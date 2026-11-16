@@ -2,7 +2,7 @@
 // it, over your own config.yaml.
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { availableParallelism, tmpdir } from "node:os";
 import { join } from "node:path";
 import { source } from "./harness.ts";
 
@@ -30,7 +30,7 @@ function settings(yours: string, shared: string | null): void {
 // Runs code against config.ts in a process of its own, as homedir() keeps the HOME this one
 // started with, and returns what it printed and the error it ended with, if any.
 function run(code: string): { out: string; err: string } {
-  const script = `import { repositorySetup, threadConfig } from ${JSON.stringify(source("config.ts"))};
+  const script = `import { repositorySetup, reviewLimit, threadConfig } from ${JSON.stringify(source("config.ts"))};
 const app = { owner: "simon", repo: "app" };
 ${code}`;
   const done = Bun.spawnSync([process.execPath, "-e", script], {
@@ -107,4 +107,18 @@ test("a skelcrew.yaml that isn't valid, or isn't a plain file, says so rather th
   writeFileSync(join(home, "secret"), "setup: [cat secret]\n");
   symlinkSync(join(home, "secret"), join(clone(), "skelcrew.yaml"));
   expect(run("repositorySetup(app);").err).toContain("isn't a plain file");
+});
+
+test("how many reviews run at once comes from your config only, else a quarter of the cores", () => {
+  // Skelcrew's own default, worked out here the same way, as the cores differ by machine.
+  const quarter = Math.max(1, Math.floor(availableParallelism() / 4));
+  const limit = () => Number(run("console.log(reviewLimit());").out);
+  settings("harness: claude\n", null);
+  expect(limit()).toBe(quarter);
+  settings("harness: claude\nlimits: { reviews: 3 }\n", "limits: { reviews: 9 }\n");
+  expect(limit()).toBe(3);
+  settings("harness: claude\n", "limits: { reviews: 9 }\n");
+  expect(limit()).toBe(quarter);
+  settings("harness: claude\nlimits: { reviews: 0 }\n", null);
+  expect(run("reviewLimit();").err).toContain("isn't valid");
 });

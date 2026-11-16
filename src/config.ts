@@ -1,6 +1,7 @@
 // Settings, in two layers: your own in config.yaml, which the first run saves, and what a
 // repository's committed skelcrew.yaml shares with everyone who works on it, which comes first.
 import { existsSync, lstatSync, readFileSync } from "node:fs";
+import { availableParallelism } from "node:os";
 import { join } from "node:path";
 import { parse, parseDocument } from "yaml";
 import { z } from "zod";
@@ -61,6 +62,11 @@ const Fallback = z.looseObject({
 });
 // Apart from Roles, so a bad max_rounds stops a thread, not the lead.
 const Rounds = z.looseObject({ max_rounds: z.number().int().positive().optional() });
+// How much may run at once on this machine. Only your config sets it, as it fits your machine,
+// not the repository.
+const Limits = z.looseObject({
+  limits: z.looseObject({ reviews: z.number().int().positive().optional() }).optional(),
+});
 // The commands that set up a thread's clone, run once in it. The reviewer reads the test
 // commands from the file itself.
 const Setup = z.looseObject({ setup: z.array(z.string()).optional() });
@@ -174,3 +180,10 @@ export const repositorySetup = (repository: Repository): string[] =>
 // names none.
 export const repositoryTracker = (repository: Repository): string | undefined =>
   readRepositoryConfig(Tracker, repository).tracker ?? undefined;
+
+// Returns how many reviews may run at once: limits.reviews in your config, else a quarter of
+// this machine's cores, at least one. Each review runs the repository's whole test suite, so
+// many at once fight over the CPU and every one of them slows down. Throws when your config
+// isn't valid.
+export const reviewLimit = (): number =>
+  readYourConfig(Limits).limits?.reviews ?? Math.max(1, Math.floor(availableParallelism() / 4));

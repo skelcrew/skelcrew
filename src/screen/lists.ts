@@ -180,8 +180,8 @@ function prGroups(db: Database, open: Open, threads: Known[]): Group[] {
           commit: pr.head,
         },
       };
-    // A review under way counts as a round going on, the first one included.
-    const reviewed = on && (on.thread.review_round !== null || on.word === "reviewing");
+    // A review under way, waiting or held counts as a round going on, the first one included.
+    const reviewed = on && (on.thread.review_round !== null || onReviewer(on.thread, on.word));
     const sign = ready ? "●" : reviewed ? "◐" : "○";
     // A working thread's green and a waiting one's dim say nothing of how far the PR is.
     const colour = on ? markOf(on)[1] : grey;

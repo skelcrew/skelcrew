@@ -219,6 +219,7 @@ const thread = (change: Partial<Thread>): Thread => ({
   updates: [],
   stalled: false,
   submitted: false,
+  queued: null,
   ...change,
 });
 

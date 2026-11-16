@@ -353,20 +353,15 @@ describe.skipIf(insideSandbox)("reviewer", () => {
     expect(existsSync(join(sessions(), "late"))).toBe(false);
   });
 
-  test("runs one review at a time, and none that was cancelled while it waited", async () => {
-    fakeCodex(approve, [
-      'mkdir "$CODEX_HOME/sessions/busy" || echo overlap >> "$CODEX_HOME/sessions/overlap"',
-      'echo ran >> "$CODEX_HOME/sessions/ran"; sleep 0.5; rmdir "$CODEX_HOME/sessions/busy"',
-    ]);
+  // How many reviews run at once is the round's queue to limit, so a review only has to stay
+  // out of the way once it is cancelled.
+  test("a review cancelled before it starts never runs", async () => {
+    fakeCodex(approve, ['echo ran >> "$CODEX_HOME/sessions/ran"']);
     const cancel = new AbortController();
-    const reviews = [start(), start(), start({ signal: cancel.signal })];
     cancel.abort();
-    const [first, second, third] = await Promise.all(reviews);
-    expect(first?.verdict).toBe("approve");
-    expect(second?.verdict).toBe("approve");
-    expect(third?.verdict).toBe("failed");
-    expect(kept("ran")).toBe("ran\nran\n");
-    expect(existsSync(join(sessions(), "overlap"))).toBe(false);
+    const done = await start({ signal: cancel.signal });
+    expect(done).toEqual({ verdict: "failed", body: "the review was cancelled" });
+    expect(existsSync(join(sessions(), "ran"))).toBe(false);
   });
 
   // Stands in for Claude Code in print mode. Its config folder is gone after the review,

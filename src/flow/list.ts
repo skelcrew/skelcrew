@@ -12,7 +12,7 @@ import { fitted, removeControlCodes } from "../screen/look.ts";
 import { sidebarWidth } from "../screen/screen.ts";
 import { openTasks, taskOf, threadTask } from "./copy.ts";
 import { findRepository, noRepositories, repositories } from "./repo.ts";
-import { needsYou, Thread, threadName, threadOn } from "./thread.ts";
+import { needsYou, queuedForReview, Thread, threadName, threadOn } from "./thread.ts";
 
 // A repository as sc repo ls shows it. `missing` is a tracker its skelcrew.yaml names that
 // isn't installed, so it has none until you install that plugin.
@@ -61,13 +61,14 @@ function tabClosed(db: Database, r: { owner: string; repo: string }): boolean {
 }
 
 // A thread as sc ps shows it, with the short title the lead gave it, if any, and its whole
-// title, which an old row may lack.
+// title, which an old row may lack. `queued` says its review waits for a place.
 export const ThreadRow = z.object({
   thread: z.string(),
   short: z.string().nullable(),
   title: z.string().nullable(),
   status: Thread.shape.status,
   needsYou: z.boolean(),
+  queued: z.boolean(),
 });
 export type ThreadRow = z.infer<typeof ThreadRow>;
 
@@ -88,6 +89,7 @@ export function listThreads(db: Database, repository?: string): ThreadRow[] {
       title: thread.title,
       status: thread.status,
       needsYou: needsYou(thread),
+      queued: queuedForReview(thread),
     };
   });
 }
@@ -216,7 +218,8 @@ export function printThreads(threads: ThreadRow[], json: boolean): void {
         t.short === null
           ? fitted(removeControlCodes(t.title ?? ""), titleRoom(sidebarWidth))
           : removeControlCodes(t.short),
-        t.status,
+        // Waiting says little while many reviews wait their turn, so the table says which.
+        t.queued ? "queued for review" : t.status,
         t.needsYou ? "yes" : "",
       ]),
     );

@@ -7,7 +7,7 @@ import { noProgress } from "../agents/progress.ts";
 import { pastRoundLimit } from "../flow/decide.ts";
 import { leadOf } from "../flow/lead.ts";
 import { clockTime } from "../flow/limits.ts";
-import { fullNameOf, needsYou, Thread, threadName } from "../flow/thread.ts";
+import { fullNameOf, needsYou, queuedForReview, Thread, threadName } from "../flow/thread.ts";
 import { green, grey, red, yellow } from "./look.ts";
 import { builderProgress, tokenText } from "./progress.ts";
 
@@ -104,17 +104,22 @@ export function threadWord(thread: Thread, maxRounds: number, now = Date.now()):
     reset === null ? "limit" : `limit · ${clockTime(reset, now)}`;
   if (thread.erred && thread.limited) return limitWord(thread.limit_reset);
   if (thread.review_limited) return limitWord(thread.review_reset);
-  // A round under way shows as reviewing, and a review's changes still waiting
-  // to be typed into the builder as changes. Otherwise it works or waits on checks.
+  // A review waiting for a place shows as queued, any other round under way as reviewing, and
+  // a review's changes still waiting to be typed into the builder as changes. Otherwise it
+  // works or waits on checks.
+  if (queuedForReview(thread)) return "queued for review";
   if (underWay) return "reviewing";
   if (thread.telling !== null) return "changes";
   return status === "working" ? "working" : "checks";
 }
 
-// Returns whether the thread's reviewer has it now: a review running, or one held on its
-// harness's usage limit, when the builder isn't held on one of its own.
+// Returns whether the thread's reviewer has it now: a review waiting for a place, running, or
+// held on its harness's usage limit when the builder isn't held on one of its own. Then its
+// harness is the reviewer's and its PR is in a round.
 export const onReviewer = (thread: Thread, word: string) =>
-  word === "reviewing" || (word.startsWith("limit") && !(thread.erred && thread.limited));
+  word === "reviewing" ||
+  word === "queued for review" ||
+  (word.startsWith("limit") && !(thread.erred && thread.limited));
 
 // What the sidebar reads of a thread beyond what its log keeps: when its builder's current
 // stretch of work began. Null before the builder first started.

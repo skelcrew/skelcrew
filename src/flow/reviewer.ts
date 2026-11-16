@@ -85,7 +85,7 @@ async function spawnReviewer(given: {
     });
   // A process that left the group can still hold the output open, and a Mac can't find it
   // once its parent is gone. So there the output gets a moment after the reviewer ends, or
-  // the review, and every review queued after it, would wait forever.
+  // the review would wait forever, and keep its place among the reviews that run at once.
   const read = (output: ReadableStream<Uint8Array>) => {
     const text = new Response(output).text();
     if (!mac) return text;
@@ -267,24 +267,17 @@ async function reviewNow(given: {
   }
 }
 
-let queue: Promise<unknown> = Promise.resolve();
-
-// Queues a review and returns its verdict, turning errors into failed verdicts for the
-// caller. One review at a time across the daemon: reviews share Skelcrew's Codex login, and a
-// renewal by one could leave the others with a token that no longer works. A review never
-// rejects, so one that throws can't stop the reviews queued after it. A review whose turn
-// comes while its harness waits out a usage limit doesn't start, and is limited at once, as a
-// review ahead of it in the queue may have just hit that limit.
+// Runs a review and returns its verdict. An error becomes a failed verdict, so a review that
+// throws ends its round as any failed review does. How many run at once is the round's to
+// limit. A review whose turn comes while its harness waits out a usage limit doesn't start,
+// and is limited at once, as a review that ran just before it may have hit that limit.
 export function review(given: Parameters<typeof reviewNow>[0]): Promise<Review | Limited> {
-  const turn = queue
-    .then((): Review | Limited | Promise<Review | Limited> => {
-      const limit = limitOn(given.harness, Date.now());
-      if (limit === null) return reviewNow(given);
-      return { verdict: "limited", body: "its usage limit is reached", reset: limit.reset };
-    })
-    .catch((error): Review => {
-      return { verdict: "failed", body: errorText(error) };
+  const limit = limitOn(given.harness, Date.now());
+  if (limit !== null)
+    return Promise.resolve({
+      verdict: "limited",
+      body: "its usage limit is reached",
+      reset: limit.reset,
     });
-  queue = turn;
-  return turn;
+  return reviewNow(given).catch((error): Review => ({ verdict: "failed", body: errorText(error) }));
 }
