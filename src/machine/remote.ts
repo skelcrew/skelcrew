@@ -4,6 +4,7 @@
 // it changed. Your laptop can be a Mac, so this file loads nothing of the Skelcrew that runs on
 // the server.
 import { chmodSync, mkdtempSync, rmSync } from "node:fs";
+import { isIP } from "node:net";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { quietly } from "../run.ts";
@@ -115,10 +116,12 @@ async function setUpFirst(
 }
 
 // Stops at a host that names a machine plugin, such as demo:box, rather than taking it for an
-// SSH host. Skelcrew has no machine plugins yet, so every such host is refused by name. An SSH
-// host never starts with a word and a colon: user@host has an @ first, and IPv6 a colon first.
+// SSH host. Skelcrew has no machine plugins yet, so every such host is refused by name. The name
+// before the colon follows a plugin manifest's rule. An IPv6 address such as abcd::1 also starts
+// that way, so it is let through to SSH first. user@host never matches, as it has an @ first.
 function checkHost(host: string): void {
-  const plugin = host.match(/^([a-z][\w-]*):/)?.[1];
+  if (isIP(host) === 6) return;
+  const plugin = host.match(/^([a-z0-9][a-z0-9-]*):/)?.[1];
   if (plugin) throw new Error(`no machine plugin named ${plugin}`);
 }
 

@@ -588,15 +588,28 @@ test("sc remote add needs a host", async () => {
 });
 
 test("a host that names a machine plugin is refused, not taken as an SSH host", async () => {
-  for (const args of [
-    ["remote", "add", "sprite:demo"],
-    ["--remote", "sprite:demo", "ps"],
-  ]) {
-    const run = await skel(args);
-    expect(run.err).toContain("no machine plugin named sprite");
-    expect(run.code).toBe(1);
+  for (const plugin of ["sprite", "3cloud"]) {
+    for (const args of [
+      ["remote", "add", `${plugin}:demo`],
+      ["--remote", `${plugin}:demo`, "ps"],
+    ]) {
+      const run = await skel(args);
+      expect(run.err).toContain(`no machine plugin named ${plugin}`);
+      expect(run.code).toBe(1);
+    }
   }
   expect(calls()).toBe("");
+});
+
+test("an IPv6 address is an SSH host, though it starts like a plugin name", async () => {
+  for (const args of [
+    ["remote", "add", "abcd::1"],
+    ["--remote", "abcd::1", "ps"],
+  ]) {
+    const run = await skel(args);
+    expect(run.err).not.toContain("no machine plugin");
+  }
+  expect(calls()).toContain("ssh abcd::1");
 });
 
 test("an agent can't set up a machine", () => {
