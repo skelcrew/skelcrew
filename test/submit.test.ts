@@ -47,7 +47,8 @@ const script = (name: string, body: string) => writeScript(home, name, body);
 // typed message ends in a paste mark and an Enter, and it runs the UserPromptSubmit hooks, then
 // answers it with another round, as a builder fixing a review would. `submits` false leaves the
 // first round to the test. While the file busy is in its config folder after a round, it looks
-// busy, as Claude Code does mid-turn, and its turn ends once the file is gone. As a
+// busy, as Claude Code does mid-turn, and its turn ends once the file is gone. Once a round's
+// Stop hooks have run, the file ended holds its number. As a
 // reviewer, run with -p, it approves, unless the file claude-limit beside it holds a moment in
 // seconds since 1970 still to come: until then it says its usage limit is reached, as Claude
 // Code did.
@@ -80,6 +81,7 @@ round() {
   sc submit "Round $n" >> "$CLAUDE_CONFIG_DIR/submitted" 2>&1
   while test -e "$CLAUDE_CONFIG_DIR/busy"; do echo "esc to interrupt"; sleep 0.2; done
   hook Stop
+  echo "$n" > "$CLAUDE_CONFIG_DIR/ended"
   clear
 }
 ${submits ? "round" : ""}
@@ -966,6 +968,8 @@ describe.skipIf(insideSandbox)("sc review", () => {
     verdict(2, "approve", "Still ready.");
     await startApp12();
     await until(() => read(join(data(), "threads", "app-12.log")).includes("waits on CI"), 30_000);
+    // The first turn's own end must come before the turn the test plays, or it would end that.
+    await until(() => read(join(builder(), "ended")).trim() === "1", 30_000);
     const asBuilder = { SKELCREW_SOCKET: builderSocket() };
     // You ask the builder for another review: a new turn, in which it runs sc review.
     expect((await skel(["question", "answered"], asBuilder)).code).toBe(0);
@@ -983,6 +987,8 @@ describe.skipIf(insideSandbox)("sc review", () => {
     verdict(2, "approve", "Still ready.");
     await startApp12();
     await until(() => read(join(data(), "threads", "app-12.log")).includes("waits on CI"), 30_000);
+    // The first turn's own end must come before the turn the test plays, or it would end that.
+    await until(() => read(join(builder(), "ended")).trim() === "1", 30_000);
     const asBuilder = { SKELCREW_SOCKET: builderSocket() };
     // Something typed in starts the builder's turn, and meanwhile the lead asks for a review.
     expect((await skel(["question", "answered"], asBuilder)).code).toBe(0);
