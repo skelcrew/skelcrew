@@ -121,7 +121,7 @@ test("sc --version answers on a server whose Skelcrew differs from the laptop's"
 test("the help lists the screen's keys, anywhere first, then lists, then pages", () => {
   const out = skel(["--help"]).out;
   const keys = out.slice(out.indexOf("\nKEYS\n"), out.indexOf("\nEXAMPLES\n"));
-  const order = ["alt + ↑/↓ ", "alt + b ", "alt + q ", "enter/→ ", "← "].map((key) =>
+  const order = ["alt + ↑/↓ ", "ctrl + 6 ", "alt + q ", "enter/→ ", "← "].map((key) =>
     keys.indexOf(`  ${key}`),
   );
   expect(order.every((at) => at > 0)).toBe(true);
@@ -143,9 +143,9 @@ test("the help lists s to start a thread on an issue and m to merge a PR, after 
 });
 
 // The list of keys runs across the whole screen, above the footer.
-test("across a 120-column terminal, the list of keys fits in three columns and five rows", () => {
+test("across a 120-column terminal, the list of keys fits in three columns and four rows", () => {
   const lines = keyLines(120);
-  expect(lines).toHaveLength(5);
+  expect(lines).toHaveLength(4);
   expect(lines[0]?.trim().split(/\s{3,}/)).toHaveLength(3);
   expect(lines.join("\n")).toContain("m to merge a ready PR");
 });

@@ -107,7 +107,7 @@ const openCommand = process.platform === "darwin" ? "open" : "xdg-open";
 // until the pane goes. `agents` names the agents' tmux server and `session` the screen's session,
 // whose sidebar this tells which page is open, for the strip, and which thread to show. `where`
 // names the remote Skelcrew runs on, and is empty on the machine you sit at. `start` is the
-// session of the thread whose row the list starts on, for Alt-B back from its agent, or empty to
+// session of the thread whose row the list starts on, for Ctrl-6 back from its agent, or empty to
 // start on the first row.
 // Up and Down move a list, and Enter, Right or a click opens a row: an issue's or PR's page here,
 // or a thread's agent, which the sidebar puts in place of this pane. Right opens as Left goes

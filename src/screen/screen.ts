@@ -46,18 +46,21 @@ const config = [
   // typing, key repeat or a slow link bring, would lose all but the first two, and type the rest
   // into the agent. A paste that matters comes bracketed anyway.
   ["set", "-g", "assume-paste-time", "0"],
-  // Alt with an arrow, and the same with Shift, go to the sidebar, in pane 0, without moving
-  // your typing from the agent.
+  // Alt-Up and Alt-Down, with or without Shift, and Alt-Shift-Left and Alt-Shift-Right go to
+  // the sidebar, in pane 0, without moving your typing from the agent. Plain Alt-Left and
+  // Alt-Right stay the agent's, as some terminals send them to move a word while you type.
   ["bind", "-n", "M-Up", "send-keys", "-t", ":.0", "M-Up"],
   ["bind", "-n", "M-Down", "send-keys", "-t", ":.0", "M-Down"],
   ["bind", "-n", "M-S-Up", "send-keys", "-t", ":.0", "M-S-Up"],
   ["bind", "-n", "M-S-Down", "send-keys", "-t", ":.0", "M-S-Down"],
-  ["bind", "-n", "M-Left", "send-keys", "-t", ":.0", "M-Left"],
-  ["bind", "-n", "M-Right", "send-keys", "-t", ":.0", "M-Right"],
   ["bind", "-n", "M-S-Left", "send-keys", "-t", ":.0", "M-S-Left"],
   ["bind", "-n", "M-S-Right", "send-keys", "-t", ":.0", "M-S-Right"],
-  // Alt-B goes to the sidebar too, which goes back.
-  ["bind", "-n", "M-b", "send-keys", "-t", ":.0", "M-b"],
+  // Ctrl-6 goes to the sidebar too, which goes back. It is not Alt-B, since Mac terminals send
+  // Option-Left as Esc b, readline's word back, which tmux reads as Alt-B. No shell, Claude Code
+  // or Codex uses Ctrl-6, and it is sent with or without Option as Alt. Terminals send it as
+  // C-^, or as C-6 once tmux asks for extended keys.
+  ["bind", "-n", "C-^", "send-keys", "-t", ":.0", "C-^"],
+  ["bind", "-n", "C-6", "send-keys", "-t", ":.0", "C-^"],
   // A click on the tabs, in a status line, reaches no pane, so tmux types which tab it was
   // into the sidebar, as an OSC naming the tab's range. send-keys -F expands no format in what
   // it types, so run-shell -C expands it first. A second click soon after the first is a
