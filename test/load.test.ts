@@ -1,7 +1,7 @@
 // The machine's load in the footer: how busy the cores were between two samples, how the figures
 // read, and when they turn yellow or red.
 import { expect, test } from "bun:test";
-import type { CpuInfo } from "node:os";
+import { type CpuInfo, totalmem } from "node:os";
 import { cpuBusy, cpuSample, loadText, memoryInUse } from "../src/screen/load.ts";
 import { grey, red, yellow } from "../src/screen/look.ts";
 
@@ -47,4 +47,34 @@ test("memory the system can free counts as free", () => {
   const meminfo =
     "MemTotal:       16000000 kB\nMemFree:  1000000 kB\nMemAvailable:    9000000 kB\n";
   expect(memoryInUse(meminfo)).toEqual({ used: 7000000 * 1024, total: 16000000 * 1024 });
+});
+
+test("on a Mac, inactive, speculative and purgeable memory count as free", () => {
+  const vmStat = `Mach Virtual Memory Statistics: (page size of 16384 bytes)
+Pages free:                               10000.
+Pages active:                            300000.
+Pages inactive:                          200000.
+Pages speculative:                         5000.
+Pages throttled:                              0.
+Pages wired down:                         90000.
+Pages purgeable:                          15000.
+`;
+  const total = totalmem();
+  const free = (10000 + 200000 + 5000 + 15000) * 16384;
+  expect(memoryInUse(vmStat)).toEqual({ used: Math.max(total - free, 0), total });
+});
+
+test("without the system's own figures, memory comes from os.freemem()", () => {
+  for (const text of [null, "MemTotal:       16000000 kB\nMemFree:  1000000 kB\n"]) {
+    const { used, total } = memoryInUse(text);
+    expect(total).toBe(totalmem());
+    expect(used).toBeGreaterThan(0);
+    expect(used).toBeLessThanOrEqual(total);
+  }
+});
+
+test("a total of nothing reads as dim, never as a broken colour", () => {
+  expect(loadText(0, 0, 0)).toBe(
+    `\x1b[${grey}mcpu 0%\x1b[22;39m  \x1b[${grey}mmem 0.0/0G\x1b[22;39m`,
+  );
 });

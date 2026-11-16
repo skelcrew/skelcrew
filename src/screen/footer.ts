@@ -3,11 +3,10 @@
 // load at its right end. Above it, while
 // you toggle them on, the list of keys shows under a thin line of its own. It runs in the
 // screen's third pane, across the bottom, and sizes that pane to what it shows.
-import { readFileSync } from "node:fs";
 import { cpus } from "node:os";
 import { screenSocket, tmux, tmuxIsAtLeast } from "../agents/tmux.ts";
 import { keyLines } from "./keys.ts";
-import { cpuBusy, cpuSample, loadText, memoryInUse } from "./load.ts";
+import { cpuBusy, cpuSample, loadText, memoryInUse, readMemory } from "./load.ts";
 import { edge, fitted, grey, pad, paint, removeControlCodes } from "./look.ts";
 
 // The keys you need most, which the footer always starts with.
@@ -148,15 +147,10 @@ export async function runFooter(agents: string, session: string): Promise<void> 
     draw();
   });
   // Reads the load every 5 seconds, and draws only when its text changed, as drawing asks tmux
-  // for the window's height. A Mac has no /proc/meminfo, so memory comes from os.freemem()
-  // there.
+  // for the window's height.
   setInterval(() => {
     const now = cpuSample(cpus());
-    let meminfo: string | null = null;
-    try {
-      meminfo = readFileSync("/proc/meminfo", "utf8");
-    } catch {}
-    const memory = memoryInUse(meminfo);
+    const memory = memoryInUse(readMemory());
     const text = loadText(cpuBusy(sample, now), memory.used, memory.total);
     sample = now;
     if (text === load) return;

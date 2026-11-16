@@ -1,5 +1,6 @@
 // The machine's load, at the right end of the footer: how busy its cores are and how much memory
 // is in use. It is the machine the screen runs on, which with sc --remote is where the agents run.
+import { readFileSync } from "node:fs";
 import { type CpuInfo, freemem, totalmem } from "node:os";
 import { grey, paint, red, yellow } from "./look.ts";
 
@@ -27,17 +28,45 @@ export function cpuBusy(before: CpuSample, after: CpuSample): number {
   return total > 0 ? 1 - (after.idle - before.idle) / total : 0;
 }
 
-// Returns the memory in use and the total, in bytes. `meminfo` is Linux's /proc/meminfo, or
-// null where there is none. On Linux, MemAvailable counts the cache the system can free as free,
-// which os.freemem() would count as used. On a Mac, os.freemem() is close enough.
-export function memoryInUse(meminfo: string | null): { used: number; total: number } {
-  const kB = (name: string) => {
-    const found = meminfo?.match(new RegExp(`^${name}:\\s+(\\d+) kB`, "m"));
-    return found ? Number(found[1]) * 1024 : null;
+// Returns what the system says of its memory: Linux's /proc/meminfo, or on a Mac what vm_stat
+// prints, or null where neither can be read. Read every 5 seconds, so only a Mac starts a
+// program for it, and a cheap one.
+export function readMemory(): string | null {
+  if (process.platform === "darwin") {
+    const run = Bun.spawnSync(["vm_stat"], { stderr: "ignore" });
+    return run.success ? run.stdout.toString() : null;
+  }
+  try {
+    return readFileSync("/proc/meminfo", "utf8");
+  } catch {
+    return null;
+  }
+}
+
+// Returns the memory in use and the total, in bytes, from what readMemory gave. Memory the system
+// can free counts as free: Linux's MemAvailable, which os.freemem() would count as used, and on
+// a Mac the free, inactive, speculative and purgeable pages, as os.freemem() there counts only
+// the free ones and would show nearly all memory used. Without either, it uses os.freemem().
+export function memoryInUse(text: string | null): { used: number; total: number } {
+  // Takes a number after a name at the start of a line, such as `MemTotal:   16000000 kB`.
+  const figure = (name: string) => {
+    const found = text?.match(new RegExp(`^${name}:\\s+(\\d+)`, "m"));
+    return found ? Number(found[1]) : null;
   };
-  const total = kB("MemTotal");
-  const available = kB("MemAvailable");
-  if (total !== null && available !== null) return { used: total - available, total };
+  // Linux gives kB.
+  const total = figure("MemTotal");
+  const available = figure("MemAvailable");
+  if (total !== null && available !== null)
+    return { used: (total - available) * 1024, total: total * 1024 };
+  // A Mac gives pages, of a size it names on its first line. Its total isn't there.
+  const pageSize = text?.match(/page size of (\d+) bytes/);
+  const pages = ["free", "inactive", "speculative", "purgeable"].map((kind) =>
+    figure(`Pages ${kind}`),
+  );
+  if (pageSize && pages.every((count) => count !== null)) {
+    const free = pages.reduce((sum: number, count) => sum + (count ?? 0), 0) * Number(pageSize[1]);
+    return { used: Math.max(totalmem() - free, 0), total: totalmem() };
+  }
   return { used: totalmem() - freemem(), total: totalmem() };
 }
 
@@ -50,5 +79,7 @@ export function loadText(cpu: number, used: number, total: number): string {
   const percent = Math.round(cpu * 100);
   const colour = (share: number) => (share >= 0.95 ? red : share >= 0.8 ? yellow : grey);
   const memory = `mem ${(used / G).toFixed(1)}/${Math.round(total / G)}G`;
-  return `${paint(colour(percent / 100), `cpu ${percent}%`)}  ${paint(colour(used / total), memory)}`;
+  // A total of nothing, which no real machine has, shows dim rather than dividing by it.
+  const share = total > 0 ? used / total : 0;
+  return `${paint(colour(percent / 100), `cpu ${percent}%`)}  ${paint(colour(share), memory)}`;
 }

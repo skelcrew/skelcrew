@@ -1663,8 +1663,11 @@ test("with nothing working, an open screen sends your terminal nothing but the m
   await Bun.sleep(6000);
   // tmux puts the cursor on a row and column before it writes there. Any text after a place
   // above the footer's two rows, at the bottom of the 30, is something else changing on its own.
+  // A line feed, or a move or scroll up or down, could reach another row without naming it, so
+  // none may come at all.
   const sent = existsSync(written) ? readFileSync(written, "utf8") : "";
   const esc = "\x1b";
+  expect(sent).not.toMatch(new RegExp(`\\n|${esc}\\[\\d*[ABEFdLMST]|${esc}[DEM]`));
   const [before, ...placed] = sent.split(new RegExp(`${esc}\\[(\\d+);\\d+H`));
   expect(Bun.stripANSI(before ?? "")).toBe("");
   for (let at = 0; at < placed.length; at += 2) {
