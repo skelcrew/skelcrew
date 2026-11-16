@@ -499,6 +499,141 @@ test("a tmux server started by an older Skelcrew gets scrolling when the screen 
   await until(() => !seen().includes("I am output"), "the scrollback");
 });
 
+// What your terminal's clipboard got from the screen, by OSC 52, or nothing. The test's terminal
+// keeps what a program copies as a buffer of its own, as it has no clipboard.
+const clipboard = () => {
+  const said = Bun.spawnSync(["tmux", "-L", terminal, "-f", "/dev/null", "show-buffer"], {
+    env: { ...env(), TMUX: "" },
+    stdout: "pipe",
+    stderr: "ignore",
+  });
+  return said.stdout.toString();
+};
+// The left button pressed at the first place on screen, dragged through the others and let go
+// at the last. Each step is a moment apart, as from a hand: tmux picks the binding for a mouse
+// event as it arrives, so a release in the same read as the drag would come before copy mode
+// had started.
+async function drag(from: [number, number], ...through: [number, number][]): Promise<void> {
+  const last = through.at(-1) ?? from;
+  const moves = through.map((place) => `32;${place.join(";")}M`);
+  const steps = [`0;${from.join(";")}M`, ...moves, `0;${last.join(";")}m`];
+  for (const step of steps) {
+    type(`\x1b[<${step}`);
+    await Bun.sleep(100);
+  }
+}
+// Where a word on a line of the agent is on screen, as the column and row a terminal counts
+// from 1.
+function placeOf(word: string, line: string): [number, number] {
+  const rows = seen().split("\n");
+  const row = rows.findIndex((text) => text.includes(line));
+  return [(rows[row] ?? "").indexOf(word, (rows[row] ?? "").indexOf(line)) + 1, row + 1];
+}
+// What an agent to copy from prints.
+const lines = 'echo "first word here"; echo "second line"';
+// Opens the screen on an agent that printed `lines`, with a terminal that keeps what is copied.
+async function copying(): Promise<void> {
+  agent("words", lines);
+  sql(`INSERT INTO threads (owner, repo, task, folder, branch, status) VALUES
+    ('simon', 'app', 20, 'words', 'skelcrew/20', 'working')`);
+  open("words");
+  await ready("words");
+  tmux(terminal, "set", "-s", "set-clipboard", "on");
+}
+
+test("a drag over the agent copies just its text to your terminal's clipboard", async () => {
+  await copying();
+  const [column, row] = placeOf("first", "first word here");
+  // tmux selects up to the cell before the one the button is let go on.
+  await drag([column, row], [column + 10, row]);
+  await until(() => clipboard() === "first word", "the copy");
+  // The agents' server keeps no copy, so no agent can ask tmux for it.
+  expect(tmux(agents, "list-buffers").out).toBe("");
+  // Typing reaches the agent, and the agent's live screen is back.
+  type("after\r");
+  await until(() => read("words.typed") === "after\n", "the typing");
+  expect(scrolledBack()).not.toContain("1");
+});
+
+test("a double click copies a word, and a triple click a line", async () => {
+  await copying();
+  // A click inside the word, not on its edge.
+  const [start, row] = placeOf("second", "second line");
+  const column = start + 1;
+  // Clicks a number of times in quick succession, as a hand does, each a moment apart.
+  const clicks = async (count: number) => {
+    for (let n = 0; n < count; n++) {
+      click(column, row);
+      await Bun.sleep(50);
+    }
+  };
+  await clicks(2);
+  await until(() => clipboard() === "second", "the word");
+  await until(() => !scrolledBack().includes("1"), "the live agent");
+  // Past tmux's time for a double click, so the next three start afresh.
+  await Bun.sleep(600);
+  await clicks(3);
+  await until(() => clipboard().startsWith("second line"), "the line");
+});
+
+test("a drag let go over the sidebar copies the agent's text up to its edge", async () => {
+  await copying();
+  const [column, row] = placeOf("word", "first word here");
+  await drag([column, row], [column - 3, row], [10, row]);
+  await until(() => clipboard() !== "", "the copy");
+  expect(clipboard()).toBe("first ");
+  type("after\r");
+  await until(() => read("words.typed") === "after\n", "the typing");
+});
+
+test("a drag let go over the footer copies the agent's text to the end of its last row", async () => {
+  await copying();
+  const [column, row] = placeOf("line", "second line");
+  await drag([column, row], [column + 2, row + 1], [60, 30]);
+  await until(() => clipboard() !== "", "the copy");
+  expect(clipboard()).toStartWith("line\nI am words\n");
+});
+
+test("copying while scrolled back keeps your place, and a key returns you to the agent", async () => {
+  agent("output", history);
+  open("output");
+  await until(() => seen().includes("I am output"), "the agent");
+  tmux(terminal, "set", "-s", "set-clipboard", "on");
+  wheel(64);
+  await until(() => seen().includes("line 190"), "the scrollback");
+  const [column, row] = placeOf("line 190", "line 190");
+  await drag([column, row], [column + 8, row]);
+  await until(() => clipboard() === "line 190", "the copy");
+  await Bun.sleep(300);
+  expect(scrolledBack()).toContain("1");
+  type("x\r");
+  await until(() => read("output.typed") === "x\n", "the typing");
+  expect(scrolledBack()).not.toContain("1");
+});
+
+test("an agent that asked for the mouse gets a drag itself", async () => {
+  agent("drawn", fullScreen("drawn", "\\033[?1002h\\033[?1006h"));
+  open("drawn");
+  await until(() => seen().includes("I am drawn"), "the agent");
+  await drag([60, 5], [64, 5]);
+  await until(() => read("drawn.bytes").includes("\x1b[<0;25;4m"), "the release");
+  expect(read("drawn.bytes")).toBe("\x1b[<0;21;4M\x1b[<32;25;4M\x1b[<0;25;4m");
+  expect(scrolledBack()).not.toContain("1");
+});
+
+test("an agent's own copy reaches your terminal, and other agents can't read it", async () => {
+  // An agent copies, as Claude Code's full-screen drawing does, once the test says go.
+  const copy = "printf '\\033]52;c;%s\\007' $(printf 'from agent' | base64)";
+  agent("copier", `while [ ! -e go ]; do sleep 0.1; done; ${copy}`);
+  open("copier");
+  await until(() => tmux(agents, "list-clients").out !== "", "the screen to show the agent");
+  tmux(terminal, "set", "-s", "set-clipboard", "on");
+  writeFileSync(join(home, "go"), "");
+  await until(() => clipboard() === "from agent", "the agent's copy");
+  // The agents' server keeps no copy, so a program asking tmux for the clipboard gets nothing.
+  expect(tmux(agents, "list-buffers").out).toBe("");
+});
+
 test("resizing the terminal resizes the agent and keeps the sidebar narrow", async () => {
   open("lead");
   await ready("lead");

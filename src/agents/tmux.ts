@@ -25,9 +25,10 @@ export const screenSocket = (agents: string) => `${agents}-screen`;
 // alternate screen that didn't ask has no history here, so it gets arrow keys, as a terminal
 // would send it. Copy mode's own keys are all gone, as they would swallow what you type and
 // leave you wondering why the agent doesn't answer: any key goes back to the live agent and
-// reaches it too, as send-keys alone sends the key that ran it. mode-keys is set to emacs
-// because when $EDITOR says vi, tmux uses vi's copy-mode table, which these bindings don't
-// touch.
+// reaches it too, as send-keys alone sends the key that ran it. A copy can leave copy mode in
+// the moment before that key, so the key leaves it only if it is still there. mode-keys is set
+// to emacs because when $EDITOR says vi, tmux uses vi's copy-mode table, which these bindings
+// don't touch.
 //
 // Extended keys let Shift+Enter reach the agent as a key of its own, which Claude Code and
 // Codex take for a newline. Without them, tmux reads it from your terminal as plain Enter, and
@@ -35,12 +36,31 @@ export const screenSocket = (agents: string) => `${agents}-screen`;
 // in front of this server; a terminal that can't, such as Terminal.app, still sends Enter.
 // tmux hands them on only to an agent that asked for them. Claude Code asks only when it can
 // tell it runs in tmux, which is why a session keeps tmux's TERM_PROGRAM.
+//
+// A drag over an agent selects its text, a double click a word and a triple click a line, and
+// letting go copies it to your terminal's clipboard, as OSC 52, which reaches a laptop over
+// ssh too. The clipboard feature lets tmux send it to the screen in front, or any terminal. An
+// agent that asked for the mouse, such as Claude Code's full-screen drawing, gets the mouse
+// itself, and copies on its own by OSC 52, which set-clipboard on passes on. tmux answers any
+// program that asks for the clipboard with its newest copy, so an agent could read what you
+// copied from another. So the server keeps no copy: each is deleted as soon as it is sent. In
+// copy mode a press clears the selection and a release does nothing, as either would
+// otherwise count as a key and leave copy mode.
+//
+// Copies what is selected, then goes back to the live agent, or stays where you scrolled back
+// to. The pause shows the selection a moment, and is needed: tmux sends nothing to the
+// terminal while the pane waits to be drawn again, as it does just after a double click
+// entered copy mode.
+const copied = `run-shell -d 0.3; send-keys -X copy-selection-no-clear; delete-buffer
+  if -F "#{==:#{scroll_position},0}" { send-keys -X cancel }`;
 const tmuxConfig = `set -g status off
 bind -n M-q detach-client
 bind -n C-q detach-client
 set -g remain-on-exit failed
-set -s terminal-features[90] "*:sync:extkeys"
+set -s terminal-features[90] "*:sync:extkeys:clipboard"
 set -s extended-keys on
+set -s set-clipboard on
+set-hook -g pane-set-clipboard delete-buffer
 set -g mouse on
 set -g mode-keys emacs
 bind -n WheelUpPane {
@@ -51,10 +71,23 @@ bind -n WheelUpPane {
 bind -n WheelDownPane {
   if -F "#{mouse_any_flag}" { send-keys -M } { if -F "#{alternate_on}" { send-keys Down } }
 }
+bind -n MouseDrag1Pane { if -F "#{mouse_any_flag}" { send-keys -M } { copy-mode -M } }
+bind -n DoubleClick1Pane {
+  if -F "#{mouse_any_flag}" { send-keys -M } { copy-mode -H; send-keys -X select-word; ${copied} }
+}
+bind -n TripleClick1Pane {
+  if -F "#{mouse_any_flag}" { send-keys -M } { copy-mode -H; send-keys -X select-line; ${copied} }
+}
 unbind -a -T copy-mode
 bind -T copy-mode WheelUpPane send-keys -X -N 5 scroll-up
 bind -T copy-mode WheelDownPane send-keys -X -N 5 scroll-down
-bind -T copy-mode Any { send-keys -X cancel; send-keys }
+bind -T copy-mode MouseDown1Pane send-keys -X clear-selection
+bind -T copy-mode MouseUp1Pane select-pane
+bind -T copy-mode MouseDrag1Pane send-keys -X begin-selection
+bind -T copy-mode MouseDragEnd1Pane { ${copied} }
+bind -T copy-mode DoubleClick1Pane { send-keys -X select-word; ${copied} }
+bind -T copy-mode TripleClick1Pane { send-keys -X select-line; ${copied} }
+bind -T copy-mode Any { if -F "#{pane_in_mode}" { send-keys -X cancel }; send-keys }
 `;
 
 // Returns whether this machine's tmux is the given version or newer, for settings an older

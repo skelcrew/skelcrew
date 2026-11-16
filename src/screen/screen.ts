@@ -77,6 +77,40 @@ const config = [
   ["bind", "-n", "MouseUp1Pane", "send-keys", "-M"],
   ["bind", "-n", "WheelUpPane", "send-keys", "-M"],
   ["bind", "-n", "WheelDownPane", "send-keys", "-M"],
+  // A drag, and the second and third press of a double or triple click, go on as they come,
+  // so the agents' server selects and copies the agent's text itself, with its history.
+  // DoubleClick1Pane stays unbound: tmux fires it a moment after the second press, which the
+  // agents' server already got, and would count it as a press of its own.
+  ["bind", "-n", "MouseDrag1Pane", "send-keys", "-M"],
+  ["bind", "-n", "SecondClick1Pane", "send-keys", "-M"],
+  ["bind", "-n", "TripleClick1Pane", "send-keys", "-M"],
+  // A drag over the agent that is let go over the sidebar, the footer or the top row would end
+  // in that other place, and the agents' server would wait for a release that never comes,
+  // copying nothing. So the agent's pane gets the drag's end at its nearest edge: the start of
+  // the same row beside the sidebar, the top left under the top row, the end of its last row
+  // above the footer. It is a move there and a release, as tmux ends a selection where the
+  // last move was, and ignores a place outside its window. Lists and the sidebar act only on
+  // presses, so a stray release there does nothing.
+  [
+    "bind",
+    "-n",
+    "MouseDragEnd1Pane",
+    "if",
+    "-F",
+    "#{==:#{pane_index},1}",
+    "send-keys -M",
+    `if -F "#{==:#{pane_index},0}" { run-shell -C 'send-keys -t :.1 -l "\x1b[<32;1;#{e|+:#{mouse_y},1}M\x1b[<0;1;#{e|+:#{mouse_y},1}m"' } { run-shell -C -t :.1 'send-keys -t :.1 -l "\x1b[<32;#{pane_width};#{pane_height}M\x1b[<0;#{pane_width};#{pane_height}m"' }`,
+  ],
+  [
+    "bind",
+    "-n",
+    "MouseDragEnd1Status",
+    "send-keys",
+    "-t",
+    ":.1",
+    "-l",
+    "\x1b[<32;1;1M\x1b[<0;1;1m",
+  ],
   ["set", "-g", "mouse", "on"],
   // Ends a session as its client goes, by Alt-Q or by a terminal or ssh link that drops, and
   // the server goes with its last session. It would also end a session made detached, so the
