@@ -7,6 +7,8 @@ import {
   filled,
   fitted,
   grey,
+  lightGrey,
+  lightGreyOnShade,
   pad,
   paint,
   removeControlCodes,
@@ -40,13 +42,14 @@ export const entryPlace = (entry: Entry) => `:${entry}`;
 
 // Returns one row as its lines, each cut with … to stop at the padding. A thread's first line is
 // a mark, its name without its repository's, such as t5, and its short title, or its title when
-// the lead gave it none. A working thread has two more lines, both dim: what its builder has
-// done, as workLine says, then the step it is on. Any other thread has one more: its word, then
-// its harness and its round, dim but the word, which takes its mark's colour so a green approved
-// or a red error reads at a glance. The word comes first, so it is the last to be cut. The lead's
-// row has its name on top and its word below. An agent that isn't running is dim, as it can't be
-// picked. The one you are looking at is shaded across the whole width, on all its lines. `width`
-// leaves out the line at the sidebar's edge.
+// the lead gave it none. A working thread has two more lines, in two greys so they read apart:
+// what its builder has done, as workLine says, in a light grey, then the step it is on, dim, as
+// it matters least. Any other thread has one more: its word, then its harness and its round, dim
+// but the word, which takes its mark's colour so a green approved or a red error reads at a
+// glance. The word comes first, so it is the last to be cut. The lead's row has its name on top
+// and its word below. An agent that isn't running is dim, as it can't be picked. The one you are
+// looking at is shaded across the whole width, on all its lines. `width` leaves out the line at
+// the sidebar's edge.
 function rowLines(row: Row, here: boolean, width: number): string[] {
   // The short title, title and step come from an agent and from outside, so they are made safe.
   // A thread from before Skelcrew kept titles has only its name to show.
@@ -57,10 +60,14 @@ function rowLines(row: Row, here: boolean, width: number): string[] {
   const styled = here ? paint(white, top) : row.running ? top : paint(grey, top);
   const [sign, colour] = threadMark(row);
   const first = `${pad}${tinted(here, colour, sign)} ${styled}`;
-  // A working thread: what it costs and what it does, all dim.
-  const dim = (text: string) => `${indent}${tinted(here, grey, fitted(text, room))}`;
+  // A working thread: what it costs in a light grey, then what it does, dim.
+  const light = here ? lightGreyOnShade : lightGrey;
   const lines = working(row)
-    ? [first, dim(workLine(row, room)), dim(removeControlCodes(row.step))]
+    ? [
+        first,
+        `${indent}${paint(light, fitted(workLine(row, room), room))}`,
+        `${indent}${tinted(here, grey, fitted(removeControlCodes(row.step), room))}`,
+      ]
     : [first, wordLine(row, here, room)];
   return here ? lines.map((line) => shaded(line, width)) : lines;
 }

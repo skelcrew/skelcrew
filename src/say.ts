@@ -5,6 +5,6 @@
 export const errorText = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
 
-// Returns the title of your terminal's window while Skelcrew runs in it, naming the server or
-// Sprite you reached with --remote, if any.
+// Returns the title of your terminal's window while Skelcrew runs in it, naming the server you
+// reached with --remote, if any.
 export const windowTitle = (where?: string) => (where ? `Skelcrew · ${where}` : "Skelcrew");

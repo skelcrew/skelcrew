@@ -11,7 +11,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { review } from "../src/flow/reviewer.ts";
 import { insideSandbox, source } from "./harness.ts";
@@ -24,10 +24,6 @@ const codexHome = () => join(home, ".local", "share", "skelcrew", "codex");
 const sessions = () => join(codexHome(), "sessions");
 const issue = { title: "Fix the flaky test", body: "It fails one run in ten." };
 
-// A Sprite's own disk is an overlay, where bwrap can't lay another, while its /tmp is a disk
-// of its own. So there the test's home is on the Sprite's own disk, as Skelcrew's is.
-const sprite = existsSync("/.sprite/api.sock");
-
 // Runs git in the clone and returns what it printed.
 const git = (...args: string[]) =>
   Bun.spawnSync(["git", "-C", clone, "-c", "user.name=t", "-c", "user.email=t@t", ...args], {
@@ -37,7 +33,7 @@ const git = (...args: string[]) =>
     .trim();
 
 beforeEach(() => {
-  home = realpathSync(mkdtempSync(join(sprite ? homedir() : tmpdir(), "skel-reviewer-test-")));
+  home = realpathSync(mkdtempSync(join(tmpdir(), "skel-reviewer-test-")));
   bin = join(home, "bin");
   mkdirSync(bin);
   clone = join(home, ".local", "share", "skelcrew", "threads", "app-12");
@@ -52,11 +48,10 @@ afterEach(() => {
   rmSync(home, { recursive: true, force: true });
 });
 
-// Without your PATH, which may find a real codex or claude. A Sprite's own tools are kept,
-// which tell Skelcrew it runs on one.
+// Without your PATH, which may find a real codex or claude.
 const env = () => ({
   HOME: home,
-  PATH: `${bin}:/usr/local/bin:/usr/bin:/bin${sprite ? ":/.sprite/bin" : ""}`,
+  PATH: `${bin}:/usr/local/bin:/usr/bin:/bin`,
   GH_TOKEN: "secret",
   OPENAI_API_KEY: "sk-test",
 });

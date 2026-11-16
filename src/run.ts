@@ -1,5 +1,5 @@
-// Runs a short program outside your terminal and reads what it printed, for git, gh, ssh and
-// sprite commands. remote.ts uses it on your laptop, so it loads nothing else of Skelcrew.
+// Runs a short program outside your terminal and reads what it printed, for git, gh and ssh
+// commands. remote.ts uses it on your laptop, so it loads nothing else of Skelcrew.
 
 // What `quietly` can change about a run. No `env` hands on the environment Skelcrew started
 // with, which leaves out any later change to process.env, so a command that needs those
