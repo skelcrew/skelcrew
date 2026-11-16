@@ -238,8 +238,10 @@ function trackRound(
   const done = rest.catch((error) => {
     if (cancel.signal.aborted) return;
     const why = errorText(error);
-    // A review not yet typed in stays saved, so starting the daemon again can type it.
-    record(db, folder, { needs_you: true, status: "waiting" }, `the round failed: ${why}`);
+    // A review not yet typed in stays saved, so starting the daemon again can type it. A review
+    // that waited in the queue left it with the failure, so it no longer counts as queued.
+    const change = { needs_you: true, status: "waiting", queued: null } satisfies Partial<Thread>;
+    record(db, folder, change, `the round failed: ${why}`);
     typeLeadNotes(db, tmux);
   });
   const round = { cancel, pushed, done, ended: false };

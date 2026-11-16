@@ -488,6 +488,46 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
     expect(thread().needs_you).toBe(0);
   }, 60_000);
 
+  // A review that leaves the queue because its pending check failed never runs, so the thread
+  // must not go on saying it is queued.
+  test("a review whose pending check fails while it waits is no longer queued, and needs you", async () => {
+    config("limits: { reviews: 1 }\n");
+    answer(plugin, "changed", {
+      items: [
+        taskItem("12", "Add export", { body: "As JSON" }),
+        taskItem("13", "Add import", { body: "From CSV" }),
+      ],
+      next: null,
+    });
+    addApp();
+    mkdirSync(codexHome(), { recursive: true });
+    writeFileSync(join(codexHome(), "held-1"), "");
+    await startApp12();
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), 30_000);
+    // app-13 gets a PR of its own, and the forge now refuses every check.
+    answer(plugin, "open pr", { number: 8 });
+    writeFileSync(join(plugin, "fail-status"), "the forge is down");
+    expect((await skel(["start", "app-13"])).err).toBe("");
+    const app13 = () => {
+      const db = new Database(join(data(), "skelcrew.db"));
+      db.run("PRAGMA busy_timeout = 5000");
+      try {
+        type Row = { needs_you: number; queued: number | null };
+        const query = db.query<Row, [string]>(
+          "SELECT needs_you, queued FROM threads WHERE folder = ?",
+        );
+        return query.get("app-13") ?? { needs_you: 0, queued: null };
+      } finally {
+        db.close();
+      }
+    };
+    await until(() => app13().needs_you === 1, 30_000);
+    expect(app13().queued).toBeNull();
+    expect((await skel(["ps", "app", "--json"])).out).toContain(
+      '"thread":"app-13","short":null,"title":"Add import","status":"waiting","needsYou":true,"queued":false',
+    );
+  }, 60_000);
+
   // The first poll brings only open tasks, while the thread's task may have closed: the thread
   // saved its task as it started.
   test("runs again a review cut short by an upgrade, though the thread's task is closed", async () => {
