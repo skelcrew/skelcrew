@@ -137,8 +137,11 @@ function readVerdict(
   // exited cleanly has only the error its harness reports, as any other line is its work.
   const { out, code } = finished;
   const failed = (otherwise: string): Review | Limited => {
-    const error = failureOf(name, finished, prompt, code !== 0);
-    const limit = error === null ? null : harnessNamed(name).usageLimit(error, Date.now());
+    // Only the error the harness itself reports can be a usage limit. A line guessed at could
+    // be a test's output, and would hold every review on the harness for nothing.
+    const reported = failureOf(name, finished, prompt, false);
+    const error = reported ?? (code === 0 ? null : failureOf(name, finished, prompt, true));
+    const limit = reported === null ? null : harnessNamed(name).usageLimit(reported, Date.now());
     if (error !== null && limit !== null) return { verdict: "limited", body: error, ...limit };
     if (code === 0)
       return {

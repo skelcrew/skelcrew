@@ -38,7 +38,7 @@ export function limitOn(harness: HarnessName, now: number): Limit | null {
 }
 
 // Saves that a review on the harness met its usage limit, so no review starts on it before
-// `reset`. A reset in the minute just gone, as a clock showing only minutes gives, is tried
+// `reset`. A new reset time is news, so the leads are told again. A reset in the minute just gone, as a clock showing only minutes gives, is tried
 // again a minute on, so a limit that hasn't quite reset isn't tried again and again. With no
 // reset time, reviews try again after a wait that grows with each try that meets the limit.
 export function reachLimit(harness: HarnessName, reset: number | null, now: number): void {
@@ -49,7 +49,7 @@ export function reachLimit(harness: HarnessName, reset: number | null, now: numb
     until: reset !== null && reset > now ? reset : after,
     reset,
     tries,
-    told: before?.told ?? new Set(),
+    told: before !== undefined && before.reset === reset ? before.told : new Set(),
   });
 }
 
@@ -134,9 +134,10 @@ function runAt(at: number, run: () => void): () => void {
 }
 
 // The wake planned for each builder that stopped on its harness's usage limit, by its thread's
-// folder, and how many waits in a row had no reset time, so the wait grows.
+// folder, and how many waits in a row had no reset time, so the wait grows, with when it was
+// last woken.
 const wakes = new Map<string, () => void>();
-const builderTries = new Map<string, number>();
+const builderTries = new Map<string, { tries: number; woken: number }>();
 
 // Plans to type "continue" into the thread's builder once its harness's usage limit resets, or,
 // with no reset time, after a wait that grows each time the limit stops it again. The builder
@@ -147,15 +148,21 @@ export function wakeAfterLimit(db: Database, tmux: string, folder: string): void
   const now = Date.now();
   const { limit_reset: reset } = readThread(db, folder);
   let at = reset ?? 0;
+  // A builder that worked an hour since it was last woken got past that limit, so the wait
+  // starts short again.
   if (at <= now) {
-    const tries = (builderTries.get(folder) ?? 0) + 1;
-    builderTries.set(folder, tries);
+    const before = builderTries.get(folder);
+    const recovered = before === undefined || now - before.woken > 60 * 60_000;
+    const tries = recovered ? 1 : before.tries + 1;
+    builderTries.set(folder, { tries, woken: before?.woken ?? now });
     at = now + backoffAfter(tries);
   } else builderTries.delete(folder);
   // One wake per builder: a newer limit replaces the one planned.
   wakes.get(folder)?.();
   const cancel = runAt(at, () => {
     wakes.delete(folder);
+    const tried = builderTries.get(folder);
+    if (tried !== undefined) builderTries.set(folder, { ...tried, woken: Date.now() });
     continueBuilder(db, tmux, folder).catch((error) =>
       console.log(`couldn't wake ${folder}'s builder after its usage limit: ${errorText(error)}`),
     );

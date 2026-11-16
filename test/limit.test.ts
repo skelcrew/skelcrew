@@ -49,6 +49,8 @@ test("Codex's error is its ERROR line, not the prompt it echoed before it", () =
   // The prompt has no newline at its end, so the error can follow its last line.
   const glued = "...so the builder can fix it.ERROR: stream disconnected before completion\n";
   expect(codex.failure("", glued)).toBe("stream disconnected before completion");
+  // A command it ran can print an ERROR line too. Only Codex's own last line counts.
+  expect(codex.failure("", "ERROR: rate limit exceeded\ntests failed: 3\n")).toBeNull();
   // Its JSON events, when it prints them, say the same.
   const events = `{"type":"thread.started"}\n{"type":"turn.failed","error":{"message":"stream disconnected"}}\n`;
   expect(codex.failure(events, echoed)).toBe("stream disconnected");

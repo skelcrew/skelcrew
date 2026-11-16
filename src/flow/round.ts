@@ -109,7 +109,7 @@ async function reviewRound(
   await setCheck("pending", "Skelcrew's reviewer is reviewing");
   if (signal.aborted) return;
   record(db, folder, { reviewing: sha, submitting: null, reviewer }, `reviewing ${sha}`);
-  const { verdict, by } = await reviewWithinLimits(db, tmux, folder, {
+  const plan = {
     given: {
       clone: cloneOf(thread),
       issue: threadTask(db, thread),
@@ -121,7 +121,18 @@ async function reviewRound(
     },
     role: reviewerRole,
     fallback,
-  });
+  };
+  let { verdict, by } = await reviewWithinLimits(db, tmux, folder, plan);
+  // A review that hung was ended. It runs once more, logged, and the lead hears of it at once,
+  // so a hung review never sits unseen. A second that hangs gives a timed out review.
+  if (verdict.verdict === "timed out" && !signal.aborted) {
+    const why = `${threadName(db, thread)}'s review timed out after ${reviewMinutes}m; retrying`;
+    record(db, folder, {}, why);
+    noteForLead(db, tmux, repositoryOf(db, thread), why);
+    ({ verdict, by } = await reviewWithinLimits(db, tmux, folder, plan));
+    if (verdict.verdict === "timed out")
+      verdict = { verdict: "timed out", body: `its review timed out twice (${reviewMinutes}m)` };
+  }
   // Decide what the verdict means for the thread, then post it on the PR. A failed or timed out
   // review is Skelcrew's problem, not the PR's, so it is never posted.
   if (signal.aborted) return;
@@ -164,9 +175,8 @@ async function reviewRound(
 // `fallback` harness, if you set one that isn't limited too, and its body says so. Otherwise it
 // is held, without a word to the builder, until the limit resets, or, with no reset time, until
 // the next try. All reviews held on a harness wait for that same moment. The thread shows the
-// limit meanwhile, and its lead hears of it once. A review that runs past its time limit is ended and run once more, and the
-// lead hears of it. A second one that does gives a timed out review, which needs you. A
-// cancelled round returns as soon as it is cancelled, with a failed review its caller drops.
+// limit meanwhile, and its lead hears of it once. A cancelled round returns as soon as it is
+// cancelled, with a failed review its caller drops.
 async function reviewWithinLimits(
   db: Database,
   tmux: string,
@@ -179,7 +189,6 @@ async function reviewWithinLimits(
 ): Promise<{ verdict: Review; by: HarnessName }> {
   const { given, role, fallback } = plan;
   const { signal } = given;
-  let timeouts = 0;
   while (true) {
     // A cancelled review held on a limit no longer is: the round that cancelled it shows its own.
     if (signal.aborted) {
@@ -191,8 +200,11 @@ async function reviewWithinLimits(
     const now = Date.now();
     const limit = limitOn(role.harness, now);
     const spare = fallback !== null && limitOn(fallback, now) === null ? fallback : null;
-    if (limit !== null)
-      tellOfLimit(db, tmux, role.harness, repositoryOf(db, readThread(db, folder)), spare);
+    // The lead hears of the reviewer's limit, and of the fallback's when that holds reviews too.
+    const repository = repositoryOf(db, readThread(db, folder));
+    if (limit !== null) tellOfLimit(db, tmux, role.harness, repository, spare);
+    if (limit !== null && spare === null && fallback !== null)
+      tellOfLimit(db, tmux, fallback, repository, null);
     // With no harness free, hold the review until the limit resets, and show that on the
     // thread.
     if (limit !== null && spare === null) {
@@ -221,22 +233,6 @@ async function reviewWithinLimits(
     }
     if (signal.aborted) return { verdict: result, by: harness };
     endLimit(db, tmux, harness);
-    // A review that hung is ended, then tried once more. Both times are logged, and the lead
-    // hears of the first at once, so a hung review never sits unseen.
-    if (result.verdict === "timed out") {
-      timeouts += 1;
-      const minutes = `${(given.limit ?? 30 * 60_000) / 60_000}m`;
-      if (timeouts >= 2)
-        return {
-          verdict: { verdict: "timed out", body: `its review timed out twice (${minutes})` },
-          by: harness,
-        };
-      const thread = readThread(db, folder);
-      const why = `${threadName(db, thread)}'s review timed out after ${minutes}; retrying`;
-      record(db, folder, {}, why);
-      noteForLead(db, tmux, repositoryOf(db, thread), why);
-      continue;
-    }
     if (harness === role.harness) return { verdict: result, by: harness };
     const { title } = harnessNamed(harness);
     const why = `${harnessNamed(role.harness).title} reached its usage limit`;

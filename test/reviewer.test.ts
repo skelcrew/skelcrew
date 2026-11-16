@@ -274,6 +274,19 @@ describe.skipIf(insideSandbox)("reviewer", () => {
     });
   });
 
+  // The code under review can log about rate limits, as this one does.
+  test("never takes an ERROR line a command printed for Codex's own error, or for a limit", async () => {
+    fakeCodex(approve, [
+      "echo 'ERROR: rate limit exceeded' >&2",
+      "echo 'thread panicked: out of memory' >&2",
+      "exit 1",
+    ]);
+    expect(await start()).toEqual({
+      verdict: "failed",
+      body: "codex exited with 1: thread panicked: out of memory",
+    });
+  });
+
   test("a Codex review that meets its usage limit is limited, with when it resets", async () => {
     const error =
       "You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at Dec 31st, 2099 11:59 PM.";
