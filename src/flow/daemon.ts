@@ -413,6 +413,10 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
       case "question answered": {
         const { folder } = callingThread(caller);
         const thread = readThread(db, folder);
+        // Whatever is typed into the builder starts a new stretch of work: a review's changes,
+        // a message from the lead, or your answer. The sidebar times the stretch. Not logged,
+        // as only the sidebar shows it.
+        db.run("UPDATE threads SET working_since = ? WHERE folder = ?", [Date.now(), folder]);
         // Run before every message typed into the builder, so only a question or an error that
         // was open is logged. Typing to a builder that stopped on an error means you fixed it,
         // such as with /login, so it ends the error as it ends a question.
