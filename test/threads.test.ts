@@ -578,6 +578,8 @@ c.on("data", (d) => process.stdout.write(d));`;
     expect(thread().short).toBe("Export");
     await until(() => read(join(config("app-12"), "calls")).includes("--resume"));
     expect(read(join(config("app-12"), "calls"))).toContain(`--resume ${session}`);
+    // The fake harness writes where it runs after it logs its call, so the test waits for both.
+    await until(() => read(join(config("app-12"), "pwd")) !== "");
     expect(read(join(config("app-12"), "pwd"))).toBe(`${clone()}\n`);
     expect(hasSession("app-12")).toBe(true);
     expect(thread().status).toBe("working");
@@ -605,6 +607,7 @@ nameRepositories(db);`;
     serve();
     await until(() => read(join(config("app-12"), "calls")).includes("--resume"));
     expect(read(join(config("app-12"), "calls"))).toContain(`--resume ${session}`);
+    await until(() => read(join(config("app-12"), "pwd")) !== "");
     expect(read(join(config("app-12"), "pwd"))).toBe(`${clone()}\n`);
     expect(hasSession("app-12")).toBe(true);
     expect(thread().session).toBe(session);
@@ -613,7 +616,9 @@ nameRepositories(db);`;
     );
   }, 60_000);
 
-  test("a builder that never saved a conversation starts again from the task", async () => {
+  // The lead's messages change the task, and the reviewer judges the builder by them, so a
+  // builder starting afresh gets them too.
+  test("a builder that never saved a conversation starts again from the task, with the lead's messages", async () => {
     addApp();
     const first = serve();
     await untilCloned();
@@ -621,6 +626,10 @@ nameRepositories(db);`;
     await until(() => read(join(config("app-12"), "args")) !== "");
     const session = String(thread().session);
     await stop(first);
+    const db = new Database(join(data(), "skelcrew.db"));
+    const updates = [{ from: "lead", at: Date.UTC(2026, 10, 16, 9, 30), text: "Keep CSV too." }];
+    db.run("UPDATE threads SET updates = ?", [JSON.stringify(updates)]);
+    db.close();
     Bun.spawnSync(["tmux", "-L", socket, "kill-session", "-t", "=app-12"]);
     rmSync(join(config("app-12"), "args"));
     serve();
@@ -629,7 +638,11 @@ nameRepositories(db);`;
     expect(fresh).not.toBe(session);
     const args = read(join(config("app-12"), "args"));
     expect(args).toContain(`--session-id\n${fresh}\n`);
-    expect(args.endsWith("Add export\n\nAs JSON\n")).toBe(true);
+    expect(
+      args.endsWith(
+        "Add export\n\nAs JSON\n\n## Changes to the task from the lead, after the thread started\n\nThese override the task above where they differ. The latest comes last.\n\n### 2026-11-16 09:30 UTC\n\nKeep CSV too.\n",
+      ),
+    ).toBe(true);
   }, 60_000);
 
   test("a thread whose setup the daemon's stop cut short is marked failed when it comes back", async () => {

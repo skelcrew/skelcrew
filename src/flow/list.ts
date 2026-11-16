@@ -10,9 +10,9 @@ import { forgeOf, trackerOf } from "../plugins/ask.ts";
 import { titleRoom } from "../screen/layout.ts";
 import { fitted, removeControlCodes } from "../screen/look.ts";
 import { sidebarWidth } from "../screen/screen.ts";
-import { openTasks, taskOf } from "./copy.ts";
+import { openTasks, taskOf, threadTask } from "./copy.ts";
 import { findRepository, noRepositories, repositories } from "./repo.ts";
-import { needsYou, Thread, threadName } from "./thread.ts";
+import { needsYou, Thread, threadName, threadOn } from "./thread.ts";
 
 // A repository as sc repo ls shows it. `missing` is a tracker its skelcrew.yaml names that
 // isn't installed, so it has none until you install that plugin.
@@ -146,10 +146,17 @@ export const TaskView = z.object({
 export type TaskView = z.infer<typeof TaskView>;
 
 // Returns one task's title and body, which is all its builder sees, with the thread on it if
-// it has one, for sc issue show. It comes from Skelcrew's copy, so the tracker isn't asked.
+// it has one, for sc issue show. It comes from Skelcrew's copy, so the tracker isn't asked. A
+// task with a thread still at work, or stopped, is shown as its reviewer gets it, with the
+// lead's messages to the builder after the body, so the lead sees the task the builder is
+// judged by. That also shows a thread with no task in the tracker, such as app-t1. A done or
+// failed thread's messages aren't shown: starting it over gives a fresh thread without them,
+// and a merged thread's issue is closed, which the copy alone can say.
 export function showTask(db: Database, repository: string, task: string): TaskView {
   const r = findRepository(db, repository);
-  const { title, body } = taskOf(db, r.owner, r.repo, task);
+  const thread = threadOn(db, repository, task);
+  const current = thread && thread.status !== "done" && thread.status !== "failed";
+  const { title, body } = current ? threadTask(db, thread) : taskOf(db, r.owner, r.repo, task);
   return {
     issue: `${r.name}-${task}`,
     title,

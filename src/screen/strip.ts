@@ -25,19 +25,22 @@ const verdicts: Record<string, string> = {
 // through strftime too, so % is doubled for it to stay itself.
 const escaped = (text: string) => text.replaceAll("#", "##").replaceAll("%", "%%");
 
-// Returns what a review says, short enough to share the line, or nothing before the first one.
+// Returns what a review says, or nothing before the first one. When the round limit stops the
+// thread, the verdict reads round limit instead, as that is why the thread waits on you.
 function aboutReview(row: Row): string {
   if (row.review === null) return "";
   const { round, reviewer, verdict } = row.review;
-  const parts = [`round ${round}`, reviewer, verdicts[verdict] ?? verdict];
+  const said = row.word === "round limit" ? "round limit" : (verdicts[verdict] ?? verdict);
+  const parts = [`round ${round}`, reviewer, said];
   return `  ${removeControlCodes(parts.filter(Boolean).join(" · "))}`;
 }
 
-// Returns the strip for a thread, in `width` columns at most: its name in bold, then the rest.
+// Returns the strip for a thread, in `width` columns at most: its name in bold, then the rest,
+// then what of a round limit verdict shows, which goes yellow and is empty otherwise.
 // The name, PR and checks are what you look for, so the review takes what room is left and the
 // title what the review leaves: the title is what is longest, and you have it from the task. A
 // name too long for all that is shown alone.
-function aboutThread(row: Row, width: number): [string, string] {
+function aboutThread(row: Row, width: number): [string, string, string] {
   // The name, then the PR and checks at the end. With no room left after them, the name shows
   // alone.
   const name = fitted(removeControlCodes(row.name), width);
@@ -46,12 +49,18 @@ function aboutThread(row: Row, width: number): [string, string] {
     .join("  ");
   const end = tail ? `  ${tail}` : "";
   const spare = width - Bun.stringWidth(name) - Bun.stringWidth(end);
-  if (spare < 0) return [name, ""];
+  if (spare < 0) return [name, "", ""];
   // The review takes what room is left, then the title what the review leaves.
-  const review = fitted(aboutReview(row), spare);
+  const whole = aboutReview(row);
+  const review = fitted(whole, spare);
   const room = spare - Bun.stringWidth(review);
   const title = row.title ? fitted(`  ${removeControlCodes(row.title)}`, room) : "";
-  return [name, `${title}${end}${review}`];
+  // A round limit verdict is split off to go yellow, as much of it as shows. Cut before it
+  // starts, the review has no verdict to colour.
+  const before = whole.slice(0, whole.length - "round limit".length);
+  if (row.word !== "round limit" || !review.startsWith(before) || review === before)
+    return [name, `${title}${end}${review}`, ""];
+  return [name, `${title}${end}${before}`, review.slice(before.length)];
 }
 
 // Returns the strip for a page: its row's name, and its title in what room is left.
@@ -163,13 +172,16 @@ export function drawTop(top: Top, size: Size): string {
   // Two columns part the strip from the tabs.
   const room = Math.max(width - taken - 2, 0);
   const row = top.rows.find((candidate) => candidate.session === top.shown);
-  const [name, rest] = top.page
-    ? aboutPage(top.page, room)
+  const [name, rest, limit]: [string, string, string] = top.page
+    ? [...aboutPage(top.page, room), ""]
     : row && row.status !== null
       ? aboutThread(row, room)
-      : ["", ""];
-  const spare = " ".repeat(Math.max(width - taken - Bun.stringWidth(`${name}${rest}`), 0));
-  const strip = name && `#[fg=brightblack,bold]${escaped(name)}#[nobold]${escaped(rest)}#[default]`;
+      : ["", "", ""];
+  const spare = " ".repeat(Math.max(width - taken - Bun.stringWidth(`${name}${rest}${limit}`), 0));
+  // A round limit verdict is in the sidebar's yellow of needs you.
+  const yellow = limit && `#[fg=colour221]${escaped(limit)}`;
+  const strip =
+    name && `#[fg=brightblack,bold]${escaped(name)}#[nobold]${escaped(rest)}${yellow}#[default]`;
   const edge = "#[fg=colour237]│#[default] ";
   return `${header(top.where, left, top.version)}${edge}${tabs}${spare}${strip}`;
 }
