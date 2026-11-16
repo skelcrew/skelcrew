@@ -46,6 +46,9 @@ test("Codex's error is its ERROR line, not the prompt it echoed before it", () =
   const error = codex.failure("", err);
   expect(error).toStartWith("You've hit your usage limit.");
   expect(codex.usageLimit(error ?? "", now)).toEqual({ reset: at(16, 13, 59) });
+  // The prompt has no newline at its end, so the error can follow its last line.
+  const glued = "...so the builder can fix it.ERROR: stream disconnected before completion\n";
+  expect(codex.failure("", glued)).toBe("stream disconnected before completion");
   // Its JSON events, when it prints them, say the same.
   const events = `{"type":"thread.started"}\n{"type":"turn.failed","error":{"message":"stream disconnected"}}\n`;
   expect(codex.failure(events, echoed)).toBe("stream disconnected");

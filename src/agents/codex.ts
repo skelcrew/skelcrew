@@ -421,14 +421,16 @@ const ErrorEvent = z.union([
 
 // Returns the error a reviewer's codex exec ended on, or null when it printed none. codex exec
 // echoes the whole prompt before it works, so the end of what it printed can be the task's
-// text. Its own error is the last line it starts with "ERROR:", or, in its JSON events, the
-// last error event.
+// text. Its own error follows the last "ERROR:" it printed, or, in its JSON events, is the last
+// error event. The prompt doesn't end in a newline, so "ERROR:" can follow its last line on
+// the same line: what comes before the marker is never part of the error.
 function reportedError(out: string, err: string): string | null {
   // Read the lines from the end, as the error that ended the run comes last.
   const lines = `${out}\n${err}`.split("\n").reverse();
   for (const line of lines) {
-    const plain = /^ERROR:\s*(.+)/.exec(line.trim());
-    if (plain?.[1]) return plain[1].trim();
+    const marker = line.lastIndexOf("ERROR:");
+    const plain = marker < 0 ? "" : line.slice(marker + "ERROR:".length).trim();
+    if (plain !== "") return plain;
     if (!line.trim().startsWith("{")) continue;
     let event: unknown;
     try {
