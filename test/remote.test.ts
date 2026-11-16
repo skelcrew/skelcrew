@@ -216,6 +216,21 @@ test("passes no repository from outside one", async () => {
   expect(run.out).toBe("Skelcrew on the server got 0 arguments\n");
 });
 
+// A PR's number names a PR of the repository you are in, which only your laptop knows, so it
+// goes along as --from. A thread's name already names its repository.
+test("sc pr show with a number passes the repository you are in", async () => {
+  installed();
+  const app = checkout("simon/app");
+  const run = await skel(["--remote", "simon@workbox", "pr", "show", "#31", "--json"], "", app);
+  expect(run.out).toBe(
+    "Skelcrew on the server got 6 arguments\n[pr]\n[show]\n[#31]\n[--json]\n[--from]\n[git@github.com:simon/app.git]\n",
+  );
+  const named = await skel(["--remote", "simon@workbox", "pr", "show", "app-12"], "", app);
+  expect(named.out).toBe("Skelcrew on the server got 3 arguments\n[pr]\n[show]\n[app-12]\n");
+  const away = await skel(["--remote", "simon@workbox", "pr", "show", "31"]);
+  expect(away.out).toBe("Skelcrew on the server got 3 arguments\n[pr]\n[show]\n[31]\n");
+});
+
 test("a command reaches the server exactly as typed", async () => {
   installed();
   const body = "Don't crash; it's \"bad\" when $HOME * `x` \\ happens\nTwice.";

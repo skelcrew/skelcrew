@@ -8,7 +8,7 @@ import { colorful } from "../help.ts";
 import { cloneDir } from "../paths.ts";
 import { failedLog, forgeOf, trackerOf } from "../plugins/ask.ts";
 import { errorText } from "../say.ts";
-import { fitted, removeControlCodes } from "../screen/look.ts";
+import { filled, fitted, removeControlCodes } from "../screen/look.ts";
 import { type Item, openTasks, prOf, taskOf, threadTask } from "./copy.ts";
 import { reviewCheck } from "./decide.ts";
 import { ciSummary, reviewVerdict } from "./page.ts";
@@ -229,16 +229,21 @@ export function showTask(db: Database, repository: string, task: string): TaskVi
 
 // Prints rows as columns lined up under their headings, with no spaces left at line ends.
 function table(heading: string[], rows: string[][]): void {
-  // Each column is as wide as its widest cell.
-  const widths = heading.map((h, i) => Math.max(h.length, ...rows.map((r) => r[i]?.length ?? 0)));
+  // Each column is as wide as its widest cell, in the columns it takes, not its letters, as a
+  // Japanese title takes two for each.
+  const widths = heading.map((_, i) => columnWidth([heading, ...rows], i));
   for (const row of [heading, ...rows])
     console.log(
       row
-        .map((cell, i) => cell.padEnd(widths[i] ?? 0))
+        .map((cell, i) => filled(cell, widths[i] ?? 0))
         .join("  ")
         .trimEnd(),
     );
 }
+
+// Returns how many terminal columns the widest cell of a table's column takes.
+const columnWidth = (rows: string[][], i: number) =>
+  Math.max(...rows.map((row) => Bun.stringWidth(row[i] ?? "")));
 
 // Prints repositories for sc repo ls: as JSON for tools, or else as a table, with the
 // plugin to install for a tracker a repository's skelcrew.yaml names that isn't installed, or
@@ -294,10 +299,7 @@ export function printThreads(threads: ThreadRow[], json: boolean): void {
   });
   // The title takes what the other columns and the two spaces between each leave of a row.
   const heading = ["THREAD", "STATUS", "PR", "CI", "REVIEW", "NEEDS YOU"];
-  const others = heading.reduce(
-    (sum, h, i) => sum + Math.max(h.length, ...rows.map((r) => r[i]?.length ?? 0)) + 2,
-    0,
-  );
+  const others = heading.reduce((sum, _, i) => sum + columnWidth([heading, ...rows], i) + 2, 0);
   const room = Math.max(psWidth - others, "TITLE".length);
   const titles = threads.map((t) => fitted(removeControlCodes(t.short ?? t.title ?? ""), room));
   table(

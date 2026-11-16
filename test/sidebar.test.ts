@@ -206,6 +206,28 @@ test("sc ps cuts a long title so each row fits 80 columns", () => {
   expect(said[1]).toContain("…  waiting  #242  running  reviewing r12  yes");
 });
 
+// A Japanese title takes two columns for each letter, so it is measured and padded by the
+// columns it takes, not its letters, and the columns after it still line up.
+test("sc ps lines up and fits rows whose titles mix wide and narrow letters", () => {
+  const said: string[] = [];
+  const log = spyOn(console, "log").mockImplementation((line: string) => said.push(line));
+  try {
+    printThreads(
+      [
+        psRow({ thread: "app-1", title: "ログインのリダイレクトを直して元のページに戻す", pr: 1 }),
+        psRow({ thread: "app-2", title: "Send people back to the page they came from", pr: 2 }),
+      ],
+      false,
+    );
+  } finally {
+    log.mockRestore();
+  }
+  for (const line of said) expect(Bun.stringWidth(line)).toBeLessThanOrEqual(80);
+  // STATUS starts in the same column on every row.
+  const at = (line: string) => Bun.stringWidth(line.slice(0, line.indexOf("working")));
+  expect(at(said[1] ?? "")).toBe(at(said[2] ?? ""));
+});
+
 // A title comes from the tracker and a short title from the lead, so either could hold a line
 // break or a code your terminal would act on.
 test("sc ps prints a title or short title with control codes as one clean row", () => {

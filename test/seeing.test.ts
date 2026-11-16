@@ -663,6 +663,9 @@ describe("with a forge", () => {
     const away = await skelIn(home, ["pr", "show", "31"]);
     expect(away.code).not.toBe(0);
     expect(away.err).toContain("name the PR's thread, such as app-12");
+    // sc --remote passes the repository of your laptop's checkout as --from.
+    const sent = await skelIn(home, ["pr", "show", "31", "--from", "git@github.com:simon/app.git"]);
+    expect(sent.out).toBe(pr31);
   });
 
   test("sc pr show gives JSON for tools", async () => {

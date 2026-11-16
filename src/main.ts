@@ -338,21 +338,23 @@ async function issueCommand(args: string[], json: boolean): Promise<void> {
 }
 
 // Shows one PR, for sc pr show, named by its number, such as 31 or #31, or by its thread, such
-// as app-12. A number is in the repository of the checkout sc runs in, or for the lead, its own.
+// as app-12. A number is in the repository of the checkout sc runs in, or the one --from names,
+// which sc --remote passes from your laptop's checkout. For the lead, it is always its own.
 async function prCommand(args: string[], json: boolean): Promise<void> {
   const [command, sub, named, ...rest] = args;
   const { askForPr } = await import("./client.ts");
   const { printPr } = await import("./flow/list.ts");
-  if (sub !== "show" || named === undefined || rest.length > 0) usage(command);
+  const given = rest[0] === "--from" && rest[1] && rest.length === 2 ? rest[1] : undefined;
+  if (sub !== "show" || named === undefined || (rest.length > 0 && !given)) usage(command);
   const number = named.match(/^#?(\d+)$/)?.[1];
   const task = splitTaskName(named);
   if (number !== undefined) {
     const { originHere } = await import("./machine/origin.ts");
-    const from = originHere() ?? undefined;
+    const from = given ?? originHere() ?? undefined;
     printPr(await askForPr({ pr: Number(number), ...(from ? { from } : {}) }), json);
     return;
   }
-  if (task) {
+  if (task && !given) {
     printPr(await askForPr({ repo: task[0], task: task[1] }), json);
     return;
   }
