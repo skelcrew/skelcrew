@@ -3,9 +3,10 @@
 // older release than yours, or was built from another commit, and copies your setup there when
 // it changed. Your laptop can be a Mac, so this file loads nothing of the Skelcrew that runs on
 // the server.
-import { chmodSync, mkdtempSync, rmSync, writeSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { sshSocket } from "../paths.ts";
 import { quietly } from "../run.ts";
 import {
   built,
@@ -88,12 +89,30 @@ export async function keepingTitle<T>(go: () => Promise<T>): Promise<T> {
   }
 }
 
-// Returns how to run sc on the host with these words. It takes the environment to add to
-// what it always passes, and gives back the exit code.
-const onServer = (host: string, words: string[]) => (env: string[]) =>
+// Returns the ssh options that make every ssh and scp Skelcrew runs for the host share one
+// connection. One setup takes five or more of them, and each new connection can ask for your
+// passphrase or a touch of your key. The shared connection ends a minute after the last
+// command, which covers one setup or connect. When your ssh config already shares connections
+// for the host, it gives nothing, so yours is used: options given to ssh beat its config.
+function sharedConnection(host: string): string[] {
+  // ssh -G prints what your config sets for the host, without connecting. It prints no
+  // controlpath when none is set, or it is set to none.
+  const config = Bun.spawnSync(["ssh", "-G", host], { stdout: "pipe", stderr: "ignore" });
+  if (/^controlpath /m.test(config.stdout.toString())) return [];
+  // Anyone who can reach the socket can run commands on the server as you, so its folder is
+  // yours alone.
+  const socket = sshSocket(host);
+  mkdirSync(dirname(socket), { recursive: true, mode: 0o700 });
+  return ["-o", "ControlMaster=auto", "-o", `ControlPath=${socket}`, "-o", "ControlPersist=60"];
+}
+
+// Returns how to run sc on the host with these words, with `shared` from sharedConnection. It
+// takes the environment to add to what it always passes, and gives back the exit code.
+const onServer = (host: string, shared: string[], words: string[]) => (env: string[]) =>
   runInTerminal([
     "ssh",
     "-t",
+    ...shared,
     host,
     [
       "env",
@@ -134,8 +153,9 @@ export async function setUpFirst(
 // the host up when it has no Skelcrew, or its first run hasn't finished.
 export async function remote(host: string, args: string[]): Promise<number> {
   const from = args.length === 0 ? originHere() : null;
-  const there = onServer(host, from ? ["--from", from] : args);
-  const connect = () => runUpToDate(host, there, serverMachine(host));
+  const machine = serverMachine(host);
+  const there = machine.sc(from ? ["--from", from] : args);
+  const connect = () => runUpToDate(host, there, machine);
   const code = await connect();
   // The server's shell exits 127 when it finds no Skelcrew to run. Skelcrew itself never does: it
   // exits 1 on any error.
@@ -146,7 +166,8 @@ export async function remote(host: string, args: string[]): Promise<number> {
 // Sets up your server for --remote and returns the exit code, for sc remote add.
 export async function addServer(host: string): Promise<number> {
   console.log(`Setting up ${host}: copying Skelcrew there and running the first run.`);
-  return addMachine(host, onServer(host, ["first-run"]), serverMachine(host));
+  const machine = serverMachine(host);
+  return addMachine(host, machine.sc(["first-run"]), machine);
 }
 
 // Puts Skelcrew on a server or Sprite if it isn't there, and runs the first run through `there`,
@@ -242,14 +263,16 @@ export async function copySkel(
     throw new Error(`couldn't put the new Skelcrew in place on ${where}`);
 }
 
-// How update reaches a server: over ssh, with systemd running the daemon.
+// How update reaches a server: over ssh, with systemd running the daemon. Its ssh and scp
+// commands share one connection.
 function serverMachine(host: string): Machine {
-  const shell = (script: string) => ["ssh", host, script];
-  const push = (file: string, to: string) => ["scp", file, `${host}:${to}`];
+  const shared = sharedConnection(host);
+  const shell = (script: string) => ["ssh", ...shared, host, script];
+  const push = (file: string, to: string) => ["scp", ...shared, file, `${host}:${to}`];
   return {
     shell,
     push,
-    sc: (words) => onServer(host, words),
+    sc: (words) => onServer(host, shared, words),
     // The unit names the Skelcrew the daemon runs, with each % doubled for systemd.
     daemonSkel: async () => {
       const unit = ".config/systemd/user/skelcrew.service";

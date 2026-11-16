@@ -69,6 +69,10 @@ export function leadPlaces(owner: string, repo: string, kept = false) {
 // so the folder is named by a short hash of the thread's folder.
 export const threadSocket = (folder: string) =>
   join(runtimeDir(), "skelcrew", "threads", shortHash(folder), "skelcrew.sock");
+// Returns the socket through which the ssh and scp commands for a server share one connection.
+// It is named by a short hash of the host, since ssh adds a long suffix while it makes the
+// socket, and a Mac refuses a socket path over 104 bytes.
+export const sshSocket = (host: string) => join(runtimeDir(), "skelcrew", "ssh", shortHash(host));
 // Returns the parent folder of Skelcrew's repository clones.
 const reposDir = () => join(dataDir(), "repos");
 // Returns a repository's clone folder so Skelcrew works away from your checkout.

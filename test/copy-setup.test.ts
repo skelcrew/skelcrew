@@ -38,19 +38,22 @@ beforeEach(() => {
   mkdirSync(join(root, "serverbin"));
   const log = join(root, "calls");
   // Like ssh, it joins the words after the host into one line for the server's shell, which
-  // runs in the server's home.
+  // runs in the server's home. The options before the host are skipped, and ssh -G, which
+  // only reads your config, finds none.
   writeFileSync(
     join(root, "bin", "ssh"),
     `#!/bin/sh
+test "$1" = -G && exit 0
 echo "ssh $*" >> "${log}"
 test "$1" = -t && shift
+while test "$1" = -o; do shift 2; done
 shift
 cd "${server()}" && HOME="${server()}" XDG_RUNTIME_DIR="${server()}/run" PATH="${root}/serverbin:/usr/bin:/bin" exec sh -c "$*"`,
     { mode: 0o755 },
   );
   writeFileSync(
     join(root, "bin", "scp"),
-    `#!/bin/sh\necho "scp $*" >> "${log}"\ncp "$1" "${server()}/\${2#*:}"\n`,
+    `#!/bin/sh\necho "scp $*" >> "${log}"\nwhile test "$1" = -o; do shift 2; done\ncp "$1" "${server()}/\${2#*:}"\n`,
     { mode: 0o755 },
   );
   // The server's Skelcrew is this checkout's, as one copied there would be.

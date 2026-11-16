@@ -77,12 +77,20 @@ beforeEach(() => {
   // Like ssh, it joins the words after the host into one line for the server's shell, which
   // runs in the server's home with the bare PATH a command over ssh gets. serverbin comes
   // first, so the server's systemctl is a fake and never the real one of this machine.
-  fake(
-    "ssh",
-    `test "$1" = -t && shift
+  // ssh -G prints the config in ssh-config, if a test gives one, and isn't logged, as it only
+  // reads your config. The options before the host are skipped.
+  writeFileSync(
+    join(home, "bin", "ssh"),
+    `#!/bin/sh
+test "$1" = -G && { cat "$HOME/ssh-config" 2>/dev/null; exit 0; }
+echo "ssh $*" >> "$HOME/calls"
+test "$1" = -t && shift
+while test "$1" = -o; do shift 2; done
 shift
 bin="$HOME/serverbin"
-cd "$HOME/server" && HOME="$HOME/server" PATH="$bin:/usr/bin:/bin" exec sh -c "$*"`,
+cd "$HOME/server" && HOME="$HOME/server" PATH="$bin:/usr/bin:/bin" exec sh -c "$*"
+`,
+    { mode: 0o755 },
   );
   writeFileSync(
     join(home, "serverbin", "systemctl"),
@@ -91,7 +99,10 @@ cd "$HOME/server" && HOME="$HOME/server" PATH="$bin:/usr/bin:/bin" exec sh -c "$
   );
   // The server is x64, whatever CPU this machine has, unless a test says otherwise.
   writeFileSync(join(home, "serverbin", "uname"), "#!/bin/sh\necho x86_64\n", { mode: 0o755 });
-  fake("scp", `test -f "$HOME/scp-fails" && exit 1\ncp "$1" "$HOME/server/\${2#*:}"`);
+  fake(
+    "scp",
+    `test -f "$HOME/scp-fails" && exit 1\nwhile test "$1" = -o; do shift 2; done\ncp "$1" "$HOME/server/\${2#*:}"`,
+  );
   // Builds the stand-in Skelcrew with the commit Skelcrew stamps into the build.
   fake(
     "bun",
@@ -130,7 +141,12 @@ function checkout(full: string): string {
 async function skel(args: string[], typed = "", cwd = home) {
   const run = Bun.spawn([process.execPath, laptop.main, ...args], {
     cwd,
-    env: { PATH: `${join(home, "bin")}:/usr/bin:/bin`, HOME: home, TMPDIR: join(home, "tmp") },
+    env: {
+      PATH: `${join(home, "bin")}:/usr/bin:/bin`,
+      HOME: home,
+      TMPDIR: join(home, "tmp"),
+      XDG_RUNTIME_DIR: join(home, "run"),
+    },
     stdin: new Blob([typed]),
     stdout: "pipe",
     stderr: "pipe",
@@ -143,14 +159,24 @@ async function skel(args: string[], typed = "", cwd = home) {
   return { out, err, code };
 }
 
+// Returns the commands run on the laptop, one per line, with the socket of the shared ssh
+// connection written as <socket>, so a test needn't know its name.
 const calls = () =>
-  existsSync(join(home, "calls")) ? readFileSync(join(home, "calls"), "utf8") : "";
+  existsSync(join(home, "calls"))
+    ? readFileSync(join(home, "calls"), "utf8").replaceAll(
+        /ControlPath=\S+/g,
+        "ControlPath=<socket>",
+      )
+    : "";
+
+// How Skelcrew starts every ssh command to the server, sharing one connection.
+const ssh = "ssh -o ControlMaster=auto -o ControlPath=<socket> -o ControlPersist=60 simon@workbox";
 
 // The line ssh runs on the server: with the laptop's build, so a copied Skelcrew can tell it is
 // out of date, or without, to run whatever Skelcrew is there. Always with the server's name, for
 // the title of your terminal.
 const onServer = (words: string, build: string | null = laptop.commit) =>
-  `ssh -t simon@workbox env PATH="$HOME/.local/bin:$PATH" SKELCREW_REMOTE_NAME=simon@workbox ${build ? `SKELCREW_LAPTOP_BUILD=${build} ` : ""}sc${words}`;
+  `ssh -t -o ControlMaster=auto -o ControlPath=<socket> -o ControlPersist=60 simon@workbox env PATH="$HOME/.local/bin:$PATH" SKELCREW_REMOTE_NAME=simon@workbox ${build ? `SKELCREW_LAPTOP_BUILD=${build} ` : ""}sc${words}`;
 
 // Runs sc in a terminal and types the next of `answers` at each [Y/n] or [y/N] question it asks.
 // Returns all it wrote there, escape codes included, and its exit code.
@@ -159,7 +185,12 @@ async function skelInTerminal(args: string[], answers: string[] = []) {
   let answered = 0;
   const run = Bun.spawn([process.execPath, laptop.main, ...args], {
     cwd: home,
-    env: { PATH: `${join(home, "bin")}:/usr/bin:/bin`, HOME: home, TMPDIR: join(home, "tmp") },
+    env: {
+      PATH: `${join(home, "bin")}:/usr/bin:/bin`,
+      HOME: home,
+      TMPDIR: join(home, "tmp"),
+      XDG_RUNTIME_DIR: join(home, "run"),
+    },
     terminal: {
       data: (terminal, bytes) => {
         wrote += new TextDecoder().decode(bytes);
@@ -244,7 +275,7 @@ test("in a terminal, --remote offers to set up a server without Skelcrew, then r
   expect(lines[0]).toBe(onServer(" ps"));
   // What sc remote add runs, then the command you asked for.
   expect(lines[1]).toBe(onServer(" first-run"));
-  expect(lines).toContain("ssh simon@workbox mv -f .local/bin/sc.new .local/bin/sc");
+  expect(lines).toContain(`${ssh} mv -f .local/bin/sc.new .local/bin/sc`);
   expect(lines.at(-2)).toBe(onServer(" first-run", null));
   expect(lines.at(-1)).toBe(onServer(" ps"));
 });
@@ -326,10 +357,10 @@ test("offers to update an out-of-date Skelcrew, updates it, then runs the comman
   expect(run.code).toBe(3);
   const lines = calls().trim().split("\n");
   expect(lines[0]).toBe(onServer(" ps"));
-  expect(lines).toContain("ssh simon@workbox mv -f .local/bin/sc.new .local/bin/sc");
+  expect(lines).toContain(`${ssh} mv -f .local/bin/sc.new .local/bin/sc`);
   // The daemon restarts only once the new Skelcrew is in place, so it runs the new build, and
   // the command runs after that.
-  expect(lines.at(-3)).toBe("ssh simon@workbox systemctl --user restart skelcrew");
+  expect(lines.at(-3)).toBe(`${ssh} systemctl --user restart skelcrew`);
   expect(lines.at(-2)).toBe("systemctl --user restart skelcrew");
   expect(lines.at(-1)).toBe(onServer(" ps", null));
   expect(readFileSync(join(home, "server", ".local", "bin", "sc"), "utf8")).toBe(
@@ -522,7 +553,7 @@ test("sc remote add copies Skelcrew to a server, runs the first run, and prints 
   );
   const lines = calls().split("\n");
   expect(lines[0]).toBe(onServer(" first-run"));
-  expect(lines[1]).toBe("ssh simon@workbox uname -m");
+  expect(lines[1]).toBe(`${ssh} uname -m`);
   // Built for the server, which is Linux, whatever the laptop runs, with the commit it came
   // from, so the server can tell when the laptop has moved on.
   expect(lines[2]).toMatch(
@@ -530,9 +561,13 @@ test("sc remote add copies Skelcrew to a server, runs the first run, and prints 
       `^bun build --compile --target=bun-linux-x64 --define SKELCREW_BUILD="${laptop.commit}" ${laptop.main} --outfile ${home}/tmp/\\S+/sc$`,
     ),
   );
-  expect(lines[3]).toBe("ssh simon@workbox mkdir -p .local/bin && rm -f .local/bin/sc.new");
-  expect(lines[4]).toMatch(new RegExp(`^scp ${home}/tmp/\\S+/sc simon@workbox:.local/bin/sc.new$`));
-  expect(lines[5]).toBe("ssh simon@workbox mv -f .local/bin/sc.new .local/bin/sc");
+  expect(lines[3]).toBe(`${ssh} mkdir -p .local/bin && rm -f .local/bin/sc.new`);
+  expect(lines[4]).toMatch(
+    new RegExp(
+      `^scp -o ControlMaster=auto -o ControlPath=<socket> -o ControlPersist=60 ${home}/tmp/\\S+/sc simon@workbox:.local/bin/sc.new$`,
+    ),
+  );
+  expect(lines[5]).toBe(`${ssh} mv -f .local/bin/sc.new .local/bin/sc`);
   // A fresh copy is the laptop's build, so it runs without the check.
   expect(lines[6]).toBe(onServer(" first-run", null));
   // The build is removed once copied.
@@ -540,6 +575,31 @@ test("sc remote add copies Skelcrew to a server, runs the first run, and prints 
   expect(readFileSync(join(home, "server", ".local", "bin", "sc"), "utf8")).toBe(
     serverSkel(laptop.commit),
   );
+});
+
+// Each new ssh connection can ask for your passphrase or a touch of your key, so one setup
+// shares one connection, through a socket only you can reach.
+test("every ssh and scp for a setup shares one connection, through a private socket", async () => {
+  await skel(["remote", "add", "simon@workbox"]);
+  const raw = readFileSync(join(home, "calls"), "utf8").trim().split("\n");
+  const ssh = raw.filter((line) => /^(ssh|scp) /.test(line));
+  expect(ssh.length).toBeGreaterThanOrEqual(5);
+  const sockets = new Set(ssh.map((line) => line.match(/ControlPath=(\S+)/)?.[1]));
+  expect(sockets.size).toBe(1);
+  const [socket = ""] = sockets;
+  // A Mac refuses a socket path over 104 bytes, and ssh adds 17 while it makes the socket.
+  expect(socket.startsWith(join(home, "run", "skelcrew", "ssh"))).toBe(true);
+  expect(socket.length - home.length).toBeLessThan(60);
+  expect(lstatSync(join(socket, "..")).mode & 0o777).toBe(0o700);
+});
+
+// Options given to ssh beat your ssh config, so Skelcrew gives none when your config already
+// shares connections for the host.
+test("your own ssh config for sharing connections is kept", async () => {
+  writeFileSync(join(home, "ssh-config"), "controlmaster auto\ncontrolpath ~/.ssh/cm-%C\n");
+  installed(laptop.commit);
+  await skel(["--remote", "simon@workbox", "ps"]);
+  expect(calls()).toStartWith("ssh -t simon@workbox env ");
 });
 
 test("sc remote add copies your setup there before the first run", async () => {
@@ -551,7 +611,7 @@ test("sc remote add copies your setup there before the first run", async () => {
   const lines = calls().trim().split("\n");
   const send = ".config/skelcrew/laptop-setup.json";
   expect(lines).toContain(
-    `ssh simon@workbox umask 077 && mkdir -p .config/skelcrew && rm -f ${send} && : > ${send}`,
+    `${ssh} umask 077 && mkdir -p .config/skelcrew && rm -f ${send} && : > ${send}`,
   );
   expect(lines.at(-1)).toMatch(/ sc first-run$/);
   expect(lines.at(-2)).toMatch(/ sc take-setup$/);
