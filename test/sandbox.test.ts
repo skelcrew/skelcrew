@@ -429,6 +429,33 @@ describe("starting Claude Code", () => {
     expect(readdirSync(join(home, "elsewhere"))).toEqual([]);
   });
 
+  // Claude Code ignores this setting when it comes only from --settings, and then runs in
+  // manual mode, stopping at prompts nobody answers.
+  test("skips the bypass warning in each session's own settings, keeping what else is there", () => {
+    repository();
+    saveToken();
+    const start = (name: string) =>
+      claude.start({ ...lead(), name, socket: socketPath, model: "opus", env: outside() });
+    const configs = join(home, ".local", "share", "skelcrew", "claude");
+    const read = (name: string) =>
+      JSON.parse(readFileSync(join(configs, name, "settings.json"), "utf8"));
+    start("lead");
+    expect(read("lead")).toEqual({ skipDangerousModePermissionPrompt: true });
+    // A session started before Skelcrew wrote the file gets it when it starts again.
+    mkdirSync(join(configs, "app-t3"), { recursive: true });
+    writeFileSync(join(configs, "app-t3", "settings.json"), '{"theme":"dark"}\n');
+    start("app-t3");
+    expect(read("app-t3")).toEqual({ theme: "dark", skipDangerousModePermissionPrompt: true });
+    expect(statSync(join(configs, "app-t3", "settings.json")).mode & 0o777).toBe(0o600);
+    // An agent can change its own folder, so a link there is refused, never followed.
+    const yours = join(home, "yours.json");
+    writeFileSync(yours, "{}\n");
+    rmSync(join(configs, "app-t3", "settings.json"));
+    symlinkSync(yours, join(configs, "app-t3", "settings.json"));
+    expect(() => start("app-t3")).toThrow("link");
+    expect(readFileSync(yours, "utf8")).toBe("{}\n");
+  });
+
   test("refuses a session settings file that isn't a plain file, without hanging", async () => {
     repository();
     saveToken();

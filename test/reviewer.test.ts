@@ -288,7 +288,7 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("reviewer", () => {
   // so it reports what it was given in its answer's body.
   function fakeClaude(lines: string[]): void {
     script("claude", [
-      "seen=$( (printf '%s\\n' \"$@\"; env | sort | grep -E '^(CLAUDE|GH_)'; pwd; echo x > README; cat README) | base64 -w0)",
+      "seen=$( (printf '%s\\n' \"$@\"; env | sort | grep -E '^(CLAUDE|GH_)'; cat \"$CLAUDE_CONFIG_DIR/settings.json\"; echo; pwd; echo x > README; cat README) | base64 -w0)",
       ...lines,
     ]);
   }
@@ -308,6 +308,8 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("reviewer", () => {
     expect(seen).toContain("CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-tok");
     expect(seen.some((line) => line.startsWith("CLAUDE_CONFIG_DIR="))).toBe(true);
     expect(seen.some((line) => line.startsWith("GH_"))).toBe(false);
+    // Claude Code takes this setting only from its config folder's settings.json.
+    expect(seen).toContain('{"skipDangerousModePermissionPrompt":true}');
     expect(seen.slice(-3)).toEqual([clone, "x", ""]);
     expect(readFileSync(join(clone, "README"), "utf8")).toBe("app\n");
   });

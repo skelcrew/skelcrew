@@ -83,36 +83,53 @@ function savedConversation(name: string, folder: string, session: string): strin
   return existsSync(file) ? session : null;
 }
 
+// Returns what a JSON file in an agent's config folder holds, or {} when there is none. It
+// refuses anything but a plain file of sane size, since the agent can change what is in its
+// folder.
+function readOwnJson(file: string): unknown {
+  if (!existsSync(file)) return {};
+  // Non-blocking, since the agent could leave a pipe there, and opening one waits forever.
+  const fd = openSync(file, O_RDONLY | O_NOFOLLOW | O_NONBLOCK);
+  try {
+    const stat = fstatSync(fd);
+    if (!stat.isFile() || stat.size > 64 * 1024 * 1024)
+      throw new Error(`${file} isn't a plain file, so Skelcrew won't use it`);
+    return JSON.parse(readFileSync(fd, "utf8"));
+  } finally {
+    closeSync(fd);
+  }
+}
+
+// Replaces a JSON file in an agent's config folder, readable only by you. It is written
+// beside it and renamed over it, so even a link made since the check is replaced, never
+// followed. "wx" refuses a link already at the new name.
+function writeOwnJson(file: string, json: unknown): void {
+  const temporary = `${file}.${process.pid}`;
+  rmSync(temporary, { force: true });
+  writeFileSync(temporary, JSON.stringify(json), { mode: 0o600, flag: "wx" });
+  renameSync(temporary, file);
+}
+
 // Marks a folder trusted and the first launch done in a session's .claude.json, keeping all
 // else in the file. Claude Code asks whether to trust the folder even in bypass mode, and on
 // its first launch asks for a theme and more, and would wait there with nobody to answer.
 function trustFolder(config: string, cwd: string): void {
-  // Read what is there now, if anything, refusing anything but a plain file of sane size.
   const file = join(config, ".claude.json");
-  let json: z.infer<typeof ClaudeJson> = {};
-  if (existsSync(file)) {
-    // Non-blocking, since the agent could leave a pipe there, and opening one waits
-    // forever.
-    const fd = openSync(file, O_RDONLY | O_NOFOLLOW | O_NONBLOCK);
-    try {
-      const stat = fstatSync(fd);
-      if (!stat.isFile() || stat.size > 64 * 1024 * 1024)
-        throw new Error(`${file} isn't a plain file, so Skelcrew won't use it`);
-      json = ClaudeJson.parse(JSON.parse(readFileSync(fd, "utf8")));
-    } finally {
-      closeSync(fd);
-    }
-  }
+  const json = ClaudeJson.parse(readOwnJson(file));
   // Trust the agent's folder, keeping whatever else Claude Code saved for it.
   const projects = json.projects ?? {};
   projects[cwd] = { ...projects[cwd], hasTrustDialogAccepted: true };
-  // Written beside it and renamed over it, so even a link made since the check is replaced,
-  // never followed. "wx" refuses a link already at the new name.
-  const temporary = join(config, `.claude.json.${process.pid}`);
-  rmSync(temporary, { force: true });
-  const updated = { ...json, hasCompletedOnboarding: true, projects };
-  writeFileSync(temporary, JSON.stringify(updated), { mode: 0o600, flag: "wx" });
-  renameSync(temporary, file);
+  writeOwnJson(file, { ...json, hasCompletedOnboarding: true, projects });
+}
+
+// Skips the warning bypass mode shows first in the settings.json of an agent's config
+// folder, keeping all else in the file. Claude Code ignores this setting when it comes only
+// from --settings, and then runs in manual mode, stopping at prompts nobody answers. It is
+// written at every start, so a session that began before Skelcrew wrote it gets it too.
+function skipBypassWarning(config: string): void {
+  const file = join(config, "settings.json");
+  const json = z.looseObject({}).parse(readOwnJson(file));
+  writeOwnJson(file, { ...json, skipDangerousModePermissionPrompt: true });
 }
 
 // Prepares an agent's own config folder and trusted Claude Code settings, then returns its
@@ -165,7 +182,7 @@ function startCommand(given: {
   const config = join(configs, name);
   // Skelcrew writes here with your rights, and the agent can change what is in its folder. A
   // link it left would send that write to any file of yours.
-  for (const p of [configs, config, join(config, ".claude.json")])
+  for (const p of [configs, config, join(config, ".claude.json"), join(config, "settings.json")])
     if (lstatSync(p, { throwIfNoEntry: false })?.isSymbolicLink())
       throw new Error(`${p} is a link, so Skelcrew won't write through it`);
   // The agent sees its own folder and its config folder, both writable, and nothing else of
@@ -184,6 +201,7 @@ function startCommand(given: {
   }
 
   trustFolder(config, cwd);
+  skipBypassWarning(config);
 
   // Bypass mode, since nobody is there to approve each tool. Only a builder gets the hooks
   // that tell Skelcrew it asked you a question.
@@ -236,7 +254,11 @@ function reviewCommand(given: {
   const command = ["claude", "-p", "--model", model, "--output-format", "json"];
   command.push("--json-schema", schema, "--no-session-persistence");
   command.push("--permission-mode", "bypassPermissions", "--settings", settings);
-  const env = { CLAUDE_CONFIG_DIR: join(folder, "claude"), CLAUDE_CODE_OAUTH_TOKEN: token };
+  // The review's folder is new and Skelcrew's alone, so the agent can't have left a link there.
+  const config = join(folder, "claude");
+  mkdirSync(config);
+  skipBypassWarning(config);
+  const env = { CLAUDE_CONFIG_DIR: config, CLAUDE_CODE_OAUTH_TOKEN: token };
   return { command, mounts: [], env };
 }
 
