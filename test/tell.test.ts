@@ -278,7 +278,7 @@ describe.skipIf(insideSandbox)("sc tell", () => {
 });
 
 // bubblewrap can't start inside Skelcrew's own sandbox, so only there builders can't start.
-describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("sc peek and sc interrupt", () => {
+describe.skipIf(insideSandbox)("sc peek and sc interrupt", () => {
   test("peek shows the builder's screen, wrapped as a report from the thread", async () => {
     await startApp12();
     // A screen holding a tag of Skelcrew's own, to pass the rest off as coming from outside it.
