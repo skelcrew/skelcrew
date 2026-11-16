@@ -3,18 +3,24 @@
 // each repository.
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
+import { noProgress } from "../agents/progress.ts";
 import { pastRoundLimit } from "../flow/decide.ts";
 import { leadOf } from "../flow/lead.ts";
 import { fullNameOf, needsYou, Thread, threadName } from "../flow/thread.ts";
 import { green, grey, red, yellow } from "./look.ts";
+import { builderProgress, tokenText } from "./progress.ts";
 
 // One row of the sidebar, with what the strip says of the agent too. The lead has no status of
-// its own, and a row's age is empty unless it shows a running time. `short` is the short title
-// the lead gave a thread, which its row shows in place of its title. `harness` names whoever has
-// the thread now, its reviewer while a review runs, and `agentHarness` the agent itself, which
-// Esc stops.
+// its own, and a row's age is empty unless it shows a running time. `task` is the thread's name
+// without its repository's, such as 12 or t5, and `short` the short title the lead gave it, which
+// its row shows in place of its title. `harness` names whoever has the thread now, its reviewer
+// while a review runs, and `agentHarness` the agent itself, which Esc stops. A working thread
+// also has its builder's `tokens`, as text, its `step`, what it is doing, and its `plan`, how
+// many steps of its plan are done of how many. Each is empty or null on other rows, and when the
+// builder's harness doesn't give it.
 export type Row = {
   name: string;
+  task: string;
   session: string;
   status: Thread["status"] | null;
   needsYou: boolean;
@@ -23,6 +29,9 @@ export type Row = {
   harness: string;
   agentHarness: string;
   age: string;
+  tokens: string;
+  step: string;
+  plan: { done: number; total: number } | null;
   fullName: string | null;
   title: string | null;
   short: string | null;
@@ -85,6 +94,10 @@ export function threadWord(thread: Thread, maxRounds: number): string {
   return status === "working" ? "working" : "checks";
 }
 
+// What the sidebar reads of a thread beyond what its log keeps: when its builder's current
+// stretch of work began. Null before the builder first started.
+const Working = z.object({ working_since: z.number().nullable() });
+
 // Returns how long ago a thread started, in the fewest letters: <1m, then 5m, 2h, 3d. Rounded
 // down, so the text changes at most once a minute.
 export function threadAge(started: number, now: number): string {
@@ -98,9 +111,9 @@ export function threadAge(started: number, now: number): string {
 // first, then each of its active threads, newest first as in sc ps: working, waiting, needing you
 // or failed. Each word takes the thread's round limit from `maxRounds`. A stopped thread needs
 // nothing and doesn't change, so it leaves ACTIVE, as a done one does. It runs each second,
-// so it reads only what shows. Only a thread whose word is working shows its running time. A
-// time on every row would write to the terminal each minute, and over a slow link each write
-// costs.
+// so it reads only what shows. Only a thread whose word is working shows how long its builder
+// has worked since it was last started or typed to, its tokens, its plan and its step. Any of
+// them on another row would write to the terminal, and over a slow link each write costs.
 export function sidebarRows(
   db: Database,
   running: string[],
@@ -122,6 +135,7 @@ export function sidebarRows(
   return [
     {
       name: "lead",
+      task: "",
       session: open.lead,
       status: null,
       needsYou: false,
@@ -130,6 +144,9 @@ export function sidebarRows(
       harness: lead?.harness ?? "",
       agentHarness: lead?.harness ?? "",
       age: "",
+      tokens: "",
+      step: "",
+      plan: null,
       fullName: null,
       title: null,
       short: null,
@@ -142,8 +159,14 @@ export function sidebarRows(
       const thread = Thread.parse(row);
       const { review_round: round, reviewer, reviewed_by: by, verdict } = thread;
       const word = threadWord(thread, maxRounds(thread));
+      const working = word === "working";
+      // A thread from before Skelcrew timed stretches of work is timed from its start.
+      const since = Working.parse(row).working_since;
+      const from = since ?? thread.started;
+      const progress = working ? builderProgress(thread, now) : noProgress;
       return {
         name: threadName(db, thread),
+        task: thread.task,
         session: thread.folder,
         status: thread.status,
         needsYou: needsYou(thread),
@@ -154,7 +177,11 @@ export function sidebarRows(
         // harness saved started before Skelcrew saved it, when builders ran only on Claude Code.
         harness: word === "reviewing" ? (reviewer ?? "") : (thread.harness ?? "claude"),
         agentHarness: thread.harness ?? "claude",
-        age: word === "working" && thread.started !== null ? threadAge(thread.started, now) : "",
+        age: working && from !== null ? threadAge(from, now) : "",
+        tokens: progress.tokens === null ? "" : `${tokenText(progress.tokens)} tok`,
+        // A builder that has run no tool yet has no step to show, so it says only that it works.
+        step: working ? (progress.step ?? "working") : "",
+        plan: progress.plan,
         fullName: fullNameOf(thread),
         title: thread.title,
         short: thread.short,

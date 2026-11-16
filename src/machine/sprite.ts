@@ -346,7 +346,7 @@ export async function addSprite(name: string): Promise<number> {
   const names = spriteNames(`sc remote add ${where}`);
   // Said before anything is created, so you know what a yes below leads to.
   console.log(
-    `Setting up ${where}: installing bubblewrap, making its URL public for GitHub's webhooks, copying Skelcrew there and running the first run.`,
+    `Setting up ${where}: installing bubblewrap, making its URL public for GitHub's webhooks, copying Skelcrew there and setting it up.`,
   );
   if (!names.includes(name)) {
     // A mistyped name would otherwise make a second Sprite you pay for.

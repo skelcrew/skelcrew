@@ -250,3 +250,8 @@ export async function runSkelInTerminal(
     tmux("kill-server");
   }
 }
+
+// Whether the run is inside Skelcrew's own sandbox, as when a builder runs these tests. There
+// bubblewrap can't start, so tests that start a real sandbox skip. scripts/test.ts sets it, as
+// the run itself must not inherit the agent's SKELCREW_SANDBOX.
+export const insideSandbox = process.env.SKELCREW_TESTS_IN_SANDBOX === "1";

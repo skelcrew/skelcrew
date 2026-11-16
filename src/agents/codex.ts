@@ -19,6 +19,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import { dataDir } from "../paths.ts";
+import { editing, type Progress, stepText, toolWords } from "./progress.ts";
 import { filterEnv, refuseCredentials, ro, rw, sandboxArgs, throwawayMounts } from "./sandbox.ts";
 
 // Returns Skelcrew's own CODEX_HOME, where the first run's codex login goes and reviews run: a
@@ -79,11 +80,22 @@ function firstLine(file: string): string {
 
 // Returns the ID of the conversation a session saved in `folder`, for codex resume to bring
 // back, or null when it saved none. Codex picks the ID itself, so `_session`, the one Skelcrew
-// keeps, can be another. Each session's CODEX_HOME holds its own conversation, but a review or
-// a sub-agent started from it saves there too, so only one whose session_meta, the file's
-// first line, says it came from the interactive CLI counts. The newest wins: its file names
-// start with the time.
+// keeps, can be another.
 function savedConversation(name: string, folder: string, _session: string): string | null {
+  return newestConversation(name, folder)?.id ?? null;
+}
+
+// Returns the file of the conversation a session saved in `folder`, as savedConversation finds
+// it, or null when it saved none. The sidebar reads it for the builder's progress.
+function conversationFile(name: string, folder: string, _session: string): string | null {
+  return newestConversation(name, folder)?.file ?? null;
+}
+
+// Returns the newest conversation a session saved in `folder`, with its file and ID. Each
+// session's CODEX_HOME holds its own conversation, but a review or a sub-agent started from it
+// saves there too, so only one whose session_meta, the file's first line, says it came from the
+// interactive CLI counts. The newest wins: its file names start with the time.
+function newestConversation(name: string, folder: string): { file: string; id: string } | null {
   const sessions = join(dataDir(), "codex-sessions", name, "sessions");
   const files: string[] = [];
   // Every rollout file under sessions/YYYY/MM/DD/, never following a link.
@@ -95,8 +107,7 @@ function savedConversation(name: string, folder: string, _session: string): stri
   };
   if (lstatSync(sessions, { throwIfNoEntry: false })?.isDirectory()) walk(sessions);
   // Newest first, by file name alone, as the folders above it only repeat the date. The first
-  // from the interactive CLI in this folder is the one to resume; a line that isn't JSON is
-  // skipped.
+  // from the interactive CLI in this folder is the one; a line that isn't JSON is skipped.
   files.sort((a, b) => (a.split("/").at(-1) ?? "").localeCompare(b.split("/").at(-1) ?? ""));
   for (const file of files.reverse()) {
     let meta: unknown;
@@ -107,9 +118,122 @@ function savedConversation(name: string, folder: string, _session: string): stri
     }
     const read = SessionMeta.safeParse(meta);
     if (read.success && read.data.payload.source === "cli" && read.data.payload.cwd === folder)
-      return read.data.payload.id;
+      return { file, id: read.data.payload.id };
   }
   return null;
+}
+
+// A line of a conversation file with Codex's running count of the tokens the session used.
+// Its input includes what came from the cache, which it also gives on its own.
+const TokenCountLine = z.object({
+  type: z.literal("event_msg"),
+  payload: z.object({
+    type: z.literal("token_count"),
+    info: z.object({
+      total_token_usage: z.object({
+        input_tokens: z.number(),
+        cached_input_tokens: z.number().optional(),
+        output_tokens: z.number(),
+      }),
+    }),
+  }),
+});
+// A line of a conversation file with a tool call: a function's arguments come as JSON text, a
+// custom tool's input, such as apply_patch's patch, as plain text, and a local shell call's
+// command as its words.
+const CallLine = z.object({
+  type: z.literal("response_item"),
+  payload: z.object({
+    type: z.enum(["function_call", "custom_tool_call", "local_shell_call"]),
+    name: z.string().optional(),
+    arguments: z.string().optional(),
+    input: z.string().optional(),
+    action: z.object({ command: z.array(z.string()) }).optional(),
+  }),
+});
+// What update_plan is given: the builder's whole plan, each step with its status.
+const Plan = z.object({ plan: z.array(z.object({ status: z.string() })) });
+// What a shell tool is given: its command as words, or as one line of text, by tool and release.
+const Shell = z.looseObject({
+  command: z.union([z.array(z.string()), z.string()]).optional(),
+  cmd: z.string().optional(),
+  input: z.string().optional(),
+});
+
+// Adds what `lines` of a builder's conversation file say to its progress so far: its tokens from
+// Codex's newest running count, its latest step and its latest plan. Cached input is left out of
+// the tokens, as each turn reads the whole conversation again from the cache. Codex counts no
+// cache writes of its own: the input that didn't come from the cache stands for them.
+function readProgress(lines: string[], before: Progress): Progress {
+  let { step, tokens, plan } = before;
+  for (const line of lines) {
+    // Most lines are something else, and parsing each would be slow on a long conversation.
+    if (!line.includes('"token_count"') && !line.includes("_call")) continue;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    const counted = TokenCountLine.safeParse(parsed);
+    if (counted.success) {
+      const usage = counted.data.payload.info.total_token_usage;
+      tokens = usage.input_tokens - (usage.cached_input_tokens ?? 0) + usage.output_tokens;
+      continue;
+    }
+    const call = CallLine.safeParse(parsed);
+    if (!call.success) continue;
+    // update_plan sets the plan, and every other call is a step.
+    const { name = "", input, action } = call.data.payload;
+    const given = parseArguments(call.data.payload.arguments);
+    const planned = name === "update_plan" ? Plan.safeParse(given) : null;
+    if (planned?.success) {
+      const steps = planned.data.plan;
+      plan = {
+        done: steps.filter((item) => item.status === "completed").length,
+        total: steps.length,
+      };
+    } else if (name !== "update_plan")
+      step = callStep(name, given, input ?? "", action?.command) ?? step;
+  }
+  return { step, tokens, plan, last: "" };
+}
+
+// Returns a function call's arguments, which Codex writes as JSON text, or nothing when they
+// aren't JSON.
+function parseArguments(text = ""): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return {};
+  }
+}
+
+// Returns the step a tool call says the builder is on, in a few words: a command as it was run,
+// without the shell around it, a patch as the first file it changes, and any other tool as its
+// name in words.
+function callStep(
+  name: string,
+  given: unknown,
+  input: string,
+  command: string[] | undefined,
+): string | null {
+  const shell = Shell.safeParse(given);
+  const args = shell.success ? shell.data : {};
+  const words = command ?? (Array.isArray(args.command) ? args.command : null);
+  // A command as words is often a shell running one line, such as bash -lc "bun test".
+  if (words) {
+    const [program = "", flag = "", line = ""] = words;
+    const shelled = /(^|\/)(ba|z)?sh$/.test(program) && /^-l?c$/.test(flag);
+    return stepText(shelled ? line : words.join(" "));
+  }
+  if (typeof args.command === "string") return stepText(args.command);
+  if (args.cmd) return stepText(args.cmd);
+  // A patch names each file it changes on a line of its own.
+  const patch = name === "apply_patch" ? input || args.input || "" : "";
+  const file = /^\*\*\* (?:Update|Add|Delete) File: (.+)$/m.exec(patch)?.[1];
+  if (file) return editing(file);
+  return toolWords(name);
 }
 
 // Returns a TOML value for a -c setting. JSON's strings are TOML's too.
@@ -302,6 +426,8 @@ export const codex = {
   keys: ["OPENAI_API_KEY", "CODEX_API_KEY"],
   start: startCommand,
   saved: savedConversation,
+  conversation: conversationFile,
+  progress: readProgress,
   review: reviewCommand,
   answer: readAnswer,
 } as const;
