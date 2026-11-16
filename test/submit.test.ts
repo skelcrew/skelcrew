@@ -48,7 +48,8 @@ const script = (name: string, body: string) => writeScript(home, name, body);
 // typed message ends in a paste mark and an Enter, and it runs the UserPromptSubmit hooks, then
 // answers it with another round, as a builder fixing a review would. `submits` false leaves the
 // first round to the test. While the file busy is in its config folder after a round, it looks
-// busy, as Claude Code does mid-turn, and its turn ends once the file is gone.
+// busy, as Claude Code does mid-turn, and its turn ends once the file is gone. A ci.yml there
+// goes into each round as the repository's first workflow.
 function fakeClaude(submits = true): void {
   script(
     "claude",
@@ -64,6 +65,7 @@ n=0
 round() {
   n=$((n+1))
   echo "$n" > change
+  test -e "$CLAUDE_CONFIG_DIR/ci.yml" && mkdir -p .github/workflows && cp "$CLAUDE_CONFIG_DIR/ci.yml" .github/workflows/
   git add -A && git commit -qm "round $n"
   sc submit "Round $n" >> "$CLAUDE_CONFIG_DIR/submitted" 2>&1
   while test -e "$CLAUDE_CONFIG_DIR/busy"; do echo "esc to interrupt"; sleep 0.2; done
@@ -391,6 +393,34 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
     );
     expect(prompt).toContain("ci.md");
   }, 60_000);
+
+  // CI the PR adds runs on the PR too, but shows no check until the forge starts it.
+  test("on a PR that adds the first workflow, the review waits for CI's check, then reads its result", async () => {
+    addApp();
+    mkdirSync(builder(), { recursive: true });
+    writeFileSync(join(builder(), "ci.yml"), "on: pull_request\n");
+    verdict(1, "approve", "Ready to merge.");
+    await startApp12();
+    await until(() => opened() !== undefined, 30_000);
+    // No check yet, so no review either.
+    await Bun.sleep(5_000);
+    expect(existsSync(join(codexHome(), "sessions", "prompt-1"))).toBe(false);
+    answer(plugin, "changed", {
+      items: [
+        taskItem("12", "Add export", { body: "As JSON" }),
+        prItem("7", "Add export", {
+          branch: "skelcrew/12-add-export",
+          checks: [{ name: "test", id: "900", state: "running" }],
+        }),
+      ],
+      next: null,
+    });
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), 60_000);
+    const prompt = read(join(codexHome(), "sessions", "prompt-1"));
+    expect(prompt).toContain(
+      "CI runs the whole test suite on this commit, so don't run it yourself",
+    );
+  }, 100_000);
 
   test("without CI, the reviewer runs the whole test suite itself", async () => {
     addApp();

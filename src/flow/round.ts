@@ -2,8 +2,6 @@
 // its PR opened on the first round, reviewed by a fresh reviewer, and the review typed back
 // into the builder's session when it asks for changes.
 import type { Database } from "bun:sqlite";
-import { existsSync } from "node:fs";
-import { join } from "node:path";
 import { typeInto } from "../agents/typing.ts";
 import { threadConfig } from "../config.ts";
 import { cloneDir } from "../paths.ts";
@@ -134,13 +132,16 @@ async function reviewRound(
   await setCheck("pending", "Skelcrew's reviewer is reviewing");
   if (signal.aborted) return;
   record(db, folder, { reviewing: sha, submitting: null, reviewer }, `reviewing ${sha}`);
-  // On a first PR CI may not have shown a check yet. Where the default branch sets CI up,
-  // wait a little for one, before the review takes its turn, so the queue never waits. CI
-  // that never runs on PRs, such as a release workflow, then leaves the suite to the reviewer.
-  // The files are looked for in Skelcrew's clone, never the builder's, which the builder
-  // controls.
+  // On a first PR, or one that adds CI, CI may not have shown a check yet. Where the commit
+  // sets CI up, wait a little for one, before the review takes its turn, so the queue never
+  // waits. CI that never runs on PRs, such as a release workflow, then leaves the suite to the
+  // reviewer. The commit is read from Skelcrew's clone, which fetched it, never from the
+  // builder's, which the builder controls.
   const skelcrewClone = cloneDir(thread.owner, thread.repo);
-  const found = ciConfigs.filter((file) => existsSync(join(skelcrewClone, file)));
+  // A commit Skelcrew can't read sets nothing up, and its review goes on without waiting.
+  const ls = ["ls-tree", "--name-only", sha, "--", ...ciConfigs];
+  const listed = await git(skelcrewClone, ...ls).catch(() => "");
+  const found = listed.split("\n").filter(Boolean);
   const prs = () => openPrs(db, thread.owner, thread.repo);
   const waitUntil = Date.now() + ciWait;
   while (true) {

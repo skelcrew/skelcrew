@@ -53,8 +53,8 @@ export function ciState(pr: PullRequest): Thread["checks"] {
 }
 
 // The files that set up CI in a repository, on the forges and CI services Skelcrew's users run.
-// One on the default branch says CI may run on a PR, but not that it does: a workflow can run
-// only on a release tag.
+// One in a PR's commit says CI may run on it, but not that it does: a workflow can run only on
+// a release tag.
 export const ciConfigs = [
   ".github/workflows",
   ".gitlab-ci.yml",
@@ -73,8 +73,8 @@ export const ciConfigs = [
 
 // Returns who runs a commit's whole test suite, so it runs once: CI, once a CI check shows on
 // one of the repository's open PRs, which proves CI runs on PRs. Otherwise the reviewer, unless
-// `found`, the CI files of `ciConfigs` on the default branch, says CI may yet start on a first
-// PR, and the review hasn't `waited` long enough for its first check: then "wait".
+// `found`, the CI files of `ciConfigs` in the commit, says CI may yet start on a first PR, or on
+// one that adds CI, and the review hasn't `waited` long enough for its first check: then "wait".
 export function whoRunsTheSuite(
   prs: PullRequest[],
   found: string[],
