@@ -51,7 +51,7 @@ export const Thread = z.object({
   asking: z.coerce.boolean(),
   // Whether the builder ended its turn without sc submit, a question or an error, and so sits
   // waiting on you. Kept apart from asking: no question is open, so the lead may still tell it.
-  idle: z.coerce.boolean(),
+  stalled: z.coerce.boolean(),
   // Whether the builder ran sc submit in its current turn, so the turn's end waits on a review
   // rather than on you. Whatever is typed into the builder starts a new turn, and clears it.
   submitted: z.coerce.boolean(),
@@ -103,7 +103,7 @@ export const builderHarness = (thread: Thread) => harnessNamed(thread.harness ??
 // Returns whether the thread needs you: for a review, the round limit or an approval, for the
 // builder's question or its stopping without submitting, or for its harness stopping on an error.
 export const needsYou = (thread: Thread) =>
-  thread.needs_you || thread.asking || thread.idle || thread.erred;
+  thread.needs_you || thread.asking || thread.stalled || thread.erred;
 
 // Returns whether a builder that just ended its turn is waiting on you, on any harness. A
 // builder that stops without sc submit in that turn has a question for you, written as plain
@@ -115,7 +115,7 @@ export const endedTurnAsks = (thread: Thread) =>
   (thread.status === "working" || thread.status === "waiting") &&
   !thread.submitted &&
   !thread.asking &&
-  !thread.idle &&
+  !thread.stalled &&
   !thread.erred;
 
 // Returns the thread's repository as owner/name.

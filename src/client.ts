@@ -189,12 +189,13 @@ export async function reviewAgain(repository: string, task: string): Promise<str
   return checkReply(z.object({ reviewing: z.string() }), reply).reviewing;
 }
 
-// Tells the daemon, for a builder's hook, that its builder is asking you a question, so the
-// thread needs you, or that the question is over. Over also ends a builder's error, as it is
-// sent whenever you type to the builder. The builder's own socket tells the daemon
-// which thread it is. The daemon answers at once, as Claude Code waits on its hooks.
-export async function reportQuestion(asking: boolean): Promise<void> {
-  await request({ command: asking ? "question asked" : "question answered" });
+// Tells the daemon, for a builder's hook, about its builder's question: asked, so the thread
+// needs you, or closed, as AskUserQuestion returned its answer within the same turn. Answered is
+// sent whenever something is typed into the builder. It ends any question or error, and starts a
+// new turn. The builder's own socket tells the daemon which thread it is. The daemon answers at
+// once, as Claude Code waits on its hooks.
+export async function reportQuestion(state: "asked" | "answered" | "closed"): Promise<void> {
+  await request({ command: `question ${state}` });
 }
 
 // Tells the daemon, for a builder's Stop hook, that its builder ended its turn, so the thread

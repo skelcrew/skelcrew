@@ -273,9 +273,11 @@ async function agentCommand(args: string[]): Promise<void> {
   }
   // Run by a builder's Claude Code hooks, not by people, so usage leaves it out. It prints
   // nothing: Claude Code adds what a UserPromptSubmit hook prints to the builder's message.
-  if (command === "question" && (sub === "asked" || sub === "answered") && rest.length === 0) {
-    await reportQuestion(sub === "asked");
-    return;
+  if (command === "question" && rest.length === 0) {
+    if (sub === "asked" || sub === "answered" || sub === "closed") {
+      await reportQuestion(sub);
+      return;
+    }
   }
   // Run by a builder's Stop hook, on Claude Code or Codex, not by people, so usage leaves it
   // out. It prints nothing, as both harnesses read what a Stop hook prints.

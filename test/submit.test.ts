@@ -306,7 +306,13 @@ describe.skipIf(insideSandbox)("sc submit", () => {
 
     // Approved, it waits on CI: polling GitHub marks it needs you once every check is green.
     // Each turn ended with a submit, so the builder never waited on you.
-    expect(thread()).toMatchObject({ status: "waiting", needs_you: 0, rounds: 1, pr: 7, idle: 0 });
+    expect(thread()).toMatchObject({
+      status: "waiting",
+      needs_you: 0,
+      rounds: 1,
+      pr: 7,
+      stalled: 0,
+    });
     expect(read(join(builder(), "hooks"))).toBe("");
     expect(read(join(data(), "threads", "app-12.log"))).not.toContain("without submitting");
     expect(thread().reviewing).toBeNull();
@@ -707,6 +713,23 @@ describe.skipIf(insideSandbox)("sc review", () => {
     expect(read(join(builder(), "typed"))).toContain("The export has no test.");
     await until(() => read(join(data(), "threads", "app-12.log")).includes("waits on CI"));
     expect(thread()).toMatchObject({ status: "waiting", needs_you: 0, rounds: 1 });
+  }, 90_000);
+
+  // sc review, like sc submit, leaves the builder's turn waiting on a review, not on you.
+  test("a builder that asks for another review and ends its turn doesn't need you", async () => {
+    addApp();
+    verdict(1, "approve", "Ready to merge.");
+    verdict(2, "approve", "Still ready.");
+    await startApp12();
+    await until(() => read(join(data(), "threads", "app-12.log")).includes("waits on CI"), 30_000);
+    const asBuilder = { SKELCREW_SOCKET: builderSocket() };
+    // You ask the builder for another review: a new turn, in which it runs sc review.
+    expect((await skel(["question", "answered"], asBuilder)).code).toBe(0);
+    expect((await skel(["review", "app-12"], asBuilder)).err).toBe("");
+    expect((await skel(["turn", "ended"], asBuilder)).code).toBe(0);
+    await until(() => finished("success").length === 2, 45_000);
+    expect(thread().stalled).toBe(0);
+    expect(read(join(data(), "threads", "app-12.log"))).not.toContain("without submitting");
   }, 90_000);
 
   test("refuses a thread with nothing submitted yet, and a thread that is done", async () => {

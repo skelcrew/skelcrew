@@ -34,8 +34,8 @@ const settings = JSON.stringify(base);
 
 // A builder's AskUserQuestion waits on a screen nobody watches, so Claude Code's hooks tell
 // Skelcrew when the builder asks, and the thread needs you until the question is over. Answering
-// runs PostToolUse, but setting it aside with Esc or "Chat about this" runs no hook at all, so
-// whatever is typed into the builder next also ends it. The commands answer at once, and
+// runs PostToolUse, within the same turn, but setting it aside with Esc or "Chat about this" runs
+// no hook at all, so whatever is typed into the builder next also ends it. The commands answer at once, and
 // print nothing, since UserPromptSubmit adds what a hook prints to the message. A turn that
 // ends on an error, such as a lapsed login or a usage limit, runs StopFailure in place of Stop,
 // and leaves the builder idle with its row still saying working, so that needs you too, until
@@ -45,13 +45,14 @@ const settings = JSON.stringify(base);
 // of these: you see a lead whenever you open its repository.
 const askedHook = { type: "command", command: "sc question asked", timeout: 10 };
 const answeredHook = { ...askedHook, command: "sc question answered" };
+const closedHook = { ...askedHook, command: "sc question closed" };
 const failedHook = { ...askedHook, command: "sc turn failed" };
 const endedHook = { ...askedHook, command: "sc turn ended" };
 const builderSettings = JSON.stringify({
   ...base,
   hooks: {
     PreToolUse: [{ matcher: "AskUserQuestion", hooks: [askedHook] }],
-    PostToolUse: [{ matcher: "AskUserQuestion", hooks: [answeredHook] }],
+    PostToolUse: [{ matcher: "AskUserQuestion", hooks: [closedHook] }],
     UserPromptSubmit: [{ hooks: [answeredHook] }],
     StopFailure: [{ hooks: [failedHook] }],
     Stop: [{ hooks: [endedHook] }],

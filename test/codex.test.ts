@@ -48,8 +48,10 @@ const subagent = "01a1c003-ffff-7380-b6d9-c7ec08342361";
 // environment and folder, and a new session saves its conversation. As the lead, it waits at
 // Codex's prompt and keeps what is typed into it. As a builder, it runs the hook commands the
 // command line gives for an event when the test leaves a file named for it: stop for Stop and
-// talk for UserPromptSubmit, adding a line to the file ran once they have finished. A hook's
-// input is what the test left in its file, or {}. renew
+// talk for UserPromptSubmit and interrupt for Interrupt, which Codex runs in Stop's place when you
+// press Esc, adding a line to the file ran once they have finished. A hook's input is what the
+// test left in its file, or {}. Text typed into the builder goes in its file typed, and runs
+// UserPromptSubmit, as talk does. renew
 // renews the login as Codex does from 0.167: it follows the link to it, writes the renewal
 // beside its target and renames it over it.
 function fakeCodex(): void {
@@ -96,9 +98,18 @@ for (const arg of (await Bun.file("args").text()).split("\\n"))
   while IFS= read -r command; do printf '%s' "$input" | sh -c "$command" >> hooks 2>&1; done
   echo "$1" >> ran
 }
+printf '\\033[?2004h'
+stty -echo
+exec 3<&0
+end=$(printf '\\033[201~')
+while IFS= read -r line; do
+  printf '%s\\n' "$line" >> typed
+  case "$line" in *"$end"*) : > talk ;; esac
+done <&3 &
 echo "› Ask Codex to do anything"
 for i in $(seq 3000); do
   test -e stop && { said=$(cat stop); rm stop; hook Stop "$said"; }
+  test -e interrupt && { rm interrupt; hook Interrupt; }
   test -e talk && { rm talk; hook UserPromptSubmit; }
   test -e renew && { rm renew; login=$(readlink -f auth.json); echo renewed > "$login.new" && mv "$login.new" "$login"; echo renewed >> ran; }
   sleep 0.1
@@ -189,7 +200,7 @@ async function untilNeedsYou(wanted: boolean) {
 
 // Has the fake builder do something, as Codex would, with `input` as what its hooks read, and
 // waits until it has.
-async function act(step: "stop" | "talk" | "renew", input = "") {
+async function act(step: "stop" | "talk" | "interrupt" | "renew", input = "") {
   const before = read(join(builder(), "ran")).split("\n").length;
   writeFileSync(join(builder(), step), input);
   await until(() => read(join(builder(), "ran")).split("\n").length > before);
@@ -220,6 +231,16 @@ async function startApp12() {
   expect(await askForLead()).toContain(leadPlaces("simon", "app").name);
   expect((await skel(["start", "app-12"])).err).toBe("");
   await until(() => read(join(builder(), "args")) !== "", 30_000);
+}
+
+// How many notes about app-12 needing you the lead has been typed.
+const notesAbout12 = () => read(join(lead(), "typed")).split("app-12 needs you").length - 1;
+
+// The socket the daemon opens for app's lead, which tells it the lead calls. It is named by a
+// short hash.
+function leadSocket(): string {
+  const short = new Bun.CryptoHasher("sha256").update("simon/app").digest("hex").slice(0, 16);
+  return join(home, "run", "skelcrew", "leads", short, "skelcrew.sock");
 }
 
 // Changes app-12 in the database, as a round would.
@@ -263,8 +284,12 @@ describe.skipIf(insideSandbox)("codex", () => {
     await untilNeedsYou(true);
     await until(() => read(join(lead(), "typed")).includes("app-12 needs you"));
     expect(read(join(lead(), "typed"))).toContain(
-      "app-12 needs you: its builder stopped without submitting: Should the export keep empty rows?",
+      'app-12 needs you: its builder stopped without submitting, saying "Should the export keep empty rows?"',
     );
+    // Another turn ending while it still waits is no news.
+    await act("stop");
+    await Bun.sleep(1000);
+    expect(notesAbout12()).toBe(1);
     expect(read(join(lead(), "typed"))).not.toContain("I can do either.");
     // What you type to it next ends that.
     await act("talk");
@@ -281,6 +306,45 @@ describe.skipIf(insideSandbox)("codex", () => {
     setThread("UPDATE threads SET status = 'waiting'");
     await act("stop");
     await untilNeedsYou(true);
+  }, 60_000);
+
+  test("a Codex builder that stopped without submitting can be told, which clears it", async () => {
+    await startApp12();
+    await act("stop");
+    await untilNeedsYou(true);
+    const told = await runSkel(["tell", "app-12", "Keep them."], {
+      ...env(),
+      SKELCREW_SANDBOX: "1",
+      SKELCREW_SOCKET: leadSocket(),
+    });
+    expect(told.err).toBe("");
+    await until(() => read(join(builder(), "typed")).includes("Keep them."));
+    await untilNeedsYou(false);
+  }, 60_000);
+
+  test("a Codex builder still needs you after the daemon starts again, with no second note", async () => {
+    await startApp12();
+    await act("stop");
+    await untilNeedsYou(true);
+    await until(() => notesAbout12() === 1);
+    for (const daemon of running.splice(0)) {
+      daemon.kill();
+      await daemon.exited;
+    }
+    startDaemon(socket, env(), running);
+    await until(() => existsSync(join(home, "run", "skelcrew.sock")));
+    await Bun.sleep(1500);
+    expect((await app12())?.needsYou).toBe(true);
+    expect(notesAbout12()).toBe(1);
+  }, 60_000);
+
+  // Esc runs Codex's Interrupt hook, not Stop, and Skelcrew gives builders none for it: you are
+  // looking at the builder when you press Esc.
+  test("pressing Esc in a Codex builder's turn doesn't mark it needing you", async () => {
+    await startApp12();
+    await act("interrupt");
+    await Bun.sleep(1000);
+    expect((await app12())?.needsYou).toBe(false);
   }, 60_000);
 
   test("a lead keeps the harness it started on, for notes and when it comes back", async () => {

@@ -727,7 +727,7 @@ const state: Thread = {
   last_comment: 0,
   last_check: 0,
   asking: false,
-  idle: false,
+  stalled: false,
   submitted: false,
   erred: false,
   noting: null,
@@ -763,7 +763,7 @@ test("a builder that took up the changes is working again", () => {
 test("each reason a thread needs you has its own word", () => {
   expect(word({ asking: true })).toBe("question");
   // A builder that stopped without submitting asked in plain text.
-  expect(word({ idle: true })).toBe("question");
+  expect(word({ stalled: true })).toBe("question");
   expect(word({ erred: true })).toBe("error");
   expect(word({ ...needing, verdict: "approve", checks: "passing" })).toBe("approved");
   expect(word({ ...needing, verdict: "approve" })).toBe("approved");
@@ -993,7 +993,7 @@ console.log(JSON.stringify(looks.map((row) => [row?.tokens, row?.step])));`;
       ["status, reviewing", "'waiting', 'abc'"],
       ["status, needs_you, verdict", "'waiting', 1, 'approve'"],
       ["status, asking", "'working', 1"],
-      ["status, idle", "'working', 1"],
+      ["status, stalled", "'working', 1"],
       ["status, erred", "'working', 1"],
       ["status, needs_you, rounds", "'working', 1, 4"],
       ["status", "'stopped'"],
@@ -1011,7 +1011,7 @@ console.log(JSON.stringify(looks.map((row) => [row?.tokens, row?.step])));`;
 import { repositoryTabs } from ${JSON.stringify(source("screen/rows.ts"))};
 const db = openDb();
 db.run(\`INSERT INTO repositories (name, owner, repo) VALUES ('site', 'simon', 'site'), ('app', 'simon', 'app');
-INSERT INTO threads (owner, repo, task, folder, branch, status, needs_you, asking, erred, idle) VALUES
+INSERT INTO threads (owner, repo, task, folder, branch, status, needs_you, asking, erred, stalled) VALUES
   ('simon', 'site', 1, 'site-1', 'b', 'waiting', 1, 0, 0, 0),
   ('simon', 'site', 2, 'site-2', 'b', 'working', 0, 1, 0, 0),
   ('simon', 'site', 3, 'site-3', 'b', 'failed', 1, 0, 0, 0),

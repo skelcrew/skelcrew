@@ -309,9 +309,12 @@ export function rerunReview(db: Database, tmux: string, folder: string): void {
   const needs_you = pastRoundLimit(thread, maxRounds);
   // The commit is saved as under review at once, so a second sc review asked before the
   // check is pending again is refused rather than cancelling this one.
+  // A builder that asked for it ends its turn waiting on the review, as after sc submit, not on
+  // you.
   const change = {
     status: "waiting",
     needs_you,
+    submitted: true,
     telling: null,
     held: null,
     reviewing: sha,
