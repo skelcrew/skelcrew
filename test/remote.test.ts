@@ -174,14 +174,6 @@ async function skelInTerminal(args: string[], answers: string[] = []) {
   return { wrote, code };
 }
 
-test("the terminal's title is saved before the server is reached and put back after", async () => {
-  installed();
-  const { wrote } = await skelInTerminal(["--remote", "simon@workbox", "ps"]);
-  expect(wrote.startsWith("\x1b[22;0t")).toBe(true);
-  expect(wrote.endsWith("\x1b[23;0t")).toBe(true);
-  expect(wrote).toContain("Skelcrew on the server got 1 arguments");
-});
-
 test("runs sc on the server with the repository you are in", async () => {
   installed();
   const run = await skel(["--remote", "simon@workbox"], "", checkout("simon/app"));
@@ -447,7 +439,7 @@ test("the update keeps the old Skelcrew when the copy fails", async () => {
   expect(calls()).not.toContain("systemctl --user restart");
 });
 
-// Runs main.ts as the Skelcrew on a server or Sprite would run it, built from the given commit
+// Runs main.ts as the Skelcrew on a server would run it, built from the given commit
 // or from a checkout, asked for its help by a laptop with the given build.
 function farSkel(built: string | null, laptopBuild?: string, args = ["--help"]) {
   const define = built === null ? [] : ["--define", `SKELCREW_BUILD="${built}"`];
@@ -592,6 +584,18 @@ test("sc remote add needs a host", async () => {
   const run = await skel(["remote", "add"]);
   expect(run.err).toContain("sc remote add needs a host");
   expect(run.code).toBe(1);
+  expect(calls()).toBe("");
+});
+
+test("a host that names a machine plugin is refused, not taken as an SSH host", async () => {
+  for (const args of [
+    ["remote", "add", "sprite:demo"],
+    ["--remote", "sprite:demo", "ps"],
+  ]) {
+    const run = await skel(args);
+    expect(run.err).toContain("no machine plugin named sprite");
+    expect(run.code).toBe(1);
+  }
   expect(calls()).toBe("");
 });
 

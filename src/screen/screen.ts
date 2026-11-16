@@ -24,14 +24,11 @@ const config = [
   ["set", "-g", "status-interval", "0"],
   ["set", "-g", "status-style", "default"],
   ["set", "-g", "status-format[0]", ""],
-  // tmux writes the title to your terminal, over whatever sprite or your shell put there. An
-  // agent's own title stops at its pane, on the agents' server: Claude Code changes its title
-  // as it works, and the title says where you are, which switching agents doesn't change. tmux
-  // saves your terminal's title on the way in and puts it back on the way out, on terminals
-  // that keep one. It goes out as OSC 2, since sprite writes the Sprite's name in front of a
-  // title sent as OSC 0, tmux's usual way.
+  // tmux writes the title to your terminal, over whatever your shell put there. An agent's own
+  // title stops at its pane, on the agents' server: Claude Code changes its title as it works,
+  // and the title says where you are, which switching agents doesn't change. tmux saves your
+  // terminal's title on the way in and puts it back on the way out, on terminals that keep one.
   ["set", "-g", "set-titles", "on"],
-  ["set", "-s", "terminal-overrides[90]", "*:tsl=\\E]2;:fsl=\\007"],
   // All of tmux's own keys go: its default mouse keys pull a drag or the wheel into copy mode,
   // which would swallow your typing, and its prefix belongs to the agents' server. Alt-Q
   // here, not there, leaves the whole screen. Ctrl-Q does too, though nothing shows it, for a
@@ -179,7 +176,7 @@ export async function openScreen(
   applyConfig(agents);
   // This screen's session, named by this process, and the sidebar that opens on it.
   const name = `screen-${process.pid}`;
-  // The name sc --remote passes along, such as sprite:demo. Empty on this machine.
+  // The name sc --remote passes along, such as simon@workbox. Empty on this machine.
   const where = env.SKELCREW_REMOTE_NAME ?? "";
   const left = sidebarCommand(agents, name, where, repository);
   // The title is the session's own: terminals on this server can come from different laptops.

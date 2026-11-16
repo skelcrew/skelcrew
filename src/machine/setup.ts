@@ -13,7 +13,6 @@ import { errorText } from "../say.ts";
 import { originHere, parseRemote } from "./origin.ts";
 import { promptSecret } from "./secret.ts";
 import { installService, loginPath, serviceFile } from "./service.ts";
-import { dropCapabilities, onSprite, spriteServiceInstalled } from "./sprite.ts";
 
 // The environment a step looks programs up in and runs them with.
 type Env = Record<string, string | undefined>;
@@ -93,8 +92,7 @@ function checkLinuxTools(env: Env): void {
     );
   // Being installed isn't being allowed: on Ubuntu 24.04 and later, AppArmor stops bwrap
   // making the namespaces it needs, and every agent would fail to start.
-  const caps = onSprite(PATH) ? dropCapabilities : [];
-  const tried = Bun.spawnSync([...caps, bwrap, "--ro-bind", "/", "/", "true"], { stderr: "pipe" });
+  const tried = Bun.spawnSync([bwrap, "--ro-bind", "/", "/", "true"], { stderr: "pipe" });
   if (!tried.success) {
     const said = tried.stderr.toString().trim();
     throw new Error(
@@ -313,10 +311,9 @@ function agentsLoggedIn(harness: HarnessName): boolean {
 
 // Reports whether setup finished: your harness choice is saved, the agents have their login,
 // and the daemon's service is installed. Setup installs the service last, so with it every
-// step ran. Plain sc checks this each time it starts, so it looks only at files, and at
-// sprite-env on a Sprite.
+// step ran. Plain sc checks this each time it starts, so it looks only at files.
 export function setupDone(): boolean {
-  const service = onSprite() ? spriteServiceInstalled() : existsSync(serviceFile());
+  const service = existsSync(serviceFile());
   const { harness } = readConfig();
   if (harness === undefined) return false;
   return agentsLoggedIn(harness) && service;

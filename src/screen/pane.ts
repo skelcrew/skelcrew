@@ -117,7 +117,7 @@ const openCommand = process.platform === "darwin" ? "open" : "xdg-open";
 // list or its page, after asking in the footer. All else you type goes nowhere. It tells the
 // footer what to say, with s or m only while the row you are on can be started or merged. It
 // reads the list again each second, and writes only when what shows changed, so a list left
-// open lets a Sprite sleep. A page is read once.
+// open sends nothing over a slow link. A page is read once.
 export async function runPane(
   agents: string,
   session: string,
@@ -303,7 +303,7 @@ export async function runPane(
     draw(true);
   };
   // Opens the page's link in your browser, or copies it to your terminal's clipboard with OSC
-  // 52, which reaches you over ssh and sprite too, and says so in the hint. The browser is
+  // 52, which reaches you over ssh too, and says so in the hint. The browser is
   // detached, so it outlives the page.
   const openLink = async (url: string) => {
     if (canOpen) {

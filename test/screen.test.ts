@@ -699,13 +699,13 @@ test("above the sidebar it says Skelcrew, in white, and the checkout's version w
 });
 
 test("each terminal says where it came from, as they can come from different laptops", async () => {
-  open("lead", "one", "xterm-256color", "120", "sprite:demo");
+  open("lead", "one", "xterm-256color", "120", "simon@workbox");
   await ready("lead");
   open("lead", "two");
   await ready("lead", "two");
   const place = (window: string) => (seen(window).split("\n")[0] ?? "").slice(0, sidebar - 1);
   await until(
-    () => place("one").startsWith(`  Skelcrew v${checkout.version} · sprite:`),
+    () => place("one").startsWith(`  Skelcrew v${checkout.version} · simon@`),
     "the first place",
   );
   await until(
@@ -1330,7 +1330,7 @@ test("a plain click on the page's link opens it in your browser, on the machine 
 test("on a remote, a click on the page's link copies it to your terminal's clipboard", async () => {
   fakeOpener();
   openOnGitHub();
-  open("lead", "one", "xterm-256color", "120", "sprite:demo");
+  open("lead", "one", "xterm-256color", "120", "simon@workbox");
   await ready("lead");
   // Your terminal keeps what a program copies, as Ghostty does.
   tmux(terminal, "set", "-s", "set-clipboard", "on");
@@ -1394,7 +1394,7 @@ test("landing on an entry from elsewhere starts its list on the first row", asyn
 });
 
 test("keys pressed together when leaving a list all count, however slowly the client attaches", async () => {
-  // A client attaching slowly, as over a busy Sprite, can't be switched yet.
+  // A client attaching slowly, as over a slow link, can't be switched yet.
   const real = Bun.which("tmux") ?? "tmux";
   mkdirSync(join(home, "slow"));
   writeFileSync(
@@ -1908,53 +1908,20 @@ test("the terminal's title says Skelcrew while the screen is open, and comes bac
 });
 
 test("the title names the machine when you came from a laptop", async () => {
-  open("lead", "one", "xterm-256color", "120", "sprite:demo");
+  open("lead", "one", "xterm-256color", "120", "simon@workbox");
   await ready("lead");
-  await until(() => title() === "Skelcrew · sprite:demo", "the title");
-});
-
-test("the title goes out in the form sprite leaves alone", async () => {
-  // sprite writes its own name in front of a title sent the other way, OSC 0.
-  const script = join(home, "open-raw.ts");
-  writeFileSync(
-    script,
-    `import { openScreen } from ${JSON.stringify(screenFile)};
-await openScreen(${JSON.stringify(agents)}, "lead");`,
-  );
-  let wrote = "";
-  const run = Bun.spawn([process.execPath, script], {
-    env: { ...env(), TMUX: "", TERM: "xterm-256color" },
-    terminal: {
-      cols: 120,
-      rows: 30,
-      data: (_, bytes) => {
-        wrote += new TextDecoder().decode(bytes);
-      },
-    },
-  });
-  try {
-    await until(
-      () => wrote.includes("Skelcrew\x07") || wrote.includes("Skelcrew\x1b\\"),
-      "the title",
-    );
-    expect(wrote).toContain("\x1b]2;Skelcrew");
-    expect(wrote).not.toContain("\x1b]0;");
-  } finally {
-    tmux(screen, "kill-server");
-    await run.exited;
-    run.terminal?.close();
-  }
+  await until(() => title() === "Skelcrew · simon@workbox", "the title");
 });
 
 test("two terminals on one machine keep a title each", async () => {
-  open("lead", "one", "xterm-256color", "120", "sprite:demo");
+  open("lead", "one", "xterm-256color", "120", "simon@workbox");
   await ready("lead");
   open("lead", "two");
   await ready("lead", "two");
   await until(() => title("two") === "Skelcrew", "the second title");
   toFirstThread();
   await until(() => seen().includes("I am app-12"), "app-12");
-  expect(title()).toBe("Skelcrew · sprite:demo");
+  expect(title()).toBe("Skelcrew · simon@workbox");
 });
 
 test("an agent's own title never reaches the terminal, even after switching", async () => {

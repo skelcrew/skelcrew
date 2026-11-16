@@ -194,8 +194,6 @@ test("brings in a repository you can push to from its checkout, without asking",
   expect(readFileSync(join(checkout, ".git", "config"), "utf8")).toBe(config);
   expect(git(checkout, "status", "--porcelain")).toBe("");
   expect(await listed()).toEqual([["app", "simon/app", "github"]]);
-  // A server stays awake, so it needs no wake-ups.
-  expect(asked(forge).filter((q) => q.ask === "wake")).toEqual([]);
 });
 
 test("brings it in from a folder inside the checkout too", async () => {
@@ -430,41 +428,6 @@ test("repo rm removes Skelcrew's clone and forgets the trust", async () => {
   const missing = await skel(["repo", "rm", "app"]);
   expect(missing.code).toBe(1);
   expect(missing.err).toContain("app");
-});
-
-// Skelcrew takes a machine with sprite-env, the Sprite's own tool, on its PATH for a Sprite. This
-// one has the daemon's service, as the first run leaves it, and says the Sprite's URL.
-function onSprite(): void {
-  fake(
-    "sprite-env",
-    `case "$*" in
-  "services get skelcrew") exit 0 ;;
-  info) echo '{"sprite_name":"demo","sprite_url":"https://demo-simon.sprites.app"}' ;;
-  *) exit 1 ;;
-esac`,
-  );
-}
-
-const wakes = (ask: string) => asked(forge).filter((q) => q.ask === ask);
-
-test("on a Sprite, brings in a repository asking its forge for the wake-ups that wake the Sprite", async () => {
-  onSprite();
-  const run = await skel([], "", onGitHub("simon/app", "WRITE"));
-  expect(run.err).toBe("");
-  expect(wakes("wake")).toEqual([
-    { ask: "wake", repository: "simon/app", url: "https://demo-simon.sprites.app/github" },
-  ]);
-});
-
-// Wake-ups left on would wake the Sprite for a repository Skelcrew no longer polls.
-test("on a Sprite, repo rm stops the wake-ups", async () => {
-  onSprite();
-  await skel([], "", onGitHub("simon/app", "WRITE"));
-  const removed = await skel(["repo", "rm", "app"]);
-  expect(removed.err).toBe("");
-  expect(wakes("unwake")).toEqual([
-    { ask: "unwake", repository: "simon/app", url: "https://demo-simon.sprites.app/github" },
-  ]);
 });
 
 test("repo rm refuses while the repository has live threads, and names them", async () => {

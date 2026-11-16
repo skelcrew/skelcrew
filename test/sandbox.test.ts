@@ -534,64 +534,9 @@ claude.start({ name: "app-12", socket: "x", model: "opus", ...${JSON.stringify(l
     ).toThrow("config");
   });
 
-  // Skelcrew takes a machine with sprite-env, the Sprite's own tool, on its PATH for a Sprite.
-  test("on a Sprite, gives the agent processes of its own, drops capabilities, and hides the Sprite's tools", () => {
+  test("gives the agent a /proc of its own", () => {
     repository();
     saveToken();
-    mkdirSync(join(home, "bin"), { recursive: true });
-    writeFileSync(join(home, "bin", "sprite-env"), "#!/bin/sh\n", { mode: 0o755 });
-    const { argv } = claude.start({
-      ...lead(),
-      name: "lead",
-      socket: socketPath,
-      model: "opus",
-      env: outside(),
-    });
-    expect(argv.slice(0, 11)).toEqual([
-      "unshare",
-      "--pid",
-      "--fork",
-      "--kill-child",
-      "--mount",
-      "--mount-proc",
-      "setpriv",
-      "--inh-caps=-all",
-      "--ambient-caps=-all",
-      "--bounding-set=-all",
-      "bwrap",
-    ]);
-    const options = argv.slice(0, argv.indexOf("--")).join(" ");
-    expect(options).toContain("--ro-bind /proc /proc");
-    expect(options).not.toContain("--proc ");
-    expect(options).not.toContain("--unshare-pid");
-    expect(options).toContain("--ro-bind /dev/null /.sprite/api.sock");
-    expect(options).toContain(`--ro-bind /dev/null ${join(home, "bin", "sprite-env")}`);
-    // gh, bun and node live in /.sprite/bin, so nothing else of /.sprite is hidden.
-    expect(options).not.toContain("--tmpfs /.sprite");
-  });
-
-  // Lowering a priority needs no capability, and what unshare, setpriv and bwrap start keeps it.
-  test("on a Sprite, a builder's lower CPU priority comes before capabilities are dropped", () => {
-    repository();
-    saveToken();
-    mkdirSync(join(home, "bin"), { recursive: true });
-    writeFileSync(join(home, "bin", "sprite-env"), "#!/bin/sh\n", { mode: 0o755 });
-    const { argv } = claude.start({
-      ...lead(),
-      thread: join(home, ".local", "share", "skelcrew", "threads", "app-12"),
-      name: "app-12",
-      socket: socketPath,
-      model: "opus",
-      env: outside(),
-    });
-    expect(argv.slice(0, 4)).toEqual(["nice", "-n", "10", "unshare"]);
-    expect(argv.indexOf("setpriv")).toBeLessThan(argv.indexOf("bwrap"));
-  });
-
-  test("on a server, gives the agent a /proc of its own", () => {
-    repository();
-    saveToken();
-    // Without the PATH this machine has, which on a Sprite holds sprite-env.
     const { argv } = claude.start({
       ...lead(),
       name: "lead",
@@ -602,7 +547,7 @@ claude.start({ name: "app-12", socket: "x", model: "opus", ...${JSON.stringify(l
     expect(argv[0]).toBe("bwrap");
     const options = argv.slice(0, argv.indexOf("--")).join(" ");
     expect(options).toContain("--proc /proc");
-    expect(options).not.toContain(".sprite");
+    expect(options).toContain("--unshare-pid");
   });
 
   test("says to run sc first when there is no token", () => {
@@ -669,32 +614,3 @@ test("a Claude Code session gets Claude Code's key and not Codex's", () => {
   expect(env.ANTHROPIC_API_KEY).toBe("sk-ant");
   expect(env.OPENAI_API_KEY).toBeUndefined();
 });
-
-// Only a Sprite has its control socket, so these run only there, as when checking Skelcrew on a
-// test Sprite, and never inside Skelcrew's own sandbox, where bubblewrap can't start.
-describe.if(existsSync("/.sprite/api.sock") && process.env.SKELCREW_SANDBOX !== "1")(
-  "on a Sprite",
-  () => {
-    test("the agent can't reach the control socket or sprite-env, but runs the Sprite's tools", async () => {
-      repository();
-      const done = await asLead(
-        "test -S /.sprite/api.sock || echo hidden; command -v sprite-env || echo no-sprite-env; command -v gh; test -d /proc/1 && echo proc",
-      );
-      expect(done.err).toBe("");
-      expect(done.out).toBe("hidden\nno-sprite-env\n/.sprite/bin/gh\nproc\n");
-    });
-
-    // Programs find themselves in /proc by their own process number, as setpriv does, and
-    // stopping a process tree reads it too.
-    test("the agent's /proc shows its own processes, by the numbers they have inside", async () => {
-      repository();
-      const done = await asLead(
-        `cut -d" " -f1 /proc/$$/stat; echo $$; test -e /proc/${process.pid}/cmdline || echo outside-hidden`,
-      );
-      expect(done.err).toBe("");
-      const [inProc, own, hidden] = done.out.split("\n");
-      expect(inProc).toBe(own);
-      expect(hidden).toBe("outside-hidden");
-    });
-  },
-);

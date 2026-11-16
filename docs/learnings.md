@@ -178,14 +178,16 @@ that covers the code you are about to write.
   first: bwrap refuses to mount a folder that doesn't exist.
 - **Start agents' sandboxes under `nice`.** Builders and reviewers running whole test
   suites at once pushed an 8-CPU server to a load of 18, and each run took twice as long.
-  `nice -n 10` goes first, before `unshare` and the `setpriv` that drops capabilities on a
-  Sprite: lowering a priority needs no capability, and everything started inside keeps it.
+  `nice -n 10` goes first, and everything started inside keeps it. If something that drops
+  capabilities ever comes before bwrap, nice still goes first: lowering a priority needs none.
   `nice` replaces itself with the command, so stopping a session still finds the sandbox.
   The lead stays at normal priority, as it is what you type into.
 - **Don't pass `--new-session`.** It moves Claude Code out of the terminal's process group,
   so it misses resize signals and draws at the wrong width.
 
 ## On a Sprite
+
+Skelcrew no longer supports Sprites itself. These are for the Sprite machine plugin to come.
 
 - **Drop capabilities before starting bwrap.** Commands on a Sprite run with a large set of
   capabilities, and bwrap refuses to start with them ("Unexpected capabilities but not

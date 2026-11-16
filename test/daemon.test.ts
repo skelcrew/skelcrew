@@ -16,7 +16,7 @@ import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import type { Subprocess } from "bun";
 import { leadPlaces } from "../src/paths.ts";
-import { asked, fakePlugin, read, source, until as wait } from "./harness.ts";
+import { read, source, until as wait } from "./harness.ts";
 
 const main = source("main.ts");
 const daemon = source("flow/daemon.ts");
@@ -80,12 +80,10 @@ function setUp(): void {
   writeFileSync(join(home, ".config", "systemd", "user", "skelcrew.service"), "");
 }
 
-// Runs the daemon as Skelcrew serve would, but on the test's own tmux server. Given a port, a
-// daemon on a Sprite listens there for wake-ups, in place of the Sprite's own.
-function serve(runtime = join(home, "run"), port?: number): Subprocess<"ignore", "pipe", "pipe"> {
-  const more = port === undefined ? "" : `, 30_000, ${port}`;
+// Runs the daemon as Skelcrew serve would, but on the test's own tmux server.
+function serve(runtime = join(home, "run")): Subprocess<"ignore", "pipe", "pipe"> {
   const script = `import { serve } from ${JSON.stringify(daemon)};
-await serve(${JSON.stringify(socket)}${more});`;
+await serve(${JSON.stringify(socket)});`;
   const run = Bun.spawn([process.execPath, "-e", script], {
     env: {
       HOME: home,
@@ -108,8 +106,6 @@ async function stop(run: Subprocess): Promise<void> {
 // seconds to start a daemon, so the limit is generous: it only ends a test that hangs.
 const until = (done: () => boolean) => wait(done, { timeout: 30_000, every: 20 });
 
-const hasServer = () =>
-  Bun.spawnSync(["tmux", "-L", socket, "list-sessions"], { stderr: "pipe" }).success;
 const hasLead = (name = leadName()) =>
   Bun.spawnSync(["tmux", "-L", socket, "has-session", "-t", `=${name}`], { stderr: "pipe" })
     .success;
@@ -276,7 +272,7 @@ test("sc serve refuses inside Skelcrew's sandbox, where Skelcrew's state is hidd
   expect(existsSync(join(home, "run", "skelcrew.sock"))).toBe(false);
 });
 
-// As on a Sprite, where the socket's folder is one of Skelcrew's own, not one systemd made.
+// As on a machine where the socket's folder is one of Skelcrew's own, not one systemd made.
 test("makes the folder for its socket, which only you can open", async () => {
   setUp();
   const folder = join(home, "fresh", "run");
@@ -313,182 +309,6 @@ test("says which checkout and commit it started from, so Skelcrew can restart it
     .stdout.toString()
     .trim();
   expect(await ask({ command: "status" })).toMatchObject({ folder: checkout, commit });
-});
-
-// Skelcrew takes a machine with sprite-env, the Sprite's own tool, on its PATH for a Sprite. Like
-// the real one, it starts a service as it creates it.
-function onSprite(): void {
-  fake(
-    "sprite-env",
-    `case "$*" in
-  "services get skelcrew") exit 0 ;;
-  info) echo '{"sprite_name":"demo","sprite_url":"https://demo-simon.sprites.app"}'; exit 0 ;;
-  "services create skelcrew-tmux-${socket} --cmd tmux --args -L,${socket},-f,/dev/null,-D --no-stream")
-    test -f "$HOME/tmux-service" && exit 0
-    : > "$HOME/tmux-service"
-    setsid tmux -L ${socket} -f /dev/null -D < /dev/null > /dev/null 2>&1 &
-    exit 0 ;;
-  "services start skelcrew-tmux-${socket}")
-    setsid tmux -L ${socket} -f /dev/null -D < /dev/null > /dev/null 2>&1 &
-    exit 0 ;;
-esac
-exit 1`,
-  );
-}
-
-test("on a Sprite, starts once the first run installed its Sprite service", async () => {
-  setUp();
-  rmSync(join(home, ".config", "systemd"), { recursive: true });
-  onSprite();
-  serve();
-  await until(() => existsSync(cliSocket()));
-  expect(await answers()).toBe(true);
-});
-
-// Creating a service that exists already does nothing, even when it is stopped, and a tmux
-// server started without it would end with the daemon's service.
-test("on a Sprite, starts Skelcrew's tmux service again when it has stopped", async () => {
-  setUp();
-  onSprite();
-  addRepository("app");
-  openedBefore();
-  writeFileSync(join(home, "tmux-service"), "");
-  serve();
-  await until(() => calls().includes("services start skelcrew-tmux"));
-  await until(hasServer);
-  expect(calls()).not.toContain("systemd-run");
-});
-
-// A Sprite service ends every process it started when it stops, so a tmux server the
-// daemon started would take every agent with it.
-test("on a Sprite, starts Skelcrew's tmux server as a Sprite service of its own", async () => {
-  setUp();
-  onSprite();
-  addRepository("app");
-  openedBefore();
-  serve();
-  await until(() => calls().includes("tmux"));
-  await until(hasServer);
-  expect(calls()).toContain(
-    `sprite-env services create skelcrew-tmux-${socket} --cmd tmux --args -L,${socket},-f,/dev/null,-D --no-stream\n`,
-  );
-});
-
-// A port nothing listens on, for the daemon's listener for wake-ups.
-function freePort(): number {
-  const probe = Bun.serve({ port: 0, fetch: () => new Response() });
-  const { port } = probe;
-  probe.stop(true);
-  if (port === undefined) throw new Error("no free port");
-  return port;
-}
-
-// The fake forge's settings folder, where it keeps what it is asked.
-let forge = "";
-
-// Makes the fake plugin the forge of the repositories Skelcrew has. It fails every poll, which
-// still counts as one.
-function fakeForge(): void {
-  forge = fakePlugin(home, "github", ["forge"]);
-  writeFileSync(join(forge, "fail-changed"), "HTTP 502: Bad Gateway");
-  onDb((db) =>
-    db.run(
-      "UPDATE repositories SET forge = 'github', claimed = 1, remote = 'https://github.com/' || owner || '/' || repo || '.git'",
-    ),
-  );
-}
-
-const polls = () => asked(forge).filter((q) => q.ask === "changed").length;
-
-// Sends a delivery to the daemon's listener, for a plugin's name.
-const deliver = (port: number, plugin: string) =>
-  fetch(`http://127.0.0.1:${port}/${plugin}`, { method: "POST", body: "{}" });
-
-// Returns whether anything answers on the port.
-const listening = (port: number) =>
-  fetch(`http://127.0.0.1:${port}/`).then(
-    () => true,
-    () => false,
-  );
-
-async function untilListening(port: number) {
-  const deadline = Date.now() + 30_000;
-  while (!(await listening(port))) {
-    if (Date.now() > deadline) throw new Error("nothing listened");
-    await Bun.sleep(20);
-  }
-}
-
-// A forge can't wake a sleeping Sprite's daemon any other way, and polling is what reads it.
-test("on a Sprite, a delivery for a plugin has the daemon poll its repositories at once", async () => {
-  setUp();
-  onSprite();
-  addRepository("app");
-  fakeForge();
-  const port = freePort();
-  serve(undefined, port);
-  await until(() => polls() === 1);
-  await untilListening(port);
-  expect((await deliver(port, "github")).status).toBe(202);
-  await until(() => polls() === 2);
-});
-
-// A wake-up comes while the forge may be failing, and the daemon must outlive the poll it
-// starts.
-test("on a Sprite, a plugin's wake-up whose poll fails leaves the daemon running", async () => {
-  setUp();
-  onSprite();
-  addRepository("app");
-  fakeForge();
-  const port = freePort();
-  const run = serve(undefined, port);
-  await until(() => polls() === 1);
-  await untilListening(port);
-  expect((await deliver(port, "github")).status).toBe(202);
-  await until(() => polls() === 2);
-  await Bun.sleep(500);
-  expect(run.exitCode).toBeNull();
-  expect(await answers()).toBe(true);
-});
-
-test("on a Sprite, a delivery for no plugin of a repository polls nothing", async () => {
-  setUp();
-  onSprite();
-  addRepository("app");
-  fakeForge();
-  const port = freePort();
-  serve(undefined, port);
-  await until(() => polls() === 1);
-  await untilListening(port);
-  expect((await deliver(port, "other")).status).toBe(404);
-  expect((await deliver(port, "")).status).toBe(404);
-  await Bun.sleep(500);
-  expect(polls()).toBe(1);
-});
-
-test("on a Sprite, asks each repository's forge to pass on its wake-ups to the Sprite", async () => {
-  setUp();
-  onSprite();
-  addRepository("app");
-  fakeForge();
-  serve(undefined, freePort());
-  await until(() => asked(forge).some((q) => q.ask === "wake"));
-  expect(asked(forge).filter((q) => q.ask === "wake")).toEqual([
-    { ask: "wake", repository: "simon/app", url: "https://demo-simon.sprites.app/github" },
-  ]);
-});
-
-// A server stays awake, so polling alone sees every event soon enough.
-test("on a server, neither listens for wake-ups nor asks for them", async () => {
-  setUp();
-  addRepository("app");
-  fakeForge();
-  const port = freePort();
-  serve(undefined, port);
-  await until(() => polls() === 1);
-  await Bun.sleep(500);
-  expect(await listening(port)).toBe(false);
-  expect(asked(forge).filter((q) => q.ask === "wake")).toEqual([]);
 });
 
 // Asks the daemon to open a repository, as plain sc in a checkout of it does.

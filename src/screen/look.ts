@@ -2,7 +2,7 @@
 // padding, and making text from outside safe and fit to show.
 
 // The colours of marks and words. 256-colour numbers, as they reach your terminal through both
-// tmux servers and sprite, and mean the same whatever your theme. A theme's own green can be olive,
+// tmux servers and ssh, and mean the same whatever your theme. A theme's own green can be olive,
 // close to the yellow of needs you. They are the same on the row you are looking at, so a mark
 // never changes colour as you move onto it.
 export const [green, yellow, red] = ["38;5;120", "38;5;221", "38;5;210"];

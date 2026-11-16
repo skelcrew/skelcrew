@@ -2,7 +2,6 @@
 // tmux server (`tmux -L skelcrew`; tests pass a socket of their own).
 import { rmSync } from "node:fs";
 import { z } from "zod";
-import { onSprite, startTmuxService } from "../machine/sprite.ts";
 import { sandboxFolders } from "./seatbelt.ts";
 
 // Returns the screen's tmux server beside the agents': skelcrew-screen beside skelcrew, and a
@@ -15,9 +14,9 @@ export const screenSocket = (agents: string) => `${agents}-screen`;
 // Ctrl-Q with no prefix and no status bar make attaching feel like being inside Claude Code. A
 // session whose command fails keeps its last screen, so Skelcrew can say why it ended instead
 // of finding it gone. tmux only passes synchronized output on to terminals it knows have it, and
-// without it Claude Code's redraws arrive in pieces, so the prompt flickers over a slow link
-// such as a Sprite's. Terminals without it ignore the codes. That setting has a fixed index,
-// since these settings run again with each new session, and appending would add it every time.
+// without it Claude Code's redraws arrive in pieces, so the prompt flickers over a slow link.
+// Terminals without it ignore the codes. That setting has a fixed index, since these settings
+// run again with each new session, and appending would add it every time.
 //
 // The wheel scrolls back through an agent's output. Claude Code draws in one of two ways. Its
 // classic drawing leaves its output in tmux's history, so copy mode shows it. Its full-screen
@@ -112,7 +111,7 @@ export function mustTmux(socket: string, args: string[], input = ""): string {
 // Starts Skelcrew's tmux server if needed, keeping agent sessions alive independently of the
 // daemon. A server started by the daemon would live in skelcrew.service's cgroup, so stopping
 // or OOM-killing the service would take every agent with it. A systemd scope of its own
-// keeps it apart, as a Sprite service does on a Sprite; without either it starts plainly.
+// keeps it apart; without systemd it starts plainly.
 // exit-empty off keeps it up until its first session, and the config applies to that
 // session too.
 export function startServer(socket: string): void {
@@ -137,11 +136,7 @@ export function startServer(socket: string): void {
       stdout: "pipe",
       stderr: "pipe",
     });
-  // On a Sprite the server runs as a Sprite service of its own, as one the daemon started would
-  // end with the daemon's service. The plain start below then finds it running, and only gives
-  // it Skelcrew's options.
-  if (onSprite()) startTmuxService(socket);
-  else if (Bun.which("systemd-run") && run([...scope, ...start]).success) return;
+  if (Bun.which("systemd-run") && run([...scope, ...start]).success) return;
   const plain = run(start);
   if (!plain.success)
     throw new Error(`tmux start-server failed: ${plain.stderr.toString().trim()}`);

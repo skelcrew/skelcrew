@@ -7,7 +7,6 @@ import { z } from "zod";
 import { type HarnessName, harnessNamed } from "../agents/harness.ts";
 import { filterEnv, sandboxArgs, throwawayMounts } from "../agents/sandbox.ts";
 import { sandboxFolders } from "../agents/seatbelt.ts";
-import { onSprite } from "../machine/sprite.ts";
 import { errorText } from "../say.ts";
 
 // What a review round ends with: the reviewer's verdict and what it said, or a failed review
@@ -51,8 +50,7 @@ Answer "approve" only if it is ready to merge. Otherwise answer "changes", and i
 
 // Starts the reviewer, waits for it to end, and returns what it printed and its exit code.
 // Ending bwrap ends everything inside: the reviewer runs as the first process of a process
-// list of its own, which the kernel empties when that process dies. On a Sprite, unshare
-// comes first and ignores SIGTERM, so the review is ended with SIGKILL. A Mac has no process
+// list of its own, which the kernel empties when that process dies. A Mac has no process
 // lists of their own, so the reviewer leads a group, which is ended when it ends. A process
 // left in it would also hold its output open, and the review would wait forever.
 async function spawnReviewer(given: {
@@ -71,7 +69,6 @@ async function spawnReviewer(given: {
     stdout: "pipe",
     stderr: "pipe",
     signal,
-    killSignal: "SIGKILL",
     detached: mac,
   });
   if (mac)
@@ -157,7 +154,6 @@ async function reviewNow(given: {
   // Never the timeout itself, even alone: Bun cancels a timeout's timer when a process given
   // it ends, so the copying before the review would leave the review with no limit.
   const signal = AbortSignal.any(given.signal ? [given.signal, timeout] : [timeout]);
-  const sprite = onSprite(path);
   // A review can be cancelled or run out of time while its folders are copied, as well as
   // while the reviewer runs.
   const whyStopped = (): Review | null => {
@@ -177,14 +173,13 @@ async function reviewNow(given: {
       folder,
       model,
       schema,
-      sprite,
       signal,
     });
     // Only what a shell and the tests need gets in, with the harness's own keys added.
     const sandboxEnv = { ...launch.env, ...filterEnv(env, keys) };
     // Tests and builds write in the clone, so it is seen as a throwaway folder too.
     const copy = join(folder, "clone");
-    const { mounts, at } = await throwawayMounts({ source: clone, copy, sprite, signal });
+    const { mounts, at } = await throwawayMounts({ source: clone, copy, signal });
     mounts.push("--bind", folder, folder);
     // The builder can go on changing its clone after it submits, so the reviewer sees the
     // submitted commit, with what the builder changed since put aside. Ignored files, such
