@@ -115,10 +115,10 @@ afterEach(() => {
 function calls(): string {
   const log = join(home, "calls");
   // The long tmux line that opens the screen is cut to the agent it opens on. Asking tmux's
-  // version, which each opening does, is left out.
+  // version and giving the agents' server its settings, which each opening does, are left out.
   const said = existsSync(log) ? readFileSync(log, "utf8") : "";
   return said
-    .replace(/tmux -L skelcrew -f \/dev\/null source-file -\n/g, "")
+    .replace(/tmux -L skelcrew -f \/dev\/null (source-file -|list-panes -a .*)\n/g, "")
     .replace(/tmux -V\n/g, "")
     .replace(/tmux -L skelcrew-screen .* sh skelcrew (\S+) \S+ ;.*/g, "screen on $1");
 }
@@ -218,45 +218,6 @@ test("installs the daemon as a systemd user service with lingering, once", async
   await skel();
   expect(calls()).not.toContain("systemctl --user enable");
   expect(calls()).not.toContain("loginctl");
-});
-
-// Skelcrew takes a machine with sprite-env, the Sprite's own tool, on its PATH for a Sprite. Like
-// the real one, it starts a service as it creates it.
-function onSprite(): void {
-  fake(
-    "sprite-env",
-    `case "$*" in
-  "services get skelcrew") test -f "$HOME/service" ;;
-  "services create skelcrew "*) : > "$HOME/service"; : > "$HOME/started" ;;
-  "services start skelcrew") : > "$HOME/started" ;;
-esac`,
-  );
-  fake("setpriv", 'while case "$1" in --*) true ;; *) false ;; esac; do shift; done; exec "$@"');
-}
-
-test("on a Sprite, installs the daemon as a Sprite service, not with systemd", async () => {
-  onSprite();
-  const run = await skel("1\nsk-ant-oat01-good\n");
-  expect(run.code).toBe(0);
-  // bwrap refuses to start on a Sprite with the capabilities its commands get.
-  expect(calls()).toContain(
-    `setpriv --inh-caps=-all --ambient-caps=-all --bounding-set=-all ${bin}/bwrap --ro-bind / / true\n`,
-  );
-  expect(calls()).toContain(
-    `sprite-env services create skelcrew --cmd ${join(checkout, "bin", "sc")} --args serve --no-stream\n`,
-  );
-  expect(calls()).not.toContain("systemctl");
-  expect(calls()).not.toContain("loginctl");
-  expect(existsSync(unit())).toBe(false);
-  expect(calls()).toEndWith("daemon lead\nscreen on lead\n");
-
-  writeFileSync(join(home, "calls"), "");
-  rmSync(join(home, "started"));
-  const again = await skel();
-  expect(again.code).toBe(0);
-  expect(again.out).not.toContain("set up");
-  expect(calls()).not.toContain("services create");
-  expect(calls()).toContain("sprite-env services start skelcrew\ndaemon lead\n");
 });
 
 test("installs the service on a machine set up before Skelcrew had one", async () => {

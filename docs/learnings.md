@@ -115,7 +115,8 @@ that covers the code you are about to write.
   `--overlay-src` and `--tmp-overlay`. Ubuntu 24.04's bwrap 0.9 passes every other check,
   then fails every review with "Unknown option --overlay-src". Check `bwrap --version` too.
 - **bwrap can't start inside Skelcrew's own sandbox.** Once Skelcrew builds Skelcrew, tests that start a
-  real sandbox can't run there. That is the one place they may skip.
+  real sandbox can't run there. That is the one place they may skip. They skip on
+  `SKELCREW_TESTS_IN_SANDBOX`, which `scripts/test.ts` sets, never on `SKELCREW_SANDBOX`.
 - **Hide the home folder, then put back only what the agent needs.** Programs often live
   under it: Claude Code under nvm keeps node beside it, and its package where its link
   points. Bring back the command's folder and the folder its link resolves into,
@@ -178,14 +179,16 @@ that covers the code you are about to write.
   first: bwrap refuses to mount a folder that doesn't exist.
 - **Start agents' sandboxes under `nice`.** Builders and reviewers running whole test
   suites at once pushed an 8-CPU server to a load of 18, and each run took twice as long.
-  `nice -n 10` goes first, before `unshare` and the `setpriv` that drops capabilities on a
-  Sprite: lowering a priority needs no capability, and everything started inside keeps it.
+  `nice -n 10` goes first, and everything started inside keeps it. If something that drops
+  capabilities ever comes before bwrap, nice still goes first: lowering a priority needs none.
   `nice` replaces itself with the command, so stopping a session still finds the sandbox.
   The lead stays at normal priority, as it is what you type into.
 - **Don't pass `--new-session`.** It moves Claude Code out of the terminal's process group,
   so it misses resize signals and draws at the wrong width.
 
 ## On a Sprite
+
+Skelcrew no longer supports Sprites itself. These are for the Sprite machine plugin to come.
 
 - **Drop capabilities before starting bwrap.** Commands on a Sprite run with a large set of
   capabilities, and bwrap refuses to start with them ("Unexpected capabilities but not
@@ -336,10 +339,22 @@ that covers the code you are about to write.
   servers need `extended-keys on` and the `extkeys` terminal feature: the screen's asks your
   terminal for extended keys, and the agents' asks the screen in front of it. Either one alone
   still delivers Enter. tmux ignores a pane's request made while the option was off, and
-  hands extended keys only to a program that asked, as Claude Code and Codex do with
-  `CSI > 4;2 m`. Codex reads Shift+Enter only in the CSI u form (`ESC[13;2u`), so the agents'
-  server sets `extended-keys-format csi-u`, which tmux before 3.5 refuses. Claude Code reads
-  both forms. Terminal.app sends plain Enter for Shift+Enter whatever tmux does.
+  hands extended keys only to a program that asked with `CSI > 4;2 m`. Codex reads Shift+Enter
+  only in the CSI u form (`ESC[13;2u`), so the agents' server sets `extended-keys-format csi-u`,
+  which tmux before 3.5 refuses. Claude Code reads both forms. Terminal.app sends plain Enter
+  for Shift+Enter whatever tmux does.
+- **Claude Code asks for extended keys only in a terminal it recognises.** It reads `TERM`,
+  `TERM_PROGRAM` and `TMUX`. `TERM=tmux-256color` alone is not enough, so a session started
+  with `env -i` must keep tmux's `TERM_PROGRAM=tmux`. Without it Claude Code never asks, tmux
+  hands it plain Enter, and Shift+Enter sends the prompt, though every tmux setting is right.
+  A test agent that asks for extended keys unconditionally hides this. `extended-keys always`
+  would also work, but only for panes made after it is set, so running agents keep Enter.
+  An agent already running can't get a new environment. Writing `CSI > 4;2 m` into its pane's
+  terminal (`pane_tty`) asks for it instead: tmux reads it as the agent's own request, and
+  Claude Code then reads `ESC[13;2u` as a newline.
+- **The screen's tmux asks your terminal for extended keys only once it knows the terminal.**
+  It sends `CSI > 4;2 m` after the terminal answers its `CSI > c` and `CSI > q` queries. A test
+  pty that answers nothing never gets asked.
 - **A click on a status line reaches no pane.** `MouseDown1Status` fires, and a range drawn
   with `#[range=user|X]` names what was clicked in `#{mouse_status_range}`. `send-keys -F`
   doesn't expand that in the text it types, so `run-shell -C` must expand the whole
@@ -353,6 +368,27 @@ that covers the code you are about to write.
 - **tmux keeps a program's OSC 52 copy from your terminal** unless `set-clipboard` is `on`.
   Its default, `external`, lets only tmux itself set your clipboard. A terminal tmux doesn't
   recognise also needs the `clipboard` feature.
+- **A drag through two tmux servers needs every raw mouse event passed on.** The front one
+  must hand on `MouseDrag1Pane`, `MouseDragEnd1Pane`, `SecondClick1Pane` and
+  `TripleClick1Pane` with `send-keys -M`. tmux fires `DoubleClick1Pane` a moment after the
+  second press, so passing that on too gives the inner server a press of its own.
+- **A drag that leaves a pane ends in the other pane.** tmux sends the moves and the release
+  to the pane under the mouse, so the pane where the drag began never gets its release.
+  tmux ends a selection where the last move was, and ignores a place outside its window.
+- **tmux picks a mouse event's binding as the event arrives.** A press, a drag and a release
+  in one read reach the inner server before `copy-mode -M` has run, so the release finds no
+  binding. A test must pace them, as a hand does.
+- **In copy mode, a mouse event with no binding goes to `Any`.** With `Any` bound to leave
+  copy mode, a press while scrolled back threw you back to the live agent. Bind the press and
+  the release.
+- **tmux sends no OSC 52 while the pane waits to be drawn.** A copy straight after
+  `copy-mode` reached no terminal. tmux's own double click waits 0.3 seconds first.
+- **`set-clipboard on` lets any program read tmux's newest copy.** tmux answers `OSC 52 ?`
+  with it, so an agent could read what you copied from another. `external` answers nothing but
+  also drops an agent's own copy. Delete each copy once it is sent, and use the
+  `pane-set-clipboard` hook for the agents' own.
+- **Claude Code copies on its own.** Its full-screen drawing selects with the mouse, then copies
+  by OSC 52, and also with `pbcopy` on a Mac or `tmux load-buffer` when it finds tmux.
 - **tmux opens no popup larger than the terminal.** `display-popup` with `-h` taller than the
   terminal says nothing and shows nothing. Its `-w` and `-h` take no formats, so read the
   client's size first and fit the box to it.
@@ -385,13 +421,21 @@ that covers the code you are about to write.
 - **Bun gives each test five seconds unless told otherwise.** On a busy machine, a test that
   starts daemons, sandboxes or many processes takes longer, and failed with nothing wrong.
   `setDefaultTimeout` in a preload only reaches the first test file of a run, so
-  `bun run check` passes `--timeout` instead.
+  `scripts/test.ts` passes `--timeout` instead.
 - **A fixed wait fails on a busy machine.** Timers fire late and processes start slowly, so
   a test that looks after a set time, or counts what happened in it, can look too early.
   Wait for the thing itself: a file, a line on screen, a row, a process gone. Time only
   what can't come too soon, such as the gap between two renewals.
 - **`Bun.spawn` without `env` ignores changes to `process.env`.** It hands on the environment
   the process started with. Pass `env: process.env` to hand on a change.
+- **Tests must not inherit the agent's `SKELCREW_SANDBOX` and `SKELCREW_SOCKET`.** A builder's
+  `bun test` handed them to every sc, tmux server and daemon its tests started. The sidebar
+  refused to start, sc called the real daemon, and dozens of screen tests each failed only
+  after a 20 second wait. The run looked hung. `scripts/test.ts` starts the run without them,
+  and `test/inherited.ts` stops a plain `bun test` inside the sandbox with a message.
+- **A parallel run prints a test file only once it ends.** A file whose tests each fail
+  slowly kept the screen blank for over half an hour. `--dots` shows each test as it ends,
+  and `scripts/test.ts` stops the whole run after 15 minutes.
 - **`--parallel` loads the preload again for each test file, in the same process.** A
   worker runs several files one after another, each with a fresh preload and `process.env`.
   What one file's preload started still runs during the next, so the leak check counted an

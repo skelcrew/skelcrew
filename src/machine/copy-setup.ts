@@ -1,4 +1,4 @@
-// Your setup, copied from the laptop to a server or Sprite by sc remote add and sc --remote:
+// Your setup, copied from the laptop to a server by sc remote add and sc --remote:
 // your config.yaml, the agents' Claude Code token, and your plugins at the laptop's versions.
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -64,7 +64,7 @@ export function writeSent(file: string, setup: Setup, remote: string | null): vo
   writeFileSync(file, JSON.stringify({ ...setup, remote }), { mode: 0o600 });
 }
 
-// Takes the setup the laptop sent, for sc take-setup on a server or Sprite. config.yaml and the
+// Takes the setup the laptop sent, for sc take-setup on a server. config.yaml and the
 // token become the laptop's. Each plugin is installed, or moved, to the laptop's version without
 // asking, as you trusted it there, and its setup runs here in your terminal so it signs in on its
 // own. A plugin gone from the laptop goes here too, and one from a folder here stays. A plugin is

@@ -2,12 +2,17 @@
 // padding, and making text from outside safe and fit to show.
 
 // The colours of marks and words. 256-colour numbers, as they reach your terminal through both
-// tmux servers and sprite, and mean the same whatever your theme. A theme's own green can be olive,
+// tmux servers and ssh, and mean the same whatever your theme. A theme's own green can be olive,
 // close to the yellow of needs you. They are the same on the row you are looking at, so a mark
 // never changes colour as you move onto it.
 export const [green, yellow, red] = ["38;5;120", "38;5;221", "38;5;210"];
 // Dim text is the theme's own grey, so it stays quiet whatever the theme.
 export const grey = "90";
+// A light grey, for text that matters more than dim text but less than a title. It is a fixed
+// one, as a theme has no grey between its dim one and its text. It is lighter still on the row
+// you are looking at, so it stays apart from dim text there.
+export const lightGrey = "38;5;250";
+export const lightGreyOnShade = "38;5;253";
 // Returns text in a colour or style. It ends just that style, not all of them, so a grey
 // background behind the text goes on after it.
 export const paint = (code: string, text: string) => `\x1b[${code}m${text}\x1b[22;39m`;

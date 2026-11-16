@@ -7,6 +7,8 @@ import {
   filled,
   fitted,
   grey,
+  lightGrey,
+  lightGreyOnShade,
   pad,
   paint,
   removeControlCodes,
@@ -24,49 +26,94 @@ type Line = { text: string; place?: string; joins?: boolean };
 
 // Where a name starts, past its mark.
 const indent = `${pad}  `;
-// How many lines a row of the lead or ACTIVE takes.
-const rowHeight = 2;
+// Returns whether a row is a thread whose builder is working, which has a line more than others.
+const working = (row: Row) => row.status !== null && row.word === "working";
+// Returns how many lines a row of the lead or ACTIVE takes, or a row's at least for none.
+const rowHeight = (row: Row | undefined) => (row && working(row) ? 3 : 2);
 
-// Returns how many columns a thread's title has in a sidebar `width` columns wide: what is left
-// once the line at its edge, the mark and the padding on each side are taken. sc ps cuts a title
-// to the same room, so it reads as the sidebar shows it.
+// Returns how many columns a row's first line has for text in a sidebar `width` columns wide:
+// what is left once the line at its edge, the mark and the padding on each side are taken. A
+// thread's name and title share it. sc ps cuts a title to the same room, so it reads much as the
+// sidebar shows it.
 export const titleRoom = (width: number) => Math.max(width - 1 - indent.length - pad.length, 0);
 // Returns the place that names an entry where the sidebar names a row by its session. tmux
 // changes a : in a session's name, so no session can be named so.
 export const entryPlace = (entry: Entry) => `:${entry}`;
 
-// Returns one row as two lines, each cut with … to stop at the padding. A thread's first line
-// is a mark and its short title, or its title when the lead gave it none, and its second is its
-// name, word, harness and running time, all dim but the word, which takes its mark's colour so
-// a green approved or a red error reads at a glance. The name and word come first, so they are the
-// last to be cut. The lead's row has its name on top and no name below. An agent that isn't
-// running is dim, as it can't be picked. The one you are looking at is shaded across the whole
-// width, on both lines. `width` leaves out the line at the sidebar's edge.
+// Returns one row as its lines, each cut with … to stop at the padding. A thread's first line is
+// a mark, its name without its repository's, such as t5, and its short title, or its title when
+// the lead gave it none. A working thread has two more lines, in two greys so they read apart:
+// what its builder has done, as workLine says, in a light grey, then the step it is on, dim, as
+// it matters least. Any other thread has one more: its word, then its harness and its round, dim
+// but the word, which takes its mark's colour so a green approved or a red error reads at a
+// glance. The word comes first, so it is the last to be cut. The lead's row has its name on top
+// and its word below. An agent that isn't running is dim, as it can't be picked. The one you are
+// looking at is shaded across the whole width, on all its lines. `width` leaves out the line at
+// the sidebar's edge.
 function rowLines(row: Row, here: boolean, width: number): string[] {
-  // The short title and title come from an agent and from outside, so they are made safe. A
-  // thread from before Skelcrew kept titles has only its name to show.
+  // The short title, title and step come from an agent and from outside, so they are made safe.
+  // A thread from before Skelcrew kept titles has only its name to show.
   const room = titleRoom(width + 1);
   const lead = row.status === null;
-  const heading = lead ? row.name : removeControlCodes(row.short ?? row.title ?? row.name);
-  const top = fitted(heading, room);
+  const title = lead ? row.name : removeControlCodes(row.short ?? row.title ?? row.name);
+  const top = fitted(lead ? title : `${row.task} ${title}`, room);
   const styled = here ? paint(white, top) : row.running ? top : paint(grey, top);
-  // The second line is cut as a whole, then split back into the name, the word and the rest,
-  // so each keeps its colour. The word takes its mark's colour. Names, words and harnesses are
-  // plain letters, so a split by letters is a split by columns.
   const [sign, colour] = threadMark(row);
-  const name = lead ? "" : `${row.name} · `;
-  const after = [row.harness, row.age].flatMap((part) => (part ? [` · ${part}`] : [])).join("");
-  const below = fitted(`${name}${row.word}${after}`, room);
-  const parts: [string, string][] = [
-    [grey, below.slice(0, name.length)],
-    [colour, below.slice(name.length, name.length + row.word.length)],
-    [grey, below.slice(name.length + row.word.length)],
-  ];
-  const lines = [
-    `${pad}${tinted(here, colour, sign)} ${styled}`,
-    `${indent}${parts.map(([code, text]) => (text ? tinted(here, code, text) : "")).join("")}`,
-  ];
+  const first = `${pad}${tinted(here, colour, sign)} ${styled}`;
+  // A working thread: what it costs in a light grey, then what it does, dim.
+  const light = here ? lightGreyOnShade : lightGrey;
+  const lines = working(row)
+    ? [
+        first,
+        `${indent}${paint(light, fitted(workLine(row, room), room))}`,
+        `${indent}${tinted(here, grey, fitted(removeControlCodes(row.step), room))}`,
+      ]
+    : [first, wordLine(row, here, room)];
   return here ? lines.map((line) => shaded(line, width)) : lines;
+}
+
+// Returns the round of a thread's latest review, such as "round 2", or nothing before its first.
+const roundText = (row: Row) => (row.review ? `round ${row.review.round}` : "");
+
+// Returns a working thread's second line, without its colour, in `room` columns: its harness,
+// its round once it has had a review, how long its builder has worked, its tokens, and how far
+// through its plan it is, such as `claude · round 2 · 12m · 48k tok · ▰▰▰▱▱▱▱ 3/7`. Each is left
+// out when the row has none. When the line is too long, the plan's bar goes first, then the
+// harness, which the row's other lines don't need, then the plan's count. What is still too long
+// is cut with … where it is drawn.
+function workLine(row: Row, room: number): string {
+  const line = (parts: string[]) => parts.filter((part) => part).join(" · ");
+  const known = [roundText(row), row.age, row.tokens];
+  const count = row.plan ? `${row.plan.done}/${row.plan.total}` : "";
+  const bar = row.plan ? `${planBar(row.plan)} ${count}` : "";
+  const tries = [
+    line([row.harness, ...known, bar]),
+    line([row.harness, ...known, count]),
+    line([...known, count]),
+    line(known),
+  ];
+  return tries.find((text) => Bun.stringWidth(text) <= room) ?? line(known);
+}
+
+// Returns a plan's progress as a bar, a filled cell for each step done and an empty one for each
+// still to do, such as ▰▰▰▱▱▱▱ for 3 of 7. A plan of more than 10 steps is shown in 10 cells.
+function planBar(plan: { done: number; total: number }): string {
+  const cells = Math.min(plan.total, 10);
+  const filled = plan.total === 0 ? 0 : Math.floor((plan.done / plan.total) * cells);
+  return "▰".repeat(filled) + "▱".repeat(cells - filled);
+}
+
+// Returns a row's line with its word, in its mark's colour, then its harness and round, dim, cut
+// as a whole to `room`. It is split back into the word and the rest after the cut, so each keeps
+// its colour. Words, harnesses and rounds are plain letters, so a split by letters is a split by
+// columns.
+function wordLine(row: Row, here: boolean, room: number): string {
+  const [, colour] = threadMark(row);
+  const parts = [row.word, row.harness, roundText(row)].filter((part) => part);
+  const below = fitted(parts.join(" · "), room);
+  const word = below.slice(0, row.word.length);
+  const rest = below.slice(row.word.length);
+  return `${indent}${tinted(here, colour, word)}${rest ? tinted(here, grey, rest) : ""}`;
 }
 
 // Returns an entry as one line: its name where a thread's title starts, and at the end, dim,
@@ -117,9 +164,9 @@ export function layout(
 ): Line[] {
   // A blank line comes first, so the lead's row, grey when you look at it, doesn't touch the
   // header above the sidebar and read as part of it. Clicks find rows in these same lines. It
-  // gives way on a sidebar too short for it and the whole row you are looking at, which is two
-  // lines.
-  if (size.height <= rowHeight) return layoutBelowBlank(rows, entries, shown, size);
+  // gives way on a sidebar too short for it and the whole row you are looking at.
+  if (size.height <= rowHeight(rows.find((row) => row.session === shown)))
+    return layoutBelowBlank(rows, entries, shown, size);
   return [
     { text: "" },
     ...layoutBelowBlank(rows, entries, shown, { ...size, height: size.height - 1 }),
@@ -161,7 +208,8 @@ function layoutBelowBlank(
   // Too short for all of that and the row you are on, or a row when you are on none of them:
   // the lead and the threads alone.
   const left = size.height - top.length;
-  if (left < (threads.length > 0 ? rowHeight : 0)) return scrolled(blocks, here, size.height);
+  const needed = threads.length > 0 ? rowHeight(threads[Math.max(shownThread, 0)]) : 0;
+  if (left < needed) return scrolled(blocks, here, size.height);
   return [...top, ...scrolled(threads.map(linesOf), Math.max(shownThread, 0), left)];
 }
 

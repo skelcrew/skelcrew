@@ -24,6 +24,7 @@ import {
   fakePlugin,
   git,
   homeEnv,
+  insideSandbox,
   prItem,
   runSkelInTerminal,
   source,
@@ -381,7 +382,7 @@ test("a labeled task claimed elsewhere starts no thread, and a claim that fails 
 }, 30_000);
 
 // bubblewrap can't start inside Skelcrew's own sandbox, so only there builders can't start.
-describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("polling a forge", () => {
+describe.skipIf(insideSandbox)("polling a forge", () => {
   test("a PR's checks are saved for the strip, without Skelcrew's own review check", async () => {
     await approvedApp12();
     await morePolls();

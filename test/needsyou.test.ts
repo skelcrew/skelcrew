@@ -11,12 +11,14 @@ import { createConnection } from "node:net";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import type { Subprocess } from "bun";
+import { z } from "zod";
 import { leadPlaces } from "../src/paths.ts";
 import {
   answer,
   fakePlugin,
   git,
   homeEnv,
+  insideSandbox,
   read,
   runSkel,
   source,
@@ -172,6 +174,15 @@ async function hook(step: "ask" | "answer" | "talk" | "fail") {
 
 const notes = (repo = "app") => read(join(lead(repo), "typed")).split("\x1b[201~").length - 1;
 
+// When app-12's builder's current stretch of work began, which the sidebar times.
+function workingSince(): number | null {
+  const db = new Database(join(data(), "skelcrew.db"));
+  db.run("PRAGMA busy_timeout = 5000");
+  const row = db.query("SELECT working_since FROM threads WHERE folder = 'app-12'").get();
+  db.close();
+  return z.object({ working_since: z.number().nullable() }).parse(row).working_since;
+}
+
 function setNeedsYou(): void {
   const db = new Database(join(data(), "skelcrew.db"));
   db.run("PRAGMA busy_timeout = 5000");
@@ -205,7 +216,7 @@ async function startApp12(open = true) {
 }
 
 // bubblewrap can't start inside Skelcrew's own sandbox, so only there builders can't start.
-describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("needs you", () => {
+describe.skipIf(insideSandbox)("needs you", () => {
   test("a builder's question marks the thread needs you, tells the lead once, and clears when answered", async () => {
     addApp();
     await startApp12();
@@ -246,6 +257,19 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("needs you", () => {
     // You fix it, such as with /login, and type to the builder.
     await hook("talk");
     await untilNeedsYou(false);
+  }, 60_000);
+
+  test("starting the builder starts a stretch of work, and typing to it starts another", async () => {
+    addApp();
+    await startApp12();
+    const started = workingSince() ?? 0;
+    expect(started).toBeGreaterThan(0);
+    // A review's changes, a message or your answer typed in start the clock again.
+    await Bun.sleep(10);
+    await hook("talk");
+    expect(workingSince() ?? 0).toBeGreaterThan(started);
+    // The clock is no news for the thread's log, which only its changes go in.
+    expect(read(join(data(), "threads", "app-12.log"))).not.toContain("working_since");
   }, 60_000);
 
   test("answering a question leaves the thread needing you for another reason", async () => {

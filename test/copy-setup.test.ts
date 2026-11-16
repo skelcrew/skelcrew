@@ -37,14 +37,15 @@ beforeEach(() => {
   mkdirSync(join(root, "bin"));
   mkdirSync(join(root, "serverbin"));
   const log = join(root, "calls");
-  // Like ssh, it joins the words after the host into one line for the server's shell, which
-  // runs in the server's home. ssh -G, which only reads your ssh config, finds nothing, so
-  // Skelcrew shares no connection.
+  // Like ssh, it skips its options and joins the words after the host into one line for the
+  // server's shell, which runs in the server's home. ssh -G, which only reads your ssh config,
+  // finds nothing, so Skelcrew shares no connection.
   writeFileSync(
     join(root, "bin", "ssh"),
     `#!/bin/sh
 test "$1" = -G && exit 0
 echo "ssh $*" >> "${log}"
+test "$1" = -o && shift 2
 test "$1" = -t && shift
 shift
 cd "${server()}" && HOME="${server()}" XDG_RUNTIME_DIR="${server()}/run" PATH="${root}/serverbin:/usr/bin:/bin" exec sh -c "$*"`,

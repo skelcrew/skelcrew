@@ -90,8 +90,9 @@ beforeEach(() => {
     `#!/bin/sh
 test "$1" = -G && exec ${realSsh} -G -F "$HOME/.ssh/config" "$2"
 echo "ssh $*" >> "$HOME/calls"
-test "$1" = -t && shift
-while test "$1" = -o; do shift 2; done
+while test "$1" = -o || test "$1" = -t; do
+  if test "$1" = -t; then shift; else shift 2; fi
+done
 shift
 bin="$HOME/serverbin"
 cd "$HOME/server" && HOME="$HOME/server" PATH="$bin:/usr/bin:/bin" exec sh -c "$*"
@@ -168,11 +169,12 @@ const shared = `-o ControlMaster=auto -o ControlPersist=60 -o ControlPath=/tmp/s
 // How Skelcrew starts every ssh command to the server, sharing one connection.
 const ssh = `ssh ${shared} simon@workbox`;
 
-// The line ssh runs on the server: with the laptop's build, so a copied Skelcrew can tell it is
+// The line ssh runs on the server, saying only errors so that ssh doesn't say each time the
+// connection closes: with the laptop's build, so a copied Skelcrew can tell it is
 // out of date, or without, to run whatever Skelcrew is there. Always with the server's name, for
 // the title of your terminal.
 const onServer = (words: string, build: string | null = laptop.commit) =>
-  `ssh -t ${shared} simon@workbox env PATH="$HOME/.local/bin:$PATH" SKELCREW_REMOTE_NAME=simon@workbox ${build ? `SKELCREW_LAPTOP_BUILD=${build} ` : ""}sc${words}`;
+  `ssh -o LogLevel=ERROR -t ${shared} simon@workbox env PATH="$HOME/.local/bin:$PATH" SKELCREW_REMOTE_NAME=simon@workbox ${build ? `SKELCREW_LAPTOP_BUILD=${build} ` : ""}sc${words}`;
 
 // Runs sc in a terminal and types the next of `answers` at each [Y/n] or [y/N] question it asks.
 // Returns all it wrote there, escape codes included, and its exit code.
@@ -195,14 +197,6 @@ async function skelInTerminal(args: string[], answers: string[] = []) {
   run.terminal?.close();
   return { wrote, code };
 }
-
-test("the terminal's title is saved before the server is reached and put back after", async () => {
-  installed();
-  const { wrote } = await skelInTerminal(["--remote", "simon@workbox", "ps"]);
-  expect(wrote.startsWith("\x1b[22;0t")).toBe(true);
-  expect(wrote.endsWith("\x1b[23;0t")).toBe(true);
-  expect(wrote).toContain("Skelcrew on the server got 1 arguments");
-});
 
 test("runs sc on the server with the repository you are in", async () => {
   installed();
@@ -261,6 +255,8 @@ test("in a terminal, --remote offers to set up a server without Skelcrew, then r
   expect(wrote).toContain("simon@workbox isn't set up. Set it up now? [Y/n]");
   expect(wrote).toContain("the first run on the server");
   expect(wrote).toContain("Skelcrew on the server got 1 arguments\r\n[ps]\r\n");
+  // It connects right away, so it prints no command to connect.
+  expect(wrote).not.toContain("Connect to it with");
   expect(code).toBe(3);
   const lines = calls().trim().split("\n");
   expect(lines[0]).toBe(onServer(" ps"));
@@ -469,7 +465,7 @@ test("the update keeps the old Skelcrew when the copy fails", async () => {
   expect(calls()).not.toContain("systemctl --user restart");
 });
 
-// Runs main.ts as the Skelcrew on a server or Sprite would run it, built from the given commit
+// Runs main.ts as the Skelcrew on a server would run it, built from the given commit
 // or from a checkout, asked for its help by a laptop with the given build.
 function farSkel(built: string | null, laptopBuild?: string, args = ["--help"]) {
   const define = built === null ? [] : ["--define", `SKELCREW_BUILD="${built}"`];
@@ -537,7 +533,7 @@ test("Skelcrew update is gone", async () => {
 test("sc remote add copies Skelcrew to a server, runs the first run, and prints how to connect", async () => {
   const run = await skel(["remote", "add", "simon@workbox"]);
   expect(run.code).toBe(0);
-  expect(run.out).toContain("Setting up simon@workbox: copying Skelcrew there and running");
+  expect(run.out).toContain("Setting up simon@workbox: copying Skelcrew there and setting it up.");
   expect(run.out).toContain("the first run on the server\n");
   expect(run.out).toEndWith(
     "simon@workbox is ready. Connect to it with:\n  sc --remote simon@workbox\n",
@@ -575,7 +571,8 @@ test("every ssh and scp for a setup shares one connection, through a private fol
     .split("\n")
     .filter((line) => /^(ssh|scp) /.test(line));
   expect(lines.length).toBeGreaterThanOrEqual(5);
-  for (const line of lines) expect(line).toMatch(/^(ssh -t|ssh|scp) -o ControlMaster=auto /);
+  for (const line of lines)
+    expect(line).toMatch(/^(ssh -o LogLevel=ERROR -t|ssh|scp) -o ControlMaster=auto /);
   for (const line of lines) expect(line).toContain(` ${shared} `);
   const folder = lstatSync(`/tmp/sc-${userInfo().uid}`);
   expect(folder.isDirectory()).toBe(true);
@@ -612,7 +609,7 @@ for (const { what, yours } of [
     writeFileSync(join(home, ".ssh", "config"), yours);
     installed(laptop.commit);
     await skel(["--remote", "simon@workbox", "ps"]);
-    expect(calls()).toStartWith("ssh -t simon@workbox env ");
+    expect(calls()).toStartWith("ssh -o LogLevel=ERROR -t simon@workbox env ");
   });
 
 // A config that ssh can't read gives nothing to go by, so nothing is added.
@@ -620,7 +617,7 @@ test("an ssh config ssh can't read adds no options", async () => {
   writeFileSync(join(home, ".ssh", "config"), "Host workbox\n  NoSuchOption yes\n");
   installed(laptop.commit);
   await skel(["--remote", "simon@workbox", "ps"]);
-  expect(calls()).toStartWith("ssh -t simon@workbox env ");
+  expect(calls()).toStartWith("ssh -o LogLevel=ERROR -t simon@workbox env ");
 });
 
 // ssh starts another ssh for a ProxyJump host. If that one took the server's socket, later
@@ -630,7 +627,7 @@ test("a ProxyJump host gets none of the sharing options", async () => {
   writeFileSync(join(home, ".ssh", "config"), "Host workbox\n  ProxyJump gate\n");
   installed(laptop.commit);
   await skel(["--remote", "simon@workbox", "ps"]);
-  expect(calls()).toStartWith(`ssh -t ${shared} simon@workbox `);
+  expect(calls()).toStartWith(`ssh -o LogLevel=ERROR -t ${shared} simon@workbox `);
   mkdirSync(join(home, "jumpbin"));
   writeFileSync(join(home, "jumpbin", "ssh"), `#!/bin/sh\necho "$*" > "${home}/jump"\n`, {
     mode: 0o755,
@@ -650,7 +647,9 @@ test("sc remote add copies your setup there before the first run", async () => {
   writeFileSync(join(home, ".config", "skelcrew", "config.yaml"), "harness: codex\n");
   const run = await skel(["remote", "add", "simon@workbox"]);
   expect(run.code).toBe(0);
-  expect(run.out).toContain("took the laptop's setup\nthe first run on the server\n");
+  expect(run.out).toContain(
+    "Copying your settings, Claude sign-in and plugins to simon@workbox.\ntook the laptop's setup\nthe first run on the server\n",
+  );
   const lines = calls().trim().split("\n");
   const send = ".config/skelcrew/laptop-setup.json";
   expect(lines).toContain(
@@ -696,6 +695,34 @@ test("sc remote add needs a host", async () => {
   expect(run.err).toContain("sc remote add needs a host");
   expect(run.code).toBe(1);
   expect(calls()).toBe("");
+});
+
+test("a host that names a machine plugin is refused, not taken as an SSH host", async () => {
+  for (const plugin of ["sprite", "3cloud"]) {
+    for (const args of [
+      ["remote", "add", `${plugin}:demo`],
+      ["--remote", `${plugin}:demo`, "ps"],
+    ]) {
+      const run = await skel(args);
+      expect(run.err).toContain(`no machine plugin named ${plugin}`);
+      expect(run.code).toBe(1);
+    }
+  }
+  expect(calls()).toBe("");
+});
+
+test("an IPv6 address is an SSH host, though it starts like a plugin name", async () => {
+  for (const host of ["abcd::1", "[abcd::1]", "simon@abcd::1"]) {
+    for (const args of [
+      ["remote", "add", host],
+      ["--remote", host, "ps"],
+    ]) {
+      const run = await skel(args);
+      expect(run.err).not.toContain("no machine plugin");
+    }
+    // The host comes after ssh's options, as a word of its own.
+    expect(calls()).toContain(` ${host} `);
+  }
 });
 
 test("an agent can't set up a machine", () => {

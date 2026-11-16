@@ -5,6 +5,7 @@ import { drawTop, type Top } from "../src/screen/strip.ts";
 
 const lead: Row = {
   name: "lead",
+  task: "",
   session: "lead",
   status: null,
   needsYou: false,
@@ -13,6 +14,9 @@ const lead: Row = {
   harness: "claude",
   agentHarness: "claude",
   age: "",
+  tokens: "",
+  step: "",
+  plan: null,
   fullName: null,
   title: null,
   short: null,
@@ -138,10 +142,10 @@ test("the tabs come first: the strip gives way before any tab does", () => {
 const roomy = { left: 40, width: 99 };
 
 test("above the sidebar, Skelcrew in white in line with the marks, then dim a dot and where it runs", () => {
-  const line = top({ where: "sprite:demo" }, roomy);
-  expect(above({ where: "sprite:demo" }, roomy)).toStartWith("  Skelcrew v0.1.0 · sprite:demo");
+  const line = top({ where: "simon@workbox" }, roomy);
+  expect(above({ where: "simon@workbox" }, roomy)).toStartWith("  Skelcrew v0.1.0 · simon@workbox");
   expect(line).toContain("#[bold,fg=colour231]Skelcrew#[default]");
-  expect(line).toContain("#[fg=brightblack] v0.1.0 · sprite:demo#[default]");
+  expect(line).toContain("#[fg=brightblack] v0.1.0 · simon@workbox#[default]");
 });
 
 test("on this machine the header is Skelcrew and its version, with no dot and no place", () => {

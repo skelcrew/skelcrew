@@ -11,10 +11,10 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { review } from "../src/flow/reviewer.ts";
-import { source } from "./harness.ts";
+import { insideSandbox, source } from "./harness.ts";
 
 let home = "";
 let clone = "";
@@ -23,10 +23,6 @@ let bin = "";
 const codexHome = () => join(home, ".local", "share", "skelcrew", "codex");
 const sessions = () => join(codexHome(), "sessions");
 const issue = { title: "Fix the flaky test", body: "It fails one run in ten." };
-
-// A Sprite's own disk is an overlay, where bwrap can't lay another, while its /tmp is a disk
-// of its own. So there the test's home is on the Sprite's own disk, as Skelcrew's is.
-const sprite = existsSync("/.sprite/api.sock");
 
 // Runs git in the clone and returns what it printed.
 const git = (...args: string[]) =>
@@ -37,7 +33,7 @@ const git = (...args: string[]) =>
     .trim();
 
 beforeEach(() => {
-  home = realpathSync(mkdtempSync(join(sprite ? homedir() : tmpdir(), "skel-reviewer-test-")));
+  home = realpathSync(mkdtempSync(join(tmpdir(), "skel-reviewer-test-")));
   bin = join(home, "bin");
   mkdirSync(bin);
   clone = join(home, ".local", "share", "skelcrew", "threads", "app-12");
@@ -52,11 +48,10 @@ afterEach(() => {
   rmSync(home, { recursive: true, force: true });
 });
 
-// Without your PATH, which may find a real codex or claude. A Sprite's own tools are kept,
-// which tell Skelcrew it runs on one.
+// Without your PATH, which may find a real codex or claude.
 const env = () => ({
   HOME: home,
-  PATH: `${bin}:/usr/local/bin:/usr/bin:/bin${sprite ? ":/.sprite/bin" : ""}`,
+  PATH: `${bin}:/usr/local/bin:/usr/bin:/bin`,
   GH_TOKEN: "secret",
   OPENAI_API_KEY: "sk-test",
 });
@@ -96,7 +91,7 @@ const start = (
 const ownNiceness = () => Number(Bun.spawnSync(["nice"], { stdout: "pipe" }).stdout.toString());
 
 // bubblewrap can't start inside Skelcrew's own sandbox, so only there these tests can't run.
-describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("reviewer", () => {
+describe.skipIf(insideSandbox)("reviewer", () => {
   test("answers with Codex's verdict, given the task and the base branch", async () => {
     fakeCodex('{"verdict":"changes","body":"The retry has no test."}');
     expect(await start()).toEqual({ verdict: "changes", body: "The retry has no test." });
@@ -288,7 +283,7 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("reviewer", () => {
   // so it reports what it was given in its answer's body.
   function fakeClaude(lines: string[]): void {
     script("claude", [
-      "seen=$( (printf '%s\\n' \"$@\"; env | sort | grep -E '^(CLAUDE|GH_)'; pwd; echo x > README; cat README) | base64 -w0)",
+      "seen=$( (printf '%s\\n' \"$@\"; env | sort | grep -E '^(CLAUDE|GH_)'; cat \"$CLAUDE_CONFIG_DIR/settings.json\"; echo; pwd; echo x > README; cat README) | base64 -w0)",
       ...lines,
     ]);
   }
@@ -308,6 +303,8 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("reviewer", () => {
     expect(seen).toContain("CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-tok");
     expect(seen.some((line) => line.startsWith("CLAUDE_CONFIG_DIR="))).toBe(true);
     expect(seen.some((line) => line.startsWith("GH_"))).toBe(false);
+    // Claude Code takes this setting only from its config folder's settings.json.
+    expect(seen).toContain('{"skipDangerousModePermissionPrompt":true}');
     expect(seen.slice(-3)).toEqual([clone, "x", ""]);
     expect(readFileSync(join(clone, "README"), "utf8")).toBe("app\n");
   });

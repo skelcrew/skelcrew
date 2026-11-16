@@ -66,8 +66,8 @@ const input = new RegExp(
 // screen's session, whose third pane this is. It shows what it was last told, and the list of
 // keys while they are toggled on, taking as many rows as they need, up to a third of the screen.
 // More keys than that scroll with the wheel. A click on ? keys shows or hides them, and a click
-// on them hides them. It writes only when what shows changed, so a quiet screen lets a Sprite
-// sleep.
+// on them hides them. It writes only when what shows changed, so a quiet screen sends nothing
+// over a slow link.
 export async function runFooter(agents: string, session: string): Promise<void> {
   const socket = screenSocket(agents);
   const self = `=${session}:.2`;
