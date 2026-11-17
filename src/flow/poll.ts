@@ -233,10 +233,14 @@ async function pollRepository(
     // Bring Skelcrew's clone's default branch up to date once the forge answered, so a PR it
     // says merged, whoever merged it, or a push straight to the default branch, reaches
     // builders fetching from the clone by this poll. Cheap when nothing changed. A failed fetch
-    // leaves the clone as it was until the next poll, and holds up nothing else.
-    await refreshClone(db, repository).catch((error) =>
-      console.log(`couldn't update Skelcrew's clone of ${owner}/${repo}: ${errorText(error)}`),
-    );
+    // leaves the clone as it was until the next poll, and holds up nothing else. sc repo rm
+    // may have removed the repository while the plugins answered, and a refresh then would
+    // clone it again as one being brought in. The check and the call share a tick, so a
+    // removal after the check still counts as one.
+    if (repositories(db).some((r) => r.owner === owner && r.repo === repo))
+      await refreshClone(db, repository).catch((error) =>
+        console.log(`couldn't update Skelcrew's clone of ${owner}/${repo}: ${errorText(error)}`),
+      );
   }
   // With the copy up to date, start labeled tasks, then act on each thread: by its PR with a
   // forge, or by its branch without one.

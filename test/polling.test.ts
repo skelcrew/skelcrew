@@ -453,6 +453,27 @@ await Promise.all(queued);`;
   expect(existsSync(skelcrewClone)).toBe(false);
 });
 
+// A poll already asking the forge when sc repo rm runs must not bring the clone back.
+test("a repository removed while its poll waits on the forge keeps no clone", async () => {
+  addApp();
+  changes([]);
+  serve();
+  const skelcrewClone = join(data(), "repos", "simon", "app");
+  await until(() => existsSync(join(skelcrewClone, "README")));
+  // Hold the next answer, and remove the repository as sc repo rm does while it is held.
+  writeFileSync(join(plugin, "hold-changed"), "");
+  await until(() => existsSync(join(plugin, "held-changed")));
+  const code = `import { removeRepo } from ${JSON.stringify(source("flow/repo.ts"))};
+await removeRepo("app", ${JSON.stringify(socket)});`;
+  const removed = Bun.spawnSync([process.execPath, "-e", code], { env: env(), stderr: "pipe" });
+  expect(removed.stderr.toString()).toBe("");
+  expect(existsSync(skelcrewClone)).toBe(false);
+  // Let the poll go on, and give it time to finish: a clone would be back within it.
+  rmSync(join(plugin, "hold-changed"));
+  await Bun.sleep(2000);
+  expect(existsSync(skelcrewClone)).toBe(false);
+});
+
 // Two machines running Skelcrew on one repository both see the label, and only the one whose
 // claim the tracker grants may start it.
 test("a labeled task claimed elsewhere starts no thread, and a claim that fails is tried again", async () => {
