@@ -1,6 +1,7 @@
-// Typing a message into an agent's session: waiting until its harness shows it is ready, then
-// pasting the message and its Enter, one message at a time per session.
-import { mustTmux, tmux } from "./tmux.ts";
+// Typing a message into an agent's session, the session module's other half: waiting until its
+// harness shows it is ready, then pasting the message and its Enter, one message at a time per
+// session.
+import { mustTmux, tmux } from "../tmux.ts";
 
 // How typing waits, in milliseconds. `moment` is the pause between two looks at the screen,
 // and between a paste and its Enter. `timeout` is how long to wait for the prompt to be ready

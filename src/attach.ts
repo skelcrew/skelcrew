@@ -1,7 +1,7 @@
 // Attaching you to a repository's lead or a thread's builder, after making sure the daemon
 // runs on this Skelcrew's code. Plain sc attaches to a lead, and sc attach to a builder.
 import { z } from "zod";
-import { agentRuns } from "./agents/tmux.ts";
+import { agentRuns } from "./agents/session.ts";
 import { ask } from "./client.ts";
 import { openDb } from "./db.ts";
 import { leadOf } from "./flow/lead.ts";
@@ -10,7 +10,7 @@ import { restartDaemon, startDaemon } from "./machine/service.ts";
 import { openScreen } from "./screen/screen.ts";
 import { checkoutFolder, git, release, singleFile } from "./version.ts";
 
-// The daemon's answer when asked for a lead: the lead's tmux session and its repository's
+// The daemon's answer when asked for a lead: the lead's session and its repository's
 // owner/name, that every tab is closed when only an open tab would do, or why it has none.
 const LeadReply = z.union([
   z.object({ lead: z.string(), repository: z.string() }),
@@ -89,7 +89,7 @@ async function ensureDaemon(): Promise<void> {
 // leave with Alt-Q. The lead is for `from`, an owner/repo, or else for the repository you
 // opened last. With `tab`, only a repository whose tab is open will do. Returns false, with no
 // screen opened, when every tab is closed.
-export async function attachToLead(tmux: string, from?: string, tab = false): Promise<boolean> {
+export async function attachToLead(agents: string, from?: string, tab = false): Promise<boolean> {
   await ensureDaemon();
   // Asking for the lead brings it back if it ended while the daemon kept running. Starting it
   // takes longer than a status, hence the longer wait.
@@ -103,7 +103,7 @@ export async function attachToLead(tmux: string, from?: string, tab = false): Pr
     throw new Error("the daemon answered in a way this Skelcrew doesn't understand");
   if ("error" in lead.data) throw new Error(lead.data.error);
   if ("closed" in lead.data) return false;
-  await openScreen(tmux, lead.data.lead, lead.data.lead, lead.data.repository);
+  await openScreen(agents, lead.data.lead, lead.data.lead, lead.data.repository);
   return true;
 }
 
@@ -111,14 +111,14 @@ export async function attachToLead(tmux: string, from?: string, tab = false): Pr
 // sidebar, and returns when you leave with Alt-Q. Only you can run it, since it takes over
 // your terminal. It checks the builder is running before it starts the daemon.
 export async function attachToThread(
-  tmux: string,
+  agents: string,
   repository: string,
   task: string,
 ): Promise<void> {
   const db = openDb();
   const thread = findThread(db, repository, task);
   // A builder that exited leaves its last screen behind, which would look like it still runs.
-  if (!agentRuns(tmux, thread.folder))
+  if (!agentRuns(agents, thread.folder))
     throw new Error(
       `${repository}-${task}'s builder isn't running: the thread is ${thread.status}`,
     );
@@ -132,5 +132,5 @@ export async function attachToThread(
   const fullName = `${thread.owner}/${thread.repo}`;
   await ask({ command: "lead", from: fullName }, 60_000);
   const { name } = leadOf(db, thread.owner, thread.repo);
-  await openScreen(tmux, thread.folder, name, fullName);
+  await openScreen(agents, thread.folder, name, fullName);
 }

@@ -1,8 +1,9 @@
 // The screen: the sidebar on the left of your terminal, with the agent or list you are looking
 // at on the right, the strip above it and the footer across the bottom. It is a second tmux
 // server, one session per open terminal, ended when you leave.
-import { applyConfig, envWithoutTmux, screenSocket, tmuxIsAtLeast } from "../agents/tmux.ts";
+import { applyConfig, attachCommand } from "../agents/session.ts";
 import { windowTitle } from "../say.ts";
+import { envWithoutTmux, screenSocket, tmuxIsAtLeast } from "../tmux.ts";
 import { mainFile, singleFile } from "../version.ts";
 import type { Entry } from "./lists.ts";
 
@@ -138,17 +139,19 @@ const config = [
   ["set-hook", "-g", "window-resized", `resize-pane -t :.0 -x ${sidebarWidth}`],
 ];
 
-// Returns the command for the right pane: an ordinary tmux client attached to the session.
-// When the client ends, because the agent you were looking at ended or you left its session
-// with its own keys, it comes back on the lead's session, trying again while the lead
-// restarts. While there is no session to attach to, such as for a lead starting or a
-// repository just removed, it says so in one line, not tmux's error each second. TMUX must go,
-// or tmux refuses to attach from inside tmux.
+// Returns the command for the right pane: the agent's session shown as is. When it ends, because
+// the agent you were looking at ended or you left its session with its own keys, it comes back
+// on the lead's session, trying again while the lead restarts. While there is no session to
+// show, such as for a lead starting or a repository just removed, it says so in one line, not
+// the session host's error each second.
 export function agentClient(agents: string, session: string, lead: string): string[] {
-  const client = `tmux -L "$1" -f /dev/null attach -t`;
+  // Each command goes into the shell script quoted word by word, so a name can't break it.
+  const quoted = (argv: string[]) => argv.map((word) => `'${word.replaceAll("'", "'\\''")}'`);
+  const agent = quoted(attachCommand(agents, session)).join(" ");
+  const back = quoted(attachCommand(agents, lead)).join(" ");
   const wait = `[ -n "$said" ] || { echo; echo 'Waiting for the lead to start.'; said=1; }`;
-  const script = `unset TMUX; ${client} "=$2" 2>/dev/null || ${wait}; while sleep 1; do ${client} "=$3" 2>/dev/null && said= || { ${wait}; }; done`;
-  return ["sh", "-c", script, "sh", agents, session, lead];
+  const script = `${agent} 2>/dev/null || ${wait}; while sleep 1; do ${back} 2>/dev/null && said= || { ${wait}; }; done`;
+  return ["sh", "-c", script];
 }
 
 // Returns a command that runs this same Skelcrew with the given words. A Skelcrew built as a

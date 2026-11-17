@@ -120,7 +120,7 @@ function calls(): string {
   return said
     .replace(/tmux -L skelcrew -f \/dev\/null (source-file -|list-panes -a .*)\n/g, "")
     .replace(/tmux -V\n/g, "")
-    .replace(/tmux -L skelcrew-screen .* sh skelcrew (\S+) \S+ ;.*/g, "screen on $1");
+    .replace(/tmux -L skelcrew-screen .*? 'attach' '-t' '=([^']+)' .*/g, "screen on $1");
 }
 
 const config = () => join(home, ".config", "skelcrew", "config.yaml");

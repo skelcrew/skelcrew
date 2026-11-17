@@ -2,7 +2,7 @@
 // other's session once it is idle, and kept in the thread's log. They never go to a tracker or
 // forge.
 import type { Database } from "bun:sqlite";
-import { agentRuns } from "../agents/tmux.ts";
+import { agentRuns } from "../agents/session.ts";
 import { typeInto } from "../agents/typing.ts";
 import { errorText } from "../say.ts";
 import { noteForLead } from "./lead.ts";
@@ -35,7 +35,7 @@ function wrapMessage(from: string, reply: string, text: string): string {
 // in ends its needing you.
 // A message that can't be typed in, such as to a builder busy for half an hour, is logged,
 // and the lead hears that it didn't arrive.
-export function messageBuilder(db: Database, tmux: string, thread: Thread, text: string): string {
+export function messageBuilder(db: Database, agents: string, thread: Thread, text: string): string {
   // Refuse first, while the lead's command still waits for an answer: a stopped thread gets
   // the command that brings it back, any other one without a session gets its status.
   const name = threadName(db, thread);
@@ -45,7 +45,7 @@ export function messageBuilder(db: Database, tmux: string, thread: Thread, text:
       `${name}'s builder isn't running: the thread is stopped. sc start ${name} brings it back.`,
     );
   // A thread still setting up has no session yet, and one that failed or is done has none left.
-  if (!live || !agentRuns(tmux, thread.folder))
+  if (!live || !agentRuns(agents, thread.folder))
     throw new Error(`${name}'s builder isn't running: the thread is ${thread.status}.`);
   if (thread.asking)
     throw new Error(
@@ -58,7 +58,7 @@ export function messageBuilder(db: Database, tmux: string, thread: Thread, text:
   // only once typed: then the reviewer never sees what the builder didn't, and messages keep
   // their order, as typing into a session goes one message at a time.
   const message = wrapMessage("lead", "sc tell lead", text);
-  typeInto(tmux, thread.folder, builderHarness(thread).marks, message, {
+  typeInto(agents, thread.folder, builderHarness(thread).marks, message, {
     timeout: 30 * 60_000,
   }).then(
     () => {
@@ -77,7 +77,7 @@ export function messageBuilder(db: Database, tmux: string, thread: Thread, text:
         readThread(db, thread.folder),
         `couldn't tell its builder what the lead said: ${said}`,
       );
-      noteForLead(db, tmux, thread, `${name}'s builder didn't get your message: ${said}`);
+      noteForLead(db, agents, thread, `${name}'s builder didn't get your message: ${said}`);
     },
   );
   return name;
@@ -86,8 +86,8 @@ export function messageBuilder(db: Database, tmux: string, thread: Thread, text:
 // Has the daemon type a builder's message into its repository's lead, naming the thread it
 // comes from and how to answer, and logs it in the thread's log. Returns at once, like any
 // agent command.
-export function messageLead(db: Database, tmux: string, thread: Thread, text: string): void {
+export function messageLead(db: Database, agents: string, thread: Thread, text: string): void {
   const name = threadName(db, thread);
-  noteForLead(db, tmux, thread, wrapMessage(name, `sc tell ${name}`, text));
+  noteForLead(db, agents, thread, wrapMessage(name, `sc tell ${name}`, text));
   log(db, readThread(db, thread.folder), `its builder told the lead: ${text}`);
 }

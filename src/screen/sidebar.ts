@@ -3,23 +3,13 @@
 // is doing. Picking a thread switches the client in the right pane, and picking an entry puts its
 // list there. The sidebar also keeps the top row up to date, with the header, the tabs and the
 // strip, tells the footer what to say under an agent, and switches tabs.
-import {
-  exitedCleanly,
-  paneTty,
-  paneWidth,
-  respawnPane,
-  runningSessions,
-  screenSocket,
-  shownSession,
-  showSession,
-  showStrip,
-  tmux,
-} from "../agents/tmux.ts";
+import { exitedCleanly, runningSessions, shownSession, showSession } from "../agents/session.ts";
 import { openRepository } from "../client.ts";
 import { openDb } from "../db.ts";
 import { leadOf } from "../flow/lead.ts";
 import { updateNotice } from "../machine/update.ts";
 import { leadPlaces } from "../paths.ts";
+import { escapeSemicolon, mustTmux, screenSocket, tmux } from "../tmux.ts";
 import { version } from "../version.ts";
 import { agentFooter, tellFooter } from "./footer.ts";
 import { draw, entryPlace, noticeLines, type Size } from "./layout.ts";
@@ -38,6 +28,27 @@ const input = new RegExp(
   `${esc}\\[1;([34])([ABCD])|${esc}\\[<0;\\d+;(\\d+)M|${esc}\\](skel-(?:tab|page|thread));([^\x07]*)\x07`,
   "g",
 );
+
+// Returns the terminal of a pane on the screen's server, by which the agents' server knows the
+// client running in it. Throws when the pane is gone, since the sidebar then has nothing to
+// switch.
+const paneTty = (screen: string, target: string) =>
+  mustTmux(screen, ["display-message", "-p", "-t", target, "#{pane_tty}"]).trim();
+
+// Returns the width of a pane, or 0 once it is gone.
+const paneWidth = (screen: string, target: string) =>
+  Number(tmux(screen, ["display-message", "-p", "-t", target, "#{pane_width}"]).out.trim());
+
+// Sets the status line of a session, as a tmux format: the header, the tabs and the strip. Each
+// set makes tmux redraw the whole screen, so the sidebar calls this only when the line changed.
+function showStrip(screen: string, session: string, line: string): void {
+  tmux(screen, ["set", "-t", `=${session}:`, "status-format[0]", escapeSemicolon(line)]);
+}
+
+// Replaces what a pane runs with a command. Its terminal is a new one, with a new name.
+function respawnPane(screen: string, target: string, command: string[]): void {
+  tmux(screen, ["respawn-pane", "-k", "-t", target, "--", ...command]);
+}
 
 // Returns the repository open in the sidebar, given its owner/name, with its lead's session.
 // For a repository Skelcrew no longer has, such as one just removed, the session is named as a

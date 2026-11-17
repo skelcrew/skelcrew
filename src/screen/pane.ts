@@ -1,11 +1,12 @@
 // The right pane while you are on one of the sidebar's entries: the entry's list, and the pages
 // of the issues and PRs opened from it. It is a process of its own, in the screen's right pane,
 // so it ends with the screen and agents' sessions never see it.
-import { screenSocket, tmux } from "../agents/tmux.ts";
+
 import { startOrMerge } from "../client.ts";
 import { openDb } from "../db.ts";
 import { type Page, readPage } from "../flow/page.ts";
 import { errorText } from "../say.ts";
+import { screenSocket, tmux } from "../tmux.ts";
 import { listFooter, tellFooter } from "./footer.ts";
 import { type Action, type Entry, type Group, listGroups } from "./lists.ts";
 import { fitted, grey, pad, paint, removeControlCodes, shaded, tinted, white } from "./look.ts";

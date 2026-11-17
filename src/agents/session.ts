@@ -1,12 +1,13 @@
-// Skelcrew's tmux sessions: one for each repository's lead and one per builder, on Skelcrew's own
-// tmux server (`tmux -L skelcrew`; tests pass a socket of their own).
+// Agents' sessions: one for each repository's lead and one per builder. This module and typing.ts
+// are the only way into them: starting, checking, typing into, showing and ending one. Callers
+// pass plain data, the sessions' names and commands, never tmux's own words, so another session
+// host could stand in. tmux is the one host today, on Skelcrew's own server (`tmux -L skelcrew`;
+// tests pass a server of their own).
 import { closeSync, constants, openSync, rmSync, writeSync } from "node:fs";
 import { z } from "zod";
+import { processTree, stillRunning } from "../processes.ts";
+import { envWithoutTmux, mustTmux, tmux, tmuxIsAtLeast } from "../tmux.ts";
 import { sandboxFolders } from "./seatbelt.ts";
-
-// Returns the screen's tmux server beside the agents': skelcrew-screen beside skelcrew, and a
-// test's own beside the test's.
-export const screenSocket = (agents: string) => `${agents}-screen`;
 
 // Skelcrew's tmux settings. They are sent on stdin with each new session instead of kept in a
 // file, so there is no file to find or keep in step, and a server that outlives an upgrade
@@ -89,57 +90,11 @@ bind -T copy-mode TripleClick1Pane { send-keys -X select-line; ${copied} }
 bind -T copy-mode Any { if -F "#{pane_in_mode}" { send-keys -X cancel }; send-keys }
 `;
 
-// Returns whether this machine's tmux is the given version or newer, for settings an older
-// one refuses. One bad setting fails the whole command, so the screen or a session wouldn't
-// start. A version that isn't a plain number, such as "next-3.7" or "master", is taken as new.
-export function tmuxIsAtLeast(major: number, minor: number): boolean {
-  const said = Bun.spawnSync(["tmux", "-V"], { env: envWithoutTmux(), stderr: "ignore" });
-  const version = said.stdout.toString().match(/^tmux (\d+)\.(\d+)/);
-  if (!version) return true;
-  const [has, hasMinor] = [Number(version[1]), Number(version[2])];
-  return has > major || (has === major && hasMinor >= minor);
-}
-
 // Returns Skelcrew's tmux settings for this machine's tmux. tmux sends extended keys in the
 // xterm form unless told otherwise, and Codex reads Shift+Enter only in the CSI u form, which
 // Claude Code reads too. tmux before 3.5 has only the xterm form, and refuses the setting.
 function settings(): string {
   return tmuxIsAtLeast(3, 5) ? `${tmuxConfig}set -s extended-keys-format csi-u\n` : tmuxConfig;
-}
-
-// Returns the inherited environment without TMUX, which otherwise prevents attaching from
-// inside tmux.
-export function envWithoutTmux(): Record<string, string> {
-  const kept = Object.entries(process.env).flatMap(([key, value]) =>
-    value === undefined || key === "TMUX" ? [] : [[key, value]],
-  );
-  return Object.fromEntries(kept);
-}
-
-// Quotes a trailing semicolon so tmux treats messages and folders as single arguments. tmux
-// reads any word ending in ";" as the end of a command, even a message or a folder, unless
-// that ";" has a backslash before it.
-const escapeSemicolon = (word: string) => (word.endsWith(";") ? `${word.slice(0, -1)}\\;` : word);
-
-// Runs a command on Skelcrew's tmux server and returns its output and whether it succeeded.
-export function tmux(socket: string, args: string[], input = "") {
-  const run = Bun.spawnSync(
-    ["tmux", "-L", socket, "-f", "/dev/null", ...args.map(escapeSemicolon)],
-    {
-      env: envWithoutTmux(),
-      stdin: new Blob([input]),
-      stdout: "pipe",
-      stderr: "pipe",
-    },
-  );
-  return { ok: run.success, out: run.stdout.toString(), err: run.stderr.toString().trim() };
-}
-
-// Returns tmux output or throws with its error, so session operations cannot fail silently.
-export function mustTmux(socket: string, args: string[], input = ""): string {
-  const run = tmux(socket, args, input);
-  if (!run.ok) throw new Error(`tmux ${args[0]} failed: ${run.err}`);
-  return run.out;
 }
 
 // Starts Skelcrew's tmux server if needed, keeping agent sessions alive independently of the
@@ -148,7 +103,7 @@ export function mustTmux(socket: string, args: string[], input = ""): string {
 // keeps it apart; without systemd it starts plainly.
 // exit-empty off keeps it up until its first session, and the config applies to that
 // session too.
-export function startServer(socket: string): void {
+function startServer(socket: string): void {
   // A server that answers is already up, and keeps its sessions.
   if (tmux(socket, ["list-sessions"]).ok) return;
   // The lone ";" separates tmux commands, so these words skip escapeSemicolon().
@@ -177,8 +132,9 @@ export function startServer(socket: string): void {
 }
 
 // Starts a named agent session with only its supplied environment and Skelcrew's terminal
-// settings. With `keepOnExit`, the session stays when its agent exits cleanly too, so Skelcrew
-// can tell a lead you exited from one that crashed: the first closes its tab, the second doesn't.
+// settings, starting Skelcrew's tmux server first if it isn't up. With `keepOnExit`, the session
+// stays when its agent exits cleanly too, so Skelcrew can tell a lead you exited from one that
+// crashed: the first closes its tab, the second doesn't.
 export function startSession(
   socket: string,
   name: string,
@@ -191,6 +147,7 @@ export function startSession(
 ): void {
   // tmux would quietly rename the session, and then never find it under the name asked for.
   if (/[.:]/.test(name)) throw new Error(`a session can't be named ${name}: tmux changes . and :`);
+  startServer(socket);
   // The server hands its own environment to every session and -e only adds to it, so a
   // token the daemon has would reach the agent. env -i starts from nothing. TERM and
   // TERM_PROGRAM are the values the pane's own must win for: tmux sets TERM to what it draws,
@@ -308,47 +265,6 @@ export async function checkAgentStarted(socket: string, name: string, who: strin
     throw new Error(`the ${who} exited as soon as it started:\n${failed ?? ""}`);
 }
 
-// Returns every process with what started it and its state letter, Z for one that exited
-// but wasn't yet reaped. It asks ps, since a Mac has no /proc. Each column is its own -o: a
-// Mac's ps reads what follows an = as the column's title, commas and all.
-function listProcesses(): { pid: number; parent: number; state: string }[] {
-  const ps = Bun.spawnSync(["ps", "-A", "-o", "pid=", "-o", "ppid=", "-o", "stat="], {
-    stdout: "pipe",
-    stderr: "ignore",
-  });
-  // Each line holds a pid, its parent and its state, padded with spaces. A line missing any
-  // of them, such as the empty one at the end, is skipped.
-  return ps.stdout
-    .toString()
-    .split("\n")
-    .flatMap((line) => {
-      const [pid, parent, state] = line.trim().split(/\s+/);
-      return pid && parent && state
-        ? [{ pid: Number(pid), parent: Number(parent), state: state.slice(0, 1) }]
-        : [];
-    });
-}
-
-// Returns a process and every process under it, so stopping a session can wait for all of
-// them: an agent in its sandbox runs a few levels down from the pane's own process.
-export function processTree(root: number): number[] {
-  // List each process's children, from one look at every process.
-  const children = new Map<number, number[]>();
-  for (const { pid, parent } of listProcesses())
-    children.set(parent, [...(children.get(parent) ?? []), pid]);
-  // Walk down from the root: each process found adds its children to the end of the list,
-  // so the loop reaches them in turn.
-  const tree = [root];
-  for (let i = 0; i < tree.length; i++) tree.push(...(children.get(tree[i] ?? 0) ?? []));
-  return tree;
-}
-
-// Returns those of the given processes that haven't exited, to wait for them to end.
-export function stillRunning(tree: number[]): number[] {
-  const alive = listProcesses().filter(({ state }) => state !== "Z");
-  return tree.filter((pid) => alive.some((process) => process.pid === pid));
-}
-
 // Ends the named session and returns once every process it ran has exited, so what it was
 // using, such as a thread's clone, can be removed. Claude Code can outlive the end of its
 // session for a few seconds, so it gets `timeout` milliseconds before being killed. On a Mac
@@ -391,21 +307,6 @@ export function runningSessions(socket: string): string[] {
   return panes.split("\n").flatMap((pane) => (pane.startsWith("0 ") ? [pane.slice(2)] : []));
 }
 
-// Returns the terminal of a pane, by which another tmux server knows the client running in
-// it. Throws when the pane is gone, since the sidebar then has nothing to switch.
-export const paneTty = (socket: string, target: string) =>
-  mustTmux(socket, ["display-message", "-p", "-t", target, "#{pane_tty}"]).trim();
-
-// Returns the width of a pane, or 0 once it is gone.
-export const paneWidth = (socket: string, target: string) =>
-  Number(tmux(socket, ["display-message", "-p", "-t", target, "#{pane_width}"]).out.trim());
-
-// Sets the status line of a session, as a tmux format: the header, the tabs and the strip. Each
-// set makes tmux redraw the whole screen, so the sidebar calls this only when the line changed.
-export function showStrip(socket: string, session: string, line: string): void {
-  tmux(socket, ["set", "-t", `=${session}:`, "status-format[0]", escapeSemicolon(line)]);
-}
-
 // Returns the session a client on the given terminal is showing, or null while it has none,
 // such as the moment between an agent ending and the client attaching to the lead.
 export function shownSession(socket: string, tty: string): string | null {
@@ -422,7 +323,18 @@ export function showSession(socket: string, tty: string, name: string): void {
   tmux(socket, ["switch-client", "-c", tty, "-t", `=${name}`]);
 }
 
-// Replaces what a pane runs with a command. Its terminal is a new one, with a new name.
-export function respawnPane(socket: string, target: string, command: string[]): void {
-  tmux(socket, ["respawn-pane", "-k", "-t", target, "--", ...command]);
-}
+// Returns the command that shows the named session in a terminal until you leave it, for the
+// screen's right pane. TMUX must go, or tmux refuses to attach from inside tmux.
+export const attachCommand = (socket: string, name: string) => [
+  "env",
+  "-u",
+  "TMUX",
+  "tmux",
+  "-L",
+  socket,
+  "-f",
+  "/dev/null",
+  "attach",
+  "-t",
+  `=${name}`,
+];

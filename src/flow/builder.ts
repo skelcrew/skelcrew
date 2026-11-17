@@ -12,9 +12,8 @@ import {
   checkAgentStarted,
   endSession,
   hasSession,
-  startServer,
   startSession,
-} from "../agents/tmux.ts";
+} from "../agents/session.ts";
 import { repositorySetup, threadConfig } from "../config.ts";
 import { cloneDir, threadSocket } from "../paths.ts";
 import { trackerOf } from "../plugins/ask.ts";
@@ -302,13 +301,13 @@ export async function setUpThread(db: Database, thread: Thread): Promise<void> {
   }
 }
 
-// Starts the thread's builder in tmux, in the sandbox in its clone: bringing back the conversation
+// Starts the thread's builder in its own session, in the sandbox in its clone: bringing back the conversation
 // it saved, or else afresh with the task as its reviewer gets it as its first message: the
 // title and body from Skelcrew's copy, and the lead's messages after them. Throws when it exits as soon as it starts. A builder's first start picks the harness
 // your config names, and saves it with the thread, which keeps it from then on: a conversation
 // can't move to another harness. The session id is stored before the builder starts, so the builder
 // can be brought back after its session is gone.
-export async function startBuilder(db: Database, tmux: string, thread: Thread): Promise<void> {
+export async function startBuilder(db: Database, agents: string, thread: Thread): Promise<void> {
   // Pick the harness: your config's for a first start, the saved one for a builder coming back.
   // A saved conversation the harness can't find starts afresh under a new id.
   const clone = cloneOf(thread);
@@ -346,25 +345,24 @@ export async function startBuilder(db: Database, tmux: string, thread: Thread): 
     system: instructions,
     ...start,
   });
-  // Start it in its own tmux session, then watch a moment for it to exit at once, so a broken
+  // Start it in its own session, then watch a moment for it to exit at once, so a broken
   // start fails the thread with a reason.
-  startServer(tmux);
-  startSession(tmux, thread.folder, { folder: clone, command: argv, env });
+  startSession(agents, thread.folder, { folder: clone, command: argv, env });
   console.log(`${resume ? "Brought back" : "Started"} the builder of ${thread.folder}.`);
-  await checkAgentStarted(tmux, thread.folder, "builder");
+  await checkAgentStarted(agents, thread.folder, "builder");
 }
 
 // Brings back a thread's builder after the daemon restarts, or for sc start after sc stop. A
 // builder still running is left alone. One whose session is gone or ended is started again.
 // Throws for a thread with no session: the daemon stopped before its setup finished, and the
 // error says to run sc start again.
-export async function bringBack(db: Database, tmux: string, thread: Thread): Promise<void> {
+export async function bringBack(db: Database, agents: string, thread: Thread): Promise<void> {
   if (thread.session === null)
     throw new Error("the daemon stopped while setting up the thread: run sc start again");
   // A session whose agent ended is ended too, so the new one can take its name.
-  if (agentRuns(tmux, thread.folder)) return;
-  if (hasSession(tmux, thread.folder)) endSession(tmux, thread.folder);
-  await startBuilder(db, tmux, thread);
+  if (agentRuns(agents, thread.folder)) return;
+  if (hasSession(agents, thread.folder)) endSession(agents, thread.folder);
+  await startBuilder(db, agents, thread);
 }
 
 // Marks the thread failed and logs why, in its log and the daemon's, so you can see what

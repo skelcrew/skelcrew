@@ -15,11 +15,13 @@ import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import checkout from "../package.json";
-import { startSession, stillRunning, tmuxIsAtLeast } from "../src/agents/tmux.ts";
+import { startSession } from "../src/agents/session.ts";
 import type { Page } from "../src/flow/page.ts";
 import { leadPlaces } from "../src/paths.ts";
+import { stillRunning } from "../src/processes.ts";
 import { drawPage } from "../src/screen/page.ts";
 import { sidebarWidth } from "../src/screen/screen.ts";
+import { tmuxIsAtLeast } from "../src/tmux.ts";
 import { fakePlugin, itemSql, source, until as wait } from "./harness.ts";
 
 const dbFile = source("db.ts");

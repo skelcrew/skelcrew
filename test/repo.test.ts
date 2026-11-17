@@ -166,7 +166,7 @@ const calls = () =>
     ? readFileSync(join(home, "calls"), "utf8")
         .replace(/tmux -L skelcrew -f \/dev\/null (source-file -|list-panes -a .*)\n/g, "")
         .replace(/tmux -V\n/g, "")
-        .replace(/tmux -L skelcrew-screen .* sh skelcrew (\S+) \S+ ;.*/g, "screen on $1")
+        .replace(/tmux -L skelcrew-screen .*? 'attach' '-t' '=([^']+)' .*/g, "screen on $1")
     : "";
 const attached = () => calls().endsWith("daemon lead\nscreen on app-lead\n");
 

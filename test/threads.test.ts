@@ -8,7 +8,7 @@ import { createConnection } from "node:net";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import type { Subprocess } from "bun";
-import { stillRunning } from "../src/agents/tmux.ts";
+import { stillRunning } from "../src/processes.ts";
 import {
   answer,
   asked,

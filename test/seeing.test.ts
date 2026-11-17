@@ -823,7 +823,9 @@ esac`,
     expect(attached.err).toBe("");
     expect(attached.code).toBe(0);
     expect(calls()).toContain("tmux -L skelcrew-screen -f /dev/null");
-    expect(calls()).toMatch(/new-session .* skelcrew site-7 lead-site-[a-p]+ ;/);
+    expect(calls()).toMatch(
+      /new-session .*? '-L' 'skelcrew' .*? '=site-7' .* '=lead-site-[a-p]+' /,
+    );
   });
 
   // A lead you exited a moment ago still reads as open until the daemon's next look, which

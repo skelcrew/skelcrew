@@ -4,7 +4,7 @@
 // you toggle them on, the list of keys shows under a thin line of its own. It runs in the
 // screen's third pane, across the bottom, and sizes that pane to what it shows.
 import { cpus } from "node:os";
-import { screenSocket, tmux, tmuxIsAtLeast } from "../agents/tmux.ts";
+import { screenSocket, tmux, tmuxIsAtLeast } from "../tmux.ts";
 import { keyLines } from "./keys.ts";
 import { cpuBusy, cpuSample, loadText, memoryInUse, readMemory } from "./load.ts";
 import { edge, fitted, grey, pad, paint, removeControlCodes } from "./look.ts";
@@ -85,7 +85,7 @@ const input = new RegExp(
 // with SKELCREW_FIXED_LOAD, which Skelcrew itself never sets: it is shown as the load, dim, and
 // nothing is measured, so a test can check that a quiet screen writes nothing at all.
 export async function runFooter(agents: string, session: string): Promise<void> {
-  const socket = screenSocket(agents);
+  const screen = screenSocket(agents);
   const self = `=${session}:.2`;
   const ruled = tmuxIsAtLeast(3, 6);
   // What the footer says, whether the keys show, and how far they scrolled.
@@ -106,7 +106,7 @@ export async function runFooter(agents: string, session: string): Promise<void> 
   const draw = () => {
     const all = shown ? keyLines(width()) : [];
     // The screen is the window and the status line above it.
-    const window = Number(tmux(socket, ["display", "-p", "-t", self, "#{window_height}"]).out);
+    const window = Number(tmux(screen, ["display", "-p", "-t", self, "#{window_height}"]).out);
     const room = Math.min(all.length, Math.max(Math.floor(((window || 23) + 1) / 3), 1));
     top = Math.min(Math.max(top, 0), all.length - room);
     const lines = drawFooter(said, all.slice(top, top + room), width(), ruled, load);
@@ -114,7 +114,7 @@ export async function runFooter(agents: string, session: string): Promise<void> 
     // The pane grows or shrinks to the lines, which takes rows from the sidebar and the right
     // side, or gives them back. tmux then sends a resize, which draws again.
     if ((process.stdout.rows || 0) !== lines.length)
-      tmux(socket, ["resize-pane", "-t", self, "-y", String(lines.length)]);
+      tmux(screen, ["resize-pane", "-t", self, "-y", String(lines.length)]);
     // Each line is cleared before it is written, not after: a line as wide as the pane leaves
     // the cursor on its last letter, which clearing after would take away.
     const frame = lines.map((line) => `\x1b[K${line}`).join("\r\n");

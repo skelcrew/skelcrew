@@ -1,4 +1,4 @@
-// Skelcrew's tmux sessions, against a fake harness on a tmux server of the test's own.
+// Agents' sessions on tmux, against a fake harness on a tmux server of the test's own.
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import {
   existsSync,
@@ -20,11 +20,11 @@ import {
   exitedCleanly,
   hasSession,
   startSession,
-  stillRunning,
   stopSession,
-  tmuxIsAtLeast,
-} from "../src/agents/tmux.ts";
+} from "../src/agents/session.ts";
 import { isIdle, type Marks, typeInto } from "../src/agents/typing.ts";
+import { stillRunning } from "../src/processes.ts";
+import { tmuxIsAtLeast } from "../src/tmux.ts";
 import { source, until as wait } from "./harness.ts";
 
 const moment = 100;
@@ -285,8 +285,8 @@ test("a first message and an environment value ending in ; arrive as given", asy
 // The tmux server hands its own environment to every session, so a token in the daemon's
 // environment would reach every agent. Claude Code needs TERM_PROGRAM=tmux to ask for Shift+Enter.
 test("a session gets only the environment it is given, and tmux's TERM and TERM_PROGRAM", async () => {
-  const tmux = source("agents/tmux.ts");
-  const script = `import { startSession } from ${JSON.stringify(tmux)};
+  const session = source("agents/session.ts");
+  const script = `import { startSession } from ${JSON.stringify(session)};
 startSession(${JSON.stringify(socket)}, "builder", {
   folder: ${JSON.stringify(home)},
   command: ["sh", "-c", "env > env.txt; sleep 30"],
