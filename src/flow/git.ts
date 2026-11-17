@@ -43,10 +43,14 @@ export async function updateClone(
   repository: Repository,
   folder: string,
 ): Promise<{ before: string; after: string }> {
-  const before = await git(db, repository, ["-C", folder, "rev-parse", "HEAD"]);
   await git(db, repository, ["-C", folder, "fetch", "--quiet", repository.remote, "HEAD"]);
-  await git(db, repository, ["-C", folder, "reset", "--quiet", "--hard", "FETCH_HEAD"]);
-  const after = await git(db, repository, ["-C", folder, "rev-parse", "HEAD"]);
+  const [before = "", after = ""] = (
+    await git(db, repository, ["-C", folder, "rev-parse", "HEAD", "FETCH_HEAD"])
+  ).split("\n");
+  // Every poll gets here, and resetting reads the whole working tree, so it runs only when
+  // the default branch moved.
+  if (before !== after)
+    await git(db, repository, ["-C", folder, "reset", "--quiet", "--hard", "FETCH_HEAD"]);
   return { before, after };
 }
 
