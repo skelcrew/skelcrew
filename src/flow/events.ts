@@ -126,8 +126,8 @@ export async function endThread(
   // while the thread is still the one it was asked to end, by when it started, and not done
   // yet. And while sc rm is removing it, only sc rm's own end goes on: the lead hears what sc rm
   // says, or nothing when the lead ran it. It is checked before anything is stopped or deleted,
-  // and again after waiting for the builder, with nothing waited on from there to marking the
-  // thread done.
+  // and again after waiting for the builder, with nothing waited on from there to removing the
+  // thread's clone.
   const ours = () => {
     const now = readThread(db, thread.folder);
     if (now.started !== thread.started || now.status === "done") return false;
@@ -136,7 +136,6 @@ export async function endThread(
   if (!ours()) return;
   await endBuilder(db, sessions, thread.folder, true);
   if (!ours()) return;
-  rmSync(cloneOf(thread), { recursive: true, force: true });
   // The thread is marked done and its note saved in one transaction. A daemon that stops
   // between the two, or a note that fails to save, would otherwise leave a done thread, which no
   // poll looks at again, and a lead that never hears of it. The note is saved first: marking
@@ -151,6 +150,10 @@ export async function endThread(
     }
     record(db, thread.folder, { status: "done", needs_you: false }, `${why}: ended the thread`);
   })();
+  // Its clone goes only once the end is saved, so a thread whose end failed keeps it. Nothing
+  // is waited on since the checks above, so a thread started over in this folder meanwhile
+  // can't lose its clone.
+  rmSync(cloneOf(thread), { recursive: true, force: true });
 }
 
 // Removes the thread for sc rm: ends its builder, closes its PR with the reason as a comment,

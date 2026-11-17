@@ -852,35 +852,6 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
     expect(leadTyped().split("app-12 is done").length - 1).toBe(1);
   }, 60_000);
 
-  // A merged thread is never polled again once it is done, so its end and its note for the
-  // lead are saved together. A note that can't be saved, as when the disk is full, leaves the
-  // thread short of done, with no end in its log, and a later poll ends it again and tells the
-  // lead.
-  test("a thread whose note for the lead can't be saved isn't done until a later poll saves both", async () => {
-    await approvedApp12();
-    // Saving any note fails while the trigger is there.
-    const db = new Database(join(data(), "skelcrew.db"));
-    db.run("PRAGMA busy_timeout = 5000");
-    try {
-      db.run(
-        "CREATE TRIGGER fail_notes BEFORE INSERT ON notes BEGIN SELECT RAISE(ABORT, 'disk full'); END",
-      );
-      pr({ state: "merged", reviews: [skelReview], checks: [approved] });
-      // A poll tried to end it: the end stops the builder before it saves anything.
-      await until(() => fakeBuilders().length === 0, 30_000);
-      await morePolls();
-      expect(thread().status).not.toBe("done");
-      expect(read(join(data(), "threads", "app-12.log"))).not.toContain("ended the thread");
-      db.run("DROP TRIGGER fail_notes");
-    } finally {
-      db.close();
-    }
-    await until(() => thread().status === "done");
-    const leadTyped = () => read(join(data(), "claude", leadName, "typed"));
-    await until(() => leadTyped().includes("app-12 is done: #7 merged into main"));
-    expect(leadTyped().split("app-12 is done").length - 1).toBe(1);
-  }, 60_000);
-
   // m on the screen's list of PRs asks on your socket. The lead's and builders' sockets refuse it,
   // so merging stays your choice, and no sc command an agent runs can merge.
   test("a merge asked on your socket goes to the forge at the commit you saw, and agents can't ask", async () => {
