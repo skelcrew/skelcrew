@@ -143,6 +143,16 @@ test("pytest from an extra or a dependency group is named in both commands", () 
     setup: ["poetry install"],
     test: ["poetry run pytest"],
   });
+  // Poetry's own extras: an optional dependency, installed only with the extra that names it.
+  expect(
+    poetry(
+      '[tool.poetry.dependencies]\npytest = { version = "^8", optional = true }\n[tool.poetry.extras]\ntest = ["pytest"]\n',
+    ),
+  ).toEqual({ setup: ["poetry install --extras test"], test: ["poetry run pytest"] });
+  // An optional pytest that no extra names is never installed.
+  expect(
+    poetry('[tool.poetry.dependencies]\npytest = { version = "^8", optional = true }\n'),
+  ).toEqual({ setup: ["poetry install"], test: [] });
   // A name a shell would read as more than a word is never put in a command.
   expect(uv("[project.optional-dependencies]\n'a;b' = ['pytest']\n").test).toEqual([]);
 });

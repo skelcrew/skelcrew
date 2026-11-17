@@ -70,6 +70,7 @@ const Table = z.record(z.string(), z.unknown()).optional().catch(undefined);
 const Poetry = z.looseObject({
   dependencies: Table,
   "dev-dependencies": Table,
+  extras: Lists,
   group: z
     .record(z.string(), z.looseObject({ dependencies: Table }))
     .optional()
@@ -116,15 +117,26 @@ function pytestIn(pyproject: string): Pytest | null {
   const keyed = (table: Record<string, unknown> | undefined) =>
     table !== undefined && "pytest" in table;
   const word = (name: string) => /^[\w.-]+$/.test(name);
+  // Poetry's main pytest marked `optional = true` is installed only with an extra that names
+  // it, under [tool.poetry.extras].
+  const main = poetry?.dependencies?.pytest;
+  const optional =
+    typeof main === "object" && main !== null && "optional" in main && main.optional === true;
   if (
     named(project?.dependencies) ||
-    keyed(poetry?.dependencies) ||
+    (keyed(poetry?.dependencies) && !optional) ||
     keyed(poetry?.["dev-dependencies"])
   )
     return {};
-  const extra = Object.entries(project?.["optional-dependencies"] ?? {}).find(
-    ([name, requirements]) => word(name) && named(requirements),
-  );
+  const extra =
+    Object.entries(project?.["optional-dependencies"] ?? {}).find(
+      ([name, requirements]) => word(name) && named(requirements),
+    ) ??
+    (optional
+      ? Object.entries(poetry?.extras ?? {}).find(
+          ([name, packages]) => word(name) && packages.includes("pytest"),
+        )
+      : undefined);
   if (extra) return { extra: extra[0] };
   const group =
     Object.entries(read["dependency-groups"] ?? {}).find(
