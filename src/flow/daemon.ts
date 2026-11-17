@@ -39,7 +39,7 @@ import {
   typeLeadNotes,
 } from "./lead.ts";
 import { restoreLimits, wakeAfterLimit } from "./limits.ts";
-import { listRepositories, listTasks, listThreads, showPr, showTask } from "./list.ts";
+import { listRepositories, listTasks, listThreads, showTask } from "./list.ts";
 import { deliverAllWaiting } from "./messages.ts";
 import { pollRepositories } from "./poll.ts";
 import { findRepository, fullNameIs, noRepositories, refreshClones, repositoryAt } from "./repo.ts";
@@ -201,9 +201,9 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   };
   // Returns the request limited to the calling lead's own repository. A request about another
   // repository is refused, and the error tells the lead to ask you to open that one. sc ps and
-  // sc issue ls with no repository mean every repository, which for a lead is its own, and sc
-  // pr show with a PR number means the lead's own repository, wherever it ran. Your requests and
-  // a builder's are returned unchanged.
+  // sc ls with no repository mean every repository, which for a lead is its own, and sc pr show
+  // with a PR number means the lead's own repository, wherever it ran. Your requests and a
+  // builder's are returned unchanged.
   const limitToOwnRepository = (request: DaemonRequest, caller: Caller): DaemonRequest => {
     const leadRepository = leadOfCaller(caller);
     if (leadRepository === null) return request;
@@ -212,7 +212,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
     const own = `${leadRepository.owner}/${leadRepository.repo}`;
     if ((request.command === "ps" || request.command === "task ls") && !request.repo)
       return { ...request, repo: own };
-    if (request.command === "pr show" && !request.repo) {
+    if (request.command === "task show" && !request.repo) {
       const { from, ...rest } = request;
       return { ...rest, repo: own };
     }
@@ -314,9 +314,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       case "task ls":
         return { tasks: listTasks(db, request.repo) };
       case "task show":
-        return { task: showTask(db, request.repo, request.task) };
-      case "pr show":
-        return { pr: await showPr(db, request) };
+        return { task: await showTask(db, request) };
       case "task create": {
         const repository = findRepository(db, request.repo);
         const task = await createTask(db, repository, request.title, request.body);
@@ -502,6 +500,11 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
     connection.on("data", read);
     connection.on("error", () => {});
   };
+  // The usage limits saved before the stop, read back before any review can start: a review
+  // brought back below, or one a request starts while the leads come back. Read later, they
+  // would overwrite a limit a review met meanwhile and forget when it was met, so a review
+  // that started before it could end it by finishing.
+  restoreLimits(db);
   // Taken before any request comes in, so a thread started meanwhile, still setting up,
   // isn't taken for one whose setup the daemon's stop cut short.
   const before = liveThreads(db);
@@ -542,8 +545,6 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   refreshClones(db).catch((error) => console.log(errorText(error)));
   // Notes the daemon's stop kept from the leads.
   typeLeadNotes(db, sessions);
-  // The usage limits saved before the stop, so the held reviews carried on below still wait.
-  restoreLimits(db);
   // Bring back each thread's builder, without waiting on it, and carry on the round it was in.
   // A thread whose builder can't come back ends its review, which would otherwise mark it
   // waiting again once it ended. Either way a review already brought back hears of it.

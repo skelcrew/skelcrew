@@ -79,7 +79,7 @@ const given = () => ({
   clone,
   issue,
   base: "origin/main",
-  test: { commands: ["bun run check"], detected: false },
+  test: ["bun run check"],
   commit,
   harness: "codex" as const,
   env: env(),
@@ -622,7 +622,7 @@ test("keeps reviewing after a review that couldn't start", async () => {
 });
 
 describe("what the reviewer is told about the tests", () => {
-  const named = { commands: ["bun install", "bun run check"], detected: false };
+  const named = ["bun install", "bun run check"];
   // CI runs the whole suite once per commit, so the reviewer runs it only where there is none.
   test("without CI, the reviewer runs the whole test suite itself", () => {
     const prompt = reviewerPrompt(issue, "origin/main", "run", named);
@@ -632,15 +632,22 @@ describe("what the reviewer is told about the tests", () => {
     expect(prompt).not.toContain("ci.md");
   });
 
-  // A detected command is a guess, so the reviewer hears it is one.
-  test("the reviewer hears when Skelcrew detected the test command, or found none", () => {
-    const detected = { commands: ["go test ./..."], detected: true };
-    expect(reviewerPrompt(issue, "origin/main", "run", detected)).toContain(
-      "run the repository's whole test suite, with `go test ./...`, which Skelcrew detected from the repository's files.",
+  // Skelcrew never guesses a test command, so with none configured the reviewer runs nothing.
+  test("with no test command configured, the reviewer reviews without running tests and says so", () => {
+    const none =
+      "no test command is configured, so don't run the tests. Review the code, and say in the body that you didn't run them, as none is configured.";
+    expect(reviewerPrompt(issue, "origin/main", "run", undefined)).toContain(
+      `No CI runs on this commit, so ${none}`,
     );
-    const none = { commands: [], detected: true };
-    expect(reviewerPrompt(issue, "origin/main", "run", none)).toContain(
-      "run the repository's whole test suite, working out how from the repository, as it names no test command and Skelcrew detected none.",
+    expect(reviewerPrompt(issue, "origin/main", { ci: "/tmp/review/ci.md" }, undefined)).toContain(
+      `such as only a deploy preview or a CLA check, ${none}`,
+    );
+  });
+
+  // An empty list says on purpose that the repository has no tests to run.
+  test("with test configured as none, the reviewer runs no tests and says the repository has none", () => {
+    expect(reviewerPrompt(issue, "origin/main", "run", [])).toContain(
+      "No CI runs on this commit, so don't run the tests: the repository is configured with none. Review the code, and say in the body that you didn't run them, as it has none.",
     );
   });
 

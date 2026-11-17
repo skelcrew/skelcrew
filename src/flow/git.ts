@@ -35,14 +35,23 @@ export async function cloneRepository(
 }
 
 // Resets Skelcrew's clone in the folder to the latest default branch, so the lead reads current
-// code. Fetching HEAD follows the default branch even after it is renamed.
+// code and builders, whose origin it is, fetch the default branch as the remote has it.
+// Fetching HEAD follows the default branch even after it is renamed. Returns the commit the
+// clone was on and the one it is on now, so a move can be logged.
 export async function updateClone(
   db: Database,
   repository: Repository,
   folder: string,
-): Promise<void> {
+): Promise<{ before: string; after: string }> {
   await git(db, repository, ["-C", folder, "fetch", "--quiet", repository.remote, "HEAD"]);
-  await git(db, repository, ["-C", folder, "reset", "--quiet", "--hard", "FETCH_HEAD"]);
+  const [before = "", after = ""] = (
+    await git(db, repository, ["-C", folder, "rev-parse", "HEAD", "FETCH_HEAD"])
+  ).split("\n");
+  // Every poll gets here, and resetting reads the whole working tree, so it runs only when
+  // the default branch moved.
+  if (before !== after)
+    await git(db, repository, ["-C", folder, "reset", "--quiet", "--hard", "FETCH_HEAD"]);
+  return { before, after };
 }
 
 // Fetches a branch, or the default branch when none is given, into the folder's FETCH_HEAD,

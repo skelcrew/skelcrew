@@ -5,13 +5,13 @@ import type { Database } from "bun:sqlite";
 import { z } from "zod";
 import { threadConfig } from "../config.ts";
 import { type Item, itemAt, openPrs, openTasks } from "../flow/copy.ts";
+import { needsDecision, readyToMerge, type Shown, shownOf } from "../flow/marks.ts";
 import { repositories } from "../flow/repo.ts";
 import type { DaemonRequest } from "../flow/requests.ts";
-import { needsYou, threadWord } from "../flow/status.ts";
 import { Thread, threadName } from "../flow/thread.ts";
 import { forgeOf, trackerOf } from "../plugins/ask.ts";
-import { green, grey, yellow } from "./look.ts";
-import { type Open, onReviewer, threadMark } from "./rows.ts";
+import { green, grey, markColours, yellow } from "./look.ts";
+import { type Open, onReviewer } from "./rows.ts";
 
 // The three entries of the sidebar, each of which shows a list.
 export type Entry = "issues" | "threads" | "prs";
@@ -38,19 +38,17 @@ export type ListRow = {
 };
 // Rows under a dim heading, such as Ready to merge.
 export type Group = { heading: string; rows: ListRow[] };
-// An entry of the sidebar: its name, how many its list has, and a note on what you act on,
-// such as 2 ready, and the note's `colour`.
+// An entry of the sidebar: its name, how many its list has, and notes on what you act on, each
+// with its colour, such as 2 ready in green.
 export type EntryCount = {
   entry: Entry;
   name: string;
   total: number;
-  note: string;
-  colour: string;
+  notes: [string, string][];
 };
 
-// A thread that isn't done, as the lists know it: with its name and the word that says what it
-// is doing.
-type Known = { thread: Thread; name: string; word: string };
+// A thread that isn't done, as the lists know it: with its name, and its word, status and mark.
+type Known = Shown & { thread: Thread; name: string };
 
 // Returns a thread's round limit, from its repository's skelcrew.yaml or your config. Settings
 // that aren't valid already stop rounds, with the reason, and mustn't also take the sidebar or a
@@ -63,23 +61,22 @@ export function roundLimit(thread: Thread): number {
   }
 }
 
-// Returns the open repository's threads that aren't done, newest first, each with its name and
-// word.
+// Returns the open repository's threads that aren't done, newest first, each with its name,
+// word, status and mark.
 function openThreads(db: Database, open: Open): Known[] {
   const found = db.query(`SELECT * FROM task_threads
       WHERE status != 'done' AND owner = ? AND repo = ? ORDER BY rowid DESC`);
   return found.all(open.owner, open.repo).map((row) => {
     const thread = Thread.parse(row);
-    return { thread, name: threadName(db, thread), word: threadWord(thread, roundLimit(thread)) };
+    return { thread, name: threadName(db, thread), ...shownOf(thread, roundLimit(thread)) };
   });
 }
 
-// Returns a thread's mark, as ACTIVE shows it.
-const markOf = ({ thread, word }: Known) =>
-  threadMark({ status: thread.status, needsYou: needsYou(thread), word });
+// Returns the colour a thread's mark is drawn in, as in ACTIVE.
+const colourOf = (open: Known) => markColours[open.mark.colour];
 
 // Returns a thread's word as the end of a row, in its mark's colour, as in ACTIVE.
-const wordEnd = (open: Known): [string, string] => [open.word, markOf(open)[1]];
+const wordEnd = (open: Known): [string, string] => [open.word, colourOf(open)];
 
 // Returns the repository's name in Skelcrew, which names its issues and PRs, such as app-12.
 function repositoryName(db: Database, open: Open): string {
@@ -146,9 +143,9 @@ function approvedOnForge(pr: Extract<Item, { kind: "pr" }>): boolean {
 // Returns the open repository's PRs, as `Ready to merge`, then `In review`. A PR's mark is ○
 // before its first review, ◐ from the moment it runs while the rounds go on, and ● once it is approved and its checks
 // pass. A PR Skelcrew didn't open has no rounds, so it is ○ until the forge says it is approved
-// and its checks pass. A PR from a thread takes its thread's colour where that means something:
-// green when approved, yellow when it needs you, red when it failed or hit an error. A thread
-// that is only working or waiting leaves the mark plain. A PR from a thread ends with its word,
+// and its checks pass. A PR from a thread takes its thread's colour when the thread's mark is
+// filled: green when approved, yellow when it needs you, red when it failed or hit an error. A
+// thread that is only working or waiting leaves the mark plain. A PR from a thread ends with its word,
 // and one with no thread with its author.
 // m merges a PR ready to merge, at the head commit the forge last sent, which is the one you saw
 // approved. On any other PR it says what the PR waits on: an approval, or its checks.
@@ -184,11 +181,9 @@ function prGroups(db: Database, open: Open, threads: Known[]): Group[] {
     // A review under way, waiting or held counts as a round going on, the first one included.
     const reviewed = on && (on.thread.review_round !== null || onReviewer(on.thread, on.word));
     const sign = ready ? "●" : reviewed ? "◐" : "○";
-    // A working thread's green and a waiting one's dim say nothing of how far the PR is.
-    const colour = on ? markOf(on)[1] : grey;
-    const plain = colour === grey || (colour === green && on?.word !== "approved");
+    // A hollow mark's bright or dim says nothing of how far the PR is.
     const row: ListRow = {
-      mark: [sign, plain ? null : colour],
+      mark: [sign, on?.mark.sign === "●" ? colourOf(on) : null],
       name: named,
       title: pr.title,
       ends: [on ? wordEnd(on) : [pr.author?.login ?? "", grey]],
@@ -216,7 +211,8 @@ export function changedAt(at: number, now: number): string {
 }
 
 // Returns the open repository's threads that aren't done, as `Needs you`, those that need you
-// or failed, then `Working`, every other one working or waiting, then `Stopped`. Each ends with
+// or failed, then `Ready to merge`, the approved ones, which wait only for your merge, then
+// `Working`, every other one working or waiting, then `Stopped`. Each ends with
 // its word, harness, its issue and PR if it has them, such as #12 #31, and when it last changed.
 // A stopped thread's agent isn't running, so its row is dim.
 function threadGroups(threads: Known[], now: number): Group[] {
@@ -232,7 +228,7 @@ function threadGroups(threads: Known[], now: number): Group[] {
     const refs = [issue, thread.pr === null ? "" : `#${thread.pr}`].filter(Boolean).join(" ");
     const changed = thread.changed ?? thread.started;
     const row: ListRow = {
-      mark: markOf(open),
+      mark: [open.mark.sign, colourOf(open)],
       name: open.name,
       title: thread.title ?? "",
       ends: [
@@ -248,12 +244,16 @@ function threadGroups(threads: Known[], now: number): Group[] {
     };
     return { row, open };
   });
-  const stopped = (r: (typeof rows)[number]) => r.open.thread.status === "stopped";
-  const urgent = (r: (typeof rows)[number]) =>
-    needsYou(r.open.thread) || r.open.thread.status === "failed";
+  // A thread goes in the first group it fits.
+  type Fits = (r: (typeof rows)[number]) => boolean;
+  const urgent: Fits = (r) => needsDecision(r.open.mark);
+  const ready: Fits = (r) => readyToMerge(r.open.mark);
+  const stopped: Fits = (r) => !urgent(r) && r.open.thread.status === "stopped";
+  const working: Fits = (r) => !urgent(r) && !ready(r) && !stopped(r);
   return filled([
     { heading: "Needs you", rows: rows.filter(urgent).map((r) => r.row) },
-    { heading: "Working", rows: rows.filter((r) => !urgent(r) && !stopped(r)).map((r) => r.row) },
+    { heading: "Ready to merge", rows: rows.filter(ready).map((r) => r.row) },
+    { heading: "Working", rows: rows.filter(working).map((r) => r.row) },
     { heading: "Stopped", rows: rows.filter(stopped).map((r) => r.row) },
   ]);
 }
@@ -269,7 +269,9 @@ export function listGroups(db: Database, open: Open, entry: Entry, now: number):
 // Returns the sidebar's entries for the open repository, with their counts: Issues when it has a
 // tracker, Threads always, and PRs when it has a forge. Issues has only its count, as an issue
 // never needs you on its own. Threads says how many need you or failed, in yellow, and PRs how
-// many are ready to merge, in green, only when there are any.
+// many are ready to merge, in green, only when there are any. An approved thread is ready, not
+// needing you, so the same thread is never counted twice. With no forge there are no PRs, so
+// Threads says how many are ready itself, before how many need you.
 export function entryCounts(db: Database, open: Open): EntryCount[] {
   const repository = repositories(db).find((r) => r.owner === open.owner && r.repo === open.repo);
   const threads = openThreads(db, open);
@@ -280,34 +282,36 @@ export function entryCounts(db: Database, open: Open): EntryCount[] {
     total: total(groups),
     flagged: groups[0]?.heading === first ? groups[0].rows.length : 0,
   });
-  const ours = count(threadGroups(threads, 0), "Needs you");
   const prs = count(repository ? prGroups(db, open, threads) : [], "Ready to merge");
-  const needYou = ours.flagged === 1 ? "needs you" : "need you";
+  const forge = Boolean(repository && forgeOf(db, repository));
+  const needing = threads.filter((open) => needsDecision(open.mark)).length;
+  const ready = forge ? 0 : threads.filter((open) => readyToMerge(open.mark)).length;
+  const needYou = needing === 1 ? "needs you" : "need you";
+  // Returns a note, or none for nothing to act on.
+  const note = (count: number, text: string, colour: string): [string, string][] =>
+    count ? [[`${count} ${text}`, colour]] : [];
   const issuesEntry: EntryCount = {
     entry: "issues",
     name: "Issues",
     total: total(repository ? issueGroups(db, open, threads) : []),
-    note: "",
-    colour: grey,
+    notes: [],
   };
   const threadsEntry: EntryCount = {
     entry: "threads",
     name: "Threads",
-    total: ours.total,
-    note: ours.flagged ? `${ours.flagged} ${needYou}` : "",
-    colour: yellow,
+    total: threads.length,
+    notes: [...note(ready, "ready", green), ...note(needing, needYou, yellow)],
   };
   const prsEntry: EntryCount = {
     entry: "prs",
     name: "PRs",
     total: prs.total,
-    note: prs.flagged ? `${prs.flagged} ready` : "",
-    colour: green,
+    notes: note(prs.flagged, "ready", green),
   };
   return [
     ...(repository && trackerOf(db, repository) ? [issuesEntry] : []),
     threadsEntry,
-    ...(repository && forgeOf(db, repository) ? [prsEntry] : []),
+    ...(forge ? [prsEntry] : []),
   ];
 }
 

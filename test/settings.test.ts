@@ -2,7 +2,6 @@
 // it, over your own config.yaml.
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import {
-  chmodSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -100,97 +99,46 @@ test("your model for a role doesn't follow it onto the harness skelcrew.yaml pic
   expect(forApp().reviewer).toEqual({ harness: "claude", model: "sonnet" });
 });
 
-// Returns app's setup and test commands, and whether each was detected.
+// Returns app's setup and test commands.
 const commands = () => JSON.parse(run("console.log(JSON.stringify(repositoryCommands(app)));").out);
 
 // Skelcrew's own skelcrew.yaml names the commands CI runs, so its threads set up and test the
 // same way. Your config is left empty so only the file counts.
 test("this repository's own skelcrew.yaml names CI's setup and test", () => {
   settings("", readFileSync(join(import.meta.dir, "..", "skelcrew.yaml"), "utf8"));
-  expect(commands()).toEqual({
-    setup: { commands: ["bun install"], detected: false },
-    test: { commands: ["bun run check"], detected: false },
-  });
+  expect(commands()).toEqual({ setup: ["bun install"], test: ["bun run check"] });
 });
 
 test("setup and test come from the skelcrew.yaml in Skelcrew's clone", () => {
   settings("harness: claude\n", "setup: [bun install, make]\ntest: [bun test]\n");
-  writeFileSync(join(clone(), "go.mod"), "");
-  expect(commands()).toEqual({
-    setup: { commands: ["bun install", "make"], detected: false },
-    test: { commands: ["bun test"], detected: false },
-  });
+  expect(commands()).toEqual({ setup: ["bun install", "make"], test: ["bun test"] });
 });
 
-test("what skelcrew.yaml doesn't name is detected from the repository's files", () => {
+// Skelcrew never guesses them from the repository's files: a guess is often wrong, and builders
+// and reviewers would use it without anyone seeing it was a guess.
+test("with no skelcrew.yaml naming them, there are no setup or test commands", () => {
+  settings("harness: claude\n", null);
+  writeFileSync(join(clone(), "go.mod"), "");
+  writeFileSync(join(clone(), "package.json"), JSON.stringify({ scripts: { test: "jest" } }));
+  // JSON drops a setting no file names, so it reads as missing here.
+  expect(commands()).toEqual({});
   settings("harness: claude\n", "test: [make check]\n");
-  writeFileSync(join(clone(), "go.mod"), "");
-  expect(commands()).toEqual({
-    setup: { commands: ["go mod download"], detected: true },
-    test: { commands: ["make check"], detected: false },
-  });
-  settings("harness: claude\n", null);
-  expect(commands()).toEqual({
-    setup: { commands: ["go mod download"], detected: true },
-    test: { commands: ["go test ./..."], detected: true },
-  });
+  expect(commands()).toEqual({ test: ["make check"] });
 });
 
-// Skelcrew's clone follows the default branch, so what is detected follows it too.
-test("detection follows the files in Skelcrew's clone as they change", () => {
-  settings("harness: claude\n", null);
-  writeFileSync(join(clone(), "go.mod"), "");
-  expect(commands().test.commands).toEqual(["go test ./..."]);
-  rmSync(join(clone(), "go.mod"));
-  writeFileSync(join(clone(), "Cargo.toml"), "");
-  expect(commands().test.commands).toEqual(["cargo test"]);
-});
-
-// A link could point at any file of yours, so it is never read.
-test("a linked file in the clone counts for nothing in detection", () => {
-  settings("harness: claude\n", null);
-  writeFileSync(join(home, "Makefile"), "check:\n");
-  symlinkSync(join(home, "Makefile"), join(clone(), "Makefile"));
-  expect(commands().test).toEqual({ commands: [], detected: true });
-});
-
-// Detection only stands in for what no file names, so a file it can't read never stops
-// commands that are named.
-test("named setup and test never read the files detection looks at", () => {
-  settings("harness: claude\nsetup: []\n", "test: [make test]\n");
-  writeFileSync(join(clone(), "package.json"), "{}");
-  chmodSync(join(clone(), "package.json"), 0);
-  expect(commands()).toEqual({
-    setup: { commands: [], detected: false },
-    test: { commands: ["make test"], detected: false },
-  });
-  // With one left to detect, the unreadable file is read and says so.
-  settings("harness: claude\n", "test: [make test]\n");
-  expect(run("repositoryCommands(app);").err).toContain("EACCES");
-});
-
-// An empty list says the repository has no setup, which detection mustn't override.
-test("an empty list in skelcrew.yaml counts as named", () => {
-  settings("harness: claude\n", "setup: []\n");
-  writeFileSync(join(clone(), "go.mod"), "");
-  expect(commands().setup).toEqual({ commands: [], detected: false });
-});
-
-// Each of setup and test comes from the repository's skelcrew.yaml, else your config, else
-// detection. Your empty list turns detection off, as the repository's does.
-test("setup and test come from the repository, then your config, then detection", () => {
-  settings("harness: claude\nsetup: []\ntest: [make test]\n", "test: [bun run check]\n");
-  writeFileSync(join(clone(), "go.mod"), "");
-  expect(commands()).toEqual({
-    setup: { commands: [], detected: false },
-    test: { commands: ["bun run check"], detected: false },
-  });
-  settings("harness: claude\ntest: [make test]\n", null);
-  writeFileSync(join(clone(), "go.mod"), "");
-  expect(commands()).toEqual({
-    setup: { commands: ["go mod download"], detected: true },
-    test: { commands: ["make test"], detected: false },
-  });
+// Your config stands in for a repository you don't want to commit a skelcrew.yaml to. Each of
+// setup and test comes from the repository's skelcrew.yaml, else your config, and an empty list
+// in skelcrew.yaml counts as named.
+test("setup and test come from the repository, then your config", () => {
+  settings("harness: claude\nsetup: [make deps]\ntest: [make test]\n", null);
+  expect(commands()).toEqual({ setup: ["make deps"], test: ["make test"] });
+  settings(
+    "harness: claude\nsetup: [make deps]\ntest: [make test]\n",
+    "setup: []\ntest: [bun run check]\n",
+  );
+  expect(commands()).toEqual({ setup: [], test: ["bun run check"] });
+  settings("harness: claude\ntest: [make test]\n", "setup: [bun install]\n");
+  expect(commands()).toEqual({ setup: ["bun install"], test: ["make test"] });
 });
 
 test("a skelcrew.yaml that isn't valid, or isn't a plain file, says so rather than be ignored", () => {

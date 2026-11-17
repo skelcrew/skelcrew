@@ -132,6 +132,9 @@ afterEach(async () => {
 // What this test's processes run with.
 const env = () => homeEnv(home);
 
+// Where the daemon this test runs writes its log.
+const daemonLog = () => join(home, "daemon.log");
+
 // Runs the daemon, polling every 200 milliseconds rather than every 30 seconds, and every
 // 400 rather than every minute while threads only wait on you, unless a test says otherwise.
 function serve(every = 200): Subprocess {
@@ -140,7 +143,7 @@ await serve(${JSON.stringify(socket)}, ${every});`;
   // Reviews start at once on app, which has no CI, rather than waiting for a first check.
   const run = Bun.spawn([process.execPath, "-e", code], {
     env: { ...env(), SKELCREW_CHECK_WAIT_MS: "0" },
-    stdout: "ignore",
+    stdout: Bun.file(daemonLog()),
     stderr: "ignore",
   });
   running.push(run);
@@ -369,6 +372,126 @@ test("the first poll brings everything open into Skelcrew's copy, and later ones
   serve();
   await until(() => copied().rows.length === 1);
   expect(copied()).toEqual({ rows: ["task 12"], totals: { open_issues: 1, open_prs: 0 } });
+});
+
+// Builders fetch the default branch from Skelcrew's clone, so it must follow the remote's,
+// however the default branch moved.
+test("a push straight to main and a merge of a PR without a thread both reach Skelcrew's clone by the next poll", async () => {
+  const work = addApp();
+  const remote = join(home, "github", "simon", "app.git");
+  changes([]);
+  serve();
+  const skelcrewClone = join(data(), "repos", "simon", "app");
+  await until(() => existsSync(join(skelcrewClone, "README")));
+  const cloneHead = () => git(skelcrewClone, "rev-parse", "HEAD").trim();
+  // Someone pushes straight to main. The poll after it brings it in, and the log says so.
+  writeFileSync(join(work, "pushed"), "1\n");
+  git(work, "add", ".");
+  git(work, "commit", "-q", "-m", "pushed");
+  git(work, "push", "-q", remote, "main");
+  const pushed = git(work, "rev-parse", "HEAD").trim();
+  await until(() => cloneHead() === pushed);
+  await until(() => read(daemonLog()).includes(`to ${pushed.slice(0, 7)}`));
+  expect(read(daemonLog())).toContain("Skelcrew's clone of simon/app moved its default branch");
+  // Someone merges a PR no thread has. The poll that hears of the merge brings it in.
+  git(work, "checkout", "-q", "-b", "feature");
+  writeFileSync(join(work, "feature"), "1\n");
+  git(work, "add", ".");
+  git(work, "commit", "-q", "-m", "feature");
+  git(work, "checkout", "-q", "main");
+  git(work, "merge", "-q", "--no-ff", "-m", "Merge pull request #40", "feature");
+  git(work, "push", "-q", remote, "main");
+  changes([prItem("40", "Add feature", { state: "merged", branch: "feature" })]);
+  const merged = git(work, "rev-parse", "HEAD").trim();
+  await until(() => cloneHead() === merged);
+  expect(existsSync(join(skelcrewClone, "feature"))).toBe(true);
+});
+
+// git can reach the remote while the tracker or forge is down, and builders must not fall
+// behind for it.
+test("a push straight to main reaches Skelcrew's clone while the forge fails to answer", async () => {
+  const work = addApp();
+  changes([]);
+  serve();
+  const skelcrewClone = join(data(), "repos", "simon", "app");
+  await until(() => existsSync(join(skelcrewClone, "README")));
+  writeFileSync(join(plugin, "fail-changed"), "forge is down");
+  const failed = polls();
+  await until(() => polls() > failed);
+  writeFileSync(join(work, "pushed"), "1\n");
+  git(work, "add", ".");
+  git(work, "commit", "-q", "-m", "pushed");
+  git(work, "push", "-q", join(home, "github", "simon", "app.git"), "main");
+  const pushed = git(work, "rev-parse", "HEAD").trim();
+  await until(() => git(skelcrewClone, "rev-parse", "HEAD").trim() === pushed);
+});
+
+// sc repo rm deletes the clone and the repository's row, and refreshes already asked for must
+// not bring the clone back.
+test("refreshes waiting their turn when the repository is removed leave no clone behind", () => {
+  addApp();
+  const skelcrewClone = join(data(), "repos", "simon", "app");
+  const code = `import { rmSync } from "node:fs";
+import { openDb } from ${JSON.stringify(source("db.ts"))};
+import { refreshClone, repositories } from ${JSON.stringify(source("flow/repo.ts"))};
+const db = openDb();
+const [app] = repositories(db);
+if (!app) throw new Error("no repository");
+await refreshClone(db, app);
+console.log("cloned");
+const queued = [refreshClone(db, app), refreshClone(db, app)];
+rmSync(${JSON.stringify(skelcrewClone)}, { recursive: true, force: true });
+db.run("DELETE FROM repositories");
+await Promise.all(queued);`;
+  const run = Bun.spawnSync([process.execPath, "-e", code], {
+    env: env(),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect(run.stderr.toString()).toBe("");
+  expect(run.stdout.toString()).toBe("cloned\n");
+  expect(existsSync(skelcrewClone)).toBe(false);
+});
+
+// A poll already asking the forge when sc repo rm runs must not bring the clone back.
+test("a repository removed while its poll waits on the forge keeps no clone", async () => {
+  addApp();
+  changes([]);
+  serve();
+  const skelcrewClone = join(data(), "repos", "simon", "app");
+  await until(() => existsSync(join(skelcrewClone, "README")));
+  // Hold the next answer, and remove the repository as sc repo rm does while it is held.
+  writeFileSync(join(plugin, "hold-changed"), "");
+  await until(() => existsSync(join(plugin, "held-changed")));
+  const code = `import { removeRepo } from ${JSON.stringify(source("flow/repo.ts"))};
+await removeRepo("app", ${JSON.stringify(socket)});`;
+  const removed = Bun.spawnSync([process.execPath, "-e", code], { env: env(), stderr: "pipe" });
+  expect(removed.stderr.toString()).toBe("");
+  expect(existsSync(skelcrewClone)).toBe(false);
+  // Let the poll go on, and give it time to finish: a clone would be back within it.
+  rmSync(join(plugin, "hold-changed"));
+  await Bun.sleep(2000);
+  expect(existsSync(skelcrewClone)).toBe(false);
+});
+
+// A refresh still asking which forge claims a repository when sc repo rm runs must not clone
+// it afterwards.
+test("a repository removed while Skelcrew asks which forge claims it gets no clone", async () => {
+  addApp();
+  const db = new Database(join(data(), "skelcrew.db"));
+  db.run("UPDATE repositories SET claimed = 0");
+  db.close();
+  writeFileSync(join(plugin, "hold-claims"), "");
+  serve();
+  await until(() => existsSync(join(plugin, "held-claims")));
+  const code = `import { removeRepo } from ${JSON.stringify(source("flow/repo.ts"))};
+await removeRepo("app", ${JSON.stringify(socket)});`;
+  const removed = Bun.spawnSync([process.execPath, "-e", code], { env: env(), stderr: "pipe" });
+  expect(removed.stderr.toString()).toBe("");
+  // Let the refresh go on, and give it time to finish: a clone would appear within it.
+  rmSync(join(plugin, "hold-claims"));
+  await Bun.sleep(2000);
+  expect(existsSync(join(data(), "repos", "simon", "app"))).toBe(false);
 });
 
 // Two machines running Skelcrew on one repository both see the label, and only the one whose
