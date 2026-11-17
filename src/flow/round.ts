@@ -165,17 +165,17 @@ const reviews = new Queue();
 // turn among all reviews, in order of `since`, when it joined: now, unless it is one the
 // daemon's stop cut short, which keeps its place. Changes are typed in only once `builderBack`
 // settles, as a review the daemon brings back can end before the builder's session is there.
-// With `keep`, for a submit, a commit that only merges the base branch into the last approved
-// one keeps that approval, and no reviewer runs.
+// A commit that only merges the base branch into the last approved one, with CI running its
+// tests, keeps that approval, and no reviewer runs.
 async function reviewRound(
   db: Database,
   sessions: string,
   folder: string,
   sha: string,
   signal: AbortSignal,
-  later: { since?: number; builderBack?: Promise<unknown>; keep?: boolean } = {},
+  later: { since?: number; builderBack?: Promise<unknown> } = {},
 ): Promise<void> {
-  const { since = Date.now(), builderBack, keep = false } = later;
+  const { since = Date.now(), builderBack } = later;
   // Read what the round needs: the thread's PR, whether there is a forge to post on, and the
   // reviewer, its time limit and the limit on reviews at once your config names.
   if (signal.aborted) return;
@@ -258,11 +258,15 @@ async function reviewRound(
   // A builder whose PR fell behind or conflicts with the base branch merges it and submits
   // again. When that is all the commit does, the PR's own change is the one already approved, so
   // the approval holds and CI alone decides whether it is ready. It counts only while the latest
-  // review approved, so a review asking for changes since is never skipped. The approved commit
-  // and the base are refs in Skelcrew's clone, which the push brought up to date. It comes after
-  // the wait for CI's first check, as an approval with no CI showing yet reads as ready to merge.
-  // Its check goes from pending to success, in that order.
-  const approved = keep && thread.verdict === "approve" ? lastApproved(thread) : null;
+  // review approved, so a review asking for changes since is never skipped, and only while CI
+  // runs the tests on this commit, as a clean merge can still break them. Without CI the
+  // reviewer runs them, in a normal review. A change to docs alone has no tests to run. The
+  // approved commit and the base are refs in Skelcrew's clone, which the push brought up to
+  // date, and sc review deletes the approved one, so it always runs the reviewer. It comes after
+  // the wait for CI's first check, so CI can show, and an approval never reads as ready to merge
+  // before it does. Its check goes from pending to success, in that order.
+  const ciRuns = docsOnly || (pr !== null && suite(Number.POSITIVE_INFINITY) === "ci");
+  const approved = ciRuns && thread.verdict === "approve" ? lastApproved(thread) : null;
   if (approved !== null && onlyMergedBase(skelcrewClone, approved, sha, bases)) {
     const body = `Approval kept: this commit only merges ${baseOf(thread)} into ${approved}, which Skelcrew's reviewer approved, and changes nothing else in the PR. CI still runs on it.`;
     const verdict: Review = { verdict: "approve", body };
@@ -602,15 +606,13 @@ function trackRound(
 }
 
 // Pushes the round, after the earlier round's push, then reviews it, once the earlier round
-// has ended. With `keep`, for a submit, a commit that only merges the base branch keeps the
-// last approval rather than being reviewed.
+// has ended.
 function pushAndReview(
   db: Database,
   sessions: string,
   folder: string,
   summary: string,
   earlier: Round | undefined,
-  keep: boolean,
 ): void {
   // The earlier round's failure is already handled by its own follow, so here it only sets
   // the order.
@@ -618,7 +620,7 @@ function pushAndReview(
   const before = earlier?.pushed.catch(() => {}) ?? Promise.resolve();
   const pushed = before.then(() => push(db, sessions, folder, summary, cancel.signal));
   const rest = Promise.all([pushed, earlier?.done]).then(([sha]) =>
-    reviewRound(db, sessions, folder, sha, cancel.signal, { keep }),
+    reviewRound(db, sessions, folder, sha, cancel.signal),
   );
   trackRound(db, sessions, folder, cancel, pushed, rest);
 }
@@ -664,7 +666,7 @@ export function submitRound(db: Database, sessions: string, folder: string, summ
   // round's commit.
   const before = latestRounds.get(folder);
   before?.cancel.abort();
-  pushAndReview(db, sessions, folder, summary, before, true);
+  pushAndReview(db, sessions, folder, summary, before);
 }
 
 // Returns the commit Skelcrew last fetched from the thread's clone and pushed, or null when it
@@ -788,10 +790,15 @@ export function rerunReview(
     queued: null,
   } satisfies Partial<Thread>;
   record(db, folder, change, "asked to review again");
+  // A review asked for runs the reviewer, so the approval a merge could keep goes. Deleting it
+  // saves that across a restart too, which brings the review back as any other.
+  const skelcrewClone = cloneDir(thread.owner, thread.repo);
+  const ref = `refs/skelcrew/approved/${thread.folder}`;
+  Bun.spawnSync(["git", "-C", skelcrewClone, "update-ref", "-d", ref], { stderr: "ignore" });
   // A submit not yet pushed goes through the whole round. A commit already pushed only needs
   // its review, after the earlier round has ended.
   earlier?.cancel.abort();
-  if (submitting !== null) pushAndReview(db, sessions, folder, submitting, earlier, false);
+  if (submitting !== null) pushAndReview(db, sessions, folder, submitting, earlier);
   else if (sha !== null) {
     const cancel = new AbortController();
     const rest = Promise.resolve(earlier?.done).then(() =>
@@ -822,7 +829,7 @@ export function resumeRound(
   const { submitting, reviewing, queued, telling } = readThread(db, folder);
   const cancel = new AbortController();
   const none = Promise.resolve();
-  if (submitting !== null) pushAndReview(db, sessions, folder, submitting, undefined, true);
+  if (submitting !== null) pushAndReview(db, sessions, folder, submitting, undefined);
   else if (reviewing !== null)
     trackRound(
       db,
