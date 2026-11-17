@@ -42,9 +42,11 @@ const report = process.env.GITHUB_ACTIONS === "true" ? join(own, "report.xml") :
 const reporting = report ? ["--reporter=junit", `--reporter-outfile=${report}`] : [];
 // A dot per test as it ends, and each failure in full, so a slow run shows it is moving. Bun's
 // usual output in a parallel run prints a file only once it has ended, so a long file leaves
-// the screen silent for minutes. A test that hangs fails after a minute. Eight files run at once:
-// most tests wait on tmux and timers rather than use the CPU, and Bun hands a whole file to one
-// worker, so the slowest file sets the least a run can take.
+// the screen silent for minutes. A test that hangs fails after a minute. Bun hands a whole file
+// to one worker, so the slowest file sets the least a run can take. A file runs for each core,
+// at least four and at most eight. Eight passed on eight cores, where the tests that start a real
+// sandbox are skipped. With those, eight timed out tests on CI's smaller machine, and four didn't.
+const workers = Math.min(8, Math.max(4, navigator.hardwareConcurrency));
 const run = Bun.spawn(
   [
     process.execPath,
@@ -52,7 +54,7 @@ const run = Bun.spawn(
     "--dots",
     "--timeout",
     "60000",
-    "--parallel=8",
+    `--parallel=${workers}`,
     ...reporting,
     ...Bun.argv.slice(2),
   ],
@@ -78,8 +80,8 @@ const stop = setTimeout(async () => {
   const asked = new Map<number, number>();
   const deadline = Date.now() + 10_000;
   while (Date.now() < deadline) {
-    const workers = Bun.spawnSync(["pgrep", "-P", String(run.pid)], { stdout: "pipe" });
-    for (const pid of workers.stdout.toString().split("\n").filter(Boolean).map(Number)) {
+    const children = Bun.spawnSync(["pgrep", "-P", String(run.pid)], { stdout: "pipe" });
+    for (const pid of children.stdout.toString().split("\n").filter(Boolean).map(Number)) {
       const since = asked.get(pid) ?? Date.now();
       asked.set(pid, since);
       try {
