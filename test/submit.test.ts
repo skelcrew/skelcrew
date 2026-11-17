@@ -61,7 +61,9 @@ const script = (name: string, body: string) => writeScript(home, name, body);
 // the repository's first workflow. With docs-only there, a round changes only the file it names, else docs/change.md,
 // and with code-to-docs there, it moves src/app.ts to docs/app.md. As a reviewer, run with -p,
 // it approves, unless the file claude-limit beside it holds a moment in seconds since 1970
-// still to come: until then it says its usage limit is reached, as Claude Code did.
+// still to come: until then it says its usage limit is reached, as Claude Code did. Its
+// arguments are written aside and moved into place, so a test that sees the file never reads
+// them half written.
 function fakeClaude(submits = true): void {
   script(
     "claude",
@@ -76,7 +78,7 @@ case " $* " in *" -p "*)
   echo '{"type":"result","structured_output":{"verdict":"approve","body":"Ready to merge."}}'
   exit 0 ;;
 esac
-printf '%s\\n' "$@" > "$CLAUDE_CONFIG_DIR/args"
+printf '%s\\n' "$@" > "$CLAUDE_CONFIG_DIR/args.part"; mv "$CLAUDE_CONFIG_DIR/args.part" "$CLAUDE_CONFIG_DIR/args"
 for a; do [ "$prev" = --settings ] && settings=$a; prev=$a; done
 hook() {
   bun -e 'for (const group of JSON.parse(process.argv[1]).hooks?.[process.argv[2]] ?? [])
@@ -199,8 +201,9 @@ const builderSocket = () => {
   return join(home, "run", "skelcrew", "threads", short, "skelcrew.sock");
 };
 
-// A daemon's work takes its time here, so a wait lasts 15 seconds unless a test says otherwise.
-const until = (done: () => boolean, timeout = 15_000) => wait(done, { timeout });
+// A daemon's work takes its time here, and longer on a busy CI runner, so a wait lasts 30
+// seconds unless a test says otherwise.
+const until = (done: () => boolean, timeout = 30_000) => wait(done, { timeout });
 
 const github = () => join(home, "github");
 
@@ -229,6 +232,11 @@ openDb().run("INSERT INTO repositories (name, owner, repo, opened, forge, remote
 }
 
 const untilCloned = () => until(() => existsSync(join(data(), "repos", "simon", "app", "README")));
+
+// Waits until the thread no longer holds a review. The forge gets the review's check before
+// the daemon saves the thread, so a test that waited only for the check could read the thread
+// mid-review.
+const untilReviewSaved = () => until(() => thread().reviewing === null);
 
 function thread(): Record<string, unknown> {
   const db = new Database(join(data(), "skelcrew.db"));
@@ -640,8 +648,8 @@ done`,
     const said =
       "app-12's push was refused: it changes .github/workflows/ci.yml, which Skelcrew can't push. Undo that change, or a person must make it.";
     await startApp12();
-    await until(() => read(join(lead(), "typed")).includes("app-12 needs you"), 30_000);
-    expect(read(join(lead(), "typed"))).toContain(said);
+    // The note reaches the lead a piece at a time, so the test waits for all of it.
+    await until(() => read(join(lead(), "typed")).includes(said), 30_000);
     await until(() => read(join(builder(), "typed")).includes(said));
     // The builder answers with a second round, which GitHub takes and the reviewer approves.
     await until(() => finished("success").length === 1, 30_000);
@@ -656,12 +664,11 @@ done`,
     writeFileSync(join(codexHome(), "error-1"), "ERROR: stream disconnected before completion\n");
     await startApp12();
     await until(() => thread().needs_you === 1, 30_000);
-    await until(() => read(join(lead(), "typed")).includes("app-12 needs you"));
-    const note = read(join(lead(), "typed"));
-    expect(note).toContain(
-      "app-12 needs you: review failed: codex exited with 1: stream disconnected before completion",
-    );
-    expect(note).not.toContain("Add export");
+    // The note reaches the lead a piece at a time, so the test waits for all of it.
+    const said =
+      "app-12 needs you: review failed: codex exited with 1: stream disconnected before completion";
+    await until(() => read(join(lead(), "typed")).includes(said));
+    expect(read(join(lead(), "typed"))).not.toContain("Add export");
   }, 60_000);
 
   test("a review that meets Codex's usage limit is held without needing you, and no other review starts on Codex until the reset", async () => {
@@ -720,6 +727,7 @@ done`,
         body: "This review ran on Claude Code, as Codex reached its usage limit.\n\nReady to merge.",
       },
     ]);
+    await untilReviewSaved();
     expect(thread()).toMatchObject({ reviewed_by: "claude", review_limited: 0, needs_you: 0 });
     await until(() =>
       read(join(lead(), "typed")).includes(
@@ -742,6 +750,7 @@ done`,
     await until(() => thread().review_limited === 1, 30_000);
     expect(thread()).toMatchObject({ needs_you: 0, review_reset: reset * 1000 });
     await until(() => finished("success").length === 1, 45_000);
+    await untilReviewSaved();
     expect(thread()).toMatchObject({ review_limited: 0, review_reset: null, needs_you: 0 });
     expect(reviews()).toEqual([{ commit: pushed(), verdict: "approve", body: "Ready to merge." }]);
     await until(() =>
@@ -766,6 +775,7 @@ done`,
     await until(() =>
       read(join(lead(), "typed")).includes("app-12's review timed out after 0.1m; retrying"),
     );
+    await untilReviewSaved();
     expect(thread()).toMatchObject({ needs_you: 0, verdict: "approve" });
   }, 60_000);
 
@@ -1374,14 +1384,15 @@ await serve(${JSON.stringify(socket)}, 200);`;
   }, 60_000);
 
   // Runs the daemon from a folder that isn't a git checkout, as the service does, polling every
-  // 200 milliseconds. git that runs outside Skelcrew's clone then fails.
-  const serveOutsideCheckout = () => {
+  // 200 milliseconds. git that runs outside Skelcrew's clone then fails. `more` adds to its
+  // environment, such as a GIT_TRACE file that shows what git the daemon runs.
+  const serveOutsideCheckout = (more: Record<string, string> = {}) => {
     const code = `import { serve } from ${JSON.stringify(source("flow/daemon.ts"))};
 await serve(${JSON.stringify(socket)}, 200);`;
     running.push(
       Bun.spawn([process.execPath, "-e", code], {
         cwd: home,
-        env: env(),
+        env: { ...env(), ...more },
         stdout: "ignore",
         stderr: "ignore",
       }),
@@ -1617,5 +1628,45 @@ await serve(${JSON.stringify(socket)}, 200);`;
     await until(() => log().split(ready).length > before, 30_000);
     expect(log()).not.toContain("was deleted");
     expect(onRemote()).toBe(true);
+  }, 60_000);
+
+  // sc rm deletes the branch before it ends the thread. A poll in between must not take the
+  // thread for one whose branch someone else deleted. The fake remote holds the deletion open
+  // after the branch is gone, so the polls see that moment.
+  test("a poll while sc rm deletes the branch leaves the thread to sc rm", async () => {
+    const bare = addAppOnGit();
+    verdict(1, "approve", "Ready to merge.");
+    // Each look a poll takes at whether the branch is on the remote is a git ls-remote.
+    const trace = join(home, "git-trace");
+    const looks = () => read(trace).split("trace: built-in: git ls-remote").length - 1;
+    serveOutsideCheckout({ GIT_TRACE: trace });
+    await untilCloned();
+    expect((await skel(["start", "app", "Add export", "As JSON"])).err).toBe("");
+    const log = () => read(join(data(), "threads", "app-t1.log"));
+    await until(() => log().includes("app-t1 is ready on branch skelcrew/t1-add-export"), 30_000);
+    const hook = join(bare, "hooks", "post-receive");
+    writeFileSync(
+      hook,
+      `while read old new ref; do
+  case "$new" in *[!0]*) ;; *)
+    : > "${home}/deleted"
+    i=0; while ! test -e "${home}/go" && test -d "${home}" && [ $i -lt 300 ]; do sleep 0.1; i=$((i+1)); done ;;
+  esac
+done`,
+    );
+    chmodSync(hook, 0o755);
+    const removing = skel(["rm", "app-t1"]);
+    await until(() => existsSync(join(home, "deleted")), 30_000);
+    // sc rm's own look came before it deleted the branch, so a look from now on is a poll's.
+    // Polls of a repository never overlap, so once a second has begun, the first one has
+    // decided what the gone branch means for the thread.
+    const before = looks();
+    await until(() => looks() >= before + 2, 30_000);
+    writeFileSync(join(home, "go"), "");
+    const removed = await removing;
+    expect(removed.err).toBe("");
+    expect(removed.out).toContain("Removed app-t1.");
+    expect(log()).not.toContain("was deleted");
+    expect(log()).toContain('"why":"removed: ended the thread"');
   }, 60_000);
 });

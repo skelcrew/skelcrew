@@ -208,10 +208,20 @@ const toSecondThread = () => {
   press("M-Down");
 };
 
-// Waits until the screen shows the sidebar and the agent you opened it on.
+// Waits until the screen shows the agent you opened it on, and the sidebar marks its row. The
+// sidebar marks the row of the session it last saw on the right, and can still be on the lead's
+// while a thread already shows, so a key pressed then moves from the lead. A thread's row can
+// show its title, so this tells only the lead's row from a thread's.
 const ready = (name: string, window = "one") =>
   until(
-    () => seen(window).includes(`I am ${name}`) && selected(window) !== "",
+    () => {
+      const row = selected(window);
+      return (
+        seen(window).includes(`I am ${name}`) &&
+        row !== "" &&
+        (name === "lead") === row.endsWith(" lead")
+      );
+    },
     "the screen",
     window,
   );
@@ -545,15 +555,21 @@ const clipboard = () => {
 // The left button pressed at the first place on screen, dragged through the others and let go
 // at the last. Each step is a moment apart, as from a hand: tmux picks the binding for a mouse
 // event as it arrives, so a release in the same read as the drag would come before copy mode
-// had started.
-async function drag(from: [number, number], ...through: [number, number][]): Promise<void> {
+// had started. A moment can be too short on a busy machine, so a drag that `copies` also waits
+// for copy mode before it lets go. An agent that asked for the mouse gets the drag instead.
+async function drag(
+  from: [number, number],
+  through: [number, number][],
+  copies = true,
+): Promise<void> {
   const last = through.at(-1) ?? from;
   const moves = through.map((place) => `32;${place.join(";")}M`);
-  const steps = [`0;${from.join(";")}M`, ...moves, `0;${last.join(";")}m`];
-  for (const step of steps) {
+  for (const step of [`0;${from.join(";")}M`, ...moves]) {
     type(`\x1b[<${step}`);
     await Bun.sleep(100);
   }
+  if (copies) await until(() => scrolledBack().includes("1"), "copy mode");
+  type(`\x1b[<0;${last.join(";")}m`);
 }
 // Where a word on a line of the agent is on screen, as the column and row a terminal counts
 // from 1.
@@ -578,7 +594,7 @@ test("a drag over the agent copies just its text to your terminal's clipboard", 
   await copying();
   const [column, row] = placeOf("first", "first word here");
   // tmux selects up to the cell before the one the button is let go on.
-  await drag([column, row], [column + 10, row]);
+  await drag([column, row], [[column + 10, row]]);
   await until(() => clipboard() === "first word", "the copy");
   // The agents' server keeps no copy, so no agent can ask tmux for it.
   expect(tmux(agents, "list-buffers").out).toBe("");
@@ -612,7 +628,13 @@ test("a double click copies a word, and a triple click a line", async () => {
 test("a drag let go over the sidebar copies the agent's text up to its edge", async () => {
   await copying();
   const [column, row] = placeOf("word", "first word here");
-  await drag([column, row], [column - 3, row], [10, row]);
+  await drag(
+    [column, row],
+    [
+      [column - 3, row],
+      [10, row],
+    ],
+  );
   await until(() => clipboard() !== "", "the copy");
   expect(clipboard()).toBe("first ");
   type("after\r");
@@ -622,7 +644,13 @@ test("a drag let go over the sidebar copies the agent's text up to its edge", as
 test("a drag let go over the footer copies the agent's text to the end of its last row", async () => {
   await copying();
   const [column, row] = placeOf("line", "second line");
-  await drag([column, row], [column + 2, row + 1], [60, 30]);
+  await drag(
+    [column, row],
+    [
+      [column + 2, row + 1],
+      [60, 30],
+    ],
+  );
   await until(() => clipboard() !== "", "the copy");
   expect(clipboard()).toStartWith("line\nI am words\n");
 });
@@ -635,7 +663,7 @@ test("copying while scrolled back keeps your place, and a key returns you to the
   wheel(64);
   await until(() => seen().includes("line 190"), "the scrollback");
   const [column, row] = placeOf("line 190", "line 190");
-  await drag([column, row], [column + 8, row]);
+  await drag([column, row], [[column + 8, row]]);
   await until(() => clipboard() === "line 190", "the copy");
   await Bun.sleep(300);
   expect(scrolledBack()).toContain("1");
@@ -648,7 +676,7 @@ test("an agent that asked for the mouse gets a drag itself", async () => {
   agent("drawn", fullScreen("drawn", "\\033[?1002h\\033[?1006h"));
   open("drawn");
   await until(() => seen().includes("I am drawn"), "the agent");
-  await drag([60, 5], [64, 5]);
+  await drag([60, 5], [[64, 5]], false);
   await until(() => read("drawn.bytes").includes("\x1b[<0;25;4m"), "the release");
   expect(read("drawn.bytes")).toBe("\x1b[<0;21;4M\x1b[<32;25;4M\x1b[<0;25;4m");
   expect(scrolledBack()).not.toContain("1");

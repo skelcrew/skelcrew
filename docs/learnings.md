@@ -441,10 +441,25 @@ Skelcrew no longer supports Sprites itself. These are for the Sprite machine plu
   starts daemons, sandboxes or many processes takes longer, and failed with nothing wrong.
   `setDefaultTimeout` in a preload only reaches the first test file of a run, so
   `scripts/test.ts` passes `--timeout` instead.
+- **A flaky test can be a real race.** A test that failed now and then on "branch was deleted"
+  had found a poll ending a thread while sc rm was removing it. Read the code the failure names
+  before blaming the test.
 - **A fixed wait fails on a busy machine.** Timers fire late and processes start slowly, so
   a test that looks after a set time, or counts what happened in it, can look too early.
   Wait for the thing itself: a file, a line on screen, a row, a process gone. Time only
   what can't come too soon, such as the gap between two renewals.
+- **A file a fake writes can be read half written.** `> file` empties the file before the
+  command writes it, so a test that waits for the file to have something can read only part.
+  Have the fake write beside it and rename it into place, as `mv` does in one step.
+- **Wait for the last thing, not the first.** The forge gets a review's check before the daemon
+  saves the thread, and a note can reach the lead a piece at a time. A test that waits for the
+  first and then reads the second can read it too early. Wait for what the test then reads.
+- **Wait for the state a key starts from.** The sidebar can draw another row before the one you
+  opened, and a key pressed then moves from there. A drag let go before tmux is in copy mode
+  copies nothing. Wait for the row, or for copy mode, before the next key.
+- **On a loaded CI runner, raise the limit, don't sleep.** A first clone or a builder's start
+  took over 15 seconds there. A longer limit on a wait for the thing costs nothing when it
+  comes fast.
 - **`Bun.spawn` without `env` ignores changes to `process.env`.** It hands on the environment
   the process started with. Pass `env: process.env` to hand on a change.
 - **Tests must not inherit the agent's `SKELCREW_SANDBOX` and `SKELCREW_SOCKET`.** A builder's
