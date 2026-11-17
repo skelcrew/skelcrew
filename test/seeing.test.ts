@@ -1058,6 +1058,8 @@ describe.skipIf(insideSandbox)("from the lead", () => {
   test("a lead runs sc ps, sc issue ls, sc issue show and sc repo ls from its sandbox, but can't attach", async () => {
     threads();
     issue("app", 12, "Add export", "As JSON");
+    // app-12 saved its issue's words as it started.
+    sql("UPDATE tasks SET body = 'As JSON' WHERE repo = 'app' AND task = '12'");
     writeFileSync(
       join(home, "bin", "claude"),
       `#!/bin/sh
