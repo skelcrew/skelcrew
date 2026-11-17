@@ -11,7 +11,7 @@ import {
   readSession,
   stillRunning,
 } from "../agents/sessions.ts";
-import { moveToTasks, openDb, type Repository } from "../db.ts";
+import { finishUpgrade, moveToTasks, openDb, type Repository } from "../db.ts";
 import { setupDone } from "../machine/setup.ts";
 import { keepUpToDate } from "../machine/update.ts";
 import { cloneDir, daemonCodeFile, daemonSocket, threadSocket } from "../paths.ts";
@@ -148,6 +148,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
     throw new Error("the daemon is already running. Run sc to attach to a lead.");
   const db = openDb();
   moveToTasks(db);
+  finishUpgrade(db);
   // The checkout and commit this daemon's code came from, for sc status. Read once at start,
   // since a git pull afterwards doesn't change the code that runs.
   const runningCode = singleFile

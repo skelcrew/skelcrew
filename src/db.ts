@@ -234,6 +234,19 @@ export function moveToTasks(db: Database): void {
   }).immediate();
 }
 
+// Fills in the columns a tasks table from an earlier release gained: each task's issue link and
+// whether its work merged. Any sc run adds the columns, but only the daemon fills them, once it
+// holds the lock that keeps a second daemon out. Filled while the earlier release's daemon still
+// ran, a task it started or merged afterwards would miss its link or its merge for good.
+export function finishUpgrade(db: Database): void {
+  db.transaction(() => {
+    if (!db.query("SELECT 1 FROM upgrades WHERE step = 'fill tasks'").get()) return;
+    linkIssues(db);
+    recoverMerges(db);
+    db.run("DELETE FROM upgrades WHERE step = 'fill tasks'");
+  }).immediate();
+}
+
 // Creates the tables Skelcrew keeps, and adds the columns a database from an earlier release
 // lacks, leaving everything already there as it is.
 function prepareTables(db: Database): void {
@@ -312,14 +325,16 @@ function prepareTables(db: Database): void {
   // A new database starts with tasks. One from an earlier release waits for its daemon to move
   // its threads onto tasks, as only the daemon knows no other daemon still writes to it.
   if (fresh) createTasks(db);
-  // A tasks table made by an earlier release lacks the task's newer columns. Its tasks get
-  // their issue's link, and whether their work merged, as the columns come.
+  // Work on the tables left for the daemon, by name, until it is done.
+  db.run("CREATE TABLE IF NOT EXISTS upgrades (step TEXT PRIMARY KEY)");
+  // A tasks table made by an earlier release lacks the task's newer columns. Filling them in
+  // waits for the new daemon, as finishUpgrade says.
   if (hasTasks(db))
     for (const [column, type] of Object.entries(taskColumns))
       if (!db.query("SELECT 1 FROM pragma_table_info('tasks') WHERE name = ?").get(column)) {
         db.run(`ALTER TABLE tasks ADD COLUMN ${column} ${type}`);
-        if (column === "issue_link") linkIssues(db);
-        if (column === "merged") recoverMerges(db);
+        if (column === "issue_link" || column === "merged")
+          db.run("INSERT OR IGNORE INTO upgrades (step) VALUES ('fill tasks')");
       }
   // Skelcrew's copy of each repository's open tasks and PRs, as items, kept as JSON. The columns
   // are what readers pick and sort by. A database from an earlier release also has an

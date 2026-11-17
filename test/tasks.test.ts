@@ -183,9 +183,9 @@ console.log(JSON.stringify({ rounds, short, status }));`;
   db.close();
 });
 
-// A database the first release with tasks moved has a tasks table without the columns added
-// since: whether the work merged, and the link to its issue, which comes from the copy.
-test("a tasks table from an earlier release gains the task's newer columns", () => {
+// Leaves the database as the first release with tasks did: moved, with a tasks table without
+// the columns added since, whether the work merged and the link to its issue.
+function earlierTasks(): void {
   oldDatabase();
   run(`import { openDb, moveToTasks } from ${JSON.stringify(source("db.ts"))};
 moveToTasks(openDb());`);
@@ -194,15 +194,17 @@ moveToTasks(openDb());`);
   earlier.run("ALTER TABLE tasks DROP COLUMN merged");
   earlier.run("ALTER TABLE tasks DROP COLUMN issue_link");
   earlier.close();
+}
+
+// Any sc run adds the columns, but the earlier release's daemon may still be running, so
+// filling them waits for the new one.
+test("a tasks table from an earlier release gains the task's newer columns, unfilled", () => {
+  earlierTasks();
   const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
 import { readThread } from ${JSON.stringify(source("flow/thread.ts"))};
 const { rounds, merged, issue_link } = readThread(openDb(), "app-15");
 console.log(JSON.stringify({ rounds, merged, issue_link }));`;
-  expect(JSON.parse(run(code))).toEqual({
-    rounds: 3,
-    merged: false,
-    issue_link: "https://github.com/simon/app/issues/15",
-  });
+  expect(JSON.parse(run(code))).toEqual({ rounds: 3, merged: false, issue_link: null });
 });
 
 // Writes the logs of two threads whose work ended before Skelcrew kept whether it merged:
@@ -246,22 +248,27 @@ moveToTasks(openDb());`);
   ]);
 });
 
-test("a tasks table from an earlier release marks merged the tasks whose PR merged", () => {
-  oldDatabase();
-  run(`import { openDb, moveToTasks } from ${JSON.stringify(source("db.ts"))};
-moveToTasks(openDb());`);
-  endedBeforeMerges();
-  const earlier = new Database(dbFile());
-  earlier.run("DROP VIEW task_threads");
-  earlier.run("ALTER TABLE tasks DROP COLUMN merged");
-  earlier.close();
+// sc run while the earlier release's daemon still runs adds the columns. That daemon then
+// merges app-16 and removes app-14, and the new daemon, once it starts, fills them in.
+test("the new daemon fills a tasks table from an earlier release, after the old daemon's last merge", async () => {
+  earlierTasks();
   run(`import { openDb } from ${JSON.stringify(source("db.ts"))};
 openDb();`);
+  endedBeforeMerges();
+  machineSetUp();
+  serve();
+  await until(() => existsSync(join(home, "run", "skelcrew.sock")), { timeout: 30_000 });
   expect(mergedTasks()).toEqual([
     { task: 14, merged: 0 },
     { task: 16, merged: 1 },
   ]);
-});
+  const db = new Database(dbFile(), { readonly: true });
+  expect(db.query("SELECT issue_link FROM tasks WHERE task = 15").get()).toEqual({
+    issue_link: "https://github.com/simon/app/issues/15",
+  });
+  expect(db.query("SELECT * FROM upgrades").all()).toEqual([]);
+  db.close();
+}, 60_000);
 
 test("a reader opened before the move reads the tasks after it", () => {
   oldDatabase();
