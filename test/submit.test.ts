@@ -3,15 +3,7 @@
 // fake plugin for the repository's tracker and forge, and a folder of bare repositories for
 // what Skelcrew pushes to.
 import { Database } from "bun:sqlite";
-import {
-  afterAll,
-  afterEach,
-  beforeEach,
-  test as bunTest,
-  describe,
-  expect,
-  setDefaultTimeout,
-} from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   chmodSync,
   existsSync,
@@ -19,7 +11,6 @@ import {
   mkdtempSync,
   realpathSync,
   rmSync,
-  statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir, userInfo } from "node:os";
@@ -43,50 +34,6 @@ import {
   until as wait,
   writeScript,
 } from "./harness.ts";
-
-// TEMPORARY, to measure reviews inside the full suite on CI, and removed once read. Each test's
-// first review is timed in four steps: from sc submit to the daemon giving the review its turn,
-// from that to the reviewer running inside its sandbox, the reviewer's own run, and from its end
-// to the daemon acting on the verdict. The reviewer's start and end are when the fake Codex wrote
-// branches-1 and ended-1. CI gets every test's times as one annotation.
-let current = "";
-const timings: string[] = [];
-const test = (name: string, fn: () => Promise<void> | void, timeout?: number) =>
-  bunTest(
-    name,
-    async () => {
-      current = name;
-      await fn();
-    },
-    timeout,
-  );
-function timeFirstReview(): void {
-  const steps: { at: number; why: string }[] = [];
-  for (const line of read(join(data(), "threads", "app-12.log")).split("\n"))
-    try {
-      const { at, why } = JSON.parse(line);
-      if (why) steps.push({ at: Date.parse(at), why });
-    } catch {}
-  const written = (file: string) =>
-    statSync(join(codexHome(), "sessions", file), { throwIfNoEntry: false })?.mtimeMs;
-  const started = written("branches-1");
-  const ended = written("ended-1");
-  const submitted = steps.find((s) => s.why.startsWith("submitted:"))?.at;
-  const turn = steps.findLast(
-    (s) => s.why.startsWith("reviewing ") && (started === undefined || s.at <= started),
-  )?.at;
-  const acted = steps.find((s) => ended !== undefined && s.at >= ended)?.at;
-  const s = (from?: number, to?: number) =>
-    from === undefined || to === undefined ? "-" : `${((to - from) / 1000).toFixed(1)} s`;
-  timings.push(
-    `${current}: submit to turn ${s(submitted, turn)}, turn to reviewer ${s(turn, started)}, reviewer ${s(started, ended)}, verdict acted on ${s(ended, acted)}`,
-  );
-}
-afterAll(() => {
-  if (!process.env.GITHUB_ACTIONS) return;
-  const text = timings.join("\n").replaceAll("%", "%25").replaceAll("\r", "%0D");
-  console.log(`::notice title=first-review::${text.replaceAll("\n", "%0A")}`);
-});
 
 let home = "";
 let socket = "";
@@ -187,8 +134,7 @@ test -e "$CODEX_HOME/slow-$n" && sleep 30
 i=0; while test -e "$CODEX_HOME/held-$n" && ! test -e "$s/go-$n" && [ $i -lt 600 ]; do sleep 0.1; i=$((i+1)); done
 test -e "$CODEX_HOME/error-$n" && { cat "$s/prompt-$n" "$CODEX_HOME/error-$n" >&2; exit 1; }
 test -e "$CODEX_HOME/verdict-$n" || { echo "no verdict for review $n" >&2; exit 1; }
-cp "$CODEX_HOME/verdict-$n" "$out"
-: > "$s/ended-$n"`,
+cp "$CODEX_HOME/verdict-$n" "$out"`,
   );
 }
 
@@ -222,7 +168,6 @@ beforeEach(() => {
   });
 });
 afterEach(async () => {
-  timeFirstReview();
   for (const serve of running.splice(0)) {
     serve.kill();
     await serve.exited;
@@ -256,16 +201,10 @@ const builderSocket = () => {
   return join(home, "run", "skelcrew", "threads", short, "skelcrew.sock");
 };
 
-// How long a wait lasts before its test fails. Alone, a round's steps take a second or two each.
-// CI runs this file beside the rest of the suite on a 4-core runner, where one step has taken
-// over half a minute. The limit only ends a wait that would never end, so it is generous.
-const patience = 60_000;
-// Each test gets time for two such waits and its own steps, unless it says otherwise.
-setDefaultTimeout(2 * patience);
-
-// Waits for what the daemon does in its own time. One that gives up shows the end of the
-// thread's log, so a failure on CI says which step the thread stalled at, and when.
-const until = (done: () => boolean, timeout = patience) =>
+// A daemon's work takes its time here, and longer on a busy CI runner, so a wait lasts 30
+// seconds unless a test says otherwise. One that gives up shows the end of the thread's log,
+// so a failure on CI says which step the thread stalled at, and when.
+const until = (done: () => boolean, timeout = 30_000) =>
   wait(done, { timeout, what: () => `the daemon. The thread's last steps were:\n${lastSteps()}` });
 
 // Returns the last steps in app-12's log, each as when and why. A line still being written,
@@ -364,7 +303,7 @@ describe.skipIf(insideSandbox)("sc submit", () => {
     verdict(1, "changes", "\n  The export has no test.\n\nMore detail here.");
     verdict(2, "approve", "Ready to merge.");
     await startApp12();
-    await until(() => read(join(data(), "threads", "app-12.log")).includes("waits on CI"));
+    await until(() => read(join(data(), "threads", "app-12.log")).includes("waits on CI"), 30_000);
     const lines = read(join(data(), "threads", "app-12.log"))
       .trim()
       .split("\n")
@@ -393,7 +332,7 @@ describe.skipIf(insideSandbox)("sc submit", () => {
     addApp();
     verdict(1, "approve", "Ready to merge.");
     await startApp12();
-    await until(() => read(join(builder(), "args")) !== "");
+    await until(() => read(join(builder(), "args")) !== "", 30_000);
     const short = new Bun.CryptoHasher("sha256").update("simon/app").digest("hex").slice(0, 16);
     const leadSocket = join(home, "run", "skelcrew", "leads", short, "skelcrew.sock");
     await until(() => existsSync(leadSocket));
@@ -403,12 +342,12 @@ describe.skipIf(insideSandbox)("sc submit", () => {
       SKELCREW_SOCKET: leadSocket,
     });
     expect(told.err).toBe("");
-    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")));
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), 30_000);
     const prompt = read(join(codexHome(), "sessions", "prompt-1"));
     expect(prompt).toMatch(
       /# Add export\n\nAs JSON\n\n## Changes to the task from the lead, after the thread started\n\nThese override the task above where they differ\. The latest comes last\.\n\n### .* UTC\n\nKeep the CSV export too\.\n/,
     );
-  });
+  }, 60_000);
 
   test("pushes the round, opens the PR, has it reviewed, types the changes in, and waits on CI once approved", async () => {
     addApp();
@@ -419,6 +358,7 @@ describe.skipIf(insideSandbox)("sc submit", () => {
       () =>
         finished("success").length === 1 &&
         read(join(data(), "threads", "app-12.log")).includes("waits on CI"),
+      30_000,
     );
 
     expect(read(join(builder(), "submitted"))).toContain("Submitted app-12 for review.");
@@ -466,7 +406,7 @@ describe.skipIf(insideSandbox)("sc submit", () => {
     // The daemon saves a thread before it appends the thread to its log.
     await until(() => read(join(data(), "threads", "app-12.log")).includes("approved"));
     expect(read(join(data(), "threads", "app-12.log"))).toContain("Round 1");
-  });
+  }, 60_000);
 
   // So it is always clear on the forge whether you or Skelcrew wrote a commit.
   test("commits are authored by the forge's bot, with you as co-author", async () => {
@@ -476,7 +416,7 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
     expect(Bun.spawnSync([process.execPath, "-e", code], { env: env() }).success).toBe(true);
     verdict(1, "approve", "Ready to merge.");
     await startApp12();
-    await until(() => finished("success").length === 1);
+    await until(() => finished("success").length === 1, 30_000);
     const bare = join(github(), "simon", "app.git");
     expect(git(bare, "log", "-1", "--format=%an <%ae>", "skelcrew/12-add-export")).toBe(
       "skelcrew[bot] <1+skelcrew[bot]@users.noreply.github.com>",
@@ -484,7 +424,7 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
     expect(git(bare, "log", "-1", "--format=%B", "skelcrew/12-add-export")).toContain(
       "Co-authored-by: Simon <simon@example.com>",
     );
-  });
+  }, 60_000);
 
   // CI runs the whole test suite once per commit, so the reviewer leaves it to CI. The PR's own
   // check on its commit shows CI runs on it, even on a repository's first PR.
@@ -492,7 +432,7 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
     addApp({ ".github/workflows/ci.yml": "on: pull_request\n" });
     verdict(1, "approve", "Ready to merge.");
     await startApp12();
-    await until(() => opened() !== undefined);
+    await until(() => opened() !== undefined, 30_000);
     answer(plugin, "changed", {
       items: [
         taskItem("12", "Add export", { body: "As JSON" }),
@@ -504,13 +444,13 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
       ],
       next: null,
     });
-    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")));
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), 60_000);
     const prompt = read(join(codexHome(), "sessions", "prompt-1"));
     expect(prompt).toContain(
       "CI runs the whole test suite on this commit, so don't run it yourself",
     );
     expect(prompt).toContain("ci.md");
-  });
+  }, 100_000);
 
   // A workflow can run on other PRs and skip this one, such as with a branch or paths filter.
   // CI elsewhere then proves nothing about this commit, and the reviewer runs the suite.
@@ -543,7 +483,7 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
     writeFileSync(join(builder(), "ci.yml"), "on: pull_request\n");
     verdict(1, "approve", "Ready to merge.");
     await startApp12();
-    await until(() => opened() !== undefined);
+    await until(() => opened() !== undefined, 30_000);
     // No check yet, so no review either.
     await Bun.sleep(5_000);
     expect(existsSync(join(codexHome(), "sessions", "prompt-1"))).toBe(false);
@@ -558,12 +498,12 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
       ],
       next: null,
     });
-    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")));
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), 60_000);
     const prompt = read(join(codexHome(), "sessions", "prompt-1"));
     expect(prompt).toContain(
       "CI runs the whole test suite on this commit, so don't run it yourself",
     );
-  });
+  }, 100_000);
 
   // CI outside GitHub, such as Buildkite, leaves no workflows in the repository, yet shows a
   // check on the commit soon after the push.
@@ -573,7 +513,7 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
     startDaemon(socket, { ...env(), SKELCREW_CHECK_WAIT_MS: "60000" }, running);
     await untilCloned();
     expect((await skel(["start", "app-12"])).err).toBe("");
-    await until(() => opened() !== undefined);
+    await until(() => opened() !== undefined, 30_000);
     // No check yet, so no review either.
     await Bun.sleep(5_000);
     expect(existsSync(join(codexHome(), "sessions", "prompt-1"))).toBe(false);
@@ -588,12 +528,12 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
       ],
       next: null,
     });
-    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")));
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), 60_000);
     const prompt = read(join(codexHome(), "sessions", "prompt-1"));
     expect(prompt).toContain(
       "CI runs the whole test suite on this commit, so don't run it yourself",
     );
-  });
+  }, 100_000);
 
   // A workflow that runs only on a release never shows a check on a PR. Once a review has waited
   // for one in vain, the repository's next reviews start at once.
@@ -606,7 +546,7 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
     const first = read(join(codexHome(), "sessions", "prompt-1"));
     expect(first).toContain("No CI runs on this commit, so run the repository's whole test suite");
     // The second round's review would wait 2 minutes more if it waited again.
-    await until(() => existsSync(join(codexHome(), "sessions", "prompt-2")));
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-2")), 60_000);
     const second = read(join(codexHome(), "sessions", "prompt-2"));
     expect(second).toContain("No CI runs on this commit, so run the repository's whole test suite");
   }, 280_000);
@@ -619,12 +559,12 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
     writeFileSync(join(builder(), "docs-only"), "");
     verdict(1, "approve", "Ready to merge.");
     await startApp12();
-    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")));
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), 30_000);
     const prompt = read(join(codexHome(), "sessions", "prompt-1"));
     expect(prompt).toContain("The change only touches docs and Markdown, so don't run the tests.");
     expect(prompt).not.toContain("run the repository's whole test suite");
     expect(prompt).not.toContain("ci.md");
-  });
+  }, 60_000);
 
   // git quotes a name with letters outside ASCII, unless asked not to.
   test("a change to a Markdown file with an accented name runs no tests", async () => {
@@ -633,10 +573,10 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
     writeFileSync(join(builder(), "docs-only"), "résumé.md");
     verdict(1, "approve", "Ready to merge.");
     await startApp12();
-    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")));
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), 60_000);
     const prompt = read(join(codexHome(), "sessions", "prompt-1"));
     expect(prompt).toContain("The change only touches docs and Markdown, so don't run the tests.");
-  });
+  }, 100_000);
 
   // A file moved from code to docs removes code, though git would show only its new name.
   test("a change that moves code into docs is no docs-only change, and its tests run", async () => {
@@ -646,22 +586,22 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
     writeFileSync(join(builder(), "code-to-docs"), "");
     verdict(1, "approve", "Ready to merge.");
     await startApp12();
-    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")));
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), 30_000);
     const prompt = read(join(codexHome(), "sessions", "prompt-1"));
     expect(prompt).toContain("No CI runs on this commit, so run the repository's whole test suite");
     expect(prompt).not.toContain("only touches docs and Markdown");
-  });
+  }, 60_000);
 
   test("without CI, the reviewer runs the whole test suite itself", async () => {
     addApp();
     verdict(1, "approve", "Ready to merge.");
     await startApp12();
-    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")));
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), 30_000);
     const prompt = read(join(codexHome(), "sessions", "prompt-1"));
     expect(prompt).toContain(
       "No CI runs on this commit, so run the repository's whole test suite, with `bun test`.",
     );
-  });
+  }, 60_000);
 
   test("tells the builder about sc submit, after the task rather than in it", async () => {
     addApp();
@@ -681,7 +621,7 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
       "Come back to the human only for new scope, missing access, or a decision that is theirs. Decide everything else yourself.",
     );
     expect(args.endsWith("Add export\n\nAs JSON\n")).toBe(true);
-  });
+  }, 60_000);
 
   // max_rounds counts rounds of review and fixes, so with 2 the builder submits 3 times.
   test("after max_rounds rounds of changes and fixes, the thread needs you and the builder hears no more", async () => {
@@ -692,7 +632,7 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
     verdict(3, "changes", "Third problem.");
     verdict(4, "approve", "A fourth review should never run.");
     await startApp12();
-    await until(() => finished("failure").length === 3);
+    await until(() => finished("failure").length === 3, 45_000);
     await until(() => thread().needs_you === 1);
     await Bun.sleep(1500);
     expect(typedMessages()).toBe(2);
@@ -702,7 +642,7 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
     await until(() =>
       read(join(lead(), "typed")).includes("app-12 needs you: changes asked for after 2 rounds"),
     );
-  });
+  }, 90_000);
 
   test("sc start on a thread past the round limit lets it go on with the last review's changes", async () => {
     addApp();
@@ -711,21 +651,21 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
     verdict(2, "changes", "Second problem.");
     verdict(3, "approve", "Ready to merge.");
     await startApp12();
-    await until(() => thread().needs_you === 1 && thread().rounds === 2);
+    await until(() => thread().needs_you === 1 && thread().rounds === 2, 45_000);
     expect(read(join(builder(), "typed"))).not.toContain("Second problem.");
     const started = await skel(["start", "app-12"]);
     expect(started.err).toBe("");
     expect(started.out).toContain("app-12 goes on");
-    await until(() => read(join(builder(), "typed")).includes("Second problem."));
-    await until(() => finished("success").length === 1);
+    await until(() => read(join(builder(), "typed")).includes("Second problem."), 30_000);
+    await until(() => finished("success").length === 1, 30_000);
     await until(() => read(join(data(), "threads", "app-12.log")).includes("waits on CI"));
     expect(thread()).toMatchObject({ status: "waiting", needs_you: 0, rounds: 0 });
-  });
+  }, 90_000);
 
   test("a review that fails sets the check to review failed, posts nothing, and needs you", async () => {
     addApp();
     await startApp12();
-    await until(() => finished("failure").length === 1);
+    await until(() => finished("failure").length === 1, 30_000);
     expect(finished("failure")[0]?.description).toBe("review failed");
     await until(() => thread().needs_you === 1);
     expect(reviews()).toEqual([]);
@@ -734,7 +674,7 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
     await until(() =>
       read(join(data(), "threads", "app-12.log")).includes("no verdict for review 1"),
     );
-  });
+  }, 60_000);
 
   // GitHub refuses a push from Skelcrew's app that changes a workflow file. Here the fake GitHub
   // refuses the first round's commit with GitHub's words, and takes the next.
@@ -756,13 +696,13 @@ done`,
       "app-12's push was refused: it changes .github/workflows/ci.yml, which Skelcrew can't push. Undo that change, or a person must make it.";
     await startApp12();
     // The note reaches the lead a piece at a time, so the test waits for all of it.
-    await until(() => read(join(lead(), "typed")).includes(said));
+    await until(() => read(join(lead(), "typed")).includes(said), 30_000);
     await until(() => read(join(builder(), "typed")).includes(said));
     // The builder answers with a second round, which GitHub takes and the reviewer approves.
-    await until(() => finished("success").length === 1);
+    await until(() => finished("success").length === 1, 30_000);
     expect(pushedRound()).toBe("2");
     expect(thread()).toMatchObject({ needs_you: 0 });
-  });
+  }, 60_000);
 
   // codex exec echoes its prompt before it works, so the end of what it printed is the task.
   test("a failed review's note says the reviewer's own error, never the task it echoed", async () => {
@@ -770,13 +710,13 @@ done`,
     mkdirSync(codexHome(), { recursive: true });
     writeFileSync(join(codexHome(), "error-1"), "ERROR: stream disconnected before completion\n");
     await startApp12();
-    await until(() => thread().needs_you === 1);
+    await until(() => thread().needs_you === 1, 30_000);
     // The note reaches the lead a piece at a time, so the test waits for all of it.
     const said =
       "app-12 needs you: review failed: codex exited with 1: stream disconnected before completion";
     await until(() => read(join(lead(), "typed")).includes(said));
     expect(read(join(lead(), "typed"))).not.toContain("Add export");
-  });
+  }, 60_000);
 
   test("a review that meets Codex's usage limit is held without needing you, and no other review starts on Codex until the reset", async () => {
     addApp();
@@ -786,7 +726,7 @@ done`,
       "ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at Dec 31st, 2099 11:59 PM.\n",
     );
     await startApp12();
-    await until(() => thread().review_limited === 1);
+    await until(() => thread().review_limited === 1, 30_000);
     expect(thread()).toMatchObject({
       status: "waiting",
       needs_you: 0,
@@ -807,12 +747,12 @@ done`,
     const again = await skel(["submit", "Newer"], { SKELCREW_SOCKET: builderSocket() });
     expect(again.err).toBe("");
     const newer = git(clone(), "rev-parse", "HEAD");
-    await until(() => thread().reviewing === newer && thread().review_limited === 1);
+    await until(() => thread().reviewing === newer && thread().review_limited === 1, 30_000);
     await Bun.sleep(1000);
     expect(read(join(codexHome(), "sessions", "count")).trim()).toBe("1");
     expect(read(join(lead(), "typed")).split(told).length - 1).toBe(1);
     expect(read(join(lead(), "typed"))).not.toContain("needs you");
-  });
+  }, 60_000);
 
   test("while Codex is limited, reviews run on the fallback, and say so", async () => {
     addApp();
@@ -826,7 +766,7 @@ done`,
       "ERROR: You've hit your usage limit. Try again at Dec 31st, 2099 11:59 PM.\n",
     );
     await startApp12();
-    await until(() => finished("success").length === 1);
+    await until(() => finished("success").length === 1, 30_000);
     expect(reviews()).toEqual([
       {
         commit: pushed(),
@@ -841,7 +781,7 @@ done`,
         "Codex's usage limit is reached until 31 Dec 23:59; reviews run on Claude Code until then.",
       ),
     );
-  });
+  }, 60_000);
 
   test("a review held on a usage limit runs again by itself once the limit resets", async () => {
     addApp();
@@ -854,9 +794,9 @@ done`,
     const reset = Math.ceil(Date.now() / 1000) + 30;
     writeFileSync(join(home, "bin", "claude-limit"), `${reset}\n`);
     await startApp12();
-    await until(() => thread().review_limited === 1);
+    await until(() => thread().review_limited === 1, 30_000);
     expect(thread()).toMatchObject({ needs_you: 0, review_reset: reset * 1000 });
-    await until(() => finished("success").length === 1);
+    await until(() => finished("success").length === 1, 45_000);
     await untilReviewSaved();
     expect(thread()).toMatchObject({ review_limited: 0, review_reset: null, needs_you: 0 });
     expect(reviews()).toEqual([{ commit: pushed(), verdict: "approve", body: "Ready to merge." }]);
@@ -866,7 +806,7 @@ done`,
       ),
     );
     expect(read(join(lead(), "typed"))).toContain("Claude Code's usage limit is reached until");
-  });
+  }, 90_000);
 
   test("a review that runs past its time limit is ended and run once more, and the lead hears of it", async () => {
     addApp();
@@ -875,7 +815,7 @@ done`,
     writeFileSync(join(codexHome(), "slow-1"), "");
     verdict(2, "approve", "Ready to merge.");
     await startApp12();
-    await until(() => finished("success").length === 1);
+    await until(() => finished("success").length === 1, 30_000);
     expect(read(join(codexHome(), "sessions", "count")).trim()).toBe("2");
     const log = read(join(data(), "threads", "app-12.log"));
     expect(log).toContain("app-12's review timed out after 0.1m; retrying");
@@ -884,7 +824,7 @@ done`,
     );
     await untilReviewSaved();
     expect(thread()).toMatchObject({ needs_you: 0, verdict: "approve" });
-  });
+  }, 60_000);
 
   test("a review that times out twice needs you, and the lead hears why", async () => {
     addApp();
@@ -894,7 +834,7 @@ done`,
     writeFileSync(join(codexHome(), "slow-2"), "");
     verdict(3, "approve", "A third review should never run.");
     await startApp12();
-    await until(() => thread().needs_you === 1);
+    await until(() => thread().needs_you === 1, 30_000);
     expect(thread()).toMatchObject({ verdict: "timed out", reviewing: null });
     expect(finished("failure")[0]?.description).toBe("review timed out");
     expect(reviews()).toEqual([]);
@@ -903,7 +843,7 @@ done`,
     );
     expect(read(join(lead(), "typed"))).toContain("app-12's review timed out after 0.1m; retrying");
     expect(read(join(codexHome(), "sessions", "count")).trim()).toBe("2");
-  });
+  }, 60_000);
 
   test("a newer sc submit cancels the review still running for an older commit", async () => {
     addApp();
@@ -912,13 +852,13 @@ done`,
     verdict(1, "approve", "Stale.");
     verdict(2, "approve", "Fresh.");
     await startApp12();
-    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")));
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), 30_000);
     const older = pushed();
     writeFileSync(join(clone(), "change"), "newer\n");
     git(clone(), "commit", "-qam", "newer");
     const again = await skel(["submit", "Newer"], { SKELCREW_SOCKET: builderSocket() });
     expect(again.err).toBe("");
-    await until(() => finished("success").length === 1);
+    await until(() => finished("success").length === 1, 30_000);
     expect(finished("success")[0]?.sha).toBe(git(clone(), "rev-parse", "HEAD"));
     expect(
       statuses()
@@ -928,7 +868,7 @@ done`,
     expect(reviews()).toEqual([
       { commit: git(clone(), "rev-parse", "HEAD"), verdict: "approve", body: "Fresh." },
     ]);
-  });
+  }, 60_000);
 
   // Moves main on the fake GitHub with a commit of its own, then merges it into the thread's
   // clone, as a builder brings in main when its PR falls behind.
@@ -969,18 +909,18 @@ done`,
     const daemon = servePolling();
     await untilCloned();
     expect((await skel(["start", "app-12"])).err).toBe("");
-    await until(() => opened() !== undefined);
+    await until(() => opened() !== undefined, 60_000);
     if (ci) showPr(pushed(), [ciCheck("passed")]);
-    await until(() => finished("success").length === 1);
+    await until(() => finished("success").length === 1, 60_000);
     await untilReviewSaved();
     // The round after waits for CI's first check only once Skelcrew has seen CI on the PR, which
     // comes with a poll. Tests set the wait for a first check without that to 0.
-    if (ci) await until(() => thread().checks === "passing");
+    if (ci) await until(() => thread().checks === "passing", 60_000);
     mergeMain(work);
     const again = await skel(["submit", "Merged main"], { SKELCREW_SOCKET: builderSocket() });
     expect(again.err).toBe("");
     const merged = git(clone(), "rev-parse", "HEAD");
-    await until(() => pushed() === merged);
+    await until(() => pushed() === merged, 60_000);
     if (ci) showPr(merged, [ciCheck(merge)]);
     return { merged, daemon };
   }
@@ -989,7 +929,7 @@ done`,
     const work = addApp();
     verdict(1, "approve", "Ready to merge.");
     const { merged } = await approveThenMerge(work, { merge: "passed" });
-    await until(() => finished("success").length === 2);
+    await until(() => finished("success").length === 2, 60_000);
     await untilReviewSaved();
 
     // No reviewer ran for the merge, and the check and a comment on the PR say why.
@@ -1012,7 +952,7 @@ done`,
     verdict(1, "approve", "Ready to merge.");
     verdict(2, "changes", "The merge broke the export.");
     const { merged } = await approveThenMerge(work, { merge: "failed" });
-    await until(() => reviews().length === 2);
+    await until(() => reviews().length === 2, 60_000);
     expect(existsSync(join(codexHome(), "sessions", "prompt-2"))).toBe(true);
     expect(reviews()[1]).toEqual({
       commit: merged,
@@ -1027,7 +967,7 @@ done`,
     verdict(1, "approve", "Ready to merge.");
     verdict(2, "approve", "Tests pass.");
     const { merged } = await approveThenMerge(work, { ci: false });
-    await until(() => finished("success").length === 2);
+    await until(() => finished("success").length === 2, 60_000);
     expect(read(join(codexHome(), "sessions", "count")).trim()).toBe("2");
     expect(read(join(codexHome(), "sessions", "prompt-2"))).not.toContain(
       "CI runs the whole test suite on this commit",
@@ -1040,8 +980,9 @@ done`,
     verdict(1, "approve", "Ready to merge.");
     const { merged, daemon } = await approveThenMerge(work, { merge: "running" });
     // CI still runs on the merge, so the approval waits for it to pass.
-    await until(() =>
-      read(join(data(), "threads", "app-12.log")).includes("waiting for CI to pass"),
+    await until(
+      () => read(join(data(), "threads", "app-12.log")).includes("waiting for CI to pass"),
+      60_000,
     );
     // While CI runs, the thread holds the commit as under review: never kept, ready or needing you.
     await Bun.sleep(3_000);
@@ -1052,7 +993,7 @@ done`,
     expect(thread().reviewing).toBe(merged);
     servePolling();
     showPr(merged, [ciCheck("passed")]);
-    await until(() => finished("success").length === 2);
+    await until(() => finished("success").length === 2, 60_000);
     expect(finished("success")[1]).toMatchObject({
       sha: merged,
       description: "approval kept: only merged main",
@@ -1068,12 +1009,12 @@ done`,
     const first = serve();
     await untilCloned();
     await skel(["start", "app-12"]);
-    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")));
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), 60_000);
     first.kill();
     await first.exited;
     expect(thread().reviewing).toBe(pushed());
     serve();
-    await until(() => finished("success").length === 1);
+    await until(() => finished("success").length === 1, 30_000);
     expect(finished("success")[0]?.sha).toBe(pushed());
     expect(reviews()).toEqual([{ commit: pushed(), verdict: "approve", body: "Looks right." }]);
     await until(() => thread().reviewing === null);
@@ -1089,18 +1030,18 @@ done`,
     const first = serve();
     await untilCloned();
     await skel(["start", "app-12"]);
-    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")));
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), 30_000);
     first.kill();
     await first.exited;
     Bun.spawnSync(["tmux", "-L", socket, "kill-session", "-t", "=app-12"]);
     // The builder started again has no round of its own to submit.
     fakeClaude(false);
     serve();
-    await until(() => typedMessages() === 1);
+    await until(() => typedMessages() === 1, 30_000);
     expect(read(join(builder(), "typed"))).toContain("The export has no test.");
     await until(() => thread().telling === null);
     expect(thread().needs_you).toBe(0);
-  });
+  }, 60_000);
 
   // A review that leaves the queue because its pending check failed never runs, so the thread
   // must not go on saying it is queued.
@@ -1117,7 +1058,7 @@ done`,
     mkdirSync(codexHome(), { recursive: true });
     writeFileSync(join(codexHome(), "held-1"), "");
     await startApp12();
-    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")));
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), 60_000);
     // app-13 gets a PR of its own, and the forge now refuses every check.
     answer(plugin, "open pr", { number: 8 });
     writeFileSync(join(plugin, "fail-status"), "the forge is down");
@@ -1135,12 +1076,12 @@ done`,
         db.close();
       }
     };
-    await until(() => app13().needs_you === 1);
+    await until(() => app13().needs_you === 1, 60_000);
     expect(app13().queued).toBeNull();
     expect((await skel(["ps", "app", "--json"])).out).toContain(
       '"thread":"app-13","short":null,"title":"Add import","status":"waiting","needsYou":true,"queued":false',
     );
-  });
+  }, 120_000);
 
   // The first poll brings only open tasks, while the thread's task may have closed: the thread
   // saved its task as it started.
@@ -1152,7 +1093,7 @@ done`,
     const first = serve();
     await untilCloned();
     await skel(["start", "app-12"]);
-    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")));
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), 60_000);
     first.kill();
     await first.exited;
     const db = new Database(join(data(), "skelcrew.db"));
@@ -1160,9 +1101,9 @@ done`,
     db.close();
     answer(plugin, "changed", { items: [], next: null });
     serve();
-    await until(() => finished("success").length + finished("failure").length === 1);
+    await until(() => finished("success").length + finished("failure").length === 1, 60_000);
     expect(finished("success")[0]?.sha).toBe(pushed());
-  });
+  }, 120_000);
 
   test("finishes a submit the daemon's stop cut short while opening the PR", async () => {
     addApp();
@@ -1171,19 +1112,19 @@ done`,
     const first = serve();
     await untilCloned();
     await skel(["start", "app-12"]);
-    await until(() => existsSync(join(plugin, "held-open-pr")));
+    await until(() => existsSync(join(plugin, "held-open-pr")), 30_000);
     first.kill();
     await first.exited;
     // The call the stopped daemon started ends with it, and the forge answers with the PR
     // already open from the branch when asked again.
     rmSync(join(plugin, "hold-open-pr"));
     serve();
-    await until(() => finished("success").length === 1);
+    await until(() => finished("success").length === 1, 30_000);
     expect(finished("success")[0]?.sha).toBe(pushed());
     expect(reviews()).toEqual([{ commit: pushed(), verdict: "approve", body: "Looks right." }]);
     await until(() => read(join(data(), "threads", "app-12.log")).includes("waits on CI"));
     expect(thread()).toMatchObject({ pr: 7, submitting: null });
-  });
+  }, 60_000);
 
   test("types in a review the daemon's stop kept from the builder, without reviewing again", async () => {
     addApp();
@@ -1193,14 +1134,14 @@ done`,
     const first = serve();
     await untilCloned();
     await skel(["start", "app-12"]);
-    await until(() => thread().telling !== null);
+    await until(() => thread().telling !== null, 30_000);
     const reviewed = statuses()[0]?.sha;
     first.kill();
     await first.exited;
     serve();
     await Bun.sleep(1000);
     rmSync(join(builder(), "busy"));
-    await until(() => typedMessages() === 1);
+    await until(() => typedMessages() === 1, 30_000);
     expect(read(join(builder(), "typed"))).toContain("The export has no test.");
     expect(reviews()).toHaveLength(1);
     expect(
@@ -1212,7 +1153,7 @@ done`,
     // The review set the thread working again before the builder's turn ended, but that turn
     // had its submit, so the builder never waited on you.
     expect(read(join(data(), "threads", "app-12.log"))).not.toContain("without submitting");
-  });
+  }, 60_000);
 
   // Typing the changes in while the builder asks you a question would answer it for you.
   test("a review's changes wait while the builder asks a question, and go in once it is over", async () => {
@@ -1221,7 +1162,7 @@ done`,
     mkdirSync(builder(), { recursive: true });
     writeFileSync(join(builder(), "busy"), "");
     await startApp12();
-    await until(() => thread().telling !== null);
+    await until(() => thread().telling !== null, 30_000);
     const asBuilder = { SKELCREW_SOCKET: builderSocket() };
     expect((await skel(["question", "asked"], asBuilder)).code).toBe(0);
     rmSync(join(builder(), "busy"));
@@ -1231,7 +1172,7 @@ done`,
     expect((await skel(["question", "closed"], asBuilder)).code).toBe(0);
     await until(() => read(join(builder(), "typed")).includes("The export has no test."));
     await until(() => thread().telling === null);
-  });
+  }, 60_000);
 
   test("keeps a review it couldn't type in, and needs you", async () => {
     addApp();
@@ -1239,15 +1180,15 @@ done`,
     mkdirSync(builder(), { recursive: true });
     writeFileSync(join(builder(), "busy"), "");
     await startApp12();
-    await until(() => thread().telling !== null);
+    await until(() => thread().telling !== null, 30_000);
     // Skelcrew watches a builder for a second after it starts, and one that ends within it
     // failed to start. With no CI to wait for, the review can come back within that second, so
     // the session ends only once the watch is over, as for a builder that ended mid-work.
     await until(() => Date.now() > Number(thread().working_since) + 2000);
     Bun.spawnSync(["tmux", "-L", socket, "kill-session", "-t", "=app-12"]);
-    await until(() => thread().needs_you === 1);
+    await until(() => thread().needs_you === 1, 30_000);
     expect(String(thread().telling)).toContain("The export has no test.");
-  });
+  }, 60_000);
 
   test("types in a saved review once a builder whose session ended is started again", async () => {
     addApp();
@@ -1257,7 +1198,7 @@ done`,
     const first = serve();
     await untilCloned();
     await skel(["start", "app-12"]);
-    await until(() => thread().telling !== null);
+    await until(() => thread().telling !== null, 30_000);
     first.kill();
     await first.exited;
     Bun.spawnSync(["tmux", "-L", socket, "kill-session", "-t", "=app-12"]);
@@ -1266,10 +1207,10 @@ done`,
     // conversation to go on with.
     fakeClaude(false);
     serve();
-    await until(() => typedMessages() === 1);
+    await until(() => typedMessages() === 1, 30_000);
     expect(read(join(builder(), "typed"))).toContain("The export has no test.");
     await until(() => thread().telling === null);
-  });
+  }, 60_000);
 
   test("a builder started again that submits at once drops the saved review", async () => {
     addApp();
@@ -1280,16 +1221,16 @@ done`,
     const first = serve();
     await untilCloned();
     await skel(["start", "app-12"]);
-    await until(() => thread().telling !== null);
+    await until(() => thread().telling !== null, 30_000);
     first.kill();
     await first.exited;
     Bun.spawnSync(["tmux", "-L", socket, "kill-session", "-t", "=app-12"]);
     rmSync(join(builder(), "busy"));
     serve();
-    await until(() => finished("success").length === 1);
+    await until(() => finished("success").length === 1, 30_000);
     await Bun.sleep(2000);
     expect(typedMessages()).toBe(0);
-  });
+  }, 60_000);
 
   test("a newer sc submit drops a review still waiting for the builder", async () => {
     addApp();
@@ -1298,16 +1239,16 @@ done`,
     mkdirSync(builder(), { recursive: true });
     writeFileSync(join(builder(), "busy"), "");
     await startApp12();
-    await until(() => thread().telling !== null);
+    await until(() => thread().telling !== null, 30_000);
     writeFileSync(join(clone(), "change"), "newer\n");
     git(clone(), "commit", "-qam", "newer");
     expect((await skel(["submit", "Newer"], { SKELCREW_SOCKET: builderSocket() })).err).toBe("");
     expect(thread().telling).toBeNull();
-    await until(() => finished("success").length === 1);
+    await until(() => finished("success").length === 1, 30_000);
     rmSync(join(builder(), "busy"));
     await Bun.sleep(2000);
     expect(typedMessages()).toBe(0);
-  });
+  }, 60_000);
 
   test("reviews against the default branch as the thread started from it", async () => {
     const work = addApp();
@@ -1319,11 +1260,11 @@ done`,
     git(work, "commit", "-qm", "later");
     git(work, "push", "-q", "origin", "main");
     expect((await skel(["start", "app-12"])).err).toBe("");
-    await until(() => finished("success").length === 1);
+    await until(() => finished("success").length === 1, 30_000);
     expect(read(join(codexHome(), "sessions", "main-1"))).toBe(
       `${git(work, "rev-parse", "HEAD")}\n`,
     );
-  });
+  }, 60_000);
 
   test("a commit submitted again while its check is being set gets pending after it", async () => {
     addApp();
@@ -1333,13 +1274,13 @@ done`,
     writeFileSync(join(codexHome(), "slow-2"), "");
     writeFileSync(join(plugin, "hold-status-success"), "");
     await startApp12();
-    await until(() => existsSync(join(plugin, "held-status")));
+    await until(() => existsSync(join(plugin, "held-status")), 60_000);
     expect((await skel(["submit", "Again"], { SKELCREW_SOCKET: builderSocket() })).err).toBe("");
     await Bun.sleep(1000);
     rmSync(join(plugin, "hold-status-success"));
-    await until(() => statuses().length === 3);
+    await until(() => statuses().length === 3, 60_000);
     expect(statuses().map((s) => s.state)).toEqual(["pending", "success", "pending"]);
-  });
+  }, 120_000);
 
   test("a review cancelled while it is posted doesn't set the check on the commit submitted again", async () => {
     addApp();
@@ -1349,15 +1290,15 @@ done`,
     writeFileSync(join(codexHome(), "slow-2"), "");
     writeFileSync(join(plugin, "hold-review"), "");
     await startApp12();
-    await until(() => existsSync(join(plugin, "held-review")));
+    await until(() => existsSync(join(plugin, "held-review")), 30_000);
     expect((await skel(["submit", "Again"], { SKELCREW_SOCKET: builderSocket() })).err).toBe("");
     await Bun.sleep(1000);
     rmSync(join(plugin, "hold-review"));
-    await until(() => existsSync(join(codexHome(), "sessions", "prompt-2")));
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-2")), 30_000);
     expect(reviews()).toHaveLength(1);
     await Bun.sleep(1500);
     expect(statuses().map((s) => s.state)).toEqual(["pending", "pending"]);
-  });
+  }, 60_000);
 
   test("a thread started from another branch is reviewed against it, and its PR goes into it", async () => {
     const work = addApp();
@@ -1367,11 +1308,11 @@ done`,
     serve();
     await untilCloned();
     expect((await skel(["start", "app-12", "--from", "next"])).err).toBe("");
-    await until(() => finished("success").length === 1);
+    await until(() => finished("success").length === 1, 30_000);
     expect(opened()?.base).toBe("next");
     expect(read(join(codexHome(), "sessions", "prompt-1"))).toContain("origin/next...HEAD");
     expect(read(join(codexHome(), "sessions", "branches-1"))).toContain("origin/next");
-  });
+  }, 60_000);
 
   // Skelcrew's clone holds the default branch, and another base only once Skelcrew fetches it.
   // Measured against main, the code next adds would make the change more than docs.
@@ -1389,10 +1330,10 @@ done`,
     serve();
     await untilCloned();
     expect((await skel(["start", "app-12", "--from", "next"])).err).toBe("");
-    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")));
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), 30_000);
     const prompt = read(join(codexHome(), "sessions", "prompt-1"));
     expect(prompt).toContain("The change only touches docs and Markdown, so don't run the tests.");
-  });
+  }, 60_000);
 });
 
 // Lets a test change a thread as merging its PR would, without polling GitHub.
@@ -1418,13 +1359,13 @@ describe.skipIf(insideSandbox)("sc review", () => {
     verdict(2, "changes", "The export has no test.");
     verdict(3, "approve", "Ready to merge.");
     await startApp12();
-    await until(() => thread().needs_you === 1);
+    await until(() => thread().needs_you === 1, 30_000);
     const first = pushed();
     const again = await skel(["review", "app-12"]);
     expect(again.err).toBe("");
     expect(again.code).toBe(0);
     expect(again.out).toContain("app-12");
-    await until(() => finished("success").length === 1);
+    await until(() => finished("success").length === 1, 45_000);
     expect(
       statuses()
         .filter((s) => s.sha === first)
@@ -1443,7 +1384,7 @@ describe.skipIf(insideSandbox)("sc review", () => {
     expect(read(join(builder(), "typed"))).toContain("The export has no test.");
     await until(() => read(join(data(), "threads", "app-12.log")).includes("waits on CI"));
     expect(thread()).toMatchObject({ status: "waiting", needs_you: 0, rounds: 1 });
-  });
+  }, 90_000);
 
   // sc review, like sc submit, leaves the builder's turn waiting on a review, not on you.
   test("a builder that asks for another review and ends its turn doesn't need you", async () => {
@@ -1451,18 +1392,18 @@ describe.skipIf(insideSandbox)("sc review", () => {
     verdict(1, "approve", "Ready to merge.");
     verdict(2, "approve", "Still ready.");
     await startApp12();
-    await until(() => read(join(data(), "threads", "app-12.log")).includes("waits on CI"));
+    await until(() => read(join(data(), "threads", "app-12.log")).includes("waits on CI"), 30_000);
     // The first turn's own end must come before the turn the test plays, or it would end that.
-    await until(() => read(join(builder(), "ended")).trim() === "1");
+    await until(() => read(join(builder(), "ended")).trim() === "1", 30_000);
     const asBuilder = { SKELCREW_SOCKET: builderSocket() };
     // You ask the builder for another review: a new turn, in which it runs sc review.
     expect((await skel(["question", "answered"], asBuilder)).code).toBe(0);
     expect((await skel(["review", "app-12"], asBuilder)).err).toBe("");
     expect((await skel(["turn", "ended"], asBuilder)).code).toBe(0);
-    await until(() => finished("success").length === 2);
+    await until(() => finished("success").length === 2, 45_000);
     expect(thread().stalled).toBe(0);
     expect(read(join(data(), "threads", "app-12.log"))).not.toContain("without submitting");
-  });
+  }, 90_000);
 
   // Only the builder's own sc review is a submit in its turn.
   test("a review the lead asks for doesn't hide a builder that then stops without submitting", async () => {
@@ -1470,17 +1411,17 @@ describe.skipIf(insideSandbox)("sc review", () => {
     verdict(1, "approve", "Ready to merge.");
     verdict(2, "approve", "Still ready.");
     await startApp12();
-    await until(() => read(join(data(), "threads", "app-12.log")).includes("waits on CI"));
+    await until(() => read(join(data(), "threads", "app-12.log")).includes("waits on CI"), 30_000);
     // The first turn's own end must come before the turn the test plays, or it would end that.
-    await until(() => read(join(builder(), "ended")).trim() === "1");
+    await until(() => read(join(builder(), "ended")).trim() === "1", 30_000);
     const asBuilder = { SKELCREW_SOCKET: builderSocket() };
     // Something typed in starts the builder's turn, and meanwhile the lead asks for a review.
     expect((await skel(["question", "answered"], asBuilder)).code).toBe(0);
     expect((await skel(["review", "app-12"], { SKELCREW_SOCKET: leadSocketPath() })).err).toBe("");
     expect((await skel(["turn", "ended"], asBuilder)).code).toBe(0);
     await until(() => thread().stalled === 1);
-    await until(() => finished("success").length === 2);
-  });
+    await until(() => finished("success").length === 2, 45_000);
+  }, 90_000);
 
   test("refuses a thread with nothing submitted yet, and a thread that is done", async () => {
     addApp();
@@ -1495,14 +1436,14 @@ describe.skipIf(insideSandbox)("sc review", () => {
     expect(done.code).not.toBe(0);
     expect(done.err).toContain("app-12 is done");
     expect(statuses()).toEqual([]);
-  });
+  }, 60_000);
 
   test("the lead and the thread's own builder can ask, and a review already running is refused", async () => {
     addApp();
     mkdirSync(codexHome(), { recursive: true });
     writeFileSync(join(codexHome(), "slow-1"), "");
     await startApp12();
-    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")));
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), 30_000);
     const fromLead = await skel(["review", "app-12"], { SKELCREW_SOCKET: leadSocketPath() });
     expect(fromLead.code).not.toBe(0);
     expect(fromLead.err).toContain(
@@ -1517,7 +1458,7 @@ describe.skipIf(insideSandbox)("sc review", () => {
     const another = await skel(["review", "app-13"], { SKELCREW_SOCKET: builderSocket() });
     expect(another.code).not.toBe(0);
     expect(another.err).toContain("you may ask for a review of app-12 only");
-  });
+  }, 60_000);
 
   test("a newer sc submit cancels a review asked for again", async () => {
     addApp();
@@ -1526,7 +1467,7 @@ describe.skipIf(insideSandbox)("sc review", () => {
     verdict(2, "approve", "Stale.");
     verdict(3, "approve", "Fresh.");
     await startApp12();
-    await until(() => thread().needs_you === 1);
+    await until(() => thread().needs_you === 1, 30_000);
     const older = pushed();
     // Held so the second ask comes before the check is pending again.
     writeFileSync(join(plugin, "hold-status-pending"), "");
@@ -1534,11 +1475,11 @@ describe.skipIf(insideSandbox)("sc review", () => {
     const twice = await skel(["review", "app-12"]);
     expect(twice.err).toContain("a review of app-12's last commit is already waiting or running");
     rmSync(join(plugin, "hold-status-pending"));
-    await until(() => existsSync(join(codexHome(), "sessions", "prompt-2")));
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-2")), 30_000);
     writeFileSync(join(clone(), "change"), "newer\n");
     git(clone(), "commit", "-qam", "newer");
     expect((await skel(["submit", "Newer"], { SKELCREW_SOCKET: builderSocket() })).err).toBe("");
-    await until(() => finished("success").length === 1);
+    await until(() => finished("success").length === 1, 30_000);
     expect(finished("success")[0]?.sha).toBe(git(clone(), "rev-parse", "HEAD"));
     expect(
       statuses()
@@ -1546,7 +1487,7 @@ describe.skipIf(insideSandbox)("sc review", () => {
         .map((s) => s.state),
     ).toEqual(["pending", "failure", "pending"]);
     expect(reviews().map((r) => r.body)).toEqual(["Fresh."]);
-  });
+  }, 60_000);
 });
 
 test("only a builder can submit, from its thread", async () => {
@@ -1596,7 +1537,7 @@ await serve(${JSON.stringify(socket)}, 200);`;
     expect(started.err).toBe("");
     expect(started.out).toBe("Started app-t1.\n");
     const log = () => read(join(data(), "threads", "app-t1.log"));
-    await until(() => log().includes("app-t1 is ready on branch skelcrew/t1-add-export"));
+    await until(() => log().includes("app-t1 is ready on branch skelcrew/t1-add-export"), 30_000);
     expect(git(bare, "show", "skelcrew/t1-add-export:change")).toBe("1");
     expect(read(join(data(), "claude", "app-t1", "args"))).toContain("Add export\n\nAs JSON");
     const row = () => {
@@ -1620,9 +1561,9 @@ await serve(${JSON.stringify(socket)}, 200);`;
     git(work, "push", "-q", bare, "main");
     // The thread's row changes a moment before its log has the line, so the test waits on the
     // log, which comes last.
-    await until(() => log().includes("is merged into main"));
+    await until(() => log().includes("is merged into main"), 30_000);
     expect(row()).toMatchObject({ status: "done" });
-  });
+  }, 60_000);
 
   // Runs the daemon from a folder that isn't a git checkout, as the service does, polling every
   // 200 milliseconds. git that runs outside Skelcrew's clone then fails. `more` adds to its
@@ -1655,7 +1596,7 @@ await serve(${JSON.stringify(socket)}, 200);`;
     expect(removed.out).toBe("Removed app-t1. sc start app-t1 starts it over.\n");
     expect(git(bare, "branch", "--list", "skelcrew/t1-add-export")).not.toBe("");
     expect(existsSync(join(data(), "threads", "app-t1"))).toBe(false);
-  });
+  }, 60_000);
 
   // Each review runs the repository's tests, so the limit keeps them from slowing each other.
   describe("with limits.reviews at 1", () => {
@@ -1698,11 +1639,11 @@ await serve(${JSON.stringify(socket)}, 200);`;
       serveOutsideCheckout();
       await untilCloned();
       await start("First");
-      await until(() => prompt(1) !== "");
+      await until(() => prompt(1) !== "", 30_000);
       await start("Second");
-      await until(() => queued("app-t2"));
+      await until(() => queued("app-t2"), 30_000);
       await start("Third");
-      await until(() => queued("app-t3"));
+      await until(() => queued("app-t3"), 30_000);
       // Only the first review runs. sc ps and the sidebar say the others wait.
       expect(reviewsRun()).toBe(1);
       const listed = (await skel(["ps"])).out;
@@ -1710,16 +1651,16 @@ await serve(${JSON.stringify(socket)}, 200);`;
       expect(listed).toMatch(/app-t3 .*queued for review/);
       // As each ends, the one that came next starts.
       letGo(1);
-      await until(() => prompt(2) !== "");
+      await until(() => prompt(2) !== "", 30_000);
       expect(prompt(2)).toContain("# Second");
       expect(queued("app-t2")).toBe(false);
       expect(queued("app-t3")).toBe(true);
       letGo(2);
-      await until(() => prompt(3) !== "");
+      await until(() => prompt(3) !== "", 30_000);
       expect(prompt(3)).toContain("# Third");
       letGo(3);
-      await until(() => ["app-t1", "app-t2", "app-t3"].every(ready));
-    });
+      await until(() => ["app-t1", "app-t2", "app-t3"].every(ready), 30_000);
+    }, 60_000);
 
     test("a thread stopped while its review waits is stopped, and its review never runs", async () => {
       config("limits: { reviews: 1 }\n");
@@ -1728,17 +1669,17 @@ await serve(${JSON.stringify(socket)}, 200);`;
       serveOutsideCheckout();
       await untilCloned();
       await start("First");
-      await until(() => prompt(1) !== "");
+      await until(() => prompt(1) !== "", 30_000);
       await start("Second");
-      await until(() => queued("app-t2"));
+      await until(() => queued("app-t2"), 30_000);
       expect((await skel(["stop", "app-t2"])).err).toBe("");
       expect((await skel(["ps"])).out).toMatch(/app-t2 .* stopped/);
       letGo(1);
-      await until(() => ready("app-t1"));
+      await until(() => ready("app-t1"), 30_000);
       await Bun.sleep(1500);
       expect(reviewsRun()).toBe(1);
       expect((await skel(["ps"])).out).toMatch(/app-t2 .* stopped/);
-    });
+    }, 60_000);
 
     test("after a restart, the review that was running goes first, and the one that waited waits again", async () => {
       config("limits: { reviews: 1 }\n");
@@ -1748,9 +1689,9 @@ await serve(${JSON.stringify(socket)}, 200);`;
       const first = running.at(-1);
       await untilCloned();
       await start("First");
-      await until(() => prompt(1) !== "");
+      await until(() => prompt(1) !== "", 30_000);
       await start("Second");
-      await until(() => queued("app-t2"));
+      await until(() => queued("app-t2"), 30_000);
       first?.kill();
       await first?.exited;
       // Both reviews are still to do, and the second still waits.
@@ -1760,18 +1701,18 @@ await serve(${JSON.stringify(socket)}, 200);`;
       serveOutsideCheckout();
       // The review that was running starts again first, and the one that waited waits again
       // until it ends.
-      await until(() => prompt(2) !== "");
+      await until(() => prompt(2) !== "", 30_000);
       expect(prompt(2)).toContain("# First");
       await Bun.sleep(1000);
       expect(reviewsRun()).toBe(2);
       expect(queued("app-t1")).toBe(false);
       expect(queued("app-t2")).toBe(true);
       letGo(2);
-      await until(() => prompt(3) !== "");
+      await until(() => prompt(3) !== "", 30_000);
       expect(prompt(3)).toContain("# Second");
       letGo(3);
-      await until(() => ready("app-t1") && ready("app-t2"));
-    });
+      await until(() => ready("app-t1") && ready("app-t2"), 30_000);
+    }, 60_000);
 
     // Giving back the first review's place starts the queued one at once, so the limit the
     // first met must already be saved by then, or the second would run on the limited harness.
@@ -1786,14 +1727,14 @@ await serve(${JSON.stringify(socket)}, 200);`;
       serveOutsideCheckout();
       await untilCloned();
       await start("First");
-      await until(() => prompt(1) !== "");
+      await until(() => prompt(1) !== "", 30_000);
       await start("Second");
-      await until(() => queued("app-t2"));
+      await until(() => queued("app-t2"), 30_000);
       letGo(1);
       const second = () => read(join(data(), "threads", "app-t2.log"));
-      await until(() => second().includes("usage limit holds the review"));
+      await until(() => second().includes("usage limit holds the review"), 30_000);
       expect(reviewsRun()).toBe(1);
-    });
+    }, 60_000);
 
     // Two reviews run at once. The second meets Codex's limit while the first still runs, and
     // the first then ends cleanly, as its last call came before the limit. That says nothing
@@ -1810,7 +1751,7 @@ await serve(${JSON.stringify(socket)}, 200);`;
       serveOutsideCheckout();
       await untilCloned();
       await start("First");
-      await until(() => prompt(1) !== "");
+      await until(() => prompt(1) !== "", 30_000);
       await start("Second");
       // The limit is met, and saved, while the first review still runs.
       const limits = () => {
@@ -1822,16 +1763,16 @@ await serve(${JSON.stringify(socket)}, 200);`;
           db.close();
         }
       };
-      await until(() => limits() === 1);
+      await until(() => limits() === 1, 30_000);
       letGo(1);
-      await until(() => ready("app-t1"));
+      await until(() => ready("app-t1"), 30_000);
       // The limit holds: a new thread's review never runs Codex.
       expect(limits()).toBe(1);
       await start("Third");
       const third = () => read(join(data(), "threads", "app-t3.log"));
-      await until(() => third().includes("usage limit holds the review"));
+      await until(() => third().includes("usage limit holds the review"), 30_000);
       expect(reviewsRun()).toBe(2);
-    });
+    }, 60_000);
   });
 
   // Without a forge there is no PR to close, but Skelcrew pushed the branch, so it deletes it.
@@ -1844,7 +1785,7 @@ await serve(${JSON.stringify(socket)}, 200);`;
     expect((await skel(["start", "app", "Add export", "As JSON"])).err).toBe("");
     const log = () => read(join(data(), "threads", "app-t1.log"));
     const ready = "app-t1 is ready on branch skelcrew/t1-add-export";
-    await until(() => log().includes(ready));
+    await until(() => log().includes(ready), 30_000);
     const onRemote = () => git(bare, "branch", "--list", "skelcrew/t1-add-export") !== "";
     expect(onRemote()).toBe(true);
 
@@ -1866,10 +1807,10 @@ await serve(${JSON.stringify(socket)}, 200);`;
     // the first did.
     const before = log().split(ready).length;
     expect((await skel(["start", "app-t1"])).out).toBe("Started app-t1.\n");
-    await until(() => log().split(ready).length > before);
+    await until(() => log().split(ready).length > before, 30_000);
     expect(log()).not.toContain("was deleted");
     expect(onRemote()).toBe(true);
-  });
+  }, 60_000);
 
   // sc rm deletes the branch before it ends the thread. A poll in between must not take the
   // thread for one whose branch someone else deleted. The fake remote holds the deletion open
@@ -1884,7 +1825,7 @@ await serve(${JSON.stringify(socket)}, 200);`;
     await untilCloned();
     expect((await skel(["start", "app", "Add export", "As JSON"])).err).toBe("");
     const log = () => read(join(data(), "threads", "app-t1.log"));
-    await until(() => log().includes("app-t1 is ready on branch skelcrew/t1-add-export"));
+    await until(() => log().includes("app-t1 is ready on branch skelcrew/t1-add-export"), 30_000);
     const hook = join(bare, "hooks", "post-receive");
     writeFileSync(
       hook,
@@ -1897,17 +1838,17 @@ done`,
     );
     chmodSync(hook, 0o755);
     const removing = skel(["rm", "app-t1"]);
-    await until(() => existsSync(join(home, "deleted")));
+    await until(() => existsSync(join(home, "deleted")), 30_000);
     // sc rm's own look came before it deleted the branch, so a look from now on is a poll's.
     // Polls of a repository never overlap, so once a second has begun, the first one has
     // decided what the gone branch means for the thread.
     const before = looks();
-    await until(() => looks() >= before + 2);
+    await until(() => looks() >= before + 2, 30_000);
     writeFileSync(join(home, "go"), "");
     const removed = await removing;
     expect(removed.err).toBe("");
     expect(removed.out).toContain("Removed app-t1.");
     expect(log()).not.toContain("was deleted");
     expect(log()).toContain('"why":"removed: ended the thread"');
-  });
+  }, 60_000);
 });

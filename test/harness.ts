@@ -116,16 +116,6 @@ export function startDaemon(
   every?: number,
 ): Subprocess {
   mustBeTestSocket(daemonSocketIn(env), env);
-  // The daemon starts builders and reviewers under nice, so they yield to everything else. In
-  // a test run, everything else is the rest of the suite, and on a busy CI runner a reviewer
-  // then waits behind it, several times slower than alone. So a stand-in nice on the test's
-  // PATH starts them at the test's own priority, unless the test put its own there. The real
-  // priority is tested where sandboxes start, in sandbox.test.ts and reviewer.test.ts.
-  const bin = join(env.HOME ?? "", "bin");
-  if (!existsSync(join(bin, "nice"))) {
-    mkdirSync(bin, { recursive: true });
-    writeScript(dirname(bin), "nice", 'while [ "$1" = -n ]; do shift 2; done\nexec "$@"');
-  }
   const polls = every === undefined ? "" : `, ${every}`;
   const code = `import { serve } from ${JSON.stringify(source("flow/daemon.ts"))};
 await serve(${JSON.stringify(socket)}${polls});`;
