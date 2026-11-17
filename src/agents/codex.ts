@@ -20,6 +20,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import { dataDir } from "../paths.ts";
 import { editing, type Progress, stepText, toolWords } from "./progress.ts";
+import { resetTime } from "./reset.ts";
 import { filterEnv, refuseCredentials, ro, rw, sandboxArgs, throwawayMounts } from "./sandbox.ts";
 
 // Returns Skelcrew's own CODEX_HOME, where the first run's codex login goes and reviews run: a
@@ -410,6 +411,28 @@ function readAnswer(folder: string): unknown {
   return JSON.parse(readFileSync(file, "utf8"));
 }
 
+// Returns the error a reviewer's codex exec ended on, or null when it printed none. Codex also
+// prints what the commands it runs print, such as a test that logs "ERROR: rate limit", so only
+// its own last line on stderr counts, when it holds "ERROR:". The echoed prompt doesn't end in
+// a newline, so that "ERROR:" can follow the prompt's last sentence: what comes before it is
+// never part of the error.
+function reportedError(_out: string, err: string): string | null {
+  const last = err.split("\n").findLast((line) => line.trim() !== "") ?? "";
+  const marker = last.lastIndexOf("ERROR:");
+  const plain = marker < 0 ? "" : last.slice(marker + "ERROR:".length).trim();
+  return plain === "" ? null : plain;
+}
+
+// Returns whether Codex's error says its usage limit is reached, and when it resets, or null
+// when it says something else. It says "You've hit your usage limit. ... try again at 1:59 PM.",
+// with the day before the time when the reset isn't today. A rate limit with no time is a limit
+// too: it passes on its own, so it is waited out.
+function usageLimit(error: string, now: number): { reset: number | null } | null {
+  if (!/usage limit|rate limit|too many requests/i.test(error)) return null;
+  const again = /try again at (.*)/i.exec(error)?.[1];
+  return { reset: again === undefined ? null : resetTime(again, now) };
+}
+
 // Codex as Skelcrew knows it. While a turn runs it shows "esc to interrupt". Its empty input
 // always shows "› Ask Codex to do anything", even mid-turn, so that whole line is its prompt:
 // a line holding only › never shows. codex exec reads CODEX_API_KEY: given only
@@ -429,4 +452,6 @@ export const codex = {
   progress: readProgress,
   review: reviewCommand,
   answer: readAnswer,
+  failure: reportedError,
+  usageLimit,
 } as const;

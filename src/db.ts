@@ -130,6 +130,10 @@ function prepareTables(db: Database): void {
     last_check: "INTEGER",
     asking: "INTEGER NOT NULL DEFAULT 0",
     erred: "INTEGER NOT NULL DEFAULT 0",
+    limited: "INTEGER NOT NULL DEFAULT 0",
+    limit_reset: "INTEGER",
+    review_limited: "INTEGER NOT NULL DEFAULT 0",
+    review_reset: "INTEGER",
     stalled: "INTEGER NOT NULL DEFAULT 0",
     submitted: "INTEGER NOT NULL DEFAULT 0",
     noting: "TEXT",
@@ -181,6 +185,15 @@ function prepareTables(db: Database): void {
     adoptOldLead(db);
   // The reviews Skelcrew posted with your gh login, before its forge posted them as its own app.
   db.run("DROP TABLE IF EXISTS posted");
+  // Each harness's usage limit holding reviews: until when, the reset time it gave, the tries
+  // in a row that met it with none, and the repositories whose leads were told, as JSON.
+  db.run(`CREATE TABLE IF NOT EXISTS limits (
+    harness TEXT PRIMARY KEY,
+    until INTEGER NOT NULL,
+    reset INTEGER,
+    tries INTEGER NOT NULL,
+    told TEXT NOT NULL
+  )`);
   // The plugins you installed: the folder each runs from, and the GitHub repository it came
   // from, or null for a folder of yours, used where it is.
   db.run(`CREATE TABLE IF NOT EXISTS plugins (

@@ -6,6 +6,7 @@ import { z } from "zod";
 import { noProgress } from "../agents/progress.ts";
 import { pastRoundLimit } from "../flow/decide.ts";
 import { leadOf } from "../flow/lead.ts";
+import { clockTime } from "../flow/limits.ts";
 import { fullNameOf, needsYou, queuedForReview, Thread, threadName } from "../flow/thread.ts";
 import { green, grey, red, yellow } from "./look.ts";
 import { builderProgress, tokenText } from "./progress.ts";
@@ -58,10 +59,12 @@ const marks: Record<Thread["status"], Mark> = {
 // Returns the mark of a row of ACTIVE, which the lists show too, and whose colour its word takes.
 // Green is good, yellow wants you, and red is wrong. So a thread that needs you is yellow, except
 // once it is approved, which is good news, and when its harness stopped on an error, which is
-// wrong. A thread that failed stays red even if it also needs you.
+// wrong. A thread that failed stays red even if it also needs you. One waiting out a usage
+// limit is dim, as it waits and goes on by itself.
 export function threadMark(row: Pick<Row, "status" | "needsYou" | "word">): Mark {
   if (row.status === null) return ["◆", grey];
   if (row.status === "failed" || row.word === "error") return ["●", red];
+  if (row.word.startsWith("limit")) return ["○", grey];
   if (row.word === "approved") return ["●", green];
   return row.needsYou ? ["●", yellow] : marks[row.status];
 }
@@ -71,8 +74,11 @@ export function threadMark(row: Pick<Row, "status" | "needsYou" | "word">): Mark
 // latest review say. Past the limit a thread goes on needing you while its builder submits, so
 // that comes before a round under way. A round that failed keeps its submit or review saved.
 // A thread can need you for a reason with no word of its own, such as a builder that couldn't be
-// told about an event. Its word is then "needs you", rather than something untrue.
-export function threadWord(thread: Thread, maxRounds: number): string {
+// told about an event. Its word is then "needs you", rather than something untrue. A review or
+// builder waiting out its harness's usage limit says when the limit resets, as this machine's
+// clock shows it, such as "limit · 13:59", or only "limit" when the harness didn't say. Anything
+// that needs you comes before a limit, which only waits.
+export function threadWord(thread: Thread, maxRounds: number, now = Date.now()): string {
   const { status, verdict, checks } = thread;
   // A thread that failed, stopped or is done says just that. Otherwise a question from its builder
   // comes first, then its harness stopping on an error, then why it needs you, then what it is
@@ -80,7 +86,7 @@ export function threadWord(thread: Thread, maxRounds: number): string {
   if (status === "failed" || status === "stopped" || status === "done") return status;
   const underWay = thread.submitting !== null || thread.reviewing !== null;
   if (thread.asking) return "question";
-  if (thread.erred) return "error";
+  if (thread.erred && !thread.limited) return "error";
   // The round limit and an approval say what you must do next, so they stay ahead of a builder
   // that stopped without submitting. Otherwise any reply it gave you, or the lead, would hide
   // that the thread is ready to merge.
@@ -91,19 +97,29 @@ export function threadWord(thread: Thread, maxRounds: number): string {
   if (thread.needs_you && !failed && green) return "approved";
   // Stopping without submitting is a question written as plain text.
   if (thread.stalled) return "question";
+  if (thread.needs_you && verdict === "timed out" && !underWay) return "review timed out";
   if (thread.needs_you) return failed ? "review failed" : "needs you";
-  // Not needing you: a review waiting for a place shows as queued, any other round under way as
-  // reviewing, and a review's changes still waiting to be typed into the builder as changes.
-  // Otherwise it works or waits on checks.
+  // Not needing you: a builder or a review waiting out a usage limit says until when.
+  const limitWord = (reset: number | null) =>
+    reset === null ? "limit" : `limit · ${clockTime(reset, now)}`;
+  if (thread.erred && thread.limited) return limitWord(thread.limit_reset);
+  if (thread.review_limited) return limitWord(thread.review_reset);
+  // A review waiting for a place shows as queued, any other round under way as reviewing, and
+  // a review's changes still waiting to be typed into the builder as changes. Otherwise it
+  // works or waits on checks.
   if (queuedForReview(thread)) return "queued for review";
   if (underWay) return "reviewing";
   if (thread.telling !== null) return "changes";
   return status === "working" ? "working" : "checks";
 }
 
-// Returns whether a thread's word says its reviewer has it, waiting or running, so its harness
-// is the reviewer's and its PR is in a round.
-export const withReviewer = (word: string) => word === "reviewing" || word === "queued for review";
+// Returns whether the thread's reviewer has it now: a review waiting for a place, running, or
+// held on its harness's usage limit when the builder isn't held on one of its own. Then its
+// harness is the reviewer's and its PR is in a round.
+export const onReviewer = (thread: Thread, word: string) =>
+  word === "reviewing" ||
+  word === "queued for review" ||
+  (word.startsWith("limit") && !(thread.erred && thread.limited));
 
 // What the sidebar reads of a thread beyond what its log keeps: when its builder's current
 // stretch of work began. Null before the builder first started.
@@ -169,7 +185,7 @@ export function sidebarRows(
     ...threads.all(open.owner, open.repo).map((row) => {
       const thread = Thread.parse(row);
       const { review_round: round, reviewer, reviewed_by: by, verdict } = thread;
-      const word = threadWord(thread, maxRounds(thread));
+      const word = threadWord(thread, maxRounds(thread), now);
       const working = word === "working";
       // A thread from before Skelcrew timed stretches of work is timed from its start.
       const since = Working.parse(row).working_since;
@@ -183,10 +199,11 @@ export function sidebarRows(
         needsYou: needsYou(thread),
         running: running.includes(thread.folder),
         word,
-        // Only a review is on another harness. A submit saves which one, so the empty text
-        // is only there for a field that stays null until the first submit. A thread with no
-        // harness saved started before Skelcrew saved it, when builders ran only on Claude Code.
-        harness: withReviewer(word) ? (reviewer ?? "") : (thread.harness ?? "claude"),
+        // Only a review is on another harness, held on a usage limit or not. A submit saves
+        // which one, so the empty text is only there for a field that stays null until the
+        // first submit. A thread with no harness saved started before Skelcrew saved it, when
+        // builders ran only on Claude Code.
+        harness: onReviewer(thread, word) ? (reviewer ?? "") : (thread.harness ?? "claude"),
         agentHarness: thread.harness ?? "claude",
         age: working && from !== null ? threadAge(from, now) : "",
         tokens: progress.tokens === null ? "" : `${tokenText(progress.tokens)} tok`,
@@ -221,7 +238,8 @@ export function repositoryTabs(db: Database): Tab[] {
     .query(
       `SELECT r.name, r.owner, r.repo, (SELECT COUNT(*) FROM threads t
         WHERE t.owner = r.owner AND t.repo = r.repo AND t.status != 'done'
-          AND (t.status = 'failed' OR t.needs_you = 1 OR t.asking = 1 OR t.stalled = 1 OR t.erred = 1)) AS count
+          AND (t.status = 'failed' OR t.needs_you = 1 OR t.asking = 1 OR t.stalled = 1
+            OR (t.erred = 1 AND t.limited = 0))) AS count
       FROM repositories r WHERE r.tab_closed = 0 ORDER BY r.name`,
     )
     .all()
