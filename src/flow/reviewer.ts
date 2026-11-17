@@ -299,7 +299,9 @@ async function reviewNow(given: {
       signal,
     });
     // Only what a shell and the tests need gets in, with the harness's own keys added.
-    const sandboxEnv = { ...launch.env, ...filterEnv(env, keys) };
+    // Its git keeps an index of its own in the review's folder, as explained below.
+    const index = join(folder, "index");
+    const sandboxEnv = { ...launch.env, ...filterEnv(env, keys), GIT_INDEX_FILE: index };
     // Tests and builds write in the clone, so it is seen as a throwaway folder too.
     const copy = join(folder, "clone");
     const { mounts, at } = await throwawayMounts({ source: clone, copy, signal });
@@ -307,13 +309,20 @@ async function reviewNow(given: {
     // The builder can go on changing its clone after it submits, so the reviewer sees the
     // submitted commit, with what the builder changed since put aside. Ignored files, such
     // as installed packages, stay for the tests. git runs in the sandbox, as the clone's
-    // .git is the builder's to plant settings in. A git command the builder runs meanwhile,
-    // such as the git status its Stop hook runs right after sc submit, holds locks the view
-    // shows too, and checkout would refuse to run. No git in the sandbox holds them, and the
-    // view is thrown away, so they go there, while the builder's own stay.
-    const unlock =
-      'rm -f "$(git rev-parse --git-path index.lock)" "$(git rev-parse --git-path HEAD.lock)"';
-    const checkout = `${unlock} && git checkout -q -f --detach "$0" && git clean -q -fd && exec "$@"`;
+    // .git is the builder's to plant settings in. The builder runs git whenever it likes, and
+    // a command of its holds index.lock or HEAD.lock in its .git, which the view shows. A
+    // checkout needs both, so the review never takes them: it reads the commit into an index
+    // of its own, started from a copy of the builder's so unchanged files aren't rewritten,
+    // and then points HEAD at the commit by writing it, which needs no lock. git replaces the
+    // builder's index whole, so the copy is never half written. Without one to copy, git
+    // starts from an empty index. Every other step must work, or the reviewer never starts.
+    const checkout = [
+      '{ cp "$(git rev-parse --git-dir)/index" "$GIT_INDEX_FILE" 2>/dev/null || true; }',
+      'git read-tree --reset -u "$0"',
+      "git clean -q -fd",
+      'printf "%s\\n" "$0" > "$(git rev-parse --git-path HEAD)"',
+      'exec "$@"',
+    ].join(" && ");
     argv = sandboxArgs({
       home,
       path,

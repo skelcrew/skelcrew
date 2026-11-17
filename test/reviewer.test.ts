@@ -14,7 +14,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { review, reviewerPrompt } from "../src/flow/reviewer.ts";
-import { insideSandbox, source } from "./harness.ts";
+import { insideSandbox, source, until } from "./harness.ts";
 
 let home = "";
 let clone = "";
@@ -187,17 +187,35 @@ describe.skipIf(insideSandbox)("reviewer", () => {
     expect(readFileSync(join(clone, "README"), "utf8")).toBe("unsaved\n");
   });
 
-  // A builder runs git whenever it likes, and its Stop hook runs git status right after sc
-  // submit. Each holds a lock in the clone while it runs, which the reviewer's view then shows.
+  // A builder runs git whenever it likes, and each command can hold a lock in its clone, which
+  // the reviewer's view shows. The review takes neither lock, so it doesn't matter when they
+  // come or go: these are held for the whole review.
   test("reviews the commit while a git command of the builder's holds its locks", async () => {
+    writeFileSync(join(clone, "README"), "unsaved\n");
     writeFileSync(join(clone, ".git", "index.lock"), "");
     writeFileSync(join(clone, ".git", "HEAD.lock"), "");
-    fakeCodex(approve, ['git rev-parse HEAD > "$CODEX_HOME/sessions/seen"']);
+    fakeCodex(approve, [
+      '{ git rev-parse HEAD; cat README; git status --porcelain; } > "$CODEX_HOME/sessions/seen"',
+    ]);
     expect(await start()).toEqual({ verdict: "approve", body: "Looks right." });
-    expect(kept("seen")).toBe(`${commit}\n`);
-    // The builder's git still holds them.
+    expect(kept("seen")).toBe(`${commit}\napp\n`);
+    // The builder's git still holds them, and its clone is as it left it.
     expect(existsSync(join(clone, ".git", "index.lock"))).toBe(true);
     expect(existsSync(join(clone, ".git", "HEAD.lock"))).toBe(true);
+    expect(readFileSync(join(clone, "README"), "utf8")).toBe("unsaved\n");
+  });
+
+  // On Linux the view shows the lock as the builder takes it. A Mac's copy never does.
+  test("the reviewer's own git works while the builder's takes a lock", async () => {
+    fakeCodex(approve, [
+      `: > "$CODEX_HOME/sessions/started"; i=0; while ! test -e .git/index.lock && [ $i -lt 50 ]; do sleep 0.1; i=$((i+1)); done`,
+      'echo changed > README; git add README && git status --porcelain > "$CODEX_HOME/sessions/seen"',
+    ]);
+    const reviewing = start();
+    await until(() => existsSync(join(sessions(), "started")));
+    writeFileSync(join(clone, ".git", "index.lock"), "");
+    expect(await reviewing).toEqual({ verdict: "approve", body: "Looks right." });
+    expect(kept("seen")).toBe("M  README\n");
   });
 
   test("keeps Codex's instructions as they were, and its login and sessions writable", async () => {
