@@ -1,7 +1,5 @@
 // Deciding what an event means: given a thread and what its forge returned, these functions
 // say what to do. They read no clock, files or network, so they can be tested without them.
-import { parse } from "yaml";
-import { z } from "zod";
 import type { Item } from "./copy.ts";
 import type { Review } from "./reviewer.ts";
 import type { Thread } from "./thread.ts";
@@ -93,103 +91,6 @@ export function whoRunsTheSuite(given: {
   if (prs.some((pr) => ciOf(pr).length > 0)) return waited < ciWait ? "wait" : "reviewer";
   if (waitedInVain) return "reviewer";
   return waited < (setsUpCi ? ciWait : checkWait) ? "wait" : "reviewer";
-}
-
-// The part of a GitHub workflow that says when it runs, what each job runs, and what can skip a
-// step, let its failure pass or change the shell that reads it. Anything else in it is let be.
-const Skips = {
-  if: z.unknown().optional(),
-  "continue-on-error": z.unknown().optional(),
-  defaults: z.unknown().optional(),
-};
-const Workflow = z.object({
-  on: z.union([z.string(), z.array(z.string()), z.record(z.string(), z.unknown())]),
-  defaults: z.unknown().optional(),
-  jobs: z.record(
-    z.string(),
-    z.object({
-      ...Skips,
-      name: z.string().optional(),
-      needs: z.unknown().optional(),
-      steps: z
-        .array(
-          z.object({
-            ...Skips,
-            run: z.string().optional(),
-            shell: z.unknown().optional(),
-            uses: z.string().optional(),
-            with: z.unknown().optional(),
-          }),
-        )
-        .optional(),
-    }),
-  ),
-});
-
-// Returns whether CI's checks on a commit, by name, prove that CI runs the repository's tests,
-// all of the `tests` commands, from the commit's `workflows`, their text. A CI check alone
-// proves nothing, as a CLA check or a deploy preview runs no tests. A check proves it when
-// every job that could have made it surely runs every test command: there must be one, and
-// a name another job shares is no proof when that job doesn't test. A job surely runs a command
-// on the PR's change when its workflow runs on pull_request, which checks out that change, and
-// not pull_request_target, which checks out the base branch. It needs no other job, which could
-// be skipped or fail and skip it too, and its checkout is given no settings, such as a ref of
-// main, that could test another commit. One of its steps runs the command as it is: the
-// step's whole script is the command, in the default shell, which stops at a failure, and
-// nothing can skip it or let its failure pass, on the step, its job or its workflow. Anything
-// less, such as `echo` before the command or `|| true` after it, proves nothing, and the
-// reviewer runs the tests instead. A check is named after its job's name, or its key without
-// one, and a matrix job adds its values in brackets. A name made from an expression could be
-// any check's. A workflow that can't be read could have made any check, so it proves nothing,
-// and nor does CI outside GitHub, which has no workflows to read.
-export function testedByCi(workflows: string[], tests: string[], checks: string[]): boolean {
-  const commands = tests.map((test) => test.trim()).filter((test) => test !== "");
-  if (commands.length === 0) return false;
-  // Each job, by the name its checks carry, and whether it surely runs every test command.
-  const jobs: { name: string; tests: boolean }[] = [];
-  for (const text of workflows) {
-    let workflow: z.infer<typeof Workflow>;
-    try {
-      workflow = Workflow.parse(parse(text));
-    } catch {
-      return false;
-    }
-    const events =
-      typeof workflow.on === "string"
-        ? [workflow.on]
-        : Array.isArray(workflow.on)
-          ? workflow.on
-          : Object.keys(workflow.on);
-    // A workflow that also runs on pull_request_target makes checks of the same name from the
-    // base branch.
-    const onPrs = events.includes("pull_request") && !events.includes("pull_request_target");
-    const surely = (part: { if?: unknown; "continue-on-error"?: unknown; defaults?: unknown }) =>
-      part.if === undefined &&
-      part["continue-on-error"] === undefined &&
-      part.defaults === undefined;
-    for (const [key, job] of Object.entries(workflow.jobs)) {
-      const steps = (job.steps ?? []).filter(
-        (step) => surely(step) && step.shell === undefined && step.run !== undefined,
-      );
-      const runs = (command: string) => steps.some((step) => step.run?.trim() === command);
-      const checkouts = (job.steps ?? []).filter((step) =>
-        step.uses?.startsWith("actions/checkout"),
-      );
-      const ownChange =
-        job.needs === undefined && checkouts.every((step) => step.with === undefined);
-      const tests = onPrs && ownChange && surely(workflow) && surely(job) && commands.every(runs);
-      jobs.push({ name: job.name ?? key, tests });
-    }
-  }
-  // The jobs that could have made a check, by its name.
-  const makers = (check: string) =>
-    jobs.filter(
-      ({ name }) => name.includes("${{") || check === name || check.startsWith(`${name} (`),
-    );
-  return checks.some((check) => {
-    const could = makers(check);
-    return check !== reviewCheck && could.length > 0 && could.every((job) => job.tests);
-  });
 }
 
 // Returns what the reviewer reads about CI on the commit it reviews: whether CI passed, failed

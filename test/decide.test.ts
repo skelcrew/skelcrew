@@ -13,7 +13,6 @@ import {
   type PullRequest,
   refusedWorkflow,
   reviewCheck,
-  testedByCi,
   whoRunsTheSuite,
 } from "../src/flow/decide.ts";
 import { endedTurnAsks } from "../src/flow/status.ts";
@@ -630,108 +629,4 @@ test("a push refused for any other reason gets no workflow message", () => {
   const said =
     "git push failed: ! [rejected] abc -> b (non-fast-forward)\nerror: failed to push some refs";
   expect(refusedWorkflow("app-12", said)).toBeNull();
-});
-
-// A workflow whose job runs `bun run check`, as the repository's test command.
-const testing = `on: pull_request
-jobs:
-  check:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - run: bun install
-      - run: bun run check
-  lint:
-    name: Lint the code
-    steps:
-      - run: bun run lint
-`;
-
-test("CI tests the commit when a check comes from a workflow job that runs the test command", () => {
-  expect(testedByCi([testing], ["bun run check"], ["check"])).toBe(true);
-  // A matrix job's checks carry its values after its name.
-  expect(testedByCi([testing], ["bun run check"], ["check (ubuntu, 1.3)"])).toBe(true);
-});
-
-test("a check that runs no tests, such as a CLA check or a lint job, is no proof CI tests", () => {
-  expect(testedByCi([testing], ["bun run check"], ["cla/check", "Vercel preview"])).toBe(false);
-  expect(testedByCi([testing], ["bun run check"], ["Lint the code"])).toBe(false);
-  expect(testedByCi([testing], ["bun run check"], [reviewCheck])).toBe(false);
-});
-
-test("without a test command, workflows Skelcrew can read, or a matching check, nothing proves CI tests", () => {
-  expect(testedByCi([testing], [], ["check"])).toBe(false);
-  expect(testedByCi([], ["bun run check"], ["buildkite/test"])).toBe(false);
-  expect(testedByCi(["jobs: [not, a, map"], ["bun run check"], ["check"])).toBe(false);
-  expect(testedByCi([testing], ["bun run check"], [])).toBe(false);
-});
-
-// A workflow with one job, check, whose steps and settings are `job`, indented under it.
-const checkJob = (job: string) =>
-  `on: pull_request\njobs:\n  check:\n${job.replace(/^/gm, "    ")}\n`;
-
-test("a step that might not run the test command, or whose failure is let pass, is no proof", () => {
-  const unproven = [
-    // A condition can skip the step, or the whole job.
-    "steps:\n  - run: bun run check\n    if: false",
-    "if: false\nsteps:\n  - run: bun run check",
-    // Its failure can be let pass.
-    "steps:\n  - run: bun run check\n    continue-on-error: true",
-    "continue-on-error: true\nsteps:\n  - run: bun run check",
-    // The command's text, but not the command run as it is.
-    "steps:\n  - run: echo bun run check",
-    "steps:\n  - run: bun run check || true",
-    "steps:\n  - run: |\n      bun run check\n      exit 0",
-    // Another shell can read it otherwise.
-    "steps:\n  - run: bun run check\n    shell: python",
-    "defaults:\n  run:\n    shell: python\nsteps:\n  - run: bun run check",
-  ];
-  for (const job of unproven)
-    expect(testedByCi([checkJob(job)], ["bun run check"], ["check"])).toBe(false);
-  expect(
-    testedByCi([checkJob("steps:\n  - run: bun run check")], ["bun run check"], ["check"]),
-  ).toBe(true);
-  const shellForAll = "defaults:\n  run:\n    shell: python\n";
-  const workflow = `${shellForAll}${checkJob("steps:\n  - run: bun run check")}`;
-  expect(testedByCi([workflow], ["bun run check"], ["check"])).toBe(false);
-});
-
-test("a job counts only when it runs every test command the repository names", () => {
-  const tests = ["echo setup", "bun test"];
-  const both = checkJob("steps:\n  - run: echo setup\n  - run: bun test");
-  expect(testedByCi([both], tests, ["check"])).toBe(true);
-  expect(testedByCi([checkJob("steps:\n  - run: echo setup")], tests, ["check"])).toBe(false);
-});
-
-test("a check name that a job running no tests could have made too proves nothing", () => {
-  // A release workflow tests under check, and the PR's own workflow lints under check.
-  const release = `on:\n  push:\n    tags: ["v*"]\njobs:\n  check:\n    steps:\n      - run: bun run check\n`;
-  const lint = "on: pull_request\njobs:\n  check:\n    steps:\n      - run: bun run lint\n";
-  expect(testedByCi([release, lint], ["bun run check"], ["check"])).toBe(false);
-  // A testing workflow that never runs on a PR never made the PR's check.
-  expect(testedByCi([release], ["bun run check"], ["check"])).toBe(false);
-  // Two PR workflows that both test under the same name still prove it.
-  const tested = checkJob("steps:\n  - run: bun run check");
-  expect(testedByCi([tested, tested], ["bun run check"], ["check"])).toBe(true);
-});
-
-test("a job that may test another commit than the PR's, or be skipped by one it needs, proves nothing", () => {
-  const tests = ["bun run check"];
-  // pull_request_target checks out the base branch, not the PR's change.
-  const target =
-    "on: pull_request_target\njobs:\n  check:\n    steps:\n      - uses: actions/checkout@v4\n      - run: bun run check\n";
-  expect(testedByCi([target], tests, ["check"])).toBe(false);
-  const both = target.replace("on: pull_request_target", "on: [pull_request, pull_request_target]");
-  expect(testedByCi([both], tests, ["check"])).toBe(false);
-  // A checkout given its own ref, such as main, tests that instead.
-  const main = checkJob(
-    "steps:\n  - uses: actions/checkout@v4\n    with:\n      ref: main\n  - run: bun run check",
-  );
-  expect(testedByCi([main], tests, ["check"])).toBe(false);
-  // A job it needs can be skipped or fail, and then so is the testing job.
-  const gated = checkJob("needs: gate\nsteps:\n  - run: bun run check");
-  expect(testedByCi([gated], tests, ["check"])).toBe(false);
-  // A plain checkout of the PR's change still counts.
-  const plain = checkJob("steps:\n  - uses: actions/checkout@v4\n  - run: bun run check");
-  expect(testedByCi([plain], tests, ["check"])).toBe(true);
 });

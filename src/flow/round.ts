@@ -14,10 +14,10 @@ import { openPrs, prOf, threadTask } from "./copy.ts";
 import {
   afterReview,
   ciResult,
+  ciState,
   onlyDocs,
   pastRoundLimit,
   refusedWorkflow,
-  testedByCi,
   whoRunsTheSuite,
 } from "./decide.ts";
 import { fetchInto, pushCommit } from "./git.ts";
@@ -166,8 +166,8 @@ const reviews = new Queue();
 // turn among all reviews, in order of `since`, when it joined: now, unless it is one the
 // daemon's stop cut short, which keeps its place. Changes are typed in only once `builderBack`
 // settles, as a review the daemon brings back can end before the builder's session is there.
-// A commit that only merges the base branch into the last approved one, with CI running its
-// tests, keeps that approval, and no reviewer runs.
+// A commit that only merges the base branch into the last approved one keeps that approval
+// once every CI check on it passed, and no reviewer runs.
 async function reviewRound(
   db: Database,
   sessions: string,
@@ -258,31 +258,30 @@ async function reviewRound(
   }
   // A builder whose PR fell behind or conflicts with the base branch merges it and submits
   // again. When that is all the commit does, the PR's own change is the one already approved, so
-  // the approval holds and CI alone decides whether it is ready. It counts only while the latest
-  // review approved, so a review asking for changes since is never skipped, and only while CI
-  // runs the tests on this commit, as a clean merge can still break them. Only a check from a
-  // workflow job that runs the repository's test command proves that, as a CLA check or a
-  // deploy preview runs none. Otherwise the reviewer runs them, in a normal review. A change to docs alone has no tests to run. The
-  // approved commit and the base are refs in Skelcrew's clone, which the push brought up to
-  // date, and sc review deletes the approved one, so it always runs the reviewer. It comes after
-  // the wait for CI's first check, so CI can show, and an approval never reads as ready to merge
-  // before it does. Its check goes from pending to success, in that order.
-  const ciTests = () => {
-    const shown = pr === null ? null : prOf(db, thread.owner, thread.repo, pr);
-    if (shown?.head !== sha || suite(Number.POSITIVE_INFINITY) !== "ci") return false;
-    const tests = repositoryCommands(thread).test.commands;
-    const checks = shown.checks.map((c) => c.name);
-    return testedByCi(workflowsOf(skelcrewClone, sha), tests, checks);
-  };
-  const ciRuns = docsOnly || ciTests();
-  const approved = ciRuns && thread.verdict === "approve" ? lastApproved(thread) : null;
-  if (approved !== null && onlyMergedBase(skelcrewClone, approved, sha, bases)) {
-    const body = `Approval kept: this commit only merges ${baseOf(thread)} into ${approved}, which Skelcrew's reviewer approved, and changes nothing else in the PR. CI still runs on it.`;
-    const verdict: Review = { verdict: "approve", body };
-    const kept = { verdict, by: thread.reviewed_by ?? reviewer, kept: approved };
-    await pending;
-    await actOnVerdict(db, sessions, folder, sha, signal, kept, builderBack);
-    return;
+  // the approval holds. It counts only while the latest review approved, so a review asking for
+  // changes since is never skipped. A clean merge can still break things, so it is kept only
+  // once every CI check that ran on this commit passed. Whether that CI tests the PR is the
+  // repository's own setup, as it is for merging. A check that fails, or no CI on the commit
+  // after the wait for its first check, gets a normal review, which runs the tests. The approved
+  // commit and the base are refs in Skelcrew's clone, which the push brought up to date, and sc
+  // review deletes the approved one, so it always runs the reviewer. A restart brings the round
+  // back to wait again. Its check goes from pending to success, in that order.
+  const approved = thread.verdict === "approve" ? lastApproved(thread) : null;
+  const merged = approved !== null && onlyMergedBase(skelcrewClone, approved, sha, bases);
+  if (approved !== null && merged && pr !== null && suite(Number.POSITIVE_INFINITY) === "ci") {
+    const waiting = { reviewing: sha, submitting: null, reviewer, queued: null };
+    record(db, folder, waiting, `only merged ${baseOf(thread)}: waiting for CI to pass on ${sha}`);
+    const ci = await ciEnds(db, thread, pr, sha, AbortSignal.any([signal, checkFailed.signal]));
+    if (signal.aborted) return;
+    if (ci === "passing") {
+      const body = `Approval kept: this commit only merges ${baseOf(thread)} into ${approved}, which Skelcrew's reviewer approved, and changes nothing else in the PR. Every CI check on it passed.`;
+      const verdict: Review = { verdict: "approve", body };
+      const kept = { verdict, by: thread.reviewed_by ?? reviewer, kept: approved };
+      await pending;
+      await actOnVerdict(db, sessions, folder, sha, signal, kept, builderBack);
+      return;
+    }
+    if (ci === "failing") record(db, folder, {}, `CI failed on ${sha}, so it is reviewed`);
   }
   // A review that has to wait is saved as queued, with when it joined, so the thread says so,
   // and a restart puts it back in the same place. One that starts at once is saved as
@@ -690,18 +689,24 @@ export function lastPushed(thread: Thread): string | null {
   return run.success ? run.stdout.toString().trim() : null;
 }
 
-// Returns the text of each GitHub workflow in the commit, read from the clone, for telling
-// whether CI runs the tests on it. A commit or file git can't read gives none.
-function workflowsOf(clone: string, sha: string): string[] {
-  const git = (...args: string[]) => {
-    const run = Bun.spawnSync(["git", "-C", clone, ...args], { stdout: "pipe", stderr: "pipe" });
-    return run.success ? run.stdout.toString() : null;
-  };
-  const listed = git("ls-tree", "--name-only", "-z", sha, ".github/workflows/") ?? "";
-  return listed
-    .split("\0")
-    .filter((path) => path.endsWith(".yml") || path.endsWith(".yaml"))
-    .flatMap((path) => git("show", `${sha}:${path}`) ?? []);
+// Waits until every CI check on the commit has ended, as Skelcrew's copy of the thread's PR
+// shows, and returns whether they all passed or one failed, or null once `signal` ends the
+// wait. Each poll brings the copy up to date. Skelcrew's own check isn't CI, so it is left out.
+// A check that failed ends the wait at once, as nothing the rest say can keep the approval.
+async function ciEnds(
+  db: Database,
+  thread: Thread,
+  pr: number,
+  sha: string,
+  signal: AbortSignal,
+): Promise<"passing" | "failing" | null> {
+  while (true) {
+    if (signal.aborted) return null;
+    const shown = prOf(db, thread.owner, thread.repo, pr);
+    const state = shown?.head === sha ? ciState(shown) : null;
+    if (state === "passing" || state === "failing") return state;
+    await Bun.sleep(5_000);
+  }
 }
 
 // Returns the commit Skelcrew's reviewer last approved for the thread, or null when none is
