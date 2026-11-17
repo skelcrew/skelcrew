@@ -5,6 +5,7 @@ import type { Database } from "bun:sqlite";
 import { z } from "zod";
 import { noProgress } from "../agents/progress.ts";
 import { leadOf } from "../flow/lead.ts";
+import { messagesWaiting, waitingText } from "../flow/messages.ts";
 import { needsYou, threadWord } from "../flow/status.ts";
 import { fullNameOf, Thread, threadName } from "../flow/thread.ts";
 import { green, grey, red, yellow } from "./look.ts";
@@ -17,7 +18,8 @@ import { builderProgress, tokenText } from "./progress.ts";
 // while a review runs, and `agentHarness` the agent itself, which Esc stops. A working thread
 // also has its builder's `tokens`, as text, its `step`, what it is doing, and its `plan`, how
 // many steps of its plan are done of how many. Each is empty or null on other rows, and when the
-// builder's harness doesn't give it.
+// builder's harness doesn't give it. `waiting` says how many messages wait to be typed into the
+// builder, such as 1 message waiting, or is empty.
 export type Row = {
   name: string;
   task: string;
@@ -32,6 +34,7 @@ export type Row = {
   tokens: string;
   step: string;
   plan: { done: number; total: number } | null;
+  waiting: string;
   fullName: string | null;
   title: string | null;
   short: string | null;
@@ -129,6 +132,7 @@ export function sidebarRows(
       tokens: "",
       step: "",
       plan: null,
+      waiting: "",
       fullName: null,
       title: null,
       short: null,
@@ -165,6 +169,7 @@ export function sidebarRows(
         // A builder that has run no tool yet has no step to show, so it says only that it works.
         step: working ? (progress.step ?? "working") : "",
         plan: progress.plan,
+        waiting: waitingText(messagesWaiting(db, thread)),
         fullName: fullNameOf(thread),
         title: thread.title,
         short: thread.short,

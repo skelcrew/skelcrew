@@ -53,7 +53,8 @@ const subagent = "01a1c003-ffff-7380-b6d9-c7ec08342361";
 // Codex runs when you press Esc: an interrupted turn returns before its Stop hooks, and its abort
 // runs the Interrupt hooks instead. A hook's input is what the test left in its file, or {}. Text
 // typed into the builder goes in its file typed, and runs UserPromptSubmit, as talk does. Both
-// look busy while the file busy is in their CODEX_HOME. error ends the builder's turn on an error
+// look busy while the file busy is in their CODEX_HOME, with a Working line that counts seconds,
+// as Codex's does. error ends the builder's turn on an error
 // as an unknown model does: Codex prints it and sits at its prompt, with no hook. renew
 // renews the login as Codex does from 0.167: it follows the link to it, writes the renewal beside
 // its target and renames it over it. Its arguments are written aside and moved into place, so a
@@ -84,9 +85,9 @@ case "$CODEX_HOME" in */lead-*)
   exec 3<&0
   while IFS= read -r line; do printf '%s\\n' "$line" >> typed; done <&3 &
   for i in $(seq 3000); do
-    now=idle; test -e busy && now=busy
+    now=idle; test -e busy && now="busy $i"
     if [ "$now" != "$shown" ]; then
-      clear; if [ $now = busy ]; then echo "• Working (esc to interrupt)"; fi
+      clear; if [ "$now" != idle ]; then echo "• Working (\${i}s • esc to interrupt)"; fi
       echo "› Ask Codex to do anything"; shown=$now
     fi
     sleep 0.1
@@ -113,9 +114,9 @@ done <&3 &
 echo "› Ask Codex to do anything"
 shown=idle
 for i in $(seq 3000); do
-  now=idle; test -e busy && now=busy
+  now=idle; test -e busy && now="busy $i"
   if [ "$now" != "$shown" ]; then
-    clear; if [ $now = busy ]; then echo "• Working (esc to interrupt)"; fi
+    clear; if [ "$now" != idle ]; then echo "• Working (\${i}s • esc to interrupt)"; fi
     echo "› Ask Codex to do anything"; shown=$now
   fi
   test -e error && { rm -f error busy; clear; echo "■ unexpected status 400 Bad Request"; echo "› Ask Codex to do anything"; shown=idle; echo error >> ran; }

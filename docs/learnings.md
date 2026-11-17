@@ -11,9 +11,18 @@ that covers the code you are about to write.
 - **Send text as a bracketed paste, then Enter on its own a moment later.** Without the
   paste marks, Claude Code treats the Enter after a long message as a new line, and the
   message is never sent. `tmux paste-buffer -p` adds the marks.
-- **Idle means more than a quiet pane.** Claude Code is idle when "esc to interrupt" is
-  gone, a line holding only the `❯` prompt is on screen, and nothing has changed for a
-  moment. A bell or a changing window title doesn't mean a turn ended.
+- **Idle means more than a quiet pane.** Claude Code is idle when no live "esc to
+  interrupt" shows, a line holding only the `❯` prompt is on screen, and nothing has changed
+  for a moment. A bell or a changing window title doesn't mean a turn ended.
+- **The busy mark can sit in the agent's own text.** A builder that greps Skelcrew's code, or
+  replies about it, leaves "esc to interrupt" on its screen after its turn ends, even just
+  above its input, and looks busy forever, Esc or not. Where the mark sits can't tell the two
+  apart. Whether it is live can: Claude Code's spinner and Codex's "Working" line redraw at
+  least every second, as their timer counts, and reply text sits still. Two looks half a
+  second apart often fall between two ticks, so a still mark is watched a second and a half
+  more. The Stop hook can't stand in: a turn may start with nothing typed in, such as when a
+  background task ends, and neither Esc nor a builder running before the hook was set up fires
+  it.
 - **A person's draft at the prompt is not idle.** A paste lands after their unsent text, and
   the Enter sends both. Ready means a line holding the bare prompt mark, so a draft makes
   typing wait. A person can start a draft after the last look, so look again right before

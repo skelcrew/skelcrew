@@ -486,8 +486,7 @@ async function tellCommand(args: string[]): Promise<void> {
     return;
   }
   if (task && text && rest.length === 0) {
-    const name = await tellOn(...task, text);
-    console.log(`Telling ${name}'s builder. Skelcrew types it in once the builder is idle.`);
+    console.log(await tellOn(...task, text));
     return;
   }
   usage(command);
