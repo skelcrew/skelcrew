@@ -483,7 +483,8 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
     expect(thread()).toMatchObject({ status: "working", needs_you: 0 });
   }, 60_000);
 
-  // Runs sc as an agent would, from the socket of app-12's builder or of app's lead.
+  // Runs sc as an agent would, inside its sandbox, from the socket of app-12's builder or of
+  // app's lead.
   function asAgent(agent: "builder" | "lead", args: string[], cwd = home) {
     const hashed = (name: string) =>
       new Bun.CryptoHasher("sha256").update(name).digest("hex").slice(0, 16);
@@ -493,7 +494,7 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
       lead: join(runDir, "leads", hashed("simon/app"), "skelcrew.sock"),
     };
     const run = Bun.spawnSync([process.execPath, main, ...args], {
-      env: { ...env(), SKELCREW_SOCKET: sockets[agent] },
+      env: { ...env(), SKELCREW_SANDBOX: "1", SKELCREW_SOCKET: sockets[agent] },
       cwd,
       stderr: "pipe",
     });

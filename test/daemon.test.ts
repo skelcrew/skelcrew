@@ -414,6 +414,7 @@ const stoppedApp1 = {
   prUrl: null,
   checks: null,
   review: null,
+  waiting: 0,
 };
 
 // bubblewrap can't start inside Skelcrew's own sandbox, so only there a lead can't start.
