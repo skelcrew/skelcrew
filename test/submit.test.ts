@@ -47,11 +47,25 @@ const script = (name: string, body: string) => writeScript(home, name, body);
 // typed message ends in a paste mark and an Enter, and it runs the UserPromptSubmit hooks, then
 // answers it with another round, as a builder fixing a review would. `submits` false leaves the
 // first round to the test. While the file busy is in its config folder after a round, it looks
-// busy, as Claude Code does mid-turn, and its turn ends once the file is gone.
+// busy, as Claude Code does mid-turn, and its turn ends once the file is gone. Once a round's
+// Stop hooks have run, the file ended holds its number. As a
+// reviewer, run with -p, it approves, unless the file claude-limit beside it holds a moment in
+// seconds since 1970 still to come: until then it says its usage limit is reached, as Claude
+// Code did.
 function fakeClaude(submits = true): void {
   script(
     "claude",
     `case "$CLAUDE_CONFIG_DIR" in */lead-*) stty -echo; echo "❯"; exec cat > "$CLAUDE_CONFIG_DIR/typed" ;; esac
+case " $* " in *" -p "*)
+  cat > /dev/null
+  reset=$(cat "$(dirname "$0")/claude-limit" 2>/dev/null)
+  if [ -n "$reset" ] && [ "$(date +%s)" -lt "$reset" ]; then
+    echo '{"type":"result","is_error":true,"result":"Claude AI usage limit reached|'"$reset"'"}'
+    exit 1
+  fi
+  echo '{"type":"result","structured_output":{"verdict":"approve","body":"Ready to merge."}}'
+  exit 0 ;;
+esac
 printf '%s\\n' "$@" > "$CLAUDE_CONFIG_DIR/args"
 for a; do [ "$prev" = --settings ] && settings=$a; prev=$a; done
 hook() {
@@ -67,6 +81,7 @@ round() {
   sc submit "Round $n" >> "$CLAUDE_CONFIG_DIR/submitted" 2>&1
   while test -e "$CLAUDE_CONFIG_DIR/busy"; do echo "esc to interrupt"; sleep 0.2; done
   hook Stop
+  echo "$n" > "$CLAUDE_CONFIG_DIR/ended"
   clear
 }
 ${submits ? "round" : ""}
@@ -84,9 +99,11 @@ exec sleep 300`,
 
 // Stands in for Codex. Review n answers with the verdict in Skelcrew's Codex folder's verdict-n,
 // and fails without one. It sleeps first when slow-n is there, and while held-n is there it
-// waits for the test to put go-n in the sessions folder. What it was given, and the branches it
-// saw, go in the sessions folder, the one place a review writes that lasts. The prompt is
-// written aside and moved into place, so a test that sees prompt-n never reads it half written.
+// waits for the test to put go-n in the sessions folder. With error-n there, it echoes its
+// prompt and then that error, as codex exec does, and fails. What it was given, and the
+// branches it saw, go in the sessions folder, the one place a review writes that lasts. The
+// prompt is written aside and moved into place, so a test that sees prompt-n never reads it
+// half written.
 function fakeCodex(): void {
   script(
     "codex",
@@ -98,6 +115,7 @@ git branch -r > "$s/branches-$n"
 git rev-parse origin/main > "$s/main-$n" 2>&1
 test -e "$CODEX_HOME/slow-$n" && sleep 30
 i=0; while test -e "$CODEX_HOME/held-$n" && ! test -e "$s/go-$n" && [ $i -lt 600 ]; do sleep 0.1; i=$((i+1)); done
+test -e "$CODEX_HOME/error-$n" && { cat "$s/prompt-$n" "$CODEX_HOME/error-$n" >&2; exit 1; }
 test -e "$CODEX_HOME/verdict-$n" || { echo "no verdict for review $n" >&2; exit 1; }
 cp "$CODEX_HOME/verdict-$n" "$out"`,
   );
@@ -437,6 +455,145 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
     await until(() =>
       read(join(data(), "threads", "app-12.log")).includes("no verdict for review 1"),
     );
+  }, 60_000);
+
+  // codex exec echoes its prompt before it works, so the end of what it printed is the task.
+  test("a failed review's note says the reviewer's own error, never the task it echoed", async () => {
+    addApp();
+    mkdirSync(codexHome(), { recursive: true });
+    writeFileSync(join(codexHome(), "error-1"), "ERROR: stream disconnected before completion\n");
+    await startApp12();
+    await until(() => thread().needs_you === 1, 30_000);
+    await until(() => read(join(lead(), "typed")).includes("app-12 needs you"));
+    const note = read(join(lead(), "typed"));
+    expect(note).toContain(
+      "app-12 needs you: review failed: codex exited with 1: stream disconnected before completion",
+    );
+    expect(note).not.toContain("Add export");
+  }, 60_000);
+
+  test("a review that meets Codex's usage limit is held without needing you, and no other review starts on Codex until the reset", async () => {
+    addApp();
+    mkdirSync(codexHome(), { recursive: true });
+    writeFileSync(
+      join(codexHome(), "error-1"),
+      "ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at Dec 31st, 2099 11:59 PM.\n",
+    );
+    await startApp12();
+    await until(() => thread().review_limited === 1, 30_000);
+    expect(thread()).toMatchObject({
+      status: "waiting",
+      needs_you: 0,
+      review_reset: new Date(2099, 11, 31, 23, 59).getTime(),
+    });
+    expect(thread().reviewing).not.toBeNull();
+    // The check stays pending, nothing is posted, and the builder hears nothing.
+    expect(statuses().map((s) => s.state)).toEqual(["pending"]);
+    expect(reviews()).toEqual([]);
+    expect(typedMessages()).toBe(0);
+    const told = "Codex's usage limit is reached until 31 Dec 23:59; reviews resume then.";
+    await until(() => read(join(lead(), "typed")).includes(told));
+
+    // A newer submit's review is held on the same limit, without running Codex, and the lead
+    // isn't told again.
+    writeFileSync(join(clone(), "change"), "newer\n");
+    git(clone(), "commit", "-qam", "newer");
+    const again = await skel(["submit", "Newer"], { SKELCREW_SOCKET: builderSocket() });
+    expect(again.err).toBe("");
+    const newer = git(clone(), "rev-parse", "HEAD");
+    await until(() => thread().reviewing === newer && thread().review_limited === 1, 30_000);
+    await Bun.sleep(1000);
+    expect(read(join(codexHome(), "sessions", "count")).trim()).toBe("1");
+    expect(read(join(lead(), "typed")).split(told).length - 1).toBe(1);
+    expect(read(join(lead(), "typed"))).not.toContain("needs you");
+  }, 60_000);
+
+  test("while Codex is limited, reviews run on the fallback, and say so", async () => {
+    addApp();
+    writeFileSync(
+      join(home, ".config", "skelcrew", "config.yaml"),
+      "harness: claude\nreviewer: { harness: codex, fallback: claude }\n",
+    );
+    mkdirSync(codexHome(), { recursive: true });
+    writeFileSync(
+      join(codexHome(), "error-1"),
+      "ERROR: You've hit your usage limit. Try again at Dec 31st, 2099 11:59 PM.\n",
+    );
+    await startApp12();
+    await until(() => finished("success").length === 1, 30_000);
+    expect(reviews()).toEqual([
+      {
+        commit: pushed(),
+        verdict: "approve",
+        body: "This review ran on Claude Code, as Codex reached its usage limit.\n\nReady to merge.",
+      },
+    ]);
+    expect(thread()).toMatchObject({ reviewed_by: "claude", review_limited: 0, needs_you: 0 });
+    await until(() =>
+      read(join(lead(), "typed")).includes(
+        "Codex's usage limit is reached until 31 Dec 23:59; reviews run on Claude Code until then.",
+      ),
+    );
+  }, 60_000);
+
+  test("a review held on a usage limit runs again by itself once the limit resets", async () => {
+    addApp();
+    writeFileSync(
+      join(home, ".config", "skelcrew", "config.yaml"),
+      "harness: claude\nreviewer: { harness: claude }\n",
+    );
+    // Claude Code says when its limit resets, in seconds since 1970. Far enough off that the
+    // first review meets it however slowly the builder starts.
+    const reset = Math.ceil(Date.now() / 1000) + 30;
+    writeFileSync(join(home, "bin", "claude-limit"), `${reset}\n`);
+    await startApp12();
+    await until(() => thread().review_limited === 1, 30_000);
+    expect(thread()).toMatchObject({ needs_you: 0, review_reset: reset * 1000 });
+    await until(() => finished("success").length === 1, 45_000);
+    expect(thread()).toMatchObject({ review_limited: 0, review_reset: null, needs_you: 0 });
+    expect(reviews()).toEqual([{ commit: pushed(), verdict: "approve", body: "Ready to merge." }]);
+    await until(() =>
+      read(join(lead(), "typed")).includes(
+        "Claude Code's usage limit is over; reviews run on it again.",
+      ),
+    );
+    expect(read(join(lead(), "typed"))).toContain("Claude Code's usage limit is reached until");
+  }, 90_000);
+
+  test("a review that runs past its time limit is ended and run once more, and the lead hears of it", async () => {
+    addApp();
+    config("review: { timeout_minutes: 0.1 }\n");
+    mkdirSync(codexHome(), { recursive: true });
+    writeFileSync(join(codexHome(), "slow-1"), "");
+    verdict(2, "approve", "Ready to merge.");
+    await startApp12();
+    await until(() => finished("success").length === 1, 30_000);
+    expect(read(join(codexHome(), "sessions", "count")).trim()).toBe("2");
+    const log = read(join(data(), "threads", "app-12.log"));
+    expect(log).toContain("app-12's review timed out after 0.1m; retrying");
+    await until(() =>
+      read(join(lead(), "typed")).includes("app-12's review timed out after 0.1m; retrying"),
+    );
+    expect(thread()).toMatchObject({ needs_you: 0, verdict: "approve" });
+  }, 60_000);
+
+  test("a review that times out twice needs you, and the lead hears why", async () => {
+    addApp();
+    config("review: { timeout_minutes: 0.1 }\n");
+    mkdirSync(codexHome(), { recursive: true });
+    writeFileSync(join(codexHome(), "slow-1"), "");
+    writeFileSync(join(codexHome(), "slow-2"), "");
+    verdict(3, "approve", "A third review should never run.");
+    await startApp12();
+    await until(() => thread().needs_you === 1, 30_000);
+    expect(thread()).toMatchObject({ verdict: "timed out", reviewing: null });
+    expect(finished("failure")[0]?.description).toBe("review timed out");
+    expect(reviews()).toEqual([]);
+    await until(() =>
+      read(join(lead(), "typed")).includes("app-12 needs you: its review timed out twice (0.1m)"),
+    );
+    expect(read(join(lead(), "typed"))).toContain("app-12's review timed out after 0.1m; retrying");
+    expect(read(join(codexHome(), "sessions", "count")).trim()).toBe("2");
   }, 60_000);
 
   test("a newer sc submit cancels the review still running for an older commit", async () => {
@@ -812,6 +969,8 @@ describe.skipIf(insideSandbox)("sc review", () => {
     verdict(2, "approve", "Still ready.");
     await startApp12();
     await until(() => read(join(data(), "threads", "app-12.log")).includes("waits on CI"), 30_000);
+    // The first turn's own end must come before the turn the test plays, or it would end that.
+    await until(() => read(join(builder(), "ended")).trim() === "1", 30_000);
     const asBuilder = { SKELCREW_SOCKET: builderSocket() };
     // You ask the builder for another review: a new turn, in which it runs sc review.
     expect((await skel(["question", "answered"], asBuilder)).code).toBe(0);
@@ -829,6 +988,8 @@ describe.skipIf(insideSandbox)("sc review", () => {
     verdict(2, "approve", "Still ready.");
     await startApp12();
     await until(() => read(join(data(), "threads", "app-12.log")).includes("waits on CI"), 30_000);
+    // The first turn's own end must come before the turn the test plays, or it would end that.
+    await until(() => read(join(builder(), "ended")).trim() === "1", 30_000);
     const asBuilder = { SKELCREW_SOCKET: builderSocket() };
     // Something typed in starts the builder's turn, and meanwhile the lead asks for a review.
     expect((await skel(["question", "answered"], asBuilder)).code).toBe(0);
@@ -1126,6 +1287,66 @@ await serve(${JSON.stringify(socket)}, 200);`;
       expect(prompt(3)).toContain("# Second");
       letGo(3);
       await until(() => ready("app-t1") && ready("app-t2"), 30_000);
+    }, 60_000);
+
+    // Giving back the first review's place starts the queued one at once, so the limit the
+    // first met must already be saved by then, or the second would run on the limited harness.
+    test("a review queued behind one that meets the usage limit is held, not run", async () => {
+      config("limits: { reviews: 1 }\n");
+      addAppOnGit();
+      holdReviews();
+      writeFileSync(
+        join(codexHome(), "error-1"),
+        "ERROR: You've hit your usage limit. Try again at Dec 31st, 2099 11:59 PM.\n",
+      );
+      serveOutsideCheckout();
+      await untilCloned();
+      await start("First");
+      await until(() => prompt(1) !== "", 30_000);
+      await start("Second");
+      await until(() => queued("app-t2"), 30_000);
+      letGo(1);
+      const second = () => read(join(data(), "threads", "app-t2.log"));
+      await until(() => second().includes("usage limit holds the review"), 30_000);
+      expect(reviewsRun()).toBe(1);
+    }, 60_000);
+
+    // Two reviews run at once. The second meets Codex's limit while the first still runs, and
+    // the first then ends cleanly, as its last call came before the limit. That says nothing
+    // of the limit, so it holds, and a later review waits for its reset.
+    test("a review that started before the usage limit doesn't end it by finishing", async () => {
+      config("limits: { reviews: 2 }\n");
+      addAppOnGit();
+      holdReviews();
+      rmSync(join(codexHome(), "held-2"));
+      writeFileSync(
+        join(codexHome(), "error-2"),
+        "ERROR: You've hit your usage limit. Try again at Dec 31st, 2099 11:59 PM.\n",
+      );
+      serveOutsideCheckout();
+      await untilCloned();
+      await start("First");
+      await until(() => prompt(1) !== "", 30_000);
+      await start("Second");
+      // The limit is met, and saved, while the first review still runs.
+      const limits = () => {
+        const db = new Database(join(data(), "skelcrew.db"));
+        db.run("PRAGMA busy_timeout = 5000");
+        try {
+          return db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM limits").get()?.n ?? 0;
+        } finally {
+          db.close();
+        }
+      };
+      await until(() => limits() === 1, 30_000);
+      letGo(1);
+      await until(() => ready("app-t1"), 30_000);
+      // The limit holds: a new thread's review never runs Codex.
+      expect(limits()).toBe(1);
+      await start("Third");
+      const third = () => read(join(data(), "threads", "app-t3.log"));
+      await until(() => third().includes("usage limit holds the review"), 30_000);
+      expect(reviewsRun()).toBe(2);
     }, 60_000);
   });
 

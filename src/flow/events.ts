@@ -12,6 +12,7 @@ import { baseOf } from "./builder.ts";
 import type { Check, Decision } from "./decide.ts";
 import { deleteBranch, fetchInto, onRemote } from "./git.ts";
 import { typeLeadNotes } from "./lead.ts";
+import { endWake } from "./limits.ts";
 import { noticeRound, queueMessage, stopDelivering } from "./messages.ts";
 import { refreshClones } from "./repo.ts";
 import { endRound } from "./round.ts";
@@ -52,12 +53,13 @@ async function refreshBase(db: Database, thread: Thread, base: string): Promise<
 // leaves such a thread alone, so its events are never told twice.
 export const tellingEvents = new Set<string>();
 
-// Cancels the round and any typing under way into the thread's builder, ends its session, and
-// waits for the builder to exit, so nothing types into it or changes the thread afterwards.
-// Messages still waiting for it are dropped once the thread ends, with `drop`, and otherwise
-// kept for when sc start brings the builder back.
+// Cancels the round, any typing under way into the thread's builder and any wake after a usage
+// limit, ends its session, and waits for the builder to exit, so nothing types into it or
+// changes the thread afterwards. Messages still waiting for it are dropped once the thread
+// ends, with `drop`, and otherwise kept for when sc start brings the builder back.
 async function endBuilder(db: Database, tmux: string, folder: string, drop: boolean) {
   stopDelivering(db, folder, drop);
+  endWake(folder);
   endRound(folder);
   // Claude Code can outlive the end of its session for a few seconds, still writing in the
   // clone.
@@ -82,7 +84,15 @@ export async function stopThread(db: Database, tmux: string, thread: Thread): Pr
   record(
     db,
     thread.folder,
-    { status: "stopped", needs_you: false, asking: false, stalled: false, erred: false },
+    {
+      status: "stopped",
+      needs_you: false,
+      asking: false,
+      stalled: false,
+      erred: false,
+      limited: false,
+      limit_reset: null,
+    },
     "stopped",
   );
   // Asked as it is marked stopped, before anything is waited on: an sc start that finds it
@@ -141,7 +151,15 @@ export async function removeThread(
     record(
       db,
       thread.folder,
-      { status: "stopped", needs_you: false, asking: false, stalled: false, erred: false },
+      {
+        status: "stopped",
+        needs_you: false,
+        asking: false,
+        stalled: false,
+        erred: false,
+        limited: false,
+        limit_reset: null,
+      },
       "removing",
     );
   // Asked before anything is waited on, so an sc start meanwhile assigns you after it, as for

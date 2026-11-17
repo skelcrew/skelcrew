@@ -121,7 +121,13 @@ function reviewOf(thread: Thread): NonNullable<ThreadRow["review"]> {
     return { state, round: thread.rounds + 1, at };
   }
   if (thread.verdict === null) return { state: "none", round: null, at: null };
-  const states = { approve: "approved", changes: "changes", failed: "failed" } as const;
+  // A review that timed out twice failed its check, so it shows as failed.
+  const states = {
+    approve: "approved",
+    changes: "changes",
+    failed: "failed",
+    "timed out": "failed",
+  } as const;
   return { state: states[thread.verdict], round: thread.review_round, at };
 }
 
