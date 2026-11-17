@@ -13,7 +13,9 @@ import {
   hasSession,
   keepOnExit,
   type Labels,
+  startCommandOf,
   startSession,
+  stopSession,
 } from "../agents/sessions.ts";
 import { deliver, idle } from "../agents/transport.ts";
 import { agentRoles, repositoryCommands } from "../config.ts";
@@ -100,6 +102,21 @@ export function leadInstructions(
   return `${builtInRole("lead").instructions}\nYou are the lead of ${repository}. Skelcrew's clone of it is at ${clone}.\nWhen this session started, ${setupTold}, and ${testTold}.\n`;
 }
 
+// Reports whether a running lead on Claude Code was started with its agent view on, by a
+// release before Skelcrew turned it off, and sits idle, so restarting it loses nothing. Agent
+// view's background service can hand the lead a spare session of its own, which has neither
+// the lead's conversation, nor its model, nor its instructions. A busy lead is left until the
+// next time Skelcrew looks, such as when you open it with sc.
+async function agentViewOn(
+  sessions: string,
+  name: string,
+  harness: HarnessName | null,
+): Promise<boolean> {
+  if (harness !== "claude") return false;
+  if (startCommandOf(sessions, name).includes("CLAUDE_CODE_DISABLE_AGENT_VIEW=1")) return false;
+  return idle(sessions, name, harnessNamed("claude").marks);
+}
+
 // Keeps a repository's running lead or starts it, resuming its saved conversation when there
 // is one. A lead's first start picks the harness your config names for leads, and the lead
 // keeps it from then on, as a conversation can't move to another harness. The session id and
@@ -114,16 +131,23 @@ export async function startLead(
   const lead = leadOf(db, owner, repo);
   // A lead still running is kept. One started by a release before leads stayed on a clean exit
   // is given that setting now, or exiting it would end its session and never close its tab.
+  // One started with agent view on is restarted once idle, as agentViewOn says.
   // One whose harness ended leaves its screen behind, which is logged before its session is
   // ended to make room for the new one.
   if (hasSession(sessions, lead.name)) {
     const failed = failedScreen(sessions, lead.name);
     if (failed === null) {
       keepOnExit(sessions, lead.name);
-      return;
+      if (!(await agentViewOn(sessions, lead.name, lead.harness))) return;
+      // Its stored conversation brings it back where it was, now without agent view.
+      console.log(
+        `${owner}/${repo}'s lead started with Claude Code's agent view on, so it restarts.`,
+      );
+      await stopSession(sessions, lead.name);
+    } else {
+      console.log(`${owner}/${repo}'s lead had ended:\n${failed}`);
+      endSession(sessions, lead.name);
     }
-    console.log(`${owner}/${repo}'s lead had ended:\n${failed}`);
-    endSession(sessions, lead.name);
   }
   // The lead's sandbox mounts its clone, and can't mount one that is missing. Adding a
   // repository clones it, so this waits only when that clone failed or has gone since.
