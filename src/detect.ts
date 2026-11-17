@@ -59,6 +59,20 @@ function scriptsOf(files: TopFiles, setup: string, run: string, fallback?: strin
   };
 }
 
+// Returns whether a pyproject.toml shows the repository uses pytest: its settings section, or a
+// dependency on it, either as a quoted requirement such as "pytest>=8" or as Poetry's
+// `pytest = "^8"`. Comments are dropped first, and a mere mention, such as in a description or
+// a project named pytest-free, shows nothing, as a wrong guess gives reviewers a command that
+// fails.
+function usesPytest(pyproject: string): boolean {
+  const text = pyproject.replace(/#.*$/gm, "");
+  return (
+    /^\s*\[tool\.pytest[.\]]/m.test(text) ||
+    /["']pytest(?![\w.-])[^"']*["']/.test(text) ||
+    /^\s*pytest\s*=/m.test(text)
+  );
+}
+
 // Each kind of repository: what tells it apart, and what it says about itself. They are tried in
 // order, and a repository can match several, such as a package with a Makefile. A lockfile
 // names its package manager, so those come before a package.json alone.
@@ -79,7 +93,7 @@ const kinds: ((files: TopFiles, has: (name: string) => boolean) => Found | null)
     const pytest =
       has("pytest.ini") ||
       has("conftest.py") ||
-      f["pyproject.toml"]?.includes("pytest") ||
+      usesPytest(f["pyproject.toml"] ?? "") ||
       f["setup.cfg"]?.includes("[tool:pytest]");
     const tool = has("uv.lock")
       ? { setup: "uv sync", run: "uv run pytest" }

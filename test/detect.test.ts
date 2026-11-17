@@ -96,6 +96,24 @@ test("Python with uv, poetry, or neither, runs pytest only where the repository 
   expect(detectCommands({ "pyproject.toml": "[project]\n" })).toEqual({ setup: [], test: [] });
 });
 
+// pyproject.toml shows pytest by a dependency on it, in PEP 621's or Poetry's form, or by its
+// settings. A comment, a description or a project named after it shows nothing.
+test("pyproject.toml counts as pytest only for a dependency on it or its settings", () => {
+  const uses = (pyproject: string) =>
+    detectCommands({ "uv.lock": "", "pyproject.toml": pyproject }).test;
+  expect(uses('[dependency-groups]\ndev = ["pytest>=8", "ruff"]\n')).toEqual(["uv run pytest"]);
+  expect(uses("[project.optional-dependencies]\ntest = ['pytest']\n")).toEqual(["uv run pytest"]);
+  expect(uses('[tool.poetry.group.dev.dependencies]\npytest = "^8.0"\n')).toEqual([
+    "uv run pytest",
+  ]);
+  expect(uses("[tool.pytest.ini_options]\naddopts = -q\n")).toEqual(["uv run pytest"]);
+  expect(
+    uses(
+      '# We use unittest, not pytest.\n[project]\nname = "pytest-free"\ndescription = "No pytest here"\ndependencies = []\n',
+    ),
+  ).toEqual([]);
+});
+
 // A lockfile names the package manager, not the test runner, such as unittest.
 test("a locked Python repository with no sign of pytest gets its setup and no test", () => {
   expect(detectCommands({ "uv.lock": "", "pyproject.toml": "[project]\n" })).toEqual({
