@@ -235,9 +235,11 @@ for (const [title, marks, draft] of drafts) {
 }
 
 test("a draft started just before the paste is left alone, and the message waits for it", async () => {
-  // A tmux in front of the real one starts a person's draft once Skelcrew has found the prompt
-  // ready and loads its message, and lets the message on only once the draft shows. That
-  // makes the moment between the last look and the paste happen every time.
+  // A tmux in front of the real one starts a person's draft at typing's last look before the
+  // paste, and lets that look through only once the draft shows. That makes a draft started
+  // after the agent was found idle, and just before the paste, happen every time. Typing looks
+  // twice to see the screen is quiet, then once more right before pasting, so the last look is
+  // the third: the agent shows its prompt before typing starts, so the first two find it idle.
   const real = Bun.which("tmux") ?? "tmux";
   const bin = join(home, "bin");
   mkdirSync(bin);
@@ -245,8 +247,10 @@ test("a draft started just before the paste is left alone, and the message waits
   writeFileSync(
     join(bin, "tmux"),
     `#!/bin/sh
-case " $* " in *" load-buffer "*)
-  if [ -f "${home}/race" ]; then
+case " $* " in *" capture-pane "*)
+  looks=$(( $(cat "${home}/looks" 2>/dev/null || echo 0) + 1 ))
+  echo $looks > "${home}/looks"
+  if [ $looks = 3 ] && [ -f "${home}/race" ]; then
     mv "${home}/race" "${home}/draft"
     until "${real}" -L ${socket} capture-pane -p -t =lead: | grep -q half-typed; do sleep 0.02; done
   fi
@@ -255,10 +259,11 @@ exec "${real}" "$@"
 `,
     { mode: 0o755 },
   );
+  start("lead", drafting(claude.marks));
+  await showing("lead", claude.marks.prompt);
   const path = process.env.PATH;
   process.env.PATH = `${bin}:${path}`;
   try {
-    start("lead", drafting(claude.marks));
     const typing = typeInto(socket, "lead", claude.marks, "hello", { moment });
     await until(() => existsSync(join(home, "draft")));
     await Bun.sleep(moment * 8);

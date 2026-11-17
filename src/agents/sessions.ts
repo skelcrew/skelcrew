@@ -393,15 +393,8 @@ export const interruptSession = (socket: string, name: string) => sendKey(socket
 let buffersMade = 0;
 
 // Pastes text into the named session as one bracketed paste, so the agent reads it as a whole,
-// however long, and newlines in it don't send it. `ready` is asked last, right before the paste,
-// and nothing is pasted when it says no: a person can start a draft at any moment, and the paste
-// would send it. Returns whether it pasted. Throws when the session is gone.
-export function pasteIntoSession(
-  socket: string,
-  name: string,
-  text: string,
-  ready: () => boolean,
-): boolean {
+// however long, and newlines in it don't send it. Throws when the session is gone.
+export function pasteIntoSession(socket: string, name: string, text: string): void {
   // A paste buffer of its own, so two daemons or two messages never paste each other's text.
   const buffer = `skelcrew-${process.pid}-${buffersMade++}`;
   try {
@@ -409,13 +402,32 @@ export function pasteIntoSession(
     // never be sent. Being scrolled back shows nowhere in the pane's text, so it is left here,
     // whether or not anyone is. It fails when nobody is, which is fine.
     tmux(socket, ["send-keys", "-X", "-t", `=${name}:`, "cancel"]);
-    // The text is loaded before the last look, so only the paste itself comes after it.
-    mustTmux(socket, ["load-buffer", "-b", buffer, "-"], text);
-    if (!ready()) return false;
-    mustTmux(socket, ["paste-buffer", "-p", "-b", buffer, "-t", `=${name}:`]);
-    return true;
+    // Loading, pasting and deleting go in one call, read from stdin, so the paste lands as soon
+    // after the caller's last look at the screen as it can: a person may start a draft at any
+    // moment, and the paste would send it. The lone ";" separates tmux commands, so these words
+    // go to tmux as they are, not through tmux(), which would quote it.
+    const paste = ["load-buffer", "-b", buffer, "-", ";", "paste-buffer", "-p", "-b", buffer];
+    const run = Bun.spawnSync(
+      [
+        "tmux",
+        "-L",
+        socket,
+        "-f",
+        "/dev/null",
+        ...paste,
+        "-t",
+        `=${name}:`,
+        ";",
+        "delete-buffer",
+        "-b",
+        buffer,
+      ],
+      { env: envWithoutTmux(), stdin: new Blob([text]), stdout: "pipe", stderr: "pipe" },
+    );
+    if (!run.success) throw new Error(`tmux paste-buffer failed: ${run.stderr.toString().trim()}`);
   } finally {
-    // The server keeps no copy, which an agent could read back.
+    // A paste that failed leaves the buffer behind, and the server must keep no copy, which an
+    // agent could read back.
     tmux(socket, ["delete-buffer", "-b", buffer]);
   }
 }

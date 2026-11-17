@@ -100,8 +100,7 @@ async function typeNow(socket: string, name: string, marks: Marks, text: string,
       // A person can start typing after the last look, and the paste would send their draft
       // along with the message. So look once more right before pasting, and wait again if the
       // prompt isn't bare. A moment remains, but only as long as the paste itself.
-      const bare = () => notReady(readSession(socket, name), marks) === "";
-      if (pasteIntoSession(socket, name, text, bare)) break;
+      if (notReady(readSession(socket, name), marks) === "") break;
     } else if (Date.now() > deadline) {
       const waited = `${timeout / 1000}s`;
       // A person's draft gets a plain answer, as it isn't the agent being busy.
@@ -114,6 +113,7 @@ async function typeNow(socket: string, name: string, marks: Marks, text: string,
   }
   // Without the paste marks, Claude Code reads the Enter after a long message as a new line,
   // and the message is never sent. So the Enter goes on its own, a moment after the paste.
+  pasteIntoSession(socket, name, text);
   await Bun.sleep(moment);
   sendKey(socket, name, "Enter");
 }
