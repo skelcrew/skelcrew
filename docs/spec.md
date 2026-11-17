@@ -463,7 +463,8 @@ The lead, the builder and the reviewer each run on their own `harness` when `ske
 | Interrupt | Stops the agent's turn, as Esc does. `sc interrupt` uses it. |
 | Attach | Gives the command that attaches a terminal to the session, for the screen's right pane, and switches that terminal to another session. |
 | End | Ends the session, and waits until every process it ran has exited, so its clone can be removed. |
-| List | Lists the sessions with their labels and whether each agent still runs, so a starting daemon finds the agents still running. It also says whether a session exists, whether its agent exited cleanly, and the last screen of one that ended. |
+| List | Lists the sessions with their labels and whether each agent still runs, so a starting daemon finds the agents still running. |
+| Check | Says whether one session exists, whether its agent still runs, whether it exited cleanly, and the last screen of one that ended, so Skelcrew reconnects instead of starting an agent twice and can say why one ended. |
 
 Every session carries labels: its repository (`simon/app`), its role (`lead` or `builder`) and, for a builder, its task (`app-12`). They stay with the session for as long as it lives, so a daemon that starts again knows whose each session is.
 
