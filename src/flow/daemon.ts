@@ -500,6 +500,11 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
     connection.on("data", read);
     connection.on("error", () => {});
   };
+  // The usage limits saved before the stop, read back before any review can start: a review
+  // brought back below, or one a request starts while the leads come back. Read later, they
+  // would overwrite a limit a review met meanwhile and forget when it was met, so a review
+  // that started before it could end it by finishing.
+  restoreLimits(db);
   // Taken before any request comes in, so a thread started meanwhile, still setting up,
   // isn't taken for one whose setup the daemon's stop cut short.
   const before = liveThreads(db);
@@ -540,8 +545,6 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   refreshClones(db).catch((error) => console.log(errorText(error)));
   // Notes the daemon's stop kept from the leads.
   typeLeadNotes(db, sessions);
-  // The usage limits saved before the stop, so the held reviews carried on below still wait.
-  restoreLimits(db);
   // Bring back each thread's builder, without waiting on it, and carry on the round it was in.
   // A thread whose builder can't come back ends its review, which would otherwise mark it
   // waiting again once it ended. Either way a review already brought back hears of it.
