@@ -266,6 +266,15 @@ test("a thread waiting out a usage limit says until when, is dim, and doesn't ne
   expect(threadWord(thread({ review_limited: true }), 3, now)).toBe("limit");
   expect(needsYou(held)).toBe(false);
   expect(shownOf(held, 3, now).mark).toEqual({ sign: "○", colour: "dim" });
+  // It stays dim while its builder works at the same time, as it still waits on the limit.
+  for (const reset of [null, at(16, 13, 59)]) {
+    const both = thread({ state: "working", review_limited: true, review_reset: reset });
+    expect(shownOf(both, 3, now)).toMatchObject({
+      word: reset === null ? "limit" : "limit · 13:59",
+      status: "working",
+      mark: { sign: "○", colour: "dim" },
+    });
+  }
   // A builder its harness stopped on a usage limit is woken at the reset, so it doesn't need you
   // either. Any other error does.
   const builder = { status: "working" as const, reviewing: null, erred: true };

@@ -14,13 +14,15 @@ export type Shown = { word: string; status: Status; mark: Mark };
 // and the colour what kind of state it is in. Red is wrong: the thread failed, its harness
 // stopped on an error, or its review couldn't run. Green is approved and ready to merge, and
 // yellow any other reason it needs you. Of the hollow ones, a working builder is bright and
-// anything that only waits is dim. A review under way shows as waiting even while the builder
-// works too, so the row tells you the PR is in review.
+// anything that only waits is dim. A review under way, or one held on its harness's usage limit,
+// shows as waiting even while the builder works too, as the word then says what the thread
+// waits on.
 export function markOf(status: Status, word: string): Mark {
   if (status === "error" || word === "review failed") return { sign: "●", colour: "red" };
   if (status === "ready") return { sign: "●", colour: "green" };
   if (status === "needs you") return { sign: "●", colour: "yellow" };
-  if (word === "reviewing" || word === "queued for review") return { sign: "○", colour: "dim" };
+  const waits = word === "reviewing" || word === "queued for review" || word.startsWith("limit");
+  if (waits) return { sign: "○", colour: "dim" };
   return { sign: "○", colour: status === "working" ? "bright" : "dim" };
 }
 

@@ -17,9 +17,12 @@ test("a hollow mark is bright while the builder works, and dim while the thread 
     expect(markOf("idle", word)).toEqual({ sign: "○", colour: "dim" });
 });
 
-test("a review under way is dim even while the builder works at the same time", () => {
+test("a review under way or held on a usage limit is dim even while the builder works", () => {
   expect(markOf("working", "reviewing")).toEqual({ sign: "○", colour: "dim" });
   expect(markOf("working", "queued for review")).toEqual({ sign: "○", colour: "dim" });
+  // A review held on its usage limit waits too, whether or not the harness said until when.
+  expect(markOf("working", "limit")).toEqual({ sign: "○", colour: "dim" });
+  expect(markOf("working", "limit · 13:59")).toEqual({ sign: "○", colour: "dim" });
 });
 
 test("an approved thread counts as ready, not as needing you", () => {
