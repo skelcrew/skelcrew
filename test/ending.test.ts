@@ -109,3 +109,34 @@ console.log(JSON.stringify({ queued, notes }));`);
     notes: [{ text: "started app-t2 from github: Fix login" }],
   });
 });
+
+// SQLite gives a new note the ID of the last one deleted. A thread starting over drops its end
+// note while it is being typed, after its paste, which still goes in. A note saved right then
+// takes its ID, and must still reach the lead, not be deleted as the note just typed.
+test("a note saved while a dropped end note is typed still reaches the lead", () => {
+  const typed = join(home, "typed");
+  // A lead at its prompt that keeps every byte typed into it, a paste as soon as it arrives.
+  const lead = `printf '\\033[?2004h'; stty -echo -icanon min 1; echo '❯'; exec cat >> ${typed}`;
+  const seen = withThread(`import { readFileSync } from "node:fs";
+import { leadPlaces } from ${JSON.stringify(source("paths.ts"))};
+const typedSoFar = () => (existsSync(${JSON.stringify(typed)}) ? readFileSync(${JSON.stringify(typed)}, "utf8") : "");
+const until = async (done) => { for (let i = 0; i < 400 && !done(); i++) await Bun.sleep(25); return done(); };
+const tmux = (...args) => Bun.spawnSync(["tmux", "-L", socket, "-f", "/dev/null", ...args]);
+tmux("new-session", "-d", "-s", leadPlaces("simon", "app").name, "-x", "100", "-y", "30", "sh", "-c", ${JSON.stringify(lead)});
+try {
+  await endThread(db, socket, thread, "PR #7 was merged", "is done: #7 merged into main");
+  const { id } = db.query("SELECT id FROM notes").get();
+  // The end note is pasted, and its Enter comes a moment later.
+  const pasted = await until(() => typedSoFar().includes("app-t1 is done"));
+  await startThread(db, { repo: "app", task: "t1" });
+  noteForLead(db, socket, thread, "started app-t2 from github: Fix login");
+  const reused = db.query("SELECT id FROM notes").get()?.id === id;
+  // Sent, with its Enter after its paste, which the terminal hands on as a new line, so
+  // nothing is left typing once tmux ends.
+  const delivered = await until(() => typedSoFar().includes("Fix login\\x1b[201~\\n"));
+  console.log(JSON.stringify({ pasted, reused, delivered }));
+} finally {
+  tmux("kill-server");
+}`);
+  expect(seen).toEqual({ pasted: true, reused: true, delivered: true });
+});
