@@ -29,6 +29,7 @@ const File = z.looseObject({
   max_rounds: z.number().int().positive().optional(),
   limits: z.looseObject({ reviews: z.number().int().positive().optional() }).optional(),
   setup: z.array(z.string()).optional(),
+  test: z.array(z.string()).optional(),
   tracker: z.string().nullish(),
   review: z.looseObject({ timeout_minutes: z.number().positive().optional() }).optional(),
   // Written as reviewer: { fallback: codex }, and picked out of the reviewer's lines on reading,
@@ -49,7 +50,8 @@ export type Role = { harness: HarnessName; model?: string };
 
 // Every setting, once the files and the defaults are merged. `rounds` is how many rounds of
 // changes a thread gets before it needs you, `reviews` how many reviews run at once on this
-// machine, and `setup` the commands that set up a thread's clone. `fallback` is the harness
+// machine, and `setup` and `test` the commands that set up a thread's clone and test it, or none
+// when the repository names none, so they can be detected instead. `fallback` is the harness
 // reviews run on while the reviewer's own waits out its usage limit, and `reviewMinutes` how
 // long a review may run before it is ended. `yourHarness` and `yourReviewer` are the harnesses
 // your config saved, with no default, so the first run can tell what you haven't picked yet, and
@@ -58,7 +60,8 @@ export type Settings = {
   roles: { lead: Role; builder: Role; reviewer: Role };
   rounds: number;
   reviews: number;
-  setup: string[];
+  setup: string[] | undefined;
+  test: string[] | undefined;
   tracker: string | undefined;
   fallback: HarnessName | undefined;
   reviewMinutes: number;
@@ -75,6 +78,7 @@ const keysOf: Record<Group, Key[]> = {
   rounds: ["max_rounds"],
   reviews: ["limits"],
   setup: ["setup"],
+  test: ["test"],
   tracker: ["tracker"],
   fallback: ["fallback"],
   reviewMinutes: ["review"],
@@ -85,7 +89,7 @@ const keysOf: Record<Group, Key[]> = {
 
 // What each file may set. Your harness, model, limits, the reviewer's fallback, a review's time
 // and the repositories you declined the GitHub plugin for fit you, your account and your
-// machine, so a repository can't set them. Setup and the
+// machine, so a repository can't set them. Setup, test and the
 // tracker belong to the repository, so your config doesn't.
 const yourKeys: Key[] = [
   "harness",
@@ -100,25 +104,31 @@ const yourKeys: Key[] = [
   "your_reviewer",
   "github_declined",
 ];
-const repositoryKeys: Key[] = ["lead", "builder", "reviewer", "max_rounds", "setup", "tracker"];
+const repositoryKeys: Key[] = [
+  "lead",
+  "builder",
+  "reviewer",
+  "max_rounds",
+  "setup",
+  "test",
+  "tracker",
+];
 const roleKeys: Key[] = ["lead", "builder", "reviewer"];
 
-// Returns the built-in defaults: Claude Code for every role, three rounds, no setup and no
-// tracker of the repository's own, and 30 minutes for a review. Reviews default to a quarter of
+// Returns the built-in defaults: Claude Code for every role, three rounds, no tracker of the
+// repository's own, and 30 minutes for a review. Reviews default to a quarter of
 // this machine's cores, at least one, as a review of a commit CI doesn't run on runs the
 // repository's whole test suite, and many at once fight over the CPU.
 function builtInDefaults(): {
   harness: HarnessName;
   max_rounds: number;
   reviews: number;
-  setup: string[];
   reviewMinutes: number;
 } {
   return {
     harness: "claude",
     max_rounds: 3,
     reviews: Math.max(1, Math.floor(availableParallelism() / 4)),
-    setup: [],
     reviewMinutes: 30,
   };
 }
@@ -229,7 +239,8 @@ function mergeSettings(layers: File[]): Settings {
     roles: { lead: role("lead"), builder: role("builder"), reviewer: role("reviewer") },
     rounds: first((l) => l.max_rounds) ?? defaults.max_rounds,
     reviews: first((l) => l.limits?.reviews) ?? defaults.reviews,
-    setup: first((l) => l.setup) ?? defaults.setup,
+    setup: first((l) => l.setup),
+    test: first((l) => l.test),
     tracker: first((l) => l.tracker),
     fallback: first((l) => l.fallback),
     reviewMinutes: first((l) => l.review?.timeout_minutes) ?? defaults.reviewMinutes,

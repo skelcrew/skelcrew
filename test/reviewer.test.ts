@@ -79,6 +79,7 @@ const given = () => ({
   clone,
   issue,
   base: "origin/main",
+  test: { commands: ["bun run check"], detected: false },
   commit,
   harness: "codex" as const,
   env: env(),
@@ -621,16 +622,30 @@ test("keeps reviewing after a review that couldn't start", async () => {
 });
 
 describe("what the reviewer is told about the tests", () => {
+  const named = { commands: ["bun install", "bun run check"], detected: false };
   // CI runs the whole suite once per commit, so the reviewer runs it only where there is none.
   test("without CI, the reviewer runs the whole test suite itself", () => {
-    const prompt = reviewerPrompt(issue, "origin/main", "run");
-    expect(prompt).toContain("No CI runs on this commit, so run the repository's whole test suite");
-    expect(prompt).toContain("under test: in the repository's skelcrew.yaml");
+    const prompt = reviewerPrompt(issue, "origin/main", "run", named);
+    expect(prompt).toContain(
+      "No CI runs on this commit, so run the repository's whole test suite, with `bun install && bun run check`, from the repository's skelcrew.yaml.",
+    );
     expect(prompt).not.toContain("ci.md");
   });
 
+  // A detected command is a guess, so the reviewer hears it is one.
+  test("the reviewer hears when Skelcrew detected the test command, or found none", () => {
+    const detected = { commands: ["go test ./..."], detected: true };
+    expect(reviewerPrompt(issue, "origin/main", "run", detected)).toContain(
+      "run the repository's whole test suite, with `go test ./...`, which Skelcrew detected from the repository's files.",
+    );
+    const none = { commands: [], detected: true };
+    expect(reviewerPrompt(issue, "origin/main", "run", none)).toContain(
+      "run the repository's whole test suite, working out how from the repository, as it names no test command and Skelcrew detected none.",
+    );
+  });
+
   test("with CI, the reviewer reads CI's result, and says when CI is still running", () => {
-    const prompt = reviewerPrompt(issue, "origin/main", { ci: "/tmp/review/ci.md" });
+    const prompt = reviewerPrompt(issue, "origin/main", { ci: "/tmp/review/ci.md" }, named);
     expect(prompt).not.toContain("run the repository's whole test suite");
     expect(prompt).toContain(
       "CI runs the whole test suite on this commit, so don't run it yourself",
@@ -645,15 +660,15 @@ describe("what the reviewer is told about the tests", () => {
   // Any check but Skelcrew's counts as CI, and some, such as a deploy preview or a CLA check,
   // run no tests. Then no one else would run the suite.
   test("with CI whose checks run no tests, the reviewer runs the whole test suite itself", () => {
-    const prompt = reviewerPrompt(issue, "origin/main", { ci: "/tmp/review/ci.md" });
+    const prompt = reviewerPrompt(issue, "origin/main", { ci: "/tmp/review/ci.md" }, named);
     expect(prompt).toContain(
-      "When it lists checks and none of them runs the tests, such as only a deploy preview or a CLA check, run the whole test suite yourself, using the commands under test: in the repository's skelcrew.yaml if there is one.",
+      "When it lists checks and none of them runs the tests, such as only a deploy preview or a CLA check, run the whole test suite yourself, with `bun install && bun run check`, from the repository's skelcrew.yaml.",
     );
   });
 
   // Before CI starts, the file lists no checks. That is CI still to come, not CI without tests.
   test("with CI that hasn't reported yet, the reviewer reviews the code without running the suite", () => {
-    const prompt = reviewerPrompt(issue, "origin/main", { ci: "/tmp/review/ci.md" });
+    const prompt = reviewerPrompt(issue, "origin/main", { ci: "/tmp/review/ci.md" }, named);
     expect(prompt).toContain(
       "When CI hasn't reported yet, or is still running as you answer, review the code anyway, and say in the body that CI is still running.",
     );
@@ -661,7 +676,7 @@ describe("what the reviewer is told about the tests", () => {
 
   // CI skips a change to docs and Markdown alone, and so does the reviewer: no code changed.
   test("on a change to docs and Markdown alone, the reviewer runs no tests and says so", () => {
-    const prompt = reviewerPrompt(issue, "origin/main", "docs only");
+    const prompt = reviewerPrompt(issue, "origin/main", "docs only", named);
     expect(prompt).toContain(
       "The change only touches docs and Markdown, so don't run the tests. Say in the body that you didn't run them, as no code changed.",
     );

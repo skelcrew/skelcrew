@@ -552,9 +552,38 @@ test("repo add adds the checkout you are in, and attaches to nothing", async () 
   const run = await skel(["repo", "add"], "", checkout);
   expect(run.err).toBe("");
   expect(run.code).toBe(0);
-  expect(run.out).toBe("Cloning simon/app for Skelcrew.\nAdded simon/app, as app.\n");
+  expect(run.out).toBe(
+    "Cloning simon/app for Skelcrew.\nAdded simon/app, as app.\nNo test command detected. Set one as test: in a skelcrew.yaml, which sc init writes.\n",
+  );
   expect(existsSync(join(clone("simon/app"), "README"))).toBe(true);
   expect(calls()).not.toContain("daemon");
+});
+
+// Adds files to a repository on the fake GitHub, as a push to its default branch would.
+function pushFiles(checkout: string, full: string, files: Record<string, string>): void {
+  for (const [name, text] of Object.entries(files)) writeFileSync(join(checkout, name), text);
+  git(checkout, "add", ".");
+  git(checkout, "commit", "-q", "-m", "more");
+  git(checkout, "push", "-q", join(home, "github", `${full}.git`), "main");
+}
+
+// Many repositories are added just to fix something, with no skelcrew.yaml to commit there.
+test("repo add says which test command it detected, as a hint, and nothing when one is named", async () => {
+  const checkout = onGitHub("simon/app", "WRITE");
+  pushFiles(checkout, "simon/app", {
+    "bun.lock": "",
+    "package.json": JSON.stringify({ scripts: { check: "true", test: "true" } }),
+  });
+  const run = await skel(["repo", "add"], "", checkout);
+  expect(run.err).toBe("");
+  expect(run.out).toEndWith(
+    "Added simon/app, as app.\nTesting with bun run check (detected). sc init writes a skelcrew.yaml to share it.\n",
+  );
+  const site = onGitHub("simon/site", "WRITE");
+  pushFiles(site, "simon/site", { "bun.lock": "", "skelcrew.yaml": "test: [make test]\n" });
+  const named = await skel(["repo", "add"], "", site);
+  expect(named.err).toBe("");
+  expect(named.out).toEndWith("Added simon/site, as site.\n");
 });
 
 test("repo add takes a checkout's path, or a repository's name on its forge", async () => {
@@ -743,6 +772,28 @@ reviewer: { harness: codex }
   expect(existsSync(join(clone("simon/app"), "README"))).toBe(true);
   expect(run.out).toContain("Added simon/app, as app.");
   expect(run.out).toContain("Wrote skelcrew.yaml. Commit and push it to start.");
+});
+
+test("init writes the setup and test it detects as real lines, and says they were detected", async () => {
+  writeFileSync(join(home, ".config", "skelcrew", "config.yaml"), "harness: claude\n");
+  const checkout = onGitHub("simon/app", "WRITE");
+  writeFileSync(join(checkout, "go.mod"), "module app\n");
+  writeFileSync(join(checkout, "Makefile"), "check:\n\tgo vet ./... && go test ./...\n");
+  const run = await skel(["init"], "", checkout);
+  expect(run.err).toBe("");
+  expect(run.out).not.toContain("Testing with");
+  expect(readFileSync(join(checkout, "skelcrew.yaml"), "utf8")).toBe(
+    `# Shared with everyone who works on this repository. Never put a secret here.
+lead:     { harness: claude }
+builder:  { harness: claude }
+reviewer: { harness: claude }
+# Detected by Skelcrew from this repository's files. Change them if they are wrong.
+setup: [go mod download]
+test: [make check]
+# Keeps this repository on git alone, with no tracker.
+# tracker: none
+`,
+  );
 });
 
 // YAML reads true, null or 123 as something other than text, which a model name must be.

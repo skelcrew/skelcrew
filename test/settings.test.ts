@@ -30,7 +30,7 @@ function settings(yours: string, shared: string | null): void {
 // Runs code against config.ts in a process of its own, as homedir() keeps the HOME this one
 // started with, and returns what it printed and the error it ended with, if any.
 function run(code: string): { out: string; err: string } {
-  const script = `import { repositorySetup, reviewLimit, threadConfig } from ${JSON.stringify(source("config.ts"))};
+  const script = `import { repositoryCommands, reviewLimit, threadConfig } from ${JSON.stringify(source("config.ts"))};
 const app = { owner: "simon", repo: "app" };
 ${code}`;
   const done = Bun.spawnSync([process.execPath, "-e", script], {
@@ -91,13 +91,56 @@ test("your model for a role doesn't follow it onto the harness skelcrew.yaml pic
   expect(forApp().reviewer).toEqual({ harness: "claude", model: "sonnet" });
 });
 
-test("setup comes from the skelcrew.yaml in Skelcrew's clone", () => {
+// Returns app's setup and test commands, and whether each was detected.
+const commands = () => JSON.parse(run("console.log(JSON.stringify(repositoryCommands(app)));").out);
+
+test("setup and test come from the skelcrew.yaml in Skelcrew's clone", () => {
   settings("harness: claude\n", "setup: [bun install, make]\ntest: [bun test]\n");
-  expect(run("console.log(JSON.stringify(repositorySetup(app)));").out).toBe(
-    '["bun install","make"]\n',
-  );
+  writeFileSync(join(clone(), "go.mod"), "");
+  expect(commands()).toEqual({
+    setup: { commands: ["bun install", "make"], detected: false },
+    test: { commands: ["bun test"], detected: false },
+  });
+});
+
+test("what skelcrew.yaml doesn't name is detected from the repository's files", () => {
+  settings("harness: claude\n", "test: [make check]\n");
+  writeFileSync(join(clone(), "go.mod"), "");
+  expect(commands()).toEqual({
+    setup: { commands: ["go mod download"], detected: true },
+    test: { commands: ["make check"], detected: false },
+  });
   settings("harness: claude\n", null);
-  expect(run("console.log(JSON.stringify(repositorySetup(app)));").out).toBe("[]\n");
+  expect(commands()).toEqual({
+    setup: { commands: ["go mod download"], detected: true },
+    test: { commands: ["go test ./..."], detected: true },
+  });
+});
+
+// Skelcrew's clone follows the default branch, so what is detected follows it too.
+test("detection follows the files in Skelcrew's clone as they change", () => {
+  settings("harness: claude\n", null);
+  writeFileSync(join(clone(), "go.mod"), "");
+  expect(commands().test.commands).toEqual(["go test ./..."]);
+  rmSync(join(clone(), "go.mod"));
+  writeFileSync(join(clone(), "Cargo.toml"), "");
+  expect(commands().test.commands).toEqual(["cargo test"]);
+});
+
+// An empty list says the repository has no setup, which detection mustn't override.
+test("an empty list in skelcrew.yaml counts as named", () => {
+  settings("harness: claude\n", "setup: []\n");
+  writeFileSync(join(clone(), "go.mod"), "");
+  expect(commands().setup).toEqual({ commands: [], detected: false });
+});
+
+// Setup and test belong to the repository, so a line in your config counts for nothing.
+test("your config can't name setup or test", () => {
+  settings("harness: claude\nsetup: [rm -rf x]\ntest: [false]\n", null);
+  expect(commands()).toEqual({
+    setup: { commands: [], detected: true },
+    test: { commands: [], detected: true },
+  });
 });
 
 test("a skelcrew.yaml that isn't valid, or isn't a plain file, says so rather than be ignored", () => {
@@ -106,7 +149,7 @@ test("a skelcrew.yaml that isn't valid, or isn't a plain file, says so rather th
   settings("harness: claude\n", null);
   writeFileSync(join(home, "secret"), "setup: [cat secret]\n");
   symlinkSync(join(home, "secret"), join(clone(), "skelcrew.yaml"));
-  expect(run("repositorySetup(app);").err).toContain("isn't a plain file");
+  expect(run("repositoryCommands(app);").err).toContain("isn't a plain file");
 });
 
 test("how many reviews run at once comes from your config only, else a quarter of the cores", () => {

@@ -14,7 +14,7 @@ import {
   type Labels,
   startSession,
 } from "../agents/sessions.ts";
-import { repositorySetup, threadConfig } from "../config.ts";
+import { repositoryCommands, threadConfig } from "../config.ts";
 import { cloneDir, threadSocket } from "../paths.ts";
 import { trackerOf } from "../plugins/ask.ts";
 import { builtInRole } from "../roles.ts";
@@ -299,11 +299,16 @@ export async function setUpThread(db: Database, thread: Thread): Promise<void> {
     );
   }
   // Make sure no git login reached the clone's settings before the builder can read them,
-  // then run the repository's setup commands in the sandbox.
+  // then run the repository's setup commands in the sandbox. A failure names where the command
+  // came from, so you know whether to fix skelcrew.yaml or write one.
   refuseCredentials(clone);
-  for (const command of repositorySetup(thread)) {
+  const { setup } = repositoryCommands(thread);
+  for (const command of setup.commands) {
     const { argv, env } = setupCommand(clone, command);
-    await mustRun(argv, `the repository's skelcrew.yaml setup command "${command}"`, env);
+    const what = setup.detected
+      ? `the setup command Skelcrew detected, "${command}"`
+      : `the repository's skelcrew.yaml setup command "${command}"`;
+    await mustRun(argv, what, env);
   }
 }
 
