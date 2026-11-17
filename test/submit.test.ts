@@ -1288,6 +1288,44 @@ await serve(${JSON.stringify(socket)}, 200);`;
       letGo(3);
       await until(() => ready("app-t1") && ready("app-t2"), 30_000);
     }, 60_000);
+
+    // Two reviews run at once. The second meets Codex's limit while the first still runs, and
+    // the first then ends cleanly, as its last call came before the limit. That says nothing
+    // of the limit, so it holds, and a later review waits for its reset.
+    test("a review that started before the usage limit doesn't end it by finishing", async () => {
+      config("limits: { reviews: 2 }\n");
+      addAppOnGit();
+      holdReviews();
+      rmSync(join(codexHome(), "held-2"));
+      writeFileSync(
+        join(codexHome(), "error-2"),
+        "ERROR: You've hit your usage limit. Try again at Dec 31st, 2099 11:59 PM.\n",
+      );
+      serveOutsideCheckout();
+      await untilCloned();
+      await start("First");
+      await until(() => prompt(1) !== "", 30_000);
+      await start("Second");
+      // The limit is met, and saved, while the first review still runs.
+      const limits = () => {
+        const db = new Database(join(data(), "skelcrew.db"));
+        db.run("PRAGMA busy_timeout = 5000");
+        try {
+          return db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM limits").get()?.n ?? 0;
+        } finally {
+          db.close();
+        }
+      };
+      await until(() => limits() === 1, 30_000);
+      letGo(1);
+      await until(() => ready("app-t1"), 30_000);
+      // The limit holds: a new thread's review never runs Codex.
+      expect(limits()).toBe(1);
+      await start("Third");
+      const third = () => read(join(data(), "threads", "app-t3.log"));
+      await until(() => third().includes("usage limit holds the review"), 30_000);
+      expect(reviewsRun()).toBe(2);
+    }, 60_000);
   });
 
   // Without a forge there is no PR to close, but Skelcrew pushed the branch, so it deletes it.
