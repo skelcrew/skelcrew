@@ -57,7 +57,7 @@ function run(code: string, ...args: string[]): string {
 }
 
 // Code that prints what each command and the screen show of the saved database's threads: sc
-// repo ls, sc ps, sc issue ls, sc issue show and sc pr show, the sidebar, the lists and the tabs.
+// repo ls, sc ps, sc ls and sc show, the sidebar, the lists and the tabs.
 const showAll = `import { openDb, moveToTasks } from ${JSON.stringify(source("db.ts"))};
 const list = await import(${JSON.stringify(source("flow/list.ts"))});
 const { listGroups, entryCounts } = await import(${JSON.stringify(source("screen/lists.ts"))});
@@ -70,18 +70,12 @@ const shown = {
   repositories: list.listRepositories(db),
   ps: list.listThreads(db),
   psNotes: list.listThreads(db, "notes"),
-  issues: list.listTasks(db),
-  show: tasks.map((name) => {
-    try {
-      const [r, t] = name.split("-");
-      return list.showTask(db, r, t);
-    } catch (e) {
-      return String(e);
-    }
-  }),
-  prs: await Promise.all(
-    [{ repo: "app", pr: 40 }, { repo: "app", pr: 41 }, { repo: "app", task: "13" }, { repo: "app", task: "16" }]
-      .map((which) => list.showPr(db, which).catch(String)),
+  ls: list.listTasks(db),
+  show: await Promise.all(
+    tasks.map((name) => {
+      const [repo, task] = name.split("-");
+      return list.showTask(db, { repo, task }).catch(String);
+    }),
   ),
   screen: ["app", "notes"].map((repo) => {
     const open = { owner: "simon", repo, lead: "lead-" + repo };
@@ -91,40 +85,15 @@ const shown = {
       entries: entryCounts(db, open),
     };
   }),
-  tabs: repositoryTabs(db),
+  tabs: repositoryTabs(db, () => 5),
 };
 console.log(JSON.stringify(shown));`;
 
-// Each task's stage, which the release before tasks didn't show. app-13 is approved with its
-// checks green, and the stopped and failed threads keep their tasks working.
-const stages: Record<string, string> = {
-  "app-12": "working",
-  "app-13": "ready for review",
-  "app-14": "working",
-  "app-15": "working",
-  "app-17": "issue",
-  "app-t1": "working",
-  "notes-t1": "working",
-  "notes-t2": "working",
-};
-
-// What the release before tasks showed, with this test's home in its paths, and each task
-// sc issue ls and sc issue show list with its stage. sc issue show adds the link to each task's
-// issue, which only app's issues have.
-function shownBefore(): unknown {
-  const shown = JSON.parse(
-    readFileSync(join(saved, "before-tasks.json"), "utf8").replaceAll("$HOME", home),
-  );
-  const staged = (task: string | { issue: string }) =>
-    typeof task === "string" ? task : { ...task, stage: stages[task.issue] };
-  const linked = (task: string | { issue: string }) => {
-    if (typeof task === "string") return task;
-    const number = /^app-(\d+)$/.exec(task.issue)?.[1];
-    const link = number ? `https://github.com/simon/app/issues/${number}` : null;
-    return { ...task, stage: stages[task.issue], link };
-  };
-  return { ...shown, issues: shown.issues.map(staged), show: shown.show.map(linked) };
-}
+// What the release before tasks showed, with this test's home in its paths. Its issues, show
+// and prs are what sc issue ls, sc issue show and sc pr show showed then, which sc ls and sc
+// show now show.
+const shownBefore = () =>
+  JSON.parse(readFileSync(join(saved, "before-tasks.json"), "utf8").replaceAll("$HOME", home));
 
 // Returns the names of the database's tables.
 function tables(file: string): string[] {
@@ -139,10 +108,52 @@ test("after the move, every command and the screen show the same threads under t
   // The saved database's app has GitHub as its forge, which shows its PRs.
   fakePlugin(home);
   // Before the new daemon moves it, sc shows the threads as they are.
-  expect(JSON.parse(run(showAll))).toEqual(shownBefore());
+  const { issues, show, prs, ...saved } = shownBefore();
+  const before = JSON.parse(run(showAll));
+  const { ls, show: shown, ...same } = before;
+  expect(same).toEqual(saved);
   expect(tables(dbFile())).not.toContain("tasks");
   // After the move, it shows them just the same.
-  expect(JSON.parse(run(showAll, "move"))).toEqual(shownBefore());
+  expect(JSON.parse(run(showAll, "move"))).toEqual(before);
+  // sc ls lists each open issue sc issue ls listed, with its title and its thread's status.
+  type Task = { task: string };
+  for (const row of issues)
+    expect(ls.find((task: Task) => task.task === row.issue)).toMatchObject({
+      title: row.title,
+      thread: row.thread,
+    });
+  // sc show shows each task sc issue show showed, with its title, its body as its reviewer
+  // gets it, and its thread.
+  const named = (name: string) =>
+    shown.find((task: Task | string) => typeof task !== "string" && task.task === name);
+  for (const task of show.filter((task: unknown) => typeof task !== "string"))
+    expect(named(task.issue)).toMatchObject({
+      title: task.title,
+      body: task.body,
+      threads: task.thread ? [task.thread] : [],
+    });
+  // And each PR sc pr show showed, on its task, as its page showed it.
+  for (const { pr, thread, ...page } of prs.filter((pr: unknown) => typeof pr !== "string"))
+    expect(named(thread)).toMatchObject({ pr, prPage: page });
+  // Each task has its stage. app-13 is approved with its checks green, the stopped and failed
+  // threads keep their tasks working, and app-16's issue closed with no merge Skelcrew saw.
+  const stages = {
+    "app-12": "working",
+    "app-13": "ready for review",
+    "app-14": "working",
+    "app-15": "working",
+    "app-16": "closed",
+    "app-17": "issue",
+    "app-t1": "working",
+    "notes-t1": "working",
+    "notes-t2": "working",
+  };
+  expect(
+    Object.fromEntries(ls.map((row: Task & { stage: string }) => [row.task, row.stage])),
+  ).toEqual(stages);
+  for (const [name, stage] of Object.entries(stages)) expect(named(name)).toMatchObject({ stage });
+  // A task whose issue closed and whose PR left the copy still shows, from what it saved.
+  expect(named("app-16")).toMatchObject({ pr: 42, prPage: null });
   // Each thread has its task, and a copy of the database from before waits beside it.
   const db = new Database(dbFile(), { readonly: true });
   expect(db.query("SELECT owner, repo, task FROM tasks ORDER BY rowid").all()).toEqual(

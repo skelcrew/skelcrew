@@ -150,7 +150,7 @@ ${threadSql({ task: "16", pr: 37, asking: 1 })}`;
       ],
     ],
   ]);
-  // A PR from a thread takes its colour where that means something: green when approved,
+  // A PR from a thread takes its colour when the thread's mark is filled: green when approved,
   // yellow when it needs you, and red when it failed or hit an error. It is plain otherwise.
   expect(prs[0]?.rows.map((row) => row.mark[1])).toEqual([null, "38;5;120"]);
   expect(prs[1]?.rows.map((row) => row.mark[1])).toEqual([
@@ -160,13 +160,13 @@ ${threadSql({ task: "16", pr: 37, asking: 1 })}`;
     null,
     null,
   ]);
-  // The word has the thread's mark colour, and the author is dim.
+  // The word has the thread's mark colour, bright for a working builder, and the author is dim.
   expect(prs[0]?.rows.map((row) => row.ends[0]?.[1])).toEqual(["90", "38;5;120"]);
   expect(prs[1]?.rows.map((row) => row.ends[0]?.[1])).toEqual([
     "38;5;221",
     "38;5;210",
     "38;5;210",
-    "38;5;120",
+    "1",
     "90",
   ]);
 });
@@ -212,7 +212,7 @@ ${pr(7, { reviews: [] })}`;
       ],
     ],
   ]);
-  expect(entries.find((e) => e.entry === "prs")?.note).toBe("3 ready");
+  expect(entries.find((e) => e.entry === "prs")?.notes).toEqual([["3 ready", "38;5;120"]]);
 });
 
 // What s on each issue's row, or m on each PR's row, does, in the list's order.
@@ -304,7 +304,7 @@ ${threadSql({ task: "14", pr: 33, review_round: 1, verdict: "changes" })}`;
   ]);
 });
 
-test("threads come as needs you, working, then stopped, with all ACTIVE hasn't room for", () => {
+test("threads come as needs you, ready to merge, working, then stopped, with all ACTIVE hasn't room for", () => {
   const today = new Date(2026, 10, 13, 16, 0).getTime();
   const at = (day: number, hour: number) => new Date(2026, 10, day, hour, 32).getTime();
   const sql = `${repository}
@@ -313,7 +313,8 @@ ${threadSql({ task: "t1", status: "waiting", title: "Tidy up", changed: at(12, 9
 ${threadSql({ task: "13", status: "stopped", title: "Old", started: at(2, 9) })}
 ${threadSql({ task: "14", status: "done", title: "Gone" })}
 ${threadSql({ task: "15", status: "failed", title: "Broke" })}
-${threadSql({ task: "16", title: "Stuck", erred: 1 })}`;
+${threadSql({ task: "16", title: "Stuck", erred: 1 })}
+${threadSql({ task: "17", status: "waiting", title: "Done", needs_you: 1, verdict: "approve" })}`;
   const { threads } = after(sql, today);
   expect(shape(threads)).toEqual([
     [
@@ -324,14 +325,18 @@ ${threadSql({ task: "16", title: "Stuck", erred: 1 })}`;
         ["●", "app-t1", "Tidy up", "question", "claude", "", "12 Nov"],
       ],
     ],
-    ["Working", [["●", "app-12", "Fix login", "working", "codex", "#12 #31", "14:32"]]],
+    // An approved thread waits only for your merge, so it is ready rather than needing you.
+    ["Ready to merge", [["●", "app-17", "Done", "approved", "claude", "#17", ""]]],
+    ["Working", [["○", "app-12", "Fix login", "working", "codex", "#12 #31", "14:32"]]],
     ["Stopped", [["○", "app-13", "Old", "stopped", "claude", "#13", "2 Nov"]]],
   ]);
-  // Each mark and word has its colour in ACTIVE, and a stopped one is dim.
-  const colours = ["38;5;210", "38;5;210", "38;5;221", "38;5;120", "90"];
+  // Each mark and word has its colour in ACTIVE: bright while its builder works, and dim once
+  // it stopped.
+  const colours = ["38;5;210", "38;5;210", "38;5;221", "38;5;120", "1", "90"];
   expect(threads.flatMap((g) => g.rows.map((row) => row.mark[1]))).toEqual(colours);
   expect(threads.flatMap((g) => g.rows.map((row) => row.ends[0]?.[1]))).toEqual(colours);
   expect(threads.flatMap((g) => g.rows.map((row) => row.dim))).toEqual([
+    false,
     false,
     false,
     false,
@@ -373,25 +378,45 @@ ${itemSql("app", "task", 31, "Add CSV export", "2026-11-05T10:00:00Z")}
 ${itemSql("app", "pr", 34, "Fix login", "2026-11-05T10:00:00Z")}
 ${threadSql({ task: "12", status: "waiting", pr: 34, needs_you: 1, verdict: "approve" })}
 ${threadSql({ task: "13", status: "stopped" })}
-${threadSql({ task: "14", status: "done" })}`;
+${threadSql({ task: "14", status: "done" })}
+${threadSql({ task: "15", asking: 1 })}`;
+  // The approved thread is ready, so it counts on PRs, and only the question needs you.
   expect(after(sql).entries).toEqual([
-    { entry: "issues", name: "Issues", total: 2, note: "", colour: "90" },
-    { entry: "threads", name: "Threads", total: 2, note: "1 needs you", colour: "38;5;221" },
-    { entry: "prs", name: "PRs", total: 1, note: "1 ready", colour: "38;5;120" },
+    { entry: "issues", name: "Issues", total: 2, notes: [] },
+    { entry: "threads", name: "Threads", total: 3, notes: [["1 needs you", "38;5;221"]] },
+    { entry: "prs", name: "PRs", total: 1, notes: [["1 ready", "38;5;120"]] },
   ]);
 });
 
 test("each entry is there with nothing open, so the threads below never move", () => {
   expect(after(repository).entries).toEqual([
-    { entry: "issues", name: "Issues", total: 0, note: "", colour: "90" },
-    { entry: "threads", name: "Threads", total: 0, note: "", colour: "38;5;221" },
-    { entry: "prs", name: "PRs", total: 0, note: "", colour: "38;5;120" },
+    { entry: "issues", name: "Issues", total: 0, notes: [] },
+    { entry: "threads", name: "Threads", total: 0, notes: [] },
+    { entry: "prs", name: "PRs", total: 0, notes: [] },
   ]);
 });
 
 test("more than one thread need you, and failed ones count with them", () => {
   const sql = `${repository} ${threadSql({ task: "12", status: "waiting", needs_you: 1 })} ${threadSql({ task: "13", status: "failed" })}`;
-  expect(after(sql).entries[1]?.note).toBe("2 need you");
+  expect(after(sql).entries[1]?.notes).toEqual([["2 need you", "38;5;221"]]);
+});
+
+test("with no forge, Threads says how many are ready before how many need you", () => {
+  const sql = `${repository}
+${threadSql({ task: "12", status: "waiting", needs_you: 1, verdict: "approve" })}
+${threadSql({ task: "13", asking: 1 })}
+${threadSql({ task: "14", erred: 1 })}`;
+  expect(after(sql, 0, false).entries).toEqual([
+    {
+      entry: "threads",
+      name: "Threads",
+      total: 3,
+      notes: [
+        ["1 ready", "38;5;120"],
+        ["2 need you", "38;5;221"],
+      ],
+    },
+  ]);
 });
 
 test("a repository with no tracker has no Issues, and one with no forge no PRs", () => {

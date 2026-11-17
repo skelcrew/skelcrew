@@ -9,9 +9,9 @@ import { claude } from "../src/agents/claude.ts";
 import { codex } from "../src/agents/codex.ts";
 import { resetTime } from "../src/agents/reset.ts";
 import { waitUntil, wakeTime } from "../src/flow/limits.ts";
+import { shownOf } from "../src/flow/marks.ts";
 import { needsYou, threadWord } from "../src/flow/status.ts";
 import type { Thread } from "../src/flow/thread.ts";
-import { threadMark } from "../src/screen/rows.ts";
 import { source } from "./harness.ts";
 
 // 16 November 2026 at 10:30 in this machine's time zone, as the harnesses read their times in it.
@@ -267,7 +267,16 @@ test("a thread waiting out a usage limit says until when, is dim, and doesn't ne
   expect(threadWord(later, 3, now)).toBe("limit · 17 Nov 13:59");
   expect(threadWord(thread({ review_limited: true }), 3, now)).toBe("limit");
   expect(needsYou(held)).toBe(false);
-  expect(threadMark({ status: "waiting", needsYou: false, word: "limit · 13:59" })[0]).toBe("○");
+  expect(shownOf(held, 3, now).mark).toEqual({ sign: "○", colour: "dim" });
+  // It stays dim while its builder works at the same time, as it still waits on the limit.
+  for (const reset of [null, at(16, 13, 59)]) {
+    const both = thread({ state: "working", review_limited: true, review_reset: reset });
+    expect(shownOf(both, 3, now)).toMatchObject({
+      word: reset === null ? "limit" : "limit · 13:59",
+      status: "working",
+      mark: { sign: "○", colour: "dim" },
+    });
+  }
   // A builder its harness stopped on a usage limit is woken at the reset, so it doesn't need you
   // either. Any other error does.
   const builder = { status: "working" as const, reviewing: null, erred: true };
