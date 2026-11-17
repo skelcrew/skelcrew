@@ -13,8 +13,15 @@ import { builderHarness, readThread, record } from "./thread.ts";
 const backoff = [15, 30, 60].map((minutes) => minutes * 60_000);
 
 // A harness's limit: when its reviews may run again, the reset time it gave, if any, how many
-// tries in a row met the limit with no reset time, and the repositories whose leads were told.
-type Limit = { until: number; reset: number | null; tries: number; told: Set<string> };
+// tries in a row met the limit with no reset time, the repositories whose leads were told, and
+// when a review last met it. That moment isn't saved: no run from before a restart ends after.
+type Limit = {
+  until: number;
+  reset: number | null;
+  tries: number;
+  told: Set<string>;
+  reached: number;
+};
 // Each harness's limit, from the first review that met it until one runs on it again. Each
 // change is saved in the database too, and restoreLimits reads them back when the daemon starts,
 // so a restart neither runs a limited harness early nor tells the leads again.
@@ -47,7 +54,7 @@ function saveLimit(db: Database, harness: HarnessName): void {
 export function restoreLimits(db: Database): void {
   for (const row of db.query("SELECT * FROM limits").all()) {
     const { harness, until, reset, tries, told } = LimitRow.parse(row);
-    limits.set(harness, { until, reset, tries, told: new Set(told) });
+    limits.set(harness, { until, reset, tries, told: new Set(told), reached: 0 });
   }
 }
 
@@ -93,15 +100,17 @@ export function reachLimit(
     reset,
     tries,
     told: before !== undefined && before.reset === reset ? before.told : new Set(),
+    reached: now,
   });
   saveLimit(db, harness);
 }
 
-// Forgets the harness's limit once a review ran on it, and tells each lead that heard of the
-// limit that it is over.
-export function endLimit(db: Database, tmux: string, harness: HarnessName): void {
+// Forgets the harness's limit once a review that `started` after a review met it ran on it, and
+// tells each lead that heard of the limit that it is over. A review that started before can
+// end cleanly after the limit, as its last call came before it, which says nothing of the limit.
+export function endLimit(db: Database, tmux: string, harness: HarnessName, started: number): void {
   const limit = limits.get(harness);
-  if (limit === undefined) return;
+  if (limit === undefined || started < limit.reached) return;
   limits.delete(harness);
   saveLimit(db, harness);
   const { title } = harnessNamed(harness);

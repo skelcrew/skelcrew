@@ -100,7 +100,7 @@ test("Claude Code's error is the result it printed, and a usage limit gives its 
 // stands in for the daemon after a restart.
 function daemonRun(home: string, code: string): unknown {
   const script = `import { openDb } from ${JSON.stringify(source("db.ts"))};
-import { limitOn, reachLimit, restoreLimits, tellOfLimit } from ${JSON.stringify(source("flow/limits.ts"))};
+import { endLimit, limitOn, reachLimit, restoreLimits, tellOfLimit } from ${JSON.stringify(source("flow/limits.ts"))};
 const db = openDb();
 const now = ${now};
 ${code}`;
@@ -147,6 +147,29 @@ console.log(JSON.stringify(seen));`,
       minutes(15),
       minutes(30),
     ]);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+// With more than one review at once, a review that started before another met the limit can
+// finish cleanly after it, as its last call came before the limit. That says nothing of the
+// limit, so it holds, and the lead hears nothing.
+test("only a review that started after the limit was reached ends it", () => {
+  const home = mkdtempSync(join(tmpdir(), "skel-limit-test-"));
+  try {
+    const seen = daemonRun(
+      home,
+      `const notes = () => db.query("SELECT COUNT(*) AS n FROM notes").get().n;
+reachLimit(db, "codex", null, now);
+tellOfLimit(db, "no-tmux", "codex", { owner: "simon", repo: "app" }, null);
+endLimit(db, "no-tmux", "codex", now - 1000);
+const early = { held: limitOn("codex", now) !== null, notes: notes() };
+endLimit(db, "no-tmux", "codex", now + 16 * 60_000);
+const late = { held: limitOn("codex", now) !== null, notes: notes() };
+console.log(JSON.stringify({ early, late }));`,
+    );
+    expect(seen).toEqual({ early: { held: true, notes: 1 }, late: { held: false, notes: 2 } });
   } finally {
     rmSync(home, { recursive: true, force: true });
   }

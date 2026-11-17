@@ -138,7 +138,8 @@ async function reviewRound(
   let queued = waits;
   // The task, the clone and the base branch are read only once the review's turn comes and its
   // check is pending, as reading them can fail, and a round still waiting on its check must not
-  // fail early.
+  // fail early. Gives back the verdict and when the review started, after any wait in the queue,
+  // since only a review that started after its harness met its limit can say the limit is over.
   const run = (given: Asked) => {
     if (!queued && reviews.full(limit)) {
       queued = true;
@@ -150,13 +151,15 @@ async function reviewRound(
           await pending;
           if (queued) record(db, folder, { queued: null }, `reviewing ${sha}`);
           queued = false;
-          return review({
+          const started = Date.now();
+          const result = await review({
             ...given,
             clone: cloneOf(thread),
             issue: threadTask(db, thread),
             // Setting up the thread's clone put the base branch there under origin/.
             base: `origin/${baseOf(thread)}`,
           });
+          return { result, started };
         })
         // Leaving the queue early says why: the check's own error, or else that it was
         // cancelled, which a newer round did, so the round ends as cancelled rounds do.
@@ -245,7 +248,7 @@ async function reviewWithinLimits(
     given: Omit<Asked, "harness" | "model"> & { signal: AbortSignal };
     role: { harness: HarnessName; model?: string };
     fallback: HarnessName | null;
-    run: (given: Asked) => Promise<Review | Limited>;
+    run: (given: Asked) => Promise<{ result: Review | Limited; started: number }>;
   },
 ): Promise<{ verdict: Review; by: HarnessName }> {
   const { given, role, fallback, run } = plan;
@@ -285,17 +288,19 @@ async function reviewWithinLimits(
     if (thread.review_limited || thread.reviewer !== harness)
       record(db, folder, running, `reviewing on ${harness}`);
     const model = harness === role.harness ? role.model : undefined;
-    const result = await run({ ...given, harness, model });
+    const { result, started } = await run({ ...given, harness, model });
     // A run that met the limit holds every review on that harness until it resets. A review the
     // queue didn't start, as the limit was already in force, changes nothing. Any other run
-    // means the harness works again, and the leads that heard of its limit hear that too. Done
-    // before any other await, so the next review in the queue already sees it.
+    // that started after the limit was met means the harness works again, and the leads that
+    // heard of its limit hear that too. One that started before, running alongside the review
+    // that met it, says nothing of the limit. Done before any other await, so the next review in
+    // the queue already sees it.
     if (result.verdict === "limited") {
       if (limitOn(harness, Date.now()) === null) reachLimit(db, harness, result.reset, Date.now());
       continue;
     }
     if (signal.aborted) return { verdict: result, by: harness };
-    endLimit(db, tmux, harness);
+    endLimit(db, tmux, harness, started);
     if (harness === role.harness) return { verdict: result, by: harness };
     const { title } = harnessNamed(harness);
     const why = `${harnessNamed(role.harness).title} reached its usage limit`;
