@@ -107,15 +107,18 @@ const scSocketIn = (env: Record<string, string>) => env.SKELCREW_SOCKET || daemo
 
 // Starts a daemon on a test's tmux socket and adds it to `running` for the test to stop. It
 // takes a process of its own, as homedir() keeps the HOME this process started with, so a
-// daemon here would open your real database.
+// daemon here would open your real database. `every` is how often it polls the forge, in
+// milliseconds, for a test that waits on what the forge shows, rather than every 30 seconds.
 export function startDaemon(
   socket: string,
   env: Record<string, string>,
   running: Subprocess[],
+  every?: number,
 ): Subprocess {
   mustBeTestSocket(daemonSocketIn(env), env);
+  const polls = every === undefined ? "" : `, ${every}`;
   const code = `import { serve } from ${JSON.stringify(source("flow/daemon.ts"))};
-await serve(${JSON.stringify(socket)});`;
+await serve(${JSON.stringify(socket)}${polls});`;
   // Reviews start at once on a repository without CI, unless the test asks for the wait.
   const run = Bun.spawn([process.execPath, "-e", code], {
     env: { SKELCREW_CHECK_WAIT_MS: "0", ...env },
