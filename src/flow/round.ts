@@ -138,8 +138,13 @@ async function reviewRound(
   let queued = waits;
   // The task, the clone and the base branch are read only once the review's turn comes and its
   // check is pending, as reading them can fail, and a round still waiting on its check must not
-  // fail early. Gives back the verdict and when the review started, after any wait in the queue,
-  // since only a review that started after its harness met its limit can say the limit is over.
+  // fail early. What the run says of its harness's usage limit is saved before its place in the
+  // queue is given back, as giving it back starts the next review at once, which must see it.
+  // A run that met the limit holds every review on that harness until it resets. A review the
+  // queue didn't start, as the limit was already in force, changes nothing. Any other run that
+  // started after the limit was met means the harness works again, and the leads that heard
+  // of its limit hear that too. One that started before, running alongside the review that met
+  // it, says nothing of the limit.
   const run = (given: Asked) => {
     if (!queued && reviews.full(limit)) {
       queued = true;
@@ -159,7 +164,12 @@ async function reviewRound(
             // Setting up the thread's clone put the base branch there under origin/.
             base: `origin/${baseOf(thread)}`,
           });
-          return { result, started };
+          const { harness } = given;
+          if (result.verdict === "limited") {
+            if (limitOn(harness, Date.now()) === null)
+              reachLimit(db, harness, result.reset, Date.now());
+          } else if (!signal.aborted) endLimit(db, tmux, harness, started);
+          return result;
         })
         // Leaving the queue early says why: the check's own error, or else that it was
         // cancelled, which a newer round did, so the round ends as cancelled rounds do.
@@ -248,7 +258,7 @@ async function reviewWithinLimits(
     given: Omit<Asked, "harness" | "model"> & { signal: AbortSignal };
     role: { harness: HarnessName; model?: string };
     fallback: HarnessName | null;
-    run: (given: Asked) => Promise<{ result: Review | Limited; started: number }>;
+    run: (given: Asked) => Promise<Review | Limited>;
   },
 ): Promise<{ verdict: Review; by: HarnessName }> {
   const { given, role, fallback, run } = plan;
@@ -288,19 +298,10 @@ async function reviewWithinLimits(
     if (thread.review_limited || thread.reviewer !== harness)
       record(db, folder, running, `reviewing on ${harness}`);
     const model = harness === role.harness ? role.model : undefined;
-    const { result, started } = await run({ ...given, harness, model });
-    // A run that met the limit holds every review on that harness until it resets. A review the
-    // queue didn't start, as the limit was already in force, changes nothing. Any other run
-    // that started after the limit was met means the harness works again, and the leads that
-    // heard of its limit hear that too. One that started before, running alongside the review
-    // that met it, says nothing of the limit. Done before any other await, so the next review in
-    // the queue already sees it.
-    if (result.verdict === "limited") {
-      if (limitOn(harness, Date.now()) === null) reachLimit(db, harness, result.reset, Date.now());
-      continue;
-    }
+    // The run saved what it said of the harness's limit, so a limited one only waits again.
+    const result = await run({ ...given, harness, model });
+    if (result.verdict === "limited") continue;
     if (signal.aborted) return { verdict: result, by: harness };
-    endLimit(db, tmux, harness, started);
     if (harness === role.harness) return { verdict: result, by: harness };
     const { title } = harnessNamed(harness);
     const why = `${harnessNamed(role.harness).title} reached its usage limit`;

@@ -1289,6 +1289,28 @@ await serve(${JSON.stringify(socket)}, 200);`;
       await until(() => ready("app-t1") && ready("app-t2"), 30_000);
     }, 60_000);
 
+    // Giving back the first review's place starts the queued one at once, so the limit the
+    // first met must already be saved by then, or the second would run on the limited harness.
+    test("a review queued behind one that meets the usage limit is held, not run", async () => {
+      config("limits: { reviews: 1 }\n");
+      addAppOnGit();
+      holdReviews();
+      writeFileSync(
+        join(codexHome(), "error-1"),
+        "ERROR: You've hit your usage limit. Try again at Dec 31st, 2099 11:59 PM.\n",
+      );
+      serveOutsideCheckout();
+      await untilCloned();
+      await start("First");
+      await until(() => prompt(1) !== "", 30_000);
+      await start("Second");
+      await until(() => queued("app-t2"), 30_000);
+      letGo(1);
+      const second = () => read(join(data(), "threads", "app-t2.log"));
+      await until(() => second().includes("usage limit holds the review"), 30_000);
+      expect(reviewsRun()).toBe(1);
+    }, 60_000);
+
     // Two reviews run at once. The second meets Codex's limit while the first still runs, and
     // the first then ends cleanly, as its last call came before the limit. That says nothing
     // of the limit, so it holds, and a later review waits for its reset.
