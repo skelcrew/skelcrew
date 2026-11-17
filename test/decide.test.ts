@@ -13,6 +13,7 @@ import {
   type PullRequest,
   refusedWorkflow,
   reviewCheck,
+  testedByCi,
   whoRunsTheSuite,
 } from "../src/flow/decide.ts";
 import { endedTurnAsks } from "../src/flow/status.ts";
@@ -629,4 +630,39 @@ test("a push refused for any other reason gets no workflow message", () => {
   const said =
     "git push failed: ! [rejected] abc -> b (non-fast-forward)\nerror: failed to push some refs";
   expect(refusedWorkflow("app-12", said)).toBeNull();
+});
+
+// A workflow whose job runs `bun run check`, as the repository's test command.
+const testing = `on: pull_request
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          bun install
+          bun run check
+  lint:
+    name: Lint the code
+    steps:
+      - run: bun run lint
+`;
+
+test("CI tests the commit when a check comes from a workflow job that runs the test command", () => {
+  expect(testedByCi([testing], ["bun run check"], ["check"])).toBe(true);
+  // A matrix job's checks carry its values after its name.
+  expect(testedByCi([testing], ["bun run check"], ["check (ubuntu, 1.3)"])).toBe(true);
+});
+
+test("a check that runs no tests, such as a CLA check or a lint job, is no proof CI tests", () => {
+  expect(testedByCi([testing], ["bun run check"], ["cla/check", "Vercel preview"])).toBe(false);
+  expect(testedByCi([testing], ["bun run check"], ["Lint the code"])).toBe(false);
+  expect(testedByCi([testing], ["bun run check"], [reviewCheck])).toBe(false);
+});
+
+test("without a test command, workflows Skelcrew can read, or a matching check, nothing proves CI tests", () => {
+  expect(testedByCi([testing], [], ["check"])).toBe(false);
+  expect(testedByCi([], ["bun run check"], ["buildkite/test"])).toBe(false);
+  expect(testedByCi(["jobs: [not, a, map"], ["bun run check"], ["check"])).toBe(false);
+  expect(testedByCi([testing], ["bun run check"], [])).toBe(false);
 });

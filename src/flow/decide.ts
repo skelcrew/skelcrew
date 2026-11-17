@@ -1,5 +1,7 @@
 // Deciding what an event means: given a thread and what its forge returned, these functions
 // say what to do. They read no clock, files or network, so they can be tested without them.
+import { parse } from "yaml";
+import { z } from "zod";
 import type { Item } from "./copy.ts";
 import type { Review } from "./reviewer.ts";
 import type { Thread } from "./thread.ts";
@@ -91,6 +93,43 @@ export function whoRunsTheSuite(given: {
   if (prs.some((pr) => ciOf(pr).length > 0)) return waited < ciWait ? "wait" : "reviewer";
   if (waitedInVain) return "reviewer";
   return waited < (setsUpCi ? ciWait : checkWait) ? "wait" : "reviewer";
+}
+
+// The part of a GitHub workflow that says what each job runs. Anything else in it is let be.
+const Workflow = z.object({
+  jobs: z.record(
+    z.string(),
+    z.object({
+      name: z.string().optional(),
+      steps: z.array(z.object({ run: z.string().optional() })).optional(),
+    }),
+  ),
+});
+
+// Returns whether CI's checks on a commit, by name, prove that CI runs the repository's tests:
+// one of them comes from a job in the commit's `workflows`, their text, with a step that runs
+// one of the `tests` commands. A CI check alone proves nothing, as a CLA check or a deploy
+// preview runs no tests. A check is named after its job's name, or its key without one, and a
+// matrix job adds its values in brackets. A workflow that can't be read proves nothing, and nor
+// does CI outside GitHub, which has no workflows to read.
+export function testedByCi(workflows: string[], tests: string[], checks: string[]): boolean {
+  const names = workflows.flatMap((text) => {
+    let jobs: z.infer<typeof Workflow>["jobs"];
+    try {
+      jobs = Workflow.parse(parse(text)).jobs;
+    } catch {
+      return [];
+    }
+    const runsTests = (run = "") => tests.some((test) => test.trim() !== "" && run.includes(test));
+    return Object.entries(jobs)
+      .filter(([, job]) => (job.steps ?? []).some((step) => runsTests(step.run)))
+      .map(([key, job]) => job.name ?? key);
+  });
+  return checks.some(
+    (check) =>
+      check !== reviewCheck &&
+      names.some((name) => check === name || check.startsWith(`${name} (`)),
+  );
 }
 
 // Returns what the reviewer reads about CI on the commit it reviews: whether CI passed, failed

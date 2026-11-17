@@ -17,6 +17,7 @@ import {
   onlyDocs,
   pastRoundLimit,
   refusedWorkflow,
+  testedByCi,
   whoRunsTheSuite,
 } from "./decide.ts";
 import { fetchInto, pushCommit } from "./git.ts";
@@ -259,13 +260,21 @@ async function reviewRound(
   // again. When that is all the commit does, the PR's own change is the one already approved, so
   // the approval holds and CI alone decides whether it is ready. It counts only while the latest
   // review approved, so a review asking for changes since is never skipped, and only while CI
-  // runs the tests on this commit, as a clean merge can still break them. Without CI the
-  // reviewer runs them, in a normal review. A change to docs alone has no tests to run. The
+  // runs the tests on this commit, as a clean merge can still break them. Only a check from a
+  // workflow job that runs the repository's test command proves that, as a CLA check or a
+  // deploy preview runs none. Otherwise the reviewer runs them, in a normal review. A change to docs alone has no tests to run. The
   // approved commit and the base are refs in Skelcrew's clone, which the push brought up to
   // date, and sc review deletes the approved one, so it always runs the reviewer. It comes after
   // the wait for CI's first check, so CI can show, and an approval never reads as ready to merge
   // before it does. Its check goes from pending to success, in that order.
-  const ciRuns = docsOnly || (pr !== null && suite(Number.POSITIVE_INFINITY) === "ci");
+  const ciTests = () => {
+    const shown = pr === null ? null : prOf(db, thread.owner, thread.repo, pr);
+    if (shown?.head !== sha || suite(Number.POSITIVE_INFINITY) !== "ci") return false;
+    const tests = repositoryCommands(thread).test.commands;
+    const checks = shown.checks.map((c) => c.name);
+    return testedByCi(workflowsOf(skelcrewClone, sha), tests, checks);
+  };
+  const ciRuns = docsOnly || ciTests();
   const approved = ciRuns && thread.verdict === "approve" ? lastApproved(thread) : null;
   if (approved !== null && onlyMergedBase(skelcrewClone, approved, sha, bases)) {
     const body = `Approval kept: this commit only merges ${baseOf(thread)} into ${approved}, which Skelcrew's reviewer approved, and changes nothing else in the PR. CI still runs on it.`;
@@ -679,6 +688,20 @@ export function lastPushed(thread: Thread): string | null {
     stderr: "pipe",
   });
   return run.success ? run.stdout.toString().trim() : null;
+}
+
+// Returns the text of each GitHub workflow in the commit, read from the clone, for telling
+// whether CI runs the tests on it. A commit or file git can't read gives none.
+function workflowsOf(clone: string, sha: string): string[] {
+  const git = (...args: string[]) => {
+    const run = Bun.spawnSync(["git", "-C", clone, ...args], { stdout: "pipe", stderr: "pipe" });
+    return run.success ? run.stdout.toString() : null;
+  };
+  const listed = git("ls-tree", "--name-only", "-z", sha, ".github/workflows/") ?? "";
+  return listed
+    .split("\0")
+    .filter((path) => path.endsWith(".yml") || path.endsWith(".yaml"))
+    .flatMap((path) => git("show", `${sha}:${path}`) ?? []);
 }
 
 // Returns the commit Skelcrew's reviewer last approved for the thread, or null when none is
