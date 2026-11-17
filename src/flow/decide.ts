@@ -110,8 +110,17 @@ const Workflow = z.object({
     z.object({
       ...Skips,
       name: z.string().optional(),
+      needs: z.unknown().optional(),
       steps: z
-        .array(z.object({ ...Skips, run: z.string().optional(), shell: z.unknown().optional() }))
+        .array(
+          z.object({
+            ...Skips,
+            run: z.string().optional(),
+            shell: z.unknown().optional(),
+            uses: z.string().optional(),
+            with: z.unknown().optional(),
+          }),
+        )
         .optional(),
     }),
   ),
@@ -122,7 +131,10 @@ const Workflow = z.object({
 // proves nothing, as a CLA check or a deploy preview runs no tests. A check proves it when
 // every job that could have made it surely runs every test command: there must be one, and
 // a name another job shares is no proof when that job doesn't test. A job surely runs a command
-// when its workflow runs on pull requests and one of its steps runs the command as it is: the
+// on the PR's change when its workflow runs on pull_request, which checks out that change, and
+// not pull_request_target, which checks out the base branch. It needs no other job, which could
+// be skipped or fail and skip it too, and its checkout is given no settings, such as a ref of
+// main, that could test another commit. One of its steps runs the command as it is: the
 // step's whole script is the command, in the default shell, which stops at a failure, and
 // nothing can skip it or let its failure pass, on the step, its job or its workflow. Anything
 // less, such as `echo` before the command or `|| true` after it, proves nothing, and the
@@ -148,7 +160,9 @@ export function testedByCi(workflows: string[], tests: string[], checks: string[
         : Array.isArray(workflow.on)
           ? workflow.on
           : Object.keys(workflow.on);
-    const onPrs = events.includes("pull_request") || events.includes("pull_request_target");
+    // A workflow that also runs on pull_request_target makes checks of the same name from the
+    // base branch.
+    const onPrs = events.includes("pull_request") && !events.includes("pull_request_target");
     const surely = (part: { if?: unknown; "continue-on-error"?: unknown; defaults?: unknown }) =>
       part.if === undefined &&
       part["continue-on-error"] === undefined &&
@@ -158,7 +172,12 @@ export function testedByCi(workflows: string[], tests: string[], checks: string[
         (step) => surely(step) && step.shell === undefined && step.run !== undefined,
       );
       const runs = (command: string) => steps.some((step) => step.run?.trim() === command);
-      const tests = onPrs && surely(workflow) && surely(job) && commands.every(runs);
+      const checkouts = (job.steps ?? []).filter((step) =>
+        step.uses?.startsWith("actions/checkout"),
+      );
+      const ownChange =
+        job.needs === undefined && checkouts.every((step) => step.with === undefined);
+      const tests = onPrs && ownChange && surely(workflow) && surely(job) && commands.every(runs);
       jobs.push({ name: job.name ?? key, tests });
     }
   }

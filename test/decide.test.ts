@@ -714,3 +714,24 @@ test("a check name that a job running no tests could have made too proves nothin
   const tested = checkJob("steps:\n  - run: bun run check");
   expect(testedByCi([tested, tested], ["bun run check"], ["check"])).toBe(true);
 });
+
+test("a job that may test another commit than the PR's, or be skipped by one it needs, proves nothing", () => {
+  const tests = ["bun run check"];
+  // pull_request_target checks out the base branch, not the PR's change.
+  const target =
+    "on: pull_request_target\njobs:\n  check:\n    steps:\n      - uses: actions/checkout@v4\n      - run: bun run check\n";
+  expect(testedByCi([target], tests, ["check"])).toBe(false);
+  const both = target.replace("on: pull_request_target", "on: [pull_request, pull_request_target]");
+  expect(testedByCi([both], tests, ["check"])).toBe(false);
+  // A checkout given its own ref, such as main, tests that instead.
+  const main = checkJob(
+    "steps:\n  - uses: actions/checkout@v4\n    with:\n      ref: main\n  - run: bun run check",
+  );
+  expect(testedByCi([main], tests, ["check"])).toBe(false);
+  // A job it needs can be skipped or fail, and then so is the testing job.
+  const gated = checkJob("needs: gate\nsteps:\n  - run: bun run check");
+  expect(testedByCi([gated], tests, ["check"])).toBe(false);
+  // A plain checkout of the PR's change still counts.
+  const plain = checkJob("steps:\n  - uses: actions/checkout@v4\n  - run: bun run check");
+  expect(testedByCi([plain], tests, ["check"])).toBe(true);
+});
