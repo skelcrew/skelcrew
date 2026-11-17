@@ -200,13 +200,14 @@ export async function removeThread(
 }
 
 // Makes what the decision tells into messages for the builder, saved to be typed in as soon as
-// the builder can take it, however long that takes, and saves the decision at once. So a
-// thread approved and ready to merge whose PR now conflicts leaves ready to merge right away,
-// and the thread shows that a message waits. People's reviews and comments go in one message,
+// the builder can take it, however long that takes, and saves the decision. A thread approved
+// and ready to merge whose PR now conflicts leaves ready to merge before anything is fetched,
+// as GitHub can't merge it, and a slow or failing fetch would leave it advertised as ready.
+// People's reviews and comments go in one message,
 // which the forge marks seen once it is typed in. Skelcrew's own notices, the failed checks and
 // a conflict, go in another, which a new round drops as stale. Fetching a failed check's log or
-// the base branch can fail, such as on a network error: then nothing is saved, and the next
-// poll tries again.
+// the base branch can fail, such as on a network error: then no message is saved and no event
+// counts as handled, and the next poll tries again.
 export async function tellBuilder(
   db: Database,
   tmux: string,
@@ -218,6 +219,17 @@ export async function tellBuilder(
   const { seen, change, why } = decision;
   // Read before fetching, as a new round may start meanwhile.
   const round = noticeRound(thread.folder);
+  // Its status stays as it is, so while a fetch keeps failing, each poll finds the conflict
+  // again and tries again.
+  const unready = decision.conflict !== null && thread.needs_you && !change.needs_you;
+  const before = unready
+    ? record(
+        db,
+        thread.folder,
+        { needs_you: false },
+        `its PR conflicts with ${decision.conflict}, so it isn't ready to merge`,
+      )
+    : thread;
   try {
     if (decision.conflict !== null) await refreshBase(db, thread, decision.conflict);
     const checks = await failedCheckMessages(db, thread, decision.failed);
@@ -227,11 +239,11 @@ export async function tellBuilder(
     const now = readThread(db, thread.folder);
     if (now.status !== "working" && now.status !== "waiting") return;
     const moved =
-      now.status !== thread.status ||
-      now.needs_you !== thread.needs_you ||
-      now.rounds !== thread.rounds ||
-      now.submitting !== thread.submitting ||
-      now.reviewing !== thread.reviewing;
+      now.status !== before.status ||
+      now.needs_you !== before.needs_you ||
+      now.rounds !== before.rounds ||
+      now.submitting !== before.submitting ||
+      now.reviewing !== before.reviewing;
     // A round submitted meanwhile is a new commit, so the notices of the older one would send
     // the builder after a problem it may have fixed, even once that round's push is done and
     // its review runs. People's words still hold.

@@ -461,6 +461,28 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
     await until(() => waiting() === 0);
   }, 60_000);
 
+  // The builder fetches the base from Skelcrew's clone, so it is told only once that clone has
+  // the base. A base Skelcrew can't fetch yet must not leave the PR advertised as ready.
+  test("an approved PR conflicting with a base Skelcrew can't fetch leaves ready to merge, and is told once it can", async () => {
+    const work = await approvedApp12();
+    pr({ reviews: [skelReview], checks: [approved] });
+    await until(() => thread().needs_you === 1);
+    pr({ conflicts: true, base: "release", reviews: [skelReview], checks: [approved] });
+    await until(() => thread().needs_you === 0);
+    expect(thread().status).toBe("waiting");
+    expect(read(join(data(), "threads", "app-12.log"))).toContain(
+      "its PR conflicts with release, so it isn't ready to merge",
+    );
+    // The fetch fails at every poll, and the thread never goes back to ready.
+    await morePolls();
+    expect(thread().needs_you).toBe(0);
+    expect(typed()).not.toContain("conflicts with release");
+    // Once the base can be fetched, the builder is told.
+    git(work, "push", "-q", join(home, "github", "simon", "app.git"), "HEAD:refs/heads/release");
+    await until(() => typed().includes("conflicts with release"));
+    expect(thread()).toMatchObject({ status: "working", needs_you: 0 });
+  }, 60_000);
+
   // Runs sc as an agent would, from the socket of app-12's builder or of app's lead.
   function asAgent(agent: "builder" | "lead", args: string[], cwd = home) {
     const hashed = (name: string) =>
