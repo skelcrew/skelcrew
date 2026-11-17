@@ -5,10 +5,10 @@ import type { Database } from "bun:sqlite";
 import { z } from "zod";
 import { noProgress } from "../agents/progress.ts";
 import { leadOf } from "../flow/lead.ts";
+import { badgeOf, type Colour, shownOf } from "../flow/marks.ts";
 import { messagesWaiting, waitingText } from "../flow/messages.ts";
-import { needsYou, threadWord } from "../flow/status.ts";
+import type { Status } from "../flow/status.ts";
 import { fullNameOf, Thread, threadName } from "../flow/thread.ts";
-import { bright, green, grey, red, yellow } from "./look.ts";
 import { builderProgress, tokenText } from "./progress.ts";
 
 // One row of the sidebar, with what the strip says of the agent too. The lead has no status of
@@ -20,13 +20,14 @@ import { builderProgress, tokenText } from "./progress.ts";
 // many steps of its plan are done of how many. A thread under review whose builder works at the
 // same time has its `step` too. Each is empty or null on other rows, and when the builder's
 // harness doesn't give it. `waiting` says how many messages wait to be typed into the
-// builder, such as 1 message waiting, or is empty.
+// builder, such as 1 message waiting, or is empty. `state` is the thread's status as a host shows
+// it, which with its word gives its mark.
 export type Row = {
   name: string;
   task: string;
   session: string;
   status: Thread["status"] | null;
-  needsYou: boolean;
+  state: Status;
   running: boolean;
   word: string;
   harness: string;
@@ -43,29 +44,11 @@ export type Row = {
   checks: Thread["checks"];
   review: { round: number; reviewer: string; verdict: string } | null;
 };
-// A sign, and the colour it is drawn in.
-type Mark = [string, string];
 // The repository open in the sidebar, by its owner and name, and its lead's session.
 export type Open = { owner: string; repo: string; lead: string };
 // A repository's tab: its name in Skelcrew, its owner/name, how many of its threads have a filled
 // mark, and the colour of its badge, or null with none.
-export type Tab = { name: string; fullName: string; count: number; colour: string | null };
-// Returns the mark of a row of ACTIVE, which the lists and the tabs show too, and whose colour
-// its word takes. Its shape says whether the thread needs you: filled when it does, hollow when
-// it doesn't. Its colour says what kind of state it is in. Red is wrong: the thread failed, its
-// harness stopped on an error, or its review couldn't run. Green is approved and ready to merge,
-// and yellow any other reason it needs you. Of the hollow ones, a working builder is bright and
-// everything that only waits is dim, a review under way, CI or a usage limit included. A failed
-// thread is red and filled though it may not need you, as something went wrong.
-export function threadMark(row: Pick<Row, "status" | "needsYou" | "word">): Mark {
-  if (row.status === null) return ["◆", grey];
-  if (row.status === "failed" || row.word === "error" || row.word === "review failed")
-    return ["●", red];
-  if (row.word === "approved") return ["●", green];
-  if (row.needsYou) return ["●", yellow];
-  return ["○", row.word === "working" ? bright : grey];
-}
-
+export type Tab = { name: string; fullName: string; count: number; colour: Colour | null };
 // Returns whether the thread's reviewer has it now: a review waiting for a place, running, or
 // held on its harness's usage limit when the builder isn't held on one of its own. Then its
 // harness is the reviewer's and its PR is in a round.
@@ -119,7 +102,7 @@ export function sidebarRows(
       task: "",
       session: open.lead,
       status: null,
-      needsYou: false,
+      state: leadRuns ? "working" : "idle",
       running: leadRuns,
       word: leadRuns ? "running" : "stopped",
       harness: lead?.harness ?? "",
@@ -140,10 +123,10 @@ export function sidebarRows(
     ...threads.all(open.owner, open.repo).map((row) => {
       const thread = Thread.parse(row);
       const { review_round: round, reviewer, reviewed_by: by, verdict } = thread;
-      const word = threadWord(thread, maxRounds(thread), now);
+      const { word, status } = shownOf(thread, maxRounds(thread), now);
       const working = word === "working";
       const reviewed = word === "reviewing" || word === "queued for review";
-      const stepping = working || (reviewed && thread.status === "working");
+      const stepping = working || (reviewed && status === "working");
       // A thread from before Skelcrew timed stretches of work is timed from its start.
       const since = Working.parse(row).working_since;
       const from = since ?? thread.started;
@@ -153,7 +136,7 @@ export function sidebarRows(
         task: thread.task,
         session: thread.folder,
         status: thread.status,
-        needsYou: needsYou(thread),
+        state: status,
         running: running.includes(thread.folder),
         word,
         // Only a review is on another harness, held on a usage limit or not. A submit saves
@@ -198,19 +181,10 @@ export function repositoryTabs(db: Database, maxRounds: (thread: Thread) => numb
     .all()
     .map((row) => {
       const thread = Thread.parse(row);
-      const word = threadWord(thread, maxRounds(thread));
-      const [sign, colour] = threadMark({
-        status: thread.status,
-        needsYou: needsYou(thread),
-        word,
-      });
-      return { thread, filled: sign === "●", colour };
+      return { thread, mark: shownOf(thread, maxRounds(thread)).mark };
     });
   return repositories.map(({ name, owner, repo }) => {
-    const ours = marked.filter(
-      (m) => m.filled && m.thread.owner === owner && m.thread.repo === repo,
-    );
-    const colour = [red, yellow, green].find((c) => ours.some((m) => m.colour === c)) ?? null;
-    return { name, fullName: `${owner}/${repo}`, count: ours.length, colour };
+    const ours = marked.filter((m) => m.thread.owner === owner && m.thread.repo === repo);
+    return { name, fullName: `${owner}/${repo}`, ...badgeOf(ours.map((m) => m.mark)) };
   });
 }

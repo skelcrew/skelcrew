@@ -3,6 +3,7 @@
 // what you are looking at: for a thread, its name, task, PR and checks, then its latest review,
 // and for a page, its row's name and title. The lead and a list have none, as the sidebar and
 // the list say it all.
+import type { Colour } from "../flow/marks.ts";
 import { fitted, removeControlCodes } from "./look.ts";
 import type { Row, Tab } from "./rows.ts";
 
@@ -19,6 +20,15 @@ const verdicts: Record<string, string> = {
   changes: "changes",
   failed: "review failed",
   "timed out": "review timed out",
+};
+
+// The sidebar's fixed colours of the marks a tab's badge can take, as tmux names them.
+const tmuxColours: Record<Colour, string> = {
+  green: "colour120",
+  yellow: "colour221",
+  red: "colour210",
+  bright: "default",
+  dim: "brightblack",
 };
 
 // Returns text as tmux shows it as is. tmux reads the strip as a format, where #(...) would run
@@ -132,13 +142,11 @@ function drawTabs(tabs: Tab[], open: string, width: number): [string, number] {
   // Tabs have greys of their own, so they stand apart from the sidebar and the agent: the open
   // one bold white on a dark grey, the others dim on a lighter one. A tab's dot is in the
   // sidebar's fixed colour of its most urgent mark, as a theme's own can look like another
-  // colour. tmux names the sidebar's 38;5;221 colour221. A dim count of those left out ends the
-  // row.
+  // colour. A dim count of those left out ends the row.
   const shown = tabs.slice(first, last + 1).map((tab, offset) => {
     const here = first + offset === at;
     const style = here ? "#[bg=colour234,fg=colour231,bold]" : "#[bg=colour237,fg=colour245]";
-    const colour = tab.colour?.replace("38;5;", "colour") ?? "default";
-    const badge = tab.count ? ` #[fg=${colour}]•${tab.count}` : "";
+    const badge = tab.colour ? ` #[fg=${tmuxColours[tab.colour]}]•${tab.count}` : "";
     return `#[range=user|${first + offset}]${style}  ${escaped(tab.name)}${badge}  #[default]#[norange]`;
   });
   const out = tabs.length - shown.length;

@@ -5,7 +5,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { printThreads, type ThreadRow } from "../src/flow/list.ts";
-import { threadWord } from "../src/flow/status.ts";
+import { type Status, threadWord } from "../src/flow/status.ts";
 import type { Thread } from "../src/flow/thread.ts";
 import { draw as drawWith, noticeLines } from "../src/screen/layout.ts";
 import type { EntryCount } from "../src/screen/lists.ts";
@@ -20,7 +20,7 @@ const row = {
   pr: null,
   checks: null,
   review: null,
-  needsYou: false,
+  state: "idle",
   running: true,
   harness: "claude",
   agentHarness: "claude",
@@ -48,8 +48,16 @@ const thread = (name: string, more: Partial<Row> = {}): Row => ({
   word: "working",
   // Only a working builder has a step, as a real row has.
   step: (more.word ?? "working") === "working" ? "working" : "",
+  state: stateOf(more.status ?? "working", more.word ?? "working"),
   ...more,
 });
+// Returns the status a host would show for a thread with this status and word, short of one
+// that needs you, which a test says itself.
+function stateOf(status: Row["status"], word: string): Status {
+  if (status === "failed" || word === "error") return "error";
+  if (word === "approved") return "ready";
+  return word === "working" ? "working" : "idle";
+}
 
 const size = { width: sidebarWidth, height: 12 };
 // The sidebar, a click and a move with no entries, as most of these tests need.
@@ -372,7 +380,7 @@ test("the second line is cut with … too, with the word whole before it", () =>
 });
 
 test("the harness is dim on the second line, beside the word in its own colour", () => {
-  const needing = thread("app-12", { needsYou: true, word: "question", title: "Fix login" });
+  const needing = thread("app-12", { state: "needs you", word: "question", title: "Fix login" });
   const screen = draw([needing], "lead", size);
   expect(screen).toContain("\x1b[38;5;221mquestion\x1b[22;39m\x1b[90m · claude");
 });
@@ -408,7 +416,7 @@ test("the harness is grey, so the titles stand out", () => {
 test("a thread that needs you for anything but an approval has a yellow circle and word", () => {
   for (const status of ["working", "waiting"] as const)
     for (const word of ["question", "round limit", "turn ended", "review timed out", "needs you"]) {
-      const needing = thread("app-12", { status, needsYou: true, word });
+      const needing = thread("app-12", { status, state: "needs you", word });
       const screen = draw([lead, needing], "lead", size);
       expect(read(screen).join("\n")).toContain(`  ● 12 app-12\n    ${word} · claude`);
       expect(screen).toContain("\x1b[38;5;221m●");
@@ -418,11 +426,7 @@ test("a thread that needs you for anything but an approval has a yellow circle a
 
 test("an approved thread is green, as it is good news, though it waits on you to merge", () => {
   for (const status of ["working", "waiting"] as const) {
-    const screen = draw(
-      [thread("app-12", { status, needsYou: true, word: "approved" })],
-      "lead",
-      size,
-    );
+    const screen = draw([thread("app-12", { status, word: "approved" })], "lead", size);
     expect(screen).toContain("\x1b[38;5;120m●");
     expect(screen).toContain("\x1b[38;5;120mapproved");
     expect(screen).not.toContain("\x1b[38;5;221m");
@@ -431,7 +435,11 @@ test("an approved thread is green, as it is good news, though it waits on you to
 
 test("a thread whose harness stopped on an error, or whose review failed, is red, though it needs you", () => {
   for (const word of ["error", "review failed"]) {
-    const screen = draw([thread("app-12", { needsYou: true, word })], "lead", size);
+    const screen = draw(
+      [thread("app-12", { state: word === "error" ? "error" : "needs you", word })],
+      "lead",
+      size,
+    );
     expect(screen).toContain("\x1b[38;5;210m●");
     expect(screen).toContain(`\x1b[38;5;210m${word}`);
     expect(screen).not.toContain("\x1b[38;5;221m");
@@ -463,7 +471,7 @@ test("a review under way shows dim while the builder works, with the builder's s
 
 test("a mark looks the same whether or not you are on its row", () => {
   // A theme's own green can be olive, close to the yellow of needs you, so marks never use it.
-  const rows = [lead, thread("app-12", { needsYou: true, word: "question" })];
+  const rows = [lead, thread("app-12", { state: "needs you", word: "question" })];
   const markLine = (shown: string) =>
     draw(rows, shown, size)
       .split("\n")
@@ -474,11 +482,7 @@ test("a mark looks the same whether or not you are on its row", () => {
 });
 
 test("a failed thread is red even while it needs you, as its word says failed", () => {
-  const screen = draw(
-    [thread("app-12", { status: "failed", needsYou: true, word: "failed" })],
-    "lead",
-    size,
-  );
+  const screen = draw([thread("app-12", { status: "failed", word: "failed" })], "lead", size);
   expect(screen).toContain("\x1b[38;5;210m●");
   expect(screen).toContain("\x1b[38;5;210mfailed");
   expect(screen).not.toContain("\x1b[38;5;221m");
@@ -536,7 +540,7 @@ test("on the grey, every colour is a fixed light one, as a theme's own can vanis
     thread("app-1"),
     thread("app-2", { status: "done", word: "done" }),
     thread("app-3", { status: "waiting", word: "checks" }),
-    thread("app-4", { needsYou: true, word: "approved" }),
+    thread("app-4", { word: "approved" }),
     thread("app-5", { status: "failed", word: "failed" }),
   ];
   const on = (session: string) => selected(draw(rows, session, size)).join("\n");
@@ -1229,10 +1233,10 @@ console.log(JSON.stringify(repositoryTabs(db, () => 3)));`;
     });
     expect(run.stderr.toString()).toBe("");
     expect(JSON.parse(run.stdout.toString())).toEqual([
-      { name: "app", fullName: "simon/app", count: 2, colour: "38;5;210" },
-      { name: "docs", fullName: "simon/docs", count: 1, colour: "38;5;221" },
-      { name: "site", fullName: "simon/site", count: 3, colour: "38;5;210" },
-      { name: "web", fullName: "simon/web", count: 1, colour: "38;5;120" },
+      { name: "app", fullName: "simon/app", count: 2, colour: "red" },
+      { name: "docs", fullName: "simon/docs", count: 1, colour: "yellow" },
+      { name: "site", fullName: "simon/site", count: 3, colour: "red" },
+      { name: "web", fullName: "simon/web", count: 1, colour: "green" },
     ]);
   });
 

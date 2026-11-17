@@ -304,7 +304,7 @@ ${threadSql({ task: "14", pr: 33, review_round: 1, verdict: "changes" })}`;
   ]);
 });
 
-test("threads come as needs you, working, then stopped, with all ACTIVE hasn't room for", () => {
+test("threads come as needs you, ready to merge, working, then stopped, with all ACTIVE hasn't room for", () => {
   const today = new Date(2026, 10, 13, 16, 0).getTime();
   const at = (day: number, hour: number) => new Date(2026, 10, day, hour, 32).getTime();
   const sql = `${repository}
@@ -313,7 +313,8 @@ ${threadSql({ task: "t1", status: "waiting", title: "Tidy up", changed: at(12, 9
 ${threadSql({ task: "13", status: "stopped", title: "Old", started: at(2, 9) })}
 ${threadSql({ task: "14", status: "done", title: "Gone" })}
 ${threadSql({ task: "15", status: "failed", title: "Broke" })}
-${threadSql({ task: "16", title: "Stuck", erred: 1 })}`;
+${threadSql({ task: "16", title: "Stuck", erred: 1 })}
+${threadSql({ task: "17", status: "waiting", title: "Done", needs_you: 1, verdict: "approve" })}`;
   const { threads } = after(sql, today);
   expect(shape(threads)).toEqual([
     [
@@ -324,15 +325,18 @@ ${threadSql({ task: "16", title: "Stuck", erred: 1 })}`;
         ["●", "app-t1", "Tidy up", "question", "claude", "", "12 Nov"],
       ],
     ],
+    // An approved thread waits only for your merge, so it is ready rather than needing you.
+    ["Ready to merge", [["●", "app-17", "Done", "approved", "claude", "#17", ""]]],
     ["Working", [["○", "app-12", "Fix login", "working", "codex", "#12 #31", "14:32"]]],
     ["Stopped", [["○", "app-13", "Old", "stopped", "claude", "#13", "2 Nov"]]],
   ]);
   // Each mark and word has its colour in ACTIVE: bright while its builder works, and dim once
   // it stopped.
-  const colours = ["38;5;210", "38;5;210", "38;5;221", "1", "90"];
+  const colours = ["38;5;210", "38;5;210", "38;5;221", "38;5;120", "1", "90"];
   expect(threads.flatMap((g) => g.rows.map((row) => row.mark[1]))).toEqual(colours);
   expect(threads.flatMap((g) => g.rows.map((row) => row.ends[0]?.[1]))).toEqual(colours);
   expect(threads.flatMap((g) => g.rows.map((row) => row.dim))).toEqual([
+    false,
     false,
     false,
     false,
@@ -374,10 +378,12 @@ ${itemSql("app", "task", 31, "Add CSV export", "2026-11-05T10:00:00Z")}
 ${itemSql("app", "pr", 34, "Fix login", "2026-11-05T10:00:00Z")}
 ${threadSql({ task: "12", status: "waiting", pr: 34, needs_you: 1, verdict: "approve" })}
 ${threadSql({ task: "13", status: "stopped" })}
-${threadSql({ task: "14", status: "done" })}`;
+${threadSql({ task: "14", status: "done" })}
+${threadSql({ task: "15", asking: 1 })}`;
+  // The approved thread is ready, so it counts on PRs, and only the question needs you.
   expect(after(sql).entries).toEqual([
     { entry: "issues", name: "Issues", total: 2, note: "", colour: "90" },
-    { entry: "threads", name: "Threads", total: 2, note: "1 needs you", colour: "38;5;221" },
+    { entry: "threads", name: "Threads", total: 3, note: "1 needs you", colour: "38;5;221" },
     { entry: "prs", name: "PRs", total: 1, note: "1 ready", colour: "38;5;120" },
   ]);
 });

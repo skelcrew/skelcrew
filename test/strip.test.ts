@@ -1,5 +1,6 @@
 // What the top row says: the header above the sidebar, then the tabs and the strip above the agent.
 import { expect, test } from "bun:test";
+import type { Colour } from "../src/flow/marks.ts";
 import type { Row, Tab } from "../src/screen/rows.ts";
 import { drawTop, type Top } from "../src/screen/strip.ts";
 
@@ -8,7 +9,7 @@ const lead: Row = {
   task: "",
   session: "lead",
   status: null,
-  needsYou: false,
+  state: "idle",
   running: true,
   word: "running",
   harness: "claude",
@@ -37,7 +38,7 @@ const thread = (more: Partial<Row> = {}): Row => ({
   review: { round: 2, reviewer: "codex", verdict: "approve" },
   ...more,
 });
-const tab = (name: string, count = 0, colour: string | null = count ? "38;5;221" : null): Tab => ({
+const tab = (name: string, count = 0, colour: Colour | null = count ? "yellow" : null): Tab => ({
   name,
   fullName: `simon/${name}`,
   count,
@@ -83,7 +84,7 @@ test("a thread's strip has its name, title, PR, checks and latest review", () =>
 
 test("when the round limit stops a thread, the verdict reads round limit, in yellow", () => {
   const changes = { round: 4, reviewer: "codex", verdict: "changes" };
-  const stopped = thread({ word: "round limit", needsYou: true, review: changes });
+  const stopped = thread({ word: "round limit", state: "needs you", review: changes });
   expect(read({ rows: [stopped] })).toEndWith("#34  checks passing  round 4 · codex · round limit");
   expect(top({ rows: [stopped] })).toEndWith(
     "round 4 · codex · #[fg=colour221]round limit#[default]",
@@ -217,7 +218,7 @@ test("where Skelcrew runs can't run commands, restyle the row or reach your term
 });
 
 test("the lead has no strip, as the sidebar already shows what needs you", () => {
-  const rows = [lead, thread({ word: "approved", needsYou: true })];
+  const rows = [lead, thread({ word: "approved", state: "ready" })];
   expect(read({ rows, shown: "lead" })).toBe("");
 });
 
@@ -291,9 +292,9 @@ test("tabs name each repository in order, above the agent, with a badge for what
 });
 
 test("a tab's badge takes the colour of its most urgent mark", () => {
-  const red = top({ tabs: [tab("app"), tab("site", 2, "38;5;210")] });
+  const red = top({ tabs: [tab("app"), tab("site", 2, "red")] });
   expect(red).toContain("  site #[fg=colour210]•2  ");
-  const green = top({ tabs: [tab("app"), tab("site", 1, "38;5;120")] });
+  const green = top({ tabs: [tab("app"), tab("site", 1, "green")] });
   expect(green).toContain("  site #[fg=colour120]•1  ");
 });
 

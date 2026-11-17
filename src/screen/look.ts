@@ -1,5 +1,6 @@
 // The look: what the sidebar, the strip and a page share to draw text, which is the colours, the
 // padding, and making text from outside safe and fit to show.
+import type { Colour } from "../flow/marks.ts";
 
 // The colours of marks and words. 256-colour numbers, as they reach your terminal through both
 // tmux servers and ssh, and mean the same whatever your theme. A theme's own green can be olive,
@@ -12,6 +13,8 @@ export const [green, yellow, red] = ["38;5;120", "38;5;221", "38;5;210"];
 export const bright = "1";
 // Dim text is the theme's own grey, so it stays quiet whatever the theme.
 export const grey = "90";
+// The colour each kind of mark is drawn in.
+export const markColours: Record<Colour, string> = { green, yellow, red, bright, dim: grey };
 // A light grey, for text that matters more than dim text but less than a title. It is a fixed
 // one, as a theme has no grey between its dim one and its text. It is lighter still on the row
 // you are looking at, so it stays apart from dim text there.

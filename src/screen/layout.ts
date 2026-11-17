@@ -1,6 +1,7 @@
 // The sidebar as lines for its pane: the lead's row on top, then the entries Issues, Threads and
 // PRs, then ACTIVE. It reads nothing, so what you see can be tested
 // without a terminal.
+import { markOf } from "../flow/marks.ts";
 import type { Entry, EntryCount } from "./lists.ts";
 import {
   edge,
@@ -9,6 +10,7 @@ import {
   grey,
   lightGrey,
   lightGreyOnShade,
+  markColours,
   pad,
   paint,
   removeControlCodes,
@@ -16,7 +18,7 @@ import {
   tinted,
   white,
 } from "./look.ts";
-import { type Row, threadMark } from "./rows.ts";
+import type { Row } from "./rows.ts";
 
 export type Size = { width: number; height: number };
 // One line of the sidebar, with where a click on it goes, if anywhere: a row's session or an
@@ -32,6 +34,14 @@ const working = (row: Row) => row.status !== null && row.word === "working";
 // thread with a step to show has a line more than others: its builder is working, perhaps while
 // a review runs.
 const rowHeight = (row: Row | undefined) => (row?.step ? 3 : 2);
+
+// Returns a row's mark and the colour it is drawn in: the lead's diamond, dim, or a thread's
+// mark as every list of threads shows it.
+function rowMark(row: Row): [string, string] {
+  if (row.status === null) return ["◆", grey];
+  const { sign, colour } = markOf(row.state, row.word);
+  return [sign, markColours[colour]];
+}
 
 // Returns how many columns a row's first line has for text in a sidebar `width` columns wide:
 // what is left once the line at its edge, the mark and the padding on each side are taken. A
@@ -62,7 +72,7 @@ function rowLines(row: Row, here: boolean, width: number): string[] {
   const title = lead ? row.name : removeControlCodes(row.short ?? row.title ?? row.name);
   const top = fitted(lead ? title : `${row.task} ${title}`, room);
   const styled = here ? paint(white, top) : row.running ? top : paint(grey, top);
-  const [sign, colour] = threadMark(row);
+  const [sign, colour] = rowMark(row);
   const first = `${pad}${tinted(here, colour, sign)} ${styled}`;
   // A working thread: what it costs in a light grey, then what it does, dim. Under review, its
   // word line says how many messages wait, so its step line has only the step.
@@ -115,7 +125,7 @@ function planBar(plan: { done: number; total: number }): string {
 // after the cut, so each keeps its colour. These are all plain letters, so a split by letters is
 // a split by columns.
 function wordLine(row: Row, here: boolean, room: number): string {
-  const [, colour] = threadMark(row);
+  const [, colour] = rowMark(row);
   const parts = [row.word, row.waiting, row.harness, roundText(row)].filter((part) => part);
   const below = fitted(parts.join(" · "), room);
   const word = below.slice(0, row.word.length);
