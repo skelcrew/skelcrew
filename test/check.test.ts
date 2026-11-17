@@ -82,8 +82,8 @@ function check(folder: string) {
 }
 
 // Starts the daemon and waits for its socket, which it makes once it listens. New checks wait
-// `settle` milliseconds after it starts, for suites from before a restart to take their slots
-// back: none, unless a test is about that. Returns the daemon, for a test that restarts it.
+// `settle` milliseconds after it starts, so a suite from before a restart is surely stopped:
+// none, unless a test is about that. Returns the daemon, for a test that restarts it.
 async function serve(settle = 0): Promise<Subprocess> {
   rmSync(join(home, "run", "skelcrew.sock"), { force: true });
   const daemon = startDaemon(
@@ -156,28 +156,7 @@ test("a check killed while it waits gives back its place, and one killed while i
   expect(log()).toBe("start a\nstart c\nend c\n");
 }, 60_000);
 
-test("a suite running while the daemon restarts keeps its slot", async () => {
-  const before = await serve();
-  const [a, b] = ["a", "b"].map((name) => checkout(name));
-  if (!a || !b) throw new Error("no checkouts");
-  const first = check(a);
-  await until(() => log().includes("start a"));
-  before.kill();
-  await before.exited;
-  // The new daemon holds new checks back long enough for the running suite to come back first.
-  await serve(2000);
-  const second = check(b);
-  await until(() => second.said.out.includes("number 1 in line"));
-  await Bun.sleep(2500);
-  expect(log()).toBe("start a\n");
-  writeFileSync(join(a, "done"), "");
-  expect((await first.ended).code).toBe(0);
-  await until(() => log().includes("start b"));
-  writeFileSync(join(b, "done"), "");
-  expect((await second.ended).code).toBe(0);
-}, 60_000);
-
-test("a check killed after the daemon restarted ends its suite before the next one starts", async () => {
+test("a daemon that stops during a check stops its suite, which never runs beside the next daemon's", async () => {
   const before = await serve();
   const [a, b] = ["a", "b"].map((name) => checkout(name));
   if (!a || !b) throw new Error("no checkouts");
@@ -185,14 +164,15 @@ test("a check killed after the daemon restarted ends its suite before the next o
   await until(() => log().includes("start a") && suiteRuns(a));
   before.kill();
   await before.exited;
-  await serve(2000);
+  // The suite is stopped as the daemon goes, before any new daemon could give its slot away.
+  const ended = await first.ended;
+  expect(ended.code).toBe(1);
+  expect(ended.err).toContain("the daemon stopped during the check");
+  expect(ended.err).toContain("Run sc check again.");
+  await until(() => !suiteRuns(a));
+  await serve(500);
   const second = check(b);
-  await until(() => second.said.out.includes("number 1 in line"));
-  // Its slot came back to it after the restart, and killing it now ends the suite too, so the
-  // next check never runs beside it.
-  first.run.kill("SIGKILL");
   await until(() => log().includes("start b"));
-  expect(suiteRuns(a)).toBe(false);
   writeFileSync(join(b, "done"), "");
   expect((await second.ended).code).toBe(0);
   expect(log()).toBe("start a\nstart b\nend b\n");

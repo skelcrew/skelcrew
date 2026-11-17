@@ -426,8 +426,8 @@ async function checkCommand(args: string[]): Promise<void> {
     console.log("This repository is configured with no tests, so there is nothing to run.");
     return;
   }
-  // Only sc check renews the slot after a daemon restart, so the suite must never outlive it.
-  // The suite runs in a process group of its own, and a watcher in it reads a pipe that only
+  // The suite must never outlive sc check, which is what notices the daemon going away. The
+  // suite runs in a process group of its own, and a watcher in it reads a pipe that only
   // sc check holds open. However sc check ends, even killed outright, the pipe closes and the
   // watcher ends the whole group. The suite's own input is /dev/null, as POSIX gives a
   // background job unless it is redirected, so the watcher is the pipe's only reader.
@@ -439,20 +439,26 @@ async function checkCommand(args: string[]): Promise<void> {
     stdio: ["pipe", "inherit", "inherit", ...holds],
     detached: true,
   });
-  // A daemon that restarts while the suite runs forgets its slot, so it is taken back, at once
-  // and over the limit if need be, as soon as the daemon answers again.
+  // A daemon that stops while the suite runs takes its slot with it, and the next daemon knows
+  // nothing of the suite. So the suite is stopped at once, rather than run on past the limit,
+  // and you are told to run it again.
   let ended = false;
-  const keepSlot = async (lost: Promise<void>): Promise<void> => {
-    await lost;
-    while (!ended) {
-      const back = await takeCheckSlot({ queued: () => {}, from, running: true }).catch(() => null);
-      if (back) return keepSlot(back.lost);
-      await Bun.sleep(250);
-    }
-  };
-  keepSlot(slot.lost);
+  let stopped = false;
+  slot.lost.then(() => {
+    if (ended) return;
+    stopped = true;
+    try {
+      process.kill(-run.pid, "SIGKILL");
+    } catch {}
+  });
   const code = await run.exited;
   ended = true;
+  if (stopped) {
+    console.error(
+      "Skelcrew: the daemon stopped during the check, which took its slot, so the tests were stopped too. Run sc check again.",
+    );
+    process.exit(1);
+  }
   process.exit(code);
 }
 

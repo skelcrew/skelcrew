@@ -54,19 +54,6 @@ export class Queue {
     });
   }
 
-  // Runs `work` at once, whatever the limit, and counts it among the work running until it ends.
-  // For work that was already running before the queue knew of it, such as a test suite that
-  // started before the daemon restarted: it must count, but can't be made to wait.
-  async hold<T>(work: () => Promise<T>): Promise<T> {
-    this.running++;
-    try {
-      return await work();
-    } finally {
-      this.running--;
-      this.startWaiting();
-    }
-  }
-
   // Returns whether work run with this limit now would wait, as every place is taken by work
   // running or waiting. So the caller can say it waits only when it does.
   full(limit: number): boolean {

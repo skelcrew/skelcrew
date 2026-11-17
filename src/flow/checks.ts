@@ -8,23 +8,19 @@ import { Queue } from "./queue.ts";
 // The one queue of checks the daemon keeps, for every repository on this machine.
 const checks = new Queue();
 
-// Suites that ran before the daemon restarted take their slots back as soon as it is up. Until
-// they have had time to, new checks wait, so a restart never lets a full set of new suites run
-// beside them. The daemon loads this file as it starts, so that is when the wait begins.
-const restarted = Date.now();
-const settling = Number(process.env.SKELCREW_CHECK_SLOT_SETTLE_MS ?? 5000);
+// A daemon that stops takes every slot with it, and sc check then stops its suite. New checks
+// wait a moment after the daemon starts, so a quick restart never starts a suite while one from
+// before it is still being stopped. The daemon loads this file as it starts, so that is when the
+// wait begins.
+const started = Date.now();
+const settling = Number(process.env.SKELCREW_CHECK_SLOT_SETTLE_MS ?? 2000);
 
 // Answers an sc check on its connection, given the repository's test commands. Once a slot is
 // free it sends the commands, and the caller runs them in its own folder. The caller holds the
 // slot while its connection stays open, and closing it, however it ends, frees the slot. So a
 // check that was killed never keeps its place. A caller over the limit is first sent its place
-// in line. A repository configured with no tests runs none, so it takes no slot. A suite already
-// `running`, from before the daemon restarted, takes its slot at once, over the limit if need be.
-export function holdCheckSlot(
-  connection: Socket,
-  test: string[] | undefined,
-  running: boolean,
-): void {
+// in line. A repository configured with no tests runs none, so it takes no slot.
+export function holdCheckSlot(connection: Socket, test: string[] | undefined): void {
   const send = (line: object) => connection.write(`${JSON.stringify(line)}\n`);
   // Without a test command there is nothing to run, and Skelcrew never guesses one.
   if (test === undefined) {
@@ -45,11 +41,6 @@ export function holdCheckSlot(
       if (closed.signal.aborted) return done();
       closed.signal.addEventListener("abort", () => done(), { once: true });
     });
-  if (running) {
-    checks.hold(heldUntilClosed);
-    send({ test });
-    return;
-  }
   let limit: number;
   try {
     limit = checkLimit();
@@ -58,10 +49,10 @@ export function holdCheckSlot(
     return;
   }
   const order = Date.now();
-  Bun.sleep(Math.max(0, restarted + settling - order))
+  Bun.sleep(Math.max(0, started + settling - order))
     .then(() => {
       // Said only when it waits, with how many wait ahead of it counted in. Worked out as it
-      // joins, after any wait for suites from before a restart, which can fill every slot.
+      // joins, after the wait that follows the daemon's start.
       if (checks.full(limit)) send({ queued: checks.inLine() + 1 });
       return checks.run({ limit, order, signal: closed.signal }, () => {
         send({ test });

@@ -195,15 +195,13 @@ export async function submitForReview(summary: string): Promise<string> {
 // the connection closes. The daemon keeps the slot while the connection stays open: in this
 // process, and in any process the descriptor is handed to. `queued` is told the caller's place in
 // line when it has to wait. `from` is the remote of the checkout you ran it in; an agent's own
-// socket names its repository instead. `running` takes the slot back for a suite already running
-// when the daemon restarted. Throws with the daemon's error, such as when no test command is
-// configured, or when nothing answers.
+// socket names its repository instead. Throws with the daemon's error, such as when no test
+// command is configured, or when nothing answers.
 export function takeCheckSlot(given: {
   queued: (place: number) => void;
   from?: string | undefined;
-  running?: true;
 }): Promise<{ test: string[]; fd: number | undefined; lost: Promise<void> }> {
-  const { queued, from, running } = given;
+  const { queued, from } = given;
   const Line = z.union([
     z.object({ queued: z.number() }),
     z.object({ test: z.array(z.string()) }),
@@ -214,11 +212,7 @@ export function takeCheckSlot(given: {
     const lost = Promise.withResolvers<void>();
     let said = "";
     let answered = false;
-    const request = {
-      command: "check",
-      ...(from ? { from } : {}),
-      ...(running ? { running } : {}),
-    };
+    const request = { command: "check", ...(from ? { from } : {}) };
     connection.on("connect", () => connection.write(`${JSON.stringify(request)}\n`));
     // Each line is one answer: a place in line, then the commands once a slot is free.
     connection.on("data", (data) => {

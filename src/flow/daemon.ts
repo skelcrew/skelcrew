@@ -486,13 +486,13 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   const checkFor = (
     connection: Socket,
     caller: Caller,
-    { from, running }: { from?: string | undefined; running?: true | undefined },
+    { from }: { from?: string | undefined },
   ) => {
     try {
       const thread = caller !== "you" && "review" in caller ? caller.review : builderOf(caller);
       const repository = thread ?? (from === undefined ? undefined : repositoryAt(db, from));
       if (!repository) throw new Error("run sc check in a checkout of a repository Skelcrew has");
-      holdCheckSlot(connection, repositoryCommands(repository).test, running === true);
+      holdCheckSlot(connection, repositoryCommands(repository).test);
     } catch (error) {
       connection.end(`${JSON.stringify({ error: errorText(error) })}\n`);
     }
