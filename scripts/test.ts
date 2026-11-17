@@ -61,9 +61,10 @@ const run = Bun.spawn(
 
 // The whole run ends within this, even if something keeps it from ever finishing, such as a
 // process a test started that never exits. A full run takes about two minutes on eight cores
-// without the tests that start a real sandbox, which CI runs too. Its own test sets a
-// shorter limit, in milliseconds.
-const limit = Number(process.env.SKELCREW_TESTS_LIMIT) || 15 * 60_000;
+// without the tests that start a real sandbox. CI runs those too, and took 13 to 16 minutes with
+// four files at once, so the limit is 30. It can come down once CI shows its new time. Its own
+// test sets a shorter limit, in milliseconds.
+const limit = Number(process.env.SKELCREW_TESTS_LIMIT) || 30 * 60_000;
 let stopped = false;
 const stop = setTimeout(async () => {
   stopped = true;
