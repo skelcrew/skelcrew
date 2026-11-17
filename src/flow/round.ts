@@ -2,6 +2,7 @@
 // its PR opened on the first round, reviewed by a fresh reviewer, and the review typed back
 // into the builder's session when it asks for changes.
 import type { Database } from "bun:sqlite";
+import { z } from "zod";
 import { type HarnessName, harnessNamed } from "../agents/harness.ts";
 import { typeInto } from "../agents/typing.ts";
 import { reviewLimit, threadConfig } from "../config.ts";
@@ -22,7 +23,6 @@ import {
 import { fetchInto, pushCommit } from "./git.ts";
 import { noteForLead, typeLeadNotes } from "./lead.ts";
 import { endLimit, limitOn, reachLimit, tellOfLimit, waitUntil } from "./limits.ts";
-import { z } from "zod";
 import { Queue } from "./queue.ts";
 import { type Limited, type Review, review } from "./reviewer.ts";
 import {
