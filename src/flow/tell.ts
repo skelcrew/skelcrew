@@ -3,6 +3,7 @@
 // the thread's log. They never go to a tracker or forge. sc peek shows a builder's screen, and
 // sc interrupt stops its turn.
 import type { Database } from "bun:sqlite";
+import { z } from "zod";
 import { agentRuns, mustTmux, tmux as tmuxCommand } from "../agents/tmux.ts";
 import { typeInto } from "../agents/typing.ts";
 import { errorText } from "../say.ts";
@@ -100,28 +101,37 @@ export function messageLead(db: Database, tmux: string, thread: Thread, text: st
   log(db, readThread(db, thread.folder), `its builder told the lead: ${text}`);
 }
 
-// Returns what the builder is doing by its screen, for sc peek and sc interrupt: mid-turn, or
-// else idle. The busy mark alone isn't enough, as a command's output above an idle prompt can
-// hold the same words, and Esc there could clear a draft. Two signs tell a running turn from
-// such output, and either is enough. A harness mid-turn redraws its spinner and timer, so its
-// screen moves. And with nothing but blank lines after the busy mark, there is no prompt below
-// it, which a quiet harness running a long command can show. Output in an idle builder sits
-// still above its bare prompt. Only the visible screen counts, as an old busy mark can sit in
-// the history above it.
-async function builderState(tmux: string, thread: Thread): Promise<"mid-turn" | "idle"> {
+// When the builder's current stretch of work began, by Skelcrew, and when its harness last said
+// by a hook that a turn ended. Both are kept out of the thread's log, so they are read apart.
+const Turn = z.object({ working_since: z.number().nullable(), turn_ended: z.number().nullable() });
+
+// Returns what the builder is doing, for sc peek and sc interrupt: mid-turn, or else idle. The
+// busy mark alone isn't enough, as a command's output above an idle prompt can hold the same
+// words, and Esc there could clear a draft. Nor is the screen's layout: mid-turn, Claude Code
+// and Codex both keep their prompt below the busy mark. So the mark must show, and either the
+// hooks say a turn is running, or the screen moves. The hooks say so when the builder's last
+// stretch of work began after its harness last ended a turn. That holds for a quiet builder
+// running a long command too. The screen moving covers the turn Esc ended, which runs no hook
+// on Claude Code: its busy mark is gone then. Only the visible screen counts, as an old busy
+// mark can sit in the history above it.
+async function builderState(
+  db: Database,
+  tmux: string,
+  thread: Thread,
+): Promise<"mid-turn" | "idle"> {
   const look = () => mustTmux(tmux, ["capture-pane", "-p", "-t", `=${thread.folder}:`]);
   const { busy } = builderHarness(thread).marks;
   const before = look();
   if (!before.includes(busy)) return "idle";
-  // A little over a second, so a timer that counts whole seconds has moved too.
+  const turn = Turn.parse(
+    db.query("SELECT working_since, turn_ended FROM threads WHERE folder = ?").get(thread.folder),
+  );
+  if (turn.working_since !== null && turn.working_since > (turn.turn_ended ?? 0)) return "mid-turn";
+  // A harness mid-turn redraws its spinner and timer. A little over a second, so a timer that
+  // counts whole seconds has moved too.
   await Bun.sleep(1200);
   const after = look();
-  if (!after.includes(busy)) return "idle";
-  const below = after
-    .slice(after.lastIndexOf(busy) + busy.length)
-    .split("\n")
-    .slice(1);
-  return after !== before || below.every((line) => line.trim() === "") ? "mid-turn" : "idle";
+  return after.includes(busy) && after !== before ? "mid-turn" : "idle";
 }
 
 // Returns the last lines of the builder's screen, for sc peek, so the lead can see what a builder
@@ -153,7 +163,9 @@ export async function peekAtBuilder(
     .trimEnd()
     .split("\n")
     .slice(-lines);
-  const doing = thread.asking ? "asking the human a question" : await builderState(tmux, thread);
+  const doing = thread.asking
+    ? "asking the human a question"
+    : await builderState(db, tmux, thread);
   const heading = `${name} · ${thread.status} · ${doing}`;
   return `<skelcrew from="${name}" kind="peek">\n${untagged([heading, ...shown].join("\n"))}\n</skelcrew>`;
 }
@@ -175,7 +187,7 @@ export async function interruptBuilder(
     throw new Error(
       `${name}'s builder is asking the human a question, and Esc would sweep it away. Tell the human instead.`,
     );
-  if ((await builderState(tmux, thread)) === "idle")
+  if ((await builderState(db, tmux, thread)) === "idle")
     return `${name}'s builder is idle already, so Skelcrew did nothing.`;
   // Looking at the screen takes a moment, and the builder may have asked a question meanwhile.
   // So the thread is read again right before the Esc, which would sweep that question away.

@@ -414,6 +414,8 @@ describe.skipIf(insideSandbox)("sc peek and sc interrupt", () => {
     await until(() => tmuxScreen().includes("esc to interrupt\n"));
     rmSync(join(builder(), "busy"));
     await until(() => tmuxScreen().includes("The busy marker is esc to interrupt\n❯"));
+    // The harness's hook says the turn ended, as Claude Code's Stop hook does.
+    expect((await skel(["turn", "ended"], "builder")).err).toBe("");
     const peek = await skel(["peek", "app-12"], "lead");
     expect(peek.out).toContain("\napp-12 · working · idle\n");
     const interrupt = await skel(["interrupt", "app-12"], "lead");
@@ -422,8 +424,10 @@ describe.skipIf(insideSandbox)("sc peek and sc interrupt", () => {
     expect(read(join(builder(), "escs"))).toBe("");
   }, 60_000);
 
-  test("interrupt stops a quiet builder whose screen doesn't move mid-turn", async () => {
+  test("interrupt stops a quiet builder whose screen doesn't move mid-turn, prompt and all", async () => {
     await startApp12();
+    // Mid-turn, Claude Code and Codex both keep their prompt below the busy mark.
+    writeFileSync(join(builder(), "screen"), "$ sleep 600\n\n❯\n");
     writeFileSync(join(builder(), "still"), "");
     writeFileSync(join(builder(), "busy"), "");
     await until(() => tmuxScreen().includes("esc to interrupt"));
@@ -445,6 +449,8 @@ describe.skipIf(insideSandbox)("sc peek and sc interrupt", () => {
     const timed = Date.now();
     await skel(["peek", "app-12"], "lead");
     const oneLook = Date.now() - timed;
+    // With the turn over by the hooks, interrupt goes by the screen, which takes two looks.
+    expect((await skel(["turn", "ended"], "builder")).err).toBe("");
     writeFileSync(join(builder(), "busy"), "");
     await until(() => tmuxScreen().includes("esc to interrupt"));
     // Busy, interrupt looks twice, 1.2 seconds apart. The question opens between the two looks.

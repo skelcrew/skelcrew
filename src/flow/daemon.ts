@@ -365,6 +365,8 @@ export async function serve(tmux: string, every = 30_000): Promise<void> {
         // which would lose the closing quote. Each " or \ doubles in length once escaped, so
         // the words are cut until the quote fits.
         const { folder } = callingThread(caller);
+        // Kept, so sc peek and sc interrupt know the turn is over, whatever the screen shows.
+        db.run("UPDATE threads SET turn_ended = ? WHERE folder = ?", [Date.now(), folder]);
         if (!endedTurnAsks(readThread(db, folder))) return { asking: false };
         let words = untagged(request.said ?? "").slice(0, 100);
         while (JSON.stringify(words).length > 100) words = words.slice(0, -1);
@@ -374,6 +376,11 @@ export async function serve(tmux: string, every = 30_000): Promise<void> {
         return { asking: true };
       }
       case "turn failed":
+        // A turn that ended on an error is over too.
+        db.run("UPDATE threads SET turn_ended = ? WHERE folder = ?", [
+          Date.now(),
+          callingThread(caller).folder,
+        ]);
         record(
           db,
           callingThread(caller).folder,
