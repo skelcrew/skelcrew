@@ -47,7 +47,7 @@ async function git(folder: string, ...args: string[]): Promise<string> {
 // cancels it first.
 async function push(
   db: Database,
-  tmux: string,
+  sessions: string,
   folder: string,
   summary: string,
   signal: AbortSignal,
@@ -78,7 +78,7 @@ async function push(
     // a newer submit makes it stale.
     const refused = refusedWorkflow(threadName(db, thread), errorText(error));
     if (refused === null) throw error;
-    typeInto(tmux, folder, builderHarness(thread).marks, refused, {
+    typeInto(sessions, folder, builderHarness(thread).marks, refused, {
       timeout: 30 * 60_000,
       signal,
     }).catch((failed) =>
@@ -426,7 +426,7 @@ function pushAndReview(
   // the order.
   const cancel = new AbortController();
   const before = earlier?.pushed.catch(() => {}) ?? Promise.resolve();
-  const pushed = before.then(() => push(db, tmux, folder, summary, cancel.signal));
+  const pushed = before.then(() => push(db, sessions, folder, summary, cancel.signal));
   const rest = Promise.all([pushed, earlier?.done]).then(([sha]) =>
     reviewRound(db, sessions, folder, sha, cancel.signal),
   );
