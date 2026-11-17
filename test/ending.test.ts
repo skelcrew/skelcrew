@@ -169,3 +169,16 @@ const refused = await startThread(db, { repo: "app", task: "t1" }).then(() => ""
 console.log(JSON.stringify({ refused: refused.includes("couldn't start app-t1 over"), status: readThread(db, thread.folder).status, started: readThread(db, thread.folder).started === thread.started }));`);
   expect(seen).toEqual({ refused: true, status: "done", started: true });
 });
+
+// A setup that couldn't clone the repository fails its thread and leaves no clone, so no refs.
+// Starting that thread over must still work, so setting it up can clone once the problem is
+// fixed.
+test("a failed thread starts over when Skelcrew has no clone of its repository", () => {
+  const seen = withThread(`import { rmSync } from "node:fs";
+record(db, thread.folder, { status: "failed" }, "couldn't clone");
+rmSync(${JSON.stringify(join(home, ".local", "share", "skelcrew", "repos", "simon", "app"))}, { recursive: true });
+await Bun.sleep(5);
+const fresh = await startThread(db, { repo: "app", task: "t1" });
+console.log(JSON.stringify({ status: readThread(db, fresh.folder).status, new: fresh.started !== thread.started }));`);
+  expect(seen).toEqual({ status: "working", new: true });
+});

@@ -153,13 +153,15 @@ async function recordThread(
   // work. So they go now, before the new thread is recorded and can push, and a ref git can't
   // delete refuses the start. Deleting a ref that isn't there succeeds. Ending a thread leaves
   // them, as nothing reads a done thread's refs, and an end cut short would leave them anyway.
-  // A thread that isn't failed or done keeps them, and is refused below.
+  // A thread that isn't failed or done keeps them, and is refused below. With no clone there
+  // are no refs, such as after a setup that couldn't clone, and setting up the new thread
+  // clones afresh.
   const ended = Thread.nullable().parse(
     db
       .query(`SELECT * FROM task_threads ${where} AND status IN ('failed', 'done')`)
       .get(owner, repo, task),
   );
-  if (ended)
+  if (ended && existsSync(cloneDir(owner, repo)))
     for (const kind of ["threads", "bases", "remote", "approved"]) {
       const ref = `refs/skelcrew/${kind}/${ended.folder}`;
       const { ok, said } = await quietly([
