@@ -854,7 +854,8 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
 
   // A merged thread is never polled again once it is done, so its end and its note for the
   // lead are saved together. A note that can't be saved, as when the disk is full, leaves the
-  // thread short of done, and a later poll ends it again and tells the lead.
+  // thread short of done, with no end in its log, and a later poll ends it again and tells the
+  // lead.
   test("a thread whose note for the lead can't be saved isn't done until a later poll saves both", async () => {
     await approvedApp12();
     // Saving any note fails while the trigger is there.
@@ -865,9 +866,11 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
         "CREATE TRIGGER fail_notes BEFORE INSERT ON notes BEGIN SELECT RAISE(ABORT, 'disk full'); END",
       );
       pr({ state: "merged", reviews: [skelReview], checks: [approved] });
-      await until(() => read(join(data(), "threads", "app-12.log")).includes("PR #7 was merged"));
+      // A poll tried to end it: the end stops the builder before it saves anything.
+      await until(() => fakeBuilders().length === 0, 30_000);
       await morePolls();
       expect(thread().status).not.toBe("done");
+      expect(read(join(data(), "threads", "app-12.log"))).not.toContain("ended the thread");
       db.run("DROP TRIGGER fail_notes");
     } finally {
       db.close();

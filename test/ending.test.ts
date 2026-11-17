@@ -161,10 +161,14 @@ try {
 // forge, a push ref left behind would make the new thread look as if it had pushed already, and
 // end it at once. So a start over whose refs git can't delete is refused, and nothing changes.
 test("a start over that can't delete the old thread's refs is refused", () => {
-  const seen = withThread(`import { rmSync } from "node:fs";
+  const clone = join(home, ".local", "share", "skelcrew", "repos", "simon", "app");
+  const seen = withThread(`import { writeFileSync } from "node:fs";
 record(db, thread.folder, { status: "done" }, "ended");
-// Skelcrew's clone is no git repository now, so git can delete nothing in it.
-rmSync(${JSON.stringify(join(home, ".local", "share", "skelcrew", "repos", "simon", "app", ".git"))}, { recursive: true });
+// The old thread pushed, and its push ref is locked, as by a git command still running.
+const git = (...args) => Bun.spawnSync(["git", "-C", ${JSON.stringify(clone)}, "-c", "user.name=t", "-c", "user.email=t@t", ...args]);
+git("commit", "-q", "--allow-empty", "-m", "pushed");
+git("update-ref", "refs/skelcrew/threads/app-t1", "HEAD");
+writeFileSync(${JSON.stringify(join(clone, ".git", "refs", "skelcrew", "threads", "app-t1.lock"))}, "");
 const refused = await startThread(db, { repo: "app", task: "t1" }).then(() => "", (error) => String(error));
 console.log(JSON.stringify({ refused: refused.includes("couldn't start app-t1 over"), status: readThread(db, thread.folder).status, started: readThread(db, thread.folder).started === thread.started }));`);
   expect(seen).toEqual({ refused: true, status: "done", started: true });

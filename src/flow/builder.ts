@@ -151,27 +151,22 @@ async function recordThread(
   // A thread starting over in a failed or done thread's folder would be taken for one that
   // pushed already, and without a forge ended at once, and an old approval could hold for its
   // work. So they go now, before the new thread is recorded and can push, and a ref git can't
-  // delete refuses the start. Deleting a ref that isn't there succeeds. Ending a thread leaves
-  // them, as nothing reads a done thread's refs, and an end cut short would leave them anyway.
-  // A thread that isn't failed or done keeps them, and is refused below. With no clone there
-  // are no refs, such as after a setup that couldn't clone, and setting up the new thread
-  // clones afresh.
+  // delete refuses the start. Only a ref that is there is deleted: there is none with no
+  // clone, as after a setup that couldn't clone, nor for a folder no ref can be named after,
+  // which setting up refuses later. Ending a thread leaves them, as nothing reads a done
+  // thread's refs, and an end cut short would leave them anyway. A thread that isn't failed or
+  // done keeps them, and is refused below.
   const ended = Thread.nullable().parse(
     db
       .query(`SELECT * FROM task_threads ${where} AND status IN ('failed', 'done')`)
       .get(owner, repo, task),
   );
-  if (ended && existsSync(cloneDir(owner, repo)))
+  const git = (...args: string[]) => quietly(["git", "-C", cloneDir(owner, repo), ...args]);
+  if (ended)
     for (const kind of ["threads", "bases", "remote", "approved"]) {
       const ref = `refs/skelcrew/${kind}/${ended.folder}`;
-      const { ok, said } = await quietly([
-        "git",
-        "-C",
-        cloneDir(owner, repo),
-        "update-ref",
-        "-d",
-        ref,
-      ]);
+      if (!(await git("rev-parse", "--verify", "--quiet", ref)).ok) continue;
+      const { ok, said } = await git("update-ref", "-d", ref);
       if (!ok)
         throw new Error(
           `couldn't start ${name}-${task} over, as Skelcrew couldn't delete ${ref}: ${said}`,
