@@ -146,7 +146,7 @@ export async function endThread(
     record(db, thread.folder, { status: "done", needs_you: false }, `${why}: ended the thread`);
     if (note === null) return;
     const line = `${threadName(db, thread)} ${note}`.replace(/\s+/g, " ").slice(0, 200);
-    noteForLead(db, sessions, thread, line);
+    noteForLead(db, sessions, thread, line, thread.folder);
   })();
 }
 

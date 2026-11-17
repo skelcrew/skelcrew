@@ -269,8 +269,9 @@ function prepareTables(db: Database): void {
   // started from a tracker, kept until they are typed in, since the lead may not be running.
   db.run("CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, text TEXT NOT NULL)");
   // A note names its repository, and one from before each repository had its own lead names
-  // none until adoptOldLead gives it one.
-  for (const column of ["owner", "repo"])
+  // none until adoptOldLead gives it one. A note that a thread ended names that thread's
+  // folder in `ended`, so a thread starting over there can drop it before the lead hears it.
+  for (const column of ["owner", "repo", "ended"])
     if (!db.query("SELECT 1 FROM pragma_table_info('notes') WHERE name = ?").get(column))
       db.run(`ALTER TABLE notes ADD COLUMN ${column} TEXT`);
   // A lead table means a database from before each repository had its own lead.

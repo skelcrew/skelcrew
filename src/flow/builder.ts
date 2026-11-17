@@ -232,6 +232,9 @@ async function recordThread(
     // PR, rounds, review or updates.
     db.run(`DELETE FROM threads ${where}`, [owner, repo, task]);
     db.run("DELETE FROM messages WHERE folder = ?", [thread.folder]);
+    // A note that the old thread ended may still wait for a busy lead. The new thread has the
+    // same name, and the lead would drop it from what it holds open, so the note goes too.
+    db.run("DELETE FROM notes WHERE ended = ?", [thread.folder]);
     db.run(
       `INSERT INTO threads (owner, repo, task, folder, branch, base, status, session, started)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,

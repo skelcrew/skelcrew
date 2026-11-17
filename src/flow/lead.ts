@@ -257,16 +257,19 @@ export function typeLeadNotes(db: Database, sessions: string): void {
 
 // Saves a note for the lead of a repository, and has the daemon type it in. Notes already
 // wait while the lead is busy, and stay saved while it isn't running, so a note is never lost.
+// `ended` is the folder of the thread whose end the note reports, if it does.
 export function noteForLead(
   db: Database,
   sessions: string,
   repository: { owner: string; repo: string },
   text: string,
+  ended: string | null = null,
 ): void {
-  db.run("INSERT INTO notes (owner, repo, text) VALUES (?, ?, ?)", [
+  db.run("INSERT INTO notes (owner, repo, text, ended) VALUES (?, ?, ?, ?)", [
     repository.owner,
     repository.repo,
     text,
+    ended,
   ]);
   typeLeadNotes(db, sessions);
 }

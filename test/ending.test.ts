@@ -35,12 +35,13 @@ console.log(JSON.stringify({ status: readThread(db, fresh.folder).status, clone:
 
 // Runs a script against the test's own home, with a thread app-t1 started on a repository with
 // no tracker or forge, and returns what it printed as JSON. The script has db, thread, the
-// imports below, and socket, a tmux socket on which no server runs.
+// imports below, and socket, a tmux socket on which no server runs, so no lead hears a note.
 function withThread(body: string): unknown {
   const code = `import { existsSync, mkdirSync } from "node:fs";
 import { openDb } from ${JSON.stringify(source("db.ts"))};
 import { startThread } from ${JSON.stringify(source("flow/builder.ts"))};
 import { endThread, removing } from ${JSON.stringify(source("flow/events.ts"))};
+import { noteForLead } from ${JSON.stringify(source("flow/lead.ts"))};
 import { cloneOf, readThread, record } from ${JSON.stringify(source("flow/thread.ts"))};
 const db = openDb();
 db.run("INSERT INTO repositories (name, owner, repo, opened, remote, claimed) VALUES ('app', 'simon', 'app', 1, 'file:///nowhere', 1)");
@@ -86,5 +87,25 @@ console.log(JSON.stringify({ failed, after, status: readThread(db, thread.folder
     after: "working",
     status: "done",
     notes: [{ text: "app-t1 is done: #7 merged into main" }],
+  });
+});
+
+// A note that a thread ended can wait while the lead is busy. If the thread starts over first,
+// the note would name the new thread, and the lead would drop it, so it goes when the thread
+// starts over. Other notes for the lead stay.
+test("a thread starting over drops the note that its old self ended", () => {
+  const seen = withThread(`noteForLead(db, socket, thread, "started app-t2 from github: Fix login");
+await endThread(db, socket, thread, "PR #7 was merged", "is done: #7 merged into main");
+const queued = db.query("SELECT text FROM notes ORDER BY id").all();
+await Bun.sleep(5);
+await startThread(db, { repo: "app", task: "t1" });
+const notes = db.query("SELECT text FROM notes ORDER BY id").all();
+console.log(JSON.stringify({ queued, notes }));`);
+  expect(seen).toEqual({
+    queued: [
+      { text: "started app-t2 from github: Fix login" },
+      { text: "app-t1 is done: #7 merged into main" },
+    ],
+    notes: [{ text: "started app-t2 from github: Fix login" }],
   });
 });
