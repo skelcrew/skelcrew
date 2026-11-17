@@ -231,9 +231,10 @@ export async function reportQuestion(state: "asked" | "answered" | "closed"): Pr
 // builder's thread needs you if the builder stopped without submitting. The hook's input on stdin
 // can hold the builder's last message, whose first line goes in the lead's note, so you see what
 // it waits on. Input that isn't the hook's is left out, and a terminal isn't read, as it would
-// wait for you. The agent's own socket says which agent. It also sends the commit the clone the
-// hook runs in has checked out, when nothing there is uncommitted, so a builder that only
-// answered a message while its last submit is reviewed doesn't need you.
+// wait for you. The agent's own socket says which agent. It also says whether the last message
+// held no question, and sends the commit the clone the hook runs in has checked out when nothing
+// there is uncommitted, so a builder that only answered a message while its last submit is
+// reviewed doesn't need you.
 export async function reportTurnEnded(): Promise<void> {
   const Input = z.object({ last_assistant_message: z.string().nullish() });
   const text = process.stdin.isTTY ? "" : await Bun.stdin.text();
@@ -245,10 +246,15 @@ export async function reportTurnEnded(): Promise<void> {
   const status = await quietly(["git", "status", "--porcelain"]);
   const head = await quietly(["git", "rev-parse", "--verify", "HEAD"]);
   const clean = status.ok && status.out.trim() === "" && head.ok;
+  // Codex has no question tool, so its builder asks by ending its turn with the question in
+  // plain text. A question mark that ends a sentence, anywhere in the message, counts as one,
+  // while code such as a?.b doesn't. A turn with no message given may have asked too.
+  const replied = message.trim() !== "" && !/\?(\s|$)/.test(message);
   await request({
     command: "turn ended",
     ...(said ? { said } : {}),
     ...(clean ? { head: head.out.trim() } : {}),
+    ...(replied ? { replied } : {}),
   });
 }
 

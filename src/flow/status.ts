@@ -37,16 +37,17 @@ export const needsYou = (thread: Thread) =>
 // text, or is stuck, and nothing else would tell you. One that submitted waits on its review.
 // One asking with AskUserQuestion, or stopped on an error, already needs you, and one already
 // waiting has nothing new to say. The status is not enough: a review can set it back to working
-// while the builder that submitted is still finishing its turn. `unchanged` says the builder's
-// clone holds nothing beyond its last submit. Such a turn only answered a message, such as the
-// lead's, so while that submit is reviewed, waits on CI or is approved, it waits on that too.
-export const endedTurnAsks = (thread: Thread, unchanged = false) =>
+// while the builder that submitted is still finishing its turn. `onlyReplied` says the builder's
+// clone holds nothing beyond its last submit and its last message asked nothing. Such a turn
+// only answered a message, such as the lead's, so while that submit is reviewed, waits on CI or
+// is approved, it waits on that too.
+export const endedTurnAsks = (thread: Thread, onlyReplied = false) =>
   (thread.status === "working" || thread.status === "waiting") &&
   !thread.submitted &&
   !thread.asking &&
   !thread.stalled &&
   !thread.erred &&
-  !(unchanged && submitStands(thread));
+  !(onlyReplied && submitStands(thread));
 
 // Returns whether the thread's last submit still moves on without its builder: its review waits
 // or runs, or it was approved and waits on CI or you. Changes asked for, a failed check or a
@@ -226,21 +227,22 @@ export function questionAsked(db: Database, sessions: string, folder: string): v
   typeLeadNotes(db, sessions);
 }
 
-// The builder's turn ended, from its harness's Stop hook, with what it last said and the commit
-// its clone has checked out when nothing there is uncommitted. A builder that didn't submit in
-// that turn waits on you, so the thread needs you and the lead hears of it, unless its clone
-// is still at the commit Skelcrew last pushed and that submit is still on its way. Returns
+// The builder's turn ended, from its harness's Stop hook, with what it last said, the commit its
+// clone has checked out when nothing there is uncommitted, and whether its last message held no
+// question. A builder that didn't submit in that turn waits on you, so the thread needs you and
+// the lead hears of it. The exception is a builder that only replied: its clone is still at the
+// commit Skelcrew last pushed, it asked nothing, and that submit is still on its way. Returns
 // whether it waits on you.
 export function turnEnded(
   db: Database,
   sessions: string,
   folder: string,
-  said: string | undefined,
-  head: string | undefined,
+  ended: { said?: string | undefined; head?: string | undefined; replied?: boolean | undefined },
 ): boolean {
   const thread = readThread(db, folder);
-  const unchanged = head !== undefined && head === lastPushed(thread);
-  if (!endedTurnAsks(thread, unchanged)) return false;
+  const said = ended.said;
+  const unchanged = ended.head !== undefined && ended.head === lastPushed(thread);
+  if (!endedTurnAsks(thread, unchanged && ended.replied === true)) return false;
   // The note quotes what the builder last said, so you see what it waits on. In quotes,
   // and with no tags of Skelcrew's, it can't pass for Skelcrew's own words or another's.
   // The quote, escapes included, is kept to 100 characters, as a note is cut at 200,

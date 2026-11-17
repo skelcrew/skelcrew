@@ -589,8 +589,9 @@ test("a builder's turn that ends without a submit needs you, and no other does",
     expect([change, endedTurnAsks(thread(change))]).toEqual([change, asks]);
 });
 
-// A builder whose clone holds nothing beyond its last submit only answered a message, such as
-// the lead's, so it waits on what that submit waits on, and only then.
+// A builder whose clone holds nothing beyond its last submit, and whose last message asked
+// nothing, only answered a message, such as the lead's, so it waits on what that submit waits
+// on, and only then.
 test("a turn with no new work waits on a submit still under review, on CI or approved", () => {
   const sha = "a".repeat(40);
   const approved = { status: "waiting" as const, verdict: "approve" as const };
@@ -610,7 +611,8 @@ test("a turn with no new work waits on a submit still under review, on CI or app
   ];
   for (const [change, asks] of cases)
     expect([change, endedTurnAsks(thread(change), true)]).toEqual([change, asks]);
-  // New work, uncommitted or not yet submitted, needs you whatever the submit waits on.
+  // New work, uncommitted or not yet submitted, or a question, needs you whatever the submit
+  // waits on.
   for (const [change] of cases)
     expect([change, endedTurnAsks(thread(change), false)]).toEqual([change, true]);
 });

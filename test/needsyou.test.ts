@@ -436,10 +436,31 @@ describe.skipIf(insideSandbox)("needs you", () => {
     addApp();
     await startApp12();
     submittedAsReviewing();
-    await hook("stop");
+    const said = "The lead's note about the import order came in after I had already fixed it.";
+    await hook("stop", JSON.stringify({ last_assistant_message: said }));
     await Bun.sleep(1000);
     expect(await needsYou()).toBe(false);
     expect(notes()).toBe(0);
+  }, 60_000);
+
+  // Codex has no question tool, so its builder asks by ending its turn with the question.
+  test("a turn with no new work that asks a question needs you, even while the last submit is reviewed", async () => {
+    addApp();
+    await startApp12();
+    submittedAsReviewing();
+    const said = "Done.\n\nWhich format should the export use?";
+    await hook("stop", JSON.stringify({ last_assistant_message: said }));
+    await untilNeedsYou(true);
+    await until(() => notes() === 1);
+  }, 60_000);
+
+  // Without the builder's last message there is no telling that it asked nothing.
+  test("a turn with no new work and no last message needs you, even while the last submit is reviewed", async () => {
+    addApp();
+    await startApp12();
+    submittedAsReviewing();
+    await hook("stop");
+    await untilNeedsYou(true);
   }, 60_000);
 
   test("a turn that leaves work it didn't submit needs you, even while the last submit is reviewed", async () => {
@@ -447,7 +468,7 @@ describe.skipIf(insideSandbox)("needs you", () => {
     await startApp12();
     submittedAsReviewing();
     writeFileSync(join(data(), "threads", "app-12", "export.ts"), "export {};\n");
-    await hook("stop");
+    await hook("stop", JSON.stringify({ last_assistant_message: "Started on the export." }));
     await untilNeedsYou(true);
     await until(() => notes() === 1);
   }, 60_000);
