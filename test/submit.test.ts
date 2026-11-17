@@ -896,6 +896,27 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
     expect(read(join(codexHome(), "sessions", "prompt-1"))).toContain("origin/next...HEAD");
     expect(read(join(codexHome(), "sessions", "branches-1"))).toContain("origin/next");
   }, 60_000);
+
+  // Skelcrew's clone holds the default branch, and another base only once Skelcrew fetches it.
+  // Measured against main, the code next adds would make the change more than docs.
+  test("a change to docs alone on another base branch runs no tests", async () => {
+    const work = addApp();
+    git(work, "checkout", "-q", "-b", "next");
+    mkdirSync(join(work, "src"), { recursive: true });
+    writeFileSync(join(work, "src", "next.ts"), "export const next = 1;\n");
+    git(work, "add", "-A");
+    git(work, "commit", "-qm", "Start next");
+    git(work, "push", "-q", "origin", "next");
+    mkdirSync(builder(), { recursive: true });
+    writeFileSync(join(builder(), "docs-only"), "");
+    verdict(1, "approve", "Fine.");
+    serve();
+    await untilCloned();
+    expect((await skel(["start", "app-12", "--from", "next"])).err).toBe("");
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), 30_000);
+    const prompt = read(join(codexHome(), "sessions", "prompt-1"));
+    expect(prompt).toContain("The change only touches docs and Markdown, so don't run the tests.");
+  }, 60_000);
 });
 
 // Lets a test change a thread as merging its PR would, without polling GitHub.

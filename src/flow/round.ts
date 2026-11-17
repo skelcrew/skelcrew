@@ -11,7 +11,7 @@ import { errorText } from "../say.ts";
 import { baseOf } from "./builder.ts";
 import { openPrs, prOf, threadTask } from "./copy.ts";
 import { afterReview, ciResult, onlyDocs, pastRoundLimit, whoRunsTheSuite } from "./decide.ts";
-import { pushCommit } from "./git.ts";
+import { fetchInto, pushCommit } from "./git.ts";
 import { typeLeadNotes } from "./lead.ts";
 import { Queue } from "./queue.ts";
 import { review } from "./reviewer.ts";
@@ -59,6 +59,12 @@ async function push(db: Database, folder: string, summary: string): Promise<stri
   // delivery, and there is no PR to open.
   const sha = await git(skelcrewClone, "rev-parse", "--verify", `${ref}^{commit}`);
   await pushCommit(db, repository, skelcrewClone, sha, thread.branch);
+  // The base branch, current, in a ref of the thread's own, for the review to see which files
+  // the change touches. Skelcrew's clone holds only the default branch otherwise. The poll
+  // fetches the same ref. A base the forge won't give fails no push: the review then can't
+  // tell the change is docs only, and the tests run.
+  const bases = `refs/skelcrew/bases/${thread.folder}`;
+  await fetchInto(db, repository, skelcrewClone, baseOf(thread), bases).catch(() => {});
   if (forgeOf(db, repository) === null) {
     record(db, folder, {}, `pushed ${sha} to ${thread.branch}`);
     return sha;
@@ -166,22 +172,18 @@ async function reviewRound(
   const setsUpCi = listed.success && listed.stdout.toString().trim() !== "";
   // A change to docs and Markdown alone is tested by no one, as CI skips it and no code
   // changed, so its review waits for no CI. The files are those changed since the base branch,
-  // which Skelcrew's clone holds as refs/heads/<base>. Without rename detection, a file moved
-  // from code into docs shows both names, so the code it removes counts. A base or diff
-  // Skelcrew can't read, as in a clone not set up yet, lists none, and the tests run.
-  const docsOnly = (() => {
-    try {
-      const base = `refs/heads/${baseOf(thread)}`;
-      const diff = ["git", "-C", cloneDir(thread.owner, thread.repo), "diff", "--name-only"];
-      const changed = Bun.spawnSync([...diff, "--no-renames", `${base}...${sha}`], {
-        stdout: "pipe",
-        stderr: "ignore",
-      });
-      return changed.success && onlyDocs(changed.stdout.toString().split("\n").filter(Boolean));
-    } catch {
-      return false;
-    }
-  })();
+  // which the push fetched into the thread's own ref in Skelcrew's clone. Without rename
+  // detection, a file moved from code into docs shows both names, so the code it removes
+  // counts. A base or diff Skelcrew can't read, as in a clone not set up yet, lists none, and
+  // the tests run.
+  const bases = `refs/skelcrew/bases/${thread.folder}`;
+  const diff = ["git", "-C", cloneDir(thread.owner, thread.repo), "diff", "--name-only"];
+  const changed = Bun.spawnSync([...diff, "--no-renames", `${bases}...${sha}`], {
+    stdout: "pipe",
+    stderr: "ignore",
+  });
+  const docsOnly =
+    changed.success && onlyDocs(changed.stdout.toString().split("\n").filter(Boolean));
   const repositoryName = `${thread.owner}/${thread.repo}`;
   const suite = (waited: boolean) => {
     const prs = openPrs(db, thread.owner, thread.repo);
