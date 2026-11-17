@@ -764,7 +764,7 @@
           "status": "waiting",
           "needsYou": true,
           "running": false,
-          "word": "question",
+          "word": "turn ended",
           "harness": "claude",
           "agentHarness": "claude",
           "age": "",
@@ -794,7 +794,12 @@
                 "mark": ["●", "38;5;221"],
                 "name": "notes-t1",
                 "title": "Sort notes by date",
-                "ends": [["question", "38;5;221"], ["claude", "90"], ["", "90"], ["17 Nov", "90"]],
+                "ends": [
+                  ["turn ended", "38;5;221"],
+                  ["claude", "90"],
+                  ["", "90"],
+                  ["17 Nov", "90"]
+                ],
                 "link": null,
                 "session": "notes-t1",
                 "dim": false,

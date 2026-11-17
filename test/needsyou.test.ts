@@ -248,7 +248,7 @@ function submittedAsReviewing(): void {
   const sha = git(clone, "rev-parse", ref);
   const db = new Database(join(data(), "skelcrew.db"));
   db.run("PRAGMA busy_timeout = 5000");
-  db.run("UPDATE threads SET reviewing = ?", [sha]);
+  db.run("UPDATE tasks SET reviewing = ?", [sha]);
   db.close();
 }
 
