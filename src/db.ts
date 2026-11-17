@@ -114,7 +114,8 @@ function prepareTables(db: Database): void {
   // for a place, so the sidebar can say so and a restart puts it back in the same order.
   // `working_since` is when the builder's current stretch of work began, for the sidebar. It
   // changes with every message typed into the builder, so it is kept out of the thread's log,
-  // which would otherwise fill with it.
+  // which would otherwise fill with it. `review_at` is when the latest review was asked for or
+  // ended, for sc ps.
   const threadColumns = {
     rounds: "INTEGER NOT NULL DEFAULT 0",
     pr: "INTEGER",
@@ -148,6 +149,7 @@ function prepareTables(db: Database): void {
     changed: "INTEGER",
     updates: "TEXT",
     working_since: "INTEGER",
+    review_at: "INTEGER",
   };
   for (const [column, type] of Object.entries(threadColumns))
     if (!db.query("SELECT 1 FROM pragma_table_info('threads') WHERE name = ?").get(column))
