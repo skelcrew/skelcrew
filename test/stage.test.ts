@@ -85,6 +85,12 @@ test("an approval with green checks is ready for review, and only once it waits 
   );
 });
 
+test("a thread that failed or stopped after its approval keeps its task working", () => {
+  const approved = { verdict: "approve" as const, checks: "passing" as const, needs_you: true };
+  expect(taskStage(thread({ ...approved, status: "failed" }), true)).toBe("working");
+  expect(taskStage(thread({ ...approved, status: "stopped" }), true)).toBe("working");
+});
+
 test("work that ended is merged, or else back in stage issue while the issue is open", () => {
   expect(taskStage(thread({ status: "done", merged: true }), false)).toBe("merged");
   expect(taskStage(thread({ status: "done", merged: true }), true)).toBe("merged");

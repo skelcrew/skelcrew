@@ -354,6 +354,24 @@ describe("sc issue show", () => {
     issue("app", 12, "Add export", "Export threads as JSON.\n\nKeep it small.");
     issue("app", 10, "Fix login", "");
     issue("site", 7, "New landing page", "Make it calm.");
+    // Each started task saved its issue's words as it started.
+    sql(`UPDATE tasks SET title = 'Add export', body = 'Export threads as JSON.
+
+Keep it small.' WHERE repo = 'app' AND task = '12';
+UPDATE tasks SET title = 'New landing page', body = 'Make it calm.' WHERE repo = 'site'`);
+  });
+
+  // The reviewer checks against what the builder was given, so an edit to the issue after the
+  // start never changes the task. The lead passes on what matters as a message.
+  test("shows a started task as it started, after its issue was edited", async () => {
+    issue("app", 12, "Add export as CSV", "Export threads as CSV.");
+    serve();
+    await untilAnswers();
+    const shown = JSON.parse((await skel(["issue", "show", "app-12", "--json"])).out);
+    expect(shown).toMatchObject({
+      title: "Add export",
+      body: "Export threads as JSON.\n\nKeep it small.",
+    });
   });
 
   test("shows a task's title and body, and the thread on it", async () => {

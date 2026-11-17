@@ -11,11 +11,14 @@ export type Stage = z.infer<typeof Stage>;
 // whether the tracker still has its issue open, which a task with no issue never has. A task
 // with a thread at work is working, as is one whose thread stopped or failed, so it doesn't
 // vanish. It is ready for review once Skelcrew's reviewer approved its latest round and CI is
-// green. Work that ended merges it, and otherwise puts it back in stage issue while its issue is
-// open, as sc start starts it again from there, or closes it.
+// green, while its thread works or waits: a thread that failed or stopped after an approval
+// keeps its review, but waits for sc start, not for you to merge. Work that ended merges it,
+// and otherwise puts it back in stage issue while its issue is open, as sc start starts it
+// again from there, or closes it.
 export function taskStage(thread: Thread | null, issueOpen: boolean): Stage {
   const ended = issueOpen ? "issue" : "closed";
   if (thread === null) return ended;
   if (thread.status === "done") return thread.merged ? "merged" : ended;
-  return readyToMerge(thread) ? "ready for review" : "working";
+  const live = thread.status === "working" || thread.status === "waiting";
+  return live && readyToMerge(thread) ? "ready for review" : "working";
 }

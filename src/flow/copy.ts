@@ -191,11 +191,13 @@ export function itemAt(db: Database, link: string): Item | null {
   return parseItems(rows)[0] ?? null;
 }
 
-// Returns the task a thread works on, for its reviewer, its PR and sc issue show: its item in
-// Skelcrew's copy, where the tracker's latest words are, or else what the thread saved as it
-// started, as for a thread with no task in the tracker. Only a task from the copy has a line
-// that closes it. The lead's messages to the builder follow the body, oldest first, as changes
-// to the task: a reviewer that didn't see them would ask the builder to undo what you agreed.
+// Returns the task a thread works on, for its builder, its reviewer, its PR and sc issue show:
+// the title and body saved as it started. Later edits to the issue never reach a started task,
+// so the reviewer checks against what the builder was given, and the lead passes on what
+// matters as a message. A row from before Skelcrew saved them falls back on the copy's words.
+// Only a task from the copy has a line that closes it. The lead's messages to the builder follow
+// the body, oldest first, as changes to the task: a reviewer that didn't see them would ask the
+// builder to undo what you agreed.
 export function threadTask(
   db: Database,
   thread: {
@@ -207,14 +209,16 @@ export function threadTask(
     updates: { at: number; text: string }[];
   },
 ): { title: string; body: string; closes: string | null } {
-  // taskOf throws when the copy has no such task, which is the sign to use the thread's own.
-  let task: { title: string; body: string; closes: string | null };
+  // taskOf throws when the copy has no such task, as for a task with no issue.
+  let issue: Task | null = null;
   try {
-    const { title, body, closes } = taskOf(db, thread.owner, thread.repo, thread.task);
-    task = { title, body, closes };
-  } catch {
-    task = { title: thread.title ?? "", body: thread.body ?? "", closes: null };
-  }
+    issue = taskOf(db, thread.owner, thread.repo, thread.task);
+  } catch {}
+  const task = {
+    title: thread.title ?? issue?.title ?? "",
+    body: thread.title === null ? (issue?.body ?? "") : (thread.body ?? ""),
+    closes: issue?.closes ?? null,
+  };
   if (thread.updates.length === 0) return task;
   // Each message under the time it was typed in, in UTC, as the reviewer has no time zone.
   const updates = thread.updates.map(

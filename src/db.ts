@@ -1,9 +1,9 @@
 // Skelcrew's state on this machine: one SQLite file.
 import { Database } from "bun:sqlite";
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
-import { dataDir } from "./paths.ts";
+import { dataDir, threadsDir } from "./paths.ts";
 
 // `name` is the repository's name in Skelcrew. `owner` and `repo` are its name on its forge, or
 // without a forge its remote's path. `forge` is the plugin that claims its remote, or null
@@ -93,6 +93,51 @@ export const taskColumns = {
   merged: "INTEGER NOT NULL DEFAULT 0",
   issue_link: "TEXT",
 };
+
+// Marks each done task merged when its thread's log says its work ended by a merge, for tasks
+// that ended before Skelcrew kept it. The log's last line that ended the thread says why: its PR
+// was merged, or without a forge, its branch was merged into its base. Anything else, such as
+// sc rm or a PR closed without merging, and a thread whose log is gone, leaves it unmerged.
+function recoverMerges(db: Database): void {
+  const done = db
+    .query("SELECT owner, repo, task, folder FROM threads WHERE status = 'done'")
+    .all()
+    .map((row) =>
+      z
+        .object({
+          owner: z.string(),
+          repo: z.string(),
+          task: z.coerce.string(),
+          folder: z.string(),
+        })
+        .parse(row),
+    );
+  for (const { owner, repo, task, folder } of done) {
+    let text: string;
+    try {
+      text = readFileSync(join(threadsDir(), `${folder}.log`), "utf8");
+    } catch {
+      continue;
+    }
+    // Each line is the thread as it was then, with why it changed. A line cut short by a crash
+    // is skipped.
+    const whys = text.split("\n").flatMap((line) => {
+      try {
+        const why = z.object({ why: z.string() }).safeParse(JSON.parse(line));
+        return why.success ? [why.data.why] : [];
+      } catch {
+        return [];
+      }
+    });
+    const ended = whys.filter((why) => why.endsWith(": ended the thread")).at(-1) ?? "";
+    if (/^PR #\d+ was merged: |^its branch .* is merged into /.test(ended))
+      db.run("UPDATE tasks SET merged = 1 WHERE owner = ? AND repo = ? AND task = ?", [
+        owner,
+        repo,
+        task,
+      ]);
+  }
+}
 
 // Saves the link to its issue on each task that lacks one, from Skelcrew's copy of the tracker,
 // for tasks that started before Skelcrew kept it. An issue that has left the copy, as a closed
@@ -184,6 +229,7 @@ export function moveToTasks(db: Database): void {
     const columns = ["owner", "repo", "task", ...Object.keys(taskColumns)].join(", ");
     db.run(`INSERT INTO tasks (${columns}) SELECT ${columns} FROM threads`);
     linkIssues(db);
+    recoverMerges(db);
     viewThreads(db);
   }).immediate();
 }
@@ -267,12 +313,13 @@ function prepareTables(db: Database): void {
   // its threads onto tasks, as only the daemon knows no other daemon still writes to it.
   if (fresh) createTasks(db);
   // A tasks table made by an earlier release lacks the task's newer columns. Its tasks get
-  // their issue's link as the column comes.
+  // their issue's link, and whether their work merged, as the columns come.
   if (hasTasks(db))
     for (const [column, type] of Object.entries(taskColumns))
       if (!db.query("SELECT 1 FROM pragma_table_info('tasks') WHERE name = ?").get(column)) {
         db.run(`ALTER TABLE tasks ADD COLUMN ${column} ${type}`);
         if (column === "issue_link") linkIssues(db);
+        if (column === "merged") recoverMerges(db);
       }
   // Skelcrew's copy of each repository's open tasks and PRs, as items, kept as JSON. The columns
   // are what readers pick and sort by. A database from an earlier release also has an

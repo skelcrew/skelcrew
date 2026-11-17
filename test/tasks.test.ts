@@ -205,6 +205,64 @@ console.log(JSON.stringify({ rounds, merged, issue_link }));`;
   });
 });
 
+// Writes the logs of two threads whose work ended before Skelcrew kept whether it merged:
+// app-16's PR merged, and app-14 was removed after an earlier start of it had merged nothing.
+// Marks app-14 done, as sc rm leaves it.
+function endedBeforeMerges(): void {
+  const logs = join(data(), "threads");
+  mkdirSync(logs, { recursive: true });
+  const line = (why: string) => `${JSON.stringify({ at: "2026-11-10T09:00:00Z", why })}\n`;
+  writeFileSync(
+    join(logs, "app-16.log"),
+    `${line("started")}${line("PR #42 was merged: ended the thread")}`,
+  );
+  writeFileSync(
+    join(logs, "app-14.log"),
+    `${line("PR #30 was merged: ended the thread")}${line("started")}{"cut sh\n${line("removed: started over: ended the thread")}`,
+  );
+  const db = new Database(dbFile());
+  db.run("UPDATE threads SET status = 'done' WHERE folder = 'app-14'");
+  db.close();
+}
+
+// Returns which of the tasks app-14 and app-16 are marked merged.
+function mergedTasks(): unknown {
+  const db = new Database(dbFile(), { readonly: true });
+  const rows = db
+    .query("SELECT task, merged FROM tasks WHERE task IN (14, 16) ORDER BY task")
+    .all();
+  db.close();
+  return rows;
+}
+
+test("the move marks tasks merged whose thread's log says their PR merged", () => {
+  oldDatabase();
+  endedBeforeMerges();
+  run(`import { openDb, moveToTasks } from ${JSON.stringify(source("db.ts"))};
+moveToTasks(openDb());`);
+  expect(mergedTasks()).toEqual([
+    { task: 14, merged: 0 },
+    { task: 16, merged: 1 },
+  ]);
+});
+
+test("a tasks table from an earlier release marks merged the tasks whose PR merged", () => {
+  oldDatabase();
+  run(`import { openDb, moveToTasks } from ${JSON.stringify(source("db.ts"))};
+moveToTasks(openDb());`);
+  endedBeforeMerges();
+  const earlier = new Database(dbFile());
+  earlier.run("DROP VIEW task_threads");
+  earlier.run("ALTER TABLE tasks DROP COLUMN merged");
+  earlier.close();
+  run(`import { openDb } from ${JSON.stringify(source("db.ts"))};
+openDb();`);
+  expect(mergedTasks()).toEqual([
+    { task: 14, merged: 0 },
+    { task: 16, merged: 1 },
+  ]);
+});
+
 test("a reader opened before the move reads the tasks after it", () => {
   oldDatabase();
   // The reader stands in for sc run before the new daemon starts, such as a screen left open.

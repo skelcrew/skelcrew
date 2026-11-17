@@ -370,8 +370,8 @@ export async function startBuilder(db: Database, sessions: string, thread: Threa
   const session = resume ?? crypto.randomUUID();
   let start: { resume: string } | { sessionId: string; prompt: string } = { resume: session };
   if (!resume) {
-    // The same task its reviewer gets: Skelcrew's copy, brought up to date just before a first
-    // start, with the lead's messages after it. A builder starting afresh on a thread the lead
+    // The same task its reviewer gets: the words saved as it started, from Skelcrew's copy
+    // brought up to date just before, with the lead's messages after it. A builder starting afresh on a thread the lead
     // already steered would otherwise be judged by changes it was never told.
     const { title, body } = threadTask(db, thread);
     start = { sessionId: session, prompt: body ? `${title}\n\n${body}` : title };
