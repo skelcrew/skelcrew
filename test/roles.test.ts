@@ -28,7 +28,12 @@ const builderTests =
 const threadEnds =
   'When a thread ends, Skelcrew types a one line note too, such as "app-12 is done: #7 merged into main" or "app-12 ended: #7 closed without merging". It comes from Skelcrew, not the human. Drop the thread from what you hold open: never list it as ready to merge again. When useful, tell the human in one line what it unblocks, such as a thread waiting on its work. A thread you removed with sc rm brings no note.\n\n';
 
-test("the lead and builder files hold the instructions the code gave, but the lead's waiting messages and thread ends, and the builder's workflows and tests", () => {
+// What the builder's file added later: it tells the lead only what the lead needs, as Skelcrew
+// already shows its progress.
+const tellingTheLead =
+  " Tell it only when you are blocked or need a decision. Never tell it just to report progress, such as that you submitted, resubmitted or merged main: Skelcrew already shows that.";
+
+test("the lead and builder files hold the instructions the code gave, but the lead's waiting messages and thread ends, and the builder's workflows, tests and telling the lead", () => {
   // The digests of src/agents/prompts/lead.md and builder.md before they moved.
   const lead = builtInRole("lead").instructions;
   expect(lead).toContain(waiting);
@@ -39,7 +44,11 @@ test("the lead and builder files hold the instructions the code gave, but the le
   const builder = builtInRole("builder").instructions;
   expect(builder).toContain(workflows);
   expect(builder).toContain(builderTests);
-  const before = builder.replace(workflows, "").replace(builderTests, builderTestsBefore);
+  expect(builder).toContain(tellingTheLead);
+  const before = builder
+    .replace(workflows, "")
+    .replace(builderTests, builderTestsBefore)
+    .replace(tellingTheLead, "");
   expect(sha256(before)).toBe("556629d5f335c1d5e635a1996a021041ea3e9fb75deaa593399ef84d70ee4d00");
 });
 

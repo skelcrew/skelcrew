@@ -596,7 +596,7 @@ export function submitRound(db: Database, sessions: string, folder: string, summ
 
 // Returns the commit Skelcrew last fetched from the thread's clone and pushed, or null when it
 // has pushed none. Read at once, with no await, so two sc review can't both start one.
-function lastPushed(thread: Thread): string | null {
+export function lastPushed(thread: Thread): string | null {
   const skelcrewClone = cloneDir(thread.owner, thread.repo);
   const ref = `refs/skelcrew/threads/${thread.folder}^{commit}`;
   const run = Bun.spawnSync(["git", "-C", skelcrewClone, "rev-parse", "--verify", "--quiet", ref], {
