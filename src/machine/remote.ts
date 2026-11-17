@@ -33,29 +33,41 @@ import { downloadRelease, releaseSum } from "./update.ts";
 const pathOnServer = 'PATH="$HOME/.local/bin:$PATH"';
 
 // The shell line that runs sc on a server, after warning when that sc runs from a checkout
-// behind the laptop's build. --remote never replaces a checkout, so without the warning a server
-// could keep running old code through many merges. The laptop sends this check with the
-// command, rather than leaving it to Skelcrew there, so a checkout too old to know of it still
-// warns, and it costs no round trip of its own. It runs only when the laptop passes its build.
-// A checkout at or past that commit, or holding that release's tag, is up to date. A commit or
-// tag the checkout has never fetched means it is behind. The warning goes to stderr, so --json
-// output stays clean, and the command runs either way.
+// behind the laptop's build, or its daemon still runs older code than the checkout. --remote
+// never replaces a checkout, so without the warning a server could keep running old code through
+// many merges. The laptop sends this check with the command, rather than leaving it to Skelcrew
+// there, so a checkout too old to know of it still warns, and it costs no round trip of its own.
+// It runs only when the laptop passes its build. The warning goes to stderr, so --json output
+// stays clean, and the command runs either way.
 // It is one line, joined from these steps, so ssh's own line stays readable in logs.
 export const checkThenSc = [
   // A release is checked by its tag, and a commit with changes not committed by the commit.
   `b=\${SKELCREW_LAPTOP_BUILD%-dirty}`,
   "case $b in *.*.*) b=v$b;; esac",
-  // d is the checkout when it is behind, and empty otherwise. The checkout is the folder above
-  // the sc it runs, which is often a link to its bin/sc. A copy has no src/main.ts there, and
-  // needs no warning, as Skelcrew there checks its own build.
-  'd=$([ -n "$b" ] && s=$(command -v sc) && cd "$(dirname "$(readlink -f "$s")")/.." && [ -f src/main.ts ] && ! git merge-base --is-ancestor "$b" HEAD 2>/dev/null && pwd)',
-  // The way to update checks out the laptop's commit or tag itself. git pull can't: it fails in
-  // a checkout with no branch, and on another branch it brings that branch, not the laptop's.
+  // d is the checkout, or empty when sc runs from none. The checkout is the folder above the sc
+  // it runs, which is often a link to its bin/sc. A copy has no src/main.ts there, and needs no
+  // warning, as Skelcrew there checks its own build.
+  'd=$([ -n "$b" ] && s=$(command -v sc) && cd "$(dirname "$(readlink -f "$s")")/.." && [ -f src/main.ts ] && pwd)',
+  // u is what brings the checkout to the laptop's commit or tag, when it isn't at or past it.
+  // git pull can't: it fails in a checkout with no branch, and on another branch it brings that
+  // branch. A commit or tag the checkout has never fetched means it is behind.
+  'u=; [ -n "$d" ] && ! git -C "$d" merge-base --is-ancestor "$b" HEAD 2>/dev/null && u="git fetch --tags && git checkout $b && "',
+  // o is set when the daemon started from another commit of this checkout than it holds now. A
+  // daemon too old to write its commit counts as older. One run from another checkout is left
+  // alone, as restarting the service wouldn't change it. A machine without the service has no
+  // daemon to check.
+  'c=; f=; { read -r c f < "$HOME/.local/share/skelcrew/daemon-code"; } 2>/dev/null',
+  'o=; [ -n "$d" ] && [ -f "$HOME/.config/systemd/user/skelcrew.service" ] && { [ -z "$f" ] || [ "$f" = "$d" ]; } && [ "$c" != "$(git -C "$d" rev-parse HEAD)" ] && o=1',
+  // What to say. Either way the way out ends by restarting the daemon, so it runs the new code.
+  'w=; [ -n "$o" ] && w="The daemon on $SKELCREW_REMOTE_NAME runs older code than its checkout."',
+  '[ -n "$u" ] && w="Skelcrew on $SKELCREW_REMOTE_NAME runs from a checkout at $(git -C "$d" rev-parse --short HEAD), yours is $SKELCREW_LAPTOP_BUILD."',
   // git checkout refuses to overwrite changes to tracked files, so those are named first. Files
   // git doesn't track stay where they are, so they don't count.
-  'w="To update it, run this there:"',
-  '[ -n "$d" ] && [ -n "$(git -C "$d" status --porcelain --untracked-files=no)" ] && w="It has local changes, so commit or stash them, then run this there:"',
-  '[ -n "$d" ] && { echo "Skelcrew on $SKELCREW_REMOTE_NAME runs from a checkout at $(git -C "$d" rev-parse --short HEAD), yours is $SKELCREW_LAPTOP_BUILD. $w"; echo "  cd $d && git fetch --tags && git checkout $b"; } >&2',
+  'a="To update it, run this there:"; [ -n "$u" ] && [ -n "$(git -C "$d" status --porcelain --untracked-files=no)" ] && a="It has local changes, so commit or stash them, then run this there:"',
+  // The folder goes in single quotes, each of its own quotes written as '\'', so a space or a
+  // $ in it reaches cd as it is when you paste the line.
+  String.raw`q=$(printf %s "$d" | sed "s/'/'\\\\''/g")`,
+  `[ -n "$w" ] && printf "%s %s\\n  cd '%s' && %ssystemctl --user restart skelcrew\\n" "$w" "$a" "$q" "$u" >&2`,
   'exec sc "$@"',
 ].join("; ");
 

@@ -1,14 +1,14 @@
 // The daemon, run by sc serve: keeps each repository's lead and the threads' builders
 // running, and answers the CLI and the agents on their sockets.
 import { dlopen, FFIType } from "bun:ffi";
-import { existsSync, mkdirSync, openSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, openSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server, type Socket } from "node:net";
 import { dirname } from "node:path";
 import { processTree, stillRunning } from "../agents/tmux.ts";
 import { openDb, type Repository } from "../db.ts";
 import { setupDone } from "../machine/setup.ts";
 import { keepUpToDate } from "../machine/update.ts";
-import { cloneDir, daemonSocket, threadSocket } from "../paths.ts";
+import { cloneDir, daemonCodeFile, daemonSocket, threadSocket } from "../paths.ts";
 import { createTask, mergePr } from "../plugins/ask.ts";
 import { errorText } from "../say.ts";
 import { checkoutFolder, git, release, singleFile } from "../version.ts";
@@ -136,6 +136,10 @@ export async function serve(tmux: string, every = 30_000): Promise<void> {
   const runningCode = singleFile
     ? {}
     : { folder: checkoutFolder, commit: git("rev-parse", "--short", "HEAD") };
+  // Written down too, for sc --remote, which checks from plain shell that the daemon runs the
+  // code its checkout holds. Shell can't ask the socket.
+  if (!singleFile)
+    writeFileSync(daemonCodeFile(), `${git("rev-parse", "HEAD")} ${checkoutFolder}\n`);
   const sockets: string[] = [];
   // Opens a socket that answers the given caller, removing one a killed daemon left behind,
   // and keeps its path so stopping removes it.

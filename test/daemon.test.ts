@@ -311,6 +311,18 @@ test("says which checkout and commit it started from, so Skelcrew can restart it
   expect(await ask({ command: "status" })).toMatchObject({ folder: checkout, commit });
 });
 
+// sc --remote reads this file from plain shell on a server, to tell whether its daemon runs the
+// code its checkout holds.
+test("writes down the full commit and checkout it started from", async () => {
+  setUp();
+  serve();
+  await until(() => existsSync(cliSocket()));
+  const checkout = join(source(), "..");
+  const commit = Bun.spawnSync(["git", "-C", checkout, "rev-parse", "HEAD"]).stdout.toString();
+  const file = join(home, ".local", "share", "skelcrew", "daemon-code");
+  expect(readFileSync(file, "utf8")).toBe(`${commit.trim()} ${checkout}\n`);
+});
+
 // Asks the daemon to open a repository, as plain sc in a checkout of it does.
 const open = (repo = "app") => ask({ command: "lead", from: `simon/${repo}` });
 

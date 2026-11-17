@@ -87,11 +87,12 @@ beforeEach(() => {
   // ssh -G, which only reads your ssh config, isn't logged. The real ssh answers it with
   // ~/.ssh/config in the test's home, and without this machine's system config, which must
   // not count. The options before the host are skipped.
+  // It logs with printf, as sh's echo would turn the \n in the line's text into new lines.
   writeFileSync(
     join(home, "bin", "ssh"),
     `#!/bin/sh
 test "$1" = -G && exec ${realSsh} -G -F "$HOME/.ssh/config" "$2"
-echo "ssh $*" >> "$HOME/calls"
+printf '%s\\n' "ssh $*" >> "$HOME/calls"
 while test "$1" = -o || test "$1" = -t; do
   if test "$1" = -t; then shift; else shift 2; fi
 done
@@ -429,9 +430,11 @@ test("a laptop with uncommitted changes always offers, and says what it copies",
 
 // Puts a Skelcrew checkout on the server, cloned from the laptop's, with ~/.local/bin/sc linking
 // to its launcher, as running Skelcrew from a checkout leaves it. Its launcher is an older
-// Skelcrew that checks no build, so any warning comes from what the laptop sends.
-function checkoutOnServer(): string {
-  const folder = join(home, "server", "skelcrew");
+// Skelcrew that checks no build, so any warning comes from what the laptop sends. Its daemon's
+// service runs, started from the checkout as it is, and restarting the service starts it again
+// from whatever the checkout then holds, writing down that commit as a daemon does.
+function checkoutOnServer(name = "skelcrew"): string {
+  const folder = join(home, "server", name);
   Bun.spawnSync(["git", "clone", "-q", laptop.folder, folder]);
   mkdirSync(join(folder, "bin"));
   writeFileSync(join(folder, "bin", "sc"), '#!/bin/sh\necho "old Skelcrew ran $*"\n', {
@@ -439,8 +442,25 @@ function checkoutOnServer(): string {
   });
   mkdirSync(join(home, "server", ".local", "bin"), { recursive: true });
   symlinkSync(join(folder, "bin", "sc"), join(home, "server", ".local", "bin", "sc"));
+  unit(join(folder, "bin", "sc"));
+  writeFileSync(
+    join(home, "serverbin", "systemctl"),
+    `#!/bin/sh
+echo "systemctl $*" >> "${join(home, "calls")}"
+mkdir -p "$HOME/.local/share/skelcrew"
+echo "$(git -C ${quoted(folder)} rev-parse HEAD) "${quoted(folder)} > "$HOME/.local/share/skelcrew/daemon-code"
+`,
+    { mode: 0o755 },
+  );
+  daemonRestarts();
   return folder;
 }
+
+// Restarts the daemon's service on the server, as a person there would.
+const daemonRestarts = () =>
+  Bun.spawnSync([join(home, "serverbin", "systemctl"), "--user", "restart", "skelcrew"], {
+    env: { PATH: "/usr/bin:/bin", HOME: join(home, "server") },
+  });
 
 // Makes a commit in a checkout, as a merge on main would.
 function commit(folder: string): void {
@@ -454,30 +474,41 @@ function commit(folder: string): void {
 const at = (folder: string) =>
   Bun.spawnSync(["git", "-C", folder, "rev-parse", "--short", "HEAD"]).stdout.toString().trim();
 
-// Runs the command a warning says to run on the server, there, and returns its exit code.
+// Runs the command a warning says to run on the server, there, as a person pasting it would,
+// with the server's systemctl. Returns its exit code.
 function runAdvice(warning: string): number {
   const command = warning.trim().split("\n").at(-1) ?? "";
   const run = Bun.spawnSync(["sh", "-c", command], {
     cwd: join(home, "server"),
-    env: { PATH: "/usr/bin:/bin", HOME: join(home, "server") },
+    env: { PATH: `${join(home, "serverbin")}:/usr/bin:/bin`, HOME: join(home, "server") },
   });
   return run.exitCode;
 }
 
-// What --remote says about a checkout behind your laptop, with the line that updates it.
-const behindWarning = (folder: string, yours: string, ref = yours, lead = "To update it,") =>
-  `Skelcrew on simon@workbox runs from a checkout at ${at(folder)}, yours is ${yours}. ${lead} run this there:\n  cd ${folder} && git fetch --tags && git checkout ${ref}\n`;
+// A folder as the server's shell reads it back exactly, in single quotes.
+const inQuotes = (folder: string) => `'${folder.replaceAll("'", `'\\''`)}'`;
 
-test("--remote warns when the server's checkout is behind your commit, says how to reach it, then runs the command", async () => {
+// What --remote says about a checkout behind your laptop, with the line that updates it and
+// restarts its daemon.
+const behindWarning = (folder: string, yours: string, ref = yours, lead = "To update it,") =>
+  `Skelcrew on simon@workbox runs from a checkout at ${at(folder)}, yours is ${yours}. ${lead} run this there:\n  cd ${inQuotes(folder)} && git fetch --tags && git checkout ${ref} && systemctl --user restart skelcrew\n`;
+
+// What --remote says about a daemon that runs older code than its checkout.
+const daemonWarning = (folder: string) =>
+  `The daemon on simon@workbox runs older code than its checkout. To update it, run this there:\n  cd ${inQuotes(folder)} && systemctl --user restart skelcrew\n`;
+
+test("--remote warns when the server's checkout is behind your commit, says how to update it and its daemon, then runs the command", async () => {
   const folder = checkoutOnServer();
   commit(laptop.folder);
   const run = await skel(["--remote", "simon@workbox", "ps"]);
   expect(run.err).toBe(behindWarning(folder, at(laptop.folder)));
   expect(run.out).toBe("old Skelcrew ran ps\n");
   expect(run.code).toBe(0);
-  // Doing what it says brings the checkout to your commit, and the warning goes.
+  // Doing what it says brings the checkout to your commit, restarts its daemon on it, and the
+  // warning goes.
   expect(runAdvice(run.err)).toBe(0);
   expect(at(folder)).toBe(at(laptop.folder));
+  expect(calls()).toContain("systemctl --user restart skelcrew\n");
   expect((await skel(["--remote", "simon@workbox", "ps"])).err).toBe("");
 });
 
@@ -496,6 +527,37 @@ for (const [where, move] of [
     expect((await skel(["--remote", "simon@workbox", "ps"])).err).toBe("");
   });
 }
+
+// A space, a quote or a $ in the folder must reach cd as it is, and run nothing.
+test("--remote quotes the checkout's folder in the line that updates it", async () => {
+  const folder = checkoutOnServer("it's my $(touch pwned) skel");
+  commit(laptop.folder);
+  const run = await skel(["--remote", "simon@workbox", "ps"]);
+  expect(run.err).toBe(behindWarning(folder, at(laptop.folder)));
+  expect(runAdvice(run.err)).toBe(0);
+  expect(at(folder)).toBe(at(laptop.folder));
+  expect(existsSync(join(home, "server", "pwned"))).toBe(false);
+  expect((await skel(["--remote", "simon@workbox", "ps"])).err).toBe("");
+});
+
+// Checking out alone leaves the daemon on the old code, so the warning stays until it restarts.
+test("--remote keeps warning after an update until the daemon restarts on it", async () => {
+  const folder = checkoutOnServer();
+  commit(laptop.folder);
+  Bun.spawnSync(["git", "-C", folder, "pull", "-q"]);
+  const run = await skel(["--remote", "simon@workbox", "ps"]);
+  expect(run.err).toBe(daemonWarning(folder));
+  expect(run.out).toBe("old Skelcrew ran ps\n");
+  expect(runAdvice(run.err)).toBe(0);
+  expect((await skel(["--remote", "simon@workbox", "ps"])).err).toBe("");
+});
+
+// A daemon from before daemons wrote down their commit can't say what it runs.
+test("--remote warns about a daemon that doesn't say which commit it runs", async () => {
+  const folder = checkoutOnServer();
+  rmSync(join(home, "server", ".local", "share", "skelcrew", "daemon-code"));
+  expect((await skel(["--remote", "simon@workbox", "ps"])).err).toBe(daemonWarning(folder));
+});
 
 test("--remote says to put local changes aside first in a checkout behind your commit", async () => {
   const folder = checkoutOnServer();
@@ -522,8 +584,9 @@ test("--remote says nothing when the server's checkout, with local changes, is a
   expect(run.out).toBe("old Skelcrew ran ps\n");
 });
 
-test("--remote says nothing when the server's checkout is past your commit", async () => {
+test("--remote says nothing when the server's checkout and its daemon are past your commit", async () => {
   commit(checkoutOnServer());
+  daemonRestarts();
   expect((await skel(["--remote", "simon@workbox", "ps"])).err).toBe("");
 });
 
@@ -568,7 +631,7 @@ test("the update goes by what the daemon's service runs, not by ~/.local/bin", a
   expect(run.out).toContain("git pull there updates it");
   expect(run.out).toEndWith("Skelcrew on the server got 1 arguments\n[ps]\n");
   expect(calls()).not.toContain("scp");
-  expect(calls()).not.toContain("systemctl --user restart");
+  expect(calls()).not.toMatch(/^systemctl --user restart/m);
 });
 
 // systemd reads % in a unit as the start of a name it fills in, so the service doubles it.
@@ -592,7 +655,7 @@ test("the update replaces nothing when the service runs a Skelcrew outside ~/.lo
   expect(run.code).toBe(1);
   expect(run.err).toContain(`the daemon on simon@workbox runs sc from ${other}`);
   expect(calls()).not.toContain("scp");
-  expect(calls()).not.toContain("systemctl --user restart");
+  expect(calls()).not.toMatch(/^systemctl --user restart/m);
   expect(readFileSync(other, "utf8")).toBe("old Skelcrew");
 });
 
@@ -623,7 +686,7 @@ test("the update keeps the old Skelcrew when the copy fails", async () => {
   expect(readFileSync(join(home, "server", ".local", "bin", "sc"), "utf8")).toBe(
     serverSkel("0000000"),
   );
-  expect(calls()).not.toContain("systemctl --user restart");
+  expect(calls()).not.toMatch(/^systemctl --user restart/m);
 });
 
 // Gives the test's home a finished first run, as setupDone reads it: a harness chosen, its login
