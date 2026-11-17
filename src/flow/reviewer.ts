@@ -312,7 +312,8 @@ async function reviewNow(given: {
     // checkout needs both, so the review never takes them. It reads the commit into an index
     // in the review's folder, started from a copy of the builder's so unchanged files aren't
     // rewritten, and puts that index in the view's .git. Then it points HEAD at the commit
-    // by writing it. Plain copies and writes need no lock. git replaces the builder's index
+    // by writing it. Plain copies and writes need no lock. They copy with cat, as the
+    // repository's tests stand in for cp. git replaces the builder's index
     // whole, so the copy is never half written, and without one git starts from an empty
     // index. The other index is named only for these steps: the reviewer's own git, in this
     // clone or any other, uses each one's own index. The builder's locks then go from the
@@ -321,10 +322,11 @@ async function reviewNow(given: {
     // Every other step must work, or the reviewer never starts.
     const index = join(folder, "index");
     const checkout = [
-      '{ cp "$(git rev-parse --git-dir)/index" "$1" 2>/dev/null || true; }',
+      'index="$(git rev-parse --git-dir)/index"',
+      '{ ! test -e "$index" || cat "$index" > "$1"; }',
       'GIT_INDEX_FILE="$1" git read-tree --reset -u "$0"',
       'GIT_INDEX_FILE="$1" git clean -q -fd',
-      'cp "$1" "$(git rev-parse --git-dir)/index"',
+      'cat "$1" > "$index"',
       'printf "%s\\n" "$0" > "$(git rev-parse --git-path HEAD)"',
       'rm -f "$(git rev-parse --git-path index.lock)" "$(git rev-parse --git-path HEAD.lock)"',
       "shift",
