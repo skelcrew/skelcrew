@@ -134,8 +134,8 @@ async function actOnPr(
   // A merge or close ends the thread whatever else is going on. Otherwise new events go to
   // the builder, and with none, only what is seen and what changed is saved.
   if ("end" in decision) {
-    // A PR sc rm closed is its to end, as it tells the lead the thread was removed, which a
-    // poll would announce as closed without merging.
+    // A PR sc rm closed is its to end, and to take you off its issue. endThread checks again,
+    // as sc rm can start while this waits.
     if (removing.has(folder)) return;
     // A merge leaves you assigned, as the closed issue's record of who did it. Asked before
     // the thread ends, so an sc start that starts it over once it is done assigns you after.

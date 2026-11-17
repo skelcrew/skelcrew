@@ -751,6 +751,45 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
     expect(leadTyped().split("app-12 ended").length - 1).toBe(1);
   }, 60_000);
 
+  // A poll can be part way through ending a thread when the lead runs sc rm on it. The lead
+  // removed it, so it hears nothing, not the merge the poll saw.
+  test("a poll ending a thread while the lead removes it tells the lead nothing", async () => {
+    await approvedApp12();
+    // Holds the poll's end in one of its git commands until the test lets it go, and says when
+    // it is held. The same command in sc rm's end waits two seconds, so the poll reaches the
+    // end of the thread first, as when sc rm started late in the poll's end.
+    const realGit = Bun.which("git");
+    const held = join(home, "held");
+    const go = join(home, "go");
+    script(
+      "git",
+      `case "$*" in *"update-ref -d refs/skelcrew/threads/"*)
+  if mkdir "${held}" 2>/dev/null; then
+    while ! test -e "${go}"; do sleep 0.1; done
+  else sleep 2; fi ;;
+esac
+exec "${realGit}" "$@"`,
+    );
+    pr({ state: "merged", reviews: [skelReview], checks: [approved] });
+    await until(() => existsSync(held));
+    // The lead runs sc rm. Once it marks the thread stopped, it is removing it.
+    const hashed = new Bun.CryptoHasher("sha256").update("simon/app").digest("hex").slice(0, 16);
+    const leadSocket = join(home, "run", "skelcrew", "leads", hashed, "skelcrew.sock");
+    const removing = Bun.spawn([process.execPath, main, "rm", "app-12"], {
+      env: { ...env(), SKELCREW_SOCKET: leadSocket },
+      stderr: "pipe",
+    });
+    running.push(removing);
+    await until(() => thread().status === "stopped");
+    writeFileSync(go, "");
+    expect(await removing.exited).toBe(0);
+    expect(thread().status).toBe("done");
+    await morePolls();
+    const leadTyped = read(join(data(), "claude", leadName, "typed"));
+    expect(leadTyped).not.toContain("app-12 is done");
+    expect(leadTyped).not.toContain("app-12 ended");
+  }, 60_000);
+
   // A forge answers what changed since the last poll, and nothing changes on the PR while
   // the thread is stopped, so the comment held back must come from Skelcrew's copy.
   test("a comment held for a stopped thread reaches it once it starts, though the forge never sends it again", async () => {

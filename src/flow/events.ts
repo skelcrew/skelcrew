@@ -62,8 +62,9 @@ async function refreshBase(db: Database, thread: Thread, base: string): Promise<
 // or sc rm cancels the typing.
 export const typingEvents = new Map<string, AbortController>();
 
-// The threads sc rm is removing, by folder. Without a forge, sc rm deletes the branch before it
-// ends the thread, and a poll in between would end it as one whose branch someone deleted.
+// The threads sc rm is removing, by folder. Only sc rm ends them. Without a forge, sc rm deletes
+// the branch before it ends the thread, and a poll in between would end it as one whose branch
+// someone deleted. With one, a poll would tell the lead the PR sc rm closed was closed.
 export const removing = new Set<string>();
 
 // Cancels the round, the typing under way and any wake after a usage limit for the thread, ends
@@ -117,13 +118,15 @@ export async function stopThread(db: Database, sessions: string, thread: Thread)
 // its clone by deleting the folder, never running git in it. `why` goes in the thread's log.
 // `note`, such as "is done: #7 merged into main", goes to its repository's lead after the
 // thread's name, so the lead stops listing it as open. With null, as when the lead removed it,
-// the lead hears nothing.
+// the lead hears nothing. `removal` is true only for sc rm's own end: a thread sc rm is
+// removing is its to end, even when a poll saw its PR merged or closed first.
 export async function endThread(
   db: Database,
   sessions: string,
   thread: Thread,
   why: string,
   note: string | null,
+  removal = false,
 ): Promise<void> {
   await endBuilder(sessions, thread.folder);
   rmSync(cloneOf(thread), { recursive: true, force: true });
@@ -140,10 +143,13 @@ export async function endThread(
       "-d",
       `refs/skelcrew/${kind}/${thread.folder}`,
     ]);
-  // A thread ends once, so the lead hears of it once: a poll and sc rm can both reach here for
-  // the same thread, and only the first finds it short of done. Nothing is waited on between
-  // reading it and marking it done.
+  // A thread ends once, so the lead hears of it once. A poll and sc rm can both reach here for
+  // the same thread, and sc rm can start while a poll waits above. So the end is the first
+  // one's to mark, unless sc rm is removing the thread: then only sc rm marks it, and the lead
+  // hears what sc rm says, or nothing when the lead ran it. Nothing is waited on between these
+  // checks and marking it done, so no other end can slip in between.
   if (readThread(db, thread.folder).status === "done") return;
+  if (removing.has(thread.folder) && !removal) return;
   record(db, thread.folder, { status: "done", needs_you: false }, `${why}: ended the thread`);
   // Every note to the lead is one line, as a reason given to sc rm may not be.
   if (note !== null) {
@@ -229,7 +235,7 @@ export async function removeThread(
     const closing = pr === null ? "" : `, closing #${pr}`;
     const note = `ended: you removed it${closing}${reason ? `: ${reason}` : ""}`;
     const why = reason ? `removed: ${reason}` : "removed";
-    await endThread(db, sessions, thread, why, byLead ? null : note);
+    await endThread(db, sessions, thread, why, byLead ? null : note, true);
   } finally {
     removing.delete(thread.folder);
   }
