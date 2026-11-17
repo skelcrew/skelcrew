@@ -108,7 +108,12 @@ export function reachLimit(
 // Forgets the harness's limit once a review that `started` after a review met it ran on it, and
 // tells each lead that heard of the limit that it is over. A review that started before can
 // end cleanly after the limit, as its last call came before it, which says nothing of the limit.
-export function endLimit(db: Database, tmux: string, harness: HarnessName, started: number): void {
+export function endLimit(
+  db: Database,
+  sessions: string,
+  harness: HarnessName,
+  started: number,
+): void {
   const limit = limits.get(harness);
   if (limit === undefined || started < limit.reached) return;
   limits.delete(harness);
@@ -118,7 +123,7 @@ export function endLimit(db: Database, tmux: string, harness: HarnessName, start
     const [owner = "", repo = ""] = fullName.split("/");
     noteForLead(
       db,
-      tmux,
+      sessions,
       { owner, repo },
       `${title}'s usage limit is over; reviews run on it again.`,
     );
@@ -130,7 +135,7 @@ export function endLimit(db: Database, tmux: string, harness: HarnessName, start
 // meanwhile when there is a `fallback`.
 export function tellOfLimit(
   db: Database,
-  tmux: string,
+  sessions: string,
   harness: HarnessName,
   repository: { owner: string; repo: string },
   fallback: HarnessName | null,
@@ -156,7 +161,7 @@ export function tellOfLimit(
       : limit.reset === null
         ? `reviews try again at ${at}`
         : "reviews resume then";
-  noteForLead(db, tmux, repository, `${reached}; ${then}.`);
+  noteForLead(db, sessions, repository, `${reached}; ${then}.`);
 }
 
 // Returns once `at` comes, or at once when `signal` aborts, such as when a newer round cancels
@@ -231,7 +236,7 @@ export function endWake(folder: string): void {
 // Plans to type "continue" into the thread's builder once its harness's usage limit resets, or,
 // with no reset time, after a wait that grows each time the limit stops it again. The builder
 // sits idle on the error until then, and nobody needs to type to it.
-export function wakeAfterLimit(db: Database, tmux: string, folder: string): void {
+export function wakeAfterLimit(db: Database, sessions: string, folder: string): void {
   // Find when, and remember the wakes so far.
   const { limit_reset: reset } = readThread(db, folder);
   const { at, wakes: next } = wakeTime(reset, Date.now(), builderTries.get(folder));
@@ -243,7 +248,7 @@ export function wakeAfterLimit(db: Database, tmux: string, folder: string): void
   const cancelWait = runAt(at, () => {
     const tried = builderTries.get(folder);
     if (tried !== undefined) builderTries.set(folder, { ...tried, woken: Date.now() });
-    continueBuilder(db, tmux, folder, typing.signal)
+    continueBuilder(db, sessions, folder, typing.signal)
       .catch((error) =>
         console.log(`couldn't wake ${folder}'s builder after its usage limit: ${errorText(error)}`),
       )
@@ -267,7 +272,7 @@ export function wakeAfterLimit(db: Database, tmux: string, folder: string): void
 // ended.
 async function continueBuilder(
   db: Database,
-  tmux: string,
+  sessions: string,
   folder: string,
   signal: AbortSignal,
 ): Promise<void> {
@@ -278,13 +283,13 @@ async function continueBuilder(
   record(db, folder, over, "its harness's usage limit reset, so Skelcrew types continue");
   try {
     const { marks } = builderHarness(thread);
-    await typeInto(tmux, folder, marks, "continue", { timeout: 60_000, signal });
+    await typeInto(sessions, folder, marks, "continue", { timeout: 60_000, signal });
   } catch (error) {
     // A builder that met the limit again, or was typed to, since has a newer state to keep.
     if (signal.aborted || readThread(db, folder).erred) return;
     const reason = errorText(error);
     const why = `its harness's usage limit reset, but Skelcrew couldn't type continue: ${reason}`;
     record(db, folder, { erred: true }, why);
-    typeLeadNotes(db, tmux);
+    typeLeadNotes(db, sessions);
   }
 }

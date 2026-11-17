@@ -15,7 +15,7 @@ import { dirname, join, resolve } from "node:path";
 import { stringify } from "yaml";
 import { z } from "zod";
 import { refuseCredentials } from "../agents/sandbox.ts";
-import { endSession, exitedCleanly, stopSession } from "../agents/tmux.ts";
+import { endSession, exitedCleanly, stopSession } from "../agents/sessions.ts";
 import { agentRoles } from "../config.ts";
 import { nameRepositories, openDb, Repository } from "../db.ts";
 import { originHere, parseRemote } from "../machine/origin.ts";
@@ -379,7 +379,7 @@ function oldRemoteOf(
 // would close the tab after this. The daemon notices the exit first. With no daemon running, a
 // lead that exited is ended here, so the daemon's start brings it back instead of closing its
 // tab. One never opened stays as it is, as only sc or its tab starts a lead the first time.
-async function openAgain(db: Database, tmux: string, had: Repository): Promise<void> {
+async function openAgain(db: Database, sessions: string, had: Repository): Promise<void> {
   const row = db
     .query("SELECT tab_closed, opened, kept_lead FROM repositories WHERE owner = ? AND repo = ?")
     .get(had.owner, had.repo);
@@ -401,7 +401,7 @@ async function openAgain(db: Database, tmux: string, had: Repository): Promise<v
     const reply = await ask({ command: "lead", from: `${had.owner}/${had.repo}` }, 60_000);
     if (reply === null) {
       const { name } = leadPlaces(had.owner, had.repo, kept);
-      if (exitedCleanly(tmux, name)) endSession(tmux, name);
+      if (exitedCleanly(sessions, name)) endSession(sessions, name);
       db.run("UPDATE repositories SET tab_closed = 0 WHERE owner = ? AND repo = ?", [
         had.owner,
         had.repo,
@@ -418,8 +418,8 @@ async function openAgain(db: Database, tmux: string, had: Repository): Promise<v
 // remote URL or named by its owner/name on its forge, or with neither, the checkout you are
 // in, and says what it did. A folder that is there is taken as one. Asks whether you trust the
 // repository when it needs to, so it runs only in your own terminal. One Skelcrew has costs no
-// call to a forge, and is opened again. `tmux` is the agents' tmux server, where its lead runs.
-export async function addRepo(given: string | undefined, tmux: string): Promise<void> {
+// call to a forge, and is opened again. `sessions` names where its lead runs.
+export async function addRepo(given: string | undefined, sessions: string): Promise<void> {
   // Work out the remote URL: a folder's own remote, or what you gave when it is no folder.
   const db = openDb();
   const folder = given === undefined || existsSync(given) ? resolve(given ?? ".") : null;
@@ -434,7 +434,7 @@ export async function addRepo(given: string | undefined, tmux: string): Promise<
   // One Skelcrew has already is only named, with no call to a forge.
   const had = repositoryAt(db, url);
   if (had) {
-    await openAgain(db, tmux, had);
+    await openAgain(db, sessions, had);
     return;
   }
   const details = await identifyRepository(db, url);
@@ -484,8 +484,8 @@ export function checkoutTop(): string | null {
 // its top, or leaves one that is there as it is, then adds the repository as sc repo add does.
 // Stops outside a git repository, and in one with no remote, as Skelcrew works from its own
 // clone. That clone is at the default branch, so it says the file counts only once pushed there.
-// `tmux` is the agents' tmux server, where the repository's lead runs.
-export async function initRepo(tmux: string): Promise<void> {
+// `sessions` names where the repository's lead runs.
+export async function initRepo(sessions: string): Promise<void> {
   // Stop before writing anything where the file couldn't count: outside a checkout, or in one
   // with no remote for Skelcrew to clone.
   const root = checkoutTop();
@@ -503,7 +503,7 @@ export async function initRepo(tmux: string): Promise<void> {
   if (!there) writeFileSync(file, starterConfig(), { flag: "wx" });
   else console.log("skelcrew.yaml is there already, so Skelcrew left it as it is.");
   // Bring the repository in, then say what was written and when Skelcrew will read it.
-  await addRepo(root, tmux);
+  await addRepo(root, sessions);
   if (!there) console.log("Wrote skelcrew.yaml. Commit and push it to start.");
 }
 
@@ -523,11 +523,11 @@ export async function trustRepo(given: string): Promise<void> {
   await bringIn(db, details);
 }
 
-// Removes a repository for sc repo rm. Ends its lead on the tmux server `tmux`, then deletes
+// Removes a repository for sc repo rm. Ends its lead, which runs in `sessions`, then deletes
 // Skelcrew's clone, its row and your trust in it, and names the other repositories again.
 // Refuses while the repository has live threads, naming them. The lead is ended because, left running, it would
 // go on with no repository behind it, and the daemon would never bring it back or end it.
-export async function removeRepo(name: string, tmux: string): Promise<void> {
+export async function removeRepo(name: string, sessions: string): Promise<void> {
   const db = openDb();
   const found = repositories(db).find((r) => r.name === name);
   if (!found) throw new Error(`there is no repository named ${name}`);
@@ -558,7 +558,7 @@ export async function removeRepo(name: string, tmux: string): Promise<void> {
     found.repo,
   ]);
   // Ended as a thread's builder is, and waited for, as the lead reads the clone removed next.
-  await stopSession(tmux, leadPlaces(found.owner, found.repo, keptLead).name);
+  await stopSession(sessions, leadPlaces(found.owner, found.repo, keptLead).name);
   // Remove the clone, the row and your trust in it. The other repositories are named again,
   // as one that shared a name with this one can drop its owner.
   rmSync(cloneDir(found.owner, found.repo), { recursive: true, force: true });

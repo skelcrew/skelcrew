@@ -1,6 +1,6 @@
 // Typing a message into an agent's session: waiting until its harness shows it is ready, then
 // pasting the message and its Enter, one message at a time per session.
-import { mustTmux, tmux } from "./tmux.ts";
+import { pasteIntoSession, readSession, sendKey } from "./sessions.ts";
 
 // How typing waits, in milliseconds. `moment` is the pause between two looks at the screen,
 // and between a paste and its Enter. `timeout` is how long to wait for the prompt to be ready
@@ -9,11 +9,6 @@ type Waits = { moment?: number; timeout?: number; signal?: AbortSignal };
 // What a harness's screen shows: `busy` while a turn runs, and a line holding only `prompt`
 // once it is ready for a message.
 export type Marks = { busy: string; prompt: string };
-
-// Returns the visible pane text so Skelcrew can check whether the agent is ready for a
-// message.
-const readScreen = (socket: string, name: string) =>
-  mustTmux(socket, ["capture-pane", "-p", "-t", `=${name}:`]);
 
 // The reason typing gives for waiting while a person has unsent text at the agent's prompt.
 const draftReason = "an unsent draft is at its prompt";
@@ -38,9 +33,9 @@ function notReady(shown: string, marks: Marks) {
 // a tool runs.
 async function notIdle(socket: string, name: string, marks: Marks, moment: number) {
   // Look twice, a moment apart, so a screen still drawing shows as busy.
-  const before = readScreen(socket, name);
+  const before = readSession(socket, name);
   await Bun.sleep(moment);
-  const after = readScreen(socket, name);
+  const after = readSession(socket, name);
   if (after.includes(marks.busy)) return `it shows ${marks.busy}`;
   if (before !== after) return "its screen kept changing";
   return notReady(after, marks);
@@ -88,52 +83,37 @@ export function typeInto(
   return turn;
 }
 
-// How many paste buffers this process has made, so each gets a name of its own.
-let buffersMade = 0;
-
 // Waits for the agent to be ready, then pastes and submits the message without losing long
-// text. Throws if it stays busy too long, and removes the temporary paste buffer after the
-// attempt. Types nothing once the signal is aborted, however long it waited.
+// text. Throws if it stays busy too long. Types nothing once the signal is aborted, however long
+// it waited.
 async function typeNow(socket: string, name: string, marks: Marks, text: string, waits: Waits) {
   const moment = waits.moment ?? 500;
   const timeout = waits.timeout ?? 60_000;
   const deadline = Date.now() + timeout;
-  // A paste buffer of its own, so two daemons or two messages never paste each other's text.
-  const buffer = `skelcrew-${process.pid}-${buffersMade++}`;
-  try {
-    // Text typed while Claude Code is starting or busy can be lost, so wait until it is idle.
-    // Check the signal after each wait too: the thread may have stopped meanwhile.
-    while (true) {
-      if (waits.signal?.aborted) return;
-      const why = await notIdle(socket, name, marks, moment);
-      if (waits.signal?.aborted) return;
-      if (why === "") {
-        // Someone scrolled back would swallow the Enter below, and the message would never be
-        // sent. Being scrolled back shows in neither the check above nor the pane's text, so
-        // it is left here, whether or not anyone is. It fails when nobody is, which is fine.
-        tmux(socket, ["send-keys", "-X", "-t", `=${name}:`, "cancel"]);
-        mustTmux(socket, ["load-buffer", "-b", buffer, "-"], text);
-        // A person can start typing after the last look, and the paste would send their draft
-        // along with the message. So look once more right before pasting, and wait again if
-        // the prompt isn't bare. A moment remains, but only a tmux call long.
-        if (notReady(readScreen(socket, name), marks) === "") break;
-      } else if (Date.now() > deadline) {
-        const waited = `${timeout / 1000}s`;
-        // A person's draft gets a plain answer, as it isn't the agent being busy.
-        if (why === draftReason)
-          throw new Error(
-            `${name} had an unsent draft at its prompt for ${waited}, so nothing was typed`,
-          );
-        throw new Error(`${name} wasn't idle for ${waited} (${why}), so nothing was typed`);
-      }
+  // Text typed while Claude Code is starting or busy can be lost, so wait until it is idle.
+  // Check the signal after each wait too: the thread may have stopped meanwhile.
+  while (true) {
+    if (waits.signal?.aborted) return;
+    const why = await notIdle(socket, name, marks, moment);
+    if (waits.signal?.aborted) return;
+    if (why === "") {
+      // A person can start typing after the last look, and the paste would send their draft
+      // along with the message. So look once more right before pasting, and wait again if the
+      // prompt isn't bare. A moment remains, but only as long as the paste itself.
+      const bare = () => notReady(readSession(socket, name), marks) === "";
+      if (pasteIntoSession(socket, name, text, bare)) break;
+    } else if (Date.now() > deadline) {
+      const waited = `${timeout / 1000}s`;
+      // A person's draft gets a plain answer, as it isn't the agent being busy.
+      if (why === draftReason)
+        throw new Error(
+          `${name} had an unsent draft at its prompt for ${waited}, so nothing was typed`,
+        );
+      throw new Error(`${name} wasn't idle for ${waited} (${why}), so nothing was typed`);
     }
-    // Without the paste marks, Claude Code reads the Enter after a long message as a new
-    // line, and the message is never sent. So the Enter goes on its own, a moment after the
-    // paste.
-    mustTmux(socket, ["paste-buffer", "-p", "-b", buffer, "-t", `=${name}:`]);
-    await Bun.sleep(moment);
-    mustTmux(socket, ["send-keys", "-t", `=${name}:`, "Enter"]);
-  } finally {
-    tmux(socket, ["delete-buffer", "-b", buffer]);
   }
+  // Without the paste marks, Claude Code reads the Enter after a long message as a new line,
+  // and the message is never sent. So the Enter goes on its own, a moment after the paste.
+  await Bun.sleep(moment);
+  sendKey(socket, name, "Enter");
 }

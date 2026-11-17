@@ -1,4 +1,5 @@
-// Skelcrew's tmux sessions, against a fake harness on a tmux server of the test's own.
+// The sessions module on tmux, and typing into a session, against a fake harness on a tmux server
+// of the test's own.
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import {
   existsSync,
@@ -19,11 +20,15 @@ import {
   endSession,
   exitedCleanly,
   hasSession,
+  interruptSession,
+  type Labels,
+  listSessions,
+  readSession,
   startSession,
   stillRunning,
   stopSession,
-  tmuxIsAtLeast,
-} from "../src/agents/tmux.ts";
+} from "../src/agents/sessions.ts";
+import { tmuxIsAtLeast } from "../src/agents/tmux.ts";
 import { isIdle, type Marks, typeInto } from "../src/agents/typing.ts";
 import { source, until as wait } from "./harness.ts";
 
@@ -68,8 +73,11 @@ cat > received.txt
   return [script];
 }
 
+// The labels every session in these tests carries.
+const labels: Labels = { repository: "simon/app", role: "builder", task: "app-12" };
+
 function start(name: string, command: string[], env: Record<string, string> = {}) {
-  startSession(socket, name, { folder: home, command, env });
+  startSession(socket, name, { folder: home, command, env, labels });
 }
 
 // Waits for what a session does in its own time, looking often. A busy machine can take
@@ -265,6 +273,62 @@ exec "${real}" "$@"
   }
 });
 
+// A daemon that starts again finds its agents by their labels, and the sidebar shows which run.
+test("a session carries its labels, and the list shows them with whether its agent runs", async () => {
+  start("builder", ["sleep", "30"]);
+  startSession(socket, "lead", {
+    folder: home,
+    command: ["sh", "-c", "exit 1"],
+    env: {},
+    labels: { repository: "simon/app", role: "lead" },
+  });
+  // A session started by a release before labels.
+  Bun.spawnSync(["tmux", "-L", socket, "new-session", "-d", "-s", "old", "sleep", "30"]);
+  await until(() => listSessions(socket).some(({ name, running }) => name === "lead" && !running));
+  const found = listSessions(socket).sort((a, b) => a.name.localeCompare(b.name));
+  expect(found).toEqual([
+    { name: "builder", running: true, labels },
+    { name: "lead", running: false, labels: { repository: "simon/app", role: "lead" } },
+    { name: "old", running: true, labels: null },
+  ]);
+});
+
+test("the list is empty while nothing runs", () => {
+  expect(listSessions(socket)).toEqual([]);
+});
+
+test("reading a session gives what its agent shows", async () => {
+  start("builder", ["sh", "-c", "echo hello there; sleep 30"]);
+  await until(() => readSession(socket, "builder").includes("hello there"));
+});
+
+test("interrupting a session sends its agent Esc", async () => {
+  start("builder", ["sh", "-c", "stty raw -echo; echo ready; exec cat > keys.txt"]);
+  await showing("builder", "ready");
+  interruptSession(socket, "builder");
+  await until(() => read("keys.txt") === "\x1b");
+});
+
+// Only the sessions module runs tmux for agents, so another session host can take its place.
+// The screen keeps a tmux server of its own, which it may run directly.
+test("nothing outside the sessions module runs tmux for agents", () => {
+  const src = join(import.meta.dir, "..", "src");
+  const module = ["agents/sessions.ts", "agents/tmux.ts"];
+  const found: string[] = [];
+  for (const file of new Bun.Glob("**/*.ts").scanSync(src)) {
+    if (module.includes(file)) continue;
+    const text = readFileSync(join(src, file), "utf8");
+    // tmux() and mustTmux() run a command on any server they are given.
+    const runner = text.match(/import \{([^}]*)\} from "[./]*\/agents\/tmux\.ts"/)?.[1] ?? "";
+    if (/\b(tmux|mustTmux)\b/.test(runner)) found.push(`${file} imports the tmux runner`);
+    // tmux started directly, on a server named with -L, may only be the screen's own.
+    for (const line of text.split("\n"))
+      if (/tmux"?,?\s+"?-L/.test(line) && !line.includes("screenSocket("))
+        found.push(`${file}: ${line.trim()}`);
+  }
+  expect(found).toEqual([]);
+});
+
 test("a session runs its command in its folder, with its environment", async () => {
   start("builder", ["sh", "-c", 'echo "$SKELCREW_THREAD $(pwd)" > seen.txt; sleep 30'], {
     SKELCREW_THREAD: "app-12",
@@ -285,12 +349,13 @@ test("a first message and an environment value ending in ; arrive as given", asy
 // The tmux server hands its own environment to every session, so a token in the daemon's
 // environment would reach every agent. Claude Code needs TERM_PROGRAM=tmux to ask for Shift+Enter.
 test("a session gets only the environment it is given, and tmux's TERM and TERM_PROGRAM", async () => {
-  const tmux = source("agents/tmux.ts");
-  const script = `import { startSession } from ${JSON.stringify(tmux)};
+  const sessions = source("agents/sessions.ts");
+  const script = `import { startSession } from ${JSON.stringify(sessions)};
 startSession(${JSON.stringify(socket)}, "builder", {
   folder: ${JSON.stringify(home)},
   command: ["sh", "-c", "env > env.txt; sleep 30"],
   env: { PATH: process.env.PATH, KEPT: "yes", TERM: "dumb", TERM_PROGRAM: "ghostty" },
+  labels: ${JSON.stringify(labels)},
 });`;
   const run = Bun.spawnSync(["bun", "-e", script], {
     env: { ...process.env, GH_TOKEN: "secret", CLAUDE_CODE_CHILD_SESSION: "1", CLAUDECODE: "1" },
@@ -430,6 +495,7 @@ test("a session kept on exit tells an agent that exited cleanly from one that fa
       folder: home,
       command: ["sh", "-c", `while [ ! -e ${name}.done ]; do sleep 0.05; done; exit ${code}`],
       env: {},
+      labels,
       keepOnExit: true,
     });
   keep("clean", 0);
