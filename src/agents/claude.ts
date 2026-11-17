@@ -328,6 +328,11 @@ function startCommand(given: {
   // path may have. Claude Code then falls back to /tmp, which the sandbox hides, and shows a
   // yellow warning at the top of the session.
   kept.CLAUDE_CODE_HARBOR_KITE = "false";
+  // Agent view off. Its background service lives on in the agent's config folder and keeps
+  // spare sessions started. After a restart it handed the lead one of those in place of its
+  // --resume: a new conversation on Claude Code's default model, without the lead's
+  // instructions. Skelcrew starts and keeps every session itself.
+  kept.CLAUDE_CODE_DISABLE_AGENT_VIEW = "1";
   // Its install folder is read-only in the sandbox, so an update only fails, with a red line
   // in every session. You update claude outside Skelcrew, and agents start on that version.
   kept.DISABLE_AUTOUPDATER = "1";
