@@ -4,7 +4,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { source } from "./harness.ts";
+import { source, threadSql } from "./harness.ts";
 
 let home = "";
 beforeEach(() => {
@@ -180,7 +180,7 @@ test("each change that goes in a thread's log saves when it happened, for the li
   const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
 import { log, readThread, record } from ${JSON.stringify(source("flow/thread.ts"))};
 const db = openDb();
-db.run("INSERT INTO threads (owner, repo, task, folder, branch, status) VALUES ('simon', 'app', 12, 'app-12', 'skelcrew/12', 'working')");
+db.run(${JSON.stringify(threadSql({ task: "12" }))});
 const before = readThread(db, "app-12").changed;
 const start = Date.now();
 record(db, "app-12", { status: "waiting" });

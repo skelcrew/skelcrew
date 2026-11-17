@@ -4,7 +4,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { source } from "./harness.ts";
+import { source, threadSql } from "./harness.ts";
 
 let home = "";
 beforeEach(() => {
@@ -38,8 +38,7 @@ function run(code: string): unknown {
 import { saveItems, openTasks, taskOf } from ${JSON.stringify(source("flow/copy.ts"))};
 const db = openDb();
 db.run("INSERT OR IGNORE INTO repositories (owner, repo, name) VALUES ('simon', 'app', 'app')");
-db.run(\`INSERT OR IGNORE INTO threads (owner, repo, task, folder, branch, status)
-  VALUES ('simon', 'app', 12, 'app-12', 'skelcrew/12', 'working')\`);
+db.run(${JSON.stringify(threadSql({ task: "12" }))});
 const ids = () => openTasks(db, "simon", "app").map((t) => t.id);
 ${code}`;
   const ran = Bun.spawnSync([process.execPath, "-e", script], {

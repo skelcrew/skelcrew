@@ -30,6 +30,11 @@ const builderTestsBefore =
 const builderTests =
   "Never run the repository's whole test suite: CI or the reviewer runs it once for each commit, and other agents share this machine, so whole suites running at once slow everyone down. While you work, run only the tests near your change. Before each sc submit, run the tests related to your change: the test files you touched and the tests of the code you changed. Run the repository's lint and typecheck too, if it has them.";
 
+// What the builder's file added later: it tells the lead only what the lead needs, as Skelcrew
+// already shows its progress.
+const tellingTheLead =
+  " Tell it only when you are blocked or need a decision. Never tell it just to report progress, such as that you submitted, resubmitted or merged main: Skelcrew already shows that.";
+
 test("the lead and builder files hold the instructions the code gave, but for what was added since", () => {
   // The digests of src/agents/prompts/lead.md and builder.md before they moved.
   const lead = builtInRole("lead").instructions;
@@ -42,10 +47,12 @@ test("the lead and builder files hold the instructions the code gave, but for wh
   expect(builder).toContain(workflows);
   expect(builder).toContain(builderTests);
   expect(builder).toContain(asking);
+  expect(builder).toContain(tellingTheLead);
   const before = builder
     .replace(workflows, "")
     .replace(asking, "")
-    .replace(builderTests, builderTestsBefore);
+    .replace(builderTests, builderTestsBefore)
+    .replace(tellingTheLead, "");
   expect(sha256(before)).toBe("556629d5f335c1d5e635a1996a021041ea3e9fb75deaa593399ef84d70ee4d00");
 });
 

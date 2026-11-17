@@ -5,6 +5,7 @@ import { appendFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import { HarnessName, harnessNamed } from "../agents/harness.ts";
+import { taskColumns } from "../db.ts";
 import { threadsDir } from "../paths.ts";
 import { findRepository } from "./repo.ts";
 import { needsYou } from "./status.ts";
@@ -18,9 +19,10 @@ export type AgentState = z.infer<typeof AgentState>;
 // milliseconds since 1970, and its text.
 const TaskUpdate = z.object({ from: z.literal("lead"), at: z.number(), text: z.string() });
 
-// A thread as Skelcrew's database keeps it, one row per thread. It is checked on every read,
-// since the row comes back from disk. Its folder names it inside Skelcrew: its clone, session
-// and log are all named after it.
+// A thread with its task, as Skelcrew's database keeps them, one row per thread from the
+// task_threads view. The task's fields are those openDb's taskColumns name, and they are saved on
+// the task. It is checked on every read, since the row comes back from disk. Its folder names it
+// inside Skelcrew: its clone, session and log are all named after it.
 export const Thread = z.object({
   owner: z.string(),
   // The repository's name on its forge, or its remote's path, without the owner.
@@ -187,7 +189,7 @@ export function log(db: Database, thread: Thread, why?: string): void {
 
 // Returns the thread in the given folder as it is now in the database.
 export const readThread = (db: Database, folder: string) =>
-  Thread.parse(db.query("SELECT * FROM threads WHERE folder = ?").get(folder));
+  Thread.parse(db.query("SELECT * FROM task_threads WHERE folder = ?").get(folder));
 
 // Saves a change to the thread, logs the thread as it now is, and returns it. `why` goes in
 // the log, so a failure says what went wrong. When the change makes the thread start needing
@@ -211,16 +213,35 @@ export function record(
   let { noting } = change;
   if (!needsYou({ ...before, ...change })) noting = null;
   else if (!needsYou(before)) noting = (why ?? "").replace(/\s+/g, " ").trim().slice(0, 200);
-  // The column names come from the keys of Thread above, never from outside. One statement,
-  // so a change is saved whole or not at all.
+  // The column names come from the keys of Thread above, never from outside. The task's fields
+  // go on its task, and the rest on the thread. One transaction, so a change is saved whole or
+  // not at all.
   const full = noting === undefined ? change : { ...change, noting };
   const set = Object.entries(full).filter(([, value]) => value !== undefined);
-  if (set.length > 0)
-    db.run(
-      `UPDATE threads SET ${set.map(([column]) => `${column} = ?`).join(", ")} WHERE folder = ?`,
-      // The IDs seen are a list, kept as JSON.
-      [...set.map(([, value]) => (Array.isArray(value) ? JSON.stringify(value) : value)), folder],
+  const update = (table: string, where: string, columns: typeof set) => {
+    if (columns.length > 0)
+      db.run(
+        `UPDATE ${table} SET ${columns.map(([column]) => `${column} = ?`).join(", ")} ${where}`,
+        // The IDs seen and the lead's updates are lists, kept as JSON.
+        [
+          ...columns.map(([, value]) => (Array.isArray(value) ? JSON.stringify(value) : value)),
+          folder,
+        ],
+      );
+  };
+  const onTask = (column: string) => column in taskColumns;
+  db.transaction(() => {
+    update(
+      "threads",
+      "WHERE folder = ?",
+      set.filter(([column]) => !onTask(column)),
     );
+    update(
+      "tasks",
+      "WHERE (owner, repo, task) = (SELECT owner, repo, task FROM threads WHERE folder = ?)",
+      set.filter(([column]) => onTask(column)),
+    );
+  })();
   // Read the thread back rather than merging the change in memory, so the log and the caller
   // see exactly what the database holds.
   const thread = readThread(db, folder);
@@ -245,7 +266,7 @@ export function threadOn(db: Database, repository: string, task: string): Thread
   const { owner, repo } = findRepository(db, repository);
   return Thread.nullable().parse(
     db
-      .query("SELECT * FROM threads WHERE owner = ? AND repo = ? AND task = ?")
+      .query("SELECT * FROM task_threads WHERE owner = ? AND repo = ? AND task = ?")
       .get(owner, repo, task),
   );
 }
@@ -261,7 +282,7 @@ export function findThread(db: Database, repository: string, task: string): Thre
 // and whose sockets it opens again when it starts.
 export function liveThreads(db: Database): Thread[] {
   return db
-    .query("SELECT * FROM threads WHERE status IN ('working', 'waiting')")
+    .query("SELECT * FROM task_threads WHERE status IN ('working', 'waiting')")
     .all()
     .map((row) => Thread.parse(row));
 }

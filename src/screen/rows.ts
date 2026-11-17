@@ -108,7 +108,7 @@ export function sidebarRows(
 ): Row[] {
   // ACTIVE has the repository's active threads, after its lead, which has no status, PR or
   // review of its own, only whether its session runs.
-  const threads = db.query(`SELECT * FROM threads
+  const threads = db.query(`SELECT * FROM task_threads
       WHERE status IN ('working', 'waiting', 'failed') AND owner = ? AND repo = ?
       ORDER BY rowid DESC`);
   const leadRuns = running.includes(open.lead);

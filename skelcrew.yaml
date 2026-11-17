@@ -1,0 +1,3 @@
+# Shared with everyone who works on this repository. Never put a secret here.
+setup: [bun install]
+test: [bun run check]

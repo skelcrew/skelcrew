@@ -11,7 +11,7 @@ import {
   readSession,
   stillRunning,
 } from "../agents/sessions.ts";
-import { openDb, type Repository } from "../db.ts";
+import { moveToTasks, openDb, type Repository } from "../db.ts";
 import { setupDone } from "../machine/setup.ts";
 import { keepUpToDate } from "../machine/update.ts";
 import { cloneDir, daemonCodeFile, daemonSocket, threadSocket } from "../paths.ts";
@@ -138,7 +138,16 @@ function endWhatItStarted(sockets: string[]): void {
 // milliseconds while a thread is active.
 export async function serve(sessions: string, every = 30_000): Promise<void> {
   if (!setupDone()) throw new Error("the first run isn't done on this machine: run sc first");
+  // The lock decides which of two daemons started together runs. The socket can't: both
+  // could find one left by a daemon that was killed, and each remove the other's new one. It
+  // comes before the database, whose threads move onto tasks only while no other daemon, such as
+  // one of an earlier release, can still write to them.
+  const path = daemonSocket();
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  if (!lock(`${path}.lock`))
+    throw new Error("the daemon is already running. Run sc to attach to a lead.");
   const db = openDb();
+  moveToTasks(db);
   // The checkout and commit this daemon's code came from, for sc status. Read once at start,
   // since a git pull afterwards doesn't change the code that runs.
   const runningCode = singleFile
@@ -388,7 +397,9 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         questionAsked(db, sessions, callingThread(caller).folder);
         return { asking: true };
       case "turn ended":
-        return { asking: turnEnded(db, sessions, callingThread(caller).folder, request.said) };
+        return {
+          asking: turnEnded(db, sessions, callingThread(caller).folder, request),
+        };
       case "turn failed":
         turnFailed(db, sessions, callingThread(caller), request.error, request.message);
         return { erred: true };
@@ -491,12 +502,6 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
     connection.on("data", read);
     connection.on("error", () => {});
   };
-  // The lock decides which of two daemons started together runs. The socket can't: both
-  // could find one left by a daemon that was killed, and each remove the other's new one.
-  const path = daemonSocket();
-  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-  if (!lock(`${path}.lock`))
-    throw new Error("the daemon is already running. Run sc to attach to a lead.");
   // Taken before any request comes in, so a thread started meanwhile, still setting up,
   // isn't taken for one whose setup the daemon's stop cut short.
   const before = liveThreads(db);

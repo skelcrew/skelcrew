@@ -214,7 +214,7 @@ function workingSince(): number | null {
 function thread(): Record<string, unknown> {
   const db = new Database(join(data(), "skelcrew.db"));
   db.run("PRAGMA busy_timeout = 5000");
-  const row = db.query("SELECT * FROM threads WHERE folder = 'app-12'").get();
+  const row = db.query("SELECT * FROM task_threads WHERE folder = 'app-12'").get();
   db.close();
   return row && typeof row === "object" ? { ...row } : {};
 }
@@ -237,6 +237,26 @@ function setColumn(column: "needs_you" | "submitted"): void {
   db.run("PRAGMA busy_timeout = 5000");
   db.run(`UPDATE threads SET ${column} = 1`);
   db.close();
+}
+
+// Stands in for a submit whose review is under way: Skelcrew's clone holds the commit app-12's
+// clone has checked out as the one it last pushed, and the thread reviews it.
+function submittedAsReviewing(): void {
+  const clone = join(data(), "repos", "simon", "app");
+  const ref = "refs/skelcrew/threads/app-12";
+  git(clone, "fetch", "-q", join(data(), "threads", "app-12"), `+HEAD:${ref}`);
+  const sha = git(clone, "rev-parse", ref);
+  const db = new Database(join(data(), "skelcrew.db"));
+  db.run("PRAGMA busy_timeout = 5000");
+  db.run("UPDATE threads SET reviewing = ?", [sha]);
+  db.close();
+}
+
+// The socket the daemon opens for app-12's builder, which tells it the builder calls. It is
+// named by a short hash.
+function builderSocket(): string {
+  const short = new Bun.CryptoHasher("sha256").update("app-12").digest("hex").slice(0, 16);
+  return join(home, "run", "skelcrew", "threads", short, "skelcrew.sock");
 }
 
 // The socket the daemon opens for app's lead, which tells it the lead calls. It is named by a
@@ -415,6 +435,63 @@ describe.skipIf(insideSandbox)("needs you", () => {
     await Bun.sleep(1000);
     expect(await needsYou()).toBe(false);
     expect(notes()).toBe(0);
+  }, 60_000);
+
+  // A builder that only answers a message, such as the lead's note about something it already
+  // fixed, has nothing new to submit, and its last submit still waits on its review.
+  // A builder that only answers a message, such as the lead's note about something it already
+  // fixed, has nothing new to submit, and its last submit still waits on its review. Its words
+  // go to the lead rather than bringing you in.
+  test("a turn with no new work, while the last submit is reviewed, goes to the lead and doesn't need you", async () => {
+    addApp();
+    await startApp12();
+    submittedAsReviewing();
+    await hook("talk");
+    const said = "The lead's note about the import order came in after I had already fixed it.";
+    await hook("stop", JSON.stringify({ last_assistant_message: said }));
+    await until(() => read(join(lead(), "typed")).includes("import order"));
+    expect(read(join(lead(), "typed"))).toContain(
+      '<skelcrew from="app-12" reply="sc tell app-12">',
+    );
+    expect(await needsYou()).toBe(false);
+    expect(read(join(lead(), "typed"))).not.toContain("needs you");
+  }, 60_000);
+
+  // A question need not end in a question mark, and may come after a reply to the lead. The
+  // lead gets the whole last message, so the question reaches it, and through it you.
+  test("a question after a reply to the lead, while the last submit is reviewed, reaches the lead", async () => {
+    addApp();
+    await startApp12();
+    submittedAsReviewing();
+    await hook("talk");
+    const asBuilder = { SKELCREW_SANDBOX: "1", SKELCREW_SOCKET: builderSocket() };
+    expect((await skel(["tell", "lead", "Already fixed."], asBuilder)).code).toBe(0);
+    const said = "Done.\n\nShould the export use JSON or YAML";
+    await hook("stop", JSON.stringify({ last_assistant_message: said }));
+    await until(() => read(join(lead(), "typed")).includes("Should the export use JSON or YAML"));
+    expect(read(join(lead(), "typed"))).toContain("Already fixed.");
+  }, 60_000);
+
+  test("a turn that leaves work it didn't submit needs you, even while the last submit is reviewed", async () => {
+    addApp();
+    await startApp12();
+    submittedAsReviewing();
+    writeFileSync(join(data(), "threads", "app-12", "export.ts"), "export {};\n");
+    await hook("stop", JSON.stringify({ last_assistant_message: "Started on the export." }));
+    await untilNeedsYou(true);
+    await until(() => notes() === 1);
+  }, 60_000);
+
+  // The clone's own settings could hide a new file from git status, and with it the work.
+  test("a new file a clone's settings hide from git status still needs you", async () => {
+    addApp();
+    await startApp12();
+    submittedAsReviewing();
+    const clone = join(data(), "threads", "app-12");
+    git(clone, "config", "status.showUntrackedFiles", "no");
+    writeFileSync(join(clone, "export.ts"), "export {};\n");
+    await hook("stop", JSON.stringify({ last_assistant_message: "Started on the export." }));
+    await untilNeedsYou(true);
   }, 60_000);
 
   test("a turn that ends on an error needs you for the error alone", async () => {

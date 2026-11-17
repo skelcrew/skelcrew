@@ -17,7 +17,7 @@ import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse } from "yaml";
-import { asked, fakePlugin, source } from "./harness.ts";
+import { asked, fakePlugin, source, threadSql } from "./harness.ts";
 
 const main = source("main.ts");
 let home = "";
@@ -434,10 +434,9 @@ test("repo rm removes Skelcrew's clone and forgets the trust", async () => {
 test("repo rm refuses while the repository has live threads, and names them", async () => {
   await skel([], "y\n", onGitHub("simon/app"));
   const db = new Database(join(home, ".local", "share", "skelcrew", "skelcrew.db"));
-  db.run(`INSERT INTO threads (owner, repo, task, folder, branch, status) VALUES
-    ('simon', 'app', 12, 'app-12', 'skelcrew/12', 'working'),
-    ('simon', 'app', 15, 'app-15', 'skelcrew/15', 'waiting'),
-    ('simon', 'app', 9, 'app-9', 'skelcrew/9', 'done')`);
+  db.run(`${threadSql({ task: "12" })}
+${threadSql({ task: "15", status: "waiting" })}
+${threadSql({ task: "9", status: "done" })}`);
   const refused = await skel(["repo", "rm", "app"]);
   expect(refused.code).toBe(1);
   expect(refused.err).toBe("Skelcrew: app has live threads: app-12, app-15. Stop them first.\n");

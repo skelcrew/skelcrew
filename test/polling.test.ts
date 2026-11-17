@@ -177,7 +177,7 @@ function thread(): Record<string, unknown> {
   // The daemon may be writing, and a read that meets a write fails without a wait.
   db.run("PRAGMA busy_timeout = 5000");
   try {
-    const row = db.query("SELECT * FROM threads").get();
+    const row = db.query("SELECT * FROM task_threads").get();
     return row && typeof row === "object" ? { ...row } : {};
   } finally {
     db.close();
@@ -445,6 +445,32 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
     expect(typed().split("Also CSV.").length - 1).toBe(1);
   }, 60_000);
 
+  // A builder that only acknowledges a comment on its approved PR has nothing new to submit,
+  // so the approval still stands, and the PR is ready to merge once its checks pass.
+  test("an approved PR whose builder only acknowledges a comment is ready to merge again", async () => {
+    await approvedApp12();
+    pr({ reviews: [skelReview], comments: [{ id: "53", author: you, text: "Nice." }] });
+    await until(() => typed().includes("Nice."));
+    expect(thread()).toMatchObject({ status: "working", needs_you: 0 });
+    // The builder's hooks, as Claude Code runs them: the comment typed in starts a turn, and
+    // the turn ends in its clone at the submitted commit, with nothing uncommitted.
+    const short = new Bun.CryptoHasher("sha256").update("app-12").digest("hex").slice(0, 16);
+    const builder = join(home, "run", "skelcrew", "threads", short, "skelcrew.sock");
+    expect(await askOn(builder, { command: "question answered" })).toEqual({ asking: false });
+    const head = git(join(data(), "threads", "app-12"), "rev-parse", "HEAD");
+    const ended = { command: "turn ended", head, message: "Thanks, glad it helps." };
+    expect(await askOn(builder, ended)).toEqual({ asking: false });
+    expect(thread()).toMatchObject({ status: "waiting", stalled: 0 });
+    await until(() => read(join(data(), "claude", leadName, "typed")).includes("glad it helps"));
+    pr({
+      reviews: [skelReview],
+      comments: [{ id: "53", author: you, text: "Nice." }],
+      checks: [approved],
+    });
+    await until(() => thread().needs_you === 1);
+    expect(thread()).toMatchObject({ status: "waiting", stalled: 0 });
+  }, 60_000);
+
   // GitHub can't merge a PR that conflicts, so the human must not be told it is ready.
   test("an approved PR that starts conflicting leaves ready to merge at once, and its builder is told once idle", async () => {
     mkdirSync(builder(), { recursive: true });
@@ -548,7 +574,14 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
     submitRound2();
     await until(() => thread().submitting === null);
     rmSync(join(plugin, "hold-log"));
-    await until(() => handled("901"));
+    // Check 901's ID is seen only until the next poll, which no longer shows the check, so
+    // the wait is on the thread's log, whose line keeps the thread as it was once handled.
+    const told = () =>
+      read(join(data(), "threads", "app-12.log"))
+        .split("\n")
+        .find((line) => line.includes("told the builder: test failed"));
+    await until(() => told() !== undefined);
+    expect(JSON.parse(told() ?? "{}").seen).toContain("901");
     expect(waiting()).toBe(1);
     rmSync(join(builder(), "busy"));
     await until(() => typed().includes("Also CSV."));
@@ -578,13 +611,13 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
       opened.close();
     };
     // A newer round is being pushed, so the failure the forge shows is the older commit's.
-    db("UPDATE threads SET submitting = 'Round 2'");
+    db("UPDATE tasks SET submitting = 'Round 2'");
     pr({ reviews: [skelReview], checks: [approved, check(900, "failed")] });
     await morePolls();
     writeFileSync(join(plugin, "hold-changed"), "");
     await until(() => existsSync(join(plugin, "held-changed")));
     // The push lands and the review starts before the forge answers; the new commit's CI runs.
-    db("UPDATE threads SET submitting = NULL, reviewing = 'abc'");
+    db("UPDATE tasks SET submitting = NULL, reviewing = 'abc'");
     rmSync(join(plugin, "held-changed"));
     pr({ reviews: [skelReview], checks: [check(901, "running")] });
     rmSync(join(plugin, "hold-changed"));

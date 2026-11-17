@@ -243,7 +243,7 @@ function thread(): Record<string, unknown> {
   // The daemon may be writing, and a read that meets a write fails without a wait.
   db.run("PRAGMA busy_timeout = 5000");
   try {
-    const row = db.query("SELECT * FROM threads").get();
+    const row = db.query("SELECT * FROM task_threads").get();
     return row && typeof row === "object" ? { ...row } : {};
   } finally {
     db.close();
@@ -923,7 +923,7 @@ done`,
       try {
         type Row = { needs_you: number; queued: number | null };
         const query = db.query<Row, [string]>(
-          "SELECT needs_you, queued FROM threads WHERE folder = ?",
+          "SELECT needs_you, queued FROM task_threads WHERE folder = ?",
         );
         return query.get("app-13") ?? { needs_you: 0, queued: null };
       } finally {
@@ -1035,6 +1035,10 @@ done`,
     writeFileSync(join(builder(), "busy"), "");
     await startApp12();
     await until(() => thread().telling !== null, 30_000);
+    // Skelcrew watches a builder for a second after it starts, and one that ends within it
+    // failed to start. With no CI to wait for, the review can come back within that second, so
+    // the session ends only once the watch is over, as for a builder that ended mid-work.
+    await until(() => Date.now() > Number(thread().working_since) + 2000);
     Bun.spawnSync(["tmux", "-L", socket, "kill-session", "-t", "=app-12"]);
     await until(() => thread().needs_you === 1, 30_000);
     expect(String(thread().telling)).toContain("The export has no test.");
@@ -1394,7 +1398,7 @@ await serve(${JSON.stringify(socket)}, 200);`;
       const db = new Database(join(data(), "skelcrew.db"));
       db.run("PRAGMA busy_timeout = 5000");
       try {
-        return db.query("SELECT task, status, needs_you, pr FROM threads").get();
+        return db.query("SELECT task, status, needs_you, pr FROM task_threads").get();
       } finally {
         db.close();
       }
@@ -1468,7 +1472,7 @@ await serve(${JSON.stringify(socket)}, 200);`;
       try {
         type Row = { reviewing: string | null; queued: number | null };
         const query = db.query<Row, [string]>(
-          "SELECT reviewing, queued FROM threads WHERE folder = ?",
+          "SELECT reviewing, queued FROM task_threads WHERE folder = ?",
         );
         return query.get(folder) ?? { reviewing: null, queued: null };
       } finally {

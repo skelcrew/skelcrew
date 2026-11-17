@@ -97,7 +97,7 @@ export async function startThread(
     // done thread kept.
     task = given.task;
     const had = Thread.nullable().parse(
-      db.query(`SELECT * FROM threads ${where}`).get(owner, repo, task),
+      db.query(`SELECT * FROM task_threads ${where}`).get(owner, repo, task),
     );
     if (tracked && !/^t\d+$/.test(task)) {
       const found = taskOf(db, owner, repo, task);
@@ -133,7 +133,7 @@ export async function startThread(
   // thread's row is never removed without the new one taking its place.
   return db.transaction(() => {
     const before = Thread.nullable().parse(
-      db.query(`SELECT * FROM threads ${where}`).get(owner, repo, task),
+      db.query(`SELECT * FROM task_threads ${where}`).get(owner, repo, task),
     );
     if (before && before.status !== "failed" && before.status !== "done")
       throw new Error(`${name}-${task} has a thread already`);
@@ -190,12 +190,13 @@ export async function startThread(
       state: null,
     };
     // A failed or done thread's row gives way to the new one, and messages that waited for its
-    // builder go with it, as they were about the old work.
+    // builder go with it, as they were about the old work. Its task starts afresh too, with no
+    // PR, rounds, review or updates.
     db.run(`DELETE FROM threads ${where}`, [owner, repo, task]);
     db.run("DELETE FROM messages WHERE folder = ?", [thread.folder]);
     db.run(
-      `INSERT INTO threads (owner, repo, task, folder, branch, base, status, session, title,
-        body, started, short, assigned, seen) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '[]')`,
+      `INSERT INTO threads (owner, repo, task, folder, branch, base, status, session, started)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         owner,
         repo,
@@ -205,12 +206,13 @@ export async function startThread(
         thread.base,
         thread.status,
         null,
-        title,
-        body,
         thread.started,
-        thread.short,
-        thread.assigned,
       ],
+    );
+    db.run(
+      `INSERT OR REPLACE INTO tasks (owner, repo, task, title, body, short, assigned, seen)
+        VALUES (?, ?, ?, ?, ?, ?, ?, '[]')`,
+      [owner, repo, task, title, body, thread.short, thread.assigned],
     );
     log(db, thread);
     return thread;

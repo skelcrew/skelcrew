@@ -21,7 +21,7 @@ import type { Page } from "../src/flow/page.ts";
 import { leadPlaces } from "../src/paths.ts";
 import { drawPage } from "../src/screen/page.ts";
 import { sidebarWidth } from "../src/screen/screen.ts";
-import { fakePlugin, itemSql, source, until as wait } from "./harness.ts";
+import { fakePlugin, itemSql, source, threadSql, until as wait } from "./harness.ts";
 
 const dbFile = source("db.ts");
 const screenFile = source("screen/screen.ts");
@@ -174,10 +174,9 @@ beforeEach(() => {
   writeFileSync(join(clone, "skelcrew.yaml"), "tracker: github\n");
   sql(`INSERT INTO repositories (name, owner, repo, kept_lead, lead_session, forge)
   VALUES ('app', 'simon', 'app', 1, 's', 'github');
-INSERT INTO threads (owner, repo, task, folder, branch, status, needs_you) VALUES
-  ('simon', 'app', 3, 'app-3', 'skelcrew/3', 'done', 0),
-  ('simon', 'app', 7, 'app-7', 'skelcrew/7', 'working', 0),
-  ('simon', 'app', 12, 'app-12', 'skelcrew/12', 'working', 0);`);
+${threadSql({ task: "3", status: "done" })}
+${threadSql({ task: "7" })}
+${threadSql({ task: "12" })}`);
   agent("lead");
   agent("app-7");
   agent("app-12");
@@ -435,8 +434,7 @@ const scrolledBack = () => tmux(agents, "list-panes", "-a", "-F", "#{pane_in_mod
 
 test("the wheel scrolls back through the agent's output, and typing returns you to it", async () => {
   agent("output", history);
-  sql(`INSERT INTO threads (owner, repo, task, folder, branch, status) VALUES
-    ('simon', 'app', 20, 'output', 'skelcrew/20', 'working')`);
+  sql(threadSql({ task: "20", folder: "output" }));
   open("output");
   await ready("output");
   for (let turn = 0; turn < 4; turn++) wheel(64);
@@ -492,8 +490,7 @@ test("every key pressed while scrolled back reaches the agent, Enter too", async
 
 test("Ctrl-Q and switching still work while scrolled back", async () => {
   agent("output", history);
-  sql(`INSERT INTO threads (owner, repo, task, folder, branch, status) VALUES
-    ('simon', 'app', 20, 'output', 'skelcrew/20', 'working')`);
+  sql(threadSql({ task: "20", folder: "output" }));
   open("output");
   await ready("output");
   wheel(64);
@@ -583,8 +580,7 @@ const lines = 'echo "first word here"; echo "second line"';
 // Opens the screen on an agent that printed `lines`, with a terminal that keeps what is copied.
 async function copying(): Promise<void> {
   agent("words", lines);
-  sql(`INSERT INTO threads (owner, repo, task, folder, branch, status) VALUES
-    ('simon', 'app', 20, 'words', 'skelcrew/20', 'working')`);
+  sql(threadSql({ task: "20", folder: "words" }));
   open("words");
   await ready("words");
   tmux(terminal, "set", "-s", "set-clipboard", "on");
@@ -811,7 +807,7 @@ test("a terminal a few lines high still shows the agent, and Ctrl-Q still leaves
 });
 
 test("the strip ends the top row, and the agent's height stays as you switch", async () => {
-  sql(`UPDATE threads SET title = 'Fix the login', pr = 34, checks = 'passing',
+  sql(`UPDATE tasks SET title = 'Fix the login', pr = 34, checks = 'passing',
     review_round = 2, reviewer = 'claude', reviewed_by = 'codex', verdict = 'changes',
     review_line = 'A test is missing.' WHERE task = 7`);
   open("lead");
@@ -893,7 +889,7 @@ test("under a list or page the footer adds ? keys, and s or m while the row can 
 });
 
 test("the header, the tabs and the strip share one row, and the agent starts right under it", async () => {
-  sql("UPDATE threads SET title = 'Fix the login', pr = 34 WHERE task = 7");
+  sql("UPDATE tasks SET title = 'Fix the login', pr = 34 WHERE task = 7");
   open("lead");
   await ready("lead");
   toSecondThread();
@@ -959,7 +955,7 @@ test("a thread's strip follows it as it changes", async () => {
   open("app-7");
   await ready("app-7");
   await until(() => tabRow().endsWith("app-7"), "the strip");
-  sql(`UPDATE threads SET review_round = 1, reviewed_by = 'codex', verdict = 'approve',
+  sql(`UPDATE tasks SET review_round = 1, reviewed_by = 'codex', verdict = 'approve',
     review_line = 'Looks right.' WHERE task = 7`);
   await until(() => seen().includes("app-7  round 1 · codex · approved"), "the review");
 });
@@ -967,7 +963,7 @@ test("a thread's strip follows it as it changes", async () => {
 test("what a title says is shown, never run or read as a format", async () => {
   const proof = join(home, "ran");
   const title = `100% %H #(touch ${proof}) #[fg=red] #{pane_pid}`;
-  sql(`UPDATE threads SET title = '${title}' WHERE task = 7`);
+  sql(`UPDATE tasks SET title = '${title}' WHERE task = 7`);
   // Wide enough for the whole title, which holds a path as long as the test's folder.
   open("app-7", "one", "xterm-256color", "200");
   await ready("app-7");
@@ -1437,8 +1433,7 @@ test("s on an issue's page, once its thread started, says the issue has it", asy
   await until(() => acted.length === 1, "the start");
   await says(startKeys);
   // The daemon records the thread, as sc start does.
-  sql(`INSERT INTO threads (owner, repo, task, folder, branch, status, needs_you)
-    VALUES ('simon', 'app', 31, 'app-31', 'skelcrew/31', 'working', 0);`);
+  sql(threadSql({ task: "31" }));
   type("s");
   await says("app#31 already has app-31");
   expect(acted).toEqual(["start simon/app 31"]);
@@ -1717,8 +1712,7 @@ test("a row that moves out of view as the list changes is scrolled back into vie
   await openList("Issues");
   await onRight("app-139");
   // The issue you are on gets a thread, which moves it under Started, far below.
-  sql(`INSERT INTO threads (owner, repo, task, folder, branch, status)
-    VALUES ('simon', 'app', 139, 'app-139', 'skelcrew/139', 'working')`);
+  sql(threadSql({ task: "139" }));
   await until(() => right().includes("Started") && right().includes("app-139"), "the row in view");
   press("Enter");
   await onRight("← back");
@@ -1779,8 +1773,7 @@ test("a page follows a resize, and the sidebar stays as wide", async () => {
 test("the wheel over an agent still scrolls it after a list came and went", async () => {
   openOnGitHub();
   agent("app-5", "seq 1 200");
-  sql(`INSERT INTO threads (owner, repo, task, folder, branch, status, needs_you) VALUES
-  ('simon', 'app', 5, 'app-5', 'skelcrew/5', 'working', 0);`);
+  sql(threadSql({ task: "5" }));
   open("app-5");
   await ready("app-5");
   clickRow("Issues");
@@ -2149,8 +2142,7 @@ await openScreen(${JSON.stringify(agents)}, "lead");`,
 const siteLead = leadPlaces("simon", "site").name;
 function addSite(): void {
   sql(`INSERT INTO repositories (name, owner, repo) VALUES ('site', 'simon', 'site');
-INSERT INTO threads (owner, repo, task, folder, branch, status, needs_you) VALUES
-  ('simon', 'site', 8, 'site-8', 'skelcrew/8', 'waiting', 1);`);
+${threadSql({ repo: "site", task: "8", status: "waiting", needs_you: 1 })}`);
   agent(siteLead);
 }
 
