@@ -695,3 +695,22 @@ test("a step that might not run the test command, or whose failure is let pass, 
   const workflow = `${shellForAll}${checkJob("steps:\n  - run: bun run check")}`;
   expect(testedByCi([workflow], ["bun run check"], ["check"])).toBe(false);
 });
+
+test("a job counts only when it runs every test command the repository names", () => {
+  const tests = ["echo setup", "bun test"];
+  const both = checkJob("steps:\n  - run: echo setup\n  - run: bun test");
+  expect(testedByCi([both], tests, ["check"])).toBe(true);
+  expect(testedByCi([checkJob("steps:\n  - run: echo setup")], tests, ["check"])).toBe(false);
+});
+
+test("a check name that a job running no tests could have made too proves nothing", () => {
+  // A release workflow tests under check, and the PR's own workflow lints under check.
+  const release = `on:\n  push:\n    tags: ["v*"]\njobs:\n  check:\n    steps:\n      - run: bun run check\n`;
+  const lint = "on: pull_request\njobs:\n  check:\n    steps:\n      - run: bun run lint\n";
+  expect(testedByCi([release, lint], ["bun run check"], ["check"])).toBe(false);
+  // A testing workflow that never runs on a PR never made the PR's check.
+  expect(testedByCi([release], ["bun run check"], ["check"])).toBe(false);
+  // Two PR workflows that both test under the same name still prove it.
+  const tested = checkJob("steps:\n  - run: bun run check");
+  expect(testedByCi([tested, tested], ["bun run check"], ["check"])).toBe(true);
+});
