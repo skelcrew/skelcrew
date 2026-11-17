@@ -64,6 +64,7 @@ const keysOf: Record<Group, Key[]> = {
 // doesn't.
 const yourKeys: Key[] = ["harness", "model", "lead", "builder", "reviewer", "max_rounds", "limits"];
 const repositoryKeys: Key[] = ["lead", "builder", "reviewer", "max_rounds", "setup", "tracker"];
+const roleKeys: Key[] = ["lead", "builder", "reviewer"];
 
 // Returns the built-in defaults: Claude Code for every role, three rounds, no setup and no
 // tracker of the repository's own. Reviews default to a quarter of this machine's cores, at least
@@ -98,7 +99,13 @@ export function readSettings<G extends Group>(
         repository,
       )
     : {};
-  return mergeSettings([shared, readYourFile(wanted.filter((k) => yourKeys.includes(k)))]);
+  // A setting the repository sets is not read from your config, so a bad value there can't
+  // stop a repository that decides it. A role is the exception: yours merges with the
+  // repository's, as a model goes along only while the role stays on your harness.
+  const decided = (k: Key) =>
+    shared[k] !== undefined && shared[k] !== null && !roleKeys.includes(k);
+  const fromYours = wanted.filter((k) => yourKeys.includes(k) && !decided(k));
+  return mergeSettings([shared, readYourFile(fromYours)]);
 }
 
 // Returns your config.yaml, holding only `keys`, checked. A file with none of them isn't read,

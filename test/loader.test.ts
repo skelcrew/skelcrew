@@ -125,3 +125,11 @@ test("only the settings asked for are checked, and a bad one names its file", ()
   expect(read(["rounds"]).err).toContain("config.yaml isn't valid");
   expect(read(["setup"]).err).toContain("the repository's skelcrew.yaml isn't valid");
 });
+
+test("a setting skelcrew.yaml sets isn't read from your config, so a bad one there stops nothing", () => {
+  files("harness: claude\nmax_rounds: 0\nsetup: 5\n", "max_rounds: 2\n");
+  expect(read(["rounds"]).settings?.rounds).toBe(2);
+  // A role is merged with yours, so yours is still read and checked.
+  files("harness: claude\nreviewer: { harness: nope }\n", "reviewer: { harness: codex }\n");
+  expect(read(["roles"]).err).toContain("config.yaml isn't valid");
+});
