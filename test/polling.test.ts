@@ -1067,6 +1067,7 @@ echo "Not logged in"; exit 1`,
     changes([issue12(true)]);
     await until(() => thread().task === 12);
     expect(listed()).toMatchObject([{ issue: "app-12", stage: "working" }]);
+    expect(thread().issue_link).toBe("https://github.com/simon/app/issues/12");
     await until(() => thread().assigned === 1);
     expect(claims()).toEqual([claim12]);
     expect(assigns()).toEqual([assignOn]);

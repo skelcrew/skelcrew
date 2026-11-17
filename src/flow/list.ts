@@ -15,7 +15,8 @@ import { messagesWaiting } from "./messages.ts";
 import { ciSummary, reviewVerdict } from "./page.ts";
 import { findRepository, noRepositories, repositories, repositoryAt } from "./repo.ts";
 import { roundRunning } from "./round.ts";
-import { needsYou, readyToMerge } from "./status.ts";
+import { Stage, taskStage } from "./stage.ts";
+import { needsYou } from "./status.ts";
 import { findThread, queuedForReview, Thread, threadName, threadOn } from "./thread.ts";
 
 // A repository as sc repo ls shows it. `missing` is a tracker its skelcrew.yaml names that
@@ -167,9 +168,6 @@ export function listThreads(db: Database, repository?: string): ThreadRow[] {
   });
 }
 
-// Where a task is, from its first words to the merge.
-const Stage = z.enum(["issue", "working", "ready for review", "merged", "closed"]);
-
 // An open task as sc issue ls shows it, with its stage and how its thread stands, or null with
 // no thread. `issue` is its name, such as app-12. The key says issue, as the commands do, and is
 // always one in the tracker: a thread with no issue, such as app-t1, is never listed here.
@@ -182,9 +180,7 @@ export const TaskRow = z.object({
 export type TaskRow = z.infer<typeof TaskRow>;
 
 // Returns a task's stage and how the thread on it stands, or null for the thread when it has
-// none. `issueOpen` is whether the tracker still has its issue open. Work that ended without a
-// merge puts the task back in stage issue while its issue is open, as sc start starts it again
-// from there. A thread that stopped or failed keeps its task working, so it doesn't vanish.
+// none. `issueOpen` is whether the tracker still has its issue open.
 function taskStatusOf(
   db: Database,
   owner: string,
@@ -196,12 +192,10 @@ function taskStatusOf(
     .query("SELECT * FROM task_threads WHERE owner = ? AND repo = ? AND task = ?")
     .get(owner, repo, task);
   const thread = Thread.nullable().parse(row);
-  const ended = issueOpen ? "issue" : "closed";
-  if (!thread) return { stage: ended, thread: null };
-  let stage: TaskRow["stage"];
-  if (thread.status === "done") stage = thread.merged ? "merged" : ended;
-  else stage = readyToMerge(thread) ? "ready for review" : "working";
-  return { stage, thread: { status: thread.status, needsYou: needsYou(thread) } };
+  return {
+    stage: taskStage(thread, issueOpen),
+    thread: thread && { status: thread.status, needsYou: needsYou(thread) },
+  };
 }
 
 // Returns the open tasks of every repository, or of one, newest first, with the thread on
@@ -228,9 +222,11 @@ export function listTasks(db: Database, repository?: string): TaskRow[] {
     .map(({ created, ...task }) => task);
 }
 
-// One task as sc issue show shows it, named under `issue` as in sc issue ls.
+// One task as sc issue show shows it, named under `issue` as in sc issue ls. `link` is the link
+// to the issue it came from, or null for a task with no issue.
 export const TaskView = z.object({
   issue: z.string(),
+  link: z.string().nullable(),
   stage: Stage,
   title: z.string(),
   body: z.string(),
@@ -274,6 +270,8 @@ export function showTask(db: Database, repository: string, task: string): TaskVi
   );
   return {
     issue: `${r.name}-${task}`,
+    // The task keeps the link it started with. One not started yet has its issue's in the copy.
+    link: thread?.issue_link ?? issue?.link ?? null,
     stage,
     title: words.title,
     body: words.body,

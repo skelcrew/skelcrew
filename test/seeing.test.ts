@@ -375,6 +375,7 @@ describe("sc issue show", () => {
     expect(shown.err).toBe("");
     expect(JSON.parse(shown.out)).toEqual({
       issue: "app-12",
+      link: "https://github.com/simon/app/issues/12",
       stage: "working",
       title: "Add export",
       body: "Export threads as JSON.\n\nKeep it small.",
@@ -382,6 +383,7 @@ describe("sc issue show", () => {
     });
     expect(JSON.parse((await skel(["issue", "show", "--json", "app-10"])).out)).toEqual({
       issue: "app-10",
+      link: "https://github.com/simon/app/issues/10",
       stage: "issue",
       title: "Fix login",
       body: "",

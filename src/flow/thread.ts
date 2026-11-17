@@ -142,6 +142,9 @@ export const Thread = z.object({
   // Whether the work ended with its changes merged: its PR merged, or without a forge, its
   // branch reached its base. False while it goes on, and once it ended any other way.
   merged: z.coerce.boolean(),
+  // The link to the issue the task came from, saved as it started, or null for a task with no
+  // issue. A task that started before Skelcrew kept it has the link Skelcrew's copy still had.
+  issue_link: z.string().nullable(),
 });
 export type Thread = z.infer<typeof Thread>;
 

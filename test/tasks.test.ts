@@ -109,14 +109,21 @@ const stages: Record<string, string> = {
 };
 
 // What the release before tasks showed, with this test's home in its paths, and each task
-// sc issue ls and sc issue show list with its stage.
+// sc issue ls and sc issue show list with its stage. sc issue show adds the link to each task's
+// issue, which only app's issues have.
 function shownBefore(): unknown {
   const shown = JSON.parse(
     readFileSync(join(saved, "before-tasks.json"), "utf8").replaceAll("$HOME", home),
   );
   const staged = (task: string | { issue: string }) =>
     typeof task === "string" ? task : { ...task, stage: stages[task.issue] };
-  return { ...shown, issues: shown.issues.map(staged), show: shown.show.map(staged) };
+  const linked = (task: string | { issue: string }) => {
+    if (typeof task === "string") return task;
+    const number = /^app-(\d+)$/.exec(task.issue)?.[1];
+    const link = number ? `https://github.com/simon/app/issues/${number}` : null;
+    return { ...task, stage: stages[task.issue], link };
+  };
+  return { ...shown, issues: shown.issues.map(staged), show: shown.show.map(linked) };
 }
 
 // Returns the names of the database's tables.
@@ -142,6 +149,14 @@ test("after the move, every command and the screen show the same threads under t
     db.query("SELECT owner, repo, task FROM threads ORDER BY rowid").all(),
   );
   expect(db.query("SELECT DISTINCT role FROM threads").all()).toEqual([{ role: "builder" }]);
+  // Each task from an issue still in the copy keeps the link to it.
+  expect(
+    db.query("SELECT task, issue_link FROM tasks WHERE task = 13 OR task = 't1'").all(),
+  ).toEqual([
+    { task: 13, issue_link: "https://github.com/simon/app/issues/13" },
+    { task: "t1", issue_link: null },
+    { task: "t1", issue_link: null },
+  ]);
   db.close();
   const copy = join(data(), "skelcrew-before-tasks.db");
   expect(tables(copy)).not.toContain("tasks");
@@ -169,7 +184,7 @@ console.log(JSON.stringify({ rounds, short, status }));`;
 });
 
 // A database the first release with tasks moved has a tasks table without the columns added
-// since, such as whether the work merged.
+// since: whether the work merged, and the link to its issue, which comes from the copy.
 test("a tasks table from an earlier release gains the task's newer columns", () => {
   oldDatabase();
   run(`import { openDb, moveToTasks } from ${JSON.stringify(source("db.ts"))};
@@ -177,12 +192,17 @@ moveToTasks(openDb());`);
   const earlier = new Database(dbFile());
   earlier.run("DROP VIEW task_threads");
   earlier.run("ALTER TABLE tasks DROP COLUMN merged");
+  earlier.run("ALTER TABLE tasks DROP COLUMN issue_link");
   earlier.close();
   const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
 import { readThread } from ${JSON.stringify(source("flow/thread.ts"))};
-const { rounds, merged } = readThread(openDb(), "app-15");
-console.log(JSON.stringify({ rounds, merged }));`;
-  expect(JSON.parse(run(code))).toEqual({ rounds: 3, merged: false });
+const { rounds, merged, issue_link } = readThread(openDb(), "app-15");
+console.log(JSON.stringify({ rounds, merged, issue_link }));`;
+  expect(JSON.parse(run(code))).toEqual({
+    rounds: 3,
+    merged: false,
+    issue_link: "https://github.com/simon/app/issues/15",
+  });
 });
 
 test("a reader opened before the move reads the tasks after it", () => {

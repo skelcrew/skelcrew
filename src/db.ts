@@ -61,7 +61,8 @@ const threadColumns = {
 // off only then. `updates` holds the lead's messages to the builder, as JSON, since they change
 // the task its reviewer checks against. `review_at` is when the latest review was asked for or
 // ended, for sc ps. `merged` is whether the work ended with its changes merged, which tells a
-// task that is done apart from one that was dropped.
+// task that is done apart from one that was dropped. `issue_link` is the link to the issue the
+// task came from, saved as it starts, and null for a task with no issue, such as t1.
 export const taskColumns = {
   title: "TEXT",
   body: "TEXT",
@@ -90,7 +91,18 @@ export const taskColumns = {
   review_limited: "INTEGER NOT NULL DEFAULT 0",
   review_reset: "INTEGER",
   merged: "INTEGER NOT NULL DEFAULT 0",
+  issue_link: "TEXT",
 };
+
+// Saves the link to its issue on each task that lacks one, from Skelcrew's copy of the tracker,
+// for tasks that started before Skelcrew kept it. An issue that has left the copy, as a closed
+// one does once its thread is done, has no link to give.
+function linkIssues(db: Database): void {
+  db.run(`UPDATE tasks SET issue_link = (SELECT json_extract(i.item, '$.link') FROM items i
+    WHERE i.owner = tasks.owner AND i.repo = tasks.repo AND i.kind = 'task'
+      AND i.id = CAST(tasks.task AS TEXT))
+    WHERE issue_link IS NULL`);
+}
 
 // Opens Skelcrew's database and prepares its tables so repositories, their leads and threads
 // survive restarts.
@@ -171,6 +183,7 @@ export function moveToTasks(db: Database): void {
     createTasks(db);
     const columns = ["owner", "repo", "task", ...Object.keys(taskColumns)].join(", ");
     db.run(`INSERT INTO tasks (${columns}) SELECT ${columns} FROM threads`);
+    linkIssues(db);
     viewThreads(db);
   }).immediate();
 }
@@ -253,11 +266,14 @@ function prepareTables(db: Database): void {
   // A new database starts with tasks. One from an earlier release waits for its daemon to move
   // its threads onto tasks, as only the daemon knows no other daemon still writes to it.
   if (fresh) createTasks(db);
-  // A tasks table made by an earlier release lacks the task's newer columns.
+  // A tasks table made by an earlier release lacks the task's newer columns. Its tasks get
+  // their issue's link as the column comes.
   if (hasTasks(db))
     for (const [column, type] of Object.entries(taskColumns))
-      if (!db.query("SELECT 1 FROM pragma_table_info('tasks') WHERE name = ?").get(column))
+      if (!db.query("SELECT 1 FROM pragma_table_info('tasks') WHERE name = ?").get(column)) {
         db.run(`ALTER TABLE tasks ADD COLUMN ${column} ${type}`);
+        if (column === "issue_link") linkIssues(db);
+      }
   // Skelcrew's copy of each repository's open tasks and PRs, as items, kept as JSON. The columns
   // are what readers pick and sort by. A database from an earlier release also has an
   // open_items table, which nothing reads now. It stays, as a daemon of that release may still

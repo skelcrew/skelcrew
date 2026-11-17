@@ -53,6 +53,7 @@ const state: Thread = {
   updates: [],
   state: null,
   merged: false,
+  issue_link: null,
 };
 const status = (more: Partial<Thread>) => statusOf({ ...state, ...more }, 3);
 

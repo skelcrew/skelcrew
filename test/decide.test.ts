@@ -67,6 +67,7 @@ function thread(change: Partial<Thread> = {}): Thread {
     updates: [],
     state: null,
     merged: false,
+    issue_link: null,
     ...change,
   };
 }

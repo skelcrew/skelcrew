@@ -83,6 +83,8 @@ export async function startThread(
   let task: string;
   let title: string;
   let body: string;
+  // The link to the issue the task comes from, which only a task from the tracker has.
+  let issueLink: string | null = null;
   if ("title" in given) {
     // The highest number of the repository's own tasks, to name the next one.
     const ownTaskNumbers = db
@@ -103,6 +105,7 @@ export async function startThread(
       const found = taskOf(db, owner, repo, task);
       if (found.state !== "open") throw new Error(`there is no open issue ${task} in ${name}`);
       ({ title, body } = found);
+      issueLink = found.link;
     } else if (had?.title) {
       title = had.title;
       body = had.body ?? "";
@@ -189,6 +192,7 @@ export async function startThread(
       updates: [],
       state: null,
       merged: false,
+      issue_link: issueLink,
     };
     // A failed or done thread's row gives way to the new one, and messages that waited for its
     // builder go with it, as they were about the old work. Its task starts afresh too, with no
@@ -211,9 +215,10 @@ export async function startThread(
       ],
     );
     db.run(
-      `INSERT OR REPLACE INTO tasks (owner, repo, task, title, body, short, assigned, seen)
-        VALUES (?, ?, ?, ?, ?, ?, ?, '[]')`,
-      [owner, repo, task, title, body, thread.short, thread.assigned],
+      `INSERT OR REPLACE INTO tasks
+        (owner, repo, task, title, body, short, assigned, seen, issue_link)
+        VALUES (?, ?, ?, ?, ?, ?, ?, '[]', ?)`,
+      [owner, repo, task, title, body, thread.short, thread.assigned, issueLink],
     );
     log(db, thread);
     return thread;
