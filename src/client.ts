@@ -4,6 +4,7 @@ import { z } from "zod";
 import { PrView, RepositoryRow, TaskRow, TaskView, ThreadRow } from "./flow/list.ts";
 import { type DaemonRequest, parseJson } from "./flow/requests.ts";
 import { cliSocket } from "./paths.ts";
+import { quietly } from "./run.ts";
 
 // Sends a request to the daemon and returns its decoded reply, or null when nothing
 // answers. A socket file alone proves nothing: a daemon that was killed leaves it behind.
@@ -230,14 +231,25 @@ export async function reportQuestion(state: "asked" | "answered" | "closed"): Pr
 // builder's thread needs you if the builder stopped without submitting. The hook's input on stdin
 // can hold the builder's last message, whose first line goes in the lead's note, so you see what
 // it waits on. Input that isn't the hook's is left out, and a terminal isn't read, as it would
-// wait for you. The agent's own socket says which agent.
+// wait for you. The agent's own socket says which agent. It also sends the commit the clone the
+// hook runs in has checked out, when nothing there is uncommitted, so a builder that only
+// answered a message while its last submit is reviewed doesn't need you.
 export async function reportTurnEnded(): Promise<void> {
   const Input = z.object({ last_assistant_message: z.string().nullish() });
   const text = process.stdin.isTTY ? "" : await Bun.stdin.text();
   const input = Input.safeParse(parseJson(text));
   const message = input.success ? (input.data.last_assistant_message ?? "") : "";
   const said = message.trim().split("\n")[0]?.trim();
-  await request({ command: "turn ended", ...(said ? { said } : {}) });
+  // The hook runs in the builder's own clone, inside its sandbox. Untracked files count as work
+  // left over. A folder git can't read sends no commit, so the turn counts as new work.
+  const status = await quietly(["git", "status", "--porcelain"]);
+  const head = await quietly(["git", "rev-parse", "--verify", "HEAD"]);
+  const clean = status.ok && status.out.trim() === "" && head.ok;
+  await request({
+    command: "turn ended",
+    ...(said ? { said } : {}),
+    ...(clean ? { head: head.out.trim() } : {}),
+  });
 }
 
 // What Claude Code's StopFailure hook gets on stdin: the kind of error, such as rate_limit, and

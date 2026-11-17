@@ -388,7 +388,9 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         questionAsked(db, sessions, callingThread(caller).folder);
         return { asking: true };
       case "turn ended":
-        return { asking: turnEnded(db, sessions, callingThread(caller).folder, request.said) };
+        return {
+          asking: turnEnded(db, sessions, callingThread(caller).folder, request.said, request.head),
+        };
       case "turn failed":
         turnFailed(db, sessions, callingThread(caller), request.error, request.message);
         return { erred: true };

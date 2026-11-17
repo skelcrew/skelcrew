@@ -239,6 +239,19 @@ function setColumn(column: "needs_you" | "submitted"): void {
   db.close();
 }
 
+// Stands in for a submit whose review is under way: Skelcrew's clone holds the commit app-12's
+// clone has checked out as the one it last pushed, and the thread reviews it.
+function submittedAsReviewing(): void {
+  const clone = join(data(), "repos", "simon", "app");
+  const ref = "refs/skelcrew/threads/app-12";
+  git(clone, "fetch", "-q", join(data(), "threads", "app-12"), `+HEAD:${ref}`);
+  const sha = git(clone, "rev-parse", ref);
+  const db = new Database(join(data(), "skelcrew.db"));
+  db.run("PRAGMA busy_timeout = 5000");
+  db.run("UPDATE threads SET reviewing = ?", [sha]);
+  db.close();
+}
+
 // The socket the daemon opens for app's lead, which tells it the lead calls. It is named by a
 // short hash.
 function leadSocket(): string {
@@ -415,6 +428,28 @@ describe.skipIf(insideSandbox)("needs you", () => {
     await Bun.sleep(1000);
     expect(await needsYou()).toBe(false);
     expect(notes()).toBe(0);
+  }, 60_000);
+
+  // A builder that only answers a message, such as the lead's note about something it already
+  // fixed, has nothing new to submit, and its last submit still waits on its review.
+  test("a turn with no new work, while the last submit is reviewed, doesn't need you", async () => {
+    addApp();
+    await startApp12();
+    submittedAsReviewing();
+    await hook("stop");
+    await Bun.sleep(1000);
+    expect(await needsYou()).toBe(false);
+    expect(notes()).toBe(0);
+  }, 60_000);
+
+  test("a turn that leaves work it didn't submit needs you, even while the last submit is reviewed", async () => {
+    addApp();
+    await startApp12();
+    submittedAsReviewing();
+    writeFileSync(join(data(), "threads", "app-12", "export.ts"), "export {};\n");
+    await hook("stop");
+    await untilNeedsYou(true);
+    await until(() => notes() === 1);
   }, 60_000);
 
   test("a turn that ends on an error needs you for the error alone", async () => {
