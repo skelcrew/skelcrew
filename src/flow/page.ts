@@ -55,9 +55,12 @@ export function pageOf(item: Item): Page {
   return { title: item.title, facts, body: item.body };
 }
 
-// Returns what a PR's CI says, and its colour. Skelcrew's own check isn't CI, and one failure is
-// enough to say so while the rest still run. A repository with no CI says none, dim.
-function ciSummary(pr: Extract<Item, { kind: "pr" }>): [string, Colour] {
+// Returns what a PR's CI says, and its colour, for its page and sc pr show. Skelcrew's own check
+// isn't CI, and one failure is enough to say so while the rest still run. A repository with no CI
+// says none, dim.
+export function ciSummary(
+  pr: Extract<Item, { kind: "pr" }>,
+): ["none" | "passed" | "failed" | "running", Colour] {
   const ci = pr.checks.filter((check) => check.name !== reviewCheck);
   if (ci.length === 0) return ["none", "dim"];
   if (ci.every((check) => check.state === "passed")) return ["passed", "green"];
@@ -66,17 +69,25 @@ function ciSummary(pr: Extract<Item, { kind: "pr" }>): [string, Colour] {
   return failed ? ["failed", "red"] : ["running", "dim"];
 }
 
-// Returns what a review said and who said it, with green for an approval and yellow for changes
-// asked for. A forge such as GitHub won't let Skelcrew approve its own PR, so Skelcrew's verdict
-// is a comment whose first line says it: for those, that line is what you want to read, and what
-// its colour comes from. Any other comment has no colour.
-function reviewSummary(
-  review: Extract<Item, { kind: "pr" }>["reviews"][number],
-): [string, Colour?] {
+// A review on a PR, as the forge gave it.
+type Review = Extract<Item, { kind: "pr" }>["reviews"][number];
+
+// Returns what a review's verdict is in words, for its page and sc pr show. A forge such as
+// GitHub won't let Skelcrew approve its own PR, so Skelcrew's verdict is a comment whose first
+// line says it, such as "**Approved**". For those, that line is the verdict.
+export function reviewVerdict(review: Review): string {
   const [first = ""] = review.text.split("\n");
   const said = review.verdict === "commented" ? first.replaceAll("*", "").trim() : "";
-  const verdict = (said || review.verdict).toLowerCase();
-  const text = `${said || review.verdict} · ${review.author?.login ?? "unknown"}`;
+  return said || review.verdict;
+}
+
+// Returns what a review said and who said it, with green for an approval and yellow for changes
+// asked for. Skelcrew's own verdict, posted as a comment, takes its colour from its first line.
+// Any other comment has no colour.
+function reviewSummary(review: Review): [string, Colour?] {
+  const said = reviewVerdict(review);
+  const verdict = said.toLowerCase();
+  const text = `${said} · ${review.author?.login ?? "unknown"}`;
   if (verdict.startsWith("approved")) return [text, "green"];
   if (verdict.startsWith("changes")) return [text, "yellow"];
   return [text];

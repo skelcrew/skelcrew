@@ -210,6 +210,7 @@ async function reviewRound(
     review_round: before + 1,
     verdict: verdict.verdict,
     review_line: verdict.body.trim().split("\n")[0]?.slice(0, 200) ?? "",
+    review_at: Date.now(),
   };
   record(db, folder, change, outcome.why);
   typeLeadNotes(db, tmux);
@@ -329,6 +330,14 @@ type Round = {
 // Each thread's latest round, by its folder.
 const latestRounds = new Map<string, Round>();
 
+// Returns whether the thread's latest round is still pushing or reviewing, for sc ps. A round
+// that failed has ended, while its submit or commit stays saved for sc review to try again, so
+// the saved columns alone can't tell a running review from a failed one.
+export function roundRunning(folder: string): boolean {
+  const round = latestRounds.get(folder);
+  return round !== undefined && !round.ended;
+}
+
 // Saves the round as the thread's latest. When `rest`, the rest of the round, fails, it marks
 // the thread needs you with the reason, unless the round was cancelled, such as by a newer
 // round. `pushed`
@@ -353,6 +362,7 @@ function trackRound(
       status: "waiting",
       queued: null,
       ...notHeld,
+      review_at: Date.now(),
     } satisfies Partial<Thread>;
     record(db, folder, change, `the round failed: ${why}`);
     typeLeadNotes(db, tmux);
@@ -415,6 +425,7 @@ export function submitRound(db: Database, tmux: string, folder: string, summary:
       // What CI said was about the commit before this one.
       checks: null,
       reviewer: reviewer.harness,
+      review_at: Date.now(),
     },
     `submitted: ${summary}`,
   );
@@ -474,6 +485,7 @@ export function rerunReview(db: Database, tmux: string, folder: string, byBuilde
     held: null,
     ...notHeld,
     reviewing: sha,
+    review_at: Date.now(),
     queued: null,
   } satisfies Partial<Thread>;
   record(db, folder, change, "asked to review again");

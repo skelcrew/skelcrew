@@ -41,6 +41,7 @@ test("the help names every command", () => {
     "issue ls",
     "issue show",
     "issue create",
+    "pr show",
     "start",
     "stop",
     "rm",

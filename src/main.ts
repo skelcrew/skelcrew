@@ -80,6 +80,7 @@ function usage(command?: string): never {
     "repo",
     "ps",
     "issue",
+    "pr",
     "start",
     "stop",
     "rm",
@@ -336,6 +337,30 @@ async function issueCommand(args: string[], json: boolean): Promise<void> {
   usage(command);
 }
 
+// Shows one PR, for sc pr show, named by its number, such as 31 or #31, or by its thread, such
+// as app-12. A number is in the repository of the checkout sc runs in, or the one --from names,
+// which sc --remote passes from your laptop's checkout. For the lead, it is always its own.
+async function prCommand(args: string[], json: boolean): Promise<void> {
+  const [command, sub, named, ...rest] = args;
+  const { askForPr } = await import("./client.ts");
+  const { printPr } = await import("./flow/list.ts");
+  const given = rest[0] === "--from" && rest[1] && rest.length === 2 ? rest[1] : undefined;
+  if (sub !== "show" || named === undefined || (rest.length > 0 && !given)) usage(command);
+  const number = named.match(/^#?(\d+)$/)?.[1];
+  const task = splitTaskName(named);
+  if (number !== undefined) {
+    const { originHere } = await import("./machine/origin.ts");
+    const from = given ?? originHere() ?? undefined;
+    printPr(await askForPr({ pr: Number(number), ...(from ? { from } : {}) }), json);
+    return;
+  }
+  if (task && !given) {
+    printPr(await askForPr({ repo: task[0], task: task[1] }), json);
+    return;
+  }
+  usage(command);
+}
+
 // Starts, stops, removes, re-reviews or attaches to the thread on a task such as app-13. sc
 // start also takes a repository, a title and a body, to start a thread with no tracker.
 async function threadCommand(args: string[]): Promise<void> {
@@ -534,6 +559,8 @@ async function runCommand(args: string[]): Promise<void> {
       return psCommand(words, json);
     case "issue":
       return issueCommand(words, json);
+    case "pr":
+      return prCommand(words, json);
     case "start":
     case "stop":
     case "rm":

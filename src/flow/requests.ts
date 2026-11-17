@@ -34,6 +34,15 @@ export const DaemonRequest = z.discriminatedUnion("command", [
     repo: z.string(),
     task: TaskId,
   }),
+  // A PR is named by its number or by its thread's task. With a number, `from` is the remote
+  // of the checkout sc ran in, which names the repository when `repo` doesn't.
+  z.object({
+    command: z.literal("pr show"),
+    repo: z.string().optional(),
+    from: z.string().optional(),
+    pr: z.number().int().positive().optional(),
+    task: TaskId.optional(),
+  }),
   z.object({
     command: z.literal("task create"),
     repo: z.string(),
@@ -122,6 +131,7 @@ export const allowed = {
     "ps",
     "task ls",
     "task show",
+    "pr show",
     "task create",
     "start",
     "start new",
@@ -137,6 +147,7 @@ export const allowed = {
     "ps",
     "task ls",
     "task show",
+    "pr show",
     "task create",
     "start",
     "start new",

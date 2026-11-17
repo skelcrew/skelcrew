@@ -102,7 +102,8 @@ exec sleep 300`,
 // waits for the test to put go-n in the sessions folder. With error-n there, it echoes its
 // prompt and then that error, as codex exec does, and fails. What it was given, and the
 // branches it saw, go in the sessions folder, the one place a review writes that lasts. The
-// prompt file appears only once it holds the whole prompt, as tests read it as soon as it exists.
+// prompt is written aside and moved into place, so a test that sees prompt-n never reads it
+// half written.
 function fakeCodex(): void {
   script(
     "codex",

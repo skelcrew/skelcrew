@@ -293,17 +293,20 @@ export async function setStatus(
   );
 }
 
-// Returns the end of a failed check's log, as the forge keeps it.
+// Returns the end of a failed check's log, as the forge keeps it. `timeout`, in milliseconds,
+// is how long the forge may take, which sc pr show keeps short, as you wait on it.
 export async function failedLog(
   db: Database,
   repository: Repository,
   check: string,
+  timeout?: number,
 ): Promise<string> {
   const read = await callPlugin(
     db,
     requireForge(db, repository),
     { ask: "log", repository: repositoryKey(repository), check },
     z.object({ log: z.string() }),
+    timeout,
   );
   return read.log;
 }
