@@ -433,7 +433,8 @@ test("a laptop with uncommitted changes always offers, and says what it copies",
 // Skelcrew that checks no build, so any warning comes from what the laptop sends. Its daemon's
 // service runs, started from the checkout as it is, and restarting the service starts it again
 // from whatever the checkout then holds, writing down that commit as a daemon does.
-function checkoutOnServer(name = "skelcrew"): string {
+// With `linked` false, ~/.local/bin/sc is left alone, for another install beside the service.
+function checkoutOnServer(name = "skelcrew", linked = true): string {
   const folder = join(home, "server", name);
   Bun.spawnSync(["git", "clone", "-q", laptop.folder, folder]);
   mkdirSync(join(folder, "bin"));
@@ -441,7 +442,7 @@ function checkoutOnServer(name = "skelcrew"): string {
     mode: 0o755,
   });
   mkdirSync(join(home, "server", ".local", "bin"), { recursive: true });
-  symlinkSync(join(folder, "bin", "sc"), join(home, "server", ".local", "bin", "sc"));
+  if (linked) symlinkSync(join(folder, "bin", "sc"), join(home, "server", ".local", "bin", "sc"));
   unit(join(folder, "bin", "sc"));
   writeFileSync(
     join(home, "serverbin", "systemctl"),
@@ -548,6 +549,29 @@ test("--remote keeps warning after an update until the daemon restarts on it", a
   const run = await skel(["--remote", "simon@workbox", "ps"]);
   expect(run.err).toBe(daemonWarning(folder));
   expect(run.out).toBe("old Skelcrew ran ps\n");
+  expect(runAdvice(run.err)).toBe(0);
+  expect((await skel(["--remote", "simon@workbox", "ps"])).err).toBe("");
+});
+
+// The sc you run can be a copy at your commit while the daemon's service runs an old checkout.
+test("--remote warns about the checkout the daemon's service runs, not the sc on the PATH", async () => {
+  const folder = checkoutOnServer("skelcrew", false);
+  commit(laptop.folder);
+  installed(at(laptop.folder));
+  const run = await skel(["--remote", "simon@workbox", "ps"]);
+  expect(run.err).toBe(behindWarning(folder, at(laptop.folder)));
+  expect(run.out).toBe("Skelcrew on the server got 1 arguments\n[ps]\n");
+  expect(runAdvice(run.err)).toBe(0);
+  expect((await skel(["--remote", "simon@workbox", "ps"])).err).toBe("");
+});
+
+// Restarting the service starts the daemon from its checkout, wherever it was started from.
+test("--remote warns about a daemon started from another checkout than its service's", async () => {
+  const folder = checkoutOnServer();
+  const code = join(home, "server", ".local", "share", "skelcrew", "daemon-code");
+  writeFileSync(code, readFileSync(code, "utf8").replace(folder, join(home, "elsewhere")));
+  const run = await skel(["--remote", "simon@workbox", "ps"]);
+  expect(run.err).toBe(daemonWarning(folder));
   expect(runAdvice(run.err)).toBe(0);
   expect((await skel(["--remote", "simon@workbox", "ps"])).err).toBe("");
 });
