@@ -1365,14 +1365,15 @@ await serve(${JSON.stringify(socket)}, 200);`;
   }, 60_000);
 
   // Runs the daemon from a folder that isn't a git checkout, as the service does, polling every
-  // 200 milliseconds. git that runs outside Skelcrew's clone then fails.
-  const serveOutsideCheckout = () => {
+  // 200 milliseconds. git that runs outside Skelcrew's clone then fails. `more` adds to its
+  // environment, such as a GIT_TRACE file that shows what git the daemon runs.
+  const serveOutsideCheckout = (more: Record<string, string> = {}) => {
     const code = `import { serve } from ${JSON.stringify(source("flow/daemon.ts"))};
 await serve(${JSON.stringify(socket)}, 200);`;
     running.push(
       Bun.spawn([process.execPath, "-e", code], {
         cwd: home,
-        env: env(),
+        env: { ...env(), ...more },
         stdout: "ignore",
         stderr: "ignore",
       }),
@@ -1616,7 +1617,10 @@ await serve(${JSON.stringify(socket)}, 200);`;
   test("a poll while sc rm deletes the branch leaves the thread to sc rm", async () => {
     const bare = addAppOnGit();
     verdict(1, "approve", "Ready to merge.");
-    serveOutsideCheckout();
+    // Each look a poll takes at whether the branch is on the remote is a git ls-remote.
+    const trace = join(home, "git-trace");
+    const looks = () => read(trace).split("trace: built-in: git ls-remote").length - 1;
+    serveOutsideCheckout({ GIT_TRACE: trace });
     await untilCloned();
     expect((await skel(["start", "app", "Add export", "As JSON"])).err).toBe("");
     const log = () => read(join(data(), "threads", "app-t1.log"));
@@ -1634,8 +1638,11 @@ done`,
     chmodSync(hook, 0o755);
     const removing = skel(["rm", "app-t1"]);
     await until(() => existsSync(join(home, "deleted")), 30_000);
-    // The daemon polls every 200 milliseconds, so this gives it several looks at the thread.
-    await Bun.sleep(1500);
+    // sc rm's own look came before it deleted the branch, so a look from now on is a poll's.
+    // Polls of a repository never overlap, so once a second has begun, the first one has
+    // decided what the gone branch means for the thread.
+    const before = looks();
+    await until(() => looks() >= before + 2, 30_000);
     writeFileSync(join(home, "go"), "");
     const removed = await removing;
     expect(removed.err).toBe("");
