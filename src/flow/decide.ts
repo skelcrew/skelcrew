@@ -52,17 +52,26 @@ export function ciState(pr: PullRequest): Thread["checks"] {
   return ci.some((c) => c.state === "failed" || c.state === "cancelled") ? "failing" : "pending";
 }
 
-// Returns who runs a commit's whole test suite, so it runs once: CI, once a CI check shows on
-// one of the repository's open PRs, which proves CI runs on PRs. Otherwise the reviewer, unless
-// the commit `setsUpCi`, so CI may yet start on a first PR, or on one that adds CI, and the
-// review hasn't `waited` long enough for its first check: then "wait".
-export function whoRunsTheSuite(
-  prs: PullRequest[],
-  setsUpCi: boolean,
-  waited: boolean,
-): "ci" | "reviewer" | "wait" {
-  if (prs.some((pr) => ciOf(pr).length > 0)) return "ci";
-  return setsUpCi && !waited ? "wait" : "reviewer";
+// Returns who runs the whole test suite on `commit`, the head of `own`, the thread's PR, so it
+// runs once: CI, once a CI check shows on this commit, as only that proves CI runs on it. A
+// workflow can skip one PR while it runs on others, such as with a branch or paths filter.
+// Until then the review waits, while a check may still come and it hasn't `waited` long
+// enough: when CI shows on another of the repository's `prs`, or when the commit `setsUpCi`,
+// as on a first PR, unless a review here already `waitedInVain` with no CI anywhere, as
+// with a workflow that runs only on a release. Otherwise the reviewer runs it.
+export function whoRunsTheSuite(given: {
+  own: PullRequest | null;
+  commit: string;
+  prs: PullRequest[];
+  setsUpCi: boolean;
+  waitedInVain: boolean;
+  waited: boolean;
+}): "ci" | "reviewer" | "wait" {
+  const { own, commit, prs, setsUpCi, waitedInVain, waited } = given;
+  if (own?.head === commit && ciOf(own).length > 0) return "ci";
+  if (waited) return "reviewer";
+  if (prs.some((pr) => ciOf(pr).length > 0)) return "wait";
+  return setsUpCi && !waitedInVain ? "wait" : "reviewer";
 }
 
 // Returns what the reviewer reads about CI on the commit it reviews: whether CI passed, failed

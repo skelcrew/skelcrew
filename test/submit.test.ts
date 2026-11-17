@@ -375,28 +375,54 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
   }, 60_000);
 
   // CI runs the whole test suite once per commit, so the reviewer leaves it to CI. The PR's own
-  // check shows CI runs on PRs, even on a repository's first PR.
-  test("once CI shows a check on the PR, the reviewer reads CI's result rather than running the suite", async () => {
+  // check on its commit shows CI runs on it, even on a repository's first PR.
+  test("once CI shows a check on the PR's commit, the reviewer reads CI's result rather than running the suite", async () => {
     addApp({ ".github/workflows/ci.yml": "on: pull_request\n" });
+    verdict(1, "approve", "Ready to merge.");
+    await startApp12();
+    await until(() => opened() !== undefined, 30_000);
     answer(plugin, "changed", {
       items: [
         taskItem("12", "Add export", { body: "As JSON" }),
         prItem("7", "Add export", {
           branch: "skelcrew/12-add-export",
+          head: pushed(),
           checks: [{ name: "test", id: "900", state: "running" }],
+        }),
+      ],
+      next: null,
+    });
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), 60_000);
+    const prompt = read(join(codexHome(), "sessions", "prompt-1"));
+    expect(prompt).toContain(
+      "CI runs the whole test suite on this commit, so don't run it yourself",
+    );
+    expect(prompt).toContain("ci.md");
+  }, 100_000);
+
+  // A workflow can run on other PRs and skip this one, such as with a branch or paths filter.
+  // CI elsewhere then proves nothing about this commit, and the reviewer runs the suite.
+  test("when CI shows on another PR but never on this one, the reviewer runs the whole suite", async () => {
+    addApp({ ".github/workflows/ci.yml": "on: { pull_request: { branches: [next] } }\n" });
+    answer(plugin, "changed", {
+      items: [
+        taskItem("12", "Add export", { body: "As JSON" }),
+        prItem("8", "Other work", {
+          branch: "other",
+          head: "0123456789abcdef0123456789abcdef01234567",
+          checks: [{ name: "test", id: "901", state: "passed" }],
         }),
       ],
       next: null,
     });
     verdict(1, "approve", "Ready to merge.");
     await startApp12();
-    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), 30_000);
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), 180_000);
     const prompt = read(join(codexHome(), "sessions", "prompt-1"));
-    expect(prompt).toContain(
-      "CI runs the whole test suite on this commit, so don't run it yourself",
-    );
-    expect(prompt).toContain("ci.md");
-  }, 60_000);
+    expect(prompt).toContain("No CI runs on this commit, so run the repository's whole test suite");
+    expect(prompt).not.toContain("CI is still running");
+    expect(prompt).not.toContain("ci.md");
+  }, 240_000);
 
   // CI the PR adds runs on the PR too, but shows no check until the forge starts it.
   test("on a PR that adds the first workflow, the review waits for CI's check, then reads its result", async () => {
@@ -414,6 +440,7 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
         taskItem("12", "Add export", { body: "As JSON" }),
         prItem("7", "Add export", {
           branch: "skelcrew/12-add-export",
+          head: pushed(),
           checks: [{ name: "test", id: "900", state: "running" }],
         }),
       ],
@@ -435,11 +462,11 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
     await startApp12();
     await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), 180_000);
     const first = read(join(codexHome(), "sessions", "prompt-1"));
-    expect(first).toContain("The repository has no CI, so run its whole test suite");
+    expect(first).toContain("No CI runs on this commit, so run the repository's whole test suite");
     // The second round's review would wait 2 minutes more if it waited again.
     await until(() => existsSync(join(codexHome(), "sessions", "prompt-2")), 60_000);
     const second = read(join(codexHome(), "sessions", "prompt-2"));
-    expect(second).toContain("The repository has no CI, so run its whole test suite");
+    expect(second).toContain("No CI runs on this commit, so run the repository's whole test suite");
   }, 280_000);
 
   test("without CI, the reviewer runs the whole test suite itself", async () => {
@@ -448,7 +475,7 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
     await startApp12();
     await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), 30_000);
     const prompt = read(join(codexHome(), "sessions", "prompt-1"));
-    expect(prompt).toContain("The repository has no CI, so run its whole test suite");
+    expect(prompt).toContain("No CI runs on this commit, so run the repository's whole test suite");
   }, 60_000);
 
   test("tells the builder about sc submit, after the task rather than in it", async () => {

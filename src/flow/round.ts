@@ -84,11 +84,12 @@ async function push(db: Database, folder: string, summary: string): Promise<stri
 // copy has it by the next poll, 30 seconds later.
 const ciWait = 2 * 60_000;
 
-// The repositories, as owner/repo, where a review already waited the whole of ciWait and no
-// check showed: their workflows don't run on PRs, such as one that runs only on a release. Their
-// reviews never wait again, so the wait costs a repository at most once while the daemon runs.
-// A check that shows on a PR later still counts as CI.
-const noCiOnPrs = new Set<string>();
+// The repositories, as owner/repo, where a review waited the whole of ciWait for its workflows
+// and no PR showed a check: they don't run on PRs, such as one that runs only on a release.
+// Their reviews wait for workflows no more, so that costs a repository at most once while the
+// daemon runs. CI that is just slow to show its first check ends up here too, and its reviewers
+// then run the suite as well, until a check shows on one of the repository's PRs.
+const waitedInVain = new Set<string>();
 
 // Returns what tells the reviewer CI's result for the commit, from Skelcrew's copy of the
 // thread's PR, which each poll brings up to date. The end of each failed check's log comes from
@@ -151,28 +152,36 @@ async function reviewRound(
   const pending = setCheck("pending", "Skelcrew's reviewer is reviewing");
   const checkFailed = new AbortController();
   pending.catch(() => checkFailed.abort());
-  // On a first PR, or one that adds CI, CI may not have shown a check yet. Where the commit
-  // has GitHub workflows, the only CI of a forge Skelcrew has a plugin for, the review waits a
-  // little for one before it joins the queue, so it never holds a place while it waits, and
-  // `since` keeps its place in line. CI that never runs on PRs, such as a release workflow,
-  // then leaves the suite to the reviewer. The commit is read from Skelcrew's clone, which
-  // fetched it, never from the builder's, which the builder controls. It is read at once, so
-  // the review still joins before any await when it doesn't wait, and a commit Skelcrew can't
-  // read sets nothing up.
+  // CI runs the suite only once a CI check shows on this commit. A forge shows one within
+  // seconds of a push, and Skelcrew's copy has it by the next poll. So while one may still come,
+  // the review waits a little for it, before it joins the queue, so it never holds a place
+  // while it waits, and `since` keeps its place in line. One may come when CI shows on another
+  // PR, or when the commit has GitHub workflows, the only CI of a forge Skelcrew has a plugin
+  // for. The commit is read from Skelcrew's clone, which fetched it, never from the builder's,
+  // which the builder controls. It is read at once, so the review still joins before any await
+  // when it doesn't wait, and a commit Skelcrew can't read sets nothing up.
   const ls = ["git", "-C", cloneDir(thread.owner, thread.repo), "ls-tree", sha, "--"];
   const listed = Bun.spawnSync([...ls, ".github/workflows"], { stdout: "pipe", stderr: "ignore" });
   const setsUpCi = listed.success && listed.stdout.toString().trim() !== "";
-  const prs = () => openPrs(db, thread.owner, thread.repo);
   const repositoryName = `${thread.owner}/${thread.repo}`;
-  const waited = noCiOnPrs.has(repositoryName);
-  if (pr !== null && whoRunsTheSuite(prs(), setsUpCi, waited) === "wait") {
+  const suite = (waited: boolean) => {
+    const prs = openPrs(db, thread.owner, thread.repo);
+    const own = pr === null ? null : prOf(db, thread.owner, thread.repo, pr);
+    const inVain = waitedInVain.has(repositoryName);
+    return whoRunsTheSuite({ own, commit: sha, prs, setsUpCi, waitedInVain: inVain, waited });
+  };
+  if (pr !== null && suite(false) === "wait") {
     // Saved as queued, as it waits to be reviewed, so a restart brings it back.
     const waiting = { reviewing: sha, submitting: null, reviewer, queued: since };
     record(db, folder, waiting, `waiting for CI's first check before reviewing ${sha}`);
     const waitUntil = Date.now() + ciWait;
-    while (whoRunsTheSuite(prs(), setsUpCi, false) === "wait") {
+    while (suite(false) === "wait") {
       if (Date.now() > waitUntil) {
-        noCiOnPrs.add(repositoryName);
+        // With CI on no PR, the wait was for the workflows alone, and they never ran.
+        const prs = openPrs(db, thread.owner, thread.repo);
+        const noCi = { own: null, commit: sha, prs, setsUpCi: false, waitedInVain: true };
+        if (whoRunsTheSuite({ ...noCi, waited: false }) === "reviewer")
+          waitedInVain.add(repositoryName);
         break;
       }
       await Bun.sleep(5_000);
@@ -202,14 +211,14 @@ async function reviewRound(
         model: reviewerRole.model,
         harness: reviewer,
         signal,
-        // With CI on the forge, CI runs the whole test suite and the reviewer reads its
+        // With CI on this commit, CI runs the whole test suite and the reviewer reads its
         // result. Without, the reviewer runs the suite itself. Asked again as the review
         // starts, as CI may show a check while the review waits its turn.
         ci:
           pr === null
             ? undefined
             : {
-                has: () => whoRunsTheSuite(prs(), setsUpCi, true) === "ci",
+                has: () => suite(true) === "ci",
                 read: ciOfCommit(db, thread, pr, sha),
               },
       });

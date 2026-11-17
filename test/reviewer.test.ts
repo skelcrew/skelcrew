@@ -347,7 +347,7 @@ describe.skipIf(insideSandbox)("reviewer", () => {
     ]);
     expect((await start({ ci })).verdict).toBe("approve");
     expect(kept("ci")).toBe("CI failed on this commit.\n");
-    expect(kept("prompt")).not.toContain("run its whole test suite");
+    expect(kept("prompt")).not.toContain("run the repository's whole test suite");
     fakeClaude([
       'prompt="$CLAUDE_CONFIG_DIR/prompt"; cat > "$prompt"',
       ciFile,
@@ -377,7 +377,9 @@ describe.skipIf(insideSandbox)("reviewer", () => {
     const ci = { has: () => has, read: async () => "CI passed.\n" };
     fakeCodex(approve);
     await start({ ci });
-    expect(kept("prompt")).toContain("The repository has no CI, so run its whole test suite");
+    expect(kept("prompt")).toContain(
+      "No CI runs on this commit, so run the repository's whole test suite",
+    );
     has = true;
     await start({ ci });
     expect(kept("prompt")).toContain("ci.md");
@@ -507,14 +509,14 @@ describe("what the reviewer is told about the tests", () => {
   // CI runs the whole suite once per commit, so the reviewer runs it only where there is none.
   test("without CI, the reviewer runs the whole test suite itself", () => {
     const prompt = reviewerPrompt(issue, "origin/main", null);
-    expect(prompt).toContain("The repository has no CI, so run its whole test suite");
+    expect(prompt).toContain("No CI runs on this commit, so run the repository's whole test suite");
     expect(prompt).toContain("under test: in the repository's skelcrew.yaml");
     expect(prompt).not.toContain("ci.md");
   });
 
   test("with CI, the reviewer reads CI's result, and says when CI is still running", () => {
     const prompt = reviewerPrompt(issue, "origin/main", "/tmp/review/ci.md");
-    expect(prompt).not.toContain("run its whole test suite");
+    expect(prompt).not.toContain("run the repository's whole test suite");
     expect(prompt).toContain(
       "CI runs the whole test suite on this commit, so don't run it yourself",
     );

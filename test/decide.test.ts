@@ -409,25 +409,55 @@ test("a PR's CI reads as passing, failing or still running, and Skelcrew's own c
   expect(ciState(pr({ checks: [failed, going] }))).toBe("failing");
 });
 
-test("CI runs the suite once a CI check shows on one of the repository's PRs", () => {
-  const ci = pr({ checks: [approved, run(30, "test", "running")] });
-  expect(whoRunsTheSuite([pr(), ci], false, false)).toBe("ci");
-  expect(whoRunsTheSuite([ci], true, true)).toBe("ci");
+// Who runs the suite on commit abc, the head of PR 7, with these open PRs in the repository.
+// By default the commit has no workflows, no review waited in vain, and this one hasn't waited.
+const suiteOn = (prs: PullRequest[], more: Partial<Parameters<typeof whoRunsTheSuite>[0]> = {}) =>
+  whoRunsTheSuite({
+    own: prs.find((one) => one.id === "7") ?? null,
+    commit: "abc",
+    prs,
+    setsUpCi: false,
+    waitedInVain: false,
+    waited: false,
+    ...more,
+  });
+const ci = [approved, run(30, "test", "running")];
+
+test("CI runs the suite once a CI check shows on the PR's own commit", () => {
+  expect(suiteOn([pr({ head: "abc", checks: ci })])).toBe("ci");
+  expect(suiteOn([pr({ head: "abc", checks: ci })], { waited: true })).toBe("ci");
 });
 
 test("with no CI, the reviewer runs the suite, and Skelcrew's own check isn't CI", () => {
-  expect(whoRunsTheSuite([], false, false)).toBe("reviewer");
-  expect(whoRunsTheSuite([pr({ checks: [approved] })], false, false)).toBe("reviewer");
+  expect(suiteOn([])).toBe("reviewer");
+  expect(suiteOn([pr({ head: "abc", checks: [approved] })])).toBe("reviewer");
+});
+
+// CI on the commit before isn't CI on this one, which may still show its first check.
+test("CI on the PR's commit before this one makes the review wait for this one's", () => {
+  expect(suiteOn([pr({ head: "old", checks: ci })])).toBe("wait");
+});
+
+// CI can skip a PR it runs on for others, such as one on another branch, or one whose files
+// its paths filter leaves out.
+test("CI on another PR only makes the review wait, and the reviewer runs the suite after", () => {
+  const prs = [pr({ head: "abc" }), pr({ id: "8", head: "def", checks: ci })];
+  expect(suiteOn(prs)).toBe("wait");
+  expect(suiteOn(prs, { waited: true })).toBe("reviewer");
+  expect(suiteOn(prs, { waitedInVain: true })).toBe("wait");
 });
 
 // A first PR shows no check yet, and the commit's workflows say one may come.
 test("on a first PR in a repository with workflows, the review waits for CI's first check", () => {
-  expect(whoRunsTheSuite([pr()], true, false)).toBe("wait");
+  expect(suiteOn([pr({ head: "abc" })], { setsUpCi: true })).toBe("wait");
+  expect(suiteOn([pr({ head: "abc" })], { setsUpCi: true, waited: true })).toBe("reviewer");
 });
 
-// A workflow that runs only on a release tag never shows a check on a PR.
-test("workflows that never show a check on a PR leave the suite to the reviewer", () => {
-  expect(whoRunsTheSuite([pr({ checks: [approved] })], true, true)).toBe("reviewer");
+// A workflow that runs only on a release tag never shows a check on a PR, so once a review
+// waited for one in vain, the repository's reviews don't wait again.
+test("workflows that never showed a check on a PR leave the suite to the reviewer", () => {
+  const prs = [pr({ head: "abc", checks: [approved] })];
+  expect(suiteOn(prs, { setsUpCi: true, waitedInVain: true })).toBe("reviewer");
 });
 
 test("tells the reviewer CI hasn't reported until the PR's head is the commit under review", () => {
