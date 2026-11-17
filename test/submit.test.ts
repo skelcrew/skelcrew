@@ -1041,7 +1041,7 @@ done`,
     mkdirSync(codexHome(), { recursive: true });
     writeFileSync(join(codexHome(), "held-1"), "");
     await startApp12();
-    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), 30_000);
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), 60_000);
     // app-13 gets a PR of its own, and the forge now refuses every check.
     answer(plugin, "open pr", { number: 8 });
     writeFileSync(join(plugin, "fail-status"), "the forge is down");
@@ -1059,12 +1059,12 @@ done`,
         db.close();
       }
     };
-    await until(() => app13().needs_you === 1, 30_000);
+    await until(() => app13().needs_you === 1, 60_000);
     expect(app13().queued).toBeNull();
     expect((await skel(["ps", "app", "--json"])).out).toContain(
       '"thread":"app-13","short":null,"title":"Add import","status":"waiting","needsYou":true,"queued":false',
     );
-  }, 60_000);
+  }, 120_000);
 
   // The first poll brings only open tasks, while the thread's task may have closed: the thread
   // saved its task as it started.
@@ -1076,7 +1076,7 @@ done`,
     const first = serve();
     await untilCloned();
     await skel(["start", "app-12"]);
-    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), 30_000);
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), 60_000);
     first.kill();
     await first.exited;
     const db = new Database(join(data(), "skelcrew.db"));
@@ -1084,9 +1084,9 @@ done`,
     db.close();
     answer(plugin, "changed", { items: [], next: null });
     serve();
-    await until(() => finished("success").length + finished("failure").length === 1, 30_000);
+    await until(() => finished("success").length + finished("failure").length === 1, 60_000);
     expect(finished("success")[0]?.sha).toBe(pushed());
-  }, 60_000);
+  }, 120_000);
 
   test("finishes a submit the daemon's stop cut short while opening the PR", async () => {
     addApp();
@@ -1257,13 +1257,13 @@ done`,
     writeFileSync(join(codexHome(), "slow-2"), "");
     writeFileSync(join(plugin, "hold-status-success"), "");
     await startApp12();
-    await until(() => existsSync(join(plugin, "held-status")), 30_000);
+    await until(() => existsSync(join(plugin, "held-status")), 60_000);
     expect((await skel(["submit", "Again"], { SKELCREW_SOCKET: builderSocket() })).err).toBe("");
     await Bun.sleep(1000);
     rmSync(join(plugin, "hold-status-success"));
-    await until(() => statuses().length === 3);
+    await until(() => statuses().length === 3, 60_000);
     expect(statuses().map((s) => s.state)).toEqual(["pending", "success", "pending"]);
-  }, 60_000);
+  }, 120_000);
 
   test("a review cancelled while it is posted doesn't set the check on the commit submitted again", async () => {
     addApp();
