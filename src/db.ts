@@ -188,8 +188,10 @@ function prepareTables(db: Database): void {
   // while the builder is busy or stopped, or the daemon restarts. `sender` is lead or skelcrew,
   // `text` is what is typed, `said` the lead's own words, `at` when it was sent, in milliseconds
   // since 1970, `noted` whether the lead heard it still waits, and `typed_in` the PR's reviews
-  // and comments it carries, as JSON, for the forge to mark seen. An `id` is never used again,
-  // so a typing under way whose message was dropped can't remove a newer one by its `id`.
+  // and comments it carries, as JSON, for the forge to mark seen. `pasted` is whether it sits at
+  // the builder's prompt, pasted but left unsent for a question, so its draft there is known for
+  // Skelcrew's own after a restart. An `id` is never used again, so a typing under way whose
+  // message was dropped can't remove a newer one by its `id`.
   db.run(`CREATE TABLE IF NOT EXISTS messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     folder TEXT NOT NULL,
@@ -198,7 +200,8 @@ function prepareTables(db: Database): void {
     said TEXT NOT NULL,
     at INTEGER NOT NULL,
     noted INTEGER NOT NULL DEFAULT 0,
-    typed_in TEXT NOT NULL DEFAULT '[]'
+    typed_in TEXT NOT NULL DEFAULT '[]',
+    pasted INTEGER NOT NULL DEFAULT 0
   )`);
   // The reviews Skelcrew posted with your gh login, before its forge posted them as its own app.
   db.run("DROP TABLE IF EXISTS posted");

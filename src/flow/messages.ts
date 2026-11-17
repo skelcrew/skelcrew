@@ -5,7 +5,7 @@
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
 import { agentRuns } from "../agents/tmux.ts";
-import { draftReason, midTurn, typeInto, unsentAt, whyBusy } from "../agents/typing.ts";
+import { draftReason, midTurn, typeInto, whyBusy } from "../agents/typing.ts";
 import { markSeen } from "../plugins/ask.ts";
 import { errorText } from "../say.ts";
 import { noteForLead, typeLeadNotes } from "./lead.ts";
@@ -25,6 +25,7 @@ const TypedIn = z.array(z.object({ kind: z.enum(["review", "comment"]), id: z.st
 // One waiting message, as the database keeps it. `sender` is the lead, Skelcrew telling of the
 // PR's events, or Skelcrew's reviewer with its review's changes. `text` is what is typed in,
 // `said` the lead's own words, or for Skelcrew's messages what they tell, for the thread's log.
+// `pasted` is whether it sits at the builder's prompt, left unsent for a question.
 const Message = z.object({
   id: z.number(),
   folder: z.string(),
@@ -34,6 +35,7 @@ const Message = z.object({
   at: z.number(),
   noted: z.coerce.boolean(),
   typed_in: z.string().transform((saved) => TypedIn.parse(JSON.parse(saved))),
+  pasted: z.coerce.boolean(),
 });
 type Message = z.infer<typeof Message>;
 
@@ -211,14 +213,21 @@ async function deliver(db: Database, tmux: string, folder: string, signal: Abort
     if (thread.status === "working" || thread.status === "waiting")
       noteMissing(db, tmux, thread, waits);
     // A draft that is this message, left unsent for a question, is sent now, with Enter alone.
-    const ours = waits === draftReason && unsentAt(tmux, folder) === message.text;
-    const why = ours ? "" : waits;
+    // A bare prompt means a person sent or cleared it, so a draft after that is theirs.
+    if (waits === "" && message.pasted)
+      db.run("UPDATE messages SET pasted = 0 WHERE id = ?", [message.id]);
+    const unsent = waits === "" ? false : message.pasted;
+    const why = waits === draftReason && unsent ? "" : waits;
     if (why !== "") return noteLate(db, tmux, thread, why);
     // The builder looked ready a moment ago, so typing shouldn't wait long. If it does, the
     // message stays saved for the next attempt.
     const { marks } = builderHarness(thread);
-    const typed = await typeInto(tmux, folder, marks, message.text, { timeout: 10_000, signal });
-    if (!typed) return;
+    const waitsFor = { timeout: 10_000, signal, unsent };
+    const typed = await typeInto(tmux, folder, marks, message.text, waitsFor);
+    // Saved, so the draft it left is known for this message's even after a restart.
+    if (typed === "left unsent")
+      db.run("UPDATE messages SET pasted = 1 WHERE id = ?", [message.id]);
+    if (typed !== "typed") return;
     // Read again, as an identical comment that came while it was typed joined it, and needs
     // marking seen too. Deleted by its id even when this attempt was cancelled while pasting, as
     // the message went in. Ids are never used again, so a message a new round dropped meanwhile
@@ -257,11 +266,11 @@ export function deliverAllWaiting(db: Database, tmux: string): void {
 
 // Drops Skelcrew's waiting messages that tell only of the thread's events, such as a failed
 // check or a merge conflict, and the review's changes, as a new round makes them about an older
-// commit. A conflict still
-// there is found and told again. The lead's messages stay, and so do those carrying a person's
-// review or comment on the PR, as people's words stay true whatever the commit. Typing under way
-// is cancelled first, as it may be typing one of them, and starts again with what is left once
-// it has ended. Notices still being prepared learn of the drop by noticeRound.
+// commit. A conflict still there is found and told again. The lead's messages stay, and so do
+// those carrying a person's review or comment on the PR, as people's words stay true whatever
+// the commit, and one left pasted at the prompt, as it would block the next as a draft. Typing
+// under way is cancelled first, as it may be typing one of them, and starts again with what is
+// left once it has ended. Notices still being prepared learn of the drop by noticeRound.
 export function dropOldEvents(db: Database, tmux: string, folder: string): void {
   roundsDropped.set(folder, noticeRound(folder) + 1);
   const ended = delivering.get(folder)?.ended ?? Promise.resolve();
@@ -270,7 +279,8 @@ export function dropOldEvents(db: Database, tmux: string, folder: string): void 
     .query("SELECT * FROM messages WHERE folder = ? AND sender IN ('skelcrew', 'review')")
     .all(folder);
   for (const message of z.array(Message).parse(rows))
-    if (message.typed_in.length === 0) db.run("DELETE FROM messages WHERE id = ?", [message.id]);
+    if (message.typed_in.length === 0 && !message.pasted)
+      db.run("DELETE FROM messages WHERE id = ?", [message.id]);
   ended.then(() => deliverMessages(db, tmux, folder));
 }
 

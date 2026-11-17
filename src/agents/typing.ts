@@ -4,8 +4,14 @@ import { mustTmux, tmux } from "./tmux.ts";
 
 // How typing waits, in milliseconds. `moment` is the pause between two looks at the screen,
 // and between a paste and its Enter. `timeout` is how long to wait for the prompt to be ready
-// before giving up, which may be Infinity. Once `signal` is aborted, nothing is typed.
-type Waits = { moment?: number; timeout?: number; signal?: AbortSignal };
+// before giving up, which may be Infinity. Once `signal` is aborted, nothing is typed. `unsent`
+// says the message was pasted before and left unsent for a question, so a draft at the prompt
+// is it, not a person's.
+type Waits = { moment?: number; timeout?: number; signal?: AbortSignal; unsent?: boolean };
+
+// What became of a message typed in: sent, left pasted at the prompt unsent for a question, or
+// not typed at all.
+export type Typed = "typed" | "left unsent" | "not typed";
 
 // How long to watch a still busy mark, in milliseconds, before taking it for the agent's own
 // text. Claude Code's spinner and Codex's "Working" line count seconds, so they redraw at least
@@ -25,15 +31,8 @@ export const draftReason = "an unsent draft is at its prompt";
 
 // The reason to cancel typing with when the agent asks you a question. A message already pasted
 // is then left at the prompt unsent, as its Enter would answer the question, and the next
-// typing of it sends it with Enter alone.
+// typing of it, told so by `unsent`, sends it with Enter alone.
 export const forQuestion = "the agent asked a question";
-
-// Messages pasted but left unsent for a question, by session, with their text.
-const leftUnsent = new Map<string, string>();
-
-// Returns the text of the message typing left pasted but unsent at the session's prompt for a
-// question, if any. The draft its prompt then shows is that message, not a person's.
-export const unsentAt = (socket: string, name: string) => leftUnsent.get(`${socket}/${name}`);
 
 // The start of the reason typing gives while the agent's turn runs, so whoever waits on it can
 // tell that pressing Esc would end the turn.
@@ -111,7 +110,7 @@ export async function isIdle(
 const typingQueues = new Map<string, Promise<void>>();
 
 // Queues a message for the session and returns a promise that settles after its typing
-// attempt, with whether it was typed. Messages wait their turn so two pastes cannot arrive
+// attempt, with what became of it. Messages wait their turn so two pastes cannot arrive
 // before either message's Enter. `marks` are those of the harness running in the session.
 export function typeInto(
   socket: string,
@@ -142,18 +141,18 @@ export function typeInto(
 let buffersMade = 0;
 
 // Waits for the agent to be ready, then pastes and submits the message without losing long
-// text, and returns true. Throws if it stays busy too long, and removes the temporary paste
-// buffer after the attempt. Types nothing, and returns false, once the signal is aborted,
-// however long it waited. Aborted between the paste and its Enter, it still sends the message,
-// which is in: unless for a question, which the Enter would answer. Then it leaves the message
-// at the prompt and returns false, and the next typing of it presses Enter alone.
+// text, and returns "typed". Throws if it stays busy too long, and removes the temporary paste
+// buffer after the attempt. Types nothing once the signal is aborted, however long it waited.
+// Aborted between the paste and its Enter, it still sends the message, which is in: unless for
+// a question, which the Enter would answer. Then it leaves the message at the prompt and returns
+// "left unsent", and the next typing of it, told so by `unsent`, presses Enter alone.
 async function typeNow(
   socket: string,
   name: string,
   marks: Marks,
   text: string,
   waits: Waits,
-): Promise<boolean> {
+): Promise<Typed> {
   const moment = waits.moment ?? 500;
   const timeout = waits.timeout ?? 60_000;
   const deadline = Date.now() + timeout;
@@ -162,19 +161,19 @@ async function typeNow(
   try {
     // Text typed while Claude Code is starting or busy can be lost, so wait until it is idle.
     // Check the signal after each wait too: the thread may have stopped meanwhile.
-    const key = `${socket}/${name}`;
+    let unsent = waits.unsent ?? false;
     while (true) {
-      if (waits.signal?.aborted) return false;
+      if (waits.signal?.aborted) return "not typed";
       const why = await whyBusy(socket, name, marks, waits);
-      if (waits.signal?.aborted) return false;
-      // The draft is this message, left unsent for a question that is over now: send it. Any
-      // other look means a person sent or cleared it, so it is typed afresh.
-      if (why === draftReason && leftUnsent.get(key) === text) {
-        leftUnsent.delete(key);
+      if (waits.signal?.aborted) return "not typed";
+      // The draft is this message, left unsent for a question that is over now: send it. A bare
+      // prompt means a person sent or cleared it, so it is typed afresh, and a draft after that
+      // is a person's.
+      if (why === draftReason && unsent) {
         mustTmux(socket, ["send-keys", "-t", `=${name}:`, "Enter"]);
-        return true;
+        return "typed";
       }
-      if (why === "") leftUnsent.delete(key);
+      if (why === "") unsent = false;
       if (why === "") {
         // Someone scrolled back would swallow the Enter below, and the message would never be
         // sent. Being scrolled back shows in neither the check above nor the pane's text, so
@@ -200,12 +199,9 @@ async function typeNow(
     // paste.
     mustTmux(socket, ["paste-buffer", "-p", "-b", buffer, "-t", `=${name}:`]);
     await Bun.sleep(moment);
-    if (waits.signal?.aborted && waits.signal.reason === forQuestion) {
-      leftUnsent.set(key, text);
-      return false;
-    }
+    if (waits.signal?.aborted && waits.signal.reason === forQuestion) return "left unsent";
     mustTmux(socket, ["send-keys", "-t", `=${name}:`, "Enter"]);
-    return true;
+    return "typed";
   } finally {
     tmux(socket, ["delete-buffer", "-b", buffer]);
   }

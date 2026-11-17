@@ -23,15 +23,17 @@ afterEach(() => {
 
 // Runs the code with the database open as `db`, the messages functions imported and app-12
 // waiting on its review, and returns what it prints. It takes a process of its own with HOME
-// set, as homedir() keeps the HOME this process started with.
-function run(body: string): string {
+// set, as homedir() keeps the HOME this process started with. `again` runs it on the database a
+// run before left, as a daemon starting again would.
+function run(body: string, again = false): string {
+  const setup = `db.run(\`INSERT INTO repositories (name, owner, repo) VALUES ('app', 'simon', 'app');
+INSERT INTO threads (owner, repo, task, folder, branch, status)
+  VALUES ('simon', 'app', 12, 'app-12', 'skelcrew/12', 'waiting')\`);`;
   const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
 import { queueMessage, deliverAllWaiting } from ${JSON.stringify(source("flow/messages.ts"))};
 const db = openDb();
 const tmux = ${JSON.stringify(socket)};
-db.run(\`INSERT INTO repositories (name, owner, repo) VALUES ('app', 'simon', 'app');
-INSERT INTO threads (owner, repo, task, folder, branch, status)
-  VALUES ('simon', 'app', 12, 'app-12', 'skelcrew/12', 'waiting')\`);
+${again ? "" : setup}
 ${body}`;
   const done = Bun.spawnSync([process.execPath, "-e", code], {
     env: { ...process.env, HOME: home },
@@ -137,8 +139,6 @@ console.log(JSON.stringify({ left: db.query("SELECT 1 FROM messages").all().leng
   expect(received.split("Use v2.").length - 1).toBe(1);
 });
 
-// The same words can come in a second comment while the first is being typed in. Both went
-// in, so both are marked seen on the PR.
 // The builder can ask you a question between a message's paste and its Enter. The Enter would
 // answer it, so the message is left at the prompt, still waiting, and sent once the question is
 // over, with no second paste.
@@ -186,6 +186,66 @@ console.log(JSON.stringify({ during, waiting: count(), updates: JSON.parse(updat
   expect(received).toEndWith("\r");
 });
 
+// Skelcrew can start again while a message sits pasted at the prompt for a question. It still
+// knows the draft for its own message, so a new round keeps it and, once the question is over,
+// it goes in with Enter alone, instead of blocking every message after it as a person's draft.
+test("a message left pasted for a question goes in once it is over, after the daemon starts again", () => {
+  // A stand-in builder, idle at Claude Code's prompt, showing what is typed after it as a draft
+  // until its Enter brings a fresh prompt, and keeping each key as it comes.
+  writeFileSync(
+    join(home, "builder.ts"),
+    `import { appendFileSync } from "node:fs";
+process.stdout.write("\\x1b[?2004h❯ ");
+process.stdin.setRawMode(true);
+process.stdin.on("data", (keys) => {
+  appendFileSync("received.txt", keys);
+  process.stdout.write(keys.toString().replaceAll("\\r", "\\r\\n❯ "));
+});`,
+  );
+  writeFileSync(join(home, "builder.sh"), `#!/bin/sh\nexec ${process.execPath} builder.ts\n`, {
+    mode: 0o755,
+  });
+  const reading = `import { readFileSync, existsSync } from "node:fs";
+const received = ${JSON.stringify(join(home, "received.txt"))};
+const got = () => (existsSync(received) ? readFileSync(received, "utf8") : "");
+const count = () => db.query("SELECT 1 FROM messages").all().length;`;
+  run(`
+${reading}
+import { forQuestion } from ${JSON.stringify(source("agents/typing.ts"))};
+import { stopDelivering } from ${JSON.stringify(source("flow/messages.ts"))};
+Bun.spawnSync(["tmux", "-L", tmux, "new-session", "-d", "-s", "app-12", "-c", ${JSON.stringify(home)}, ${JSON.stringify(join(home, "builder.sh"))}]);
+await Bun.sleep(300);
+queueMessage(db, tmux, "app-12", { sender: "skelcrew", text: "Merge main.", said: "a conflict", typed_in: [] });
+for (let i = 0; i < 200 && !got().includes("Merge main."); i++) await Bun.sleep(10);
+if (got().includes("\\r")) throw new Error("the Enter came before the question");
+db.run("UPDATE threads SET asking = 1");
+stopDelivering(db, "app-12", false, forQuestion);
+await Bun.sleep(1000);`);
+  const seen = run(
+    `
+${reading}
+import { dropOldEvents } from ${JSON.stringify(source("flow/messages.ts"))};
+dropOldEvents(db, tmux, "app-12");
+queueMessage(db, tmux, "app-12", { sender: "lead", text: "Use v2.", said: "Use v2.", typed_in: [] });
+db.run("UPDATE threads SET asking = 0");
+for (let i = 0; i < 16 && count() > 0; i++) {
+  deliverAllWaiting(db, tmux);
+  await Bun.sleep(500);
+}
+await Bun.sleep(500);
+console.log(JSON.stringify({ waiting: count() }));`,
+    true,
+  );
+  expect(JSON.parse(seen)).toEqual({ waiting: 0 });
+  const received = readFileSync(join(home, "received.txt"), "utf8");
+  expect(received.split("Merge main.").length - 1).toBe(1);
+  expect(received.split("Use v2.").length - 1).toBe(1);
+  // The conflict's Enter came before the lead's message was pasted.
+  expect(received.indexOf("\r")).toBeLessThan(received.indexOf("Use v2."));
+});
+
+// The same words can come in a second comment while the first is being typed in. Both went
+// in, so both are marked seen on the PR.
 test("a comment that joins a message being typed in is marked seen too", () => {
   const plugin = fakePlugin(home);
   // A stand-in builder, idle at Claude Code's prompt, keeping each key as it comes, so the test

@@ -183,7 +183,7 @@ test("a message goes in though the agent's own reply quotes the busy mark", asyn
   start("lead", screen(quoting));
   await showing("lead", "accept edits");
   expect(await whyBusy(socket, "lead", claude.marks, { moment })).toBe("");
-  expect(await typeInto(socket, "lead", claude.marks, "hello", { moment })).toBe(true);
+  expect(await typeInto(socket, "lead", claude.marks, "hello", { moment })).toBe("typed");
   await until(() => read("received.txt").endsWith("\n"));
   expect(read("received.txt")).toBe("\x1b[200~hello\x1b[201~\n");
 });
