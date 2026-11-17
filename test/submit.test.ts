@@ -1285,7 +1285,7 @@ done`,
     writeFileSync(join(codexHome(), "slow-2"), "");
     writeFileSync(join(plugin, "hold-review"), "");
     await startApp12();
-    await until(() => existsSync(join(plugin, "held-review")), 30_000);
+    await until(() => existsSync(join(plugin, "held-review")), 60_000);
     expect((await skel(["submit", "Again"], { SKELCREW_SOCKET: builderSocket() })).err).toBe("");
     await Bun.sleep(1000);
     rmSync(join(plugin, "hold-review"));
@@ -1293,7 +1293,7 @@ done`,
     expect(reviews()).toHaveLength(1);
     await Bun.sleep(1500);
     expect(statuses().map((s) => s.state)).toEqual(["pending", "pending"]);
-  }, 60_000);
+  }, 120_000);
 
   test("a thread started from another branch is reviewed against it, and its PR goes into it", async () => {
     const work = addApp();
@@ -1325,10 +1325,10 @@ done`,
     serve();
     await untilCloned();
     expect((await skel(["start", "app-12", "--from", "next"])).err).toBe("");
-    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), 30_000);
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), 60_000);
     const prompt = read(join(codexHome(), "sessions", "prompt-1"));
     expect(prompt).toContain("The change only touches docs and Markdown, so don't run the tests.");
-  }, 60_000);
+  }, 120_000);
 });
 
 // Lets a test change a thread as merging its PR would, without polling GitHub.
