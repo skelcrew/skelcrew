@@ -104,8 +104,8 @@ function ciOfCommit(db: Database, thread: Thread, pr: number, sha: string): () =
   };
 }
 
-// The reviews of every thread, kept to limits.reviews at once. Each review runs the repository's
-// tests, so too many at once slow every one of them down.
+// The reviews of every thread, kept to limits.reviews at once. A review in a repository without
+// CI runs the repository's tests, so too many at once slow every one of them down.
 const reviews = new Queue();
 
 // Reviews the commit and acts on the verdict: with a forge, posts it on the PR and sets Skelcrew's
@@ -163,7 +163,10 @@ async function reviewRound(
     const waitUntil = Date.now() + ciWait;
     while (Date.now() <= waitUntil && whoRunsTheSuite(prs(), found, false) === "wait") {
       await Bun.sleep(5_000);
+      // A newer round ends the wait, and so does a pending check that failed, which fails
+      // the round once it joins the queue.
       if (signal.aborted) return;
+      if (checkFailed.signal.aborted) break;
     }
   }
   // A review that has to wait is saved as queued, with when it joined, so the thread says so,

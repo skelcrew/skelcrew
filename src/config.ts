@@ -160,8 +160,8 @@ export const repositoryTracker = (repository: Repository): string | undefined =>
   readRepositoryConfig(Tracker, repository).tracker ?? undefined;
 
 // Returns how many reviews may run at once: limits.reviews in your config, else a quarter of
-// this machine's cores, at least one. Each review runs the repository's whole test suite, so
-// many at once fight over the CPU and every one of them slows down. Throws when your config
+// this machine's cores, at least one. A review in a repository without CI runs the repository's
+// whole test suite, so many at once fight over the CPU and every one of them slows down. Throws when your config
 // isn't valid.
 export const reviewLimit = (): number =>
   readYourConfig(Limits).limits?.reviews ?? Math.max(1, Math.floor(availableParallelism() / 4));

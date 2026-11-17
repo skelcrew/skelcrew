@@ -524,4 +524,13 @@ describe("what the reviewer is told about the tests", () => {
     expect(prompt).toContain("When CI failed, name the failing tests as problems");
     expect(prompt).toContain("say in the body that CI is still running");
   });
+
+  // Any check but Skelcrew's counts as CI, and some, such as a deploy preview or a CLA check,
+  // run no tests. Then no one else would run the suite.
+  test("with CI whose checks run no tests, the reviewer runs the whole test suite itself", () => {
+    const prompt = reviewerPrompt(issue, "origin/main", "/tmp/review/ci.md");
+    expect(prompt).toContain(
+      "When none of the checks it lists runs the tests, such as only a deploy preview or a CLA check, run the whole test suite yourself, using the commands under test: in the repository's skelcrew.yaml if there is one.",
+    );
+  });
 });
