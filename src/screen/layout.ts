@@ -1,6 +1,7 @@
 // The sidebar as lines for its pane: the lead's row on top, then the entries Issues, Threads and
 // PRs, then ACTIVE. It reads nothing, so what you see can be tested
 // without a terminal.
+import { markOf } from "../flow/marks.ts";
 import type { Entry, EntryCount } from "./lists.ts";
 import {
   edge,
@@ -9,6 +10,7 @@ import {
   grey,
   lightGrey,
   lightGreyOnShade,
+  markColours,
   pad,
   paint,
   removeControlCodes,
@@ -16,7 +18,7 @@ import {
   tinted,
   white,
 } from "./look.ts";
-import { type Row, threadMark } from "./rows.ts";
+import type { Row } from "./rows.ts";
 
 export type Size = { width: number; height: number };
 // One line of the sidebar, with where a click on it goes, if anywhere: a row's session or an
@@ -26,10 +28,20 @@ type Line = { text: string; place?: string; joins?: boolean };
 
 // Where a name starts, past its mark.
 const indent = `${pad}  `;
-// Returns whether a row is a thread whose builder is working, which has a line more than others.
+// Returns whether a row is a thread whose word is working, which shows what its builder costs.
 const working = (row: Row) => row.status !== null && row.word === "working";
-// Returns how many lines a row of the lead or ACTIVE takes, or a row's at least for none.
-const rowHeight = (row: Row | undefined) => (row && working(row) ? 3 : 2);
+// Returns how many lines a row of the lead or ACTIVE takes, or a row's at least for none. A
+// thread with a step to show has a line more than others: its builder is working, perhaps while
+// a review runs.
+const rowHeight = (row: Row | undefined) => (row?.step ? 3 : 2);
+
+// Returns a row's mark and the colour it is drawn in: the lead's diamond, dim, or a thread's
+// mark as every list of threads shows it.
+function rowMark(row: Row): [string, string] {
+  if (row.status === null) return ["◆", grey];
+  const { sign, colour } = markOf(row.state, row.word);
+  return [sign, markColours[colour]];
+}
 
 // Returns how many columns a row's first line has for text in a sidebar `width` columns wide:
 // what is left once the line at its edge, the mark and the padding on each side are taken. A
@@ -47,7 +59,8 @@ export const entryPlace = (entry: Entry) => `:${entry}`;
 // it matters least, or in its place how many messages wait for the builder, which tells why one
 // hasn't reached it. Any other thread has one more: its word, how many messages wait, its harness
 // and its round, dim but the word, which takes its mark's colour so a green approved or a red
-// error reads at a glance. The word comes first, so it is the last to be cut. The lead's row
+// error reads at a glance. The word comes first, so it is the last to be cut. A thread under
+// review whose builder works meanwhile adds its builder's step below that, dim. The lead's row
 // has its name on top and its word below. An agent that isn't running is dim, as it can't be
 // picked. The one you are looking at is shaded across the whole width, on all its lines.
 // `width` leaves out the line at the sidebar's edge.
@@ -59,17 +72,20 @@ function rowLines(row: Row, here: boolean, width: number): string[] {
   const title = lead ? row.name : removeControlCodes(row.short ?? row.title ?? row.name);
   const top = fitted(lead ? title : `${row.task} ${title}`, room);
   const styled = here ? paint(white, top) : row.running ? top : paint(grey, top);
-  const [sign, colour] = threadMark(row);
+  const [sign, colour] = rowMark(row);
   const first = `${pad}${tinted(here, colour, sign)} ${styled}`;
-  // A working thread: what it costs in a light grey, then what it does, dim.
+  // A working thread: what it costs in a light grey, then what it does, dim. Under review, its
+  // word line says how many messages wait, so its step line has only the step.
   const light = here ? lightGreyOnShade : lightGrey;
+  const stepLine = (text: string) => `${indent}${tinted(here, grey, fitted(text, room))}`;
+  const step = removeControlCodes(row.step);
   const lines = working(row)
     ? [
         first,
         `${indent}${paint(light, fitted(workLine(row, room), room))}`,
-        `${indent}${tinted(here, grey, fitted(row.waiting || removeControlCodes(row.step), room))}`,
+        stepLine(row.waiting || step),
       ]
-    : [first, wordLine(row, here, room)];
+    : [first, wordLine(row, here, room), ...(step ? [stepLine(step)] : [])];
   return here ? lines.map((line) => shaded(line, width)) : lines;
 }
 
@@ -109,7 +125,7 @@ function planBar(plan: { done: number; total: number }): string {
 // after the cut, so each keeps its colour. These are all plain letters, so a split by letters is
 // a split by columns.
 function wordLine(row: Row, here: boolean, room: number): string {
-  const [, colour] = threadMark(row);
+  const [, colour] = rowMark(row);
   const parts = [row.word, row.waiting, row.harness, roundText(row)].filter((part) => part);
   const below = fitted(parts.join(" · "), room);
   const word = below.slice(0, row.word.length);
@@ -118,17 +134,26 @@ function wordLine(row: Row, here: boolean, room: number): string {
 }
 
 // Returns an entry as one line: its name where a thread's title starts, and at the end, dim,
-// how many its list has, after its note, such as 2 ready · 5, which is in the entry's colour. The
+// how many its list has, after its notes, such as 2 ready · 5, each note in its own colour. The
 // entry you are on is shaded across the whole width.
 function entryLine(entry: EntryCount, here: boolean, width: number): string {
-  // The count stops at the padding before the edge, and the name gives way to it.
-  const count = `${entry.note && " · "}${entry.total}`;
-  const end = `${entry.note}${count}`;
+  // The count stops at the padding before the edge. When the notes leave too little room for
+  // the whole name, the total gives way first, as the notes are what you act on: on Threads with
+  // no forge, ready and need you both, such as 1 ready · 2 need you. Then the name gives way.
+  const notes = entry.notes.map(([text]) => text).join(" · ");
+  const room = width - indent.length - pad.length - 1;
+  const whole = `${notes && " · "}${entry.total}`;
+  const fits = Bun.stringWidth(`${entry.name}${notes}${whole}`) <= room;
+  const count = notes && !fits ? "" : whole;
+  const end = `${notes}${count}`;
   const name = fitted(entry.name, Math.max(width - indent.length - pad.length - end.length - 1, 0));
   const gap = " ".repeat(
     Math.max(width - indent.length - name.length - end.length - pad.length, 1),
   );
-  const note = entry.note ? tinted(here, entry.colour, entry.note) : "";
+  // Each note is in its colour, with a dim dot between them.
+  const note = entry.notes
+    .map(([text, colour]) => tinted(here, colour, text))
+    .join(tinted(here, grey, " · "));
   const line = `${indent}${here ? paint(white, name) : name}${gap}${note}${tinted(here, grey, count)}`;
   return here ? shaded(line, width) : line;
 }
