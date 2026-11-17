@@ -61,11 +61,12 @@ console.log(JSON.stringify(db.query("SELECT text FROM notes").all()));`);
   expect(texts[0]?.text).not.toContain("Esc");
 });
 
-test("a new round's drop takes only Skelcrew's notices, not the lead's message or a comment", () => {
+test("a new round's drop takes only Skelcrew's notices and the review's changes, not the lead's message or a comment", () => {
   const left = run(`
 import { dropOldEvents } from ${JSON.stringify(source("flow/messages.ts"))};
 queueMessage(db, tmux, "app-12", { sender: "skelcrew", text: "Merge main.", said: "a conflict", typed_in: [] });
 queueMessage(db, tmux, "app-12", { sender: "skelcrew", text: "Check failed.", said: "a failed check", typed_in: [] });
+queueMessage(db, tmux, "app-12", { sender: "review", text: "Add a test.", said: "the review's changes", typed_in: [] });
 queueMessage(db, tmux, "app-12", { sender: "skelcrew", text: "Comment: CSV too.", said: "a comment", typed_in: [{ kind: "comment", id: "7" }] });
 queueMessage(db, tmux, "app-12", { sender: "lead", text: "Use v2.", said: "Use v2.", typed_in: [] });
 dropOldEvents(db, tmux, "app-12");

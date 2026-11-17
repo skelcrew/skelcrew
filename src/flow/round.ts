@@ -3,7 +3,6 @@
 // into the builder's session when it asks for changes.
 import type { Database } from "bun:sqlite";
 import { type HarnessName, harnessNamed } from "../agents/harness.ts";
-import { typeInto } from "../agents/typing.ts";
 import { reviewLimit, threadConfig } from "../config.ts";
 import { cloneDir } from "../paths.ts";
 import { forgeOf, openPr, postReview, setStatus } from "../plugins/ask.ts";
@@ -15,19 +14,10 @@ import { afterReview, pastRoundLimit, refusedWorkflow } from "./decide.ts";
 import { pushCommit } from "./git.ts";
 import { noteForLead, typeLeadNotes } from "./lead.ts";
 import { endLimit, limitOn, reachLimit, tellOfLimit, waitUntil } from "./limits.ts";
-import { dropOldEvents } from "./messages.ts";
+import { dropOldEvents, queueMessage } from "./messages.ts";
 import { Queue } from "./queue.ts";
 import { type Limited, type Review, review } from "./reviewer.ts";
-import {
-  builderHarness,
-  cloneOf,
-  log,
-  readThread,
-  record,
-  repositoryOf,
-  type Thread,
-  threadName,
-} from "./thread.ts";
+import { cloneOf, readThread, record, repositoryOf, type Thread, threadName } from "./thread.ts";
 
 // Runs git in Skelcrew's own clone and returns what it printed, throwing with its error when it
 // fails.
@@ -74,17 +64,18 @@ async function push(
     await pushCommit(db, repository, skelcrewClone, sha, thread.branch);
   } catch (error) {
     // A push refused for changing a workflow file fails the round with words a person can act
-    // on, and the builder hears them too, so it can undo the change and submit again. It types
-    // in once the builder is idle, as it has likely not ended its turn yet, and not at all once
-    // a newer submit makes it stale.
+    // on, and the builder hears them too, so it can undo the change and submit again. It waits
+    // as every message to the builder does, as it has likely not ended its turn yet, and a newer
+    // submit drops it as stale.
     const refused = refusedWorkflow(threadName(db, thread), errorText(error));
     if (refused === null) throw error;
-    typeInto(tmux, folder, builderHarness(thread).marks, refused, {
-      timeout: 30 * 60_000,
-      signal,
-    }).catch((failed) =>
-      log(db, readThread(db, folder), `couldn't tell its builder: ${errorText(failed)}`),
-    );
+    if (!signal.aborted)
+      queueMessage(db, tmux, folder, {
+        sender: "skelcrew",
+        text: refused,
+        said: "its push was refused for changing a workflow file",
+        typed_in: [],
+      });
     throw new Error(refused);
   }
   if (forgeOf(db, repository) === null) {
@@ -266,7 +257,7 @@ async function reviewRound(
   // for when you start it again.
   await builderBack;
   if (signal.aborted) return;
-  await typeChanges(db, tmux, folder, tell, signal);
+  await queueChanges(db, tmux, folder, tell, signal);
 }
 
 // Runs the review on the reviewer's harness and returns its verdict and the harness it ran on,
@@ -339,23 +330,25 @@ async function reviewWithinLimits(
 // What a thread's review held on a usage limit becomes once it isn't.
 const notHeld = { review_limited: false, review_reset: null };
 
-// Types a review's changes into the builder once it is idle, however long that takes, then
-// forgets them. They are saved until then, so a stop of the daemon while the builder is busy
-// doesn't lose them, and sc ps counts them as waiting. A newer round makes them stale, so they
-// are never typed once one starts.
-async function typeChanges(
+// Saves a review's changes as a message for the builder, typed in as soon as it can take them,
+// however long that takes, as every message to a builder is: never while it asks you a
+// question, which they would answer. They stay saved on the thread too until then, so sc ps
+// counts them and the sidebar says changes. A newer round drops them, as they are about an
+// older commit. Nothing is saved once the round is cancelled.
+async function queueChanges(
   db: Database,
   tmux: string,
   folder: string,
   text: string,
   signal: AbortSignal,
 ): Promise<void> {
-  const { marks } = builderHarness(readThread(db, folder));
-  const typed = await typeInto(tmux, folder, marks, text, {
-    timeout: Number.POSITIVE_INFINITY,
-    signal,
+  if (signal.aborted) return;
+  queueMessage(db, tmux, folder, {
+    sender: "review",
+    text,
+    said: "the review's changes",
+    typed_in: [],
   });
-  if (typed) record(db, folder, { telling: null }, "typed the review into the builder");
 }
 
 // A thread's latest round, with what cancels its review. The next round pushes only after this
@@ -585,7 +578,7 @@ export function resumeRound(
       folder,
       cancel,
       none,
-      typeChanges(db, tmux, folder, telling, cancel.signal),
+      queueChanges(db, tmux, folder, telling, cancel.signal),
     );
 }
 
@@ -611,7 +604,7 @@ export function goOn(db: Database, tmux: string, folder: string): void {
     folder,
     cancel,
     Promise.resolve(),
-    typeChanges(db, tmux, folder, held, cancel.signal),
+    queueChanges(db, tmux, folder, held, cancel.signal),
   );
 }
 

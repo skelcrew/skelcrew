@@ -8,7 +8,7 @@ import { agentRuns } from "../agents/tmux.ts";
 import { midTurn, typeInto, whyBusy } from "../agents/typing.ts";
 import { markSeen } from "../plugins/ask.ts";
 import { errorText } from "../say.ts";
-import { noteForLead } from "./lead.ts";
+import { noteForLead, typeLeadNotes } from "./lead.ts";
 import {
   builderHarness,
   log,
@@ -22,12 +22,13 @@ import {
 // The PR's reviews and comments a message carries, for the forge to mark seen once it is typed.
 const TypedIn = z.array(z.object({ kind: z.enum(["review", "comment"]), id: z.string() }));
 
-// One waiting message, as the database keeps it. `text` is what is typed in, `said` the lead's
-// own words, or for Skelcrew's messages what they tell, for the thread's log.
+// One waiting message, as the database keeps it. `sender` is the lead, Skelcrew telling of the
+// PR's events, or Skelcrew's reviewer with its review's changes. `text` is what is typed in,
+// `said` the lead's own words, or for Skelcrew's messages what they tell, for the thread's log.
 const Message = z.object({
   id: z.number(),
   folder: z.string(),
-  sender: z.enum(["lead", "skelcrew"]),
+  sender: z.enum(["lead", "skelcrew", "review"]),
   text: z.string(),
   said: z.string(),
   at: z.number(),
@@ -46,13 +47,16 @@ const oldest = (db: Database, folder: string) =>
   );
 
 // Returns how many messages wait to be typed into the thread's builder, for sc ps and the
-// sidebar: its waiting messages, and a review's changes not yet typed in.
+// sidebar: its waiting messages, and a review's changes saved but not yet among them, as when
+// the daemon starts again.
 export function messagesWaiting(db: Database, thread: Thread): number {
-  const row = db
-    .query("SELECT COUNT(*) AS count FROM messages WHERE folder = ?")
-    .get(thread.folder);
-  const { count } = z.object({ count: z.number() }).parse(row);
-  return count + (thread.telling === null ? 0 : 1);
+  const counted = (sql: string) =>
+    z.object({ count: z.number() }).parse(db.query(sql).get(thread.folder)).count;
+  const count = counted("SELECT COUNT(*) AS count FROM messages WHERE folder = ?");
+  const reviews = counted(
+    "SELECT COUNT(*) AS count FROM messages WHERE folder = ? AND sender = 'review'",
+  );
+  return count + (thread.telling !== null && reviews === 0 ? 1 : 0);
 }
 
 // Returns how many messages wait for a builder, in words, such as "1 message waiting", or
@@ -60,20 +64,46 @@ export function messagesWaiting(db: Database, thread: Thread): number {
 export const waitingText = (count: number) =>
   count === 0 ? "" : `${count} message${count === 1 ? "" : "s"} waiting`;
 
+// The reason a message waits for a builder whose session isn't there or has ended.
+const notRunning = "its builder isn't running";
+
+// How long a working or waiting thread's builder may be missing while messages wait for it
+// before the thread needs you, in milliseconds. The daemon brings builders back as it starts,
+// which takes a few seconds, and a message saved meanwhile must not flag it.
+const missingFor = 10_000;
+
+// When each thread's builder was first found missing while messages waited, by its folder.
+const missingSince = new Map<string, number>();
+
+// Has a working or waiting thread need you once its builder has been missing a while with
+// messages waiting, as nothing else would bring it back, such as a session that ended while a
+// review's changes waited. Its status becomes waiting, as no builder works on it.
+function noteMissing(db: Database, tmux: string, thread: Thread, why: string): void {
+  if (why !== notRunning) return void missingSince.delete(thread.folder);
+  const since = missingSince.get(thread.folder) ?? Date.now();
+  missingSince.set(thread.folder, since);
+  if (thread.needs_you || Date.now() - since < missingFor) return;
+  const count = messagesWaiting(db, thread);
+  const wait = count === 1 ? "a message waits" : `${count} messages wait`;
+  const missing = `${notRunning}, so ${wait} for it`;
+  record(db, thread.folder, { needs_you: true, status: "waiting" }, missing);
+  typeLeadNotes(db, tmux);
+}
+
 // Returns why the thread's builder can't take a message right now, in plain words, or empty
 // text when it can. A stopped builder keeps its messages for when sc start brings it back. One
 // asking you a question waits too, as typing would answer it for you.
 export async function whyWaiting(tmux: string, thread: Thread): Promise<string> {
   if (thread.status !== "working" && thread.status !== "waiting")
     return `the thread is ${thread.status}`;
-  if (!agentRuns(tmux, thread.folder)) return "its builder isn't running";
+  if (!agentRuns(tmux, thread.folder)) return notRunning;
   if (thread.asking) return "it is asking the human a question";
   return whyBusy(tmux, thread.folder, builderHarness(thread).marks);
 }
 
 // Saves a message for the thread's builder and has the daemon type it in as soon as the builder
 // can take it. Skelcrew's own message isn't saved twice while the same one still waits, such as
-// a conflict found again after a submit. The reviews and comments the second one carries join
+// a conflict found again after a submit, or a review's changes saved again as the daemon starts. The reviews and comments the second one carries join
 // the waiting one, so each is still marked seen once it is typed in: two comments can say the
 // same words.
 export function queueMessage(
@@ -84,8 +114,7 @@ export function queueMessage(
 ): void {
   const { sender, text, said, typed_in } = message;
   const query = db.query("SELECT * FROM messages WHERE folder = ? AND sender = ? AND text = ?");
-  const same =
-    sender === "skelcrew" ? Message.nullable().parse(query.get(folder, sender, text)) : null;
+  const same = sender === "lead" ? null : Message.nullable().parse(query.get(folder, sender, text));
   if (same === null)
     db.run(
       "INSERT INTO messages (folder, sender, text, said, at, typed_in) VALUES (?, ?, ?, ?, ?, ?)",
@@ -106,9 +135,15 @@ export function queueMessage(
 // only once typed, so the reviewer never sees what the builder didn't. Skelcrew's message has
 // the forge mark the people's reviews and comments it carried seen, so they can see it on the
 // PR. Not waited on, and a failure, such as from a plugin too old to know the question, is only
-// logged: the builder already has them.
+// logged: the builder already has them. A review's changes are no longer saved on the thread,
+// unless a newer review's are there by then.
 function afterTyped(db: Database, folder: string, message: Message): void {
   const thread = readThread(db, folder);
+  if (message.sender === "review") {
+    if (thread.telling === message.text)
+      record(db, folder, { telling: null }, "typed the review into the builder");
+    return;
+  }
   if (message.sender === "lead") {
     const update: Thread["updates"][number] = { from: "lead", at: Date.now(), text: message.said };
     record(
@@ -173,6 +208,8 @@ async function deliver(db: Database, tmux: string, folder: string, signal: Abort
     const thread = readThread(db, folder);
     const why = await whyWaiting(tmux, thread);
     if (signal.aborted) return;
+    if (thread.status === "working" || thread.status === "waiting")
+      noteMissing(db, tmux, thread, why);
     if (why !== "") return noteLate(db, tmux, thread, why);
     // The builder looked ready a moment ago, so typing shouldn't wait long. If it does, the
     // message stays saved for the next attempt.
@@ -216,7 +253,8 @@ export function deliverAllWaiting(db: Database, tmux: string): void {
 }
 
 // Drops Skelcrew's waiting messages that tell only of the thread's events, such as a failed
-// check or a merge conflict, as a new round makes them about an older commit. A conflict still
+// check or a merge conflict, and the review's changes, as a new round makes them about an older
+// commit. A conflict still
 // there is found and told again. The lead's messages stay, and so do those carrying a person's
 // review or comment on the PR, as people's words stay true whatever the commit. Typing under way
 // is cancelled first, as it may be typing one of them, and starts again with what is left once
@@ -226,7 +264,7 @@ export function dropOldEvents(db: Database, tmux: string, folder: string): void 
   const ended = delivering.get(folder)?.ended ?? Promise.resolve();
   stopDelivering(db, folder, false);
   const rows = db
-    .query("SELECT * FROM messages WHERE folder = ? AND sender = 'skelcrew'")
+    .query("SELECT * FROM messages WHERE folder = ? AND sender IN ('skelcrew', 'review')")
     .all(folder);
   for (const message of z.array(Message).parse(rows))
     if (message.typed_in.length === 0) db.run("DELETE FROM messages WHERE id = ?", [message.id]);
