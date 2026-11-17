@@ -58,7 +58,8 @@ const backoffAfter = (tries: number) => backoff[Math.min(tries, backoff.length) 
 // such as 17 Nov 13:59, when it isn't today. For the sidebar, the lists and the lead's notes.
 export function clockTime(at: number, now: number): string {
   const when = new Date(at);
-  const time = `${String(when.getHours()).padStart(2, "0")}:${String(when.getMinutes()).padStart(2, "0")}`;
+  const two = (n: number) => String(n).padStart(2, "0");
+  const time = `${two(when.getHours())}:${two(when.getMinutes())}`;
   if (when.toDateString() === new Date(now).toDateString()) return time;
   return `${when.getDate()} ${when.toLocaleString("en-GB", { month: "short" })} ${time}`;
 }
@@ -73,8 +74,10 @@ export function limitOn(harness: HarnessName, now: number): Limit | null {
 // Saves that a review on the harness met its usage limit, so no review starts on it before
 // `reset`. A new reset time is news, so the leads are told again. A reset in the minute just
 // gone, as a clock showing only minutes gives, is tried again a minute on, so a limit that
-// hasn't quite reset isn't tried again and again. With no reset time, reviews try again after a
-// wait that grows with each try that meets the limit.
+// hasn't quite reset isn't tried again and again. The same past reset given again means the
+// limit hasn't reset, such as when the harness's clock runs ahead of this machine's, so it is
+// treated as no reset time. With none, reviews try again after a wait that grows with each try
+// that meets the limit.
 export function reachLimit(
   db: Database,
   harness: HarnessName,
@@ -82,8 +85,9 @@ export function reachLimit(
   now: number,
 ): void {
   const before = limits.get(harness);
-  const tries = reset === null ? (before?.tries ?? 0) + 1 : 0;
-  const after = reset === null ? now + backoffAfter(tries) : now + 60_000;
+  const stale = reset !== null && reset <= now && before?.reset === reset;
+  const tries = reset === null || stale ? (before?.tries ?? 0) + 1 : 0;
+  const after = tries > 0 ? now + backoffAfter(tries) : now + 60_000;
   limits.set(harness, {
     until: reset !== null && reset > now ? reset : after,
     reset,
@@ -249,8 +253,9 @@ export function wakeAfterLimit(db: Database, tmux: string, folder: string): void
 // works or waits, such as on CI, since you can talk to a builder in either. The limit is cleared
 // before typing, so the row never shows a limit that is over. Typing waits for the builder to be
 // idle, and anything else typed to it meanwhile ends the wake, so "continue" never lands on
-// top of it. A builder that couldn't be told is idle on its error with nobody to wake it, so the thread then
-// needs you. Nothing happens once `signal` aborts, as the error it was for has ended.
+// top of it. A builder that couldn't be told is idle on its error with nobody to wake it, so
+// the thread then needs you. Nothing happens once `signal` aborts, as the error it was for has
+// ended.
 async function continueBuilder(
   db: Database,
   tmux: string,
@@ -268,7 +273,8 @@ async function continueBuilder(
   } catch (error) {
     // A builder that met the limit again, or was typed to, since has a newer state to keep.
     if (signal.aborted || readThread(db, folder).erred) return;
-    const why = `its harness's usage limit reset, but Skelcrew couldn't type continue: ${errorText(error)}`;
+    const reason = errorText(error);
+    const why = `its harness's usage limit reset, but Skelcrew couldn't type continue: ${reason}`;
     record(db, folder, { erred: true }, why);
     typeLeadNotes(db, tmux);
   }

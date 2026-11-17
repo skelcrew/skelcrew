@@ -127,6 +127,12 @@ for (let i = 0; i < 4; i++) { reachLimit(db, "claude", null, now); seen.push(unt
 // A reset in the minute just gone is tried a minute on, not at once.
 reachLimit(db, "claude", now - 30_000, now);
 seen.push(until("claude"));
+// The same past reset again means it hasn't reset, such as on a clock running fast: the
+// growing wait, so held reviews don't try every minute.
+for (let i = 0; i < 2; i++) { reachLimit(db, "codex", now - 30_000, now); }
+seen.push(until("codex"));
+reachLimit(db, "codex", now - 30_000, now);
+seen.push(until("codex"));
 console.log(JSON.stringify(seen));`,
     );
     const minutes = (m: number) => now + m * 60_000;
@@ -138,6 +144,8 @@ console.log(JSON.stringify(seen));`,
       minutes(60),
       minutes(60),
       minutes(1),
+      minutes(15),
+      minutes(30),
     ]);
   } finally {
     rmSync(home, { recursive: true, force: true });

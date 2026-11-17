@@ -185,8 +185,6 @@ function prepareTables(db: Database): void {
     adoptOldLead(db);
   // The reviews Skelcrew posted with your gh login, before its forge posted them as its own app.
   db.run("DROP TABLE IF EXISTS posted");
-  // The plugins you installed: the folder each runs from, and the GitHub repository it came
-  // from, or null for a folder of yours, used where it is.
   // Each harness's usage limit holding reviews: until when, the reset time it gave, the tries
   // in a row that met it with none, and the repositories whose leads were told, as JSON.
   db.run(`CREATE TABLE IF NOT EXISTS limits (
@@ -196,6 +194,8 @@ function prepareTables(db: Database): void {
     tries INTEGER NOT NULL,
     told TEXT NOT NULL
   )`);
+  // The plugins you installed: the folder each runs from, and the GitHub repository it came
+  // from, or null for a folder of yours, used where it is.
   db.run(`CREATE TABLE IF NOT EXISTS plugins (
     name TEXT PRIMARY KEY,
     folder TEXT NOT NULL,

@@ -63,8 +63,8 @@ async function refreshBase(db: Database, thread: Thread, base: string): Promise<
 export const typingEvents = new Map<string, AbortController>();
 
 // Cancels the round, the typing under way and any wake after a usage limit for the thread, ends
-// its builder's session, and
-// waits for the builder to exit, so nothing types into it or changes the thread afterwards.
+// its builder's session, and waits for the builder to exit, so nothing types into it or changes
+// the thread afterwards.
 async function endBuilder(tmux: string, folder: string): Promise<void> {
   typingEvents.get(folder)?.abort();
   endWake(folder);
