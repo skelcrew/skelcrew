@@ -7,6 +7,7 @@ import { z } from "zod";
 import { HarnessName, harnessNamed } from "../agents/harness.ts";
 import { threadsDir } from "../paths.ts";
 import { findRepository } from "./repo.ts";
+import { needsYou } from "./status.ts";
 
 // One message the lead told a thread's builder: who sent it, when it was typed in, in
 // milliseconds since 1970, and its text.
@@ -129,12 +130,6 @@ export type Thread = z.infer<typeof Thread>;
 // Returns the harness the thread's builder runs on, for starting it again and typing into it.
 export const builderHarness = (thread: Thread) => harnessNamed(thread.harness ?? "claude");
 
-// Returns whether the thread needs you: for a review, the round limit or an approval, for the
-// builder's question or its stopping without submitting, or for its harness stopping on an error.
-// A usage limit isn't one, as the builder is woken once it resets.
-export const needsYou = (thread: Thread) =>
-  thread.needs_you || thread.asking || thread.stalled || (thread.erred && !thread.limited);
-
 // Returns whether the thread's review waits in the queue for a place, as limits.reviews already
 // runs. Only a working or waiting thread has a review going on: one stopped, failed or done
 // can keep the fields of a review that ended with it. A newer submit still pushing doesn't
@@ -144,19 +139,6 @@ export const queuedForReview = (thread: Thread) =>
   thread.submitting === null &&
   thread.reviewing !== null &&
   thread.queued !== null;
-
-// Returns whether a builder that just ended its turn is waiting on you, on any harness. A
-// builder that stops without sc submit in that turn has a question for you, written as plain
-// text, or is stuck, and nothing else would tell you. One that submitted waits on its review.
-// One asking with AskUserQuestion, or stopped on an error, already needs you, and one already
-// waiting has nothing new to say. The status is not enough: a review can set it back to working
-// while the builder that submitted is still finishing its turn.
-export const endedTurnAsks = (thread: Thread) =>
-  (thread.status === "working" || thread.status === "waiting") &&
-  !thread.submitted &&
-  !thread.asking &&
-  !thread.stalled &&
-  !thread.erred;
 
 // Returns the thread's repository as owner/name.
 export const fullNameOf = (thread: Thread) => `${thread.owner}/${thread.repo}`;

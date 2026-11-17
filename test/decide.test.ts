@@ -15,7 +15,8 @@ import {
   reviewCheck,
   whoRunsTheSuite,
 } from "../src/flow/decide.ts";
-import { endedTurnAsks, type Thread } from "../src/flow/thread.ts";
+import { endedTurnAsks } from "../src/flow/status.ts";
+import type { Thread } from "../src/flow/thread.ts";
 
 function thread(change: Partial<Thread> = {}): Thread {
   return {

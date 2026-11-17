@@ -7,10 +7,11 @@ import { threadConfig } from "../config.ts";
 import { type Item, itemAt, openPrs, openTasks } from "../flow/copy.ts";
 import { repositories } from "../flow/repo.ts";
 import type { DaemonRequest } from "../flow/requests.ts";
-import { needsYou, Thread, threadName } from "../flow/thread.ts";
+import { needsYou, threadWord } from "../flow/status.ts";
+import { Thread, threadName } from "../flow/thread.ts";
 import { forgeOf, trackerOf } from "../plugins/ask.ts";
 import { green, grey, yellow } from "./look.ts";
-import { type Open, onReviewer, threadMark, threadWord } from "./rows.ts";
+import { type Open, onReviewer, threadMark } from "./rows.ts";
 
 // The three entries of the sidebar, each of which shows a list.
 export type Entry = "issues" | "threads" | "prs";

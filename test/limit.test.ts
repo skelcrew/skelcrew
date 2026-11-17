@@ -9,8 +9,9 @@ import { claude } from "../src/agents/claude.ts";
 import { codex } from "../src/agents/codex.ts";
 import { resetTime } from "../src/agents/reset.ts";
 import { waitUntil, wakeTime } from "../src/flow/limits.ts";
-import { needsYou, type Thread } from "../src/flow/thread.ts";
-import { threadMark, threadWord } from "../src/screen/rows.ts";
+import { needsYou, threadWord } from "../src/flow/status.ts";
+import type { Thread } from "../src/flow/thread.ts";
+import { threadMark } from "../src/screen/rows.ts";
 import { source } from "./harness.ts";
 
 // 16 November 2026 at 10:30 in this machine's time zone, as the harnesses read their times in it.
