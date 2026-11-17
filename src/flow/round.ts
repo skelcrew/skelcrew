@@ -6,13 +6,20 @@ import { type HarnessName, harnessNamed } from "../agents/harness.ts";
 import { typeInto } from "../agents/typing.ts";
 import { reviewLimit, threadConfig } from "../config.ts";
 import { cloneDir } from "../paths.ts";
-import { forgeOf, openPr, postReview, setStatus } from "../plugins/ask.ts";
+import { failedLog, forgeOf, openPr, postReview, setStatus } from "../plugins/ask.ts";
 import { quietly } from "../run.ts";
 import { errorText } from "../say.ts";
 import { baseOf } from "./builder.ts";
-import { threadTask } from "./copy.ts";
-import { afterReview, pastRoundLimit, refusedWorkflow } from "./decide.ts";
-import { pushCommit } from "./git.ts";
+import { openPrs, prOf, threadTask } from "./copy.ts";
+import {
+  afterReview,
+  ciResult,
+  onlyDocs,
+  pastRoundLimit,
+  refusedWorkflow,
+  whoRunsTheSuite,
+} from "./decide.ts";
+import { fetchInto, pushCommit } from "./git.ts";
 import { noteForLead, typeLeadNotes } from "./lead.ts";
 import { endLimit, limitOn, reachLimit, tellOfLimit, waitUntil } from "./limits.ts";
 import { Queue } from "./queue.ts";
@@ -86,6 +93,12 @@ async function push(
     );
     throw new Error(refused);
   }
+  // The base branch, current, in a ref of the thread's own, for the review to see which files
+  // the change touches. Skelcrew's clone holds only the default branch otherwise. The poll
+  // fetches the same ref. A base the forge won't give fails no push: the review then can't
+  // tell the change is docs only, and the tests run.
+  const bases = `refs/skelcrew/bases/${thread.folder}`;
+  await fetchInto(db, repository, skelcrewClone, baseOf(thread), bases).catch(() => {});
   if (forgeOf(db, repository) === null) {
     record(db, folder, {}, `pushed ${sha} to ${thread.branch}`);
     return sha;
@@ -106,11 +119,44 @@ async function push(
   return sha;
 }
 
+// How long a review waits for CI's first check on a PR, where the commit sets CI up and no
+// PR has shown one yet. A forge shows a check within seconds of a push, and Skelcrew's
+// copy has it by the next poll, 30 seconds later.
+const ciWait = 2 * 60_000;
+
+// The repositories, as owner/repo, where a review waited the whole of ciWait for its workflows
+// and no PR showed a check: they don't run on PRs, such as one that runs only on a release.
+// Their reviews wait for workflows no more, so that costs a repository at most once while the
+// daemon runs. CI that is just slow to show its first check ends up here too, and its reviewers
+// then run the suite as well, until a check shows on one of the repository's PRs.
+const waitedInVain = new Set<string>();
+
+// Returns what tells the reviewer CI's result for the commit, from Skelcrew's copy of the
+// thread's PR, which each poll brings up to date. The end of each failed check's log comes from
+// the forge, once per check, so a review that reads the result again doesn't ask again. A log
+// the forge won't give is left out, and asked for again next time.
+function ciOfCommit(db: Database, thread: Thread, pr: number, sha: string): () => Promise<string> {
+  const repository = repositoryOf(db, thread);
+  const logs = new Map<string, string>();
+  return async () => {
+    const shown = prOf(db, thread.owner, thread.repo, pr);
+    const failed = shown?.head === sha ? shown.checks.filter((c) => c.state === "failed") : [];
+    for (const { id } of failed)
+      if (id !== null && !logs.has(id))
+        await failedLog(db, repository, id).then(
+          (log) => logs.set(id, log),
+          () => {},
+        );
+    return ciResult(shown, sha, logs);
+  };
+}
+
 // What a round asks of one run of its review, before the task, the clone and the base are read.
 type Asked = Omit<Parameters<typeof review>[0], "clone" | "issue" | "base">;
 
-// The reviews of every thread, kept to limits.reviews at once. Each review runs the repository's
-// tests, so too many at once slow every one of them down.
+// The reviews of every thread, kept to limits.reviews at once. A review of a commit CI doesn't
+// run on runs the repository's whole test suite, so too many at once slow every one of them
+// down.
 const reviews = new Queue();
 
 // Reviews the commit and acts on the verdict: with a forge, posts it on the PR and sets Skelcrew's
@@ -150,6 +196,61 @@ async function reviewRound(
   const pending = setCheck("pending", "Skelcrew's reviewer is reviewing");
   const checkFailed = new AbortController();
   pending.catch(() => checkFailed.abort());
+  // CI runs the suite only once a CI check shows on this commit. A forge shows one within
+  // seconds of a push, and Skelcrew's copy has it by the next poll. So while one may still come,
+  // the review waits a little for it, before it joins the queue, so it never holds a place
+  // while it waits, and `since` keeps its place in line. One may come when CI shows on another
+  // PR, or when the commit has GitHub workflows, the only CI of a forge Skelcrew has a plugin
+  // for. The commit is read from Skelcrew's clone, which fetched it, never from the builder's,
+  // which the builder controls. It is read at once, so the review still joins before any await
+  // when it doesn't wait, and a commit Skelcrew can't read sets nothing up.
+  const ls = ["git", "-C", cloneDir(thread.owner, thread.repo), "ls-tree", sha, "--"];
+  const listed = Bun.spawnSync([...ls, ".github/workflows"], { stdout: "pipe", stderr: "ignore" });
+  const setsUpCi = listed.success && listed.stdout.toString().trim() !== "";
+  // A change to docs and Markdown alone is tested by no one, as CI skips it and no code
+  // changed, so its review waits for no CI. The files are those changed since the base branch,
+  // which the push fetched into the thread's own ref in Skelcrew's clone. Without rename
+  // detection, a file moved from code into docs shows both names, so the code it removes
+  // counts. Names end in a NUL, as git otherwise quotes one with letters outside ASCII, such
+  // as résumé.md. A base or diff Skelcrew can't read, as in a clone not set up yet, lists
+  // none, and the tests run.
+  const bases = `refs/skelcrew/bases/${thread.folder}`;
+  const diff = ["git", "-C", cloneDir(thread.owner, thread.repo), "diff", "--name-only", "-z"];
+  const changed = Bun.spawnSync([...diff, "--no-renames", `${bases}...${sha}`], {
+    stdout: "pipe",
+    stderr: "ignore",
+  });
+  const docsOnly =
+    changed.success && onlyDocs(changed.stdout.toString().split("\0").filter(Boolean));
+  const repositoryName = `${thread.owner}/${thread.repo}`;
+  const suite = (waited: boolean) => {
+    const prs = openPrs(db, thread.owner, thread.repo);
+    const own = pr === null ? null : prOf(db, thread.owner, thread.repo, pr);
+    const inVain = waitedInVain.has(repositoryName);
+    return whoRunsTheSuite({ own, commit: sha, prs, setsUpCi, waitedInVain: inVain, waited });
+  };
+  if (pr !== null && !docsOnly && suite(false) === "wait") {
+    // Saved as reviewing, as the review is under way for you, and so a restart brings it back.
+    // Its place in the queue only matters once it joins, with `since`.
+    const waiting = { reviewing: sha, submitting: null, reviewer, queued: null };
+    record(db, folder, waiting, `waiting for CI's first check before reviewing ${sha}`);
+    const ciDeadline = Date.now() + ciWait;
+    while (suite(false) === "wait") {
+      if (Date.now() > ciDeadline) {
+        // With CI on no PR, the wait was for the workflows alone, and they never ran.
+        const prs = openPrs(db, thread.owner, thread.repo);
+        const noCi = { own: null, commit: sha, prs, setsUpCi: false, waitedInVain: true };
+        if (whoRunsTheSuite({ ...noCi, waited: false }) === "reviewer")
+          waitedInVain.add(repositoryName);
+        break;
+      }
+      await Bun.sleep(5_000);
+      // A newer round ends the wait, and so does a pending check that failed, which fails
+      // the round once it joins the queue.
+      if (signal.aborted) return;
+      if (checkFailed.signal.aborted) break;
+    }
+  }
   // A review that has to wait is saved as queued, with when it joined, so the thread says so,
   // and a restart puts it back in the same place. One that starts at once is saved as
   // reviewing, with no queued step in between.
@@ -209,6 +310,14 @@ async function reviewRound(
       commit: sha,
       signal,
       limit: reviewMinutes * 60_000,
+      // With CI on this commit, CI runs the whole test suite and the reviewer reads its result.
+      // Without, the reviewer runs the suite itself, and on a change to docs alone no one
+      // does. Asked again as each run starts, as CI may show a check while it waits its turn.
+      docsOnly,
+      ci:
+        pr === null || docsOnly
+          ? undefined
+          : { has: () => suite(true) === "ci", read: ciOfCommit(db, thread, pr, sha) },
     },
     role: reviewerRole,
     fallback,
