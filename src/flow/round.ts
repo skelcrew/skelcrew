@@ -692,9 +692,9 @@ function lastApproved(thread: Thread): string | null {
 // branch merged in: what git merges by itself, with no conflict and nothing else changed. A
 // builder whose PR fell behind or conflicts with main merges it and submits again, and then the
 // PR's own change is the one already approved. A conflict, even one resolved by keeping the PR's
-// side, or any change on top, needs a review. So does a rebase, which rewrites the approved
-// commit. The base merged is where the commit meets the base branch, which may be older than
-// the base's tip. A commit git can't read gives false.
+// side, any change on top, or a merge that changes the PR's own diff needs a review. So does a
+// rebase, which rewrites the approved commit. The base merged is where the commit meets the
+// base branch, which may be older than the base's tip. A commit git can't read gives false.
 export function onlyMergedBase(
   clone: string,
   approved: string,
@@ -724,7 +724,19 @@ export function onlyMergedBase(
   }
   // And the whole is the approved commit merged with the base, so nothing else crept in.
   const merged = git("merge-base", sha, base);
-  return merged !== null && automatic(sha, approved, merged);
+  if (merged === null || !automatic(sha, approved, merged)) return false;
+  // A clean merge can still change the PR's own diff, such as when main took one of its
+  // changes as its own, which then leaves the PR. So the PR's change against where it meets the
+  // base must read the same before and after. Line numbers and blob IDs are left out, as main's
+  // changes elsewhere in a file shift them, and no context, which main's changes alter too.
+  const change = (commit: string, from: string | null) => {
+    if (from === null) return null;
+    const diff = git("diff", "--no-color", "--no-ext-diff", "--no-renames", "-U0", from, commit);
+    const kept = (line: string) => !line.startsWith("index ") && !line.startsWith("@@");
+    return diff?.split("\n").filter(kept).join("\n") ?? null;
+  };
+  const before = change(approved, git("merge-base", approved, base));
+  return before !== null && before === change(sha, merged);
 }
 
 // Reviews the thread's last submitted commit again, for sc review, such as after a review

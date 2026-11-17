@@ -96,3 +96,8 @@ test("a commit that rewrote the approved one, rather than merging into it, does 
   git(repo, "rebase", "-q", "main");
   expect(onlyMergedBase(repo, approved, git(repo, "rev-parse", "HEAD"), "main")).toBe(false);
 });
+
+test("a merge after main took one of the PR's changes as its own does not, as the PR's diff changed", () => {
+  expect(moveMainAndMerge({ change: "the PR's change\n" })).toBe(false);
+  expect(onlyMergedBase(repo, approved, finishMerge(), "main")).toBe(false);
+});
