@@ -9,6 +9,11 @@ import { threadsDir } from "../paths.ts";
 import { findRepository } from "./repo.ts";
 import { needsYou } from "./status.ts";
 
+// What an agent is doing: working on a turn, idle at its prompt, asking you a question with its
+// harness's question tool, or stopped on an error its harness reported.
+export const AgentState = z.enum(["working", "idle", "asking", "error"]);
+export type AgentState = z.infer<typeof AgentState>;
+
 // One message the lead told a thread's builder: who sent it, when it was typed in, in
 // milliseconds since 1970, and its text.
 const TaskUpdate = z.object({ from: z.literal("lead"), at: z.number(), text: z.string() });
@@ -124,6 +129,9 @@ export const Thread = z.object({
     .string()
     .nullable()
     .transform((saved) => TaskUpdate.array().parse(saved === null ? [] : JSON.parse(saved))),
+  // What the builder is doing, as its harness's hooks and its screen tell. Null until its first
+  // hook runs, and in a row from before Skelcrew kept it.
+  state: AgentState.nullable(),
 });
 export type Thread = z.infer<typeof Thread>;
 
