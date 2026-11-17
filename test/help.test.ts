@@ -8,9 +8,12 @@ import { source } from "./harness.ts";
 
 const main = source("main.ts");
 
+// Runs sc with no home. The run's own runtime folder, with no daemon in it, keeps a command
+// that asks the daemon from finding yours in /run/user.
 function skel(args: string[], env: Record<string, string> = {}) {
+  const runtime = process.env.XDG_RUNTIME_DIR ?? "";
   const run = Bun.spawnSync([process.execPath, main, ...args], {
-    env: { PATH: process.env.PATH ?? "", HOME: "/nonexistent", ...env },
+    env: { PATH: process.env.PATH ?? "", HOME: "/nonexistent", XDG_RUNTIME_DIR: runtime, ...env },
   });
   return { code: run.exitCode, out: run.stdout.toString(), err: run.stderr.toString() };
 }

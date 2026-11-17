@@ -1,7 +1,8 @@
 // What Skelcrew's tests share: finding Skelcrew's source files, waiting, and running sc and its
 // daemon as a user would. Each test file keeps its own home folder and tmux socket and hands
 // them in, so a test that outlives its file can never reach another file's home.
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Subprocess } from "bun";
 
@@ -63,6 +64,19 @@ export function git(cwd: string, ...args: string[]): string {
   return run.stdout.toString().trim();
 }
 
+// Throws unless sc or a daemon with this environment would use a socket in the test's
+// temporary folder. sc finds the daemon by SKELCREW_SOCKET, or else in XDG_RUNTIME_DIR, or else
+// in /run/user: a test that left either out, or handed on an agent's, would reach a real daemon.
+function mustBeTestSocket(env: Record<string, string>): void {
+  const socket =
+    env.SKELCREW_SOCKET ||
+    (env.XDG_RUNTIME_DIR ? join(env.XDG_RUNTIME_DIR, "skelcrew.sock") : "/run/user");
+  // A Mac's temporary folder is reached through a link, and a test's home may be either.
+  const temporary = [tmpdir(), realpathSync(tmpdir())];
+  if (!temporary.some((folder) => socket.startsWith(`${folder}/`)))
+    throw new Error(`a test's Skelcrew must use a socket of its own, not one outside: ${socket}`);
+}
+
 // Starts a daemon on a test's tmux socket and adds it to `running` for the test to stop. It
 // takes a process of its own, as homedir() keeps the HOME this process started with, so a
 // daemon here would open your real database.
@@ -71,6 +85,7 @@ export function startDaemon(
   env: Record<string, string>,
   running: Subprocess[],
 ): Subprocess {
+  mustBeTestSocket(env);
   const code = `import { serve } from ${JSON.stringify(source("flow/daemon.ts"))};
 await serve(${JSON.stringify(socket)});`;
   const run = Bun.spawn([process.execPath, "-e", code], {
@@ -85,6 +100,7 @@ await serve(${JSON.stringify(socket)});`;
 // Runs sc with these arguments and environment, and gives back what it printed and its code.
 // `input`, when given, is what sc reads on stdin, as from a file or a heredoc.
 export async function runSkel(args: string[], env: Record<string, string>, input?: string) {
+  mustBeTestSocket(env);
   const run = Bun.spawn([process.execPath, source("main.ts"), ...args], {
     env,
     ...(input === undefined ? {} : { stdin: Buffer.from(input) }),
@@ -220,6 +236,7 @@ export async function runSkelInTerminal(
   question: string,
   answer: string,
 ): Promise<string> {
+  mustBeTestSocket(env);
   const terminal = `${socket}-terminal`;
   const tmux = (...words: string[]) =>
     Bun.spawnSync(["tmux", "-L", terminal, "-f", "/dev/null", ...words], {
