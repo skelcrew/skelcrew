@@ -30,10 +30,14 @@ test("refuses to run sc on a socket outside the test's own folder", async () => 
       join(other, "skelcrew.sock"),
       join(home, "..", basename(other), "skelcrew.sock"),
       join(home, "link", "skelcrew.sock"),
+      // The link is followed first, so this is the folder above the other one.
+      `${home}/link/../skelcrew.sock`,
     ])
       await expect(runSkel(["ps"], at(socket))).rejects.toThrow(socket);
     await expect(runSkel(["ps"], { HOME: home, PATH: path })).rejects.toThrow("outside");
-    expect(() => startDaemon("t", at(join(other, "s.sock")), [])).toThrow("outside");
+    // The daemon listens in XDG_RUNTIME_DIR whatever SKELCREW_SOCKET says.
+    const daemon = { ...at(join(home, "run", "s.sock")), XDG_RUNTIME_DIR: other };
+    expect(() => startDaemon("t", daemon, [])).toThrow(join(other, "skelcrew.sock"));
     // An agent's home inside the test's folder still reaches the test's own sockets.
     const agent = { ...at(join(home, "run", "a", "s.sock")), HOME: join(home, "agent") };
     expect((await runSkel(["--version"], agent)).code).toBe(0);
