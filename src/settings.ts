@@ -105,8 +105,8 @@ const roleKeys: Key[] = ["lead", "builder", "reviewer"];
 
 // Returns the built-in defaults: Claude Code for every role, three rounds, no setup and no
 // tracker of the repository's own, and 30 minutes for a review. Reviews default to a quarter of
-// this machine's cores, at least one, as each runs the repository's whole test suite and many at
-// once fight over the CPU.
+// this machine's cores, at least one, as a review of a commit CI doesn't run on runs the
+// repository's whole test suite, and many at once fight over the CPU.
 function builtInDefaults(): {
   harness: HarnessName;
   max_rounds: number;

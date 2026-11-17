@@ -14,7 +14,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir, userInfo } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { Subprocess } from "bun";
 import { leadPlaces } from "../src/paths.ts";
 import {
@@ -24,6 +24,7 @@ import {
   git,
   homeEnv,
   insideSandbox,
+  prItem,
   read,
   runSkel,
   runSkelInTerminal,
@@ -56,10 +57,11 @@ const script = (name: string, body: string) => writeScript(home, name, body);
 // answers it with another round, as a builder fixing a review would. `submits` false leaves the
 // first round to the test. While the file busy is in its config folder after a round, it looks
 // busy, as Claude Code does mid-turn, and its turn ends once the file is gone. Once a round's
-// Stop hooks have run, the file ended holds its number. As a
-// reviewer, run with -p, it approves, unless the file claude-limit beside it holds a moment in
-// seconds since 1970 still to come: until then it says its usage limit is reached, as Claude
-// Code did.
+// Stop hooks have run, the file ended holds its number. A ci.yml there goes into each round as
+// the repository's first workflow. With docs-only there, a round changes only the file it names, else docs/change.md,
+// and with code-to-docs there, it moves src/app.ts to docs/app.md. As a reviewer, run with -p,
+// it approves, unless the file claude-limit beside it holds a moment in seconds since 1970
+// still to come: until then it says its usage limit is reached, as Claude Code did.
 function fakeClaude(submits = true): void {
   script(
     "claude",
@@ -84,7 +86,12 @@ hook() {
 n=0
 round() {
   n=$((n+1))
-  echo "$n" > change
+  if test -e "$CLAUDE_CONFIG_DIR/docs-only"; then
+    f=$(cat "$CLAUDE_CONFIG_DIR/docs-only"); f=\${f:-docs/change.md}
+    mkdir -p "$(dirname "$f")"; echo "$n" > "$f"
+  else echo "$n" > change; fi
+  test -e "$CLAUDE_CONFIG_DIR/code-to-docs" && mkdir -p docs && git mv src/app.ts docs/app.md
+  test -e "$CLAUDE_CONFIG_DIR/ci.yml" && mkdir -p .github/workflows && cp "$CLAUDE_CONFIG_DIR/ci.yml" .github/workflows/
   git add -A && git commit -qm "round $n"
   sc submit "Round $n" >> "$CLAUDE_CONFIG_DIR/submitted" 2>&1
   while test -e "$CLAUDE_CONFIG_DIR/busy"; do echo "esc to interrupt"; sleep 0.2; done
@@ -109,18 +116,18 @@ exec sleep 300`,
 // and fails without one. It sleeps first when slow-n is there, and while held-n is there it
 // waits for the test to put go-n in the sessions folder. With error-n there, it echoes its
 // prompt and then that error, as codex exec does, and fails. What it was given, and the
-// branches it saw, go in the sessions folder, the one place a review writes that lasts. The
-// prompt is written aside and moved into place, so a test that sees prompt-n never reads it
-// half written.
+// branches it saw, go in the sessions folder, the one place a review writes that lasts. Each
+// file is written aside and renamed in, since tests read a file as soon as it shows, and the
+// prompt comes last, so a test that sees it can read all three.
 function fakeCodex(): void {
   script(
     "codex",
     `for a; do [ "$prev" = -o ] && out=$a; prev=$a; done
 s="$CODEX_HOME/sessions"
 n=$(( $(cat "$s/count" 2>/dev/null || echo 0) + 1 )); echo $n > "$s/count"
-cat > "$s/prompt-$n.part" && mv "$s/prompt-$n.part" "$s/prompt-$n"
-git branch -r > "$s/branches-$n"
-git rev-parse origin/main > "$s/main-$n" 2>&1
+git branch -r > "$s/branches-$n.new"; mv "$s/branches-$n.new" "$s/branches-$n"
+git rev-parse origin/main > "$s/main-$n.new" 2>&1; mv "$s/main-$n.new" "$s/main-$n"
+cat > "$s/prompt-$n.new"; mv "$s/prompt-$n.new" "$s/prompt-$n"
 test -e "$CODEX_HOME/slow-$n" && sleep 30
 i=0; while test -e "$CODEX_HOME/held-$n" && ! test -e "$s/go-$n" && [ $i -lt 600 ]; do sleep 0.1; i=$((i+1)); done
 test -e "$CODEX_HOME/error-$n" && { cat "$s/prompt-$n" "$CODEX_HOME/error-$n" >&2; exit 1; }
@@ -199,11 +206,15 @@ const github = () => join(home, "github");
 
 // Puts simon/app on the fake GitHub and tells Skelcrew about it, as a repository you have opened,
 // whose lead the daemon starts, with the fake plugin as its tracker and forge. Returns a
-// checkout to push from.
-function addApp(): string {
+// checkout to push from. `files` are more files its first commit holds, by path.
+function addApp(files: Record<string, string> = {}): string {
   const work = join(home, "work", "app");
   mkdirSync(work, { recursive: true });
   writeFileSync(join(work, "README"), "app\n");
+  for (const [path, text] of Object.entries(files)) {
+    mkdirSync(dirname(join(work, path)), { recursive: true });
+    writeFileSync(join(work, path), text);
+  }
   writeFileSync(join(work, "skelcrew.yaml"), "tracker: github\n");
   git(work, "init", "-q", "-b", "main");
   git(work, "add", ".");
@@ -390,6 +401,151 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
     expect(git(bare, "log", "-1", "--format=%B", "skelcrew/12-add-export")).toContain(
       "Co-authored-by: Simon <simon@example.com>",
     );
+  }, 60_000);
+
+  // CI runs the whole test suite once per commit, so the reviewer leaves it to CI. The PR's own
+  // check on its commit shows CI runs on it, even on a repository's first PR.
+  test("once CI shows a check on the PR's commit, the reviewer reads CI's result rather than running the suite", async () => {
+    addApp({ ".github/workflows/ci.yml": "on: pull_request\n" });
+    verdict(1, "approve", "Ready to merge.");
+    await startApp12();
+    await until(() => opened() !== undefined, 30_000);
+    answer(plugin, "changed", {
+      items: [
+        taskItem("12", "Add export", { body: "As JSON" }),
+        prItem("7", "Add export", {
+          branch: "skelcrew/12-add-export",
+          head: pushed(),
+          checks: [{ name: "test", id: "900", state: "running" }],
+        }),
+      ],
+      next: null,
+    });
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), 60_000);
+    const prompt = read(join(codexHome(), "sessions", "prompt-1"));
+    expect(prompt).toContain(
+      "CI runs the whole test suite on this commit, so don't run it yourself",
+    );
+    expect(prompt).toContain("ci.md");
+  }, 100_000);
+
+  // A workflow can run on other PRs and skip this one, such as with a branch or paths filter.
+  // CI elsewhere then proves nothing about this commit, and the reviewer runs the suite.
+  test("when CI shows on another PR but never on this one, the reviewer runs the whole suite", async () => {
+    addApp({ ".github/workflows/ci.yml": "on: { pull_request: { branches: [next] } }\n" });
+    answer(plugin, "changed", {
+      items: [
+        taskItem("12", "Add export", { body: "As JSON" }),
+        prItem("8", "Other work", {
+          branch: "other",
+          head: "0123456789abcdef0123456789abcdef01234567",
+          checks: [{ name: "test", id: "901", state: "passed" }],
+        }),
+      ],
+      next: null,
+    });
+    verdict(1, "approve", "Ready to merge.");
+    await startApp12();
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), 180_000);
+    const prompt = read(join(codexHome(), "sessions", "prompt-1"));
+    expect(prompt).toContain("No CI runs on this commit, so run the repository's whole test suite");
+    expect(prompt).not.toContain("CI is still running");
+    expect(prompt).not.toContain("ci.md");
+  }, 240_000);
+
+  // CI the PR adds runs on the PR too, but shows no check until the forge starts it.
+  test("on a PR that adds the first workflow, the review waits for CI's check, then reads its result", async () => {
+    addApp();
+    mkdirSync(builder(), { recursive: true });
+    writeFileSync(join(builder(), "ci.yml"), "on: pull_request\n");
+    verdict(1, "approve", "Ready to merge.");
+    await startApp12();
+    await until(() => opened() !== undefined, 30_000);
+    // No check yet, so no review either.
+    await Bun.sleep(5_000);
+    expect(existsSync(join(codexHome(), "sessions", "prompt-1"))).toBe(false);
+    answer(plugin, "changed", {
+      items: [
+        taskItem("12", "Add export", { body: "As JSON" }),
+        prItem("7", "Add export", {
+          branch: "skelcrew/12-add-export",
+          head: pushed(),
+          checks: [{ name: "test", id: "900", state: "running" }],
+        }),
+      ],
+      next: null,
+    });
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), 60_000);
+    const prompt = read(join(codexHome(), "sessions", "prompt-1"));
+    expect(prompt).toContain(
+      "CI runs the whole test suite on this commit, so don't run it yourself",
+    );
+  }, 100_000);
+
+  // A workflow that runs only on a release never shows a check on a PR. Once a review has waited
+  // for one in vain, the repository's next reviews start at once.
+  test("with a release-only workflow, only the first review waits for CI, then the reviewer runs the suite", async () => {
+    addApp({ ".github/workflows/release.yml": "on: release\n" });
+    verdict(1, "changes", "The export has no test.");
+    verdict(2, "approve", "Ready to merge.");
+    await startApp12();
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), 180_000);
+    const first = read(join(codexHome(), "sessions", "prompt-1"));
+    expect(first).toContain("No CI runs on this commit, so run the repository's whole test suite");
+    // The second round's review would wait 2 minutes more if it waited again.
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-2")), 60_000);
+    const second = read(join(codexHome(), "sessions", "prompt-2"));
+    expect(second).toContain("No CI runs on this commit, so run the repository's whole test suite");
+  }, 280_000);
+
+  // CI skips a change to docs and Markdown alone, so the review neither waits for it nor runs
+  // the tests.
+  test("on a change to docs alone, the review starts at once and runs no tests", async () => {
+    addApp({ ".github/workflows/ci.yml": "on: pull_request\n" });
+    mkdirSync(builder(), { recursive: true });
+    writeFileSync(join(builder(), "docs-only"), "");
+    verdict(1, "approve", "Ready to merge.");
+    await startApp12();
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), 30_000);
+    const prompt = read(join(codexHome(), "sessions", "prompt-1"));
+    expect(prompt).toContain("The change only touches docs and Markdown, so don't run the tests.");
+    expect(prompt).not.toContain("run the repository's whole test suite");
+    expect(prompt).not.toContain("ci.md");
+  }, 60_000);
+
+  // git quotes a name with letters outside ASCII, unless asked not to.
+  test("a change to a Markdown file with an accented name runs no tests", async () => {
+    addApp();
+    mkdirSync(builder(), { recursive: true });
+    writeFileSync(join(builder(), "docs-only"), "résumé.md");
+    verdict(1, "approve", "Ready to merge.");
+    await startApp12();
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), 30_000);
+    const prompt = read(join(codexHome(), "sessions", "prompt-1"));
+    expect(prompt).toContain("The change only touches docs and Markdown, so don't run the tests.");
+  }, 60_000);
+
+  // A file moved from code to docs removes code, though git would show only its new name.
+  test("a change that moves code into docs is no docs-only change, and its tests run", async () => {
+    addApp({ "src/app.ts": "export const app = 1;\n" });
+    mkdirSync(builder(), { recursive: true });
+    writeFileSync(join(builder(), "docs-only"), "");
+    writeFileSync(join(builder(), "code-to-docs"), "");
+    verdict(1, "approve", "Ready to merge.");
+    await startApp12();
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), 30_000);
+    const prompt = read(join(codexHome(), "sessions", "prompt-1"));
+    expect(prompt).toContain("No CI runs on this commit, so run the repository's whole test suite");
+    expect(prompt).not.toContain("only touches docs and Markdown");
+  }, 60_000);
+
+  test("without CI, the reviewer runs the whole test suite itself", async () => {
+    addApp();
+    verdict(1, "approve", "Ready to merge.");
+    await startApp12();
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), 30_000);
+    const prompt = read(join(codexHome(), "sessions", "prompt-1"));
+    expect(prompt).toContain("No CI runs on this commit, so run the repository's whole test suite");
   }, 60_000);
 
   test("tells the builder about sc submit, after the task rather than in it", async () => {
@@ -945,6 +1101,27 @@ done`,
     expect(opened()?.base).toBe("next");
     expect(read(join(codexHome(), "sessions", "prompt-1"))).toContain("origin/next...HEAD");
     expect(read(join(codexHome(), "sessions", "branches-1"))).toContain("origin/next");
+  }, 60_000);
+
+  // Skelcrew's clone holds the default branch, and another base only once Skelcrew fetches it.
+  // Measured against main, the code next adds would make the change more than docs.
+  test("a change to docs alone on another base branch runs no tests", async () => {
+    const work = addApp();
+    git(work, "checkout", "-q", "-b", "next");
+    mkdirSync(join(work, "src"), { recursive: true });
+    writeFileSync(join(work, "src", "next.ts"), "export const next = 1;\n");
+    git(work, "add", "-A");
+    git(work, "commit", "-qm", "Start next");
+    git(work, "push", "-q", "origin", "next");
+    mkdirSync(builder(), { recursive: true });
+    writeFileSync(join(builder(), "docs-only"), "");
+    verdict(1, "approve", "Fine.");
+    serve();
+    await untilCloned();
+    expect((await skel(["start", "app-12", "--from", "next"])).err).toBe("");
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), 30_000);
+    const prompt = read(join(codexHome(), "sessions", "prompt-1"));
+    expect(prompt).toContain("The change only touches docs and Markdown, so don't run the tests.");
   }, 60_000);
 });
 

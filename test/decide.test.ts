@@ -5,12 +5,15 @@ import { expect, test } from "bun:test";
 import {
   afterReview,
   type Check,
+  ciResult,
   ciState,
   decide,
   labeledToStart,
+  onlyDocs,
   type PullRequest,
   refusedWorkflow,
   reviewCheck,
+  whoRunsTheSuite,
 } from "../src/flow/decide.ts";
 import { endedTurnAsks, type Thread } from "../src/flow/thread.ts";
 
@@ -411,6 +414,106 @@ test("a PR's CI reads as passing, failing or still running, and Skelcrew's own c
   expect(ciState(pr({ checks: [changes, passed] }))).toBe("passing");
   expect(ciState(pr({ checks: [passed, going] }))).toBe("pending");
   expect(ciState(pr({ checks: [failed, going] }))).toBe("failing");
+});
+
+// Who runs the suite on commit abc, the head of PR 7, with these open PRs in the repository.
+// By default the commit has no workflows, no review waited in vain, and this one hasn't waited.
+const suiteOn = (prs: PullRequest[], more: Partial<Parameters<typeof whoRunsTheSuite>[0]> = {}) =>
+  whoRunsTheSuite({
+    own: prs.find((one) => one.id === "7") ?? null,
+    commit: "abc",
+    prs,
+    setsUpCi: false,
+    waitedInVain: false,
+    waited: false,
+    ...more,
+  });
+const ci = [approved, run(30, "test", "running")];
+
+test("CI runs the suite once a CI check shows on the PR's own commit", () => {
+  expect(suiteOn([pr({ head: "abc", checks: ci })])).toBe("ci");
+  expect(suiteOn([pr({ head: "abc", checks: ci })], { waited: true })).toBe("ci");
+});
+
+test("with no CI, the reviewer runs the suite, and Skelcrew's own check isn't CI", () => {
+  expect(suiteOn([])).toBe("reviewer");
+  expect(suiteOn([pr({ head: "abc", checks: [approved] })])).toBe("reviewer");
+});
+
+// CI on the commit before isn't CI on this one, which may still show its first check.
+test("CI on the PR's commit before this one makes the review wait for this one's", () => {
+  expect(suiteOn([pr({ head: "old", checks: ci })])).toBe("wait");
+});
+
+// CI can skip a PR it runs on for others, such as one on another branch, or one whose files
+// its paths filter leaves out.
+test("CI on another PR only makes the review wait, and the reviewer runs the suite after", () => {
+  const prs = [pr({ head: "abc" }), pr({ id: "8", head: "def", checks: ci })];
+  expect(suiteOn(prs)).toBe("wait");
+  expect(suiteOn(prs, { waited: true })).toBe("reviewer");
+  expect(suiteOn(prs, { waitedInVain: true })).toBe("wait");
+});
+
+// A first PR shows no check yet, and the commit's workflows say one may come.
+test("on a first PR in a repository with workflows, the review waits for CI's first check", () => {
+  expect(suiteOn([pr({ head: "abc" })], { setsUpCi: true })).toBe("wait");
+  expect(suiteOn([pr({ head: "abc" })], { setsUpCi: true, waited: true })).toBe("reviewer");
+});
+
+// A workflow that runs only on a release tag never shows a check on a PR, so once a review
+// waited for one in vain, the repository's reviews don't wait again.
+test("workflows that never showed a check on a PR leave the suite to the reviewer", () => {
+  const prs = [pr({ head: "abc", checks: [approved] })];
+  expect(suiteOn(prs, { setsUpCi: true, waitedInVain: true })).toBe("reviewer");
+});
+
+// CI skips a commit that changes only docs and Markdown, and the reviewer runs no tests on it.
+test("a change is docs only when every file is under docs or is Markdown", () => {
+  expect(onlyDocs(["docs/spec.md", "docs/diagram.png", "README.md", "src/notes.md"])).toBe(true);
+  expect(onlyDocs(["docs/spec.md", "src/round.ts"])).toBe(false);
+  expect(onlyDocs(["src/docs/page.ts"])).toBe(false);
+  // No file changed tells nothing, so the tests run.
+  expect(onlyDocs([])).toBe(false);
+});
+
+test("tells the reviewer CI hasn't reported until the PR's head is the commit under review", () => {
+  const older = pr({ head: "old", checks: [run(30, "test", "failed")] });
+  const waiting = "CI is still running: it hasn't reported on this commit yet.\n";
+  expect(ciResult(null, "new", new Map())).toBe(waiting);
+  expect(ciResult(older, "new", new Map())).toBe(waiting);
+  expect(ciResult(pr({ head: "new", checks: [approved] }), "new", new Map())).toBe(waiting);
+});
+
+test("tells the reviewer whether CI passed, failed or still runs, with each check", () => {
+  const passed = pr({ head: "c1", checks: [approved, run(30, "test", "passed")] });
+  expect(ciResult(passed, "c1", new Map())).toBe("CI passed on this commit.\n\n- test: passed\n");
+  const going = pr({ head: "c1", checks: [run(30, "test", "passed"), run(31, "lint", "running")] });
+  expect(ciResult(going, "c1", new Map())).toBe(
+    "CI is still running on this commit.\n\n- test: passed\n- lint: running\n",
+  );
+});
+
+test("gives the reviewer the end of each failed check's log, which names the failing tests", () => {
+  const failed = pr({
+    head: "c1",
+    checks: [run(30, "test", "failed"), run(31, "lint", "passed"), run(32, "e2e", "failed")],
+  });
+  // A log the forge didn't give is left out, and the check is still listed.
+  const logs = new Map([["30", "FAIL test/login.test.ts > redirects\n"]]);
+  expect(ciResult(failed, "c1", logs)).toBe(
+    [
+      "CI failed on this commit.",
+      "",
+      "- test: failed",
+      "- lint: passed",
+      "- e2e: failed",
+      "",
+      "The end of the log of test:",
+      "",
+      "FAIL test/login.test.ts > redirects",
+      "",
+    ].join("\n"),
+  );
 });
 
 const approval = { verdict: "approve" as const, body: "Ready." };

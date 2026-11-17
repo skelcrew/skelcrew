@@ -52,6 +52,62 @@ export function ciState(pr: PullRequest): Thread["checks"] {
   return ci.some((c) => c.state === "failed" || c.state === "cancelled") ? "failing" : "pending";
 }
 
+// Returns whether a change of these files touches only docs and Markdown: each is under docs/
+// or ends in .md. CI skips such a commit, and so does the reviewer's run of the tests, as no
+// code changed. No files at all says nothing, so it isn't.
+export function onlyDocs(files: string[]): boolean {
+  return files.length > 0 && files.every((f) => f.startsWith("docs/") || f.endsWith(".md"));
+}
+
+// Returns who runs the whole test suite on `commit`, the head of `own`, the thread's PR, so it
+// runs once: CI, once a CI check shows on this commit, as only that proves CI runs on it. A
+// workflow can skip one PR while it runs on others, such as with a branch or paths filter.
+// Until then the review waits, while a check may still come and it hasn't `waited` long
+// enough: when CI shows on another of the repository's `prs`, or when the commit `setsUpCi`,
+// as on a first PR, unless a review here already `waitedInVain` with no CI anywhere, as
+// with a workflow that runs only on a release. Otherwise the reviewer runs it.
+export function whoRunsTheSuite(given: {
+  own: PullRequest | null;
+  commit: string;
+  prs: PullRequest[];
+  setsUpCi: boolean;
+  waitedInVain: boolean;
+  waited: boolean;
+}): "ci" | "reviewer" | "wait" {
+  const { own, commit, prs, setsUpCi, waitedInVain, waited } = given;
+  if (own?.head === commit && ciOf(own).length > 0) return "ci";
+  if (waited) return "reviewer";
+  if (prs.some((pr) => ciOf(pr).length > 0)) return "wait";
+  return setsUpCi && !waitedInVain ? "wait" : "reviewer";
+}
+
+// Returns what the reviewer reads about CI on the commit it reviews: whether CI passed, failed
+// or still runs, each check's state, and the end of each failed check's log, from `logs` by
+// check ID. CI the forge shows for another commit, such as the one before, is never this
+// commit's, so the reviewer is told CI hasn't reported yet.
+export function ciResult(
+  pr: PullRequest | null,
+  commit: string,
+  logs: Map<string, string>,
+): string {
+  // Nothing about this commit yet: the forge's copy holds an older head, or no check started.
+  const state = pr?.head === commit ? ciState(pr) : null;
+  if (pr === null || state === null)
+    return "CI is still running: it hasn't reported on this commit yet.\n";
+  // The whole result first, in the words the PR's page uses, then each check.
+  const ci = ciOf(pr);
+  const word = { passing: "passed", failing: "failed", pending: "is still running" };
+  const lines = [`CI ${word[state]} on this commit.`, ""];
+  for (const check of ci) lines.push(`- ${check.name}: ${check.state}`);
+  // Each failed check's log ends with the failing tests, which the reviewer names.
+  for (const check of ci) {
+    const log = check.id === null ? undefined : logs.get(check.id);
+    if (check.state === "failed" && log !== undefined)
+      lines.push("", `The end of the log of ${check.name}:`, "", log.trimEnd());
+  }
+  return `${lines.join("\n")}\n`;
+}
+
 // Returns the IDs the thread has handled, as a set. A thread saved before Skelcrew kept them has
 // the last ID of each kind it handled instead, from a forge whose IDs only grow: everything up
 // to those counts as handled. One that never took in its PR's history has neither.

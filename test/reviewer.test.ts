@@ -13,7 +13,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { review } from "../src/flow/reviewer.ts";
+import { review, reviewerPrompt } from "../src/flow/reviewer.ts";
 import { insideSandbox, source } from "./harness.ts";
 
 let home = "";
@@ -89,6 +89,7 @@ const start = (
     limit?: number;
     harness?: "claude";
     model?: string;
+    ci?: { has: () => boolean; read: () => Promise<string> };
     issue?: { title: string; body: string };
   } = {},
 ) => review({ ...given(), ...more });
@@ -430,6 +431,99 @@ describe.skipIf(insideSandbox)("reviewer", () => {
     expect(done.verdict).toBe("failed");
     expect(done.body).toContain("shape");
   });
+
+  // The file CI's result is in, as the reviewer's prompt names it.
+  const ciFile = `f=$(grep -o '/[^ ]*/ci\\.md' "$prompt" | head -1)`;
+
+  test("a reviewer on either harness reads CI's result from the file its prompt names", async () => {
+    mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
+    writeFileSync(join(home, ".config", "skelcrew", "claude-token"), "sk-ant-oat01-tok\n");
+    const ci = { has: () => true, read: async () => "CI failed on this commit.\n" };
+    // Codex answers in a file, and Claude Code on its output.
+    fakeCodex(approve, [
+      'prompt="$CODEX_HOME/sessions/prompt"',
+      ciFile,
+      'cat "$f" > "$CODEX_HOME/sessions/ci"',
+    ]);
+    expect((await start({ ci })).verdict).toBe("approve");
+    expect(kept("ci")).toBe("CI failed on this commit.\n");
+    expect(kept("prompt")).not.toContain("run the repository's whole test suite");
+    fakeClaude([
+      'prompt="$CLAUDE_CONFIG_DIR/prompt"; cat > "$prompt"',
+      ciFile,
+      'body=$(cat "$f" | tr -d "\\n")',
+      'echo "{\\"type\\":\\"result\\",\\"structured_output\\":{\\"verdict\\":\\"approve\\",\\"body\\":\\"$body\\"}}"',
+    ]);
+    const done = await start({ harness: "claude", ci });
+    expect(done).toEqual({ verdict: "approve", body: "CI failed on this commit." });
+  });
+
+  test("keeps CI's result current while the review runs", async () => {
+    let asked = 0;
+    const ci = { has: () => true, read: async () => `asked ${++asked}\n` };
+    fakeCodex(approve, [
+      'prompt="$CODEX_HOME/sessions/prompt"',
+      ciFile,
+      'cat "$f" > "$CODEX_HOME/sessions/ci"; sleep 17; cat "$f" >> "$CODEX_HOME/sessions/ci"',
+    ]);
+    expect((await start({ ci })).verdict).toBe("approve");
+    expect(kept("ci")).toBe("asked 1\nasked 2\n");
+  }, 40_000);
+
+  // The reviewer can write in the folder CI's result goes in. What it leaves there must never
+  // lead a refresh to write to a file outside the sandbox.
+  test("a refresh of CI's result never writes through a link the reviewer left", async () => {
+    const outside = join(home, "outside");
+    writeFileSync(outside, "kept\n");
+    const ci = { has: () => true, read: async () => "CI passed.\n" };
+    fakeCodex(approve, [
+      'prompt="$CODEX_HOME/sessions/prompt"',
+      ciFile,
+      `for n in "$f" "$f.new"; do rm -f "$n"; ln -s ${outside} "$n"; done; sleep 17`,
+    ]);
+    expect((await start({ ci })).verdict).toBe("approve");
+    expect(readFileSync(outside, "utf8")).toBe("kept\n");
+  }, 40_000);
+
+  // A review waits in the round's queue for its place, and CI may show a check meanwhile. So the
+  // reviewer is told about CI from what holds as each review starts.
+  test("whether CI runs on the commit is asked as each review starts", async () => {
+    let has = false;
+    const ci = { has: () => has, read: async () => "CI passed.\n" };
+    fakeCodex(approve);
+    await start({ ci });
+    expect(kept("prompt")).toContain(
+      "No CI runs on this commit, so run the repository's whole test suite",
+    );
+    has = true;
+    await start({ ci });
+    expect(kept("prompt")).toContain("ci.md");
+  });
+
+  // Asking the forge for a failed log can take a minute. A review that ends must not wait for
+  // it, or it would keep its place among the reviews that run at once, and those queued for one
+  // would wait too.
+  test("a slow answer about CI never holds up a review that was cancelled or ran out of time", async () => {
+    fakeCodex(approve);
+    // An answer that comes only once the test lets it, after every review has ended.
+    let answer = () => {};
+    const late = new Promise<void>((resolve) => {
+      answer = resolve;
+    });
+    const slow = { has: () => true, read: () => late.then(() => "late\n") };
+    const cancel = new AbortController();
+    setTimeout(() => cancel.abort(), 500);
+    const began = Date.now();
+    const cancelled = start({ signal: cancel.signal, ci: slow });
+    const timedOut = start({ limit: 1000, ci: slow });
+    const next = start();
+    expect(await cancelled).toEqual({ verdict: "failed", body: "the review was cancelled" });
+    expect(await timedOut).toMatchObject({ verdict: "timed out" });
+    expect((await timedOut).body).toContain("ran past");
+    expect((await next).verdict).toBe("approve");
+    expect(Date.now() - began).toBeLessThan(15_000);
+    answer();
+  });
 });
 
 // These never start bubblewrap, so they run inside Skelcrew's sandbox too.
@@ -523,5 +617,55 @@ test("keeps reviewing after a review that couldn't start", async () => {
   expect(await start({ signal: cancel.signal })).toEqual({
     verdict: "failed",
     body: "the review was cancelled",
+  });
+});
+
+describe("what the reviewer is told about the tests", () => {
+  // CI runs the whole suite once per commit, so the reviewer runs it only where there is none.
+  test("without CI, the reviewer runs the whole test suite itself", () => {
+    const prompt = reviewerPrompt(issue, "origin/main", "run");
+    expect(prompt).toContain("No CI runs on this commit, so run the repository's whole test suite");
+    expect(prompt).toContain("under test: in the repository's skelcrew.yaml");
+    expect(prompt).not.toContain("ci.md");
+  });
+
+  test("with CI, the reviewer reads CI's result, and says when CI is still running", () => {
+    const prompt = reviewerPrompt(issue, "origin/main", { ci: "/tmp/review/ci.md" });
+    expect(prompt).not.toContain("run the repository's whole test suite");
+    expect(prompt).toContain(
+      "CI runs the whole test suite on this commit, so don't run it yourself",
+    );
+    expect(prompt).toContain("CI's result for this commit is in /tmp/review/ci.md");
+    expect(prompt).toContain("whether it passed, failed or is still running");
+    expect(prompt).toContain("read it when you start and again just before you answer");
+    expect(prompt).toContain("When CI failed, name the failing tests as problems");
+    expect(prompt).toContain("say in the body that CI is still running");
+  });
+
+  // Any check but Skelcrew's counts as CI, and some, such as a deploy preview or a CLA check,
+  // run no tests. Then no one else would run the suite.
+  test("with CI whose checks run no tests, the reviewer runs the whole test suite itself", () => {
+    const prompt = reviewerPrompt(issue, "origin/main", { ci: "/tmp/review/ci.md" });
+    expect(prompt).toContain(
+      "When it lists checks and none of them runs the tests, such as only a deploy preview or a CLA check, run the whole test suite yourself, using the commands under test: in the repository's skelcrew.yaml if there is one.",
+    );
+  });
+
+  // Before CI starts, the file lists no checks. That is CI still to come, not CI without tests.
+  test("with CI that hasn't reported yet, the reviewer reviews the code without running the suite", () => {
+    const prompt = reviewerPrompt(issue, "origin/main", { ci: "/tmp/review/ci.md" });
+    expect(prompt).toContain(
+      "When CI hasn't reported yet, or is still running as you answer, review the code anyway, and say in the body that CI is still running.",
+    );
+  });
+
+  // CI skips a change to docs and Markdown alone, and so does the reviewer: no code changed.
+  test("on a change to docs and Markdown alone, the reviewer runs no tests and says so", () => {
+    const prompt = reviewerPrompt(issue, "origin/main", "docs only");
+    expect(prompt).toContain(
+      "The change only touches docs and Markdown, so don't run the tests. Say in the body that you didn't run them, as no code changed.",
+    );
+    expect(prompt).not.toContain("run the repository's whole test suite");
+    expect(prompt).not.toContain("ci.md");
   });
 });
