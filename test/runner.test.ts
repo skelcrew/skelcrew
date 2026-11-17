@@ -65,8 +65,11 @@ function timeOf(out: string, what: string): { seconds: number; at: number } {
 }
 
 // CI is where the tests that start a real sandbox run, so its log shows where a slow run went.
-// A file's time includes its hooks, such as a slow beforeAll, which no test's time has.
+// A file's time includes its hooks, such as a slow beforeAll, which no test's time has, and the
+// preloads bunfig.toml names, which load before the runner's own. Here one takes half a second.
 test("in CI a run prints its slowest tests and each file's time, and elsewhere neither", async () => {
+  writeFileSync(join(folder, "bunfig.toml"), '[test]\npreload = ["./slow-preload.ts"]\n');
+  writeFileSync(join(folder, "slow-preload.ts"), "Bun.sleepSync(500);\n");
   writeFileSync(
     join(folder, "slow.test.ts"),
     `import { test } from "bun:test";
@@ -93,8 +96,8 @@ test("other", () => {});
   // Each file once, the one with slow hooks first.
   const perFile = out.slice(out.indexOf("Time per file:"));
   const [other, slow] = [timeOf(perFile, "other.test.ts"), timeOf(perFile, "slow.test.ts")];
-  expect(other.seconds).toBeGreaterThanOrEqual(1.2);
-  expect(slow.seconds).toBeGreaterThanOrEqual(0.4);
+  expect(other.seconds).toBeGreaterThanOrEqual(1.7);
+  expect(slow.seconds).toBeGreaterThanOrEqual(0.9);
   expect(other.at).toBeGreaterThan(0);
   expect(other.at).toBeLessThan(slow.at);
   const local = await runIn(files, false);

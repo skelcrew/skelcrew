@@ -1,19 +1,27 @@
 // Loaded before each test file in CI, by scripts/test.ts: writes how long the whole file took to
-// the file TEST_FILE_TIMES names. Bun's report counts only the tests, not a file's imports and
-// hooks, so a slow beforeAll would hide there.
+// the file TEST_FILE_TIMES names. Bun's report can't give this: its time for a file leaves out
+// the file's hooks, so a slow beforeAll would hide there.
 import { afterAll } from "bun:test";
-import { appendFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { relative } from "node:path";
+import { z } from "zod";
 
 const times = process.env.TEST_FILE_TIMES;
 if (times) {
-  const start = performance.now();
+  // A worker runs its files one after another, and this loads after the preloads bunfig.toml
+  // names. So a file's time runs from when the worker ended its last file, or from when the
+  // worker started, and those preloads count too. performance.now() counts from the worker's
+  // start, whichever file it is on. The worker notes each end in a file of its own.
+  const lastEnd = `${times}.${process.pid}`;
+  const start = existsSync(lastEnd) ? z.coerce.number().parse(readFileSync(lastEnd, "utf8")) : 0;
   // Bun.main is the test file, named as Bun's report names it, from where the run started.
   const file = relative(process.cwd(), Bun.main);
-  // A preload's afterAll runs after the file's own, so the time covers its hooks. Workers run at
-  // once, and each writes one short line, so appending keeps them apart.
+  // A preload passed to bun test runs its afterAll after the file's own and bunfig.toml's
+  // preloads', so the time covers them. Workers run at once, and each writes one short line,
+  // so appending keeps them apart.
   afterAll(() => {
-    const seconds = (performance.now() - start) / 1000;
-    appendFileSync(times, `${JSON.stringify({ file, seconds })}\n`);
+    const end = performance.now();
+    writeFileSync(lastEnd, String(end));
+    appendFileSync(times, `${JSON.stringify({ file, seconds: (end - start) / 1000 })}\n`);
   });
 }
