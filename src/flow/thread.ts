@@ -95,6 +95,11 @@ export const Thread = z.object({
   // What the PR's CI says, without Skelcrew's own check, as last polled. Null with no CI, or
   // while the commit it would be about is still on its way to the forge.
   checks: z.enum(["passing", "failing", "pending"]).nullable(),
+  // The base branch the PR conflicts with, as Skelcrew last found, so an approval isn't ready to
+  // merge until the builder's next round, whatever else makes the thread need you meanwhile.
+  // Null when it doesn't, or once a new round starts, as the conflict is found again if still
+  // there. Null in a row from before Skelcrew kept it.
+  conflicts: z.string().nullable(),
   // The harness of the review waiting or running, which can differ from the latest finished
   // one's once you change your config.
   reviewer: HarnessName.nullable(),

@@ -26,8 +26,12 @@ export type Decision =
       // The IDs of the reviews, comments and check runs handled once this decision is carried
       // out, among those the PR shows.
       seen: string[];
-      // What to type into the builder, besides the failed checks, whose logs come from the forge.
+      // What people said on the PR, their reviews and comments, to type into the builder.
       tell: string[];
+      // What Skelcrew itself tells the builder of the PR, such as a conflict, besides the failed
+      // checks, whose logs come from the forge. Kept apart from people's words, as a new round
+      // makes it stale while their words still hold.
+      notice: string[];
       // The reviews and comments by people that are typed in. The forge marks them seen once
       // they are.
       typedIn: { kind: "review" | "comment"; id: string }[];
@@ -150,7 +154,16 @@ export function decide(thread: Thread, pr: PullRequest, given: { maxRounds: numb
   const before = handledBefore(thread, pr);
   if (before === null) {
     const why = "started after the PR's history";
-    return { seen: shown, tell: [], typedIn: [], failed: [], conflict: null, change: {}, why };
+    return {
+      seen: shown,
+      tell: [],
+      notice: [],
+      typedIn: [],
+      failed: [],
+      conflict: null,
+      change: {},
+      why,
+    };
   }
   const past = pastRoundLimit(thread, given.maxRounds);
   // Whether what this author wrote is typed into the builder.
@@ -191,8 +204,9 @@ export function decide(thread: Thread, pr: PullRequest, given: { maxRounds: numb
     : [];
   // A conflict with the base is told with how to fix it.
   const conflict = quiet && pr.conflicts ? pr.base : null;
+  const notice: string[] = [];
   if (conflict !== null)
-    tell.push(
+    notice.push(
       `The PR conflicts with ${conflict}. Run git fetch origin, merge origin/${conflict} into your branch and fix the conflict, then commit and run sc submit "<summary>" again.`,
     );
   // The IDs the PR no longer shows can never come back, so they are left out.
@@ -204,12 +218,15 @@ export function decide(thread: Thread, pr: PullRequest, given: { maxRounds: numb
       (finished && runs.includes(id)),
   );
   // Anything to tell sets the builder working again.
-  if (tell.length > 0 || failed.length > 0) {
-    const told = [...failed.map((r) => `${r.name} failed`), ...tell.map((t) => t.split("\n")[0])];
+  if (tell.length > 0 || notice.length > 0 || failed.length > 0) {
+    const told = [
+      ...failed.map((r) => `${r.name} failed`),
+      ...[...tell, ...notice].map((t) => t.split("\n")[0]),
+    ];
     // Past the round limit the thread still needs you, as the builder's next round would.
     const change: Change = { status: "working", needs_you: past };
     const why = `told the builder: ${told.join("; ")}`;
-    return { seen, tell, typedIn, failed, conflict, change, why };
+    return { seen, tell, notice, typedIn, failed, conflict, change, why };
   }
   // Skelcrew's reviewer approves by setting its check, so an approved PR with every check passed,
   // its own included, is ready. With no CI, that check is the only one.
@@ -218,13 +235,14 @@ export function decide(thread: Thread, pr: PullRequest, given: { maxRounds: numb
     return {
       seen,
       tell,
+      notice,
       typedIn,
       failed,
       conflict,
       change: { needs_you: true },
       why: "approved by Skelcrew's reviewer with every check green, so it is ready to merge",
     };
-  return { seen, tell, typedIn, failed, conflict, change: {}, why: "" };
+  return { seen, tell, notice, typedIn, failed, conflict, change: {}, why: "" };
 }
 
 // A task labeled to start, by its ID and title.

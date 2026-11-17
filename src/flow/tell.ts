@@ -1,12 +1,11 @@
 // Messages between a repository's lead and its threads' builders, for sc tell: typed into the
-// other's session once it is idle, and kept in the thread's log. They never go to a tracker or
+// other's session once it can take them, and kept in the thread's log. They never go to a tracker or
 // forge.
 import type { Database } from "bun:sqlite";
 import { agentRuns } from "../agents/sessions.ts";
-import { deliver } from "../agents/transport.ts";
-import { errorText } from "../say.ts";
 import { noteForLead } from "./lead.ts";
-import { builderHarness, log, readThread, record, type Thread, threadName } from "./thread.ts";
+import { messagesWaiting, queueMessage, whyWaiting } from "./messages.ts";
+import { log, readThread, type Thread, threadName } from "./thread.ts";
 
 // Returns an agent's text with any <skelcrew or </skelcrew> removed, so it can't open or close
 // Skelcrew's tag and pass what follows off as coming from someone else.
@@ -26,23 +25,22 @@ function wrapMessage(from: string, reply: string, text: string): string {
   return `<skelcrew from="${from}" reply="${reply}">\n${untagged(text)}\n</skelcrew>`;
 }
 
-// Types the lead's message into the thread's builder once it is idle, and keeps it with the
-// thread as a change to its task. Returns the thread's name at once, as an agent's command
-// must answer quickly. Refuses a builder that isn't running rather than keeping the message,
+// Saves the lead's message for the thread's builder, to be typed in as soon as the builder can
+// take it, and returns the line sc tell prints. When it can't be typed in right away, the line
+// says why, so the lead never waits without knowing. A message still waiting after 10 minutes
+// brings the lead a note. Refuses a builder that isn't running rather than keeping the message,
 // which could reach it long after it mattered. Refuses one asking you a question with its
 // harness's question tool too: typing then would answer it for you. One that stopped without
 // submitting may be told, as the lead can often answer what it waits on, and the message typed
 // in ends its needing you.
-// A message that can't be typed in, such as to a builder busy for half an hour, is logged,
-// and the lead hears that it didn't arrive.
-export function messageBuilder(
+export async function messageBuilder(
   db: Database,
   sessions: string,
   thread: Thread,
   text: string,
-): string {
-  // Refuse first, while the lead's command still waits for an answer: a stopped thread gets
-  // the command that brings it back, any other one without a session gets its status.
+): Promise<string> {
+  // Refuse first: a stopped thread gets the command that brings it back, any other one without
+  // a session gets its status.
   const name = threadName(db, thread);
   const live = thread.status === "working" || thread.status === "waiting";
   if (thread.status === "stopped")
@@ -56,36 +54,21 @@ export function messageBuilder(
     throw new Error(
       `${name}'s builder is asking the human a question, and typing now would answer it. Tell the human instead.`,
     );
-  // Typing waits until the builder is idle, up to half an hour, so it runs on without being
-  // awaited. Either way the thread's log says what happened, and the lead hears of a failure,
-  // since by then its command has long returned. A message typed in becomes a change to the
-  // thread's task, so its reviewer judges the builder by what the lead last said. It is kept
-  // only once typed: then the reviewer never sees what the builder didn't, and messages keep
-  // their order, as typing into a session goes one message at a time.
+  // Look before saving it, so the answer says whether it goes in now. Messages are typed in
+  // order, so any still waiting go first.
+  const ahead = messagesWaiting(db, thread);
+  const why = await whyWaiting(sessions, thread);
   const message = wrapMessage("lead", "sc tell lead", text);
-  deliver(sessions, thread.folder, builderHarness(thread).marks, message, {
-    timeout: 30 * 60_000,
-  }).then(
-    () => {
-      const { updates } = readThread(db, thread.folder);
-      record(
-        db,
-        thread.folder,
-        { updates: [...updates, { from: "lead", at: Date.now(), text }] },
-        `the lead told its builder: ${text}`,
-      );
-    },
-    (error) => {
-      const said = errorText(error);
-      log(
-        db,
-        readThread(db, thread.folder),
-        `couldn't tell its builder what the lead said: ${said}`,
-      );
-      noteForLead(db, sessions, thread, `${name}'s builder didn't get your message: ${said}`);
-    },
-  );
-  return name;
+  queueMessage(db, sessions, thread.folder, {
+    sender: "lead",
+    text: message,
+    said: text,
+    typed_in: [],
+  });
+  if (why === "" && ahead === 0) return `Telling ${name}'s builder now: it is idle.`;
+  const earlier = ahead === 1 ? "1 earlier message waits" : `${ahead} earlier messages wait`;
+  const reasons = [why, ahead > 0 ? earlier : ""].filter((reason) => reason).join(", and ");
+  return `${name}'s builder can't take it yet: ${reasons}. Skelcrew types it in once it can, and tells you if it still waits in 10 minutes.`;
 }
 
 // Has the daemon type a builder's message into its repository's lead, naming the thread it

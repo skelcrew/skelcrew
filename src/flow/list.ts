@@ -11,6 +11,7 @@ import { errorText } from "../say.ts";
 import { filled, fitted, removeControlCodes } from "../screen/look.ts";
 import { type Item, openTasks, prOf, taskOf, threadTask } from "./copy.ts";
 import { reviewCheck } from "./decide.ts";
+import { messagesWaiting } from "./messages.ts";
 import { ciSummary, reviewVerdict } from "./page.ts";
 import { findRepository, noRepositories, repositories, repositoryAt } from "./repo.ts";
 import { roundRunning } from "./round.ts";
@@ -67,7 +68,8 @@ function tabClosed(db: Database, r: { owner: string; repo: string }): boolean {
 // title, which an old row may lack. `queued` says its review waits for a place. `pr`, `prUrl`
 // and `checks` are null without a PR, and `review` without a forge, where sc ps leaves those
 // columns empty. `checks` is what the PR's CI says, without Skelcrew's own check. `review` is
-// where Skelcrew's reviewer stands: its round, and when it was asked for or ended, as an ISO time.
+// where Skelcrew's reviewer stands: its round, and when it was asked for or ended, as an ISO
+// time. `waiting` is how many messages wait to be typed into its builder.
 export const ThreadRow = z.object({
   thread: z.string(),
   short: z.string().nullable(),
@@ -86,6 +88,7 @@ export const ThreadRow = z.object({
       at: z.string().nullable(),
     })
     .nullable(),
+  waiting: z.number(),
 });
 export type ThreadRow = z.infer<typeof ThreadRow>;
 
@@ -159,6 +162,7 @@ export function listThreads(db: Database, repository?: string): ThreadRow[] {
       prUrl: copy?.link ?? null,
       checks: pr === null ? null : ciOf(thread, copy),
       review: forge ? reviewOf(thread) : null,
+      waiting: messagesWaiting(db, thread),
     };
   });
 }
@@ -297,7 +301,7 @@ function shortName(name: string, room: number): string {
 // its title, takes the rest, so a long one doesn't push the rest out of sight. --json has
 // both whole. The title comes from the tracker and the short title from the lead, so their
 // control codes are removed, which could break a row or reach your terminal. A review shows
-// its round, such as changes r3.
+// its round, such as changes r3. WAITING counts the messages waiting for each builder.
 export function printThreads(threads: ThreadRow[], json: boolean): void {
   if (json) {
     console.log(JSON.stringify(threads));
@@ -308,7 +312,9 @@ export function printThreads(threads: ThreadRow[], json: boolean): void {
     return;
   }
   // The columns after the title, as they will show. Waiting says little while many reviews
-  // wait their turn, so the status says which.
+  // wait their turn, so the status says which. WAITING shows only while a message waits for
+  // some builder, so it takes no room from the others the rest of the time.
+  const waiting = threads.some((t) => t.waiting > 0);
   const rows = threads.map((t) => {
     const review = t.review === null ? "" : t.review.state;
     const round = t.review?.round == null ? "" : ` r${t.review.round}`;
@@ -318,11 +324,12 @@ export function printThreads(threads: ThreadRow[], json: boolean): void {
       t.checks ?? "",
       `${review}${round}`,
       t.needsYou ? "yes" : "",
+      ...(waiting ? [t.waiting === 0 ? "" : `${t.waiting}`] : []),
     ];
   });
   // The name and title share what those columns, and the two spaces after each column but the
   // last, leave of a row. The title keeps at least room for its heading.
-  const heading = ["STATUS", "PR", "CI", "REVIEW", "NEEDS YOU"];
+  const heading = ["STATUS", "PR", "CI", "REVIEW", "NEEDS YOU", ...(waiting ? ["WAITING"] : [])];
   const others = heading.reduce((sum, _, i) => sum + columnWidth([heading, ...rows], i), 0);
   const left = psWidth - others - 2 * (heading.length + 1);
   const room = Math.min(nameRoom.most, Math.max(left - "TITLE".length, nameRoom.least));
