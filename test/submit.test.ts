@@ -85,14 +85,15 @@ exec sleep 300`,
 // Stands in for Codex. Review n answers with the verdict in Skelcrew's Codex folder's verdict-n,
 // and fails without one. It sleeps first when slow-n is there, and while held-n is there it
 // waits for the test to put go-n in the sessions folder. What it was given, and the branches it
-// saw, go in the sessions folder, the one place a review writes that lasts.
+// saw, go in the sessions folder, the one place a review writes that lasts. The prompt is
+// written aside and moved into place, so a test that sees prompt-n never reads it half written.
 function fakeCodex(): void {
   script(
     "codex",
     `for a; do [ "$prev" = -o ] && out=$a; prev=$a; done
 s="$CODEX_HOME/sessions"
 n=$(( $(cat "$s/count" 2>/dev/null || echo 0) + 1 )); echo $n > "$s/count"
-cat > "$s/prompt-$n"
+cat > "$s/prompt-$n.part" && mv "$s/prompt-$n.part" "$s/prompt-$n"
 git branch -r > "$s/branches-$n"
 git rev-parse origin/main > "$s/main-$n" 2>&1
 test -e "$CODEX_HOME/slow-$n" && sleep 30
