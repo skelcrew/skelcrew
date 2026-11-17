@@ -24,6 +24,7 @@ import type { Settings } from "../settings.ts";
 import { taskOf, threadTask } from "./copy.ts";
 import { pastRoundLimit } from "./decide.ts";
 import { fetchBranch } from "./git.ts";
+import { dropEndNotes } from "./lead.ts";
 import { findRepository, forgeAuthor, refreshClones } from "./repo.ts";
 import {
   builderHarness,
@@ -234,7 +235,7 @@ async function recordThread(
     db.run("DELETE FROM messages WHERE folder = ?", [thread.folder]);
     // A note that the old thread ended may still wait for a busy lead. The new thread has the
     // same name, and the lead would drop it from what it holds open, so the note goes too.
-    db.run("DELETE FROM notes WHERE ended = ?", [thread.folder]);
+    dropEndNotes(db, thread.folder);
     db.run(
       `INSERT INTO threads (owner, repo, task, folder, branch, base, status, session, started)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
