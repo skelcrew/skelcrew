@@ -10,7 +10,7 @@ import { quietly } from "../run.ts";
 import { errorText } from "../say.ts";
 import { baseOf } from "./builder.ts";
 import { openPrs, prOf, threadTask } from "./copy.ts";
-import { afterReview, ciResult, pastRoundLimit, whoRunsTheSuite } from "./decide.ts";
+import { afterReview, ciResult, onlyDocs, pastRoundLimit, whoRunsTheSuite } from "./decide.ts";
 import { pushCommit } from "./git.ts";
 import { typeLeadNotes } from "./lead.ts";
 import { Queue } from "./queue.ts";
@@ -164,6 +164,18 @@ async function reviewRound(
   const ls = ["git", "-C", cloneDir(thread.owner, thread.repo), "ls-tree", sha, "--"];
   const listed = Bun.spawnSync([...ls, ".github/workflows"], { stdout: "pipe", stderr: "ignore" });
   const setsUpCi = listed.success && listed.stdout.toString().trim() !== "";
+  // A change to docs and Markdown alone is tested by no one, as CI skips it and no code
+  // changed, so its review waits for no CI. The files are those changed since the base branch,
+  // which Skelcrew's clone holds as refs/heads/<base>. A diff Skelcrew can't read lists none,
+  // and the tests run.
+  const base = `refs/heads/${baseOf(thread)}`;
+  const diff = ["git", "-C", cloneDir(thread.owner, thread.repo), "diff", "--name-only"];
+  const changed = Bun.spawnSync([...diff, `${base}...${sha}`], {
+    stdout: "pipe",
+    stderr: "ignore",
+  });
+  const docsOnly =
+    changed.success && onlyDocs(changed.stdout.toString().split("\n").filter(Boolean));
   const repositoryName = `${thread.owner}/${thread.repo}`;
   const suite = (waited: boolean) => {
     const prs = openPrs(db, thread.owner, thread.repo);
@@ -171,7 +183,7 @@ async function reviewRound(
     const inVain = waitedInVain.has(repositoryName);
     return whoRunsTheSuite({ own, commit: sha, prs, setsUpCi, waitedInVain: inVain, waited });
   };
-  if (pr !== null && suite(false) === "wait") {
+  if (pr !== null && !docsOnly && suite(false) === "wait") {
     // Saved as reviewing, as the review is under way for you, and so a restart brings it back.
     // Its place in the queue only matters once it joins, with `since`.
     const waiting = { reviewing: sha, submitting: null, reviewer, queued: null };
@@ -216,8 +228,9 @@ async function reviewRound(
         // With CI on this commit, CI runs the whole test suite and the reviewer reads its
         // result. Without, the reviewer runs the suite itself. Asked again as the review
         // starts, as CI may show a check while the review waits its turn.
+        docsOnly,
         ci:
-          pr === null
+          pr === null || docsOnly
             ? undefined
             : {
                 has: () => suite(true) === "ci",

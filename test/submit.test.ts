@@ -49,7 +49,8 @@ const script = (name: string, body: string) => writeScript(home, name, body);
 // answers it with another round, as a builder fixing a review would. `submits` false leaves the
 // first round to the test. While the file busy is in its config folder after a round, it looks
 // busy, as Claude Code does mid-turn, and its turn ends once the file is gone. A ci.yml there
-// goes into each round as the repository's first workflow.
+// goes into each round as the repository's first workflow. With docs-only there, a round
+// changes only docs/change.md.
 function fakeClaude(submits = true): void {
   script(
     "claude",
@@ -64,7 +65,7 @@ hook() {
 n=0
 round() {
   n=$((n+1))
-  echo "$n" > change
+  if test -e "$CLAUDE_CONFIG_DIR/docs-only"; then mkdir -p docs; echo "$n" > docs/change.md; else echo "$n" > change; fi
   test -e "$CLAUDE_CONFIG_DIR/ci.yml" && mkdir -p .github/workflows && cp "$CLAUDE_CONFIG_DIR/ci.yml" .github/workflows/
   git add -A && git commit -qm "round $n"
   sc submit "Round $n" >> "$CLAUDE_CONFIG_DIR/submitted" 2>&1
@@ -468,6 +469,21 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
     const second = read(join(codexHome(), "sessions", "prompt-2"));
     expect(second).toContain("No CI runs on this commit, so run the repository's whole test suite");
   }, 280_000);
+
+  // CI skips a change to docs and Markdown alone, so the review neither waits for it nor runs
+  // the tests.
+  test("on a change to docs alone, the review starts at once and runs no tests", async () => {
+    addApp({ ".github/workflows/ci.yml": "on: pull_request\n" });
+    mkdirSync(builder(), { recursive: true });
+    writeFileSync(join(builder(), "docs-only"), "");
+    verdict(1, "approve", "Ready to merge.");
+    await startApp12();
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), 30_000);
+    const prompt = read(join(codexHome(), "sessions", "prompt-1"));
+    expect(prompt).toContain("The change only touches docs and Markdown, so don't run the tests.");
+    expect(prompt).not.toContain("run the repository's whole test suite");
+    expect(prompt).not.toContain("ci.md");
+  }, 60_000);
 
   test("without CI, the reviewer runs the whole test suite itself", async () => {
     addApp();

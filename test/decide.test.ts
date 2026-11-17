@@ -9,6 +9,7 @@ import {
   ciState,
   decide,
   labeledToStart,
+  onlyDocs,
   type PullRequest,
   reviewCheck,
   whoRunsTheSuite,
@@ -459,6 +460,15 @@ test("on a first PR in a repository with workflows, the review waits for CI's fi
 test("workflows that never showed a check on a PR leave the suite to the reviewer", () => {
   const prs = [pr({ head: "abc", checks: [approved] })];
   expect(suiteOn(prs, { setsUpCi: true, waitedInVain: true })).toBe("reviewer");
+});
+
+// CI skips a commit that changes only docs and Markdown, and the reviewer runs no tests on it.
+test("a change is docs only when every file is under docs or is Markdown", () => {
+  expect(onlyDocs(["docs/spec.md", "docs/diagram.png", "README.md", "src/notes.md"])).toBe(true);
+  expect(onlyDocs(["docs/spec.md", "src/round.ts"])).toBe(false);
+  expect(onlyDocs(["src/docs/page.ts"])).toBe(false);
+  // No file changed tells nothing, so the tests run.
+  expect(onlyDocs([])).toBe(false);
 });
 
 test("tells the reviewer CI hasn't reported until the PR's head is the commit under review", () => {

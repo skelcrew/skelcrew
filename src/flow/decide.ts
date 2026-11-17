@@ -52,6 +52,13 @@ export function ciState(pr: PullRequest): Thread["checks"] {
   return ci.some((c) => c.state === "failed" || c.state === "cancelled") ? "failing" : "pending";
 }
 
+// Returns whether a change of these files touches only docs and Markdown: each is under docs/
+// or ends in .md. CI skips such a commit, and so does the reviewer's run of the tests, as no
+// code changed. No files at all says nothing, so it isn't.
+export function onlyDocs(files: string[]): boolean {
+  return files.length > 0 && files.every((f) => f.startsWith("docs/") || f.endsWith(".md"));
+}
+
 // Returns who runs the whole test suite on `commit`, the head of `own`, the thread's PR, so it
 // runs once: CI, once a CI check shows on this commit, as only that proves CI runs on it. A
 // workflow can skip one PR while it runs on others, such as with a branch or paths filter.

@@ -29,22 +29,28 @@ const schema = JSON.stringify({
   additionalProperties: false,
 });
 
+// Who runs the tests on a review's commit: CI, whose result is in the file `ci`; the reviewer;
+// or no one, on a change to docs and Markdown alone.
+export type Tests = { ci: string } | "run" | "docs only";
+
 // Returns what the reviewer is told: the task it checks the PR against, where the change
 // starts, how to learn whether the tests pass, and to answer with problems the builder can act
 // on. It tells the reviewer to assume the change is wrong, since a reviewer that trusts the
-// builder misses what the builder missed. `ci` is the file holding CI's result for the commit,
-// or null when no CI runs on the commit. The whole test suite runs once per commit: CI runs it
-// where CI runs on the commit, and the reviewer only where it doesn't, as several threads
-// running it at once overload the machine.
+// builder misses what the builder missed. `tests` says who runs the tests: CI, with the file
+// holding its result for the commit; the reviewer, as no CI runs on the commit; or no one, as
+// the change touches only docs and Markdown. The whole test suite runs once per commit, and
+// only when code changed, as several threads running it at once overload the machine.
 export function reviewerPrompt(
   issue: { title: string; body: string },
   base: string,
-  ci: string | null,
+  tests: Tests,
 ): string {
-  const tests =
-    ci === null
-      ? "No CI runs on this commit, so run the repository's whole test suite, using the commands under test: in the repository's skelcrew.yaml if there is one."
-      : `The repository's CI runs the whole test suite on this commit, so don't run it yourself. Run a single test only to settle a doubt. CI's result for this commit is in ${ci}: whether it passed, failed or is still running, and the end of each failed check's log. Skelcrew updates that file as CI goes on, so read it when you start and again just before you answer. When CI failed, name the failing tests as problems. When it lists checks and none of them runs the tests, such as only a deploy preview or a CLA check, run the whole test suite yourself, using the commands under test: in the repository's skelcrew.yaml if there is one. When CI hasn't reported yet, or is still running as you answer, review the code anyway, and say in the body that CI is still running.`;
+  const told =
+    tests === "docs only"
+      ? "The change only touches docs and Markdown, so don't run the tests. Say in the body that you didn't run them, as no code changed."
+      : tests === "run"
+        ? "No CI runs on this commit, so run the repository's whole test suite, using the commands under test: in the repository's skelcrew.yaml if there is one."
+        : `The repository's CI runs the whole test suite on this commit, so don't run it yourself. Run a single test only to settle a doubt. CI's result for this commit is in ${tests.ci}: whether it passed, failed or is still running, and the end of each failed check's log. Skelcrew updates that file as CI goes on, so read it when you start and again just before you answer. When CI failed, name the failing tests as problems. When it lists checks and none of them runs the tests, such as only a deploy preview or a CLA check, run the whole test suite yourself, using the commands under test: in the repository's skelcrew.yaml if there is one. When CI hasn't reported yet, or is still running as you answer, review the code anyway, and say in the body that CI is still running.`;
   return `Review this pull request as an adversarial reviewer. Another agent wrote it. Assume it is wrong until you have checked it yourself.
 
 It should do this:
@@ -55,7 +61,7 @@ ${issue.body}
 
 The change is everything on HEAD since ${base}. Read the whole diff with \`git diff ${base}...HEAD\`, and the code around it. Anything you change here is thrown away after the review, so run what you need, but don't fix the code.
 
-${tests}
+${told}
 
 Check that it does what this asks and nothing else, and look for bugs, edge cases it misses, missing tests and failing ones.
 
@@ -143,7 +149,8 @@ function readVerdict(
 // files. `ci` says whether CI runs on the commit, asked as the review starts, since CI may have
 // shown a check while it waited its turn, and what CI says about the commit. With CI, the reviewer
 // reads CI's result rather than running the whole test suite. It is asked again every 15
-// seconds while the review runs, as CI usually finishes during it.
+// seconds while the review runs, as CI usually finishes during it. `docsOnly` says the change
+// touches only docs and Markdown, so the reviewer runs no tests, and `ci` isn't asked.
 async function reviewNow(given: {
   clone: string;
   issue: { title: string; body: string };
@@ -155,6 +162,7 @@ async function reviewNow(given: {
   limit?: number;
   env?: Record<string, string | undefined>;
   ci?: { has: () => boolean; read: () => Promise<string> } | undefined;
+  docsOnly?: boolean;
 }): Promise<Review> {
   const { clone, issue, base, model, harness, limit = 30 * 60_000, env = process.env } = given;
   // Fail at once, with a reason you can act on, when the review was cancelled before its turn
@@ -246,7 +254,7 @@ async function reviewNow(given: {
     });
     // CI's result is there before the reviewer starts, and kept current while it runs. The
     // first answer is waited for, but never past a cancellation or the time limit.
-    const ci = given.ci?.has() ? given.ci.read : undefined;
+    const ci = !given.docsOnly && given.ci?.has() ? given.ci.read : undefined;
     if (ci && !signal.aborted) {
       const stopped = new Promise<void>((resolve) =>
         signal.addEventListener("abort", () => resolve(), { once: true }),
@@ -263,7 +271,11 @@ async function reviewNow(given: {
     const finished = await spawnReviewer({
       argv,
       env: sandboxEnv,
-      input: reviewerPrompt(issue, base, ci ? ciFile : null),
+      input: reviewerPrompt(
+        issue,
+        base,
+        given.docsOnly ? "docs only" : ci ? { ci: ciFile } : "run",
+      ),
       signal,
     });
     const after = whyStopped();
