@@ -165,26 +165,43 @@ const reviews = new Queue();
 // turn among all reviews, in order of `since`, when it joined: now, unless it is one the
 // daemon's stop cut short, which keeps its place. Changes are typed in only once `builderBack`
 // settles, as a review the daemon brings back can end before the builder's session is there.
+// With `keep`, for a submit, a commit that only merges the base branch into the last approved
+// one keeps that approval, and no reviewer runs.
 async function reviewRound(
   db: Database,
   sessions: string,
   folder: string,
   sha: string,
   signal: AbortSignal,
-  later: { since?: number; builderBack?: Promise<unknown> } = {},
+  later: { since?: number; builderBack?: Promise<unknown>; keep?: boolean } = {},
 ): Promise<void> {
-  const { since = Date.now(), builderBack } = later;
+  const { since = Date.now(), builderBack, keep = false } = later;
   // Read what the round needs: the thread's PR, whether there is a forge to post on, and the
-  // reviewer, round limit and limit on reviews at once your config names.
+  // reviewer, its time limit and the limit on reviews at once your config names.
   if (signal.aborted) return;
   const thread = readThread(db, folder);
   const repository = repositoryOf(db, thread);
   const { pr } = thread;
   const hasForge = forgeOf(db, repository) !== null;
   if (hasForge && pr === null) throw new Error("the thread has no pull request to review");
-  const { reviewer: reviewerRole, maxRounds, fallback, reviewMinutes } = threadConfig(thread);
+  const { reviewer: reviewerRole, fallback, reviewMinutes } = threadConfig(thread);
   const reviewer = reviewerRole.harness;
   const limit = reviewLimit();
+  // A builder whose PR fell behind or conflicts with the base branch merges it and submits
+  // again. When that is all the commit does, the PR's own change is the one already approved, so
+  // the approval holds and CI alone decides whether it is ready. It counts only while the latest
+  // review approved, so a review asking for changes since is never skipped. The approved commit
+  // and the base are refs in Skelcrew's clone, which the push brought up to date.
+  const skelcrewClone = cloneDir(thread.owner, thread.repo);
+  const bases = `refs/skelcrew/bases/${thread.folder}`;
+  const approved = keep && thread.verdict === "approve" ? lastApproved(thread) : null;
+  if (approved !== null && onlyMergedBase(skelcrewClone, approved, sha, bases)) {
+    const body = `Approval kept: this commit only merges ${baseOf(thread)} into ${approved}, which Skelcrew's reviewer approved, and changes nothing else in the PR. CI still runs on it.`;
+    const verdict: Review = { verdict: "approve", body };
+    const kept = { verdict, by: thread.reviewed_by ?? reviewer, kept: approved };
+    await actOnVerdict(db, sessions, folder, sha, signal, kept, builderBack);
+    return;
+  }
   const setCheck = async (state: "pending" | "success" | "failure", description: string) => {
     if (hasForge) await setStatus(db, repository, { commit: sha, state, description });
   };
@@ -204,7 +221,7 @@ async function reviewRound(
   // commit is read from Skelcrew's clone, which fetched it, never from the builder's, which the
   // builder controls. It is read at once, so the review still joins before any await when it
   // doesn't wait, and a commit Skelcrew can't read sets nothing up.
-  const ls = ["git", "-C", cloneDir(thread.owner, thread.repo), "ls-tree", sha, "--"];
+  const ls = ["git", "-C", skelcrewClone, "ls-tree", sha, "--"];
   const listed = Bun.spawnSync([...ls, ".github/workflows"], { stdout: "pipe", stderr: "ignore" });
   const setsUpCi = listed.success && listed.stdout.toString().trim() !== "";
   // A change to docs and Markdown alone is tested by no one, as CI skips it and no code
@@ -214,8 +231,7 @@ async function reviewRound(
   // counts. Names end in a NUL, as git otherwise quotes one with letters outside ASCII, such
   // as résumé.md. A base or diff Skelcrew can't read, as in a clone not set up yet, lists
   // none, and the tests run.
-  const bases = `refs/skelcrew/bases/${thread.folder}`;
-  const diff = ["git", "-C", cloneDir(thread.owner, thread.repo), "diff", "--name-only", "-z"];
+  const diff = ["git", "-C", skelcrewClone, "diff", "--name-only", "-z"];
   const changed = Bun.spawnSync([...diff, "--no-renames", `${bases}...${sha}`], {
     stdout: "pipe",
     stderr: "ignore",
@@ -339,12 +355,46 @@ async function reviewRound(
     if (verdict.verdict === "timed out")
       verdict = { verdict: "timed out", body: `its review timed out twice (${reviewMinutes}m)` };
   }
+  await actOnVerdict(db, sessions, folder, sha, signal, { verdict, by, kept: null }, builderBack);
+}
+
+// Acts on a review's verdict: with a forge, posts it on the PR and sets Skelcrew's check; saves
+// what it means for the thread, and types changes into the builder once `builderBack` settles.
+// Without a forge an approved branch needs you at once. An approval is saved as a ref in
+// Skelcrew's clone, so a later submit that only merges the base branch can keep it. `kept` is
+// the approved commit whose approval this one keeps, with no reviewer run, which the check and
+// the thread's log say. Stops without a word once a newer round cancels it.
+async function actOnVerdict(
+  db: Database,
+  sessions: string,
+  folder: string,
+  sha: string,
+  signal: AbortSignal,
+  reviewed: { verdict: Review; by: HarnessName; kept: string | null },
+  builderBack?: Promise<unknown>,
+): Promise<void> {
+  const { verdict, by, kept } = reviewed;
+  const thread = readThread(db, folder);
+  const repository = repositoryOf(db, thread);
+  const { pr } = thread;
+  const hasForge = forgeOf(db, repository) !== null;
+  const { maxRounds } = threadConfig(thread);
   // Decide what the verdict means for the thread, then post it on the PR. A failed or timed out
-  // review is Skelcrew's problem, not the PR's, so it is never posted.
+  // review is Skelcrew's problem, not the PR's, so it is never posted. A kept approval says so
+  // on the check and in the log, in place of the reviewer's.
   if (signal.aborted) return;
-  const before = readThread(db, folder).rounds;
+  const before = thread.rounds;
   const ready = hasForge ? null : `${threadName(db, thread)} is ready on branch ${thread.branch}`;
-  const outcome = afterReview(before, verdict, maxRounds, ready);
+  const decided = afterReview(before, verdict, maxRounds, ready);
+  const keptWhy = `approval kept: only merged ${baseOf(thread)} into ${kept}`;
+  const outcome =
+    kept === null
+      ? decided
+      : {
+          ...decided,
+          description: `approval kept: only merged ${baseOf(thread)}`,
+          why: ready === null ? `${keptWhy}, so it waits on CI` : `${keptWhy}; ${ready}`,
+        };
   if ((verdict.verdict === "approve" || verdict.verdict === "changes") && pr !== null)
     await postReview(db, repository, {
       pr,
@@ -354,13 +404,28 @@ async function reviewRound(
     });
   // A newer round may be reviewing the same commit, and its check must stay pending.
   if (signal.aborted) return;
-  await setCheck(outcome.check, outcome.description);
+  if (hasForge)
+    await setStatus(db, repository, {
+      commit: sha,
+      state: outcome.check,
+      description: outcome.description,
+    });
   if (signal.aborted) return;
+  // The approved commit is kept for the next submit to compare with. Losing it costs only a
+  // review, so a ref git won't write fails nothing.
+  if (verdict.verdict === "approve")
+    await git(
+      cloneDir(thread.owner, thread.repo),
+      "update-ref",
+      `refs/skelcrew/approved/${thread.folder}`,
+      sha,
+    ).catch(() => {});
   // Save the outcome, tell the lead if the thread now needs you, and type any changes into
   // the builder.
   const { rounds, needsYou, status, tell, held } = outcome;
   const change = {
     reviewing: null,
+    submitting: null,
     rounds,
     needs_you: needsYou,
     status,
@@ -531,13 +596,15 @@ function trackRound(
 }
 
 // Pushes the round, after the earlier round's push, then reviews it, once the earlier round
-// has ended.
+// has ended. With `keep`, for a submit, a commit that only merges the base branch keeps the
+// last approval rather than being reviewed.
 function pushAndReview(
   db: Database,
   sessions: string,
   folder: string,
   summary: string,
   earlier: Round | undefined,
+  keep: boolean,
 ): void {
   // The earlier round's failure is already handled by its own follow, so here it only sets
   // the order.
@@ -545,7 +612,7 @@ function pushAndReview(
   const before = earlier?.pushed.catch(() => {}) ?? Promise.resolve();
   const pushed = before.then(() => push(db, sessions, folder, summary, cancel.signal));
   const rest = Promise.all([pushed, earlier?.done]).then(([sha]) =>
-    reviewRound(db, sessions, folder, sha, cancel.signal),
+    reviewRound(db, sessions, folder, sha, cancel.signal, { keep }),
   );
   trackRound(db, sessions, folder, cancel, pushed, rest);
 }
@@ -591,7 +658,7 @@ export function submitRound(db: Database, sessions: string, folder: string, summ
   // round's commit.
   const before = latestRounds.get(folder);
   before?.cancel.abort();
-  pushAndReview(db, sessions, folder, summary, before);
+  pushAndReview(db, sessions, folder, summary, before, true);
 }
 
 // Returns the commit Skelcrew last fetched from the thread's clone and pushed, or null when it
@@ -604,6 +671,40 @@ export function lastPushed(thread: Thread): string | null {
     stderr: "pipe",
   });
   return run.success ? run.stdout.toString().trim() : null;
+}
+
+// Returns the commit Skelcrew's reviewer last approved for the thread, or null when none is
+// saved, such as before its first approval.
+function lastApproved(thread: Thread): string | null {
+  const skelcrewClone = cloneDir(thread.owner, thread.repo);
+  const ref = `refs/skelcrew/approved/${thread.folder}^{commit}`;
+  const run = Bun.spawnSync(["git", "-C", skelcrewClone, "rev-parse", "--verify", "--quiet", ref], {
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  return run.success ? run.stdout.toString().trim() : null;
+}
+
+// Returns whether the commit, in the clone, is exactly the approved commit with the base
+// branch merged in: what git merges by itself, with no conflict and nothing else changed. A
+// builder whose PR fell behind or conflicts with main merges it and submits again, and then the
+// PR's own change is the one already approved. A conflict, even one resolved by keeping the PR's
+// side, or any change on top, needs a review. The base merged is where the commit meets the
+// base branch, which may be older than the base's tip. A commit git can't read gives false.
+export function onlyMergedBase(
+  clone: string,
+  approved: string,
+  sha: string,
+  base: string,
+): boolean {
+  const git = (...args: string[]) => {
+    const run = Bun.spawnSync(["git", "-C", clone, ...args], { stdout: "pipe", stderr: "pipe" });
+    return run.success ? run.stdout.toString().trim() : null;
+  };
+  // merge-tree fails on a conflict, and prints the merged tree first otherwise.
+  const merged = git("merge-base", sha, base);
+  const tree = merged === null ? null : git("merge-tree", "--write-tree", approved, merged);
+  return tree !== null && tree.split("\n")[0] === git("rev-parse", `${sha}^{tree}`);
 }
 
 // Reviews the thread's last submitted commit again, for sc review, such as after a review
@@ -655,7 +756,7 @@ export function rerunReview(
   // A submit not yet pushed goes through the whole round. A commit already pushed only needs
   // its review, after the earlier round has ended.
   earlier?.cancel.abort();
-  if (submitting !== null) pushAndReview(db, sessions, folder, submitting, earlier);
+  if (submitting !== null) pushAndReview(db, sessions, folder, submitting, earlier, false);
   else if (sha !== null) {
     const cancel = new AbortController();
     const rest = Promise.resolve(earlier?.done).then(() =>
@@ -686,7 +787,7 @@ export function resumeRound(
   const { submitting, reviewing, queued, telling } = readThread(db, folder);
   const cancel = new AbortController();
   const none = Promise.resolve();
-  if (submitting !== null) pushAndReview(db, sessions, folder, submitting, undefined);
+  if (submitting !== null) pushAndReview(db, sessions, folder, submitting, undefined, true);
   else if (reviewing !== null)
     trackRound(
       db,

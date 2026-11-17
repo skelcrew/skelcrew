@@ -853,6 +853,92 @@ done`,
     ]);
   }, 60_000);
 
+  // Moves main on the fake GitHub with a commit that writes `files`, then merges it into the
+  // thread's clone, as a builder brings in main when its PR falls behind. A conflict is
+  // resolved by keeping the thread's side. `fix` changes the clone before the merge commit.
+  function mergeMain(work: string, files: Record<string, string>, fix = () => {}): void {
+    for (const [path, text] of Object.entries(files)) writeFileSync(join(work, path), text);
+    git(work, "add", ".");
+    git(work, "commit", "-qm", "main moved");
+    git(work, "push", "-q", "origin", "main");
+    git(clone(), "fetch", "-q", join(github(), "simon", "app.git"), "main");
+    // The merge stops before its commit, so a conflict or `fix` goes into the merge itself.
+    try {
+      git(clone(), "merge", "-q", "--no-ff", "--no-commit", "FETCH_HEAD");
+    } catch {
+      git(clone(), "checkout", "--ours", "--", "change");
+    }
+    fix();
+    git(clone(), "add", "-A");
+    git(clone(), "commit", "-q", "--no-edit");
+  }
+
+  // Approves round 1, then merges main into the branch as `mergeMain` does and submits that.
+  // Returns the commit submitted.
+  async function approveThenMerge(
+    work: string,
+    files: Record<string, string>,
+    fix?: () => void,
+  ): Promise<string> {
+    await startApp12();
+    await until(() => finished("success").length === 1);
+    await untilReviewSaved();
+    mergeMain(work, files, fix);
+    const again = await skel(["submit", "Merged main"], { SKELCREW_SOCKET: builderSocket() });
+    expect(again.err).toBe("");
+    return git(clone(), "rev-parse", "HEAD");
+  }
+
+  test("a submit that only merges main keeps the approval, and CI still decides", async () => {
+    const work = addApp();
+    verdict(1, "approve", "Ready to merge.");
+    const merged = await approveThenMerge(work, { OTHER: "other\n" });
+    await until(() => finished("success").length === 2);
+    await untilReviewSaved();
+
+    // No reviewer ran for the merge, and the check and a comment on the PR say why.
+    expect(read(join(codexHome(), "sessions", "count")).trim()).toBe("1");
+    expect(finished("success")[1]).toEqual({
+      sha: merged,
+      state: "success",
+      description: "approval kept: only merged main",
+    });
+    const kept = reviews()[1];
+    expect(kept).toMatchObject({ commit: merged, verdict: "approve" });
+    expect(String(kept?.body)).toContain("only merges main");
+    // It waits on CI as after an approval, with no round counted.
+    expect(thread()).toMatchObject({
+      status: "waiting",
+      needs_you: 0,
+      rounds: 0,
+      verdict: "approve",
+    });
+    expect(read(join(data(), "threads", "app-12.log"))).toContain("approval kept");
+  }, 60_000);
+
+  test("a submit that merges main and changes a line of the PR is reviewed again", async () => {
+    const work = addApp();
+    verdict(1, "approve", "Ready to merge.");
+    verdict(2, "approve", "Still fine.");
+    const merged = await approveThenMerge(work, { OTHER: "other\n" }, () =>
+      writeFileSync(join(clone(), "change"), "changed while merging\n"),
+    );
+    await until(() => finished("success").length === 2);
+    expect(read(join(codexHome(), "sessions", "count")).trim()).toBe("2");
+    expect(reviews()[1]).toEqual({ commit: merged, verdict: "approve", body: "Still fine." });
+  }, 60_000);
+
+  test("a submit that resolved a conflict with main in the PR's files is reviewed again", async () => {
+    const work = addApp();
+    verdict(1, "approve", "Ready to merge.");
+    verdict(2, "approve", "Still fine.");
+    // Round 1 adds the file change, and main adds it too, so the merge conflicts.
+    const merged = await approveThenMerge(work, { change: "main's own\n" });
+    await until(() => finished("success").length === 2);
+    expect(read(join(codexHome(), "sessions", "count")).trim()).toBe("2");
+    expect(reviews()[1]).toEqual({ commit: merged, verdict: "approve", body: "Still fine." });
+  }, 60_000);
+
   test("runs again a review the daemon's stop cut short", async () => {
     addApp();
     mkdirSync(codexHome(), { recursive: true });
