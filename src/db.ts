@@ -64,7 +64,8 @@ function prepareTables(db: Database): void {
   // `old_remote` is the host and owner/name in lower case, such as github.com/simon/old, of a
   // checkout's remote that uses an old name of the repository, once its forge has said so.
   // `tab_closed` marks a repository whose lead you exited, so its tab stays hidden and the
-  // daemon doesn't bring its lead back until you open it again.
+  // daemon doesn't bring its lead back until you open it again. `lead_state` is what its lead
+  // is doing, as a thread's `state` says for its builder.
   const repositoryColumns = {
     open_issues: "INTEGER NOT NULL DEFAULT 0",
     open_prs: "INTEGER NOT NULL DEFAULT 0",
@@ -77,6 +78,7 @@ function prepareTables(db: Database): void {
     author: "TEXT",
     old_remote: "TEXT",
     tab_closed: "INTEGER NOT NULL DEFAULT 0",
+    lead_state: "TEXT",
   };
   // SQLite has no ADD COLUMN IF NOT EXISTS, so each column is looked up first.
   for (const [column, type] of Object.entries(repositoryColumns))
@@ -115,7 +117,8 @@ function prepareTables(db: Database): void {
   // `working_since` is when the builder's current stretch of work began, for the sidebar. It
   // changes with every message typed into the builder, so it is kept out of the thread's log,
   // which would otherwise fill with it. `review_at` is when the latest review was asked for or
-  // ended, for sc ps.
+  // ended, for sc ps. `state` is what the builder is doing, from its harness's hooks and its
+  // screen. It changes with every turn, so it is kept out of the thread's log too.
   const threadColumns = {
     rounds: "INTEGER NOT NULL DEFAULT 0",
     pr: "INTEGER",
@@ -154,6 +157,7 @@ function prepareTables(db: Database): void {
     updates: "TEXT",
     working_since: "INTEGER",
     review_at: "INTEGER",
+    state: "TEXT",
   };
   for (const [column, type] of Object.entries(threadColumns))
     if (!db.query("SELECT 1 FROM pragma_table_info('threads') WHERE name = ?").get(column))

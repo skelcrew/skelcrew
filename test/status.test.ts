@@ -50,6 +50,7 @@ const state: Thread = {
   assigned: false,
   changed: null,
   updates: [],
+  state: null,
 };
 const status = (more: Partial<Thread>) => statusOf({ ...state, ...more }, 3);
 
@@ -84,4 +85,17 @@ test("a harness that stopped on an error, or a thread that failed, is in error",
 test("a builder waiting out its usage limit idles, as it is woken once the limit resets", () => {
   expect(status({ erred: true, limited: true })).toBe("idle");
   expect(status({ erred: true, limited: true, asking: true })).toBe("needs you");
+});
+
+test("the builder's own state says whether it works, once a hook or its screen has told", () => {
+  // Stopped with Esc, or on a Codex error the screen showed, while its thread still works.
+  expect(status({ state: "idle" })).toBe("idle");
+  // Still finishing the turn in which it submitted, while its review runs.
+  expect(status({ status: "waiting", reviewing: "abc", state: "working" })).toBe("working");
+  // A builder that isn't running doesn't work, whatever its last state was.
+  expect(status({ status: "stopped", state: "working" })).toBe("idle");
+  expect(status({ status: "done", state: "working" })).toBe("idle");
+  // A question or an error needs you, as their flags say.
+  expect(status({ state: "asking", asking: true })).toBe("needs you");
+  expect(status({ state: "error", erred: true })).toBe("error");
 });

@@ -1,7 +1,7 @@
 // sc --remote and sc remote add: run a Skelcrew command on your server over ssh -t, from your
 // laptop, and set a server up for that. --remote offers to replace Skelcrew there when it is an
-// older release than yours, or was built from another commit, and copies your setup there when
-// it changed. Your laptop can be a Mac, so this file loads nothing of the Skelcrew that runs on
+// older release than yours, or was built from another commit, warns when it runs from a checkout
+// behind yours, and copies your setup there when it changed. Your laptop can be a Mac, so this file loads nothing of the Skelcrew that runs on
 // the server.
 import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { isIP } from "node:net";
@@ -31,6 +31,48 @@ import { downloadRelease, releaseSum } from "./update.ts";
 // itself and where Claude Code installs, is added here. It is set through env, which works
 // the same in every shell.
 const pathOnServer = 'PATH="$HOME/.local/bin:$PATH"';
+
+// The shell line that runs sc on a server, after warning when the daemon there runs from a
+// checkout behind the laptop's build, or still runs older code than that checkout holds.
+// --remote never replaces a checkout, so without the warning a server could keep running old
+// code through many merges. The laptop sends this check with the command, rather than leaving it to Skelcrew
+// there, so a checkout too old to know of it still warns, and it costs no round trip of its own.
+// It runs only when the laptop passes its build. The warning goes to stderr, so --json output
+// stays clean, and the command runs either way.
+// It is one line, joined from these steps, so ssh's own line stays readable in logs.
+export const checkThenSc = [
+  // A release is checked by its tag, and a commit with changes not committed by the commit.
+  `b=\${SKELCREW_LAPTOP_BUILD%-dirty}`,
+  "case $b in *.*.*) b=v$b;; esac",
+  // e is the sc the daemon's service starts, as its unit names it with each % doubled, or else
+  // the sc on the PATH. The daemon is what must run new code, and the sc you run can be another
+  // install, such as a copy in ~/.local/bin beside a service that runs a checkout.
+  String.raw`e=$(sed -n 's/%%/%/g; s/^ExecStart="\(.*\)" serve$/\1/p' "$HOME/.config/systemd/user/skelcrew.service" 2>/dev/null); [ -n "$e" ] || e=$(command -v sc)`,
+  // d is the checkout that sc runs from, or empty when it runs from none. It is the folder
+  // above the sc, which is often a link to its bin/sc. A copy has no src/main.ts there, and
+  // needs no warning, as Skelcrew there checks its own build.
+  'd=$([ -n "$b" ] && [ -n "$e" ] && cd "$(dirname "$(readlink -f "$e")")/.." && [ -f src/main.ts ] && pwd)',
+  // u is what brings the checkout to the laptop's commit or tag, when it isn't at or past it.
+  // git pull can't: it fails in a checkout with no branch, and on another branch it brings that
+  // branch. A commit or tag the checkout has never fetched means it is behind.
+  'u=; [ -n "$d" ] && ! git -C "$d" merge-base --is-ancestor "$b" HEAD 2>/dev/null && u="git fetch --tags && git checkout $b && "',
+  // o is set when the daemon didn't start from this checkout as it is now: from another commit,
+  // from another folder, or so long ago that it didn't write down where from. Restarting the
+  // service starts it from this checkout. A machine without the service has no daemon to check.
+  'c=; f=; { read -r c f < "$HOME/.local/share/skelcrew/daemon-code"; } 2>/dev/null',
+  'o=; [ -n "$d" ] && [ -f "$HOME/.config/systemd/user/skelcrew.service" ] && [ "$c $f" != "$(git -C "$d" rev-parse HEAD) $d" ] && o=1',
+  // What to say. Either way the way out ends by restarting the daemon, so it runs the new code.
+  'w=; [ -n "$o" ] && w="The daemon on $SKELCREW_REMOTE_NAME runs older code than its checkout."',
+  '[ -n "$u" ] && w="Skelcrew on $SKELCREW_REMOTE_NAME runs from a checkout at $(git -C "$d" rev-parse --short HEAD), yours is $SKELCREW_LAPTOP_BUILD."',
+  // git checkout refuses to overwrite changes to tracked files, so those are named first. Files
+  // git doesn't track stay where they are, so they don't count.
+  'a="To update it, run this there:"; [ -n "$u" ] && [ -n "$(git -C "$d" status --porcelain --untracked-files=no)" ] && a="It has local changes, so commit or stash them, then run this there:"',
+  // The folder goes in single quotes, each of its own quotes written as '\'', so a space or a
+  // $ in it reaches cd as it is when you paste the line.
+  String.raw`q=$(printf %s "$d" | sed "s/'/'\\\\''/g")`,
+  `[ -n "$w" ] && printf "%s %s\\n  cd '%s' && %ssystemctl --user restart skelcrew\\n" "$w" "$a" "$q" "$u" >&2`,
+  'exec sc "$@"',
+].join("; ");
 
 // What a copied Skelcrew exits with when the laptop's build differs. Skelcrew otherwise exits 0 or
 // 1, and the server's shell 127 when it finds no Skelcrew.
@@ -169,7 +211,12 @@ const onServer = (host: string, shared: string[], words: string[]) => (env: stri
       pathOnServer,
       quoted(`SKELCREW_REMOTE_NAME=${host}`),
       ...env.map(quoted),
-      "sc",
+      // The check is shell, and your login shell there may not be sh, so sh runs it. The words
+      // after the second sh become its "$@".
+      "sh",
+      "-c",
+      quoted(checkThenSc),
+      "sh",
       ...words.map(quoted),
     ].join(" "),
   ]);

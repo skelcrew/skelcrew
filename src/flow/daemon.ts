@@ -1,7 +1,7 @@
 // The daemon, run by sc serve: keeps each repository's lead and the threads' builders
 // running, and answers the CLI and the agents on their sockets.
 import { dlopen, FFIType } from "bun:ffi";
-import { existsSync, mkdirSync, openSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, openSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server, type Socket } from "node:net";
 import { dirname } from "node:path";
 import {
@@ -14,7 +14,7 @@ import {
 import { openDb, type Repository } from "../db.ts";
 import { setupDone } from "../machine/setup.ts";
 import { keepUpToDate } from "../machine/update.ts";
-import { cloneDir, daemonSocket, threadSocket } from "../paths.ts";
+import { cloneDir, daemonCodeFile, daemonSocket, threadSocket } from "../paths.ts";
 import { createTask, mergePr } from "../plugins/ask.ts";
 import { errorText } from "../say.ts";
 import { checkoutFolder, git, release, singleFile } from "../version.ts";
@@ -45,9 +45,12 @@ import { findRepository, fullNameIs, noRepositories, refreshClones, repositoryAt
 import { allowed, type Caller, DaemonRequest, parseJson } from "./requests.ts";
 import { endRound, goOn, rerunReview, resumeRound, submitRound } from "./round.ts";
 import {
+  keepState,
+  noticeIdleScreens,
   questionAnswered,
   questionAsked,
   questionClosed,
+  stateAfter,
   turnEnded,
   turnFailed,
 } from "./status.ts";
@@ -140,6 +143,10 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   const runningCode = singleFile
     ? {}
     : { folder: checkoutFolder, commit: git("rev-parse", "--short", "HEAD") };
+  // Written down too, for sc --remote, which checks from plain shell that the daemon runs the
+  // code its checkout holds. Shell can't ask the socket.
+  if (!singleFile)
+    writeFileSync(daemonCodeFile(), `${git("rev-parse", "HEAD")} ${checkoutFolder}\n`);
   const sockets: string[] = [];
   // Opens a socket that answers the given caller, removing one a killed daemon left behind,
   // and keeps its path so stopping removes it.
@@ -234,6 +241,14 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   // Carries out a request the caller may make, and returns the reply to send. The switch has
   // no default, so the typecheck fails if a request is left out.
   const handle = async (request: DaemonRequest, caller: Caller): Promise<object> => {
+    // A hook's request first keeps what the agent is doing. A lead's stops there: you see a lead
+    // whenever you open its repository, so nothing it does flags needs you.
+    const state = stateAfter(request.command);
+    if (state !== null) {
+      const lead = leadOfCaller(caller);
+      keepState(db, lead ?? callingThread(caller), state);
+      if (lead) return { state };
+    }
     switch (request.command) {
       case "status": {
         const builder = builderOf(caller);
@@ -382,6 +397,9 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       case "question answered":
         questionAnswered(db, callingThread(caller).folder);
         return { asking: false };
+      // Esc on Codex flags nothing: you are looking at the builder anyway.
+      case "turn interrupted":
+        return { state };
       case "start": {
         // A thread the task already has is brought back or let past its round limit, with no
         // poll, as nothing new is read from the tracker.
@@ -497,6 +515,15 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   // it, and isn't brought back. From here on, the daemon looks each second for a lead you exit.
   closeExitedLeads(db, sessions);
   setInterval(() => closeExitedLeads(db, sessions), 1000);
+  // From here on, the daemon also looks every two seconds for a working agent whose screen
+  // shows it idle, where no hook said so. A session that ends during a look only ends that look.
+  setInterval(() => {
+    try {
+      noticeIdleScreens(db, sessions);
+    } catch (error) {
+      console.log(`couldn't look at the agents' screens: ${errorText(error)}`);
+    }
+  }, 2000);
   // Open your socket, and end cleanly on the service's stop or on Ctrl-C.
   await open(path, "you");
   for (const signal of ["SIGTERM", "SIGINT"]) process.on(signal, () => endWhatItStarted(sockets));

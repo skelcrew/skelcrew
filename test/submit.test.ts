@@ -490,6 +490,36 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
     );
   }, 100_000);
 
+  // CI outside GitHub, such as Buildkite, leaves no workflows in the repository, yet shows a
+  // check on the commit soon after the push.
+  test("without workflows or CI on other PRs, the review waits for an outside check, then reads its result", async () => {
+    addApp();
+    verdict(1, "approve", "Ready to merge.");
+    startDaemon(socket, { ...env(), SKELCREW_CHECK_WAIT_MS: "60000" }, running);
+    await untilCloned();
+    expect((await skel(["start", "app-12"])).err).toBe("");
+    await until(() => opened() !== undefined, 30_000);
+    // No check yet, so no review either.
+    await Bun.sleep(5_000);
+    expect(existsSync(join(codexHome(), "sessions", "prompt-1"))).toBe(false);
+    answer(plugin, "changed", {
+      items: [
+        taskItem("12", "Add export", { body: "As JSON" }),
+        prItem("7", "Add export", {
+          branch: "skelcrew/12-add-export",
+          head: pushed(),
+          checks: [{ name: "buildkite/test", id: null, state: "running" }],
+        }),
+      ],
+      next: null,
+    });
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), 60_000);
+    const prompt = read(join(codexHome(), "sessions", "prompt-1"));
+    expect(prompt).toContain(
+      "CI runs the whole test suite on this commit, so don't run it yourself",
+    );
+  }, 100_000);
+
   // A workflow that runs only on a release never shows a check on a PR. Once a review has waited
   // for one in vain, the repository's next reviews start at once.
   test("with a release-only workflow, only the first review waits for CI, then the reviewer runs the suite", async () => {
