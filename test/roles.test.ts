@@ -111,7 +111,7 @@ Answer "approve" only if it is ready to merge. Otherwise answer "changes", and i
 
 // Without CI on the commit, the reviewer runs the tests, as it always did.
 const runs =
-  "No CI runs on this commit, so run the repository's whole test suite, with `bun test`.";
+  "No CI runs on this commit, so run the repository's whole test suite with `sc check`, which runs `bun test` once one of this machine's check slots is free. Never run that command directly, as other agents share this machine.";
 const testedBy = ["bun test"];
 
 test("the reviewer is told exactly what its code told it, and who runs the tests", () => {

@@ -190,6 +190,58 @@ export async function submitForReview(summary: string): Promise<string> {
   return checkReply(z.object({ submitted: z.string() }), reply).submitted;
 }
 
+// Waits for one of the machine's check slots, for sc check, and returns the repository's test
+// commands with what gives the slot back. The daemon keeps the slot while this connection stays
+// open, so the caller frees it by calling `release`, or by ending in any way. `queued` is told
+// the caller's place in line when it has to wait. `from` is the remote of the checkout you ran it
+// in; an agent's own socket names its repository instead. Throws with the daemon's error, such as
+// when no test command is configured, or when nothing answers.
+export function takeCheckSlot(
+  queued: (place: number) => void,
+  from?: string,
+): Promise<{ test: string[]; release: () => void }> {
+  const Line = z.union([
+    z.object({ queued: z.number() }),
+    z.object({ test: z.array(z.string()) }),
+    z.object({ error: z.string() }),
+  ]);
+  return new Promise((done, fail) => {
+    const connection = createConnection(cliSocket());
+    let given = "";
+    let answered = false;
+    connection.on("connect", () =>
+      connection.write(`${JSON.stringify({ command: "check", ...(from ? { from } : {}) })}\n`),
+    );
+    // Each line is one answer: a place in line, then the commands once a slot is free.
+    connection.on("data", (data) => {
+      given += data.toString();
+      let end = given.indexOf("\n");
+      while (end !== -1) {
+        const line = Line.safeParse(parseJson(given.slice(0, end)));
+        given = given.slice(end + 1);
+        end = given.indexOf("\n");
+        if (!line.success) {
+          answered = true;
+          connection.destroy();
+          fail(new Error("the daemon answered in a way this Skelcrew doesn't understand"));
+        } else if ("queued" in line.data) queued(line.data.queued);
+        else if ("error" in line.data) {
+          answered = true;
+          fail(new Error(line.data.error));
+        } else {
+          answered = true;
+          done({ test: line.data.test, release: () => connection.end() });
+        }
+      }
+    });
+    connection.on("error", () => {});
+    // A daemon that stops while the caller waits leaves it nothing to wait for.
+    connection.on("close", () => {
+      if (!answered) fail(new Error("the daemon didn't answer: run sc to start it"));
+    });
+  });
+}
+
 // Has the daemon type the lead's message into a thread's builder, for sc tell, and returns the
 // line to print: whether it goes in now, or why it waits. The daemon answers at once, and types
 // it in once the builder can take it.

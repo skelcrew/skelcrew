@@ -104,6 +104,7 @@ function usage(command?: string): never {
     "interrupt",
     "review",
     "submit",
+    "check",
     "tell",
     "plugin",
   ];
@@ -404,6 +405,37 @@ async function prCommand(args: string[], json: boolean): Promise<void> {
   usage(command);
 }
 
+// Runs the repository's whole test suite in this folder once one of the machine's check slots
+// is free, for sc check, and exits with the suite's own exit code. Builders, reviewers and you
+// all go through it, so at most limits.checks suites run at once. Each test command runs in a
+// shell, in order, and the first that fails ends the run, as `&&` would.
+async function checkCommand(args: string[]): Promise<void> {
+  if (args.length !== 1) usage(args[0]);
+  const { takeCheckSlot } = await import("./client.ts");
+  const { originHere } = await import("./machine/origin.ts");
+  // An agent's socket names its repository, and only your checkout's remote names yours.
+  const from = process.env.SKELCREW_SOCKET ? undefined : (originHere() ?? undefined);
+  const { test, release } = await takeCheckSlot(
+    (place) =>
+      console.log(
+        `Waiting for a check slot: number ${place} in line. The tests start once one is free.`,
+      ),
+    from,
+  );
+  if (test.length === 0) {
+    console.log("This repository is configured with no tests, so there is nothing to run.");
+    return;
+  }
+  let code = 0;
+  for (const command of test) {
+    const run = Bun.spawn(["sh", "-c", command], { stdio: ["inherit", "inherit", "inherit"] });
+    code = await run.exited;
+    if (code !== 0) break;
+  }
+  release();
+  process.exit(code);
+}
+
 // Starts, stops, removes, re-reviews, peeks at, interrupts or attaches to the thread on a task
 // such as app-13. sc start also takes a repository, a title and a body, to start a thread with
 // no tracker.
@@ -631,6 +663,8 @@ async function runCommand(args: string[]): Promise<void> {
       return threadCommand(words);
     case "tell":
       return tellCommand(words);
+    case "check":
+      return checkCommand(words);
     case "plugin":
       return pluginCommand(words, json);
     default:

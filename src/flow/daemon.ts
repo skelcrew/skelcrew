@@ -11,10 +11,11 @@ import {
   readSession,
   stillRunning,
 } from "../agents/sessions.ts";
+import { repositoryCommands } from "../config.ts";
 import { moveToTasks, openDb, type Repository } from "../db.ts";
 import { setupDone } from "../machine/setup.ts";
 import { keepUpToDate } from "../machine/update.ts";
-import { cloneDir, daemonCodeFile, daemonSocket, threadSocket } from "../paths.ts";
+import { cloneDir, daemonCodeFile, daemonSocket, reviewSocket, threadSocket } from "../paths.ts";
 import { createTask, mergePr } from "../plugins/ask.ts";
 import { errorText } from "../say.ts";
 import { checkoutFolder, git, release, singleFile } from "../version.ts";
@@ -28,6 +29,7 @@ import {
   startThread,
   statusOnceBack,
 } from "./builder.ts";
+import { holdCheckSlot } from "./checks.ts";
 import { saveItems } from "./copy.ts";
 import { removeThread, stopThread } from "./events.ts";
 import {
@@ -86,12 +88,12 @@ function listen(server: Server, path: string): Promise<void> {
   });
 }
 
-// Returns the thread whose builder is calling, or null when you or a lead call.
+// Returns the thread whose builder is calling, or null when you, a lead or a reviewer call.
 const builderOf = (caller: Caller): Thread | null =>
-  caller === "you" || "lead" in caller ? null : caller;
+  caller === "you" || "lead" in caller || "review" in caller ? null : caller;
 
-// Returns the repository whose lead is calling, as its owner and name, or null when you or
-// a builder call.
+// Returns the repository whose lead is calling, as its owner and name, or null when you, a
+// builder or a reviewer call.
 const leadOfCaller = (caller: Caller) =>
   caller !== "you" && "lead" in caller ? caller.lead : null;
 
@@ -173,13 +175,14 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   const listening = new Set<string>();
   // The tasks sc start is starting, as owner/repo#number, which no poll starts by its label.
   const startingTasks = new Set<string>();
-  // Opens a thread's own socket, so the daemon knows which thread calls on it. A thread that
-  // starts over keeps the socket it has.
+  // Opens a thread's own socket, so the daemon knows which thread calls on it, and its
+  // reviewer's, which may only run sc check. A thread that starts over keeps the sockets it has.
   const listenFor = async (thread: Thread) => {
     const socket = threadSocket(thread.folder);
     if (listening.has(socket)) return;
     listening.add(socket);
     await open(socket, thread);
+    await open(reviewSocket(thread.folder), { review: thread });
   };
   let leadStarts: Promise<void> = Promise.resolve();
   // Opens a repository's lead's own socket, so the daemon knows which lead calls on it, then
@@ -260,6 +263,10 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       if (lead) return { state };
     }
     switch (request.command) {
+      // sc check holds its connection open while it runs, so answer() hands it to the queue of
+      // checks before it gets here.
+      case "check":
+        throw new Error("sc check can't be answered with one reply");
       case "status": {
         const builder = builderOf(caller);
         const thread = builder ? { thread: threadName(db, builder) } : {};
@@ -473,6 +480,19 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       }
     }
   };
+  // Gives an sc check its place among the checks, with the test commands of the caller's
+  // repository: the thread's for a builder or a reviewer, and for you the repository of the
+  // checkout you ran it in.
+  const checkFor = (connection: Socket, caller: Caller, from: string | undefined) => {
+    try {
+      const thread = caller !== "you" && "review" in caller ? caller.review : builderOf(caller);
+      const repository = thread ?? (from === undefined ? undefined : repositoryAt(db, from));
+      if (!repository) throw new Error("run sc check in a checkout of a repository Skelcrew has");
+      holdCheckSlot(connection, repositoryCommands(repository).test);
+    } catch (error) {
+      connection.end(`${JSON.stringify({ error: errorText(error) })}\n`);
+    }
+  };
   // Returns a handler for connections from the given caller: it reads one request, refuses
   // what that caller may not ask, and answers the rest.
   const answer = (caller: Caller) => (connection: Socket) => {
@@ -489,9 +509,17 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       connection.off("data", read);
       // Check the request, then refuse it unless this kind of caller may make it.
       const asked = DaemonRequest.safeParse(parseJson(request.slice(0, end)));
-      const kind = caller === "you" ? "you" : "lead" in caller ? "lead" : "builder";
+      const kind =
+        caller === "you"
+          ? "you"
+          : "lead" in caller
+            ? "lead"
+            : "review" in caller
+              ? "review"
+              : "builder";
       if (!asked.success || !allowed[kind].includes(asked.data.command))
         reply({ error: "the daemon doesn't know that request" });
+      else if (asked.data.command === "check") checkFor(connection, caller, asked.data.from);
       else
         Promise.resolve()
           .then(() => handle(limitToOwnRepository(asked.data, caller), caller))
@@ -515,6 +543,8 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   const reviewsCutShort = before.filter((t) => t.submitting === null && t.reviewing !== null);
   reviewsCutShort.sort((a, b) => (a.queued ?? 0) - (b.queued ?? 0));
   const builderBack = new Map<string, () => void>();
+  // Their sockets open first, so their reviewers can run sc check.
+  for (const thread of reviewsCutShort) await listenFor(thread);
   for (const thread of reviewsCutShort) {
     const back = Promise.withResolvers<void>();
     builderBack.set(thread.folder, back.resolve);
