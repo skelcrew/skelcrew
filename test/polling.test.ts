@@ -541,7 +541,8 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
     expect(typed()).toContain("The check test failed");
     expect(asked(plugin)).toContainEqual({ ask: "log", repository: "simon/app", check: "900" });
     await until(() => handled("900"));
-    expect(thread()).toMatchObject({ status: "working", needs_you: 0 });
+    // The approval waits for the builder's next round, even if the check passes again.
+    expect(thread()).toMatchObject({ status: "working", needs_you: 0, ci_failed: 1 });
     const first = running[0];
     first?.kill();
     await first?.exited;

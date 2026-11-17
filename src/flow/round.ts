@@ -664,6 +664,7 @@ export function submitRound(db: Database, sessions: string, folder: string, summ
       // What CI said, and the conflict found, were about the commit before this one.
       checks: null,
       conflicts: null,
+      ci_failed: false,
       reviewer: reviewer.harness,
       review_at: Date.now(),
     },

@@ -284,7 +284,9 @@ export async function tellBuilder(
     };
     send(notices, []);
     send(decision.tell, decision.typedIn);
-    record(db, thread.folder, moved ? { seen } : { seen, ...change }, why);
+    // A failed check told needs a new round, which an approval waits for, whatever else moved.
+    const failed = notices.length > 0 && checks.length > 0 ? { ci_failed: true } : {};
+    record(db, thread.folder, moved ? { seen, ...failed } : { seen, ...change, ...failed }, why);
     typeLeadNotes(db, sessions);
   } catch (error) {
     console.log(

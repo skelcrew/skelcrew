@@ -60,19 +60,22 @@ const submitStands = (thread: Thread) =>
   (thread.verdict === "approve" &&
     thread.checks !== "failing" &&
     thread.conflicts === null &&
+    !thread.ci_failed &&
     thread.telling === null);
 
 // Returns whether the thread waits for you to merge it: Skelcrew's reviewer approved its latest
 // round, with no newer one under way, and its checks are green, which polling marks by having it
-// need you. A PR that conflicts isn't ready to merge, even when something else, such as its
-// builder missing, makes the thread need you again.
+// need you. A PR that conflicts, or whose failed check the builder was told of, isn't ready to
+// merge until the builder's next round, even when something else, such as its builder missing,
+// makes the thread need you again.
 export const readyToMerge = (thread: Thread) =>
   thread.needs_you &&
   thread.submitting === null &&
   thread.reviewing === null &&
   thread.verdict === "approve" &&
   (thread.checks === "passing" || thread.checks === null) &&
-  thread.conflicts === null;
+  thread.conflicts === null &&
+  !thread.ci_failed;
 
 // Returns the thread's status, one of the five words a host can show, from the same fields and
 // in the same order as its word in the sidebar, which then serves as the reason. A thread that

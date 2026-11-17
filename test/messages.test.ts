@@ -110,6 +110,25 @@ console.log(JSON.stringify({ needsYou: thread.needs_you, word: threadWord(thread
   expect(JSON.parse(seen)).toEqual({ needsYou: true, word: "needs you" });
 });
 
+// A failed check was told to the builder of an approved PR, and its message waits for a builder
+// that is missing. The check then passes on a run again, but the builder still owes a new round,
+// so the thread needs you and isn't ready to merge, nor its task ready for review.
+test("a missing builder told of a failed check needs you, not ready to merge, once CI passes again", () => {
+  const seen = run(`
+import { threadWord } from ${JSON.stringify(source("flow/status.ts"))};
+import { taskStage } from ${JSON.stringify(source("flow/stage.ts"))};
+import { readThread } from ${JSON.stringify(source("flow/thread.ts"))};
+db.run("UPDATE tasks SET verdict = 'approve', checks = 'passing', ci_failed = 1, pr = 7");
+queueMessage(db, tmux, "app-12", { sender: "skelcrew", text: "test failed.", said: "test failed", typed_in: [] });
+for (let i = 0; i < 30 && !readThread(db, "app-12").needs_you; i++) {
+  deliverAllWaiting(db, tmux);
+  await Bun.sleep(500);
+}
+const thread = readThread(db, "app-12");
+console.log(JSON.stringify({ needsYou: thread.needs_you, word: threadWord(thread, 3), stage: taskStage(thread, true) }));`);
+  expect(JSON.parse(seen)).toEqual({ needsYou: true, word: "needs you", stage: "working" });
+});
+
 test("a new round's drop takes only Skelcrew's notices and the review's changes, not the lead's message or a comment", () => {
   const left = run(`
 import { dropOldEvents } from ${JSON.stringify(source("flow/messages.ts"))};

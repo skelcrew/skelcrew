@@ -34,6 +34,7 @@ const working: Thread = {
   review_limited: false,
   review_reset: null,
   conflicts: null,
+  ci_failed: false,
   noting: null,
   body: null,
   title: null,
@@ -81,6 +82,10 @@ test("an approval with green checks is ready for review, and only once it waits 
     "working",
   );
   expect(taskStage(thread({ ...approved, needs_you: true, reviewing: "abc" }), true)).toBe(
+    "working",
+  );
+  // A failed check the builder was told of needs its next round, though the check passed since.
+  expect(taskStage(thread({ ...approved, needs_you: true, ci_failed: true }), true)).toBe(
     "working",
   );
 });

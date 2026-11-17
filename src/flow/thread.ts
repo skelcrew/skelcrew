@@ -102,6 +102,11 @@ export const Thread = z.object({
   // Null when it doesn't, or once a new round starts, as the conflict is found again if still
   // there. Null in a row from before Skelcrew kept it.
   conflicts: z.string().nullable(),
+  // Whether the builder was told a CI check failed since its last round. Like a conflict, it
+  // keeps an approval from being ready to merge until the builder's next round, even once the
+  // check passes on a run again and something else, such as its builder missing, makes the
+  // thread need you. False in a row from before Skelcrew kept it.
+  ci_failed: z.coerce.boolean(),
   // The harness of the review waiting or running, which can differ from the latest finished
   // one's once you change your config.
   reviewer: HarnessName.nullable(),

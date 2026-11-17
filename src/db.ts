@@ -72,6 +72,7 @@ export const taskColumns = {
   pr: "INTEGER",
   checks: "TEXT",
   conflicts: "TEXT",
+  ci_failed: "INTEGER NOT NULL DEFAULT 0",
   seen: "TEXT",
   last_review: "INTEGER",
   last_comment: "INTEGER",

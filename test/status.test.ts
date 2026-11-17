@@ -35,6 +35,7 @@ const state: Thread = {
   review_limited: false,
   review_reset: null,
   conflicts: null,
+  ci_failed: false,
   noting: null,
   body: null,
   title: null,
