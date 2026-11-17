@@ -1555,6 +1555,50 @@ await serve(${JSON.stringify(socket)}, 200);`;
     );
   }, 60_000);
 
+  // Without a forge, a poll looks for a merge only on a thread whose push Skelcrew still has a
+  // ref of. So an end whose note for the lead can't be saved, as when the disk is full, keeps
+  // that ref, and a later poll ends the thread and tells the lead.
+  test("a merge whose note for the lead can't be saved is tried again", async () => {
+    const bare = addAppOnGit();
+    verdict(1, "approve", "Ready to merge.");
+    // Polling every 200 milliseconds, so the merge is seen soon.
+    const code = `import { serve } from ${JSON.stringify(source("flow/daemon.ts"))};
+await serve(${JSON.stringify(socket)}, 200);`;
+    running.push(
+      Bun.spawn([process.execPath, "-e", code], { env: env(), stdout: "ignore", stderr: "ignore" }),
+    );
+    await untilCloned();
+    expect((await skel(["start", "app", "Add export", "As JSON"])).err).toBe("");
+    const log = () => read(join(data(), "threads", "app-t1.log"));
+    await until(() => log().includes("app-t1 is ready on branch skelcrew/t1-add-export"), 30_000);
+    const db = new Database(join(data(), "skelcrew.db"));
+    db.run("PRAGMA busy_timeout = 5000");
+    const status = () => db.query("SELECT status FROM task_threads").get();
+    try {
+      // Saving any note fails while the trigger is there.
+      db.run(
+        "CREATE TRIGGER fail_notes BEFORE INSERT ON notes BEGIN SELECT RAISE(ABORT, 'disk full'); END",
+      );
+      const work = join(home, "work", "app");
+      git(work, "pull", "-q", bare, "main");
+      git(work, "fetch", "-q", bare, "skelcrew/t1-add-export");
+      git(work, "merge", "--squash", "-q", "FETCH_HEAD");
+      git(work, "commit", "-q", "-m", "Add export");
+      git(work, "push", "-q", bare, "main");
+      // Each try logs the end before its save fails, so two lines mean a later poll tried again.
+      const tries = () => log().split("is merged into main").length - 1;
+      await until(() => tries() >= 2, 30_000);
+      expect(status()).toEqual({ status: "waiting" });
+      db.run("DROP TRIGGER fail_notes");
+      await until(() => JSON.stringify(status()) === JSON.stringify({ status: "done" }));
+    } finally {
+      db.close();
+    }
+    const said = "app-t1 is done: its branch skelcrew/t1-add-export merged into main";
+    await until(() => read(join(lead(), "typed")).includes(said));
+    expect(read(join(lead(), "typed")).split(said).length - 1).toBe(1);
+  }, 60_000);
+
   // Runs the daemon from a folder that isn't a git checkout, as the service does, polling every
   // 200 milliseconds. git that runs outside Skelcrew's clone then fails. `more` adds to its
   // environment, such as a GIT_TRACE file that shows what git the daemon runs.

@@ -123,20 +123,6 @@ export async function endThread(
 ): Promise<void> {
   await endBuilder(db, sessions, thread.folder, true);
   rmSync(cloneOf(thread), { recursive: true, force: true });
-  // Skelcrew's clone keeps refs of the branch it pushed, named by the thread's folder. A thread
-  // started over in that folder would be taken for one that pushed already, and without a forge
-  // ended at once, as its branch isn't on the remote. Its last approval goes too, so it never
-  // holds for the new thread's work.
-  const skelcrewClone = cloneDir(thread.owner, thread.repo);
-  for (const kind of ["threads", "bases", "remote", "approved"])
-    await quietly([
-      "git",
-      "-C",
-      skelcrewClone,
-      "update-ref",
-      "-d",
-      `refs/skelcrew/${kind}/${thread.folder}`,
-    ]);
   // A thread ends once, so the lead hears of it once. A poll and sc rm can both reach here for
   // the same thread, and sc rm can start while a poll waits above. So the end is the first
   // one's to mark, unless sc rm is removing the thread: then only sc rm marks it, and the lead
@@ -155,6 +141,22 @@ export async function endThread(
     const line = `${threadName(db, thread)} ${note}`.replace(/\s+/g, " ").slice(0, 200);
     noteForLead(db, sessions, thread, line);
   })();
+  // Skelcrew's clone keeps refs of the branch it pushed, named by the thread's folder. A thread
+  // started over in that folder would be taken for one that pushed already, and without a forge
+  // ended at once, as its branch isn't on the remote. Its last approval goes too, so it never
+  // holds for the new thread's work. They go only once the end is saved: without a forge, a
+  // poll looks for a merge only on a thread that has them, so an end that failed to save must
+  // keep them to be tried again. A thread started over meanwhile can't have pushed yet.
+  const skelcrewClone = cloneDir(thread.owner, thread.repo);
+  for (const kind of ["threads", "bases", "remote", "approved"])
+    await quietly([
+      "git",
+      "-C",
+      skelcrewClone,
+      "update-ref",
+      "-d",
+      `refs/skelcrew/${kind}/${thread.folder}`,
+    ]);
 }
 
 // Removes the thread for sc rm: ends its builder, closes its PR with the reason as a comment,

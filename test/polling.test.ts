@@ -1074,27 +1074,30 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
   // A poll can be part way through ending a thread when the lead runs sc rm on it. The lead
   // removed it, so it hears nothing, not the merge the poll saw.
   test("a poll ending a thread while the lead removes it tells the lead nothing", async () => {
-    await approvedApp12();
-    // Holds the poll's end in one of its git commands until the test lets it go, and says when
-    // it is held. The same command in sc rm's end waits two seconds, so the poll reaches the
-    // end of the thread first, as when sc rm started late in the poll's end.
-    const realGit = Bun.which("git");
+    // Stands in for nice, which starts every sandbox. Once the test arms it, it outlives its
+    // sandbox until the test lets it go, saying when it is held. Stopping the builder waits
+    // for it, so the poll ending the thread is held there, before it marks the thread done.
+    const arm = join(home, "arm");
     const held = join(home, "held");
     const go = join(home, "go");
     script(
-      "git",
-      `case "$*" in *"update-ref -d refs/skelcrew/threads/"*)
-  if mkdir "${held}" 2>/dev/null; then
-    while ! test -e "${go}"; do sleep 0.1; done
-  else sleep 2; fi ;;
-esac
-exec "${realGit}" "$@"`,
+      "nice",
+      `shift 2
+trap : HUP TERM
+"$@"
+code=$?
+if test -e "${arm}"; then
+  : > "${held}"
+  for i in $(seq 90); do test -e "${go}" && break; sleep 0.1; done
+fi
+exit $code`,
     );
+    await approvedApp12();
+    writeFileSync(arm, "");
     pr({ state: "merged", reviews: [skelReview], checks: [approved] });
     await until(() => existsSync(held));
-    // The lead runs sc rm. Once it asks the forge to close the PR, it is removing the thread.
-    // Its status says nothing here: with its builder gone while the poll is held, the thread
-    // can be marked failed, which sc rm doesn't mark stopped.
+    // The lead runs sc rm, held as it closes the PR, so the poll reaches the end first.
+    writeFileSync(join(plugin, "hold-close-pr"), "");
     const hashed = new Bun.CryptoHasher("sha256").update("simon/app").digest("hex").slice(0, 16);
     const leadSocket = join(home, "run", "skelcrew", "leads", hashed, "skelcrew.sock");
     const removing = Bun.spawn([process.execPath, main, "rm", "app-12"], {
@@ -1102,10 +1105,12 @@ exec "${realGit}" "$@"`,
       stderr: "pipe",
     });
     running.push(removing);
-    // An sc rm that fails ends before that, and says why.
-    const closing = () => asked(plugin).some((q) => q.ask === "close pr");
-    await until(() => closing() || removing.exitCode !== null);
+    // An sc rm that fails ends before it closes the PR, and says why.
+    await until(() => existsSync(join(plugin, "held-close-pr")) || removing.exitCode !== null);
+    // The poll goes on and finishes: a repository's next poll starts only after it.
     writeFileSync(go, "");
+    await morePolls(1);
+    rmSync(join(plugin, "hold-close-pr"));
     await removing.exited;
     expect(await new Response(removing.stderr).text()).toBe("");
     expect(removing.exitCode).toBe(0);
