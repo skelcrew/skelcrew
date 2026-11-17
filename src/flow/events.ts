@@ -62,6 +62,10 @@ async function refreshBase(db: Database, thread: Thread, base: string): Promise<
 // or sc rm cancels the typing.
 export const typingEvents = new Map<string, AbortController>();
 
+// The threads sc rm is removing, by folder. Without a forge, sc rm deletes the branch before it
+// ends the thread, and a poll in between would end it as one whose branch someone deleted.
+export const removing = new Set<string>();
+
 // Cancels the round, the typing under way and any wake after a usage limit for the thread, ends
 // its builder's session, and waits for the builder to exit, so nothing types into it or changes
 // the thread afterwards.
@@ -173,38 +177,44 @@ export async function removeThread(
   // Asked before anything is waited on, so an sc start meanwhile assigns you after it, as for
   // sc stop. A forge that fails leaves the thread stopped, which takes you off too.
   unassignIssue(db, thread.folder);
-  // A push under way would put back the branch, or open a PR after none was closed, so it is
-  // waited for, and the thread read again for the PR it may have opened.
-  const pushing = endRound(thread.folder);
-  await endBuilder(sessions, thread.folder);
-  await pushing;
-  // Close the PR, which deletes its branch on the forge too. With no PR, as a repository with
-  // no forge has, delete the branch only if this thread pushed it: Skelcrew keeps a ref of each
-  // push in its clone, and a branch of the same name may be someone else's.
-  const { pr, branch } = readThread(db, thread.folder);
-  const repository = repositoryOf(db, thread);
-  const skelcrewClone = cloneDir(thread.owner, thread.repo);
-  const threadPushedBranch = async () =>
-    (
-      await quietly([
-        "git",
-        "-C",
-        skelcrewClone,
-        "rev-parse",
-        "--verify",
-        "--quiet",
-        `refs/skelcrew/threads/${thread.folder}`,
-      ])
-    ).ok;
-  if (pr !== null)
-    await closePr(db, repository, {
-      pr,
-      branch,
-      comment: reason ? `Closed by Skelcrew: ${reason}` : null,
-    });
-  else if ((await threadPushedBranch()) && (await onRemote(db, repository, branch)))
-    await deleteBranch(db, repository, skelcrewClone, branch);
-  await endThread(db, sessions, thread, reason ? `removed: ${reason}` : "removed");
+  // Until it ends, a poll leaves the thread to sc rm, which deletes its branch first.
+  removing.add(thread.folder);
+  try {
+    // A push under way would put back the branch, or open a PR after none was closed, so it is
+    // waited for, and the thread read again for the PR it may have opened.
+    const pushing = endRound(thread.folder);
+    await endBuilder(sessions, thread.folder);
+    await pushing;
+    // Close the PR, which deletes its branch on the forge too. With no PR, as a repository with
+    // no forge has, delete the branch only if this thread pushed it: Skelcrew keeps a ref of each
+    // push in its clone, and a branch of the same name may be someone else's.
+    const { pr, branch } = readThread(db, thread.folder);
+    const repository = repositoryOf(db, thread);
+    const skelcrewClone = cloneDir(thread.owner, thread.repo);
+    const threadPushedBranch = async () =>
+      (
+        await quietly([
+          "git",
+          "-C",
+          skelcrewClone,
+          "rev-parse",
+          "--verify",
+          "--quiet",
+          `refs/skelcrew/threads/${thread.folder}`,
+        ])
+      ).ok;
+    if (pr !== null)
+      await closePr(db, repository, {
+        pr,
+        branch,
+        comment: reason ? `Closed by Skelcrew: ${reason}` : null,
+      });
+    else if ((await threadPushedBranch()) && (await onRemote(db, repository, branch)))
+      await deleteBranch(db, repository, skelcrewClone, branch);
+    await endThread(db, sessions, thread, reason ? `removed: ${reason}` : "removed");
+  } finally {
+    removing.delete(thread.folder);
+  }
 }
 
 // Types what the decision tells into the builder once it is idle, then saves the decision.
