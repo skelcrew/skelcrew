@@ -1,5 +1,6 @@
 // The test runner, scripts/test.ts: a run that goes past its time limit is stopped and fails,
-// and what a run starts never reaches the daemon of the Skelcrew it runs in.
+// CI can ask it for a JUnit report, and what a run starts never reaches the daemon of the
+// Skelcrew it runs in.
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
@@ -35,6 +36,24 @@ test("hangs", () => new Promise(() => {}), 600_000);
   const [err, code] = await Promise.all([new Response(run.stderr).text(), run.exited]);
   expect(err).toContain("so they were stopped");
   expect(code).toBe(1);
+});
+
+// CI asks for a JUnit report, to see how long each test took where the tests that start a real
+// sandbox run. A run without the variable, such as yours, writes none.
+test("a run with SKELCREW_TESTS_REPORT set writes a JUnit report there, with each test's time", async () => {
+  writeFileSync(
+    join(folder, "quick.test.ts"),
+    'import { test } from "bun:test";\ntest("quick", () => {});\n',
+  );
+  const report = join(folder, "report.xml");
+  const run = Bun.spawn([process.execPath, runner, "./quick.test.ts"], {
+    cwd: folder,
+    env: { PATH: process.env.PATH ?? "", HOME: folder, SKELCREW_TESTS_REPORT: report },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect(await run.exited).toBe(0);
+  expect(await Bun.file(report).text()).toMatch(/<testcase name="quick"[^>]* time="[\d.]+"/);
 });
 
 // Stands in for the daemon of the Skelcrew a builder runs in, listening on this socket, and

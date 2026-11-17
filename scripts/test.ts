@@ -34,17 +34,34 @@ if (inside) {
   );
 }
 
+// CI sets SKELCREW_TESTS_REPORT to a file, and gets a JUnit report there with each test's time.
+// The tests that start a real sandbox run only outside Skelcrew's own, so CI is where their times
+// show. Bun writes the report only when the run ends by itself, not when it is stopped.
+const report = process.env.SKELCREW_TESTS_REPORT;
+const reporting = report ? ["--reporter=junit", `--reporter-outfile=${report}`] : [];
 // A dot per test as it ends, and each failure in full, so a slow run shows it is moving. Bun's
 // usual output in a parallel run prints a file only once it has ended, so a long file leaves
-// the screen silent for minutes. A test that hangs fails after a minute.
+// the screen silent for minutes. A test that hangs fails after a minute. Eight files run at once:
+// most tests wait on tmux and timers rather than use the CPU, and Bun hands a whole file to one
+// worker, so the slowest file sets the least a run can take.
 const run = Bun.spawn(
-  [process.execPath, "test", "--dots", "--timeout", "60000", "--parallel=4", ...Bun.argv.slice(2)],
+  [
+    process.execPath,
+    "test",
+    "--dots",
+    "--timeout",
+    "60000",
+    "--parallel=8",
+    ...reporting,
+    ...Bun.argv.slice(2),
+  ],
   { env, stdio: ["inherit", "inherit", "inherit"] },
 );
 
 // The whole run ends within this, even if something keeps it from ever finishing, such as a
-// process a test started that never exits. A full run takes a few minutes. Its own test sets a
-// shorter limit, in milliseconds.
+// process a test started that never exits. Without the tests that start a real sandbox, a full
+// run takes about two minutes on eight cores. CI runs those too, and takes longer. Its own test
+// sets a shorter limit, in milliseconds.
 const limit = Number(process.env.SKELCREW_TESTS_LIMIT) || 15 * 60_000;
 let stopped = false;
 const stop = setTimeout(() => {
