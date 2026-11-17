@@ -443,6 +443,20 @@ Skelcrew no longer supports Sprites itself. These are for the Sprite machine plu
   refused to start, sc called the real daemon, and dozens of screen tests each failed only
   after a 20 second wait. The run looked hung. `scripts/test.ts` starts the run without them,
   and `test/inherited.ts` stops a plain `bun test` inside the sandbox with a message.
+- **A test's Skelcrew must never reach a real daemon.** A builder ran `test/submit.test.ts` in its
+  sandbox with a stand-in for bubblewrap. The stand-in set the test builder's `SKELCREW_SOCKET`
+  to `/run/skelcrew/skelcrew.sock` but skipped the mount that puts the test's socket there. That
+  path held the real daemon's socket, so the fake builder ran `sc submit` on the real builder's
+  own thread about four times: it pushed, replaced the PR description and started reviews. The rule:
+  - `scripts/test.ts` drops every `SKELCREW_` variable, the laptop ones too, and gives the run a
+    home and a runtime folder of its own. A process that spreads `process.env` then finds no
+    daemon, and none of your settings or data.
+  - A run that sees `/run/skelcrew` is inside a sandbox, even without `SKELCREW_SANDBOX`, so the
+    tests that start a sandbox skip. Never run them there with a stand-in.
+  - `test/inherited.ts` stops a plain `bun test` that has any `SKELCREW_` variable.
+  - `runSkel`, `runSkelInTerminal` and `startDaemon` throw on a socket outside the test's own
+    folder, with `..` and links resolved. Give every sc a test starts some other way the test's
+    `XDG_RUNTIME_DIR`.
 - **A parallel run prints a test file only once it ends.** A file whose tests each fail
   slowly kept the screen blank for over half an hour. `--dots` shows each test as it ends,
   and `scripts/test.ts` stops the whole run after 15 minutes.
