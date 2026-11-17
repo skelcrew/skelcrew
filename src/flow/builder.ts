@@ -68,11 +68,28 @@ export function statusOnceBack(stopped: Thread): "waiting" | "working" {
 // since the lead waits on the answer. Setting up its clone and starting its builder come
 // after, and can take minutes. `given` is a start request, so its `repo` is the repository's
 // name in Skelcrew or its owner/name, and its `short` the short title the lead gave, if any.
-export async function startThread(
+// Starts go one at a time: a start over first deletes the old thread's refs, and a second
+// start of the same task, running alongside, could delete the refs of the thread the first
+// just started. One at a time, the second finds that thread and is refused.
+export function startThread(
   db: Database,
   given:
     | { repo: string; task: string; from?: string | undefined; short?: string | undefined }
     | { repo: string; title: string; body: string; short?: string | undefined },
+): Promise<Thread> {
+  const start = startsBefore.then(() => recordThread(db, given));
+  // A start that fails holds up none after it.
+  startsBefore = start.catch(() => {});
+  return start;
+}
+
+// The last start under way, which the next one waits for.
+let startsBefore: Promise<unknown> = Promise.resolve();
+
+// Records a new thread for startThread, which runs one at a time, and returns it.
+async function recordThread(
+  db: Database,
+  given: Parameters<typeof startThread>[1],
 ): Promise<Thread> {
   // Find the repository and whether a tracker holds its tasks, which decides where a named
   // task's title and body come from.
