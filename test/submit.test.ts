@@ -63,8 +63,8 @@ const script = (name: string, body: string) => writeScript(home, name, body);
 // and with code-to-docs there, it moves src/app.ts to docs/app.md. As a reviewer, run with -p,
 // it approves, unless the file claude-limit beside it holds a moment in seconds since 1970
 // still to come: until then it says its usage limit is reached, as Claude Code did. While the
-// file says wait, it waits, with the file waiting in its config folder, so a test can set the
-// moment once the reviewer runs. Its
+// file says wait, it waits, with the file waiting in its config folder holding its HOME, so a
+// test can set the moment once its own reviewer runs. Its
 // arguments are written aside and moved into place, so a test that sees the file never reads
 // them half written.
 function fakeClaude(submits = true): void {
@@ -74,7 +74,7 @@ function fakeClaude(submits = true): void {
 case " $* " in *" -p "*)
   cat > /dev/null
   limit="$(dirname "$0")/claude-limit"
-  [ "$(cat "$limit" 2>/dev/null)" = wait ] && : > "$CLAUDE_CONFIG_DIR/waiting"
+  [ "$(cat "$limit" 2>/dev/null)" = wait ] && echo "$HOME" > "$CLAUDE_CONFIG_DIR/waiting"
   i=0; while [ "$(cat "$limit" 2>/dev/null)" = wait ] && [ $i -lt 600 ]; do sleep 0.1; i=$((i+1)); done
   reset=$(cat "$limit" 2>/dev/null)
   if [ -n "$reset" ] && [ "$(date +%s)" -lt "$reset" ]; then
@@ -812,10 +812,12 @@ done`,
     // Claude Code says when its limit resets, in seconds since 1970. The reset is set once the
     // first reviewer runs, so it meets the limit however slowly the builder starts, and the
     // test waits only a few seconds for it. The reviewer's config folder is in the review's
-    // own temporary folder.
+    // own temporary folder, which other tests' reviews share, so the home it names tells
+    // this test's reviewer from theirs.
     writeFileSync(join(home, "bin", "claude-limit"), "wait");
     await startApp12();
-    const waiting = (name: string) => existsSync(join(tmpdir(), name, "claude", "waiting"));
+    const waiting = (name: string) =>
+      read(join(tmpdir(), name, "claude", "waiting")).trim() === home;
     await until(() =>
       readdirSync(tmpdir()).some((name) => name.startsWith("skelcrew-review-") && waiting(name)),
     );
