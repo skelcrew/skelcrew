@@ -627,7 +627,7 @@ describe("what the reviewer is told about the tests", () => {
   test("without CI, the reviewer runs the whole test suite itself", () => {
     const prompt = reviewerPrompt(issue, "origin/main", "run", named);
     expect(prompt).toContain(
-      "No CI runs on this commit, so run the repository's whole test suite, with `bun install && bun run check`, from the repository's skelcrew.yaml.",
+      "No CI runs on this commit, so run the repository's whole test suite, with `bun install && bun run check`.",
     );
     expect(prompt).not.toContain("ci.md");
   });
@@ -662,7 +662,7 @@ describe("what the reviewer is told about the tests", () => {
   test("with CI whose checks run no tests, the reviewer runs the whole test suite itself", () => {
     const prompt = reviewerPrompt(issue, "origin/main", { ci: "/tmp/review/ci.md" }, named);
     expect(prompt).toContain(
-      "When it lists checks and none of them runs the tests, such as only a deploy preview or a CLA check, run the whole test suite yourself, with `bun install && bun run check`, from the repository's skelcrew.yaml.",
+      "When it lists checks and none of them runs the tests, such as only a deploy preview or a CLA check, run the whole test suite yourself, with `bun install && bun run check`.",
     );
   });
 

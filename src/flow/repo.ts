@@ -448,8 +448,8 @@ export async function addRepo(
   if (!added) return;
   console.log(`Added ${added.owner}/${added.repo}, as ${added.name}.`);
   // Many repositories are added just to fix something, with no skelcrew.yaml to commit there,
-  // so say what Skelcrew detected, as a hint, never a question. A test command the repository
-  // names needs no word.
+  // so say what Skelcrew detected, as a hint, never a question. A test command skelcrew.yaml or
+  // your config names needs no word.
   const { test } = repositoryCommands(added);
   if (!hint || !test.detected) return;
   console.log(

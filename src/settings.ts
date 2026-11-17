@@ -94,8 +94,9 @@ const keysOf: Record<Group, Key[]> = {
 
 // What each file may set. Your harness, model, limits, the reviewer's fallback, a review's time
 // and the repositories you declined the GitHub plugin for fit you, your account and your
-// machine, so a repository can't set them. Setup, test and the
-// tracker belong to the repository, so your config doesn't.
+// machine, so a repository can't set them. The tracker belongs to the repository, so your
+// config doesn't. Setup and test can come from either: yours stand in for a repository you
+// don't want to commit a skelcrew.yaml to, ahead of what Skelcrew detects.
 const yourKeys: Key[] = [
   "harness",
   "model",
@@ -103,6 +104,8 @@ const yourKeys: Key[] = [
   "builder",
   "reviewer",
   "max_rounds",
+  "setup",
+  "test",
   "limits",
   "review",
   "fallback",
@@ -160,7 +163,7 @@ export function readSettings<G extends Group>(
   const decided = (k: Key) =>
     shared[k] !== undefined && shared[k] !== null && !roleKeys.includes(k);
   const fromYours = wanted.filter((k) => yourKeys.includes(k) && !decided(k));
-  // Detection is the lowest layer for setup and test, below the built-in defaults' none, and
+  // Detection is the lowest layer for setup and test, below both files, and
   // only looks when they are asked for.
   const detecting = repository && (wanted.includes("setup") || wanted.includes("test"));
   const detected = detecting ? detectCommands(readTopFiles(repository)) : { setup: [], test: [] };

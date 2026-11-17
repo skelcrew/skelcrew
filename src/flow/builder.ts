@@ -299,15 +299,15 @@ export async function setUpThread(db: Database, thread: Thread): Promise<void> {
     );
   }
   // Make sure no git login reached the clone's settings before the builder can read them,
-  // then run the repository's setup commands in the sandbox. A failure names where the command
-  // came from, so you know whether to fix skelcrew.yaml or write one.
+  // then run the repository's setup commands in the sandbox. A failure says when the command
+  // was detected, so you know to name the right one in skelcrew.yaml or your config.
   refuseCredentials(clone);
   const { setup } = repositoryCommands(thread);
   for (const command of setup.commands) {
     const { argv, env } = setupCommand(clone, command);
     const what = setup.detected
       ? `the setup command Skelcrew detected, "${command}"`
-      : `the repository's skelcrew.yaml setup command "${command}"`;
+      : `the setup command "${command}"`;
     await mustRun(argv, what, env);
   }
 }

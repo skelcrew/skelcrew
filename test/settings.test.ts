@@ -142,12 +142,20 @@ test("an empty list in skelcrew.yaml counts as named", () => {
   expect(commands().setup).toEqual({ commands: [], detected: false });
 });
 
-// Setup and test belong to the repository, so a line in your config counts for nothing.
-test("your config can't name setup or test", () => {
-  settings("harness: claude\nsetup: [rm -rf x]\ntest: [false]\n", null);
+// Each of setup and test comes from the repository's skelcrew.yaml, else your config, else
+// detection. Your empty list turns detection off, as the repository's does.
+test("setup and test come from the repository, then your config, then detection", () => {
+  settings("harness: claude\nsetup: []\ntest: [make test]\n", "test: [bun run check]\n");
+  writeFileSync(join(clone(), "go.mod"), "");
   expect(commands()).toEqual({
-    setup: { commands: [], detected: true },
-    test: { commands: [], detected: true },
+    setup: { commands: [], detected: false },
+    test: { commands: ["bun run check"], detected: false },
+  });
+  settings("harness: claude\ntest: [make test]\n", null);
+  writeFileSync(join(clone(), "go.mod"), "");
+  expect(commands()).toEqual({
+    setup: { commands: ["go mod download"], detected: true },
+    test: { commands: ["make test"], detected: false },
   });
 });
 

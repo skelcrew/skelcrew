@@ -47,8 +47,9 @@ export function threadConfig(repository: Repository): Settings["roles"] & {
   };
 }
 
-// Returns the repository's setup and test commands. Each comes from its skelcrew.yaml when it
-// names it, even as an empty list, and is otherwise detected from its files.
+// Returns the repository's setup and test commands. Each comes from its skelcrew.yaml, else
+// your config, when one names it, even as an empty list, and is otherwise detected from its
+// files.
 export function repositoryCommands(repository: Repository): Pick<Settings, "setup" | "test"> {
   const { setup, test } = readSettings(["setup", "test"], repository);
   return { setup, test };

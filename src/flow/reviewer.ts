@@ -39,14 +39,14 @@ const schema = JSON.stringify({
 // or no one, on a change to docs and Markdown alone.
 export type Tests = { ci: string } | "run" | "docs only";
 
-// Returns how the reviewer runs the repository's tests: with the commands its skelcrew.yaml
-// names, or else those Skelcrew detected from its files, saying which, so a reviewer that finds
+// Returns how the reviewer runs the repository's tests: with the commands its skelcrew.yaml or
+// your config names, or else those Skelcrew detected from its files, saying which, so a reviewer that finds
 // a detected command wrong knows it is a guess. With neither, it works out how itself.
 function testedWith({ commands, detected }: Commands): string {
   if (commands.length > 0)
     return detected
       ? `with \`${commands.join(" && ")}\`, which Skelcrew detected from the repository's files`
-      : `with \`${commands.join(" && ")}\`, from the repository's skelcrew.yaml`;
+      : `with \`${commands.join(" && ")}\``;
   return "working out how from the repository, as it names no test command and Skelcrew detected none";
 }
 
