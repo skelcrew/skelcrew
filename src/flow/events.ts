@@ -12,7 +12,7 @@ import { unassignIssue } from "./assign.ts";
 import { baseOf } from "./builder.ts";
 import type { Check, Decision } from "./decide.ts";
 import { deleteBranch, fetchInto, onRemote } from "./git.ts";
-import { typeLeadNotes } from "./lead.ts";
+import { noteForLead, typeLeadNotes } from "./lead.ts";
 import { endWake } from "./limits.ts";
 import { refreshClones } from "./repo.ts";
 import { endRound } from "./round.ts";
@@ -114,12 +114,16 @@ export async function stopThread(db: Database, sessions: string, thread: Thread)
 }
 
 // Ends the thread once its PR is merged or closed, or for sc rm: ends its builder, and removes
-// its clone by deleting the folder, never running git in it.
+// its clone by deleting the folder, never running git in it. `why` goes in the thread's log.
+// `note`, such as "is done: #7 merged into main", goes to its repository's lead after the
+// thread's name, so the lead stops listing it as open. With null, as when the lead removed it,
+// the lead hears nothing.
 export async function endThread(
   db: Database,
   sessions: string,
   thread: Thread,
   why: string,
+  note: string | null,
 ): Promise<void> {
   await endBuilder(sessions, thread.folder);
   rmSync(cloneOf(thread), { recursive: true, force: true });
@@ -136,12 +140,22 @@ export async function endThread(
       "-d",
       `refs/skelcrew/${kind}/${thread.folder}`,
     ]);
+  // A thread ends once, so the lead hears of it once: a poll and sc rm can both reach here for
+  // the same thread, and only the first finds it short of done. Nothing is waited on between
+  // reading it and marking it done.
+  if (readThread(db, thread.folder).status === "done") return;
   record(db, thread.folder, { status: "done", needs_you: false }, `${why}: ended the thread`);
+  // Every note to the lead is one line, as a reason given to sc rm may not be.
+  if (note !== null) {
+    const line = `${threadName(db, thread)} ${note}`.replace(/\s+/g, " ").slice(0, 200);
+    noteForLead(db, sessions, thread, line);
+  }
 }
 
 // Removes the thread for sc rm: ends its builder, closes its PR with the reason as a comment,
 // deletes its branch on the forge, removes its clone, takes you off its issue if Skelcrew
-// assigned you, and marks it done. Its task stays open,
+// assigned you, and marks it done. The lead hears of it, unless `byLead`: it ran sc rm, so it
+// knows already. Its task stays open,
 // so sc start can start the thread over on it. Without a PR, the branch is deleted with git,
 // but only if Skelcrew pushed it for this thread. A running thread is marked stopped first, so
 // a builder that submits while it exits is refused. If the forge fails, the thread stays
@@ -152,6 +166,7 @@ export async function removeThread(
   sessions: string,
   thread: Thread,
   reason: string | undefined,
+  byLead: boolean,
 ): Promise<void> {
   // Refuse what can't be removed, then stop a thread still running.
   const name = threadName(db, thread);
@@ -211,7 +226,10 @@ export async function removeThread(
       });
     else if ((await threadPushedBranch()) && (await onRemote(db, repository, branch)))
       await deleteBranch(db, repository, skelcrewClone, branch);
-    await endThread(db, sessions, thread, reason ? `removed: ${reason}` : "removed");
+    const closing = pr === null ? "" : `, closing #${pr}`;
+    const note = `ended: you removed it${closing}${reason ? `: ${reason}` : ""}`;
+    const why = reason ? `removed: ${reason}` : "removed";
+    await endThread(db, sessions, thread, why, byLead ? null : note);
   } finally {
     removing.delete(thread.folder);
   }

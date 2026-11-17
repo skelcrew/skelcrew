@@ -1392,6 +1392,11 @@ await serve(${JSON.stringify(socket)}, 200);`;
     // log, which comes last.
     await until(() => log().includes("is merged into main"), 30_000);
     expect(row()).toMatchObject({ status: "done" });
+    await until(() =>
+      read(join(lead(), "typed")).includes(
+        "app-t1 is done: its branch skelcrew/t1-add-export merged into main",
+      ),
+    );
   }, 60_000);
 
   // Runs the daemon from a folder that isn't a git checkout, as the service does, polling every

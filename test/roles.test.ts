@@ -18,9 +18,16 @@ const builderTestsBefore =
 const builderTests =
   "Never run the repository's whole test suite: CI or the reviewer runs it once for each commit, and other agents share this machine, so whole suites running at once slow everyone down. While you work, run only the tests near your change. Before each sc submit, run the tests related to your change: the test files you touched and the tests of the code you changed. Run the repository's lint and typecheck too, if it has them.";
 
-test("the lead and builder files hold the instructions the code gave, but the builder's workflows and tests", () => {
+// What the lead's file added after its instructions moved there: the note Skelcrew types in
+// when a thread ends.
+const threadEnds =
+  'When a thread ends, Skelcrew types a one line note too, such as "app-12 is done: #7 merged into main" or "app-12 ended: #7 closed without merging". It comes from Skelcrew, not the human. Drop the thread from what you hold open: never list it as ready to merge again. When useful, tell the human in one line what it unblocks, such as a thread waiting on its work. A thread you removed with sc rm brings no note.\n\n';
+
+test("the lead and builder files hold the instructions the code gave, but the lead's thread ends and the builder's workflows and tests", () => {
   // The digests of src/agents/prompts/lead.md and builder.md before they moved.
-  expect(sha256(builtInRole("lead").instructions)).toBe(
+  const lead = builtInRole("lead").instructions;
+  expect(lead).toContain(threadEnds);
+  expect(sha256(lead.replace(threadEnds, ""))).toBe(
     "4a964d29382eddbab5268fa24921ee599fa1bde9bd1eb51341f5bee1cb577837",
   );
   const builder = builtInRole("builder").instructions;

@@ -353,7 +353,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       case "rm": {
         const thread = findThread(db, request.repo, request.task);
         const name = threadName(db, thread);
-        await removeThread(db, sessions, thread, request.reason);
+        await removeThread(db, sessions, thread, request.reason, leadOfCaller(caller) !== null);
         // The issue it worked on stays open in the tracker, so sc rm can say so. A thread
         // started on what you told the lead is numbered with a t, such as app-t1, and has none.
         return { removed: name, issue: /^t\d+$/.test(thread.task) ? null : thread.task };

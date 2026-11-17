@@ -134,10 +134,13 @@ async function actOnPr(
   // A merge or close ends the thread whatever else is going on. Otherwise new events go to
   // the builder, and with none, only what is seen and what changed is saved.
   if ("end" in decision) {
+    // A PR sc rm closed is its to end, as it tells the lead the thread was removed, which a
+    // poll would announce as closed without merging.
+    if (removing.has(folder)) return;
     // A merge leaves you assigned, as the closed issue's record of who did it. Asked before
     // the thread ends, so an sc start that starts it over once it is done assigns you after.
     if (pr.state === "closed") unassignIssue(db, folder);
-    await endThread(db, sessions, thread, decision.end);
+    await endThread(db, sessions, thread, decision.end, decision.note);
   }
   // Left unhandled, so a stopped thread's events reach its builder once it starts again.
   else if (thread.status === "stopped" || typingEvents.has(folder) || stale) return;
@@ -177,7 +180,13 @@ async function actOnBranch(db: Database, sessions: string, repository: Repositor
   };
   if (!(await onRemote(db, repository, thread.branch))) {
     if (unchanged())
-      await endThread(db, sessions, thread, `its branch ${thread.branch} was deleted`);
+      await endThread(
+        db,
+        sessions,
+        thread,
+        `its branch ${thread.branch} was deleted`,
+        `ended: its branch ${thread.branch} was deleted`,
+      );
     return;
   }
   // Merge the remote branch into its base without touching any files, and compare the result
@@ -188,7 +197,13 @@ async function actOnBranch(db: Database, sessions: string, repository: Repositor
   const merged = await git("merge-tree", "--write-tree", ref("bases"), ref("remote"));
   const tree = await git("rev-parse", `${ref("bases")}^{tree}`);
   if (merged.ok && tree.ok && merged.out.trim().split("\n")[0] === tree.out.trim() && unchanged())
-    await endThread(db, sessions, thread, `its branch ${thread.branch} is merged into ${base}`);
+    await endThread(
+      db,
+      sessions,
+      thread,
+      `its branch ${thread.branch} is merged into ${base}`,
+      `is done: its branch ${thread.branch} merged into ${base}`,
+    );
 }
 
 // Polls one repository. Asks its tracker and its forge what changed since the `next` each
