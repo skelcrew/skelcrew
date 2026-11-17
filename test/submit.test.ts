@@ -426,6 +426,22 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
     );
   }, 100_000);
 
+  // A workflow that runs only on a release never shows a check on a PR. Once a review has waited
+  // for one in vain, the repository's next reviews start at once.
+  test("with a release-only workflow, only the first review waits for CI, then the reviewer runs the suite", async () => {
+    addApp({ ".github/workflows/release.yml": "on: release\n" });
+    verdict(1, "changes", "The export has no test.");
+    verdict(2, "approve", "Ready to merge.");
+    await startApp12();
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), 180_000);
+    const first = read(join(codexHome(), "sessions", "prompt-1"));
+    expect(first).toContain("The repository has no CI, so run its whole test suite");
+    // The second round's review would wait 2 minutes more if it waited again.
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-2")), 60_000);
+    const second = read(join(codexHome(), "sessions", "prompt-2"));
+    expect(second).toContain("The repository has no CI, so run its whole test suite");
+  }, 280_000);
+
   test("without CI, the reviewer runs the whole test suite itself", async () => {
     addApp();
     verdict(1, "approve", "Ready to merge.");

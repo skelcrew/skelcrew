@@ -52,36 +52,17 @@ export function ciState(pr: PullRequest): Thread["checks"] {
   return ci.some((c) => c.state === "failed" || c.state === "cancelled") ? "failing" : "pending";
 }
 
-// The files that set up CI in a repository, on the forges and CI services Skelcrew's users run.
-// One in a PR's commit says CI may run on it, but not that it does: a workflow can run only on
-// a release tag.
-export const ciConfigs = [
-  ".github/workflows",
-  ".gitlab-ci.yml",
-  ".forgejo/workflows",
-  ".gitea/workflows",
-  ".woodpecker.yml",
-  ".woodpecker",
-  ".circleci",
-  ".buildkite",
-  ".travis.yml",
-  ".drone.yml",
-  "azure-pipelines.yml",
-  "bitbucket-pipelines.yml",
-  "Jenkinsfile",
-];
-
 // Returns who runs a commit's whole test suite, so it runs once: CI, once a CI check shows on
 // one of the repository's open PRs, which proves CI runs on PRs. Otherwise the reviewer, unless
-// `found`, the CI files of `ciConfigs` in the commit, says CI may yet start on a first PR, or on
-// one that adds CI, and the review hasn't `waited` long enough for its first check: then "wait".
+// the commit `setsUpCi`, so CI may yet start on a first PR, or on one that adds CI, and the
+// review hasn't `waited` long enough for its first check: then "wait".
 export function whoRunsTheSuite(
   prs: PullRequest[],
-  found: string[],
+  setsUpCi: boolean,
   waited: boolean,
 ): "ci" | "reviewer" | "wait" {
   if (prs.some((pr) => ciOf(pr).length > 0)) return "ci";
-  return found.length > 0 && !waited ? "wait" : "reviewer";
+  return setsUpCi && !waited ? "wait" : "reviewer";
 }
 
 // Returns what the reviewer reads about CI on the commit it reviews: whether CI passed, failed

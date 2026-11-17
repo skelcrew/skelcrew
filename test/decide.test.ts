@@ -411,25 +411,23 @@ test("a PR's CI reads as passing, failing or still running, and Skelcrew's own c
 
 test("CI runs the suite once a CI check shows on one of the repository's PRs", () => {
   const ci = pr({ checks: [approved, run(30, "test", "running")] });
-  expect(whoRunsTheSuite([pr(), ci], [], false)).toBe("ci");
-  expect(whoRunsTheSuite([ci], [".github/workflows"], true)).toBe("ci");
+  expect(whoRunsTheSuite([pr(), ci], false, false)).toBe("ci");
+  expect(whoRunsTheSuite([ci], true, true)).toBe("ci");
 });
 
 test("with no CI, the reviewer runs the suite, and Skelcrew's own check isn't CI", () => {
-  expect(whoRunsTheSuite([], [], false)).toBe("reviewer");
-  expect(whoRunsTheSuite([pr({ checks: [approved] })], [], false)).toBe("reviewer");
+  expect(whoRunsTheSuite([], false, false)).toBe("reviewer");
+  expect(whoRunsTheSuite([pr({ checks: [approved] })], false, false)).toBe("reviewer");
 });
 
-// A first PR shows no check yet, and its default branch's CI files say one may come.
-test("on a first PR in a repository with CI files, the review waits for CI's first check", () => {
-  expect(whoRunsTheSuite([pr()], [".github/workflows"], false)).toBe("wait");
+// A first PR shows no check yet, and the commit's workflows say one may come.
+test("on a first PR in a repository with workflows, the review waits for CI's first check", () => {
+  expect(whoRunsTheSuite([pr()], true, false)).toBe("wait");
 });
 
 // A workflow that runs only on a release tag never shows a check on a PR.
-test("CI files whose CI never shows a check on a PR leave the suite to the reviewer", () => {
-  expect(whoRunsTheSuite([pr({ checks: [approved] })], [".github/workflows"], true)).toBe(
-    "reviewer",
-  );
+test("workflows that never show a check on a PR leave the suite to the reviewer", () => {
+  expect(whoRunsTheSuite([pr({ checks: [approved] })], true, true)).toBe("reviewer");
 });
 
 test("tells the reviewer CI hasn't reported until the PR's head is the commit under review", () => {

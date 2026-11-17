@@ -530,7 +530,15 @@ describe("what the reviewer is told about the tests", () => {
   test("with CI whose checks run no tests, the reviewer runs the whole test suite itself", () => {
     const prompt = reviewerPrompt(issue, "origin/main", "/tmp/review/ci.md");
     expect(prompt).toContain(
-      "When none of the checks it lists runs the tests, such as only a deploy preview or a CLA check, run the whole test suite yourself, using the commands under test: in the repository's skelcrew.yaml if there is one.",
+      "When it lists checks and none of them runs the tests, such as only a deploy preview or a CLA check, run the whole test suite yourself, using the commands under test: in the repository's skelcrew.yaml if there is one.",
+    );
+  });
+
+  // Before CI starts, the file lists no checks. That is CI still to come, not CI without tests.
+  test("with CI that hasn't reported yet, the reviewer reviews the code without running the suite", () => {
+    const prompt = reviewerPrompt(issue, "origin/main", "/tmp/review/ci.md");
+    expect(prompt).toContain(
+      "When CI hasn't reported yet, or is still running as you answer, review the code anyway, and say in the body that CI is still running.",
     );
   });
 });
