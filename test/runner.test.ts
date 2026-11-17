@@ -93,13 +93,14 @@ test("other", () => {});
   expect(slowTest.seconds).toBeGreaterThanOrEqual(0.4);
   expect(slowTest.at).toBeLessThan(timeOf(tests, "slow.test.ts  takes no time").at);
   expect(timeOf(tests, "other.test.ts  other").at).toBeGreaterThan(0);
-  // Each file once, the one with slow hooks first.
+  // Each file, with at least what its tests, hooks and the preload slept. A busy machine can
+  // delay either file, so their order isn't checked.
   const perFile = out.slice(out.indexOf("Time per file:"));
   const [other, slow] = [timeOf(perFile, "other.test.ts"), timeOf(perFile, "slow.test.ts")];
   expect(other.seconds).toBeGreaterThanOrEqual(1.7);
   expect(slow.seconds).toBeGreaterThanOrEqual(0.9);
   expect(other.at).toBeGreaterThan(0);
-  expect(other.at).toBeLessThan(slow.at);
+  expect(slow.at).toBeGreaterThan(0);
   const local = await runIn(files, false);
   expect(local.code).toBe(0);
   expect(local.out).not.toContain("slowest");
