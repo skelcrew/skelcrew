@@ -106,6 +106,22 @@ test("a Makefile's check target, then its test target", () => {
   });
 });
 
+// A rule can name several targets, with spaces around them, and `:=` sets a variable instead.
+test("a Makefile target counts among several, and with a space before its colon", () => {
+  expect(detectCommands({ Makefile: "test :\n\t./x\n" })).toEqual({
+    setup: [],
+    test: ["make test"],
+  });
+  expect(detectCommands({ Makefile: "lint test check: build\n" })).toEqual({
+    setup: [],
+    test: ["make check"],
+  });
+  expect(detectCommands({ Makefile: "check := yes\ntest = no\n\tcheck: x\n" })).toEqual({
+    setup: [],
+    test: [],
+  });
+});
+
 // A check runs more than the tests, such as lint and the typecheck, so it wins wherever it is.
 test("a Makefile's check beats a package's test script, and setup comes from the package", () => {
   expect(

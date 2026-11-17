@@ -94,7 +94,17 @@ const kinds: ((files: TopFiles, has: (name: string) => boolean) => Found | null)
   (f) => {
     const makefile = f.Makefile ?? f.makefile;
     if (makefile === undefined) return null;
-    const target = (name: string) => new RegExp(`^${name}:`, "m").test(makefile);
+    // Each rule's targets: what comes before the colon on a line that doesn't start with a
+    // tab, as a recipe does. A rule can name several, with spaces around them. `:=` and `::=`
+    // set a variable instead, and a line with `=` before any colon does too.
+    const targets = makefile.split("\n").flatMap(
+      (line) =>
+        line
+          .match(/^([^\t:=#][^:=#]*):(?!:?=)/)?.[1]
+          ?.trim()
+          .split(/\s+/) ?? [],
+    );
+    const target = (name: string) => targets.includes(name);
     return {
       ...(target("check") ? { check: "make check" } : {}),
       ...(target("test") ? { test: "make test" } : {}),
