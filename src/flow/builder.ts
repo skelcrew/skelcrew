@@ -308,7 +308,7 @@ export async function setUpThread(db: Database, thread: Thread): Promise<void> {
   refuseCredentials(clone);
   for (const command of repositoryCommands(thread).setup) {
     const { argv, env } = setupCommand(clone, command);
-    await mustRun(argv, `the repository's skelcrew.yaml setup command "${command}"`, env);
+    await mustRun(argv, `the setup command "${command}"`, env);
   }
 }
 
