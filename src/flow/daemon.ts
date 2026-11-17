@@ -30,17 +30,10 @@ import {
 } from "./builder.ts";
 import { saveItems } from "./copy.ts";
 import { removeThread, stopThread } from "./events.ts";
-import {
-  closeExitedLeads,
-  lastOpened,
-  leadOf,
-  openedRepositories,
-  startLead,
-  typeLeadNotes,
-} from "./lead.ts";
+import { closeExitedLeads, lastOpened, leadOf, openedRepositories, startLead } from "./lead.ts";
 import { restoreLimits, wakeAfterLimit } from "./limits.ts";
 import { listRepositories, listTasks, listThreads, showPr, showTask } from "./list.ts";
-import { deliverAllWaiting } from "./messages.ts";
+import { deliverAllWaiting, messageBuilder, messageLead, typeLeadNotes } from "./messages.ts";
 import { pollRepositories } from "./poll.ts";
 import { findRepository, fullNameIs, noRepositories, refreshClones, repositoryAt } from "./repo.ts";
 import { allowed, type Caller, DaemonRequest, parseJson } from "./requests.ts";
@@ -55,7 +48,6 @@ import {
   turnEnded,
   turnFailed,
 } from "./status.ts";
-import { messageBuilder, messageLead } from "./tell.ts";
 import { findThread, liveThreads, record, type Thread, threadName, threadOn } from "./thread.ts";
 
 // Tries to hold the daemon lock and returns whether this process owns it, preventing

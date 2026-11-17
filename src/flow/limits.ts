@@ -3,10 +3,9 @@
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
 import { HarnessName, harnessNamed } from "../agents/harness.ts";
-import { deliver } from "../agents/transport.ts";
 import { errorText } from "../say.ts";
-import { noteForLead, typeLeadNotes } from "./lead.ts";
-import { builderHarness, readThread, record } from "./thread.ts";
+import { noteForLead, typeContinue, typeLeadNotes } from "./messages.ts";
+import { readThread, record } from "./thread.ts";
 
 // How long to wait when the harness gave no reset time: 15 minutes after the first try that
 // met the limit, 30 after the second, and an hour after each one since.
@@ -282,8 +281,7 @@ async function continueBuilder(
   const over = { erred: false, limited: false, limit_reset: null };
   record(db, folder, over, "its harness's usage limit reset, so Skelcrew types continue");
   try {
-    const { marks } = builderHarness(thread);
-    await deliver(sessions, folder, marks, "continue", { timeout: 60_000, signal });
+    await typeContinue(sessions, thread, signal);
   } catch (error) {
     // A builder that met the limit again, or was typed to, since has a newer state to keep.
     if (signal.aborted || readThread(db, folder).erred) return;

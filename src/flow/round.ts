@@ -20,9 +20,8 @@ import {
   whoRunsTheSuite,
 } from "./decide.ts";
 import { fetchInto, pushCommit } from "./git.ts";
-import { noteForLead, typeLeadNotes } from "./lead.ts";
 import { endLimit, limitOn, reachLimit, tellOfLimit, waitUntil } from "./limits.ts";
-import { dropOldEvents, queueMessage } from "./messages.ts";
+import { dropOldEvents, noteForLead, queueMessage, typeLeadNotes } from "./messages.ts";
 import { Queue } from "./queue.ts";
 import { type Limited, type Review, review } from "./reviewer.ts";
 import { cloneOf, readThread, record, repositoryOf, type Thread, threadName } from "./thread.ts";

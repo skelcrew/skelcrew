@@ -21,7 +21,7 @@ import { type Item, openTasks, prOf, saveItems } from "./copy.ts";
 import { ciState, decide, labeledToStart, type PullRequest } from "./decide.ts";
 import { endThread, removing, tellBuilder, tellingEvents } from "./events.ts";
 import { fetchInto, onRemote } from "./git.ts";
-import { noteForLead, typeLeadNotes } from "./lead.ts";
+import { noteForLead, typeLeadNotes } from "./messages.ts";
 import { forgeKnown, fullNameIs, repositories } from "./repo.ts";
 import { needsYou } from "./status.ts";
 import { readThread, record, Thread, threadName } from "./thread.ts";
