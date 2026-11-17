@@ -5,7 +5,6 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import { harnessNamed } from "../agents/harness.ts";
-import instructions from "../agents/prompts/builder.md" with { type: "text" };
 import { refuseCredentials, setupCommand } from "../agents/sandbox.ts";
 import {
   agentRuns,
@@ -18,6 +17,7 @@ import {
 import { repositorySetup, threadConfig } from "../config.ts";
 import { cloneDir, threadSocket } from "../paths.ts";
 import { trackerOf } from "../plugins/ask.ts";
+import { builtInRole } from "../roles.ts";
 import { quietly } from "../run.ts";
 import { errorText } from "../say.ts";
 import { taskOf, threadTask } from "./copy.ts";
@@ -347,7 +347,7 @@ export async function startBuilder(db: Database, tmux: string, thread: Thread): 
     // task in its own words, and the builder still has it after a long conversation is
     // compacted. It asks the builder to ask you only when it must: its question waits on a
     // screen nobody watches.
-    system: instructions,
+    system: builtInRole("builder").instructions,
     ...start,
   });
   // Start it in its own tmux session, then watch a moment for it to exit at once, so a broken
