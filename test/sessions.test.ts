@@ -11,7 +11,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir, userInfo } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { claude } from "../src/agents/claude.ts";
 import { codex } from "../src/agents/codex.ts";
 import {
@@ -314,13 +314,20 @@ test("interrupting a session sends its agent Esc", async () => {
 test("nothing outside the sessions module runs tmux for agents", () => {
   const src = join(import.meta.dir, "..", "src");
   const module = ["agents/sessions.ts", "agents/tmux.ts"];
+  const runner = join(src, "agents", "tmux.ts");
   const found: string[] = [];
   for (const file of new Bun.Glob("**/*.ts").scanSync(src)) {
     if (module.includes(file)) continue;
     const text = readFileSync(join(src, file), "utf8");
-    // tmux() and mustTmux() run a command on any server they are given.
-    const runner = text.match(/import \{([^}]*)\} from "[./]*\/agents\/tmux\.ts"/)?.[1] ?? "";
-    if (/\b(tmux|mustTmux)\b/.test(runner)) found.push(`${file} imports the tmux runner`);
+    // tmux() and mustTmux() run a command on any server they are given. Each import's path is
+    // resolved from its file, as src/agents/ names the runner ./tmux.ts. A whole module, by
+    // import * or a dynamic import, would bring the runner too.
+    const imports = text.matchAll(/import\s+([^;]*?)\s+from\s+"([^"]+)"|import\(\s*"([^"]+)"/g);
+    for (const [, names = "*", path = "", dynamic = ""] of imports) {
+      const resolved = join(src, dirname(file), path || dynamic);
+      if (resolved === runner && /\*|\b(tmux|mustTmux)\b/.test(names))
+        found.push(`${file} imports the tmux runner`);
+    }
     // tmux started directly, on a server named with -L, may only be the screen's own.
     for (const line of text.split("\n"))
       if (/tmux"?,?\s+"?-L/.test(line) && !line.includes("screenSocket("))
