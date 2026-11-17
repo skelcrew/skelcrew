@@ -482,6 +482,18 @@ describe.skipIf(insideSandbox)("needs you", () => {
     await until(() => notes() === 1);
   }, 60_000);
 
+  // The clone's own settings could hide a new file from git status, and with it the work.
+  test("a new file a clone's settings hide from git status still needs you", async () => {
+    addApp();
+    await startApp12();
+    submittedAsReviewing();
+    const clone = join(data(), "threads", "app-12");
+    git(clone, "config", "status.showUntrackedFiles", "no");
+    writeFileSync(join(clone, "export.ts"), "export {};\n");
+    await hook("stop", JSON.stringify({ last_assistant_message: "Started on the export." }));
+    await untilNeedsYou(true);
+  }, 60_000);
+
   test("a turn that ends on an error needs you for the error alone", async () => {
     addApp();
     await startApp12();

@@ -242,8 +242,9 @@ export async function reportTurnEnded(): Promise<void> {
   const message = input.success ? (input.data.last_assistant_message ?? "") : "";
   const said = message.trim().split("\n")[0]?.trim();
   // The hook runs in the builder's own clone, inside its sandbox. Untracked files count as work
-  // left over. A folder git can't read sends no commit, so the turn counts as new work.
-  const status = await quietly(["git", "status", "--porcelain"]);
+  // left over, whatever the clone's settings say about showing them. A folder git can't read
+  // sends no commit, so the turn counts as new work.
+  const status = await quietly(["git", "status", "--porcelain", "--untracked-files=all"]);
   const head = await quietly(["git", "rev-parse", "--verify", "HEAD"]);
   const clean = status.ok && status.out.trim() === "" && head.ok;
   await request({
