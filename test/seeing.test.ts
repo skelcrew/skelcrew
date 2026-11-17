@@ -18,6 +18,7 @@ import {
   runSkel,
   source,
   startDaemon,
+  threadSql,
   until,
 } from "./harness.ts";
 
@@ -91,11 +92,10 @@ openDb().run(${JSON.stringify(statements)});`;
 // builders running, so the daemon leaves them be as it starts.
 function threads(): void {
   sql(`INSERT INTO repositories (name, owner, repo) VALUES ('app', 'simon', 'app'), ('site', 'simon', 'site');
-INSERT INTO threads (owner, repo, task, folder, branch, status, needs_you, session, title, short) VALUES
-  ('simon', 'app', 3, 'app-3', 'skelcrew/3', 'done', 0, NULL, 'Fix typo', 'Typo'),
-  ('simon', 'site', 7, 'site-7', 'skelcrew/7', 'waiting', 1, 's7', 'Add docs', NULL),
-  ('simon', 'app', 12, 'app-12', 'skelcrew/12', 'working', 0, 's12', 'Add export', 'JSON export'),
-  ('simon', 'app', 9, 'app-9', 'skelcrew/9', 'failed', 0, NULL, 'Send people back to the page they came from after signing in', NULL);`);
+${threadSql({ task: "3", status: "done", title: "Fix typo", short: "Typo" })}
+${threadSql({ repo: "site", task: "7", status: "waiting", needs_you: 1, session: "s7", title: "Add docs" })}
+${threadSql({ task: "12", session: "s12", title: "Add export", short: "JSON export" })}
+${threadSql({ task: "9", status: "failed", title: "Send people back to the page they came from after signing in" })}`);
   for (const live of ["site-7", "app-12"])
     Bun.spawnSync([
       "tmux",
@@ -202,8 +202,7 @@ describe("sc ps", () => {
   // A stopped thread can keep the fields of the review its stop cancelled.
   test("says a stopped thread is stopped, not queued for review", async () => {
     sql(`INSERT INTO repositories (name, owner, repo) VALUES ('app', 'simon', 'app');
-INSERT INTO threads (owner, repo, task, folder, branch, status, session, title, reviewing, queued)
-  VALUES ('simon', 'app', 3, 'app-3', 'skelcrew/3', 'stopped', NULL, 'Old', 'abc', 5);`);
+${threadSql({ task: "3", status: "stopped", title: "Old", reviewing: "abc", queued: 5 })}`);
     serve();
     await untilAnswers();
     const listed = await skel(["ps"]);
@@ -426,8 +425,7 @@ describe("sc issue show", () => {
 
   // A thread with no task in the tracker shows the title and body it started with.
   test("shows a thread with no task in the tracker, with the lead's messages", async () => {
-    sql(`INSERT INTO threads (owner, repo, task, folder, branch, status, session, title, body)
-      VALUES ('simon', 'app', 't1', 'app-t1', 'skelcrew/t1', 'working', 's1', 'Add docs', 'A page.')`);
+    sql(threadSql({ task: "t1", session: "s1", title: "Add docs", body: "A page." }));
     tmux("new-session", "-d", "-s", "app-t1", "stty -echo; echo ❯; exec sleep 300");
     serve();
     await untilAnswers();
@@ -447,7 +445,8 @@ describe("sc issue show", () => {
   // never see its old messages, and a merged thread's issue is closed.
   test("shows a done thread's task without its messages, and its closed issue as missing", async () => {
     const updates = JSON.stringify([{ from: "lead", at: 0, text: "Keep the CSV export too." }]);
-    sql(`UPDATE threads SET status = 'done', updates = '${updates}' WHERE task IN ('12', '3')`);
+    sql(`UPDATE threads SET status = 'done' WHERE task IN ('12', '3');
+UPDATE tasks SET updates = '${updates}' WHERE task IN ('12', '3')`);
     serve();
     await untilAnswers();
     const shown = await skel(["issue", "show", "app-12"]);
@@ -486,12 +485,10 @@ function forgeThreads(): string {
   sql(`INSERT INTO repositories (name, owner, repo, forge, claimed, remote) VALUES
   ('app', 'simon', 'app', 'github', 1, 'https://github.com/simon/app.git'),
   ('site', 'simon', 'site', NULL, 1, 'https://example.com/simon/site.git');
-INSERT INTO threads (owner, repo, task, folder, branch, status, session, title, short, pr, checks,
-    rounds, verdict, review_round, review_at, reviewing) VALUES
-  ('simon', 'app', 9, 'app-9', 'skelcrew/9', 'failed', NULL, 'Old', NULL, NULL, NULL, 0, NULL, NULL, NULL, NULL),
-  ('simon', 'app', 12, 'app-12', 'skelcrew/12', 'waiting', 's12', 'Add' || char(10) || 'export', 'JSON export', 31, 'failing', 3, 'changes', 3, 1763290800000, NULL),
-  ('simon', 'app', 14, 'app-14', 'skelcrew/14', 'waiting', 's14', 'Fix login', NULL, 33, 'pending', 1, 'changes', 1, 1763294400000, 'abc'),
-  ('simon', 'site', 7, 'site-7', 'skelcrew/7', 'waiting', 's7', 'Add docs', NULL, NULL, NULL, 0, 'approve', 1, 1763290800000, NULL);`);
+${threadSql({ task: "9", status: "failed", title: "Old" })}
+${threadSql({ task: "12", status: "waiting", session: "s12", title: "Add\nexport", short: "JSON export", pr: 31, checks: "failing", rounds: 3, verdict: "changes", review_round: 3, review_at: 1763290800000 })}
+${threadSql({ task: "14", status: "waiting", session: "s14", title: "Fix login", pr: 33, checks: "pending", rounds: 1, verdict: "changes", review_round: 1, review_at: 1763294400000, reviewing: "abc" })}
+${threadSql({ repo: "site", task: "7", status: "waiting", session: "s7", title: "Add docs", verdict: "approve", review_round: 1, review_at: 1763290800000 })}`);
   const bot = { login: "skelcrew[bot]", bot: true, you: false, push: false };
   sql(
     itemSql("app", "pr", 31, "Add\x07export", "2026-11-05T10:00:00Z", {
@@ -525,12 +522,10 @@ INSERT INTO threads (owner, repo, task, folder, branch, status, session, title, 
 // its push, as its clone was never set up. app-19 failed while CI still ran on its PR, and CI
 // passed after, which only the copy of its PR has heard.
 function moreThreads(): void {
-  sql(`INSERT INTO threads (owner, repo, task, folder, branch, status, session, title, pr, checks,
-    rounds, needs_you, asking, verdict, review_round, reviewing, submitting) VALUES
-  ('simon', 'app', 16, 'app-16', 'skelcrew/16', 'waiting', 's16', 'Asks', 35, NULL, 2, 0, 1, 'changes', 2, 'def', NULL),
-  ('simon', 'app', 17, 'app-17', 'skelcrew/17', 'waiting', 's17', 'Past', 36, NULL, 4, 1, 0, 'changes', 4, 'ghi', NULL),
-  ('simon', 'app', 18, 'app-18', 'skelcrew/18', 'waiting', 's18', 'Push', 37, NULL, 0, 0, 0, NULL, NULL, NULL, 'Go'),
-  ('simon', 'app', 19, 'app-19', 'skelcrew/19', 'failed', NULL, 'Late CI', 38, 'pending', 0, 0, 0, NULL, NULL, NULL, NULL);`);
+  sql(`${threadSql({ task: "16", status: "waiting", session: "s16", title: "Asks", pr: 35, rounds: 2, asking: 1, verdict: "changes", review_round: 2, reviewing: "def" })}
+${threadSql({ task: "17", status: "waiting", session: "s17", title: "Past", pr: 36, rounds: 4, needs_you: 1, verdict: "changes", review_round: 4, reviewing: "ghi" })}
+${threadSql({ task: "18", status: "waiting", session: "s18", title: "Push", pr: 37, submitting: "Go" })}
+${threadSql({ task: "19", status: "failed", title: "Late CI", pr: 38, checks: "pending" })}`);
   sql(
     itemSql("app", "pr", 38, "Late CI", "2026-11-08T10:00:00Z", {
       checks: [{ name: "test", id: "601", state: "passed" }],

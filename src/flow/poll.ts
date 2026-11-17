@@ -52,7 +52,7 @@ async function startLabeled(
   // Every thread the repository ever had counts, ended ones too, so the tasks to start are
   // those labeled with no thread at all, and not being started by sc start.
   const threads = db
-    .query("SELECT * FROM threads WHERE owner = ? AND repo = ?")
+    .query("SELECT * FROM task_threads WHERE owner = ? AND repo = ?")
     .all(owner, repo)
     .map((row) => Thread.parse(row));
   const labeled = openTasks(db, owner, repo).filter((task) => {
@@ -291,7 +291,7 @@ export function pollRepositories(
   // The threads a poll looks after. A stopped thread's PR or branch still merges or closes.
   const threadsToPoll = () =>
     db
-      .query("SELECT * FROM threads WHERE status IN ('working', 'waiting', 'stopped')")
+      .query("SELECT * FROM task_threads WHERE status IN ('working', 'waiting', 'stopped')")
       .all()
       .map((row) => Thread.parse(row));
   const poll = (owner: string, repo: string): Promise<void> => {

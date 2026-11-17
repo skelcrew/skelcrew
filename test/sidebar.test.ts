@@ -12,7 +12,7 @@ import type { EntryCount } from "../src/screen/lists.ts";
 import { nextList, nextRow, rowAtLine } from "../src/screen/moves.ts";
 import { type Row, threadAge } from "../src/screen/rows.ts";
 import { sidebarWidth } from "../src/screen/screen.ts";
-import { source } from "./harness.ts";
+import { source, threadSql } from "./harness.ts";
 
 const row = {
   title: null,
@@ -1012,10 +1012,8 @@ console.log(JSON.stringify(sidebarRows(db, ["lead", "app-12"], () => 3, ${now}, 
   const repository = `INSERT INTO repositories (name, owner, repo, kept_lead, lead_session)
     VALUES ('app', 'simon', 'app', 1, 's');`;
   // Returns the sidebar with one thread that started at 0, in the state given, at a moment.
-  function shown(columns: string, values: string, now: number): string {
-    const sql = `${repository} INSERT INTO threads
-      (owner, repo, task, folder, branch, started, ${columns})
-      VALUES ('simon', 'app', 12, 'app-12', 'skelcrew/12', 0, ${values})`;
+  function shown(row: Record<string, string | number | null>, now: number): string {
+    const sql = `${repository} ${threadSql({ task: "12", started: 0, ...row })}`;
     return draw(rowsAfter(sql, now), "lead", size);
   }
   const hours = (n: number) => n * 3_600_000;
@@ -1029,21 +1027,19 @@ console.log(JSON.stringify(sidebarRows(db, ["lead", "app-12"], () => 3, ${now}, 
   });
 
   test("a thread shows the harness its builder runs on, and Claude Code for one from before", () => {
-    expect(shown("status, harness", "'working', 'codex'", 0)).toContain("codex · <1m");
-    expect(shown("status", "'working'", 0)).toContain("claude · <1m");
+    expect(shown({ harness: "codex" }, 0)).toContain("codex · <1m");
+    expect(shown({}, 0)).toContain("claude · <1m");
   });
 
   // A stopped thread needs nothing and doesn't change, so only the active ones are listed.
   test("THREADS has only active threads, newest first, and no stopped or done one", () => {
-    const sql = `${repository} INSERT INTO threads (owner, repo, task, folder, branch, status)
-      VALUES ('simon', 'app', 1, 'app-1', 'b', 'working'), ('simon', 'app', 2, 'app-2', 'b', 'stopped'),
-        ('simon', 'app', 3, 'app-3', 'b', 'waiting'), ('simon', 'app', 4, 'app-4', 'b', 'stopped'),
-        ('simon', 'app', 5, 'app-5', 'b', 'failed'), ('simon', 'app', 6, 'app-6', 'b', 'done')`;
+    const statuses = ["working", "stopped", "waiting", "stopped", "failed", "done"];
+    const sql = `${repository} ${statuses.map((status, i) => threadSql({ task: String(i + 1), status })).join("\n")}`;
     expect(rowsAfter(sql, 0).map((row) => row.name)).toEqual(["lead", "app-5", "app-3", "app-1"]);
   });
 
   test("a working thread shows how long ago it started, and the lead shows no time", () => {
-    expect(listed(shown("status", "'working'", hours(2)))).toEqual([
+    expect(listed(shown({}, hours(2)))).toEqual([
       "  ◆ lead",
       "    running · claude",
       "  ● 12 app-12",
@@ -1054,7 +1050,7 @@ console.log(JSON.stringify(sidebarRows(db, ["lead", "app-12"], () => 3, ${now}, 
 
   // A thread started at 0 whose builder was typed to an hour later has worked for an hour.
   test("a working thread's time counts from the start of its current stretch of work", () => {
-    const frame = shown("status, working_since", `'working', ${hours(1)}`, hours(2));
+    const frame = shown({ working_since: hours(1) }, hours(2));
     expect(listed(frame)[3]).toBe("    claude · 1h");
   });
 
@@ -1072,13 +1068,12 @@ console.log(JSON.stringify(sidebarRows(db, ["lead", "app-12"], () => 3, ${now}, 
   // A working thread whose builder has nothing to read, or nothing that makes sense, still has
   // its row: the sidebar must go on drawing whatever the agent left in its folder.
   test("a working thread's row stands when its conversation is missing, empty, half-written or nonsense", () => {
-    const rows = (columns: string, values: string) =>
-      listed(shown(`status, ${columns}`, `'working', ${values}`, 0)).slice(2);
+    const rows = (row: Record<string, string | null>) => listed(shown(row, 0)).slice(2);
     const plainRow = ["  ● 12 app-12", "    claude · <1m", "    working"];
     // No session yet, then a session whose file isn't there yet, on either harness.
-    expect(rows("session", "NULL")).toEqual(plainRow);
-    expect(rows("session", "'s1'")).toEqual(plainRow);
-    expect(rows("session, harness", "'s1', 'codex'")).toEqual([
+    expect(rows({ session: null })).toEqual(plainRow);
+    expect(rows({ session: "s1" })).toEqual(plainRow);
+    expect(rows({ session: "s1", harness: "codex" })).toEqual([
       "  ● 12 app-12",
       "    codex · <1m",
       "    working",
@@ -1086,9 +1081,9 @@ console.log(JSON.stringify(sidebarRows(db, ["lead", "app-12"], () => 3, ${now}, 
     // An empty file, a folder where the file should be, and lines that aren't what a harness
     // writes.
     writeFileSync(join(claudeFolder(), "empty.jsonl"), "");
-    expect(rows("session", "'empty'")).toEqual(plainRow);
+    expect(rows({ session: "empty" })).toEqual(plainRow);
     mkdirSync(join(claudeFolder(), "folder.jsonl"));
-    expect(rows("session", "'folder'")).toEqual(plainRow);
+    expect(rows({ session: "folder" })).toEqual(plainRow);
     const nonsense = [
       "not json",
       "[]",
@@ -1099,12 +1094,12 @@ console.log(JSON.stringify(sidebarRows(db, ["lead", "app-12"], () => 3, ${now}, 
       '{"type":"assistant","message":{"id":"m","content":[null,{"type":"tool_use","name":"Bash","input":null}]}}',
     ];
     writeFileSync(join(claudeFolder(), "nonsense.jsonl"), `${nonsense.join("\n")}\n`);
-    expect(rows("session", "'nonsense'")).toEqual(plainRow);
+    expect(rows({ session: "nonsense" })).toEqual(plainRow);
     // A last line still being written is left for the next read.
     const usage = { input_tokens: 1, cache_creation_input_tokens: 0, output_tokens: 849 };
     const whole = JSON.stringify({ type: "assistant", message: { id: "m1", usage } });
     writeFileSync(join(claudeFolder(), "half.jsonl"), `${whole}\n{"type":"assistant","mess`);
-    expect(rows("session", "'half'")[1]).toBe("    claude · <1m · 850 tok");
+    expect(rows({ session: "half" })[1]).toBe("    claude · <1m · 850 tok");
   });
 
   // A line too long for one read would hold every later read where it began.
@@ -1122,9 +1117,7 @@ console.log(JSON.stringify(sidebarRows(db, ["lead", "app-12"], () => 3, ${now}, 
     const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
 import { sidebarRows } from ${JSON.stringify(source("screen/rows.ts"))};
 const db = openDb();
-db.run(${JSON.stringify(`${repository} INSERT INTO threads
-  (owner, repo, task, folder, branch, started, status, session)
-  VALUES ('simon', 'app', 12, 'app-12', 'skelcrew/12', 0, 'working', 's1')`)});
+db.run(${JSON.stringify(`${repository} ${threadSql({ task: "12", started: 0, session: "s1" })}`)});
 const app = { owner: "simon", repo: "app", lead: "lead" };
 const looks = [0, 10_000, 20_000].map((now) => sidebarRows(db, [], () => 3, now, app)[1]);
 console.log(JSON.stringify(looks.map((row) => [row?.tokens, row?.step])));`;
@@ -1159,31 +1152,31 @@ console.log(JSON.stringify(looks.map((row) => [row?.tokens, row?.step])));`;
       answer("msg_2", { type: "text", text: "Done" }),
     ];
     writeFileSync(join(folder, "s1.jsonl"), `${lines.join("\n")}\n`);
-    const frame = listed(shown("status, session", "'working', 's1'", 0));
+    const frame = listed(shown({ session: "s1" }, 0));
     expect(frame.slice(3)).toEqual(["    claude · <1m · 61k tok · ▰▱ 1/2", "    Reading db.ts"]);
   });
 
   test("a thread that isn't working reads nothing of its builder's conversation", () => {
-    const frame = shown("status, verdict, session", "'waiting', 'approve', 's1'", 0);
+    const frame = shown({ status: "waiting", verdict: "approve", session: "s1" }, 0);
     expect(plain(frame)).not.toContain("tok");
   });
 
   test("only a working thread has a time, so nothing else changes as time passes", () => {
     const quiet = [
-      ["status, verdict", "'waiting', 'approve'"],
-      ["status, reviewing", "'waiting', 'abc'"],
-      ["status, needs_you, verdict", "'waiting', 1, 'approve'"],
-      ["status, asking", "'working', 1"],
-      ["status, stalled", "'working', 1"],
-      ["status, erred", "'working', 1"],
-      ["status, needs_you, rounds", "'working', 1, 4"],
-      ["status", "'stopped'"],
-      ["status", "'failed'"],
-    ] as const;
-    for (const [columns, values] of quiet) {
-      const frame = shown(columns, values, hours(2));
+      { status: "waiting", verdict: "approve" },
+      { status: "waiting", reviewing: "abc" },
+      { status: "waiting", needs_you: 1, verdict: "approve" },
+      { asking: 1 },
+      { stalled: 1 },
+      { erred: 1 },
+      { needs_you: 1, rounds: 4 },
+      { status: "stopped" },
+      { status: "failed" },
+    ];
+    for (const row of quiet) {
+      const frame = shown(row, hours(2));
       expect(plain(frame)).not.toMatch(/ · \d/);
-      expect(shown(columns, values, hours(30))).toBe(frame);
+      expect(shown(row, hours(30))).toBe(frame);
     }
   });
 
@@ -1215,8 +1208,7 @@ console.log(JSON.stringify(repositoryTabs(db)));`;
   });
 
   test("a thread with no start time saved shows none", () => {
-    const sql = `${repository} INSERT INTO threads (owner, repo, task, folder, branch, status)
-      VALUES ('simon', 'app', 12, 'app-12', 'skelcrew/12', 'working')`;
+    const sql = `${repository} ${threadSql({ task: "12" })}`;
     const [, older] = rowsAfter(sql, 5_000);
     expect(older?.word).toBe("working");
     expect(older?.age).toBe("");

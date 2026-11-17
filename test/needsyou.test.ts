@@ -214,7 +214,7 @@ function workingSince(): number | null {
 function thread(): Record<string, unknown> {
   const db = new Database(join(data(), "skelcrew.db"));
   db.run("PRAGMA busy_timeout = 5000");
-  const row = db.query("SELECT * FROM threads WHERE folder = 'app-12'").get();
+  const row = db.query("SELECT * FROM task_threads WHERE folder = 'app-12'").get();
   db.close();
   return row && typeof row === "object" ? { ...row } : {};
 }
