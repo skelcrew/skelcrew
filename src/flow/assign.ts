@@ -3,7 +3,7 @@
 import type { Database } from "bun:sqlite";
 import { assignTask, claimTask, trackerOf } from "../plugins/ask.ts";
 import { errorText } from "../say.ts";
-import { readThread, record, repositoryOf, type Thread, threadName } from "./thread.ts";
+import { ownTask, readThread, record, repositoryOf, type Thread, threadName } from "./thread.ts";
 
 // The last claim, assignment or removal asked for each thread, by its folder. Each waits for
 // the one before it, so they reach the tracker in the order asked. Otherwise sc start right
@@ -28,11 +28,11 @@ function inOrder(folder: string, failed: string, work: () => Promise<void>): voi
 // Claims the thread's issue, when `claim` says to, and assigns it to you, then saves that
 // Skelcrew assigned you, when it did. sc start claims as a labeled start does, so the issue shows
 // Skelcrew took it, but starts the thread whatever the answer. A thread with no issue, such as
-// app-t1, or in a repository with no tracker, has nothing to assign.
+// app-wr1, or in a repository with no tracker, has nothing to assign.
 export function assignIssue(db: Database, thread: Thread, claim: boolean): void {
   inOrder(thread.folder, `couldn't assign you ${thread.folder}'s issue`, async () => {
     const repository = repositoryOf(db, thread);
-    if (/^t\d+$/.test(thread.task) || trackerOf(db, repository) === null) return;
+    if (ownTask(thread.task) || trackerOf(db, repository) === null) return;
     const name = threadName(db, thread);
     if (claim)
       await claimTask(db, repository, thread.task).catch((error) =>

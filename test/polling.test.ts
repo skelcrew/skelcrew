@@ -14,9 +14,10 @@ import {
   writeFileSync,
 } from "node:fs";
 import { Socket } from "node:net";
-import { tmpdir, userInfo } from "node:os";
+import { hostname, tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import type { Subprocess } from "bun";
+import { codeOf } from "../src/db.ts";
 import { leadPlaces } from "../src/paths.ts";
 import {
   answer,
@@ -33,6 +34,8 @@ import {
   writeScript,
 } from "./harness.ts";
 
+// This machine's code, which names the threads sc start begins with no issue, such as app-wr1.
+const own = codeOf(hostname());
 const main = source("main.ts");
 const daemon = source("flow/daemon.ts");
 let home = "";
@@ -1376,7 +1379,7 @@ echo "Not logged in"; exit 1`,
     );
     expect(started.stderr.toString()).toBe("");
     await until(() => thread().status === "waiting", 30_000);
-    Bun.spawnSync([process.execPath, main, "stop", "app-t1"], { env: env() });
+    Bun.spawnSync([process.execPath, main, "stop", `app-${own}1`], { env: env() });
     expect(thread().status).toBe("stopped");
     expect([...claims(), ...assigns()]).toEqual([]);
   }, 60_000);

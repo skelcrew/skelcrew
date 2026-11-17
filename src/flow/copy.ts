@@ -17,7 +17,7 @@ const Author = z.object({
 // A comment on an item, or the text of a review on a PR.
 const Comment = z.object({ id: z.string(), text: z.string(), author: Author.nullable() });
 
-// A task's ID in its tracker, or Skelcrew's own for a thread with no task there, such as t1. It
+// A task's ID in its tracker, or Skelcrew's own for a thread with no task there, such as wr1. It
 // names the thread's folder, which setup deletes, and its branch, so it holds only letters,
 // digits, underscores and dashes, starting with a letter or digit: never a / or a .. that
 // would reach outside Skelcrew's threads folder.

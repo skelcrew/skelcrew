@@ -1,6 +1,7 @@
 // Skelcrew's state on this machine: one SQLite file.
 import { Database } from "bun:sqlite";
 import { mkdirSync, rmSync } from "node:fs";
+import { hostname } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import { dataDir } from "./paths.ts";
@@ -114,7 +115,7 @@ const hasTasks = (db: Database) =>
   db.query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'tasks'").get() !== null;
 
 // Creates the tasks table: one row per task, named by its repository and its ID, such as 12 or
-// t1, as its threads name it.
+// wr1, as its threads name it.
 function createTasks(db: Database): void {
   const columns = Object.entries(taskColumns).map(([column, type]) => `${column} ${type}`);
   db.run(`CREATE TABLE tasks (
@@ -173,9 +174,35 @@ export function moveToTasks(db: Database): void {
   }).immediate();
 }
 
+// Returns two lowercase letters from a machine's name, such as wr for workbox or sl for
+// simon-laptop, to name the threads it starts with no issue. Two machines on one repository
+// then name theirs apart, such as app-wr4 and app-sl4. A name of several words gives its first
+// two initials. One word gives its first letter and the next consonant after it, which reads
+// more like the word than its second letter does. A name with too few letters pads with x.
+export function codeOf(name: string): string {
+  // The words of the name, without a domain such as .local, which every Mac has.
+  const [first = "", second] =
+    name
+      .toLowerCase()
+      .split(".")[0]
+      ?.match(/[a-z]+/g) ?? [];
+  const next = second?.[0] ?? first.slice(1).match(/[^aeiou]/)?.[0] ?? first.slice(1, 2);
+  return `${first.slice(0, 1)}${next}`.padEnd(2, "x");
+}
+
+// Returns this machine's code, which names the threads it starts with no issue.
+export function machineCode(db: Database): string {
+  return z.object({ code: z.string() }).parse(db.query("SELECT code FROM machine").get()).code;
+}
+
 // Creates the tables Skelcrew keeps, and adds the columns a database from an earlier release
 // lacks, leaving everything already there as it is.
 function prepareTables(db: Database): void {
+  // The machine's code, chosen from its name at the first run and kept, so renaming the machine
+  // never renames the threads it starts after.
+  db.run("CREATE TABLE IF NOT EXISTS machine (code TEXT NOT NULL)");
+  if (!db.query("SELECT 1 FROM machine").get())
+    db.run("INSERT INTO machine (code) VALUES (?)", [codeOf(hostname())]);
   db.run(`CREATE TABLE IF NOT EXISTS repositories (
     owner TEXT NOT NULL,
     repo TEXT NOT NULL,

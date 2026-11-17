@@ -8,7 +8,7 @@ import { type Item, itemAt, openPrs, openTasks } from "../flow/copy.ts";
 import { needsDecision, readyToMerge, type Shown, shownOf } from "../flow/marks.ts";
 import { repositories } from "../flow/repo.ts";
 import type { DaemonRequest } from "../flow/requests.ts";
-import { Thread, threadName } from "../flow/thread.ts";
+import { ownTask, Thread, threadName } from "../flow/thread.ts";
 import { forgeOf, trackerOf } from "../plugins/ask.ts";
 import { green, grey, markColours, yellow } from "./look.ts";
 import { type Open, onReviewer } from "./rows.ts";
@@ -220,11 +220,11 @@ function threadGroups(threads: Known[], now: number): Group[] {
     const { thread, word } = open;
     // Only a review is on another harness, held on a usage limit or not, and a thread with no
     // harness saved started before Skelcrew saved it, when builders ran only on Claude Code. A
-    // thread with no issue in the tracker has a task such as t1.
+    // thread with no issue in the tracker has a task such as wr1.
     const harness = onReviewer(thread, word)
       ? (thread.reviewer ?? "")
       : (thread.harness ?? "claude");
-    const issue = /^t\d+$/.test(thread.task) ? "" : `#${thread.task}`;
+    const issue = ownTask(thread.task) ? "" : `#${thread.task}`;
     const refs = [issue, thread.pr === null ? "" : `#${thread.pr}`].filter(Boolean).join(" ");
     const changed = thread.changed ?? thread.started;
     const row: ListRow = {

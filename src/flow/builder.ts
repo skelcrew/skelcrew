@@ -15,6 +15,7 @@ import {
   startSession,
 } from "../agents/sessions.ts";
 import { repositoryCommands, threadConfig } from "../config.ts";
+import { machineCode } from "../db.ts";
 import { cloneDir, threadSocket } from "../paths.ts";
 import { trackerOf } from "../plugins/ask.ts";
 import { builtInRole } from "../roles.ts";
@@ -30,6 +31,7 @@ import {
   cloneOf,
   folderName,
   log,
+  ownTask,
   readThread,
   record,
   repositoryOf,
@@ -61,9 +63,9 @@ export function statusOnceBack(stopped: Thread): "waiting" | "working" {
 
 // Records a new thread and returns it. Its task is either one of the tracker's, with its title
 // and body from Skelcrew's copy, which sc start brings up to date first, or a given title and
-// body. A given one becomes a task of the repository's own, named t1, t2 and on. That works
-// with a tracker too, so you can start work without filing it. Refuses a task the copy doesn't
-// have open. Refuses a task that has a thread already, unless that thread failed or is done,
+// body. A given one becomes a task of the repository's own, named by the machine's code and a
+// number, such as wr1, wr2 and on. That works with a tracker too, so you can start work without
+// filing it. Refuses a task the copy doesn't have open. Refuses a task that has a thread already, unless that thread failed or is done,
 // such as after sc rm: then it starts over in the same folder. It only records the thread,
 // since the lead waits on the answer. Setting up its clone and starting its builder come
 // after, and can take minutes. `given` is a start request, so its `repo` is the repository's
@@ -84,12 +86,14 @@ export async function startThread(
   let title: string;
   let body: string;
   if ("title" in given) {
-    // The highest number of the repository's own tasks, to name the next one.
+    // The highest number of the repository's own tasks this machine started, to name the next
+    // one. Those from before machines had codes, such as t4, keep their names and don't count.
+    const code = machineCode(db);
     const ownTaskNumbers = db
-      .query("SELECT task FROM threads WHERE owner = ? AND repo = ? AND task GLOB 't[0-9]*'")
-      .all(owner, repo)
-      .map((row) => Number(z.object({ task: z.string() }).parse(row).task.slice(1)));
-    task = `t${Math.max(0, ...ownTaskNumbers) + 1}`;
+      .query("SELECT task FROM threads WHERE owner = ? AND repo = ? AND task GLOB ?")
+      .all(owner, repo, `${code}[0-9]*`)
+      .map((row) => Number(z.object({ task: z.string() }).parse(row).task.slice(code.length)));
+    task = `${code}${Math.max(0, ...ownTaskNumbers) + 1}`;
     ({ title, body } = given);
   } else {
     // A named task takes its words from Skelcrew's copy of the tracker. One of the repository's
@@ -99,7 +103,7 @@ export async function startThread(
     const had = Thread.nullable().parse(
       db.query(`SELECT * FROM task_threads ${where}`).get(owner, repo, task),
     );
-    if (tracked && !/^t\d+$/.test(task)) {
+    if (tracked && !ownTask(task)) {
       const found = taskOf(db, owner, repo, task);
       if (found.state !== "open") throw new Error(`there is no open issue ${task} in ${name}`);
       ({ title, body } = found);

@@ -56,7 +56,15 @@ import {
   turnFailed,
 } from "./status.ts";
 import { messageBuilder, messageLead } from "./tell.ts";
-import { findThread, liveThreads, record, type Thread, threadName, threadOn } from "./thread.ts";
+import {
+  findThread,
+  liveThreads,
+  ownTask,
+  record,
+  type Thread,
+  threadName,
+  threadOn,
+} from "./thread.ts";
 
 // Tries to hold the daemon lock and returns whether this process owns it, preventing
 // duplicate daemons. The kernel lets go of it when the process ends, however it ends, so a
@@ -363,8 +371,9 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         const name = threadName(db, thread);
         await removeThread(db, sessions, thread, request.reason);
         // The issue it worked on stays open in the tracker, so sc rm can say so. A thread
-        // started on what you told the lead is numbered with a t, such as app-t1, and has none.
-        return { removed: name, issue: /^t\d+$/.test(thread.task) ? null : thread.task };
+        // started on what you told the lead is named by the machine's code, such as app-wr1,
+        // and has none.
+        return { removed: name, issue: ownTask(thread.task) ? null : thread.task };
       }
       case "merge": {
         const repository = findRepository(db, request.repo);

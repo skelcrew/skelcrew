@@ -5,10 +5,11 @@ import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createConnection } from "node:net";
-import { tmpdir, userInfo } from "node:os";
+import { hostname, tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import type { Subprocess } from "bun";
 import { stillRunning } from "../src/agents/sessions.ts";
+import { codeOf } from "../src/db.ts";
 import {
   answer,
   asked,
@@ -25,6 +26,8 @@ import {
   until,
 } from "./harness.ts";
 
+// This machine's code, which names the threads sc start begins with no issue, such as app-wr1.
+const own = codeOf(hostname());
 const main = source("main.ts");
 let home = "";
 let socket = "";
@@ -793,10 +796,10 @@ nameRepositories(db);`;
     await untilAnswers();
     const run = await skel("start", "app", "Add export", "As JSON");
     expect(run.err).toBe("");
-    expect(run.out).toBe("Started app-t1.\n");
-    await until(() => read(join(config("app-t1"), "args")) !== "");
-    expect(read(join(config("app-t1"), "args"))).toContain("Add export\n\nAs JSON");
-    expect(thread()).toMatchObject({ task: "t1", title: "Add export", body: "As JSON" });
+    expect(run.out).toBe(`Started app-${own}1.\n`);
+    await until(() => read(join(config(`app-${own}1`), "args")) !== "");
+    expect(read(join(config(`app-${own}1`), "args"))).toContain("Add export\n\nAs JSON");
+    expect(thread()).toMatchObject({ task: `${own}1`, title: "Add export", body: "As JSON" });
     expect(asked(plugin).filter((q) => q.ask === "create task")).toEqual([]);
   }, 60_000);
 
@@ -808,9 +811,9 @@ nameRepositories(db);`;
     const task = '# Add export\n\n\nAs JSON, with "quotes" and $HOME.\nAnd dates.\n';
     const run = await runSkel(["start", "app"], env(), task);
     expect(run.err).toBe("");
-    expect(run.out).toBe("Started app-t1.\n");
+    expect(run.out).toBe(`Started app-${own}1.\n`);
     expect(thread()).toMatchObject({
-      task: "t1",
+      task: `${own}1`,
       title: "Add export",
       body: 'As JSON, with "quotes" and $HOME.\nAnd dates.\n',
     });
@@ -823,15 +826,15 @@ nameRepositories(db);`;
     await untilCloned();
     const named = await skel("start", "app", "Add export", "As JSON", "--short", "JSON export");
     expect(named.err).toBe("");
-    expect(named.out).toBe("Started app-t1.\n");
-    expect(thread()).toMatchObject({ task: "t1", title: "Add export", short: "JSON export" });
+    expect(named.out).toBe(`Started app-${own}1.\n`);
+    expect(thread()).toMatchObject({ task: `${own}1`, title: "Add export", short: "JSON export" });
     const piped = await runSkel(
       ["start", "app", "--short", "Notes"],
       env(),
       "Add notes\n\nAs text",
     );
     expect(piped.err).toBe("");
-    expect(piped.out).toBe("Started app-t2.\n");
+    expect(piped.out).toBe(`Started app-${own}2.\n`);
     const issue = await skel("start", "app-12", "--short", "Export");
     expect(issue.err).toBe("");
     expect(issue.out).toBe("Started app-12.\n");
@@ -840,8 +843,8 @@ nameRepositories(db);`;
     db.close();
     expect(shorts).toEqual([
       { task: 12, short: "Export" },
-      { task: "t1", short: "JSON export" },
-      { task: "t2", short: "Notes" },
+      { task: `${own}1`, short: "JSON export" },
+      { task: `${own}2`, short: "Notes" },
     ]);
     expect((await skel("start", "app-12", "--short", " ")).code).not.toBe(0);
     expect((await skel("start", "app-12", "--short")).code).not.toBe(0);

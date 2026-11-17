@@ -34,12 +34,12 @@ const agentRefusals: Record<string, string> = {
   "plugin ls": "listing plugins",
 };
 
-// Splits a task's name, such as app-13, or app-t1 for a thread with no tracker, into its
+// Splits a task's name, such as app-13, or app-wr1 for a thread with no tracker, into its
 // repository and task. Gives nothing when the word isn't a task's name. Repository names can
 // hold dashes, so the task is what follows the last one.
 function splitTaskName(word?: string): [string, string] | undefined {
   // The greedy first group takes every dash but the last.
-  const parts = word?.match(/^(.+)-(t?\d+)$/);
+  const parts = word?.match(/^(.+)-([a-z]{0,2}\d+)$/);
   return parts?.[1] && parts[2] ? [parts[1], parts[2]] : undefined;
 }
 

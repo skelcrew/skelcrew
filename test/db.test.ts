@@ -201,3 +201,47 @@ console.log(JSON.stringify({ before, start, recorded, logged: readThread(db, "ap
   expect(recorded).toBeLessThanOrEqual(end);
   expect(logged).toBeGreaterThanOrEqual(start);
 });
+
+// Threads with no issue are named by a code of the machine's, so two machines working on one
+// repository never both have an app-t4 meaning different work.
+test("a machine's code is two letters from its name, so names from two machines differ", async () => {
+  const { codeOf } = await import("../src/db.ts");
+  expect(codeOf("workbox")).toBe("wr");
+  expect(codeOf("laptop")).toBe("lp");
+  expect(codeOf("simon-laptop")).toBe("sl");
+  expect(codeOf("Simons-MacBook-Pro.local")).toBe("sm");
+  expect(codeOf("aeo")).toBe("ae");
+  expect(codeOf("x")).toBe("xx");
+  expect(codeOf("1234")).toBe("xx");
+});
+
+test("a database keeps the code it chose at its first run, and earlier t threads keep their names", () => {
+  const data = join(home, ".local", "share", "skelcrew");
+  mkdirSync(data, { recursive: true });
+  const old = new Database(join(data, "skelcrew.db"));
+  old.run("CREATE TABLE machine (code TEXT NOT NULL)");
+  old.run("INSERT INTO machine VALUES ('lp')");
+  old.close();
+  const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
+import { startThread } from ${JSON.stringify(source("flow/builder.ts"))};
+import { findThread, threadName } from ${JSON.stringify(source("flow/thread.ts"))};
+const db = openDb();
+db.run("INSERT INTO repositories (name, owner, repo, remote) VALUES ('app', 'simon', 'app', 'x')");
+db.run(${JSON.stringify(threadSql({ task: "t4", status: "done", title: "Old" }))});
+const names = [];
+for (const title of ["One", "Two"])
+  names.push(threadName(db, await startThread(db, { repo: "app", title, body: "b" })));
+console.log(JSON.stringify({ names, old: findThread(db, "app", "t4").folder,
+  branch: findThread(db, "app", "lp2").branch }));`;
+  const run = Bun.spawnSync([process.execPath, "-e", code], {
+    env: { ...process.env, HOME: home },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect(run.stderr.toString()).toBe("");
+  expect(JSON.parse(run.stdout.toString())).toEqual({
+    names: ["app-lp1", "app-lp2"],
+    old: "app-t4",
+    branch: "skelcrew/lp2-two",
+  });
+});

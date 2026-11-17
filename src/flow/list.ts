@@ -17,7 +17,7 @@ import { ciSummary, reviewVerdict } from "./page.ts";
 import { findRepository, noRepositories, repositories, repositoryAt } from "./repo.ts";
 import { roundRunning } from "./round.ts";
 import { needsYou } from "./status.ts";
-import { queuedForReview, Thread, threadName, threadOn } from "./thread.ts";
+import { ownTask, queuedForReview, Thread, threadName, threadOn } from "./thread.ts";
 
 // A repository as sc repo ls shows it. `missing` is a tracker its skelcrew.yaml names that
 // isn't installed, so it has none until you install that plugin.
@@ -283,7 +283,7 @@ export type PrPage = z.infer<typeof PrPage>;
 
 // One task as sc show shows it. `body` is its description as its reviewer gets it. `issue` is
 // the issue it came from, such as #12, with its link while Skelcrew's copy has it, or null for a
-// task with no issue, such as app-t1. `threads` names each of its threads with its role, such
+// task with no issue, such as app-wr1. `threads` names each of its threads with its role, such
 // as app-12/builder. `pr` is its PR's number, as sc ps gives it, and `review` where Skelcrew's
 // review stands, with a forge or without one. `prPage` is its PR from Skelcrew's copy, or null once the copy no longer has
 // it, as after a merge.
@@ -401,8 +401,8 @@ export async function showTask(
     thread && (current || !issue)
       ? threadTask(db, current ? thread : { ...thread, updates: [] })
       : { title: issue?.title ?? "", body: issue?.body ?? "" };
-  // Its issue, unless it is a task of Skelcrew's own, such as t1.
-  const own = /^t\d+$/.test(task);
+  // Its issue, unless it is a task of Skelcrew's own, such as wr1.
+  const own = ownTask(task);
   const row = thread && threadRow(db, thread, forge);
   const pr = row?.pr ?? null;
   return {
@@ -468,7 +468,7 @@ const psWidth = 80;
 const nameRoom = { most: 20, least: 10 };
 
 // Returns a thread's name cut to `room` columns, in its middle, as a repository's name can be
-// long. Its task stays whole, such as -t7, as it is what tells a repository's threads apart.
+// long. Its task stays whole, such as -wr7, as it is what tells a repository's threads apart.
 function shortName(name: string, room: number): string {
   if (Bun.stringWidth(name) <= room) return name;
   const task = name.slice(name.lastIndexOf("-"));

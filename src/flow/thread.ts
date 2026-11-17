@@ -27,7 +27,7 @@ export const Thread = z.object({
   owner: z.string(),
   // The repository's name on its forge, or its remote's path, without the owner.
   repo: z.string(),
-  // The task's ID in its tracker, such as 12, or, with no task there, Skelcrew's own, such as t1.
+  // The task's ID in its tracker, such as 12, or, with no task there, Skelcrew's own, such as wr1.
   task: z.coerce.string(),
   folder: z.string(),
   branch: z.string(),
@@ -248,6 +248,11 @@ export function record(
   log(db, thread, why);
   return thread;
 }
+
+// Returns whether a task is one of Skelcrew's own, started with no issue in the tracker, rather
+// than the tracker's. Its ID is the code of the machine that started it and a number, such as
+// wr4, or a t and a number for one started before machines had codes, such as t4.
+export const ownTask = (task: string) => /^[a-z]{1,2}\d+$/.test(task);
 
 // Returns the thread's name, such as app-12, for replies. It uses the repository's name
 // now, which can gain its owner since the thread started, or owner/name once Skelcrew no longer
