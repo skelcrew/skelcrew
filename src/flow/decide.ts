@@ -62,18 +62,14 @@ export function onlyDocs(files: string[]): boolean {
 // How long a review waits for CI's first check on its commit, when CI shows on another PR or
 // the commit has workflows. A forge shows a check within seconds of a push, and Skelcrew's copy
 // has it by the next poll, 30 seconds later.
-export const ciWait = 2 * 60_000;
-
-// How long a review waits for a first check when nothing says CI runs: no workflows and no CI
-// on any PR. CI outside GitHub, such as Buildkite, still shows a check, and a poll brings it.
-export const checkWait = 40_000;
+const ciWait = 2 * 60_000;
 
 // Returns who runs the whole test suite on `commit`, the head of `own`, the thread's PR, so it
 // runs once: CI, once a CI check shows on this commit, as only that proves CI runs on it. A
 // workflow can skip one PR while it runs on others, such as with a branch or paths filter.
 // Until then the review waits, while a check may still come, for `waited` milliseconds so far:
 // up to ciWait when CI shows on another of the repository's `prs` or the commit `setsUpCi`, as
-// on a first PR, and up to checkWait otherwise, as CI outside GitHub has no workflows to read.
+// on a first PR, and up to `checkWait` otherwise, as CI outside GitHub has no workflows to read.
 // A review here that already `waitedInVain`, with no CI anywhere, as with a workflow that runs
 // only on a release or no CI at all, means no PR or commit of the repository waits for one
 // again, unless CI shows on another PR. Otherwise the reviewer runs it.
@@ -84,8 +80,9 @@ export function whoRunsTheSuite(given: {
   setsUpCi: boolean;
   waitedInVain: boolean;
   waited: number;
+  checkWait: number;
 }): "ci" | "reviewer" | "wait" {
-  const { own, commit, prs, setsUpCi, waitedInVain, waited } = given;
+  const { own, commit, prs, setsUpCi, waitedInVain, waited, checkWait } = given;
   if (own?.head === commit && ciOf(own).length > 0) return "ci";
   if (prs.some((pr) => ciOf(pr).length > 0)) return waited < ciWait ? "wait" : "reviewer";
   if (waitedInVain) return "reviewer";

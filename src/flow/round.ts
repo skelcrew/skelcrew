@@ -22,6 +22,7 @@ import {
 import { fetchInto, pushCommit } from "./git.ts";
 import { noteForLead, typeLeadNotes } from "./lead.ts";
 import { endLimit, limitOn, reachLimit, tellOfLimit, waitUntil } from "./limits.ts";
+import { z } from "zod";
 import { Queue } from "./queue.ts";
 import { type Limited, type Review, review } from "./reviewer.ts";
 import {
@@ -118,6 +119,16 @@ async function push(
   record(db, folder, { pr }, `pushed ${sha} to ${thread.branch}, for #${pr}`);
   return sha;
 }
+
+// How long a review waits for a first check when nothing says CI runs: no workflows and no CI
+// on any PR. CI outside GitHub, such as Buildkite, still shows a check, and the next poll, 30
+// seconds on, brings it. Tests of the daemon set SKELCREW_CHECK_WAIT_MS, mostly to 0, as most
+// of them start a fresh daemon on a repository without CI and would each pay the wait.
+const checkWait = z.coerce
+  .number()
+  .min(0)
+  .catch(40_000)
+  .parse(process.env.SKELCREW_CHECK_WAIT_MS ?? 40_000);
 
 // The repositories, as owner/repo, where a review waited the whole time for a first check and
 // no PR showed one: they have no CI that runs on PRs, such as a workflow that runs only on a
@@ -223,7 +234,8 @@ async function reviewRound(
     const prs = openPrs(db, thread.owner, thread.repo);
     const own = pr === null ? null : prOf(db, thread.owner, thread.repo, pr);
     const inVain = waitedInVain.has(repositoryName);
-    return whoRunsTheSuite({ own, commit: sha, prs, setsUpCi, waitedInVain: inVain, waited });
+    const given = { own, commit: sha, prs, setsUpCi, waitedInVain: inVain, waited, checkWait };
+    return whoRunsTheSuite(given);
   };
   if (pr !== null && !docsOnly && suite(0) === "wait") {
     // Saved as reviewing, as the review is under way for you, and so a restart brings it back.
@@ -242,8 +254,9 @@ async function reviewRound(
     }
     // A wait that ran out with CI on no PR was for a check that never came.
     const prs = openPrs(db, thread.owner, thread.repo);
-    const noCi = { own: null, commit: sha, prs, setsUpCi: false, waitedInVain: true, waited: 0 };
-    if (who === "reviewer" && whoRunsTheSuite(noCi) === "reviewer")
+    const noCi = { own: null, commit: sha, prs, setsUpCi: false, waitedInVain: true };
+
+    if (who === "reviewer" && whoRunsTheSuite({ ...noCi, waited: 0, checkWait }) === "reviewer")
       waitedInVain.add(repositoryName);
   }
   // A review that has to wait is saved as queued, with when it joined, so the thread says so,

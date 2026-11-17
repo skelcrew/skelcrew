@@ -427,6 +427,7 @@ const suiteOn = (prs: PullRequest[], more: Partial<Parameters<typeof whoRunsTheS
     setsUpCi: false,
     waitedInVain: false,
     waited: 0,
+    checkWait: 40_000,
     ...more,
   });
 const ci = [approved, run(30, "test", "running")];
