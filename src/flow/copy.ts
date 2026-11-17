@@ -195,7 +195,9 @@ export function itemAt(db: Database, link: string): Item | null {
 // the title and body saved as it started. Later edits to the issue never reach a started task,
 // so the reviewer checks against what the builder was given, and the lead passes on what
 // matters as a message. A row from before Skelcrew saved them falls back on the copy's words.
-// Only a task from the copy has a line that closes it. The lead's messages to the builder follow
+// The line that closes its issue is the one saved as it started too, so its PR closes the issue
+// though the tracker or the copy changed since. A row from before Skelcrew saved it takes the
+// copy's, and a task with no issue has none. The lead's messages to the builder follow
 // the body, oldest first, as changes to the task: a reviewer that didn't see them would ask the
 // builder to undo what you agreed.
 export function threadTask(
@@ -206,6 +208,7 @@ export function threadTask(
     task: string;
     title: string | null;
     body: string | null;
+    closes: string | null;
     updates: { at: number; text: string }[];
   },
 ): { title: string; body: string; closes: string | null } {
@@ -217,7 +220,7 @@ export function threadTask(
   const task = {
     title: thread.title ?? issue?.title ?? "",
     body: thread.title === null ? (issue?.body ?? "") : (thread.body ?? ""),
-    closes: issue?.closes ?? null,
+    closes: thread.closes ?? issue?.closes ?? null,
   };
   if (thread.updates.length === 0) return task;
   // Each message under the time it was typed in, in UTC, as the reviewer has no time zone.

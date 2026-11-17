@@ -160,13 +160,13 @@ test("after the move, every command and the screen show the same threads under t
     db.query("SELECT owner, repo, task FROM threads ORDER BY rowid").all(),
   );
   expect(db.query("SELECT DISTINCT role FROM threads").all()).toEqual([{ role: "builder" }]);
-  // Each task from an issue still in the copy keeps the link to it.
+  // Each task from an issue still in the copy keeps the link to it, and the line that closes it.
   expect(
-    db.query("SELECT task, issue_link FROM tasks WHERE task = 13 OR task = 't1'").all(),
+    db.query("SELECT task, issue_link, closes FROM tasks WHERE task = 13 OR task = 't1'").all(),
   ).toEqual([
-    { task: 13, issue_link: "https://github.com/simon/app/issues/13" },
-    { task: "t1", issue_link: null },
-    { task: "t1", issue_link: null },
+    { task: 13, issue_link: "https://github.com/simon/app/issues/13", closes: "Closes #13" },
+    { task: "t1", issue_link: null, closes: null },
+    { task: "t1", issue_link: null, closes: null },
   ]);
   db.close();
   const copy = join(data(), "skelcrew-before-tasks.db");
@@ -195,7 +195,8 @@ console.log(JSON.stringify({ rounds, short, status }));`;
 });
 
 // Leaves the database as the first release with tasks did: moved, with a tasks table without
-// the columns added since, whether the work merged and the link to its issue.
+// the columns added since: whether the work merged, the link to its issue and the line that
+// closes it.
 function earlierTasks(): void {
   oldDatabase();
   run(`import { openDb, moveToTasks } from ${JSON.stringify(source("db.ts"))};
@@ -204,6 +205,7 @@ moveToTasks(openDb());`);
   earlier.run("DROP VIEW task_threads");
   earlier.run("ALTER TABLE tasks DROP COLUMN merged");
   earlier.run("ALTER TABLE tasks DROP COLUMN issue_link");
+  earlier.run("ALTER TABLE tasks DROP COLUMN closes");
   earlier.close();
 }
 
@@ -213,9 +215,14 @@ test("a tasks table from an earlier release gains the task's newer columns, unfi
   earlierTasks();
   const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
 import { readThread } from ${JSON.stringify(source("flow/thread.ts"))};
-const { rounds, merged, issue_link } = readThread(openDb(), "app-15");
-console.log(JSON.stringify({ rounds, merged, issue_link }));`;
-  expect(JSON.parse(run(code))).toEqual({ rounds: 3, merged: false, issue_link: null });
+const { rounds, merged, issue_link, closes } = readThread(openDb(), "app-15");
+console.log(JSON.stringify({ rounds, merged, issue_link, closes }));`;
+  expect(JSON.parse(run(code))).toEqual({
+    rounds: 3,
+    merged: false,
+    issue_link: null,
+    closes: null,
+  });
 });
 
 // Writes the logs of two threads whose work ended before Skelcrew kept whether it merged:
@@ -274,8 +281,9 @@ openDb();`);
     { task: 16, merged: 1 },
   ]);
   const db = new Database(dbFile(), { readonly: true });
-  expect(db.query("SELECT issue_link FROM tasks WHERE task = 15").get()).toEqual({
+  expect(db.query("SELECT issue_link, closes FROM tasks WHERE task = 15").get()).toEqual({
     issue_link: "https://github.com/simon/app/issues/15",
+    closes: "Closes #15",
   });
   expect(db.query("SELECT * FROM upgrades").all()).toEqual([]);
   db.close();

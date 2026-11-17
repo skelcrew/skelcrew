@@ -479,15 +479,22 @@ UPDATE tasks SET title = 'New landing page', body = 'Make it calm.' WHERE repo =
   });
 
   // A repository whose tracker was turned off starts a task over on the words it kept, and it
-  // still came from its issue.
-  test("a task started over with no tracker keeps the link to its issue", async () => {
+  // still came from its issue, which its PR still closes.
+  test("a task started over with no tracker keeps the link to its issue and the line that closes it", async () => {
     const link = "https://github.com/simon/app/issues/3";
-    sql(`UPDATE tasks SET issue_link = '${link}' WHERE task = '3'`);
+    sql(`UPDATE tasks SET issue_link = '${link}', closes = 'Closes #3' WHERE task = '3'`);
     const code = `import { openDb } from ${JSON.stringify(dbFile)};
 const { startThread } = await import(${JSON.stringify(source("flow/builder.ts"))});
-await startThread(openDb(), { repo: "app", task: "3" });`;
-    const started = Bun.spawnSync([process.execPath, "-e", code], { env: env(), stderr: "pipe" });
+const { threadTask } = await import(${JSON.stringify(source("flow/copy.ts"))});
+const db = openDb();
+console.log(threadTask(db, await startThread(db, { repo: "app", task: "3" })).closes);`;
+    const started = Bun.spawnSync([process.execPath, "-e", code], {
+      env: env(),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
     expect(started.stderr.toString()).toBe("");
+    expect(started.stdout.toString()).toBe("Closes #3\n");
     serve();
     await untilAnswers();
     const shown = JSON.parse((await skel(["show", "app-3", "--json"])).out);

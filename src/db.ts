@@ -62,7 +62,9 @@ const threadColumns = {
 // the task its reviewer checks against. `review_at` is when the latest review was asked for or
 // ended, for sc ps. `merged` is whether the work ended with its changes merged, which tells a
 // task that is done apart from one that was dropped. `issue_link` is the link to the issue the
-// task came from, saved as it starts, and null for a task with no issue, such as t1.
+// task came from, saved as it starts, and null for a task with no issue, such as t1. `closes` is
+// the line a PR's body needs to close that issue on merge, saved as it starts too, so its PR
+// closes it though the tracker or Skelcrew's copy of it changed since.
 export const taskColumns = {
   title: "TEXT",
   body: "TEXT",
@@ -93,6 +95,7 @@ export const taskColumns = {
   review_reset: "INTEGER",
   merged: "INTEGER NOT NULL DEFAULT 0",
   issue_link: "TEXT",
+  closes: "TEXT",
 };
 
 // Marks each done task merged when its thread's log says its work ended by a merge, for tasks
@@ -140,14 +143,18 @@ function recoverMerges(db: Database): void {
   }
 }
 
-// Saves the link to its issue on each task that lacks one, from Skelcrew's copy of the tracker,
-// for tasks that started before Skelcrew kept it. An issue that has left the copy, as a closed
-// one does once its thread is done, has no link to give.
+// Saves the link to its issue, and the line that closes it, on each task that lacks them, from
+// Skelcrew's copy of the tracker, for tasks that started before Skelcrew kept them. An issue
+// that has left the copy, as a closed one does once its thread is done, has nothing to give.
 function linkIssues(db: Database): void {
-  db.run(`UPDATE tasks SET issue_link = (SELECT json_extract(i.item, '$.link') FROM items i
-    WHERE i.owner = tasks.owner AND i.repo = tasks.repo AND i.kind = 'task'
-      AND i.id = CAST(tasks.task AS TEXT))
-    WHERE issue_link IS NULL`);
+  for (const [column, field] of [
+    ["issue_link", "link"],
+    ["closes", "closes"],
+  ])
+    db.run(`UPDATE tasks SET ${column} = (SELECT json_extract(i.item, '$.${field}') FROM items i
+      WHERE i.owner = tasks.owner AND i.repo = tasks.repo AND i.kind = 'task'
+        AND i.id = CAST(tasks.task AS TEXT))
+      WHERE ${column} IS NULL`);
 }
 
 // Opens Skelcrew's database and prepares its tables so repositories, their leads and threads
@@ -334,7 +341,7 @@ function prepareTables(db: Database): void {
     for (const [column, type] of Object.entries(taskColumns))
       if (!db.query("SELECT 1 FROM pragma_table_info('tasks') WHERE name = ?").get(column)) {
         db.run(`ALTER TABLE tasks ADD COLUMN ${column} ${type}`);
-        if (column === "issue_link" || column === "merged")
+        if (column === "issue_link" || column === "merged" || column === "closes")
           db.run("INSERT OR IGNORE INTO upgrades (step) VALUES ('fill tasks')");
       }
   // Skelcrew's copy of each repository's open tasks and PRs, as items, kept as JSON. The columns

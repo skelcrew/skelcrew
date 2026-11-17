@@ -84,3 +84,25 @@ saveItems(db, "simon", "app", ${JSON.stringify([task(12, { state: "closed" })])}
 console.log(JSON.stringify(db.query("SELECT id FROM items ORDER BY id").all()));`),
   ).toEqual([{ id: "15" }]);
 });
+
+// A started task's PR closes the issue it started on, by the line saved as it started, though
+// the tracker's copy of the issue changed or left since. A task saved before Skelcrew kept the
+// line takes the copy's.
+test("a started task closes its issue by the line it saved, whatever the copy says now", () => {
+  const closes =
+    () => `const { threadTask } = await import(${JSON.stringify(source("flow/copy.ts"))});
+const { readThread } = await import(${JSON.stringify(source("flow/thread.ts"))});
+console.log(JSON.stringify(threadTask(db, readThread(db, "app-12")).closes));`;
+  expect(
+    run(`db.run("UPDATE tasks SET title = 'Task 12', closes = 'Closes #12'");
+${closes()}`),
+  ).toBe("Closes #12");
+  expect(
+    run(`saveItems(db, "simon", "app", ${JSON.stringify([task(12, { closes: "Fixes JOTT-12" })])}, ["task"]);
+${closes()}`),
+  ).toBe("Closes #12");
+  expect(
+    run(`db.run("UPDATE tasks SET closes = NULL");
+${closes()}`),
+  ).toBe("Fixes JOTT-12");
+});

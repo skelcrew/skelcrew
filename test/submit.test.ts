@@ -334,6 +334,33 @@ describe.skipIf(insideSandbox)("sc submit", () => {
     );
   }, 60_000);
 
+  // The line that closes the issue is saved as the task starts, so the PR still closes it though
+  // the copy lost the issue before the first submit, such as after the tracker changed.
+  test("the first PR closes the task's issue after Skelcrew's copy lost it", async () => {
+    fakeClaude(false);
+    addApp();
+    verdict(1, "approve", "Ready to merge.");
+    await startApp12();
+    await until(() => read(join(builder(), "args")) !== "", 30_000);
+    // The tracker no longer gives the issue, and the copy has lost it.
+    answer(plugin, "changed", { items: [], next: null });
+    const db = new Database(join(data(), "skelcrew.db"));
+    db.run("PRAGMA busy_timeout = 5000");
+    db.run("DELETE FROM items");
+    db.close();
+    // The builder answers the lead's message with its first round.
+    const short = new Bun.CryptoHasher("sha256").update("simon/app").digest("hex").slice(0, 16);
+    const leadSocket = join(home, "run", "skelcrew", "leads", short, "skelcrew.sock");
+    await until(() => existsSync(leadSocket));
+    const told = await skel(["tell", "app-12", "Go ahead."], {
+      SKELCREW_SANDBOX: "1",
+      SKELCREW_SOCKET: leadSocket,
+    });
+    expect(told.err).toBe("");
+    await until(() => opened() !== undefined, 30_000);
+    expect(opened()?.body).toBe("Round 1\n\nCloses #12");
+  }, 60_000);
+
   test("pushes the round, opens the PR, has it reviewed, types the changes in, and waits on CI once approved", async () => {
     addApp();
     verdict(1, "changes", "The export has no test.");

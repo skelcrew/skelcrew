@@ -150,6 +150,9 @@ export const Thread = z.object({
   // The link to the issue the task came from, saved as it started, or null for a task with no
   // issue. A task that started before Skelcrew kept it has the link Skelcrew's copy still had.
   issue_link: z.string().nullable(),
+  // The line a PR's body needs to close the task's issue on merge, such as "Closes #12", saved as
+  // the task starts. Null for a task with no issue.
+  closes: z.string().nullable(),
 });
 export type Thread = z.infer<typeof Thread>;
 
