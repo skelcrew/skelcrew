@@ -708,9 +708,9 @@ test("a click follows the list as it scrolls", () => {
 
 // The entries of a repository with a tracker and a forge, with what each counts.
 const entries: EntryCount[] = [
-  { entry: "issues", name: "Issues", total: 12, note: "", colour: "90" },
-  { entry: "threads", name: "Threads", total: 6, note: "1 needs you", colour: "38;5;221" },
-  { entry: "prs", name: "PRs", total: 5, note: "", colour: "38;5;120" },
+  { entry: "issues", name: "Issues", total: 12, notes: [] },
+  { entry: "threads", name: "Threads", total: 6, notes: [["1 needs you", "38;5;221"]] },
+  { entry: "prs", name: "PRs", total: 5, notes: [] },
 ];
 const tall = { width: sidebarWidth, height: 30 };
 const threads = [lead, thread("app-12", { age: "5m" })];
@@ -737,11 +737,31 @@ test("the lead sits on top, then the entries, then ACTIVE, with a line between e
 });
 
 test("an entry's count is dim, what needs you on Threads is yellow, and ready PRs are green", () => {
-  const ready = entries.map((e) => (e.entry === "prs" ? { ...e, note: "2 ready" } : e));
+  const ready = entries.map((e): EntryCount => {
+    if (e.entry !== "prs") return e;
+    return { ...e, notes: [["2 ready", "38;5;120"]] };
+  });
   const screen = drawWith(threads, ready, "lead", tall);
   expect(screen).toContain(`Issues${" ".repeat(23)}\x1b[90m12\x1b[22;39m`);
   expect(screen).toContain("\x1b[38;5;221m1 needs you\x1b[22;39m\x1b[90m · 6");
   expect(screen).toContain("\x1b[38;5;120m2 ready\x1b[22;39m\x1b[90m · 5");
+});
+
+test("with no PRs, Threads says how many are ready, in green, before how many need you", () => {
+  const notes: [string, string][] = [
+    ["1 ready", "38;5;120"],
+    ["2 need you", "38;5;221"],
+  ];
+  const both: EntryCount[] = [{ entry: "threads", name: "Threads", total: 6, notes }];
+  const screen = drawWith(threads, both, "lead", tall);
+  // Both notes and the total don't fit beside the name, so the total gives way.
+  expect(read(screen)).toContain("    Threads    1 ready · 2 need you");
+  expect(screen).toContain(
+    "\x1b[38;5;120m1 ready\x1b[22;39m\x1b[90m · \x1b[22;39m\x1b[38;5;221m2 need you\x1b[22;39m",
+  );
+  // On a wider sidebar the total shows too.
+  const wide = drawWith(threads, both, "lead", { width: 44, height: 30 });
+  expect(read(wide)).toContain("    Threads      1 ready · 2 need you · 6");
 });
 
 test("each line between the parts has the colour of the sidebar's edge, and joins it", () => {
@@ -1201,9 +1221,10 @@ console.log(JSON.stringify(looks.map((row) => [row?.tokens, row?.step])));`;
     }
   });
 
-  test("each repository's tab counts its filled marks, in the colour of the most urgent", () => {
+  test("each repository's tab counts what needs you and what is ready apart", () => {
     // site and app each have a red mark among their yellow ones, docs only a yellow one, and web
-    // an approved thread. Threads working, stopped or done have no filled mark.
+    // an approved thread, which is ready rather than needing you. Threads working, stopped or
+    // done count for neither.
     const threads = [
       { repo: "site", task: "1", status: "waiting", needs_you: 1 },
       { repo: "site", task: "2", asking: 1 },
@@ -1233,10 +1254,10 @@ console.log(JSON.stringify(repositoryTabs(db, () => 3)));`;
     });
     expect(run.stderr.toString()).toBe("");
     expect(JSON.parse(run.stdout.toString())).toEqual([
-      { name: "app", fullName: "simon/app", count: 2, colour: "red" },
-      { name: "docs", fullName: "simon/docs", count: 1, colour: "yellow" },
-      { name: "site", fullName: "simon/site", count: 3, colour: "red" },
-      { name: "web", fullName: "simon/web", count: 1, colour: "green" },
+      { name: "app", fullName: "simon/app", needYou: 2, colour: "red", ready: 0 },
+      { name: "docs", fullName: "simon/docs", needYou: 1, colour: "yellow", ready: 0 },
+      { name: "site", fullName: "simon/site", needYou: 3, colour: "red", ready: 0 },
+      { name: "web", fullName: "simon/web", needYou: 0, colour: "yellow", ready: 1 },
     ]);
   });
 

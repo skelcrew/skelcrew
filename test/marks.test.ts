@@ -31,16 +31,17 @@ test("an approved thread counts as ready, not as needing you", () => {
   expect(needsDecision(markOf("working", "working"))).toBe(false);
 });
 
-test("a badge counts the filled marks, in the colour of the most urgent", () => {
+test("a badge counts what needs you and what is ready apart", () => {
   const [green, yellow, red, bright] = [
     markOf("ready", "approved"),
     markOf("needs you", "question"),
     markOf("error", "error"),
     markOf("working", "working"),
   ];
-  expect(badgeOf([])).toEqual({ count: 0, colour: null });
-  expect(badgeOf([bright])).toEqual({ count: 0, colour: null });
-  expect(badgeOf([green, bright])).toEqual({ count: 1, colour: "green" });
-  expect(badgeOf([green, yellow])).toEqual({ count: 2, colour: "yellow" });
-  expect(badgeOf([yellow, red, green])).toEqual({ count: 3, colour: "red" });
+  expect(badgeOf([])).toEqual({ needYou: 0, colour: "yellow", ready: 0 });
+  expect(badgeOf([bright])).toEqual({ needYou: 0, colour: "yellow", ready: 0 });
+  expect(badgeOf([green, bright])).toEqual({ needYou: 0, colour: "yellow", ready: 1 });
+  expect(badgeOf([green, yellow])).toEqual({ needYou: 1, colour: "yellow", ready: 1 });
+  // What needs you is red when any of it went wrong.
+  expect(badgeOf([yellow, red, green])).toEqual({ needYou: 2, colour: "red", ready: 1 });
 });

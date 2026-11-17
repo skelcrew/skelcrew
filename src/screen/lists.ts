@@ -38,14 +38,13 @@ export type ListRow = {
 };
 // Rows under a dim heading, such as Ready to merge.
 export type Group = { heading: string; rows: ListRow[] };
-// An entry of the sidebar: its name, how many its list has, and a note on what you act on,
-// such as 2 ready, and the note's `colour`.
+// An entry of the sidebar: its name, how many its list has, and notes on what you act on, each
+// with its colour, such as 2 ready in green.
 export type EntryCount = {
   entry: Entry;
   name: string;
   total: number;
-  note: string;
-  colour: string;
+  notes: [string, string][];
 };
 
 // A thread that isn't done, as the lists know it: with its name, and its word, status and mark.
@@ -270,8 +269,9 @@ export function listGroups(db: Database, open: Open, entry: Entry, now: number):
 // Returns the sidebar's entries for the open repository, with their counts: Issues when it has a
 // tracker, Threads always, and PRs when it has a forge. Issues has only its count, as an issue
 // never needs you on its own. Threads says how many need you or failed, in yellow, and PRs how
-// many are ready to merge, in green, only when there are any. An approved thread is ready, so
-// it counts on PRs, not as needing you.
+// many are ready to merge, in green, only when there are any. An approved thread is ready, not
+// needing you, so the same thread is never counted twice. With no forge there are no PRs, so
+// Threads says how many are ready itself, before how many need you.
 export function entryCounts(db: Database, open: Open): EntryCount[] {
   const repository = repositories(db).find((r) => r.owner === open.owner && r.repo === open.repo);
   const threads = openThreads(db, open);
@@ -283,33 +283,35 @@ export function entryCounts(db: Database, open: Open): EntryCount[] {
     flagged: groups[0]?.heading === first ? groups[0].rows.length : 0,
   });
   const prs = count(repository ? prGroups(db, open, threads) : [], "Ready to merge");
+  const forge = Boolean(repository && forgeOf(db, repository));
   const needing = threads.filter((open) => needsDecision(open.mark)).length;
+  const ready = forge ? 0 : threads.filter((open) => readyToMerge(open.mark)).length;
   const needYou = needing === 1 ? "needs you" : "need you";
+  // Returns a note, or none for nothing to act on.
+  const note = (count: number, text: string, colour: string): [string, string][] =>
+    count ? [[`${count} ${text}`, colour]] : [];
   const issuesEntry: EntryCount = {
     entry: "issues",
     name: "Issues",
     total: total(repository ? issueGroups(db, open, threads) : []),
-    note: "",
-    colour: grey,
+    notes: [],
   };
   const threadsEntry: EntryCount = {
     entry: "threads",
     name: "Threads",
     total: threads.length,
-    note: needing ? `${needing} ${needYou}` : "",
-    colour: yellow,
+    notes: [...note(ready, "ready", green), ...note(needing, needYou, yellow)],
   };
   const prsEntry: EntryCount = {
     entry: "prs",
     name: "PRs",
     total: prs.total,
-    note: prs.flagged ? `${prs.flagged} ready` : "",
-    colour: green,
+    notes: note(prs.flagged, "ready", green),
   };
   return [
     ...(repository && trackerOf(db, repository) ? [issuesEntry] : []),
     threadsEntry,
-    ...(repository && forgeOf(db, repository) ? [prsEntry] : []),
+    ...(forge ? [prsEntry] : []),
   ];
 }
 

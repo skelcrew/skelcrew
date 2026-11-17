@@ -5,7 +5,7 @@ import type { Database } from "bun:sqlite";
 import { z } from "zod";
 import { noProgress } from "../agents/progress.ts";
 import { leadOf } from "../flow/lead.ts";
-import { badgeOf, type Colour, shownOf } from "../flow/marks.ts";
+import { type Badge, badgeOf, shownOf } from "../flow/marks.ts";
 import { messagesWaiting, waitingText } from "../flow/messages.ts";
 import type { Status } from "../flow/status.ts";
 import { fullNameOf, Thread, threadName } from "../flow/thread.ts";
@@ -46,9 +46,8 @@ export type Row = {
 };
 // The repository open in the sidebar, by its owner and name, and its lead's session.
 export type Open = { owner: string; repo: string; lead: string };
-// A repository's tab: its name in Skelcrew, its owner/name, how many of its threads have a filled
-// mark, and the colour of its badge, or null with none.
-export type Tab = { name: string; fullName: string; count: number; colour: Colour | null };
+// A repository's tab: its name in Skelcrew, its owner/name, and its badge.
+export type Tab = Badge & { name: string; fullName: string };
 // Returns whether the thread's reviewer has it now: a review waiting for a place, running, or
 // held on its harness's usage limit when the builder isn't held on one of its own. Then its
 // harness is the reviewer's and its PR is in a round.
@@ -165,11 +164,11 @@ export function sidebarRows(
 // What a tab's row holds as the database gives it, checked, since it is read from disk.
 const TabRow = z.object({ name: z.string(), owner: z.string(), repo: z.string() });
 
-// Returns a tab for each repository, in name order, with how many of its threads have a filled
-// mark, which its badge shows, in the colour of the most urgent of them: red, then yellow, then
-// green. The badges are how you hear of other repositories, as one repository's lead never
-// mentions another's threads. Each thread's word takes its round limit from `maxRounds`. A
-// repository whose lead you exited has no tab, and no badge, until you open it again.
+// Returns a tab for each repository, in name order, with its badge: how many of its threads
+// need you, and how many are ready to merge. The badges are how you hear of other repositories,
+// as one repository's lead never mentions another's threads. Each thread's word takes its round
+// limit from `maxRounds`. A repository whose lead you exited has no tab, and no badge, until you
+// open it again.
 export function repositoryTabs(db: Database, maxRounds: (thread: Thread) => number): Tab[] {
   const repositories = db
     .query("SELECT name, owner, repo FROM repositories WHERE tab_closed = 0 ORDER BY name")

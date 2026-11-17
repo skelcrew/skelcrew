@@ -697,22 +697,19 @@
           "entry": "issues",
           "name": "Issues",
           "total": 5,
-          "note": "",
-          "colour": "90"
+          "notes": []
         },
         {
           "entry": "threads",
           "name": "Threads",
           "total": 5,
-          "note": "2 need you",
-          "colour": "38;5;221"
+          "notes": [["2 need you", "38;5;221"]]
         },
         {
           "entry": "prs",
           "name": "PRs",
           "total": 2,
-          "note": "1 ready",
-          "colour": "38;5;120"
+          "notes": [["1 ready", "38;5;120"]]
         }
       ]
     },
@@ -840,8 +837,7 @@
           "entry": "threads",
           "name": "Threads",
           "total": 2,
-          "note": "1 needs you",
-          "colour": "38;5;221"
+          "notes": [["1 needs you", "38;5;221"]]
         }
       ]
     }
@@ -850,14 +846,16 @@
     {
       "name": "app",
       "fullName": "simon/app",
-      "count": 3,
-      "colour": "red"
+      "needYou": 2,
+      "colour": "red",
+      "ready": 1
     },
     {
       "name": "notes",
       "fullName": "simon/notes",
-      "count": 1,
-      "colour": "yellow"
+      "needYou": 1,
+      "colour": "yellow",
+      "ready": 0
     }
   ]
 }

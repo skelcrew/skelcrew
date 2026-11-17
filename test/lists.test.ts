@@ -212,7 +212,7 @@ ${pr(7, { reviews: [] })}`;
       ],
     ],
   ]);
-  expect(entries.find((e) => e.entry === "prs")?.note).toBe("3 ready");
+  expect(entries.find((e) => e.entry === "prs")?.notes).toEqual([["3 ready", "38;5;120"]]);
 });
 
 // What s on each issue's row, or m on each PR's row, does, in the list's order.
@@ -382,23 +382,41 @@ ${threadSql({ task: "14", status: "done" })}
 ${threadSql({ task: "15", asking: 1 })}`;
   // The approved thread is ready, so it counts on PRs, and only the question needs you.
   expect(after(sql).entries).toEqual([
-    { entry: "issues", name: "Issues", total: 2, note: "", colour: "90" },
-    { entry: "threads", name: "Threads", total: 3, note: "1 needs you", colour: "38;5;221" },
-    { entry: "prs", name: "PRs", total: 1, note: "1 ready", colour: "38;5;120" },
+    { entry: "issues", name: "Issues", total: 2, notes: [] },
+    { entry: "threads", name: "Threads", total: 3, notes: [["1 needs you", "38;5;221"]] },
+    { entry: "prs", name: "PRs", total: 1, notes: [["1 ready", "38;5;120"]] },
   ]);
 });
 
 test("each entry is there with nothing open, so the threads below never move", () => {
   expect(after(repository).entries).toEqual([
-    { entry: "issues", name: "Issues", total: 0, note: "", colour: "90" },
-    { entry: "threads", name: "Threads", total: 0, note: "", colour: "38;5;221" },
-    { entry: "prs", name: "PRs", total: 0, note: "", colour: "38;5;120" },
+    { entry: "issues", name: "Issues", total: 0, notes: [] },
+    { entry: "threads", name: "Threads", total: 0, notes: [] },
+    { entry: "prs", name: "PRs", total: 0, notes: [] },
   ]);
 });
 
 test("more than one thread need you, and failed ones count with them", () => {
   const sql = `${repository} ${threadSql({ task: "12", status: "waiting", needs_you: 1 })} ${threadSql({ task: "13", status: "failed" })}`;
-  expect(after(sql).entries[1]?.note).toBe("2 need you");
+  expect(after(sql).entries[1]?.notes).toEqual([["2 need you", "38;5;221"]]);
+});
+
+test("with no forge, Threads says how many are ready before how many need you", () => {
+  const sql = `${repository}
+${threadSql({ task: "12", status: "waiting", needs_you: 1, verdict: "approve" })}
+${threadSql({ task: "13", asking: 1 })}
+${threadSql({ task: "14", erred: 1 })}`;
+  expect(after(sql, 0, false).entries).toEqual([
+    {
+      entry: "threads",
+      name: "Threads",
+      total: 3,
+      notes: [
+        ["1 ready", "38;5;120"],
+        ["2 need you", "38;5;221"],
+      ],
+    },
+  ]);
 });
 
 test("a repository with no tracker has no Issues, and one with no forge no PRs", () => {

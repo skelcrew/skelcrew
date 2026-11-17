@@ -1,6 +1,5 @@
 // What the top row says: the header above the sidebar, then the tabs and the strip above the agent.
 import { expect, test } from "bun:test";
-import type { Colour } from "../src/flow/marks.ts";
 import type { Row, Tab } from "../src/screen/rows.ts";
 import { drawTop, type Top } from "../src/screen/strip.ts";
 
@@ -38,11 +37,13 @@ const thread = (more: Partial<Row> = {}): Row => ({
   review: { round: 2, reviewer: "codex", verdict: "approve" },
   ...more,
 });
-const tab = (name: string, count = 0, colour: Colour | null = count ? "yellow" : null): Tab => ({
+// A tab with how many threads need you, how many are ready, and the colour of the first.
+const tab = (name: string, needYou = 0, ready = 0, colour: Tab["colour"] = "yellow"): Tab => ({
   name,
   fullName: `simon/${name}`,
-  count,
+  needYou,
   colour,
+  ready,
 });
 // The tab "  app  " and the two columns after it take nine columns before the strip.
 const size = { left: 30, width: 99 };
@@ -291,11 +292,14 @@ test("tabs name each repository in order, above the agent, with a badge for what
   );
 });
 
-test("a tab's badge takes the colour of its most urgent mark", () => {
-  const red = top({ tabs: [tab("app"), tab("site", 2, "red")] });
+test("a tab's badge counts what needs you and what is ready apart, each in its colour", () => {
+  const red = top({ tabs: [tab("app"), tab("site", 2, 0, "red")] });
   expect(red).toContain("  site #[fg=colour210]•2  ");
-  const green = top({ tabs: [tab("app"), tab("site", 1, "green")] });
-  expect(green).toContain("  site #[fg=colour120]•1  ");
+  const ready = top({ tabs: [tab("app"), tab("site", 0, 1)] });
+  expect(ready).toContain("  site #[fg=colour120]•1  ");
+  const both = [tab("app"), tab("site", 2, 1)];
+  expect(top({ tabs: both })).toContain("  site #[fg=colour221]•2 #[fg=colour120]•1  ");
+  expect(tabText(both, "simon/app", 120)).toBe("  app    site •2 •1");
 });
 
 test("a click on a tab is told apart by its place in the row", () => {

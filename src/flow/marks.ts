@@ -39,11 +39,14 @@ export const needsDecision = (mark: Mark) => mark.sign === "●" && mark.colour 
 // Returns whether a mark says the thread is approved and ready to merge.
 export const readyToMerge = (mark: Mark) => mark.colour === "green";
 
-// Returns a repository's badge from its threads' marks: how many are filled, and the colour of
-// the most urgent of them, red, then yellow, then green, or null when none is.
-export function badgeOf(marks: Mark[]): { count: number; colour: Colour | null } {
-  const filled = marks.filter((mark) => mark.sign === "●");
-  const urgent: Colour[] = ["red", "yellow", "green"];
-  const colour = urgent.find((c) => filled.some((mark) => mark.colour === c)) ?? null;
-  return { count: filled.length, colour };
+// A repository's badge: how many of its threads need you, in red when any of them went wrong
+// and yellow otherwise, and how many are ready to merge, in green.
+export type Badge = { needYou: number; colour: "red" | "yellow"; ready: number };
+
+// Returns a repository's badge from its threads' marks. Needing you and being ready are counted
+// apart, as one is a decision and the other a merge, so a finished thread is never told twice.
+export function badgeOf(marks: Mark[]): Badge {
+  const needing = marks.filter(needsDecision);
+  const colour = needing.some((mark) => mark.colour === "red") ? "red" : "yellow";
+  return { needYou: needing.length, colour, ready: marks.filter(readyToMerge).length };
 }

@@ -134,17 +134,26 @@ function wordLine(row: Row, here: boolean, room: number): string {
 }
 
 // Returns an entry as one line: its name where a thread's title starts, and at the end, dim,
-// how many its list has, after its note, such as 2 ready · 5, which is in the entry's colour. The
+// how many its list has, after its notes, such as 2 ready · 5, each note in its own colour. The
 // entry you are on is shaded across the whole width.
 function entryLine(entry: EntryCount, here: boolean, width: number): string {
-  // The count stops at the padding before the edge, and the name gives way to it.
-  const count = `${entry.note && " · "}${entry.total}`;
-  const end = `${entry.note}${count}`;
+  // The count stops at the padding before the edge. When the notes leave too little room for
+  // the whole name, the total gives way first, as the notes are what you act on: on Threads with
+  // no forge, ready and need you both, such as 1 ready · 2 need you. Then the name gives way.
+  const notes = entry.notes.map(([text]) => text).join(" · ");
+  const room = width - indent.length - pad.length - 1;
+  const whole = `${notes && " · "}${entry.total}`;
+  const fits = Bun.stringWidth(`${entry.name}${notes}${whole}`) <= room;
+  const count = notes && !fits ? "" : whole;
+  const end = `${notes}${count}`;
   const name = fitted(entry.name, Math.max(width - indent.length - pad.length - end.length - 1, 0));
   const gap = " ".repeat(
     Math.max(width - indent.length - name.length - end.length - pad.length, 1),
   );
-  const note = entry.note ? tinted(here, entry.colour, entry.note) : "";
+  // Each note is in its colour, with a dim dot between them.
+  const note = entry.notes
+    .map(([text, colour]) => tinted(here, colour, text))
+    .join(tinted(here, grey, " · "));
   const line = `${indent}${here ? paint(white, name) : name}${gap}${note}${tinted(here, grey, count)}`;
   return here ? shaded(line, width) : line;
 }
