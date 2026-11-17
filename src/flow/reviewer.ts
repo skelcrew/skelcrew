@@ -7,6 +7,7 @@ import { z } from "zod";
 import { type HarnessName, harnessNamed } from "../agents/harness.ts";
 import { filterEnv, sandboxArgs, throwawayMounts } from "../agents/sandbox.ts";
 import { sandboxFolders } from "../agents/seatbelt.ts";
+import { builtInRole } from "../roles.ts";
 import { errorText } from "../say.ts";
 
 // What a review round ends with: the reviewer's verdict and what it said, or a failed review
@@ -29,23 +30,17 @@ const schema = JSON.stringify({
   additionalProperties: false,
 });
 
-// Returns what the reviewer is told: the task it checks the PR against, where the change
-// starts, and to answer with problems the builder can act on. It tells the reviewer to assume
-// the change is wrong, since a reviewer that trusts the builder misses what the builder missed.
-function reviewerPrompt(issue: { title: string; body: string }, base: string): string {
-  return `Review this pull request as an adversarial reviewer. Another agent wrote it. Assume it is wrong until you have checked it yourself.
-
-It should do this:
-
-# ${issue.title}
-
-${issue.body}
-
-The change is everything on HEAD since ${base}. Read the whole diff with \`git diff ${base}...HEAD\`, and the code around it. Run the tests, using the commands under test: in the repository's skelcrew.yaml if there is one. Anything you change here is thrown away after the review, so run what you need, but don't fix the code.
-
-Check that it does what this asks and nothing else, and look for bugs, edge cases it misses, missing tests and failing ones.
-
-Answer "approve" only if it is ready to merge. Otherwise answer "changes", and in the body name each problem, where it is and why it matters, so the builder can fix it.`;
+// Returns what the reviewer is told: its built-in instructions, with the task it checks the
+// PR against and where the change starts filled into their blanks. All blanks are filled in
+// one pass, so a task whose text holds a blank's mark, or a `$&`, reaches the reviewer as
+// written. The file's last newline is dropped, as the reviewer has always been told without one.
+export function reviewerPrompt(issue: { title: string; body: string }, base: string): string {
+  const blanks: Record<string, string> = { ...issue, base };
+  const instructions = builtInRole("reviewer").instructions.replace(/\n$/, "");
+  return instructions.replace(
+    /\{\{(title|body|base)\}\}/g,
+    (_, blank: string) => blanks[blank] ?? "",
+  );
 }
 
 // Starts the reviewer, waits for it to end, and returns what it printed and its exit code.
