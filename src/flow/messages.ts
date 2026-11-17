@@ -5,7 +5,7 @@
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
 import { agentRuns } from "../agents/tmux.ts";
-import { midTurn, typeInto, whyBusy } from "../agents/typing.ts";
+import { draftReason, midTurn, typeInto, unsentAt, whyBusy } from "../agents/typing.ts";
 import { markSeen } from "../plugins/ask.ts";
 import { errorText } from "../say.ts";
 import { noteForLead, typeLeadNotes } from "./lead.ts";
@@ -206,10 +206,13 @@ async function deliver(db: Database, tmux: string, folder: string, signal: Abort
     const message = oldest(db, folder);
     if (message === null || signal.aborted) return;
     const thread = readThread(db, folder);
-    const why = await whyWaiting(tmux, thread);
+    const waits = await whyWaiting(tmux, thread);
     if (signal.aborted) return;
     if (thread.status === "working" || thread.status === "waiting")
-      noteMissing(db, tmux, thread, why);
+      noteMissing(db, tmux, thread, waits);
+    // A draft that is this message, left unsent for a question, is sent now, with Enter alone.
+    const ours = waits === draftReason && unsentAt(tmux, folder) === message.text;
+    const why = ours ? "" : waits;
     if (why !== "") return noteLate(db, tmux, thread, why);
     // The builder looked ready a moment ago, so typing shouldn't wait long. If it does, the
     // message stays saved for the next attempt.
@@ -283,7 +286,8 @@ export const noticeRound = (folder: string) => roundsDropped.get(folder) ?? 0;
 // it asked you, so nothing is typed into it afterwards. Its messages stay saved, unless `drop`,
 // for a thread that ended.
 // The attempt stays known until it ends, so no other starts meanwhile.
-export function stopDelivering(db: Database, folder: string, drop: boolean): void {
-  delivering.get(folder)?.cancel.abort();
+// `reason` is forQuestion for a question, which leaves a message already pasted unsent.
+export function stopDelivering(db: Database, folder: string, drop: boolean, reason?: string): void {
+  delivering.get(folder)?.cancel.abort(reason);
   if (drop) db.run("DELETE FROM messages WHERE folder = ?", [folder]);
 }

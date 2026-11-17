@@ -5,6 +5,7 @@ import { existsSync, mkdirSync, openSync, rmSync } from "node:fs";
 import { createServer, type Server, type Socket } from "node:net";
 import { dirname } from "node:path";
 import { processTree, stillRunning } from "../agents/tmux.ts";
+import { forQuestion } from "../agents/typing.ts";
 import { openDb, type Repository } from "../db.ts";
 import { setupDone } from "../machine/setup.ts";
 import { keepUpToDate } from "../machine/update.ts";
@@ -352,9 +353,9 @@ export async function serve(tmux: string, every = 30_000): Promise<void> {
         const { folder } = callingThread(caller);
         record(db, folder, { asking: true }, "its builder asked a question");
         // A message being typed in now would answer the question for you. Typing checks for the
-        // cancel after each wait and right before its paste, and the message waits until the
-        // question is over.
-        stopDelivering(db, folder, false);
+        // cancel after each wait, right before its paste and right before its Enter, and the
+        // message waits until the question is over.
+        stopDelivering(db, folder, false, forQuestion);
         typeLeadNotes(db, tmux);
         return { asking: true };
       }

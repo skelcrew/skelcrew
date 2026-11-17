@@ -21,7 +21,19 @@ const readScreen = (socket: string, name: string) =>
   mustTmux(socket, ["capture-pane", "-p", "-t", `=${name}:`]);
 
 // The reason typing gives for waiting while a person has unsent text at the agent's prompt.
-const draftReason = "an unsent draft is at its prompt";
+export const draftReason = "an unsent draft is at its prompt";
+
+// The reason to cancel typing with when the agent asks you a question. A message already pasted
+// is then left at the prompt unsent, as its Enter would answer the question, and the next
+// typing of it sends it with Enter alone.
+export const forQuestion = "the agent asked a question";
+
+// Messages pasted but left unsent for a question, by session, with their text.
+const leftUnsent = new Map<string, string>();
+
+// Returns the text of the message typing left pasted but unsent at the session's prompt for a
+// question, if any. The draft its prompt then shows is that message, not a person's.
+export const unsentAt = (socket: string, name: string) => leftUnsent.get(`${socket}/${name}`);
 
 // The start of the reason typing gives while the agent's turn runs, so whoever waits on it can
 // tell that pressing Esc would end the turn.
@@ -132,7 +144,9 @@ let buffersMade = 0;
 // Waits for the agent to be ready, then pastes and submits the message without losing long
 // text, and returns true. Throws if it stays busy too long, and removes the temporary paste
 // buffer after the attempt. Types nothing, and returns false, once the signal is aborted,
-// however long it waited.
+// however long it waited. Aborted between the paste and its Enter, it still sends the message,
+// which is in: unless for a question, which the Enter would answer. Then it leaves the message
+// at the prompt and returns false, and the next typing of it presses Enter alone.
 async function typeNow(
   socket: string,
   name: string,
@@ -148,10 +162,19 @@ async function typeNow(
   try {
     // Text typed while Claude Code is starting or busy can be lost, so wait until it is idle.
     // Check the signal after each wait too: the thread may have stopped meanwhile.
+    const key = `${socket}/${name}`;
     while (true) {
       if (waits.signal?.aborted) return false;
       const why = await whyBusy(socket, name, marks, waits);
       if (waits.signal?.aborted) return false;
+      // The draft is this message, left unsent for a question that is over now: send it. Any
+      // other look means a person sent or cleared it, so it is typed afresh.
+      if (why === draftReason && leftUnsent.get(key) === text) {
+        leftUnsent.delete(key);
+        mustTmux(socket, ["send-keys", "-t", `=${name}:`, "Enter"]);
+        return true;
+      }
+      if (why === "") leftUnsent.delete(key);
       if (why === "") {
         // Someone scrolled back would swallow the Enter below, and the message would never be
         // sent. Being scrolled back shows in neither the check above nor the pane's text, so
@@ -177,6 +200,10 @@ async function typeNow(
     // paste.
     mustTmux(socket, ["paste-buffer", "-p", "-b", buffer, "-t", `=${name}:`]);
     await Bun.sleep(moment);
+    if (waits.signal?.aborted && waits.signal.reason === forQuestion) {
+      leftUnsent.set(key, text);
+      return false;
+    }
     mustTmux(socket, ["send-keys", "-t", `=${name}:`, "Enter"]);
     return true;
   } finally {

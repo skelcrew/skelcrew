@@ -139,6 +139,53 @@ console.log(JSON.stringify({ left: db.query("SELECT 1 FROM messages").all().leng
 
 // The same words can come in a second comment while the first is being typed in. Both went
 // in, so both are marked seen on the PR.
+// The builder can ask you a question between a message's paste and its Enter. The Enter would
+// answer it, so the message is left at the prompt, still waiting, and sent once the question is
+// over, with no second paste.
+test("a question asked between a message's paste and its Enter leaves it unsent until it is over", () => {
+  // A stand-in builder, idle at Claude Code's prompt, showing what is typed after it as a draft
+  // and keeping each key as it comes, so the test sees the paste before its Enter.
+  writeFileSync(
+    join(home, "builder.sh"),
+    "#!/bin/sh\nprintf '\\033[?2004h'\nstty raw\nprintf '❯ '\nexec cat > received.txt\n",
+    { mode: 0o755 },
+  );
+  const seen = run(`
+import { readFileSync, existsSync } from "node:fs";
+import { forQuestion } from ${JSON.stringify(source("agents/typing.ts"))};
+import { stopDelivering } from ${JSON.stringify(source("flow/messages.ts"))};
+const received = ${JSON.stringify(join(home, "received.txt"))};
+const got = () => (existsSync(received) ? readFileSync(received, "utf8") : "");
+const count = () => db.query("SELECT 1 FROM messages").all().length;
+Bun.spawnSync(["tmux", "-L", tmux, "new-session", "-d", "-s", "app-12", "-c", ${JSON.stringify(home)}, ${JSON.stringify(join(home, "builder.sh"))}]);
+await Bun.sleep(300);
+queueMessage(db, tmux, "app-12", { sender: "lead", text: "Use v2.", said: "Use v2.", typed_in: [] });
+for (let i = 0; i < 200 && !got().includes("Use v2."); i++) await Bun.sleep(10);
+if (got().includes("\\r")) throw new Error("the Enter came before the question");
+// As the daemon does when the builder's hook says it asked a question.
+db.run("UPDATE threads SET asking = 1");
+stopDelivering(db, "app-12", false, forQuestion);
+await Bun.sleep(1500);
+const during = { entered: got().includes("\\r"), waiting: count() };
+// The question is over.
+db.run("UPDATE threads SET asking = 0");
+for (let i = 0; i < 12 && count() > 0; i++) {
+  deliverAllWaiting(db, tmux);
+  await Bun.sleep(500);
+}
+await Bun.sleep(500);
+const { updates } = db.query("SELECT updates FROM threads").get();
+console.log(JSON.stringify({ during, waiting: count(), updates: JSON.parse(updates).length }));`);
+  expect(JSON.parse(seen)).toEqual({
+    during: { entered: false, waiting: 1 },
+    waiting: 0,
+    updates: 1,
+  });
+  const received = readFileSync(join(home, "received.txt"), "utf8");
+  expect(received.split("Use v2.").length - 1).toBe(1);
+  expect(received).toEndWith("\r");
+});
+
 test("a comment that joins a message being typed in is marked seen too", () => {
   const plugin = fakePlugin(home);
   // A stand-in builder, idle at Claude Code's prompt, keeping each key as it comes, so the test
