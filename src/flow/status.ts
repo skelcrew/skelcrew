@@ -247,13 +247,19 @@ export function turnEnded(
   if (!endedTurnAsks(thread, unchanged)) {
     // Only a turn that would have needed you but for its submit still under way is passed on.
     // Any other, such as one that submitted, says nothing new.
-    if (endedTurnAsks(thread) && ended.message)
+    if (!endedTurnAsks(thread)) return false;
+    if (ended.message)
       messageLead(
         db,
         sessions,
         thread,
         `My turn ended without a submit, saying:\n\n${ended.message}`,
       );
+    // A comment on an approved PR set the thread working. The builder only answered it, so the
+    // thread waits on its approved submit again, and the next poll can find it ready to merge.
+    // A review under way sets the status itself once it ends.
+    if (thread.status === "working" && thread.reviewing === null)
+      record(db, folder, { status: "waiting" }, "its builder only replied, so it waits on CI");
     return false;
   }
   // The note quotes what the builder last said, so you see what it waits on. In quotes,
