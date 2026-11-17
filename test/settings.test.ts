@@ -54,6 +54,8 @@ test("the repository's skelcrew.yaml sets each role and the round limit, over yo
     builder: { harness: "claude", model: "sonnet" },
     reviewer: { harness: "codex" },
     maxRounds: 2,
+    fallback: null,
+    reviewMinutes: 30,
   });
 });
 
@@ -64,7 +66,21 @@ test("without a skelcrew.yaml, your config decides", () => {
     builder: { harness: "claude", model: "sonnet" },
     reviewer: { harness: "codex" },
     maxRounds: 5,
+    fallback: null,
+    reviewMinutes: 30,
   });
+});
+
+// A usage limit and a review's time are yours, so only your config sets them.
+test("the reviewer's fallback and a review's time limit come from your config alone", () => {
+  settings(
+    "harness: claude\nreviewer: { harness: codex, fallback: claude }\nreview: { timeout_minutes: 10 }\n",
+    "reviewer: { fallback: codex }\nreview: { timeout_minutes: 99 }\n",
+  );
+  expect(forApp()).toMatchObject({ fallback: "claude", reviewMinutes: 10 });
+  // A fallback that is the reviewer's own harness is none.
+  settings("harness: claude\nreviewer: { fallback: claude }\n", null);
+  expect(forApp()).toMatchObject({ fallback: null, reviewMinutes: 30 });
 });
 
 // A model name belongs to its harness.

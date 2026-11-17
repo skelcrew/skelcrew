@@ -84,7 +84,13 @@ const given = () => ({
   env: env(),
 });
 const start = (
-  more: { signal?: AbortSignal; limit?: number; harness?: "claude"; model?: string } = {},
+  more: {
+    signal?: AbortSignal;
+    limit?: number;
+    harness?: "claude";
+    model?: string;
+    issue?: { title: string; body: string };
+  } = {},
 ) => review({ ...given(), ...more });
 
 // What `nice` prints here, so a test can tell the reviewer's CPU priority from the test's own.
@@ -241,12 +247,96 @@ describe.skipIf(insideSandbox)("reviewer", () => {
     expect(done.body).toContain("not logged in");
   });
 
-  test("fails a review that runs past its time limit, and ends it", async () => {
+  // codex exec echoes its whole prompt before it works, so the end of what it printed can be
+  // the task's text.
+  test("fails a review with Codex's own error, never the prompt it echoed", async () => {
+    const echo = 'cat "$CODEX_HOME/sessions/prompt" >&2';
+    fakeCodex(approve, [echo, "echo 'ERROR: stream disconnected before completion' >&2", "exit 1"]);
+    const done = await start();
+    expect(done).toEqual({
+      verdict: "failed",
+      body: "codex exited with 1: stream disconnected before completion",
+    });
+    fakeCodex(approve, [echo, "exit 1"]);
+    expect(await start()).toEqual({ verdict: "failed", body: "codex exited with 1" });
+  });
+
+  // A bug report can quote an error that looks like Codex's own, and even one about a limit.
+  test("never takes an ERROR line of the echoed task for Codex's own error", async () => {
+    const quoted = {
+      title: "Fix the sync",
+      body: "It logs:\nERROR: Too many requests, rate limit\n",
+    };
+    fakeCodex(approve, ['cat "$CODEX_HOME/sessions/prompt" >&2', "exit 1"]);
+    expect(await start({ issue: quoted })).toEqual({
+      verdict: "failed",
+      body: "codex exited with 1",
+    });
+  });
+
+  // A task about a limit can quote Codex's own error word for word.
+  test("a Codex error the task quotes word for word still counts when Codex prints it", async () => {
+    const error = "You've hit your usage limit. Try again at Dec 31st, 2099 11:59 PM.";
+    const quoted = { title: "Handle limits", body: `Codex said:\nERROR: ${error}\n` };
+    fakeCodex(approve, [
+      'cat "$CODEX_HOME/sessions/prompt" >&2',
+      `echo "ERROR: ${error}" >&2`,
+      "exit 1",
+    ]);
+    expect(await start({ issue: quoted })).toEqual({
+      verdict: "limited",
+      body: error,
+      reset: new Date(2099, 11, 31, 23, 59).getTime(),
+    });
+  });
+
+  // The prompt ends with no newline, so an error with no ERROR: marker joins its last line.
+  test("never puts the echoed task in the note, even joined to a plain error", async () => {
+    fakeCodex(approve, [
+      'cat "$CODEX_HOME/sessions/prompt" >&2',
+      "echo 'sandbox setup failed' >&2",
+      "exit 1",
+    ]);
+    expect(await start()).toEqual({
+      verdict: "failed",
+      body: "codex exited with 1: sandbox setup failed",
+    });
+  });
+
+  // The code under review can log about rate limits, as this one does.
+  test("never takes an ERROR line a command printed for Codex's own error, or for a limit", async () => {
+    fakeCodex(approve, [
+      "echo 'ERROR: rate limit exceeded' >&2",
+      "echo 'thread panicked: out of memory' >&2",
+      "exit 1",
+    ]);
+    expect(await start()).toEqual({
+      verdict: "failed",
+      body: "codex exited with 1: thread panicked: out of memory",
+    });
+  });
+
+  test("a Codex review that meets its usage limit is limited, with when it resets", async () => {
+    const error =
+      "You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at Dec 31st, 2099 11:59 PM.";
+    fakeCodex(approve, [
+      'cat "$CODEX_HOME/sessions/prompt" >&2',
+      `echo "ERROR: ${error}" >&2`,
+      "exit 1",
+    ]);
+    expect(await start()).toEqual({
+      verdict: "limited",
+      body: error,
+      reset: new Date(2099, 11, 31, 23, 59).getTime(),
+    });
+  });
+
+  test("times out a review that runs past its time limit, and ends it", async () => {
     fakeCodex(approve, ['sleep 1; echo late >> "$CODEX_HOME/sessions/late"; sleep 30']);
     const began = Date.now();
     const done = await start({ limit: 300 });
     expect(Date.now() - began).toBeLessThan(5000);
-    expect(done.verdict).toBe("failed");
+    expect(done.verdict).toBe("timed out");
     expect(done.body).toContain("ran past");
     // Whatever the reviewer started ends with it.
     await Bun.sleep(1500);
@@ -313,6 +403,21 @@ describe.skipIf(insideSandbox)("reviewer", () => {
     ]);
     const done = await review({ ...given(), harness: "claude" });
     expect(done).toEqual({ verdict: "approve", body: "From Claude Code." });
+  });
+
+  test("a Claude Code review that meets its usage limit is limited, with when it resets", async () => {
+    mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
+    writeFileSync(join(home, ".config", "skelcrew", "claude-token"), "sk-ant-oat01-tok\n");
+    fakeClaude([
+      "cat > /dev/null",
+      'echo \'{"type":"result","is_error":true,"result":"Claude AI usage limit reached|4102444740"}\'',
+      "exit 1",
+    ]);
+    expect(await start({ harness: "claude" })).toEqual({
+      verdict: "limited",
+      body: "Claude AI usage limit reached|4102444740",
+      reset: 4102444740_000,
+    });
   });
 
   test("fails a Claude Code review that answers outside the shape", async () => {

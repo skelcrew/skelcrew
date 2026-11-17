@@ -47,10 +47,12 @@ const script = (name: string, body: string) => writeScript(home, name, body);
 // hook commands its settings give for an event when the test leaves a file named for it:
 // ask for AskUserQuestion's PreToolUse, answer for its PostToolUse, talk for UserPromptSubmit,
 // stop for Stop, which Claude Code runs when a turn ends, and fail for StopFailure, which it runs
-// in Stop's place when a turn ends on an error such as a lapsed login. interrupt runs no hook at
-// all, as Claude Code's hooks reference says of a turn you stop with Esc. A hook's input is what
-// the test left in its file, or {}. Each hook gets a line in the file ran once it has finished.
-// Text typed into the builder goes in its file typed, and runs UserPromptSubmit, as talk does.
+// in Stop's place when a turn ends on an error such as a lapsed login. limit runs StopFailure too,
+// for a usage limit. interrupt runs no hook at all, as Claude Code's hooks reference says of a
+// turn you stop with Esc. A hook's input is what the test left in its file, or {}. Each hook gets
+// a line in the file ran once it has finished. Text typed into the builder goes in its file
+// typed, and runs UserPromptSubmit, as talk does. It looks busy while the file busy is in its
+// config folder.
 function fakeClaude(): void {
   script(
     "claude",
@@ -95,6 +97,10 @@ for i in $(seq 3000); do
   test -e "$CLAUDE_CONFIG_DIR/fail" && { rm "$CLAUDE_CONFIG_DIR/fail"; hook StopFailure authentication_failed; }
   test -e "$CLAUDE_CONFIG_DIR/interrupt" && { rm "$CLAUDE_CONFIG_DIR/interrupt"; echo Esc >> "$CLAUDE_CONFIG_DIR/ran"; }
   test -e "$CLAUDE_CONFIG_DIR/stop" && { said=$(cat "$CLAUDE_CONFIG_DIR/stop"); rm "$CLAUDE_CONFIG_DIR/stop"; hook Stop "" "$said"; }
+  if [ -e "$CLAUDE_CONFIG_DIR/busy" ]; then
+    [ "$look" = busy ] || { clear; echo "esc to interrupt"; look=busy; }
+  elif [ "$look" = busy ]; then clear; echo "❯"; look=idle; fi
+  test -e "$CLAUDE_CONFIG_DIR/limit" && { given=$(cat "$CLAUDE_CONFIG_DIR/limit"); rm "$CLAUDE_CONFIG_DIR/limit"; hook StopFailure rate_limit "$given"; }
   sleep 0.1
 done`,
   );
@@ -181,7 +187,10 @@ async function untilNeedsYou(wanted: boolean) {
 
 // Has the fake builder run the hooks for an event, as Claude Code would, with `input` as what
 // the hook reads, and waits for them.
-async function hook(step: "ask" | "answer" | "talk" | "fail" | "stop" | "interrupt", input = "") {
+async function hook(
+  step: "ask" | "answer" | "talk" | "fail" | "stop" | "interrupt" | "limit",
+  input = "",
+) {
   const before = read(join(builder(), "ran")).split("\n").length;
   writeFileSync(join(builder(), step), input);
   await until(() => read(join(builder(), "ran")).split("\n").length > before);
@@ -196,6 +205,15 @@ function workingSince(): number | null {
   const row = db.query("SELECT working_since FROM threads WHERE folder = 'app-12'").get();
   db.close();
   return z.object({ working_since: z.number().nullable() }).parse(row).working_since;
+}
+
+// app-12's row in Skelcrew's database.
+function thread(): Record<string, unknown> {
+  const db = new Database(join(data(), "skelcrew.db"));
+  db.run("PRAGMA busy_timeout = 5000");
+  const row = db.query("SELECT * FROM threads WHERE folder = 'app-12'").get();
+  db.close();
+  return row && typeof row === "object" ? { ...row } : {};
 }
 
 // Sets one of app-12's flags, as a review, or with submitted as sc submit, would.
@@ -280,6 +298,68 @@ describe.skipIf(insideSandbox)("needs you", () => {
     // You fix it, such as with /login, and type to the builder.
     await hook("talk");
     await untilNeedsYou(false);
+  }, 60_000);
+
+  test("a builder stopped by its usage limit waits for the reset without needing you, then is told to continue", async () => {
+    addApp();
+    await startApp12();
+    // Claude Code's StopFailure hook is given the kind of error and what it showed.
+    // Far enough off to see the thread wait before the reset comes.
+    const reset = Math.ceil(Date.now() / 1000) + 8;
+    const said = `Claude AI usage limit reached|${reset}`;
+    await hook("limit", JSON.stringify({ error: "rate_limit", last_assistant_message: said }));
+    expect(read(join(builder(), "hooks"))).toBe("");
+    await until(() => thread().limited === 1);
+    expect(thread()).toMatchObject({ erred: 1, limit_reset: reset * 1000 });
+    expect(await needsYou()).toBe(false);
+    // At the reset, Skelcrew types continue into the builder, and nobody hears of it.
+    await until(() => read(join(builder(), "typed")).includes("continue"), 30_000);
+    expect(thread()).toMatchObject({ erred: 0, limited: 0, limit_reset: null });
+    expect(notes()).toBe(0);
+  }, 60_000);
+
+  // The builder's own last words can mention rate limits, such as the code it was writing.
+  test("a login error is no usage limit, whatever the builder last said, and needs you", async () => {
+    addApp();
+    await startApp12();
+    const said =
+      "I added rate limit handling to the API client.\nOAuth token has expired. Please run /login";
+    await hook(
+      "limit",
+      JSON.stringify({ error: "authentication_failed", last_assistant_message: said }),
+    );
+    await untilNeedsYou(true);
+    expect(thread()).toMatchObject({ erred: 1, limited: 0 });
+  }, 60_000);
+
+  // The wake waits for the builder to be idle, so it can still be waiting when the error ends.
+  for (const [ends, step] of [
+    ["you type to it", "talk"],
+    ["it meets another error", "fail"],
+  ] as const)
+    test(`a wake planned for a usage limit never types once ${ends}`, async () => {
+      addApp();
+      await startApp12();
+      const said = `Claude AI usage limit reached|${Math.ceil(Date.now() / 1000) + 2}`;
+      await hook("limit", JSON.stringify({ error: "rate_limit", last_assistant_message: said }));
+      await until(() => thread().limited === 1);
+      // Busy past the reset, so the wake waits to type, and the error ends meanwhile.
+      writeFileSync(join(builder(), "busy"), "");
+      await Bun.sleep(3000);
+      await hook(step);
+      rmSync(join(builder(), "busy"));
+      await Bun.sleep(3000);
+      expect(read(join(builder(), "typed"))).not.toContain("continue");
+    }, 60_000);
+
+  test("stopping a builder that waits out a usage limit forgets the limit", async () => {
+    addApp();
+    await startApp12();
+    const said = `Claude AI usage limit reached|${Math.ceil(Date.now() / 1000) + 3600}`;
+    await hook("limit", JSON.stringify({ error: "rate_limit", last_assistant_message: said }));
+    await until(() => thread().limited === 1);
+    expect((await skel(["stop", "app-12"])).err).toBe("");
+    expect(thread()).toMatchObject({ status: "stopped", erred: 0, limited: 0, limit_reset: null });
   }, 60_000);
 
   test("a builder that stops without submitting needs you, tells the lead what it said, and clears when typed to", async () => {

@@ -32,6 +32,7 @@ import {
   startLead,
   typeLeadNotes,
 } from "./lead.ts";
+import { endWake, restoreLimits, wakeAfterLimit } from "./limits.ts";
 import { listRepositories, listTasks, listThreads, showPr, showTask } from "./list.ts";
 import { pollRepositories } from "./poll.ts";
 import { findRepository, fullNameIs, noRepositories, refreshClones, repositoryAt } from "./repo.ts";
@@ -39,6 +40,7 @@ import { allowed, type Caller, DaemonRequest, parseJson } from "./requests.ts";
 import { endRound, goOn, rerunReview, resumeRound, submitRound } from "./round.ts";
 import { messageBuilder, messageLead, untagged } from "./tell.ts";
 import {
+  builderHarness,
   endedTurnAsks,
   findThread,
   liveThreads,
@@ -364,15 +366,36 @@ export async function serve(tmux: string, every = 30_000): Promise<void> {
         typeLeadNotes(db, tmux);
         return { asking: true };
       }
-      case "turn failed":
-        record(
-          db,
-          callingThread(caller).folder,
-          { erred: true },
-          "its builder's harness stopped on an error",
-        );
+      case "turn failed": {
+        // A usage limit, or a rate limit, passes by itself, so the builder is woken once it
+        // resets, and the thread doesn't need you for it. Any other error does. Only the kind of
+        // error the hook names decides: its message can hold the builder's own last words,
+        // such as about the rate limiting it was writing. The message only gives the reset.
+        const thread = callingThread(caller);
+        const said = request.message ?? "";
+        const limit =
+          request.error === "rate_limit"
+            ? { reset: builderHarness(thread).usageLimit(said, Date.now())?.reset ?? null }
+            : null;
+        if (limit !== null) {
+          const change = { erred: true, limited: true, limit_reset: limit.reset };
+          record(
+            db,
+            thread.folder,
+            change,
+            `its builder's harness reached its usage limit: ${said}`,
+          );
+          wakeAfterLimit(db, tmux, thread.folder);
+          return { erred: true };
+        }
+        // A limit it stopped on before is over: this error is new, and needs you, so the wake
+        // planned for the old one never types "continue" over it.
+        endWake(thread.folder);
+        const erred = { erred: true, limited: false, limit_reset: null };
+        record(db, thread.folder, erred, "its builder's harness stopped on an error");
         typeLeadNotes(db, tmux);
         return { erred: true };
+      }
       case "question closed": {
         // AskUserQuestion returned your answer, and the builder goes on in the same turn, so a
         // submit earlier in it still counts. Your answer starts a new stretch of work all the
@@ -392,10 +415,22 @@ export async function serve(tmux: string, every = 30_000): Promise<void> {
         db.run("UPDATE threads SET working_since = ? WHERE folder = ?", [Date.now(), folder]);
         // Run before every message typed into the builder, so only a question or an error that
         // was open is logged. Typing to a builder that stopped on an error means you fixed it,
-        // such as with /login, so it ends the error as it ends a question. Typing to one that
-        // stopped without submitting answers it, whether you typed or the lead told it. Each
-        // message starts a new turn, with no submit in it yet.
-        const over = { asking: false, stalled: false, erred: false, submitted: false };
+        // such as with /login, so it ends the error as it ends a question. A usage limit it
+        // stopped on ends too, as the builder now works again or meets it again. Typing to one
+        // that stopped without submitting answers it, whether you typed or the lead told it.
+        // Each message starts a new turn, with no submit in it yet.
+        const over = {
+          asking: false,
+          stalled: false,
+          erred: false,
+          submitted: false,
+          limited: false,
+          limit_reset: null,
+        };
+        // The builder has something to work on, so a "continue" still waiting to be typed must
+        // not land. A wake already typing has cleared the error, so it is ended whatever the
+        // flags say. One whose "continue" ran this hook has nothing left to type.
+        endWake(folder);
         if (thread.asking || thread.stalled)
           record(db, folder, over, "its builder's question is over");
         else if (thread.erred) record(db, folder, over, "its builder was typed to after its error");
@@ -529,6 +564,8 @@ export async function serve(tmux: string, every = 30_000): Promise<void> {
   refreshClones(db).catch((error) => console.log(errorText(error)));
   // Notes the daemon's stop kept from the leads.
   typeLeadNotes(db, tmux);
+  // The usage limits saved before the stop, so the held reviews carried on below still wait.
+  restoreLimits(db);
   // Bring back each thread's builder, without waiting on it, and carry on the round it was in.
   // A thread whose builder can't come back ends its review, which would otherwise mark it
   // waiting again once it ended. Either way a review already brought back hears of it.
@@ -536,10 +573,12 @@ export async function serve(tmux: string, every = 30_000): Promise<void> {
     await listenFor(thread);
     const settled = builderBack.get(thread.folder) ?? (() => {});
     // After the builder is back, since the round may type into its session.
+    // A builder that stopped on a usage limit is woken once it resets, as it would have been.
     bringBack(db, tmux, thread).then(
       () => {
         settled();
         resumeRound(db, tmux, thread.folder);
+        if (thread.erred && thread.limited) wakeAfterLimit(db, tmux, thread.folder);
       },
       (error) => {
         endRound(thread.folder);
