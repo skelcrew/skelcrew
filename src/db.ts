@@ -60,8 +60,7 @@ const threadColumns = {
 // for the sidebar. `assigned` is whether Skelcrew assigned you the task's issue, so it takes you
 // off only then. `updates` holds the lead's messages to the builder, as JSON, since they change
 // the task its reviewer checks against. `review_at` is when the latest review was asked for or
-// ended, for sc ps. `merged` is whether the task's work reached the default branch, so sc ls
-// can tell a merged task from one closed without a merge once its PR has left Skelcrew's copy.
+// ended, for sc ps.
 export const taskColumns = {
   title: "TEXT",
   body: "TEXT",
@@ -89,7 +88,6 @@ export const taskColumns = {
   review_at: "INTEGER",
   review_limited: "INTEGER NOT NULL DEFAULT 0",
   review_reset: "INTEGER",
-  merged: "INTEGER NOT NULL DEFAULT 0",
 };
 
 // Opens Skelcrew's database and prepares its tables so repositories, their leads and threads
@@ -251,13 +249,8 @@ function prepareTables(db: Database): void {
     if (!db.query("SELECT 1 FROM pragma_table_info('threads') WHERE name = ?").get(column))
       db.run(`ALTER TABLE threads ADD COLUMN ${column} ${type}`);
   // A new database starts with tasks. One from an earlier release waits for its daemon to move
-  // its threads onto tasks, as only the daemon knows no other daemon still writes to it. Tasks
-  // made by an earlier release get the columns added since.
+  // its threads onto tasks, as only the daemon knows no other daemon still writes to it.
   if (fresh) createTasks(db);
-  else if (hasTasks(db))
-    for (const [column, type] of Object.entries(taskColumns))
-      if (!db.query("SELECT 1 FROM pragma_table_info('tasks') WHERE name = ?").get(column))
-        db.run(`ALTER TABLE tasks ADD COLUMN ${column} ${type}`);
   // Skelcrew's copy of each repository's open tasks and PRs, as items, kept as JSON. The columns
   // are what readers pick and sort by. A database from an earlier release also has an
   // open_items table, which nothing reads now. It stays, as a daemon of that release may still

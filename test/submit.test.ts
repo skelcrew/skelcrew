@@ -1396,12 +1396,12 @@ await serve(${JSON.stringify(socket)}, 200);`;
       const db = new Database(join(data(), "skelcrew.db"));
       db.run("PRAGMA busy_timeout = 5000");
       try {
-        return db.query("SELECT task, status, needs_you, pr, merged FROM task_threads").get();
+        return db.query("SELECT task, status, needs_you, pr FROM task_threads").get();
       } finally {
         db.close();
       }
     };
-    expect(row()).toEqual({ task: "t1", status: "waiting", needs_you: 1, pr: null, merged: 0 });
+    expect(row()).toEqual({ task: "t1", status: "waiting", needs_you: 1, pr: null });
     // No forge, so no PR, check or review was asked for.
     expect(asked(plugin).filter((q) => q.ask !== "claims")).toEqual([]);
     // You merge it yourself, with a squash, and Skelcrew sees the branch has nothing left.
@@ -1414,7 +1414,7 @@ await serve(${JSON.stringify(socket)}, 200);`;
     // The thread's row changes a moment before its log has the line, so the test waits on the
     // log, which comes last.
     await until(() => log().includes("is merged into main"), 30_000);
-    expect(row()).toMatchObject({ status: "done", merged: 1 });
+    expect(row()).toMatchObject({ status: "done" });
   }, 60_000);
 
   // Runs the daemon from a folder that isn't a git checkout, as the service does, polling every

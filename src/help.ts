@@ -8,7 +8,7 @@ const sections: [string, [string, string][]][] = [
     "COMMANDS",
     [
       ["(no command)", "Open this repository's lead, with the sidebar"],
-      ["ls [<repo>]", "Tasks by stage, with each one's PR, CI and review"],
+      ["ls [<repo>]", "Tasks, with each one's status, PR, CI and review"],
       ["show <task>", "A task: description, threads, PR, checks, review"],
       ["ps [<repo>]", "Threads: status, PR, CI, review, needs you"],
       ["start <issue> [--from <branch>]", "Start, resume, or go on past the limit"],
@@ -71,7 +71,7 @@ const sections: [string, [string, string][]][] = [
     "OPTIONS",
     [
       ["--json", "Output for tools"],
-      ["--all", "Done threads too, on ps, and merged and closed tasks, on ls"],
+      ["--all", "Done threads too, on ps, and ended tasks, on ls"],
       ['--short "<words>"', "A thread's short title for the sidebar, on start"],
       ["--from <remote>", "The repository you're in"],
       ["--version", "Which release of Skelcrew this is"],

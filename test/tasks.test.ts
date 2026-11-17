@@ -135,10 +135,8 @@ test("after the move, every command and the screen show the same threads under t
   // And each PR sc pr show showed, on its task, as its page showed it.
   for (const { pr, thread, ...page } of prs.filter((pr: unknown) => typeof pr !== "string"))
     expect(named(thread)).toMatchObject({ pr, prPage: page });
-  // A task whose issue closed and whose PR left the copy still shows, from what it saved. The
-  // release before tasks didn't save whether a thread's work merged, so its tasks that ended
-  // show as closed.
-  expect(named("app-16")).toMatchObject({ stage: "closed", pr: 42, prPage: null });
+  // A task whose issue closed and whose PR left the copy still shows, from what it saved.
+  expect(named("app-16")).toMatchObject({ pr: 42, prPage: null });
   // Each thread has its task, and a copy of the database from before waits beside it.
   const db = new Database(dbFile(), { readonly: true });
   expect(db.query("SELECT owner, repo, task FROM tasks ORDER BY rowid").all()).toEqual(

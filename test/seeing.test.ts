@@ -288,21 +288,18 @@ describe("sc ls", () => {
     issues("site", [{ number: 7, title: "New landing page", createdAt: "2026-11-02T12:00:00Z" }]);
   });
 
-  // app-3 is done and its issue closed, so it is closed and only --all shows it. app-9 failed,
-  // and stays in Working so it doesn't vanish.
-  test("lists every repository's tasks under their stages, from Skelcrew's copy", async () => {
+  // app-3's thread is done and its issue closed, so only --all shows it.
+  test("lists every repository's tasks, from Skelcrew's copy", async () => {
     serve();
     await untilAnswers();
     const listed = await skel(["ls"]);
     expect(listed.err).toBe("");
     expect(listed.out).toBe(
-      "Issues\n" +
-        "  app-10  Fix login\n" +
-        "\n" +
-        "Working\n" +
-        "  app-9   Send people back to the page they came …  failed\n" +
-        "  app-12  JSON export                               working\n" +
-        "  site-7  New landing page                          waiting · needs you\n",
+      "TASK    TITLE                                     STATUS\n" +
+        "app-9   Send people back to the page they came …  failed\n" +
+        "app-12  JSON export                               working\n" +
+        "app-10  Fix login\n" +
+        "site-7  New landing page                          waiting · needs you\n",
     );
     // They come from Skelcrew's copy, with no call to GitHub.
     expect(read(join(home, "calls"))).not.toContain("issue");
@@ -310,41 +307,26 @@ describe("sc ls", () => {
     expect((await skel(["issue", "ls"])).out).toBe(listed.out);
   });
 
-  // A task whose work ended without a merge goes back to its open issue, so it can start again.
-  // One with no issue is closed. An approval with nothing failing waits for you.
-  test("--all adds merged and closed tasks, and each task has the stage its thread gives it", async () => {
-    sql(`UPDATE tasks SET merged = 1 WHERE task = '3';
-${threadSql({ task: "10", status: "done", title: "Fix login" })}
-${threadSql({ task: "t1", status: "done", title: "Add docs" })}
-${threadSql({ task: "t2", status: "waiting", session: "s2", title: "Tidy", verdict: "approve", needs_you: 1 })}`);
-    tmux("new-session", "-d", "-s", "app-t2", "sleep 300");
+  // A task whose thread is done stays listed while its issue is open, as after sc rm, so it can
+  // start again.
+  test("--all adds tasks whose thread is done and whose issue closed", async () => {
+    sql(threadSql({ task: "10", status: "done", title: "Fix login" }));
     serve();
     await untilAnswers();
-    const listed = await skel(["ls", "app", "--all"]);
+    const listed = await skel(["ls", "app"]);
     expect(listed.err).toBe("");
     expect(listed.out).toBe(
-      "Issues\n" +
-        "  app-10  Fix login\n" +
-        "\n" +
-        "Working\n" +
-        "  app-9   Send people back to the page they came …  failed\n" +
-        "  app-12  JSON export                               working\n" +
-        "\n" +
-        "Ready for review\n" +
-        "  app-t2  Tidy                                      waiting · needs you\n" +
-        "\n" +
-        "Merged\n" +
-        "  app-3   Typo\n" +
-        "\n" +
-        "Closed\n" +
-        "  app-t1  Add docs\n",
+      "TASK    TITLE                                     STATUS\n" +
+        "app-10  Fix login                                 done\n" +
+        "app-9   Send people back to the page they came …  failed\n" +
+        "app-12  JSON export                               working\n",
     );
-    const json = JSON.parse((await skel(["ls", "app", "--json"])).out);
-    expect(json.map((row: { task: string }) => row.task)).toEqual([
-      "app-t2",
+    const all = JSON.parse((await skel(["ls", "app", "--all", "--json"])).out);
+    expect(all.map((row: { task: string }) => row.task)).toEqual([
       "app-10",
       "app-9",
       "app-12",
+      "app-3",
     ]);
   });
 
@@ -358,7 +340,7 @@ ${threadSql({ task: "t2", status: "waiting", session: "s2", title: "Tidy", verdi
         task: "app-9",
         title: "Send people back to the page they came from after signing in",
         short: null,
-        stage: "working",
+        issue: null,
         thread: { status: "failed", needsYou: false, queued: false },
         pr: null,
         checks: null,
@@ -368,7 +350,7 @@ ${threadSql({ task: "t2", status: "waiting", session: "s2", title: "Tidy", verdi
         task: "app-12",
         title: "Add export",
         short: "JSON export",
-        stage: "working",
+        issue: "#12",
         thread: { status: "working", needsYou: false, queued: false },
         pr: null,
         checks: null,
@@ -378,7 +360,7 @@ ${threadSql({ task: "t2", status: "waiting", session: "s2", title: "Tidy", verdi
         task: "app-10",
         title: "Fix login",
         short: null,
-        stage: "issue",
+        issue: "#10",
         thread: null,
         pr: null,
         checks: null,
@@ -393,7 +375,7 @@ ${threadSql({ task: "t2", status: "waiting", session: "s2", title: "Tidy", verdi
     serve();
     await untilAnswers();
     expect((await skel(["ls", "site"])).out).toBe(
-      "Working\n  site-7  Add docs  waiting · needs you\n",
+      "TASK    TITLE     STATUS\nsite-7  Add docs  waiting · needs you\n",
     );
     sql("DELETE FROM threads WHERE repo = 'site'");
     expect((await skel(["ls", "site"])).out).toBe("There are no tasks.\n");
@@ -430,14 +412,14 @@ describe("sc show", () => {
     issue("site", 7, "New landing page", "Make it calm.");
   });
 
-  test("shows a task's stage, issue, threads and description", async () => {
+  test("shows a task's issue, threads and description", async () => {
     serve();
     await untilAnswers();
     const shown = await skel(["show", "site-7"]);
     expect(shown.err).toBe("");
     expect(shown.out).toBe(
       "site-7  New landing page\n" +
-        "Stage   working\n" +
+        "" +
         "Issue   #7  https://github.com/simon/site/issues/7\n" +
         "Thread  site-7/builder  waiting, needs you\n" +
         "PR      none\n" +
@@ -445,7 +427,7 @@ describe("sc show", () => {
     );
     expect(read(join(home, "calls"))).not.toContain("issues");
     expect((await skel(["show", "app-10"])).out).toBe(
-      "app-10  Fix login\nStage   issue\nIssue   #10  https://github.com/simon/app/issues/10\nThread  none\nPR      none\n",
+      "app-10  Fix login\nIssue   #10  https://github.com/simon/app/issues/10\nThread  none\nPR      none\n",
     );
     // sc issue show is a short name for it.
     expect((await skel(["issue", "show", "site-7"])).out).toBe(shown.out);
@@ -459,7 +441,6 @@ describe("sc show", () => {
     expect(JSON.parse(shown.out)).toEqual({
       task: "app-12",
       title: "Add export",
-      stage: "working",
       issue: { id: "#12", link: "https://github.com/simon/app/issues/12" },
       threads: [{ thread: "app-12/builder", status: "working", needsYou: false }],
       body: "Export threads as JSON.\n\nKeep it small.",
@@ -469,7 +450,6 @@ describe("sc show", () => {
     });
     expect(JSON.parse((await skel(["show", "--json", "app-10"])).out)).toMatchObject({
       task: "app-10",
-      stage: "issue",
       threads: [],
       body: "",
     });
@@ -539,7 +519,7 @@ describe("sc show", () => {
 
   // A done or failed thread starts over with a fresh row, so its builder and reviewer would
   // never see its old messages. A task whose issue closed shows what its thread saved.
-  test("shows a done task without its messages, and a closed one from what it saved", async () => {
+  test("shows a done task without its messages, and one whose issue closed from what it saved", async () => {
     const updates = JSON.stringify([{ from: "lead", at: 0, text: "Keep the CSV export too." }]);
     sql(`UPDATE threads SET status = 'done' WHERE task IN ('12', '3');
 UPDATE tasks SET updates = '${updates}', body = 'Fix the typo.' WHERE task IN ('12', '3')`);
@@ -548,12 +528,12 @@ UPDATE tasks SET updates = '${updates}', body = 'Fix the typo.' WHERE task IN ('
     const shown = await skel(["show", "app-12"]);
     expect(shown.err).toBe("");
     expect(shown.out).toBe(
-      "app-12  Add export\nStage   issue\nIssue   #12  https://github.com/simon/app/issues/12\nThread  app-12/builder  done\nPR      none\n\nDescription\nExport threads as JSON.\n\nKeep it small.\n",
+      "app-12  Add export\nIssue   #12  https://github.com/simon/app/issues/12\nThread  app-12/builder  done\nPR      none\n\nDescription\nExport threads as JSON.\n\nKeep it small.\n",
     );
     const closed = await skel(["show", "app-3"]);
     expect(closed.err).toBe("");
     expect(closed.out).toBe(
-      "app-3  Fix typo\nStage   closed\nIssue   #3\nThread  app-3/builder  done\nPR      none\n\nDescription\nFix the typo.\n",
+      "app-3  Fix typo\nIssue   #3\nThread  app-3/builder  done\nPR      none\n\nDescription\nFix the typo.\n",
     );
   });
 
@@ -651,7 +631,6 @@ async function skelIn(cwd: string, args: string[]) {
 // What sc show prints for app-12, whose PR is 31, from Skelcrew's copy, with the forge's log of
 // its failed check. The colour codes and other control characters from the forge are gone.
 const app12 = `app-12  Add export
-Stage   working
 Issue   #12
 Thread  app-12/builder  waiting
 PR      #31  open  skelcrew/12 → main
@@ -811,7 +790,6 @@ describe("with a forge", () => {
     expect(JSON.parse(shown.out)).toEqual({
       task: "app-12",
       title: "Add export",
-      stage: "working",
       issue: { id: "#12", link: null },
       threads: [{ thread: "app-12/builder", status: "waiting", needsYou: false }],
       body: "",
@@ -838,35 +816,17 @@ describe("with a forge", () => {
     });
   });
 
-  // An approval with green CI and no conflict waits for you, and sc ls shows it so.
-  test("sc ls shows each task's PR, CI and review, and an approved one ready for review", async () => {
+  test("sc ls shows each task's PR, CI and review", async () => {
     forgeThreads();
-    sql(
-      threadSql({
-        task: "20",
-        status: "waiting",
-        session: "s20",
-        title: "Done",
-        pr: 40,
-        checks: "passing",
-        verdict: "approve",
-        review_round: 2,
-        needs_you: 1,
-      }),
-    );
-    tmux("new-session", "-d", "-s", "app-20", "sleep 300");
     serve();
     await untilAnswers();
     const listed = await skel(["ls", "app"]);
     expect(listed.err).toBe("");
     expect(listed.out).toBe(
-      "Working\n" +
-        "  app-14  Fix login    waiting · #33 · CI running · reviewing r2\n" +
-        "  app-12  JSON export  waiting · #31 · CI failed · changes r3\n" +
-        "  app-9   Old          failed\n" +
-        "\n" +
-        "Ready for review\n" +
-        "  app-20  Done         waiting · needs you · #40 · CI passed · approved r2\n",
+      "TASK    TITLE        STATUS\n" +
+        "app-14  Fix login    waiting · #33 · CI running · reviewing r2\n" +
+        "app-12  JSON export  waiting · #31 · CI failed · changes r3\n" +
+        "app-9   Old          failed\n",
     );
   });
 

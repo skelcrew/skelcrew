@@ -62,7 +62,7 @@ export async function askForThreads(repository?: string): Promise<ThreadRow[]> {
   return checkReply(z.object({ threads: z.array(ThreadRow) }), reply).threads;
 }
 
-// Asks the daemon for the tasks of every repository, or of one, with their stages, for sc ls.
+// Asks the daemon for the tasks of every repository, or of one, for sc ls.
 // The daemon answers, as the lead's sandbox hides Skelcrew's database.
 export async function askForTasks(repository?: string): Promise<TaskRow[]> {
   const reply = await request({ command: "task ls", ...(repository ? { repo: repository } : {}) });

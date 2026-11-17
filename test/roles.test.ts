@@ -16,16 +16,16 @@ const workflows =
 const waiting =
   " When the builder can't take it yet, sc tell says why, and sc ps counts the messages still waiting. If one still waits after 10 minutes, Skelcrew tells you why. When the builder is mid-turn, you may ask the human to press Esc in that thread if it shouldn't finish its turn first.";
 
-// What the lead was told about issues, threads and PRs before tasks had stages, each with what it
-// is told now.
+// What the lead was told about issues, threads and PRs before sc ls and sc show, each with what
+// it is told now.
 const leadTasks = [
   [
     "- sc issue ls lists open issues, and sc ps lists threads, with their status, whether they need the human, and each one's PR, CI and review, such as #242, failed and changes r3.",
-    "- sc ls lists tasks under their stages: Issues not started, Working, and Ready for review, which wait for the human to merge. Each row says what is happening, such as waiting · #242 · CI failed · changes r3, and whether it needs the human. sc ls --all adds merged and closed tasks. sc ps lists threads, with the same columns.",
+    "- sc ls lists tasks: open issues, and the work on each. Each row says what is happening, such as waiting · #242 · CI failed · changes r3, and whether it needs the human. sc ls --all adds tasks whose work ended. sc ps lists threads, with the same columns.",
   ],
   [
     "- sc pr show app-13, or a PR's number such as sc pr show 242, shows a PR: its state, branch, thread, checks, latest review and description, with the log of each failed check. Use it to see why CI failed or what a review asked for.",
-    "- sc show app-13 shows a task: its stage, issue, threads, PR with its checks and review, and its description as its reviewer gets it, then the PR's latest review and description, with the log of each failed check. Use it to see why CI failed or what a review asked for. sc pr show 242 shows the task of PR 242 the same way.",
+    "- sc show app-13 shows a task: its issue, threads, PR with its checks and review, and its description as its reviewer gets it, then the PR's latest review and description, with the log of each failed check. Use it to see why CI failed or what a review asked for. sc pr show 242 shows the task of PR 242 the same way.",
   ],
   [
     "Skelcrew keeps its own copy: sc issue ls and sc issue show app-13 show issues, with the title and body a builder sees, and sc ps and sc pr show show PRs.",

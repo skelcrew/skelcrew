@@ -136,8 +136,6 @@ export const Thread = z.object({
     .string()
     .nullable()
     .transform((saved) => TaskUpdate.array().parse(saved === null ? [] : JSON.parse(saved))),
-  // Whether the thread ended with its work merged, rather than closed or removed.
-  merged: z.coerce.boolean(),
   // What the builder is doing, as its harness's hooks and its screen tell. Null until its first
   // hook runs, and in a row from before Skelcrew kept it.
   state: AgentState.nullable(),
