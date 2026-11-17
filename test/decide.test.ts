@@ -9,6 +9,7 @@ import {
   decide,
   labeledToStart,
   type PullRequest,
+  refusedWorkflow,
   reviewCheck,
 } from "../src/flow/decide.ts";
 import { endedTurnAsks, type Thread } from "../src/flow/thread.ts";
@@ -449,4 +450,18 @@ test("a builder's turn that ends without a submit needs you, and no other does",
   ];
   for (const [change, asks] of cases)
     expect([change, endedTurnAsks(thread(change))]).toEqual([change, asks]);
+});
+
+test("a push GitHub refuses for a workflow file says which file, and what to do", () => {
+  const said =
+    "git -C /x push --quiet https://github.com/simon/app.git abc:refs/heads/b failed: To https://github.com/simon/app.git\n ! [remote rejected] abc -> b (refusing to allow a GitHub App to create or update workflow `.github/workflows/ci.yml` without `workflows` permission)\nerror: failed to push some refs to 'https://github.com/simon/app.git'";
+  expect(refusedWorkflow("app-12", said)).toBe(
+    "app-12's push was refused: it changes .github/workflows/ci.yml, which Skelcrew can't push. Undo that change, or a person must make it.",
+  );
+});
+
+test("a push refused for any other reason gets no workflow message", () => {
+  const said =
+    "git push failed: ! [rejected] abc -> b (non-fast-forward)\nerror: failed to push some refs";
+  expect(refusedWorkflow("app-12", said)).toBeNull();
 });
