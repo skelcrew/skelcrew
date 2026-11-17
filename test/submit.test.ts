@@ -373,7 +373,9 @@ describe.skipIf(insideSandbox)("sc submit", () => {
 
     const prompt = read(join(codexHome(), "sessions", "prompt-1"));
     expect(prompt).toContain("Add export");
-    expect(prompt).toContain("git diff origin/main...HEAD");
+    // The diff starts where the branch meets main as GitHub has it, which here is main's tip.
+    const main = git(join(github(), "simon", "app.git"), "rev-parse", "main");
+    expect(prompt).toContain(`git diff ${main}...HEAD`);
     expect(read(join(codexHome(), "sessions", "branches-1"))).toContain("origin/main");
 
     // Approved, it waits on CI: polling GitHub marks it needs you once every check is green.
@@ -960,6 +962,19 @@ done`,
     expect(reviews()[1]).toEqual({ commit: merged, verdict: "approve", body: "Tests pass." });
   }, 180_000);
 
+  // The builder merged main as GitHub has it, but its own origin/main is still where the thread
+  // started. Diffed against that, main's new commits would read as the PR's.
+  test("a merge of main is reviewed against main as the forge has it, not the builder's older copy", async () => {
+    const work = addApp();
+    verdict(1, "approve", "Ready to merge.");
+    verdict(2, "approve", "Tests pass.");
+    await approveThenMerge(work, { ci: false });
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-2")), 60_000);
+    const main = git(work, "rev-parse", "HEAD");
+    expect(read(join(codexHome(), "sessions", "main-2")).trim()).not.toBe(main);
+    expect(read(join(codexHome(), "sessions", "prompt-2"))).toContain(`git diff ${main}...HEAD`);
+  }, 180_000);
+
   test("a merge whose wait for CI a restart cut short still keeps the approval", async () => {
     const work = addApp();
     verdict(1, "approve", "Ready to merge.");
@@ -1295,7 +1310,8 @@ done`,
     expect((await skel(["start", "app-12", "--from", "next"])).err).toBe("");
     await until(() => finished("success").length === 1, 30_000);
     expect(opened()?.base).toBe("next");
-    expect(read(join(codexHome(), "sessions", "prompt-1"))).toContain("origin/next...HEAD");
+    const next = git(work, "rev-parse", "next");
+    expect(read(join(codexHome(), "sessions", "prompt-1"))).toContain(`git diff ${next}...HEAD`);
     expect(read(join(codexHome(), "sessions", "branches-1"))).toContain("origin/next");
   }, 60_000);
 

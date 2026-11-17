@@ -319,8 +319,12 @@ async function reviewRound(
             ...given,
             clone: cloneOf(thread),
             issue: threadTask(db, thread),
-            // Setting up the thread's clone put the base branch there under origin/.
-            base: `origin/${baseOf(thread)}`,
+            // Where the commit meets the base branch as the forge had it at the push, read in
+            // Skelcrew's clone. The builder's origin/ moves only when it fetches, so a builder
+            // that merged a newer main would show main's commits as its own. That commit is in
+            // the commit's history, so the reviewer's copy of the clone has it. Without one,
+            // origin/ in the thread's clone, where setting it up put the base branch.
+            base: whereItMeets(skelcrewClone, bases, sha) ?? `origin/${baseOf(thread)}`,
             test: repositoryCommands(thread).test,
           });
           const { harness } = given;
@@ -715,6 +719,17 @@ function lastApproved(thread: Thread): string | null {
   const skelcrewClone = cloneDir(thread.owner, thread.repo);
   const ref = `refs/skelcrew/approved/${thread.folder}^{commit}`;
   const run = Bun.spawnSync(["git", "-C", skelcrewClone, "rev-parse", "--verify", "--quiet", ref], {
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  return run.success ? run.stdout.toString().trim() : null;
+}
+
+// Returns the commit where the commit meets the base, in the clone, which is where the PR's own
+// change starts, as the forge shows it. Returns null when git can't read either, such as a
+// base the clone never fetched.
+export function whereItMeets(clone: string, base: string, sha: string): string | null {
+  const run = Bun.spawnSync(["git", "-C", clone, "merge-base", base, sha], {
     stdout: "pipe",
     stderr: "pipe",
   });
