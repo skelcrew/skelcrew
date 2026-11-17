@@ -20,6 +20,7 @@ import { trackerOf } from "../plugins/ask.ts";
 import { builtInRole } from "../roles.ts";
 import { quietly } from "../run.ts";
 import { errorText } from "../say.ts";
+import type { Commands, Settings } from "../settings.ts";
 import { taskOf, threadTask } from "./copy.ts";
 import { pastRoundLimit } from "./decide.ts";
 import { fetchBranch } from "./git.ts";
@@ -312,6 +313,33 @@ export async function setUpThread(db: Database, thread: Thread): Promise<void> {
   }
 }
 
+// Returns the builder's instructions: its built-in ones, then how the repository is set up and
+// tested, as skelcrew.yaml or your config names it or Skelcrew detected it. The builder can't read
+// your config from its sandbox, nor tell what was detected, so it is told, along with which were
+// detected, as a detected command can be wrong. The whole suite stays CI's and the reviewer's.
+export function builderInstructions(commands: Pick<Settings, "setup" | "test">): string {
+  const instructions = builtInRole("builder").instructions;
+  const { setup, test } = commands;
+  const shown = ({ commands }: Commands) => `\`${commands.join(" && ")}\``;
+  const told = [
+    ...(setup.commands.length > 0
+      ? [
+          setup.detected
+            ? `Skelcrew set up your clone with ${shown(setup)}, which it detected from the repository's files.`
+            : `Skelcrew set up your clone with ${shown(setup)}.`,
+        ]
+      : []),
+    ...(test.commands.length > 0
+      ? [
+          `The repository's whole test suite runs with ${shown(test)}${test.detected ? ", which Skelcrew detected from the repository's files, so it may be wrong" : ""}. That is for CI and the reviewer, so don't run it yourself. It shows how the repository runs its tests, lint and typecheck, so run the parts near your change.`,
+        ]
+      : []),
+  ];
+  return told.length > 0
+    ? `${instructions.replace(/\n$/, "")}\n\n${told.join(" ")}\n`
+    : instructions;
+}
+
 // Starts the thread's builder in a session, in the sandbox in its clone: bringing back the
 // conversation it saved, or else afresh with the task as its reviewer gets it as its first
 // message: the title and body from Skelcrew's copy, and the lead's messages after them. Throws
@@ -354,7 +382,7 @@ export async function startBuilder(db: Database, sessions: string, thread: Threa
     // task in its own words, and the builder still has it after a long conversation is
     // compacted. It asks the builder to ask you only when it must: its question waits on a
     // screen nobody watches.
-    system: builtInRole("builder").instructions,
+    system: builderInstructions(repositoryCommands(thread)),
     ...start,
   });
   // Start it in a session of its own, then watch a moment for it to exit at once, so a broken
