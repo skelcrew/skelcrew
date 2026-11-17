@@ -4,7 +4,13 @@ import { dlopen, FFIType } from "bun:ffi";
 import { existsSync, mkdirSync, openSync, rmSync } from "node:fs";
 import { createServer, type Server, type Socket } from "node:net";
 import { dirname } from "node:path";
-import { processTree, stillRunning } from "../agents/tmux.ts";
+import {
+  agentRuns,
+  interruptSession,
+  processTree,
+  readSession,
+  stillRunning,
+} from "../agents/sessions.ts";
 import { openDb, type Repository } from "../db.ts";
 import { setupDone } from "../machine/setup.ts";
 import { keepUpToDate } from "../machine/update.ts";
@@ -98,7 +104,7 @@ function callingThread(caller: Caller): Thread {
 }
 
 // Ends the daemon on a signal: removes its sockets, ends the processes it started, and exits.
-// The agents' tmux sessions aren't the daemon's processes, so agents keep working while the
+// The agents' sessions aren't the daemon's processes, so agents keep working while the
 // daemon is down. The processes it started, such as a git clone or a reviewer, are ended and
 // waited for. The service stops only the daemon, and the next daemon starts that work again.
 // A clone left running would write into the folder the next daemon clones into. Each process
@@ -125,10 +131,11 @@ function endWhatItStarted(sockets: string[]): void {
 
 // Opens the daemon's sockets, brings back the lead of each repository you have opened and
 // the builders of threads that were running, so commands and agents can reach it. Leaves the
-// sockets listening after returning, and removes them when stopped, leaving every tmux
-// session running. It never asks questions: systemd has nobody to answer. Polls each
-// repository's tracker and forge every `every` milliseconds while a thread is active.
-export async function serve(tmux: string, every = 30_000): Promise<void> {
+// sockets listening after returning, and removes them when stopped, leaving every agent's
+// session running. `sessions` names where the agents' sessions run. It never asks questions:
+// systemd has nobody to answer. Polls each repository's tracker and forge every `every`
+// milliseconds while a thread is active.
+export async function serve(sessions: string, every = 30_000): Promise<void> {
   if (!setupDone()) throw new Error("the first run isn't done on this machine: run sc first");
   const db = openDb();
   // The checkout and commit this daemon's code came from, for sc status. Read once at start,
@@ -174,7 +181,7 @@ export async function serve(tmux: string, every = 30_000): Promise<void> {
           listening.add(socket);
           await open(socket, { lead: { owner, repo } });
         }
-        await startLead(db, tmux, repository);
+        await startLead(db, sessions, repository);
       });
     return leadStarts;
   };
@@ -207,7 +214,7 @@ export async function serve(tmux: string, every = 30_000): Promise<void> {
     try {
       await setUpThread(db, thread);
       await listenFor(thread);
-      await startBuilder(db, tmux, thread);
+      await startBuilder(db, sessions, thread);
     } catch (error) {
       failThread(db, thread, error);
     }
@@ -221,8 +228,8 @@ export async function serve(tmux: string, every = 30_000): Promise<void> {
     const thread = record(db, stopped.folder, change, "started again");
     try {
       await listenFor(thread);
-      await bringBack(db, tmux, thread);
-      resumeRound(db, tmux, thread.folder);
+      await bringBack(db, sessions, thread);
+      resumeRound(db, sessions, thread.folder);
     } catch (error) {
       failThread(db, thread, error);
     }
@@ -240,7 +247,7 @@ export async function serve(tmux: string, every = 30_000): Promise<void> {
         // A lead you exited this second is closed first, so the daemon's next look can't close
         // the tab again while the lead starts, and a tab can't bring it back. It comes before
         // the choice of repository, so plain sc doesn't pick the one whose tab just closed.
-        closeExitedLeads(db, tmux);
+        closeExitedLeads(db, sessions);
         // From outside any repository Skelcrew has, the one you opened last.
         const repository =
           (request.from === undefined ? undefined : repositoryAt(db, request.from)) ??
@@ -268,7 +275,7 @@ export async function serve(tmux: string, every = 30_000): Promise<void> {
         ]);
         await ensureLead(repository);
         // A lead that wasn't running kept its notes until now.
-        typeLeadNotes(db, tmux);
+        typeLeadNotes(db, sessions);
         // Not waited on, so attaching never waits on a remote.
         refreshClones(db).catch((error) => console.log(errorText(error)));
         return { lead: leadOf(db, owner, repo).name, repository: `${owner}/${repo}` };
@@ -301,14 +308,31 @@ export async function serve(tmux: string, every = 30_000): Promise<void> {
         if (builder && threadOn(db, request.repo, request.task)?.folder !== builder.folder)
           throw new Error(`you may ask for a review of ${threadName(db, builder)} only`);
         const thread = findThread(db, request.repo, request.task);
-        rerunReview(db, tmux, thread.folder, builder !== null);
+        rerunReview(db, sessions, thread.folder, builder !== null);
         return { reviewing: threadName(db, thread) };
       }
       case "stop": {
         const thread = findThread(db, request.repo, request.task);
         const name = threadName(db, thread);
-        await stopThread(db, tmux, thread);
+        await stopThread(db, sessions, thread);
         return { stopped: name };
+      }
+      // Both act only on a builder that runs: one that ended leaves its last screen behind,
+      // which would read as what it shows now.
+      case "peek": {
+        const thread = findThread(db, request.repo, request.task);
+        const name = threadName(db, thread);
+        if (!agentRuns(sessions, thread.folder))
+          throw new Error(`${name}'s builder isn't running: the thread is ${thread.status}`);
+        return { thread: name, screen: readSession(sessions, thread.folder) };
+      }
+      case "interrupt": {
+        const thread = findThread(db, request.repo, request.task);
+        const name = threadName(db, thread);
+        if (!agentRuns(sessions, thread.folder))
+          throw new Error(`${name}'s builder isn't running: the thread is ${thread.status}`);
+        interruptSession(sessions, thread.folder);
+        return { interrupted: name };
       }
       case "rm preview": {
         const thread = findThread(db, request.repo, request.task);
@@ -317,7 +341,7 @@ export async function serve(tmux: string, every = 30_000): Promise<void> {
       case "rm": {
         const thread = findThread(db, request.repo, request.task);
         const name = threadName(db, thread);
-        await removeThread(db, tmux, thread, request.reason);
+        await removeThread(db, sessions, thread, request.reason);
         // The issue it worked on stays open in the tracker, so sc rm can say so. A thread
         // started on what you told the lead is numbered with a t, such as app-t1, and has none.
         return { removed: name, issue: /^t\d+$/.test(thread.task) ? null : thread.task };
@@ -337,19 +361,19 @@ export async function serve(tmux: string, every = 30_000): Promise<void> {
       }
       case "tell": {
         const thread = findThread(db, request.repo, request.task);
-        return { told: messageBuilder(db, tmux, thread, request.text) };
+        return { told: messageBuilder(db, sessions, thread, request.text) };
       }
       case "tell lead":
-        messageLead(db, tmux, callingThread(caller), request.text);
+        messageLead(db, sessions, callingThread(caller), request.text);
         return { told: "lead" };
       case "submit": {
         const thread = callingThread(caller);
-        submitRound(db, tmux, thread.folder, request.summary);
+        submitRound(db, sessions, thread.folder, request.summary);
         return { submitted: threadName(db, thread) };
       }
       case "question asked":
         record(db, callingThread(caller).folder, { asking: true }, "its builder asked a question");
-        typeLeadNotes(db, tmux);
+        typeLeadNotes(db, sessions);
         return { asking: true };
       case "turn ended": {
         // The note quotes what the builder last said, so you see what it waits on. In quotes,
@@ -363,7 +387,7 @@ export async function serve(tmux: string, every = 30_000): Promise<void> {
         while (JSON.stringify(words).length > 100) words = words.slice(0, -1);
         const said = words ? `, saying ${JSON.stringify(words)}` : "";
         record(db, folder, { stalled: true }, `its builder stopped without submitting${said}`);
-        typeLeadNotes(db, tmux);
+        typeLeadNotes(db, sessions);
         return { asking: true };
       }
       case "turn failed": {
@@ -385,7 +409,7 @@ export async function serve(tmux: string, every = 30_000): Promise<void> {
             change,
             `its builder's harness reached its usage limit: ${said}`,
           );
-          wakeAfterLimit(db, tmux, thread.folder);
+          wakeAfterLimit(db, sessions, thread.folder);
           return { erred: true };
         }
         // A limit it stopped on before is over: this error is new, and needs you, so the wake
@@ -393,7 +417,7 @@ export async function serve(tmux: string, every = 30_000): Promise<void> {
         endWake(thread.folder);
         const erred = { erred: true, limited: false, limit_reset: null };
         record(db, thread.folder, erred, "its builder's harness stopped on an error");
-        typeLeadNotes(db, tmux);
+        typeLeadNotes(db, sessions);
         return { erred: true };
       }
       case "question closed": {
@@ -456,7 +480,7 @@ export async function serve(tmux: string, every = 30_000): Promise<void> {
           return { started: `Started ${name} again: its builder is back where it was.` };
         }
         if (before && choice === "go on") {
-          goOn(db, tmux, before.folder);
+          goOn(db, sessions, before.folder);
           return { started: `${threadName(db, before)} goes on past the round limit.` };
         }
         // Refused before the poll, which only a new thread needs, so a slow or failing remote
@@ -546,12 +570,12 @@ export async function serve(tmux: string, every = 30_000): Promise<void> {
   for (const thread of reviewsCutShort) {
     const back = Promise.withResolvers<void>();
     builderBack.set(thread.folder, back.resolve);
-    resumeRound(db, tmux, thread.folder, back.promise);
+    resumeRound(db, sessions, thread.folder, back.promise);
   }
   // A lead you exited while the daemon was down closes its tab, before any request could open
   // it, and isn't brought back. From here on, the daemon looks each second for a lead you exit.
-  closeExitedLeads(db, tmux);
-  setInterval(() => closeExitedLeads(db, tmux), 1000);
+  closeExitedLeads(db, sessions);
+  setInterval(() => closeExitedLeads(db, sessions), 1000);
   // Open your socket, and end cleanly on the service's stop or on Ctrl-C.
   await open(path, "you");
   for (const signal of ["SIGTERM", "SIGINT"]) process.on(signal, () => endWhatItStarted(sockets));
@@ -563,7 +587,7 @@ export async function serve(tmux: string, every = 30_000): Promise<void> {
   // A lead keeps its clone current as it starts, and a repository with no lead needs it too.
   refreshClones(db).catch((error) => console.log(errorText(error)));
   // Notes the daemon's stop kept from the leads.
-  typeLeadNotes(db, tmux);
+  typeLeadNotes(db, sessions);
   // The usage limits saved before the stop, so the held reviews carried on below still wait.
   restoreLimits(db);
   // Bring back each thread's builder, without waiting on it, and carry on the round it was in.
@@ -574,11 +598,11 @@ export async function serve(tmux: string, every = 30_000): Promise<void> {
     const settled = builderBack.get(thread.folder) ?? (() => {});
     // After the builder is back, since the round may type into its session.
     // A builder that stopped on a usage limit is woken once it resets, as it would have been.
-    bringBack(db, tmux, thread).then(
+    bringBack(db, sessions, thread).then(
       () => {
         settled();
-        resumeRound(db, tmux, thread.folder);
-        if (thread.erred && thread.limited) wakeAfterLimit(db, tmux, thread.folder);
+        resumeRound(db, sessions, thread.folder);
+        if (thread.erred && thread.limited) wakeAfterLimit(db, sessions, thread.folder);
       },
       (error) => {
         endRound(thread.folder);
@@ -589,6 +613,6 @@ export async function serve(tmux: string, every = 30_000): Promise<void> {
   }
   // Start polling, which also lets any sc start waiting on it go ahead, and keep Skelcrew itself
   // up to date.
-  polling.resolve(pollRepositories(db, tmux, every, setUpAndStart, startingTasks));
+  polling.resolve(pollRepositories(db, sessions, every, setUpAndStart, startingTasks));
   keepUpToDate();
 }
