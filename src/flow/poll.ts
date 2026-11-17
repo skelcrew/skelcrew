@@ -212,28 +212,32 @@ async function pollRepository(
   // Ask each plugin in turn, telling a forge which PRs Skelcrew watches: those of this
   // repository's threads. A plugin's answer only updates the kinds its jobs cover. A first
   // poll, with no `next`, replaces those kinds in the copy outright, so what closed while the
-  // daemon was down goes.
-  for (const { plugin, jobs } of repositoryPlugins(db, repository)) {
-    const next = nexts.get(plugin) ?? null;
-    const watched = jobs.includes("forge")
-      ? threads.flatMap((t) => (t.pr === null ? [] : [t.pr]))
-      : [];
-    const answer = await askWhatChanged(db, plugin, repository, jobs, next, watched);
-    const kinds: Item["kind"][] = [
-      ...(jobs.includes("tracker") ? ["task" as const] : []),
-      ...(jobs.includes("forge") ? ["pr" as const] : []),
-    ];
-    const items = answer.items.filter((item) => kinds.includes(item.kind));
-    saveItems(db, owner, repo, items, next === null ? kinds : []);
-    nexts.set(plugin, answer.next);
+  // daemon was down goes. Skelcrew's clone is refreshed after, even when a plugin fails, as git
+  // can still reach the remote while a tracker or forge is down.
+  try {
+    for (const { plugin, jobs } of repositoryPlugins(db, repository)) {
+      const next = nexts.get(plugin) ?? null;
+      const watched = jobs.includes("forge")
+        ? threads.flatMap((t) => (t.pr === null ? [] : [t.pr]))
+        : [];
+      const answer = await askWhatChanged(db, plugin, repository, jobs, next, watched);
+      const kinds: Item["kind"][] = [
+        ...(jobs.includes("tracker") ? ["task" as const] : []),
+        ...(jobs.includes("forge") ? ["pr" as const] : []),
+      ];
+      const items = answer.items.filter((item) => kinds.includes(item.kind));
+      saveItems(db, owner, repo, items, next === null ? kinds : []);
+      nexts.set(plugin, answer.next);
+    }
+  } finally {
+    // Bring Skelcrew's clone's default branch up to date once the forge answered, so a PR it
+    // says merged, whoever merged it, or a push straight to the default branch, reaches
+    // builders fetching from the clone by this poll. Cheap when nothing changed. A failed fetch
+    // leaves the clone as it was until the next poll, and holds up nothing else.
+    await refreshClone(db, repository).catch((error) =>
+      console.log(`couldn't update Skelcrew's clone of ${owner}/${repo}: ${errorText(error)}`),
+    );
   }
-  // Bring Skelcrew's clone's default branch up to date after the forge answered, so a PR it
-  // says merged, whoever merged it, or a push straight to the default branch, reaches builders
-  // fetching from the clone by this poll. Cheap when nothing changed. A failed fetch leaves the
-  // clone as it was until the next poll, and holds up nothing else.
-  await refreshClone(db, repository).catch((error) =>
-    console.log(`couldn't update Skelcrew's clone of ${owner}/${repo}: ${errorText(error)}`),
-  );
   // With the copy up to date, start labeled tasks, then act on each thread: by its PR with a
   // forge, or by its branch without one.
   if (trackerOf(db, repository) !== null)

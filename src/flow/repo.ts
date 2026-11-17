@@ -114,12 +114,14 @@ const cloneWork = new Map<string, Promise<void>>();
 export function refreshClone(db: Database, repository: Repository): Promise<void> {
   const { owner, repo } = repository;
   const fullName = `${owner}/${repo}`;
+  // sc repo rm can run while this waits for the refresh before it, or while the clone is
+  // being made, and a clone made after the removal would stay where nothing removes it. A
+  // repository being brought in is cloned before it is saved, so whether it counts as removed
+  // depends on whether Skelcrew had it when the refresh was asked for.
   const saved = () => repositories(db).some((r) => r.owner === owner && r.repo === repo);
+  const wasSaved = saved();
   const run = (cloneWork.get(fullName) ?? Promise.resolve()).then(async () => {
-    // sc repo rm can run while a clone is still being made, and the clone would then land
-    // after the removal, where nothing would remove it. A repository being brought in is
-    // cloned before it is saved, so only one saved already counts as removed.
-    const wasSaved = saved();
+    if (wasSaved && !saved()) return;
     await createOrUpdate(db, repository);
     if (wasSaved && !saved()) rmSync(cloneDir(owner, repo), { recursive: true, force: true });
   });

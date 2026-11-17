@@ -407,6 +407,52 @@ test("a push straight to main and a merge of a PR without a thread both reach Sk
   expect(existsSync(join(skelcrewClone, "feature"))).toBe(true);
 });
 
+// git can reach the remote while the tracker or forge is down, and builders must not fall
+// behind for it.
+test("a push straight to main reaches Skelcrew's clone while the forge fails to answer", async () => {
+  const work = addApp();
+  changes([]);
+  serve();
+  const skelcrewClone = join(data(), "repos", "simon", "app");
+  await until(() => existsSync(join(skelcrewClone, "README")));
+  writeFileSync(join(plugin, "fail-changed"), "forge is down");
+  const failed = polls();
+  await until(() => polls() > failed);
+  writeFileSync(join(work, "pushed"), "1\n");
+  git(work, "add", ".");
+  git(work, "commit", "-q", "-m", "pushed");
+  git(work, "push", "-q", join(home, "github", "simon", "app.git"), "main");
+  const pushed = git(work, "rev-parse", "HEAD").trim();
+  await until(() => git(skelcrewClone, "rev-parse", "HEAD").trim() === pushed);
+});
+
+// sc repo rm deletes the clone and the repository's row, and refreshes already asked for must
+// not bring the clone back.
+test("refreshes waiting their turn when the repository is removed leave no clone behind", () => {
+  addApp();
+  const skelcrewClone = join(data(), "repos", "simon", "app");
+  const code = `import { rmSync } from "node:fs";
+import { openDb } from ${JSON.stringify(source("db.ts"))};
+import { refreshClone, repositories } from ${JSON.stringify(source("flow/repo.ts"))};
+const db = openDb();
+const [app] = repositories(db);
+if (!app) throw new Error("no repository");
+await refreshClone(db, app);
+console.log("cloned");
+const queued = [refreshClone(db, app), refreshClone(db, app)];
+rmSync(${JSON.stringify(skelcrewClone)}, { recursive: true, force: true });
+db.run("DELETE FROM repositories");
+await Promise.all(queued);`;
+  const run = Bun.spawnSync([process.execPath, "-e", code], {
+    env: env(),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect(run.stderr.toString()).toBe("");
+  expect(run.stdout.toString()).toBe("cloned\n");
+  expect(existsSync(skelcrewClone)).toBe(false);
+});
+
 // Two machines running Skelcrew on one repository both see the label, and only the one whose
 // claim the tracker grants may start it.
 test("a labeled task claimed elsewhere starts no thread, and a claim that fails is tried again", async () => {
