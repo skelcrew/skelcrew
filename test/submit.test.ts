@@ -19,6 +19,7 @@ import {
   mkdtempSync,
   realpathSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir, userInfo } from "node:os";
@@ -43,8 +44,11 @@ import {
   writeScript,
 } from "./harness.ts";
 
-// TEMPORARY, to measure reviews inside the full suite on CI, and removed once read: each
-// test's first review is timed from its thread's log, and CI gets them all as one annotation.
+// TEMPORARY, to measure reviews inside the full suite on CI, and removed once read. Each test's
+// first review is timed in four steps: from sc submit to the daemon giving the review its turn,
+// from that to the reviewer running inside its sandbox, the reviewer's own run, and from its end
+// to the daemon acting on the verdict. The reviewer's start and end are when the fake Codex wrote
+// branches-1 and ended-1. CI gets every test's times as one annotation.
 let current = "";
 const timings: string[] = [];
 const test = (name: string, fn: () => Promise<void> | void, timeout?: number) =>
@@ -56,10 +60,6 @@ const test = (name: string, fn: () => Promise<void> | void, timeout?: number) =>
     },
     timeout,
   );
-// Returns when the first step whose reason starts with one of `starts` was logged, in ms.
-function loggedAt(steps: { at: number; why: string }[], ...starts: string[]): number | undefined {
-  return steps.find((s) => starts.some((start) => s.why.startsWith(start)))?.at;
-}
 function timeFirstReview(): void {
   const steps: { at: number; why: string }[] = [];
   for (const line of read(join(data(), "threads", "app-12.log")).split("\n"))
@@ -67,13 +67,19 @@ function timeFirstReview(): void {
       const { at, why } = JSON.parse(line);
       if (why) steps.push({ at: Date.parse(at), why });
     } catch {}
-  const submitted = loggedAt(steps, "submitted:");
-  const reviewing = loggedAt(steps, "reviewing ", "queued ", "waiting for CI's first check");
-  const next = steps.find((s) => reviewing !== undefined && s.at > reviewing)?.at;
+  const written = (file: string) =>
+    statSync(join(codexHome(), "sessions", file), { throwIfNoEntry: false })?.mtimeMs;
+  const started = written("branches-1");
+  const ended = written("ended-1");
+  const submitted = steps.find((s) => s.why.startsWith("submitted:"))?.at;
+  const turn = steps.findLast(
+    (s) => s.why.startsWith("reviewing ") && (started === undefined || s.at <= started),
+  )?.at;
+  const acted = steps.find((s) => ended !== undefined && s.at >= ended)?.at;
   const s = (from?: number, to?: number) =>
     from === undefined || to === undefined ? "-" : `${((to - from) / 1000).toFixed(1)} s`;
   timings.push(
-    `${current}: submit to review ${s(submitted, reviewing)}, review ${s(reviewing, next)}`,
+    `${current}: submit to turn ${s(submitted, turn)}, turn to reviewer ${s(turn, started)}, reviewer ${s(started, ended)}, verdict acted on ${s(ended, acted)}`,
   );
 }
 afterAll(() => {
@@ -181,7 +187,8 @@ test -e "$CODEX_HOME/slow-$n" && sleep 30
 i=0; while test -e "$CODEX_HOME/held-$n" && ! test -e "$s/go-$n" && [ $i -lt 600 ]; do sleep 0.1; i=$((i+1)); done
 test -e "$CODEX_HOME/error-$n" && { cat "$s/prompt-$n" "$CODEX_HOME/error-$n" >&2; exit 1; }
 test -e "$CODEX_HOME/verdict-$n" || { echo "no verdict for review $n" >&2; exit 1; }
-cp "$CODEX_HOME/verdict-$n" "$out"`,
+cp "$CODEX_HOME/verdict-$n" "$out"
+: > "$s/ended-$n"`,
   );
 }
 
