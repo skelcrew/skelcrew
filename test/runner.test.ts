@@ -98,6 +98,25 @@ test("in CI a run stopped at its limit still prints the times it has, and names 
   expect(out).toMatch(/\n +cut off {2}hangs\.test\.ts\n/);
 });
 
+// A test that hangs and ignores being asked to stop, so only a kill ends its worker.
+test("in CI a run stopped at its limit prints its times even when a worker ignores SIGTERM", async () => {
+  writeFileSync(
+    join(folder, "quick.test.ts"),
+    'import { test } from "bun:test";\ntest("quick", () => Bun.sleep(100));\n',
+  );
+  writeFileSync(
+    join(folder, "stubborn.test.ts"),
+    `import { test } from "bun:test";
+process.on("SIGTERM", () => {});
+test("hangs", () => new Promise(() => {}), 600_000);
+`,
+  );
+  const { out, code } = await runIn(["./quick.test.ts", "./stubborn.test.ts"], true, "3000");
+  expect(code).toBe(1);
+  expect(out).toMatch(/\n +0\.1 s {2}quick\.test\.ts {2}quick\n/);
+  expect(out).toMatch(/\n +cut off {2}stubborn\.test\.ts\n/);
+});
+
 // Stands in for the daemon of the Skelcrew a builder runs in, listening on this socket, and
 // counts what connects to it.
 function outerDaemon(socket: string) {

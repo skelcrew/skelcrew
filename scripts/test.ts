@@ -73,13 +73,19 @@ const stop = setTimeout(async () => {
   // Bun. It counts each file a worker had as cut off and hands the next to a new worker, which
   // is stopped in turn, until Bun ends. Workers are Bun's own children, found by their parent,
   // never by name. Each is asked first, so the run's sweeps can end what its tests left running.
+  // A worker still there two seconds later is killed, as a test can ignore being asked, and Bun
+  // would then wait for it and never write the report.
+  const asked = new Map<number, number>();
   const deadline = Date.now() + 10_000;
   while (Date.now() < deadline) {
     const workers = Bun.spawnSync(["pgrep", "-P", String(run.pid)], { stdout: "pipe" });
-    for (const pid of workers.stdout.toString().split("\n").filter(Boolean))
+    for (const pid of workers.stdout.toString().split("\n").filter(Boolean).map(Number)) {
+      const since = asked.get(pid) ?? Date.now();
+      asked.set(pid, since);
       try {
-        process.kill(Number(pid), "SIGTERM");
+        process.kill(pid, Date.now() - since > 2000 ? "SIGKILL" : "SIGTERM");
       } catch {}
+    }
     await Bun.sleep(200);
   }
   // A Bun still running then is asked to end, and killed if it doesn't.
