@@ -231,9 +231,10 @@ export async function reportQuestion(state: "asked" | "answered" | "closed"): Pr
 // builder's thread needs you if the builder stopped without submitting. The hook's input on stdin
 // can hold the builder's last message, whose first line goes in the lead's note, so you see what
 // it waits on. Input that isn't the hook's is left out, and a terminal isn't read, as it would
-// wait for you. The agent's own socket says which agent. It also sends the commit the clone the
-// hook runs in has checked out, when nothing there is uncommitted, so a builder that only
-// answered the lead while its last submit is reviewed doesn't need you.
+// wait for you. The agent's own socket says which agent. When nothing in the clone the hook runs
+// in is uncommitted, it also sends the commit checked out and the whole last message: a builder
+// that only answered a message while its last submit is reviewed doesn't need you, and its
+// message goes to the lead instead.
 export async function reportTurnEnded(): Promise<void> {
   const Input = z.object({ last_assistant_message: z.string().nullish() });
   const text = process.stdin.isTTY ? "" : await Bun.stdin.text();
@@ -248,7 +249,8 @@ export async function reportTurnEnded(): Promise<void> {
   await request({
     command: "turn ended",
     ...(said ? { said } : {}),
-    ...(clean ? { head: head.out.trim() } : {}),
+    // Cut, so a long report can't flood the lead.
+    ...(clean ? { head: head.out.trim(), message: message.trim().slice(0, 2000) } : {}),
   });
 }
 

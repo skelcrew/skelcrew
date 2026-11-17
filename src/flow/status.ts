@@ -13,7 +13,7 @@ import { clockTime, endWake, wakeAfterLimit } from "./limits.ts";
 import { stopDelivering } from "./messages.ts";
 import type { DaemonRequest } from "./requests.ts";
 import { lastPushed } from "./round.ts";
-import { untagged } from "./tell.ts";
+import { messageLead, untagged } from "./tell.ts";
 import {
   type AgentState,
   builderHarness,
@@ -38,17 +38,17 @@ export const needsYou = (thread: Thread) =>
 // One asking with AskUserQuestion, or stopped on an error, already needs you, and one already
 // waiting has nothing new to say. The status is not enough: a review can set it back to working
 // while the builder that submitted is still finishing its turn. `unchanged` says the builder's
-// clone holds nothing beyond its last submit. Such a turn that answered the lead with sc tell
-// lead only replied to a message, so while that submit is reviewed, waits on CI or is approved,
-// it waits on that too. Its words can't be read for a question: one need not end in a question
-// mark. The lead has them, though, so a question in them still reaches you.
+// clone holds nothing beyond its last submit. Such a turn most likely only answered a message,
+// such as the lead's, so while that submit is reviewed, waits on CI or is approved, it waits on
+// that too. Its words can't be read for a question, which need not end in a question mark, so
+// they go to the lead instead, who passes a question on to you.
 export const endedTurnAsks = (thread: Thread, unchanged = false) =>
   (thread.status === "working" || thread.status === "waiting") &&
   !thread.submitted &&
   !thread.asking &&
   !thread.stalled &&
   !thread.erred &&
-  !(unchanged && thread.replied && submitStands(thread));
+  !(unchanged && submitStands(thread));
 
 // Returns whether the thread's last submit still moves on without its builder: its review waits
 // or runs, or it was approved and waits on CI or you. Changes asked for, a failed check or a
@@ -228,21 +228,33 @@ export function questionAsked(db: Database, sessions: string, folder: string): v
   typeLeadNotes(db, sessions);
 }
 
-// The builder's turn ended, from its harness's Stop hook, with what it last said and the commit
-// its clone has checked out when nothing there is uncommitted. A builder that didn't submit in
-// that turn waits on you, so the thread needs you and the lead hears of it. The exception is a
-// builder that only answered the lead: its clone is still at the commit Skelcrew last pushed, it
-// ran sc tell lead, and that submit is still on its way. Returns whether it waits on you.
+// The builder's turn ended, from its harness's Stop hook, with the first line of what it last
+// said, and, when nothing in its clone is uncommitted, the commit it has checked out and its
+// whole last message. A builder that didn't submit in that turn waits on you, so the thread
+// needs you and the lead hears of it. The exception is a turn with no new work while the last
+// submit is still on its way: the lead gets the builder's last message instead, so a question
+// in it still reaches you through the lead. Returns whether it waits on you.
 export function turnEnded(
   db: Database,
   sessions: string,
   folder: string,
-  ended: { said?: string | undefined; head?: string | undefined },
+  ended: { said?: string | undefined; head?: string | undefined; message?: string | undefined },
 ): boolean {
   const thread = readThread(db, folder);
   const said = ended.said;
   const unchanged = ended.head !== undefined && ended.head === lastPushed(thread);
-  if (!endedTurnAsks(thread, unchanged)) return false;
+  if (!endedTurnAsks(thread, unchanged)) {
+    // Only a turn that would have needed you but for its submit still under way is passed on.
+    // Any other, such as one that submitted, says nothing new.
+    if (endedTurnAsks(thread) && ended.message)
+      messageLead(
+        db,
+        sessions,
+        thread,
+        `My turn ended without a submit, saying:\n\n${ended.message}`,
+      );
+    return false;
+  }
   // The note quotes what the builder last said, so you see what it waits on. In quotes,
   // and with no tags of Skelcrew's, it can't pass for Skelcrew's own words or another's.
   // The quote, escapes included, is kept to 100 characters, as a note is cut at 200,
@@ -306,13 +318,12 @@ export function questionAnswered(db: Database, folder: string): void {
   // such as with /login, so it ends the error as it ends a question. A usage limit it
   // stopped on ends too, as the builder now works again or meets it again. Typing to one
   // that stopped without submitting answers it, whether you typed or the lead told it.
-  // Each message starts a new turn, with no submit or reply to the lead in it yet.
+  // Each message starts a new turn, with no submit in it yet.
   const over = {
     asking: false,
     stalled: false,
     erred: false,
     submitted: false,
-    replied: false,
     limited: false,
     limit_reset: null,
   };
@@ -322,6 +333,5 @@ export function questionAnswered(db: Database, folder: string): void {
   endWake(folder);
   if (thread.asking || thread.stalled) record(db, folder, over, "its builder's question is over");
   else if (thread.erred) record(db, folder, over, "its builder was typed to after its error");
-  else if (thread.submitted || thread.replied)
-    record(db, folder, { submitted: false, replied: false });
+  else if (thread.submitted) record(db, folder, { submitted: false });
 }

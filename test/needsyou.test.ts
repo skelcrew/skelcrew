@@ -439,45 +439,37 @@ describe.skipIf(insideSandbox)("needs you", () => {
 
   // A builder that only answers a message, such as the lead's note about something it already
   // fixed, has nothing new to submit, and its last submit still waits on its review.
-  test("a turn with no new work that answers the lead, while the last submit is reviewed, doesn't need you", async () => {
+  // A builder that only answers a message, such as the lead's note about something it already
+  // fixed, has nothing new to submit, and its last submit still waits on its review. Its words
+  // go to the lead rather than bringing you in.
+  test("a turn with no new work, while the last submit is reviewed, goes to the lead and doesn't need you", async () => {
     addApp();
     await startApp12();
     submittedAsReviewing();
     await hook("talk");
-    const said = "The note about the import order came after I had already fixed it.";
-    const asBuilder = { SKELCREW_SANDBOX: "1", SKELCREW_SOCKET: builderSocket() };
-    expect((await skel(["tell", "lead", said], asBuilder)).code).toBe(0);
+    const said = "The lead's note about the import order came in after I had already fixed it.";
     await hook("stop", JSON.stringify({ last_assistant_message: said }));
-    await Bun.sleep(1000);
-    expect(await needsYou()).toBe(false);
-    // The lead has the builder's words, and no needs-you note.
     await until(() => read(join(lead(), "typed")).includes("import order"));
-    expect(notes()).toBe(0);
+    expect(read(join(lead(), "typed"))).toContain(
+      '<skelcrew from="app-12" reply="sc tell app-12">',
+    );
+    expect(await needsYou()).toBe(false);
+    expect(read(join(lead(), "typed"))).not.toContain("needs you");
   }, 60_000);
 
-  // A question need not end in a question mark, so only answering the lead says the turn
-  // asked you nothing.
-  test("a turn with no new work that doesn't answer the lead needs you, even while the last submit is reviewed", async () => {
+  // A question need not end in a question mark, and may come after a reply to the lead. The
+  // lead gets the whole last message, so the question reaches it, and through it you.
+  test("a question after a reply to the lead, while the last submit is reviewed, reaches the lead", async () => {
     addApp();
     await startApp12();
     submittedAsReviewing();
     await hook("talk");
-    const said = "Should I use JSON or YAML";
-    await hook("stop", JSON.stringify({ last_assistant_message: said }));
-    await untilNeedsYou(true);
-    await until(() => notes() === 1);
-  }, 60_000);
-
-  // An answer to the lead belongs to its turn: the next turn needs you again without one.
-  test("an earlier turn's answer to the lead doesn't cover a later turn", async () => {
-    addApp();
-    await startApp12();
-    submittedAsReviewing();
     const asBuilder = { SKELCREW_SANDBOX: "1", SKELCREW_SOCKET: builderSocket() };
-    expect((await skel(["tell", "lead", "Fixed already."], asBuilder)).code).toBe(0);
-    await hook("talk");
-    await hook("stop", JSON.stringify({ last_assistant_message: "Which one" }));
-    await untilNeedsYou(true);
+    expect((await skel(["tell", "lead", "Already fixed."], asBuilder)).code).toBe(0);
+    const said = "Done.\n\nShould the export use JSON or YAML";
+    await hook("stop", JSON.stringify({ last_assistant_message: said }));
+    await until(() => read(join(lead(), "typed")).includes("Should the export use JSON or YAML"));
+    expect(read(join(lead(), "typed"))).toContain("Already fixed.");
   }, 60_000);
 
   test("a turn that leaves work it didn't submit needs you, even while the last submit is reviewed", async () => {
@@ -485,8 +477,6 @@ describe.skipIf(insideSandbox)("needs you", () => {
     await startApp12();
     submittedAsReviewing();
     writeFileSync(join(data(), "threads", "app-12", "export.ts"), "export {};\n");
-    const asBuilder = { SKELCREW_SANDBOX: "1", SKELCREW_SOCKET: builderSocket() };
-    expect((await skel(["tell", "lead", "Started on the export."], asBuilder)).code).toBe(0);
     await hook("stop", JSON.stringify({ last_assistant_message: "Started on the export." }));
     await untilNeedsYou(true);
     await until(() => notes() === 1);

@@ -73,12 +73,9 @@ export async function messageBuilder(
 
 // Has the daemon type a builder's message into its repository's lead, naming the thread it
 // comes from and how to answer, and logs it in the thread's log. Returns at once, like any
-// agent command. It also keeps that the builder answered the lead in this turn, so a turn with
-// no new work doesn't bring you in too.
+// agent command.
 export function messageLead(db: Database, sessions: string, thread: Thread, text: string): void {
   const name = threadName(db, thread);
-  // Not logged on its own, as the message itself is.
-  db.run("UPDATE threads SET replied = 1 WHERE folder = ?", [thread.folder]);
   noteForLead(db, sessions, thread, wrapMessage(name, `sc tell ${name}`, text));
   log(db, readThread(db, thread.folder), `its builder told the lead: ${text}`);
 }
