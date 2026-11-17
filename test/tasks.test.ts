@@ -91,7 +91,7 @@ const shown = {
       entries: entryCounts(db, open),
     };
   }),
-  tabs: repositoryTabs(db),
+  tabs: repositoryTabs(db, () => 5),
 };
 console.log(JSON.stringify(shown));`;
 

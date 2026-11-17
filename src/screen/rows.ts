@@ -8,7 +8,7 @@ import { leadOf } from "../flow/lead.ts";
 import { messagesWaiting, waitingText } from "../flow/messages.ts";
 import { needsYou, threadWord } from "../flow/status.ts";
 import { fullNameOf, Thread, threadName } from "../flow/thread.ts";
-import { green, grey, red, yellow } from "./look.ts";
+import { bright, green, grey, red, yellow } from "./look.ts";
 import { builderProgress, tokenText } from "./progress.ts";
 
 // One row of the sidebar, with what the strip says of the agent too. The lead has no status of
@@ -17,8 +17,9 @@ import { builderProgress, tokenText } from "./progress.ts";
 // its row shows in place of its title. `harness` names whoever has the thread now, its reviewer
 // while a review runs, and `agentHarness` the agent itself, which Esc stops. A working thread
 // also has its builder's `tokens`, as text, its `step`, what it is doing, and its `plan`, how
-// many steps of its plan are done of how many. Each is empty or null on other rows, and when the
-// builder's harness doesn't give it. `waiting` says how many messages wait to be typed into the
+// many steps of its plan are done of how many. A thread under review whose builder works at the
+// same time has its `step` too. Each is empty or null on other rows, and when the builder's
+// harness doesn't give it. `waiting` says how many messages wait to be typed into the
 // builder, such as 1 message waiting, or is empty.
 export type Row = {
   name: string;
@@ -46,29 +47,23 @@ export type Row = {
 type Mark = [string, string];
 // The repository open in the sidebar, by its owner and name, and its lead's session.
 export type Open = { owner: string; repo: string; lead: string };
-// A repository's tab: its name in Skelcrew, its owner/name, and how many of its threads need you
-// or failed.
-export type Tab = { name: string; fullName: string; count: number };
-// Each thread's mark is a circle in its status's colour. Waiting and stopped look alike, and the
-// word under the name tells every status apart, so nothing is told by colour alone.
-const marks: Record<Thread["status"], Mark> = {
-  working: ["●", green],
-  waiting: ["○", grey],
-  stopped: ["○", grey],
-  failed: ["●", red],
-  done: ["●", green],
-};
-// Returns the mark of a row of ACTIVE, which the lists show too, and whose colour its word takes.
-// Green is good, yellow wants you, and red is wrong. So a thread that needs you is yellow, except
-// once it is approved, which is good news, and when its harness stopped on an error, which is
-// wrong. A thread that failed stays red even if it also needs you. One waiting out a usage
-// limit is dim, as it waits and goes on by itself.
+// A repository's tab: its name in Skelcrew, its owner/name, how many of its threads have a filled
+// mark, and the colour of its badge, or null with none.
+export type Tab = { name: string; fullName: string; count: number; colour: string | null };
+// Returns the mark of a row of ACTIVE, which the lists and the tabs show too, and whose colour
+// its word takes. Its shape says whether the thread needs you: filled when it does, hollow when
+// it doesn't. Its colour says what kind of state it is in. Red is wrong: the thread failed, its
+// harness stopped on an error, or its review couldn't run. Green is approved and ready to merge,
+// and yellow any other reason it needs you. Of the hollow ones, a working builder is bright and
+// everything that only waits is dim, a review under way, CI or a usage limit included. A failed
+// thread is red and filled though it may not need you, as something went wrong.
 export function threadMark(row: Pick<Row, "status" | "needsYou" | "word">): Mark {
   if (row.status === null) return ["◆", grey];
-  if (row.status === "failed" || row.word === "error") return ["●", red];
-  if (row.word.startsWith("limit")) return ["○", grey];
+  if (row.status === "failed" || row.word === "error" || row.word === "review failed")
+    return ["●", red];
   if (row.word === "approved") return ["●", green];
-  return row.needsYou ? ["●", yellow] : marks[row.status];
+  if (row.needsYou) return ["●", yellow];
+  return ["○", row.word === "working" ? bright : grey];
 }
 
 // Returns whether the thread's reviewer has it now: a review waiting for a place, running, or
@@ -97,8 +92,9 @@ export function threadAge(started: number, now: number): string {
 // or failed. Each word takes the thread's round limit from `maxRounds`. A stopped thread needs
 // nothing and doesn't change, so it leaves ACTIVE, as a done one does. It runs each second,
 // so it reads only what shows. Only a thread whose word is working shows how long its builder
-// has worked since it was last started or typed to, its tokens, its plan and its step. Any of
-// them on another row would write to the terminal, which costs over a slow link.
+// has worked since it was last started or typed to, its tokens and its plan. Its step shows too
+// while a review runs or waits and its builder works meanwhile, as the row then says reviewing.
+// Any of them on another row would write to the terminal, which costs over a slow link.
 export function sidebarRows(
   db: Database,
   running: string[],
@@ -146,10 +142,12 @@ export function sidebarRows(
       const { review_round: round, reviewer, reviewed_by: by, verdict } = thread;
       const word = threadWord(thread, maxRounds(thread), now);
       const working = word === "working";
+      const reviewed = word === "reviewing" || word === "queued for review";
+      const stepping = working || (reviewed && thread.status === "working");
       // A thread from before Skelcrew timed stretches of work is timed from its start.
       const since = Working.parse(row).working_since;
       const from = since ?? thread.started;
-      const progress = working ? builderProgress(thread, now) : noProgress;
+      const progress = stepping ? builderProgress(thread, now) : noProgress;
       return {
         name: threadName(db, thread),
         task: thread.task,
@@ -165,10 +163,10 @@ export function sidebarRows(
         harness: onReviewer(thread, word) ? (reviewer ?? "") : (thread.harness ?? "claude"),
         agentHarness: thread.harness ?? "claude",
         age: working && from !== null ? threadAge(from, now) : "",
-        tokens: progress.tokens === null ? "" : `${tokenText(progress.tokens)} tok`,
+        tokens: !working || progress.tokens === null ? "" : `${tokenText(progress.tokens)} tok`,
         // A builder that has run no tool yet has no step to show, so it says only that it works.
-        step: working ? (progress.step ?? "working") : "",
-        plan: progress.plan,
+        step: stepping ? (progress.step ?? "working") : "",
+        plan: working ? progress.plan : null,
         waiting: waitingText(messagesWaiting(db, thread)),
         fullName: fullNameOf(thread),
         title: thread.title,
@@ -182,29 +180,37 @@ export function sidebarRows(
 }
 
 // What a tab's row holds as the database gives it, checked, since it is read from disk.
-const TabRow = z.object({
-  name: z.string(),
-  owner: z.string(),
-  repo: z.string(),
-  count: z.number(),
-});
+const TabRow = z.object({ name: z.string(), owner: z.string(), repo: z.string() });
 
-// Returns a tab for each repository, in name order, with how many of its threads need you or
-// failed, which its badge shows. The badges are how you hear of other repositories, as one
-// repository's lead never mentions another's threads. A repository whose lead you exited has
-// no tab, and no badge, until you open it again.
-export function repositoryTabs(db: Database): Tab[] {
-  return db
-    .query(
-      `SELECT r.name, r.owner, r.repo, (SELECT COUNT(*) FROM threads t
-        WHERE t.owner = r.owner AND t.repo = r.repo AND t.status != 'done'
-          AND (t.status = 'failed' OR t.needs_you = 1 OR t.asking = 1 OR t.stalled = 1
-            OR (t.erred = 1 AND t.limited = 0))) AS count
-      FROM repositories r WHERE r.tab_closed = 0 ORDER BY r.name`,
-    )
+// Returns a tab for each repository, in name order, with how many of its threads have a filled
+// mark, which its badge shows, in the colour of the most urgent of them: red, then yellow, then
+// green. The badges are how you hear of other repositories, as one repository's lead never
+// mentions another's threads. Each thread's word takes its round limit from `maxRounds`. A
+// repository whose lead you exited has no tab, and no badge, until you open it again.
+export function repositoryTabs(db: Database, maxRounds: (thread: Thread) => number): Tab[] {
+  const repositories = db
+    .query("SELECT name, owner, repo FROM repositories WHERE tab_closed = 0 ORDER BY name")
+    .all()
+    .map((row) => TabRow.parse(row));
+  // Each thread that isn't done gets the mark ACTIVE would give it.
+  const marked = db
+    .query("SELECT * FROM task_threads WHERE status != 'done'")
     .all()
     .map((row) => {
-      const { name, owner, repo, count } = TabRow.parse(row);
-      return { name, fullName: `${owner}/${repo}`, count };
+      const thread = Thread.parse(row);
+      const word = threadWord(thread, maxRounds(thread));
+      const [sign, colour] = threadMark({
+        status: thread.status,
+        needsYou: needsYou(thread),
+        word,
+      });
+      return { thread, filled: sign === "●", colour };
     });
+  return repositories.map(({ name, owner, repo }) => {
+    const ours = marked.filter(
+      (m) => m.filled && m.thread.owner === owner && m.thread.repo === repo,
+    );
+    const colour = [red, yellow, green].find((c) => ours.some((m) => m.colour === c)) ?? null;
+    return { name, fullName: `${owner}/${repo}`, count: ours.length, colour };
+  });
 }

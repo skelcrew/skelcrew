@@ -62,7 +62,7 @@ export async function runSidebar(
   // its terminal, and what it last drew.
   const db = openDb();
   let open = repositoryAndLead(db, repository);
-  let tabs = repositoryTabs(db);
+  let tabs = repositoryTabs(db, roundLimit);
   const rightPane = `=${session}:.1`;
   let tty = paneTty(agents, rightPane);
   let rows: Row[] = [];
@@ -97,7 +97,7 @@ export async function runSidebar(
     const running = listSessions(agents).flatMap((found) => (found.running ? [found.name] : []));
     const exited = exitedCleanly(agents, open.lead);
     const before = tabs;
-    tabs = repositoryTabs(db);
+    tabs = repositoryTabs(db, roundLimit);
     // A repository you removed, or whose lead you exited, has no tab left. The sidebar moves to
     // the tab that took its place, or the one before when it was last. With no tab left, the
     // screen leaves as Alt-Q does.

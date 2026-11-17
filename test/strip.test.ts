@@ -37,7 +37,12 @@ const thread = (more: Partial<Row> = {}): Row => ({
   review: { round: 2, reviewer: "codex", verdict: "approve" },
   ...more,
 });
-const tab = (name: string, count = 0): Tab => ({ name, fullName: `simon/${name}`, count });
+const tab = (name: string, count = 0, colour: string | null = count ? "38;5;221" : null): Tab => ({
+  name,
+  fullName: `simon/${name}`,
+  count,
+  colour,
+});
 // The tab "  app  " and the two columns after it take nine columns before the strip.
 const size = { left: 30, width: 99 };
 const base: Top = {
@@ -283,6 +288,13 @@ test("tabs name each repository in order, above the agent, with a badge for what
   expect(top({ tabs, open: "simon/site" })).toContain(
     "#[bg=colour234,fg=colour231,bold]  site #[fg=colour221]•1  #[default]",
   );
+});
+
+test("a tab's badge takes the colour of its most urgent mark", () => {
+  const red = top({ tabs: [tab("app"), tab("site", 2, "38;5;210")] });
+  expect(red).toContain("  site #[fg=colour210]•2  ");
+  const green = top({ tabs: [tab("app"), tab("site", 1, "38;5;120")] });
+  expect(green).toContain("  site #[fg=colour120]•1  ");
 });
 
 test("a click on a tab is told apart by its place in the row", () => {

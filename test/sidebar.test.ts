@@ -46,7 +46,8 @@ const thread = (name: string, more: Partial<Row> = {}): Row => ({
   session: name,
   status: "working",
   word: "working",
-  step: "working",
+  // Only a working builder has a step, as a real row has.
+  step: (more.word ?? "working") === "working" ? "working" : "",
   ...more,
 });
 
@@ -86,7 +87,7 @@ test("a working thread has three lines: its name and title, harness, time and to
   expect(listed(draw(rows, "lead", { width: sidebarWidth, height: 14 }))).toEqual([
     "  ◆ lead",
     "    running · claude",
-    "  ● t5 Shift+Enter fix",
+    "  ○ t5 Shift+Enter fix",
     "    claude · 12m · 48k tok",
     "    Run the sidebar tests",
     "  ○ 7 Add docs",
@@ -166,7 +167,7 @@ test("a thread with messages waiting for its builder says how many on its row", 
   expect(listed(draw(rows, "lead", { width: sidebarWidth, height: 14 }))).toEqual([
     "  ◆ lead",
     "    running · claude",
-    "  ● 12 app-12",
+    "  ○ 12 app-12",
     "    claude",
     "    1 message waiting",
     "  ● 13 app-13",
@@ -178,7 +179,7 @@ test("the sidebar is 38 columns wide, with room for 31 of a name and title", () 
   expect(sidebarWidth).toBe(38);
   const title = "Send people back to the page they came from after signing in";
   expect(listed(draw([thread("app-9", { title })], "lead", size))[0]).toBe(
-    "  ● 9 Send people back to the page…",
+    "  ○ 9 Send people back to the page…",
   );
 });
 
@@ -389,10 +390,10 @@ test("a blank line sits above the lead, so the lead doesn't read as part of the 
 
 test("rows sit two columns in, and the line below a mark two further", () => {
   const lines = plain(draw([lead, thread("app-12")], "lead", size)).split("\n");
-  const y = lines.findIndex((line) => line.includes("●"));
+  const y = lines.findIndex((line) => line.includes("○"));
   expect(lines[1]?.indexOf("◆")).toBe(2);
   expect(lines[2]?.indexOf("running")).toBe(4);
-  expect(lines[y]?.indexOf("●")).toBe(2);
+  expect(lines[y]?.indexOf("○")).toBe(2);
   expect(lines[y]?.indexOf("12 app-12")).toBe(4);
   expect(lines[y + 1]?.indexOf("claude")).toBe(4);
   expect(lines[y + 2]?.indexOf("working")).toBe(4);
@@ -406,7 +407,7 @@ test("the harness is grey, so the titles stand out", () => {
 
 test("a thread that needs you for anything but an approval has a yellow circle and word", () => {
   for (const status of ["working", "waiting"] as const)
-    for (const word of ["question", "round limit", "review failed", "needs you"]) {
+    for (const word of ["question", "round limit", "turn ended", "review timed out", "needs you"]) {
       const needing = thread("app-12", { status, needsYou: true, word });
       const screen = draw([lead, needing], "lead", size);
       expect(read(screen).join("\n")).toContain(`  ● 12 app-12\n    ${word} · claude`);
@@ -428,25 +429,41 @@ test("an approved thread is green, as it is good news, though it waits on you to
   }
 });
 
-test("a thread whose harness stopped on an error is red, though it needs you", () => {
-  const screen = draw([thread("app-12", { needsYou: true, word: "error" })], "lead", size);
-  expect(screen).toContain("\x1b[38;5;210m●");
-  expect(screen).toContain("\x1b[38;5;210merror");
-  expect(screen).not.toContain("\x1b[38;5;221m");
+test("a thread whose harness stopped on an error, or whose review failed, is red, though it needs you", () => {
+  for (const word of ["error", "review failed"]) {
+    const screen = draw([thread("app-12", { needsYou: true, word })], "lead", size);
+    expect(screen).toContain("\x1b[38;5;210m●");
+    expect(screen).toContain(`\x1b[38;5;210m${word}`);
+    expect(screen).not.toContain("\x1b[38;5;221m");
+  }
 });
 
-test("every thread's mark is a circle, in its status's colour", () => {
+test("a mark is filled when the thread needs you, and hollow when it doesn't", () => {
   const mark = (more: Partial<Row>) => draw([thread("app-12", more)], "lead", size);
-  expect(mark({ status: "working" })).toContain("\x1b[38;5;120m●");
+  // A working builder is bright, in the theme's own text in bold, so it reads on any theme.
+  expect(mark({ status: "working" })).toContain("\x1b[1m○");
   expect(mark({ status: "failed", word: "failed" })).toContain("\x1b[38;5;210m●");
-  expect(mark({ status: "waiting", word: "checks" })).toContain("\x1b[90m○");
+  for (const word of ["reviewing", "queued for review", "checks", "changes", "limit · 13:59"])
+    expect(mark({ status: "waiting", word })).toContain("\x1b[90m○");
   expect(mark({ status: "stopped", word: "stopped" })).toContain("\x1b[90m○");
-  expect(mark({ status: "done", word: "done" })).toContain("\x1b[38;5;120m●");
+  expect(mark({ status: "done", word: "done" })).toContain("\x1b[90m○");
+});
+
+test("a review under way shows dim while the builder works, with the builder's step below", () => {
+  const both = thread("app-12", { status: "working", word: "reviewing", step: "Editing rows.ts" });
+  const screen = draw([lead, both], "lead", size);
+  expect(listed(screen).slice(2)).toEqual([
+    "  ○ 12 app-12",
+    "    reviewing · claude",
+    "    Editing rows.ts",
+  ]);
+  expect(screen).toContain("\x1b[90m○");
+  expect(screen).toContain("\x1b[90mreviewing");
 });
 
 test("a mark looks the same whether or not you are on its row", () => {
   // A theme's own green can be olive, close to the yellow of needs you, so marks never use it.
-  const rows = [lead, thread("app-12")];
+  const rows = [lead, thread("app-12", { needsYou: true, word: "question" })];
   const markLine = (shown: string) =>
     draw(rows, shown, size)
       .split("\n")
@@ -474,7 +491,7 @@ test("the lead keeps its diamond", () => {
 test("a thread's word takes its mark's colour, and a dim circle gives a dim word", () => {
   const word = (status: Row["status"], said: string) =>
     draw([thread("app-12", { status, word: said })], "lead", size);
-  expect(word("working", "reviewing")).toContain("\x1b[38;5;120mreviewing");
+  expect(word("working", "reviewing")).toContain("\x1b[90mreviewing");
   expect(word("failed", "failed")).toContain("\x1b[38;5;210mfailed");
   expect(word("waiting", "checks")).toContain("\x1b[90mchecks");
   expect(word("stopped", "stopped")).toContain("\x1b[90mstopped");
@@ -487,7 +504,7 @@ const selected = (screen: string) => screen.split("\n").filter((line) => line.in
 test("the row you are looking at is shaded, and nothing is when it isn't listed", () => {
   const rows = [lead, thread("app-12")];
   expect(read(selected(draw(rows, "app-12", size)).join("\n"))).toEqual([
-    "  ● 12 app-12",
+    "  ○ 12 app-12",
     "    claude",
     "    working",
   ]);
@@ -517,17 +534,17 @@ test("the grey runs the whole width, on every line of the row, and ends with it"
 test("on the grey, every colour is a fixed light one, as a theme's own can vanish there", () => {
   const rows = [
     thread("app-1"),
-    thread("app-2", { status: "done" }),
+    thread("app-2", { status: "done", word: "done" }),
     thread("app-3", { status: "waiting", word: "checks" }),
     thread("app-4", { needsYou: true, word: "approved" }),
     thread("app-5", { status: "failed", word: "failed" }),
   ];
   const on = (session: string) => selected(draw(rows, session, size)).join("\n");
-  expect(on("app-1")).toContain("\x1b[38;5;120m●");
+  expect(on("app-1")).toContain("\x1b[1;38;5;231m○");
   expect(on("app-1")).toContain("\x1b[1;38;5;231m1 app-1");
   expect(on("app-1")).toContain("\x1b[38;5;253mclaude");
   expect(on("app-1")).toContain("\x1b[38;5;250mworking");
-  expect(on("app-2")).toContain("\x1b[38;5;120m●");
+  expect(on("app-2")).toContain("\x1b[38;5;250m○");
   expect(on("app-3")).toContain("\x1b[38;5;250m○");
   expect(on("app-3")).toContain("\x1b[38;5;250mchecks");
   expect(on("app-4")).toContain("\x1b[38;5;120m●");
@@ -539,7 +556,7 @@ test("on the grey, every colour is a fixed light one, as a theme's own can vanis
 
 test("a running time follows the harness on the second line, in the same grey as the rest of it", () => {
   const screen = draw([thread("app-12", { age: "5m" })], "lead", size);
-  expect(listed(screen)).toEqual(["  ● 12 app-12", "    claude · 5m", "    working"]);
+  expect(listed(screen)).toEqual(["  ○ 12 app-12", "    claude · 5m", "    working"]);
   expect(screen).toContain("\x1b[38;5;250mclaude · 5m");
 });
 
@@ -570,7 +587,7 @@ test("a clock set back never shows a time that makes no sense", () => {
 test("a title too long for its line is cut with …, so a row never takes more lines", () => {
   const name = "a-very-long-repository-name-1234";
   expect(listed(draw([thread(name)], "lead", size))).toEqual([
-    "  ● 1234 a-very-long-repository-na…",
+    "  ○ 1234 a-very-long-repository-na…",
     "    claude",
     "    working",
   ]);
@@ -629,13 +646,13 @@ test("a list too long for the sidebar scrolls, down to its bottom line", () => {
   const short = { width: sidebarWidth, height: 8 };
   expect(read(draw(rows, "app-4", short))).toEqual([
     "",
-    "  ● 3 app-3",
+    "  ○ 3 app-3",
     "    claude",
     "    working",
-    "  ● 4 app-4",
+    "  ○ 4 app-4",
     "    claude",
     "    working",
-    "  ● 5 app-5",
+    "  ○ 5 app-5",
   ]);
 });
 
@@ -709,7 +726,7 @@ test("the lead sits on top, then the entries, then ACTIVE, with a line between e
     rule,
     "  Active",
     "",
-    "  ● 12 app-12",
+    "  ○ 12 app-12",
     "    claude · 5m",
     "    working",
   ]);
@@ -783,12 +800,12 @@ test("a terminal too short for the entries, the heading and your row leaves the 
   const whole = read(drawn("app-7", short, busy)).join("\n");
   for (const text of ["Issues", "Threads", "PRs", "Active", "───"])
     expect(whole).not.toContain(text);
-  expect(whole).toContain("● 7 app-7");
+  expect(whole).toContain("○ 7 app-7");
   expect(read(drawn("lead", short, busy)).slice(0, 4)).toEqual([
     "",
     "  ◆ lead",
     "    running · claude",
-    "  ● 1 app-1",
+    "  ○ 1 app-1",
   ]);
 });
 
@@ -810,7 +827,7 @@ test("a click on an entry picks it, and on a line, heading or blank between entr
   expect(click(y("Issues"))).toBe(":issues");
   expect(click(y("    Threads"))).toBe(":threads");
   expect(click(y("PRs"))).toBe(":prs");
-  expect(click(y("● 12 app-12"))).toBe("app-12");
+  expect(click(y("○ 12 app-12"))).toBe("app-12");
   expect(click(y("───"))).toBeNull();
   expect(click(read(drawn("lead")).indexOf("  Active"))).toBeNull();
   expect(click(y("    Threads") + 1)).toBeNull();
@@ -1042,7 +1059,7 @@ console.log(JSON.stringify(sidebarRows(db, ["lead", "app-12"], () => 3, ${now}, 
     expect(listed(shown({}, hours(2)))).toEqual([
       "  ◆ lead",
       "    running · claude",
-      "  ● 12 app-12",
+      "  ○ 12 app-12",
       "    claude · 2h",
       "    working",
     ]);
@@ -1069,12 +1086,12 @@ console.log(JSON.stringify(sidebarRows(db, ["lead", "app-12"], () => 3, ${now}, 
   // its row: the sidebar must go on drawing whatever the agent left in its folder.
   test("a working thread's row stands when its conversation is missing, empty, half-written or nonsense", () => {
     const rows = (row: Record<string, string | null>) => listed(shown(row, 0)).slice(2);
-    const plainRow = ["  ● 12 app-12", "    claude · <1m", "    working"];
+    const plainRow = ["  ○ 12 app-12", "    claude · <1m", "    working"];
     // No session yet, then a session whose file isn't there yet, on either harness.
     expect(rows({ session: null })).toEqual(plainRow);
     expect(rows({ session: "s1" })).toEqual(plainRow);
     expect(rows({ session: "s1", harness: "codex" })).toEqual([
-      "  ● 12 app-12",
+      "  ○ 12 app-12",
       "    codex · <1m",
       "    working",
     ]);
@@ -1180,21 +1197,31 @@ console.log(JSON.stringify(looks.map((row) => [row?.tokens, row?.step])));`;
     }
   });
 
-  test("each repository's tab counts its threads that need you or failed", () => {
+  test("each repository's tab counts its filled marks, in the colour of the most urgent", () => {
+    // site and app each have a red mark among their yellow ones, docs only a yellow one, and web
+    // an approved thread. Threads working, stopped or done have no filled mark.
+    const threads = [
+      { repo: "site", task: "1", status: "waiting", needs_you: 1 },
+      { repo: "site", task: "2", asking: 1 },
+      { repo: "site", task: "3", status: "failed", needs_you: 1 },
+      { repo: "site", task: "4" },
+      { repo: "site", task: "5", status: "done", needs_you: 1 },
+      { repo: "app", task: "6", status: "stopped" },
+      { repo: "app", task: "7", erred: 1 },
+      { repo: "app", task: "8", status: "waiting", stalled: 1 },
+      { repo: "docs", task: "9", status: "waiting", stalled: 1 },
+      { repo: "docs", task: "10" },
+      { repo: "web", task: "11", status: "waiting", needs_you: 1, verdict: "approve" },
+    ]
+      .map((row) => threadSql(row))
+      .join("\n");
     const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
 import { repositoryTabs } from ${JSON.stringify(source("screen/rows.ts"))};
 const db = openDb();
-db.run(\`INSERT INTO repositories (name, owner, repo) VALUES ('site', 'simon', 'site'), ('app', 'simon', 'app');
-INSERT INTO threads (owner, repo, task, folder, branch, status, needs_you, asking, erred, stalled) VALUES
-  ('simon', 'site', 1, 'site-1', 'b', 'waiting', 1, 0, 0, 0),
-  ('simon', 'site', 2, 'site-2', 'b', 'working', 0, 1, 0, 0),
-  ('simon', 'site', 3, 'site-3', 'b', 'failed', 1, 0, 0, 0),
-  ('simon', 'site', 4, 'site-4', 'b', 'working', 0, 0, 0, 0),
-  ('simon', 'site', 5, 'site-5', 'b', 'done', 1, 0, 0, 0),
-  ('simon', 'app', 6, 'app-6', 'b', 'stopped', 0, 0, 0, 0),
-  ('simon', 'app', 7, 'app-7', 'b', 'working', 0, 0, 1, 0),
-  ('simon', 'app', 8, 'app-8', 'b', 'waiting', 0, 0, 0, 1)\`);
-console.log(JSON.stringify(repositoryTabs(db)));`;
+db.run(\`INSERT INTO repositories (name, owner, repo) VALUES ('site', 'simon', 'site'), ('app', 'simon', 'app'),
+  ('docs', 'simon', 'docs'), ('web', 'simon', 'web');
+${threads}\`);
+console.log(JSON.stringify(repositoryTabs(db, () => 3)));`;
     const run = Bun.spawnSync([process.execPath, "-e", code], {
       env: { ...process.env, HOME: home },
       stdout: "pipe",
@@ -1202,8 +1229,10 @@ console.log(JSON.stringify(repositoryTabs(db)));`;
     });
     expect(run.stderr.toString()).toBe("");
     expect(JSON.parse(run.stdout.toString())).toEqual([
-      { name: "app", fullName: "simon/app", count: 2 },
-      { name: "site", fullName: "simon/site", count: 3 },
+      { name: "app", fullName: "simon/app", count: 2, colour: "38;5;210" },
+      { name: "docs", fullName: "simon/docs", count: 1, colour: "38;5;221" },
+      { name: "site", fullName: "simon/site", count: 3, colour: "38;5;210" },
+      { name: "web", fullName: "simon/web", count: 1, colour: "38;5;120" },
     ]);
   });
 

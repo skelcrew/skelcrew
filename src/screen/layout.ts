@@ -26,10 +26,12 @@ type Line = { text: string; place?: string; joins?: boolean };
 
 // Where a name starts, past its mark.
 const indent = `${pad}  `;
-// Returns whether a row is a thread whose builder is working, which has a line more than others.
+// Returns whether a row is a thread whose word is working, which shows what its builder costs.
 const working = (row: Row) => row.status !== null && row.word === "working";
-// Returns how many lines a row of the lead or ACTIVE takes, or a row's at least for none.
-const rowHeight = (row: Row | undefined) => (row && working(row) ? 3 : 2);
+// Returns how many lines a row of the lead or ACTIVE takes, or a row's at least for none. A
+// thread with a step to show has a line more than others: its builder is working, perhaps while
+// a review runs.
+const rowHeight = (row: Row | undefined) => (row?.step ? 3 : 2);
 
 // Returns how many columns a row's first line has for text in a sidebar `width` columns wide:
 // what is left once the line at its edge, the mark and the padding on each side are taken. A
@@ -47,7 +49,8 @@ export const entryPlace = (entry: Entry) => `:${entry}`;
 // it matters least, or in its place how many messages wait for the builder, which tells why one
 // hasn't reached it. Any other thread has one more: its word, how many messages wait, its harness
 // and its round, dim but the word, which takes its mark's colour so a green approved or a red
-// error reads at a glance. The word comes first, so it is the last to be cut. The lead's row
+// error reads at a glance. The word comes first, so it is the last to be cut. A thread under
+// review whose builder works meanwhile adds its builder's step below that, dim. The lead's row
 // has its name on top and its word below. An agent that isn't running is dim, as it can't be
 // picked. The one you are looking at is shaded across the whole width, on all its lines.
 // `width` leaves out the line at the sidebar's edge.
@@ -61,15 +64,18 @@ function rowLines(row: Row, here: boolean, width: number): string[] {
   const styled = here ? paint(white, top) : row.running ? top : paint(grey, top);
   const [sign, colour] = threadMark(row);
   const first = `${pad}${tinted(here, colour, sign)} ${styled}`;
-  // A working thread: what it costs in a light grey, then what it does, dim.
+  // A working thread: what it costs in a light grey, then what it does, dim. Under review, its
+  // word line says how many messages wait, so its step line has only the step.
   const light = here ? lightGreyOnShade : lightGrey;
+  const stepLine = (text: string) => `${indent}${tinted(here, grey, fitted(text, room))}`;
+  const step = removeControlCodes(row.step);
   const lines = working(row)
     ? [
         first,
         `${indent}${paint(light, fitted(workLine(row, room), room))}`,
-        `${indent}${tinted(here, grey, fitted(row.waiting || removeControlCodes(row.step), room))}`,
+        stepLine(row.waiting || step),
       ]
-    : [first, wordLine(row, here, room)];
+    : [first, wordLine(row, here, room), ...(step ? [stepLine(step)] : [])];
   return here ? lines.map((line) => shaded(line, width)) : lines;
 }
 

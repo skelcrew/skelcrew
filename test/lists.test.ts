@@ -150,7 +150,7 @@ ${threadSql({ task: "16", pr: 37, asking: 1 })}`;
       ],
     ],
   ]);
-  // A PR from a thread takes its colour where that means something: green when approved,
+  // A PR from a thread takes its colour when the thread's mark is filled: green when approved,
   // yellow when it needs you, and red when it failed or hit an error. It is plain otherwise.
   expect(prs[0]?.rows.map((row) => row.mark[1])).toEqual([null, "38;5;120"]);
   expect(prs[1]?.rows.map((row) => row.mark[1])).toEqual([
@@ -160,13 +160,13 @@ ${threadSql({ task: "16", pr: 37, asking: 1 })}`;
     null,
     null,
   ]);
-  // The word has the thread's mark colour, and the author is dim.
+  // The word has the thread's mark colour, bright for a working builder, and the author is dim.
   expect(prs[0]?.rows.map((row) => row.ends[0]?.[1])).toEqual(["90", "38;5;120"]);
   expect(prs[1]?.rows.map((row) => row.ends[0]?.[1])).toEqual([
     "38;5;221",
     "38;5;210",
     "38;5;210",
-    "38;5;120",
+    "1",
     "90",
   ]);
 });
@@ -324,11 +324,12 @@ ${threadSql({ task: "16", title: "Stuck", erred: 1 })}`;
         ["●", "app-t1", "Tidy up", "question", "claude", "", "12 Nov"],
       ],
     ],
-    ["Working", [["●", "app-12", "Fix login", "working", "codex", "#12 #31", "14:32"]]],
+    ["Working", [["○", "app-12", "Fix login", "working", "codex", "#12 #31", "14:32"]]],
     ["Stopped", [["○", "app-13", "Old", "stopped", "claude", "#13", "2 Nov"]]],
   ]);
-  // Each mark and word has its colour in ACTIVE, and a stopped one is dim.
-  const colours = ["38;5;210", "38;5;210", "38;5;221", "38;5;120", "90"];
+  // Each mark and word has its colour in ACTIVE: bright while its builder works, and dim once
+  // it stopped.
+  const colours = ["38;5;210", "38;5;210", "38;5;221", "1", "90"];
   expect(threads.flatMap((g) => g.rows.map((row) => row.mark[1]))).toEqual(colours);
   expect(threads.flatMap((g) => g.rows.map((row) => row.ends[0]?.[1]))).toEqual(colours);
   expect(threads.flatMap((g) => g.rows.map((row) => row.dim))).toEqual([

@@ -465,7 +465,7 @@
           "agentHarness": "claude",
           "age": "",
           "tokens": "",
-          "step": "",
+          "step": "working",
           "plan": null,
           "waiting": "1 message waiting",
           "fullName": "simon/app",
@@ -552,7 +552,7 @@
                 "mark": ["◐", null],
                 "name": "app-12",
                 "title": "Fix login",
-                "ends": [["queued for review", "38;5;120"]],
+                "ends": [["queued for review", "90"]],
                 "link": "https://github.com/simon/app/issues/12",
                 "session": null,
                 "dim": false,
@@ -609,11 +609,11 @@
             "heading": "Working",
             "rows": [
               {
-                "mark": ["●", "38;5;120"],
+                "mark": ["○", "90"],
                 "name": "app-12",
                 "title": "Fix login",
                 "ends": [
-                  ["queued for review", "38;5;120"],
+                  ["queued for review", "90"],
                   ["claude", "90"],
                   ["#12 #40", "90"],
                   ["17 Nov", "90"]
@@ -674,7 +674,7 @@
                 "mark": ["◐", null],
                 "name": "app#40",
                 "title": "Fix login",
-                "ends": [["queued for review", "38;5;120"]],
+                "ends": [["queued for review", "90"]],
                 "link": "https://github.com/simon/app/pull/40",
                 "session": null,
                 "dim": false,
@@ -845,12 +845,14 @@
     {
       "name": "app",
       "fullName": "simon/app",
-      "count": 3
+      "count": 3,
+      "colour": "38;5;210"
     },
     {
       "name": "notes",
       "fullName": "simon/notes",
-      "count": 1
+      "count": 1,
+      "colour": "38;5;221"
     }
   ]
 }

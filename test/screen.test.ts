@@ -245,10 +245,10 @@ test("shows the lead and every thread that isn't done, beside the agent", async 
   expect(lines[y + 7]).toContain("PRs");
   expect(lines[y + 8]?.slice(0, sidebar - 1)).toMatch(/^─+$/);
   expect(lines[y + 9]).toContain("Active");
-  expect(lines[y + 11]).toContain("● 12 app-12");
+  expect(lines[y + 11]).toContain("○ 12 app-12");
   expect(lines[y + 12]).toContain("claude");
   expect(lines[y + 13]).toContain("working");
-  expect(lines[y + 14]).toContain("● 7 app-7");
+  expect(lines[y + 14]).toContain("○ 7 app-7");
   expect(seen()).not.toContain("app-3");
   // Nothing of the screen is left in agents' sessions: each stays one pane.
   const panes = tmux(agents, "list-panes", "-a", "-F", "#{session_name}").out.trim().split("\n");
@@ -260,7 +260,7 @@ test("Alt-Down and Alt-Up switch the right side, and you type to whichever agent
   await ready("app-12");
   press("M-Down");
   await until(() => seen().includes("I am app-7"), "app-7");
-  await until(() => selected() === "● 7 app-7", "the sidebar to follow");
+  await until(() => selected() === "○ 7 app-7", "the sidebar to follow");
   type("hello\r");
   // The agent's shell makes the file before it writes the line, so wait for the whole line.
   await until(() => read("app-7.typed").endsWith("\n"), "the typing");
@@ -276,7 +276,7 @@ test("clicking a row switches the right side and leaves your typing there", asyn
   await ready("lead");
   const y = seen()
     .split("\n")
-    .findIndex((line) => line.includes("● 7 app-7"));
+    .findIndex((line) => line.includes("○ 7 app-7"));
   click(5, y + 1);
   await until(() => seen().includes("I am app-7"), "app-7");
   type("hello\r");
@@ -286,7 +286,7 @@ test("clicking a row switches the right side and leaves your typing there", asyn
 test("sc attach's screen starts on the agent it names, marked in the sidebar", async () => {
   open("app-7");
   await ready("app-7");
-  expect(selected()).toBe("● 7 app-7");
+  expect(selected()).toBe("○ 7 app-7");
 });
 
 test("updates on its own, with needs you in the sidebar", async () => {
@@ -391,7 +391,7 @@ test("with a terminal that sends extended keys, the screen's own keys still work
   open("lead");
   await ready("lead");
   toSecondThread();
-  await until(() => selected() === "● 7 app-7", "Alt-Shift-Down and Alt-Down to move");
+  await until(() => selected() === "○ 7 app-7", "Alt-Shift-Down and Alt-Down to move");
   await until(() => seen().includes("I am app-7"), "app-7");
   type("hello");
   press("Enter");
@@ -496,7 +496,7 @@ test("Ctrl-Q and switching still work while scrolled back", async () => {
   wheel(64);
   await until(() => !seen().includes("I am output"), "the scrollback");
   press("M-Down");
-  await until(() => selected() === "● 12 app-12", "the next row");
+  await until(() => selected() === "○ 12 app-12", "the next row");
   press("C-q");
   await until(() => existsSync(join(home, "left-one")), "Skelcrew to return");
 });
@@ -707,9 +707,9 @@ test("resizing the terminal resizes the agent and keeps the sidebar narrow", asy
   expect(widths).toEqual(["38", "111", "150"]);
   // A terminal shorter than the list keeps the row you are looking at in view.
   toSecondThread();
-  await until(() => selected() === "● 7 app-7", "app-7");
+  await until(() => selected() === "○ 7 app-7", "app-7");
   tmux(terminal, "resize-window", "-t", "=one:", "-x", "150", "-y", "6");
-  await until(() => selected() === "● 7 app-7", "the sidebar to scroll");
+  await until(() => selected() === "○ 7 app-7", "the sidebar to scroll");
 });
 
 // The columns at the sidebar's edge, on each line of a screen `height` rows high above the
@@ -1244,7 +1244,7 @@ test("Enter on a thread in the list of threads shows its agent, and the sidebar 
   expect(right()).toContain("app-12");
   press("Enter");
   await until(() => seen().includes("I am app-12"), "the agent");
-  await until(() => selected() === "● 12 app-12", "the sidebar to follow");
+  await until(() => selected() === "○ 12 app-12", "the sidebar to follow");
   type("from the list\r");
   await until(() => read("app-12.typed").includes("from the list"), "what you typed");
 });
@@ -1553,7 +1553,7 @@ test("Alt-Shift-Down and Alt-Shift-Up jump between the lead, the entries and ACT
   press("M-S-Down");
   await onRight("Not started");
   press("M-S-Down");
-  await until(() => selected() === "● 12 app-12", "the first row of ACTIVE");
+  await until(() => selected() === "○ 12 app-12", "the first row of ACTIVE");
   await until(() => seen().includes("I am app-12"), "its agent");
   press("M-S-Up");
   await onRight("Not started");
@@ -1586,7 +1586,7 @@ test("keys pressed together when leaving a list all count, however slowly the cl
   type("\x1b[1;3B\x1b[1;3B");
   await until(() => seen().includes("I am app-7"), "the second row's agent");
   await Bun.sleep(1200);
-  expect(selected()).toBe("● 7 app-7");
+  expect(selected()).toBe("○ 7 app-7");
   expect(seen()).toContain("I am app-7");
 });
 
@@ -2003,12 +2003,12 @@ test("two terminals each get their own session, and leaving one leaves the other
   await ready("app-7", "two");
   expect(screenSessions()).toHaveLength(2);
   press("M-Up", "two");
-  await until(() => selected("two") === "● 12 app-12", "the second to switch", "two");
+  await until(() => selected("two") === "○ 12 app-12", "the second to switch", "two");
   expect(selected("one")).toBe("◆ lead");
   press("C-q", "one");
   await until(() => screenSessions().length === 1, "the first to end");
   press("M-Down", "two");
-  await until(() => selected("two") === "● 7 app-7", "the second to go on working", "two");
+  await until(() => selected("two") === "○ 7 app-7", "the second to go on working", "two");
 });
 
 test("a terminal that just goes leaves no session behind, and no sidebar running", async () => {
@@ -2043,7 +2043,7 @@ test("when the thread you are on stops, its row goes and the right side goes to 
   await until(() => seen().includes("I am lead"), "the lead");
   await until(() => selected() === "◆ lead", "the sidebar to follow");
   await until(() => !seen().includes("app-7"), "the stopped thread to go");
-  expect(seen()).toContain("● 12 app-12");
+  expect(seen()).toContain("○ 12 app-12");
 });
 
 test("a row whose agent isn't running can't be picked", async () => {
@@ -2198,7 +2198,7 @@ test("several Alt keys typed together all move, and none is typed into the agent
   await ready("lead");
   type("\x1b[1;3B\x1b[1;3B\x1b[1;3B\x1b[1;3B");
   await until(() => seen().includes("I am app-12"), "the first thread, past the three entries");
-  await until(() => selected() === "● 12 app-12", "the sidebar to follow");
+  await until(() => selected() === "○ 12 app-12", "the sidebar to follow");
   await Bun.sleep(300);
   expect(read("lead.typed")).toBe("");
 });

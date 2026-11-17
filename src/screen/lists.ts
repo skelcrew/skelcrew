@@ -146,9 +146,9 @@ function approvedOnForge(pr: Extract<Item, { kind: "pr" }>): boolean {
 // Returns the open repository's PRs, as `Ready to merge`, then `In review`. A PR's mark is ○
 // before its first review, ◐ from the moment it runs while the rounds go on, and ● once it is approved and its checks
 // pass. A PR Skelcrew didn't open has no rounds, so it is ○ until the forge says it is approved
-// and its checks pass. A PR from a thread takes its thread's colour where that means something:
-// green when approved, yellow when it needs you, red when it failed or hit an error. A thread
-// that is only working or waiting leaves the mark plain. A PR from a thread ends with its word,
+// and its checks pass. A PR from a thread takes its thread's colour when the thread's mark is
+// filled: green when approved, yellow when it needs you, red when it failed or hit an error. A
+// thread that is only working or waiting leaves the mark plain. A PR from a thread ends with its word,
 // and one with no thread with its author.
 // m merges a PR ready to merge, at the head commit the forge last sent, which is the one you saw
 // approved. On any other PR it says what the PR waits on: an approval, or its checks.
@@ -184,11 +184,10 @@ function prGroups(db: Database, open: Open, threads: Known[]): Group[] {
     // A review under way, waiting or held counts as a round going on, the first one included.
     const reviewed = on && (on.thread.review_round !== null || onReviewer(on.thread, on.word));
     const sign = ready ? "●" : reviewed ? "◐" : "○";
-    // A working thread's green and a waiting one's dim say nothing of how far the PR is.
-    const colour = on ? markOf(on)[1] : grey;
-    const plain = colour === grey || (colour === green && on?.word !== "approved");
+    // A hollow mark's bright or dim says nothing of how far the PR is.
+    const [threadSign, colour] = on ? markOf(on) : ["○", grey];
     const row: ListRow = {
-      mark: [sign, plain ? null : colour],
+      mark: [sign, threadSign === "●" ? colour : null],
       name: named,
       title: pr.title,
       ends: [on ? wordEnd(on) : [pr.author?.login ?? "", grey]],

@@ -96,8 +96,8 @@ function header(where: string, left: number, version: string): string {
 }
 
 // Returns the tabs as a tmux format, and the columns they take, given each repository's tab, the
-// open one's owner/name, and the agent's width. Each tab is the repository's name, with a yellow
-// dot and a count when threads in it need you or failed, such as site •1, and two spaces on each
+// open one's owner/name, and the agent's width. Each tab is the repository's name, with a dot and
+// a count when threads in it have a filled mark, such as site •1, and two spaces on each
 // side, so the open one's grey reads as a tab. The open one is bold white on the grey a picked row
 // has, and the others dim. When they don't fit, those furthest from the open one give way, and a
 // dim count says how many. Each tab is a range of its own, named by its place in the list, so a
@@ -108,7 +108,7 @@ function drawTabs(tabs: Tab[], open: string, width: number): [string, number] {
     tabs.findIndex((tab) => tab.fullName === open),
     0,
   );
-  // Returns a tab's text: its name, with its count when threads in it need you or failed.
+  // Returns a tab's text: its name, with its count when threads in it have a filled mark.
   const label = (tab: Tab) => `  ${tab.name}${tab.count ? ` •${tab.count}` : ""}  `;
   // Returns how many columns the tab at a place in the list takes, or none past either end.
   const tabWidth = (index: number) => {
@@ -130,13 +130,15 @@ function drawTabs(tabs: Tab[], open: string, width: number): [string, number] {
     else left = false;
   }
   // Tabs have greys of their own, so they stand apart from the sidebar and the agent: the open
-  // one bold white on a dark grey, the others dim on a lighter one. Every tab's dot is the
-  // sidebar's fixed yellow, as a theme's own can look like another colour. A dim count of those
-  // left out ends the row.
+  // one bold white on a dark grey, the others dim on a lighter one. A tab's dot is in the
+  // sidebar's fixed colour of its most urgent mark, as a theme's own can look like another
+  // colour. tmux names the sidebar's 38;5;221 colour221. A dim count of those left out ends the
+  // row.
   const shown = tabs.slice(first, last + 1).map((tab, offset) => {
     const here = first + offset === at;
     const style = here ? "#[bg=colour234,fg=colour231,bold]" : "#[bg=colour237,fg=colour245]";
-    const badge = tab.count ? ` #[fg=colour221]•${tab.count}` : "";
+    const colour = tab.colour?.replace("38;5;", "colour") ?? "default";
+    const badge = tab.count ? ` #[fg=${colour}]•${tab.count}` : "";
     return `#[range=user|${first + offset}]${style}  ${escaped(tab.name)}${badge}  #[default]#[norange]`;
   });
   const out = tabs.length - shown.length;
