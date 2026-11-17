@@ -311,13 +311,21 @@ describe.skipIf(insideSandbox)("sc submit", () => {
   });
 
   // The lead's message changes the task after the thread started, such as a design you agreed
-  // to, so the reviewer judges the round by it rather than asking to undo it.
-  test("the reviewer gets the lead's messages to the builder after the task", async () => {
+  // to, so the reviewer judges the round by it rather than asking to undo it. The line that
+  // closes the issue is saved as the task starts, so the PR still closes it though Skelcrew's
+  // copy lost the issue before the first submit, such as after the tracker changed.
+  test("the reviewer gets the lead's messages to the builder after the task, and the PR closes the issue the copy lost", async () => {
     fakeClaude(false);
     addApp();
     verdict(1, "approve", "Ready to merge.");
     await startApp12();
     await until(() => read(join(builder(), "args")) !== "", 30_000);
+    // The tracker no longer gives the issue, and the copy has lost it.
+    answer(plugin, "changed", { items: [], next: null });
+    const db = new Database(join(data(), "skelcrew.db"));
+    db.run("PRAGMA busy_timeout = 5000");
+    db.run("DELETE FROM items");
+    db.close();
     const short = new Bun.CryptoHasher("sha256").update("simon/app").digest("hex").slice(0, 16);
     const leadSocket = join(home, "run", "skelcrew", "leads", short, "skelcrew.sock");
     await until(() => existsSync(leadSocket));
@@ -332,32 +340,7 @@ describe.skipIf(insideSandbox)("sc submit", () => {
     expect(prompt).toMatch(
       /# Add export\n\nAs JSON\n\n## Changes to the task from the lead, after the thread started\n\nThese override the task above where they differ\. The latest comes last\.\n\n### .* UTC\n\nKeep the CSV export too\.\n/,
     );
-  }, 60_000);
-
-  // The line that closes the issue is saved as the task starts, so the PR still closes it though
-  // the copy lost the issue before the first submit, such as after the tracker changed.
-  test("the first PR closes the task's issue after Skelcrew's copy lost it", async () => {
-    fakeClaude(false);
-    addApp();
-    verdict(1, "approve", "Ready to merge.");
-    await startApp12();
-    await until(() => read(join(builder(), "args")) !== "", 30_000);
-    // The tracker no longer gives the issue, and the copy has lost it.
-    answer(plugin, "changed", { items: [], next: null });
-    const db = new Database(join(data(), "skelcrew.db"));
-    db.run("PRAGMA busy_timeout = 5000");
-    db.run("DELETE FROM items");
-    db.close();
-    // The builder answers the lead's message with its first round.
-    const short = new Bun.CryptoHasher("sha256").update("simon/app").digest("hex").slice(0, 16);
-    const leadSocket = join(home, "run", "skelcrew", "leads", short, "skelcrew.sock");
-    await until(() => existsSync(leadSocket));
-    const told = await skel(["tell", "app-12", "Go ahead."], {
-      SKELCREW_SANDBOX: "1",
-      SKELCREW_SOCKET: leadSocket,
-    });
-    expect(told.err).toBe("");
-    await until(() => opened() !== undefined, 30_000);
+    await until(() => opened() !== undefined);
     expect(opened()?.body).toBe("Round 1\n\nCloses #12");
   }, 60_000);
 
