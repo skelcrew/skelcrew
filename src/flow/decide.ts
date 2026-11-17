@@ -95,13 +95,23 @@ export function whoRunsTheSuite(given: {
   return waited < (setsUpCi ? ciWait : checkWait) ? "wait" : "reviewer";
 }
 
-// The part of a GitHub workflow that says what each job runs. Anything else in it is let be.
+// The part of a GitHub workflow that says what each job runs, and what can skip a step, let its
+// failure pass or change the shell that reads it. Anything else in it is let be.
+const Skips = {
+  if: z.unknown().optional(),
+  "continue-on-error": z.unknown().optional(),
+  defaults: z.unknown().optional(),
+};
 const Workflow = z.object({
+  defaults: z.unknown().optional(),
   jobs: z.record(
     z.string(),
     z.object({
+      ...Skips,
       name: z.string().optional(),
-      steps: z.array(z.object({ run: z.string().optional() })).optional(),
+      steps: z
+        .array(z.object({ ...Skips, run: z.string().optional(), shell: z.unknown().optional() }))
+        .optional(),
     }),
   ),
 });
@@ -109,20 +119,35 @@ const Workflow = z.object({
 // Returns whether CI's checks on a commit, by name, prove that CI runs the repository's tests:
 // one of them comes from a job in the commit's `workflows`, their text, with a step that runs
 // one of the `tests` commands. A CI check alone proves nothing, as a CLA check or a deploy
-// preview runs no tests. A check is named after its job's name, or its key without one, and a
-// matrix job adds its values in brackets. A workflow that can't be read proves nothing, and nor
-// does CI outside GitHub, which has no workflows to read.
+// preview runs no tests. Only a step that surely runs the command as it is counts: its whole
+// script is the command, in the default shell, which stops at a failure, and nothing can skip
+// it or let its failure pass, on the step or its job. Anything else, such as `echo` before the
+// command or `|| true` after it, proves nothing, and the reviewer runs the tests instead. A check
+// is named after its job's name, or its key without one, and a matrix job adds its values in
+// brackets. A workflow that can't be read proves nothing, and nor does CI outside GitHub, which
+// has no workflows to read.
 export function testedByCi(workflows: string[], tests: string[], checks: string[]): boolean {
   const names = workflows.flatMap((text) => {
-    let jobs: z.infer<typeof Workflow>["jobs"];
+    let workflow: z.infer<typeof Workflow>;
     try {
-      jobs = Workflow.parse(parse(text)).jobs;
+      workflow = Workflow.parse(parse(text));
     } catch {
       return [];
     }
-    const runsTests = (run = "") => tests.some((test) => test.trim() !== "" && run.includes(test));
-    return Object.entries(jobs)
-      .filter(([, job]) => (job.steps ?? []).some((step) => runsTests(step.run)))
+    // Defaults for the whole workflow can change the shell of every step.
+    if (workflow.defaults !== undefined) return [];
+    const surely = (part: { if?: unknown; "continue-on-error"?: unknown; defaults?: unknown }) =>
+      part.if === undefined &&
+      part["continue-on-error"] === undefined &&
+      part.defaults === undefined;
+    const runsTests = (step: { run?: string | undefined; shell?: unknown }) =>
+      step.shell === undefined &&
+      tests.some((test) => test.trim() !== "" && step.run?.trim() === test.trim());
+    return Object.entries(workflow.jobs)
+      .filter(
+        ([, job]) =>
+          surely(job) && (job.steps ?? []).some((step) => surely(step) && runsTests(step)),
+      )
       .map(([key, job]) => job.name ?? key);
   });
   return checks.some(

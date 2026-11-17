@@ -639,9 +639,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: |
-          bun install
-          bun run check
+      - run: bun install
+      - run: bun run check
   lint:
     name: Lint the code
     steps:
@@ -665,4 +664,34 @@ test("without a test command, workflows Skelcrew can read, or a matching check, 
   expect(testedByCi([], ["bun run check"], ["buildkite/test"])).toBe(false);
   expect(testedByCi(["jobs: [not, a, map"], ["bun run check"], ["check"])).toBe(false);
   expect(testedByCi([testing], ["bun run check"], [])).toBe(false);
+});
+
+// A workflow with one job, check, whose steps and settings are `job`, indented under it.
+const checkJob = (job: string) =>
+  `on: pull_request\njobs:\n  check:\n${job.replace(/^/gm, "    ")}\n`;
+
+test("a step that might not run the test command, or whose failure is let pass, is no proof", () => {
+  const unproven = [
+    // A condition can skip the step, or the whole job.
+    "steps:\n  - run: bun run check\n    if: false",
+    "if: false\nsteps:\n  - run: bun run check",
+    // Its failure can be let pass.
+    "steps:\n  - run: bun run check\n    continue-on-error: true",
+    "continue-on-error: true\nsteps:\n  - run: bun run check",
+    // The command's text, but not the command run as it is.
+    "steps:\n  - run: echo bun run check",
+    "steps:\n  - run: bun run check || true",
+    "steps:\n  - run: |\n      bun run check\n      exit 0",
+    // Another shell can read it otherwise.
+    "steps:\n  - run: bun run check\n    shell: python",
+    "defaults:\n  run:\n    shell: python\nsteps:\n  - run: bun run check",
+  ];
+  for (const job of unproven)
+    expect(testedByCi([checkJob(job)], ["bun run check"], ["check"])).toBe(false);
+  expect(
+    testedByCi([checkJob("steps:\n  - run: bun run check")], ["bun run check"], ["check"]),
+  ).toBe(true);
+  const shellForAll = "defaults:\n  run:\n    shell: python\n";
+  const workflow = `${shellForAll}${checkJob("steps:\n  - run: bun run check")}`;
+  expect(testedByCi([workflow], ["bun run check"], ["check"])).toBe(false);
 });
