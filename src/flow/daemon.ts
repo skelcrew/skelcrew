@@ -34,7 +34,7 @@ import {
 } from "./lead.ts";
 import { endWake, restoreLimits, wakeAfterLimit } from "./limits.ts";
 import { listRepositories, listTasks, listThreads, showPr, showTask } from "./list.ts";
-import { deliverAllWaiting } from "./messages.ts";
+import { deliverAllWaiting, stopDelivering } from "./messages.ts";
 import { pollRepositories } from "./poll.ts";
 import { findRepository, fullNameIs, noRepositories, refreshClones, repositoryAt } from "./repo.ts";
 import { allowed, type Caller, DaemonRequest, parseJson } from "./requests.ts";
@@ -348,10 +348,16 @@ export async function serve(tmux: string, every = 30_000): Promise<void> {
         submitRound(db, tmux, thread.folder, request.summary);
         return { submitted: threadName(db, thread) };
       }
-      case "question asked":
-        record(db, callingThread(caller).folder, { asking: true }, "its builder asked a question");
+      case "question asked": {
+        const { folder } = callingThread(caller);
+        record(db, folder, { asking: true }, "its builder asked a question");
+        // A message being typed in now would answer the question for you. Typing checks for the
+        // cancel after each wait and right before its paste, and the message waits until the
+        // question is over.
+        stopDelivering(db, folder, false);
         typeLeadNotes(db, tmux);
         return { asking: true };
+      }
       case "turn ended": {
         // The note quotes what the builder last said, so you see what it waits on. In quotes,
         // and with no tags of Skelcrew's, it can't pass for Skelcrew's own words or another's.

@@ -52,7 +52,8 @@ const script = (name: string, body: string) => writeScript(home, name, body);
 // turn you stop with Esc. A hook's input is what the test left in its file, or {}. Each hook gets
 // a line in the file ran once it has finished. Text typed into the builder goes in its file
 // typed, and runs UserPromptSubmit, as talk does. It looks busy while the file busy is in its
-// config folder.
+// config folder. While the file quoting is there, it is idle with a reply that quotes the busy
+// mark, so each look at its screen takes a while.
 function fakeClaude(): void {
   script(
     "claude",
@@ -99,7 +100,9 @@ for i in $(seq 3000); do
   test -e "$CLAUDE_CONFIG_DIR/stop" && { said=$(cat "$CLAUDE_CONFIG_DIR/stop"); rm "$CLAUDE_CONFIG_DIR/stop"; hook Stop "" "$said"; }
   if [ -e "$CLAUDE_CONFIG_DIR/busy" ]; then
     [ "$look" = busy ] || { clear; echo "esc to interrupt"; look=busy; }
-  elif [ "$look" = busy ]; then clear; echo "❯"; look=idle; fi
+  elif [ -e "$CLAUDE_CONFIG_DIR/quoting" ]; then
+    [ "$look" = quoting ] || { clear; echo '● It presses Esc while the screen shows "esc to interrupt".'; echo; echo "❯"; look=quoting; }
+  elif [ -n "$look" ] && [ "$look" != idle ]; then clear; echo "❯"; look=idle; fi
   test -e "$CLAUDE_CONFIG_DIR/limit" && { given=$(cat "$CLAUDE_CONFIG_DIR/limit"); rm "$CLAUDE_CONFIG_DIR/limit"; hook StopFailure rate_limit "$given"; }
   sleep 0.1
 done`,
@@ -443,6 +446,30 @@ describe.skipIf(insideSandbox)("needs you", () => {
     expect(told.err).toBe("");
     await until(() => read(join(builder(), "typed")).includes("Use JSON."));
     await untilNeedsYou(false);
+  }, 60_000);
+
+  // The builder can ask you a question after Skelcrew found it idle and before the paste. The
+  // message would then answer the question for you, so it waits until the question is over.
+  test("a lead's message isn't typed in once the builder asks a question while typing waits", async () => {
+    addApp();
+    await startApp12();
+    // Each look at its screen now takes a couple of seconds, so typing waits a while.
+    writeFileSync(join(builder(), "quoting"), "");
+    await Bun.sleep(500);
+    const lead = { SKELCREW_SANDBOX: "1", SKELCREW_SOCKET: leadSocket() };
+    expect((await skel(["tell", "app-12", "Use JSON."], lead)).err).toBe("");
+    await hook("ask");
+    expect(thread().asking).toBe(1);
+    await Bun.sleep(8000);
+    expect(read(join(builder(), "typed"))).not.toContain("Use JSON.");
+    const db = new Database(join(data(), "skelcrew.db"));
+    db.run("PRAGMA busy_timeout = 5000");
+    const waiting = db.query("SELECT said FROM messages").all();
+    db.close();
+    expect(waiting).toEqual([{ said: "Use JSON." }]);
+    // Once you answer, the message goes in.
+    await hook("answer");
+    await until(() => read(join(builder(), "typed")).includes("Use JSON."));
   }, 60_000);
 
   test("a builder's words can't pass for Skelcrew's in the lead's note", async () => {

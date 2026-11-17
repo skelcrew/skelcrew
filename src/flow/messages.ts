@@ -241,8 +241,9 @@ const roundsDropped = new Map<string, number>();
 // saving it: a notice prepared across a drop is about an older commit, so it isn't saved.
 export const noticeRound = (folder: string) => roundsDropped.get(folder) ?? 0;
 
-// Cancels typing under way into the thread's builder, for a stop, a merge or sc rm, so nothing
-// is typed into it afterwards. Its messages stay saved, unless `drop`, for a thread that ended.
+// Cancels typing under way into the thread's builder, for a stop, a merge, sc rm or a question
+// it asked you, so nothing is typed into it afterwards. Its messages stay saved, unless `drop`,
+// for a thread that ended.
 // The attempt stays known until it ends, so no other starts meanwhile.
 export function stopDelivering(db: Database, folder: string, drop: boolean): void {
   delivering.get(folder)?.cancel.abort();
