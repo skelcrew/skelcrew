@@ -33,9 +33,9 @@ const schema = JSON.stringify({
 // starts, how to learn whether the tests pass, and to answer with problems the builder can act
 // on. It tells the reviewer to assume the change is wrong, since a reviewer that trusts the
 // builder misses what the builder missed. `ci` is the file holding CI's result for the commit,
-// or null for a repository with no CI. The whole test suite runs once per commit: CI runs it
-// where there is CI, and the reviewer only where there is none, as several threads running it
-// at once overload the machine.
+// or null when no CI runs on the commit. The whole test suite runs once per commit: CI runs it
+// where CI runs on the commit, and the reviewer only where it doesn't, as several threads
+// running it at once overload the machine.
 export function reviewerPrompt(
   issue: { title: string; body: string },
   base: string,
@@ -140,8 +140,8 @@ function readVerdict(
 
 // Runs a fresh reviewer against a throwaway view of the clone and returns its verdict or failure
 // reason. Enforces cancellation and a time limit, then removes the review's temporary
-// files. `ci` says whether the repository has CI, asked as the review starts, since CI may have
-// shown up while it waited its turn, and what CI says about the commit. With CI, the reviewer
+// files. `ci` says whether CI runs on the commit, asked as the review starts, since CI may have
+// shown a check while it waited its turn, and what CI says about the commit. With CI, the reviewer
 // reads CI's result rather than running the whole test suite. It is asked again every 15
 // seconds while the review runs, as CI usually finishes during it.
 async function reviewNow(given: {

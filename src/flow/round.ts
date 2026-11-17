@@ -111,8 +111,9 @@ function ciOfCommit(db: Database, thread: Thread, pr: number, sha: string): () =
   };
 }
 
-// The reviews of every thread, kept to limits.reviews at once. A review in a repository without
-// CI runs the repository's tests, so too many at once slow every one of them down.
+// The reviews of every thread, kept to limits.reviews at once. A review of a commit CI doesn't
+// run on runs the repository's whole test suite, so too many at once slow every one of them
+// down.
 const reviews = new Queue();
 
 // Reviews the commit and acts on the verdict: with a forge, posts it on the PR and sets Skelcrew's

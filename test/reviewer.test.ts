@@ -372,7 +372,7 @@ describe.skipIf(insideSandbox)("reviewer", () => {
 
   // A review waits in the round's queue for its place, and CI may show a check meanwhile. So the
   // reviewer is told about CI from what holds as each review starts.
-  test("whether the repository has CI is asked as each review starts", async () => {
+  test("whether CI runs on the commit is asked as each review starts", async () => {
     let has = false;
     const ci = { has: () => has, read: async () => "CI passed.\n" };
     fakeCodex(approve);
