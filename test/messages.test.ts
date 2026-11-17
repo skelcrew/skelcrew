@@ -1,9 +1,10 @@
 // A builder's waiting messages, kept in the database: the lead hears of every message of its own
 // that waits too long, and each review or comment a message carries is kept to be marked seen.
-// The builder isn't running, as the tmux socket has no server, so every message waits.
+// The builder isn't running, as the tmux socket has no server, so every message waits, unless a
+// test starts a stand-in builder on that socket.
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdtempSync, realpathSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import { source } from "./harness.ts";
 
@@ -11,7 +12,12 @@ let home = "";
 beforeEach(() => {
   home = realpathSync(mkdtempSync(join(tmpdir(), "skel-messages-test-")));
 });
+// The tmux server a test may start, which ends with it.
+const socket = `skel-messages-test-${process.pid}`;
 afterEach(() => {
+  Bun.spawnSync(["tmux", "-L", socket, "kill-server"], { stderr: "pipe" });
+  const folder = join(process.env.TMUX_TMPDIR ?? "/tmp", `tmux-${userInfo().uid}`);
+  rmSync(join(folder, socket), { force: true });
   rmSync(home, { recursive: true, force: true });
 });
 
@@ -22,7 +28,7 @@ function run(body: string): string {
   const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
 import { queueMessage, deliverAllWaiting } from ${JSON.stringify(source("flow/messages.ts"))};
 const db = openDb();
-const tmux = ${JSON.stringify(`skel-messages-test-${process.pid}`)};
+const tmux = ${JSON.stringify(socket)};
 db.run(\`INSERT INTO repositories (name, owner, repo) VALUES ('app', 'simon', 'app');
 INSERT INTO threads (owner, repo, task, folder, branch, status)
   VALUES ('simon', 'app', 12, 'app-12', 'skelcrew/12', 'waiting')\`);
@@ -62,9 +68,39 @@ queueMessage(db, tmux, "app-12", { sender: "skelcrew", text: "Merge main.", said
 queueMessage(db, tmux, "app-12", { sender: "skelcrew", text: "Check failed.", said: "a failed check", typed_in: [] });
 queueMessage(db, tmux, "app-12", { sender: "skelcrew", text: "Comment: CSV too.", said: "a comment", typed_in: [{ kind: "comment", id: "7" }] });
 queueMessage(db, tmux, "app-12", { sender: "lead", text: "Use v2.", said: "Use v2.", typed_in: [] });
-dropOldEvents(db, "app-12");
+dropOldEvents(db, tmux, "app-12");
 console.log(JSON.stringify(db.query("SELECT said FROM messages ORDER BY id").all()));`);
   expect(JSON.parse(left)).toEqual([{ said: "a comment" }, { said: "Use v2." }]);
+});
+
+// A new round can drop a notice while it is being typed in, and the lead's message saved right
+// after must still go in, whatever the database numbers it.
+test("a lead's message saved while a dropped notice was being typed in still goes in", () => {
+  // A stand-in builder, idle at Claude Code's prompt, keeping what is typed into it.
+  writeFileSync(
+    join(home, "builder.sh"),
+    "#!/bin/sh\nprintf '\\033[?2004h'\nstty -echo\necho '❯'\ncat > received.txt\n",
+    { mode: 0o755 },
+  );
+  const left = run(`
+import { dropOldEvents } from ${JSON.stringify(source("flow/messages.ts"))};
+Bun.spawnSync(["tmux", "-L", tmux, "new-session", "-d", "-s", "app-12", "-c", ${JSON.stringify(home)}, ${JSON.stringify(join(home, "builder.sh"))}]);
+await Bun.sleep(300);
+queueMessage(db, tmux, "app-12", { sender: "skelcrew", text: "Merge main.", said: "a conflict", typed_in: [] });
+await Bun.sleep(100);
+dropOldEvents(db, tmux, "app-12");
+queueMessage(db, tmux, "app-12", { sender: "lead", text: "Use v2.", said: "Use v2.", typed_in: [] });
+// As the daemon does every few seconds.
+for (let i = 0; i < 20 && db.query("SELECT 1 FROM messages").get(); i++) {
+  deliverAllWaiting(db, tmux);
+  await Bun.sleep(500);
+}
+await Bun.sleep(500);
+console.log(JSON.stringify(db.query("SELECT said FROM messages").all()));`);
+  expect(JSON.parse(left)).toEqual([]);
+  const received = readFileSync(join(home, "received.txt"), "utf8");
+  expect(received).toContain("Use v2.");
+  expect(received).not.toContain("Merge main.");
 });
 
 test("two comments with the same words both stay to be marked seen", () => {

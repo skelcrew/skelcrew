@@ -186,9 +186,10 @@ function prepareTables(db: Database): void {
   // while the builder is busy or stopped, or the daemon restarts. `sender` is lead or skelcrew,
   // `text` is what is typed, `said` the lead's own words, `at` when it was sent, in milliseconds
   // since 1970, `noted` whether the lead heard it still waits, and `typed_in` the PR's reviews
-  // and comments it carries, as JSON, for the forge to mark seen.
+  // and comments it carries, as JSON, for the forge to mark seen. An `id` is never used again,
+  // so a typing under way whose message was dropped can't remove a newer one by its `id`.
   db.run(`CREATE TABLE IF NOT EXISTS messages (
-    id INTEGER PRIMARY KEY,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
     folder TEXT NOT NULL,
     sender TEXT NOT NULL,
     text TEXT NOT NULL,

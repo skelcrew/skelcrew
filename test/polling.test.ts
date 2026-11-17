@@ -461,57 +461,70 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
     await until(() => waiting() === 0);
   }, 60_000);
 
-  // A new round is a new commit, so a conflict or failed check told of the old one no longer
-  // holds. The lead's words and a person's comment still do.
+  // Runs sc as an agent would, from the socket of app-12's builder or of app's lead.
+  function asAgent(agent: "builder" | "lead", args: string[], cwd = home) {
+    const hashed = (name: string) =>
+      new Bun.CryptoHasher("sha256").update(name).digest("hex").slice(0, 16);
+    const runDir = join(home, "run", "skelcrew");
+    const sockets = {
+      builder: join(runDir, "threads", hashed("app-12"), "skelcrew.sock"),
+      lead: join(runDir, "leads", hashed("simon/app"), "skelcrew.sock"),
+    };
+    const run = Bun.spawnSync([process.execPath, main, ...args], {
+      env: { ...env(), SKELCREW_SOCKET: sockets[agent] },
+      cwd,
+      stderr: "pipe",
+    });
+    return run.stderr.toString();
+  }
+
+  // Has app-12's builder commit a change and submit round 2, as it would once it fixed what it
+  // was told.
+  function submitRound2(): void {
+    writeFileSync(join(clone(), "change"), "2\n");
+    git(clone(), "add", "-A");
+    git(clone(), "commit", "-qm", "round 2");
+    expect(asAgent("builder", ["submit", "Round 2"], clone())).toBe("");
+  }
+
+  // A new round is a new commit, so a conflict told of the old one no longer holds. The lead's
+  // words and a person's comment still do, even one that came in the same poll as the conflict.
   test("a new round drops Skelcrew's waiting notices of the old one, but keeps the lead's message and your comment", async () => {
     mkdirSync(builder(), { recursive: true });
     writeFileSync(join(builder(), "busy"), "");
     await approvedApp12();
-    pr({ conflicts: true, reviews: [skelReview], checks: [approved] });
-    await until(() => waiting() === 1);
-    pr({
-      conflicts: true,
-      reviews: [skelReview],
-      checks: [approved],
-      comments: [{ id: "51", author: you, text: "Also CSV." }],
-    });
+    const comments = [{ id: "51", author: you, text: "Also CSV." }];
+    pr({ conflicts: true, reviews: [skelReview], checks: [approved], comments });
     await until(() => waiting() === 2);
-    // Runs sc as an agent would, from its own socket.
-    const hashed = (name: string) =>
-      new Bun.CryptoHasher("sha256").update(name).digest("hex").slice(0, 16);
-    const runDir = join(home, "run", "skelcrew");
-    const asAgent = (socketPath: string, args: string[], cwd = home) =>
-      Bun.spawnSync([process.execPath, main, ...args], {
-        env: { ...env(), SKELCREW_SOCKET: socketPath },
-        cwd,
-        stderr: "pipe",
-      });
-    const told = asAgent(join(runDir, "leads", hashed("simon/app"), "skelcrew.sock"), [
-      "tell",
-      "app-12",
-      "Keep the old names.",
-    ]);
-    expect(told.stderr.toString()).toBe("");
+    expect(asAgent("lead", ["tell", "app-12", "Keep the old names."])).toBe("");
     expect(waiting()).toBe(3);
     // The builder fixes the conflict and submits a new round, while still busy.
-    pr({
-      reviews: [skelReview],
-      checks: [approved],
-      comments: [{ id: "51", author: you, text: "Also CSV." }],
-    });
-    writeFileSync(join(clone(), "change"), "2\n");
-    git(clone(), "add", "-A");
-    git(clone(), "commit", "-qm", "round 2");
-    const submitted = asAgent(
-      join(runDir, "threads", hashed("app-12"), "skelcrew.sock"),
-      ["submit", "Round 2"],
-      clone(),
-    );
-    expect(submitted.stderr.toString()).toBe("");
+    pr({ reviews: [skelReview], checks: [approved], comments });
+    submitRound2();
     expect(waiting()).toBe(2);
     rmSync(join(builder(), "busy"));
     await until(() => typed().includes("Keep the old names.") && typed().includes("Also CSV."));
     expect(typed()).not.toContain("conflicts with main");
+  }, 60_000);
+
+  // A failed check's log takes a while to fetch, and the builder can submit a new round
+  // meanwhile. The check was about the older commit, but the comment with it still holds.
+  test("a failed check whose log comes after a new round started isn't told, but a comment with it is", async () => {
+    mkdirSync(builder(), { recursive: true });
+    writeFileSync(join(builder(), "busy"), "");
+    await approvedApp12();
+    writeFileSync(join(plugin, "hold-log"), "");
+    const comments = [{ id: "52", author: you, text: "Also CSV." }];
+    pr({ reviews: [skelReview], checks: [approved, check(901, "failed")], comments });
+    await until(() => existsSync(join(plugin, "held-log")));
+    pr({ reviews: [skelReview], checks: [approved], comments });
+    submitRound2();
+    rmSync(join(plugin, "hold-log"));
+    await until(() => handled("901"));
+    expect(waiting()).toBe(1);
+    rmSync(join(builder(), "busy"));
+    await until(() => typed().includes("Also CSV."));
+    expect(typed()).not.toContain("The check test failed");
   }, 60_000);
 
   // An earlier Skelcrew gave up typing after half an hour, and left the thread approved, needing

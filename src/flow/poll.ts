@@ -135,7 +135,7 @@ async function actOnPr(db: Database, tmux: string, before: Thread, pr: PullReque
   }
   // Left unhandled, so a stopped thread's events reach its builder once it starts again.
   else if (thread.status === "stopped" || tellingEvents.has(folder) || stale) return;
-  else if (decision.tell.length > 0 || decision.failed.length > 0)
+  else if (decision.tell.length > 0 || decision.notice.length > 0 || decision.failed.length > 0)
     // Not waited on, so fetching a check's log holds up neither the other threads nor the
     // next poll.
     tellBuilder(db, tmux, thread, decision);

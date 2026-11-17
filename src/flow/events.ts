@@ -181,12 +181,14 @@ export async function removeThread(
   await endThread(db, tmux, thread, reason ? `removed: ${reason}` : "removed");
 }
 
-// Makes what the decision tells into one message for the builder, saved to be typed in as soon
-// as the builder can take it, however long that takes, and saves the decision at once. So a
+// Makes what the decision tells into messages for the builder, saved to be typed in as soon as
+// the builder can take it, however long that takes, and saves the decision at once. So a
 // thread approved and ready to merge whose PR now conflicts leaves ready to merge right away,
-// and the thread shows that a message waits. The forge marks the people's reviews and comments
-// seen once the message is typed in. Fetching a failed check's log or the base branch can fail,
-// such as on a network error: then nothing is saved, and the next poll tries again.
+// and the thread shows that a message waits. People's reviews and comments go in one message,
+// which the forge marks seen once it is typed in. Skelcrew's own notices, the failed checks and
+// a conflict, go in another, which a new round drops as stale. Fetching a failed check's log or
+// the base branch can fail, such as on a network error: then nothing is saved, and the next
+// poll tries again.
 export async function tellBuilder(
   db: Database,
   tmux: string,
@@ -197,10 +199,8 @@ export async function tellBuilder(
   tellingEvents.add(thread.folder);
   const { seen, change, why } = decision;
   try {
-    // Gather everything to tell into one message: the failed checks first, then the rest.
     if (decision.conflict !== null) await refreshBase(db, thread, decision.conflict);
     const checks = await failedCheckMessages(db, thread, decision.failed);
-    const text = [...checks, ...decision.tell].join("\n\n---\n\n");
     // Fetching can take a while, and the thread may have stopped or ended meanwhile, whose
     // events stay unhandled. Or a newer round may have moved it on, such as to approved. Its
     // state then stands, and only the events count as handled.
@@ -212,12 +212,24 @@ export async function tellBuilder(
       now.rounds !== thread.rounds ||
       now.submitting !== thread.submitting ||
       now.reviewing !== thread.reviewing;
-    queueMessage(db, tmux, thread.folder, {
-      sender: "skelcrew",
-      text,
-      said: why,
-      typed_in: decision.typedIn,
-    });
+    // A round submitted meanwhile is a new commit, so the notices of the older one would send
+    // the builder after a problem it may have fixed. People's words still hold.
+    const newRound = now.rounds !== thread.rounds || now.submitting !== thread.submitting;
+    const notices = newRound ? [] : [...checks, ...decision.notice];
+    // Saves one message of these texts, unless there are none. The thread's log gets the first
+    // line of each.
+    const firstLines = (texts: string[]) => texts.map((t) => t.split("\n")[0]).join("; ");
+    const send = (texts: string[], typedIn: typeof decision.typedIn) => {
+      if (texts.length === 0) return;
+      queueMessage(db, tmux, thread.folder, {
+        sender: "skelcrew",
+        text: texts.join("\n\n---\n\n"),
+        said: firstLines(texts),
+        typed_in: typedIn,
+      });
+    };
+    send(notices, []);
+    send(decision.tell, decision.typedIn);
     record(db, thread.folder, moved ? { seen } : { seen, ...change }, why);
     typeLeadNotes(db, tmux);
   } catch (error) {

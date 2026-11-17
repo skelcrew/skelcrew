@@ -327,7 +327,7 @@ export function submitRound(db: Database, tmux: string, folder: string, summary:
     },
     `submitted: ${summary}`,
   );
-  dropOldEvents(db, folder);
+  dropOldEvents(db, tmux, folder);
   // The older round is cancelled, but its push still runs first, so the branch ends on this
   // round's commit.
   const before = latestRounds.get(folder);
