@@ -285,10 +285,14 @@ describe("sc ls", () => {
       { number: 12, title: "Add export", createdAt: "2026-11-03T12:00:00Z" },
       { number: 10, title: "Fix login", createdAt: "2026-11-01T12:00:00Z" },
     ]);
-    issues("site", [{ number: 7, title: "New landing page", createdAt: "2026-11-02T12:00:00Z" }]);
+    issues("site", [
+      { number: 7, title: "New landing page", createdAt: "2026-11-02T12:00:00Z" },
+      { number: 8, title: "Fix the footer", createdAt: "2026-11-02T13:00:00Z" },
+    ]);
   });
 
-  // app-3's thread is done and its issue closed, so only --all shows it.
+  // app-3's thread is done and its issue closed, so only --all shows it. Threads come newest
+  // first across repositories, then issues with no thread, newest first across them too.
   test("lists every repository's tasks, from Skelcrew's copy", async () => {
     serve();
     await untilAnswers();
@@ -298,8 +302,9 @@ describe("sc ls", () => {
       "TASK    TITLE                                     STATUS\n" +
         "app-9   Send people back to the page they came …  failed\n" +
         "app-12  JSON export                               working\n" +
-        "app-10  Fix login\n" +
-        "site-7  New landing page                          waiting · needs you\n",
+        "site-7  New landing page                          waiting · needs you\n" +
+        "site-8  Fix the footer\n" +
+        "app-10  Fix login\n",
     );
     // They come from Skelcrew's copy, with no call to GitHub.
     expect(read(join(home, "calls"))).not.toContain("issue");
@@ -453,6 +458,19 @@ describe("sc show", () => {
       threads: [],
       body: "",
     });
+  });
+
+  // Text from the tracker could clear or change your terminal, so its control codes go, while
+  // its line breaks stay.
+  test("shows a description without the tracker's control codes", async () => {
+    issue("app", 10, "Fix login", "Clear\u001b[2J the screen.\n\nThen\u0007beep.");
+    serve();
+    await untilAnswers();
+    const shown = await skel(["show", "app-10"]);
+    expect(shown.err).toBe("");
+    expect(shown.out).not.toContain("\u001b");
+    expect(shown.out).not.toContain("\u0007");
+    expect(shown.out).toEndWith("\nDescription\nClear the screen.\n\nThen beep.\n");
   });
 
   test("says when the task or the repository doesn't exist", async () => {

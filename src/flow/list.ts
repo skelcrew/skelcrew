@@ -197,25 +197,27 @@ export type TaskRow = z.infer<typeof TaskRow>;
 // tracker such as Linear has IDs like JOTT-12 that stand alone.
 const issueId = (id: string) => (/^\d+$/.test(id) ? `#${id}` : id);
 
-// Returns the tasks of every repository, or of one, for sc ls: each task
-// with a thread, newest first, then each open issue with none, newest first. They come from
-// Skelcrew's database and its copy of the tracker, so the tracker isn't asked. Text from the
-// tracker and the lead has its control codes removed.
+// Returns the tasks of every repository, or of one, for sc ls: each task with a thread, newest
+// first, then each open issue with none, newest first, across all the repositories asked for.
+// They come from Skelcrew's database and its copy of the tracker, so the tracker isn't asked.
+// Text from the tracker and the lead has its control codes removed.
 export function listTasks(db: Database, repository?: string): TaskRow[] {
   const chosen = repository ? [findRepository(db, repository)] : repositories(db);
-  return chosen.flatMap((r) => {
+  // Each repository's threads and open issues, kept with when each began, so the two lists can
+  // be sorted across repositories once all are in.
+  const parts = chosen.map((r) => {
     const forge = forgeOf(db, r) !== null;
     const open = openTasks(db, r.owner, r.repo);
-    const threads = db
-      .query("SELECT * FROM task_threads WHERE owner = ? AND repo = ? ORDER BY rowid DESC")
-      .all(r.owner, r.repo)
-      .map((row) => Thread.parse(row));
+    const rows = db
+      .query("SELECT rowid AS at, * FROM task_threads WHERE owner = ? AND repo = ?")
+      .all(r.owner, r.repo);
     // A task with a thread takes its title from the open issue, which has the tracker's latest
     // words, or else from what the thread saved as it started.
-    const worked = threads.map((thread): TaskRow => {
+    const worked = rows.map((saved) => {
+      const thread = Thread.parse(saved);
       const row = threadRow(db, thread, forge);
       const issue = open.find((item) => item.id === thread.task);
-      return {
+      const task: TaskRow = {
         task: `${r.name}-${thread.task}`,
         title: removeControlCodes(issue?.title ?? thread.title ?? ""),
         short: row.short,
@@ -225,11 +227,12 @@ export function listTasks(db: Database, repository?: string): TaskRow[] {
         checks: row.checks,
         review: row.review,
       };
+      return { at: z.object({ at: z.number() }).parse(saved).at, id: thread.task, task };
     });
     const waiting = open
-      .filter((item) => !threads.some((thread) => thread.task === item.id))
-      .map(
-        (item): TaskRow => ({
+      .filter((item) => !worked.some((w) => w.id === item.id))
+      .map((item) => {
+        const task: TaskRow = {
           task: `${r.name}-${item.id}`,
           title: removeControlCodes(item.title),
           short: null,
@@ -238,10 +241,18 @@ export function listTasks(db: Database, repository?: string): TaskRow[] {
           pr: null,
           checks: null,
           review: null,
-        }),
-      );
-    return [...worked, ...waiting];
+        };
+        return { created: item.created, task };
+      });
+    return { worked, waiting };
   });
+  // A thread's rowid grows as threads start, across repositories. Issues sort by when the tracker
+  // made them, and the sort keeps each repository's own order, newest first, for the same time.
+  const worked = parts.flatMap((p) => p.worked).sort((a, b) => b.at - a.at);
+  const waiting = parts
+    .flatMap((p) => p.waiting)
+    .sort((a, b) => b.created.localeCompare(a.created));
+  return [...worked.map((w) => w.task), ...waiting.map((w) => w.task)];
 }
 
 // One PR as sc show shows it, from Skelcrew's copy: what its page on the screen shows, with its
@@ -398,7 +409,7 @@ export async function showTask(
     threads: row
       ? [{ thread: `${name}-${task}/builder`, status: row.status, needsYou: row.needsYou }]
       : [],
-    body: described.body,
+    body: safeText(described.body),
     pr,
     review: row?.review ?? null,
     prPage: pr === null ? null : await prPageOf(db, repository, pr),
