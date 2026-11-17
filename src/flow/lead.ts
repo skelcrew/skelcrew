@@ -247,7 +247,9 @@ const typingNote = new Map<number, AbortController>();
 
 // Drops the notes that a thread ended which still wait for its lead, cancelling one being
 // typed. A thread starting over in the same folder has the same name, and the lead would take
-// the old end for the new thread's and drop it from what it holds open.
+// the old end for the new thread's and drop it from what it holds open. A note already pasted
+// at the lead's prompt is still sent: typing presses Enter a moment after the paste, and
+// leaving it there would block every later note behind an unsent draft.
 export function dropEndNotes(db: Database, folder: string): void {
   const ids = z
     .array(z.object({ id: z.number() }))
