@@ -1,7 +1,7 @@
 // sc --remote and sc remote add: run a Skelcrew command on your server over ssh -t, from your
 // laptop, and set a server up for that. --remote offers to replace Skelcrew there when it is an
-// older release than yours, or was built from another commit, and copies your setup there when
-// it changed. Your laptop can be a Mac, so this file loads nothing of the Skelcrew that runs on
+// older release than yours, or was built from another commit, warns when it runs from a checkout
+// at another commit, and copies your setup there when it changed. Your laptop can be a Mac, so this file loads nothing of the Skelcrew that runs on
 // the server.
 import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { isIP } from "node:net";
@@ -48,13 +48,44 @@ export const otherSetup = 96;
 // catches up on its own, so asking would only offer to go back.
 export function outOfDate(): boolean {
   const laptop = process.env.SKELCREW_LAPTOP_BUILD;
-  // No laptop build means the command came without the check, and no build here means this
-  // Skelcrew runs from a checkout. Uncommitted changes never count as the same build.
-  if (!laptop || built === undefined || (laptop === built && !built.endsWith(dirty))) return false;
+  // No laptop build means the command came without the check.
+  if (!laptop) return false;
+  // No build here means this Skelcrew runs from a checkout, which is never replaced.
+  if (built === undefined) {
+    warnIfCheckoutDiffers(laptop);
+    return false;
+  }
+  // Uncommitted changes never count as the same build.
+  if (laptop === built && !built.endsWith(dirty)) return false;
   if (release && isRelease(laptop) && newer(release, laptop)) return false;
   const where = process.env.SKELCREW_REMOTE_NAME;
   console.log(`Skelcrew on ${where} is from ${readable(built)}, yours is ${readable(laptop)}.`);
   return true;
+}
+
+// Warns when this Skelcrew runs from a checkout at another commit than the laptop's build.
+// --remote never replaces a checkout, so without this a server could keep running old code
+// unnoticed through many merges. The warning goes to stderr, so `--json` output stays clean, and
+// the command still runs. A laptop on a release names no commit, so there is nothing to compare.
+// An agent's sandbox can inherit the laptop's build through tmux, and has no use for the warning.
+function warnIfCheckoutDiffers(laptop: string): void {
+  if (isRelease(laptop) || process.env.SKELCREW_SANDBOX === "1") return;
+  const here = laptopBuild();
+  if (here === null) return;
+  // Short commits can differ in length between machines, as git lengthens them in bigger
+  // repositories, so one starting with the other counts as the same commit. Uncommitted changes
+  // on either side don't change which commit git pull would bring.
+  const [a, b] = [here.replace(dirty, ""), laptop.replace(dirty, "")];
+  if (a.startsWith(b) || b.startsWith(a)) return;
+  const where = process.env.SKELCREW_REMOTE_NAME;
+  // The folder under the server's home is shown with ~, as you would type it there.
+  const home = homedir();
+  const folder = checkoutFolder.startsWith(`${home}/`)
+    ? `~${checkoutFolder.slice(home.length)}`
+    : checkoutFolder;
+  console.error(
+    `Skelcrew on ${where} runs from a checkout at ${readable(here)}, yours is ${readable(laptop)}. To update it, run git pull in ${folder} there.`,
+  );
 }
 
 // Says whether release `a` comes after release `b`, by number, so 0.4.10 comes after 0.4.9.

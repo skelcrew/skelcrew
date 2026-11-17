@@ -534,7 +534,7 @@ function farSkel(built: string | null, laptopBuild?: string, args = ["--help"]) 
   if (laptopBuild)
     Object.assign(env, { SKELCREW_LAPTOP_BUILD: laptopBuild, SKELCREW_REMOTE_NAME: "x" });
   const run = Bun.spawnSync([process.execPath, ...define, laptop.main, ...args], { env });
-  return { code: run.exitCode, out: run.stdout.toString() };
+  return { code: run.exitCode, out: run.stdout.toString(), err: run.stderr.toString() };
 }
 
 test("a copied Skelcrew runs a command from a laptop with its own commit", () => {
@@ -544,10 +544,9 @@ test("a copied Skelcrew runs a command from a laptop with its own commit", () =>
 });
 
 test("a copied Skelcrew from another commit says so and runs nothing", () => {
-  expect(farSkel("abc1234", "def5678")).toEqual({
-    code: 98,
-    out: "Skelcrew on x is from abc1234, yours is def5678.\n",
-  });
+  const run = farSkel("abc1234", "def5678");
+  expect(run.code).toBe(98);
+  expect(run.out).toBe("Skelcrew on x is from abc1234, yours is def5678.\n");
 });
 
 test("a sidebar runs whichever laptop's build its tmux server remembers", () => {
@@ -592,15 +591,41 @@ test("a copied Skelcrew whose first run isn't done says so before its build or s
 });
 
 test("a copied Skelcrew built with uncommitted changes is never up to date", () => {
-  expect(farSkel("abc1234-dirty", "abc1234-dirty")).toEqual({
-    code: 98,
-    out: "Skelcrew on x is from abc1234 with uncommitted changes, yours is abc1234 with uncommitted changes.\n",
-  });
+  const run = farSkel("abc1234-dirty", "abc1234-dirty");
+  expect(run.code).toBe(98);
+  expect(run.out).toBe(
+    "Skelcrew on x is from abc1234 with uncommitted changes, yours is abc1234 with uncommitted changes.\n",
+  );
 });
 
-// A checkout on the server updates with git pull there, never from the laptop.
-test("Skelcrew from a checkout never says it is out of date", () => {
-  expect(farSkel(null, "def5678").out).toContain("USAGE");
+// A checkout on the server updates with git pull there, never from the laptop, so it only warns.
+test("Skelcrew from a checkout at another commit warns how to update it, and runs the command", () => {
+  const run = farSkel(null, "def5678");
+  expect(run.code).toBe(0);
+  expect(run.out).toContain("USAGE");
+  expect(run.err).toBe(
+    `Skelcrew on x runs from a checkout at ${laptop.commit}, yours is def5678. To update it, run git pull in ~/code/skel there.\n`,
+  );
+});
+
+test("Skelcrew from a checkout with local changes warns and names them", () => {
+  writeFileSync(join(laptop.folder, "local.txt"), "a change\n");
+  const run = farSkel(null, "def5678");
+  expect(run.code).toBe(0);
+  expect(run.err).toBe(
+    `Skelcrew on x runs from a checkout at ${laptop.commit} with uncommitted changes, yours is def5678. To update it, run git pull in ~/code/skel there.\n`,
+  );
+});
+
+test("Skelcrew from a checkout at the laptop's commit says nothing", () => {
+  const run = farSkel(null, `${laptop.commit.slice(0, 7)}`);
+  expect(run.code).toBe(0);
+  expect(run.out).toContain("USAGE");
+  expect(run.err).toBe("");
+});
+
+test("Skelcrew from a checkout says nothing to a laptop on a release", () => {
+  expect(farSkel(null, "0.4.2").err).toBe("");
 });
 
 test("Skelcrew update is gone", async () => {
