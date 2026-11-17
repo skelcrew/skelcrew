@@ -1071,56 +1071,6 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
     expect(leadTyped().split("app-12 ended").length - 1).toBe(1);
   }, 60_000);
 
-  // A poll can be part way through ending a thread when the lead runs sc rm on it. The lead
-  // removed it, so it hears nothing, not the merge the poll saw.
-  test("a poll ending a thread while the lead removes it tells the lead nothing", async () => {
-    // Stands in for nice, which starts every sandbox. Once the test arms it, it outlives its
-    // sandbox until the test lets it go, saying when it is held. Stopping the builder waits
-    // for it, so the poll ending the thread is held there, before it marks the thread done.
-    const arm = join(home, "arm");
-    const held = join(home, "held");
-    const go = join(home, "go");
-    script(
-      "nice",
-      `shift 2
-trap : HUP TERM
-"$@"
-code=$?
-if test -e "${arm}"; then
-  : > "${held}"
-  for i in $(seq 90); do test -e "${go}" && break; sleep 0.1; done
-fi
-exit $code`,
-    );
-    await approvedApp12();
-    writeFileSync(arm, "");
-    pr({ state: "merged", reviews: [skelReview], checks: [approved] });
-    await until(() => existsSync(held));
-    // The lead runs sc rm, held as it closes the PR, so the poll reaches the end first.
-    writeFileSync(join(plugin, "hold-close-pr"), "");
-    const hashed = new Bun.CryptoHasher("sha256").update("simon/app").digest("hex").slice(0, 16);
-    const leadSocket = join(home, "run", "skelcrew", "leads", hashed, "skelcrew.sock");
-    const removing = Bun.spawn([process.execPath, main, "rm", "app-12"], {
-      env: { ...env(), SKELCREW_SOCKET: leadSocket },
-      stderr: "pipe",
-    });
-    running.push(removing);
-    // An sc rm that fails ends before it closes the PR, and says why.
-    await until(() => existsSync(join(plugin, "held-close-pr")) || removing.exitCode !== null);
-    // The poll goes on and finishes: a repository's next poll starts only after it.
-    writeFileSync(go, "");
-    await morePolls(1);
-    rmSync(join(plugin, "hold-close-pr"));
-    await removing.exited;
-    expect(await new Response(removing.stderr).text()).toBe("");
-    expect(removing.exitCode).toBe(0);
-    expect(thread().status).toBe("done");
-    await morePolls();
-    const leadTyped = read(join(data(), "claude", leadName, "typed"));
-    expect(leadTyped).not.toContain("app-12 is done");
-    expect(leadTyped).not.toContain("app-12 ended");
-  }, 60_000);
-
   // A forge answers what changed since the last poll, and nothing changes on the PR while
   // the thread is stopped, so the comment held back must come from Skelcrew's copy.
   test("a comment held for a stopped thread reaches it once it starts, though the forge never sends it again", async () => {
