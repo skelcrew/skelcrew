@@ -143,6 +143,7 @@ function prepareTables(db: Database): void {
     title: "TEXT",
     started: "INTEGER",
     checks: "TEXT",
+    conflicts: "TEXT",
     reviewer: "TEXT",
     reviewed_by: "TEXT",
     review_round: "INTEGER",
@@ -187,6 +188,26 @@ function prepareTables(db: Database): void {
   // A lead table means a database from before each repository had its own lead.
   if (db.query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'lead'").get())
     adoptOldLead(db);
+  // Messages waiting to be typed into a thread's builder, by its folder, oldest first: the lead's
+  // sc tell, and what Skelcrew tells it of its PR's events. Kept until typed in, so none is lost
+  // while the builder is busy or stopped, or the daemon restarts. `sender` is lead or skelcrew,
+  // `text` is what is typed, `said` the lead's own words, `at` when it was sent, in milliseconds
+  // since 1970, `noted` whether the lead heard it still waits, and `typed_in` the PR's reviews
+  // and comments it carries, as JSON, for the forge to mark seen. `pasted` is whether it sits at
+  // the builder's prompt, pasted but left unsent for a question, so its draft there is known for
+  // Skelcrew's own after a restart. An `id` is never used again, so a typing under way whose
+  // message was dropped can't remove a newer one by its `id`.
+  db.run(`CREATE TABLE IF NOT EXISTS messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    folder TEXT NOT NULL,
+    sender TEXT NOT NULL,
+    text TEXT NOT NULL,
+    said TEXT NOT NULL,
+    at INTEGER NOT NULL,
+    noted INTEGER NOT NULL DEFAULT 0,
+    typed_in TEXT NOT NULL DEFAULT '[]',
+    pasted INTEGER NOT NULL DEFAULT 0
+  )`);
   // The reviews Skelcrew posted with your gh login, before its forge posted them as its own app.
   db.run("DROP TABLE IF EXISTS posted");
   // Each harness's usage limit holding reviews: until when, the reset time it gave, the tries

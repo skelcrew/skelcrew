@@ -1007,6 +1007,25 @@ done`,
     expect(read(join(data(), "threads", "app-12.log"))).not.toContain("without submitting");
   }, 60_000);
 
+  // Typing the changes in while the builder asks you a question would answer it for you.
+  test("a review's changes wait while the builder asks a question, and go in once it is over", async () => {
+    addApp();
+    verdict(1, "changes", "The export has no test.");
+    mkdirSync(builder(), { recursive: true });
+    writeFileSync(join(builder(), "busy"), "");
+    await startApp12();
+    await until(() => thread().telling !== null, 30_000);
+    const asBuilder = { SKELCREW_SOCKET: builderSocket() };
+    expect((await skel(["question", "asked"], asBuilder)).code).toBe(0);
+    rmSync(join(builder(), "busy"));
+    await Bun.sleep(6000);
+    expect(read(join(builder(), "typed"))).not.toContain("The export has no test.");
+    expect(String(thread().telling)).toContain("The export has no test.");
+    expect((await skel(["question", "closed"], asBuilder)).code).toBe(0);
+    await until(() => read(join(builder(), "typed")).includes("The export has no test."));
+    await until(() => thread().telling === null);
+  }, 60_000);
+
   test("keeps a review it couldn't type in, and needs you", async () => {
     addApp();
     verdict(1, "changes", "The export has no test.");

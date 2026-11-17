@@ -19,7 +19,7 @@ import { assignIssue, unassignIssue } from "./assign.ts";
 import { baseOf, startThread } from "./builder.ts";
 import { type Item, openTasks, prOf, saveItems } from "./copy.ts";
 import { ciState, decide, labeledToStart, type PullRequest } from "./decide.ts";
-import { endThread, removing, tellBuilder, typingEvents } from "./events.ts";
+import { endThread, removing, tellBuilder, tellingEvents } from "./events.ts";
 import { fetchInto, onRemote } from "./git.ts";
 import { noteForLead, typeLeadNotes } from "./lead.ts";
 import { forgeKnown, fullNameIs, repositories } from "./repo.ts";
@@ -143,9 +143,10 @@ async function actOnPr(
     await endThread(db, sessions, thread, decision.end, decision.note);
   }
   // Left unhandled, so a stopped thread's events reach its builder once it starts again.
-  else if (thread.status === "stopped" || typingEvents.has(folder) || stale) return;
-  else if (decision.tell.length > 0 || decision.failed.length > 0)
-    // Not waited on, so a busy builder holds up neither the other threads nor the next poll.
+  else if (thread.status === "stopped" || tellingEvents.has(folder) || stale) return;
+  else if (decision.tell.length > 0 || decision.notice.length > 0 || decision.failed.length > 0)
+    // Not waited on, so fetching a check's log holds up neither the other threads nor the
+    // next poll.
     tellBuilder(db, sessions, thread, decision);
   else {
     const { seen, change, why } = decision;

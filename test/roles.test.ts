@@ -11,6 +11,11 @@ const sha256 = (text: string) => new Bun.CryptoHasher("sha256").update(text).dig
 const workflows =
   "\nNever change files under .github/: Skelcrew can't push a change to its workflows, and the push is refused. If the work needs a change there, leave it out, and say in your sc submit summary, which becomes the PR, what a person should change there instead.\n";
 
+// What the lead's file added after its instructions moved there: why a message to a builder
+// waits, and what to do when it waits long.
+const waiting =
+  " When the builder can't take it yet, sc tell says why, and sc ps counts the messages still waiting. If one still waits after 10 minutes, Skelcrew tells you why. When the builder is mid-turn, you may ask the human to press Esc in that thread if it shouldn't finish its turn first.";
+
 // What the builder was told about the tests before the whole suite ran once per commit, in CI
 // or the reviewer, and what it is told now.
 const builderTestsBefore =
@@ -23,11 +28,12 @@ const builderTests =
 const threadEnds =
   'When a thread ends, Skelcrew types a one line note too, such as "app-12 is done: #7 merged into main" or "app-12 ended: #7 closed without merging". It comes from Skelcrew, not the human. Drop the thread from what you hold open: never list it as ready to merge again. When useful, tell the human in one line what it unblocks, such as a thread waiting on its work. A thread you removed with sc rm brings no note.\n\n';
 
-test("the lead and builder files hold the instructions the code gave, but the lead's thread ends and the builder's workflows and tests", () => {
+test("the lead and builder files hold the instructions the code gave, but the lead's waiting messages and thread ends, and the builder's workflows and tests", () => {
   // The digests of src/agents/prompts/lead.md and builder.md before they moved.
   const lead = builtInRole("lead").instructions;
+  expect(lead).toContain(waiting);
   expect(lead).toContain(threadEnds);
-  expect(sha256(lead.replace(threadEnds, ""))).toBe(
+  expect(sha256(lead.replace(waiting, "").replace(threadEnds, ""))).toBe(
     "4a964d29382eddbab5268fa24921ee599fa1bde9bd1eb51341f5bee1cb577837",
   );
   const builder = builtInRole("builder").instructions;

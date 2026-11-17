@@ -6,9 +6,11 @@ import type { Database } from "bun:sqlite";
 import { z } from "zod";
 import { harnessNamed } from "../agents/harness.ts";
 import { agentRuns, readSession } from "../agents/sessions.ts";
+import { forQuestion, type Marks, quietSince } from "../agents/transport.ts";
 import { pastRoundLimit } from "./decide.ts";
 import { leadOf, typeLeadNotes } from "./lead.ts";
 import { clockTime, endWake, wakeAfterLimit } from "./limits.ts";
+import { stopDelivering } from "./messages.ts";
 import type { DaemonRequest } from "./requests.ts";
 import { untagged } from "./tell.ts";
 import {
@@ -86,11 +88,11 @@ type Agent = { folder: string } | { owner: string; repo: string };
 // A repository whose lead is working, as the screen check reads it from the database.
 const LeadKey = z.object({ owner: z.string(), repo: z.string() });
 
-// The agents whose busy mark was gone at the screen check's last look, by the key keepState
-// gives them.
-const markGone = new Set<string>();
+// The screen check's last look at each working agent, by the key agentKey gives it: what its
+// screen showed, and whether that look found it out of a turn.
+const lastLook = new Map<string, { screen: string; quiet: boolean }>();
 
-// Returns the key an agent goes by in markGone: a thread's folder, or a lead's owner/name.
+// Returns the key an agent goes by in lastLook: a thread's folder, or a lead's owner/name.
 // Folders hold no /, so the two never meet.
 const agentKey = (agent: Agent) =>
   "folder" in agent ? agent.folder : `${agent.owner}/${agent.repo}`;
@@ -99,7 +101,7 @@ const agentKey = (agent: Agent) =>
 // Not logged, as it changes with every turn. A new state forgets the screen check's last look,
 // so a mark gone before the change can't turn the new turn idle.
 export function keepState(db: Database, agent: Agent, state: AgentState): void {
-  markGone.delete(agentKey(agent));
+  lastLook.delete(agentKey(agent));
   if ("folder" in agent)
     db.run("UPDATE threads SET state = ? WHERE folder = ?", [state, agent.folder]);
   else
@@ -110,41 +112,45 @@ export function keepState(db: Database, agent: Agent, state: AgentState): void {
     ]);
 }
 
-// Looks at the screen of each running agent whose state is working, and makes it idle once its
-// harness's busy mark is gone at two looks in a row. Two gaps have no hook: Esc on Claude Code,
-// and an error on Codex, such as an unknown model, which prints it and sits at its prompt. One
-// look isn't enough: right after a message goes in, the mark can take a moment to show. Neither
-// gap flags needs you: after Esc you are looking at the agent anyway. The daemon runs it every
-// two seconds.
+// Looks at the screen of each running agent whose state is working, and makes it idle once two
+// looks in a row find it out of a turn: its harness's busy mark gone, or sitting still at a bare
+// prompt, as the agent's own text, such as a reply quoting it. Only a live status line counts,
+// as when typing, so such a reply can't keep it working forever. Two gaps have no hook: Esc on
+// Claude Code, and an error on Codex, such as an unknown model, which prints it and sits at its
+// prompt. One look isn't enough: right after a message goes in, the mark can take a moment to
+// show. Neither gap flags needs you: after Esc you are looking at the agent anyway. The daemon
+// runs it every two seconds.
 export function noticeIdleScreens(db: Database, sessions: string): void {
   // The working agents: each builder still at work on its thread, and each lead.
-  const working: { key: Agent; name: string; busy: string }[] = [];
+  const working: { key: Agent; name: string; marks: Marks }[] = [];
   const threads = db
     .query("SELECT * FROM threads WHERE state = 'working' AND status IN ('working', 'waiting')")
     .all()
     .map((row) => Thread.parse(row));
   for (const thread of threads)
-    working.push({ key: thread, name: thread.folder, busy: builderHarness(thread).marks.busy });
+    working.push({ key: thread, name: thread.folder, marks: builderHarness(thread).marks });
   const leads = db
     .query("SELECT owner, repo FROM repositories WHERE lead_state = 'working'")
     .all()
     .map((row) => LeadKey.parse(row));
   for (const lead of leads) {
     const { name, harness } = leadOf(db, lead.owner, lead.repo);
-    working.push({ key: lead, name, busy: harnessNamed(harness ?? "claude").marks.busy });
+    working.push({ key: lead, name, marks: harnessNamed(harness ?? "claude").marks });
   }
-  // An agent goes idle when the mark was gone at the last look too. The rest are remembered
+  // An agent goes idle when the last look found it out of a turn too. The rest are remembered
   // for the next look, and an agent no longer working is forgotten.
-  const gone = new Set<string>();
+  const looks = new Map<string, { screen: string; quiet: boolean }>();
   for (const agent of working) {
     const key = agentKey(agent.key);
     if (!agentRuns(sessions, agent.name)) continue;
-    if (readSession(sessions, agent.name).includes(agent.busy)) continue;
-    if (markGone.has(key)) keepState(db, agent.key, "idle");
-    else gone.add(key);
+    const screen = readSession(sessions, agent.name);
+    const before = lastLook.get(key);
+    const quiet = quietSince(before?.screen, screen, agent.marks);
+    if (quiet && before?.quiet) keepState(db, agent.key, "idle");
+    else looks.set(key, { screen, quiet });
   }
-  markGone.clear();
-  for (const key of gone) markGone.add(key);
+  lastLook.clear();
+  for (const [key, look] of looks) lastLook.set(key, look);
 }
 
 // Returns the word for what the thread is doing, given the rounds of changes it may have. Its
@@ -170,7 +176,10 @@ export function threadWord(thread: Thread, maxRounds: number, now = Date.now()):
   // that the thread is ready to merge.
   const past = thread.needs_you && pastRoundLimit(thread, maxRounds);
   const failed = underWay || verdict === "failed";
-  const green = verdict === "approve" && (checks === "passing" || checks === null);
+  // A PR that conflicts isn't ready to merge, even when something else, such as its builder
+  // missing, makes the thread need you again.
+  const green =
+    verdict === "approve" && (checks === "passing" || checks === null) && thread.conflicts === null;
   if (past) return "round limit";
   if (thread.needs_you && !failed && green) return "approved";
   // Stopping without submitting is a question written as plain text.
@@ -192,9 +201,12 @@ export function threadWord(thread: Thread, maxRounds: number, now = Date.now()):
 }
 
 // The builder asked you a question with AskUserQuestion, from Claude Code's PreToolUse hook.
-// The thread needs you until the question is over, and the lead hears of it.
+// The thread needs you until the question is over, and the lead hears of it. A message being
+// typed in now would answer the question for you, so that typing is cancelled, and the message
+// waits until the question is over.
 export function questionAsked(db: Database, sessions: string, folder: string): void {
   record(db, folder, { asking: true }, "its builder asked a question");
+  stopDelivering(db, folder, false, forQuestion);
   typeLeadNotes(db, sessions);
 }
 

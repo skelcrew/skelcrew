@@ -48,6 +48,7 @@ function thread(change: Partial<Thread> = {}): Thread {
     limit_reset: null,
     review_limited: false,
     review_reset: null,
+    conflicts: null,
     noting: null,
     title: null,
     body: null,
@@ -350,17 +351,31 @@ test("a thread saved with the last ID of each kind handled counts those and olde
 
 test("a merge conflict tells the builder to merge the base branch", () => {
   const decision = acted(thread({ base: "next" }), pr({ conflicts: true, base: "next" }));
-  expect(decision.tell).toEqual([expect.stringContaining("conflicts with next")]);
-  expect(decision.tell[0]).toContain("git fetch origin, merge origin/next");
+  expect(decision.notice).toEqual([expect.stringContaining("conflicts with next")]);
+  expect(decision.notice[0]).toContain("git fetch origin, merge origin/next");
+  // A conflict is Skelcrew's own word, not a person's, so a new round can drop it.
+  expect(decision.tell).toEqual([]);
   // Skelcrew's clone, the builder's origin, must hold next before the builder is told.
   expect(decision.conflict).toBe("next");
   expect(decision.change).toEqual({ status: "working", needs_you: false });
 });
 
+// A comment is a person's words, which hold whatever the commit, and the conflict Skelcrew's own
+// notice, which a new round makes stale, so they are kept apart even when they come together.
+test("a conflict and a comment in the same poll are told apart", () => {
+  const decision = acted(
+    thread(),
+    pr({ conflicts: true, comments: [comment(51, you, "Also CSV.")] }),
+  );
+  expect(decision.tell).toEqual([expect.stringContaining("Also CSV.")]);
+  expect(decision.notice).toEqual([expect.stringContaining("conflicts with main")]);
+  expect(decision.typedIn).toEqual([{ kind: "comment", id: "51" }]);
+});
+
 test("a merge conflict is told once: the builder works on it until it submits", () => {
   const conflicting = pr({ conflicts: true });
-  expect(acted(thread({ status: "working" }), conflicting).tell).toEqual([]);
-  expect(acted(thread({ reviewing: "abc" }), conflicting).tell).toEqual([]);
+  expect(acted(thread({ status: "working" }), conflicting).notice).toEqual([]);
+  expect(acted(thread({ reviewing: "abc" }), conflicting).notice).toEqual([]);
 });
 
 test("an approved PR with a conflict doesn't need you yet", () => {

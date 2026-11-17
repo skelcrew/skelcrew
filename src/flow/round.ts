@@ -4,7 +4,6 @@
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
 import { type HarnessName, harnessNamed } from "../agents/harness.ts";
-import { deliver } from "../agents/transport.ts";
 import { reviewLimit, threadConfig } from "../config.ts";
 import { cloneDir } from "../paths.ts";
 import { failedLog, forgeOf, openPr, postReview, setStatus } from "../plugins/ask.ts";
@@ -23,18 +22,10 @@ import {
 import { fetchInto, pushCommit } from "./git.ts";
 import { noteForLead, typeLeadNotes } from "./lead.ts";
 import { endLimit, limitOn, reachLimit, tellOfLimit, waitUntil } from "./limits.ts";
+import { dropOldEvents, queueMessage } from "./messages.ts";
 import { Queue } from "./queue.ts";
 import { type Limited, type Review, review } from "./reviewer.ts";
-import {
-  builderHarness,
-  cloneOf,
-  log,
-  readThread,
-  record,
-  repositoryOf,
-  type Thread,
-  threadName,
-} from "./thread.ts";
+import { cloneOf, readThread, record, repositoryOf, type Thread, threadName } from "./thread.ts";
 
 // Runs git in Skelcrew's own clone and returns what it printed, throwing with its error when it
 // fails.
@@ -81,17 +72,18 @@ async function push(
     await pushCommit(db, repository, skelcrewClone, sha, thread.branch);
   } catch (error) {
     // A push refused for changing a workflow file fails the round with words a person can act
-    // on, and the builder hears them too, so it can undo the change and submit again. It types
-    // in once the builder is idle, as it has likely not ended its turn yet, and not at all once
-    // a newer submit makes it stale.
+    // on, and the builder hears them too, so it can undo the change and submit again. It waits
+    // as every message to the builder does, as it has likely not ended its turn yet, and a newer
+    // submit drops it as stale.
     const refused = refusedWorkflow(threadName(db, thread), errorText(error));
     if (refused === null) throw error;
-    deliver(sessions, folder, builderHarness(thread).marks, refused, {
-      timeout: 30 * 60_000,
-      signal,
-    }).catch((failed) =>
-      log(db, readThread(db, folder), `couldn't tell its builder: ${errorText(failed)}`),
-    );
+    if (!signal.aborted)
+      queueMessage(db, sessions, folder, {
+        sender: "skelcrew",
+        text: refused,
+        said: "its push was refused for changing a workflow file",
+        typed_in: [],
+      });
     throw new Error(refused);
   }
   // The base branch, current, in a ref of the thread's own, for the review to see which files
@@ -385,7 +377,7 @@ async function reviewRound(
   // for when you start it again.
   await builderBack;
   if (signal.aborted) return;
-  await typeChanges(db, sessions, folder, tell, signal);
+  await queueChanges(db, sessions, folder, tell, signal);
 }
 
 // Runs the review on the reviewer's harness and returns its verdict and the harness it ran on,
@@ -458,22 +450,25 @@ async function reviewWithinLimits(
 // What a thread's review held on a usage limit becomes once it isn't.
 const notHeld = { review_limited: false, review_reset: null };
 
-// Types a review's changes into the builder once it is idle, then forgets them. They are
-// saved until then, so a stop of the daemon while the builder is busy doesn't lose them.
-// A newer round makes them stale, so they are never typed once one starts.
-async function typeChanges(
+// Saves a review's changes as a message for the builder, typed in as soon as it can take them,
+// however long that takes, as every message to a builder is: never while it asks you a
+// question, which they would answer. They stay saved on the thread too until then, so sc ps
+// counts them and the sidebar says changes. A newer round drops them, as they are about an
+// older commit. Nothing is saved once the round is cancelled.
+async function queueChanges(
   db: Database,
   sessions: string,
   folder: string,
   text: string,
   signal: AbortSignal,
 ): Promise<void> {
-  // A builder can work long after it submits, but one busy this long has likely hung.
-  await deliver(sessions, folder, builderHarness(readThread(db, folder)).marks, text, {
-    timeout: 30 * 60_000,
-    signal,
+  if (signal.aborted) return;
+  queueMessage(db, sessions, folder, {
+    sender: "review",
+    text,
+    said: "the review's changes",
+    typed_in: [],
   });
-  if (!signal.aborted) record(db, folder, { telling: null }, "typed the review into the builder");
 }
 
 // A thread's latest round, with what cancels its review. The next round pushes only after this
@@ -557,7 +552,7 @@ function pushAndReview(
 // way, and returns at once: a shell command can't block long, so pushing and the review go on
 // in the background. The submit is saved first, so a stop of the daemon can't lose it. A
 // review still waiting to be typed in, or held past the round limit, is dropped, as it is
-// about an older commit. Throws when your config or the repository's skelcrew.yaml isn't valid,
+// about an older commit, and so are Skelcrew's waiting messages of the PR's events. Throws when your config or the repository's skelcrew.yaml isn't valid,
 // so the builder hears why, and for a thread sc stop is ending, whose builder may submit while
 // it exits.
 export function submitRound(db: Database, sessions: string, folder: string, summary: string): void {
@@ -581,13 +576,15 @@ export function submitRound(db: Database, sessions: string, folder: string, summ
       telling: null,
       held: null,
       ...notHeld,
-      // What CI said was about the commit before this one.
+      // What CI said, and the conflict found, were about the commit before this one.
       checks: null,
+      conflicts: null,
       reviewer: reviewer.harness,
       review_at: Date.now(),
     },
     `submitted: ${summary}`,
   );
+  dropOldEvents(db, sessions, folder);
   // The older round is cancelled, but its push still runs first, so the branch ends on this
   // round's commit.
   const before = latestRounds.get(folder);
@@ -707,7 +704,7 @@ export function resumeRound(
       folder,
       cancel,
       none,
-      typeChanges(db, sessions, folder, telling, cancel.signal),
+      queueChanges(db, sessions, folder, telling, cancel.signal),
     );
 }
 
@@ -733,7 +730,7 @@ export function goOn(db: Database, sessions: string, folder: string): void {
     folder,
     cancel,
     Promise.resolve(),
-    typeChanges(db, sessions, folder, held, cancel.signal),
+    queueChanges(db, sessions, folder, held, cancel.signal),
   );
 }
 

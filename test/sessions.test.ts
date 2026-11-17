@@ -29,7 +29,7 @@ import {
   stopSession,
 } from "../src/agents/sessions.ts";
 import { tmuxIsAtLeast } from "../src/agents/tmux.ts";
-import { deliver, idle, type Marks } from "../src/agents/transport.ts";
+import { deliver, idle, type Marks, quietSince, whyBusy } from "../src/agents/transport.ts";
 import { source, until as wait } from "./harness.ts";
 
 const moment = 100;
@@ -150,6 +150,91 @@ test("a message cancelled while the harness is busy is never typed", async () =>
   deliver(socket, "lead", claude.marks, "fresh", { moment });
   await until(() => read("received.txt").endsWith("\n"));
   expect(read("received.txt")).toBe("\x1b[200~fresh\x1b[201~\n");
+});
+
+// A stand-in for Claude Code that draws the screen given, laid out as Claude Code's: what the
+// agent said, then its input between two rules, then its footer. It keeps what is typed in.
+// SECONDS in a line is a timer: the screen is then redrawn once a second with it counting, as
+// Claude Code's spinner line is mid-turn.
+function screen(said: string[]): string[] {
+  const footer = ["", "────────", claude.marks.prompt, "────────", "  ⏵⏵ accept edits on"];
+  writeFileSync(join(home, "screen.txt"), `${[...said, ...footer].join("\n")}\n`);
+  const script = join(home, "screen.sh");
+  writeFileSync(
+    script,
+    `#!/bin/sh
+printf '\\033[?2004h'
+stty -echo
+if grep -q SECONDS screen.txt; then
+  i=0
+  while true; do clear; sed "s/SECONDS/$i/" screen.txt; i=$((i + 1)); sleep 1; done &
+else
+  cat screen.txt
+fi
+cat > received.txt
+`,
+    { mode: 0o755 },
+  );
+  return [script];
+}
+
+// An idle builder whose last reply, just above its input, quotes the busy mark, as one building
+// Skelcrew's own typing does.
+const quoting = [
+  "● Bash(grep -rn busy src)",
+  `  ⎿  src/agents/claude.ts:383:  marks: { busy: "${claude.marks.busy}", prompt: "❯" },`,
+  "",
+  `● sc interrupt presses Esc while the screen shows "${claude.marks.busy}".`,
+];
+
+test("a message goes in though the agent's own reply quotes the busy mark", async () => {
+  start("lead", screen(quoting));
+  await showing("lead", "accept edits");
+  expect(await whyBusy(socket, "lead", claude.marks, { moment })).toBe("");
+  expect(await deliver(socket, "lead", claude.marks, "hello", { moment })).toBe("typed");
+  await until(() => read("received.txt").endsWith("\n"));
+  expect(read("received.txt")).toBe("\x1b[200~hello\x1b[201~\n");
+});
+
+// The status module's screen check looks every two seconds, with no hook to say a turn ended,
+// as after Esc. Only a live status line keeps the agent working: a reply quoting the busy mark
+// sits still.
+test("two looks show the agent out of a turn once its status line is gone or only quoted", () => {
+  const { busy, prompt } = claude.marks;
+  const at = (lines: string[]) => [...lines, "", prompt].join("\n");
+  const replied = at(quoting);
+  const spinner = (seconds: number) => `✻ Thinking… (${seconds}s · ${busy})`;
+  // The mark gone.
+  expect(quietSince(undefined, at(["● Done."]), claude.marks)).toBe(true);
+  // The mark quoted in a reply, at a bare prompt, the same as the look before.
+  expect(quietSince(replied, replied, claude.marks)).toBe(true);
+  // With no look before, a mark can't yet be told from a status line.
+  expect(quietSince(undefined, replied, claude.marks)).toBe(false);
+  // The spinner redrew since the look before.
+  expect(quietSince(at([spinner(3)]), at([spinner(5)]), claude.marks)).toBe(false);
+  // The mark with no bare prompt, as a harness shows mid-turn without its input.
+  expect(quietSince(busy, busy, claude.marks)).toBe(false);
+});
+
+// Claude Code's spinner line counts the seconds of the turn, todo list or not.
+const spinning = [
+  "● Reading the code.",
+  "",
+  `✻ Thinking… (SECONDSs · ${claude.marks.busy})`,
+  "  ⎿  ☐ Read the code",
+  "     ☐ Write the test",
+];
+
+// The first two looks, a moment apart, mostly fall between two ticks of the spinner's timer,
+// so each look here does. A turn can start with nothing typed in, such as when a background
+// task ends, so whatever ended the last turn, only the screen tells.
+test("a spinner redrawn once a second shows the agent busy at every look", async () => {
+  start("lead", screen(spinning));
+  await showing("lead", "accept edits");
+  for (let look = 0; look < 3; look++)
+    expect(await whyBusy(socket, "lead", claude.marks, { moment })).toBe(
+      "it is mid-turn (it shows esc to interrupt)",
+    );
 });
 
 test("typing says so when it gives up because there is no prompt", async () => {

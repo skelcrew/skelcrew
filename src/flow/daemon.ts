@@ -40,6 +40,7 @@ import {
 } from "./lead.ts";
 import { restoreLimits, wakeAfterLimit } from "./limits.ts";
 import { listRepositories, listTasks, listThreads, showPr, showTask } from "./list.ts";
+import { deliverAllWaiting } from "./messages.ts";
 import { pollRepositories } from "./poll.ts";
 import { findRepository, fullNameIs, noRepositories, refreshClones, repositoryAt } from "./repo.ts";
 import { allowed, type Caller, DaemonRequest, parseJson } from "./requests.ts";
@@ -373,7 +374,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       }
       case "tell": {
         const thread = findThread(db, request.repo, request.task);
-        return { told: messageBuilder(db, sessions, thread, request.text) };
+        return { told: await messageBuilder(db, sessions, thread, request.text) };
       }
       case "tell lead":
         messageLead(db, sessions, callingThread(caller), request.text);
@@ -559,6 +560,9 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       },
     );
   }
+  // Type the messages waiting for builders as soon as each can take them, looking every two
+  // seconds, as a builder becomes idle with no word to the daemon, such as after Esc.
+  setInterval(() => deliverAllWaiting(db, sessions), 2000);
   // Start polling, which also lets any sc start waiting on it go ahead, and keep Skelcrew itself
   // up to date.
   polling.resolve(pollRepositories(db, sessions, every, setUpAndStart, startingTasks));

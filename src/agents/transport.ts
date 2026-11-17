@@ -1,28 +1,50 @@
 // The transport module, built in: gets text into an agent and says when the agent is idle. It
 // works on any host's sessions, as it uses only the sessions module's paste, keys and read. It
-// tells idle from the screen, by the harness's busy mark and bare prompt, which also shows a
-// person's unsent draft. It delivers one message at a time per session, as a paste then Enter.
+// tells idle from the screen: the harness's status line isn't live and a bare prompt shows,
+// which also shows a person's unsent draft. It delivers one message at a time per session, as a paste then Enter.
 import { dropStaged, pasteStaged, readSession, sendKey, stagePaste } from "./sessions.ts";
 
 // How typing waits, in milliseconds. `moment` is the pause between two looks at the screen,
 // and between a paste and its Enter. `timeout` is how long to wait for the prompt to be ready
-// before giving up. Once `signal` is aborted, nothing is typed.
-type Waits = { moment?: number; timeout?: number; signal?: AbortSignal };
+// before giving up, which may be Infinity. Once `signal` is aborted, nothing is typed. `unsent`
+// says the message was pasted before and left unsent for a question, so a draft at the prompt
+// is it, not a person's.
+type Waits = { moment?: number; timeout?: number; signal?: AbortSignal; unsent?: boolean };
+
+// What became of a message typed in: sent, left pasted at the prompt unsent for a question, or
+// not typed at all.
+export type Typed = "typed" | "left unsent" | "not typed";
+
+// How long to watch a still busy mark, in milliseconds, before taking it for the agent's own
+// text. Claude Code's spinner and Codex's "Working" line count seconds, so they redraw at least
+// once a second, and one and a half seconds always holds a redraw.
+const statusLineWatch = 1500;
 // What a harness's screen shows: `busy` while a turn runs, and a line holding only `prompt`
 // once it is ready for a message.
 export type Marks = { busy: string; prompt: string };
 
 // The reason typing gives for waiting while a person has unsent text at the agent's prompt.
-const draftReason = "an unsent draft is at its prompt";
+export const draftReason = "an unsent draft is at its prompt";
+
+// The reason to cancel typing with when the agent asks you a question. A message already pasted
+// is then left at the prompt unsent, as its Enter would answer the question, and the next
+// typing of it, told so by `unsent`, sends it with Enter alone.
+export const forQuestion = "the agent asked a question";
+
+// The start of the reason typing gives while the agent's turn runs, so whoever waits on it can
+// tell that pressing Esc would end the turn.
+export const midTurn = "it is mid-turn";
 
 // Returns why one look at the screen shows the agent not ready, by its harness's marks, or
 // empty text when it shows a bare prompt. A prompt line holding text is a person's unsent
 // draft: a message pasted then would be sent along with it. A numbered menu, such as a
-// permission question, also puts the mark before text, so that isn't taken for a draft.
+// permission question, also puts the mark before text, so that isn't taken for a draft. The
+// busy mark only names the reason here: Claude Code and Codex show their input mid-turn too,
+// so whether a turn runs is told by whyBusy, from two looks.
 function notReady(shown: string, marks: Marks) {
-  if (shown.includes(marks.busy)) return `it shows ${marks.busy}`;
   const lines = shown.split("\n").map((line) => line.trim());
   if (lines.includes(marks.prompt)) return "";
+  if (shown.includes(marks.busy)) return `${midTurn} (it shows ${marks.busy})`;
   // The mark alone, without Codex's placeholder, which a draft replaces.
   const mark = marks.prompt.split(" ")[0] ?? marks.prompt;
   const input = lines.findLast((line) => line.startsWith(`${mark} `));
@@ -30,17 +52,61 @@ function notReady(shown: string, marks: Marks) {
   return `it shows no ${marks.prompt} prompt`;
 }
 
-// Returns why the agent is busy, by its harness's marks, or empty text when it is ready to
-// accept a message. A quiet pane alone isn't enough: Claude Code can sit still mid-turn while
-// a tool runs.
-async function notIdle(socket: string, name: string, marks: Marks, moment: number) {
-  // Look twice, a moment apart, so a screen still drawing shows as busy.
+// Returns why the screen changed between two looks: mid-turn when a line holding the busy mark
+// is new, as the harness's status line redraws, or else that it kept changing.
+function whyChanged(before: string, after: string, marks: Marks): string {
+  return statusLineLive(before, after, marks.busy)
+    ? `${midTurn} (it shows ${marks.busy})`
+    : "its screen kept changing";
+}
+
+// Reports whether a line holding the busy mark is new since the earlier look, as the harness's
+// status line redraws while a turn runs. The same line again is the agent's own text.
+function statusLineLive(before: string, after: string, busy: string): boolean {
+  const earlier = new Set(before.split("\n"));
+  return after.split("\n").some((line) => line.includes(busy) && !earlier.has(line));
+}
+
+// Reports whether a look at the screen shows the agent out of a turn, given the look before it,
+// taken at least two seconds earlier, or undefined for none: its busy mark is gone, or it sits
+// still at a bare prompt, as the agent's own text. A live status line redraws every second.
+// The status module's screen check uses it, by the same rule as typing.
+export function quietSince(before: string | undefined, after: string, marks: Marks): boolean {
+  if (!after.includes(marks.busy)) return true;
+  if (before === undefined || notReady(after, marks) !== "") return false;
+  return !statusLineLive(before, after, marks.busy);
+}
+
+// Returns why the agent isn't ready for a message, in plain words, by its harness's marks, or
+// empty text when it is. Skelcrew says why to whoever waits on the message.
+// A turn runs while the harness's status line is live: Claude Code's spinner and Codex's
+// "Working" line hold the busy mark and redraw at least every second, as their timer counts.
+// The mark sitting still is the agent's own text, such as a builder's grep through Skelcrew's
+// code or its reply quoting it, and never makes it look busy: it would then look busy forever,
+// Esc or not. No hook stands in for this: a turn can start with nothing typed in, such as when
+// a background task ends, and Esc runs none.
+export async function whyBusy(
+  socket: string,
+  name: string,
+  marks: Marks,
+  waits: Waits = {},
+): Promise<string> {
+  // Look twice, a moment apart. A line holding the mark that changed is the live status line.
+  const moment = waits.moment ?? 500;
   const before = readSession(socket, name);
   await Bun.sleep(moment);
   const after = readSession(socket, name);
-  if (after.includes(marks.busy)) return `it shows ${marks.busy}`;
-  if (before !== after) return "its screen kept changing";
-  return notReady(after, marks);
+  if (before !== after) return whyChanged(before, after, marks);
+  const why = notReady(after, marks);
+  if (why !== "") return why;
+  // The mark sits still at a ready prompt. Look once more, long enough to see a status line
+  // redraw, as the first two looks can fall between two ticks of its timer.
+  if (after.includes(marks.busy)) {
+    await Bun.sleep(statusLineWatch);
+    const later = readSession(socket, name);
+    if (later !== after) return whyChanged(after, later, marks);
+  }
+  return "";
 }
 
 // Reports whether the agent is idle: its screen is quiet and shows a bare prompt, by its
@@ -51,16 +117,17 @@ export async function idle(
   marks: Marks,
   waits: Waits = {},
 ): Promise<boolean> {
-  return (await notIdle(socket, name, marks, waits.moment ?? 500)) === "";
+  return (await whyBusy(socket, name, marks, waits)) === "";
 }
 
 // One message at a time per session, so two pastes can't land before either's Enter.
 const typingQueues = new Map<string, Promise<void>>();
 
 // Delivers a message into the agent once it is idle, never into a turn still running and never
-// on top of a person's unsent draft. Returns a promise that settles after the attempt, and
-// rejects if the agent stays busy too long. Messages to one session wait their turn, so two
-// pastes cannot arrive before either message's Enter. `marks` are the harness's in the session.
+// on top of a person's unsent draft. Returns a promise that settles after the attempt, with
+// what became of the message, and rejects if the agent stays busy too long. Messages to one
+// session wait their turn, so two pastes cannot arrive before either message's Enter. `marks`
+// are the harness's in the session.
 export function deliver(
   socket: string,
   name: string,
@@ -87,9 +154,18 @@ export function deliver(
 }
 
 // Waits for the agent to be ready, then pastes and submits the message without losing long
-// text. Throws if it stays busy too long, and forgets the text it readied for pasting after the
-// attempt. Types nothing once the signal is aborted, however long it waited.
-async function typeNow(socket: string, name: string, marks: Marks, text: string, waits: Waits) {
+// text, and returns "typed". Throws if it stays busy too long, and forgets the text it readied
+// for pasting after the attempt. Types nothing once the signal is aborted, however long it waited.
+// Aborted between the paste and its Enter, it still sends the message, which is in: unless for
+// a question, which the Enter would answer. Then it leaves the message at the prompt and returns
+// "left unsent", and the next typing of it, told so by `unsent`, presses Enter alone.
+async function typeNow(
+  socket: string,
+  name: string,
+  marks: Marks,
+  text: string,
+  waits: Waits,
+): Promise<Typed> {
   const moment = waits.moment ?? 500;
   const timeout = waits.timeout ?? 60_000;
   const deadline = Date.now() + timeout;
@@ -98,10 +174,19 @@ async function typeNow(socket: string, name: string, marks: Marks, text: string,
   try {
     // Text typed while Claude Code is starting or busy can be lost, so wait until it is idle.
     // Check the signal after each wait too: the thread may have stopped meanwhile.
+    let unsent = waits.unsent ?? false;
     while (true) {
-      if (waits.signal?.aborted) return;
-      const why = await notIdle(socket, name, marks, moment);
-      if (waits.signal?.aborted) return;
+      if (waits.signal?.aborted) return "not typed";
+      const why = await whyBusy(socket, name, marks, waits);
+      if (waits.signal?.aborted) return "not typed";
+      // The draft is this message, left unsent for a question that is over now: send it. A bare
+      // prompt means a person sent or cleared it, so it is typed afresh, and a draft after that
+      // is a person's.
+      if (why === draftReason && unsent) {
+        sendKey(socket, name, "Enter");
+        return "typed";
+      }
+      if (why === "") unsent = false;
       if (why === "") {
         staged.push(stagePaste(socket, name, text));
         // A person can start typing after the last look, and the paste would send their draft
@@ -123,7 +208,9 @@ async function typeNow(socket: string, name: string, marks: Marks, text: string,
     // and the message is never sent. So the Enter goes on its own, a moment after the paste.
     pasteStaged(socket, name, staged.at(-1) ?? "");
     await Bun.sleep(moment);
+    if (waits.signal?.aborted && waits.signal.reason === forQuestion) return "left unsent";
     sendKey(socket, name, "Enter");
+    return "typed";
   } finally {
     for (const readied of staged) dropStaged(socket, readied);
   }
