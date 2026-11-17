@@ -401,6 +401,21 @@ function addThread(repo: string, task: number): void {
   );
 }
 
+// app-1 as sc ps gives it. app has no forge, so it has no PR, CI or review to show.
+const stoppedApp1 = {
+  thread: "app-1",
+  short: null,
+  title: null,
+  status: "stopped",
+  needsYou: false,
+  queued: false,
+  branch: "skelcrew/x",
+  pr: null,
+  prUrl: null,
+  checks: null,
+  review: null,
+};
+
 // bubblewrap can't start inside Skelcrew's own sandbox, so only there a lead can't start.
 describe.skipIf(insideSandbox)("with a lead per repository", () => {
   test("starts a repository's lead the first time you open it, in its own folder, with a session id it stores", async () => {
@@ -610,16 +625,7 @@ describe.skipIf(insideSandbox)("with a lead per repository", () => {
     expect(storedSession()).toBe(id);
     expect(existsSync(join(clone, "README"))).toBe(true);
     expect(await ask({ command: "ps" })).toEqual({
-      threads: [
-        {
-          thread: "app-1",
-          short: null,
-          title: null,
-          status: "stopped",
-          needsYou: false,
-          queued: false,
-        },
-      ],
+      threads: [stoppedApp1],
     });
     expect(await ask({ command: "repo ls" })).toMatchObject({
       repositories: [{ name: "app", tabClosed: true }],
@@ -858,16 +864,7 @@ describe.skipIf(insideSandbox)("with a lead per repository", () => {
       repositories: [{ name: "app", repository: "simon/app" }],
     });
     expect(await askAsLead({ command: "ps" })).toEqual({
-      threads: [
-        {
-          thread: "app-1",
-          short: null,
-          title: null,
-          status: "stopped",
-          needsYou: false,
-          queued: false,
-        },
-      ],
+      threads: [stoppedApp1],
     });
     const refused = {
       error:
