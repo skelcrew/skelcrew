@@ -1,13 +1,20 @@
 // The look: what the sidebar, the strip and a page share to draw text, which is the colours, the
 // padding, and making text from outside safe and fit to show.
+import type { Colour } from "../flow/marks.ts";
 
 // The colours of marks and words. 256-colour numbers, as they reach your terminal through both
 // tmux servers and ssh, and mean the same whatever your theme. A theme's own green can be olive,
 // close to the yellow of needs you. They are the same on the row you are looking at, so a mark
 // never changes colour as you move onto it.
 export const [green, yellow, red] = ["38;5;120", "38;5;221", "38;5;210"];
+// Bright text, for the mark of a builder at work. It is the theme's own text in bold, not a fixed
+// white, so it reads on a light theme too. On the row you are looking at it is white, as there
+// the theme's own text can be dark on the grey.
+export const bright = "1";
 // Dim text is the theme's own grey, so it stays quiet whatever the theme.
 export const grey = "90";
+// The colour each kind of mark is drawn in.
+export const markColours: Record<Colour, string> = { green, yellow, red, bright, dim: grey };
 // A light grey, for text that matters more than dim text but less than a title. It is a fixed
 // one, as a theme has no grey between its dim one and its text. It is lighter still on the row
 // you are looking at, so it stays apart from dim text there.
@@ -48,11 +55,13 @@ export function fitted(text: string, width: number): string {
 export const filled = (line: string, width: number) =>
   `${line}${" ".repeat(Math.max(width - Bun.stringWidth(line), 0))}`;
 
-// Returns text in a colour. Dim text on the row you are looking at takes the light grey that
-// shows on its background. Other colours stay as they are, so a mark looks the same whether or
-// not you are on its row.
-export const tinted = (here: boolean, code: string, text: string) =>
-  paint(here && code === grey ? greyOnShade : code, text);
+// Returns text in a colour. On the row you are looking at, dim text takes the light grey that
+// shows on its background, and bright text white. Other colours stay as they are, so a mark
+// looks the same whether or not you are on its row.
+export function tinted(here: boolean, code: string, text: string): string {
+  if (here && code === grey) return paint(greyOnShade, text);
+  return paint(here && code === bright ? white : code, text);
+}
 
 // Returns a line with the grey behind it, out to the end of the row.
 export const shaded = (line: string, width: number) =>

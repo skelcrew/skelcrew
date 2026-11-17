@@ -8,30 +8,29 @@ const sections: [string, [string, string][]][] = [
     "COMMANDS",
     [
       ["(no command)", "Open this repository's lead, with the sidebar"],
+      ["ls [<repo>]", "Tasks, with each one's status, PR, CI and review"],
+      ["show <task>", "A task: description, threads, PR, checks, review"],
       ["ps [<repo>]", "Threads: status, PR, CI, review, needs you"],
       ["start <issue> [--from <branch>]", "Start, resume, or go on past the limit"],
       ['start <repo> "<title>" "<body>"', "Start a thread, with no issue in the tracker"],
       ["start <repo> < <file>", "The same, with the title on stdin's first line"],
       ["stop <thread>", "End the builder, keeping its clone and PR"],
-      ['rm <thread> ["<reason>"]', "Close its PR, delete its branch and clone"],
+      ['rm <task> ["<reason>"]', "Close its PR, delete its branch and clone"],
       ["attach <thread>", "Open that builder, with the sidebar"],
       ["peek <thread>", "What that builder shows now, without attaching"],
       ["interrupt <thread>", "Stop that builder's turn, as Esc does"],
-      ["review <thread>", "Run the thread's last review again"],
+      ["review <task>", "Run the task's last review again"],
     ],
   ],
   [
     "ISSUES",
     [
-      ["issue ls [<repo>]", "Open issues, with the thread on each"],
-      ["issue show <issue>", "An issue's title and body"],
+      ["issue ls [<repo>]", "The same as ls"],
+      ["issue show <issue>", "The same as show"],
       ['issue create <repo> "<title>" "<body>"', "Create an issue in the repository's tracker"],
     ],
   ],
-  [
-    "PULL REQUESTS",
-    [["pr show <number> | <thread>", "A PR as its page shows it, with failed logs"]],
-  ],
+  ["PULL REQUESTS", [["pr show <number> | <task>", "The PR's task, as show shows it"]]],
   [
     "REPOSITORIES",
     [
@@ -72,7 +71,7 @@ const sections: [string, [string, string][]][] = [
     "OPTIONS",
     [
       ["--json", "Output for tools"],
-      ["--all", "Done threads too, on ps"],
+      ["--all", "Done threads too, on ps, and ended tasks, on ls"],
       ['--short "<words>"', "A thread's short title for the sidebar, on start"],
       ["--from <remote>", "The repository you're in"],
       ["--version", "Which release of Skelcrew this is"],
@@ -87,7 +86,7 @@ const examples = [
   "sc",
   'sc issue create app "Fix the login redirect" "Sign-in lands on a 404."',
   "sc start app-12",
-  "sc ps",
+  "sc ls",
   "sc remote add simon@workbox",
   "sc --remote simon@workbox",
 ];
@@ -119,7 +118,8 @@ export function help(color = colorful()): string {
   lines.push("", heading("EXAMPLES"), ...examples.map((example) => `  ${dim("%")} ${example}`));
   lines.push(
     "",
-    dim("  A thread is named after its issue, such as app-12. --remote keeps"),
+    dim("  A task is named after its issue, such as app-12, and its thread after"),
+    dim("  its task and role, app-12/builder, or app-12 for short. --remote keeps"),
     dim("  Skelcrew on the other side up to date with yours, after asking. See skelcrew.dev."),
     "",
   );

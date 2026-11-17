@@ -1,8 +1,9 @@
 // Polling: the daemon asks each repository's tracker and forge what changed, brings Skelcrew's
-// copy of its tasks and PRs up to date, starts threads on tasks labeled to start, and hands what
+// copy of its tasks and PRs and its clone's default branch up to date, starts threads on tasks labeled to start, and hands what
 // each thread's PR means for it to the code that acts on it. In a repository with no forge, it
 // ends a thread once its branch is merged or gone.
 import type { Database } from "bun:sqlite";
+import { existsSync } from "node:fs";
 import { threadConfig } from "../config.ts";
 import type { Repository } from "../db.ts";
 import { cloneDir } from "../paths.ts";
@@ -22,7 +23,7 @@ import { ciState, decide, labeledToStart, type PullRequest } from "./decide.ts";
 import { endThread, removing, tellBuilder, tellingEvents } from "./events.ts";
 import { fetchInto, onRemote } from "./git.ts";
 import { noteForLead, typeLeadNotes } from "./messages.ts";
-import { forgeKnown, fullNameIs, repositories } from "./repo.ts";
+import { forgeKnown, fullNameIs, refreshClone, repositories } from "./repo.ts";
 import { needsYou } from "./status.ts";
 import { readThread, record, Thread, threadName } from "./thread.ts";
 
@@ -194,8 +195,8 @@ async function actOnBranch(db: Database, sessions: string, repository: Repositor
 
 // Polls one repository. Asks its tracker and its forge what changed since the `next` each
 // plugin last gave, kept in `nexts`, or for everything open when there is none. Brings
-// Skelcrew's copy up to date, taking tasks only from its tracker and PRs only from its forge.
-// Then starts threads on its tasks labeled to start. Then acts on what each thread's PR means
+// Skelcrew's copy up to date, taking tasks only from its tracker and PRs only from its forge,
+// and Skelcrew's clone's default branch with it. Then starts threads on its tasks labeled to start. Then acts on what each thread's PR means
 // for it, or, with no forge, on each thread's branch. Thread rows are read again once the
 // answers are in, since a round can change them meanwhile.
 async function pollRepository(
@@ -212,20 +213,34 @@ async function pollRepository(
   // Ask each plugin in turn, telling a forge which PRs Skelcrew watches: those of this
   // repository's threads. A plugin's answer only updates the kinds its jobs cover. A first
   // poll, with no `next`, replaces those kinds in the copy outright, so what closed while the
-  // daemon was down goes.
-  for (const { plugin, jobs } of repositoryPlugins(db, repository)) {
-    const next = nexts.get(plugin) ?? null;
-    const watched = jobs.includes("forge")
-      ? threads.flatMap((t) => (t.pr === null ? [] : [t.pr]))
-      : [];
-    const answer = await askWhatChanged(db, plugin, repository, jobs, next, watched);
-    const kinds: Item["kind"][] = [
-      ...(jobs.includes("tracker") ? ["task" as const] : []),
-      ...(jobs.includes("forge") ? ["pr" as const] : []),
-    ];
-    const items = answer.items.filter((item) => kinds.includes(item.kind));
-    saveItems(db, owner, repo, items, next === null ? kinds : []);
-    nexts.set(plugin, answer.next);
+  // daemon was down goes. Skelcrew's clone is refreshed after, even when a plugin fails, as git
+  // can still reach the remote while a tracker or forge is down.
+  try {
+    for (const { plugin, jobs } of repositoryPlugins(db, repository)) {
+      const next = nexts.get(plugin) ?? null;
+      const watched = jobs.includes("forge")
+        ? threads.flatMap((t) => (t.pr === null ? [] : [t.pr]))
+        : [];
+      const answer = await askWhatChanged(db, plugin, repository, jobs, next, watched);
+      const kinds: Item["kind"][] = [
+        ...(jobs.includes("tracker") ? ["task" as const] : []),
+        ...(jobs.includes("forge") ? ["pr" as const] : []),
+      ];
+      const items = answer.items.filter((item) => kinds.includes(item.kind));
+      saveItems(db, owner, repo, items, next === null ? kinds : []);
+      nexts.set(plugin, answer.next);
+    }
+  } finally {
+    // Bring Skelcrew's clone's default branch up to date once the forge answered, so a PR it
+    // says merged, whoever merged it, or a push straight to the default branch, reaches
+    // builders fetching from the clone by this poll. Cheap when nothing changed. A failed fetch
+    // leaves the clone as it was until the next poll, and holds up nothing else. A repository
+    // with no clone yet is left to the daemon's start, sc and a thread's setup, which make
+    // it: a remote that can't be cloned would otherwise be tried at every poll.
+    if (existsSync(cloneDir(owner, repo)))
+      await refreshClone(db, repository).catch((error) =>
+        console.log(`couldn't update Skelcrew's clone of ${owner}/${repo}: ${errorText(error)}`),
+      );
   }
   // With the copy up to date, start labeled tasks, then act on each thread: by its PR with a
   // forge, or by its branch without one.

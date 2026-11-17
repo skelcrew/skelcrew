@@ -13,7 +13,7 @@ import type { Check, Decision } from "./decide.ts";
 import { deleteBranch, fetchInto, onRemote } from "./git.ts";
 import { endWake } from "./limits.ts";
 import { noticeRound, queueMessage, stopDelivering, typeLeadNotes } from "./messages.ts";
-import { refreshClones } from "./repo.ts";
+import { refreshClone } from "./repo.ts";
 import { endRound } from "./round.ts";
 import { cloneOf, readThread, record, repositoryOf, type Thread, threadName } from "./thread.ts";
 
@@ -38,14 +38,15 @@ async function failedCheckMessages(
 }
 
 // Brings the base branch up to date in Skelcrew's clone of the repository. The builder's clone
-// has Skelcrew's clone as origin, so its next fetch gets the latest base. Otherwise Skelcrew's
-// clone is refreshed only when you attach or the daemon starts, and holds only the default
-// branch.
+// has Skelcrew's clone as origin, so its next fetch gets the latest base. Each poll keeps the
+// default branch current, but the builder is told of the conflict before the next one, and
+// any other base is fetched only here.
 async function refreshBase(db: Database, thread: Thread, base: string): Promise<void> {
+  const repository = repositoryOf(db, thread);
   // Refreshing brings the default branch up to date. Any other base is fetched on its own.
-  await refreshClones(db);
+  await refreshClone(db, repository);
   if (base !== baseOf({ ...thread, base: null }))
-    await fetchInto(db, repositoryOf(db, thread), cloneDir(thread.owner, thread.repo), base);
+    await fetchInto(db, repository, cloneDir(thread.owner, thread.repo), base);
 }
 
 // The threads whose events are being made into a message for the builder, by folder. A poll
@@ -116,9 +117,10 @@ export async function endThread(
   rmSync(cloneOf(thread), { recursive: true, force: true });
   // Skelcrew's clone keeps refs of the branch it pushed, named by the thread's folder. A thread
   // started over in that folder would be taken for one that pushed already, and without a forge
-  // ended at once, as its branch isn't on the remote.
+  // ended at once, as its branch isn't on the remote. Its last approval goes too, so it never
+  // holds for the new thread's work.
   const skelcrewClone = cloneDir(thread.owner, thread.repo);
-  for (const kind of ["threads", "bases", "remote"])
+  for (const kind of ["threads", "bases", "remote", "approved"])
     await quietly([
       "git",
       "-C",

@@ -16,6 +16,34 @@ const workflows =
 const waiting =
   " When the builder can't take it yet, sc tell says why, and sc ps counts the messages still waiting. If one still waits after 10 minutes, Skelcrew tells you why. When the builder is mid-turn, you may ask the human to press Esc in that thread if it shouldn't finish its turn first.";
 
+// What the lead's and builder's files added once Skelcrew stopped guessing a repository's setup
+// and test commands: the lead settles them with the human, and a builder with none asks the lead.
+const settling =
+  "\nEvery builder sets up and tests your repository with the same commands, under setup: and test: in its skelcrew.yaml, or in the human's own config.yaml. Skelcrew never guesses them. The end of these instructions says which were configured, in either file, when this session started. You can't read the human's config, so go by that, and by the skelcrew.yaml in the clone for any added since. Before you start the first thread in your repository, settle any that is missing. Find it out by reading the repository: its package files, its Makefile, its CI workflow, which shows what the project really runs, and its README. Propose only the missing ones to the human in plain words, such as \"Builders will set up with bun install and test with bun run check, as CI does. Shall I add that to skelcrew.yaml?\" On a yes, start a small thread that adds them to the repository's skelcrew.yaml, a normal PR the human merges. Until then, a builder that needs them asks you. Later, a repository the human only drops into will be able to keep them under repos: in the human's own config instead.\n";
+const asking =
+  "\nUse the setup and test commands named at the end of these instructions, as every builder of the repository uses the same ones. If one you need isn't configured, never make one up: ask the lead which to use with sc tell lead, and wait for its answer. That counts as blocked.\n";
+
+// What the lead was told about issues, threads and PRs before sc ls and sc show, each with what
+// it is told now.
+const leadTasks = [
+  [
+    "- sc issue ls lists open issues, and sc ps lists threads, with their status, whether they need the human, and each one's PR, CI and review, such as #242, failed and changes r3.",
+    "- sc ls lists open issues and the work on each, one row each. Each row says what is happening, such as waiting · #242 · CI failed · changes r3, and whether it needs the human. sc ls --all adds work that ended. sc ps lists threads, with the same columns.",
+  ],
+  [
+    "- sc pr show app-13, or a PR's number such as sc pr show 242, shows a PR: its state, branch, thread, checks, latest review and description, with the log of each failed check. Use it to see why CI failed or what a review asked for.",
+    "- sc show app-13 shows one piece of work: its issue, threads, PR with its checks and review, and its description as its reviewer gets it, then the PR's latest review and description, with the log of each failed check. Use it to see why CI failed or what a review asked for. sc pr show 242 shows the work on PR 242 the same way.",
+  ],
+  [
+    "Skelcrew keeps its own copy: sc issue ls and sc issue show app-13 show issues, with the title and body a builder sees, and sc ps and sc pr show show PRs.",
+    "Skelcrew keeps its own copy: sc ls and sc show app-13 show issues, threads and their PRs, with the title and description a builder sees.",
+  ],
+  [
+    '- sc tell app-13 "<text>" types a message into that thread\'s builder once it is idle,',
+    '- sc tell app-13 "<text>", or sc tell app-13/builder "<text>", types a message into that thread\'s builder once it is idle,',
+  ],
+];
+
 // What the builder was told about the tests before the whole suite ran once per commit, in CI
 // or the reviewer, and what it is told now.
 const builderTestsBefore =
@@ -28,19 +56,26 @@ const builderTests =
 const tellingTheLead =
   " Tell it only when you are blocked or need a decision. Never tell it just to report progress, such as that you submitted, resubmitted or merged main: Skelcrew already shows that.";
 
-test("the lead and builder files hold the instructions the code gave, but waiting messages and the builder's workflows, tests and telling the lead", () => {
+test("the lead and builder files hold the instructions the code gave, but for what was added since", () => {
   // The digests of src/agents/prompts/lead.md and builder.md before they moved.
-  const lead = builtInRole("lead").instructions;
+  let lead = builtInRole("lead").instructions;
   expect(lead).toContain(waiting);
-  expect(sha256(lead.replace(waiting, ""))).toBe(
+  expect(lead).toContain(settling);
+  for (const [before = "", now = ""] of leadTasks) {
+    expect(lead).toContain(now);
+    lead = lead.replace(now, before);
+  }
+  expect(sha256(lead.replace(waiting, "").replace(settling, ""))).toBe(
     "4a964d29382eddbab5268fa24921ee599fa1bde9bd1eb51341f5bee1cb577837",
   );
   const builder = builtInRole("builder").instructions;
   expect(builder).toContain(workflows);
   expect(builder).toContain(builderTests);
+  expect(builder).toContain(asking);
   expect(builder).toContain(tellingTheLead);
   const before = builder
     .replace(workflows, "")
+    .replace(asking, "")
     .replace(builderTests, builderTestsBefore)
     .replace(tellingTheLead, "");
   expect(sha256(before)).toBe("556629d5f335c1d5e635a1996a021041ea3e9fb75deaa593399ef84d70ee4d00");
@@ -77,7 +112,7 @@ Answer "approve" only if it is ready to merge. Otherwise answer "changes", and i
 // Without CI on the commit, the reviewer runs the tests, as it always did.
 const runs =
   "No CI runs on this commit, so run the repository's whole test suite, with `bun test`.";
-const testedBy = { commands: ["bun test"], detected: false };
+const testedBy = ["bun test"];
 
 test("the reviewer is told exactly what its code told it, and who runs the tests", () => {
   const issue = { title: "Fix the flaky test", body: "It fails one run in ten." };

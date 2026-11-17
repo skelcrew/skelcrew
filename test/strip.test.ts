@@ -8,7 +8,7 @@ const lead: Row = {
   task: "",
   session: "lead",
   status: null,
-  needsYou: false,
+  state: "idle",
   running: true,
   word: "running",
   harness: "claude",
@@ -37,7 +37,14 @@ const thread = (more: Partial<Row> = {}): Row => ({
   review: { round: 2, reviewer: "codex", verdict: "approve" },
   ...more,
 });
-const tab = (name: string, count = 0): Tab => ({ name, fullName: `simon/${name}`, count });
+// A tab with how many threads need you, how many are ready, and the colour of the first.
+const tab = (name: string, needYou = 0, ready = 0, colour: Tab["colour"] = "yellow"): Tab => ({
+  name,
+  fullName: `simon/${name}`,
+  needYou,
+  colour,
+  ready,
+});
 // The tab "  app  " and the two columns after it take nine columns before the strip.
 const size = { left: 30, width: 99 };
 const base: Top = {
@@ -78,7 +85,7 @@ test("a thread's strip has its name, title, PR, checks and latest review", () =>
 
 test("when the round limit stops a thread, the verdict reads round limit, in yellow", () => {
   const changes = { round: 4, reviewer: "codex", verdict: "changes" };
-  const stopped = thread({ word: "round limit", needsYou: true, review: changes });
+  const stopped = thread({ word: "round limit", state: "needs you", review: changes });
   expect(read({ rows: [stopped] })).toEndWith("#34  checks passing  round 4 · codex · round limit");
   expect(top({ rows: [stopped] })).toEndWith(
     "round 4 · codex · #[fg=colour221]round limit#[default]",
@@ -212,7 +219,7 @@ test("where Skelcrew runs can't run commands, restyle the row or reach your term
 });
 
 test("the lead has no strip, as the sidebar already shows what needs you", () => {
-  const rows = [lead, thread({ word: "approved", needsYou: true })];
+  const rows = [lead, thread({ word: "approved", state: "ready" })];
   expect(read({ rows, shown: "lead" })).toBe("");
 });
 
@@ -283,6 +290,16 @@ test("tabs name each repository in order, above the agent, with a badge for what
   expect(top({ tabs, open: "simon/site" })).toContain(
     "#[bg=colour234,fg=colour231,bold]  site #[fg=colour221]•1  #[default]",
   );
+});
+
+test("a tab's badge counts what needs you and what is ready apart, each in its colour", () => {
+  const red = top({ tabs: [tab("app"), tab("site", 2, 0, "red")] });
+  expect(red).toContain("  site #[fg=colour210]•2  ");
+  const ready = top({ tabs: [tab("app"), tab("site", 0, 1)] });
+  expect(ready).toContain("  site #[fg=colour120]•1  ");
+  const both = [tab("app"), tab("site", 2, 1)];
+  expect(top({ tabs: both })).toContain("  site #[fg=colour221]•2 #[fg=colour120]•1  ");
+  expect(tabText(both, "simon/app", 120)).toBe("  app    site •2 •1");
 });
 
 test("a click on a tab is told apart by its place in the row", () => {

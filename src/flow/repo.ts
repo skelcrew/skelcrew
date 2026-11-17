@@ -16,7 +16,7 @@ import { stringify } from "yaml";
 import { z } from "zod";
 import { refuseCredentials } from "../agents/sandbox.ts";
 import { endSession, exitedCleanly, stopSession } from "../agents/sessions.ts";
-import { agentRoles, repositoryCommands } from "../config.ts";
+import { agentRoles } from "../config.ts";
 import { nameRepositories, openDb, Repository } from "../db.ts";
 import { originHere, parseRemote } from "../machine/origin.ts";
 import { cloneDir, configDir, dataDir, leadPlaces } from "../paths.ts";
@@ -102,17 +102,55 @@ export function repositoryAt(db: Database, given: string): Repository | undefine
   return old ? all.find((r) => r.owner === old.owner && r.repo === old.repo) : undefined;
 }
 
-// Creates or updates Skelcrew's repository clone so its lead can read its latest default
-// branch. The lead reads the clone, so a clone whose config holds a credential is deleted
-// rather than left there for it.
-async function refreshClone(db: Database, repository: Repository): Promise<void> {
+// The refresh of each repository's clone under way or waiting, by owner/name, so two git
+// commands never fight over a clone.
+const cloneWork = new Map<string, Promise<void>>();
+
+// Creates or updates Skelcrew's clone of the repository, so its lead reads its latest default
+// branch and builders, whose origin it is, fetch it as the remote has it. The poll calls it
+// each time, so a merge or a push to the default branch reaches builders within a poll. A
+// call while one runs waits for it, then refreshes again, so it always sees what the remote
+// had when it was asked. `adding` is for a repository being brought in, which is cloned before
+// it is saved. Throws what git said when it fails.
+export function refreshClone(db: Database, repository: Repository, adding = false): Promise<void> {
+  const { owner, repo } = repository;
+  const fullName = `${owner}/${repo}`;
+  // sc repo rm can run at any wait before this refresh's git starts, or while it runs, and a
+  // clone made after the removal would stay where nothing removes it. So a repository not
+  // being brought in is refreshed only while Skelcrew has it, checked when its turn comes and
+  // again once git is done.
+  const removed = () =>
+    !adding && !repositories(db).some((r) => r.owner === owner && r.repo === repo);
+  const run = (cloneWork.get(fullName) ?? Promise.resolve()).then(async () => {
+    if (removed()) return;
+    await createOrUpdate(db, repository);
+    if (removed()) rmSync(cloneDir(owner, repo), { recursive: true, force: true });
+  });
+  // The next call waits for this one whether it fails or not, and the last one leaves no
+  // entry behind.
+  const settled = run.catch(() => {});
+  cloneWork.set(fullName, settled);
+  settled.then(() => {
+    if (cloneWork.get(fullName) === settled) cloneWork.delete(fullName);
+  });
+  return run;
+}
+
+// Creates Skelcrew's clone of the repository, or brings the one it has up to date, logging
+// when its default branch moves. The lead reads the clone, so a clone whose config holds a
+// credential is deleted rather than left there for it.
+async function createOrUpdate(db: Database, repository: Repository): Promise<void> {
   const { owner, repo } = repository;
   // A clone Skelcrew has already is brought up to date in place, and checked again, as the
   // update could have brought a credential in.
   const clone = cloneDir(owner, repo);
   if (existsSync(clone)) {
-    await updateClone(db, repository, clone);
+    const { before, after } = await updateClone(db, repository, clone);
     deleteIfCredentials(clone);
+    if (before !== after)
+      console.log(
+        `Skelcrew's clone of ${owner}/${repo} moved its default branch from ${before.slice(0, 7)} to ${after.slice(0, 7)}`,
+      );
     return;
   }
   // Cloned outside the clone's folder, checked, and moved in once whole, so neither a clone
@@ -199,10 +237,6 @@ export function refreshClones(db: Database): Promise<void> {
       done.add(`${owner}/${repo}`);
       try {
         await refreshClone(db, await findForge(db, next));
-        // sc repo rm can run while a clone is still being made, and the clone would then
-        // land after the removal, where nothing would remove it.
-        if (!repositories(db).some((r) => r.owner === owner && r.repo === repo))
-          rmSync(cloneDir(owner, repo), { recursive: true, force: true });
       } catch (error) {
         console.log(errorText(error));
       }
@@ -298,7 +332,7 @@ async function bringIn(db: Database, details: RepositoryDetails): Promise<void> 
   // Clone before saving it, so a repository Skelcrew has always has a clone. One Skelcrew had
   // already only needed its clone back, such as after sc repo trust.
   if (!existsSync(cloneDir(owner, repo))) console.log(`Cloning ${fullName} for Skelcrew.`);
-  await refreshClone(db, repository);
+  await refreshClone(db, repository, true);
   if (known) return;
   if (claimed === null)
     await checkPush(db, repository, cloneDir(owner, repo)).catch((error) => {
@@ -418,13 +452,8 @@ async function openAgain(db: Database, sessions: string, had: Repository): Promi
 // remote URL or named by its owner/name on its forge, or with neither, the checkout you are
 // in, and says what it did. A folder that is there is taken as one. Asks whether you trust the
 // repository when it needs to, so it runs only in your own terminal. One Skelcrew has costs no
-// call to a forge, and is opened again. `sessions` names where its lead runs. With `hint`, a
-// repository just added gets a line saying how it will be tested, as sc init doesn't need one.
-export async function addRepo(
-  given: string | undefined,
-  sessions: string,
-  hint = true,
-): Promise<void> {
+// call to a forge, and is opened again. `sessions` names where its lead runs.
+export async function addRepo(given: string | undefined, sessions: string): Promise<void> {
   // Work out the remote URL: a folder's own remote, or what you gave when it is no folder.
   const db = openDb();
   const folder = given === undefined || existsSync(given) ? resolve(given ?? ".") : null;
@@ -445,18 +474,7 @@ export async function addRepo(
   const details = await identifyRepository(db, url);
   await bringIn(db, details);
   const added = repositories(db).find((r) => r.owner === details.owner && r.repo === details.repo);
-  if (!added) return;
-  console.log(`Added ${added.owner}/${added.repo}, as ${added.name}.`);
-  // Many repositories are added just to fix something, with no skelcrew.yaml to commit there,
-  // so say what Skelcrew detected, as a hint, never a question. A test command skelcrew.yaml or
-  // your config names needs no word.
-  const { test } = repositoryCommands(added);
-  if (!hint || !test.detected) return;
-  console.log(
-    test.commands.length > 0
-      ? `Testing with ${test.commands.join(" && ")} (detected). sc init writes a skelcrew.yaml to share it.`
-      : "No test command detected. Set one as test: in a skelcrew.yaml, which sc init writes.",
-  );
+  if (added) console.log(`Added ${added.owner}/${added.repo}, as ${added.name}.`);
 }
 
 // Returns a setting's value as YAML that reads back as the same text: plain when it can be,
@@ -518,9 +536,8 @@ export async function initRepo(sessions: string): Promise<void> {
   const there = lstatSync(file, { throwIfNoEntry: false }) !== undefined;
   if (!there) writeFileSync(file, starterConfig(), { flag: "wx" });
   else console.log("skelcrew.yaml is there already, so Skelcrew left it as it is.");
-  // Bring the repository in, then say what was written and when Skelcrew will read it. The hint
-  // about sc init would only repeat what you just ran.
-  await addRepo(root, sessions, false);
+  // Bring the repository in, then say what was written and when Skelcrew will read it.
+  await addRepo(root, sessions);
   if (!there) console.log("Wrote skelcrew.yaml. Commit and push it to start.");
 }
 
