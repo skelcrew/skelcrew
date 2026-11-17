@@ -8,7 +8,7 @@ const sections: [string, [string, string][]][] = [
     "COMMANDS",
     [
       ["(no command)", "Open this repository's lead, with the sidebar"],
-      ["ps [<repo>]", "Threads and whether they need you"],
+      ["ps [<repo>]", "Threads: status, PR, CI, review, needs you"],
       ["start <issue> [--from <branch>]", "Start, resume, or go on past the limit"],
       ['start <repo> "<title>" "<body>"', "Start a thread, with no issue in the tracker"],
       ["start <repo> < <file>", "The same, with the title on stdin's first line"],
@@ -27,6 +27,10 @@ const sections: [string, [string, string][]][] = [
       ["issue show <issue>", "An issue's title and body"],
       ['issue create <repo> "<title>" "<body>"', "Create an issue in the repository's tracker"],
     ],
+  ],
+  [
+    "PULL REQUESTS",
+    [["pr show <number> | <thread>", "A PR as its page shows it, with failed logs"]],
   ],
   [
     "REPOSITORIES",

@@ -40,7 +40,7 @@ const script = (name: string, body: string) => writeScript(home, name, body);
 
 // Stands in for Claude Code, as the lead and as the builder alike: it waits at a ❯ prompt,
 // keeps what is typed into it, and shows esc to interrupt while the file busy is there, with
-// the file screen below it and a count above it that keeps moving. Idle, it shows the file
+// the file screen below it and a count above it that keeps moving, unless the file still is there. Idle, it shows the file
 // transcript above its prompt. Esc on its own ends a busy turn, as in Claude Code, and is noted
 // in the file escs.
 function fakeClaude(): void {
@@ -77,8 +77,9 @@ for i in $(seq 3000); do
     else cat "$CLAUDE_CONFIG_DIR/transcript" 2>/dev/null; echo "❯"; fi
     shown=$now
   fi
-  # Busy, the top line counts up, as Claude Code's spinner moves all through a turn.
-  if [ $now = busy ]; then printf '\\033[H%s\\033[K' "$i"; fi
+  # Busy, the top line counts up, as Claude Code's spinner moves all through a turn, unless the
+  # file still is there.
+  if [ $now = busy ] && [ ! -e "$CLAUDE_CONFIG_DIR/still" ]; then printf '\\033[H%s\\033[K' "$i"; fi
   sleep 0.1
 done`,
   );
@@ -417,6 +418,42 @@ describe.skipIf(insideSandbox)("sc peek and sc interrupt", () => {
     expect(peek.out).toContain("\napp-12 · working · idle\n");
     const interrupt = await skel(["interrupt", "app-12"], "lead");
     expect(interrupt.out).toContain("app-12's builder is idle already");
+    await Bun.sleep(1500);
+    expect(read(join(builder(), "escs"))).toBe("");
+  }, 60_000);
+
+  test("interrupt stops a quiet builder whose screen doesn't move mid-turn", async () => {
+    await startApp12();
+    writeFileSync(join(builder(), "still"), "");
+    writeFileSync(join(builder(), "busy"), "");
+    await until(() => tmuxScreen().includes("esc to interrupt"));
+    const before = tmuxScreen();
+    await Bun.sleep(1500);
+    expect(tmuxScreen()).toBe(before);
+    const peek = await skel(["peek", "app-12"], "lead");
+    expect(peek.out).toContain("\napp-12 · working · mid-turn\n");
+    const interrupt = await skel(["interrupt", "app-12"], "lead");
+    expect(interrupt.out).toContain("Interrupted app-12's builder");
+    await until(() => read(join(builder(), "escs")) !== "");
+  }, 60_000);
+
+  test("interrupt presses no Esc when a question opens while it looks at the screen", async () => {
+    await startApp12();
+    await until(() => tmuxScreen().includes("❯"));
+    // How long a command takes to look once, timed on the idle builder, where peek looks only
+    // once.
+    const timed = Date.now();
+    await skel(["peek", "app-12"], "lead");
+    const oneLook = Date.now() - timed;
+    writeFileSync(join(builder(), "busy"), "");
+    await until(() => tmuxScreen().includes("esc to interrupt"));
+    // Busy, interrupt looks twice, 1.2 seconds apart. The question opens between the two looks.
+    const interrupt = skel(["interrupt", "app-12"], "lead");
+    await Bun.sleep(oneLook + 600);
+    setAsking();
+    const said = await interrupt;
+    expect(said.code).not.toBe(0);
+    expect(said.err).toContain("started asking the human a question");
     await Bun.sleep(1500);
     expect(read(join(builder(), "escs"))).toBe("");
   }, 60_000);

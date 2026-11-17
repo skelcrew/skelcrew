@@ -100,22 +100,28 @@ export function messageLead(db: Database, tmux: string, thread: Thread, text: st
   log(db, readThread(db, thread.folder), `its builder told the lead: ${text}`);
 }
 
-// Returns what the builder is doing by its screen, for sc peek and sc interrupt: asking the
-// human a question, mid-turn, or else idle. The busy mark alone isn't enough, as a command's
-// output above an idle prompt can hold the same words, and Esc there could clear a draft. A
-// harness mid-turn redraws its spinner and timer all the time, even while a command hangs, and
-// an idle one sits still. So it is mid-turn only while the mark shows and the screen moves.
-async function builderState(tmux: string, thread: Thread): Promise<"asking" | "mid-turn" | "idle"> {
-  if (thread.asking) return "asking";
+// Returns what the builder is doing by its screen, for sc peek and sc interrupt: mid-turn, or
+// else idle. The busy mark alone isn't enough, as a command's output above an idle prompt can
+// hold the same words, and Esc there could clear a draft. Two signs tell a running turn from
+// such output, and either is enough. A harness mid-turn redraws its spinner and timer, so its
+// screen moves. And with nothing but blank lines after the busy mark, there is no prompt below
+// it, which a quiet harness running a long command can show. Output in an idle builder sits
+// still above its bare prompt. Only the visible screen counts, as an old busy mark can sit in
+// the history above it.
+async function builderState(tmux: string, thread: Thread): Promise<"mid-turn" | "idle"> {
   const look = () => mustTmux(tmux, ["capture-pane", "-p", "-t", `=${thread.folder}:`]);
   const { busy } = builderHarness(thread).marks;
-  // Only the visible screen counts, as an old busy mark can sit in the history above it.
   const before = look();
   if (!before.includes(busy)) return "idle";
   // A little over a second, so a timer that counts whole seconds has moved too.
   await Bun.sleep(1200);
   const after = look();
-  return after.includes(busy) && after !== before ? "mid-turn" : "idle";
+  if (!after.includes(busy)) return "idle";
+  const below = after
+    .slice(after.lastIndexOf(busy) + busy.length)
+    .split("\n")
+    .slice(1);
+  return after !== before || below.every((line) => line.trim() === "") ? "mid-turn" : "idle";
 }
 
 // Returns the last lines of the builder's screen, for sc peek, so the lead can see what a builder
@@ -147,8 +153,8 @@ export async function peekAtBuilder(
     .trimEnd()
     .split("\n")
     .slice(-lines);
-  const doing = { asking: "asking the human a question", "mid-turn": "mid-turn", idle: "idle" };
-  const heading = `${name} · ${thread.status} · ${doing[await builderState(tmux, thread)]}`;
+  const doing = thread.asking ? "asking the human a question" : await builderState(tmux, thread);
+  const heading = `${name} · ${thread.status} · ${doing}`;
   return `<skelcrew from="${name}" kind="peek">\n${untagged([heading, ...shown].join("\n"))}\n</skelcrew>`;
 }
 
@@ -165,12 +171,19 @@ export async function interruptBuilder(
   who: "you" | "the lead",
 ): Promise<string> {
   const name = runningBuilder(db, tmux, thread);
-  const state = await builderState(tmux, thread);
-  if (state === "asking")
+  if (thread.asking)
     throw new Error(
       `${name}'s builder is asking the human a question, and Esc would sweep it away. Tell the human instead.`,
     );
-  if (state === "idle") return `${name}'s builder is idle already, so Skelcrew did nothing.`;
+  if ((await builderState(tmux, thread)) === "idle")
+    return `${name}'s builder is idle already, so Skelcrew did nothing.`;
+  // Looking at the screen takes a moment, and the builder may have asked a question meanwhile.
+  // So the thread is read again right before the Esc, which would sweep that question away.
+  const now = readThread(db, thread.folder);
+  if (now.asking)
+    throw new Error(
+      `${name}'s builder started asking the human a question just now, so Skelcrew didn't press Esc. Tell the human instead.`,
+    );
   // Someone scrolled back would have tmux's copy mode take the Esc, and the builder would never
   // get it. So copy mode is left first. It fails when nobody is scrolled back, which is fine.
   tmuxCommand(tmux, ["send-keys", "-X", "-t", `=${thread.folder}:`, "cancel"]);

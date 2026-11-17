@@ -80,6 +80,7 @@ function usage(command?: string): never {
     "repo",
     "ps",
     "issue",
+    "pr",
     "start",
     "stop",
     "rm",
@@ -338,6 +339,30 @@ async function issueCommand(args: string[], json: boolean): Promise<void> {
   usage(command);
 }
 
+// Shows one PR, for sc pr show, named by its number, such as 31 or #31, or by its thread, such
+// as app-12. A number is in the repository of the checkout sc runs in, or the one --from names,
+// which sc --remote passes from your laptop's checkout. For the lead, it is always its own.
+async function prCommand(args: string[], json: boolean): Promise<void> {
+  const [command, sub, named, ...rest] = args;
+  const { askForPr } = await import("./client.ts");
+  const { printPr } = await import("./flow/list.ts");
+  const given = rest[0] === "--from" && rest[1] && rest.length === 2 ? rest[1] : undefined;
+  if (sub !== "show" || named === undefined || (rest.length > 0 && !given)) usage(command);
+  const number = named.match(/^#?(\d+)$/)?.[1];
+  const task = splitTaskName(named);
+  if (number !== undefined) {
+    const { originHere } = await import("./machine/origin.ts");
+    const from = given ?? originHere() ?? undefined;
+    printPr(await askForPr({ pr: Number(number), ...(from ? { from } : {}) }), json);
+    return;
+  }
+  if (task && !given) {
+    printPr(await askForPr({ repo: task[0], task: task[1] }), json);
+    return;
+  }
+  usage(command);
+}
+
 // Starts, stops, removes, re-reviews or attaches to the thread on a task such as app-13, or
 // peeks at or interrupts its builder. sc start also takes a repository, a title and a body, to
 // start a thread with no tracker.
@@ -472,6 +497,22 @@ async function runCommand(args: string[]): Promise<void> {
   // them already passed it, and tmux may hand them another laptop's build, which would make them
   // refuse.
   const onScreen = command === "sidebar" || command === "list" || command === "footer";
+  // On a remote, refuse to run until the machine is set up, with the exit code that lets the
+  // laptop offer to finish it. This comes before the build and setup checks, since they would
+  // copy and install things there, and --remote must ask before setting a machine up. Sidebars,
+  // lists and agents skip it: they can inherit the remote's name from whoever started tmux, and
+  // an agent's sandbox hides what setupDone reads. Only a remote loads setup.ts this early, so
+  // sc --remote on the laptop still starts quickly.
+  if (
+    process.env.SKELCREW_REMOTE_NAME &&
+    command !== "first-run" &&
+    command !== "take-setup" &&
+    !onScreen &&
+    process.env.SKELCREW_SANDBOX !== "1"
+  ) {
+    const { setupDone } = await import("./machine/setup.ts");
+    if (!setupDone()) process.exit(unfinished);
+  }
   if (!onScreen && outOfDate()) process.exit(outdated);
   // A machine whose setup differs from the laptop's runs nothing, so the laptop copies its own
   // there first. An agent's sandbox hides what this reads.
@@ -506,22 +547,6 @@ async function runCommand(args: string[]): Promise<void> {
     if (code === 0) console.log(`${host} is ready. Connect to it with:\n  sc --remote ${host}`);
     process.exit(code);
   }
-  // Commands that run here load what they need only from this point on, so sc --remote
-  // starts quickly and loads no part of the daemon on your laptop.
-  const { setupDone } = await import("./machine/setup.ts");
-  // On a remote, refuse to run until the machine is set up, with the exit code that lets the
-  // laptop offer to finish it. Sidebars, lists and agents skip this: they can inherit the
-  // remote's name from whoever started tmux, and an agent's sandbox hides what setupDone reads.
-  const remoteName = process.env.SKELCREW_REMOTE_NAME;
-  if (
-    remoteName &&
-    first !== "first-run" &&
-    first !== "take-setup" &&
-    !onScreen &&
-    process.env.SKELCREW_SANDBOX !== "1" &&
-    !setupDone()
-  )
-    process.exit(unfinished);
   // Plain sc, or sc --from <remote> as sc --remote sends it.
   if (words.length === 0 || (first === "--from" && second && words.length === 2))
     return leadCommand(second);
@@ -546,6 +571,8 @@ async function runCommand(args: string[]): Promise<void> {
       return psCommand(words, json);
     case "issue":
       return issueCommand(words, json);
+    case "pr":
+      return prCommand(words, json);
     case "start":
     case "stop":
     case "rm":

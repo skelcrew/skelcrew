@@ -353,6 +353,18 @@ test("while a review runs, a thread's harness is its reviewer's", () => {
   ]);
 });
 
+test("a review waiting for a place is queued for review, on its reviewer, and its PR in a round", () => {
+  const columns = ", pr, harness, reviewing, reviewer, queued";
+  const sql = `${repository}
+${itemSql("app", "pr", 31, "Waiting", "2026-11-01T10:00:00Z")}
+${thread("12", columns, "'waiting', 31, 'claude', 'abc', 'codex', 5")}`;
+  const { threads, prs } = after(sql);
+  expect(shape(threads)[0]?.[1]).toEqual([
+    ["○", "app-12", "", "queued for review", "codex", "#12 #31", ""],
+  ]);
+  expect(shape(prs)[0]?.[1]).toEqual([["◐", "app#31", "Waiting", "queued for review"]]);
+});
+
 test("a change is shown by its clock time today and its date before, so it ticks only at midnight", () => {
   const now = new Date(2026, 10, 13, 9, 5).getTime();
   expect(changedAt(new Date(2026, 10, 13, 0, 1).getTime(), now)).toBe("00:01");

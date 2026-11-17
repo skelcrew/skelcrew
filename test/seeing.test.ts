@@ -8,6 +8,9 @@ import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import type { Subprocess } from "bun";
 import {
+  answer,
+  asked,
+  fakePlugin,
   homeEnv,
   insideSandbox,
   itemSql,
@@ -136,7 +139,7 @@ async function openApp(): Promise<void> {
 
 describe("sc ps", () => {
   // A thread's short title says what it is in a few words. One with none shows its title, cut
-  // to the room the sidebar gives it, so a long title doesn't push the other columns away.
+  // so the row fits 80 columns. Without a forge there is no PR, CI or review to show.
   test("lists live threads newest first, with their short title, status and whether they need you", async () => {
     threads();
     serve();
@@ -144,10 +147,10 @@ describe("sc ps", () => {
     const listed = await skel(["ps"]);
     expect(listed.err).toBe("");
     expect(listed.out).toBe(
-      "THREAD  TITLE                            STATUS   NEEDS YOU\n" +
-        "app-9   Send people back to the page t…  failed\n" +
-        "app-12  JSON export                      working\n" +
-        "site-7  Add docs                         waiting  yes\n",
+      "THREAD  TITLE                                 STATUS   PR  CI  REVIEW  NEEDS YOU\n" +
+        "app-9   Send people back to the page they c…  failed\n" +
+        "app-12  JSON export                           working\n" +
+        "site-7  Add docs                              waiting                  yes\n",
     );
   });
 
@@ -159,11 +162,11 @@ describe("sc ps", () => {
     const listed = await skel(["ps", "--all"]);
     expect(listed.err).toBe("");
     expect(listed.out).toBe(
-      "THREAD  TITLE                            STATUS   NEEDS YOU\n" +
-        "app-9   Send people back to the page t…  failed\n" +
-        "app-12  JSON export                      working\n" +
-        "site-7  Add docs                         waiting  yes\n" +
-        "app-3   Typo                             done\n",
+      "THREAD  TITLE                                 STATUS   PR  CI  REVIEW  NEEDS YOU\n" +
+        "app-9   Send people back to the page they c…  failed\n" +
+        "app-12  JSON export                           working\n" +
+        "site-7  Add docs                              waiting                  yes\n" +
+        "app-3   Typo                                  done\n",
     );
     expect(JSON.parse((await skel(["ps", "app", "--json", "--all"])).out)).toHaveLength(3);
   });
@@ -175,9 +178,35 @@ describe("sc ps", () => {
     const listed = await skel(["ps", "site", "--json"]);
     expect(listed.err).toBe("");
     expect(JSON.parse(listed.out)).toEqual([
-      { thread: "site-7", short: null, title: "Add docs", status: "waiting", needsYou: true },
+      {
+        thread: "site-7",
+        short: null,
+        title: "Add docs",
+        status: "waiting",
+        needsYou: true,
+        queued: false,
+        branch: "skelcrew/7",
+        pr: null,
+        prUrl: null,
+        checks: null,
+        review: null,
+      },
     ]);
     expect(JSON.parse((await skel(["ps", "--json", "app"])).out)).toHaveLength(2);
+  });
+
+  // A stopped thread can keep the fields of the review its stop cancelled.
+  test("says a stopped thread is stopped, not queued for review", async () => {
+    sql(`INSERT INTO repositories (name, owner, repo) VALUES ('app', 'simon', 'app');
+INSERT INTO threads (owner, repo, task, folder, branch, status, session, title, reviewing, queued)
+  VALUES ('simon', 'app', 3, 'app-3', 'skelcrew/3', 'stopped', NULL, 'Old', 'abc', 5);`);
+    serve();
+    await untilAnswers();
+    const listed = await skel(["ps"]);
+    expect(listed.err).toBe("");
+    expect(listed.out).toBe(
+      "THREAD  TITLE  STATUS   PR  CI  REVIEW  NEEDS YOU\napp-3   Old    stopped\n",
+    );
   });
 
   test("says when there are no threads, and when the repository isn't Skelcrew's", async () => {
@@ -216,7 +245,19 @@ describe("sc ps", () => {
     serve();
     await untilAnswers();
     expect(JSON.parse((await skel(["ps", "--json"])).out)).toEqual([
-      { thread: "app-12", short: null, title: null, status: "working", needsYou: false },
+      {
+        thread: "app-12",
+        short: null,
+        title: null,
+        status: "working",
+        needsYou: false,
+        queued: false,
+        branch: "skelcrew/12",
+        pr: null,
+        prUrl: null,
+        checks: null,
+        review: null,
+      },
     ]);
   });
 
@@ -424,6 +465,304 @@ describe("sc issue show", () => {
     const refused = await asAgent(["issue", "show", "app-12"], await builderSocket());
     expect(refused.code).not.toBe(0);
     expect(refused.err).toBe("Skelcrew: the daemon doesn't know that request\n");
+  });
+});
+
+// app has the fake plugin as its forge, and site has none. The fake forge fails every poll, so
+// Skelcrew's copy keeps what each test puts in it. app-14's review is under way, app-12's last
+// review asked for changes in round 3 and its CI failed, and app-9 never got a PR.
+function forgeThreads(): string {
+  const settings = fakePlugin(home);
+  writeFileSync(join(settings, "fail-changed"), "no network in tests");
+  // The daemon carries on app-14's review as it starts. It waits on the forge to show it under
+  // way, so it stays under way.
+  writeFileSync(join(settings, "hold-status"), "");
+  answer(settings, "log", { log: "\x1b[31mexpected 2, got 3\x1b[0m\r\nat line 4" });
+  sql(`INSERT INTO repositories (name, owner, repo, forge, claimed, remote) VALUES
+  ('app', 'simon', 'app', 'github', 1, 'https://github.com/simon/app.git'),
+  ('site', 'simon', 'site', NULL, 1, 'https://example.com/simon/site.git');
+INSERT INTO threads (owner, repo, task, folder, branch, status, session, title, short, pr, checks,
+    rounds, verdict, review_round, review_at, reviewing) VALUES
+  ('simon', 'app', 9, 'app-9', 'skelcrew/9', 'failed', NULL, 'Old', NULL, NULL, NULL, 0, NULL, NULL, NULL, NULL),
+  ('simon', 'app', 12, 'app-12', 'skelcrew/12', 'waiting', 's12', 'Add' || char(10) || 'export', 'JSON export', 31, 'failing', 3, 'changes', 3, 1763290800000, NULL),
+  ('simon', 'app', 14, 'app-14', 'skelcrew/14', 'waiting', 's14', 'Fix login', NULL, 33, 'pending', 1, 'changes', 1, 1763294400000, 'abc'),
+  ('simon', 'site', 7, 'site-7', 'skelcrew/7', 'waiting', 's7', 'Add docs', NULL, NULL, NULL, 0, 'approve', 1, 1763290800000, NULL);`);
+  const bot = { login: "skelcrew[bot]", bot: true, you: false, push: false };
+  sql(
+    itemSql("app", "pr", 31, "Add\x07export", "2026-11-05T10:00:00Z", {
+      branch: "skelcrew/12",
+      body: "Adds export.\r\n\r\nCloses #12",
+      checks: [
+        { name: "test", id: "501", state: "failed" },
+        { name: "lint", id: "502", state: "passed" },
+        { name: "skelcrew/check", id: null, state: "failed" },
+      ],
+      reviews: [
+        {
+          id: "1",
+          text: "**Changes requested**\n\nRename the \x1b[31mflag\x1b[0m.",
+          author: bot,
+          verdict: "commented",
+          lines: [],
+        },
+      ],
+    }),
+  );
+  sql(itemSql("app", "pr", 33, "Fix login", "2026-11-06T10:00:00Z", { branch: "skelcrew/14" }));
+  sql(itemSql("app", "pr", 40, "Bump deps", "2026-11-07T10:00:00Z"));
+  for (const live of ["app-12", "app-14", "site-7"])
+    tmux("new-session", "-d", "-s", live, "sleep 300");
+  return settings;
+}
+
+// More of app's threads, beside forgeThreads': app-16's review is under way while its builder
+// asks a question, and app-17's while it is past the round limit of 3. app-18's round fails on
+// its push, as its clone was never set up. app-19 failed while CI still ran on its PR, and CI
+// passed after, which only the copy of its PR has heard.
+function moreThreads(): void {
+  sql(`INSERT INTO threads (owner, repo, task, folder, branch, status, session, title, pr, checks,
+    rounds, needs_you, asking, verdict, review_round, reviewing, submitting) VALUES
+  ('simon', 'app', 16, 'app-16', 'skelcrew/16', 'waiting', 's16', 'Asks', 35, NULL, 2, 0, 1, 'changes', 2, 'def', NULL),
+  ('simon', 'app', 17, 'app-17', 'skelcrew/17', 'waiting', 's17', 'Past', 36, NULL, 4, 1, 0, 'changes', 4, 'ghi', NULL),
+  ('simon', 'app', 18, 'app-18', 'skelcrew/18', 'waiting', 's18', 'Push', 37, NULL, 0, 0, 0, NULL, NULL, NULL, 'Go'),
+  ('simon', 'app', 19, 'app-19', 'skelcrew/19', 'failed', NULL, 'Late CI', 38, 'pending', 0, 0, 0, NULL, NULL, NULL, NULL);`);
+  sql(
+    itemSql("app", "pr", 38, "Late CI", "2026-11-08T10:00:00Z", {
+      checks: [{ name: "test", id: "601", state: "passed" }],
+    }),
+  );
+  for (const live of ["app-16", "app-17", "app-18"])
+    tmux("new-session", "-d", "-s", live, "sleep 300");
+}
+
+// Runs sc in a folder, as you would in a checkout.
+async function skelIn(cwd: string, args: string[]) {
+  const run = Bun.spawn([process.execPath, source("main.ts"), ...args], {
+    cwd,
+    env: env(),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [out, err] = await Promise.all([
+    new Response(run.stdout).text(),
+    new Response(run.stderr).text(),
+  ]);
+  return { out, err, code: await run.exited };
+}
+
+// What sc pr show prints for app's PR 31, from Skelcrew's copy, with the forge's log of its
+// failed check. The colour codes and other control characters from the forge are gone.
+const pr31 = `#31  Add export
+State   open
+Branch  skelcrew/12 → main
+Thread  app-12
+Checks  failed
+        test: failed
+        lint: passed
+Review  Changes requested · skelcrew[bot]
+Link    https://github.com/simon/app/pull/31
+
+Latest review
+**Changes requested**
+
+Rename the flag.
+
+Description
+Adds export.
+
+Closes #12
+
+Log of test, from the forge
+expected 2, got 3
+at line 4
+`;
+
+describe("with a forge", () => {
+  // Each thread's PR, what its CI says and where its review stands, in a row that still fits
+  // 80 columns. A repository with no forge has none of them.
+  test("sc ps shows each thread's PR, CI and review, with its round", async () => {
+    forgeThreads();
+    serve();
+    await untilAnswers();
+    const listed = await skel(["ps"]);
+    expect(listed.err).toBe("");
+    expect(listed.out).toBe(
+      "THREAD  TITLE        STATUS   PR   CI       REVIEW        NEEDS YOU\n" +
+        "site-7  Add docs     waiting\n" +
+        "app-14  Fix login    waiting  #33  running  reviewing r2\n" +
+        "app-12  JSON export  waiting  #31  failed   changes r3\n" +
+        "app-9   Old          failed                 none\n",
+    );
+    for (const line of listed.out.split("\n")) expect(line.length).toBeLessThanOrEqual(80);
+    const json = JSON.parse((await skel(["ps", "app", "--json"])).out);
+    expect(json[1]).toEqual({
+      thread: "app-12",
+      short: "JSON export",
+      title: "Add export",
+      status: "waiting",
+      needsYou: false,
+      queued: false,
+      branch: "skelcrew/12",
+      pr: 31,
+      prUrl: "https://github.com/simon/app/pull/31",
+      checks: "failed",
+      review: { state: "changes", round: 3, at: "2025-11-16T11:00:00.000Z" },
+    });
+    expect(json[0].review).toEqual({
+      state: "reviewing",
+      round: 2,
+      at: "2025-11-16T12:00:00.000Z",
+    });
+    expect(json[2]).toMatchObject({ pr: null, checks: null, review: { state: "none" } });
+  });
+
+  // A question or the round limit comes on top of a review under way without changing it. A
+  // round that failed says so. A thread polls pass over takes its CI from the copy of its PR.
+  test("sc ps shows a review under way whatever else the thread needs, and CI from the copy", async () => {
+    forgeThreads();
+    moreThreads();
+    serve();
+    await untilAnswers();
+    type Row = { thread: string; checks: string | null; review: { state: string; round: number } };
+    const rows = async () => {
+      const listed: Row[] = JSON.parse((await skel(["ps", "app", "--json"])).out);
+      return Object.fromEntries(listed.map((row) => [row.thread, row]));
+    };
+    // app-18's push fails a moment after the daemon starts.
+    let shown = await rows();
+    for (let tries = 0; shown["app-18"]?.review.state !== "failed" && tries < 100; tries++) {
+      await Bun.sleep(100);
+      shown = await rows();
+    }
+    expect(shown["app-16"]?.review).toMatchObject({ state: "reviewing", round: 3 });
+    expect(shown["app-17"]?.review).toMatchObject({ state: "reviewing", round: 5 });
+    expect(shown["app-18"]?.review).toMatchObject({ state: "failed", round: 1 });
+    expect(shown["app-19"]?.checks).toBe("passed");
+    // A live thread keeps the word its polls keep.
+    expect(shown["app-14"]?.checks).toBe("running");
+  });
+
+  test("sc pr show shows a thread's PR from Skelcrew's copy, with the log of a failed check", async () => {
+    const settings = forgeThreads();
+    serve();
+    await untilAnswers();
+    const shown = await skel(["pr", "show", "app-12"]);
+    expect(shown.err).toBe("");
+    expect(shown.out).toBe(pr31);
+    // Only the log comes from the forge, and only for the failed check with a log.
+    const logs = asked(settings).filter((question) => question.ask === "log");
+    expect(logs).toEqual([{ ask: "log", repository: "simon/app", check: "501" }]);
+  });
+
+  // The forge can hang on a log, and sc gives up on the daemon after a minute, so the log has a
+  // deadline of its own, and the PR still shows with why its log is missing.
+  test("sc pr show still shows the PR when the forge hangs on a log", async () => {
+    const settings = forgeThreads();
+    writeFileSync(join(settings, "hold-log"), "");
+    serve();
+    await untilAnswers();
+    const started = Date.now();
+    const shown = await skel(["pr", "show", "app-12"]);
+    expect(Date.now() - started).toBeLessThan(20_000);
+    expect(shown.err).toBe("");
+    expect(shown.out).toStartWith("#31  Add export\n");
+    expect(shown.out).toEndWith(
+      "Log of test, from the forge\n(Skelcrew couldn't read its log: github didn't answer within 10 seconds)\n",
+    );
+  }, 40_000);
+
+  test("sc pr show takes a PR's number, or #N, in a checkout of its repository", async () => {
+    forgeThreads();
+    const checkout = join(home, "app");
+    mkdirSync(checkout);
+    Bun.spawnSync(["git", "-C", checkout, "init", "-q"]);
+    Bun.spawnSync([
+      "git",
+      "-C",
+      checkout,
+      "remote",
+      "add",
+      "origin",
+      "git@github.com:simon/app.git",
+    ]);
+    serve();
+    await untilAnswers();
+    expect((await skelIn(checkout, ["pr", "show", "#31"])).out).toBe(pr31);
+    const bare = await skelIn(checkout, ["pr", "show", "40"]);
+    expect(bare.err).toBe("");
+    expect(bare.out).toStartWith(
+      "#40  Bump deps\nState   open\nBranch  b40 → main\nThread  none\nChecks  none\nReview  none\n",
+    );
+    // Outside any checkout, a number names no repository.
+    const away = await skelIn(home, ["pr", "show", "31"]);
+    expect(away.code).not.toBe(0);
+    expect(away.err).toContain("name the PR's thread, such as app-12");
+    // sc --remote passes the repository of your laptop's checkout as --from.
+    const sent = await skelIn(home, ["pr", "show", "31", "--from", "git@github.com:simon/app.git"]);
+    expect(sent.out).toBe(pr31);
+  });
+
+  test("sc pr show gives JSON for tools", async () => {
+    forgeThreads();
+    serve();
+    await untilAnswers();
+    const shown = await skel(["pr", "show", "app-12", "--json"]);
+    expect(JSON.parse(shown.out)).toEqual({
+      pr: 31,
+      title: "Add export",
+      state: "open",
+      branch: "skelcrew/12",
+      base: "main",
+      thread: "app-12",
+      ci: "failed",
+      checks: [
+        { name: "test", state: "failed", log: "expected 2, got 3\nat line 4" },
+        { name: "lint", state: "passed", log: null },
+      ],
+      review: {
+        verdict: "Changes requested",
+        author: "skelcrew[bot]",
+        body: "**Changes requested**\n\nRename the flag.",
+      },
+      body: "Adds export.\n\nCloses #12",
+      link: "https://github.com/simon/app/pull/31",
+    });
+  });
+
+  // The lead has no login to the forge, so it reads PRs here. A number means its own repository,
+  // wherever it runs, and it can't read another repository's.
+  test("the lead runs sc pr show on its own repository only", async () => {
+    forgeThreads();
+    serve();
+    await untilAnswers();
+    await openApp();
+    const own = await asAgent(["pr", "show", "31"], leadSocket());
+    expect(own.err).toBe("");
+    expect(own.out).toBe(pr31);
+    const listed = JSON.parse((await asAgent(["ps", "--json"], leadSocket())).out);
+    expect(listed.map((row: { thread: string }) => row.thread)).toEqual([
+      "app-14",
+      "app-12",
+      "app-9",
+    ]);
+    const other = await asAgent(["pr", "show", "site-7"], leadSocket());
+    expect(other.code).not.toBe(0);
+    expect(other.err).toContain("you are the lead of simon/app only");
+  });
+
+  test("sc pr show says a repository with no forge has no PRs, and names what is missing", async () => {
+    forgeThreads();
+    serve();
+    await untilAnswers();
+    const none = await skel(["pr", "show", "site-7"]);
+    expect(none.code).not.toBe(0);
+    expect(none.err).toBe("Skelcrew: site has no forge, so there are no PRs\n");
+    const early = await skel(["pr", "show", "app-9"]);
+    expect(early.err).toBe("Skelcrew: app-9 has no PR yet\n");
+    const gone = await skel(["pr", "show", "app-99"]);
+    expect(gone.err).toBe("Skelcrew: there is no thread app-99\n");
+    const usage = await skel(["pr", "show"]);
+    expect(usage.err).toContain("sc pr was given arguments it doesn't take");
   });
 });
 
