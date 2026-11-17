@@ -281,6 +281,21 @@ console.log(JSON.stringify(claude.start({ name: "lead", ...${JSON.stringify(lead
     return names.stdout.toString() + listed.stdout.toString();
   }
 
+  // The settings every Claude Code agent starts with: bypass mode with no warning, its own sandbox
+  // off, and the hooks that tell Skelcrew what it is doing.
+  const hook = (command: string) => ({ type: "command", command, timeout: 10 });
+  const agentSettings = JSON.stringify({
+    skipDangerousModePermissionPrompt: true,
+    sandbox: { enabled: false },
+    hooks: {
+      PreToolUse: [{ matcher: "AskUserQuestion", hooks: [hook("sc question asked")] }],
+      PostToolUse: [{ matcher: "AskUserQuestion", hooks: [hook("sc question closed")] }],
+      UserPromptSubmit: [{ hooks: [hook("sc question answered")] }],
+      StopFailure: [{ hooks: [hook("sc turn failed")] }],
+      Stop: [{ hooks: [hook("sc turn ended")] }],
+    },
+  });
+
   test("Claude Code starts in its own config folder, trusted, with Skelcrew's token", async () => {
     repository();
     mkdirSync(join(home, ".claude", "projects"), { recursive: true });
@@ -320,7 +335,7 @@ console.log(JSON.stringify(claude.start({ name: "lead", ...${JSON.stringify(lead
         "--permission-mode",
         "bypassPermissions",
         "--settings",
-        '{"skipDangerousModePermissionPrompt":true,"sandbox":{"enabled":false}}',
+        agentSettings,
         "--resume",
         "abc-123",
         "Fix the bug",

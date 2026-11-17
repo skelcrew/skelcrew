@@ -64,6 +64,7 @@ function thread(change: Partial<Thread> = {}): Thread {
     assigned: false,
     changed: null,
     updates: [],
+    state: null,
     ...change,
   };
 }

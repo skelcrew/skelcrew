@@ -216,20 +216,20 @@ export async function reviewAgain(repository: string, task: string): Promise<str
   return checkReply(z.object({ reviewing: z.string() }), reply).reviewing;
 }
 
-// Tells the daemon, for a builder's hook, about its builder's question: asked, so the thread
+// Tells the daemon, for an agent's hook, about its question: asked, so a builder's thread
 // needs you, or closed, as AskUserQuestion returned its answer within the same turn. Answered is
-// sent whenever something is typed into the builder. It ends any question or error, and starts a
-// new turn. The builder's own socket tells the daemon which thread it is. The daemon answers at
-// once, as Claude Code waits on its hooks.
+// sent whenever something is typed into the agent. It starts a new turn, and for a builder ends
+// any question or error. The agent's own socket tells the daemon which agent it is. The daemon
+// answers at once, as Claude Code waits on its hooks.
 export async function reportQuestion(state: "asked" | "answered" | "closed"): Promise<void> {
   await request({ command: `question ${state}` });
 }
 
-// Tells the daemon, for a builder's Stop hook, that its builder ended its turn, so the thread
-// needs you if the builder stopped without submitting. The hook's input on stdin can hold the
-// builder's last message, whose first line goes in the lead's note, so you see what it waits
-// on. Input that isn't the hook's is left out, and a terminal isn't read, as it would wait for
-// you. The builder's own socket says which thread.
+// Tells the daemon, for an agent's Stop hook, that it ended its turn, so it shows idle, and a
+// builder's thread needs you if the builder stopped without submitting. The hook's input on stdin
+// can hold the builder's last message, whose first line goes in the lead's note, so you see what
+// it waits on. Input that isn't the hook's is left out, and a terminal isn't read, as it would
+// wait for you. The agent's own socket says which agent.
 export async function reportTurnEnded(): Promise<void> {
   const Input = z.object({ last_assistant_message: z.string().nullish() });
   const text = process.stdin.isTTY ? "" : await Bun.stdin.text();
@@ -247,10 +247,9 @@ const StopFailure = z.looseObject({
   last_assistant_message: z.string().optional(),
 });
 
-// Tells the daemon, for a Claude Code builder's hook, that its builder's turn ended on an
-// error, such as a lapsed login or a usage limit, with what the hook was told of it, so the
-// thread needs you or waits for the limit to reset. The builder's own socket says which
-// thread. A hook input that can't be read still reports the error, only without its words.
+// Tells the daemon, for a Claude Code agent's hook, that its turn ended on an error, such as a
+// lapsed login or a usage limit, with what the hook was told of it, so a builder's thread needs
+// you or waits for the limit to reset. The agent's own socket says which agent. A hook input that can't be read still reports the error, only without its words.
 export async function reportTurnFailed(input: string): Promise<void> {
   let given: unknown = {};
   try {
@@ -264,6 +263,12 @@ export async function reportTurnFailed(input: string): Promise<void> {
     ...(error ? { error } : {}),
     ...(message ? { message } : {}),
   });
+}
+
+// Tells the daemon, for a Codex agent's Interrupt hook, that you stopped its turn with Esc, so
+// it shows idle. The agent's own socket says which one.
+export async function reportTurnInterrupted(): Promise<void> {
+  await request({ command: "turn interrupted" });
 }
 
 // Has the daemon open a repository, by its owner/name, when the sidebar switches to its tab or

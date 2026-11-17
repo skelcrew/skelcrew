@@ -1,12 +1,24 @@
-// The status module: knows whether each thread's builder works, idles, needs you, is ready or
-// hit an error. It learns this from the hooks the builder's harness runs, and gives the word the
-// sidebar and sc ps show for it. Leads have no status: they get none of these hooks.
+// The status module: knows whether each agent works, idles, asks you or hit an error, and
+// whether each thread needs you or is ready. It learns this from the hooks the agent's harness
+// runs, and from the agent's screen where no hook fires, and gives the word the sidebar and sc ps
+// show for a thread. A lead's hooks only keep its state: nothing a lead does flags needs you.
 import type { Database } from "bun:sqlite";
+import { z } from "zod";
+import { harnessNamed } from "../agents/harness.ts";
+import { agentRuns, readSession } from "../agents/sessions.ts";
 import { pastRoundLimit } from "./decide.ts";
-import { typeLeadNotes } from "./lead.ts";
+import { leadOf, typeLeadNotes } from "./lead.ts";
 import { clockTime, endWake, wakeAfterLimit } from "./limits.ts";
+import type { DaemonRequest } from "./requests.ts";
 import { untagged } from "./tell.ts";
-import { builderHarness, queuedForReview, readThread, record, type Thread } from "./thread.ts";
+import {
+  type AgentState,
+  builderHarness,
+  queuedForReview,
+  readThread,
+  record,
+  Thread,
+} from "./thread.ts";
 
 // The status a host shows for a thread's builder.
 export type Status = "working" | "idle" | "needs you" | "ready" | "error";
@@ -34,15 +46,105 @@ export const endedTurnAsks = (thread: Thread) =>
 // in the same order as its word in the sidebar, which then serves as the reason. A thread that
 // failed, or whose harness stopped on an error, is in error. An approval with green checks is
 // ready to merge. Anything else that needs you comes next. A builder waiting out its usage limit
-// idles, as it is woken once the limit resets. Otherwise a working thread works, and the rest
-// idle: one waiting on its checks or review, stopped or done.
+// idles, as it is woken once the limit resets, and so does one that isn't running. Otherwise
+// the builder's own state says whether it works, such as idle after Esc while its thread still
+// works. Before its first hook, a working thread works, and one waiting on its review idles.
 export function statusOf(thread: Thread, maxRounds: number, now = Date.now()): Status {
   const word = threadWord(thread, maxRounds, now);
   if (thread.status === "failed" || word === "error") return "error";
   if (word === "approved") return "ready";
   if (needsYou(thread)) return "needs you";
   if (thread.erred && thread.limited) return "idle";
-  return thread.status === "working" ? "working" : "idle";
+  if (thread.status !== "working" && thread.status !== "waiting") return "idle";
+  return (thread.state ?? thread.status) === "working" ? "working" : "idle";
+}
+
+// Returns the state an agent is in once its harness ran a hook, by the request the hook made,
+// or null for a request no hook makes. A message going in starts a turn, as an answer to
+// AskUserQuestion goes on with one. A turn ends idle, normally or by Esc on Codex, or on an
+// error Claude Code reported.
+export function stateAfter(command: DaemonRequest["command"]): AgentState | null {
+  switch (command) {
+    case "question answered":
+    case "question closed":
+      return "working";
+    case "question asked":
+      return "asking";
+    case "turn ended":
+    case "turn interrupted":
+      return "idle";
+    case "turn failed":
+      return "error";
+    default:
+      return null;
+  }
+}
+
+// An agent as keepState takes it: a builder by its thread's folder, a lead by its repository.
+type Agent = { folder: string } | { owner: string; repo: string };
+
+// A repository whose lead is working, as the screen check reads it from the database.
+const LeadKey = z.object({ owner: z.string(), repo: z.string() });
+
+// The agents whose busy mark was gone at the screen check's last look, by the key keepState
+// gives them.
+const markGone = new Set<string>();
+
+// Returns the key an agent goes by in markGone: a thread's folder, or a lead's owner/name.
+// Folders hold no /, so the two never meet.
+const agentKey = (agent: Agent) =>
+  "folder" in agent ? agent.folder : `${agent.owner}/${agent.repo}`;
+
+// Keeps what an agent is doing: a builder's state on its thread, a lead's on its repository.
+// Not logged, as it changes with every turn. A new state forgets the screen check's last look,
+// so a mark gone before the change can't turn the new turn idle.
+export function keepState(db: Database, agent: Agent, state: AgentState): void {
+  markGone.delete(agentKey(agent));
+  if ("folder" in agent)
+    db.run("UPDATE threads SET state = ? WHERE folder = ?", [state, agent.folder]);
+  else
+    db.run("UPDATE repositories SET lead_state = ? WHERE owner = ? AND repo = ?", [
+      state,
+      agent.owner,
+      agent.repo,
+    ]);
+}
+
+// Looks at the screen of each running agent whose state is working, and makes it idle once its
+// harness's busy mark is gone at two looks in a row. Two gaps have no hook: Esc on Claude Code,
+// and an error on Codex, such as an unknown model, which prints it and sits at its prompt. One
+// look isn't enough: right after a message goes in, the mark can take a moment to show. Neither
+// gap flags needs you: after Esc you are looking at the agent anyway. The daemon runs it every
+// two seconds.
+export function noticeIdleScreens(db: Database, sessions: string): void {
+  // The working agents: each builder still at work on its thread, and each lead.
+  const working: { key: Agent; name: string; busy: string }[] = [];
+  const threads = db
+    .query("SELECT * FROM threads WHERE state = 'working' AND status IN ('working', 'waiting')")
+    .all()
+    .map((row) => Thread.parse(row));
+  for (const thread of threads)
+    working.push({ key: thread, name: thread.folder, busy: builderHarness(thread).marks.busy });
+  const leads = db
+    .query("SELECT owner, repo FROM repositories WHERE lead_state = 'working'")
+    .all()
+    .map((row) => LeadKey.parse(row));
+  for (const lead of leads) {
+    const { name, harness } = leadOf(db, lead.owner, lead.repo);
+    working.push({ key: lead, name, busy: harnessNamed(harness ?? "claude").marks.busy });
+  }
+  // An agent goes idle when the mark was gone at the last look too. The rest are remembered
+  // for the next look, and an agent no longer working is forgotten.
+  const gone = new Set<string>();
+  for (const agent of working) {
+    const key = agentKey(agent.key);
+    if (!agentRuns(sessions, agent.name)) continue;
+    if (readSession(sessions, agent.name).includes(agent.busy)) continue;
+    if (markGone.has(key)) keepState(db, agent.key, "idle");
+    else gone.add(key);
+  }
+  markGone.clear();
+  for (const key of gone) markGone.add(key);
 }
 
 // Returns the word for what the thread is doing, given the rounds of changes it may have. Its
