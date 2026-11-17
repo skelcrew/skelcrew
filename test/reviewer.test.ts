@@ -187,6 +187,19 @@ describe.skipIf(insideSandbox)("reviewer", () => {
     expect(readFileSync(join(clone, "README"), "utf8")).toBe("unsaved\n");
   });
 
+  // A builder runs git whenever it likes, and its Stop hook runs git status right after sc
+  // submit. Each holds a lock in the clone while it runs, which the reviewer's view then shows.
+  test("reviews the commit while a git command of the builder's holds its locks", async () => {
+    writeFileSync(join(clone, ".git", "index.lock"), "");
+    writeFileSync(join(clone, ".git", "HEAD.lock"), "");
+    fakeCodex(approve, ['git rev-parse HEAD > "$CODEX_HOME/sessions/seen"']);
+    expect(await start()).toEqual({ verdict: "approve", body: "Looks right." });
+    expect(kept("seen")).toBe(`${commit}\n`);
+    // The builder's git still holds them.
+    expect(existsSync(join(clone, ".git", "index.lock"))).toBe(true);
+    expect(existsSync(join(clone, ".git", "HEAD.lock"))).toBe(true);
+  });
+
   test("keeps Codex's instructions as they were, and its login and sessions writable", async () => {
     mkdirSync(join(codexHome(), "rules"), { recursive: true });
     for (const file of ["config.toml", "AGENTS.md", "rules/default.rules", "auth.json"])

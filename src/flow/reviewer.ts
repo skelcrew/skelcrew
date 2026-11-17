@@ -307,8 +307,13 @@ async function reviewNow(given: {
     // The builder can go on changing its clone after it submits, so the reviewer sees the
     // submitted commit, with what the builder changed since put aside. Ignored files, such
     // as installed packages, stay for the tests. git runs in the sandbox, as the clone's
-    // .git is the builder's to plant settings in.
-    const checkout = 'git checkout -q -f --detach "$0" && git clean -q -fd && exec "$@"';
+    // .git is the builder's to plant settings in. A git command the builder runs meanwhile,
+    // such as the git status its Stop hook runs right after sc submit, holds locks the view
+    // shows too, and checkout would refuse to run. No git in the sandbox holds them, and the
+    // view is thrown away, so they go there, while the builder's own stay.
+    const unlock =
+      'rm -f "$(git rev-parse --git-path index.lock)" "$(git rev-parse --git-path HEAD.lock)"';
+    const checkout = `${unlock} && git checkout -q -f --detach "$0" && git clean -q -fd && exec "$@"`;
     argv = sandboxArgs({
       home,
       path,
