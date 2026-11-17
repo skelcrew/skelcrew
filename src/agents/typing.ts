@@ -1,6 +1,6 @@
 // Typing a message into an agent's session: waiting until its harness shows it is ready, then
 // pasting the message and its Enter, one message at a time per session.
-import { pasteIntoSession, readSession, sendKey } from "./sessions.ts";
+import { dropStaged, pasteStaged, readSession, sendKey, stagePaste } from "./sessions.ts";
 
 // How typing waits, in milliseconds. `moment` is the pause between two looks at the screen,
 // and between a paste and its Enter. `timeout` is how long to wait for the prompt to be ready
@@ -84,36 +84,44 @@ export function typeInto(
 }
 
 // Waits for the agent to be ready, then pastes and submits the message without losing long
-// text. Throws if it stays busy too long. Types nothing once the signal is aborted, however long
-// it waited.
+// text. Throws if it stays busy too long, and forgets the text it readied for pasting after the
+// attempt. Types nothing once the signal is aborted, however long it waited.
 async function typeNow(socket: string, name: string, marks: Marks, text: string, waits: Waits) {
   const moment = waits.moment ?? 500;
   const timeout = waits.timeout ?? 60_000;
   const deadline = Date.now() + timeout;
-  // Text typed while Claude Code is starting or busy can be lost, so wait until it is idle.
-  // Check the signal after each wait too: the thread may have stopped meanwhile.
-  while (true) {
-    if (waits.signal?.aborted) return;
-    const why = await notIdle(socket, name, marks, moment);
-    if (waits.signal?.aborted) return;
-    if (why === "") {
-      // A person can start typing after the last look, and the paste would send their draft
-      // along with the message. So look once more right before pasting, and wait again if the
-      // prompt isn't bare. A moment remains, but only as long as the paste itself.
-      if (notReady(readSession(socket, name), marks) === "") break;
-    } else if (Date.now() > deadline) {
-      const waited = `${timeout / 1000}s`;
-      // A person's draft gets a plain answer, as it isn't the agent being busy.
-      if (why === draftReason)
-        throw new Error(
-          `${name} had an unsent draft at its prompt for ${waited}, so nothing was typed`,
-        );
-      throw new Error(`${name} wasn't idle for ${waited} (${why}), so nothing was typed`);
+  // The text readied on each pass, the last of which is pasted.
+  const staged: string[] = [];
+  try {
+    // Text typed while Claude Code is starting or busy can be lost, so wait until it is idle.
+    // Check the signal after each wait too: the thread may have stopped meanwhile.
+    while (true) {
+      if (waits.signal?.aborted) return;
+      const why = await notIdle(socket, name, marks, moment);
+      if (waits.signal?.aborted) return;
+      if (why === "") {
+        staged.push(stagePaste(socket, name, text));
+        // A person can start typing after the last look, and the paste would send their draft
+        // along with the message. So the text is readied first, then the screen looked at once
+        // more right before pasting, and typing waits again if the prompt isn't bare. A moment
+        // remains, but only as long as the paste itself.
+        if (notReady(readSession(socket, name), marks) === "") break;
+      } else if (Date.now() > deadline) {
+        const waited = `${timeout / 1000}s`;
+        // A person's draft gets a plain answer, as it isn't the agent being busy.
+        if (why === draftReason)
+          throw new Error(
+            `${name} had an unsent draft at its prompt for ${waited}, so nothing was typed`,
+          );
+        throw new Error(`${name} wasn't idle for ${waited} (${why}), so nothing was typed`);
+      }
     }
+    // Without the paste marks, Claude Code reads the Enter after a long message as a new line,
+    // and the message is never sent. So the Enter goes on its own, a moment after the paste.
+    pasteStaged(socket, name, staged.at(-1) ?? "");
+    await Bun.sleep(moment);
+    sendKey(socket, name, "Enter");
+  } finally {
+    for (const readied of staged) dropStaged(socket, readied);
   }
-  // Without the paste marks, Claude Code reads the Enter after a long message as a new line,
-  // and the message is never sent. So the Enter goes on its own, a moment after the paste.
-  pasteIntoSession(socket, name, text);
-  await Bun.sleep(moment);
-  sendKey(socket, name, "Enter");
 }

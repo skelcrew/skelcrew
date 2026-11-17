@@ -392,44 +392,33 @@ export const interruptSession = (socket: string, name: string) => sendKey(socket
 // How many paste buffers this process has made, so each gets a name of its own.
 let buffersMade = 0;
 
-// Pastes text into the named session as one bracketed paste, so the agent reads it as a whole,
-// however long, and newlines in it don't send it. Throws when the session is gone.
-export function pasteIntoSession(socket: string, name: string, text: string): void {
+// Pasting goes in steps, so the caller can take its last look at the screen after the slow
+// part and just before the paste: a person may start a draft at any moment, and the paste would
+// send it. stagePaste readies the text, pasteStaged pastes it, and dropStaged forgets it.
+
+// Readies text for pasteStaged into the named session, and returns the name it is kept under.
+// Someone scrolled back would swallow the Enter that follows a paste, and the message would
+// never be sent. Being scrolled back shows nowhere in the pane's text, so it is left here,
+// whether or not anyone is. That fails when nobody is, which is fine.
+export function stagePaste(socket: string, name: string, text: string): string {
   // A paste buffer of its own, so two daemons or two messages never paste each other's text.
-  const buffer = `skelcrew-${process.pid}-${buffersMade++}`;
-  try {
-    // Someone scrolled back would swallow the Enter that follows a paste, and the message would
-    // never be sent. Being scrolled back shows nowhere in the pane's text, so it is left here,
-    // whether or not anyone is. It fails when nobody is, which is fine.
-    tmux(socket, ["send-keys", "-X", "-t", `=${name}:`, "cancel"]);
-    // Loading, pasting and deleting go in one call, read from stdin, so the paste lands as soon
-    // after the caller's last look at the screen as it can: a person may start a draft at any
-    // moment, and the paste would send it. The lone ";" separates tmux commands, so these words
-    // go to tmux as they are, not through tmux(), which would quote it.
-    const paste = ["load-buffer", "-b", buffer, "-", ";", "paste-buffer", "-p", "-b", buffer];
-    const run = Bun.spawnSync(
-      [
-        "tmux",
-        "-L",
-        socket,
-        "-f",
-        "/dev/null",
-        ...paste,
-        "-t",
-        `=${name}:`,
-        ";",
-        "delete-buffer",
-        "-b",
-        buffer,
-      ],
-      { env: envWithoutTmux(), stdin: new Blob([text]), stdout: "pipe", stderr: "pipe" },
-    );
-    if (!run.success) throw new Error(`tmux paste-buffer failed: ${run.stderr.toString().trim()}`);
-  } finally {
-    // A paste that failed leaves the buffer behind, and the server must keep no copy, which an
-    // agent could read back.
-    tmux(socket, ["delete-buffer", "-b", buffer]);
-  }
+  const staged = `skelcrew-${process.pid}-${buffersMade++}`;
+  tmux(socket, ["send-keys", "-X", "-t", `=${name}:`, "cancel"]);
+  mustTmux(socket, ["load-buffer", "-b", staged, "-"], text);
+  return staged;
+}
+
+// Pastes text stagePaste readied into the named session as one bracketed paste, so the agent
+// reads it as a whole, however long, and newlines in it don't send it. Throws when the session
+// is gone.
+export function pasteStaged(socket: string, name: string, staged: string): void {
+  mustTmux(socket, ["paste-buffer", "-p", "-b", staged, "-t", `=${name}:`]);
+}
+
+// Forgets text stagePaste readied, pasted or not, so the server keeps no copy an agent could
+// read back.
+export function dropStaged(socket: string, staged: string): void {
+  tmux(socket, ["delete-buffer", "-b", staged]);
 }
 
 // Returns a command that attaches a terminal to the named session, for the screen's right pane.
