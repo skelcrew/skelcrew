@@ -5,6 +5,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { socketFolderInside } from "../src/agents/sandbox.ts";
+import { timings } from "./timings.ts";
 
 // Skelcrew's sandbox gives every agent SKELCREW_SANDBOX and the daemon's SKELCREW_SOCKET, and a
 // laptop's server gets variables of its own. Tests would hand them on to every sc, daemon and
@@ -34,10 +35,10 @@ if (inside) {
   );
 }
 
-// CI sets SKELCREW_TESTS_REPORT to a file, and gets a JUnit report there with each test's time.
-// The tests that start a real sandbox run only outside Skelcrew's own, so CI is where their times
-// show. Bun writes the report only when the run ends by itself, not when it is stopped.
-const report = process.env.SKELCREW_TESTS_REPORT;
+// In CI, Bun writes a JUnit report with each test's time, and the run prints where its time went
+// once it ends. The tests that start a real sandbox run only outside Skelcrew's own, so CI is
+// where their times show.
+const report = process.env.GITHUB_ACTIONS === "true" ? join(own, "report.xml") : "";
 const reporting = report ? ["--reporter=junit", `--reporter-outfile=${report}`] : [];
 // A dot per test as it ends, and each failure in full, so a slow run shows it is moving. Bun's
 // usual output in a parallel run prints a file only once it has ended, so a long file leaves
@@ -59,22 +60,42 @@ const run = Bun.spawn(
 );
 
 // The whole run ends within this, even if something keeps it from ever finishing, such as a
-// process a test started that never exits. Without the tests that start a real sandbox, a full
-// run takes about two minutes on eight cores. CI runs those too, and takes longer. Its own test
-// sets a shorter limit, in milliseconds.
+// process a test started that never exits. A full run takes about two minutes on eight cores
+// without the tests that start a real sandbox, which CI runs too. Its own test sets a
+// shorter limit, in milliseconds.
 const limit = Number(process.env.SKELCREW_TESTS_LIMIT) || 15 * 60_000;
 let stopped = false;
-const stop = setTimeout(() => {
+const stop = setTimeout(async () => {
   stopped = true;
   console.error(`\nThe tests ran past ${limit / 1000} seconds, so they were stopped.`);
+  // Bun writes its report only when it ends by itself, so its workers are stopped rather than
+  // Bun. It counts each file a worker had as cut off and hands the next to a new worker, which
+  // is stopped in turn, until Bun ends. Workers are Bun's own children, found by their parent,
+  // never by name. Each is asked first, so the run's sweeps can end what its tests left running.
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    const workers = Bun.spawnSync(["pgrep", "-P", String(run.pid)], { stdout: "pipe" });
+    for (const pid of workers.stdout.toString().split("\n").filter(Boolean))
+      try {
+        process.kill(Number(pid), "SIGTERM");
+      } catch {}
+    await Bun.sleep(200);
+  }
+  // A Bun still running then is asked to end, and killed if it doesn't.
   run.kill("SIGTERM");
-  // Asked first, so the run's sweeps can end what its tests left running.
   setTimeout(() => run.kill("SIGKILL"), 10_000).unref();
 }, limit);
 // A run that was stopped fails, whatever its code: a test that handles SIGTERM can leave with
 // success.
-run.exited.then((code) => {
+run.exited.then(async (code) => {
   clearTimeout(stop);
+  // A report that can't be read is said, and the run still ends as its tests did.
+  if (report && existsSync(report))
+    try {
+      console.log(`\n${timings(await Bun.file(report).text(), 25)}`);
+    } catch (error) {
+      console.error(`The test report couldn't be read: ${error}`);
+    }
   rmSync(own, { recursive: true, force: true });
   process.exit(stopped || run.signalCode ? 1 : code);
 });

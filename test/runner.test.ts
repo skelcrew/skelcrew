@@ -1,5 +1,5 @@
 // The test runner, scripts/test.ts: a run that goes past its time limit is stopped and fails,
-// CI can ask it for a JUnit report, and what a run starts never reaches the daemon of the
+// in CI it prints how long each test took, and what a run starts never reaches the daemon of the
 // Skelcrew it runs in.
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -38,22 +38,64 @@ test("hangs", () => new Promise(() => {}), 600_000);
   expect(code).toBe(1);
 });
 
-// CI asks for a JUnit report, to see how long each test took where the tests that start a real
-// sandbox run. A run without the variable, such as yours, writes none.
-test("a run with SKELCREW_TESTS_REPORT set writes a JUnit report there, with each test's time", async () => {
-  writeFileSync(
-    join(folder, "quick.test.ts"),
-    'import { test } from "bun:test";\ntest("quick", () => {});\n',
-  );
-  const report = join(folder, "report.xml");
-  const run = Bun.spawn([process.execPath, runner, "./quick.test.ts"], {
+// Runs scripts/test.ts on the given test files in the test's folder, as CI runs it when `ci`,
+// and gives back what it printed and its exit code. The folder has no bunfig.toml, so the run
+// loads no preload of Skelcrew's.
+async function runIn(files: string[], ci: boolean, limit = "") {
+  const env: Record<string, string> = { PATH: process.env.PATH ?? "", HOME: folder };
+  if (ci) env.GITHUB_ACTIONS = "true";
+  if (limit) env.SKELCREW_TESTS_LIMIT = limit;
+  const run = Bun.spawn([process.execPath, runner, ...files], {
     cwd: folder,
-    env: { PATH: process.env.PATH ?? "", HOME: folder, SKELCREW_TESTS_REPORT: report },
+    env,
     stdout: "pipe",
     stderr: "pipe",
   });
-  expect(await run.exited).toBe(0);
-  expect(await Bun.file(report).text()).toMatch(/<testcase name="quick"[^>]* time="[\d.]+"/);
+  const [out, code] = await Promise.all([new Response(run.stdout).text(), run.exited]);
+  return { out, code };
+}
+
+// CI is where the tests that start a real sandbox run, so its log shows where a slow run went.
+test("in CI a run prints its slowest tests and each file's time, and elsewhere neither", async () => {
+  writeFileSync(
+    join(folder, "slow.test.ts"),
+    `import { test } from "bun:test";
+test("takes a while", () => Bun.sleep(400));
+test("takes no time", () => {});
+`,
+  );
+  writeFileSync(
+    join(folder, "other.test.ts"),
+    'import { test } from "bun:test";\ntest("other", () => {});\n',
+  );
+  const files = ["./slow.test.ts", "./other.test.ts"];
+  const { out, code } = await runIn(files, true);
+  expect(code).toBe(0);
+  const tests = out.slice(out.indexOf("The slowest tests:"), out.indexOf("Time per file:"));
+  expect(tests).toMatch(/\n +0\.4 s {2}slow\.test\.ts {2}takes a while\n/);
+  expect(tests.indexOf("takes a while")).toBeLessThan(tests.indexOf("takes no time"));
+  expect(tests).toContain("other.test.ts  other");
+  const perFile = out.slice(out.indexOf("Time per file:"));
+  expect(perFile).toMatch(/\n +0\.4 s {2}slow\.test\.ts\n +0\.0 s {2}other\.test\.ts\n/);
+  const local = await runIn(files, false);
+  expect(local.code).toBe(0);
+  expect(local.out).not.toContain("slowest");
+});
+
+// A run stopped at its limit is the one whose times matter most.
+test("in CI a run stopped at its limit still prints the times it has, and names the files it stopped", async () => {
+  writeFileSync(
+    join(folder, "quick.test.ts"),
+    'import { test } from "bun:test";\ntest("quick", () => Bun.sleep(100));\n',
+  );
+  writeFileSync(
+    join(folder, "hangs.test.ts"),
+    'import { test } from "bun:test";\ntest("hangs", () => new Promise(() => {}), 600_000);\n',
+  );
+  const { out, code } = await runIn(["./quick.test.ts", "./hangs.test.ts"], true, "3000");
+  expect(code).toBe(1);
+  expect(out).toMatch(/\n +0\.1 s {2}quick\.test\.ts {2}quick\n/);
+  expect(out).toMatch(/\n +cut off {2}hangs\.test\.ts\n/);
 });
 
 // Stands in for the daemon of the Skelcrew a builder runs in, listening on this socket, and
