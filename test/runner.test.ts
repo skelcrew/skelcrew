@@ -55,6 +55,15 @@ async function runIn(files: string[], ci: boolean, limit = "") {
   return { out, code };
 }
 
+// The seconds a line of the timings gives for what follows them, such as a file and a test's
+// name, and where that line is in what the run printed. A busy machine makes a sleep last
+// longer, so tests check that a time is at least what was slept, and the order, never one value.
+function timeOf(out: string, what: string): { seconds: number; at: number } {
+  const lines = out.split("\n");
+  const at = lines.findIndex((line) => line.trimStart().endsWith(` s  ${what}`));
+  return { seconds: Number.parseFloat(lines[at]?.trim() ?? ""), at };
+}
+
 // CI is where the tests that start a real sandbox run, so its log shows where a slow run went.
 // A file's time includes its hooks, such as a slow beforeAll, which no test's time has.
 test("in CI a run prints its slowest tests and each file's time, and elsewhere neither", async () => {
@@ -77,11 +86,17 @@ test("other", () => {});
   const { out, code } = await runIn(files, true);
   expect(code).toBe(0);
   const tests = out.slice(out.indexOf("The slowest tests:"), out.indexOf("Time per file:"));
-  expect(tests).toMatch(/\n +0\.4 s {2}slow\.test\.ts {2}takes a while\n/);
-  expect(tests.indexOf("takes a while")).toBeLessThan(tests.indexOf("takes no time"));
-  expect(tests).toContain("other.test.ts  other");
+  const slowTest = timeOf(tests, "slow.test.ts  takes a while");
+  expect(slowTest.seconds).toBeGreaterThanOrEqual(0.4);
+  expect(slowTest.at).toBeLessThan(timeOf(tests, "slow.test.ts  takes no time").at);
+  expect(timeOf(tests, "other.test.ts  other").at).toBeGreaterThan(0);
+  // Each file once, the one with slow hooks first.
   const perFile = out.slice(out.indexOf("Time per file:"));
-  expect(perFile).toMatch(/\n +1\.[2-9] s {2}other\.test\.ts\n +0\.[4-9] s {2}slow\.test\.ts\n/);
+  const [other, slow] = [timeOf(perFile, "other.test.ts"), timeOf(perFile, "slow.test.ts")];
+  expect(other.seconds).toBeGreaterThanOrEqual(1.2);
+  expect(slow.seconds).toBeGreaterThanOrEqual(0.4);
+  expect(other.at).toBeGreaterThan(0);
+  expect(other.at).toBeLessThan(slow.at);
   const local = await runIn(files, false);
   expect(local.code).toBe(0);
   expect(local.out).not.toContain("slowest");
@@ -99,7 +114,7 @@ test("in CI a run stopped at its limit still prints the times it has, and names 
   );
   const { out, code } = await runIn(["./quick.test.ts", "./hangs.test.ts"], true, "3000");
   expect(code).toBe(1);
-  expect(out).toMatch(/\n +0\.1 s {2}quick\.test\.ts {2}quick\n/);
+  expect(timeOf(out, "quick.test.ts  quick").seconds).toBeGreaterThanOrEqual(0.1);
   expect(out).toMatch(/\n +cut off {2}hangs\.test\.ts\n/);
 });
 
@@ -118,7 +133,7 @@ test("hangs", () => new Promise(() => {}), 600_000);
   );
   const { out, code } = await runIn(["./quick.test.ts", "./stubborn.test.ts"], true, "3000");
   expect(code).toBe(1);
-  expect(out).toMatch(/\n +0\.1 s {2}quick\.test\.ts {2}quick\n/);
+  expect(timeOf(out, "quick.test.ts  quick").seconds).toBeGreaterThanOrEqual(0.1);
   expect(out).toMatch(/\n +cut off {2}stubborn\.test\.ts\n/);
 });
 
