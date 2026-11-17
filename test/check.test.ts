@@ -13,10 +13,11 @@ const running: Subprocess[] = [];
 const socket = `skel-test-${process.pid}-${Math.random().toString(36).slice(2)}`;
 
 // The test command: notes in the shared log when it starts and ends in which checkout, and
-// holds its check slot until the test creates `done` in that checkout. Ends with the code the
-// checkout's `code` file holds, or 0.
+// its shell's process in the checkout's `pid`. It holds its check slot until the test creates
+// `done` in that checkout, and ends with the code the checkout's `code` file holds, or 0.
 const suite = [
   'echo "start $(basename "$PWD")" >> "$HOME/log"',
+  "echo $$ > pid",
   'while [ ! -e done ]; do sleep 0.05; done; echo "end $(basename "$PWD")" >> "$HOME/log"; exit "$(cat code 2>/dev/null || echo 0)"',
 ];
 
@@ -124,29 +125,35 @@ test("runs the test commands in its own folder, one check at a time, the rest to
   expect(log()).toBe("start a\nend a\nstart b\nend b\nstart c\nend c\n");
 }, 60_000);
 
-test("a check killed while it waits gives back its place, and one killed while it runs keeps it until its suite ends", async () => {
+// Returns whether the suite started in the checkout still runs. A suite that ended can stay a
+// zombie, as the test runner takes in orphans without reaping them, so one counts as ended.
+function suiteRuns(folder: string): boolean {
+  const pid = read(join(folder, "pid")).trim();
+  if (!pid) return false;
+  const stat = Bun.spawnSync(["ps", "-o", "stat=", "-p", pid]).stdout.toString().trim();
+  return stat !== "" && !stat.startsWith("Z");
+}
+
+test("a check killed while it waits gives back its place, and one killed while it runs ends its suite", async () => {
   await serve();
   const [a, b, c] = ["a", "b", "c"].map((name) => checkout(name));
   if (!a || !b || !c) throw new Error("no checkouts");
   const first = check(a);
-  await until(() => log().includes("start a"));
+  await until(() => log().includes("start a") && suiteRuns(a));
   const waiting = check(b);
   await until(() => waiting.said.out.includes("in line"));
   waiting.run.kill("SIGKILL");
   await waiting.run.exited;
-  // Its test shell runs on, holding the output open, so only the process is waited for.
-  first.run.kill("SIGKILL");
-  await first.run.exited;
   const third = check(c);
   await until(() => third.said.out.includes("number 1 in line"));
-  await Bun.sleep(300);
-  expect(log()).toBe("start a\n");
-  // The suite ending frees the slot, for the next in line, not for the one killed while waiting.
-  writeFileSync(join(a, "done"), "");
+  // Killed outright, sc check takes its suite with it, which frees the slot for the next in
+  // line, not for the one killed while waiting.
+  first.run.kill("SIGKILL");
+  await until(() => !suiteRuns(a));
   await until(() => log().includes("start c"));
   writeFileSync(join(c, "done"), "");
   expect((await third.ended).code).toBe(0);
-  expect(log()).toBe("start a\nend a\nstart c\nend c\n");
+  expect(log()).toBe("start a\nstart c\nend c\n");
 }, 60_000);
 
 test("a suite running while the daemon restarts keeps its slot", async () => {
@@ -168,6 +175,27 @@ test("a suite running while the daemon restarts keeps its slot", async () => {
   await until(() => log().includes("start b"));
   writeFileSync(join(b, "done"), "");
   expect((await second.ended).code).toBe(0);
+}, 60_000);
+
+test("a check killed after the daemon restarted ends its suite before the next one starts", async () => {
+  const before = await serve();
+  const [a, b] = ["a", "b"].map((name) => checkout(name));
+  if (!a || !b) throw new Error("no checkouts");
+  const first = check(a);
+  await until(() => log().includes("start a") && suiteRuns(a));
+  before.kill();
+  await before.exited;
+  await serve(2000);
+  const second = check(b);
+  await until(() => second.said.out.includes("number 1 in line"));
+  // Its slot came back to it after the restart, and killing it now ends the suite too, so the
+  // next check never runs beside it.
+  first.run.kill("SIGKILL");
+  await until(() => log().includes("start b"));
+  expect(suiteRuns(a)).toBe(false);
+  writeFileSync(join(b, "done"), "");
+  expect((await second.ended).code).toBe(0);
+  expect(log()).toBe("start a\nstart b\nend b\n");
 }, 60_000);
 
 test("runs the test commands in one shell, so a cd or an export holds for the next", async () => {

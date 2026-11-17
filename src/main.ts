@@ -426,11 +426,18 @@ async function checkCommand(args: string[]): Promise<void> {
     console.log("This repository is configured with no tests, so there is nothing to run.");
     return;
   }
-  // The shell gets the connection too, as its descriptor 3, so the slot stays taken while the
-  // suite runs even if sc check itself is killed. The daemon frees it once no process holds it.
+  // Only sc check renews the slot after a daemon restart, so the suite must never outlive it.
+  // The suite runs in a process group of its own, and a watcher in it reads a pipe that only
+  // sc check holds open. However sc check ends, even killed outright, the pipe closes and the
+  // watcher ends the whole group. The suite's own input is /dev/null, as POSIX gives a
+  // background job unless it is redirected, so the watcher is the pipe's only reader.
+  const watched = `exec 4<&0 </dev/null; (cat <&4 >/dev/null; kill -KILL 0) & exec 4<&-; ${slot.test.join(" && ")}`;
+  // The shell gets the connection too, as its descriptor 3, so the daemon frees the slot only
+  // once the last process of the suite has ended, not when sc check does.
   const holds = slot.fd === undefined ? [] : [slot.fd];
-  const run = Bun.spawn(["sh", "-c", slot.test.join(" && ")], {
-    stdio: ["inherit", "inherit", "inherit", ...holds],
+  const run = Bun.spawn(["sh", "-c", watched], {
+    stdio: ["pipe", "inherit", "inherit", ...holds],
+    detached: true,
   });
   // A daemon that restarts while the suite runs forgets its slot, so it is taken back, at once
   // and over the limit if need be, as soon as the daemon answers again.
