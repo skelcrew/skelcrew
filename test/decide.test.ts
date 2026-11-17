@@ -591,6 +591,34 @@ test("a builder's turn that ends without a submit needs you, and no other does",
     expect([change, endedTurnAsks(thread(change))]).toEqual([change, asks]);
 });
 
+// A builder whose clone holds nothing beyond its last submit most likely only answered a
+// message, such as the lead's, so it waits on what that submit waits on, and only then.
+test("a turn with no new work waits on a submit still under review, on CI or approved", () => {
+  const sha = "a".repeat(40);
+  const approved = { status: "waiting" as const, verdict: "approve" as const };
+  const cases: [Partial<Thread>, boolean][] = [
+    // Its submit is reviewed, waits on CI, or is approved and waits on you to merge.
+    [{ status: "working", reviewing: sha }, false],
+    [{ ...approved, checks: "pending" }, false],
+    [{ ...approved, checks: "passing", needs_you: true }, false],
+    // A comment on the PR set it working again, but the approval stands.
+    [{ ...approved, status: "working", checks: "passing" }, false],
+    // Its submit needs it to work again: changes asked for, a failed check or a conflict.
+    [{ status: "working", verdict: "changes" }, true],
+    [{ status: "working", verdict: "changes", telling: "Add a test." }, true],
+    [{ ...approved, checks: "failing" }, true],
+    [{ ...approved, conflicts: "main" }, true],
+    // A review that failed, or none yet, has nothing to wait on.
+    [{ status: "waiting", verdict: "failed", needs_you: true }, true],
+    [{ status: "working" }, true],
+  ];
+  for (const [change, asks] of cases)
+    expect([change, endedTurnAsks(thread(change), true)]).toEqual([change, asks]);
+  // New work, uncommitted or not yet submitted, needs you whatever the submit waits on.
+  for (const [change] of cases)
+    expect([change, endedTurnAsks(thread(change), false)]).toEqual([change, true]);
+});
+
 test("a push GitHub refuses for a workflow file says which file, and what to do", () => {
   const said =
     "git -C /x push --quiet https://github.com/simon/app.git abc:refs/heads/b failed: To https://github.com/simon/app.git\n ! [remote rejected] abc -> b (refusing to allow a GitHub App to create or update workflow `.github/workflows/ci.yml` without `workflows` permission)\nerror: failed to push some refs to 'https://github.com/simon/app.git'";
