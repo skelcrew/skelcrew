@@ -286,6 +286,20 @@ describe("sc issue ls", () => {
       { number: 10, title: "Fix login", createdAt: "2026-11-01T12:00:00Z" },
     ]);
     issues("site", [{ number: 7, title: "New landing page", createdAt: "2026-11-02T12:00:00Z" }]);
+    // site-7 saved its issue's title as it started.
+    sql("UPDATE tasks SET title = 'New landing page' WHERE repo = 'site'");
+  });
+
+  // Its builder and reviewer keep the title it started with, so the list does too.
+  test("lists a started task by the title it started with, after its issue was edited", async () => {
+    issues("app", [{ number: 12, title: "Add export as CSV", createdAt: "2026-11-03T12:00:00Z" }]);
+    serve();
+    await untilAnswers();
+    const listed = JSON.parse((await skel(["issue", "ls", "app", "--json"])).out);
+    expect(listed).toMatchObject([
+      { issue: "app-12", title: "Add export" },
+      { issue: "app-10", title: "Fix login" },
+    ]);
   });
 
   test("lists every repository's open issues newest first, with the thread on each", async () => {
@@ -359,6 +373,30 @@ describe("sc issue show", () => {
 
 Keep it small.' WHERE repo = 'app' AND task = '12';
 UPDATE tasks SET title = 'New landing page', body = 'Make it calm.' WHERE repo = 'site'`);
+  });
+
+  // A failed thread still holds its task, in stage working, until it is started over or removed,
+  // so it shows as it started, with the lead's messages, whether its issue was edited or closed and gone
+  // from the copy.
+  test("shows a failed thread's task as it started, after its issue was edited or closed", async () => {
+    const updates = JSON.stringify([{ from: "lead", at: 0, text: "Keep the old page too." }]);
+    sql(`UPDATE tasks SET body = 'Back to the page.', updates = '${updates}' WHERE task = '9'`);
+    issue("app", 9, "Redirect after login", "Edited.");
+    serve();
+    await untilAnswers();
+    const edited = JSON.parse((await skel(["issue", "show", "app-9", "--json"])).out);
+    expect(edited).toMatchObject({
+      stage: "working",
+      title: "Send people back to the page they came from after signing in",
+      thread: { status: "failed" },
+    });
+    expect(edited.body).toMatch(
+      /^Back to the page\.\n\n## Changes to the task.*Keep the old page too\.$/s,
+    );
+    sql("DELETE FROM items WHERE id = '9'");
+    const closed = await skel(["issue", "show", "app-9", "--json"]);
+    expect(closed.err).toBe("");
+    expect(JSON.parse(closed.out)).toEqual({ ...edited, link: null });
   });
 
   // The reviewer checks against what the builder was given, so an edit to the issue after the

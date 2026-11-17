@@ -179,28 +179,20 @@ export const TaskRow = z.object({
 });
 export type TaskRow = z.infer<typeof TaskRow>;
 
-// Returns a task's stage and how the thread on it stands, or null for the thread when it has
-// none. `issueOpen` is whether the tracker still has its issue open.
-function taskStatusOf(
-  db: Database,
-  owner: string,
-  repo: string,
-  task: string,
+// Returns a task's stage and how its thread stands, given the thread, or null when it has none.
+// `issueOpen` is whether the tracker still has its issue open.
+const taskStatusOf = (
+  thread: Thread | null,
   issueOpen: boolean,
-): Pick<TaskRow, "stage" | "thread"> {
-  const row = db
-    .query("SELECT * FROM task_threads WHERE owner = ? AND repo = ? AND task = ?")
-    .get(owner, repo, task);
-  const thread = Thread.nullable().parse(row);
-  return {
-    stage: taskStage(thread, issueOpen),
-    thread: thread && { status: thread.status, needsYou: needsYou(thread) },
-  };
-}
+): Pick<TaskRow, "stage" | "thread"> => ({
+  stage: taskStage(thread, issueOpen),
+  thread: thread && { status: thread.status, needsYou: needsYou(thread) },
+});
 
 // Returns the open tasks of every repository, or of one, newest first, with the thread on
 // each one that has one, for sc issue ls. They come from Skelcrew's copy, so the tracker isn't
-// asked.
+// asked. A task whose work goes on, a failed thread's included, shows the title it started
+// with, as its builder and reviewer see it, however the issue was edited since.
 export function listTasks(db: Database, repository?: string): TaskRow[] {
   const chosen = repository ? [findRepository(db, repository)] : repositories(db);
   // Each repository's tasks come newest first, but mixing repositories needs a sort of its own,
@@ -208,13 +200,16 @@ export function listTasks(db: Database, repository?: string): TaskRow[] {
   return chosen
     .flatMap((r) =>
       openTasks(db, r.owner, r.repo).map((task) => {
-        const { stage, thread } = taskStatusOf(db, r.owner, r.repo, task.id, true);
+        const row = db
+          .query("SELECT * FROM task_threads WHERE owner = ? AND repo = ? AND task = ?")
+          .get(r.owner, r.repo, task.id);
+        const thread = Thread.nullable().parse(row);
+        const working = thread !== null && thread.status !== "done";
         return {
           created: task.created,
           issue: `${r.name}-${task.id}`,
-          stage,
-          title: task.title,
-          thread,
+          ...taskStatusOf(thread, true),
+          title: (working ? thread.title : null) ?? task.title,
         };
       }),
     )
@@ -236,16 +231,17 @@ export type TaskView = z.infer<typeof TaskView>;
 
 // Returns one task's stage, title and body, which is all its builder sees, with the thread on
 // it if it has one, for sc issue show. It comes from Skelcrew's copy, so the tracker isn't
-// asked. A task with a thread still at work, or stopped, is shown as its reviewer gets it, with
-// the lead's messages to the builder after the body, so the lead sees the task the builder is
-// judged by. That also shows a task with no issue, such as app-t1, from the words it started
-// with, once it is done too. A done or failed thread's messages aren't shown: starting it over
-// gives a fresh thread without them. An issue that closed, such as by its PR's merge, has left
-// the copy, so it isn't found.
+// asked. A task whose thread isn't done, a stopped or failed one included, is shown as its
+// reviewer gets it: the words it started with, and the lead's messages to the builder after the
+// body, so the lead sees the task the builder is judged by. A failed thread still holds its
+// task, in stage working, until it is started over or removed. That also shows a task with no issue, such
+// as app-t1, from the words it started with, once it is done too. A done thread's messages
+// aren't shown: starting it over gives a fresh thread without them. An issue that closed, such
+// as by its PR's merge, has left the copy once its thread is done, so it isn't found.
 export function showTask(db: Database, repository: string, task: string): TaskView {
   const r = findRepository(db, repository);
   const thread = threadOn(db, repository, task);
-  const current = thread && thread.status !== "done" && thread.status !== "failed";
+  const current = thread && thread.status !== "done";
   // taskOf throws when the copy has no such issue, which only a task with a thread can lack.
   let issue: Task | null = null;
   try {
@@ -261,13 +257,7 @@ export function showTask(db: Database, repository: string, task: string): TaskVi
   else if (thread && /^t\d+$/.test(task))
     words = { title: thread.title ?? "", body: thread.body ?? "" };
   else throw new Error(`there is no open issue ${task} in ${r.owner}/${r.repo}`);
-  const { stage, thread: status } = taskStatusOf(
-    db,
-    r.owner,
-    r.repo,
-    task,
-    issue?.state === "open",
-  );
+  const { stage, thread: status } = taskStatusOf(thread, issue?.state === "open");
   return {
     issue: `${r.name}-${task}`,
     // The task keeps the link it started with. One not started yet has its issue's in the copy.
