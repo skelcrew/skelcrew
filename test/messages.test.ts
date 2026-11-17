@@ -75,7 +75,8 @@ test("a builder whose session ends mid-turn, with a review's changes waiting, ma
 import { readThread } from ${JSON.stringify(source("flow/thread.ts"))};
 Bun.spawnSync(["tmux", "-L", tmux, "new-session", "-d", "-s", "app-12", ${JSON.stringify(join(home, "busy.sh"))}]);
 await Bun.sleep(300);
-db.run("UPDATE threads SET status = 'working', telling = 'Fix it.'");
+db.run("UPDATE threads SET status = 'working'");
+db.run("UPDATE tasks SET telling = 'Fix it.'");
 queueMessage(db, tmux, "app-12", { sender: "review", text: "Fix it.", said: "the review's changes", typed_in: [] });
 for (let i = 0; i < 4; i++) {
   deliverAllWaiting(db, tmux);
