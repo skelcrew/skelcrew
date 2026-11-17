@@ -69,6 +69,10 @@ export const Thread = z.object({
   // Whether the builder ran sc submit in its current turn, so the turn's end waits on a review
   // rather than on you. Whatever is typed into the builder starts a new turn, and clears it.
   submitted: z.coerce.boolean(),
+  // Whether the builder ran sc tell lead in its current turn. A turn that leaves no new work and
+  // answered the lead waits on its last submit rather than on you: the lead has its words, so a
+  // question in them still reaches you. Whatever is typed into the builder clears it.
+  replied: z.coerce.boolean(),
   // Whether the builder's harness stopped on an error it can't get past alone, such as a lapsed
   // login. The builder then sits idle, so the thread needs you until you type to it.
   erred: z.coerce.boolean(),

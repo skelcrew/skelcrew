@@ -15,7 +15,7 @@ import {
   reviewCheck,
   whoRunsTheSuite,
 } from "../src/flow/decide.ts";
-import { endedTurnAsks, holdsQuestion } from "../src/flow/status.ts";
+import { endedTurnAsks } from "../src/flow/status.ts";
 import type { Thread } from "../src/flow/thread.ts";
 
 function thread(change: Partial<Thread> = {}): Thread {
@@ -43,6 +43,7 @@ function thread(change: Partial<Thread> = {}): Thread {
     asking: false,
     stalled: false,
     submitted: false,
+    replied: false,
     erred: false,
     limited: false,
     limit_reset: null,
@@ -589,55 +590,35 @@ test("a builder's turn that ends without a submit needs you, and no other does",
     expect([change, endedTurnAsks(thread(change))]).toEqual([change, asks]);
 });
 
-// A builder whose clone holds nothing beyond its last submit, and whose last message asked
-// nothing, only answered a message, such as the lead's, so it waits on what that submit waits
-// on, and only then.
-test("a turn with no new work waits on a submit still under review, on CI or approved", () => {
+// A builder whose clone holds nothing beyond its last submit, and who answered the lead with
+// sc tell lead, only replied to a message, so it waits on what that submit waits on, and only
+// then. Its words can't be read for a question, but the lead has them.
+test("a turn with no new work that answers the lead waits on a submit under review, on CI or approved", () => {
   const sha = "a".repeat(40);
-  const approved = { status: "waiting" as const, verdict: "approve" as const };
+  const approved = { status: "waiting" as const, verdict: "approve" as const, replied: true };
   const cases: [Partial<Thread>, boolean][] = [
     // Its submit is reviewed, waits on CI, or is approved and waits on you to merge.
-    [{ status: "working", reviewing: sha }, false],
+    [{ status: "working", reviewing: sha, replied: true }, false],
     [{ ...approved, checks: "pending" }, false],
     [{ ...approved, checks: "passing", needs_you: true }, false],
     // Its submit needs it to work again: changes asked for, a failed check or a conflict.
-    [{ status: "working", verdict: "changes" }, true],
-    [{ status: "working", verdict: "changes", telling: "Add a test." }, true],
+    [{ status: "working", verdict: "changes", replied: true }, true],
+    [{ status: "working", verdict: "changes", telling: "Add a test.", replied: true }, true],
     [{ ...approved, checks: "failing" }, true],
     [{ ...approved, conflicts: "main" }, true],
     // A review that failed, or none yet, has nothing to wait on.
-    [{ status: "waiting", verdict: "failed", needs_you: true }, true],
-    [{ status: "working" }, true],
+    [{ status: "waiting", verdict: "failed", needs_you: true, replied: true }, true],
+    [{ status: "working", replied: true }, true],
   ];
   for (const [change, asks] of cases)
     expect([change, endedTurnAsks(thread(change), true)]).toEqual([change, asks]);
-  // New work, uncommitted or not yet submitted, or a question, needs you whatever the submit
-  // waits on.
-  for (const [change] of cases)
+  // New work, uncommitted or not yet submitted, needs you whatever the submit waits on, and so
+  // does a turn that didn't answer the lead, as it may have asked you something.
+  for (const [change] of cases) {
     expect([change, endedTurnAsks(thread(change), false)]).toEqual([change, true]);
-});
-
-// A question hidden as a reply would leave you never hearing of it, so anything that may ask
-// counts as asking.
-test("a builder's last message holds a question wherever its question mark sits", () => {
-  const asks = [
-    "Which format should the export use?",
-    "Done.\n\nWhich format should the export use?\n1. JSON\n2. CSV",
-    "**Should I use JSON or YAML?**",
-    '"Should I use JSON or YAML?"',
-    "“Should I use JSON or YAML?”",
-    "_JSON or YAML?_ Let me know.",
-    "(Or should it be CSV?)",
-    "Shall I go on?\u00a0",
-  ];
-  const replies = [
-    "The lead's note about the import order came in after I had already fixed it.",
-    "It reads `thread?.pr` now.",
-    "See /search?q=export for the page.",
-  ];
-  for (const message of asks) expect([message, holdsQuestion(message)]).toEqual([message, true]);
-  for (const message of replies)
-    expect([message, holdsQuestion(message)]).toEqual([message, false]);
+    const silent = { ...change, replied: false };
+    expect([silent, endedTurnAsks(thread(silent), true)]).toEqual([silent, true]);
+  }
 });
 
 test("a push GitHub refuses for a workflow file says which file, and what to do", () => {

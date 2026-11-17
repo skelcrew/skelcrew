@@ -139,6 +139,7 @@ function prepareTables(db: Database): void {
     review_reset: "INTEGER",
     stalled: "INTEGER NOT NULL DEFAULT 0",
     submitted: "INTEGER NOT NULL DEFAULT 0",
+    replied: "INTEGER NOT NULL DEFAULT 0",
     noting: "TEXT",
     title: "TEXT",
     started: "INTEGER",

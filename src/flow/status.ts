@@ -37,24 +37,18 @@ export const needsYou = (thread: Thread) =>
 // text, or is stuck, and nothing else would tell you. One that submitted waits on its review.
 // One asking with AskUserQuestion, or stopped on an error, already needs you, and one already
 // waiting has nothing new to say. The status is not enough: a review can set it back to working
-// while the builder that submitted is still finishing its turn. `onlyReplied` says the builder's
-// clone holds nothing beyond its last submit and its last message asked nothing. Such a turn
-// only answered a message, such as the lead's, so while that submit is reviewed, waits on CI or
-// is approved, it waits on that too.
-export const endedTurnAsks = (thread: Thread, onlyReplied = false) =>
+// while the builder that submitted is still finishing its turn. `unchanged` says the builder's
+// clone holds nothing beyond its last submit. Such a turn that answered the lead with sc tell
+// lead only replied to a message, so while that submit is reviewed, waits on CI or is approved,
+// it waits on that too. Its words can't be read for a question: one need not end in a question
+// mark. The lead has them, though, so a question in them still reaches you.
+export const endedTurnAsks = (thread: Thread, unchanged = false) =>
   (thread.status === "working" || thread.status === "waiting") &&
   !thread.submitted &&
   !thread.asking &&
   !thread.stalled &&
   !thread.erred &&
-  !(onlyReplied && submitStands(thread));
-
-// Returns whether a builder's last message may ask you something. Codex has no question tool,
-// so its builder asks by ending its turn with the question in plain text. Any question mark
-// counts, also before closing Markdown or quotes, as in **JSON or YAML?**, except one followed
-// by a dot, a letter or a digit, as in code such as a?.b or a URL's ?q=1. Erring towards a
-// question only brings you in for nothing, so a ?? in code counts too.
-export const holdsQuestion = (message: string) => /\?(?![.?A-Za-z0-9])/.test(message);
+  !(unchanged && thread.replied && submitStands(thread));
 
 // Returns whether the thread's last submit still moves on without its builder: its review waits
 // or runs, or it was approved and waits on CI or you. Changes asked for, a failed check or a
@@ -234,22 +228,21 @@ export function questionAsked(db: Database, sessions: string, folder: string): v
   typeLeadNotes(db, sessions);
 }
 
-// The builder's turn ended, from its harness's Stop hook, with what it last said, the commit its
-// clone has checked out when nothing there is uncommitted, and whether its last message held no
-// question. A builder that didn't submit in that turn waits on you, so the thread needs you and
-// the lead hears of it. The exception is a builder that only replied: its clone is still at the
-// commit Skelcrew last pushed, it asked nothing, and that submit is still on its way. Returns
-// whether it waits on you.
+// The builder's turn ended, from its harness's Stop hook, with what it last said and the commit
+// its clone has checked out when nothing there is uncommitted. A builder that didn't submit in
+// that turn waits on you, so the thread needs you and the lead hears of it. The exception is a
+// builder that only answered the lead: its clone is still at the commit Skelcrew last pushed, it
+// ran sc tell lead, and that submit is still on its way. Returns whether it waits on you.
 export function turnEnded(
   db: Database,
   sessions: string,
   folder: string,
-  ended: { said?: string | undefined; head?: string | undefined; replied?: boolean | undefined },
+  ended: { said?: string | undefined; head?: string | undefined },
 ): boolean {
   const thread = readThread(db, folder);
   const said = ended.said;
   const unchanged = ended.head !== undefined && ended.head === lastPushed(thread);
-  if (!endedTurnAsks(thread, unchanged && ended.replied === true)) return false;
+  if (!endedTurnAsks(thread, unchanged)) return false;
   // The note quotes what the builder last said, so you see what it waits on. In quotes,
   // and with no tags of Skelcrew's, it can't pass for Skelcrew's own words or another's.
   // The quote, escapes included, is kept to 100 characters, as a note is cut at 200,
@@ -313,12 +306,13 @@ export function questionAnswered(db: Database, folder: string): void {
   // such as with /login, so it ends the error as it ends a question. A usage limit it
   // stopped on ends too, as the builder now works again or meets it again. Typing to one
   // that stopped without submitting answers it, whether you typed or the lead told it.
-  // Each message starts a new turn, with no submit in it yet.
+  // Each message starts a new turn, with no submit or reply to the lead in it yet.
   const over = {
     asking: false,
     stalled: false,
     erred: false,
     submitted: false,
+    replied: false,
     limited: false,
     limit_reset: null,
   };
@@ -328,5 +322,6 @@ export function questionAnswered(db: Database, folder: string): void {
   endWake(folder);
   if (thread.asking || thread.stalled) record(db, folder, over, "its builder's question is over");
   else if (thread.erred) record(db, folder, over, "its builder was typed to after its error");
-  else if (thread.submitted) record(db, folder, { submitted: false });
+  else if (thread.submitted || thread.replied)
+    record(db, folder, { submitted: false, replied: false });
 }

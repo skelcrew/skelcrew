@@ -114,12 +114,11 @@ export const DaemonRequest = z.discriminatedUnion("command", [
   z.object({ command: z.literal("question closed") }),
   // `said` is the first line of the builder's last message, for the lead's note, when the
   // harness gives it. `head` is the commit the builder's clone has checked out, sent only when
-  // nothing in it is left uncommitted. `replied` says the builder's last message held no question.
+  // nothing in it is left uncommitted.
   z.object({
     command: z.literal("turn ended"),
     said: z.string().optional(),
     head: z.string().optional(),
-    replied: z.boolean().optional(),
   }),
   // `error` is the kind of error Claude Code's StopFailure hook gives, such as rate_limit, and
   // `message` what it said, such as when the limit resets.

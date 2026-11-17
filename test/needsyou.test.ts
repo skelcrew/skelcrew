@@ -252,6 +252,13 @@ function submittedAsReviewing(): void {
   db.close();
 }
 
+// The socket the daemon opens for app-12's builder, which tells it the builder calls. It is
+// named by a short hash.
+function builderSocket(): string {
+  const short = new Bun.CryptoHasher("sha256").update("app-12").digest("hex").slice(0, 16);
+  return join(home, "run", "skelcrew", "threads", short, "skelcrew.sock");
+}
+
 // The socket the daemon opens for app's lead, which tells it the lead calls. It is named by a
 // short hash.
 function leadSocket(): string {
@@ -432,34 +439,44 @@ describe.skipIf(insideSandbox)("needs you", () => {
 
   // A builder that only answers a message, such as the lead's note about something it already
   // fixed, has nothing new to submit, and its last submit still waits on its review.
-  test("a turn with no new work, while the last submit is reviewed, doesn't need you", async () => {
+  test("a turn with no new work that answers the lead, while the last submit is reviewed, doesn't need you", async () => {
     addApp();
     await startApp12();
     submittedAsReviewing();
-    const said = "The lead's note about the import order came in after I had already fixed it.";
+    await hook("talk");
+    const said = "The note about the import order came after I had already fixed it.";
+    const asBuilder = { SKELCREW_SANDBOX: "1", SKELCREW_SOCKET: builderSocket() };
+    expect((await skel(["tell", "lead", said], asBuilder)).code).toBe(0);
     await hook("stop", JSON.stringify({ last_assistant_message: said }));
     await Bun.sleep(1000);
     expect(await needsYou()).toBe(false);
+    // The lead has the builder's words, and no needs-you note.
+    await until(() => read(join(lead(), "typed")).includes("import order"));
     expect(notes()).toBe(0);
   }, 60_000);
 
-  // Codex has no question tool, so its builder asks by ending its turn with the question.
-  test("a turn with no new work that asks a question needs you, even while the last submit is reviewed", async () => {
+  // A question need not end in a question mark, so only answering the lead says the turn
+  // asked you nothing.
+  test("a turn with no new work that doesn't answer the lead needs you, even while the last submit is reviewed", async () => {
     addApp();
     await startApp12();
     submittedAsReviewing();
-    const said = "Done.\n\n**Should the export use JSON or YAML?**";
+    await hook("talk");
+    const said = "Should I use JSON or YAML";
     await hook("stop", JSON.stringify({ last_assistant_message: said }));
     await untilNeedsYou(true);
     await until(() => notes() === 1);
   }, 60_000);
 
-  // Without the builder's last message there is no telling that it asked nothing.
-  test("a turn with no new work and no last message needs you, even while the last submit is reviewed", async () => {
+  // An answer to the lead belongs to its turn: the next turn needs you again without one.
+  test("an earlier turn's answer to the lead doesn't cover a later turn", async () => {
     addApp();
     await startApp12();
     submittedAsReviewing();
-    await hook("stop");
+    const asBuilder = { SKELCREW_SANDBOX: "1", SKELCREW_SOCKET: builderSocket() };
+    expect((await skel(["tell", "lead", "Fixed already."], asBuilder)).code).toBe(0);
+    await hook("talk");
+    await hook("stop", JSON.stringify({ last_assistant_message: "Which one" }));
     await untilNeedsYou(true);
   }, 60_000);
 
@@ -468,6 +485,8 @@ describe.skipIf(insideSandbox)("needs you", () => {
     await startApp12();
     submittedAsReviewing();
     writeFileSync(join(data(), "threads", "app-12", "export.ts"), "export {};\n");
+    const asBuilder = { SKELCREW_SANDBOX: "1", SKELCREW_SOCKET: builderSocket() };
+    expect((await skel(["tell", "lead", "Started on the export."], asBuilder)).code).toBe(0);
     await hook("stop", JSON.stringify({ last_assistant_message: "Started on the export." }));
     await untilNeedsYou(true);
     await until(() => notes() === 1);
