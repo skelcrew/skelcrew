@@ -115,8 +115,9 @@ export function startDaemon(
   mustBeTestSocket(daemonSocketIn(env), env);
   const code = `import { serve } from ${JSON.stringify(source("flow/daemon.ts"))};
 await serve(${JSON.stringify(socket)});`;
+  // Reviews start at once on a repository without CI, unless the test asks for the wait.
   const run = Bun.spawn([process.execPath, "-e", code], {
-    env,
+    env: { SKELCREW_CHECK_WAIT_MS: "0", ...env },
     stdout: "ignore",
     stderr: "ignore",
   });

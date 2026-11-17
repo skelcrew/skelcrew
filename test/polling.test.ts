@@ -137,8 +137,9 @@ const env = () => homeEnv(home);
 function serve(every = 200): Subprocess {
   const code = `import { serve } from ${JSON.stringify(daemon)};
 await serve(${JSON.stringify(socket)}, ${every});`;
+  // Reviews start at once on app, which has no CI, rather than waiting for a first check.
   const run = Bun.spawn([process.execPath, "-e", code], {
-    env: env(),
+    env: { ...env(), SKELCREW_CHECK_WAIT_MS: "0" },
     stdout: "ignore",
     stderr: "ignore",
   });
