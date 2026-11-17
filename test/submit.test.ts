@@ -3,7 +3,15 @@
 // fake plugin for the repository's tracker and forge, and a folder of bare repositories for
 // what Skelcrew pushes to.
 import { Database } from "bun:sqlite";
-import { afterEach, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
+import {
+  afterAll,
+  afterEach,
+  beforeEach,
+  test as bunTest,
+  describe,
+  expect,
+  setDefaultTimeout,
+} from "bun:test";
 import {
   chmodSync,
   existsSync,
@@ -34,6 +42,45 @@ import {
   until as wait,
   writeScript,
 } from "./harness.ts";
+
+// TEMPORARY, to measure reviews inside the full suite on CI, and removed once read: each
+// test's first review is timed from its thread's log, and CI gets them all as one annotation.
+let current = "";
+const timings: string[] = [];
+const test = (name: string, fn: () => Promise<void> | void, timeout?: number) =>
+  bunTest(
+    name,
+    async () => {
+      current = name;
+      await fn();
+    },
+    timeout,
+  );
+// Returns when the first step whose reason starts with one of `starts` was logged, in ms.
+function loggedAt(steps: { at: number; why: string }[], ...starts: string[]): number | undefined {
+  return steps.find((s) => starts.some((start) => s.why.startsWith(start)))?.at;
+}
+function timeFirstReview(): void {
+  const steps: { at: number; why: string }[] = [];
+  for (const line of read(join(data(), "threads", "app-12.log")).split("\n"))
+    try {
+      const { at, why } = JSON.parse(line);
+      if (why) steps.push({ at: Date.parse(at), why });
+    } catch {}
+  const submitted = loggedAt(steps, "submitted:");
+  const reviewing = loggedAt(steps, "reviewing ", "queued ", "waiting for CI's first check");
+  const next = steps.find((s) => reviewing !== undefined && s.at > reviewing)?.at;
+  const s = (from?: number, to?: number) =>
+    from === undefined || to === undefined ? "-" : `${((to - from) / 1000).toFixed(1)} s`;
+  timings.push(
+    `${current}: submit to review ${s(submitted, reviewing)}, review ${s(reviewing, next)}`,
+  );
+}
+afterAll(() => {
+  if (!process.env.GITHUB_ACTIONS) return;
+  const text = timings.join("\n").replaceAll("%", "%25").replaceAll("\r", "%0D");
+  console.log(`::notice title=first-review::${text.replaceAll("\n", "%0A")}`);
+});
 
 let home = "";
 let socket = "";
@@ -168,6 +215,7 @@ beforeEach(() => {
   });
 });
 afterEach(async () => {
+  timeFirstReview();
   for (const serve of running.splice(0)) {
     serve.kill();
     await serve.exited;
