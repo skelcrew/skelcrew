@@ -9,6 +9,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   realpathSync,
   rmSync,
   writeFileSync,
@@ -62,7 +63,8 @@ const script = (name: string, body: string) => writeScript(home, name, body);
 // and with code-to-docs there, it moves src/app.ts to docs/app.md. As a reviewer, run with -p,
 // it approves, unless the file claude-limit beside it holds a moment in seconds since 1970
 // still to come: until then it says its usage limit is reached, as Claude Code did. While the
-// file says wait, it waits, so a test can set the moment once the review has started. Its
+// file says wait, it waits, with the file waiting in its config folder, so a test can set the
+// moment once the reviewer runs. Its
 // arguments are written aside and moved into place, so a test that sees the file never reads
 // them half written.
 function fakeClaude(submits = true): void {
@@ -72,6 +74,7 @@ function fakeClaude(submits = true): void {
 case " $* " in *" -p "*)
   cat > /dev/null
   limit="$(dirname "$0")/claude-limit"
+  [ "$(cat "$limit" 2>/dev/null)" = wait ] && : > "$CLAUDE_CONFIG_DIR/waiting"
   i=0; while [ "$(cat "$limit" 2>/dev/null)" = wait ] && [ $i -lt 600 ]; do sleep 0.1; i=$((i+1)); done
   reset=$(cat "$limit" 2>/dev/null)
   if [ -n "$reset" ] && [ "$(date +%s)" -lt "$reset" ]; then
@@ -807,11 +810,15 @@ done`,
       "harness: claude\nreviewer: { harness: claude }\n",
     );
     // Claude Code says when its limit resets, in seconds since 1970. The reset is set once the
-    // first review has started, so that review meets it however slowly the builder starts, and
-    // the test waits only a few seconds for it.
+    // first reviewer runs, so it meets the limit however slowly the builder starts, and the
+    // test waits only a few seconds for it. The reviewer's config folder is in the review's
+    // own temporary folder.
     writeFileSync(join(home, "bin", "claude-limit"), "wait");
     await startApp12();
-    await until(() => read(join(data(), "threads", "app-12.log")).includes('"why":"reviewing '));
+    const waiting = (name: string) => existsSync(join(tmpdir(), name, "claude", "waiting"));
+    await until(() =>
+      readdirSync(tmpdir()).some((name) => name.startsWith("skelcrew-review-") && waiting(name)),
+    );
     const reset = Math.ceil(Date.now() / 1000) + 5;
     writeFileSync(join(home, "bin", "claude-limit"), `${reset}\n`);
     await until(() => thread().review_limited === 1, 30_000);
