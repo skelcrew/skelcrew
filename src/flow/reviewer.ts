@@ -7,6 +7,7 @@ import { z } from "zod";
 import { type HarnessName, harnessNamed } from "../agents/harness.ts";
 import { filterEnv, sandboxArgs, throwawayMounts } from "../agents/sandbox.ts";
 import { sandboxFolders } from "../agents/seatbelt.ts";
+import { builtInRole } from "../roles.ts";
 import { errorText } from "../say.ts";
 import { limitOn } from "./limits.ts";
 
@@ -37,39 +38,34 @@ const schema = JSON.stringify({
 // or no one, on a change to docs and Markdown alone.
 export type Tests = { ci: string } | "run" | "docs only";
 
-// Returns what the reviewer is told: the task it checks the PR against, where the change
-// starts, how to learn whether the tests pass, and to answer with problems the builder can act
-// on. It tells the reviewer to assume the change is wrong, since a reviewer that trusts the
-// builder misses what the builder missed. `tests` says who runs the tests: CI, with the file
-// holding its result for the commit; the reviewer, as no CI runs on the commit; or no one, as
-// the change touches only docs and Markdown. The whole test suite runs once per commit, and
-// only when code changed, as several threads running it at once overload the machine.
+// Returns what the reviewer is told about the tests. The whole test suite runs once per commit,
+// and only when code changed, as several threads running it at once overload the machine. So
+// with CI on the commit the reviewer reads CI's result from its file, without CI it runs the
+// suite, and on a change to docs alone no one runs it.
+function testsTold(tests: Tests): string {
+  if (tests === "docs only")
+    return "The change only touches docs and Markdown, so don't run the tests. Say in the body that you didn't run them, as no code changed.";
+  if (tests === "run")
+    return "No CI runs on this commit, so run the repository's whole test suite, using the commands under test: in the repository's skelcrew.yaml if there is one.";
+  return `The repository's CI runs the whole test suite on this commit, so don't run it yourself. Run a single test only to settle a doubt. CI's result for this commit is in ${tests.ci}: whether it passed, failed or is still running, and the end of each failed check's log. Skelcrew updates that file as CI goes on, so read it when you start and again just before you answer. When CI failed, name the failing tests as problems. When it lists checks and none of them runs the tests, such as only a deploy preview or a CLA check, run the whole test suite yourself, using the commands under test: in the repository's skelcrew.yaml if there is one. When CI hasn't reported yet, or is still running as you answer, review the code anyway, and say in the body that CI is still running.`;
+}
+
+// Returns what the reviewer is told: its built-in instructions, with the task it checks the
+// PR against, where the change starts and who runs the tests filled into their blanks. All
+// blanks are filled in one pass, so a task whose text holds a blank's mark, or a `$&`, reaches
+// the reviewer as written. The file's last newline is dropped, as the reviewer has always been
+// told without one.
 export function reviewerPrompt(
   issue: { title: string; body: string },
   base: string,
   tests: Tests,
 ): string {
-  const told =
-    tests === "docs only"
-      ? "The change only touches docs and Markdown, so don't run the tests. Say in the body that you didn't run them, as no code changed."
-      : tests === "run"
-        ? "No CI runs on this commit, so run the repository's whole test suite, using the commands under test: in the repository's skelcrew.yaml if there is one."
-        : `The repository's CI runs the whole test suite on this commit, so don't run it yourself. Run a single test only to settle a doubt. CI's result for this commit is in ${tests.ci}: whether it passed, failed or is still running, and the end of each failed check's log. Skelcrew updates that file as CI goes on, so read it when you start and again just before you answer. When CI failed, name the failing tests as problems. When it lists checks and none of them runs the tests, such as only a deploy preview or a CLA check, run the whole test suite yourself, using the commands under test: in the repository's skelcrew.yaml if there is one. When CI hasn't reported yet, or is still running as you answer, review the code anyway, and say in the body that CI is still running.`;
-  return `Review this pull request as an adversarial reviewer. Another agent wrote it. Assume it is wrong until you have checked it yourself.
-
-It should do this:
-
-# ${issue.title}
-
-${issue.body}
-
-The change is everything on HEAD since ${base}. Read the whole diff with \`git diff ${base}...HEAD\`, and the code around it. Anything you change here is thrown away after the review, so run what you need, but don't fix the code.
-
-${told}
-
-Check that it does what this asks and nothing else, and look for bugs, edge cases it misses, missing tests and failing ones.
-
-Answer "approve" only if it is ready to merge. Otherwise answer "changes", and in the body name each problem, where it is and why it matters, so the builder can fix it.`;
+  const blanks: Record<string, string> = { ...issue, base, tests: testsTold(tests) };
+  const instructions = builtInRole("reviewer").instructions.replace(/\n$/, "");
+  return instructions.replace(
+    /\{\{(title|body|base|tests)\}\}/g,
+    (_, blank: string) => blanks[blank] ?? "",
+  );
 }
 
 // Starts the reviewer, waits for it to end, and returns what it printed and its exit code.

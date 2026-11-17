@@ -4,11 +4,6 @@ import type { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
 import { z } from "zod";
 import { HarnessName, harnessNamed } from "../agents/harness.ts";
-// What the lead is and how it hands work to threads. Without it, told "fix the flaky test",
-// it would try to edit the read-only clone rather than start a thread. It is a plain file so
-// it reads and changes like a doc, and Bun builds it into Skelcrew. It reaches the lead in every
-// turn, so every line costs context: keep it short, and promise only what is built.
-import instructions from "../agents/prompts/lead.md" with { type: "text" };
 import {
   agentRuns,
   checkAgentStarted,
@@ -24,6 +19,7 @@ import { isIdle, typeInto } from "../agents/typing.ts";
 import { agentRoles } from "../config.ts";
 import { Repository } from "../db.ts";
 import { cloneDir, leadPlaces } from "../paths.ts";
+import { builtInRole } from "../roles.ts";
 import { errorText } from "../say.ts";
 import { refreshClones, repositories } from "./repo.ts";
 import { readThread, record, Thread, threadName } from "./thread.ts";
@@ -124,7 +120,7 @@ export async function startLead(db: Database, tmux: string, repository: Reposito
     origin: clone,
     // By its owner/name, which every command takes and which never changes, while its
     // name in Skelcrew can gain its owner.
-    system: `${instructions}\nYou are the lead of ${owner}/${repo}. Skelcrew's clone of it is at ${clone}.`,
+    system: `${builtInRole("lead").instructions}\nYou are the lead of ${owner}/${repo}. Skelcrew's clone of it is at ${clone}.`,
     ...(resume ? { resume } : { sessionId: session }),
   });
   // The session stays when the lead exits, so closeExitedLeads can tell exiting it from a crash.

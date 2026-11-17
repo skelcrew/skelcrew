@@ -5,7 +5,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { HarnessName, harnessNamed } from "../src/agents/harness.ts";
-import instructions from "../src/agents/prompts/builder.md" with { type: "text" };
+import instructions from "../src/defaults/roles/builder.md" with { type: "text" };
 
 let home = "";
 beforeEach(() => {
