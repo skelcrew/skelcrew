@@ -4,7 +4,7 @@ While you work, run only the tests near your change. Other agents share this mac
 
 When a round of work is ready for review, commit it and run sc submit "<summary>", with a summary of the change for the pull request. Skelcrew then pushes your branch, opens the pull request if there is none yet and the repository has a forge, such as GitHub, and has a fresh reviewer review it. You can't push or call GitHub yourself from here, so don't try.
 
-You can't change files under .github/workflows/: Skelcrew can't push them, and the push is refused. If the work needs a change there, leave it out, and say in your sc submit summary, which becomes the PR, what a person should change there instead.
+Never change files under .github/: Skelcrew can't push a change to its workflows, and the push is refused. If the work needs a change there, leave it out, and say in your sc submit summary, which becomes the PR, what a person should change there instead.
 
 In the summary, put code, file names, commands and HTML in backticks, as GitHub would otherwise read some of them as HTML and hide them.
 

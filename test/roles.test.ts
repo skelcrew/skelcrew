@@ -9,7 +9,7 @@ const sha256 = (text: string) => new Bun.CryptoHasher("sha256").update(text).dig
 // What the builder's file added after its instructions moved there: Skelcrew can't push a
 // change to a workflow file.
 const workflows =
-  "\nYou can't change files under .github/workflows/: Skelcrew can't push them, and the push is refused. If the work needs a change there, leave it out, and say in your sc submit summary, which becomes the PR, what a person should change there instead.\n";
+  "\nNever change files under .github/: Skelcrew can't push a change to its workflows, and the push is refused. If the work needs a change there, leave it out, and say in your sc submit summary, which becomes the PR, what a person should change there instead.\n";
 
 test("the lead and builder files hold the instructions the code gave, and the builder's adds only workflows", () => {
   // The digests of src/agents/prompts/lead.md and builder.md before they moved.
