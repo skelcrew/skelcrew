@@ -399,6 +399,22 @@ UPDATE tasks SET title = 'New landing page', body = 'Make it calm.' WHERE repo =
     expect(JSON.parse(closed.out)).toEqual({ ...edited, link: null });
   });
 
+  // A repository whose tracker was turned off starts a task over on the words it kept, and it
+  // still came from its issue.
+  test("a task started over with no tracker keeps the link to its issue", async () => {
+    const link = "https://github.com/simon/app/issues/3";
+    sql(`UPDATE tasks SET issue_link = '${link}' WHERE task = '3'`);
+    const code = `import { openDb } from ${JSON.stringify(dbFile)};
+const { startThread } = await import(${JSON.stringify(source("flow/builder.ts"))});
+await startThread(openDb(), { repo: "app", task: "3" });`;
+    const started = Bun.spawnSync([process.execPath, "-e", code], { env: env(), stderr: "pipe" });
+    expect(started.stderr.toString()).toBe("");
+    serve();
+    await untilAnswers();
+    const shown = JSON.parse((await skel(["issue", "show", "app-3", "--json"])).out);
+    expect(shown).toMatchObject({ issue: "app-3", link, title: "Fix typo" });
+  });
+
   // The reviewer checks against what the builder was given, so an edit to the issue after the
   // start never changes the task. The lead passes on what matters as a message.
   test("shows a started task as it started, after its issue was edited", async () => {

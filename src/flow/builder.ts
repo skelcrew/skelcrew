@@ -109,6 +109,8 @@ export async function startThread(
     } else if (had?.title) {
       title = had.title;
       body = had.body ?? "";
+      // A task from an issue still came from it, though the repository's tracker is gone now.
+      issueLink = had.issue_link;
     } else
       throw new Error(
         tracked
