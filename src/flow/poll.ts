@@ -1,5 +1,5 @@
 // Polling: the daemon asks each repository's tracker and forge what changed, brings Skelcrew's
-// copy of its tasks and PRs up to date, starts threads on tasks labeled to start, and hands what
+// copy of its tasks and PRs and its clone's default branch up to date, starts threads on tasks labeled to start, and hands what
 // each thread's PR means for it to the code that acts on it. In a repository with no forge, it
 // ends a thread once its branch is merged or gone.
 import type { Database } from "bun:sqlite";
@@ -22,7 +22,7 @@ import { ciState, decide, labeledToStart, type PullRequest } from "./decide.ts";
 import { endThread, removing, tellBuilder, tellingEvents } from "./events.ts";
 import { fetchInto, onRemote } from "./git.ts";
 import { noteForLead, typeLeadNotes } from "./lead.ts";
-import { forgeKnown, fullNameIs, repositories } from "./repo.ts";
+import { forgeKnown, fullNameIs, refreshClone, repositories } from "./repo.ts";
 import { needsYou } from "./status.ts";
 import { readThread, record, Thread, threadName } from "./thread.ts";
 
@@ -194,8 +194,8 @@ async function actOnBranch(db: Database, sessions: string, repository: Repositor
 
 // Polls one repository. Asks its tracker and its forge what changed since the `next` each
 // plugin last gave, kept in `nexts`, or for everything open when there is none. Brings
-// Skelcrew's copy up to date, taking tasks only from its tracker and PRs only from its forge.
-// Then starts threads on its tasks labeled to start. Then acts on what each thread's PR means
+// Skelcrew's copy up to date, taking tasks only from its tracker and PRs only from its forge,
+// and Skelcrew's clone's default branch with it. Then starts threads on its tasks labeled to start. Then acts on what each thread's PR means
 // for it, or, with no forge, on each thread's branch. Thread rows are read again once the
 // answers are in, since a round can change them meanwhile.
 async function pollRepository(
@@ -227,6 +227,13 @@ async function pollRepository(
     saveItems(db, owner, repo, items, next === null ? kinds : []);
     nexts.set(plugin, answer.next);
   }
+  // Bring Skelcrew's clone's default branch up to date after the forge answered, so a PR it
+  // says merged, whoever merged it, or a push straight to the default branch, reaches builders
+  // fetching from the clone by this poll. Cheap when nothing changed. A failed fetch leaves the
+  // clone as it was until the next poll, and holds up nothing else.
+  await refreshClone(db, repository).catch((error) =>
+    console.log(`couldn't update Skelcrew's clone of ${owner}/${repo}: ${errorText(error)}`),
+  );
   // With the copy up to date, start labeled tasks, then act on each thread: by its PR with a
   // forge, or by its branch without one.
   if (trackerOf(db, repository) !== null)

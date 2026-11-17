@@ -102,17 +102,52 @@ export function repositoryAt(db: Database, given: string): Repository | undefine
   return old ? all.find((r) => r.owner === old.owner && r.repo === old.repo) : undefined;
 }
 
-// Creates or updates Skelcrew's repository clone so its lead can read its latest default
-// branch. The lead reads the clone, so a clone whose config holds a credential is deleted
-// rather than left there for it.
-async function refreshClone(db: Database, repository: Repository): Promise<void> {
+// The refresh of each repository's clone under way or waiting, by owner/name, so two git
+// commands never fight over a clone.
+const cloneWork = new Map<string, Promise<void>>();
+
+// Creates or updates Skelcrew's clone of the repository, so its lead reads its latest default
+// branch and builders, whose origin it is, fetch it as the remote has it. The poll calls it
+// each time, so a merge or a push to the default branch reaches builders within a poll. A
+// call while one runs waits for it, then refreshes again, so it always sees what the remote
+// had when it was asked. Throws what git said when it fails.
+export function refreshClone(db: Database, repository: Repository): Promise<void> {
+  const { owner, repo } = repository;
+  const fullName = `${owner}/${repo}`;
+  const saved = () => repositories(db).some((r) => r.owner === owner && r.repo === repo);
+  const run = (cloneWork.get(fullName) ?? Promise.resolve()).then(async () => {
+    // sc repo rm can run while a clone is still being made, and the clone would then land
+    // after the removal, where nothing would remove it. A repository being brought in is
+    // cloned before it is saved, so only one saved already counts as removed.
+    const wasSaved = saved();
+    await createOrUpdate(db, repository);
+    if (wasSaved && !saved()) rmSync(cloneDir(owner, repo), { recursive: true, force: true });
+  });
+  // The next call waits for this one whether it fails or not, and the last one leaves no
+  // entry behind.
+  const settled = run.catch(() => {});
+  cloneWork.set(fullName, settled);
+  settled.then(() => {
+    if (cloneWork.get(fullName) === settled) cloneWork.delete(fullName);
+  });
+  return run;
+}
+
+// Creates Skelcrew's clone of the repository, or brings the one it has up to date, logging
+// when its default branch moves. The lead reads the clone, so a clone whose config holds a
+// credential is deleted rather than left there for it.
+async function createOrUpdate(db: Database, repository: Repository): Promise<void> {
   const { owner, repo } = repository;
   // A clone Skelcrew has already is brought up to date in place, and checked again, as the
   // update could have brought a credential in.
   const clone = cloneDir(owner, repo);
   if (existsSync(clone)) {
-    await updateClone(db, repository, clone);
+    const { before, after } = await updateClone(db, repository, clone);
     deleteIfCredentials(clone);
+    if (before !== after)
+      console.log(
+        `Skelcrew's clone of ${owner}/${repo} moved its default branch from ${before.slice(0, 7)} to ${after.slice(0, 7)}`,
+      );
     return;
   }
   // Cloned outside the clone's folder, checked, and moved in once whole, so neither a clone
@@ -199,10 +234,6 @@ export function refreshClones(db: Database): Promise<void> {
       done.add(`${owner}/${repo}`);
       try {
         await refreshClone(db, await findForge(db, next));
-        // sc repo rm can run while a clone is still being made, and the clone would then
-        // land after the removal, where nothing would remove it.
-        if (!repositories(db).some((r) => r.owner === owner && r.repo === repo))
-          rmSync(cloneDir(owner, repo), { recursive: true, force: true });
       } catch (error) {
         console.log(errorText(error));
       }

@@ -132,6 +132,9 @@ afterEach(async () => {
 // What this test's processes run with.
 const env = () => homeEnv(home);
 
+// Where the daemon this test runs writes its log.
+const daemonLog = () => join(home, "daemon.log");
+
 // Runs the daemon, polling every 200 milliseconds rather than every 30 seconds, and every
 // 400 rather than every minute while threads only wait on you, unless a test says otherwise.
 function serve(every = 200): Subprocess {
@@ -140,7 +143,7 @@ await serve(${JSON.stringify(socket)}, ${every});`;
   // Reviews start at once on app, which has no CI, rather than waiting for a first check.
   const run = Bun.spawn([process.execPath, "-e", code], {
     env: { ...env(), SKELCREW_CHECK_WAIT_MS: "0" },
-    stdout: "ignore",
+    stdout: Bun.file(daemonLog()),
     stderr: "ignore",
   });
   running.push(run);
@@ -369,6 +372,39 @@ test("the first poll brings everything open into Skelcrew's copy, and later ones
   serve();
   await until(() => copied().rows.length === 1);
   expect(copied()).toEqual({ rows: ["task 12"], totals: { open_issues: 1, open_prs: 0 } });
+});
+
+// Builders fetch the default branch from Skelcrew's clone, so it must follow the remote's,
+// however the default branch moved.
+test("a push straight to main and a merge of a PR without a thread both reach Skelcrew's clone by the next poll", async () => {
+  const work = addApp();
+  const remote = join(home, "github", "simon", "app.git");
+  changes([]);
+  serve();
+  const skelcrewClone = join(data(), "repos", "simon", "app");
+  await until(() => existsSync(join(skelcrewClone, "README")));
+  const cloneHead = () => git(skelcrewClone, "rev-parse", "HEAD").trim();
+  // Someone pushes straight to main. The poll after it brings it in, and the log says so.
+  writeFileSync(join(work, "pushed"), "1\n");
+  git(work, "add", ".");
+  git(work, "commit", "-q", "-m", "pushed");
+  git(work, "push", "-q", remote, "main");
+  const pushed = git(work, "rev-parse", "HEAD").trim();
+  await until(() => cloneHead() === pushed);
+  await until(() => read(daemonLog()).includes(`to ${pushed.slice(0, 7)}`));
+  expect(read(daemonLog())).toContain("Skelcrew's clone of simon/app moved its default branch");
+  // Someone merges a PR no thread has. The poll that hears of the merge brings it in.
+  git(work, "checkout", "-q", "-b", "feature");
+  writeFileSync(join(work, "feature"), "1\n");
+  git(work, "add", ".");
+  git(work, "commit", "-q", "-m", "feature");
+  git(work, "checkout", "-q", "main");
+  git(work, "merge", "-q", "--no-ff", "-m", "Merge pull request #40", "feature");
+  git(work, "push", "-q", remote, "main");
+  changes([prItem("40", "Add feature", { state: "merged", branch: "feature" })]);
+  const merged = git(work, "rev-parse", "HEAD").trim();
+  await until(() => cloneHead() === merged);
+  expect(existsSync(join(skelcrewClone, "feature"))).toBe(true);
 });
 
 // Two machines running Skelcrew on one repository both see the label, and only the one whose
