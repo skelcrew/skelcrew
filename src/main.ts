@@ -427,16 +427,15 @@ async function checkCommand(args: string[]): Promise<void> {
     return;
   }
   // The suite must never outlive sc check, which is what notices the daemon going away. The
-  // suite runs in a process group of its own, and a watcher in it reads a pipe that only
-  // sc check holds open. However sc check ends, even killed outright, the pipe closes and the
-  // watcher ends the whole group. The suite's own input is /dev/null, as POSIX gives a
-  // background job unless it is redirected, so the watcher is the pipe's only reader.
-  const watched = `exec 4<&0 </dev/null; (cat <&4 >/dev/null; kill -KILL 0) & exec 4<&-; ${slot.test.join(" && ")}`;
+  // suite runs in a process group of its own, and a watcher in it reads a pipe, descriptor 4,
+  // whose other end only sc check holds. However sc check ends, even killed outright, the pipe
+  // closes and the watcher ends the whole group. The shell closes its own copy once the watcher
+  // has it, so the suite keeps your input, and only the watcher reads the pipe.
+  const watched = `(cat <&4 >/dev/null; kill -KILL 0) & exec 4<&-; ${slot.test.join(" && ")}`;
   // The shell gets the connection too, as its descriptor 3, so the daemon frees the slot only
   // once the last process of the suite has ended, not when sc check does.
-  const holds = slot.fd === undefined ? [] : [slot.fd];
   const run = Bun.spawn(["sh", "-c", watched], {
-    stdio: ["pipe", "inherit", "inherit", ...holds],
+    stdio: ["inherit", "inherit", "inherit", slot.fd ?? "ignore", "pipe"],
     detached: true,
   });
   // A daemon that stops while the suite runs takes its slot with it, and the next daemon knows

@@ -178,6 +178,21 @@ test("a daemon that stops during a check stops its suite, which never runs besid
   expect(log()).toBe("start a\nstart b\nend b\n");
 }, 60_000);
 
+test("the test commands read what sc check is given on its input", async () => {
+  config('test: [\'read answer; echo "got $answer" > "$HOME/answer"\']\n');
+  await serve();
+  const folder = checkout("a");
+  const run = Bun.spawn([process.execPath, source("main.ts"), "check"], {
+    cwd: folder,
+    env: env(),
+    stdin: Buffer.from("yes\n"),
+    stdout: "ignore",
+    stderr: "ignore",
+  });
+  expect(await run.exited).toBe(0);
+  expect(read(join(home, "answer"))).toBe("got yes\n");
+}, 60_000);
+
 test("runs the test commands in one shell, so a cd or an export holds for the next", async () => {
   config(
     'test: ["export WHO=me", "cd sub", "echo \\"$WHO $(basename \\"$PWD\\")\\" > \\"$HOME/where\\""]\n',
