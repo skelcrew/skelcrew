@@ -43,6 +43,19 @@ function splitTaskName(word?: string): [string, string] | undefined {
   return parts?.[1] && parts[2] ? [parts[1], parts[2]] : undefined;
 }
 
+// Splits a thread's name into its repository and task, as splitTaskName does. A thread is its
+// task with its role after a slash, such as app-12/builder, and the task alone means its
+// builder. A task's name never ends in a slash and a plain word, so app-12/builder can't be read
+// as a repository named with its owner. Every task's one thread is its builder, so another role
+// is refused, saying so.
+function splitThreadName(word?: string): [string, string] | undefined {
+  const parts = word?.match(/^(.+)\/([a-z]+)$/);
+  const task = splitTaskName(parts?.[1] ?? word);
+  if (task && parts?.[2] && parts[2] !== "builder")
+    throw new Error(`${parts[1]} has no ${parts[2]} thread: a task's only thread is its builder`);
+  return task;
+}
+
 // Splits a task given on stdin to sc start <repo>, such as a file or a lead's heredoc: the
 // first line is its title, without a markdown heading's "# ", and the rest is its body, from
 // its first line that isn't blank. Throws saying which is missing, as a builder needs both.
@@ -79,6 +92,8 @@ function usage(command?: string): never {
     "init",
     "repo",
     "ps",
+    "ls",
+    "show",
     "issue",
     "pr",
     "start",
@@ -323,24 +338,38 @@ async function psCommand(args: string[], json: boolean): Promise<void> {
   printThreads(all ? rows : rows.filter((row) => row.status !== "done"), json);
 }
 
-// Lists issues, shows one or creates one, for sc issue. The words a user types say issue, as
-// the sidebar does, while Skelcrew calls each one a task. --json changes only what ls and show
-// print.
+// Prints the tasks, or one repository's, under their stages, for sc ls and its short name sc
+// issue ls. Merged and closed tasks pile up forever and would bury the rest, so only --all
+// shows them. `words` are what follows the command.
+async function lsCommand(command: string, words: string[], json: boolean): Promise<void> {
+  const { askForTasks } = await import("./client.ts");
+  const { printTasks } = await import("./flow/list.ts");
+  const all = words.includes("--all");
+  // What is left is, at most, a repository.
+  const rest = words.filter((word) => word !== "--all");
+  if (rest.length > 1) usage(command);
+  const tasks = await askForTasks(rest[0]);
+  const shown = all ? tasks : tasks.filter((t) => t.stage !== "merged" && t.stage !== "closed");
+  printTasks(shown, json);
+}
+
+// Shows one task, for sc show and its short name sc issue show, named such as app-12.
+async function showCommand(command: string, words: string[], json: boolean): Promise<void> {
+  const { askForTask } = await import("./client.ts");
+  const { printTask } = await import("./flow/list.ts");
+  const task = splitTaskName(words[0]);
+  if (!task || words.length !== 1) usage(command);
+  printTask(await askForTask({ repo: task[0], task: task[1] }), json);
+}
+
+// Lists tasks, shows one or creates an issue, for sc issue. sc issue ls and sc issue show are
+// short names for sc ls and sc show, kept while people and leads still type them.
 async function issueCommand(args: string[], json: boolean): Promise<void> {
   const [command, sub, ...rest] = args;
-  const { askForTask, askForTasks, createTask } = await import("./client.ts");
-  const { printTask, printTasks } = await import("./flow/list.ts");
-  if (sub === "ls" && rest.length <= 1) {
-    printTasks(await askForTasks(rest[0]), json);
-    return;
-  }
-  // sc issue show takes an issue's name, such as app-13. sc issue create takes a repository
-  // with a title and a body.
-  const task = splitTaskName(rest[0]);
-  if (sub === "show" && task && rest.length === 1) {
-    printTask(await askForTask(...task), json);
-    return;
-  }
+  const { createTask } = await import("./client.ts");
+  if (sub === "ls") return lsCommand(command ?? "issue", rest, json);
+  if (sub === "show") return showCommand(command ?? "issue", rest, json);
+  // sc issue create takes a repository with a title and a body.
   const [repository, title, body] = rest;
   if (sub === "create" && repository && title && body !== undefined && rest.length === 3) {
     console.log(await createTask(repository, title, bodyFor("sc issue create", body)));
@@ -349,13 +378,14 @@ async function issueCommand(args: string[], json: boolean): Promise<void> {
   usage(command);
 }
 
-// Shows one PR, for sc pr show, named by its number, such as 31 or #31, or by its thread, such
-// as app-12. A number is in the repository of the checkout sc runs in, or the one --from names,
-// which sc --remote passes from your laptop's checkout. For the lead, it is always its own.
+// Shows the task a PR belongs to, for sc pr show, a short name for sc show. The PR is named by
+// its number, such as 31 or #31, or by its task, such as app-12. A number is in the repository
+// of the checkout sc runs in, or the one --from names, which sc --remote passes from your
+// laptop's checkout. For the lead, it is always its own.
 async function prCommand(args: string[], json: boolean): Promise<void> {
   const [command, sub, named, ...rest] = args;
-  const { askForPr } = await import("./client.ts");
-  const { printPr } = await import("./flow/list.ts");
+  const { askForTask } = await import("./client.ts");
+  const { printTask } = await import("./flow/list.ts");
   const given = rest[0] === "--from" && rest[1] && rest.length === 2 ? rest[1] : undefined;
   if (sub !== "show" || named === undefined || (rest.length > 0 && !given)) usage(command);
   const number = named.match(/^#?(\d+)$/)?.[1];
@@ -363,25 +393,28 @@ async function prCommand(args: string[], json: boolean): Promise<void> {
   if (number !== undefined) {
     const { originHere } = await import("./machine/origin.ts");
     const from = given ?? originHere() ?? undefined;
-    printPr(await askForPr({ pr: Number(number), ...(from ? { from } : {}) }), json);
+    printTask(await askForTask({ pr: Number(number), ...(from ? { from } : {}) }), json);
     return;
   }
   if (task && !given) {
-    printPr(await askForPr({ repo: task[0], task: task[1] }), json);
+    printTask(await askForTask({ repo: task[0], task: task[1] }), json);
     return;
   }
   usage(command);
 }
 
 // Starts, stops, removes, re-reviews, peeks at, interrupts or attaches to the thread on a task
-// such as app-13. sc
-// start also takes a repository, a title and a body, to start a thread with no tracker.
+// such as app-13. sc start also takes a repository, a title and a body, to start a thread with
+// no tracker.
 async function threadCommand(args: string[]): Promise<void> {
   const [command, sub, ...rest] = args;
   const { attachToThread } = await import("./attach.ts");
   const { interruptOn, peekAt, previewRemoval, removeOn, reviewAgain, startNew, startOn, stopOn } =
     await import("./client.ts");
   const task = splitTaskName(sub);
+  // stop, peek, interrupt and attach act on one thread, so they take its role too.
+  const thread =
+    command === "start" || command === "rm" || command === "review" ? task : splitThreadName(sub);
   // --short takes the thread's short title for the sidebar, on every form of sc start, and is
   // taken out before the other words are read. A blank one would show nothing, so it is a
   // mistake, like a --short with no words after it.
@@ -409,8 +442,8 @@ async function threadCommand(args: string[]): Promise<void> {
     console.log(await startNew(sub, given.title, given.body, short));
     return;
   }
-  if (command === "stop" && task && rest.length === 0) {
-    const name = await stopOn(...task);
+  if (command === "stop" && thread && rest.length === 0) {
+    const name = await stopOn(...thread);
     console.log(
       `Stopped ${name}. Its clone, branch and pull request stay, and sc start ${name} brings its builder back.`,
     );
@@ -452,18 +485,18 @@ async function threadCommand(args: string[]): Promise<void> {
     return;
   }
   // The screen comes without the blank lines below what the builder drew.
-  if (command === "peek" && task && rest.length === 0) {
-    const { screen } = await peekAt(...task);
+  if (command === "peek" && thread && rest.length === 0) {
+    const { screen } = await peekAt(...thread);
     console.log(screen.trimEnd());
     return;
   }
-  if (command === "interrupt" && task && rest.length === 0) {
-    const name = await interruptOn(...task);
+  if (command === "interrupt" && thread && rest.length === 0) {
+    const name = await interruptOn(...thread);
     console.log(`Stopped ${name}'s turn, as Esc does. sc tell ${name} gives it what to do next.`);
     return;
   }
-  if (command === "attach" && task && rest.length === 0) {
-    await attachToThread("skelcrew", ...task);
+  if (command === "attach" && thread && rest.length === 0) {
+    await attachToThread("skelcrew", ...thread);
     return;
   }
   usage(command);
@@ -479,7 +512,7 @@ async function tellCommand(args: string[]): Promise<void> {
     throw new Error(
       "sc tell is for the lead and builders. To type to a builder, pick it in the sidebar.",
     );
-  const task = splitTaskName(to);
+  const task = to === "lead" ? undefined : splitThreadName(to);
   if (to === "lead" && text && rest.length === 0) {
     await tellTheLead(text);
     console.log("Telling the lead. Skelcrew types it in once the lead is idle.");
@@ -579,6 +612,10 @@ async function runCommand(args: string[]): Promise<void> {
       return agentCommand(words);
     case "ps":
       return psCommand(words, json);
+    case "ls":
+      return lsCommand(first, words.slice(1), json);
+    case "show":
+      return showCommand(first, words.slice(1), json);
     case "issue":
       return issueCommand(words, json);
     case "pr":

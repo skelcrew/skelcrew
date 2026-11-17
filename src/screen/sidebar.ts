@@ -14,12 +14,13 @@ import { paneTty, paneWidth, respawnPane, screenTmux, showStrip } from "../agent
 import { openRepository } from "../client.ts";
 import { openDb } from "../db.ts";
 import { leadOf } from "../flow/lead.ts";
+import { roundLimit } from "../flow/status.ts";
 import { updateNotice } from "../machine/update.ts";
 import { leadPlaces } from "../paths.ts";
 import { version } from "../version.ts";
 import { agentFooter, tellFooter } from "./footer.ts";
 import { draw, entryPlace, noticeLines, type Size } from "./layout.ts";
-import { type EntryCount, entryCounts, pageRow, roundLimit } from "./lists.ts";
+import { type EntryCount, entryCounts, pageRow } from "./lists.ts";
 import { nextList, nextRow, rowAtLine } from "./moves.ts";
 import { type Open, type Row, repositoryTabs, sidebarRows } from "./rows.ts";
 import { paneCommand, sidebarWidth } from "./screen.ts";

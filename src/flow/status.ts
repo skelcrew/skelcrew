@@ -7,6 +7,7 @@ import { z } from "zod";
 import { harnessNamed } from "../agents/harness.ts";
 import { agentRuns, readSession } from "../agents/sessions.ts";
 import { forQuestion, type Marks, quietSince } from "../agents/transport.ts";
+import { threadConfig } from "../config.ts";
 import { pastRoundLimit } from "./decide.ts";
 import { leadOf, typeLeadNotes } from "./lead.ts";
 import { clockTime, endWake, wakeAfterLimit } from "./limits.ts";
@@ -59,6 +60,17 @@ export function statusOf(thread: Thread, maxRounds: number, now = Date.now()): S
   if (thread.erred && thread.limited) return "idle";
   if (thread.status !== "working" && thread.status !== "waiting") return "idle";
   return (thread.state ?? thread.status) === "working" ? "working" : "idle";
+}
+
+// Returns a thread's round limit, from its repository's skelcrew.yaml or your config. Settings
+// that aren't valid already stop rounds, with the reason, and mustn't also take the sidebar, a
+// list or sc ls away. Such a thread then reads as never past the limit.
+export function roundLimit(thread: Thread): number {
+  try {
+    return threadConfig(thread).maxRounds;
+  } catch {
+    return Number.POSITIVE_INFINITY;
+  }
 }
 
 // Returns the state an agent is in once its harness ran a hook, by the request the hook made,

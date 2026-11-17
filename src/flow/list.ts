@@ -1,22 +1,23 @@
-// What Skelcrew shows you about its work: repositories for sc repo ls, threads for sc ps,
-// open tasks for sc issue ls, one task for sc issue show and one PR for sc pr show, as short
-// text for a terminal or JSON for tools.
+// What Skelcrew shows you about its work: repositories for sc repo ls, threads for sc ps, tasks
+// with their stages for sc ls, and one task with its threads and PR for sc show, as short text
+// for a terminal or JSON for tools.
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
 import { repositoryTracker } from "../config.ts";
+import type { Repository } from "../db.ts";
 import { colorful } from "../help.ts";
 import { cloneDir } from "../paths.ts";
 import { failedLog, forgeOf, trackerOf } from "../plugins/ask.ts";
 import { errorText } from "../say.ts";
 import { filled, fitted, removeControlCodes } from "../screen/look.ts";
-import { type Item, openTasks, prOf, taskOf, threadTask } from "./copy.ts";
+import { type Item, openTasks, prOf, threadTask } from "./copy.ts";
 import { reviewCheck } from "./decide.ts";
 import { messagesWaiting } from "./messages.ts";
 import { ciSummary, reviewVerdict } from "./page.ts";
 import { findRepository, noRepositories, repositories, repositoryAt } from "./repo.ts";
 import { roundRunning } from "./round.ts";
-import { needsYou } from "./status.ts";
-import { findThread, queuedForReview, Thread, threadName, threadOn } from "./thread.ts";
+import { needsYou, roundLimit, threadWord } from "./status.ts";
+import { queuedForReview, Thread, threadName, threadOn } from "./thread.ts";
 
 // A repository as sc repo ls shows it. `missing` is a tracker its skelcrew.yaml names that
 // isn't installed, so it has none until you install that plugin.
@@ -132,10 +133,32 @@ function reviewOf(thread: Thread): NonNullable<ThreadRow["review"]> {
   return { state: states[thread.verdict], round: thread.review_round, at };
 }
 
+// Returns a thread as sc ps shows it, and as sc ls and sc show show its task's PR, CI and
+// review. `forge` is whether its repository has one, as without it there are no PRs. Its PR's
+// link comes from Skelcrew's copy, which has a PR while it is open or its thread isn't over. The
+// title comes from the tracker and the short title from the lead, so tools get them with no
+// control codes.
+function threadRow(db: Database, thread: Thread, forge: boolean): ThreadRow {
+  const pr = forge ? thread.pr : null;
+  const copy = pr === null ? null : prOf(db, thread.owner, thread.repo, pr);
+  return {
+    thread: threadName(db, thread),
+    short: thread.short && removeControlCodes(thread.short),
+    title: thread.title && removeControlCodes(thread.title),
+    status: thread.status,
+    needsYou: needsYou(thread),
+    queued: queuedForReview(thread),
+    branch: thread.branch,
+    pr,
+    prUrl: copy?.link ?? null,
+    checks: pr === null ? null : ciOf(thread, copy),
+    review: forge ? reviewOf(thread) : null,
+    waiting: messagesWaiting(db, thread),
+  };
+}
+
 // Returns the threads, or one repository's, newest first, for sc ps. A thread that starts
-// over gets a new row, so it counts as started when it last started. Its PR's link comes from
-// Skelcrew's copy, which has a PR while it is open or its thread isn't over. The title comes
-// from the tracker and the short title from the lead, so tools get them with no control codes.
+// over gets a new row, so it counts as started when it last started.
 export function listThreads(db: Database, repository?: string): ThreadRow[] {
   const one = repository ? findRepository(db, repository) : null;
   const all = one
@@ -148,95 +171,262 @@ export function listThreads(db: Database, repository?: string): ThreadRow[] {
   return all.map((row) => {
     const thread = Thread.parse(row);
     const forge = withForge.some((r) => r.owner === thread.owner && r.repo === thread.repo);
-    const pr = forge ? thread.pr : null;
-    const copy = pr === null ? null : prOf(db, thread.owner, thread.repo, pr);
-    return {
-      thread: threadName(db, thread),
-      short: thread.short && removeControlCodes(thread.short),
-      title: thread.title && removeControlCodes(thread.title),
-      status: thread.status,
-      needsYou: needsYou(thread),
-      queued: queuedForReview(thread),
-      branch: thread.branch,
-      pr,
-      prUrl: copy?.link ?? null,
-      checks: pr === null ? null : ciOf(thread, copy),
-      review: forge ? reviewOf(thread) : null,
-      waiting: messagesWaiting(db, thread),
-    };
+    return threadRow(db, thread, forge);
   });
 }
 
-// An open task as sc issue ls shows it, with how its thread stands, or null with no thread.
-// `issue` is its name, such as app-12. The key says issue, as the commands do, and is always
-// one in the tracker: a thread with no issue, such as app-t1, is never listed here.
+// Where a task is: an open issue with no work running on it, agents on it, approved with green
+// CI and waiting for you, merged, or ended without a merge.
+export const Stage = z.enum(["issue", "working", "ready for review", "merged", "closed"]);
+export type Stage = z.infer<typeof Stage>;
+
+// The stages in the order sc ls shows them, each with its heading.
+const stages: [Stage, string][] = [
+  ["issue", "Issues"],
+  ["working", "Working"],
+  ["ready for review", "Ready for review"],
+  ["merged", "Merged"],
+  ["closed", "Closed"],
+];
+
+// Returns a task's stage from its thread, or null with none, and whether its issue is open in
+// Skelcrew's copy. A thread that ended without a merge leaves an open issue to start again, so
+// the task goes back to `issue`. A thread that stopped or failed stays in `working`, so it
+// doesn't vanish. Ready for review is the approval the sidebar shows: the latest round
+// approved, CI green and no conflict.
+function stageOf(thread: Thread | null, issueOpen: boolean): Stage {
+  if (thread === null) return "issue";
+  if (thread.status === "done") return thread.merged ? "merged" : issueOpen ? "issue" : "closed";
+  const live = thread.status === "working" || thread.status === "waiting";
+  if (live && threadWord(thread, roundLimit(thread)) === "approved") return "ready for review";
+  return "working";
+}
+
+// A task as sc ls shows it: its name, such as app-12, its title and the short title the lead
+// gave it, its stage, and how its builder stands, or null with no thread. `pr`, `checks` and
+// `review` are as sc ps gives them for its thread, and null with none.
 export const TaskRow = z.object({
-  issue: z.string(),
+  task: z.string(),
   title: z.string(),
-  thread: z.object({ status: Thread.shape.status, needsYou: z.boolean() }).nullable(),
+  short: z.string().nullable(),
+  stage: Stage,
+  thread: z
+    .object({ status: Thread.shape.status, needsYou: z.boolean(), queued: z.boolean() })
+    .nullable(),
+  pr: ThreadRow.shape.pr,
+  checks: ThreadRow.shape.checks,
+  review: ThreadRow.shape.review,
 });
 export type TaskRow = z.infer<typeof TaskRow>;
 
-// Returns how the thread on a task stands, or null when it has none.
-function threadStatusOf(
-  db: Database,
-  owner: string,
-  repo: string,
-  task: string,
-): TaskRow["thread"] {
-  const row = db
-    .query("SELECT * FROM task_threads WHERE owner = ? AND repo = ? AND task = ?")
-    .get(owner, repo, task);
-  const thread = Thread.nullable().parse(row);
-  return thread && { status: thread.status, needsYou: needsYou(thread) };
-}
-
-// Returns the open tasks of every repository, or of one, newest first, with the thread on
-// each one that has one, for sc issue ls. They come from Skelcrew's copy, so the tracker isn't
-// asked.
+// Returns the tasks of every repository, or of one, with their stages, for sc ls: each task
+// with a thread, newest first, then each open issue with none, newest first. They come from
+// Skelcrew's database and its copy of the tracker, so the tracker isn't asked. Text from the
+// tracker and the lead has its control codes removed.
 export function listTasks(db: Database, repository?: string): TaskRow[] {
   const chosen = repository ? [findRepository(db, repository)] : repositories(db);
-  // Each repository's tasks come newest first, but mixing repositories needs a sort of its own,
-  // so each row keeps its creation time until the sort is done.
-  return chosen
-    .flatMap((r) =>
-      openTasks(db, r.owner, r.repo).map((task) => ({
-        created: task.created,
-        issue: `${r.name}-${task.id}`,
-        title: task.title,
-        thread: threadStatusOf(db, r.owner, r.repo, task.id),
-      })),
-    )
-    .sort((a, b) => b.created.localeCompare(a.created))
-    .map(({ created, ...task }) => task);
+  return chosen.flatMap((r) => {
+    const forge = forgeOf(db, r) !== null;
+    const open = openTasks(db, r.owner, r.repo);
+    const threads = db
+      .query("SELECT * FROM task_threads WHERE owner = ? AND repo = ? ORDER BY rowid DESC")
+      .all(r.owner, r.repo)
+      .map((row) => Thread.parse(row));
+    // A task with a thread takes its title from the open issue, which has the tracker's latest
+    // words, or else from what the thread saved as it started.
+    const worked = threads.map((thread): TaskRow => {
+      const row = threadRow(db, thread, forge);
+      const issue = open.find((item) => item.id === thread.task);
+      return {
+        task: `${r.name}-${thread.task}`,
+        title: removeControlCodes(issue?.title ?? thread.title ?? ""),
+        short: row.short,
+        stage: stageOf(thread, issue !== undefined),
+        thread: { status: row.status, needsYou: row.needsYou, queued: row.queued },
+        pr: row.pr,
+        checks: row.checks,
+        review: row.review,
+      };
+    });
+    const waiting = open
+      .filter((item) => !threads.some((thread) => thread.task === item.id))
+      .map(
+        (item): TaskRow => ({
+          task: `${r.name}-${item.id}`,
+          title: removeControlCodes(item.title),
+          short: null,
+          stage: "issue",
+          thread: null,
+          pr: null,
+          checks: null,
+          review: null,
+        }),
+      );
+    return [...worked, ...waiting];
+  });
 }
 
-// One task as sc issue show shows it, named under `issue` as in sc issue ls.
-export const TaskView = z.object({
-  issue: z.string(),
+// One PR as sc show shows it, from Skelcrew's copy: what its page on the screen shows, with its
+// latest review's text. `ci` is what its CI says as a whole, and `checks` each CI check, with
+// the end of its log for a failed one, as the forge gives it, or null. Everything here that
+// came from the forge has its control codes removed.
+export const PrPage = z.object({
   title: z.string(),
+  state: z.enum(["open", "closed", "merged"]),
+  branch: z.string(),
+  base: z.string(),
+  ci: z.enum(["passed", "failed", "running", "none"]),
+  checks: z.array(
+    z.object({
+      name: z.string(),
+      state: z.enum(["running", "passed", "failed", "cancelled"]),
+      log: z.string().nullable(),
+    }),
+  ),
+  review: z.object({ verdict: z.string(), author: z.string(), body: z.string() }).nullable(),
   body: z.string(),
-  thread: TaskRow.shape.thread,
+  link: z.string(),
+});
+export type PrPage = z.infer<typeof PrPage>;
+
+// One task as sc show shows it. `body` is its description as its reviewer gets it. `issue` is
+// the issue it came from, such as #12, with its link while Skelcrew's copy has it, or null for a
+// task with no issue, such as app-t1. `threads` names each of its threads with its role, such
+// as app-12/builder. `pr` is its PR's number, and `review` where Skelcrew's review stands, as
+// sc ps gives them. `prPage` is its PR from Skelcrew's copy, or null once the copy no longer has
+// it, as after a merge.
+export const TaskView = z.object({
+  task: z.string(),
+  title: z.string(),
+  stage: Stage,
+  issue: z.object({ id: z.string(), link: z.string().nullable() }).nullable(),
+  threads: z.array(
+    z.object({ thread: z.string(), status: Thread.shape.status, needsYou: z.boolean() }),
+  ),
+  body: z.string(),
+  pr: z.number().nullable(),
+  review: ThreadRow.shape.review,
+  prPage: PrPage.nullable(),
 });
 export type TaskView = z.infer<typeof TaskView>;
 
-// Returns one task's title and body, which is all its builder sees, with the thread on it if
-// it has one, for sc issue show. It comes from Skelcrew's copy, so the tracker isn't asked. A
-// task with a thread still at work, or stopped, is shown as its reviewer gets it, with the
-// lead's messages to the builder after the body, so the lead sees the task the builder is
-// judged by. That also shows a thread with no task in the tracker, such as app-t1. A done or
-// failed thread's messages aren't shown: starting it over gives a fresh thread without them,
-// and a merged thread's issue is closed, which the copy alone can say.
-export function showTask(db: Database, repository: string, task: string): TaskView {
-  const r = findRepository(db, repository);
-  const thread = threadOn(db, repository, task);
+// Returns text from the forge safe to print, line breaks kept. A check's log often colours its
+// lines, and those codes are removed whole, so no stray "[31m" is left behind.
+function safeText(text: string): string {
+  const colours = new RegExp(`${String.fromCharCode(27)}\\[[0-?]*[ -/]*[@-~]`, "g");
+  return text.replace(colours, "").split(/\r?\n/).map(removeControlCodes).join("\n");
+}
+
+// How long sc show waits on the forge for a failed check's log, in milliseconds. sc gives up on
+// the daemon after a minute, so a forge that hangs must not keep the task itself from showing.
+const logDeadline = 10_000;
+
+// Returns a PR as its page shows it, from Skelcrew's copy, or null when the copy doesn't have
+// it. It asks the forge only for the logs of failed checks. A log that can't be read, or that
+// the forge takes too long on, says why in its place, so the PR still shows.
+async function prPageOf(db: Database, repository: Repository, number: number) {
+  const pr = prOf(db, repository.owner, repository.repo, number);
+  if (!pr) return null;
+  // Each CI check, with the end of its log when it failed and has one.
+  const checks = await Promise.all(
+    pr.checks
+      .filter((check) => check.name !== reviewCheck)
+      .map(async (check) => {
+        const log =
+          check.state === "failed" && check.id !== null
+            ? await failedLog(db, repository, check.id, logDeadline).catch(
+                (error) => `(Skelcrew couldn't read its log: ${errorText(error)})`,
+              )
+            : null;
+        return { name: safeText(check.name), state: check.state, log: log && safeText(log) };
+      }),
+  );
+  const latest = pr.reviews.at(-1);
+  return PrPage.parse({
+    title: removeControlCodes(pr.title),
+    state: pr.state,
+    branch: removeControlCodes(pr.branch),
+    base: removeControlCodes(pr.base),
+    ci: ciSummary(pr)[0],
+    checks,
+    review: latest
+      ? {
+          verdict: removeControlCodes(reviewVerdict(latest)),
+          author: removeControlCodes(latest.author?.login ?? "unknown"),
+          body: safeText(latest.text),
+        }
+      : null,
+    body: safeText(pr.body),
+    link: pr.link,
+  });
+}
+
+// Returns one task for sc show, named by its task, or by its PR's number for sc pr show. It is
+// in the repository `repo` names, or else in the one whose remote is `from`, the checkout sc ran
+// in. A task with a thread still at work, or stopped, is shown as its reviewer gets it, with the
+// lead's messages to the builder after the description, so the lead sees what the builder is
+// judged by. A thread that is done or failed starts over fresh, without them, so they aren't
+// shown then. It reads Skelcrew's database and copy, and asks the forge only for the logs of
+// failed checks. Throws when there is no such task.
+export async function showTask(
+  db: Database,
+  which: {
+    repo?: string | undefined;
+    from?: string | undefined;
+    task?: string | undefined;
+    pr?: number | undefined;
+  },
+): Promise<TaskView> {
+  // Find the repository, then the task, from its PR when a number names it.
+  const repository =
+    which.repo !== undefined
+      ? findRepository(db, which.repo)
+      : which.from !== undefined
+        ? repositoryAt(db, which.from)
+        : undefined;
+  if (!repository)
+    throw new Error(
+      "name the PR's task, such as app-12, or run sc pr show in a checkout of its repository",
+    );
+  const { owner, repo, name } = repository;
+  const forge = forgeOf(db, repository) !== null;
+  let task = which.task;
+  if (which.pr !== undefined) {
+    if (!forge) throw new Error(`${name} has no forge, so there are no PRs`);
+    const row = db
+      .query("SELECT task FROM task_threads WHERE owner = ? AND repo = ? AND pr = ?")
+      .get(owner, repo, which.pr);
+    task = z.object({ task: z.coerce.string() }).nullable().parse(row)?.task;
+    if (task === undefined) throw new Error(`Skelcrew has no task with PR #${which.pr} in ${name}`);
+  }
+  if (task === undefined) throw new Error("sc show needs a task, such as app-12");
+  // The task's description: as its reviewer gets it while its thread is current, or else from
+  // its open issue, or from what its thread saved as it started.
+  const thread = threadOn(db, name, task);
+  const issue = openTasks(db, owner, repo).find((item) => item.id === task);
+  if (!thread && !issue) throw new Error(`there is no task ${name}-${task}`);
   const current = thread && thread.status !== "done" && thread.status !== "failed";
-  const { title, body } = current ? threadTask(db, thread) : taskOf(db, r.owner, r.repo, task);
+  const described =
+    thread && (current || !issue)
+      ? threadTask(db, current ? thread : { ...thread, updates: [] })
+      : { title: issue?.title ?? "", body: issue?.body ?? "" };
+  // Its issue, unless it is a task of Skelcrew's own, such as t1. GitHub writes a number as #12,
+  // while a tracker such as Linear has IDs like JOTT-12 that stand alone.
+  const own = /^t\d+$/.test(task);
+  const row = thread && threadRow(db, thread, forge);
+  const pr = row?.pr ?? null;
   return {
-    issue: `${r.name}-${task}`,
-    title,
-    body,
-    thread: threadStatusOf(db, r.owner, r.repo, task),
+    task: `${name}-${task}`,
+    title: removeControlCodes(described.title),
+    stage: stageOf(thread, issue !== undefined),
+    issue: own ? null : { id: /^\d+$/.test(task) ? `#${task}` : task, link: issue?.link ?? null },
+    threads: row
+      ? [{ thread: `${name}-${task}/builder`, status: row.status, needsYou: row.needsYou }]
+      : [],
+    body: described.body,
+    pr,
+    review: row?.review ?? null,
+    prPage: pr === null ? null : await prPageOf(db, repository, pr),
   };
 }
 
@@ -346,176 +536,106 @@ export function printThreads(threads: ThreadRow[], json: boolean): void {
   );
 }
 
-// Prints open tasks for sc issue ls: as JSON for tools, or else as a table whose thread
-// column is empty for a task with no thread.
-export function printTasks(tasks: TaskRow[], json: boolean): void {
-  if (json) console.log(JSON.stringify(tasks));
-  else if (tasks.length === 0) console.log("There are no open issues.");
-  else
-    table(
-      ["ISSUE", "THREAD", "TITLE"],
-      tasks.map(({ issue, title, thread }) => {
-        const status = thread ? `${thread.status}${thread.needsYou ? ", needs you" : ""}` : "";
-        return [issue, status, title];
-      }),
-    );
+// Returns what is happening on a task, for its row in sc ls, such as "waiting · #31 · CI failed ·
+// changes r3". A task with no thread, or whose thread is done, has only what its PR says.
+function happening(task: TaskRow): string {
+  const { thread, review } = task;
+  const parts: string[] = [];
+  if (thread && thread.status !== "done")
+    parts.push(thread.queued ? "queued for review" : thread.status);
+  if (thread?.needsYou) parts.push("needs you");
+  if (task.pr !== null) parts.push(`#${task.pr}`);
+  if (task.checks !== null && task.checks !== "none") parts.push(`CI ${task.checks}`);
+  if (review && review.state !== "none")
+    parts.push(review.round === null ? review.state : `${review.state} r${review.round}`);
+  return parts.join(" · ");
 }
 
-// Prints one task for sc issue show: as JSON for tools, or else its name and title, the
-// thread on it if it has one, and its body after a blank line.
+// The most columns a task's title takes in sc ls, so a long one doesn't push what is happening
+// out of sight.
+const titleRoom = 40;
+
+// Prints tasks for sc ls: as JSON for tools, or else under a heading for each stage, in the
+// order a task moves through them. Each row has the task's name, its short title or its title,
+// and what is happening on it, lined up across every stage.
+export function printTasks(tasks: TaskRow[], json: boolean): void {
+  if (json) {
+    console.log(JSON.stringify(tasks));
+    return;
+  }
+  if (tasks.length === 0) {
+    console.log("There are no tasks.");
+    return;
+  }
+  const rows = tasks.map((task) => [
+    task.task,
+    fitted(task.short ?? task.title, titleRoom),
+    happening(task),
+  ]);
+  const widths = [0, 1, 2].map((i) => columnWidth(rows, i));
+  const lines: string[] = [];
+  for (const [stage, heading] of stages) {
+    const inStage = rows.filter((_, i) => tasks[i]?.stage === stage);
+    if (inStage.length === 0) continue;
+    if (lines.length > 0) lines.push("");
+    lines.push(heading);
+    for (const row of inStage)
+      lines.push(`  ${row.map((cell, i) => filled(cell, widths[i] ?? 0)).join("  ")}`.trimEnd());
+  }
+  console.log(lines.join("\n"));
+}
+
+// Prints one task for sc show: as JSON for tools, or else its name and title, its facts, then
+// its description, its PR's latest review and description, and the logs of failed checks, each
+// under a heading that says where it came from.
 export function printTask(task: TaskView, json: boolean): void {
   if (json) {
     console.log(JSON.stringify(task));
     return;
   }
-  console.log(`${task.issue}  ${task.title}`);
-  if (task.thread)
-    console.log(`Thread: ${task.thread.status}${task.thread.needsYou ? ", needs you" : ""}`);
-  if (task.body) console.log(`\n${task.body.trimEnd()}`);
-}
-
-// One PR as sc pr show shows it, from Skelcrew's copy: what its page on the screen shows, with
-// the thread on it, if any, and its latest review's text. `ci` is what its CI says as a whole,
-// and `checks` each CI check, with the end of its log for a failed one, as the forge gives it,
-// or null. Everything here that came from the forge has its control codes removed.
-export const PrView = z.object({
-  pr: z.number(),
-  title: z.string(),
-  state: z.enum(["open", "closed", "merged"]),
-  branch: z.string(),
-  base: z.string(),
-  thread: z.string().nullable(),
-  ci: z.enum(["passed", "failed", "running", "none"]),
-  checks: z.array(
-    z.object({
-      name: z.string(),
-      state: z.enum(["running", "passed", "failed", "cancelled"]),
-      log: z.string().nullable(),
-    }),
-  ),
-  review: z.object({ verdict: z.string(), author: z.string(), body: z.string() }).nullable(),
-  body: z.string(),
-  link: z.string(),
-});
-export type PrView = z.infer<typeof PrView>;
-
-// Returns text from the forge safe to print, line breaks kept. A check's log often colours its
-// lines, and those codes are removed whole, so no stray "[31m" is left behind.
-function safeText(text: string): string {
-  const colours = new RegExp(`${String.fromCharCode(27)}\\[[0-?]*[ -/]*[@-~]`, "g");
-  return text.replace(colours, "").split(/\r?\n/).map(removeControlCodes).join("\n");
-}
-
-// How long sc pr show waits on the forge for a failed check's log, in milliseconds. sc gives up
-// on the daemon after a minute, so a forge that hangs must not keep the PR itself from showing.
-const logDeadline = 10_000;
-
-// Returns a PR for sc pr show, named by its number or by its thread's task, in the repository
-// `repo` names, or else in the one whose remote is `from`, the checkout sc ran in. It reads
-// Skelcrew's copy, so it asks the forge only for the logs of failed checks. A log that can't be
-// read says why in its place. Throws when the repository has no forge, and so no PRs, and when
-// the copy has no such PR, such as one closed with no thread at work on it. A log the forge takes
-// too long on is given up on, so the PR still shows.
-export async function showPr(
-  db: Database,
-  which: {
-    repo?: string | undefined;
-    from?: string | undefined;
-    pr?: number | undefined;
-    task?: string | undefined;
-  },
-): Promise<PrView> {
-  // Find the repository, then the PR's number, from its thread when a thread names it.
-  const repository =
-    which.repo !== undefined
-      ? findRepository(db, which.repo)
-      : which.from !== undefined
-        ? repositoryAt(db, which.from)
-        : undefined;
-  if (!repository)
-    throw new Error(
-      "name the PR's thread, such as app-12, or run sc pr show in a checkout of its repository",
-    );
-  const { owner, repo, name } = repository;
-  if (forgeOf(db, repository) === null)
-    throw new Error(`${name} has no forge, so there are no PRs`);
-  let number = which.pr;
-  if (which.task !== undefined) {
-    const thread = findThread(db, name, which.task);
-    if (thread.pr === null) throw new Error(`${name}-${which.task} has no PR yet`);
-    number = thread.pr;
-  }
-  if (number === undefined) throw new Error("sc pr show needs a PR number or a thread");
-  const pr = prOf(db, owner, repo, number);
-  if (!pr) throw new Error(`Skelcrew has no PR #${number} in ${owner}/${repo}`);
-  // The thread on the PR, the newest, as a thread that starts over keeps its PR's number.
-  const row = db
-    .query("SELECT * FROM task_threads WHERE owner = ? AND repo = ? AND pr = ? ORDER BY rowid DESC")
-    .get(owner, repo, number);
-  const thread = Thread.nullable().parse(row);
-  // Each CI check, with the end of its log when it failed and has one.
-  const checks = await Promise.all(
-    pr.checks
-      .filter((check) => check.name !== reviewCheck)
-      .map(async (check) => {
-        const log =
-          check.state === "failed" && check.id !== null
-            ? await failedLog(db, repository, check.id, logDeadline).catch(
-                (error) => `(Skelcrew couldn't read its log: ${errorText(error)})`,
-              )
-            : null;
-        return { name: safeText(check.name), state: check.state, log: log && safeText(log) };
-      }),
+  const { prPage, review } = task;
+  const issue = task.issue && [task.issue.id, task.issue.link ?? ""].join("  ").trimEnd();
+  const threads = task.threads.map(
+    (t) => `${t.thread}  ${t.status}${t.needsYou ? ", needs you" : ""}`,
   );
-  const latest = pr.reviews.at(-1);
-  const [ci] = ciSummary(pr);
-  return PrView.parse({
-    pr: number,
-    title: removeControlCodes(pr.title),
-    state: pr.state,
-    branch: removeControlCodes(pr.branch),
-    base: removeControlCodes(pr.base),
-    thread: thread && threadName(db, thread),
-    ci,
-    checks,
-    review: latest
-      ? {
-          verdict: removeControlCodes(reviewVerdict(latest)),
-          author: removeControlCodes(latest.author?.login ?? "unknown"),
-          body: safeText(latest.text),
-        }
-      : null,
-    body: safeText(pr.body),
-    link: pr.link,
-  });
-}
-
-// Prints one PR for sc pr show: as JSON for tools, or else its number and title, its facts as
-// its page shows them, then its latest review, its description and the logs of failed checks,
-// each under a heading that says where it came from.
-export function printPr(pr: PrView, json: boolean): void {
-  if (json) {
-    console.log(JSON.stringify(pr));
-    return;
-  }
-  const review = pr.review ? `${pr.review.verdict} · ${pr.review.author}` : "none";
+  const pr =
+    task.pr === null
+      ? "none"
+      : prPage
+        ? `#${task.pr}  ${prPage.state}  ${prPage.branch} → ${prPage.base}`
+        : `#${task.pr}`;
   const facts = [
-    ["State", pr.state],
-    ["Branch", `${pr.branch} → ${pr.base}`],
-    ["Thread", pr.thread ?? "none"],
-    ["Checks", pr.ci],
-    // Each CI check on a line of its own, under the summary.
-    ...pr.checks.map((check) => ["", `${check.name}: ${check.state}`]),
-    ["Review", review],
-    ["Link", pr.link],
+    ["Stage", task.stage],
+    ["Issue", issue ?? "none"],
+    // Each thread on a line of its own.
+    ...(threads.length === 0
+      ? [["Thread", "none"]]
+      : threads.map((t, i) => [i ? "" : "Thread", t])),
+    ["PR", pr],
+    ...(prPage
+      ? [
+          ["Checks", prPage.ci],
+          // Each CI check on a line of its own, under the summary.
+          ...prPage.checks.map((check) => ["", `${check.name}: ${check.state}`]),
+        ]
+      : []),
+    ...(review
+      ? [["Review", review.round === null ? review.state : `${review.state} r${review.round}`]]
+      : []),
+    ...(prPage ? [["Link", prPage.link]] : []),
   ];
-  console.log(`#${pr.pr}  ${pr.title}`);
+  console.log(`${task.task}  ${task.title}`);
   for (const [label = "", value = ""] of facts) console.log(`${label.padEnd(8)}${value}`);
   // The longer texts, each after a blank line, with only those that have something to say.
+  const latest = prPage?.review;
   const texts: [string, string][] = [
-    ["Latest review", pr.review?.body ?? ""],
-    ["Description", pr.body],
-    ...pr.checks.map((check): [string, string] => [
+    ["Description", task.body],
+    [
+      latest ? `Latest review on the PR: ${latest.verdict} · ${latest.author}` : "",
+      latest?.body ?? "",
+    ],
+    ["PR description", prPage?.body ?? ""],
+    ...(prPage?.checks ?? []).map((check): [string, string] => [
       `Log of ${check.name}, from the forge`,
       check.log ?? "",
     ]),

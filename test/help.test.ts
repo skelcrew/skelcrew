@@ -41,6 +41,8 @@ test("the help names every command", () => {
     "repo rm",
     "repo trust",
     "ps",
+    "ls",
+    "show",
     "issue ls",
     "issue show",
     "issue create",
@@ -186,20 +188,20 @@ test("sc runs from a checkout whose folder it may read files in but not list, as
   }
 });
 
-// Issues and threads are different things, so the help keeps them apart: an issue is what you
-// want done, in the tracker, and a thread is Skelcrew's work on one. The sidebar's list is
-// called ISSUES, so the commands use the same word.
-test("the help lists the issue commands in a section of their own, and names threads as threads", () => {
+// Issues, tasks and threads are different things, so the help keeps them apart: an issue is
+// what you want done, in the tracker, a task is Skelcrew's record of the work on one, and a
+// thread is an agent on a task. The sidebar's list is called ISSUES, so the commands for the
+// tracker use the same word.
+test("the help lists the issue commands in a section of their own, and names tasks and threads as such", () => {
   const out = skel(["--help"]).out;
   const issues = out.slice(out.indexOf("\nISSUES\n"), out.indexOf("\nREPOSITORIES\n"));
   expect(out).toContain("\nISSUES\n");
   for (const command of ["issue ls", "issue show", "issue create"])
     expect(issues).toContain(`  ${command} `);
   expect(issues).not.toContain("  start ");
-  // A user sees issues and threads only. Task is Skelcrew's own word, never shown.
-  expect(out).not.toMatch(/\btasks?\b/i);
-  for (const command of ["stop", "rm", "attach", "peek", "interrupt", "review", "tell"])
+  for (const command of ["stop", "attach", "peek", "interrupt", "tell"])
     expect(out).toContain(`  ${command} <thread>`);
+  for (const command of ["show", "rm", "review"]) expect(out).toContain(`  ${command} <task>`);
 });
 
 // The issue commands replaced the task commands, which are gone with no alias.

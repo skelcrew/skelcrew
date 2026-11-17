@@ -3,11 +3,10 @@
 // the tracker, never the tracker itself, as the sidebar and an open list read them each second.
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
-import { threadConfig } from "../config.ts";
 import { type Item, itemAt, openPrs, openTasks } from "../flow/copy.ts";
 import { repositories } from "../flow/repo.ts";
 import type { DaemonRequest } from "../flow/requests.ts";
-import { needsYou, threadWord } from "../flow/status.ts";
+import { needsYou, roundLimit, threadWord } from "../flow/status.ts";
 import { Thread, threadName } from "../flow/thread.ts";
 import { forgeOf, trackerOf } from "../plugins/ask.ts";
 import { green, grey, yellow } from "./look.ts";
@@ -51,17 +50,6 @@ export type EntryCount = {
 // A thread that isn't done, as the lists know it: with its name and the word that says what it
 // is doing.
 type Known = { thread: Thread; name: string; word: string };
-
-// Returns a thread's round limit, from its repository's skelcrew.yaml or your config. Settings
-// that aren't valid already stop rounds, with the reason, and mustn't also take the sidebar or a
-// list away. Such a thread then reads as never past the limit.
-export function roundLimit(thread: Thread): number {
-  try {
-    return threadConfig(thread).maxRounds;
-  } catch {
-    return Number.POSITIVE_INFINITY;
-  }
-}
 
 // Returns the open repository's threads that aren't done, newest first, each with its name and
 // word.
