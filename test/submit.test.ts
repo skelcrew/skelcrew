@@ -61,7 +61,8 @@ const script = (name: string, body: string) => writeScript(home, name, body);
 // the repository's first workflow. With docs-only there, a round changes only the file it names, else docs/change.md,
 // and with code-to-docs there, it moves src/app.ts to docs/app.md. As a reviewer, run with -p,
 // it approves, unless the file claude-limit beside it holds a moment in seconds since 1970
-// still to come: until then it says its usage limit is reached, as Claude Code did. Its
+// still to come: until then it says its usage limit is reached, as Claude Code did. While the
+// file says wait, it waits, so a test can set the moment once the review has started. Its
 // arguments are written aside and moved into place, so a test that sees the file never reads
 // them half written.
 function fakeClaude(submits = true): void {
@@ -70,7 +71,9 @@ function fakeClaude(submits = true): void {
     `case "$CLAUDE_CONFIG_DIR" in */lead-*) stty -echo; echo "❯"; exec cat > "$CLAUDE_CONFIG_DIR/typed" ;; esac
 case " $* " in *" -p "*)
   cat > /dev/null
-  reset=$(cat "$(dirname "$0")/claude-limit" 2>/dev/null)
+  limit="$(dirname "$0")/claude-limit"
+  i=0; while [ "$(cat "$limit" 2>/dev/null)" = wait ] && [ $i -lt 600 ]; do sleep 0.1; i=$((i+1)); done
+  reset=$(cat "$limit" 2>/dev/null)
   if [ -n "$reset" ] && [ "$(date +%s)" -lt "$reset" ]; then
     echo '{"type":"result","is_error":true,"result":"Claude AI usage limit reached|'"$reset"'"}'
     exit 1
@@ -803,15 +806,17 @@ done`,
       join(home, ".config", "skelcrew", "config.yaml"),
       "harness: claude\nreviewer: { harness: claude }\n",
     );
-    // Claude Code says when its limit resets, in seconds since 1970. Far enough off that the
-    // first review meets it however slowly the builder starts.
-    const reset = Math.ceil(Date.now() / 1000) + 30;
-    writeFileSync(join(home, "bin", "claude-limit"), `${reset}\n`);
+    // Claude Code says when its limit resets, in seconds since 1970. The reset is set once the
+    // first review has started, so that review meets it however slowly the builder starts, and
+    // the test waits only a few seconds for it.
+    writeFileSync(join(home, "bin", "claude-limit"), "wait");
     await startApp12();
+    await until(() => read(join(data(), "threads", "app-12.log")).includes('"why":"reviewing '));
+    const reset = Math.ceil(Date.now() / 1000) + 5;
+    writeFileSync(join(home, "bin", "claude-limit"), `${reset}\n`);
     await until(() => thread().review_limited === 1, 30_000);
     expect(thread()).toMatchObject({ needs_you: 0, review_reset: reset * 1000 });
-    // The review runs again only once the limit resets, so the wait counts from then.
-    await until(() => finished("success").length === 1, reset * 1000 - Date.now() + 30_000);
+    await until(() => finished("success").length === 1, 30_000);
     await untilReviewSaved();
     expect(thread()).toMatchObject({ review_limited: 0, review_reset: null, needs_you: 0 });
     expect(reviews()).toEqual([{ commit: pushed(), verdict: "approve", body: "Ready to merge." }]);
