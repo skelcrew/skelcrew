@@ -101,11 +101,7 @@ test("Python with uv, poetry, or neither, runs pytest only where the repository 
 test("pyproject.toml counts as pytest only for a dependency on it or its settings", () => {
   const uses = (pyproject: string) =>
     detectCommands({ "uv.lock": "", "pyproject.toml": pyproject }).test;
-  expect(uses('[dependency-groups]\ndev = ["pytest>=8", "ruff"]\n')).toEqual(["uv run pytest"]);
-  expect(uses("[project.optional-dependencies]\ntest = ['pytest']\n")).toEqual(["uv run pytest"]);
-  expect(uses('[tool.poetry.group.dev.dependencies]\npytest = "^8.0"\n')).toEqual([
-    "uv run pytest",
-  ]);
+  expect(uses('[project]\ndependencies = ["pytest>=8"]\n')).toEqual(["uv run pytest"]);
   expect(uses('[tool.pytest.ini_options]\naddopts = "-q"\n')).toEqual(["uv run pytest"]);
   expect(
     uses(
@@ -115,6 +111,40 @@ test("pyproject.toml counts as pytest only for a dependency on it or its setting
   expect(uses('[project]\ndescription = "pytest is not used"\ndependencies = []\n')).toEqual([]);
   expect(uses('[project]\nkeywords = ["pytest"]\n')).toEqual([]);
   expect(uses("[project\nnot toml")).toEqual([]);
+});
+
+// pytest in an extra or a dependency group isn't installed unless asked for, so both the setup
+// and the test name it, or the test would find no pytest.
+test("pytest from an extra or a dependency group is named in both commands", () => {
+  const uv = (pyproject: string) => detectCommands({ "uv.lock": "", "pyproject.toml": pyproject });
+  expect(uv("[project.optional-dependencies]\ntest = ['pytest']\n")).toEqual({
+    setup: ["uv sync --extra test"],
+    test: ["uv run --extra test pytest"],
+  });
+  expect(uv('[dependency-groups]\ndev = ["ruff"]\ntesting = ["pytest>=8"]\n')).toEqual({
+    setup: ["uv sync --group testing"],
+    test: ["uv run --group testing pytest"],
+  });
+  // pytest in the main dependencies needs no extra, even when an extra names it too.
+  expect(
+    uv('[project]\ndependencies = ["pytest"]\n[project.optional-dependencies]\nci = ["pytest"]\n'),
+  ).toEqual({ setup: ["uv sync"], test: ["uv run pytest"] });
+  const poetry = (pyproject: string) =>
+    detectCommands({ "poetry.lock": "", "pyproject.toml": pyproject });
+  expect(poetry('[tool.poetry.group.test.dependencies]\npytest = "^8.0"\n')).toEqual({
+    setup: ["poetry install --with test"],
+    test: ["poetry run pytest"],
+  });
+  expect(poetry('[project.optional-dependencies]\ntest = ["pytest"]\n')).toEqual({
+    setup: ["poetry install --extras test"],
+    test: ["poetry run pytest"],
+  });
+  expect(poetry('[tool.poetry.dev-dependencies]\npytest = "^8.0"\n')).toEqual({
+    setup: ["poetry install"],
+    test: ["poetry run pytest"],
+  });
+  // A name a shell would read as more than a word is never put in a command.
+  expect(uv("[project.optional-dependencies]\n'a;b' = ['pytest']\n").test).toEqual([]);
 });
 
 // A lockfile names the package manager, not the test runner, such as unittest.

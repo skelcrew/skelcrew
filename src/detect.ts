@@ -87,35 +87,55 @@ const Pyproject = z.looseObject({
     .catch(undefined),
 });
 
-// Returns whether a pyproject.toml shows the repository uses pytest: its settings section, or a
-// dependency on it. Only those count, never a mention elsewhere, such as in a description or a
-// comment, as a wrong guess gives reviewers a command the repository can't run. A file that
-// isn't valid TOML shows nothing.
-function usesPytest(pyproject: string): boolean {
+// Where a repository's pytest comes from: installed by default, an optional-dependency extra, or
+// a dependency group, which is only installed when named.
+type Pytest = { extra?: string; group?: string };
+
+// Returns where a pyproject.toml shows the repository's pytest comes from, or null when it shows
+// none. Only a dependency on pytest or its settings section counts, never a mention elsewhere,
+// such as in a description or a comment, as a wrong guess gives reviewers a command the
+// repository can't run. A default dependency wins over an extra, and an extra over a group, so
+// the commands ask for no more than they need. An extra or group whose name a shell would read
+// as more than a word is skipped, as the name goes into a command. A file that isn't valid TOML
+// shows nothing.
+function pytestIn(pyproject: string): Pytest | null {
   let read: z.infer<typeof Pyproject>;
   try {
     read = Pyproject.parse(Bun.TOML.parse(pyproject));
   } catch {
-    return false;
+    return null;
   }
   const { project, tool } = read;
-  if (tool?.pytest !== undefined) return true;
-  // A requirement names its package first, such as "pytest>=8" or "pytest[testing]".
-  const requirements = [
-    ...(project?.dependencies ?? []),
-    ...Object.values(project?.["optional-dependencies"] ?? {}).flat(),
-    ...Object.values(read["dependency-groups"] ?? {}).flat(),
-  ];
-  const named = requirements.some(
-    (each) => typeof each === "string" && /^\s*pytest(?![\w.-])/i.test(each),
-  );
   const poetry = tool?.poetry;
-  const tables = [
-    poetry?.dependencies,
-    poetry?.["dev-dependencies"],
-    ...Object.values(poetry?.group ?? {}).map((group) => group.dependencies),
-  ];
-  return named || tables.some((table) => table !== undefined && "pytest" in table);
+  // A requirement names its package first, such as "pytest>=8" or "pytest[testing]". Poetry's
+  // tables name it as a key.
+  const named = (requirements: unknown[] | undefined) =>
+    (requirements ?? []).some(
+      (each) => typeof each === "string" && /^\s*pytest(?![\w.-])/i.test(each),
+    );
+  const keyed = (table: Record<string, unknown> | undefined) =>
+    table !== undefined && "pytest" in table;
+  const word = (name: string) => /^[\w.-]+$/.test(name);
+  if (
+    named(project?.dependencies) ||
+    keyed(poetry?.dependencies) ||
+    keyed(poetry?.["dev-dependencies"])
+  )
+    return {};
+  const extra = Object.entries(project?.["optional-dependencies"] ?? {}).find(
+    ([name, requirements]) => word(name) && named(requirements),
+  );
+  if (extra) return { extra: extra[0] };
+  const group =
+    Object.entries(read["dependency-groups"] ?? {}).find(
+      ([name, requirements]) => word(name) && named(requirements),
+    ) ??
+    Object.entries(poetry?.group ?? {}).find(
+      ([name, group]) => word(name) && keyed(group.dependencies),
+    );
+  if (group) return { group: group[0] };
+  // Settings alone say pytest is used, but not where it comes from, so it is taken as installed.
+  return tool?.pytest !== undefined ? {} : null;
 }
 
 // Each kind of repository: what tells it apart, and what it says about itself. They are tried in
@@ -135,15 +155,27 @@ const kinds: ((files: TopFiles, has: (name: string) => boolean) => Found | null)
   // its test runner. So pytest only when the repository shows it uses it, and with no lockfile,
   // no setup, as installing into the sandbox's system Python would fail.
   (f, has) => {
-    const pytest =
-      has("pytest.ini") ||
-      has("conftest.py") ||
-      usesPytest(f["pyproject.toml"] ?? "") ||
-      f["setup.cfg"]?.includes("[tool:pytest]");
+    const fromPyproject = pytestIn(f["pyproject.toml"] ?? "");
+    const pytest: Pytest | null =
+      fromPyproject ??
+      (has("pytest.ini") || has("conftest.py") || f["setup.cfg"]?.includes("[tool:pytest]")
+        ? {}
+        : null);
+    // The extra or group pytest comes from, as each package manager asks for it.
+    const uv = pytest?.extra
+      ? ` --extra ${pytest.extra}`
+      : pytest?.group
+        ? ` --group ${pytest.group}`
+        : "";
+    const poetry = pytest?.extra
+      ? ` --extras ${pytest.extra}`
+      : pytest?.group
+        ? ` --with ${pytest.group}`
+        : "";
     const tool = has("uv.lock")
-      ? { setup: "uv sync", run: "uv run pytest" }
+      ? { setup: `uv sync${uv}`, run: `uv run${uv} pytest` }
       : has("poetry.lock")
-        ? { setup: "poetry install", run: "poetry run pytest" }
+        ? { setup: `poetry install${poetry}`, run: "poetry run pytest" }
         : { run: "python3 -m pytest" };
     if (!pytest && !tool.setup) return null;
     return { ...(tool.setup ? { setup: tool.setup } : {}), ...(pytest ? { test: tool.run } : {}) };
