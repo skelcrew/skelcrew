@@ -42,6 +42,16 @@ for (const name of HarnessName.options)
     expect(told).not.toContain("once before each sc submit");
   });
 
+// Skelcrew keeps its clone, the builder's origin, current with the forge, but never moves the
+// builder's own origin/ refs. A builder that compares with them unfetched would say it
+// already has main when it doesn't.
+test("a builder fetches before it compares with or merges the base branch", () => {
+  const told = builderInstructions({ setup: undefined, test: undefined });
+  expect(told).toContain(
+    "Before you compare your branch with its base branch or merge it, such as main, run git fetch origin first.",
+  );
+});
+
 // The lead settles the setup and test commands with the human once, so every builder uses the
 // same ones, and a builder with none asks rather than guess.
 test("a builder is told the repository's setup and test commands", () => {
