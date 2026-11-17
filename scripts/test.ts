@@ -43,9 +43,10 @@ const run = Bun.spawn(
 );
 
 // The whole run ends within this, even if something keeps it from ever finishing, such as a
-// process a test started that never exits. A full run takes a few minutes. Its own test sets a
+// process a test started that never exits. A full run on CI takes 13 to 16 minutes, so the
+// limit is 30. Faster tests (thread t31) should let it come back down. Its own test sets a
 // shorter limit, in milliseconds.
-const limit = Number(process.env.SKELCREW_TESTS_LIMIT) || 15 * 60_000;
+const limit = Number(process.env.SKELCREW_TESTS_LIMIT) || 30 * 60_000;
 let stopped = false;
 const stop = setTimeout(() => {
   stopped = true;
