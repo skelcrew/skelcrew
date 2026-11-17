@@ -349,7 +349,7 @@ describe("sc ls", () => {
         thread: { status: "failed", needsYou: false, queued: false },
         pr: null,
         checks: null,
-        review: null,
+        review: { state: "none", round: null, at: null },
       },
       {
         task: "app-12",
@@ -359,7 +359,7 @@ describe("sc ls", () => {
         thread: { status: "working", needsYou: false, queued: false },
         pr: null,
         checks: null,
-        review: null,
+        review: { state: "none", round: null, at: null },
       },
       {
         task: "app-10",
@@ -450,7 +450,7 @@ describe("sc show", () => {
       threads: [{ thread: "app-12/builder", status: "working", needsYou: false }],
       body: "Export threads as JSON.\n\nKeep it small.",
       pr: null,
-      review: null,
+      review: { state: "none", round: null, at: null },
       prPage: null,
     });
     expect(JSON.parse((await skel(["show", "--json", "app-10"])).out)).toMatchObject({
@@ -869,11 +869,19 @@ describe("with a forge", () => {
     expect(other.err).toContain("you are the lead of simon/app only");
   });
 
-  test("sc show says when a task has no PR, and sc pr show that a repository with no forge has none", async () => {
+  test("sc show says when a task has no PR, shows a review without a forge, and sc pr show that a repository with no forge has none", async () => {
     forgeThreads();
     serve();
     await untilAnswers();
-    expect((await skel(["show", "site-7"])).out).toContain("\nPR      none\n");
+    // site has no forge, but its reviews still run, on the branch, so their state shows.
+    const site = await skel(["show", "site-7"]);
+    expect(site.out).toContain("\nPR      none\nReview  approved r1\n");
+    expect(JSON.parse((await skel(["show", "site-7", "--json"])).out).review).toEqual({
+      state: "approved",
+      round: 1,
+      at: "2025-11-16T11:00:00.000Z",
+    });
+    expect((await skel(["ls", "site"])).out).toContain("site-7  Add docs  waiting · approved r1\n");
     expect((await skel(["show", "app-9"])).out).toContain("\nPR      none\n");
     const none = await skel(["pr", "show", "7", "--from", "https://example.com/simon/site.git"]);
     expect(none.code).not.toBe(0);

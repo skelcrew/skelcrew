@@ -177,8 +177,9 @@ export function listThreads(db: Database, repository?: string): ThreadRow[] {
 
 // A task as sc ls shows it: its name, such as app-12, its title and the short title the lead
 // gave it, its issue while that is open in Skelcrew's copy, such as #12, and how its builder
-// stands, or null with no thread. `pr`, `checks` and `review` are as sc ps gives them for its
-// thread, and null with none.
+// stands, or null with no thread. `pr` and `checks` are as sc ps gives them for its thread, and
+// null with none. `review` is where Skelcrew's review stands, with a forge or without one, and
+// null with no thread.
 export const TaskRow = z.object({
   task: z.string(),
   title: z.string(),
@@ -225,7 +226,9 @@ export function listTasks(db: Database, repository?: string): TaskRow[] {
         thread: { status: row.status, needsYou: row.needsYou, queued: row.queued },
         pr: row.pr,
         checks: row.checks,
-        review: row.review,
+        // Reviews run without a forge too, on the branch, so their state shows whatever sc ps
+        // leaves out.
+        review: reviewOf(thread),
       };
       return { at: z.object({ at: z.number() }).parse(saved).at, id: thread.task, task };
     });
@@ -281,8 +284,8 @@ export type PrPage = z.infer<typeof PrPage>;
 // One task as sc show shows it. `body` is its description as its reviewer gets it. `issue` is
 // the issue it came from, such as #12, with its link while Skelcrew's copy has it, or null for a
 // task with no issue, such as app-t1. `threads` names each of its threads with its role, such
-// as app-12/builder. `pr` is its PR's number, and `review` where Skelcrew's review stands, as
-// sc ps gives them. `prPage` is its PR from Skelcrew's copy, or null once the copy no longer has
+// as app-12/builder. `pr` is its PR's number, as sc ps gives it, and `review` where Skelcrew's
+// review stands, with a forge or without one. `prPage` is its PR from Skelcrew's copy, or null once the copy no longer has
 // it, as after a merge.
 export const TaskView = z.object({
   task: z.string(),
@@ -411,7 +414,8 @@ export async function showTask(
       : [],
     body: safeText(described.body),
     pr,
-    review: row?.review ?? null,
+    // Reviews run without a forge too, so their state shows here even then.
+    review: thread && reviewOf(thread),
     prPage: pr === null ? null : await prPageOf(db, repository, pr),
   };
 }
@@ -589,7 +593,8 @@ export function printTask(task: TaskView, json: boolean): void {
           ...prPage.checks.map((check) => ["", `${check.name}: ${check.state}`]),
         ]
       : []),
-    ...(review
+    // A thread with no review yet says nothing of one.
+    ...(review && review.state !== "none"
       ? [["Review", review.round === null ? review.state : `${review.state} r${review.round}`]]
       : []),
     ...(prPage ? [["Link", prPage.link]] : []),
