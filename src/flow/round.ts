@@ -87,12 +87,12 @@ async function push(
       });
     throw new Error(refused);
   }
-  // The base branch, current, in a ref of the thread's own, for the review to see which files
-  // the change touches. Skelcrew's clone holds only the default branch otherwise. The poll
-  // fetches the same ref. A base the forge won't give fails no push: the review then can't
-  // tell the change is docs only, and the tests run.
+  // The PR's base branch, current, in a ref of the thread's own, for the review to see which
+  // files the change touches. Skelcrew's clone holds only the default branch otherwise. The
+  // review fetches it again when its turn comes. A base the forge won't give fails no push: the
+  // review then can't tell the change is docs only, and the tests run.
   const bases = `refs/skelcrew/bases/${thread.folder}`;
-  await fetchInto(db, repository, skelcrewClone, baseOf(thread), bases).catch(() => {});
+  await fetchInto(db, repository, skelcrewClone, prBase(db, thread), bases).catch(() => {});
   if (forgeOf(db, repository) === null) {
     record(db, folder, {}, `pushed ${sha} to ${thread.branch}`);
     return sha;
@@ -314,17 +314,29 @@ async function reviewRound(
           await pending;
           if (queued) record(db, folder, { queued: null }, `reviewing ${sha}`);
           queued = false;
+          // The diff starts where the commit meets the PR's base as the forge has it now,
+          // fetched into Skelcrew's clone. Never the builder's origin/, which moves only when
+          // the builder fetches: a builder that merged a newer main would show main's commits
+          // as its own. That commit is in the commit's history, so the reviewer's copy of the
+          // clone has it. A review with no current base to read fails and says why, rather
+          // than judging a diff that may hold someone else's commits.
+          const base = prBase(db, thread);
+          const fetched = await fetchInto(db, repository, skelcrewClone, base, bases).then(
+            () => null,
+            (error) => errorText(error),
+          );
+          const from = fetched === null ? whereItMeets(skelcrewClone, bases, sha) : null;
+          if (from === null)
+            return {
+              verdict: "failed" as const,
+              body: `Skelcrew couldn't read where ${sha.slice(0, 7)} meets ${base} as the forge has it, so it can't tell the PR's change apart: ${fetched ?? "they share no commit"}`,
+            };
           const started = Date.now();
           const result = await review({
             ...given,
             clone: cloneOf(thread),
             issue: threadTask(db, thread),
-            // Where the commit meets the base branch as the forge had it at the push, read in
-            // Skelcrew's clone. The builder's origin/ moves only when it fetches, so a builder
-            // that merged a newer main would show main's commits as its own. That commit is in
-            // the commit's history, so the reviewer's copy of the clone has it. Without one,
-            // origin/ in the thread's clone, where setting it up put the base branch.
-            base: whereItMeets(skelcrewClone, bases, sha) ?? `origin/${baseOf(thread)}`,
+            base: from,
             test: repositoryCommands(thread).test,
           });
           const { harness } = given;
@@ -723,6 +735,14 @@ function lastApproved(thread: Thread): string | null {
     stderr: "pipe",
   });
   return run.success ? run.stdout.toString().trim() : null;
+}
+
+// Returns the branch the thread's PR goes into, as the forge last said, since someone can
+// change it on the forge. Before the PR is open, or with no forge, the branch the thread
+// started from.
+function prBase(db: Database, thread: Thread): string {
+  const pr = thread.pr === null ? null : prOf(db, thread.owner, thread.repo, thread.pr);
+  return pr?.base ?? baseOf(thread);
 }
 
 // Returns the commit where the commit meets the base, in the clone, which is where the PR's own

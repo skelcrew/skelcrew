@@ -270,6 +270,17 @@ const reviews = () =>
   asked(plugin)
     .filter((q) => q.ask === "review")
     .map(({ commit, verdict, body }) => ({ commit, verdict, body }));
+// PR 7 as Skelcrew's copy of the forge holds it, or nothing yet.
+function copiedPr(): string {
+  const db = new Database(join(data(), "skelcrew.db"));
+  db.run("PRAGMA busy_timeout = 5000");
+  try {
+    const row = db.query("SELECT item FROM items WHERE kind = 'pr' AND id = '7'").get();
+    return row && typeof row === "object" && "item" in row ? String(row.item) : "";
+  } finally {
+    db.close();
+  }
+}
 // The PR Skelcrew opened, as it asked the forge, or nothing.
 const opened = () => asked(plugin).find((q) => q.ask === "open pr");
 const typedMessages = () => read(join(builder(), "typed")).split("\x1b[201~").length - 1;
@@ -973,6 +984,40 @@ done`,
     const main = git(work, "rev-parse", "HEAD");
     expect(read(join(codexHome(), "sessions", "main-2")).trim()).not.toBe(main);
     expect(read(join(codexHome(), "sessions", "prompt-2"))).toContain(`git diff ${main}...HEAD`);
+  }, 180_000);
+
+  // Someone can change the branch a PR goes into on the forge. Diffed against the base the
+  // thread started from, the reviewer would judge commits that aren't the PR's.
+  test("a PR retargeted on the forge is reviewed against its new base", async () => {
+    const work = addApp();
+    git(work, "push", "-q", "origin", "main:next");
+    const next = git(work, "rev-parse", "HEAD");
+    verdict(1, "approve", "Ready to merge.");
+    verdict(2, "approve", "Fine.");
+    servePolling();
+    await untilCloned();
+    expect((await skel(["start", "app-12"])).err).toBe("");
+    await until(() => finished("success").length === 1, 60_000);
+    await untilReviewSaved();
+    answer(plugin, "changed", {
+      items: [
+        taskItem("12", "Add export", { body: "As JSON" }),
+        prItem("7", "Add export", {
+          branch: "skelcrew/12-add-export",
+          head: pushed(),
+          base: "next",
+        }),
+      ],
+      next: null,
+    });
+    await until(() => copiedPr().includes('"base":"next"'), 60_000);
+    // main moves and the branch takes it in, so main and next now meet the branch apart.
+    mergeMain(work);
+    expect((await skel(["submit", "Merged main"], { SKELCREW_SOCKET: builderSocket() })).err).toBe(
+      "",
+    );
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-2")), 60_000);
+    expect(read(join(codexHome(), "sessions", "prompt-2"))).toContain(`git diff ${next}...HEAD`);
   }, 180_000);
 
   test("a merge whose wait for CI a restart cut short still keeps the approval", async () => {
