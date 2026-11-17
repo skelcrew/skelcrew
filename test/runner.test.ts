@@ -51,7 +51,8 @@ function outerDaemon(socket: string) {
 
 // A builder's tests run with its sandbox's Skelcrew variables set. No sc a test starts may reach
 // the daemon those point to: not with the harness's environment, nor with the run's own spread
-// into it, nor with none given.
+// into it, nor with none given. Nor may the run or what it starts find that Skelcrew's settings
+// and data in its home.
 test("a nested sc never reaches the outer daemon, whatever the outer variables say", async () => {
   const outer = outerDaemon(join(folder, "skelcrew.sock"));
   writeFileSync(
@@ -71,6 +72,12 @@ test("submits", async () => {
     const [err, code] = await Promise.all([new Response(run.stderr).text(), run.exited]);
     if (!err.includes("the daemon didn't answer")) throw new Error(\`sc ended with \${code}: \${err}\`);
   }
+  // Skelcrew's settings and data, in this run and in a process that inherits its environment.
+  const paths = ${JSON.stringify(join(import.meta.dir, "..", "src", "paths.ts"))};
+  const code = \`import { configDir, dataDir } from \${JSON.stringify(paths)}; console.log(configDir(), dataDir());\`;
+  const child = Bun.spawnSync([process.execPath, "-e", code]).stdout.toString();
+  for (const seen of [child, (await import(paths)).configDir()])
+    if (!seen.includes("skelcrew") || seen.includes(${JSON.stringify(folder)})) throw new Error(\`reached the outer home: \${seen}\`);
 });
 `,
   );

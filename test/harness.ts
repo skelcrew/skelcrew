@@ -3,7 +3,7 @@
 // them in, so a test that outlives its file can never reach another file's home.
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { Subprocess } from "bun";
 
 // Returns the path of a file in src/, or of src/ itself, for a test that runs sc or hands
@@ -64,17 +64,35 @@ export function git(cwd: string, ...args: string[]): string {
   return run.stdout.toString().trim();
 }
 
-// Throws unless sc or a daemon with this environment would use a socket in the test's
-// temporary folder. sc finds the daemon by SKELCREW_SOCKET, or else in XDG_RUNTIME_DIR, or else
-// in /run/user: a test that left either out, or handed on an agent's, would reach a real daemon.
+// Returns where a path really leads, with `..` and links resolved, even before the file is
+// there: a daemon makes its socket only once it starts.
+function realPath(path: string): string {
+  let head = resolve(path);
+  const rest: string[] = [];
+  while (!existsSync(head)) {
+    rest.unshift(basename(head));
+    head = dirname(head);
+  }
+  return join(realpathSync(head), ...rest);
+}
+
+// Throws unless sc or a daemon with this environment would use a socket in the test's own
+// folder: the one in the temporary folder that holds its HOME. sc finds the daemon by
+// SKELCREW_SOCKET, or else in XDG_RUNTIME_DIR, or else in /run/user. A test that left both out,
+// or handed on an agent's, or another test's or daemon's, would reach a daemon not its own.
 function mustBeTestSocket(env: Record<string, string>): void {
-  const socket =
+  const given =
     env.SKELCREW_SOCKET ||
     (env.XDG_RUNTIME_DIR ? join(env.XDG_RUNTIME_DIR, "skelcrew.sock") : "/run/user");
-  // A Mac's temporary folder is reached through a link, and a test's home may be either.
-  const temporary = [tmpdir(), realpathSync(tmpdir())];
-  if (!temporary.some((folder) => socket.startsWith(`${folder}/`)))
-    throw new Error(`a test's Skelcrew must use a socket of its own, not one outside: ${socket}`);
+  const socket = realPath(given);
+  // An agent's sc gets a home of its own inside the test's folder, so the test's folder is
+  // the first one under the temporary folder, not HOME itself.
+  const temporary = realPath(tmpdir());
+  const home = realPath(env.HOME ?? "/");
+  const [own] = relative(temporary, home).split(sep);
+  const folder = own && own !== ".." && !isAbsolute(own) ? join(temporary, own) : "";
+  if (!folder || !socket.startsWith(`${folder}/`))
+    throw new Error(`a test's Skelcrew must use a socket of its own, not one outside: ${given}`);
 }
 
 // Starts a daemon on a test's tmux socket and adds it to `running` for the test to stop. It

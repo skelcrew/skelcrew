@@ -1,7 +1,7 @@
 // Runs Skelcrew's tests, for `bun run check` and for a builder running a few test files, as
 // bun scripts/test.ts [files]. The same run inside Skelcrew's own sandbox and outside it.
 
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { socketFolderInside } from "../src/agents/sandbox.ts";
@@ -14,11 +14,14 @@ import { socketFolderInside } from "../src/agents/sandbox.ts";
 // the tests themselves.
 const env: Record<string, string | undefined> = { ...process.env };
 for (const name of Object.keys(env)) if (name.startsWith("SKELCREW_")) delete env[name];
-// Without a variable, sc finds the daemon in XDG_RUNTIME_DIR, or in /run/user. A test that
-// spreads the run's environment into a process of its own would reach the real daemon there,
-// so the run gets a runtime folder of its own, with nothing listening in it.
-const runtime = mkdtempSync(join(tmpdir(), "skel-test-runtime-"));
-env.XDG_RUNTIME_DIR = runtime;
+// A test that spreads the run's environment into a process of its own, or gives none, would
+// reach your real Skelcrew: its settings and data through HOME, and its daemon through
+// XDG_RUNTIME_DIR, or /run/user without it. So the run gets a home and a runtime folder of its
+// own, with nothing in them.
+const own = mkdtempSync(join(tmpdir(), "skel-test-run-"));
+mkdirSync(join(own, "run"), { mode: 0o700 });
+env.HOME = own;
+env.XDG_RUNTIME_DIR = join(own, "run");
 // Tests that start a real sandbox can't run inside one, and learn that they are inside from
 // SKELCREW_TESTS_IN_SANDBOX, which nothing in Skelcrew reads. The sandbox's socket folder tells
 // too, so a run that dropped SKELCREW_SANDBOX by hand still skips them. A stand-in for bubblewrap
@@ -55,6 +58,6 @@ const stop = setTimeout(() => {
 // success.
 run.exited.then((code) => {
   clearTimeout(stop);
-  rmSync(runtime, { recursive: true, force: true });
+  rmSync(own, { recursive: true, force: true });
   process.exit(stopped || run.signalCode ? 1 : code);
 });
