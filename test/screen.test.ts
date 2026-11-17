@@ -849,8 +849,12 @@ test("the footer runs across the screen under a thin line, with move and quit, t
 test("a pinned load sits at the right end of the footer", async () => {
   open("lead");
   await ready("lead");
+  // The lead's harness reaches the footer a moment after the lead starts, so the load can show
+  // before what Esc stops does. Wait for both, then check they sit on the row together.
+  const lead = "  ⌥↑↓ move  ⌥Q quit  Esc stops claude";
+  await until(() => footer() === lead, "the lead's footer");
   await until(() => (seen().split("\n")[29] ?? "").trimEnd().endsWith(fixedLoad), "the load");
-  expect(footer()).toBe("  ⌥↑↓ move  ⌥Q quit  Esc stops claude");
+  expect(footer()).toBe(lead);
 });
 
 test("the footer ends with the machine's own load, even with no thread working", async () => {
