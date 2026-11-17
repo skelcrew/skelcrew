@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { printThreads } from "../src/flow/list.ts";
+import { printThreads, type ThreadRow } from "../src/flow/list.ts";
 import type { Thread } from "../src/flow/thread.ts";
 import { draw as drawWith, noticeLines } from "../src/screen/layout.ts";
 import type { EntryCount } from "../src/screen/lists.ts";
@@ -173,39 +173,6 @@ test("a thread with messages waiting for its builder says how many on its row", 
   ]);
 });
 
-test("sc ps says how many messages wait for each builder, and --json counts them", () => {
-  const said: string[] = [];
-  const log = spyOn(console, "log").mockImplementation((line: string) => said.push(line));
-  const rows = [
-    {
-      thread: "app-9",
-      short: "Fix",
-      title: null,
-      status: "working" as const,
-      needsYou: false,
-      waiting: 1,
-    },
-    {
-      thread: "app-8",
-      short: "Ok",
-      title: null,
-      status: "waiting" as const,
-      needsYou: true,
-      waiting: 0,
-    },
-  ];
-  try {
-    printThreads(rows, false);
-    printThreads(rows, true);
-  } finally {
-    log.mockRestore();
-  }
-  expect(said[0]).toEndWith("WAITING");
-  expect(said[1]).toEndWith("1 message waiting");
-  expect(said[2]).toEndWith("yes");
-  expect(JSON.parse(said[3] ?? "")).toEqual(rows);
-});
-
 test("the sidebar is 38 columns wide, with room for 31 of a name and title", () => {
   expect(sidebarWidth).toBe(38);
   const title = "Send people back to the page they came from after signing in";
@@ -214,23 +181,166 @@ test("the sidebar is 38 columns wide, with room for 31 of a name and title", () 
   );
 });
 
-// sc ps shows a thread with no short title by its title, cut to the room the sidebar has for
-// its first line.
-test("sc ps cuts a long title to the room of the sidebar's first line", () => {
+// A row of sc ps for a thread, with no PR or review unless given.
+const psRow = (change: Partial<ThreadRow>): ThreadRow => ({
+  thread: "app-9",
+  short: null,
+  title: "Ok",
+  status: "working",
+  needsYou: false,
+  queued: false,
+  branch: "skelcrew/9",
+  pr: null,
+  prUrl: null,
+  checks: null,
+  review: null,
+  waiting: 0,
+  ...change,
+});
+
+test("sc ps says how many messages wait for each builder, and --json counts them", () => {
+  const said: string[] = [];
+  const log = spyOn(console, "log").mockImplementation((line: string) => said.push(line));
+  const rows = [
+    psRow({ thread: "app-9", short: "Fix", waiting: 1 }),
+    psRow({ thread: "app-8", short: "Ok", status: "waiting", needsYou: true }),
+  ];
+  try {
+    printThreads(rows, false);
+    printThreads(rows, true);
+  } finally {
+    log.mockRestore();
+  }
+  expect(said[0]).toEndWith("NEEDS YOU  WAITING");
+  expect(said[1]).toEndWith("1");
+  expect(said[2]).toEndWith("yes");
+  expect(JSON.parse(said[3] ?? "")).toEqual(rows);
+});
+
+// sc ps shows a thread with no short title by its title, cut so the whole row, with its PR, CI
+// and review, fits a terminal 80 columns wide.
+test("sc ps cuts a long title so each row fits 80 columns", () => {
   const title = "Send people back to the page they came from after signing in";
   const said: string[] = [];
   const log = spyOn(console, "log").mockImplementation((line: string) => said.push(line));
   try {
     printThreads(
-      [{ thread: "app-9", short: null, title, status: "failed", needsYou: false, waiting: 0 }],
+      [
+        psRow({
+          thread: "dotfiles-t12",
+          title,
+          status: "waiting",
+          needsYou: true,
+          pr: 242,
+          checks: "running",
+          review: { state: "reviewing", round: 12, at: null },
+        }),
+      ],
       false,
     );
   } finally {
     log.mockRestore();
   }
-  const sidebar = listed(draw([thread("app-9", { title })], "lead", size))[0]?.slice(4) ?? "";
-  expect(sidebar).toEndWith("…");
-  expect(said[1]).toBe(`app-9   ${title.slice(0, sidebar.length - 1)}…  failed`);
+  expect(said).toHaveLength(2);
+  for (const line of said) expect(line.length).toBeLessThanOrEqual(80);
+  expect(said[1]).toStartWith("dotfiles-t12  Send people");
+  expect(said[1]).toContain("…  waiting  #242  running  reviewing r12  yes");
+});
+
+// A Japanese title takes two columns for each letter, so it is measured and padded by the
+// columns it takes, not its letters, and the columns after it still line up.
+test("sc ps lines up and fits rows whose titles mix wide and narrow letters", () => {
+  const said: string[] = [];
+  const log = spyOn(console, "log").mockImplementation((line: string) => said.push(line));
+  try {
+    printThreads(
+      [
+        psRow({ thread: "app-1", title: "ログインのリダイレクトを直して元のページに戻す", pr: 1 }),
+        psRow({ thread: "app-2", title: "Send people back to the page they came from", pr: 2 }),
+      ],
+      false,
+    );
+  } finally {
+    log.mockRestore();
+  }
+  for (const line of said) expect(Bun.stringWidth(line)).toBeLessThanOrEqual(80);
+  // STATUS starts in the same column on every row.
+  const at = (line: string) => Bun.stringWidth(line.slice(0, line.indexOf("working")));
+  expect(at(said[1] ?? "")).toBe(at(said[2] ?? ""));
+});
+
+// A repository's name can be long, and so its threads' names. The name is cut in its middle, so
+// its task, which tells threads apart, still shows, and the row still fits.
+test("sc ps cuts a long thread name in its middle, keeping its task", () => {
+  const said: string[] = [];
+  const log = spyOn(console, "log").mockImplementation((line: string) => said.push(line));
+  try {
+    printThreads(
+      [
+        psRow({
+          thread: "a-repository-with-a-perfectly-valid-long-name-t7",
+          title: "Send people back to the page they came from",
+          status: "waiting",
+          needsYou: true,
+          pr: 1234,
+          checks: "running",
+          review: { state: "reviewing", round: 12, at: null },
+        }),
+      ],
+      false,
+    );
+  } finally {
+    log.mockRestore();
+  }
+  for (const line of said) expect(Bun.stringWidth(line)).toBeLessThanOrEqual(80);
+  expect(said[1]).toStartWith("a-repository-wit…-t7  ");
+});
+
+test("sc ps says a thread whose review waits for a place is queued for review", () => {
+  const said: string[] = [];
+  const log = spyOn(console, "log").mockImplementation((line: string) => said.push(line));
+  try {
+    const row = { short: "Export", title: null, status: "waiting" } as const;
+    printThreads(
+      [psRow({ ...row, thread: "app-9", queued: true }), psRow({ ...row, thread: "app-8" })],
+      false,
+    );
+  } finally {
+    log.mockRestore();
+  }
+  expect(said).toEqual([
+    "THREAD  TITLE   STATUS             PR  CI  REVIEW  NEEDS YOU",
+    "app-9   Export  queued for review",
+    "app-8   Export  waiting",
+  ]);
+});
+
+// With every other column at its widest, a thread queued for review next to one in its twelfth
+// round, a long thread name is cut further, to what the row has left, and its task still shows.
+test("sc ps fits 80 columns with a long name, a queued review and a late round", () => {
+  const said: string[] = [];
+  const log = spyOn(console, "log").mockImplementation((line: string) => said.push(line));
+  try {
+    const row = {
+      title: "Send people back to the page they came from",
+      status: "waiting",
+      needsYou: true,
+      pr: 1234,
+      checks: "running",
+    } as const;
+    printThreads(
+      [
+        psRow({ ...row, thread: "a-repository-with-a-perfectly-valid-long-name-t7", queued: true }),
+        psRow({ ...row, thread: "app-8", review: { state: "reviewing", round: 12, at: null } }),
+      ],
+      false,
+    );
+  } finally {
+    log.mockRestore();
+  }
+  for (const line of said) expect(Bun.stringWidth(line)).toBeLessThanOrEqual(80);
+  expect(said[1]).toStartWith("a-reposi…-t7  Send…  queued for review  #1234  running");
+  expect(said[2]).toContain("reviewing r12  yes");
 });
 
 // A title comes from the tracker and a short title from the lead, so either could hold a line
@@ -241,22 +351,8 @@ test("sc ps prints a title or short title with control codes as one clean row", 
   try {
     printThreads(
       [
-        {
-          thread: "app-9",
-          short: null,
-          title: "Fix\nlogin\x1b[2J",
-          status: "working",
-          needsYou: false,
-          waiting: 0,
-        },
-        {
-          thread: "app-8",
-          short: "Bad\x1b]8;;http://x\x07 one",
-          title: "Ok",
-          status: "working",
-          needsYou: false,
-          waiting: 0,
-        },
+        psRow({ title: "Fix\nlogin\x1b[2J" }),
+        psRow({ thread: "app-8", short: "Bad\x1b]8;;http://x\x07 one" }),
       ],
       false,
     );
@@ -775,6 +871,7 @@ const state: Thread = {
   needs_you: false,
   submitting: null,
   reviewing: null,
+  queued: null,
   telling: null,
   held: null,
   seen: [],
@@ -796,6 +893,7 @@ const state: Thread = {
   review_round: null,
   verdict: null,
   review_line: null,
+  review_at: null,
   harness: null,
   short: null,
   assigned: false,
@@ -809,8 +907,17 @@ test("a thread's word says who has it right now", () => {
   expect(word({})).toBe("working");
   expect(word({ status: "waiting", submitting: "the fix" })).toBe("reviewing");
   expect(word({ status: "waiting", reviewing: "abc" })).toBe("reviewing");
+  expect(word({ status: "waiting", reviewing: "abc", queued: 5 })).toBe("queued for review");
   expect(word({ status: "waiting", verdict: "approve" })).toBe("checks");
   expect(word({ telling: "fix it", verdict: "changes" })).toBe("changes");
+});
+
+// A review that waited when the daemon stopped is saved with when it joined the queue, which a
+// newer submit leaves behind until its own review joins.
+test("a newer submit is reviewing, not queued, until its own review waits", () => {
+  const waited = { status: "waiting", reviewing: "abc", queued: 5 } satisfies Partial<Thread>;
+  expect(word({ ...waited, submitting: "the fix" })).toBe("reviewing");
+  expect(word({ ...waited, needs_you: true })).toBe("review failed");
 });
 
 // A builder that replied to you or the lead and stopped must not hide what you must do next.

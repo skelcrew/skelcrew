@@ -1,7 +1,7 @@
 // What Skelcrew's commands ask the daemon, over its socket.
 import { createConnection } from "node:net";
 import { z } from "zod";
-import { RepositoryRow, TaskRow, TaskView, ThreadRow } from "./flow/list.ts";
+import { PrView, RepositoryRow, TaskRow, TaskView, ThreadRow } from "./flow/list.ts";
 import { type DaemonRequest, parseJson } from "./flow/requests.ts";
 import { cliSocket } from "./paths.ts";
 
@@ -74,6 +74,19 @@ export async function askForTasks(repository?: string): Promise<TaskRow[]> {
 export async function askForTask(repository: string, task: string): Promise<TaskView> {
   const reply = await request({ command: "task show", repo: repository, task });
   return checkReply(z.object({ task: TaskView }), reply).task;
+}
+
+// Asks the daemon for one PR, for sc pr show, named by its number or by its thread's task. The
+// daemon answers from Skelcrew's copy, and asks the forge for the logs of failed checks, as only
+// it holds the forge's login.
+export async function askForPr(which: {
+  repo?: string;
+  from?: string;
+  pr?: number;
+  task?: string;
+}): Promise<PrView> {
+  const reply = await request({ command: "pr show", ...which });
+  return checkReply(z.object({ pr: PrView }), reply).pr;
 }
 
 // Has the daemon create a task in the repository's tracker, such as a GitHub issue, for sc

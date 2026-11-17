@@ -32,12 +32,12 @@ import {
   startLead,
   typeLeadNotes,
 } from "./lead.ts";
-import { listRepositories, listTasks, listThreads, showTask } from "./list.ts";
+import { listRepositories, listTasks, listThreads, showPr, showTask } from "./list.ts";
 import { deliverAllWaiting } from "./messages.ts";
 import { pollRepositories } from "./poll.ts";
 import { findRepository, fullNameIs, noRepositories, refreshClones, repositoryAt } from "./repo.ts";
 import { allowed, type Caller, DaemonRequest, parseJson } from "./requests.ts";
-import { goOn, rerunReview, resumeRound, submitRound } from "./round.ts";
+import { endRound, goOn, rerunReview, resumeRound, submitRound } from "./round.ts";
 import { messageBuilder, messageLead, untagged } from "./tell.ts";
 import {
   endedTurnAsks,
@@ -180,8 +180,9 @@ export async function serve(tmux: string, every = 30_000): Promise<void> {
   };
   // Returns the request limited to the calling lead's own repository. A request about another
   // repository is refused, and the error tells the lead to ask you to open that one. sc ps and
-  // sc issue ls with no repository mean every repository, which for a lead is its own. Your
-  // requests and a builder's are returned unchanged.
+  // sc issue ls with no repository mean every repository, which for a lead is its own, and sc
+  // pr show with a PR number means the lead's own repository, wherever it ran. Your requests and
+  // a builder's are returned unchanged.
   const limitToOwnRepository = (request: DaemonRequest, caller: Caller): DaemonRequest => {
     const leadRepository = leadOfCaller(caller);
     if (leadRepository === null) return request;
@@ -190,6 +191,10 @@ export async function serve(tmux: string, every = 30_000): Promise<void> {
     const own = `${leadRepository.owner}/${leadRepository.repo}`;
     if ((request.command === "ps" || request.command === "task ls") && !request.repo)
       return { ...request, repo: own };
+    if (request.command === "pr show" && !request.repo) {
+      const { from, ...rest } = request;
+      return { ...rest, repo: own };
+    }
     if (!("repo" in request) || !request.repo || fullNameIs(findRepository(db, request.repo), own))
       return request;
     throw new Error(
@@ -281,6 +286,8 @@ export async function serve(tmux: string, every = 30_000): Promise<void> {
         return { tasks: listTasks(db, request.repo) };
       case "task show":
         return { task: showTask(db, request.repo, request.task) };
+      case "pr show":
+        return { pr: await showPr(db, request) };
       case "task create": {
         const repository = findRepository(db, request.repo);
         const task = await createTask(db, repository, request.title, request.body);
@@ -499,6 +506,18 @@ export async function serve(tmux: string, every = 30_000): Promise<void> {
   // Taken before any request comes in, so a thread started meanwhile, still setting up,
   // isn't taken for one whose setup the daemon's stop cut short.
   const before = liveThreads(db);
+  // Reviews the daemon's stop cut short join the queue of reviews first, before any request or
+  // builder could start one, and in the order they had: those that were running, then those
+  // that waited, by when they joined. A review doesn't need its builder until it types changes
+  // in, so those wait until the builder is back, or has failed and ended the round.
+  const reviewsCutShort = before.filter((t) => t.submitting === null && t.reviewing !== null);
+  reviewsCutShort.sort((a, b) => (a.queued ?? 0) - (b.queued ?? 0));
+  const builderBack = new Map<string, () => void>();
+  for (const thread of reviewsCutShort) {
+    const back = Promise.withResolvers<void>();
+    builderBack.set(thread.folder, back.resolve);
+    resumeRound(db, tmux, thread.folder, back.promise);
+  }
   // A lead you exited while the daemon was down closes its tab, before any request could open
   // it, and isn't brought back. From here on, the daemon looks each second for a lead you exit.
   closeExitedLeads(db, tmux);
@@ -516,12 +535,22 @@ export async function serve(tmux: string, every = 30_000): Promise<void> {
   // Notes the daemon's stop kept from the leads.
   typeLeadNotes(db, tmux);
   // Bring back each thread's builder, without waiting on it, and carry on the round it was in.
+  // A thread whose builder can't come back ends its review, which would otherwise mark it
+  // waiting again once it ended. Either way a review already brought back hears of it.
   for (const thread of before) {
     await listenFor(thread);
+    const settled = builderBack.get(thread.folder) ?? (() => {});
     // After the builder is back, since the round may type into its session.
     bringBack(db, tmux, thread).then(
-      () => resumeRound(db, tmux, thread.folder),
-      (error) => failThread(db, thread, error),
+      () => {
+        settled();
+        resumeRound(db, tmux, thread.folder);
+      },
+      (error) => {
+        endRound(thread.folder);
+        settled();
+        failThread(db, thread, error);
+      },
     );
   }
   // Type the messages waiting for builders as soon as each can take them, looking every two

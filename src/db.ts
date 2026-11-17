@@ -110,15 +110,19 @@ function prepareTables(db: Database): void {
   // `assigned` is whether Skelcrew assigned you the thread's issue, so it takes you off only then.
   // `changed` is when anything last went in the thread's log. `updates` holds the lead's
   // messages to the builder, as JSON, since they change the task its reviewer checks against.
+  // `queued` is when the review in `reviewing` joined the queue of reviews, while it waits there
+  // for a place, so the sidebar can say so and a restart puts it back in the same order.
   // `working_since` is when the builder's current stretch of work began, for the sidebar. It
   // changes with every message typed into the builder, so it is kept out of the thread's log,
-  // which would otherwise fill with it. `turn_ended` is whether the builder's harness said, by
-  // its hook, that its last turn ended, with nothing typed in since.
+  // which would otherwise fill with it. `review_at` is when the latest review was asked for or
+  // ended, for sc ps. `turn_ended` is whether the builder's harness said, by its hook, that its
+  // last turn ended, with nothing typed in since.
   const threadColumns = {
     rounds: "INTEGER NOT NULL DEFAULT 0",
     pr: "INTEGER",
     needs_you: "INTEGER NOT NULL DEFAULT 0",
     reviewing: "TEXT",
+    queued: "INTEGER",
     submitting: "TEXT",
     telling: "TEXT",
     held: "TEXT",
@@ -146,6 +150,7 @@ function prepareTables(db: Database): void {
     changed: "INTEGER",
     updates: "TEXT",
     working_since: "INTEGER",
+    review_at: "INTEGER",
     turn_ended: "INTEGER NOT NULL DEFAULT 0",
   };
   for (const [column, type] of Object.entries(threadColumns))
