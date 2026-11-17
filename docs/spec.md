@@ -123,7 +123,8 @@ The second line is the harness, the round once the thread has had a review, such
 | `reviewing` | A review is under way |
 | `checks` | Waiting on CI |
 | `changes` | The reviewer asked for changes, and the builder hasn't picked them up yet |
-| `question` | Needs you: the builder asked a question, or stopped without submitting |
+| `question` | Needs you: the builder asked a question with its harness's question tool |
+| `turn ended` | Needs you: the builder ended its turn without submitting, with a question in plain text or only a reply |
 | `error` | Needs you: the builder's harness stopped on an error, such as a lapsed login |
 | `limit · 13:59` | The builder or the review waits for its harness's usage limit to reset, at 13:59, or `limit` when the harness gave no time |
 | `approved` | Needs you: approved and green, ready to merge |

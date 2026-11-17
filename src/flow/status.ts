@@ -197,8 +197,9 @@ export function threadWord(thread: Thread, maxRounds: number, now = Date.now()):
     verdict === "approve" && (checks === "passing" || checks === null) && thread.conflicts === null;
   if (past) return "round limit";
   if (thread.needs_you && !failed && green) return "approved";
-  // Stopping without submitting is a question written as plain text.
-  if (thread.stalled) return "question";
+  // Stopping without submitting may be a question written as plain text, or only a reply, so
+  // its word doesn't claim a question. The lead's note quotes what the builder last said.
+  if (thread.stalled) return "turn ended";
   if (thread.needs_you && verdict === "timed out" && !underWay) return "review timed out";
   if (thread.needs_you) return failed ? "review failed" : "needs you";
   // Not needing you: a builder or a review waiting out a usage limit says until when.

@@ -931,9 +931,9 @@ test("a builder that stopped without submitting doesn't hide an approval or the 
   const stalled = { ...needing, stalled: true };
   expect(word({ ...stalled, verdict: "approve", checks: "passing" })).toBe("approved");
   expect(word({ ...stalled, verdict: "changes", rounds: 4, held: "fix" })).toBe("round limit");
-  // Any other reason it needs you says less than the builder's question.
-  expect(word({ ...stalled, verdict: "approve", checks: "failing" })).toBe("question");
-  expect(word({ ...stalled, verdict: "failed" })).toBe("question");
+  // Any other reason it needs you says less than the builder's stopping.
+  expect(word({ ...stalled, verdict: "approve", checks: "failing" })).toBe("turn ended");
+  expect(word({ ...stalled, verdict: "failed" })).toBe("turn ended");
 });
 
 test("a builder that took up the changes is working again", () => {
@@ -942,8 +942,8 @@ test("a builder that took up the changes is working again", () => {
 
 test("each reason a thread needs you has its own word", () => {
   expect(word({ asking: true })).toBe("question");
-  // A builder that stopped without submitting asked in plain text.
-  expect(word({ stalled: true })).toBe("question");
+  // A builder that stopped without submitting may only have replied, so it claims no question.
+  expect(word({ stalled: true })).toBe("turn ended");
   expect(word({ erred: true })).toBe("error");
   expect(word({ ...needing, verdict: "approve", checks: "passing" })).toBe("approved");
   expect(word({ ...needing, verdict: "approve" })).toBe("approved");
