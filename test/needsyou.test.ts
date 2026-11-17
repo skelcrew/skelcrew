@@ -219,6 +219,18 @@ function thread(): Record<string, unknown> {
   return row && typeof row === "object" ? { ...row } : {};
 }
 
+// What app-12's builder is doing, as Skelcrew keeps it.
+const builderState = () => thread().state;
+
+// What app's lead is doing, as Skelcrew keeps it.
+function leadState(): unknown {
+  const db = new Database(join(data(), "skelcrew.db"));
+  db.run("PRAGMA busy_timeout = 5000");
+  const row = db.query("SELECT lead_state FROM repositories WHERE repo = 'app'").get();
+  db.close();
+  return z.object({ lead_state: z.string().nullable() }).parse(row).lead_state;
+}
+
 // Sets one of app-12's flags, as a review, or with submitted as sc submit, would.
 function setColumn(column: "needs_you" | "submitted"): void {
   const db = new Database(join(data(), "skelcrew.db"));
@@ -436,6 +448,81 @@ describe.skipIf(insideSandbox)("needs you", () => {
     expect(await needsYou()).toBe(false);
   }, 60_000);
 
+  test("each of Claude Code's hooks puts the builder in its state", async () => {
+    addApp();
+    await startApp12();
+    // The builder shows its busy mark throughout, so its screen never says it idles.
+    writeFileSync(join(builder(), "busy"), "");
+    await hook("talk");
+    expect(builderState()).toBe("working");
+    await hook("ask");
+    expect(builderState()).toBe("asking");
+    await hook("answer");
+    expect(builderState()).toBe("working");
+    await hook("stop");
+    expect(builderState()).toBe("idle");
+    await hook("talk");
+    expect(builderState()).toBe("working");
+    await hook("fail");
+    expect(builderState()).toBe("error");
+    expect(read(join(builder(), "hooks"))).toBe("");
+  }, 60_000);
+
+  // Esc runs no hook on Claude Code, so only the screen can tell.
+  test("a builder stopped with Esc shows idle once its busy mark is gone, and doesn't need you", async () => {
+    addApp();
+    await startApp12();
+    writeFileSync(join(builder(), "busy"), "");
+    await hook("talk");
+    // While its busy mark shows, it works, however long the turn takes.
+    await Bun.sleep(5000);
+    expect(builderState()).toBe("working");
+    rmSync(join(builder(), "busy"));
+    await hook("interrupt");
+    await until(() => builderState() === "idle");
+    expect(await needsYou()).toBe(false);
+  }, 60_000);
+
+  test("the lead gets the builders' hooks, which change its state and flag nothing", async () => {
+    addApp();
+    await startApp12();
+    // The same hooks as a builder's.
+    await until(() => read(join(lead(), "args")) !== "");
+    const given = read(join(lead(), "args")).split("\n");
+    const Settings = z.object({ hooks: z.record(z.string(), z.unknown()) });
+    const settings = Settings.parse(JSON.parse(given[given.indexOf("--settings") + 1] ?? "{}"));
+    expect(Object.keys(settings.hooks).sort()).toEqual([
+      "PostToolUse",
+      "PreToolUse",
+      "Stop",
+      "StopFailure",
+      "UserPromptSubmit",
+    ]);
+    // The lead shows its busy mark, so its screen never says it idles. Each hook's command runs
+    // from the lead's socket, as the lead's Claude Code would run it.
+    writeFileSync(join(lead(), "busy"), "");
+    const asLead = (args: string[]) =>
+      skel(args, { SKELCREW_SANDBOX: "1", SKELCREW_SOCKET: leadSocket() });
+    for (const [args, state] of [
+      [["question", "answered"], "working"],
+      [["question", "asked"], "asking"],
+      [["question", "closed"], "working"],
+      [["turn", "ended"], "idle"],
+      [["question", "answered"], "working"],
+      [["turn", "failed"], "error"],
+    ] as const) {
+      const run = await asLead([...args]);
+      expect(run.err).toBe("");
+      expect(run.out).toBe("");
+      expect(leadState()).toBe(state);
+    }
+    // Nothing the lead did touched the thread or brought a note.
+    await Bun.sleep(1000);
+    expect(await needsYou()).toBe(false);
+    expect(builderState()).toBe(null);
+    expect(notes()).toBe(0);
+  }, 60_000);
+
   test("a lead's message to a builder that stopped without submitting is typed in and clears it", async () => {
     addApp();
     await startApp12();
@@ -644,7 +731,7 @@ describe.skipIf(insideSandbox)("needs you", () => {
   }, 60_000);
 });
 
-test("only a builder can say it is asking you a question, stopped, or stopped on an error", async () => {
+test("only an agent's hooks can say it is asking you a question, stopped, or stopped on an error", async () => {
   serve();
   await until(() => existsSync(join(home, "run", "skelcrew.sock")));
   await Bun.sleep(100);
@@ -654,6 +741,7 @@ test("only a builder can say it is asking you a question, stopped, or stopped on
     ["turn", "failed"],
     ["turn", "ended"],
     ["question", "closed"],
+    ["turn", "interrupted"],
   ]) {
     const run = await skel(args);
     expect(run.code).not.toBe(0);

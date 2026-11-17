@@ -40,11 +40,12 @@ beforeEach(() => {
   // Like ssh, it skips its options and joins the words after the host into one line for the
   // server's shell, which runs in the server's home. ssh -G, which only reads your ssh config,
   // finds nothing, so Skelcrew shares no connection.
+  // It logs with printf, as sh's echo would turn the \n in the line's text into new lines.
   writeFileSync(
     join(root, "bin", "ssh"),
     `#!/bin/sh
 test "$1" = -G && exit 0
-echo "ssh $*" >> "${log}"
+printf '%s\\n' "ssh $*" >> "${log}"
 test "$1" = -o && shift 2
 test "$1" = -t && shift
 shift

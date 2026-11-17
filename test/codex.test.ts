@@ -8,6 +8,7 @@ import { createConnection } from "node:net";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import type { Subprocess } from "bun";
+import { z } from "zod";
 import { leadPlaces } from "../src/paths.ts";
 import {
   answer,
@@ -51,7 +52,10 @@ const subagent = "01a1c003-ffff-7380-b6d9-c7ec08342361";
 // the file ran. stop runs Stop, talk UserPromptSubmit, and interrupt Interrupt. Interrupt is what
 // Codex runs when you press Esc: an interrupted turn returns before its Stop hooks, and its abort
 // runs the Interrupt hooks instead. A hook's input is what the test left in its file, or {}. Text
-// typed into the builder goes in its file typed, and runs UserPromptSubmit, as talk does. renew
+// typed into the builder goes in its file typed, and runs UserPromptSubmit, as talk does. Both
+// look busy while the file busy is in their CODEX_HOME, with a Working line that counts seconds,
+// as Codex's does. error ends the builder's turn on an error
+// as an unknown model does: Codex prints it and sits at its prompt, with no hook. renew
 // renews the login as Codex does from 0.167: it follows the link to it, writes the renewal beside
 // its target and renames it over it. Its arguments are written aside and moved into place, so a
 // test that sees the file never reads them half written.
@@ -108,7 +112,14 @@ while IFS= read -r line; do
   case "$line" in *"$end"*) : > talk ;; esac
 done <&3 &
 echo "› Ask Codex to do anything"
+shown=idle
 for i in $(seq 3000); do
+  now=idle; test -e busy && now="busy $i"
+  if [ "$now" != "$shown" ]; then
+    clear; if [ "$now" != idle ]; then echo "• Working (\${i}s • esc to interrupt)"; fi
+    echo "› Ask Codex to do anything"; shown=$now
+  fi
+  test -e error && { rm -f error busy; clear; echo "■ unexpected status 400 Bad Request"; echo "› Ask Codex to do anything"; shown=idle; echo error >> ran; }
   test -e stop && { said=$(cat stop); rm stop; hook Stop "$said"; }
   test -e interrupt && { rm interrupt; hook Interrupt; }
   test -e talk && { rm talk; hook UserPromptSubmit; }
@@ -202,7 +213,7 @@ async function untilNeedsYou(wanted: boolean) {
 
 // Has the fake builder do something, as Codex would, with `input` as what its hooks read, and
 // waits until it has.
-async function act(step: "stop" | "talk" | "interrupt" | "renew", input = "") {
+async function act(step: "stop" | "talk" | "interrupt" | "error" | "renew", input = "") {
   const before = read(join(builder(), "ran")).split("\n").length;
   writeFileSync(join(builder(), step), input);
   await until(() => read(join(builder(), "ran")).split("\n").length > before);
@@ -245,6 +256,15 @@ function leadSocket(): string {
   return join(home, "run", "skelcrew", "leads", short, "skelcrew.sock");
 }
 
+// What app-12's builder is doing, as Skelcrew keeps it.
+function builderState(): unknown {
+  const db = new Database(join(data(), "skelcrew.db"));
+  db.run("PRAGMA busy_timeout = 5000");
+  const row = db.query("SELECT state FROM threads WHERE folder = 'app-12'").get();
+  db.close();
+  return z.object({ state: z.string().nullable() }).parse(row).state;
+}
+
 // Changes app-12 in the database, as a round would.
 function setThread(sql: string): void {
   const db = new Database(join(data(), "skelcrew.db"));
@@ -272,10 +292,12 @@ describe.skipIf(insideSandbox)("codex", () => {
     expect(given[given.indexOf("-m") + 1]).toBe("gpt-6.1-sol");
     // The task's body starts with -, which mustn't be read as an option.
     expect(read(join(builder(), "args"))).toEndWith("\n--\nAdd export\n\n-n as JSON\n");
-    // The lead runs on Codex too, with its own folder.
+    // The lead runs on Codex too, with its own folder, and the same hooks as the builder.
     await until(() => read(join(lead(), "args")) !== "");
-    expect(args(lead()).filter((arg) => arg.startsWith("hooks."))).toEqual([]);
-    expect(args().filter((arg) => arg.startsWith("hooks."))).toHaveLength(2);
+    const hooks = (given: string[]) =>
+      given.filter((arg) => arg.startsWith("hooks.")).map((arg) => arg.split("=")[0]);
+    expect(hooks(args())).toEqual(["hooks.Stop", "hooks.UserPromptSubmit", "hooks.Interrupt"]);
+    expect(hooks(args(lead()))).toEqual(hooks(args()));
   }, 60_000);
 
   test("a builder that stops without submitting needs you, and the Codex lead hears what it said", async () => {
@@ -342,12 +364,41 @@ describe.skipIf(insideSandbox)("codex", () => {
     expect(notesAbout12()).toBe(1);
   }, 60_000);
 
-  // Esc runs Codex's Interrupt hooks, not Stop, and Skelcrew gives builders none: you are looking
-  // at the builder when you press Esc. So any hook Skelcrew adds for Interrupt must keep this.
-  test("pressing Esc in a Codex builder's turn doesn't mark it needing you", async () => {
+  test("each of Codex's hooks puts the builder in its state", async () => {
+    await startApp12();
+    // The builder shows its busy mark throughout, so its screen never says it idles.
+    writeFileSync(join(builder(), "busy"), "");
+    await act("talk");
+    expect(builderState()).toBe("working");
+    await act("stop");
+    expect(builderState()).toBe("idle");
+    await act("talk");
+    expect(builderState()).toBe("working");
+    await act("interrupt");
+    expect(builderState()).toBe("idle");
+    expect(read(join(builder(), "hooks"))).toBe("");
+  }, 60_000);
+
+  // Esc runs Codex's Interrupt hooks, not Stop: you are looking at the builder when you press
+  // Esc. So it shows idle, and doesn't need you.
+  test("pressing Esc in a Codex builder's turn shows it idle, and doesn't mark it needing you", async () => {
     await startApp12();
     await act("interrupt");
+    expect(builderState()).toBe("idle");
     await Bun.sleep(1000);
+    expect((await app12())?.needsYou).toBe(false);
+  }, 60_000);
+
+  // An error runs no hook on Codex, so only the screen can tell.
+  test("a Codex builder whose turn ends on an error shows idle once its busy mark is gone", async () => {
+    await startApp12();
+    writeFileSync(join(builder(), "busy"), "");
+    await act("talk");
+    // While its busy mark shows, it works, however long the turn takes.
+    await Bun.sleep(5000);
+    expect(builderState()).toBe("working");
+    await act("error");
+    await until(() => builderState() === "idle");
     expect((await app12())?.needsYou).toBe(false);
   }, 60_000);
 

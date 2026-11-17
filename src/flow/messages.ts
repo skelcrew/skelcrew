@@ -94,12 +94,17 @@ function noteMissing(db: Database, sessions: string, thread: Thread, why: string
 
 // Returns why the thread's builder can't take a message right now, in plain words, or empty
 // text when it can. A stopped builder keeps its messages for when sc start brings it back. One
-// asking you a question waits too, as typing would answer it for you.
+// asking you a question waits too, as typing would answer it for you. One the status module
+// knows to be working, from its harness's hooks, is mid-turn, even right after a message went
+// in, before its status line shows. Otherwise its screen tells, whatever its state says: a
+// turn can start with no hook, such as when a background task ends, and only the screen shows a
+// person's draft.
 export async function whyWaiting(sessions: string, thread: Thread): Promise<string> {
   if (thread.status !== "working" && thread.status !== "waiting")
     return `the thread is ${thread.status}`;
   if (!agentRuns(sessions, thread.folder)) return notRunning;
   if (thread.asking) return "it is asking the human a question";
+  if (thread.state === "working") return `${midTurn} (its harness says a turn runs)`;
   return whyBusy(sessions, thread.folder, builderHarness(thread).marks);
 }
 

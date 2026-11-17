@@ -186,6 +186,7 @@ export async function startThread(
       assigned: before?.assigned ?? false,
       changed: null,
       updates: [],
+      state: null,
     };
     // A failed or done thread's row gives way to the new one, and messages that waited for its
     // builder go with it, as they were about the old work.

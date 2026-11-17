@@ -55,9 +55,26 @@ function notReady(shown: string, marks: Marks) {
 // Returns why the screen changed between two looks: mid-turn when a line holding the busy mark
 // is new, as the harness's status line redraws, or else that it kept changing.
 function whyChanged(before: string, after: string, marks: Marks): string {
+  return statusLineLive(before, after, marks.busy)
+    ? `${midTurn} (it shows ${marks.busy})`
+    : "its screen kept changing";
+}
+
+// Reports whether a line holding the busy mark is new since the earlier look, as the harness's
+// status line redraws while a turn runs. The same line again is the agent's own text.
+function statusLineLive(before: string, after: string, busy: string): boolean {
   const earlier = new Set(before.split("\n"));
-  const live = after.split("\n").some((line) => line.includes(marks.busy) && !earlier.has(line));
-  return live ? `${midTurn} (it shows ${marks.busy})` : "its screen kept changing";
+  return after.split("\n").some((line) => line.includes(busy) && !earlier.has(line));
+}
+
+// Reports whether a look at the screen shows the agent out of a turn, given the look before it,
+// taken at least two seconds earlier, or undefined for none: its busy mark is gone, or it sits
+// still at a bare prompt, as the agent's own text. A live status line redraws every second.
+// The status module's screen check uses it, by the same rule as typing.
+export function quietSince(before: string | undefined, after: string, marks: Marks): boolean {
+  if (!after.includes(marks.busy)) return true;
+  if (before === undefined || notReady(after, marks) !== "") return false;
+  return !statusLineLive(before, after, marks.busy);
 }
 
 // Returns why the agent isn't ready for a message, in plain words, by its harness's marks, or

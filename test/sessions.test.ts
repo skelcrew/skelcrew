@@ -29,7 +29,7 @@ import {
   stopSession,
 } from "../src/agents/sessions.ts";
 import { tmuxIsAtLeast } from "../src/agents/tmux.ts";
-import { deliver, idle, type Marks, whyBusy } from "../src/agents/transport.ts";
+import { deliver, idle, type Marks, quietSince, whyBusy } from "../src/agents/transport.ts";
 import { source, until as wait } from "./harness.ts";
 
 const moment = 100;
@@ -194,6 +194,26 @@ test("a message goes in though the agent's own reply quotes the busy mark", asyn
   expect(await deliver(socket, "lead", claude.marks, "hello", { moment })).toBe("typed");
   await until(() => read("received.txt").endsWith("\n"));
   expect(read("received.txt")).toBe("\x1b[200~hello\x1b[201~\n");
+});
+
+// The status module's screen check looks every two seconds, with no hook to say a turn ended,
+// as after Esc. Only a live status line keeps the agent working: a reply quoting the busy mark
+// sits still.
+test("two looks show the agent out of a turn once its status line is gone or only quoted", () => {
+  const { busy, prompt } = claude.marks;
+  const at = (lines: string[]) => [...lines, "", prompt].join("\n");
+  const replied = at(quoting);
+  const spinner = (seconds: number) => `✻ Thinking… (${seconds}s · ${busy})`;
+  // The mark gone.
+  expect(quietSince(undefined, at(["● Done."]), claude.marks)).toBe(true);
+  // The mark quoted in a reply, at a bare prompt, the same as the look before.
+  expect(quietSince(replied, replied, claude.marks)).toBe(true);
+  // With no look before, a mark can't yet be told from a status line.
+  expect(quietSince(undefined, replied, claude.marks)).toBe(false);
+  // The spinner redrew since the look before.
+  expect(quietSince(at([spinner(3)]), at([spinner(5)]), claude.marks)).toBe(false);
+  // The mark with no bare prompt, as a harness shows mid-turn without its input.
+  expect(quietSince(busy, busy, claude.marks)).toBe(false);
 });
 
 // Claude Code's spinner line counts the seconds of the turn, todo list or not.

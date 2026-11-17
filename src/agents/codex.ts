@@ -240,16 +240,20 @@ function callStep(
 // Returns a TOML value for a -c setting. JSON's strings are TOML's too.
 const tomlString = (text: string) => JSON.stringify(text);
 
-// A builder on Codex asks you a question by ending its turn without sc submit, since Codex
-// has no tool for asking, and its Stop hook tells Skelcrew the turn ended, as Claude Code's does.
-// Whatever is typed into the builder next ends the question, and starts a new turn. The commands
-// print nothing, and run with no trust asked for: Codex would otherwise wait for a person to
-// trust each one.
+// Codex's hooks tell Skelcrew what each agent, the lead and builders alike, is doing: a message
+// going in starts a turn, which ends with Stop, or with Interrupt when you press Esc. A builder
+// on Codex asks you a question by ending its turn without sc submit, since Codex has no tool for
+// asking, and Stop tells Skelcrew the turn ended, as Claude Code's does. Whatever is typed into
+// the builder next ends the question, and starts a new turn. Esc flags nothing, as you are
+// looking at the agent anyway. An error ends a turn with no hook, so Skelcrew reads that from
+// the screen. The commands print nothing, and run with no trust asked for: Codex would
+// otherwise wait for a person to trust each one.
 const hookToml = (command: string) =>
   `[{hooks=[{type="command",command=${tomlString(command)},timeout=10}]}]`;
-const builderHooks = [
+const agentHooks = [
   ["-c", `hooks.Stop=${hookToml("sc turn ended")}`],
   ["-c", `hooks.UserPromptSubmit=${hookToml("sc question answered")}`],
+  ["-c", `hooks.Interrupt=${hookToml("sc turn interrupted")}`],
 ].flat();
 
 // Throws when Codex doesn't offer the model, saying which it does. An unknown model only shows
@@ -349,8 +353,7 @@ async function startCommand(given: {
   // sandbox, and no paste burst, which could take a message typed in for keys.
   command.push("-c", `projects.${tomlString(cwd)}.trust_level="trusted"`);
   command.push("-c", "check_for_update_on_startup=false", "-c", "tui.disable_paste_burst=true");
-  command.push("-c", "features.hooks=true");
-  if (thread) command.push(...builderHooks);
+  command.push("-c", "features.hooks=true", ...agentHooks);
   if (system) command.push("-c", `developer_instructions=${tomlString(system)}`);
   if (model) command.push("-m", model);
   if (resume) command.push(resume);

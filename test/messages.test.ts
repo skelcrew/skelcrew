@@ -93,6 +93,39 @@ console.log(JSON.stringify(db.query("SELECT said FROM messages ORDER BY id").all
   expect(JSON.parse(left)).toEqual([{ said: "a comment" }, { said: "Use v2." }]);
 });
 
+// Right after a message goes in, the builder's screen can still show a bare prompt before its
+// status line draws. Its harness's hooks already say a turn runs, so the next message waits for
+// the turn's end.
+test("a message waits while the builder's hooks say a turn runs, though its screen looks idle", () => {
+  // A stand-in builder, idle at Claude Code's prompt, keeping what is typed into it.
+  writeFileSync(
+    join(home, "builder.sh"),
+    "#!/bin/sh\nprintf '\\033[?2004h'\nstty -echo\necho '❯'\ncat > received.txt\n",
+    { mode: 0o755 },
+  );
+  const seen = run(`
+import { readFileSync, existsSync } from "node:fs";
+const received = ${JSON.stringify(join(home, "received.txt"))};
+const got = () => (existsSync(received) ? readFileSync(received, "utf8") : "");
+Bun.spawnSync(["tmux", "-L", tmux, "new-session", "-d", "-s", "app-12", "-c", ${JSON.stringify(home)}, ${JSON.stringify(join(home, "builder.sh"))}]);
+await Bun.sleep(300);
+db.run("UPDATE threads SET state = 'working'");
+queueMessage(db, tmux, "app-12", { sender: "lead", text: "Use v2.", said: "Use v2.", typed_in: [] });
+for (let i = 0; i < 4; i++) {
+  deliverAllWaiting(db, tmux);
+  await Bun.sleep(500);
+}
+const during = got().includes("Use v2.");
+// The turn's Stop hook ran.
+db.run("UPDATE threads SET state = 'idle'");
+for (let i = 0; i < 12 && !got().includes("Use v2."); i++) {
+  deliverAllWaiting(db, tmux);
+  await Bun.sleep(500);
+}
+console.log(JSON.stringify({ during, after: got().includes("Use v2.") }));`);
+  expect(JSON.parse(seen)).toEqual({ during: false, after: true });
+});
+
 // A new round can drop a notice while it is being typed in, and the lead's message saved right
 // after must still go in, whatever the database numbers it.
 test("a lead's message saved while a dropped notice was being typed in still goes in", () => {

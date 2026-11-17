@@ -260,12 +260,16 @@ async function pluginCommand(args: string[], json: boolean): Promise<void> {
 }
 
 // Runs what agents and their hooks call: a builder submitting its work, and the hooks that
-// tell the daemon about questions.
+// tell the daemon what an agent is doing.
 async function agentCommand(args: string[]): Promise<void> {
   const [command, sub, ...rest] = args;
-  const { reportQuestion, reportTurnEnded, reportTurnFailed, submitForReview } = await import(
-    "./client.ts"
-  );
+  const {
+    reportQuestion,
+    reportTurnEnded,
+    reportTurnFailed,
+    reportTurnInterrupted,
+    submitForReview,
+  } = await import("./client.ts");
   if (command === "submit" && sub && rest.length === 0) {
     const thread = await submitForReview(sub);
     console.log(
@@ -273,24 +277,30 @@ async function agentCommand(args: string[]): Promise<void> {
     );
     return;
   }
-  // Run by a builder's Claude Code hooks, not by people, so usage leaves it out. It prints
-  // nothing: Claude Code adds what a UserPromptSubmit hook prints to the builder's message.
+  // Run by an agent's hooks, not by people, so usage leaves it out. It prints nothing: Claude
+  // Code adds what a UserPromptSubmit hook prints to the agent's message.
   if (command === "question" && rest.length === 0) {
     if (sub === "asked" || sub === "answered" || sub === "closed") {
       await reportQuestion(sub);
       return;
     }
   }
-  // Run by a builder's Stop hook, on Claude Code or Codex, not by people, so usage leaves it
+  // Run by an agent's Stop hook, on Claude Code or Codex, not by people, so usage leaves it
   // out. It prints nothing, as both harnesses read what a Stop hook prints.
   if (command === "turn" && sub === "ended" && rest.length === 0) {
     await reportTurnEnded();
     return;
   }
-  // Run by a Claude Code builder's StopFailure hook, not by people, so usage leaves it out.
+  // Run by a Claude Code agent's StopFailure hook, not by people, so usage leaves it out.
   // Claude Code ignores what that hook prints. It hands the hook the error on stdin.
   if (command === "turn" && sub === "failed" && rest.length === 0) {
     await reportTurnFailed(process.stdin.isTTY ? "" : await Bun.stdin.text());
+    return;
+  }
+  // Run by a Codex agent's Interrupt hook, when you press Esc, not by people, so usage leaves
+  // it out. It prints nothing.
+  if (command === "turn" && sub === "interrupted" && rest.length === 0) {
+    await reportTurnInterrupted();
     return;
   }
   // Leads started by an older Skelcrew run this hook with each message until they restart.

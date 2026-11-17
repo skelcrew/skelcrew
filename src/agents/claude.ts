@@ -33,23 +33,23 @@ const ClaudeJson = z.looseObject({
 const base = { skipDangerousModePermissionPrompt: true, sandbox: { enabled: false } };
 const settings = JSON.stringify(base);
 
-// A builder's AskUserQuestion waits on a screen nobody watches, so Claude Code's hooks tell
-// Skelcrew when the builder asks, and the thread needs you until the question is over. Answering
-// runs PostToolUse, within the same turn, but setting it aside with Esc or "Chat about this" runs
-// no hook at all, so whatever is typed into the builder next also ends it. The commands answer at once, and
-// print nothing, since UserPromptSubmit adds what a hook prints to the message. A turn that
-// ends on an error, such as a lapsed login or a usage limit, runs StopFailure in place of Stop,
-// and leaves the builder idle with its row still saying working, so that needs you too, until
-// you fix it and type to the builder. A turn that ends any other way runs Stop, and a builder
-// that stops without sc submit is waiting on you too, such as with a question written as plain
-// text. Pressing Esc runs neither, and then you are looking at the builder anyway. Leads get none
-// of these: you see a lead whenever you open its repository.
+// Claude Code's hooks tell Skelcrew what each agent, the lead and builders alike, is doing. A
+// message going in starts a turn, which ends with Stop, or with StopFailure on an error, such
+// as a lapsed login or a usage limit. A builder's AskUserQuestion waits on a screen nobody
+// watches, so its asking needs you until the question is over. Answering runs PostToolUse,
+// within the same turn, but setting it aside with Esc or "Chat about this" runs no hook at all,
+// so whatever is typed into the builder next also ends it. A builder whose turn stops on an
+// error sits idle, so that needs you too, until you fix it and type to the builder, and one that
+// stops without sc submit is waiting on you too, such as with a question written as plain text.
+// Pressing Esc runs no hook, so Skelcrew reads that from the screen. A lead's hooks flag nothing:
+// you see a lead whenever you open its repository. The commands answer at once, and print
+// nothing, since UserPromptSubmit adds what a hook prints to the message.
 const askedHook = { type: "command", command: "sc question asked", timeout: 10 };
 const answeredHook = { ...askedHook, command: "sc question answered" };
 const closedHook = { ...askedHook, command: "sc question closed" };
 const failedHook = { ...askedHook, command: "sc turn failed" };
 const endedHook = { ...askedHook, command: "sc turn ended" };
-const builderSettings = JSON.stringify({
+const agentSettings = JSON.stringify({
   ...base,
   hooks: {
     PreToolUse: [{ matcher: "AskUserQuestion", hooks: [askedHook] }],
@@ -308,10 +308,10 @@ function startCommand(given: {
   trustFolder(config, cwd);
   skipBypassWarning(config);
 
-  // Bypass mode, since nobody is there to approve each tool. Only a builder gets the hooks
-  // that tell Skelcrew it asked you a question.
+  // Bypass mode, since nobody is there to approve each tool, with the hooks that tell Skelcrew
+  // what the agent is doing.
   const command = ["claude", "--model", model, "--permission-mode", "bypassPermissions"];
-  command.push("--settings", thread ? builderSettings : settings);
+  command.push("--settings", agentSettings);
   if (resume) command.push("--resume", resume);
   if (sessionId) command.push("--session-id", sessionId);
   if (system) command.push("--append-system-prompt", system);
