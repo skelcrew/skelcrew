@@ -163,11 +163,17 @@ export function readSettings<G extends Group>(
   const decided = (k: Key) =>
     shared[k] !== undefined && shared[k] !== null && !roleKeys.includes(k);
   const fromYours = wanted.filter((k) => yourKeys.includes(k) && !decided(k));
-  // Detection is the lowest layer for setup and test, below both files, and
-  // only looks when they are asked for.
-  const detecting = repository && (wanted.includes("setup") || wanted.includes("test"));
-  const detected = detecting ? detectCommands(readTopFiles(repository)) : { setup: [], test: [] };
-  return mergeSettings([shared, readYourFile(fromYours)], detected);
+  // Detection is the lowest layer for setup and test, below both files. It reads the
+  // repository's files only when one of them is asked for and neither file names it, so a file
+  // it can't read never stops commands that are named.
+  const layers = [shared, readYourFile(fromYours)];
+  const unnamed = (key: "setup" | "test") =>
+    wanted.includes(key) && layers.every((layer) => layer[key] === undefined);
+  const detected =
+    repository && (unnamed("setup") || unnamed("test"))
+      ? detectCommands(readTopFiles(repository))
+      : { setup: [], test: [] };
+  return mergeSettings(layers, detected);
 }
 
 // Returns the files at the top of Skelcrew's clone of the repository that detection looks at,

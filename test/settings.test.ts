@@ -1,7 +1,15 @@
 // Settings in two layers: the repository's committed skelcrew.yaml, read from Skelcrew's clone of
 // it, over your own config.yaml.
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { availableParallelism, tmpdir } from "node:os";
 import { join } from "node:path";
 import { source } from "./harness.ts";
@@ -133,6 +141,21 @@ test("a linked file in the clone counts for nothing in detection", () => {
   writeFileSync(join(home, "Makefile"), "check:\n");
   symlinkSync(join(home, "Makefile"), join(clone(), "Makefile"));
   expect(commands().test).toEqual({ commands: [], detected: true });
+});
+
+// Detection only stands in for what no file names, so a file it can't read never stops
+// commands that are named.
+test("named setup and test never read the files detection looks at", () => {
+  settings("harness: claude\nsetup: []\n", "test: [make test]\n");
+  writeFileSync(join(clone(), "package.json"), "{}");
+  chmodSync(join(clone(), "package.json"), 0);
+  expect(commands()).toEqual({
+    setup: { commands: [], detected: false },
+    test: { commands: ["make test"], detected: false },
+  });
+  // With one left to detect, the unreadable file is read and says so.
+  settings("harness: claude\n", "test: [make test]\n");
+  expect(run("repositoryCommands(app);").err).toContain("EACCES");
 });
 
 // An empty list says the repository has no setup, which detection mustn't override.

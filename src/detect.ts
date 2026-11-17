@@ -72,17 +72,23 @@ const kinds: ((files: TopFiles, has: (name: string) => boolean) => Found | null)
   (f, has) => (has("package.json") ? scriptsOf(f, "npm install", "npm") : null),
   (_, has) => (has("Cargo.toml") ? { setup: "cargo fetch", test: "cargo test" } : null),
   (_, has) => (has("go.mod") ? { setup: "go mod download", test: "go test ./..." } : null),
-  (_, has) => (has("uv.lock") ? { setup: "uv sync", test: "uv run pytest" } : null),
-  (_, has) => (has("poetry.lock") ? { setup: "poetry install", test: "poetry run pytest" } : null),
-  // Python with neither: pytest only when the repository shows it uses it, and no setup, as
-  // installing into the sandbox's system Python would fail.
-  (f, has) =>
-    has("pytest.ini") ||
-    has("conftest.py") ||
-    f["pyproject.toml"]?.includes("[tool.pytest") ||
-    f["setup.cfg"]?.includes("[tool:pytest]")
-      ? { test: "python3 -m pytest" }
-      : null,
+  // Python: a lockfile names its package manager, which sets it up and runs the tests, but not
+  // its test runner. So pytest only when the repository shows it uses it, and with no lockfile,
+  // no setup, as installing into the sandbox's system Python would fail.
+  (f, has) => {
+    const pytest =
+      has("pytest.ini") ||
+      has("conftest.py") ||
+      f["pyproject.toml"]?.includes("pytest") ||
+      f["setup.cfg"]?.includes("[tool:pytest]");
+    const tool = has("uv.lock")
+      ? { setup: "uv sync", run: "uv run pytest" }
+      : has("poetry.lock")
+        ? { setup: "poetry install", run: "poetry run pytest" }
+        : { run: "python3 -m pytest" };
+    if (!pytest && !tool.setup) return null;
+    return { ...(tool.setup ? { setup: tool.setup } : {}), ...(pytest ? { test: tool.run } : {}) };
+  },
   (_, has) => (has("mix.exs") ? { setup: "mix deps.get", test: "mix test" } : null),
   // Gradle's own check runs the tests and every other check, and Maven's verify does likewise.
   (_, has) => (has("gradlew") ? { check: "./gradlew check" } : null),

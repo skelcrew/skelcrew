@@ -79,12 +79,13 @@ test("Cargo, Go, Elixir, Maven, Gradle and Ruby", () => {
   });
 });
 
-test("Python with uv, poetry, or pytest alone", () => {
-  expect(detectCommands({ "uv.lock": "", "pyproject.toml": "" })).toEqual({
+test("Python with uv, poetry, or neither, runs pytest only where the repository uses it", () => {
+  const usesPytest = '[project]\ndependencies = ["pytest"]\n';
+  expect(detectCommands({ "uv.lock": "", "pyproject.toml": usesPytest })).toEqual({
     setup: ["uv sync"],
     test: ["uv run pytest"],
   });
-  expect(detectCommands({ "poetry.lock": "", "pyproject.toml": "" })).toEqual({
+  expect(detectCommands({ "poetry.lock": "", "pyproject.toml": "", "conftest.py": "" })).toEqual({
     setup: ["poetry install"],
     test: ["poetry run pytest"],
   });
@@ -93,6 +94,18 @@ test("Python with uv, poetry, or pytest alone", () => {
   expect(detectCommands({ "setup.cfg": "[tool:pytest]\n" })).toEqual(pytest);
   expect(detectCommands({ "pytest.ini": "" })).toEqual(pytest);
   expect(detectCommands({ "pyproject.toml": "[project]\n" })).toEqual({ setup: [], test: [] });
+});
+
+// A lockfile names the package manager, not the test runner, such as unittest.
+test("a locked Python repository with no sign of pytest gets its setup and no test", () => {
+  expect(detectCommands({ "uv.lock": "", "pyproject.toml": "[project]\n" })).toEqual({
+    setup: ["uv sync"],
+    test: [],
+  });
+  expect(detectCommands({ "poetry.lock": "", "pyproject.toml": "[project]\n" })).toEqual({
+    setup: ["poetry install"],
+    test: [],
+  });
 });
 
 test("a Makefile's check target, then its test target", () => {
