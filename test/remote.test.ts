@@ -18,6 +18,7 @@ import {
 } from "node:fs";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
+import { checkThenSc, quoted } from "../src/machine/remote.ts";
 import { source } from "./harness.ts";
 
 let home = "";
@@ -146,8 +147,8 @@ function checkout(full: string): string {
   return folder;
 }
 
-async function skel(args: string[], typed = "", cwd = home) {
-  const run = Bun.spawn([process.execPath, laptop.main, ...args], {
+async function skel(args: string[], typed = "", cwd = home, define: string[] = []) {
+  const run = Bun.spawn([process.execPath, ...define, laptop.main, ...args], {
     cwd,
     env: { PATH: `${join(home, "bin")}:/usr/bin:/bin`, HOME: home, TMPDIR: join(home, "tmp") },
     stdin: new Blob([typed]),
@@ -175,7 +176,7 @@ const ssh = `ssh ${shared} simon@workbox`;
 // out of date, or without, to run whatever Skelcrew is there. Always with the server's name, for
 // the title of your terminal.
 const onServer = (words: string, build: string | null = laptop.commit) =>
-  `ssh -o LogLevel=ERROR -t ${shared} simon@workbox env PATH="$HOME/.local/bin:$PATH" SKELCREW_REMOTE_NAME=simon@workbox ${build ? `SKELCREW_LAPTOP_BUILD=${build} ` : ""}sc${words}`;
+  `ssh -o LogLevel=ERROR -t ${shared} simon@workbox env PATH="$HOME/.local/bin:$PATH" SKELCREW_REMOTE_NAME=simon@workbox ${build ? `SKELCREW_LAPTOP_BUILD=${build} ` : ""}sh -c ${quoted(checkThenSc)} sh${words}`;
 
 // Runs sc in a terminal and types the next of `answers` at each [Y/n] or [y/N] question it asks.
 // Returns all it wrote there, escape codes included, and its exit code.
@@ -318,7 +319,7 @@ test("in a terminal, a no to setting up a server whose first run isn't done copi
   // Only the command you asked for reached the server.
   const lines = calls().trim().split("\n");
   expect(lines).toHaveLength(1);
-  expect(lines[0]).toMatch(/^ssh .* simon@workbox .* sc ps$/);
+  expect(lines[0]).toMatch(/^ssh .* simon@workbox .* sh ps$/);
   expect(existsSync(join(home, "server", ".config", "skelcrew", "laptop-setup.json"))).toBe(false);
   expect(existsSync(join(home, "server", "setup-taken"))).toBe(false);
 });
@@ -424,6 +425,68 @@ test("a laptop with uncommitted changes always offers, and says what it copies",
   expect(run.out).toContain("~/code/skel is on try, not main.");
   expect(calls()).toContain(`--define SKELCREW_BUILD="${laptop.commit}-dirty"`);
   expect(calls()).toContain("systemctl --user restart skelcrew");
+});
+
+// Puts a Skelcrew checkout on the server, cloned from the laptop's, with ~/.local/bin/sc linking
+// to its launcher, as running Skelcrew from a checkout leaves it. Its launcher is an older
+// Skelcrew that checks no build, so any warning comes from what the laptop sends.
+function checkoutOnServer(): string {
+  const folder = join(home, "server", "skelcrew");
+  Bun.spawnSync(["git", "clone", "-q", laptop.folder, folder]);
+  mkdirSync(join(folder, "bin"));
+  writeFileSync(join(folder, "bin", "sc"), '#!/bin/sh\necho "old Skelcrew ran $*"\n', {
+    mode: 0o755,
+  });
+  mkdirSync(join(home, "server", ".local", "bin"), { recursive: true });
+  symlinkSync(join(folder, "bin", "sc"), join(home, "server", ".local", "bin", "sc"));
+  return folder;
+}
+
+// Makes a commit in a checkout, as a merge on main would.
+function commit(folder: string): void {
+  writeFileSync(join(folder, "later.txt"), "later\n");
+  const git = ["git", "-C", folder, "-c", "user.name=t", "-c", "user.email=t"];
+  Bun.spawnSync([...git, "add", "later.txt"]);
+  Bun.spawnSync([...git, "commit", "-q", "-m", "later"]);
+}
+
+test("--remote warns when the server's checkout is behind your commit, then runs the command", async () => {
+  const folder = checkoutOnServer();
+  commit(laptop.folder);
+  const ahead = Bun.spawnSync(["git", "-C", laptop.folder, "rev-parse", "--short", "HEAD"]);
+  const at = Bun.spawnSync(["git", "-C", folder, "rev-parse", "--short", "HEAD"]);
+  const run = await skel(["--remote", "simon@workbox", "ps"]);
+  expect(run.err).toBe(
+    `Skelcrew on simon@workbox runs from a checkout at ${at.stdout.toString().trim()}, yours is ${ahead.stdout.toString().trim()}. To update it, run git pull in ${folder} there.\n`,
+  );
+  expect(run.out).toBe("old Skelcrew ran ps\n");
+  expect(run.code).toBe(0);
+});
+
+// Local changes on the server don't change which commit git pull would bring.
+test("--remote says nothing when the server's checkout, with local changes, is at your commit", async () => {
+  const folder = checkoutOnServer();
+  writeFileSync(join(folder, "src", "main.ts"), "// a change on the server\n");
+  const run = await skel(["--remote", "simon@workbox", "ps"]);
+  expect(run.err).toBe("");
+  expect(run.out).toBe("old Skelcrew ran ps\n");
+});
+
+test("--remote says nothing when the server's checkout is past your commit", async () => {
+  commit(checkoutOnServer());
+  expect((await skel(["--remote", "simon@workbox", "ps"])).err).toBe("");
+});
+
+test("--remote from a release warns when the server's checkout lacks its tag, and not once it has it", async () => {
+  const folder = checkoutOnServer();
+  const release = ["--define", 'SKELCREW_BUILD="0.4.2"'];
+  const behind = await skel(["--remote", "simon@workbox", "ps"], "", home, release);
+  expect(behind.err).toBe(
+    `Skelcrew on simon@workbox runs from a checkout at ${laptop.commit}, yours is 0.4.2. To update it, run git pull in ${folder} there.\n`,
+  );
+  expect(behind.out).toBe("old Skelcrew ran ps\n");
+  Bun.spawnSync(["git", "-C", folder, "tag", "v0.4.2"]);
+  expect((await skel(["--remote", "simon@workbox", "ps"], "", home, release)).err).toBe("");
 });
 
 // Returns a Skelcrew checkout on the server, with its launcher and sources.
@@ -534,7 +597,7 @@ function farSkel(built: string | null, laptopBuild?: string, args = ["--help"]) 
   if (laptopBuild)
     Object.assign(env, { SKELCREW_LAPTOP_BUILD: laptopBuild, SKELCREW_REMOTE_NAME: "x" });
   const run = Bun.spawnSync([process.execPath, ...define, laptop.main, ...args], { env });
-  return { code: run.exitCode, out: run.stdout.toString(), err: run.stderr.toString() };
+  return { code: run.exitCode, out: run.stdout.toString() };
 }
 
 test("a copied Skelcrew runs a command from a laptop with its own commit", () => {
@@ -544,9 +607,10 @@ test("a copied Skelcrew runs a command from a laptop with its own commit", () =>
 });
 
 test("a copied Skelcrew from another commit says so and runs nothing", () => {
-  const run = farSkel("abc1234", "def5678");
-  expect(run.code).toBe(98);
-  expect(run.out).toBe("Skelcrew on x is from abc1234, yours is def5678.\n");
+  expect(farSkel("abc1234", "def5678")).toEqual({
+    code: 98,
+    out: "Skelcrew on x is from abc1234, yours is def5678.\n",
+  });
 });
 
 test("a sidebar runs whichever laptop's build its tmux server remembers", () => {
@@ -591,50 +655,15 @@ test("a copied Skelcrew whose first run isn't done says so before its build or s
 });
 
 test("a copied Skelcrew built with uncommitted changes is never up to date", () => {
-  const run = farSkel("abc1234-dirty", "abc1234-dirty");
-  expect(run.code).toBe(98);
-  expect(run.out).toBe(
-    "Skelcrew on x is from abc1234 with uncommitted changes, yours is abc1234 with uncommitted changes.\n",
-  );
+  expect(farSkel("abc1234-dirty", "abc1234-dirty")).toEqual({
+    code: 98,
+    out: "Skelcrew on x is from abc1234 with uncommitted changes, yours is abc1234 with uncommitted changes.\n",
+  });
 });
 
-// A checkout on the server updates with git pull there, never from the laptop, so it only warns.
-test("Skelcrew from a checkout at another commit warns how to update it, and runs the command", () => {
-  const run = farSkel(null, "def5678");
-  expect(run.code).toBe(0);
-  expect(run.out).toContain("USAGE");
-  expect(run.err).toBe(
-    `Skelcrew on x runs from a checkout at ${laptop.commit}, yours is def5678. To update it, run git pull in ~/code/skel there.\n`,
-  );
-});
-
-test("Skelcrew from a checkout with local changes warns and names them", () => {
-  writeFileSync(join(laptop.folder, "local.txt"), "a change\n");
-  const run = farSkel(null, "def5678");
-  expect(run.code).toBe(0);
-  expect(run.err).toBe(
-    `Skelcrew on x runs from a checkout at ${laptop.commit} with uncommitted changes, yours is def5678. To update it, run git pull in ~/code/skel there.\n`,
-  );
-});
-
-test("Skelcrew from a checkout at the laptop's commit says nothing", () => {
-  const run = farSkel(null, `${laptop.commit.slice(0, 7)}`);
-  expect(run.code).toBe(0);
-  expect(run.out).toContain("USAGE");
-  expect(run.err).toBe("");
-});
-
-test("Skelcrew from a checkout without the laptop's release warns how to update it", () => {
-  const run = farSkel(null, "0.4.2");
-  expect(run.code).toBe(0);
-  expect(run.err).toBe(
-    `Skelcrew on x runs from a checkout at ${laptop.commit}, yours is release 0.4.2. To update it, run git pull in ~/code/skel there.\n`,
-  );
-});
-
-test("Skelcrew from a checkout that holds the laptop's release says nothing", () => {
-  Bun.spawnSync(["git", "-C", laptop.folder, "tag", "v0.4.2"]);
-  expect(farSkel(null, "0.4.2").err).toBe("");
+// A checkout on the server updates with git pull there, never from the laptop.
+test("Skelcrew from a checkout never says it is out of date", () => {
+  expect(farSkel(null, "def5678").out).toContain("USAGE");
 });
 
 test("Skelcrew update is gone", async () => {
@@ -793,8 +822,8 @@ test("sc remote add copies your setup there before the first run", async () => {
   expect(lines).toContain(
     `${ssh} umask 077 && mkdir -p .config/skelcrew && rm -f ${send} && : > ${send}`,
   );
-  expect(lines.at(-1)).toMatch(/ sc first-run$/);
-  expect(lines.at(-2)).toMatch(/ sc take-setup$/);
+  expect(lines.at(-1)).toMatch(/ sh first-run$/);
+  expect(lines.at(-2)).toMatch(/ sh take-setup$/);
   // The file sent holds the token, so it is readable only by you there.
   const taken = join(home, "server", "setup-taken");
   expect(JSON.parse(readFileSync(taken, "utf8"))).toMatchObject({

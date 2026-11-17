@@ -1,7 +1,7 @@
 // sc --remote and sc remote add: run a Skelcrew command on your server over ssh -t, from your
 // laptop, and set a server up for that. --remote offers to replace Skelcrew there when it is an
 // older release than yours, or was built from another commit, warns when it runs from a checkout
-// at another commit, and copies your setup there when it changed. Your laptop can be a Mac, so this file loads nothing of the Skelcrew that runs on
+// behind yours, and copies your setup there when it changed. Your laptop can be a Mac, so this file loads nothing of the Skelcrew that runs on
 // the server.
 import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { isIP } from "node:net";
@@ -32,6 +32,25 @@ import { downloadRelease, releaseSum } from "./update.ts";
 // the same in every shell.
 const pathOnServer = 'PATH="$HOME/.local/bin:$PATH"';
 
+// The shell line that runs sc on a server, after warning when that sc runs from a checkout
+// behind the laptop's build. --remote never replaces a checkout, so without the warning a server
+// could keep running old code through many merges. The laptop sends this check with the
+// command, rather than leaving it to Skelcrew there, so a checkout too old to know of it still
+// warns, and it costs no round trip of its own. It runs only when the laptop passes its build.
+// A checkout at or past that commit, or holding that release's tag, is up to date. A commit or
+// tag the checkout has never fetched means it is behind, as git pull brings both. The warning
+// goes to stderr, so --json output stays clean, and the command runs either way.
+// It is one line, joined from these steps, so ssh's own line stays readable in logs.
+export const checkThenSc = [
+  // A release is checked by its tag, and a commit with changes not committed by the commit.
+  "b=${SKELCREW_LAPTOP_BUILD%-dirty}",
+  "case $b in *.*.*) b=v$b;; esac",
+  // The checkout is the folder above the sc it runs, which is often a link to its bin/sc. A copy
+  // has no src/main.ts there, and needs no warning, as Skelcrew there checks its own build.
+  '[ -n "$b" ] && s=$(command -v sc) && d=$(cd "$(dirname "$(readlink -f "$s")")/.." && pwd) && [ -f "$d/src/main.ts" ] && ! git -C "$d" merge-base --is-ancestor "$b" HEAD 2>/dev/null && echo "Skelcrew on $SKELCREW_REMOTE_NAME runs from a checkout at $(git -C "$d" rev-parse --short HEAD), yours is $SKELCREW_LAPTOP_BUILD. To update it, run git pull in $d there." >&2',
+  'exec sc "$@"',
+].join("; ");
+
 // What a copied Skelcrew exits with when the laptop's build differs. Skelcrew otherwise exits 0 or
 // 1, and the server's shell 127 when it finds no Skelcrew.
 export const outdated = 98;
@@ -48,54 +67,13 @@ export const otherSetup = 96;
 // catches up on its own, so asking would only offer to go back.
 export function outOfDate(): boolean {
   const laptop = process.env.SKELCREW_LAPTOP_BUILD;
-  // No laptop build means the command came without the check.
-  if (!laptop) return false;
-  // No build here means this Skelcrew runs from a checkout, which is never replaced.
-  if (built === undefined) {
-    warnIfCheckoutDiffers(laptop);
-    return false;
-  }
-  // Uncommitted changes never count as the same build.
-  if (laptop === built && !built.endsWith(dirty)) return false;
+  // No laptop build means the command came without the check, and no build here means this
+  // Skelcrew runs from a checkout. Uncommitted changes never count as the same build.
+  if (!laptop || built === undefined || (laptop === built && !built.endsWith(dirty))) return false;
   if (release && isRelease(laptop) && newer(release, laptop)) return false;
   const where = process.env.SKELCREW_REMOTE_NAME;
   console.log(`Skelcrew on ${where} is from ${readable(built)}, yours is ${readable(laptop)}.`);
   return true;
-}
-
-// Warns when this Skelcrew runs from a checkout behind the laptop's build: at another commit,
-// or without the laptop's release. --remote never replaces a checkout, so without this a server
-// could keep running old code unnoticed through many merges. The warning goes to stderr, so
-// `--json` output stays clean, and the command still runs. An agent's sandbox can inherit the
-// laptop's build through tmux, and has no use for the warning.
-function warnIfCheckoutDiffers(laptop: string): void {
-  if (process.env.SKELCREW_SANDBOX === "1") return;
-  const here = laptopBuild();
-  if (here === null) return;
-  if (isRelease(laptop)) {
-    // A checkout at or past the release's tag holds the release. A tag the checkout hasn't
-    // fetched also means it is behind, as git pull brings the tags along.
-    const tagged = Bun.spawnSync(
-      ["git", "-C", checkoutFolder, "merge-base", "--is-ancestor", `v${laptop}`, "HEAD"],
-      { stdout: "ignore", stderr: "ignore" },
-    );
-    if (tagged.exitCode === 0) return;
-  } else {
-    // Short commits can differ in length between machines, as git lengthens them in bigger
-    // repositories, so one starting with the other counts as the same commit. Uncommitted
-    // changes on either side don't change which commit git pull would bring.
-    const [a, b] = [here.replace(dirty, ""), laptop.replace(dirty, "")];
-    if (a.startsWith(b) || b.startsWith(a)) return;
-  }
-  const where = process.env.SKELCREW_REMOTE_NAME;
-  // The folder under the server's home is shown with ~, as you would type it there.
-  const home = homedir();
-  const folder = checkoutFolder.startsWith(`${home}/`)
-    ? `~${checkoutFolder.slice(home.length)}`
-    : checkoutFolder;
-  console.error(
-    `Skelcrew on ${where} runs from a checkout at ${readable(here)}, yours is ${isRelease(laptop) ? `release ${laptop}` : readable(laptop)}. To update it, run git pull in ${folder} there.`,
-  );
 }
 
 // Says whether release `a` comes after release `b`, by number, so 0.4.10 comes after 0.4.9.
@@ -210,7 +188,12 @@ const onServer = (host: string, shared: string[], words: string[]) => (env: stri
       pathOnServer,
       quoted(`SKELCREW_REMOTE_NAME=${host}`),
       ...env.map(quoted),
-      "sc",
+      // The check is shell, and your login shell there may not be sh, so sh runs it. The words
+      // after the second sh become its "$@".
+      "sh",
+      "-c",
+      quoted(checkThenSc),
+      "sh",
       ...words.map(quoted),
     ].join(" "),
   ]);
