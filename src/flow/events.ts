@@ -144,12 +144,17 @@ export async function endThread(
   // checks and marking it done, so no other end can slip in between.
   if (readThread(db, thread.folder).status === "done") return;
   if (removing.has(thread.folder) && !removal) return;
-  record(db, thread.folder, { status: "done", needs_you: false }, `${why}: ended the thread`);
-  // Every note to the lead is one line, as a reason given to sc rm may not be.
-  if (note !== null) {
+  // The thread is marked done and its note saved in one transaction. A daemon that stops
+  // between the two, or a note that fails to save, would otherwise leave a done thread, which no
+  // poll looks at again, and a lead that never hears of it. The note is typed only after: typing
+  // starts on a promise, once this has returned. Every note to the lead is one line, as a reason
+  // given to sc rm may not be.
+  db.transaction(() => {
+    record(db, thread.folder, { status: "done", needs_you: false }, `${why}: ended the thread`);
+    if (note === null) return;
     const line = `${threadName(db, thread)} ${note}`.replace(/\s+/g, " ").slice(0, 200);
     noteForLead(db, sessions, thread, line);
-  }
+  })();
 }
 
 // Removes the thread for sc rm: ends its builder, closes its PR with the reason as a comment,
