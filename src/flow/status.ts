@@ -51,12 +51,13 @@ export const endedTurnAsks = (thread: Thread, unchanged = false) =>
   !(unchanged && submitStands(thread));
 
 // Returns whether the thread's last submit still moves on without its builder: its review waits
-// or runs, or it was approved and waits on CI or you. Changes asked for, a failed check or a
-// conflict all need the builder to work again, so a turn without new work doesn't wait on them.
+// or runs, or it was approved and waits on CI or you. The thread's status doesn't matter: a
+// comment on the PR sets it working again, yet the approval stands. Changes asked for, a failed
+// check or a conflict all need the builder to work again, so a turn without new work doesn't
+// wait on them.
 const submitStands = (thread: Thread) =>
   thread.reviewing !== null ||
-  (thread.status === "waiting" &&
-    thread.verdict === "approve" &&
+  (thread.verdict === "approve" &&
     thread.checks !== "failing" &&
     thread.conflicts === null &&
     thread.telling === null);

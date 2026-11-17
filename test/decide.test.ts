@@ -599,6 +599,8 @@ test("a turn with no new work waits on a submit still under review, on CI or app
     [{ status: "working", reviewing: sha }, false],
     [{ ...approved, checks: "pending" }, false],
     [{ ...approved, checks: "passing", needs_you: true }, false],
+    // A comment on the PR set it working again, but the approval stands.
+    [{ ...approved, status: "working", checks: "passing" }, false],
     // Its submit needs it to work again: changes asked for, a failed check or a conflict.
     [{ status: "working", verdict: "changes" }, true],
     [{ status: "working", verdict: "changes", telling: "Add a test." }, true],
