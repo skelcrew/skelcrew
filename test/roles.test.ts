@@ -11,9 +11,16 @@ const sha256 = (text: string) => new Bun.CryptoHasher("sha256").update(text).dig
 const workflows =
   "\nNever change files under .github/: Skelcrew can't push a change to its workflows, and the push is refused. If the work needs a change there, leave it out, and say in your sc submit summary, which becomes the PR, what a person should change there instead.\n";
 
-test("the lead and builder files hold the instructions the code gave, and the builder's adds only workflows", () => {
+// What the lead's file added after its instructions moved there: why a message to a builder
+// waits, and what to do when it waits long.
+const waiting =
+  " When the builder can't take it yet, sc tell says why, and sc ps counts the messages still waiting. If one still waits after 10 minutes, Skelcrew tells you why. When the builder is mid-turn, you may ask the human to press Esc in that thread if it shouldn't finish its turn first.";
+
+test("the lead and builder files hold the instructions the code gave, and add only workflows and waiting messages", () => {
   // The digests of src/agents/prompts/lead.md and builder.md before they moved.
-  expect(sha256(builtInRole("lead").instructions)).toBe(
+  const lead = builtInRole("lead").instructions;
+  expect(lead).toContain(waiting);
+  expect(sha256(lead.replace(waiting, ""))).toBe(
     "4a964d29382eddbab5268fa24921ee599fa1bde9bd1eb51341f5bee1cb577837",
   );
   const builder = builtInRole("builder").instructions;
