@@ -299,9 +299,7 @@ async function reviewNow(given: {
       signal,
     });
     // Only what a shell and the tests need gets in, with the harness's own keys added.
-    // Its git keeps an index of its own in the review's folder, as explained below.
-    const index = join(folder, "index");
-    const sandboxEnv = { ...launch.env, ...filterEnv(env, keys), GIT_INDEX_FILE: index };
+    const sandboxEnv = { ...launch.env, ...filterEnv(env, keys) };
     // Tests and builds write in the clone, so it is seen as a throwaway folder too.
     const copy = join(folder, "clone");
     const { mounts, at } = await throwawayMounts({ source: clone, copy, signal });
@@ -311,16 +309,22 @@ async function reviewNow(given: {
     // as installed packages, stay for the tests. git runs in the sandbox, as the clone's
     // .git is the builder's to plant settings in. The builder runs git whenever it likes, and
     // a command of its holds index.lock or HEAD.lock in its .git, which the view shows. A
-    // checkout needs both, so the review never takes them: it reads the commit into an index
-    // of its own, started from a copy of the builder's so unchanged files aren't rewritten,
-    // and then points HEAD at the commit by writing it, which needs no lock. git replaces the
-    // builder's index whole, so the copy is never half written. Without one to copy, git
-    // starts from an empty index. Every other step must work, or the reviewer never starts.
+    // checkout needs both, so the review never takes them. It reads the commit into an index
+    // in the review's folder, started from a copy of the builder's so unchanged files aren't
+    // rewritten, and puts that index in the view's .git. Then it points HEAD at the commit
+    // by writing it. Plain copies and writes need no lock. git replaces the builder's index
+    // whole, so the copy is never half written, and without one git starts from an empty
+    // index. The other index is named only for these steps: the reviewer's own git, in this
+    // clone or any other, uses each one's own index. Every other step must work, or the
+    // reviewer never starts.
+    const index = join(folder, "index");
     const checkout = [
-      '{ cp "$(git rev-parse --git-dir)/index" "$GIT_INDEX_FILE" 2>/dev/null || true; }',
-      'git read-tree --reset -u "$0"',
-      "git clean -q -fd",
+      '{ cp "$(git rev-parse --git-dir)/index" "$1" 2>/dev/null || true; }',
+      'GIT_INDEX_FILE="$1" git read-tree --reset -u "$0"',
+      'GIT_INDEX_FILE="$1" git clean -q -fd',
+      'cp "$1" "$(git rev-parse --git-dir)/index"',
       'printf "%s\\n" "$0" > "$(git rev-parse --git-path HEAD)"',
+      "shift",
       'exec "$@"',
     ].join(" && ");
     argv = sandboxArgs({
@@ -328,7 +332,7 @@ async function reviewNow(given: {
       path,
       mounts: [...mounts, ...launch.mounts],
       cwd: at,
-      command: ["sh", "-c", checkout, given.commit, ...launch.command],
+      command: ["sh", "-c", checkout, given.commit, index, ...launch.command],
       programs: launch.command.slice(0, 1),
     });
     // CI's result is there before the reviewer starts, and kept current while it runs. The

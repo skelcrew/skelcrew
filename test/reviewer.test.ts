@@ -14,7 +14,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { review, reviewerPrompt } from "../src/flow/reviewer.ts";
-import { insideSandbox, source, until } from "./harness.ts";
+import { insideSandbox, source } from "./harness.ts";
 
 let home = "";
 let clone = "";
@@ -205,17 +205,15 @@ describe.skipIf(insideSandbox)("reviewer", () => {
     expect(readFileSync(join(clone, "README"), "utf8")).toBe("unsaved\n");
   });
 
-  // On Linux the view shows the lock as the builder takes it. A Mac's copy never does.
-  test("the reviewer's own git works while the builder's takes a lock", async () => {
+  // The reviewer and the tests it runs use git in other repositories too, such as one a test
+  // makes in a temporary folder, and each must keep its own index.
+  test("git in another repository uses that repository's own index", async () => {
     fakeCodex(approve, [
-      `: > "$CODEX_HOME/sessions/started"; i=0; while ! test -e .git/index.lock && [ $i -lt 50 ]; do sleep 0.1; i=$((i+1)); done`,
-      'echo changed > README; git add README && git status --porcelain > "$CODEX_HOME/sessions/seen"',
+      'other=$(mktemp -d) && git -C "$other" init -q && echo x > "$other/f"',
+      'git -C "$other" add f && git -C "$other" ls-files > "$CODEX_HOME/sessions/seen"',
     ]);
-    const reviewing = start();
-    await until(() => existsSync(join(sessions(), "started")));
-    writeFileSync(join(clone, ".git", "index.lock"), "");
-    expect(await reviewing).toEqual({ verdict: "approve", body: "Looks right." });
-    expect(kept("seen")).toBe("M  README\n");
+    expect(await start()).toEqual({ verdict: "approve", body: "Looks right." });
+    expect(kept("seen")).toBe("f\n");
   });
 
   test("keeps Codex's instructions as they were, and its login and sessions writable", async () => {
