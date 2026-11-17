@@ -3,33 +3,22 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseDocument } from "yaml";
-import { z } from "zod";
-import { HarnessName } from "./agents/harness.ts";
+import type { HarnessName } from "./agents/harness.ts";
 import { configDir } from "./paths.ts";
 import { type Repository, readSettings, type Settings } from "./settings.ts";
-
-// Unknown keys pass through, so settings this version doesn't know survive a save.
-// github_declined lists the repositories, by full name, never offered the GitHub plugin again
-// because you said no in one of their checkouts.
-const SetupConfig = z.looseObject({
-  harness: HarnessName.optional(),
-  github_declined: z.array(z.string()).optional(),
-});
 
 // Returns the path of your settings file.
 export const configFile = () => join(configDir(), "config.yaml");
 
-// Reads and validates settings, returning the YAML document, the harness choice and the
-// repositories you declined the GitHub plugin for, while preserving unknown settings.
-export function readConfig() {
+// Returns your config.yaml as a YAML document, for the first run to change and save. Read as a
+// document, not plain data, so a save keeps your comments, your layout and settings this version
+// doesn't know. What it says is read through the loader, never from here.
+export function yourConfigDocument() {
   const file = configFile();
-  // Read as a document, not plain data, so a save keeps your comments and layout.
   const config = parseDocument(existsSync(file) ? readFileSync(file, "utf8") : "");
   const [broken] = config.errors;
   if (broken) throw new Error(`${file} isn't valid YAML: ${broken.message}`);
-  const read = SetupConfig.safeParse(config.toJS() ?? {});
-  if (!read.success) throw new Error(`${file} isn't valid: ${z.prettifyError(read.error)}`);
-  return { config, harness: read.data.harness, declined: read.data.github_declined ?? [] };
+  return config;
 }
 
 // Returns the harness and model of the lead, builders and reviewers. For a repository, its

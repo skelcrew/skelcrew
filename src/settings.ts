@@ -34,6 +34,12 @@ const File = z.looseObject({
   // Written as reviewer: { fallback: codex }, and picked out of the reviewer's lines on reading,
   // so a bad one stops only a thread, not the lead.
   fallback: HarnessName.optional(),
+  // The reviewer's harness as your config saved it, picked out of the reviewer's lines the same
+  // way. One that isn't valid counts as none, so the first run asks for it again.
+  your_reviewer: HarnessName.optional().catch(undefined),
+  // The repositories, by full name, never offered the GitHub plugin again because you said no
+  // in one of their checkouts.
+  github_declined: z.array(z.string()).optional(),
 });
 type File = z.infer<typeof File>;
 type Key = keyof typeof File.shape;
@@ -45,7 +51,9 @@ export type Role = { harness: HarnessName; model?: string };
 // changes a thread gets before it needs you, `reviews` how many reviews run at once on this
 // machine, and `setup` the commands that set up a thread's clone. `fallback` is the harness
 // reviews run on while the reviewer's own waits out its usage limit, and `reviewMinutes` how
-// long a review may run before it is ended.
+// long a review may run before it is ended. `yourHarness` and `yourReviewer` are the harnesses
+// your config saved, with no default, so the first run can tell what you haven't picked yet, and
+// `declined` the repositories never offered the GitHub plugin again.
 export type Settings = {
   roles: { lead: Role; builder: Role; reviewer: Role };
   rounds: number;
@@ -54,6 +62,9 @@ export type Settings = {
   tracker: string | undefined;
   fallback: HarnessName | undefined;
   reviewMinutes: number;
+  yourHarness: HarnessName | undefined;
+  yourReviewer: HarnessName | undefined;
+  declined: string[];
 };
 type Group = keyof Settings;
 
@@ -67,10 +78,14 @@ const keysOf: Record<Group, Key[]> = {
   tracker: ["tracker"],
   fallback: ["fallback"],
   reviewMinutes: ["review"],
+  yourHarness: ["harness"],
+  yourReviewer: ["your_reviewer"],
+  declined: ["github_declined"],
 };
 
-// What each file may set. Your harness, model, limits, the reviewer's fallback and a review's
-// time fit you, your account and your machine, so a repository can't set them. Setup and the
+// What each file may set. Your harness, model, limits, the reviewer's fallback, a review's time
+// and the repositories you declined the GitHub plugin for fit you, your account and your
+// machine, so a repository can't set them. Setup and the
 // tracker belong to the repository, so your config doesn't.
 const yourKeys: Key[] = [
   "harness",
@@ -82,6 +97,8 @@ const yourKeys: Key[] = [
   "limits",
   "review",
   "fallback",
+  "your_reviewer",
+  "github_declined",
 ];
 const repositoryKeys: Key[] = ["lead", "builder", "reviewer", "max_rounds", "setup", "tracker"];
 const roleKeys: Key[] = ["lead", "builder", "reviewer"];
@@ -136,7 +153,7 @@ export function readSettings<G extends Group>(
 function readYourFile(keys: Key[]): File {
   const file = join(configDir(), "config.yaml");
   if (keys.length === 0 || !existsSync(file)) return {};
-  return check(pick(parse(readFileSync(file, "utf8")), keys), `${file} isn't valid`);
+  return check(pick(parseYaml(file, file), keys), `${file} isn't valid`);
 }
 
 // Returns the repository's skelcrew.yaml, holding only `keys`, checked, or nothing when it has
@@ -150,8 +167,18 @@ function readRepositoryFile(keys: Key[], repository: Repository): File {
   if (!stat) return {};
   if (!stat.isFile())
     throw new Error("the repository's skelcrew.yaml isn't a plain file, so Skelcrew won't read it");
-  const read = pick(parse(readFileSync(file, "utf8")), keys);
+  const read = pick(parseYaml(file, "the repository's skelcrew.yaml"), keys);
   return check(read, "the repository's skelcrew.yaml isn't valid");
+}
+
+// Returns what the YAML file at `path` holds, or throws naming it as `name` when it isn't YAML.
+function parseYaml(path: string, name: string): unknown {
+  const text = readFileSync(path, "utf8");
+  try {
+    return parse(text);
+  } catch (error) {
+    throw new Error(`${name} isn't valid YAML: ${error instanceof Error ? error.message : error}`);
+  }
 }
 
 // Returns the `keys` of what a file held. An empty file, or one that isn't a mapping, gives
@@ -159,18 +186,18 @@ function readRepositoryFile(keys: Key[], repository: Repository): File {
 function pick(data: unknown, keys: Key[]): unknown {
   if (data === null || data === undefined) return {};
   if (typeof data !== "object" || Array.isArray(data)) return data;
+  // The fallback and your reviewer's harness are written among the reviewer's lines, but read
+  // on their own. A top-level line of either name counts for nothing, as it never did.
+  const nested = ["fallback", "your_reviewer"];
   const picked = Object.fromEntries(
-    Object.entries(data).filter(([key]) => keys.some((k) => k === key)),
+    Object.entries(data).filter(([key]) => !nested.includes(key) && keys.some((k) => k === key)),
   );
-  // The fallback is written among the reviewer's lines, but it is a setting of its own.
   const reviewer = "reviewer" in data ? data.reviewer : undefined;
-  if (
-    keys.includes("fallback") &&
-    typeof reviewer === "object" &&
-    reviewer &&
-    "fallback" in reviewer
-  )
-    picked.fallback = reviewer.fallback;
+  if (typeof reviewer === "object" && reviewer !== null) {
+    if (keys.includes("fallback") && "fallback" in reviewer) picked.fallback = reviewer.fallback;
+    if (keys.includes("your_reviewer") && "harness" in reviewer)
+      picked.your_reviewer = reviewer.harness;
+  }
   return picked;
 }
 
@@ -206,12 +233,15 @@ function mergeSettings(layers: File[]): Settings {
     tracker: first((l) => l.tracker),
     fallback: first((l) => l.fallback),
     reviewMinutes: first((l) => l.review?.timeout_minutes) ?? defaults.reviewMinutes,
+    yourHarness: first((l) => l.harness),
+    yourReviewer: first((l) => l.your_reviewer),
+    declined: first((l) => l.github_declined) ?? [],
   };
 }
 
 // Returns a role's harness and model from what each layer says of it, the one that wins first,
-// and `top`, the harness and model every role gets unless it names its own. A model name belongs to its
-// harness, so a model goes along only while the role stays on the harness it was given with:
+// and `top`, the harness and model every role gets unless it names its own. A model name belongs
+// to its harness, so a model goes along only while the role stays on the harness it was given with:
 // reviewer: { harness: codex } in skelcrew.yaml must never run Codex on your opus. With no
 // model left, the harness picks its default.
 function mergeRole(

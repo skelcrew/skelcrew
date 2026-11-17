@@ -41,7 +41,18 @@ console.log(JSON.stringify(readSettings(${JSON.stringify(groups)}, { owner: "sim
   return { settings: out ? JSON.parse(out) : undefined, err: done.stderr.toString() };
 }
 
-const all = ["roles", "rounds", "reviews", "setup", "tracker", "fallback", "reviewMinutes"];
+const all = [
+  "roles",
+  "rounds",
+  "reviews",
+  "setup",
+  "tracker",
+  "fallback",
+  "reviewMinutes",
+  "yourHarness",
+  "yourReviewer",
+  "declined",
+];
 const quarter = Math.max(1, Math.floor(availableParallelism() / 4));
 
 test("with no files, every setting is the built-in default", () => {
@@ -56,6 +67,7 @@ test("with no files, every setting is the built-in default", () => {
     reviews: quarter,
     setup: [],
     reviewMinutes: 30,
+    declined: [],
   });
 });
 
@@ -71,6 +83,8 @@ test("your config goes over the built-in defaults", () => {
     reviews: 2,
     setup: [],
     reviewMinutes: 30,
+    yourHarness: "codex",
+    declined: [],
   });
 });
 
@@ -90,6 +104,8 @@ test("the repository's skelcrew.yaml goes over your config, key by key", () => {
     setup: ["make"],
     tracker: "none",
     reviewMinutes: 30,
+    yourHarness: "claude",
+    declined: [],
   });
 });
 
@@ -120,6 +136,7 @@ test("a file sets only what is its own", () => {
     reviews: quarter,
     setup: [],
     reviewMinutes: 30,
+    declined: [],
   });
 });
 
@@ -151,4 +168,27 @@ test("the reviewer's fallback and a review's time come from your config alone, e
   files("reviewer: { fallback: nope }\n", null);
   expect(read(["roles"]).settings?.roles).toBeDefined();
   expect(read(["fallback"]).err).toContain("config.yaml isn't valid");
+});
+
+test("a fallback counts only under reviewer:", () => {
+  files("harness: claude\nfallback: codex\n", null);
+  expect(read(["fallback"]).settings?.fallback).toBeUndefined();
+  files("harness: claude\nfallback: nope\n", null);
+  expect(read(["fallback"]).err).toBe("");
+});
+
+// The first run asks for what you haven't picked, so it must tell your choice from the default.
+test("what your config saved reads apart from the defaults", () => {
+  files(null, "reviewer: { harness: codex }\n");
+  expect(read(["yourHarness", "yourReviewer", "declined"]).settings).toMatchObject({
+    declined: [],
+  });
+  expect(read(["yourHarness"]).settings?.yourHarness).toBeUndefined();
+  expect(read(["yourReviewer"]).settings?.yourReviewer).toBeUndefined();
+  files("harness: codex\nreviewer: { harness: claude }\ngithub_declined: [simon/app]\n", null);
+  expect(read(["yourHarness", "yourReviewer", "declined"]).settings).toMatchObject({
+    yourHarness: "codex",
+    yourReviewer: "claude",
+    declined: ["simon/app"],
+  });
 });

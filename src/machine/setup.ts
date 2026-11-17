@@ -4,12 +4,13 @@ import { existsSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { codexHome } from "../agents/codex.ts";
 import { HarnessName, harnessNamed } from "../agents/harness.ts";
-import { configFile, readConfig } from "../config.ts";
+import { configFile, yourConfigDocument } from "../config.ts";
 import { openDb } from "../db.ts";
 import { claudeTokenFile, configDir } from "../paths.ts";
 import { installPlugin } from "../plugins/install.ts";
 import { installedPlugins } from "../plugins/plugin.ts";
 import { errorText } from "../say.ts";
+import { readSettings } from "../settings.ts";
 import { originHere, parseRemote } from "./origin.ts";
 import { promptSecret } from "./secret.ts";
 import { installService, loginPath, serviceFile } from "./service.ts";
@@ -39,7 +40,7 @@ const macTools = [
 // either one, when neither is installed. Each line says how to install it.
 function missingHarness(env: Env): string[] {
   const PATH = env.PATH ?? "";
-  const saved = readConfig().harness;
+  const saved = readSettings(["yourHarness"]).yourHarness;
   // Before you pick one, any installed harness will do.
   const wanted = harnesses.filter((h) => saved === undefined || h.name === saved);
   if (wanted.some((h) => Bun.which(h.program, { PATH }))) return [];
@@ -221,7 +222,7 @@ function gitHubToOffer(remote: string | null): string | null {
   if (found?.host !== "github.com" || hasGitHubPlugin()) return null;
   const repository = `${found.owner}/${found.repo}`;
   // GitHub's names ignore case, so a no for Simon/App covers simon/app.
-  const declined = readConfig().declined.map((name) => name.toLowerCase());
+  const declined = readSettings(["declined"]).declined.map((name) => name.toLowerCase());
   return declined.includes(repository.toLowerCase()) ? null : repository;
 }
 
@@ -236,7 +237,8 @@ function offerGitHub(repository: string, remote: string): void {
   );
   // Bun's prompt answers a bare Enter with null, which takes the default, yes.
   if (!["", "y", "yes"].includes(answer?.trim().toLowerCase() ?? "")) {
-    const { config, declined } = readConfig();
+    const { declined } = readSettings(["declined"]);
+    const config = yourConfigDocument();
     config.set("github_declined", [...declined, repository]);
     mkdirSync(configDir(), { recursive: true });
     writeFileSync(configFile(), config.toString());
@@ -256,7 +258,7 @@ function offerGitHub(repository: string, remote: string): void {
 // Asks whether agents run on Claude Code or Codex, refuses one that isn't installed, and saves
 // the choice. Enter picks the first one installed.
 function pickHarness(env: Env): void {
-  const { config } = readConfig();
+  const config = yourConfigDocument();
   const PATH = env.PATH ?? "";
   console.log("Choose the coding agent:");
   for (const [at, h] of harnesses.entries()) console.log(`  ${at + 1}) ${h.title}`);
@@ -277,8 +279,7 @@ function pickHarness(env: Env): void {
 
 // Returns the harness your config names for reviews, or none when reviews run on your harness.
 function savedReviewerHarness(): HarnessName | undefined {
-  const read = HarnessName.safeParse(readConfig().config.getIn(["reviewer", "harness"]));
-  return read.success ? read.data : undefined;
+  return readSettings(["yourReviewer"]).yourReviewer;
 }
 
 // Asks which harness reviews run on, offering the other one first, as a second model sees what
@@ -296,7 +297,7 @@ function pickReviewer(harness: HarnessName): void {
   const picked = choices[Number(answer.trim()) - 1];
   if (!picked) throw new Error(`${answer.trim()} isn't one of the numbers, so none is saved`);
   if (picked.name === harness) return;
-  const { config } = readConfig();
+  const config = yourConfigDocument();
   config.setIn(["reviewer", "harness"], picked.name);
   writeFileSync(configFile(), config.toString());
 }
@@ -314,7 +315,7 @@ function agentsLoggedIn(harness: HarnessName): boolean {
 // step ran. Plain sc checks this each time it starts, so it looks only at files.
 export function setupDone(): boolean {
   const service = existsSync(serviceFile());
-  const { harness } = readConfig();
+  const harness = readSettings(["yourHarness"]).yourHarness;
   if (harness === undefined) return false;
   return agentsLoggedIn(harness) && service;
 }
@@ -356,7 +357,7 @@ export function firstRun(from?: string): void {
     }
     // Reviews fall back to your harness when the other one isn't installed, which is worth
     // a line.
-    const yours = harnesses.find((h) => h.name === readConfig().harness);
+    const yours = harnesses.find((h) => h.name === readSettings(["yourHarness"]).yourHarness);
     const other = harnesses.find((h) => h !== yours);
     if (yours && other && !Bun.which(other.program, { PATH: env.PATH ?? "" }))
       console.log(`\n${other.title} isn't installed, so reviews run on ${yours.title}.`);
@@ -374,7 +375,7 @@ type Step = { title: string; take: () => void };
 // harness, Claude Code's login is counted, as Enter usually picks it.
 function stepsToTake(env: Env, asked: { reviewer: boolean }): Step[] {
   const steps: Step[] = [];
-  const { harness } = readConfig();
+  const harness = readSettings(["yourHarness"]).yourHarness;
   if (!harness) steps.push({ title: "the coding agent", take: () => pickHarness(env) });
   const PATH = env.PATH ?? "";
   // Reviews are asked about only when both harnesses are installed, as otherwise there is
