@@ -317,3 +317,13 @@ export function afterReview(
     why: `changes asked for in round ${counted} of ${maxRounds}`,
   };
 }
+
+// Returns what to say when a thread's push was refused for changing a workflow file, from what
+// git said, or null for any other failure. GitHub refuses an app's push that touches a file
+// under .github/workflows/, and Skelcrew's app has no permission for them. git's own words name
+// only the failed command, so the builder wouldn't know to undo the change.
+export function refusedWorkflow(name: string, said: string): string | null {
+  const file = said.match(/refusing to allow an? .+? to create or update workflow `([^`]+)`/)?.[1];
+  if (file === undefined) return null;
+  return `${name}'s push was refused: it changes ${file}, which Skelcrew can't push. Undo that change, or a person must make it.`;
+}

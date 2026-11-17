@@ -6,6 +6,11 @@ import { builtInRole, readRole } from "../src/roles.ts";
 
 const sha256 = (text: string) => new Bun.CryptoHasher("sha256").update(text).digest("hex");
 
+// What the builder's file added after its instructions moved there: Skelcrew can't push a
+// change to a workflow file.
+const workflows =
+  "\nNever change files under .github/: Skelcrew can't push a change to its workflows, and the push is refused. If the work needs a change there, leave it out, and say in your sc submit summary, which becomes the PR, what a person should change there instead.\n";
+
 // What the builder was told about the tests before the whole suite ran once per commit, in CI
 // or the reviewer, and what it is told now.
 const builderTestsBefore =
@@ -13,16 +18,16 @@ const builderTestsBefore =
 const builderTests =
   "Never run the repository's whole test suite: CI or the reviewer runs it once for each commit, and other agents share this machine, so whole suites running at once slow everyone down. While you work, run only the tests near your change. Before each sc submit, run the tests related to your change: the test files you touched and the tests of the code you changed. Run the repository's lint and typecheck too, if it has them.";
 
-test("the lead and builder files hold the instructions the code gave, but the builder's tests", () => {
+test("the lead and builder files hold the instructions the code gave, but the builder's workflows and tests", () => {
   // The digests of src/agents/prompts/lead.md and builder.md before they moved.
   expect(sha256(builtInRole("lead").instructions)).toBe(
     "4a964d29382eddbab5268fa24921ee599fa1bde9bd1eb51341f5bee1cb577837",
   );
   const builder = builtInRole("builder").instructions;
+  expect(builder).toContain(workflows);
   expect(builder).toContain(builderTests);
-  expect(sha256(builder.replace(builderTests, builderTestsBefore))).toBe(
-    "556629d5f335c1d5e635a1996a021041ea3e9fb75deaa593399ef84d70ee4d00",
-  );
+  const before = builder.replace(workflows, "").replace(builderTests, builderTestsBefore);
+  expect(sha256(before)).toBe("556629d5f335c1d5e635a1996a021041ea3e9fb75deaa593399ef84d70ee4d00");
 });
 
 test("the built-in roles name no harness or model, so yours count, as before", () => {

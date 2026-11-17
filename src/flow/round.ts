@@ -11,7 +11,14 @@ import { quietly } from "../run.ts";
 import { errorText } from "../say.ts";
 import { baseOf } from "./builder.ts";
 import { openPrs, prOf, threadTask } from "./copy.ts";
-import { afterReview, ciResult, onlyDocs, pastRoundLimit, whoRunsTheSuite } from "./decide.ts";
+import {
+  afterReview,
+  ciResult,
+  onlyDocs,
+  pastRoundLimit,
+  refusedWorkflow,
+  whoRunsTheSuite,
+} from "./decide.ts";
 import { fetchInto, pushCommit } from "./git.ts";
 import { noteForLead, typeLeadNotes } from "./lead.ts";
 import { endLimit, limitOn, reachLimit, tellOfLimit, waitUntil } from "./limits.ts";
@@ -20,6 +27,7 @@ import { type Limited, type Review, review } from "./reviewer.ts";
 import {
   builderHarness,
   cloneOf,
+  log,
   readThread,
   record,
   repositoryOf,
@@ -41,8 +49,16 @@ async function git(folder: string, ...args: string[]): Promise<string> {
 // to the thread's branch on the repository's remote, then, with a forge, opens the PR if there
 // is none yet, with the line that closes its task at the end of its body. Returns the commit.
 // git never runs inside the thread's clone: the builder controls everything there, .git
-// included, and a planted setting would run with your rights.
-async function push(db: Database, folder: string, summary: string): Promise<string> {
+// included, and a planted setting would run with your rights. A push refused for changing a
+// workflow file throws saying so, and types that into the builder, unless a newer round
+// cancels it first.
+async function push(
+  db: Database,
+  tmux: string,
+  folder: string,
+  summary: string,
+  signal: AbortSignal,
+): Promise<string> {
   const thread = readThread(db, folder);
   const repository = repositoryOf(db, thread);
   const skelcrewClone = cloneDir(thread.owner, thread.repo);
@@ -60,7 +76,23 @@ async function push(db: Database, folder: string, summary: string): Promise<stri
   // can't change what this round reviews. Without a forge the push is the whole round's
   // delivery, and there is no PR to open.
   const sha = await git(skelcrewClone, "rev-parse", "--verify", `${ref}^{commit}`);
-  await pushCommit(db, repository, skelcrewClone, sha, thread.branch);
+  try {
+    await pushCommit(db, repository, skelcrewClone, sha, thread.branch);
+  } catch (error) {
+    // A push refused for changing a workflow file fails the round with words a person can act
+    // on, and the builder hears them too, so it can undo the change and submit again. It types
+    // in once the builder is idle, as it has likely not ended its turn yet, and not at all once
+    // a newer submit makes it stale.
+    const refused = refusedWorkflow(threadName(db, thread), errorText(error));
+    if (refused === null) throw error;
+    typeInto(tmux, folder, builderHarness(thread).marks, refused, {
+      timeout: 30 * 60_000,
+      signal,
+    }).catch((failed) =>
+      log(db, readThread(db, folder), `couldn't tell its builder: ${errorText(failed)}`),
+    );
+    throw new Error(refused);
+  }
   // The base branch, current, in a ref of the thread's own, for the review to see which files
   // the change touches. Skelcrew's clone holds only the default branch otherwise. The poll
   // fetches the same ref. A base the forge won't give fails no push: the review then can't
@@ -503,7 +535,7 @@ function pushAndReview(
   // the order.
   const cancel = new AbortController();
   const before = earlier?.pushed.catch(() => {}) ?? Promise.resolve();
-  const pushed = before.then(() => push(db, folder, summary));
+  const pushed = before.then(() => push(db, tmux, folder, summary, cancel.signal));
   const rest = Promise.all([pushed, earlier?.done]).then(([sha]) =>
     reviewRound(db, tmux, folder, sha, cancel.signal),
   );

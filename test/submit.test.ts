@@ -4,7 +4,15 @@
 // what Skelcrew pushes to.
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir, userInfo } from "node:os";
 import { dirname, join } from "node:path";
 import type { Subprocess } from "bun";
@@ -611,6 +619,34 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
     await until(() =>
       read(join(data(), "threads", "app-12.log")).includes("no verdict for review 1"),
     );
+  }, 60_000);
+
+  // GitHub refuses a push from Skelcrew's app that changes a workflow file. Here the fake GitHub
+  // refuses the first round's commit with GitHub's words, and takes the next.
+  test("a push refused for a workflow file says which file to the lead and the builder, and the next submit goes through", async () => {
+    addApp();
+    verdict(1, "approve", "Ready to merge.");
+    const hook = join(github(), "simon", "app.git", "hooks", "pre-receive");
+    writeFileSync(
+      hook,
+      `while read old new ref; do
+  if [ "$(git show "$new:change" 2>/dev/null)" = 1 ]; then
+    echo 'refusing to allow a GitHub App to create or update workflow \`.github/workflows/ci.yml\` without \`workflows\` permission' >&2
+    exit 1
+  fi
+done`,
+    );
+    chmodSync(hook, 0o755);
+    const said =
+      "app-12's push was refused: it changes .github/workflows/ci.yml, which Skelcrew can't push. Undo that change, or a person must make it.";
+    await startApp12();
+    await until(() => read(join(lead(), "typed")).includes("app-12 needs you"), 30_000);
+    expect(read(join(lead(), "typed"))).toContain(said);
+    await until(() => read(join(builder(), "typed")).includes(said));
+    // The builder answers with a second round, which GitHub takes and the reviewer approves.
+    await until(() => finished("success").length === 1, 30_000);
+    expect(pushedRound()).toBe("2");
+    expect(thread()).toMatchObject({ needs_you: 0 });
   }, 60_000);
 
   // codex exec echoes its prompt before it works, so the end of what it printed is the task.
