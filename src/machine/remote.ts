@@ -43,7 +43,7 @@ const pathOnServer = 'PATH="$HOME/.local/bin:$PATH"';
 // It is one line, joined from these steps, so ssh's own line stays readable in logs.
 export const checkThenSc = [
   // A release is checked by its tag, and a commit with changes not committed by the commit.
-  "b=${SKELCREW_LAPTOP_BUILD%-dirty}",
+  `b=\${SKELCREW_LAPTOP_BUILD%-dirty}`,
   "case $b in *.*.*) b=v$b;; esac",
   // The checkout is the folder above the sc it runs, which is often a link to its bin/sc. A copy
   // has no src/main.ts there, and needs no warning, as Skelcrew there checks its own build.
