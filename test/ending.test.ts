@@ -11,9 +11,10 @@ let socket = "";
 beforeEach(() => {
   home = realpathSync(mkdtempSync(join(tmpdir(), "skel-ending-test-")));
   socket = `skel-test-ending-${process.pid}-${Math.random().toString(36).slice(2)}`;
-  mkdirSync(join(home, ".local", "share", "skelcrew", "repos", "simon", "app"), {
-    recursive: true,
-  });
+  // Skelcrew's clone of the repository, where it keeps refs of what each thread pushed.
+  const clone = join(home, ".local", "share", "skelcrew", "repos", "simon", "app");
+  mkdirSync(clone, { recursive: true });
+  Bun.spawnSync(["git", "init", "-q", clone]);
 });
 afterEach(() => {
   // Ending the server leaves its socket file behind.
@@ -154,4 +155,17 @@ try {
   tmux("kill-server");
 }`);
   expect(seen).toEqual({ pasted: true, newId: true, delivered: true });
+});
+
+// A thread starting over first deletes the old thread's refs of what it pushed. Without a
+// forge, a push ref left behind would make the new thread look as if it had pushed already, and
+// end it at once. So a start over whose refs git can't delete is refused, and nothing changes.
+test("a start over that can't delete the old thread's refs is refused", () => {
+  const seen = withThread(`import { rmSync } from "node:fs";
+record(db, thread.folder, { status: "done" }, "ended");
+// Skelcrew's clone is no git repository now, so git can delete nothing in it.
+rmSync(${JSON.stringify(join(home, ".local", "share", "skelcrew", "repos", "simon", "app", ".git"))}, { recursive: true });
+const refused = await startThread(db, { repo: "app", task: "t1" }).then(() => "", (error) => String(error));
+console.log(JSON.stringify({ refused: refused.includes("couldn't start app-t1 over"), status: readThread(db, thread.folder).status, started: readThread(db, thread.folder).started === thread.started }));`);
+  expect(seen).toEqual({ refused: true, status: "done", started: true });
 });

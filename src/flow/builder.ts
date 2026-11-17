@@ -150,24 +150,31 @@ async function recordThread(
   // Skelcrew's clone keeps refs of what a thread pushed and had approved, named by its folder.
   // A thread starting over in a failed or done thread's folder would be taken for one that
   // pushed already, and without a forge ended at once, and an old approval could hold for its
-  // work. So they go now, before the new thread is recorded and can push. Ending a thread
-  // leaves them, as nothing reads a done thread's refs, and an end cut short would leave them
-  // anyway. A thread that isn't failed or done keeps them, and is refused below.
+  // work. So they go now, before the new thread is recorded and can push, and a ref git can't
+  // delete refuses the start. Deleting a ref that isn't there succeeds. Ending a thread leaves
+  // them, as nothing reads a done thread's refs, and an end cut short would leave them anyway.
+  // A thread that isn't failed or done keeps them, and is refused below.
   const ended = Thread.nullable().parse(
     db
       .query(`SELECT * FROM task_threads ${where} AND status IN ('failed', 'done')`)
       .get(owner, repo, task),
   );
   if (ended)
-    for (const kind of ["threads", "bases", "remote", "approved"])
-      await quietly([
+    for (const kind of ["threads", "bases", "remote", "approved"]) {
+      const ref = `refs/skelcrew/${kind}/${ended.folder}`;
+      const { ok, said } = await quietly([
         "git",
         "-C",
         cloneDir(owner, repo),
         "update-ref",
         "-d",
-        `refs/skelcrew/${kind}/${ended.folder}`,
+        ref,
       ]);
+      if (!ok)
+        throw new Error(
+          `couldn't start ${name}-${task} over, as Skelcrew couldn't delete ${ref}: ${said}`,
+        );
+    }
   // Check again for a thread and record the new one in one transaction, so a failed or done
   // thread's row is never removed without the new one taking its place.
   return db.transaction(() => {
