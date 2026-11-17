@@ -57,7 +57,7 @@ export async function messageBuilder(
   // Look before saving it, so the answer says whether it goes in now. Messages are typed in
   // order, so any still waiting go first.
   const ahead = messagesWaiting(db, thread);
-  const why = await whyWaiting(db, tmux, thread);
+  const why = await whyWaiting(tmux, thread);
   const message = wrapMessage("lead", "sc tell lead", text);
   queueMessage(db, tmux, thread.folder, {
     sender: "lead",

@@ -17,7 +17,6 @@ import {
   repositoryOf,
   type Thread,
   threadName,
-  turnEnded,
 } from "./thread.ts";
 
 // The PR's reviews and comments a message carries, for the forge to mark seen once it is typed.
@@ -64,14 +63,12 @@ export const waitingText = (count: number) =>
 // Returns why the thread's builder can't take a message right now, in plain words, or empty
 // text when it can. A stopped builder keeps its messages for when sc start brings it back. One
 // asking you a question waits too, as typing would answer it for you.
-export async function whyWaiting(db: Database, tmux: string, thread: Thread): Promise<string> {
+export async function whyWaiting(tmux: string, thread: Thread): Promise<string> {
   if (thread.status !== "working" && thread.status !== "waiting")
     return `the thread is ${thread.status}`;
   if (!agentRuns(tmux, thread.folder)) return "its builder isn't running";
   if (thread.asking) return "it is asking the human a question";
-  // Its hook can say its turn ended while the look at its screen is under way.
-  const turnOver = () => readThread(db, thread.folder).turn_ended;
-  return whyBusy(tmux, thread.folder, builderHarness(thread).marks, { turnOver });
+  return whyBusy(tmux, thread.folder, builderHarness(thread).marks);
 }
 
 // Saves a message for the thread's builder and has the daemon type it in as soon as the builder
@@ -162,8 +159,10 @@ function noteLate(db: Database, tmux: string, thread: Thread, why: string) {
   );
 }
 
-// The attempt under way for each thread, by its folder, with what cancels it.
-const delivering = new Map<string, AbortController>();
+// The attempt under way for each thread, by its folder, with what cancels it and what settles
+// once it ends. A cancelled attempt stays here until it ends, so no second one starts while it
+// may still be pressing Enter on a message it pasted, and type that message again.
+const delivering = new Map<string, { cancel: AbortController; ended: Promise<void> }>();
 
 // Types the thread's waiting messages into its builder, oldest first, while it can take them,
 // and returns once none is left or it can't. The ones left wait for the next attempt.
@@ -172,21 +171,14 @@ async function deliver(db: Database, tmux: string, folder: string, signal: Abort
     const message = oldest(db, folder);
     if (message === null || signal.aborted) return;
     const thread = readThread(db, folder);
-    const why = await whyWaiting(db, tmux, thread);
+    const why = await whyWaiting(tmux, thread);
     if (signal.aborted) return;
     if (why !== "") return noteLate(db, tmux, thread, why);
     // The builder looked ready a moment ago, so typing shouldn't wait long. If it does, the
     // message stays saved for the next attempt.
     const { marks } = builderHarness(thread);
-    const turnOver = () => readThread(db, folder).turn_ended;
-    const typed = await typeInto(tmux, folder, marks, message.text, {
-      timeout: 10_000,
-      signal,
-      turnOver,
-    });
+    const typed = await typeInto(tmux, folder, marks, message.text, { timeout: 10_000, signal });
     if (!typed) return;
-    // A new turn starts now, before its hook can say so, so the next message waits for it.
-    turnEnded(db, folder, false);
     // Deleted by its id even when this attempt was cancelled while pasting, as the message went
     // in. Ids are never used again, so a message a new round dropped meanwhile takes no other.
     db.run("DELETE FROM messages WHERE id = ?", [message.id]);
@@ -200,12 +192,13 @@ async function deliver(db: Database, tmux: string, folder: string, signal: Abort
 export function deliverMessages(db: Database, tmux: string, folder: string): void {
   if (delivering.has(folder)) return;
   const cancel = new AbortController();
-  delivering.set(folder, cancel);
-  deliver(db, tmux, folder, cancel.signal)
+  const ended = deliver(db, tmux, folder, cancel.signal)
     .catch((error) => console.log(`couldn't type into ${folder}'s builder: ${errorText(error)}`))
     .finally(() => {
-      if (delivering.get(folder) === cancel) delivering.delete(folder);
+      if (delivering.get(folder) === attempt) delivering.delete(folder);
     });
+  const attempt = { cancel, ended };
+  delivering.set(folder, attempt);
 }
 
 // Starts typing into every builder that has messages waiting. The daemon calls it every few
@@ -221,21 +214,32 @@ export function deliverAllWaiting(db: Database, tmux: string): void {
 // check or a merge conflict, as a new round makes them about an older commit. A conflict still
 // there is found and told again. The lead's messages stay, and so do those carrying a person's
 // review or comment on the PR, as people's words stay true whatever the commit. Typing under way
-// is cancelled first, as it may be typing one of them, and starts again with what is left.
+// is cancelled first, as it may be typing one of them, and starts again with what is left once
+// it has ended. Notices still being prepared learn of the drop by noticeRound.
 export function dropOldEvents(db: Database, tmux: string, folder: string): void {
+  roundsDropped.set(folder, noticeRound(folder) + 1);
+  const ended = delivering.get(folder)?.ended ?? Promise.resolve();
   stopDelivering(db, folder, false);
   const rows = db
     .query("SELECT * FROM messages WHERE folder = ? AND sender = 'skelcrew'")
     .all(folder);
   for (const message of z.array(Message).parse(rows))
     if (message.typed_in.length === 0) db.run("DELETE FROM messages WHERE id = ?", [message.id]);
-  deliverMessages(db, tmux, folder);
+  ended.then(() => deliverMessages(db, tmux, folder));
 }
+
+// How many times each thread's notices were dropped for a new round, by its folder.
+const roundsDropped = new Map<string, number>();
+
+// Returns how many times the thread's notices were dropped for a new round. Telling the builder
+// of events reads it before fetching what it tells, which takes a while, and again before
+// saving it: a notice prepared across a drop is about an older commit, so it isn't saved.
+export const noticeRound = (folder: string) => roundsDropped.get(folder) ?? 0;
 
 // Cancels typing under way into the thread's builder, for a stop, a merge or sc rm, so nothing
 // is typed into it afterwards. Its messages stay saved, unless `drop`, for a thread that ended.
+// The attempt stays known until it ends, so no other starts meanwhile.
 export function stopDelivering(db: Database, folder: string, drop: boolean): void {
-  delivering.get(folder)?.abort();
-  delivering.delete(folder);
+  delivering.get(folder)?.cancel.abort();
   if (drop) db.run("DELETE FROM messages WHERE folder = ?", [folder]);
 }

@@ -103,6 +103,39 @@ console.log(JSON.stringify(db.query("SELECT said FROM messages").all()));`);
   expect(received).not.toContain("Merge main.");
 });
 
+// A new round can start between the paste of a message and its Enter. The message went in, so
+// it must not go in again once typing starts over.
+test("a message pasted when a new round's drop cancels typing goes in once", () => {
+  // A stand-in builder, idle at Claude Code's prompt, keeping each key as it comes, so the test
+  // sees the paste before its Enter.
+  writeFileSync(
+    join(home, "builder.sh"),
+    "#!/bin/sh\nprintf '\\033[?2004h'\nstty raw -echo\necho '❯'\nexec cat > received.txt\n",
+    { mode: 0o755 },
+  );
+  const left = run(`
+import { readFileSync, existsSync } from "node:fs";
+import { dropOldEvents } from ${JSON.stringify(source("flow/messages.ts"))};
+const received = ${JSON.stringify(join(home, "received.txt"))};
+const got = () => (existsSync(received) ? readFileSync(received, "utf8") : "");
+Bun.spawnSync(["tmux", "-L", tmux, "new-session", "-d", "-s", "app-12", "-c", ${JSON.stringify(home)}, ${JSON.stringify(join(home, "builder.sh"))}]);
+await Bun.sleep(300);
+queueMessage(db, tmux, "app-12", { sender: "lead", text: "Use v2.", said: "Use v2.", typed_in: [] });
+for (let i = 0; i < 200 && !got().includes("Use v2."); i++) await Bun.sleep(10);
+if (got().includes("\\r")) throw new Error("the Enter came before the drop");
+dropOldEvents(db, tmux, "app-12");
+// As the daemon does every few seconds.
+for (let i = 0; i < 8; i++) {
+  deliverAllWaiting(db, tmux);
+  await Bun.sleep(500);
+}
+const { updates } = db.query("SELECT updates FROM threads").get();
+console.log(JSON.stringify({ left: db.query("SELECT 1 FROM messages").all().length, updates: JSON.parse(updates).length }));`);
+  expect(JSON.parse(left)).toEqual({ left: 0, updates: 1 });
+  const received = readFileSync(join(home, "received.txt"), "utf8");
+  expect(received.split("Use v2.").length - 1).toBe(1);
+});
+
 test("two comments with the same words both stay to be marked seen", () => {
   const kept = run(`
 const text = "Comment from simon: Thanks!";

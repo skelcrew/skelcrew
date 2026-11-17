@@ -18,11 +18,11 @@ that covers the code you are about to write.
   replies about it, leaves "esc to interrupt" on its screen after its turn ends, even just
   above its input, and looks busy forever, Esc or not. Where the mark sits can't tell the two
   apart. Whether it is live can: Claude Code's spinner and Codex's "Working" line redraw at
-  least every second, as their timer counts, and reply text sits still. So trust the Stop hook
-  that says a turn ended, and otherwise a mark that redraws. A still mark waits a few seconds
-  more, unless the hook said the turn ended: a builder running before Skelcrew watched its
-  hook fires none, and neither does Esc. The hook never hides a live mark, as a turn may start
-  with nothing typed in, such as when a background task ends.
+  least every second, as their timer counts, and reply text sits still. Two looks half a
+  second apart often fall between two ticks, so a still mark is watched a second and a half
+  more. The Stop hook can't stand in: a turn may start with nothing typed in, such as when a
+  background task ends, and neither Esc nor a builder running before the hook was set up fires
+  it.
 - **A person's draft at the prompt is not idle.** A paste lands after their unsent text, and
   the Enter sends both. Ready means a line holding the bare prompt mark, so a draft makes
   typing wait. A person can start a draft after the last look, so look again right before

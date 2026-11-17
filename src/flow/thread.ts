@@ -66,9 +66,6 @@ export const Thread = z.object({
   // Whether the builder's harness stopped on an error it can't get past alone, such as a lapsed
   // login. The builder then sits idle, so the thread needs you until you type to it.
   erred: z.coerce.boolean(),
-  // Whether the builder's harness said, by its Stop hook, that its last turn ended, with nothing
-  // typed in since. The busy mark sitting still on its screen is then the builder's own text.
-  turn_ended: z.coerce.boolean(),
   // Why the thread started needing you, until a note saying so is typed into the lead.
   noting: z.string().nullable(),
   // The task's title and body when the thread started, for the strip, which looks each second
@@ -185,13 +182,6 @@ export function log(db: Database, thread: Thread, why?: string): void {
 // Returns the thread in the given folder as it is now in the database.
 export const readThread = (db: Database, folder: string) =>
   Thread.parse(db.query("SELECT * FROM threads WHERE folder = ?").get(folder));
-
-// Saves whether the builder's turn ended: its harness's hook says so when it does, and anything
-// typed in starts a new one. Typing trusts it over the busy mark sitting still on the builder's
-// screen, which is then its own text. Not logged, as it changes with every turn.
-export function turnEnded(db: Database, folder: string, ended: boolean): void {
-  db.run("UPDATE threads SET turn_ended = ? WHERE folder = ?", [ended ? 1 : 0, folder]);
-}
 
 // Saves a change to the thread, logs the thread as it now is, and returns it. `why` goes in
 // the log, so a failure says what went wrong. When the change makes the thread start needing

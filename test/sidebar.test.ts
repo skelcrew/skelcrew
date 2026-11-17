@@ -882,7 +882,6 @@ const state: Thread = {
   stalled: false,
   submitted: false,
   erred: false,
-  turn_ended: false,
   noting: null,
   body: null,
   title: null,

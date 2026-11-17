@@ -146,7 +146,7 @@ test("a message cancelled while the harness is busy is never typed", async () =>
 
 // A stand-in for Claude Code that draws the screen given, laid out as Claude Code's: what the
 // agent said, then its input between two rules, then its footer. It keeps what is typed in.
-// SECONDS in a line is a timer: the screen is then redrawn every 50 ms with it counting, as
+// SECONDS in a line is a timer: the screen is then redrawn once a second with it counting, as
 // Claude Code's spinner line is mid-turn.
 function screen(said: string[]): string[] {
   const footer = ["", "────────", claude.marks.prompt, "────────", "  ⏵⏵ accept edits on"];
@@ -159,7 +159,7 @@ printf '\\033[?2004h'
 stty -echo
 if grep -q SECONDS screen.txt; then
   i=0
-  while true; do clear; sed "s/SECONDS/$i/" screen.txt; i=$((i + 1)); sleep 0.05; done &
+  while true; do clear; sed "s/SECONDS/$i/" screen.txt; i=$((i + 1)); sleep 1; done &
 else
   cat screen.txt
 fi
@@ -171,8 +171,7 @@ cat > received.txt
 }
 
 // An idle builder whose last reply, just above its input, quotes the busy mark, as one building
-// Skelcrew's own typing does. No Stop hook has said its turn ended, as for a builder running
-// before Skelcrew watched its hook, or after Esc.
+// Skelcrew's own typing does.
 const quoting = [
   "● Bash(grep -rn busy src)",
   `  ⎿  src/agents/claude.ts:383:  marks: { busy: "${claude.marks.busy}", prompt: "❯" },`,
@@ -198,30 +197,16 @@ const spinning = [
   "     ☐ Write the test",
 ];
 
-test("a live spinner above the input shows the agent busy", async () => {
+// The first two looks, a moment apart, mostly fall between two ticks of the spinner's timer,
+// so each look here does. A turn can start with nothing typed in, such as when a background
+// task ends, so whatever ended the last turn, only the screen tells.
+test("a spinner redrawn once a second shows the agent busy at every look", async () => {
   start("lead", screen(spinning));
   await showing("lead", "accept edits");
-  expect(await whyBusy(socket, "lead", claude.marks, { moment })).toBe(
-    "it is mid-turn (it shows esc to interrupt)",
-  );
-});
-
-// A turn can start with nothing typed in, such as when a background task ends, so the Stop hook
-// that said the last one ended doesn't hide a live spinner.
-test("a live spinner shows the agent busy even after its Stop hook said the turn ended", async () => {
-  start("lead", screen(spinning));
-  await showing("lead", "accept edits");
-  expect(await whyBusy(socket, "lead", claude.marks, { moment, turnOver: () => true })).toBe(
-    "it is mid-turn (it shows esc to interrupt)",
-  );
-});
-
-test("once the Stop hook says the turn ended, a still mark needs no longer look", async () => {
-  start("lead", screen(quoting));
-  await showing("lead", "accept edits");
-  const started = Date.now();
-  expect(await whyBusy(socket, "lead", claude.marks, { moment, turnOver: () => true })).toBe("");
-  expect(Date.now() - started).toBeLessThan(moment * 6);
+  for (let look = 0; look < 3; look++)
+    expect(await whyBusy(socket, "lead", claude.marks, { moment })).toBe(
+      "it is mid-turn (it shows esc to interrupt)",
+    );
 });
 
 test("typing says so when it gives up because there is no prompt", async () => {

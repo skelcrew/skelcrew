@@ -508,8 +508,9 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
   }, 60_000);
 
   // A failed check's log takes a while to fetch, and the builder can submit a new round
-  // meanwhile. The check was about the older commit, but the comment with it still holds.
-  test("a failed check whose log comes after a new round started isn't told, but a comment with it is", async () => {
+  // meanwhile, whose push can finish before the log comes. The check was about the older
+  // commit, but the comment with it still holds.
+  test("a failed check whose log comes after a newer round was pushed isn't told, but a comment with it is", async () => {
     mkdirSync(builder(), { recursive: true });
     writeFileSync(join(builder(), "busy"), "");
     await approvedApp12();
@@ -519,6 +520,7 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
     await until(() => existsSync(join(plugin, "held-log")));
     pr({ reviews: [skelReview], checks: [approved], comments });
     submitRound2();
+    await until(() => thread().submitting === null);
     rmSync(join(plugin, "hold-log"));
     await until(() => handled("901"));
     expect(waiting()).toBe(1);

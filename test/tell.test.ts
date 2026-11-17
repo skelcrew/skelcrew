@@ -288,8 +288,7 @@ describe.skipIf(insideSandbox)("sc tell", () => {
 
   // Approved and ready to merge, the thread needs you, but its builder takes messages as any
   // other does. Its own text quoting the busy mark doesn't hold them, as the mark sitting still
-  // is never its harness's status line. No hook says its turn ended, as for a builder started
-  // before Skelcrew watched its hook.
+  // is never its harness's status line.
   test("a message to an approved builder, idle at its prompt, is typed in", async () => {
     await startApp12();
     changeDb("UPDATE threads SET status = 'waiting', needs_you = 1, verdict = 'approve'");

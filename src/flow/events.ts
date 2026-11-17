@@ -12,7 +12,7 @@ import { baseOf } from "./builder.ts";
 import type { Check, Decision } from "./decide.ts";
 import { deleteBranch, fetchInto, onRemote } from "./git.ts";
 import { typeLeadNotes } from "./lead.ts";
-import { queueMessage, stopDelivering } from "./messages.ts";
+import { noticeRound, queueMessage, stopDelivering } from "./messages.ts";
 import { refreshClones } from "./repo.ts";
 import { endRound } from "./round.ts";
 import { cloneOf, readThread, record, repositoryOf, type Thread, threadName } from "./thread.ts";
@@ -198,6 +198,8 @@ export async function tellBuilder(
   // Mark the events as being told, so a poll meanwhile leaves the thread alone.
   tellingEvents.add(thread.folder);
   const { seen, change, why } = decision;
+  // Read before fetching, as a new round may start meanwhile.
+  const round = noticeRound(thread.folder);
   try {
     if (decision.conflict !== null) await refreshBase(db, thread, decision.conflict);
     const checks = await failedCheckMessages(db, thread, decision.failed);
@@ -213,9 +215,9 @@ export async function tellBuilder(
       now.submitting !== thread.submitting ||
       now.reviewing !== thread.reviewing;
     // A round submitted meanwhile is a new commit, so the notices of the older one would send
-    // the builder after a problem it may have fixed. People's words still hold.
-    const newRound = now.rounds !== thread.rounds || now.submitting !== thread.submitting;
-    const notices = newRound ? [] : [...checks, ...decision.notice];
+    // the builder after a problem it may have fixed, even once that round's push is done and
+    // its review runs. People's words still hold.
+    const notices = noticeRound(thread.folder) !== round ? [] : [...checks, ...decision.notice];
     // Saves one message of these texts, unless there are none. The thread's log gets the first
     // line of each.
     const firstLines = (texts: string[]) => texts.map((t) => t.split("\n")[0]).join("; ");

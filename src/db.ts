@@ -115,8 +115,7 @@ function prepareTables(db: Database): void {
   // `working_since` is when the builder's current stretch of work began, for the sidebar. It
   // changes with every message typed into the builder, so it is kept out of the thread's log,
   // which would otherwise fill with it. `review_at` is when the latest review was asked for or
-  // ended, for sc ps. `turn_ended` is whether the builder's harness said, by its hook, that its
-  // last turn ended, with nothing typed in since.
+  // ended, for sc ps.
   const threadColumns = {
     rounds: "INTEGER NOT NULL DEFAULT 0",
     pr: "INTEGER",
@@ -151,7 +150,6 @@ function prepareTables(db: Database): void {
     updates: "TEXT",
     working_since: "INTEGER",
     review_at: "INTEGER",
-    turn_ended: "INTEGER NOT NULL DEFAULT 0",
   };
   for (const [column, type] of Object.entries(threadColumns))
     if (!db.query("SELECT 1 FROM pragma_table_info('threads') WHERE name = ?").get(column))

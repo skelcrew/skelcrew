@@ -5,14 +5,12 @@ import { mustTmux, tmux } from "./tmux.ts";
 // How typing waits, in milliseconds. `moment` is the pause between two looks at the screen,
 // and between a paste and its Enter. `timeout` is how long to wait for the prompt to be ready
 // before giving up, which may be Infinity. Once `signal` is aborted, nothing is typed.
-// `turnOver` says whether the agent's Stop hook reported that its last turn ended, with nothing
-// typed in since.
-type Waits = {
-  moment?: number;
-  timeout?: number;
-  signal?: AbortSignal;
-  turnOver?: () => boolean;
-};
+type Waits = { moment?: number; timeout?: number; signal?: AbortSignal };
+
+// How long to watch a still busy mark, in milliseconds, before taking it for the agent's own
+// text. Claude Code's spinner and Codex's "Working" line count seconds, so they redraw at least
+// once a second, and one and a half seconds always holds a redraw.
+const statusLineWatch = 1500;
 // What a harness's screen shows: `busy` while a turn runs, and a line holding only `prompt`
 // once it is ready for a message.
 export type Marks = { busy: string; prompt: string };
@@ -60,7 +58,8 @@ function whyChanged(before: string, after: string, marks: Marks): string {
 // "Working" line hold the busy mark and redraw at least every second, as their timer counts.
 // The mark sitting still is the agent's own text, such as a builder's grep through Skelcrew's
 // code or its reply quoting it, and never makes it look busy: it would then look busy forever,
-// Esc or not.
+// Esc or not. No hook stands in for this: a turn can start with nothing typed in, such as when
+// a background task ends, and Esc runs none.
 export async function whyBusy(
   socket: string,
   name: string,
@@ -75,12 +74,10 @@ export async function whyBusy(
   if (before !== after) return whyChanged(before, after, marks);
   const why = notReady(after, marks);
   if (why !== "") return why;
-  // The mark sits still at a ready prompt. Unless the Stop hook said the turn ended, look once
-  // more, over several seconds: a status line whose timer the first two looks fell between
-  // shows as live then. A builder running before Skelcrew watched its hook, or after Esc, which
-  // runs none, gets its messages this way.
-  if (after.includes(marks.busy) && !(waits.turnOver?.() ?? false)) {
-    await Bun.sleep(moment * 6);
+  // The mark sits still at a ready prompt. Look once more, long enough to see a status line
+  // redraw, as the first two looks can fall between two ticks of its timer.
+  if (after.includes(marks.busy)) {
+    await Bun.sleep(statusLineWatch);
     const later = readScreen(socket, name);
     if (later !== after) return whyChanged(after, later, marks);
   }
