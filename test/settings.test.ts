@@ -5,6 +5,7 @@ import {
   chmodSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   realpathSync,
   rmSync,
   symlinkSync,
@@ -101,6 +102,16 @@ test("your model for a role doesn't follow it onto the harness skelcrew.yaml pic
 
 // Returns app's setup and test commands, and whether each was detected.
 const commands = () => JSON.parse(run("console.log(JSON.stringify(repositoryCommands(app)));").out);
+
+// Skelcrew's own skelcrew.yaml names the commands CI runs, so its threads set up and test the
+// same way. Your config is left empty so only the file counts.
+test("this repository's own skelcrew.yaml names CI's setup and test", () => {
+  settings("", readFileSync(join(import.meta.dir, "..", "skelcrew.yaml"), "utf8"));
+  expect(commands()).toEqual({
+    setup: { commands: ["bun install"], detected: false },
+    test: { commands: ["bun run check"], detected: false },
+  });
+});
 
 test("setup and test come from the skelcrew.yaml in Skelcrew's clone", () => {
   settings("harness: claude\n", "setup: [bun install, make]\ntest: [bun test]\n");

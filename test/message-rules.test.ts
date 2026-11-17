@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { allowed } from "../src/flow/requests.ts";
 import { leadPlaces } from "../src/paths.ts";
-import { source } from "./harness.ts";
+import { source, threadSql } from "./harness.ts";
 
 let home = "";
 beforeEach(() => {
@@ -52,8 +52,7 @@ const { readThread } = await import(${JSON.stringify(source("flow/thread.ts"))})
 const messages = await import(${JSON.stringify(source("flow/messages.ts"))});
 const db = openDb();
 db.run(\`INSERT INTO repositories (name, owner, repo) VALUES ('app', 'simon', 'app');
-INSERT INTO threads (owner, repo, task, folder, branch, status)
-  VALUES ('simon', 'app', 12, 'app-12', 'skelcrew/12', 'waiting')\`);
+${threadSql({ task: "12", status: "waiting" })}\`);
 const tmux = "unused";
 const settle = () => Bun.sleep(200);
 const texts = (to) => fake.received.filter((typed) => typed.to === to).map((typed) => typed.text);

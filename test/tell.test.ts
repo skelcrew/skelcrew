@@ -291,7 +291,8 @@ describe.skipIf(insideSandbox)("sc tell", () => {
   // is never its harness's status line.
   test("a message to an approved builder, idle at its prompt, is typed in", async () => {
     await startApp12();
-    changeDb("UPDATE threads SET status = 'waiting', needs_you = 1, verdict = 'approve'");
+    changeDb("UPDATE threads SET status = 'waiting', needs_you = 1");
+    changeDb("UPDATE tasks SET verdict = 'approve'");
     writeFileSync(join(builder(), "quoting"), "");
     const told = await skel(["tell", "app-12", "Rename it."], "lead");
     expect(told.err).toBe("");

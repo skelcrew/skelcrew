@@ -1,0 +1,851 @@
+{
+  "repositories": [
+    {
+      "name": "app",
+      "repository": "simon/app",
+      "tracker": "github",
+      "forge": "github",
+      "missing": null,
+      "clone": "$HOME/.local/share/skelcrew/repos/simon/app",
+      "tabClosed": false
+    },
+    {
+      "name": "notes",
+      "repository": "simon/notes",
+      "tracker": null,
+      "forge": null,
+      "missing": null,
+      "clone": "$HOME/.local/share/skelcrew/repos/simon/notes",
+      "tabClosed": false
+    }
+  ],
+  "ps": [
+    {
+      "thread": "notes-t2",
+      "short": null,
+      "title": "Search notes",
+      "status": "working",
+      "needsYou": false,
+      "queued": false,
+      "branch": "skelcrew/t2-search-notes",
+      "pr": null,
+      "prUrl": null,
+      "checks": null,
+      "review": null,
+      "waiting": 0
+    },
+    {
+      "thread": "notes-t1",
+      "short": "Sort notes",
+      "title": "Sort notes by date",
+      "status": "waiting",
+      "needsYou": true,
+      "queued": false,
+      "branch": "skelcrew/t1-sort-notes-by-date",
+      "pr": null,
+      "prUrl": null,
+      "checks": null,
+      "review": null,
+      "waiting": 0
+    },
+    {
+      "thread": "app-t1",
+      "short": null,
+      "title": "Tidy the README",
+      "status": "working",
+      "needsYou": true,
+      "queued": false,
+      "branch": "skelcrew/t1-tidy-the-readme",
+      "pr": null,
+      "prUrl": null,
+      "checks": null,
+      "review": {
+        "state": "none",
+        "round": null,
+        "at": null
+      },
+      "waiting": 0
+    },
+    {
+      "thread": "app-16",
+      "short": null,
+      "title": "Old work",
+      "status": "done",
+      "needsYou": false,
+      "queued": false,
+      "branch": "skelcrew/16-old-work",
+      "pr": 42,
+      "prUrl": null,
+      "checks": "passed",
+      "review": {
+        "state": "approved",
+        "round": 2,
+        "at": "2026-11-10T09:01:40.000Z"
+      },
+      "waiting": 0
+    },
+    {
+      "thread": "app-15",
+      "short": "Dark mode",
+      "title": "Dark mode",
+      "status": "stopped",
+      "needsYou": false,
+      "queued": false,
+      "branch": "skelcrew/15-dark-mode",
+      "pr": null,
+      "prUrl": null,
+      "checks": null,
+      "review": {
+        "state": "none",
+        "round": null,
+        "at": null
+      },
+      "waiting": 0
+    },
+    {
+      "thread": "app-14",
+      "short": null,
+      "title": "Crash on save",
+      "status": "failed",
+      "needsYou": false,
+      "queued": false,
+      "branch": "skelcrew/14-crash-on-save",
+      "pr": null,
+      "prUrl": null,
+      "checks": null,
+      "review": {
+        "state": "none",
+        "round": null,
+        "at": null
+      },
+      "waiting": 0
+    },
+    {
+      "thread": "app-13",
+      "short": null,
+      "title": "Add CSV export",
+      "status": "waiting",
+      "needsYou": true,
+      "queued": false,
+      "branch": "skelcrew/13-add-csv-export",
+      "pr": 41,
+      "prUrl": "https://github.com/simon/app/pull/41",
+      "checks": "passed",
+      "review": {
+        "state": "approved",
+        "round": 1,
+        "at": "2026-11-10T09:01:30.000Z"
+      },
+      "waiting": 0
+    },
+    {
+      "thread": "app-12",
+      "short": "Login fix",
+      "title": "Fix login",
+      "status": "working",
+      "needsYou": false,
+      "queued": true,
+      "branch": "skelcrew/12-fix-login",
+      "pr": 40,
+      "prUrl": "https://github.com/simon/app/pull/40",
+      "checks": "running",
+      "review": {
+        "state": "failed",
+        "round": 2,
+        "at": "2026-11-10T09:01:10.000Z"
+      },
+      "waiting": 1
+    }
+  ],
+  "psNotes": [
+    {
+      "thread": "notes-t2",
+      "short": null,
+      "title": "Search notes",
+      "status": "working",
+      "needsYou": false,
+      "queued": false,
+      "branch": "skelcrew/t2-search-notes",
+      "pr": null,
+      "prUrl": null,
+      "checks": null,
+      "review": null,
+      "waiting": 0
+    },
+    {
+      "thread": "notes-t1",
+      "short": "Sort notes",
+      "title": "Sort notes by date",
+      "status": "waiting",
+      "needsYou": true,
+      "queued": false,
+      "branch": "skelcrew/t1-sort-notes-by-date",
+      "pr": null,
+      "prUrl": null,
+      "checks": null,
+      "review": null,
+      "waiting": 0
+    }
+  ],
+  "issues": [
+    {
+      "issue": "app-17",
+      "title": "Not started yet",
+      "thread": null
+    },
+    {
+      "issue": "app-15",
+      "title": "Dark mode",
+      "thread": {
+        "status": "stopped",
+        "needsYou": false
+      }
+    },
+    {
+      "issue": "app-14",
+      "title": "Crash on save",
+      "thread": {
+        "status": "failed",
+        "needsYou": false
+      }
+    },
+    {
+      "issue": "app-13",
+      "title": "Add CSV export",
+      "thread": {
+        "status": "waiting",
+        "needsYou": true
+      }
+    },
+    {
+      "issue": "app-12",
+      "title": "Fix login",
+      "thread": {
+        "status": "working",
+        "needsYou": false
+      }
+    }
+  ],
+  "show": [
+    {
+      "issue": "app-12",
+      "title": "Fix login",
+      "body": "Body of Fix login.\n\n## Changes to the task from the lead, after the thread started\n\nThese override the task above where they differ. The latest comes last.\n\n### 2026-11-10 09:00 UTC\n\nUpdate 1: also keep the old path.",
+      "thread": {
+        "status": "working",
+        "needsYou": false
+      }
+    },
+    {
+      "issue": "app-13",
+      "title": "Add CSV export",
+      "body": "Body of Add CSV export.",
+      "thread": {
+        "status": "waiting",
+        "needsYou": true
+      }
+    },
+    {
+      "issue": "app-14",
+      "title": "Crash on save",
+      "body": "Body of Crash on save.",
+      "thread": {
+        "status": "failed",
+        "needsYou": false
+      }
+    },
+    {
+      "issue": "app-15",
+      "title": "Dark mode",
+      "body": "Body of Dark mode.\n\n## Changes to the task from the lead, after the thread started\n\nThese override the task above where they differ. The latest comes last.\n\n### 2026-11-10 09:00 UTC\n\nUpdate 2: also keep the old path.\n\n### 2026-11-10 09:00 UTC\n\nUpdate 3: also keep the old path.",
+      "thread": {
+        "status": "stopped",
+        "needsYou": false
+      }
+    },
+    "Error: there is no open issue 16 in simon/app",
+    {
+      "issue": "app-17",
+      "title": "Not started yet",
+      "body": "Body of Not started yet.",
+      "thread": null
+    },
+    {
+      "issue": "app-t1",
+      "title": "Tidy the README",
+      "body": "Make the README shorter.",
+      "thread": {
+        "status": "working",
+        "needsYou": true
+      }
+    },
+    {
+      "issue": "notes-t1",
+      "title": "Sort notes by date",
+      "body": "Newest first.",
+      "thread": {
+        "status": "waiting",
+        "needsYou": true
+      }
+    },
+    {
+      "issue": "notes-t2",
+      "title": "Search notes",
+      "body": "Find by word.",
+      "thread": {
+        "status": "working",
+        "needsYou": false
+      }
+    }
+  ],
+  "prs": [
+    {
+      "pr": 40,
+      "title": "Fix login",
+      "state": "open",
+      "branch": "skelcrew/40",
+      "base": "main",
+      "thread": "app-12",
+      "ci": "running",
+      "checks": [
+        {
+          "name": "test",
+          "state": "running",
+          "log": null
+        }
+      ],
+      "review": null,
+      "body": "Body of Fix login.",
+      "link": "https://github.com/simon/app/pull/40"
+    },
+    {
+      "pr": 41,
+      "title": "Add CSV export",
+      "state": "open",
+      "branch": "skelcrew/41",
+      "base": "main",
+      "thread": "app-13",
+      "ci": "passed",
+      "checks": [
+        {
+          "name": "test",
+          "state": "passed",
+          "log": null
+        }
+      ],
+      "review": null,
+      "body": "Body of Add CSV export.",
+      "link": "https://github.com/simon/app/pull/41"
+    },
+    {
+      "pr": 41,
+      "title": "Add CSV export",
+      "state": "open",
+      "branch": "skelcrew/41",
+      "base": "main",
+      "thread": "app-13",
+      "ci": "passed",
+      "checks": [
+        {
+          "name": "test",
+          "state": "passed",
+          "log": null
+        }
+      ],
+      "review": null,
+      "body": "Body of Add CSV export.",
+      "link": "https://github.com/simon/app/pull/41"
+    },
+    "Error: Skelcrew has no PR #42 in simon/app"
+  ],
+  "screen": [
+    {
+      "sidebar": [
+        {
+          "name": "lead",
+          "task": "",
+          "session": "lead-app",
+          "status": null,
+          "needsYou": false,
+          "running": false,
+          "word": "stopped",
+          "harness": "claude",
+          "agentHarness": "claude",
+          "age": "",
+          "tokens": "",
+          "step": "",
+          "plan": null,
+          "waiting": "",
+          "fullName": null,
+          "title": null,
+          "short": null,
+          "pr": null,
+          "checks": null,
+          "review": null
+        },
+        {
+          "name": "app-t1",
+          "task": "t1",
+          "session": "app-t1",
+          "status": "working",
+          "needsYou": true,
+          "running": false,
+          "word": "question",
+          "harness": "claude",
+          "agentHarness": "claude",
+          "age": "",
+          "tokens": "",
+          "step": "",
+          "plan": null,
+          "waiting": "",
+          "fullName": "simon/app",
+          "title": "Tidy the README",
+          "short": null,
+          "pr": null,
+          "checks": null,
+          "review": null
+        },
+        {
+          "name": "app-14",
+          "task": "14",
+          "session": "app-14",
+          "status": "failed",
+          "needsYou": false,
+          "running": false,
+          "word": "failed",
+          "harness": "claude",
+          "agentHarness": "claude",
+          "age": "",
+          "tokens": "",
+          "step": "",
+          "plan": null,
+          "waiting": "",
+          "fullName": "simon/app",
+          "title": "Crash on save",
+          "short": null,
+          "pr": null,
+          "checks": null,
+          "review": null
+        },
+        {
+          "name": "app-13",
+          "task": "13",
+          "session": "app-13",
+          "status": "waiting",
+          "needsYou": true,
+          "running": false,
+          "word": "approved",
+          "harness": "codex",
+          "agentHarness": "codex",
+          "age": "",
+          "tokens": "",
+          "step": "",
+          "plan": null,
+          "waiting": "",
+          "fullName": "simon/app",
+          "title": "Add CSV export",
+          "short": null,
+          "pr": 41,
+          "checks": "passing",
+          "review": {
+            "round": 1,
+            "reviewer": "codex",
+            "verdict": "approve"
+          }
+        },
+        {
+          "name": "app-12",
+          "task": "12",
+          "session": "app-12",
+          "status": "working",
+          "needsYou": false,
+          "running": false,
+          "word": "queued for review",
+          "harness": "claude",
+          "agentHarness": "claude",
+          "age": "",
+          "tokens": "",
+          "step": "",
+          "plan": null,
+          "waiting": "1 message waiting",
+          "fullName": "simon/app",
+          "title": "Fix login",
+          "short": "Login fix",
+          "pr": 40,
+          "checks": "pending",
+          "review": {
+            "round": 1,
+            "reviewer": "claude",
+            "verdict": "changes"
+          }
+        }
+      ],
+      "lists": [
+        [
+          {
+            "heading": "Not started",
+            "rows": [
+              {
+                "mark": ["○", null],
+                "name": "app-17",
+                "title": "Not started yet",
+                "ends": [],
+                "link": "https://github.com/simon/app/issues/17",
+                "session": null,
+                "dim": false,
+                "action": {
+                  "key": "s",
+                  "ask": "Start a thread on app#17? y/n",
+                  "working": "Starting app-17…",
+                  "request": {
+                    "command": "start",
+                    "repo": "simon/app",
+                    "task": "17"
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "heading": "Started",
+            "rows": [
+              {
+                "mark": ["◐", null],
+                "name": "app-15",
+                "title": "Dark mode",
+                "ends": [["stopped", "90"]],
+                "link": "https://github.com/simon/app/issues/15",
+                "session": null,
+                "dim": false,
+                "action": {
+                  "key": "s",
+                  "refused": "app#15 already has app-15"
+                }
+              },
+              {
+                "mark": ["◐", null],
+                "name": "app-14",
+                "title": "Crash on save",
+                "ends": [["failed", "38;5;210"]],
+                "link": "https://github.com/simon/app/issues/14",
+                "session": null,
+                "dim": false,
+                "action": {
+                  "key": "s",
+                  "refused": "app#14 already has app-14"
+                }
+              },
+              {
+                "mark": ["●", null],
+                "name": "app-13",
+                "title": "Add CSV export",
+                "ends": [["approved", "38;5;120"]],
+                "link": "https://github.com/simon/app/issues/13",
+                "session": null,
+                "dim": false,
+                "action": {
+                  "key": "s",
+                  "refused": "app#13 already has app-13"
+                }
+              },
+              {
+                "mark": ["◐", null],
+                "name": "app-12",
+                "title": "Fix login",
+                "ends": [["queued for review", "38;5;120"]],
+                "link": "https://github.com/simon/app/issues/12",
+                "session": null,
+                "dim": false,
+                "action": {
+                  "key": "s",
+                  "refused": "app#12 already has app-12"
+                }
+              }
+            ]
+          }
+        ],
+        [
+          {
+            "heading": "Needs you",
+            "rows": [
+              {
+                "mark": ["●", "38;5;221"],
+                "name": "app-t1",
+                "title": "Tidy the README",
+                "ends": [["question", "38;5;221"], ["claude", "90"], ["", "90"], ["17 Nov", "90"]],
+                "link": null,
+                "session": "app-t1",
+                "dim": false,
+                "action": null
+              },
+              {
+                "mark": ["●", "38;5;210"],
+                "name": "app-14",
+                "title": "Crash on save",
+                "ends": [["failed", "38;5;210"], ["claude", "90"], ["#14", "90"], ["17 Nov", "90"]],
+                "link": null,
+                "session": "app-14",
+                "dim": false,
+                "action": null
+              },
+              {
+                "mark": ["●", "38;5;120"],
+                "name": "app-13",
+                "title": "Add CSV export",
+                "ends": [
+                  ["approved", "38;5;120"],
+                  ["codex", "90"],
+                  ["#13 #41", "90"],
+                  ["17 Nov", "90"]
+                ],
+                "link": null,
+                "session": "app-13",
+                "dim": false,
+                "action": null
+              }
+            ]
+          },
+          {
+            "heading": "Working",
+            "rows": [
+              {
+                "mark": ["●", "38;5;120"],
+                "name": "app-12",
+                "title": "Fix login",
+                "ends": [
+                  ["queued for review", "38;5;120"],
+                  ["claude", "90"],
+                  ["#12 #40", "90"],
+                  ["17 Nov", "90"]
+                ],
+                "link": null,
+                "session": "app-12",
+                "dim": false,
+                "action": null
+              }
+            ]
+          },
+          {
+            "heading": "Stopped",
+            "rows": [
+              {
+                "mark": ["○", "90"],
+                "name": "app-15",
+                "title": "Dark mode",
+                "ends": [["stopped", "90"], ["claude", "90"], ["#15", "90"], ["17 Nov", "90"]],
+                "link": null,
+                "session": "app-15",
+                "dim": true,
+                "action": null
+              }
+            ]
+          }
+        ],
+        [
+          {
+            "heading": "Ready to merge",
+            "rows": [
+              {
+                "mark": ["●", "38;5;120"],
+                "name": "app#41",
+                "title": "Add CSV export",
+                "ends": [["approved", "38;5;120"]],
+                "link": "https://github.com/simon/app/pull/41",
+                "session": null,
+                "dim": false,
+                "action": {
+                  "key": "m",
+                  "ask": "Merge app#41 into main? y/n",
+                  "working": "Merging app#41…",
+                  "request": {
+                    "command": "merge",
+                    "repo": "simon/app",
+                    "pr": 41,
+                    "commit": "abc123"
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "heading": "In review",
+            "rows": [
+              {
+                "mark": ["◐", null],
+                "name": "app#40",
+                "title": "Fix login",
+                "ends": [["queued for review", "38;5;120"]],
+                "link": "https://github.com/simon/app/pull/40",
+                "session": null,
+                "dim": false,
+                "action": {
+                  "key": "m",
+                  "refused": "app#40 isn't approved yet"
+                }
+              }
+            ]
+          }
+        ]
+      ],
+      "entries": [
+        {
+          "entry": "issues",
+          "name": "Issues",
+          "total": 5,
+          "note": "",
+          "colour": "90"
+        },
+        {
+          "entry": "threads",
+          "name": "Threads",
+          "total": 5,
+          "note": "3 need you",
+          "colour": "38;5;221"
+        },
+        {
+          "entry": "prs",
+          "name": "PRs",
+          "total": 2,
+          "note": "1 ready",
+          "colour": "38;5;120"
+        }
+      ]
+    },
+    {
+      "sidebar": [
+        {
+          "name": "lead",
+          "task": "",
+          "session": "lead-notes",
+          "status": null,
+          "needsYou": false,
+          "running": false,
+          "word": "stopped",
+          "harness": "claude",
+          "agentHarness": "claude",
+          "age": "",
+          "tokens": "",
+          "step": "",
+          "plan": null,
+          "waiting": "",
+          "fullName": null,
+          "title": null,
+          "short": null,
+          "pr": null,
+          "checks": null,
+          "review": null
+        },
+        {
+          "name": "notes-t2",
+          "task": "t2",
+          "session": "notes-t2",
+          "status": "working",
+          "needsYou": false,
+          "running": false,
+          "word": "limit · 10:00",
+          "harness": "claude",
+          "agentHarness": "claude",
+          "age": "",
+          "tokens": "",
+          "step": "",
+          "plan": null,
+          "waiting": "",
+          "fullName": "simon/notes",
+          "title": "Search notes",
+          "short": null,
+          "pr": null,
+          "checks": null,
+          "review": null
+        },
+        {
+          "name": "notes-t1",
+          "task": "t1",
+          "session": "notes-t1",
+          "status": "waiting",
+          "needsYou": true,
+          "running": false,
+          "word": "question",
+          "harness": "claude",
+          "agentHarness": "claude",
+          "age": "",
+          "tokens": "",
+          "step": "",
+          "plan": null,
+          "waiting": "",
+          "fullName": "simon/notes",
+          "title": "Sort notes by date",
+          "short": "Sort notes",
+          "pr": null,
+          "checks": null,
+          "review": {
+            "round": 2,
+            "reviewer": "claude",
+            "verdict": "changes"
+          }
+        }
+      ],
+      "lists": [
+        [],
+        [
+          {
+            "heading": "Needs you",
+            "rows": [
+              {
+                "mark": ["●", "38;5;221"],
+                "name": "notes-t1",
+                "title": "Sort notes by date",
+                "ends": [["question", "38;5;221"], ["claude", "90"], ["", "90"], ["17 Nov", "90"]],
+                "link": null,
+                "session": "notes-t1",
+                "dim": false,
+                "action": null
+              }
+            ]
+          },
+          {
+            "heading": "Working",
+            "rows": [
+              {
+                "mark": ["○", "90"],
+                "name": "notes-t2",
+                "title": "Search notes",
+                "ends": [
+                  ["limit · 10 Nov 10:00", "90"],
+                  ["claude", "90"],
+                  ["", "90"],
+                  ["17 Nov", "90"]
+                ],
+                "link": null,
+                "session": "notes-t2",
+                "dim": false,
+                "action": null
+              }
+            ]
+          }
+        ],
+        []
+      ],
+      "entries": [
+        {
+          "entry": "threads",
+          "name": "Threads",
+          "total": 2,
+          "note": "1 needs you",
+          "colour": "38;5;221"
+        }
+      ]
+    }
+  ],
+  "tabs": [
+    {
+      "name": "app",
+      "fullName": "simon/app",
+      "count": 3
+    },
+    {
+      "name": "notes",
+      "fullName": "simon/notes",
+      "count": 1
+    }
+  ]
+}

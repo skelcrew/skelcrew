@@ -12,7 +12,7 @@ import {
   type ListRow,
 } from "../src/screen/lists.ts";
 import { drawList } from "../src/screen/pane.ts";
-import { fakePlugin, itemSql, source } from "./harness.ts";
+import { fakePlugin, itemSql, source, threadSql } from "./harness.ts";
 
 let home = "";
 beforeEach(() => {
@@ -58,11 +58,6 @@ console.log(JSON.stringify({ issues: list("issues"), threads: list("threads"), p
   return JSON.parse(run.stdout.toString());
 }
 
-// Returns a thread's insert, on a task, with more columns as given.
-const thread = (task: string, columns = "", values = "") =>
-  `INSERT INTO threads (owner, repo, task, folder, branch, status${columns})
-    VALUES ('simon', 'app', '${task}', 'app-${task}', 'skelcrew/${task}', ${values || "'working'"});`;
-
 // Returns the groups as headings and, under each, its rows' marks, names and ends.
 const shape = (groups: Group[]) =>
   groups.map(({ heading, rows }) => [
@@ -75,7 +70,7 @@ test("issues come as not started, then started, newest first, with the thread's 
 ${itemSql("app", "task", 12, "Fix login", "2026-11-04T10:00:00Z")}
 ${itemSql("app", "task", 31, "Add CSV export", "2026-11-05T10:00:00Z")}
 ${itemSql("app", "task", 9, "Old thing", "2026-11-01T10:00:00Z")}
-${thread("12")}`;
+${threadSql({ task: "12" })}`;
   expect(shape(after(sql).issues)).toEqual([
     [
       "Not started",
@@ -93,9 +88,9 @@ test("an issue whose thread is approved is full, and one whose thread is done is
 ${itemSql("app", "task", 12, "Fix login", "2026-11-04T10:00:00Z")}
 ${itemSql("app", "task", 13, "Fix logout", "2026-11-04T10:00:00Z")}
 ${itemSql("app", "task", 14, "Fix signup", "2026-11-03T10:00:00Z")}
-${thread("12", ", needs_you, verdict", "'waiting', 1, 'approve'")}
-${thread("13", "", "'done'")}
-${thread("14", "", "'stopped'")}`;
+${threadSql({ task: "12", status: "waiting", needs_you: 1, verdict: "approve" })}
+${threadSql({ task: "13", status: "done" })}
+${threadSql({ task: "14", status: "stopped" })}`;
   const { issues } = after(sql);
   // A stopped thread still holds its issue, so the issue has started.
   expect(shape(issues)).toEqual([
@@ -128,13 +123,13 @@ ${itemSql("app", "pr", 32, "Bump deps", "2026-11-05T10:00:00Z", approved)}
 ${itemSql("app", "pr", 33, "Tidy", "2026-11-06T10:00:00Z", { ...passed, author: { login: "bob", bot: false, you: false } })}
 ${itemSql("app", "pr", 34, "Fix logout", "2026-11-07T10:00:00Z")}
 ${itemSql("app", "pr", 35, "Fix signup", "2026-11-08T10:00:00Z")}
-${thread("12", ", pr, needs_you, verdict, review_round", "'waiting', 31, 1, 'approve', 1")}
-${thread("13", ", pr, review_round, verdict", "'working', 34, 1, 'changes'")}
-${thread("14", ", pr", "'failed', 35")}
+${threadSql({ task: "12", status: "waiting", pr: 31, needs_you: 1, verdict: "approve", review_round: 1 })}
+${threadSql({ task: "13", pr: 34, review_round: 1, verdict: "changes" })}
+${threadSql({ task: "14", status: "failed", pr: 35 })}
 ${itemSql("app", "pr", 36, "Fix export", "2026-11-09T10:00:00Z")}
 ${itemSql("app", "pr", 37, "Fix import", "2026-11-10T10:00:00Z")}
-${thread("15", ", pr, erred", "'working', 36, 1")}
-${thread("16", ", pr, asking", "'working', 37, 1")}`;
+${threadSql({ task: "15", pr: 36, erred: 1 })}
+${threadSql({ task: "16", pr: 37, asking: 1 })}`;
   const { prs } = after(sql);
   expect(shape(prs)).toEqual([
     [
@@ -228,8 +223,8 @@ test("s on an issue no thread works on asks to start one, and on one that has a 
 ${itemSql("app", "task", 31, "Add CSV export", "2026-11-05T10:00:00Z")}
 ${itemSql("app", "task", 12, "Fix login", "2026-11-04T10:00:00Z")}
 ${itemSql("app", "task", 13, "Fix logout", "2026-11-03T10:00:00Z")}
-${thread("12")}
-${thread("13", "", "'stopped'")}`;
+${threadSql({ task: "12" })}
+${threadSql({ task: "13", status: "stopped" })}`;
   expect(actions(after(sql).issues)).toEqual([
     {
       key: "s",
@@ -254,9 +249,9 @@ ${itemSql("app", "pr", 34, "Fix logout", "2026-11-07T10:00:00Z", { ...head, revi
 ${itemSql("app", "pr", 35, "Fix signup", "2026-11-08T10:00:00Z", { ...passing, ...head })}
 ${itemSql("app", "pr", 36, "Fix export", "2026-11-09T10:00:00Z", head)}
 ${itemSql("app", "pr", 37, "Fix import", "2026-11-10T10:00:00Z", head)}
-${thread("12", ", pr, needs_you, verdict, review_round", "'waiting', 31, 1, 'approve', 1")}
-${thread("13", ", pr, verdict, review_round", "'waiting', 36, 'approve', 1")}
-${thread("14", ", pr, review_round, verdict", "'working', 37, 1, 'changes'")}`;
+${threadSql({ task: "12", status: "waiting", pr: 31, needs_you: 1, verdict: "approve", review_round: 1 })}
+${threadSql({ task: "13", status: "waiting", pr: 36, verdict: "approve", review_round: 1 })}
+${threadSql({ task: "14", pr: 37, review_round: 1, verdict: "changes" })}`;
   const { prs } = after(sql);
   expect(prs.map((group) => group.rows.map((row) => row.name))).toEqual([
     ["app#33", "app#32", "app#31"],
@@ -285,7 +280,7 @@ ${thread("14", ", pr, review_round, verdict", "'working', 37, 1, 'changes'")}`;
 
 test("a thread's row has nothing for s or m to do", () => {
   const sql = `${repository}
-${thread("12")}`;
+${threadSql({ task: "12" })}`;
   expect(actions(after(sql).threads)).toEqual([null]);
 });
 
@@ -294,9 +289,9 @@ test("a PR from a thread is ○ before its first review, and ◐ once a review r
 ${itemSql("app", "pr", 31, "Waiting", "2026-11-01T10:00:00Z")}
 ${itemSql("app", "pr", 32, "Reviewing", "2026-11-02T10:00:00Z")}
 ${itemSql("app", "pr", 33, "Fixing", "2026-11-03T10:00:00Z")}
-${thread("12", ", pr", "'working', 31")}
-${thread("13", ", pr, reviewing", "'waiting', 32, 'abc'")}
-${thread("14", ", pr, review_round, verdict", "'working', 33, 1, 'changes'")}`;
+${threadSql({ task: "12", pr: 31 })}
+${threadSql({ task: "13", status: "waiting", pr: 32, reviewing: "abc" })}
+${threadSql({ task: "14", pr: 33, review_round: 1, verdict: "changes" })}`;
   expect(shape(after(sql).prs)).toEqual([
     [
       "In review",
@@ -313,12 +308,12 @@ test("threads come as needs you, working, then stopped, with all ACTIVE hasn't r
   const today = new Date(2026, 10, 13, 16, 0).getTime();
   const at = (day: number, hour: number) => new Date(2026, 10, day, hour, 32).getTime();
   const sql = `${repository}
-${thread("12", ", pr, harness, title, changed", `'working', 31, 'codex', 'Fix login', ${at(13, 14)}`)}
-${thread("t1", ", title, changed, needs_you, asking", `'waiting', 'Tidy up', ${at(12, 9)}, 0, 1`)}
-${thread("13", ", title, started", `'stopped', 'Old', ${at(2, 9)}`)}
-${thread("14", ", title", "'done', 'Gone'")}
-${thread("15", ", title", "'failed', 'Broke'")}
-${thread("16", ", title, erred", "'working', 'Stuck', 1")}`;
+${threadSql({ task: "12", pr: 31, harness: "codex", title: "Fix login", changed: at(13, 14) })}
+${threadSql({ task: "t1", status: "waiting", title: "Tidy up", changed: at(12, 9), needs_you: 0, asking: 1 })}
+${threadSql({ task: "13", status: "stopped", title: "Old", started: at(2, 9) })}
+${threadSql({ task: "14", status: "done", title: "Gone" })}
+${threadSql({ task: "15", status: "failed", title: "Broke" })}
+${threadSql({ task: "16", title: "Stuck", erred: 1 })}`;
   const { threads } = after(sql, today);
   expect(shape(threads)).toEqual([
     [
@@ -347,17 +342,16 @@ ${thread("16", ", title, erred", "'working', 'Stuck', 1")}`;
 });
 
 test("while a review runs, a thread's harness is its reviewer's", () => {
-  const sql = `${repository} ${thread("12", ", harness, reviewing, reviewer", "'waiting', 'claude', 'abc', 'codex'")}`;
+  const sql = `${repository} ${threadSql({ task: "12", status: "waiting", harness: "claude", reviewing: "abc", reviewer: "codex" })}`;
   expect(shape(after(sql).threads)[0]?.[1]).toEqual([
     ["○", "app-12", "", "reviewing", "codex", "#12", ""],
   ]);
 });
 
 test("a review waiting for a place is queued for review, on its reviewer, and its PR in a round", () => {
-  const columns = ", pr, harness, reviewing, reviewer, queued";
   const sql = `${repository}
 ${itemSql("app", "pr", 31, "Waiting", "2026-11-01T10:00:00Z")}
-${thread("12", columns, "'waiting', 31, 'claude', 'abc', 'codex', 5")}`;
+${threadSql({ task: "12", status: "waiting", pr: 31, harness: "claude", reviewing: "abc", reviewer: "codex", queued: 5 })}`;
   const { threads, prs } = after(sql);
   expect(shape(threads)[0]?.[1]).toEqual([
     ["○", "app-12", "", "queued for review", "codex", "#12 #31", ""],
@@ -377,9 +371,9 @@ test("the entries count what their lists have, and say what to act on only when 
 ${itemSql("app", "task", 12, "Fix login", "2026-11-04T10:00:00Z")}
 ${itemSql("app", "task", 31, "Add CSV export", "2026-11-05T10:00:00Z")}
 ${itemSql("app", "pr", 34, "Fix login", "2026-11-05T10:00:00Z")}
-${thread("12", ", pr, needs_you, verdict", "'waiting', 34, 1, 'approve'")}
-${thread("13", "", "'stopped'")}
-${thread("14", "", "'done'")}`;
+${threadSql({ task: "12", status: "waiting", pr: 34, needs_you: 1, verdict: "approve" })}
+${threadSql({ task: "13", status: "stopped" })}
+${threadSql({ task: "14", status: "done" })}`;
   expect(after(sql).entries).toEqual([
     { entry: "issues", name: "Issues", total: 2, note: "", colour: "90" },
     { entry: "threads", name: "Threads", total: 2, note: "1 needs you", colour: "38;5;221" },
@@ -396,7 +390,7 @@ test("each entry is there with nothing open, so the threads below never move", (
 });
 
 test("more than one thread need you, and failed ones count with them", () => {
-  const sql = `${repository} ${thread("12", ", needs_you", "'waiting', 1")} ${thread("13", "", "'failed'")}`;
+  const sql = `${repository} ${threadSql({ task: "12", status: "waiting", needs_you: 1 })} ${threadSql({ task: "13", status: "failed" })}`;
   expect(after(sql).entries[1]?.note).toBe("2 need you");
 });
 
@@ -409,8 +403,7 @@ test("only the open repository's issues, PRs and threads are listed", () => {
 INSERT INTO repositories (name, owner, repo) VALUES ('site', 'simon', 'site');
 ${itemSql("site", "task", 1, "Elsewhere", "2026-11-04T10:00:00Z")}
 ${itemSql("site", "pr", 2, "Elsewhere", "2026-11-04T10:00:00Z")}
-INSERT INTO threads (owner, repo, task, folder, branch, status)
-  VALUES ('simon', 'site', 1, 'site-1', 'skelcrew/1', 'working');`;
+${threadSql({ repo: "site", task: "1" })}`;
   const { issues, threads, prs } = after(sql);
   expect([issues, threads, prs]).toEqual([[], [], []]);
 });

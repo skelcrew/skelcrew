@@ -123,7 +123,9 @@ export function noticeIdleScreens(db: Database, sessions: string): void {
   // The working agents: each builder still at work on its thread, and each lead.
   const working: { key: Agent; name: string; marks: Marks }[] = [];
   const threads = db
-    .query("SELECT * FROM threads WHERE state = 'working' AND status IN ('working', 'waiting')")
+    .query(
+      "SELECT * FROM task_threads WHERE state = 'working' AND status IN ('working', 'waiting')",
+    )
     .all()
     .map((row) => Thread.parse(row));
   for (const thread of threads)

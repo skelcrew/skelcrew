@@ -107,7 +107,7 @@ export function saveItems(
     // stopped points to one by its task or PR.
     db.run(
       `DELETE FROM items WHERE owner = ? AND repo = ? AND state != 'open' AND NOT EXISTS (
-        SELECT 1 FROM threads t WHERE t.owner = items.owner AND t.repo = items.repo
+        SELECT 1 FROM task_threads t WHERE t.owner = items.owner AND t.repo = items.repo
           AND t.status IN ('working', 'waiting', 'stopped')
           AND items.id = CAST((CASE items.kind WHEN 'task' THEN t.task ELSE t.pr END) AS TEXT))`,
       [owner, repo],

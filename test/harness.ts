@@ -5,6 +5,7 @@ import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, sep } from "node:path";
 import type { Subprocess } from "bun";
+import { taskColumns } from "../src/db.ts";
 
 // Returns the path of a file in src/, or of src/ itself, for a test that runs sc or hands
 // its code to a process of its own.
@@ -252,6 +253,37 @@ export function itemSql(
   const json = JSON.stringify({ ...item, ...pr, ...more }).replaceAll("'", "''");
   return `INSERT OR REPLACE INTO items (owner, repo, kind, id, state, created, item)
     VALUES ('simon', '${repo}', '${kind}', '${id}', 'open', '${created}', '${json}');`;
+}
+
+// Returns SQL that saves a thread and its task, as sc start and the rounds after it would have,
+// for a test that reads them without a daemon. `row` names the thread's task, and anything else
+// either holds, each saved where it belongs. Its repository is simon/app, its folder app-12 for
+// task 12, and its status working, unless `row` says otherwise. A thread already saved is left as
+// it is, so a test can run it before each step.
+export function threadSql(row: Record<string, string | number | null>): string {
+  const { owner = "simon", repo = "app", task = "12" } = row;
+  const full: Record<string, string | number | null> = {
+    owner,
+    repo,
+    folder: `${repo}-${task}`,
+    branch: `skelcrew/${task}`,
+    status: "working",
+    ...row,
+    task,
+  };
+  // A text value is quoted for SQL, with its quotes doubled.
+  const literal = (value: string | number | null) =>
+    typeof value === "string" ? `'${value.replaceAll("'", "''")}'` : String(value);
+  const insert = (table: string, columns: string[]) =>
+    `INSERT OR IGNORE INTO ${table} (${columns.join(", ")})
+      VALUES (${columns.map((column) => literal(full[column] ?? null)).join(", ")});`;
+  const onTask = (column: string) => column in taskColumns;
+  const named = Object.keys(full);
+  return `${insert(
+    "threads",
+    named.filter((column) => !onTask(column)),
+  )}
+${insert("tasks", ["owner", "repo", "task", ...named.filter(onTask)])}`;
 }
 
 // Runs sc with these arguments at a terminal of its own, in a tmux session on a socket of its
