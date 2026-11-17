@@ -67,6 +67,32 @@ test("says how much work waits for a place", async () => {
   expect(queue.inLine()).toBe(0);
 });
 
+test("held work runs at once over the limit, and counts until it ends", async () => {
+  const queue = new Queue();
+  const started: string[] = [];
+  const signal = new AbortController().signal;
+  const first = held(started, "first");
+  const running = queue.run({ limit: 1, order: 1, signal }, first.work);
+  await settle();
+  const kept = held(started, "kept");
+  const holding = queue.hold(kept.work);
+  await settle();
+  expect(started).toEqual(["first", "kept"]);
+  // With both running, new work waits until both have ended.
+  const next = held(started, "next");
+  const waiting = queue.run({ limit: 1, order: 2, signal }, next.work);
+  first.end();
+  await running;
+  await settle();
+  expect(started).toEqual(["first", "kept"]);
+  kept.end();
+  await holding;
+  await settle();
+  expect(started).toEqual(["first", "kept", "next"]);
+  next.end();
+  await waiting;
+});
+
 test("waiting work starts by its order, not by when it joined", async () => {
   const queue = new Queue();
   const started: string[] = [];

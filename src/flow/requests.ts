@@ -105,8 +105,13 @@ export const DaemonRequest = z.discriminatedUnion("command", [
   z.object({ command: z.literal("tell lead"), text: z.string().min(1) }),
   z.object({ command: z.literal("submit"), summary: z.string().min(1) }),
   // `from` is the remote of the checkout you ran sc check in, which names the repository whose
-  // test command it runs. An agent's own socket names its repository instead.
-  z.object({ command: z.literal("check"), from: z.string().optional() }),
+  // test command it runs. An agent's own socket names its repository instead. `running` says the
+  // suite already runs, as it started before the daemon restarted, so it takes a slot at once.
+  z.object({
+    command: z.literal("check"),
+    from: z.string().optional(),
+    running: z.literal(true).optional(),
+  }),
   z.object({ command: z.literal("question asked") }),
   z.object({ command: z.literal("question answered") }),
   z.object({ command: z.literal("question closed") }),

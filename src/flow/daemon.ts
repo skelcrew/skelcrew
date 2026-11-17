@@ -483,12 +483,16 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   // Gives an sc check its place among the checks, with the test commands of the caller's
   // repository: the thread's for a builder or a reviewer, and for you the repository of the
   // checkout you ran it in.
-  const checkFor = (connection: Socket, caller: Caller, from: string | undefined) => {
+  const checkFor = (
+    connection: Socket,
+    caller: Caller,
+    { from, running }: { from?: string | undefined; running?: true | undefined },
+  ) => {
     try {
       const thread = caller !== "you" && "review" in caller ? caller.review : builderOf(caller);
       const repository = thread ?? (from === undefined ? undefined : repositoryAt(db, from));
       if (!repository) throw new Error("run sc check in a checkout of a repository Skelcrew has");
-      holdCheckSlot(connection, repositoryCommands(repository).test);
+      holdCheckSlot(connection, repositoryCommands(repository).test, running === true);
     } catch (error) {
       connection.end(`${JSON.stringify({ error: errorText(error) })}\n`);
     }
@@ -519,7 +523,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
               : "builder";
       if (!asked.success || !allowed[kind].includes(asked.data.command))
         reply({ error: "the daemon doesn't know that request" });
-      else if (asked.data.command === "check") checkFor(connection, caller, asked.data.from);
+      else if (asked.data.command === "check") checkFor(connection, caller, asked.data);
       else
         Promise.resolve()
           .then(() => handle(limitToOwnRepository(asked.data, caller), caller))

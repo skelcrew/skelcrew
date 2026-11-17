@@ -191,15 +191,19 @@ export async function submitForReview(summary: string): Promise<string> {
 }
 
 // Waits for one of the machine's check slots, for sc check, and returns the repository's test
-// commands with what gives the slot back. The daemon keeps the slot while this connection stays
-// open, so the caller frees it by calling `release`, or by ending in any way. `queued` is told
-// the caller's place in line when it has to wait. `from` is the remote of the checkout you ran it
-// in; an agent's own socket names its repository instead. Throws with the daemon's error, such as
-// when no test command is configured, or when nothing answers.
-export function takeCheckSlot(
-  queued: (place: number) => void,
-  from?: string,
-): Promise<{ test: string[]; release: () => void }> {
+// commands, the connection's file descriptor, when Bun gives it, and `lost`, which settles once
+// the connection closes. The daemon keeps the slot while the connection stays open: in this
+// process, and in any process the descriptor is handed to. `queued` is told the caller's place in
+// line when it has to wait. `from` is the remote of the checkout you ran it in; an agent's own
+// socket names its repository instead. `running` takes the slot back for a suite already running
+// when the daemon restarted. Throws with the daemon's error, such as when no test command is
+// configured, or when nothing answers.
+export function takeCheckSlot(given: {
+  queued: (place: number) => void;
+  from?: string | undefined;
+  running?: true;
+}): Promise<{ test: string[]; fd: number | undefined; lost: Promise<void> }> {
+  const { queued, from, running } = given;
   const Line = z.union([
     z.object({ queued: z.number() }),
     z.object({ test: z.array(z.string()) }),
@@ -207,19 +211,23 @@ export function takeCheckSlot(
   ]);
   return new Promise((done, fail) => {
     const connection = createConnection(cliSocket());
-    let given = "";
+    const lost = Promise.withResolvers<void>();
+    let said = "";
     let answered = false;
-    connection.on("connect", () =>
-      connection.write(`${JSON.stringify({ command: "check", ...(from ? { from } : {}) })}\n`),
-    );
+    const request = {
+      command: "check",
+      ...(from ? { from } : {}),
+      ...(running ? { running } : {}),
+    };
+    connection.on("connect", () => connection.write(`${JSON.stringify(request)}\n`));
     // Each line is one answer: a place in line, then the commands once a slot is free.
     connection.on("data", (data) => {
-      given += data.toString();
-      let end = given.indexOf("\n");
+      said += data.toString();
+      let end = said.indexOf("\n");
       while (end !== -1) {
-        const line = Line.safeParse(parseJson(given.slice(0, end)));
-        given = given.slice(end + 1);
-        end = given.indexOf("\n");
+        const line = Line.safeParse(parseJson(said.slice(0, end)));
+        said = said.slice(end + 1);
+        end = said.indexOf("\n");
         if (!line.success) {
           answered = true;
           connection.destroy();
@@ -230,13 +238,19 @@ export function takeCheckSlot(
           fail(new Error(line.data.error));
         } else {
           answered = true;
-          done({ test: line.data.test, release: () => connection.end() });
+          // Node's socket keeps its descriptor on a field it doesn't publish, so it is read
+          // and checked here, and a Bun without it gives none.
+          const handle: unknown = Reflect.get(connection, "_handle");
+          const read = z.object({ fd: z.number().int().nonnegative() }).safeParse(handle);
+          const fd = read.success ? read.data.fd : undefined;
+          done({ test: line.data.test, fd, lost: lost.promise });
         }
       }
     });
     connection.on("error", () => {});
     // A daemon that stops while the caller waits leaves it nothing to wait for.
     connection.on("close", () => {
+      lost.resolve();
       if (!answered) fail(new Error("the daemon didn't answer: run sc to start it"));
     });
   });

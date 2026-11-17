@@ -80,10 +80,18 @@ function check(folder: string) {
   return { said, ended, run };
 }
 
-// Starts the daemon and waits for its socket, which it makes once it listens.
-async function serve(): Promise<void> {
-  startDaemon(socket, env(), running);
+// Starts the daemon and waits for its socket, which it makes once it listens. New checks wait
+// `settle` milliseconds after it starts, for suites from before a restart to take their slots
+// back: none, unless a test is about that. Returns the daemon, for a test that restarts it.
+async function serve(settle = 0): Promise<Subprocess> {
+  rmSync(join(home, "run", "skelcrew.sock"), { force: true });
+  const daemon = startDaemon(
+    socket,
+    { ...env(), SKELCREW_CHECK_SLOT_SETTLE_MS: String(settle) },
+    running,
+  );
   await until(() => existsSync(join(home, "run", "skelcrew.sock")));
+  return daemon;
 }
 
 const log = () => read(join(home, "log"));
@@ -116,7 +124,7 @@ test("runs the test commands in its own folder, one check at a time, the rest to
   expect(log()).toBe("start a\nend a\nstart b\nend b\nstart c\nend c\n");
 }, 60_000);
 
-test("a check killed while it runs or waits gives back its place", async () => {
+test("a check killed while it waits gives back its place, and one killed while it runs keeps it until its suite ends", async () => {
   await serve();
   const [a, b, c] = ["a", "b", "c"].map((name) => checkout(name));
   if (!a || !b || !c) throw new Error("no checkouts");
@@ -126,16 +134,51 @@ test("a check killed while it runs or waits gives back its place", async () => {
   await until(() => waiting.said.out.includes("in line"));
   waiting.run.kill("SIGKILL");
   await waiting.run.exited;
-  // Killing sc check leaves its test shell running, holding the output open, but the slot is
-  // freed with the connection.
+  // Its test shell runs on, holding the output open, so only the process is waited for.
   first.run.kill("SIGKILL");
   await first.run.exited;
   const third = check(c);
+  await until(() => third.said.out.includes("number 1 in line"));
+  await Bun.sleep(300);
+  expect(log()).toBe("start a\n");
+  // The suite ending frees the slot, for the next in line, not for the one killed while waiting.
+  writeFileSync(join(a, "done"), "");
   await until(() => log().includes("start c"));
-  expect(third.said.out).not.toContain("in line");
-  for (const folder of [a, c]) writeFileSync(join(folder, "done"), "");
+  writeFileSync(join(c, "done"), "");
   expect((await third.ended).code).toBe(0);
-  expect(log()).not.toContain("start b");
+  expect(log()).toBe("start a\nend a\nstart c\nend c\n");
+}, 60_000);
+
+test("a suite running while the daemon restarts keeps its slot", async () => {
+  const before = await serve();
+  const [a, b] = ["a", "b"].map((name) => checkout(name));
+  if (!a || !b) throw new Error("no checkouts");
+  const first = check(a);
+  await until(() => log().includes("start a"));
+  before.kill();
+  await before.exited;
+  // The new daemon holds new checks back long enough for the running suite to come back first.
+  await serve(2000);
+  const second = check(b);
+  await until(() => second.said.out.includes("number 1 in line"));
+  await Bun.sleep(2500);
+  expect(log()).toBe("start a\n");
+  writeFileSync(join(a, "done"), "");
+  expect((await first.ended).code).toBe(0);
+  await until(() => log().includes("start b"));
+  writeFileSync(join(b, "done"), "");
+  expect((await second.ended).code).toBe(0);
+}, 60_000);
+
+test("runs the test commands in one shell, so a cd or an export holds for the next", async () => {
+  config(
+    'test: ["export WHO=me", "cd sub", "echo \\"$WHO $(basename \\"$PWD\\")\\" > \\"$HOME/where\\""]\n',
+  );
+  await serve();
+  const folder = checkout("a");
+  mkdirSync(join(folder, "sub"));
+  expect((await check(folder).ended).code).toBe(0);
+  expect(read(join(home, "where"))).toBe("me sub\n");
 }, 60_000);
 
 test("says when no test command is configured, and runs nothing when it is configured as none", async () => {

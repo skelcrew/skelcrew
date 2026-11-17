@@ -407,32 +407,45 @@ async function prCommand(args: string[], json: boolean): Promise<void> {
 
 // Runs the repository's whole test suite in this folder once one of the machine's check slots
 // is free, for sc check, and exits with the suite's own exit code. Builders, reviewers and you
-// all go through it, so at most limits.checks suites run at once. Each test command runs in a
-// shell, in order, and the first that fails ends the run, as `&&` would.
+// all go through it, so at most limits.checks suites run at once. The test commands run joined
+// with `&&` in one shell, so a `cd` or an `export` in one still holds for the next.
 async function checkCommand(args: string[]): Promise<void> {
   if (args.length !== 1) usage(args[0]);
   const { takeCheckSlot } = await import("./client.ts");
   const { originHere } = await import("./machine/origin.ts");
   // An agent's socket names its repository, and only your checkout's remote names yours.
   const from = process.env.SKELCREW_SOCKET ? undefined : (originHere() ?? undefined);
-  const { test, release } = await takeCheckSlot(
-    (place) =>
+  const slot = await takeCheckSlot({
+    queued: (place) =>
       console.log(
         `Waiting for a check slot: number ${place} in line. The tests start once one is free.`,
       ),
     from,
-  );
-  if (test.length === 0) {
+  });
+  if (slot.test.length === 0) {
     console.log("This repository is configured with no tests, so there is nothing to run.");
     return;
   }
-  let code = 0;
-  for (const command of test) {
-    const run = Bun.spawn(["sh", "-c", command], { stdio: ["inherit", "inherit", "inherit"] });
-    code = await run.exited;
-    if (code !== 0) break;
-  }
-  release();
+  // The shell gets the connection too, as its descriptor 3, so the slot stays taken while the
+  // suite runs even if sc check itself is killed. The daemon frees it once no process holds it.
+  const holds = slot.fd === undefined ? [] : [slot.fd];
+  const run = Bun.spawn(["sh", "-c", slot.test.join(" && ")], {
+    stdio: ["inherit", "inherit", "inherit", ...holds],
+  });
+  // A daemon that restarts while the suite runs forgets its slot, so it is taken back, at once
+  // and over the limit if need be, as soon as the daemon answers again.
+  let ended = false;
+  const keepSlot = async (lost: Promise<void>): Promise<void> => {
+    await lost;
+    while (!ended) {
+      const back = await takeCheckSlot({ queued: () => {}, from, running: true }).catch(() => null);
+      if (back) return keepSlot(back.lost);
+      await Bun.sleep(250);
+    }
+  };
+  keepSlot(slot.lost);
+  const code = await run.exited;
+  ended = true;
   process.exit(code);
 }
 
