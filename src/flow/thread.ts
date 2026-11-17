@@ -139,6 +139,9 @@ export const Thread = z.object({
   // What the builder is doing, as its harness's hooks and its screen tell. Null until its first
   // hook runs, and in a row from before Skelcrew kept it.
   state: AgentState.nullable(),
+  // Whether the work ended with its changes merged: its PR merged, or without a forge, its
+  // branch reached its base. False while it goes on, and once it ended any other way.
+  merged: z.coerce.boolean(),
 });
 export type Thread = z.infer<typeof Thread>;
 

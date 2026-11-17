@@ -294,10 +294,10 @@ describe("sc issue ls", () => {
     const listed = await skel(["issue", "ls"]);
     expect(listed.err).toBe("");
     expect(listed.out).toBe(
-      "ISSUE   THREAD              TITLE\n" +
-        "app-12  working             Add export\n" +
-        "site-7  waiting, needs you  New landing page\n" +
-        "app-10                      Fix login\n",
+      "ISSUE   STAGE    THREAD              TITLE\n" +
+        "app-12  working  working             Add export\n" +
+        "site-7  working  waiting, needs you  New landing page\n" +
+        "app-10  issue                        Fix login\n",
     );
     // They come from Skelcrew's copy, with no call to GitHub.
     expect(read(join(home, "calls"))).not.toContain("issue");
@@ -309,8 +309,13 @@ describe("sc issue ls", () => {
     const listed = await skel(["issue", "ls", "app", "--json"]);
     expect(listed.err).toBe("");
     expect(JSON.parse(listed.out)).toEqual([
-      { issue: "app-12", title: "Add export", thread: { status: "working", needsYou: false } },
-      { issue: "app-10", title: "Fix login", thread: null },
+      {
+        issue: "app-12",
+        stage: "working",
+        title: "Add export",
+        thread: { status: "working", needsYou: false },
+      },
+      { issue: "app-10", stage: "issue", title: "Fix login", thread: null },
     ]);
   });
 
@@ -357,10 +362,10 @@ describe("sc issue show", () => {
     const shown = await skel(["issue", "show", "site-7"]);
     expect(shown.err).toBe("");
     expect(shown.out).toBe(
-      "site-7  New landing page\nThread: waiting, needs you\n\nMake it calm.\n",
+      "site-7  New landing page\nStage: working\nThread: waiting, needs you\n\nMake it calm.\n",
     );
     expect(read(join(home, "calls"))).not.toContain("issues");
-    expect((await skel(["issue", "show", "app-10"])).out).toBe("app-10  Fix login\n");
+    expect((await skel(["issue", "show", "app-10"])).out).toBe("app-10  Fix login\nStage: issue\n");
   });
 
   test("shows a task as JSON for tools", async () => {
@@ -370,12 +375,14 @@ describe("sc issue show", () => {
     expect(shown.err).toBe("");
     expect(JSON.parse(shown.out)).toEqual({
       issue: "app-12",
+      stage: "working",
       title: "Add export",
       body: "Export threads as JSON.\n\nKeep it small.",
       thread: { status: "working", needsYou: false },
     });
     expect(JSON.parse((await skel(["issue", "show", "--json", "app-10"])).out)).toEqual({
       issue: "app-10",
+      stage: "issue",
       title: "Fix login",
       body: "",
       thread: null,
@@ -412,7 +419,7 @@ describe("sc issue show", () => {
     const shown = await skel(["issue", "show", "app-12"]);
     expect(shown.err).toBe("");
     expect(shown.out).toMatch(
-      /^app-12 {2}Add export\nThread: working\n\nExport threads as JSON\.\n\nKeep it small\.\n\n## Changes to the task from the lead, after the thread started\n\nThese override the task above where they differ\. The latest comes last\.\n\n### \d{4}-\d\d-\d\d \d\d:\d\d UTC\n\nKeep the CSV export too\.\n\n### \d{4}-\d\d-\d\d \d\d:\d\d UTC\n\nName the file export\.json\.\n$/,
+      /^app-12 {2}Add export\nStage: working\nThread: working\n\nExport threads as JSON\.\n\nKeep it small\.\n\n## Changes to the task from the lead, after the thread started\n\nThese override the task above where they differ\. The latest comes last\.\n\n### \d{4}-\d\d-\d\d \d\d:\d\d UTC\n\nKeep the CSV export too\.\n\n### \d{4}-\d\d-\d\d \d\d:\d\d UTC\n\nName the file export\.json\.\n$/,
     );
     expect(shown.out).not.toContain("Done with the CSV part.");
     // The thread's log keeps each one, with who sent it and when.
@@ -452,11 +459,27 @@ UPDATE tasks SET updates = '${updates}' WHERE task IN ('12', '3')`);
     const shown = await skel(["issue", "show", "app-12"]);
     expect(shown.err).toBe("");
     expect(shown.out).toBe(
-      "app-12  Add export\nThread: done\n\nExport threads as JSON.\n\nKeep it small.\n",
+      "app-12  Add export\nStage: issue\nThread: done\n\nExport threads as JSON.\n\nKeep it small.\n",
     );
     const closed = await skel(["issue", "show", "app-3"]);
     expect(closed.code).not.toBe(0);
     expect(closed.err).toBe("Skelcrew: there is no open issue 3 in simon/app\n");
+  });
+
+  // With no issue behind it, a task whose work ended is merged or closed, never back in stage
+  // issue.
+  test("shows a done task with no issue as merged or closed", async () => {
+    sql(`${threadSql({ task: "t1", status: "done", title: "Add docs" })}
+${threadSql({ task: "t2", status: "done", title: "Add tests" })}
+UPDATE tasks SET merged = 1 WHERE task = 't2'`);
+    serve();
+    await untilAnswers();
+    expect((await skel(["issue", "show", "app-t1"])).out).toBe(
+      "app-t1  Add docs\nStage: closed\nThread: done\n",
+    );
+    expect((await skel(["issue", "show", "app-t2"])).out).toBe(
+      "app-t2  Add tests\nStage: merged\nThread: done\n",
+    );
   });
 
   test("the lead can show a task from its sandbox, and a builder can't", async () => {
@@ -979,7 +1002,12 @@ exec sleep 300
     const [ps, tasks, shown, app, attach] = read(out).trim().split("\n");
     expect(JSON.parse(ps ?? "")).toHaveLength(2);
     expect(JSON.parse(tasks ?? "")).toEqual([
-      { issue: "app-12", title: "Add export", thread: { status: "working", needsYou: false } },
+      {
+        issue: "app-12",
+        stage: "working",
+        title: "Add export",
+        thread: { status: "working", needsYou: false },
+      },
     ]);
     expect(JSON.parse(shown ?? "")).toMatchObject({ issue: "app-12", body: "As JSON" });
     expect(JSON.parse(app ?? "")).toEqual([

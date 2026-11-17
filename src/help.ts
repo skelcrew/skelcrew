@@ -23,7 +23,7 @@ const sections: [string, [string, string][]][] = [
   [
     "ISSUES",
     [
-      ["issue ls [<repo>]", "Open issues, with the thread on each"],
+      ["issue ls [<repo>]", "Open issues, with the stage and thread of each"],
       ["issue show <issue>", "An issue's title and body"],
       ['issue create <repo> "<title>" "<body>"', "Create an issue in the repository's tracker"],
     ],

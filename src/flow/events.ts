@@ -106,12 +106,14 @@ export async function stopThread(db: Database, sessions: string, thread: Thread)
 }
 
 // Ends the thread once its PR is merged or closed, or for sc rm: ends its builder, and removes
-// its clone by deleting the folder, never running git in it.
+// its clone by deleting the folder, never running git in it. `merged` says whether its changes
+// were merged, which the task keeps, as its stage shows.
 export async function endThread(
   db: Database,
   sessions: string,
   thread: Thread,
   why: string,
+  merged: boolean,
 ): Promise<void> {
   await endBuilder(db, sessions, thread.folder, true);
   rmSync(cloneOf(thread), { recursive: true, force: true });
@@ -128,7 +130,12 @@ export async function endThread(
       "-d",
       `refs/skelcrew/${kind}/${thread.folder}`,
     ]);
-  record(db, thread.folder, { status: "done", needs_you: false }, `${why}: ended the thread`);
+  record(
+    db,
+    thread.folder,
+    { status: "done", needs_you: false, merged },
+    `${why}: ended the thread`,
+  );
 }
 
 // Removes the thread for sc rm: ends its builder, closes its PR with the reason as a comment,
@@ -203,7 +210,7 @@ export async function removeThread(
       });
     else if ((await threadPushedBranch()) && (await onRemote(db, repository, branch)))
       await deleteBranch(db, repository, skelcrewClone, branch);
-    await endThread(db, sessions, thread, reason ? `removed: ${reason}` : "removed");
+    await endThread(db, sessions, thread, reason ? `removed: ${reason}` : "removed", false);
   } finally {
     removing.delete(thread.folder);
   }

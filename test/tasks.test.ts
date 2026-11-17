@@ -95,9 +95,29 @@ const shown = {
 };
 console.log(JSON.stringify(shown));`;
 
-// What the release before tasks showed, with this test's home in its paths.
-const shownBefore = () =>
-  JSON.parse(readFileSync(join(saved, "before-tasks.json"), "utf8").replaceAll("$HOME", home));
+// Each task's stage, which the release before tasks didn't show. app-13 is approved with its
+// checks green, and the stopped and failed threads keep their tasks working.
+const stages: Record<string, string> = {
+  "app-12": "working",
+  "app-13": "ready for review",
+  "app-14": "working",
+  "app-15": "working",
+  "app-17": "issue",
+  "app-t1": "working",
+  "notes-t1": "working",
+  "notes-t2": "working",
+};
+
+// What the release before tasks showed, with this test's home in its paths, and each task
+// sc issue ls and sc issue show list with its stage.
+function shownBefore(): unknown {
+  const shown = JSON.parse(
+    readFileSync(join(saved, "before-tasks.json"), "utf8").replaceAll("$HOME", home),
+  );
+  const staged = (task: string | { issue: string }) =>
+    typeof task === "string" ? task : { ...task, stage: stages[task.issue] };
+  return { ...shown, issues: shown.issues.map(staged), show: shown.show.map(staged) };
+}
 
 // Returns the names of the database's tables.
 function tables(file: string): string[] {
@@ -146,6 +166,23 @@ console.log(JSON.stringify({ rounds, short, status }));`;
     short: "Dark mode",
   });
   db.close();
+});
+
+// A database the first release with tasks moved has a tasks table without the columns added
+// since, such as whether the work merged.
+test("a tasks table from an earlier release gains the task's newer columns", () => {
+  oldDatabase();
+  run(`import { openDb, moveToTasks } from ${JSON.stringify(source("db.ts"))};
+moveToTasks(openDb());`);
+  const earlier = new Database(dbFile());
+  earlier.run("DROP VIEW task_threads");
+  earlier.run("ALTER TABLE tasks DROP COLUMN merged");
+  earlier.close();
+  const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
+import { readThread } from ${JSON.stringify(source("flow/thread.ts"))};
+const { rounds, merged } = readThread(openDb(), "app-15");
+console.log(JSON.stringify({ rounds, merged }));`;
+  expect(JSON.parse(run(code))).toEqual({ rounds: 3, merged: false });
 });
 
 test("a reader opened before the move reads the tasks after it", () => {

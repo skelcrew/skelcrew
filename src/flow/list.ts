@@ -9,13 +9,13 @@ import { cloneDir } from "../paths.ts";
 import { failedLog, forgeOf, trackerOf } from "../plugins/ask.ts";
 import { errorText } from "../say.ts";
 import { filled, fitted, removeControlCodes } from "../screen/look.ts";
-import { type Item, openTasks, prOf, taskOf, threadTask } from "./copy.ts";
+import { type Item, openTasks, prOf, type Task, taskOf, threadTask } from "./copy.ts";
 import { reviewCheck } from "./decide.ts";
 import { messagesWaiting } from "./messages.ts";
 import { ciSummary, reviewVerdict } from "./page.ts";
 import { findRepository, noRepositories, repositories, repositoryAt } from "./repo.ts";
 import { roundRunning } from "./round.ts";
-import { needsYou } from "./status.ts";
+import { needsYou, readyToMerge } from "./status.ts";
 import { findThread, queuedForReview, Thread, threadName, threadOn } from "./thread.ts";
 
 // A repository as sc repo ls shows it. `missing` is a tracker its skelcrew.yaml names that
@@ -167,28 +167,41 @@ export function listThreads(db: Database, repository?: string): ThreadRow[] {
   });
 }
 
-// An open task as sc issue ls shows it, with how its thread stands, or null with no thread.
-// `issue` is its name, such as app-12. The key says issue, as the commands do, and is always
-// one in the tracker: a thread with no issue, such as app-t1, is never listed here.
+// Where a task is, from its first words to the merge.
+const Stage = z.enum(["issue", "working", "ready for review", "merged", "closed"]);
+
+// An open task as sc issue ls shows it, with its stage and how its thread stands, or null with
+// no thread. `issue` is its name, such as app-12. The key says issue, as the commands do, and is
+// always one in the tracker: a thread with no issue, such as app-t1, is never listed here.
 export const TaskRow = z.object({
   issue: z.string(),
+  stage: Stage,
   title: z.string(),
   thread: z.object({ status: Thread.shape.status, needsYou: z.boolean() }).nullable(),
 });
 export type TaskRow = z.infer<typeof TaskRow>;
 
-// Returns how the thread on a task stands, or null when it has none.
-function threadStatusOf(
+// Returns a task's stage and how the thread on it stands, or null for the thread when it has
+// none. `issueOpen` is whether the tracker still has its issue open. Work that ended without a
+// merge puts the task back in stage issue while its issue is open, as sc start starts it again
+// from there. A thread that stopped or failed keeps its task working, so it doesn't vanish.
+function taskStatusOf(
   db: Database,
   owner: string,
   repo: string,
   task: string,
-): TaskRow["thread"] {
+  issueOpen: boolean,
+): Pick<TaskRow, "stage" | "thread"> {
   const row = db
     .query("SELECT * FROM task_threads WHERE owner = ? AND repo = ? AND task = ?")
     .get(owner, repo, task);
   const thread = Thread.nullable().parse(row);
-  return thread && { status: thread.status, needsYou: needsYou(thread) };
+  const ended = issueOpen ? "issue" : "closed";
+  if (!thread) return { stage: ended, thread: null };
+  let stage: TaskRow["stage"];
+  if (thread.status === "done") stage = thread.merged ? "merged" : ended;
+  else stage = readyToMerge(thread) ? "ready for review" : "working";
+  return { stage, thread: { status: thread.status, needsYou: needsYou(thread) } };
 }
 
 // Returns the open tasks of every repository, or of one, newest first, with the thread on
@@ -200,12 +213,16 @@ export function listTasks(db: Database, repository?: string): TaskRow[] {
   // so each row keeps its creation time until the sort is done.
   return chosen
     .flatMap((r) =>
-      openTasks(db, r.owner, r.repo).map((task) => ({
-        created: task.created,
-        issue: `${r.name}-${task.id}`,
-        title: task.title,
-        thread: threadStatusOf(db, r.owner, r.repo, task.id),
-      })),
+      openTasks(db, r.owner, r.repo).map((task) => {
+        const { stage, thread } = taskStatusOf(db, r.owner, r.repo, task.id, true);
+        return {
+          created: task.created,
+          issue: `${r.name}-${task.id}`,
+          stage,
+          title: task.title,
+          thread,
+        };
+      }),
     )
     .sort((a, b) => b.created.localeCompare(a.created))
     .map(({ created, ...task }) => task);
@@ -214,29 +231,53 @@ export function listTasks(db: Database, repository?: string): TaskRow[] {
 // One task as sc issue show shows it, named under `issue` as in sc issue ls.
 export const TaskView = z.object({
   issue: z.string(),
+  stage: Stage,
   title: z.string(),
   body: z.string(),
   thread: TaskRow.shape.thread,
 });
 export type TaskView = z.infer<typeof TaskView>;
 
-// Returns one task's title and body, which is all its builder sees, with the thread on it if
-// it has one, for sc issue show. It comes from Skelcrew's copy, so the tracker isn't asked. A
-// task with a thread still at work, or stopped, is shown as its reviewer gets it, with the
-// lead's messages to the builder after the body, so the lead sees the task the builder is
-// judged by. That also shows a thread with no task in the tracker, such as app-t1. A done or
-// failed thread's messages aren't shown: starting it over gives a fresh thread without them,
-// and a merged thread's issue is closed, which the copy alone can say.
+// Returns one task's stage, title and body, which is all its builder sees, with the thread on
+// it if it has one, for sc issue show. It comes from Skelcrew's copy, so the tracker isn't
+// asked. A task with a thread still at work, or stopped, is shown as its reviewer gets it, with
+// the lead's messages to the builder after the body, so the lead sees the task the builder is
+// judged by. That also shows a task with no issue, such as app-t1, from the words it started
+// with, once it is done too. A done or failed thread's messages aren't shown: starting it over
+// gives a fresh thread without them. An issue that closed, such as by its PR's merge, has left
+// the copy, so it isn't found.
 export function showTask(db: Database, repository: string, task: string): TaskView {
   const r = findRepository(db, repository);
   const thread = threadOn(db, repository, task);
   const current = thread && thread.status !== "done" && thread.status !== "failed";
-  const { title, body } = current ? threadTask(db, thread) : taskOf(db, r.owner, r.repo, task);
+  // taskOf throws when the copy has no such issue, which only a task with a thread can lack.
+  let issue: Task | null = null;
+  try {
+    issue = taskOf(db, r.owner, r.repo, task);
+  } catch (error) {
+    if (!thread) throw error;
+  }
+  // The words to show: as the reviewer gets them while work goes on, else the issue's, else
+  // those a task with no issue started with.
+  let words: { title: string; body: string };
+  if (current) words = threadTask(db, thread);
+  else if (issue) words = issue;
+  else if (thread && /^t\d+$/.test(task))
+    words = { title: thread.title ?? "", body: thread.body ?? "" };
+  else throw new Error(`there is no open issue ${task} in ${r.owner}/${r.repo}`);
+  const { stage, thread: status } = taskStatusOf(
+    db,
+    r.owner,
+    r.repo,
+    task,
+    issue?.state === "open",
+  );
   return {
     issue: `${r.name}-${task}`,
-    title,
-    body,
-    thread: threadStatusOf(db, r.owner, r.repo, task),
+    stage,
+    title: words.title,
+    body: words.body,
+    thread: status,
   };
 }
 
@@ -346,29 +387,30 @@ export function printThreads(threads: ThreadRow[], json: boolean): void {
   );
 }
 
-// Prints open tasks for sc issue ls: as JSON for tools, or else as a table whose thread
-// column is empty for a task with no thread.
+// Prints open tasks for sc issue ls: as JSON for tools, or else as a table with each one's
+// stage, whose thread column is empty for a task with no thread.
 export function printTasks(tasks: TaskRow[], json: boolean): void {
   if (json) console.log(JSON.stringify(tasks));
   else if (tasks.length === 0) console.log("There are no open issues.");
   else
     table(
-      ["ISSUE", "THREAD", "TITLE"],
-      tasks.map(({ issue, title, thread }) => {
+      ["ISSUE", "STAGE", "THREAD", "TITLE"],
+      tasks.map(({ issue, stage, title, thread }) => {
         const status = thread ? `${thread.status}${thread.needsYou ? ", needs you" : ""}` : "";
-        return [issue, status, title];
+        return [issue, stage, status, title];
       }),
     );
 }
 
-// Prints one task for sc issue show: as JSON for tools, or else its name and title, the
-// thread on it if it has one, and its body after a blank line.
+// Prints one task for sc issue show: as JSON for tools, or else its name and title, its stage,
+// the thread on it if it has one, and its body after a blank line.
 export function printTask(task: TaskView, json: boolean): void {
   if (json) {
     console.log(JSON.stringify(task));
     return;
   }
   console.log(`${task.issue}  ${task.title}`);
+  console.log(`Stage: ${task.stage}`);
   if (task.thread)
     console.log(`Thread: ${task.thread.status}${task.thread.needsYou ? ", needs you" : ""}`);
   if (task.body) console.log(`\n${task.body.trimEnd()}`);

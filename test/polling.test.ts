@@ -851,6 +851,13 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
       false,
     );
     expect(fakeBuilders()).toEqual([]);
+    // Its issue is still open, so the task goes back to stage issue.
+    const listed = Bun.spawnSync([process.execPath, main, "issue", "ls", "app", "--json"], {
+      env: env(),
+    });
+    expect(JSON.parse(listed.stdout.toString())).toMatchObject([
+      { issue: "app-12", stage: "issue" },
+    ]);
     const again = Bun.spawnSync([process.execPath, main, "rm", "app-12"], {
       env: env(),
       stderr: "pipe",
@@ -1032,6 +1039,62 @@ echo "Not logged in"; exit 1`,
     expect(claims()).toEqual([claim12]);
     expect(assigns()).toEqual([assignOn]);
   }, 30_000);
+
+  // The tracker is where tasks come from and where Skelcrew shows how they go: an open issue is a
+  // task in stage issue, its label starts it, and the issue is claimed, assigned and closed by
+  // the PR's merge, through the tracker's own signals.
+  test("an open issue is a task in stage issue, its label starts it, and its merge closes the issue", async () => {
+    addApp();
+    answer(plugin, "took", { took: true });
+    changes([issue12()]);
+    serve();
+    // Runs sc issue ls for app as a tool would, and returns its rows, or none while the daemon
+    // isn't listening yet.
+    const listed = () => {
+      const done = Bun.spawnSync([process.execPath, main, "issue", "ls", "app", "--json"], {
+        env: env(),
+        stderr: "pipe",
+      });
+      return done.success ? JSON.parse(done.stdout.toString()) : [];
+    };
+    await until(() => listed().length === 1);
+    expect(listed()).toEqual([
+      { issue: "app-12", stage: "issue", title: "Add export", thread: null },
+    ]);
+    // Nothing starts until the label is added.
+    await morePolls();
+    expect(claims()).toEqual([]);
+    changes([issue12(true)]);
+    await until(() => thread().task === 12);
+    expect(listed()).toMatchObject([{ issue: "app-12", stage: "working" }]);
+    await until(() => thread().assigned === 1);
+    expect(claims()).toEqual([claim12]);
+    expect(assigns()).toEqual([assignOn]);
+    // The PR the builder opens holds the line that closes the issue on merge.
+    await until(
+      () => thread().pr === 7 && thread().reviewing === null && thread().submitting === null,
+      30_000,
+    );
+    const opened = asked(plugin).find((q) => q.ask === "open pr");
+    expect(String(opened?.body)).toEndWith("\n\nCloses #12");
+    // Approved with every check green, it waits for you to merge.
+    pr({ labeled: true, reviews: [skelReview], checks: [approved, check(900, "passed")] });
+    await until(() => thread().needs_you === 1);
+    expect(listed()).toMatchObject([{ issue: "app-12", stage: "ready for review" }]);
+    // Merged, the task is too, and you stay assigned. The tracker closes the issue, which then
+    // leaves the list.
+    pr({
+      labeled: true,
+      state: "merged",
+      reviews: [skelReview],
+      checks: [approved, check(900, "passed")],
+    });
+    await until(() => thread().status === "done");
+    expect(listed()).toMatchObject([{ issue: "app-12", stage: "merged" }]);
+    changes([taskItem("12", "Add export", { state: "closed", labels: ["skelcrew"] })]);
+    await until(() => listed().length === 0);
+    expect(assigns()).toEqual([assignOn]);
+  }, 60_000);
 
   // The claim only keeps two daemons from both starting by the label. You decide by hand, and
   // sc start claims it too, so the issue shows Skelcrew took it.
