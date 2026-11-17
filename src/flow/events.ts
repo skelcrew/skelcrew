@@ -2,8 +2,8 @@
 // merge, sc stop or sc rm, which must cancel any typing still under way.
 import type { Database } from "bun:sqlite";
 import { rmSync } from "node:fs";
-import { agentRuns, stopSession } from "../agents/tmux.ts";
-import { typeInto } from "../agents/typing.ts";
+import { agentRuns, stopSession } from "../agents/sessions.ts";
+import { deliver } from "../agents/transport.ts";
 import { cloneDir } from "../paths.ts";
 import { closePr, failedLog, markSeen } from "../plugins/ask.ts";
 import { quietly } from "../run.ts";
@@ -62,16 +62,20 @@ async function refreshBase(db: Database, thread: Thread, base: string): Promise<
 // or sc rm cancels the typing.
 export const typingEvents = new Map<string, AbortController>();
 
+// The threads sc rm is removing, by folder. Without a forge, sc rm deletes the branch before it
+// ends the thread, and a poll in between would end it as one whose branch someone deleted.
+export const removing = new Set<string>();
+
 // Cancels the round, the typing under way and any wake after a usage limit for the thread, ends
 // its builder's session, and waits for the builder to exit, so nothing types into it or changes
 // the thread afterwards.
-async function endBuilder(tmux: string, folder: string): Promise<void> {
+async function endBuilder(sessions: string, folder: string): Promise<void> {
   typingEvents.get(folder)?.abort();
   endWake(folder);
   endRound(folder);
   // Claude Code can outlive the end of its session for a few seconds, still writing in the
   // clone.
-  await stopSession(tmux, folder);
+  await stopSession(sessions, folder);
 }
 
 // Stops the thread for sc stop: marks it stopped, then ends its builder as a merge would,
@@ -81,7 +85,7 @@ async function endBuilder(tmux: string, folder: string): Promise<void> {
 // It takes you off its issue, if Skelcrew assigned you. Marked first, so a builder that
 // submits while it exits is refused. Refuses a thread that has no builder to stop, or whose
 // builder hasn't started yet.
-export async function stopThread(db: Database, tmux: string, thread: Thread): Promise<void> {
+export async function stopThread(db: Database, sessions: string, thread: Thread): Promise<void> {
   const name = threadName(db, thread);
   if (thread.status === "stopped") throw new Error(`${name} is stopped already`);
   if (thread.status !== "working" && thread.status !== "waiting")
@@ -106,18 +110,18 @@ export async function stopThread(db: Database, tmux: string, thread: Thread): Pr
   // Asked as it is marked stopped, before anything is waited on: an sc start that finds it
   // stopped meanwhile asks to assign you, and that must come after.
   unassignIssue(db, thread.folder);
-  await endBuilder(tmux, thread.folder);
+  await endBuilder(sessions, thread.folder);
 }
 
 // Ends the thread once its PR is merged or closed, or for sc rm: ends its builder, and removes
 // its clone by deleting the folder, never running git in it.
 export async function endThread(
   db: Database,
-  tmux: string,
+  sessions: string,
   thread: Thread,
   why: string,
 ): Promise<void> {
-  await endBuilder(tmux, thread.folder);
+  await endBuilder(sessions, thread.folder);
   rmSync(cloneOf(thread), { recursive: true, force: true });
   // Skelcrew's clone keeps refs of the branch it pushed, named by the thread's folder. A thread
   // started over in that folder would be taken for one that pushed already, and without a forge
@@ -145,7 +149,7 @@ export async function endThread(
 // up, whose setup would go on to start its builder.
 export async function removeThread(
   db: Database,
-  tmux: string,
+  sessions: string,
   thread: Thread,
   reason: string | undefined,
 ): Promise<void> {
@@ -173,38 +177,44 @@ export async function removeThread(
   // Asked before anything is waited on, so an sc start meanwhile assigns you after it, as for
   // sc stop. A forge that fails leaves the thread stopped, which takes you off too.
   unassignIssue(db, thread.folder);
-  // A push under way would put back the branch, or open a PR after none was closed, so it is
-  // waited for, and the thread read again for the PR it may have opened.
-  const pushing = endRound(thread.folder);
-  await endBuilder(tmux, thread.folder);
-  await pushing;
-  // Close the PR, which deletes its branch on the forge too. With no PR, as a repository with
-  // no forge has, delete the branch only if this thread pushed it: Skelcrew keeps a ref of each
-  // push in its clone, and a branch of the same name may be someone else's.
-  const { pr, branch } = readThread(db, thread.folder);
-  const repository = repositoryOf(db, thread);
-  const skelcrewClone = cloneDir(thread.owner, thread.repo);
-  const threadPushedBranch = async () =>
-    (
-      await quietly([
-        "git",
-        "-C",
-        skelcrewClone,
-        "rev-parse",
-        "--verify",
-        "--quiet",
-        `refs/skelcrew/threads/${thread.folder}`,
-      ])
-    ).ok;
-  if (pr !== null)
-    await closePr(db, repository, {
-      pr,
-      branch,
-      comment: reason ? `Closed by Skelcrew: ${reason}` : null,
-    });
-  else if ((await threadPushedBranch()) && (await onRemote(db, repository, branch)))
-    await deleteBranch(db, repository, skelcrewClone, branch);
-  await endThread(db, tmux, thread, reason ? `removed: ${reason}` : "removed");
+  // Until it ends, a poll leaves the thread to sc rm, which deletes its branch first.
+  removing.add(thread.folder);
+  try {
+    // A push under way would put back the branch, or open a PR after none was closed, so it is
+    // waited for, and the thread read again for the PR it may have opened.
+    const pushing = endRound(thread.folder);
+    await endBuilder(sessions, thread.folder);
+    await pushing;
+    // Close the PR, which deletes its branch on the forge too. With no PR, as a repository with
+    // no forge has, delete the branch only if this thread pushed it: Skelcrew keeps a ref of each
+    // push in its clone, and a branch of the same name may be someone else's.
+    const { pr, branch } = readThread(db, thread.folder);
+    const repository = repositoryOf(db, thread);
+    const skelcrewClone = cloneDir(thread.owner, thread.repo);
+    const threadPushedBranch = async () =>
+      (
+        await quietly([
+          "git",
+          "-C",
+          skelcrewClone,
+          "rev-parse",
+          "--verify",
+          "--quiet",
+          `refs/skelcrew/threads/${thread.folder}`,
+        ])
+      ).ok;
+    if (pr !== null)
+      await closePr(db, repository, {
+        pr,
+        branch,
+        comment: reason ? `Closed by Skelcrew: ${reason}` : null,
+      });
+    else if ((await threadPushedBranch()) && (await onRemote(db, repository, branch)))
+      await deleteBranch(db, repository, skelcrewClone, branch);
+    await endThread(db, sessions, thread, reason ? `removed: ${reason}` : "removed");
+  } finally {
+    removing.delete(thread.folder);
+  }
 }
 
 // Types what the decision tells into the builder once it is idle, then saves the decision.
@@ -214,7 +224,7 @@ export async function removeThread(
 // events count as handled, and the thread needs you, with what it missed in its log.
 export async function tellBuilder(
   db: Database,
-  tmux: string,
+  sessions: string,
   thread: Thread,
   decision: Exclude<Decision, { end: string }>,
 ): Promise<void> {
@@ -228,10 +238,10 @@ export async function tellBuilder(
     if (decision.conflict !== null) await refreshBase(db, thread, decision.conflict);
     const checks = await failedCheckMessages(db, thread, decision.failed);
     const text = [...checks, ...decision.tell].join("\n\n---\n\n");
-    if (!agentRuns(tmux, thread.folder)) throw new Error("its builder isn't running");
+    if (!agentRuns(sessions, thread.folder)) throw new Error("its builder isn't running");
     // A builder can work long after an event, but one busy this long has likely hung.
     const { marks } = builderHarness(thread);
-    await typeInto(tmux, thread.folder, marks, text, {
+    await deliver(sessions, thread.folder, marks, text, {
       timeout: 30 * 60_000,
       signal: cancel.signal,
     });
@@ -267,7 +277,7 @@ export async function tellBuilder(
     if (cancel.signal.aborted) return;
     const said = errorText(error);
     record(db, thread.folder, { seen, needs_you: true }, `couldn't tell: ${said}. ${why}`);
-    typeLeadNotes(db, tmux);
+    typeLeadNotes(db, sessions);
   } finally {
     typingEvents.delete(thread.folder);
   }

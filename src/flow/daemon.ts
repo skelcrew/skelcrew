@@ -4,7 +4,13 @@ import { dlopen, FFIType } from "bun:ffi";
 import { existsSync, mkdirSync, openSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server, type Socket } from "node:net";
 import { dirname } from "node:path";
-import { processTree, stillRunning } from "../agents/tmux.ts";
+import {
+  agentRuns,
+  interruptSession,
+  processTree,
+  readSession,
+  stillRunning,
+} from "../agents/sessions.ts";
 import { openDb, type Repository } from "../db.ts";
 import { setupDone } from "../machine/setup.ts";
 import { keepUpToDate } from "../machine/update.ts";
@@ -32,24 +38,21 @@ import {
   startLead,
   typeLeadNotes,
 } from "./lead.ts";
-import { endWake, restoreLimits, wakeAfterLimit } from "./limits.ts";
+import { restoreLimits, wakeAfterLimit } from "./limits.ts";
 import { listRepositories, listTasks, listThreads, showPr, showTask } from "./list.ts";
 import { pollRepositories } from "./poll.ts";
 import { findRepository, fullNameIs, noRepositories, refreshClones, repositoryAt } from "./repo.ts";
 import { allowed, type Caller, DaemonRequest, parseJson } from "./requests.ts";
 import { endRound, goOn, rerunReview, resumeRound, submitRound } from "./round.ts";
-import { messageBuilder, messageLead, untagged } from "./tell.ts";
 import {
-  builderHarness,
-  endedTurnAsks,
-  findThread,
-  liveThreads,
-  readThread,
-  record,
-  type Thread,
-  threadName,
-  threadOn,
-} from "./thread.ts";
+  questionAnswered,
+  questionAsked,
+  questionClosed,
+  turnEnded,
+  turnFailed,
+} from "./status.ts";
+import { messageBuilder, messageLead } from "./tell.ts";
+import { findThread, liveThreads, record, type Thread, threadName, threadOn } from "./thread.ts";
 
 // Tries to hold the daemon lock and returns whether this process owns it, preventing
 // duplicate daemons. The kernel lets go of it when the process ends, however it ends, so a
@@ -98,7 +101,7 @@ function callingThread(caller: Caller): Thread {
 }
 
 // Ends the daemon on a signal: removes its sockets, ends the processes it started, and exits.
-// The agents' tmux sessions aren't the daemon's processes, so agents keep working while the
+// The agents' sessions aren't the daemon's processes, so agents keep working while the
 // daemon is down. The processes it started, such as a git clone or a reviewer, are ended and
 // waited for. The service stops only the daemon, and the next daemon starts that work again.
 // A clone left running would write into the folder the next daemon clones into. Each process
@@ -125,10 +128,11 @@ function endWhatItStarted(sockets: string[]): void {
 
 // Opens the daemon's sockets, brings back the lead of each repository you have opened and
 // the builders of threads that were running, so commands and agents can reach it. Leaves the
-// sockets listening after returning, and removes them when stopped, leaving every tmux
-// session running. It never asks questions: systemd has nobody to answer. Polls each
-// repository's tracker and forge every `every` milliseconds while a thread is active.
-export async function serve(tmux: string, every = 30_000): Promise<void> {
+// sockets listening after returning, and removes them when stopped, leaving every agent's
+// session running. `sessions` names where the agents' sessions run. It never asks questions:
+// systemd has nobody to answer. Polls each repository's tracker and forge every `every`
+// milliseconds while a thread is active.
+export async function serve(sessions: string, every = 30_000): Promise<void> {
   if (!setupDone()) throw new Error("the first run isn't done on this machine: run sc first");
   const db = openDb();
   // The checkout and commit this daemon's code came from, for sc status. Read once at start,
@@ -178,7 +182,7 @@ export async function serve(tmux: string, every = 30_000): Promise<void> {
           listening.add(socket);
           await open(socket, { lead: { owner, repo } });
         }
-        await startLead(db, tmux, repository);
+        await startLead(db, sessions, repository);
       });
     return leadStarts;
   };
@@ -211,7 +215,7 @@ export async function serve(tmux: string, every = 30_000): Promise<void> {
     try {
       await setUpThread(db, thread);
       await listenFor(thread);
-      await startBuilder(db, tmux, thread);
+      await startBuilder(db, sessions, thread);
     } catch (error) {
       failThread(db, thread, error);
     }
@@ -225,8 +229,8 @@ export async function serve(tmux: string, every = 30_000): Promise<void> {
     const thread = record(db, stopped.folder, change, "started again");
     try {
       await listenFor(thread);
-      await bringBack(db, tmux, thread);
-      resumeRound(db, tmux, thread.folder);
+      await bringBack(db, sessions, thread);
+      resumeRound(db, sessions, thread.folder);
     } catch (error) {
       failThread(db, thread, error);
     }
@@ -244,7 +248,7 @@ export async function serve(tmux: string, every = 30_000): Promise<void> {
         // A lead you exited this second is closed first, so the daemon's next look can't close
         // the tab again while the lead starts, and a tab can't bring it back. It comes before
         // the choice of repository, so plain sc doesn't pick the one whose tab just closed.
-        closeExitedLeads(db, tmux);
+        closeExitedLeads(db, sessions);
         // From outside any repository Skelcrew has, the one you opened last.
         const repository =
           (request.from === undefined ? undefined : repositoryAt(db, request.from)) ??
@@ -272,7 +276,7 @@ export async function serve(tmux: string, every = 30_000): Promise<void> {
         ]);
         await ensureLead(repository);
         // A lead that wasn't running kept its notes until now.
-        typeLeadNotes(db, tmux);
+        typeLeadNotes(db, sessions);
         // Not waited on, so attaching never waits on a remote.
         refreshClones(db).catch((error) => console.log(errorText(error)));
         return { lead: leadOf(db, owner, repo).name, repository: `${owner}/${repo}` };
@@ -305,14 +309,31 @@ export async function serve(tmux: string, every = 30_000): Promise<void> {
         if (builder && threadOn(db, request.repo, request.task)?.folder !== builder.folder)
           throw new Error(`you may ask for a review of ${threadName(db, builder)} only`);
         const thread = findThread(db, request.repo, request.task);
-        rerunReview(db, tmux, thread.folder, builder !== null);
+        rerunReview(db, sessions, thread.folder, builder !== null);
         return { reviewing: threadName(db, thread) };
       }
       case "stop": {
         const thread = findThread(db, request.repo, request.task);
         const name = threadName(db, thread);
-        await stopThread(db, tmux, thread);
+        await stopThread(db, sessions, thread);
         return { stopped: name };
+      }
+      // Both act only on a builder that runs: one that ended leaves its last screen behind,
+      // which would read as what it shows now.
+      case "peek": {
+        const thread = findThread(db, request.repo, request.task);
+        const name = threadName(db, thread);
+        if (!agentRuns(sessions, thread.folder))
+          throw new Error(`${name}'s builder isn't running: the thread is ${thread.status}`);
+        return { thread: name, screen: readSession(sessions, thread.folder) };
+      }
+      case "interrupt": {
+        const thread = findThread(db, request.repo, request.task);
+        const name = threadName(db, thread);
+        if (!agentRuns(sessions, thread.folder))
+          throw new Error(`${name}'s builder isn't running: the thread is ${thread.status}`);
+        interruptSession(sessions, thread.folder);
+        return { interrupted: name };
       }
       case "rm preview": {
         const thread = findThread(db, request.repo, request.task);
@@ -321,7 +342,7 @@ export async function serve(tmux: string, every = 30_000): Promise<void> {
       case "rm": {
         const thread = findThread(db, request.repo, request.task);
         const name = threadName(db, thread);
-        await removeThread(db, tmux, thread, request.reason);
+        await removeThread(db, sessions, thread, request.reason);
         // The issue it worked on stays open in the tracker, so sc rm can say so. A thread
         // started on what you told the lead is numbered with a t, such as app-t1, and has none.
         return { removed: name, issue: /^t\d+$/.test(thread.task) ? null : thread.task };
@@ -341,106 +362,30 @@ export async function serve(tmux: string, every = 30_000): Promise<void> {
       }
       case "tell": {
         const thread = findThread(db, request.repo, request.task);
-        return { told: messageBuilder(db, tmux, thread, request.text) };
+        return { told: messageBuilder(db, sessions, thread, request.text) };
       }
       case "tell lead":
-        messageLead(db, tmux, callingThread(caller), request.text);
+        messageLead(db, sessions, callingThread(caller), request.text);
         return { told: "lead" };
       case "submit": {
         const thread = callingThread(caller);
-        submitRound(db, tmux, thread.folder, request.summary);
+        submitRound(db, sessions, thread.folder, request.summary);
         return { submitted: threadName(db, thread) };
       }
       case "question asked":
-        record(db, callingThread(caller).folder, { asking: true }, "its builder asked a question");
-        typeLeadNotes(db, tmux);
+        questionAsked(db, sessions, callingThread(caller).folder);
         return { asking: true };
-      case "turn ended": {
-        // The note quotes what the builder last said, so you see what it waits on. In quotes,
-        // and with no tags of Skelcrew's, it can't pass for Skelcrew's own words or another's.
-        // The quote, escapes included, is kept to 100 characters, as a note is cut at 200,
-        // which would lose the closing quote. Each " or \ doubles in length once escaped, so
-        // the words are cut until the quote fits.
-        const { folder } = callingThread(caller);
-        if (!endedTurnAsks(readThread(db, folder))) return { asking: false };
-        let words = untagged(request.said ?? "").slice(0, 100);
-        while (JSON.stringify(words).length > 100) words = words.slice(0, -1);
-        const said = words ? `, saying ${JSON.stringify(words)}` : "";
-        record(db, folder, { stalled: true }, `its builder stopped without submitting${said}`);
-        typeLeadNotes(db, tmux);
-        return { asking: true };
-      }
-      case "turn failed": {
-        // A usage limit, or a rate limit, passes by itself, so the builder is woken once it
-        // resets, and the thread doesn't need you for it. Any other error does. Only the kind of
-        // error the hook names decides: its message can hold the builder's own last words,
-        // such as about the rate limiting it was writing. The message only gives the reset.
-        const thread = callingThread(caller);
-        const said = request.message ?? "";
-        const limit =
-          request.error === "rate_limit"
-            ? { reset: builderHarness(thread).usageLimit(said, Date.now())?.reset ?? null }
-            : null;
-        if (limit !== null) {
-          const change = { erred: true, limited: true, limit_reset: limit.reset };
-          record(
-            db,
-            thread.folder,
-            change,
-            `its builder's harness reached its usage limit: ${said}`,
-          );
-          wakeAfterLimit(db, tmux, thread.folder);
-          return { erred: true };
-        }
-        // A limit it stopped on before is over: this error is new, and needs you, so the wake
-        // planned for the old one never types "continue" over it.
-        endWake(thread.folder);
-        const erred = { erred: true, limited: false, limit_reset: null };
-        record(db, thread.folder, erred, "its builder's harness stopped on an error");
-        typeLeadNotes(db, tmux);
+      case "turn ended":
+        return { asking: turnEnded(db, sessions, callingThread(caller).folder, request.said) };
+      case "turn failed":
+        turnFailed(db, sessions, callingThread(caller), request.error, request.message);
         return { erred: true };
-      }
-      case "question closed": {
-        // AskUserQuestion returned your answer, and the builder goes on in the same turn, so a
-        // submit earlier in it still counts. Your answer starts a new stretch of work all the
-        // same, which the sidebar times, as anything typed into the builder does.
-        const { folder } = callingThread(caller);
-        db.run("UPDATE threads SET working_since = ? WHERE folder = ?", [Date.now(), folder]);
-        if (readThread(db, folder).asking)
-          record(db, folder, { asking: false }, "its builder's question is over");
+      case "question closed":
+        questionClosed(db, callingThread(caller).folder);
         return { asking: false };
-      }
-      case "question answered": {
-        const { folder } = callingThread(caller);
-        const thread = readThread(db, folder);
-        // Whatever is typed into the builder starts a new stretch of work: a review's changes,
-        // a message from the lead, or your answer. The sidebar times the stretch. Not logged,
-        // as only the sidebar shows it.
-        db.run("UPDATE threads SET working_since = ? WHERE folder = ?", [Date.now(), folder]);
-        // Run before every message typed into the builder, so only a question or an error that
-        // was open is logged. Typing to a builder that stopped on an error means you fixed it,
-        // such as with /login, so it ends the error as it ends a question. A usage limit it
-        // stopped on ends too, as the builder now works again or meets it again. Typing to one
-        // that stopped without submitting answers it, whether you typed or the lead told it.
-        // Each message starts a new turn, with no submit in it yet.
-        const over = {
-          asking: false,
-          stalled: false,
-          erred: false,
-          submitted: false,
-          limited: false,
-          limit_reset: null,
-        };
-        // The builder has something to work on, so a "continue" still waiting to be typed must
-        // not land. A wake already typing has cleared the error, so it is ended whatever the
-        // flags say. One whose "continue" ran this hook has nothing left to type.
-        endWake(folder);
-        if (thread.asking || thread.stalled)
-          record(db, folder, over, "its builder's question is over");
-        else if (thread.erred) record(db, folder, over, "its builder was typed to after its error");
-        else if (thread.submitted) record(db, folder, { submitted: false });
+      case "question answered":
+        questionAnswered(db, callingThread(caller).folder);
         return { asking: false };
-      }
       case "start": {
         // A thread the task already has is brought back or let past its round limit, with no
         // poll, as nothing new is read from the tracker.
@@ -460,7 +405,7 @@ export async function serve(tmux: string, every = 30_000): Promise<void> {
           return { started: `Started ${name} again: its builder is back where it was.` };
         }
         if (before && choice === "go on") {
-          goOn(db, tmux, before.folder);
+          goOn(db, sessions, before.folder);
           return { started: `${threadName(db, before)} goes on past the round limit.` };
         }
         // Refused before the poll, which only a new thread needs, so a slow or failing remote
@@ -550,12 +495,12 @@ export async function serve(tmux: string, every = 30_000): Promise<void> {
   for (const thread of reviewsCutShort) {
     const back = Promise.withResolvers<void>();
     builderBack.set(thread.folder, back.resolve);
-    resumeRound(db, tmux, thread.folder, back.promise);
+    resumeRound(db, sessions, thread.folder, back.promise);
   }
   // A lead you exited while the daemon was down closes its tab, before any request could open
   // it, and isn't brought back. From here on, the daemon looks each second for a lead you exit.
-  closeExitedLeads(db, tmux);
-  setInterval(() => closeExitedLeads(db, tmux), 1000);
+  closeExitedLeads(db, sessions);
+  setInterval(() => closeExitedLeads(db, sessions), 1000);
   // Open your socket, and end cleanly on the service's stop or on Ctrl-C.
   await open(path, "you");
   for (const signal of ["SIGTERM", "SIGINT"]) process.on(signal, () => endWhatItStarted(sockets));
@@ -567,7 +512,7 @@ export async function serve(tmux: string, every = 30_000): Promise<void> {
   // A lead keeps its clone current as it starts, and a repository with no lead needs it too.
   refreshClones(db).catch((error) => console.log(errorText(error)));
   // Notes the daemon's stop kept from the leads.
-  typeLeadNotes(db, tmux);
+  typeLeadNotes(db, sessions);
   // The usage limits saved before the stop, so the held reviews carried on below still wait.
   restoreLimits(db);
   // Bring back each thread's builder, without waiting on it, and carry on the round it was in.
@@ -578,11 +523,11 @@ export async function serve(tmux: string, every = 30_000): Promise<void> {
     const settled = builderBack.get(thread.folder) ?? (() => {});
     // After the builder is back, since the round may type into its session.
     // A builder that stopped on a usage limit is woken once it resets, as it would have been.
-    bringBack(db, tmux, thread).then(
+    bringBack(db, sessions, thread).then(
       () => {
         settled();
-        resumeRound(db, tmux, thread.folder);
-        if (thread.erred && thread.limited) wakeAfterLimit(db, tmux, thread.folder);
+        resumeRound(db, sessions, thread.folder);
+        if (thread.erred && thread.limited) wakeAfterLimit(db, sessions, thread.folder);
       },
       (error) => {
         endRound(thread.folder);
@@ -593,6 +538,6 @@ export async function serve(tmux: string, every = 30_000): Promise<void> {
   }
   // Start polling, which also lets any sc start waiting on it go ahead, and keep Skelcrew itself
   // up to date.
-  polling.resolve(pollRepositories(db, tmux, every, setUpAndStart, startingTasks));
+  polling.resolve(pollRepositories(db, sessions, every, setUpAndStart, startingTasks));
   keepUpToDate();
 }

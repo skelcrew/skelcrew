@@ -4,17 +4,13 @@
 // list there. The sidebar also keeps the top row up to date, with the header, the tabs and the
 // strip, tells the footer what to say under an agent, and switches tabs.
 import {
+  attachCommand,
   exitedCleanly,
-  paneTty,
-  paneWidth,
-  respawnPane,
-  runningSessions,
-  screenSocket,
+  listSessions,
   shownSession,
   showSession,
-  showStrip,
-  tmux,
-} from "../agents/tmux.ts";
+} from "../agents/sessions.ts";
+import { paneTty, paneWidth, respawnPane, screenTmux, showStrip } from "../agents/tmux.ts";
 import { openRepository } from "../client.ts";
 import { openDb } from "../db.ts";
 import { leadOf } from "../flow/lead.ts";
@@ -26,7 +22,7 @@ import { draw, entryPlace, noticeLines, type Size } from "./layout.ts";
 import { type EntryCount, entryCounts, pageRow, roundLimit } from "./lists.ts";
 import { nextList, nextRow, rowAtLine } from "./moves.ts";
 import { type Open, type Row, repositoryTabs, sidebarRows } from "./rows.ts";
-import { agentClient, paneCommand, sidebarWidth } from "./screen.ts";
+import { paneCommand, sidebarWidth } from "./screen.ts";
 import { drawTop } from "./strip.ts";
 
 // What the sidebar reads: Alt with an arrow as tmux sends it, 3 without Shift and 4 with it,
@@ -68,7 +64,7 @@ export async function runSidebar(
   let open = repositoryAndLead(db, repository);
   let tabs = repositoryTabs(db);
   const rightPane = `=${session}:.1`;
-  let tty = paneTty(screenSocket(agents), rightPane);
+  let tty = paneTty(agents, rightPane);
   let rows: Row[] = [];
   let entries: EntryCount[] = [];
   // What is on the right: a session, or an entry's place while its list or a page from it shows.
@@ -98,7 +94,7 @@ export async function runSidebar(
     if (leaving) return;
     // tmux first, then the tabs: the daemon closes a tab before it ends the lead's session, so
     // a lead found gone here with its tab still read as open has crashed.
-    const running = runningSessions(agents);
+    const running = listSessions(agents).flatMap((found) => (found.running ? [found.name] : []));
     const exited = exitedCleanly(agents, open.lead);
     const before = tabs;
     tabs = repositoryTabs(db);
@@ -115,7 +111,7 @@ export async function runSidebar(
         // The server ends it itself a moment after this command is gone, so no one-off
         // command disconnects as it goes, and the sidebar asks tmux nothing more.
         leaving = true;
-        tmux(screenSocket(agents), ["run-shell", "-d", "0.5", "-C", `kill-session -t =${session}`]);
+        screenTmux(agents, ["run-shell", "-d", "0.5", "-C", `kill-session -t =${session}`]);
         return;
       }
       switchTo(next.fullName);
@@ -140,14 +136,14 @@ export async function runSidebar(
       openRepository(`${open.owner}/${open.repo}`);
     }
     // The header, the tabs and the strip go to tmux's status line, and only when they changed.
-    const width = paneWidth(screenSocket(agents), rightPane);
+    const width = paneWidth(agents, rightPane);
     const left = size().width + 1;
     const fullName = `${open.owner}/${open.repo}`;
     const look = { rows, shown, page, tabs, open: fullName, where, version };
     const top = drawTop(look, { left, width });
     if (top !== lastStrip) {
       lastStrip = top;
-      showStrip(screenSocket(agents), session, top);
+      showStrip(agents, session, top);
     }
     // The footer under an agent, also only when it changed. Moving onto an agent hides the list
     // of keys, as every key but the Alt ones is the agent's there. A list or page tells the
@@ -178,7 +174,7 @@ export async function runSidebar(
   const show = (next: string | null) => {
     if (next === null) return;
     if (next === shown) {
-      if (page && isEntry(next)) tmux(screenSocket(agents), ["send-keys", "-t", rightPane, "Left"]);
+      if (page && isEntry(next)) screenTmux(agents, ["send-keys", "-t", rightPane, "Left"]);
       return;
     }
     // An entry's list runs in the pane in place of what was there. Coming from a list, or onto
@@ -186,14 +182,10 @@ export async function runSidebar(
     const entry = entries.find((candidate) => entryPlace(candidate.entry) === next);
     const fullName = `${open.owner}/${open.repo}`;
     if (entry)
-      respawnPane(
-        screenSocket(agents),
-        rightPane,
-        paneCommand(agents, session, entry.entry, where, fullName),
-      );
+      respawnPane(agents, rightPane, paneCommand(agents, session, entry.entry, where, fullName));
     else if (isEntry(shown) || shownSession(agents, tty) === null) {
-      respawnPane(screenSocket(agents), rightPane, agentClient(agents, next, open.lead));
-      tty = paneTty(screenSocket(agents), rightPane);
+      respawnPane(agents, rightPane, attachCommand(agents, next, open.lead));
+      tty = paneTty(agents, rightPane);
     } else showSession(agents, tty, next);
     page = null;
     shown = next;
@@ -208,8 +200,8 @@ export async function runSidebar(
     // lead, and no list shows.
     openRepository(fullName);
     asked = open.lead;
-    respawnPane(screenSocket(agents), rightPane, agentClient(agents, open.lead, open.lead));
-    tty = paneTty(screenSocket(agents), rightPane);
+    respawnPane(agents, rightPane, attachCommand(agents, open.lead, open.lead));
+    tty = paneTty(agents, rightPane);
     page = null;
     shown = open.lead;
   }

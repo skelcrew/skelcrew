@@ -1,6 +1,8 @@
-// Typing a message into an agent's session: waiting until its harness shows it is ready, then
-// pasting the message and its Enter, one message at a time per session.
-import { mustTmux, tmux } from "./tmux.ts";
+// The transport module, built in: gets text into an agent and says when the agent is idle. It
+// works on any host's sessions, as it uses only the sessions module's paste, keys and read. It
+// tells idle from the screen, by the harness's busy mark and bare prompt, which also shows a
+// person's unsent draft. It delivers one message at a time per session, as a paste then Enter.
+import { dropStaged, pasteStaged, readSession, sendKey, stagePaste } from "./sessions.ts";
 
 // How typing waits, in milliseconds. `moment` is the pause between two looks at the screen,
 // and between a paste and its Enter. `timeout` is how long to wait for the prompt to be ready
@@ -9,11 +11,6 @@ type Waits = { moment?: number; timeout?: number; signal?: AbortSignal };
 // What a harness's screen shows: `busy` while a turn runs, and a line holding only `prompt`
 // once it is ready for a message.
 export type Marks = { busy: string; prompt: string };
-
-// Returns the visible pane text so Skelcrew can check whether the agent is ready for a
-// message.
-const readScreen = (socket: string, name: string) =>
-  mustTmux(socket, ["capture-pane", "-p", "-t", `=${name}:`]);
 
 // The reason typing gives for waiting while a person has unsent text at the agent's prompt.
 const draftReason = "an unsent draft is at its prompt";
@@ -38,17 +35,17 @@ function notReady(shown: string, marks: Marks) {
 // a tool runs.
 async function notIdle(socket: string, name: string, marks: Marks, moment: number) {
   // Look twice, a moment apart, so a screen still drawing shows as busy.
-  const before = readScreen(socket, name);
+  const before = readSession(socket, name);
   await Bun.sleep(moment);
-  const after = readScreen(socket, name);
+  const after = readSession(socket, name);
   if (after.includes(marks.busy)) return `it shows ${marks.busy}`;
   if (before !== after) return "its screen kept changing";
   return notReady(after, marks);
 }
 
-// Reports whether the agent shows a quiet, ready prompt, by its harness's marks, so Skelcrew can
-// avoid interrupting work.
-export async function isIdle(
+// Reports whether the agent is idle: its screen is quiet and shows a bare prompt, by its
+// harness's marks. Skelcrew checks it before typing a lead's notes, so it never interrupts work.
+export async function idle(
   socket: string,
   name: string,
   marks: Marks,
@@ -60,10 +57,11 @@ export async function isIdle(
 // One message at a time per session, so two pastes can't land before either's Enter.
 const typingQueues = new Map<string, Promise<void>>();
 
-// Queues a message for the session and returns a promise that settles after its typing
-// attempt. Messages wait their turn so two pastes cannot arrive before either message's
-// Enter. `marks` are those of the harness running in the session.
-export function typeInto(
+// Delivers a message into the agent once it is idle, never into a turn still running and never
+// on top of a person's unsent draft. Returns a promise that settles after the attempt, and
+// rejects if the agent stays busy too long. Messages to one session wait their turn, so two
+// pastes cannot arrive before either message's Enter. `marks` are the harness's in the session.
+export function deliver(
   socket: string,
   name: string,
   marks: Marks,
@@ -88,18 +86,15 @@ export function typeInto(
   return turn;
 }
 
-// How many paste buffers this process has made, so each gets a name of its own.
-let buffersMade = 0;
-
 // Waits for the agent to be ready, then pastes and submits the message without losing long
-// text. Throws if it stays busy too long, and removes the temporary paste buffer after the
+// text. Throws if it stays busy too long, and forgets the text it readied for pasting after the
 // attempt. Types nothing once the signal is aborted, however long it waited.
 async function typeNow(socket: string, name: string, marks: Marks, text: string, waits: Waits) {
   const moment = waits.moment ?? 500;
   const timeout = waits.timeout ?? 60_000;
   const deadline = Date.now() + timeout;
-  // A paste buffer of its own, so two daemons or two messages never paste each other's text.
-  const buffer = `skelcrew-${process.pid}-${buffersMade++}`;
+  // The text readied on each pass, the last of which is pasted.
+  const staged: string[] = [];
   try {
     // Text typed while Claude Code is starting or busy can be lost, so wait until it is idle.
     // Check the signal after each wait too: the thread may have stopped meanwhile.
@@ -108,15 +103,12 @@ async function typeNow(socket: string, name: string, marks: Marks, text: string,
       const why = await notIdle(socket, name, marks, moment);
       if (waits.signal?.aborted) return;
       if (why === "") {
-        // Someone scrolled back would swallow the Enter below, and the message would never be
-        // sent. Being scrolled back shows in neither the check above nor the pane's text, so
-        // it is left here, whether or not anyone is. It fails when nobody is, which is fine.
-        tmux(socket, ["send-keys", "-X", "-t", `=${name}:`, "cancel"]);
-        mustTmux(socket, ["load-buffer", "-b", buffer, "-"], text);
+        staged.push(stagePaste(socket, name, text));
         // A person can start typing after the last look, and the paste would send their draft
-        // along with the message. So look once more right before pasting, and wait again if
-        // the prompt isn't bare. A moment remains, but only a tmux call long.
-        if (notReady(readScreen(socket, name), marks) === "") break;
+        // along with the message. So the text is readied first, then the screen looked at once
+        // more right before pasting, and typing waits again if the prompt isn't bare. A moment
+        // remains, but only as long as the paste itself.
+        if (notReady(readSession(socket, name), marks) === "") break;
       } else if (Date.now() > deadline) {
         const waited = `${timeout / 1000}s`;
         // A person's draft gets a plain answer, as it isn't the agent being busy.
@@ -127,13 +119,12 @@ async function typeNow(socket: string, name: string, marks: Marks, text: string,
         throw new Error(`${name} wasn't idle for ${waited} (${why}), so nothing was typed`);
       }
     }
-    // Without the paste marks, Claude Code reads the Enter after a long message as a new
-    // line, and the message is never sent. So the Enter goes on its own, a moment after the
-    // paste.
-    mustTmux(socket, ["paste-buffer", "-p", "-b", buffer, "-t", `=${name}:`]);
+    // Without the paste marks, Claude Code reads the Enter after a long message as a new line,
+    // and the message is never sent. So the Enter goes on its own, a moment after the paste.
+    pasteStaged(socket, name, staged.at(-1) ?? "");
     await Bun.sleep(moment);
-    mustTmux(socket, ["send-keys", "-t", `=${name}:`, "Enter"]);
+    sendKey(socket, name, "Enter");
   } finally {
-    tmux(socket, ["delete-buffer", "-b", buffer]);
+    for (const readied of staged) dropStaged(socket, readied);
   }
 }

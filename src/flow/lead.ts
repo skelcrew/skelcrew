@@ -1,5 +1,5 @@
 // Each repository's lead: your agent session for that repository on this machine, in its own
-// folder, kept alive in tmux, and the notes Skelcrew types into it.
+// folder, kept alive in a session of its own, and the notes Skelcrew types into it.
 import type { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
 import { z } from "zod";
@@ -12,10 +12,10 @@ import {
   failedScreen,
   hasSession,
   keepOnExit,
-  startServer,
+  type Labels,
   startSession,
-} from "../agents/tmux.ts";
-import { isIdle, typeInto } from "../agents/typing.ts";
+} from "../agents/sessions.ts";
+import { deliver, idle } from "../agents/transport.ts";
 import { agentRoles } from "../config.ts";
 import { Repository } from "../db.ts";
 import { cloneDir, leadPlaces } from "../paths.ts";
@@ -76,23 +76,26 @@ export function lastOpened(db: Database): Repository | null {
 // keeps it from then on, as a conversation can't move to another harness. The session id and
 // harness are stored before the lead starts, so the lead can be brought back after its session
 // is gone. Codex picks its own id, and its module finds the conversation it saved.
-export async function startLead(db: Database, tmux: string, repository: Repository): Promise<void> {
+export async function startLead(
+  db: Database,
+  sessions: string,
+  repository: Repository,
+): Promise<void> {
   const { owner, repo } = repository;
   const lead = leadOf(db, owner, repo);
   // A lead still running is kept. One started by a release before leads stayed on a clean exit
   // is given that setting now, or exiting it would end its session and never close its tab.
   // One whose harness ended leaves its screen behind, which is logged before its session is
   // ended to make room for the new one.
-  if (hasSession(tmux, lead.name)) {
-    const failed = failedScreen(tmux, lead.name);
+  if (hasSession(sessions, lead.name)) {
+    const failed = failedScreen(sessions, lead.name);
     if (failed === null) {
-      keepOnExit(tmux, lead.name);
+      keepOnExit(sessions, lead.name);
       return;
     }
     console.log(`${owner}/${repo}'s lead had ended:\n${failed}`);
-    endSession(tmux, lead.name);
+    endSession(sessions, lead.name);
   }
-  startServer(tmux);
   // The lead's sandbox mounts its clone, and can't mount one that is missing. Adding a
   // repository clones it, so this waits only when that clone failed or has gone since.
   const clone = cloneDir(owner, repo);
@@ -124,13 +127,20 @@ export async function startLead(db: Database, tmux: string, repository: Reposito
     ...(resume ? { resume } : { sessionId: session }),
   });
   // The session stays when the lead exits, so closeExitedLeads can tell exiting it from a crash.
-  startSession(tmux, lead.name, { folder: lead.folder, command: argv, env, keepOnExit: true });
+  const labels: Labels = { repository: `${owner}/${repo}`, role: "lead" };
+  startSession(sessions, lead.name, {
+    folder: lead.folder,
+    command: argv,
+    env,
+    labels,
+    keepOnExit: true,
+  });
   // A remote can be slow or away, and attaching waits on this.
   refreshClones(db).catch((error) => console.log(errorText(error)));
   console.log(
     `${resume ? "Brought back" : "Started"} ${owner}/${repo}'s lead, session ${session}.`,
   );
-  await checkAgentStarted(tmux, lead.name, "lead");
+  await checkAgentStarted(sessions, lead.name, "lead");
 }
 
 // Closes the tab of each repository whose lead you exited, such as with /exit, and ends its
@@ -140,12 +150,12 @@ export async function startLead(db: Database, tmux: string, repository: Reposito
 // its clone stay, and its conversation is kept for when you open it again. The tab is marked
 // closed before the session ends, so a sidebar that finds the session gone also finds the tab
 // closed, and doesn't bring the lead back.
-export function closeExitedLeads(db: Database, tmux: string): void {
+export function closeExitedLeads(db: Database, sessions: string): void {
   for (const { owner, repo } of openedRepositories(db)) {
     const { name } = leadOf(db, owner, repo);
-    if (!exitedCleanly(tmux, name)) continue;
+    if (!exitedCleanly(sessions, name)) continue;
     db.run("UPDATE repositories SET tab_closed = 1 WHERE owner = ? AND repo = ?", [owner, repo]);
-    endSession(tmux, name);
+    endSession(sessions, name);
     console.log(`${owner}/${repo}'s lead exited, so its tab is closed until you open it again.`);
   }
 }
@@ -156,7 +166,12 @@ export function closeExitedLeads(db: Database, tmux: string): void {
 // each time whether a note about a thread needing you is still wanted, so a question you
 // answered meanwhile is never announced. A lead that isn't running, or never started, gets
 // nothing: its notes stay saved until it starts.
-async function typeNotes(db: Database, tmux: string, owner: string, repo: string): Promise<void> {
+async function typeNotes(
+  db: Database,
+  sessions: string,
+  owner: string,
+  repo: string,
+): Promise<void> {
   const { name, harness } = leadOf(db, owner, repo);
   const where = "owner = ? AND repo = ?";
   // Each pass reads the oldest note and the first thread waiting to be announced, so what was
@@ -171,18 +186,18 @@ async function typeNotes(db: Database, tmux: string, owner: string, repo: string
     const thread = Thread.nullable().parse(row);
     // Stop when nothing is left to say, or nobody is there to hear it. Wait while the lead is busy.
     if (note === null && (thread === null || thread.noting === null)) return;
-    if (!agentRuns(tmux, name)) return;
+    if (!agentRuns(sessions, name)) return;
     // A lead that is running has started, so it has a harness.
     const { marks } = harnessNamed(harness ?? "claude");
-    if (!(await isIdle(tmux, name, marks))) continue;
+    if (!(await idle(sessions, name, marks))) continue;
     // Saved notes go first, then a thread that needs you.
     if (note !== null) {
-      await typeInto(tmux, name, marks, note.text);
+      await deliver(sessions, name, marks, note.text);
       db.run("DELETE FROM notes WHERE id = ?", [note.id]);
       continue;
     }
     if (thread === null || thread.noting === null) return;
-    await typeInto(tmux, name, marks, `${threadName(db, thread)} needs you: ${thread.noting}`);
+    await deliver(sessions, name, marks, `${threadName(db, thread)} needs you: ${thread.noting}`);
     // The thread may have stopped needing you and started again while this was typed.
     if (readThread(db, thread.folder).noting === thread.noting)
       record(db, thread.folder, { noting: null }, "told the lead it needs you");
@@ -197,7 +212,7 @@ const noteTyping = new Map<string, Promise<void>>();
 // another, so a note is never pasted twice, and two notes never share one Enter. A busy lead
 // holds up no other lead. A note that fails to be typed stays saved. The next call tries it
 // again: at the next note, the next time you open a lead with sc, or the daemon's next start.
-export function typeLeadNotes(db: Database, tmux: string): void {
+export function typeLeadNotes(db: Database, sessions: string): void {
   for (const { owner, repo } of repositories(db)) {
     // Chain onto the lead's typing under way, so its notes go in one after another.
     const key = `${owner}/${repo}`;
@@ -205,7 +220,7 @@ export function typeLeadNotes(db: Database, tmux: string): void {
     noteTyping.set(
       key,
       before
-        .then(() => typeNotes(db, tmux, owner, repo))
+        .then(() => typeNotes(db, sessions, owner, repo))
         .catch((error) => console.log(`couldn't tell ${key}'s lead: ${errorText(error)}`)),
     );
   }
@@ -215,7 +230,7 @@ export function typeLeadNotes(db: Database, tmux: string): void {
 // wait while the lead is busy, and stay saved while it isn't running, so a note is never lost.
 export function noteForLead(
   db: Database,
-  tmux: string,
+  sessions: string,
   repository: { owner: string; repo: string },
   text: string,
 ): void {
@@ -224,5 +239,5 @@ export function noteForLead(
     repository.repo,
     text,
   ]);
-  typeLeadNotes(db, tmux);
+  typeLeadNotes(db, sessions);
 }

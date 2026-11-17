@@ -432,10 +432,25 @@ Skelcrew no longer supports Sprites itself. These are for the Sprite machine plu
   starts daemons, sandboxes or many processes takes longer, and failed with nothing wrong.
   `setDefaultTimeout` in a preload only reaches the first test file of a run, so
   `scripts/test.ts` passes `--timeout` instead.
+- **A flaky test can be a real race.** A test that failed now and then on "branch was deleted"
+  had found a poll ending a thread while sc rm was removing it. Read the code the failure names
+  before blaming the test.
 - **A fixed wait fails on a busy machine.** Timers fire late and processes start slowly, so
   a test that looks after a set time, or counts what happened in it, can look too early.
   Wait for the thing itself: a file, a line on screen, a row, a process gone. Time only
   what can't come too soon, such as the gap between two renewals.
+- **A file a fake writes can be read half written.** `> file` empties the file before the
+  command writes it, so a test that waits for the file to have something can read only part.
+  Have the fake write beside it and rename it into place, as `mv` does in one step.
+- **Wait for the last thing, not the first.** The forge gets a review's check before the daemon
+  saves the thread, and a note can reach the lead a piece at a time. A test that waits for the
+  first and then reads the second can read it too early. Wait for what the test then reads.
+- **Wait for the state a key starts from.** The sidebar can draw another row before the one you
+  opened, and a key pressed then moves from there. A drag let go before tmux is in copy mode
+  copies nothing. Wait for the row, or for copy mode, before the next key.
+- **On a loaded CI runner, raise the limit, don't sleep.** A first clone or a builder's start
+  took over 15 seconds there. A longer limit on a wait for the thing costs nothing when it
+  comes fast.
 - **`Bun.spawn` without `env` ignores changes to `process.env`.** It hands on the environment
   the process started with. Pass `env: process.env` to hand on a change.
 - **Tests must not inherit the agent's `SKELCREW_SANDBOX` and `SKELCREW_SOCKET`.** A builder's
@@ -443,6 +458,20 @@ Skelcrew no longer supports Sprites itself. These are for the Sprite machine plu
   refused to start, sc called the real daemon, and dozens of screen tests each failed only
   after a 20 second wait. The run looked hung. `scripts/test.ts` starts the run without them,
   and `test/inherited.ts` stops a plain `bun test` inside the sandbox with a message.
+- **A test's Skelcrew must never reach a real daemon.** A builder ran `test/submit.test.ts` in its
+  sandbox with a stand-in for bubblewrap. The stand-in set the test builder's `SKELCREW_SOCKET`
+  to `/run/skelcrew/skelcrew.sock` but skipped the mount that puts the test's socket there. That
+  path held the real daemon's socket, so the fake builder ran `sc submit` on the real builder's
+  own thread about four times: it pushed, replaced the PR description and started reviews. The rule:
+  - `scripts/test.ts` drops every `SKELCREW_` variable, the laptop ones too, and gives the run a
+    home and a runtime folder of its own. A process that spreads `process.env` then finds no
+    daemon, and none of your settings or data.
+  - A run that sees `/run/skelcrew` is inside a sandbox, even without `SKELCREW_SANDBOX`, so the
+    tests that start a sandbox skip. Never run them there with a stand-in.
+  - `test/inherited.ts` stops a plain `bun test` that has any `SKELCREW_` variable.
+  - `runSkel`, `runSkelInTerminal` and `startDaemon` throw on a socket outside the test's own
+    folder, with `..` and links resolved. Give every sc a test starts some other way the test's
+    `XDG_RUNTIME_DIR`.
 - **A parallel run prints a test file only once it ends.** A file whose tests each fail
   slowly kept the screen blank for over half an hour. `--dots` shows each test as it ends,
   and `scripts/test.ts` stops the whole run after 15 minutes.

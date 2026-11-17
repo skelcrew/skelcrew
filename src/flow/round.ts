@@ -3,16 +3,23 @@
 // into the builder's session when it asks for changes.
 import type { Database } from "bun:sqlite";
 import { type HarnessName, harnessNamed } from "../agents/harness.ts";
-import { typeInto } from "../agents/typing.ts";
+import { deliver } from "../agents/transport.ts";
 import { reviewLimit, threadConfig } from "../config.ts";
 import { cloneDir } from "../paths.ts";
-import { forgeOf, openPr, postReview, setStatus } from "../plugins/ask.ts";
+import { failedLog, forgeOf, openPr, postReview, setStatus } from "../plugins/ask.ts";
 import { quietly } from "../run.ts";
 import { errorText } from "../say.ts";
 import { baseOf } from "./builder.ts";
-import { threadTask } from "./copy.ts";
-import { afterReview, pastRoundLimit, refusedWorkflow } from "./decide.ts";
-import { pushCommit } from "./git.ts";
+import { openPrs, prOf, threadTask } from "./copy.ts";
+import {
+  afterReview,
+  ciResult,
+  onlyDocs,
+  pastRoundLimit,
+  refusedWorkflow,
+  whoRunsTheSuite,
+} from "./decide.ts";
+import { fetchInto, pushCommit } from "./git.ts";
 import { noteForLead, typeLeadNotes } from "./lead.ts";
 import { endLimit, limitOn, reachLimit, tellOfLimit, waitUntil } from "./limits.ts";
 import { Queue } from "./queue.ts";
@@ -47,7 +54,7 @@ async function git(folder: string, ...args: string[]): Promise<string> {
 // cancels it first.
 async function push(
   db: Database,
-  tmux: string,
+  sessions: string,
   folder: string,
   summary: string,
   signal: AbortSignal,
@@ -78,7 +85,7 @@ async function push(
     // a newer submit makes it stale.
     const refused = refusedWorkflow(threadName(db, thread), errorText(error));
     if (refused === null) throw error;
-    typeInto(tmux, folder, builderHarness(thread).marks, refused, {
+    deliver(sessions, folder, builderHarness(thread).marks, refused, {
       timeout: 30 * 60_000,
       signal,
     }).catch((failed) =>
@@ -86,6 +93,12 @@ async function push(
     );
     throw new Error(refused);
   }
+  // The base branch, current, in a ref of the thread's own, for the review to see which files
+  // the change touches. Skelcrew's clone holds only the default branch otherwise. The poll
+  // fetches the same ref. A base the forge won't give fails no push: the review then can't
+  // tell the change is docs only, and the tests run.
+  const bases = `refs/skelcrew/bases/${thread.folder}`;
+  await fetchInto(db, repository, skelcrewClone, baseOf(thread), bases).catch(() => {});
   if (forgeOf(db, repository) === null) {
     record(db, folder, {}, `pushed ${sha} to ${thread.branch}`);
     return sha;
@@ -106,11 +119,44 @@ async function push(
   return sha;
 }
 
+// How long a review waits for CI's first check on a PR, where the commit sets CI up and no
+// PR has shown one yet. A forge shows a check within seconds of a push, and Skelcrew's
+// copy has it by the next poll, 30 seconds later.
+const ciWait = 2 * 60_000;
+
+// The repositories, as owner/repo, where a review waited the whole of ciWait for its workflows
+// and no PR showed a check: they don't run on PRs, such as one that runs only on a release.
+// Their reviews wait for workflows no more, so that costs a repository at most once while the
+// daemon runs. CI that is just slow to show its first check ends up here too, and its reviewers
+// then run the suite as well, until a check shows on one of the repository's PRs.
+const waitedInVain = new Set<string>();
+
+// Returns what tells the reviewer CI's result for the commit, from Skelcrew's copy of the
+// thread's PR, which each poll brings up to date. The end of each failed check's log comes from
+// the forge, once per check, so a review that reads the result again doesn't ask again. A log
+// the forge won't give is left out, and asked for again next time.
+function ciOfCommit(db: Database, thread: Thread, pr: number, sha: string): () => Promise<string> {
+  const repository = repositoryOf(db, thread);
+  const logs = new Map<string, string>();
+  return async () => {
+    const shown = prOf(db, thread.owner, thread.repo, pr);
+    const failed = shown?.head === sha ? shown.checks.filter((c) => c.state === "failed") : [];
+    for (const { id } of failed)
+      if (id !== null && !logs.has(id))
+        await failedLog(db, repository, id).then(
+          (log) => logs.set(id, log),
+          () => {},
+        );
+    return ciResult(shown, sha, logs);
+  };
+}
+
 // What a round asks of one run of its review, before the task, the clone and the base are read.
 type Asked = Omit<Parameters<typeof review>[0], "clone" | "issue" | "base">;
 
-// The reviews of every thread, kept to limits.reviews at once. Each review runs the repository's
-// tests, so too many at once slow every one of them down.
+// The reviews of every thread, kept to limits.reviews at once. A review of a commit CI doesn't
+// run on runs the repository's whole test suite, so too many at once slow every one of them
+// down.
 const reviews = new Queue();
 
 // Reviews the commit and acts on the verdict: with a forge, posts it on the PR and sets Skelcrew's
@@ -122,7 +168,7 @@ const reviews = new Queue();
 // settles, as a review the daemon brings back can end before the builder's session is there.
 async function reviewRound(
   db: Database,
-  tmux: string,
+  sessions: string,
   folder: string,
   sha: string,
   signal: AbortSignal,
@@ -150,6 +196,61 @@ async function reviewRound(
   const pending = setCheck("pending", "Skelcrew's reviewer is reviewing");
   const checkFailed = new AbortController();
   pending.catch(() => checkFailed.abort());
+  // CI runs the suite only once a CI check shows on this commit. A forge shows one within
+  // seconds of a push, and Skelcrew's copy has it by the next poll. So while one may still come,
+  // the review waits a little for it, before it joins the queue, so it never holds a place
+  // while it waits, and `since` keeps its place in line. One may come when CI shows on another
+  // PR, or when the commit has GitHub workflows, the only CI of a forge Skelcrew has a plugin
+  // for. The commit is read from Skelcrew's clone, which fetched it, never from the builder's,
+  // which the builder controls. It is read at once, so the review still joins before any await
+  // when it doesn't wait, and a commit Skelcrew can't read sets nothing up.
+  const ls = ["git", "-C", cloneDir(thread.owner, thread.repo), "ls-tree", sha, "--"];
+  const listed = Bun.spawnSync([...ls, ".github/workflows"], { stdout: "pipe", stderr: "ignore" });
+  const setsUpCi = listed.success && listed.stdout.toString().trim() !== "";
+  // A change to docs and Markdown alone is tested by no one, as CI skips it and no code
+  // changed, so its review waits for no CI. The files are those changed since the base branch,
+  // which the push fetched into the thread's own ref in Skelcrew's clone. Without rename
+  // detection, a file moved from code into docs shows both names, so the code it removes
+  // counts. Names end in a NUL, as git otherwise quotes one with letters outside ASCII, such
+  // as résumé.md. A base or diff Skelcrew can't read, as in a clone not set up yet, lists
+  // none, and the tests run.
+  const bases = `refs/skelcrew/bases/${thread.folder}`;
+  const diff = ["git", "-C", cloneDir(thread.owner, thread.repo), "diff", "--name-only", "-z"];
+  const changed = Bun.spawnSync([...diff, "--no-renames", `${bases}...${sha}`], {
+    stdout: "pipe",
+    stderr: "ignore",
+  });
+  const docsOnly =
+    changed.success && onlyDocs(changed.stdout.toString().split("\0").filter(Boolean));
+  const repositoryName = `${thread.owner}/${thread.repo}`;
+  const suite = (waited: boolean) => {
+    const prs = openPrs(db, thread.owner, thread.repo);
+    const own = pr === null ? null : prOf(db, thread.owner, thread.repo, pr);
+    const inVain = waitedInVain.has(repositoryName);
+    return whoRunsTheSuite({ own, commit: sha, prs, setsUpCi, waitedInVain: inVain, waited });
+  };
+  if (pr !== null && !docsOnly && suite(false) === "wait") {
+    // Saved as reviewing, as the review is under way for you, and so a restart brings it back.
+    // Its place in the queue only matters once it joins, with `since`.
+    const waiting = { reviewing: sha, submitting: null, reviewer, queued: null };
+    record(db, folder, waiting, `waiting for CI's first check before reviewing ${sha}`);
+    const ciDeadline = Date.now() + ciWait;
+    while (suite(false) === "wait") {
+      if (Date.now() > ciDeadline) {
+        // With CI on no PR, the wait was for the workflows alone, and they never ran.
+        const prs = openPrs(db, thread.owner, thread.repo);
+        const noCi = { own: null, commit: sha, prs, setsUpCi: false, waitedInVain: true };
+        if (whoRunsTheSuite({ ...noCi, waited: false }) === "reviewer")
+          waitedInVain.add(repositoryName);
+        break;
+      }
+      await Bun.sleep(5_000);
+      // A newer round ends the wait, and so does a pending check that failed, which fails
+      // the round once it joins the queue.
+      if (signal.aborted) return;
+      if (checkFailed.signal.aborted) break;
+    }
+  }
   // A review that has to wait is saved as queued, with when it joined, so the thread says so,
   // and a restart puts it back in the same place. One that starts at once is saved as
   // reviewing, with no queued step in between.
@@ -193,7 +294,7 @@ async function reviewRound(
           if (result.verdict === "limited") {
             if (limitOn(harness, Date.now()) === null)
               reachLimit(db, harness, result.reset, Date.now());
-          } else if (!signal.aborted) endLimit(db, tmux, harness, started);
+          } else if (!signal.aborted) endLimit(db, sessions, harness, started);
           return result;
         })
         // Leaving the queue early says why: the check's own error, or else that it was
@@ -209,19 +310,27 @@ async function reviewRound(
       commit: sha,
       signal,
       limit: reviewMinutes * 60_000,
+      // With CI on this commit, CI runs the whole test suite and the reviewer reads its result.
+      // Without, the reviewer runs the suite itself, and on a change to docs alone no one
+      // does. Asked again as each run starts, as CI may show a check while it waits its turn.
+      docsOnly,
+      ci:
+        pr === null || docsOnly
+          ? undefined
+          : { has: () => suite(true) === "ci", read: ciOfCommit(db, thread, pr, sha) },
     },
     role: reviewerRole,
     fallback,
     run,
   };
-  let { verdict, by } = await reviewWithinLimits(db, tmux, folder, plan);
+  let { verdict, by } = await reviewWithinLimits(db, sessions, folder, plan);
   // A review that hung was ended. It runs once more, logged, and the lead hears of it at once,
   // so a hung review never sits unseen. A second that hangs gives a timed out review.
   if (verdict.verdict === "timed out" && !signal.aborted) {
     const why = `${threadName(db, thread)}'s review timed out after ${reviewMinutes}m; retrying`;
     record(db, folder, {}, why);
-    noteForLead(db, tmux, repositoryOf(db, thread), why);
-    ({ verdict, by } = await reviewWithinLimits(db, tmux, folder, plan));
+    noteForLead(db, sessions, repositoryOf(db, thread), why);
+    ({ verdict, by } = await reviewWithinLimits(db, sessions, folder, plan));
     if (verdict.verdict === "timed out")
       verdict = { verdict: "timed out", body: `its review timed out twice (${reviewMinutes}m)` };
   }
@@ -259,13 +368,13 @@ async function reviewRound(
     review_at: Date.now(),
   };
   record(db, folder, change, outcome.why);
-  typeLeadNotes(db, tmux);
+  typeLeadNotes(db, sessions);
   if (!tell) return;
   // The changes are saved, so a builder that never comes back, which ends the round, keeps them
   // for when you start it again.
   await builderBack;
   if (signal.aborted) return;
-  await typeChanges(db, tmux, folder, tell, signal);
+  await typeChanges(db, sessions, folder, tell, signal);
 }
 
 // Runs the review on the reviewer's harness and returns its verdict and the harness it ran on,
@@ -277,7 +386,7 @@ async function reviewRound(
 // cancelled, with a failed review its caller drops.
 async function reviewWithinLimits(
   db: Database,
-  tmux: string,
+  sessions: string,
   folder: string,
   plan: {
     given: Omit<Asked, "harness" | "model"> & { signal: AbortSignal };
@@ -301,9 +410,9 @@ async function reviewWithinLimits(
     const spare = fallback !== null && limitOn(fallback, now) === null ? fallback : null;
     // The lead hears of the reviewer's limit, and of the fallback's when that holds reviews too.
     const repository = repositoryOf(db, readThread(db, folder));
-    if (limit !== null) tellOfLimit(db, tmux, role.harness, repository, spare);
+    if (limit !== null) tellOfLimit(db, sessions, role.harness, repository, spare);
     if (limit !== null && spare === null && fallback !== null)
-      tellOfLimit(db, tmux, fallback, repository, null);
+      tellOfLimit(db, sessions, fallback, repository, null);
     // With no harness free, hold the review until a limit resets, and show that on the
     // thread. With the fallback limited too, it waits for whichever frees first.
     if (limit !== null && spare === null) {
@@ -343,13 +452,13 @@ const notHeld = { review_limited: false, review_reset: null };
 // A newer round makes them stale, so they are never typed once one starts.
 async function typeChanges(
   db: Database,
-  tmux: string,
+  sessions: string,
   folder: string,
   text: string,
   signal: AbortSignal,
 ): Promise<void> {
   // A builder can work long after it submits, but one busy this long has likely hung.
-  await typeInto(tmux, folder, builderHarness(readThread(db, folder)).marks, text, {
+  await deliver(sessions, folder, builderHarness(readThread(db, folder)).marks, text, {
     timeout: 30 * 60_000,
     signal,
   });
@@ -383,7 +492,7 @@ export function roundRunning(folder: string): boolean {
 // settles once the round's push is done.
 function trackRound(
   db: Database,
-  tmux: string,
+  sessions: string,
   folder: string,
   cancel: AbortController,
   pushed: Promise<unknown>,
@@ -404,7 +513,7 @@ function trackRound(
       review_at: Date.now(),
     } satisfies Partial<Thread>;
     record(db, folder, change, `the round failed: ${why}`);
-    typeLeadNotes(db, tmux);
+    typeLeadNotes(db, sessions);
   });
   const round = { cancel, pushed, done, ended: false };
   done.then(() => {
@@ -417,7 +526,7 @@ function trackRound(
 // has ended.
 function pushAndReview(
   db: Database,
-  tmux: string,
+  sessions: string,
   folder: string,
   summary: string,
   earlier: Round | undefined,
@@ -426,11 +535,11 @@ function pushAndReview(
   // the order.
   const cancel = new AbortController();
   const before = earlier?.pushed.catch(() => {}) ?? Promise.resolve();
-  const pushed = before.then(() => push(db, tmux, folder, summary, cancel.signal));
+  const pushed = before.then(() => push(db, sessions, folder, summary, cancel.signal));
   const rest = Promise.all([pushed, earlier?.done]).then(([sha]) =>
-    reviewRound(db, tmux, folder, sha, cancel.signal),
+    reviewRound(db, sessions, folder, sha, cancel.signal),
   );
-  trackRound(db, tmux, folder, cancel, pushed, rest);
+  trackRound(db, sessions, folder, cancel, pushed, rest);
 }
 
 // Starts a round for sc submit, cancelling the thread's older round if one is still under
@@ -440,7 +549,7 @@ function pushAndReview(
 // about an older commit. Throws when your config or the repository's skelcrew.yaml isn't valid,
 // so the builder hears why, and for a thread sc stop is ending, whose builder may submit while
 // it exits.
-export function submitRound(db: Database, tmux: string, folder: string, summary: string): void {
+export function submitRound(db: Database, sessions: string, folder: string, summary: string): void {
   const thread = readThread(db, folder);
   const { maxRounds, reviewer } = threadConfig(thread);
   if (thread.status === "stopped")
@@ -472,7 +581,7 @@ export function submitRound(db: Database, tmux: string, folder: string, summary:
   // round's commit.
   const before = latestRounds.get(folder);
   before?.cancel.abort();
-  pushAndReview(db, tmux, folder, summary, before);
+  pushAndReview(db, sessions, folder, summary, before);
 }
 
 // Returns the commit Skelcrew last fetched from the thread's clone and pushed, or null when it
@@ -493,7 +602,12 @@ function lastPushed(thread: Thread): string | null {
 // push failed is pushed first. Refuses a thread that is done or stopped, one with nothing
 // submitted, and one whose review is still waiting or running, since that review answers
 // already. `byBuilder` says the thread's own builder asked, which counts as a submit in its turn.
-export function rerunReview(db: Database, tmux: string, folder: string, byBuilder: boolean): void {
+export function rerunReview(
+  db: Database,
+  sessions: string,
+  folder: string,
+  byBuilder: boolean,
+): void {
   // Refuse what there is nothing to do for: a thread that ended, a review already under way,
   // or no commit yet. A submit that was saved but never pushed counts as a commit.
   const thread = readThread(db, folder);
@@ -531,13 +645,13 @@ export function rerunReview(db: Database, tmux: string, folder: string, byBuilde
   // A submit not yet pushed goes through the whole round. A commit already pushed only needs
   // its review, after the earlier round has ended.
   earlier?.cancel.abort();
-  if (submitting !== null) pushAndReview(db, tmux, folder, submitting, earlier);
+  if (submitting !== null) pushAndReview(db, sessions, folder, submitting, earlier);
   else if (sha !== null) {
     const cancel = new AbortController();
     const rest = Promise.resolve(earlier?.done).then(() =>
-      reviewRound(db, tmux, folder, sha, cancel.signal),
+      reviewRound(db, sessions, folder, sha, cancel.signal),
     );
-    trackRound(db, tmux, folder, cancel, Promise.resolve(), rest);
+    trackRound(db, sessions, folder, cancel, Promise.resolve(), rest);
   }
 }
 
@@ -552,7 +666,7 @@ export function rerunReview(db: Database, tmux: string, folder: string, byBuilde
 // wait for `builderBack`, which the daemon settles once the builder is back or has failed.
 export function resumeRound(
   db: Database,
-  tmux: string,
+  sessions: string,
   folder: string,
   builderBack: Promise<unknown> = Promise.resolve(),
 ): void {
@@ -562,15 +676,15 @@ export function resumeRound(
   const { submitting, reviewing, queued, telling } = readThread(db, folder);
   const cancel = new AbortController();
   const none = Promise.resolve();
-  if (submitting !== null) pushAndReview(db, tmux, folder, submitting, undefined);
+  if (submitting !== null) pushAndReview(db, sessions, folder, submitting, undefined);
   else if (reviewing !== null)
     trackRound(
       db,
-      tmux,
+      sessions,
       folder,
       cancel,
       none,
-      reviewRound(db, tmux, folder, reviewing, cancel.signal, {
+      reviewRound(db, sessions, folder, reviewing, cancel.signal, {
         since: queued ?? 0,
         builderBack,
       }),
@@ -578,18 +692,18 @@ export function resumeRound(
   else if (telling !== null)
     trackRound(
       db,
-      tmux,
+      sessions,
       folder,
       cancel,
       none,
-      typeChanges(db, tmux, folder, telling, cancel.signal),
+      typeChanges(db, sessions, folder, telling, cancel.signal),
     );
 }
 
 // Lets a thread past the round limit go on, for sc start: counts its rounds of changes from
 // zero again, so it no longer needs you for them, and types the changes of the review that
 // reached the limit into the builder, as a round within the limit would have.
-export function goOn(db: Database, tmux: string, folder: string): void {
+export function goOn(db: Database, sessions: string, folder: string): void {
   const { held } = readThread(db, folder);
   const change = { rounds: 0, needs_you: false, held: null, telling: held };
   record(
@@ -604,11 +718,11 @@ export function goOn(db: Database, tmux: string, folder: string): void {
   const cancel = new AbortController();
   trackRound(
     db,
-    tmux,
+    sessions,
     folder,
     cancel,
     Promise.resolve(),
-    typeChanges(db, tmux, folder, held, cancel.signal),
+    typeChanges(db, sessions, folder, held, cancel.signal),
   );
 }
 

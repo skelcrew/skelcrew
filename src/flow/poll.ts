@@ -19,11 +19,12 @@ import { assignIssue, unassignIssue } from "./assign.ts";
 import { baseOf, startThread } from "./builder.ts";
 import { type Item, openTasks, prOf, saveItems } from "./copy.ts";
 import { ciState, decide, labeledToStart, type PullRequest } from "./decide.ts";
-import { endThread, tellBuilder, typingEvents } from "./events.ts";
+import { endThread, removing, tellBuilder, typingEvents } from "./events.ts";
 import { fetchInto, onRemote } from "./git.ts";
 import { noteForLead, typeLeadNotes } from "./lead.ts";
 import { forgeKnown, fullNameIs, repositories } from "./repo.ts";
-import { needsYou, readThread, record, Thread, threadName } from "./thread.ts";
+import { needsYou } from "./status.ts";
+import { readThread, record, Thread, threadName } from "./thread.ts";
 
 // The label that starts a thread on a task, added in its tracker by someone who may.
 const startLabel = "skelcrew";
@@ -40,7 +41,7 @@ const startLabel = "skelcrew";
 // on every poll.
 async function startLabeled(
   db: Database,
-  tmux: string,
+  sessions: string,
   repository: Repository,
   setUpAndStart: (thread: Thread) => Promise<void>,
   starting: Set<string>,
@@ -94,7 +95,7 @@ async function startLabeled(
     // The lead hears first, then the builder starts. The note is one line, as every note to
     // the lead is.
     const note = `started ${threadName(db, thread)} from ${trackerOf(db, repository)}: ${task.title}`;
-    noteForLead(db, tmux, { owner, repo }, note.replace(/\s+/g, " ").slice(0, 200));
+    noteForLead(db, sessions, { owner, repo }, note.replace(/\s+/g, " ").slice(0, 200));
     // Not waited on, as for sc start: setup can take minutes.
     setUpAndStart(thread);
   }
@@ -104,7 +105,12 @@ async function startLabeled(
 // is the thread as it was when the poll began: a round that moved on while the forge answered
 // may have pushed a newer commit, and what the forge said about the checks would be the older
 // one's, so the next poll acts on it instead.
-async function actOnPr(db: Database, tmux: string, before: Thread, pr: PullRequest): Promise<void> {
+async function actOnPr(
+  db: Database,
+  sessions: string,
+  before: Thread,
+  pr: PullRequest,
+): Promise<void> {
   // Act on the thread as it is now, since it may have ended or moved on while the forge
   // answered. One already done or failed has nothing left to act on.
   const { folder } = before;
@@ -131,20 +137,20 @@ async function actOnPr(db: Database, tmux: string, before: Thread, pr: PullReque
     // A merge leaves you assigned, as the closed issue's record of who did it. Asked before
     // the thread ends, so an sc start that starts it over once it is done assigns you after.
     if (pr.state === "closed") unassignIssue(db, folder);
-    await endThread(db, tmux, thread, decision.end);
+    await endThread(db, sessions, thread, decision.end);
   }
   // Left unhandled, so a stopped thread's events reach its builder once it starts again.
   else if (thread.status === "stopped" || typingEvents.has(folder) || stale) return;
   else if (decision.tell.length > 0 || decision.failed.length > 0)
     // Not waited on, so a busy builder holds up neither the other threads nor the next poll.
-    tellBuilder(db, tmux, thread, decision);
+    tellBuilder(db, sessions, thread, decision);
   else {
     const { seen, change, why } = decision;
     const moved = JSON.stringify(seen) !== JSON.stringify(thread.seen);
     // Most polls find nothing new, and the log stays free of them.
     if (moved || Object.keys(change).length > 0) {
       record(db, folder, { seen, ...change }, why);
-      typeLeadNotes(db, tmux);
+      typeLeadNotes(db, sessions);
     }
   }
 }
@@ -153,7 +159,7 @@ async function actOnPr(db: Database, tmux: string, before: Thread, pr: PullReque
 // into its base would change nothing, which a merge, a squash and a rebase all leave, or when
 // it is gone from the remote. Only a branch Skelcrew has pushed counts, as before that it isn't on
 // the remote at all.
-async function actOnBranch(db: Database, tmux: string, repository: Repository, thread: Thread) {
+async function actOnBranch(db: Database, sessions: string, repository: Repository, thread: Thread) {
   const skelcrewClone = cloneDir(thread.owner, thread.repo);
   const ref = (kind: string) => `refs/skelcrew/${kind}/${thread.folder}`;
   const git = (...args: string[]) => quietly(["git", "-C", skelcrewClone, ...args]);
@@ -162,13 +168,16 @@ async function actOnBranch(db: Database, tmux: string, repository: Repository, t
   if (thread.submitting !== null) return;
   if (!(await git("rev-parse", "--verify", "--quiet", ref("threads"))).ok) return;
   // Asking git takes a while, and sc rm may meanwhile have deleted the branch and ended the
-  // thread, or the thread started over. Only the thread as it was is ended.
+  // thread, or the thread started over. Only the thread as it was is ended. A thread sc rm is
+  // still removing is its to end, as it deleted the branch.
   const unchanged = () => {
     const now = readThread(db, thread.folder);
-    return now.status === thread.status && now.started === thread.started;
+    const same = now.status === thread.status && now.started === thread.started;
+    return same && !removing.has(thread.folder);
   };
   if (!(await onRemote(db, repository, thread.branch))) {
-    if (unchanged()) await endThread(db, tmux, thread, `its branch ${thread.branch} was deleted`);
+    if (unchanged())
+      await endThread(db, sessions, thread, `its branch ${thread.branch} was deleted`);
     return;
   }
   // Merge the remote branch into its base without touching any files, and compare the result
@@ -179,7 +188,7 @@ async function actOnBranch(db: Database, tmux: string, repository: Repository, t
   const merged = await git("merge-tree", "--write-tree", ref("bases"), ref("remote"));
   const tree = await git("rev-parse", `${ref("bases")}^{tree}`);
   if (merged.ok && tree.ok && merged.out.trim().split("\n")[0] === tree.out.trim() && unchanged())
-    await endThread(db, tmux, thread, `its branch ${thread.branch} is merged into ${base}`);
+    await endThread(db, sessions, thread, `its branch ${thread.branch} is merged into ${base}`);
 }
 
 // Polls one repository. Asks its tracker and its forge what changed since the `next` each
@@ -190,7 +199,7 @@ async function actOnBranch(db: Database, tmux: string, repository: Repository, t
 // answers are in, since a round can change them meanwhile.
 async function pollRepository(
   db: Database,
-  tmux: string,
+  sessions: string,
   repository: Repository,
   threads: Thread[],
   setUpAndStart: (thread: Thread) => Promise<void>,
@@ -220,16 +229,16 @@ async function pollRepository(
   // With the copy up to date, start labeled tasks, then act on each thread: by its PR with a
   // forge, or by its branch without one.
   if (trackerOf(db, repository) !== null)
-    await startLabeled(db, tmux, repository, setUpAndStart, starting, passed);
+    await startLabeled(db, sessions, repository, setUpAndStart, starting, passed);
   const hasForge = forgeOf(db, repository) !== null;
   for (const before of threads) {
-    if (!hasForge) await actOnBranch(db, tmux, repository, readThread(db, before.folder));
+    if (!hasForge) await actOnBranch(db, sessions, repository, readThread(db, before.folder));
     else {
       // From the copy, just brought up to date, rather than from the answer: a forge answers
       // only what changed, and events held back for a thread, such as one stopped, were left
       // out of its `seen`, so its PR is acted on again until they are handed over.
       const pr = before.pr === null ? null : prOf(db, owner, repo, before.pr);
-      if (pr) await actOnPr(db, tmux, before, pr);
+      if (pr) await actOnPr(db, sessions, before, pr);
     }
   }
 }
@@ -247,7 +256,7 @@ async function pollRepository(
 // start. It settles once that poll is done, and fails if the poll fails.
 export function pollRepositories(
   db: Database,
-  tmux: string,
+  sessions: string,
   every: number,
   setUpAndStart: (thread: Thread) => Promise<void>,
   starting: Set<string>,
@@ -297,7 +306,7 @@ export function pollRepositories(
     nexts.set(fullName, pluginNexts);
     const done = pollRepository(
       db,
-      tmux,
+      sessions,
       repository,
       threads,
       setUpAndStart,
