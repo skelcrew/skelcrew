@@ -426,10 +426,11 @@ async function checkCommand(args: string[]): Promise<void> {
     console.log("This repository is configured with no tests, so there is nothing to run.");
     return;
   }
-  // The suite must never outlive sc check, which is what notices the daemon going away. The
-  // suite runs in a process group of its own, and a watcher in it reads a pipe, descriptor 4,
-  // whose other end only sc check holds. However sc check ends, even killed outright, the pipe
-  // closes and the watcher ends the whole group. The shell closes its own copy once the watcher
+  // The suite never outlives sc check, so a check that is stopped, by Ctrl-C or a killed agent,
+  // never leaves a suite running on that nobody waits for. The suite runs in a process group of
+  // its own, and a watcher in it reads a pipe, descriptor 4, whose other end only sc check
+  // holds. However sc check ends, even killed outright, the pipe closes and the watcher ends the
+  // whole group. The shell closes its own copy once the watcher
   // has it, so the suite keeps your input, and only the watcher reads the pipe.
   const watched = `(cat <&4 >/dev/null; kill -KILL 0) & exec 4<&-; ${slot.test.join(" && ")}`;
   // The shell gets the connection too, as its descriptor 3, so the daemon frees the slot only
@@ -438,27 +439,8 @@ async function checkCommand(args: string[]): Promise<void> {
     stdio: ["inherit", "inherit", "inherit", slot.fd ?? "ignore", "pipe"],
     detached: true,
   });
-  // A daemon that stops while the suite runs takes its slot with it, and the next daemon knows
-  // nothing of the suite. So the suite is stopped at once, rather than run on past the limit,
-  // and you are told to run it again.
-  let ended = false;
-  let stopped = false;
-  slot.lost.then(() => {
-    if (ended) return;
-    stopped = true;
-    try {
-      process.kill(-run.pid, "SIGKILL");
-    } catch {}
-  });
-  const code = await run.exited;
-  ended = true;
-  if (stopped) {
-    console.error(
-      "Skelcrew: the daemon stopped during the check, which took its slot, so the tests were stopped too. Run sc check again.",
-    );
-    process.exit(1);
-  }
-  process.exit(code);
+  // A daemon that restarts meanwhile forgets the slot, and the suite finishes on its own.
+  process.exit(await run.exited);
 }
 
 // Starts, stops, removes, re-reviews, peeks at, interrupts or attaches to the thread on a task

@@ -8,12 +8,9 @@ import { Queue } from "./queue.ts";
 // The one queue of checks the daemon keeps, for every repository on this machine.
 const checks = new Queue();
 
-// A daemon that stops takes every slot with it, and sc check then stops its suite. New checks
-// wait a moment after the daemon starts, so a quick restart never starts a suite while one from
-// before it is still being stopped. The daemon loads this file as it starts, so that is when the
-// wait begins.
-const started = Date.now();
-const settling = Number(process.env.SKELCREW_CHECK_SLOT_SETTLE_MS ?? 2000);
+// The slots are counted only here, in the daemon. A daemon that restarts starts counting from
+// none, and a suite that was running finishes on its own beside the new ones. A restart is rare,
+// and the cost is a short overlap, never a wrong result.
 
 // Answers an sc check on its connection, given the repository's test commands. Once a slot is
 // free it sends the commands, and the caller runs them in its own folder. The caller holds the
@@ -48,16 +45,12 @@ export function holdCheckSlot(connection: Socket, test: string[] | undefined): v
     connection.end(`${JSON.stringify({ error: errorText(error) })}\n`);
     return;
   }
-  const order = Date.now();
-  Bun.sleep(Math.max(0, started + settling - order))
-    .then(() => {
-      // Said only when it waits, with how many wait ahead of it counted in. Worked out as it
-      // joins, after the wait that follows the daemon's start.
-      if (checks.full(limit)) send({ queued: checks.inLine() + 1 });
-      return checks.run({ limit, order, signal: closed.signal }, () => {
-        send({ test });
-        return heldUntilClosed();
-      });
+  // Said only when it waits, with how many wait ahead of it counted in.
+  if (checks.full(limit)) send({ queued: checks.inLine() + 1 });
+  checks
+    .run({ limit, order: Date.now(), signal: closed.signal }, () => {
+      send({ test });
+      return heldUntilClosed();
     })
     // A caller that left while it waited never ran: there is no one to tell.
     .catch(() => {});

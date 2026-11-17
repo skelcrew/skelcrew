@@ -81,16 +81,11 @@ function check(folder: string) {
   return { said, ended, run };
 }
 
-// Starts the daemon and waits for its socket, which it makes once it listens. New checks wait
-// `settle` milliseconds after it starts, so a suite from before a restart is surely stopped:
-// none, unless a test is about that. Returns the daemon, for a test that restarts it.
-async function serve(settle = 0): Promise<Subprocess> {
+// Starts the daemon and waits for its socket, which it makes once it listens. Returns the
+// daemon, for a test that restarts it.
+async function serve(): Promise<Subprocess> {
   rmSync(join(home, "run", "skelcrew.sock"), { force: true });
-  const daemon = startDaemon(
-    socket,
-    { ...env(), SKELCREW_CHECK_SLOT_SETTLE_MS: String(settle) },
-    running,
-  );
+  const daemon = startDaemon(socket, env(), running);
   await until(() => existsSync(join(home, "run", "skelcrew.sock")));
   return daemon;
 }
@@ -156,7 +151,7 @@ test("a check killed while it waits gives back its place, and one killed while i
   expect(log()).toBe("start a\nstart c\nend c\n");
 }, 60_000);
 
-test("a daemon that stops during a check stops its suite, which never runs beside the next daemon's", async () => {
+test("a daemon restart frees the slots, and a suite running then finishes on its own", async () => {
   const before = await serve();
   const [a, b] = ["a", "b"].map((name) => checkout(name));
   if (!a || !b) throw new Error("no checkouts");
@@ -164,18 +159,18 @@ test("a daemon that stops during a check stops its suite, which never runs besid
   await until(() => log().includes("start a") && suiteRuns(a));
   before.kill();
   await before.exited;
-  // The suite is stopped as the daemon goes, before any new daemon could give its slot away.
-  const ended = await first.ended;
-  expect(ended.code).toBe(1);
-  expect(ended.err).toContain("the daemon stopped during the check");
-  expect(ended.err).toContain("Run sc check again.");
-  await until(() => !suiteRuns(a));
-  await serve(500);
+  await serve();
+  // The new daemon counts from none, so the next check starts beside the running suite.
   const second = check(b);
   await until(() => log().includes("start b"));
+  expect(second.said.out).not.toContain("in line");
+  expect(suiteRuns(a)).toBe(true);
+  writeFileSync(join(a, "code"), "3");
+  writeFileSync(join(a, "done"), "");
+  expect((await first.ended).code).toBe(3);
   writeFileSync(join(b, "done"), "");
   expect((await second.ended).code).toBe(0);
-  expect(log()).toBe("start a\nstart b\nend b\n");
+  expect(log()).toBe("start a\nstart b\nend a\nend b\n");
 }, 60_000);
 
 test("the test commands read what sc check is given on its input", async () => {

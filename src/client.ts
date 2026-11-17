@@ -191,16 +191,16 @@ export async function submitForReview(summary: string): Promise<string> {
 }
 
 // Waits for one of the machine's check slots, for sc check, and returns the repository's test
-// commands, the connection's file descriptor, when Bun gives it, and `lost`, which settles once
-// the connection closes. The daemon keeps the slot while the connection stays open: in this
-// process, and in any process the descriptor is handed to. `queued` is told the caller's place in
+// commands and the connection's file descriptor, when Bun gives it. The daemon keeps the slot
+// while the connection stays open: in this process, and in any process the descriptor is handed
+// to. `queued` is told the caller's place in
 // line when it has to wait. `from` is the remote of the checkout you ran it in; an agent's own
 // socket names its repository instead. Throws with the daemon's error, such as when no test
 // command is configured, or when nothing answers.
 export function takeCheckSlot(given: {
   queued: (place: number) => void;
   from?: string | undefined;
-}): Promise<{ test: string[]; fd: number | undefined; lost: Promise<void> }> {
+}): Promise<{ test: string[]; fd: number | undefined }> {
   const { queued, from } = given;
   const Line = z.union([
     z.object({ queued: z.number() }),
@@ -209,7 +209,6 @@ export function takeCheckSlot(given: {
   ]);
   return new Promise((done, fail) => {
     const connection = createConnection(cliSocket());
-    const lost = Promise.withResolvers<void>();
     let said = "";
     let answered = false;
     const request = { command: "check", ...(from ? { from } : {}) };
@@ -237,14 +236,13 @@ export function takeCheckSlot(given: {
           const handle: unknown = Reflect.get(connection, "_handle");
           const read = z.object({ fd: z.number().int().nonnegative() }).safeParse(handle);
           const fd = read.success ? read.data.fd : undefined;
-          done({ test: line.data.test, fd, lost: lost.promise });
+          done({ test: line.data.test, fd });
         }
       }
     });
     connection.on("error", () => {});
     // A daemon that stops while the caller waits leaves it nothing to wait for.
     connection.on("close", () => {
-      lost.resolve();
       if (!answered) fail(new Error("the daemon didn't answer: run sc to start it"));
     });
   });
