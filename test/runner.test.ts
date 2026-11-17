@@ -58,26 +58,31 @@ test("a nested sc never reaches the outer daemon, whatever the outer variables s
   writeFileSync(
     join(folder, "nested.test.ts"),
     `import { test } from "bun:test";
-import { mkdirSync, mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { homeEnv, runSkel, source } from ${JSON.stringify(join(import.meta.dir, "harness.ts"))};
 test("submits", async () => {
   const home = mkdtempSync(join(tmpdir(), "nested-"));
-  mkdirSync(join(home, "run"));
-  await runSkel(["submit", "Round 1"], { ...process.env, ...homeEnv(home) });
-  const sc = [process.execPath, source("main.ts"), "submit", "Round 1"];
-  for (const env of [{ ...process.env, HOME: home }, undefined]) {
-    const run = Bun.spawn(sc, { env, stdout: "pipe", stderr: "pipe" });
-    const [err, code] = await Promise.all([new Response(run.stderr).text(), run.exited]);
-    if (!err.includes("the daemon didn't answer")) throw new Error(\`sc ended with \${code}: \${err}\`);
+  // The folder is outside the outer test's, so it goes here, whatever happens.
+  try {
+    mkdirSync(join(home, "run"));
+    await runSkel(["submit", "Round 1"], { ...process.env, ...homeEnv(home) });
+    const sc = [process.execPath, source("main.ts"), "submit", "Round 1"];
+    for (const env of [{ ...process.env, HOME: home }, undefined]) {
+      const run = Bun.spawn(sc, { env, stdout: "pipe", stderr: "pipe" });
+      const [err, code] = await Promise.all([new Response(run.stderr).text(), run.exited]);
+      if (!err.includes("the daemon didn't answer")) throw new Error(\`sc ended with \${code}: \${err}\`);
+    }
+    // Skelcrew's settings and data, in this run and in a process that inherits its environment.
+    const paths = ${JSON.stringify(join(import.meta.dir, "..", "src", "paths.ts"))};
+    const code = \`import { configDir, dataDir } from \${JSON.stringify(paths)}; console.log(configDir(), dataDir());\`;
+    const child = Bun.spawnSync([process.execPath, "-e", code]).stdout.toString();
+    for (const seen of [child, (await import(paths)).configDir()])
+      if (!seen.includes("skelcrew") || seen.includes(${JSON.stringify(folder)})) throw new Error(\`reached the outer home: \${seen}\`);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
   }
-  // Skelcrew's settings and data, in this run and in a process that inherits its environment.
-  const paths = ${JSON.stringify(join(import.meta.dir, "..", "src", "paths.ts"))};
-  const code = \`import { configDir, dataDir } from \${JSON.stringify(paths)}; console.log(configDir(), dataDir());\`;
-  const child = Bun.spawnSync([process.execPath, "-e", code]).stdout.toString();
-  for (const seen of [child, (await import(paths)).configDir()])
-    if (!seen.includes("skelcrew") || seen.includes(${JSON.stringify(folder)})) throw new Error(\`reached the outer home: \${seen}\`);
 });
 `,
   );
