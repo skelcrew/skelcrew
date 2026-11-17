@@ -426,8 +426,9 @@ async function checkCommand(args: string[]): Promise<void> {
     console.log("This repository is configured with no tests, so there is nothing to run.");
     return;
   }
-  // The suite never outlives sc check, so a check that is stopped, by Ctrl-C or a killed agent,
-  // never leaves a suite running on that nobody waits for. The suite runs in a process group of
+  // The suite's process group never outlives sc check, so a check that is stopped, by Ctrl-C or
+  // a killed agent, never leaves a suite running on that nobody waits for. A process that
+  // detaches itself into a group of its own is outside the check, as only Linux could follow it. The suite runs in a process group of
   // its own, and a watcher in it reads a pipe, descriptor 4, whose other end only sc check
   // holds. However sc check ends, even killed outright, the pipe closes and the watcher ends the
   // whole group. The shell closes its own copy once the watcher

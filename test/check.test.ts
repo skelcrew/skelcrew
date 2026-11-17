@@ -151,6 +151,33 @@ test("a check killed while it waits gives back its place, and one killed while i
   expect(log()).toBe("start a\nstart c\nend c\n");
 }, 60_000);
 
+test("a process the suite detaches is outside the check: it neither ends with sc check nor holds the slot", async () => {
+  // The suite starts a process in a session of its own, as Bun's detached spawn does, without
+  // the daemon's connection, then waits.
+  const detach = `${JSON.stringify(process.execPath)} -e 'const c = Bun.spawn(["sleep", "60"], { detached: true, stdio: ["ignore", "ignore", "ignore"] }); await Bun.write("child", String(c.pid)); c.unref()'`;
+  config(`limits: { checks: 1 }\ntest: ${JSON.stringify([detach, ...suite])}\n`);
+  await serve();
+  const [a, b] = ["a", "b"].map((name) => checkout(name));
+  if (!a || !b) throw new Error("no checkouts");
+  const first = check(a);
+  await until(() => log().includes("start a") && suiteRuns(a));
+  const child = Number(read(join(a, "child")));
+  first.run.kill("SIGKILL");
+  await until(() => !suiteRuns(a));
+  // The slot is free for the next check while the detached process runs on.
+  const second = check(b);
+  await until(() => log().includes("start b"));
+  const alive = Bun.spawnSync(["ps", "-o", "stat=", "-p", String(child)])
+    .stdout.toString()
+    .trim();
+  expect(alive).not.toBe("");
+  expect(alive.startsWith("Z")).toBe(false);
+  writeFileSync(join(b, "done"), "");
+  expect((await second.ended).code).toBe(0);
+  // The second suite detached one too. The test ends both, as nothing else will.
+  for (const folder of [a, b]) process.kill(Number(read(join(folder, "child"))), "SIGKILL");
+}, 60_000);
+
 test("a daemon restart frees the slots, and a suite running then finishes on its own", async () => {
   const before = await serve();
   const [a, b] = ["a", "b"].map((name) => checkout(name));
