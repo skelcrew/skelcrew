@@ -78,3 +78,21 @@ test("a merge that resolved a conflict in the PR's files does not, even keeping 
 test("a commit Skelcrew can't read does not", () => {
   expect(onlyMergedBase(repo, approved, "0".repeat(40), "main")).toBe(false);
 });
+
+test("a conflict resolved in an earlier merge does not, though main undid its side since", () => {
+  // Main changes the PR's line, and the builder resolves the conflict by keeping its side.
+  expect(moveMainAndMerge({ shared: "one\ntwo, changed by main\nthree\n" })).toBe(true);
+  finishMerge();
+  // Main puts the line back, and the builder merges again, keeping its side. The final tree is
+  // then what git alone would make of the approved commit and main.
+  moveMainAndMerge({ shared: "one\ntwo\nthree\n" });
+  expect(onlyMergedBase(repo, approved, finishMerge(), "main")).toBe(false);
+});
+
+test("a commit that rewrote the approved one, rather than merging into it, does not", () => {
+  git(repo, "checkout", "-q", "main");
+  commit({ OTHER: "other\n" }, "main moved");
+  git(repo, "checkout", "-q", "pr");
+  git(repo, "rebase", "-q", "main");
+  expect(onlyMergedBase(repo, approved, git(repo, "rev-parse", "HEAD"), "main")).toBe(false);
+});

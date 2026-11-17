@@ -420,6 +420,9 @@ async function actOnVerdict(
       `refs/skelcrew/approved/${thread.folder}`,
       sha,
     ).catch(() => {});
+  // A newer submit, or sc stop, may have cancelled the round meanwhile, and the thread is then
+  // its to change.
+  if (signal.aborted) return;
   // Save the outcome, tell the lead if the thread now needs you, and type any changes into
   // the builder.
   const { rounds, needsYou, status, tell, held } = outcome;
@@ -689,8 +692,9 @@ function lastApproved(thread: Thread): string | null {
 // branch merged in: what git merges by itself, with no conflict and nothing else changed. A
 // builder whose PR fell behind or conflicts with main merges it and submits again, and then the
 // PR's own change is the one already approved. A conflict, even one resolved by keeping the PR's
-// side, or any change on top, needs a review. The base merged is where the commit meets the
-// base branch, which may be older than the base's tip. A commit git can't read gives false.
+// side, or any change on top, needs a review. So does a rebase, which rewrites the approved
+// commit. The base merged is where the commit meets the base branch, which may be older than
+// the base's tip. A commit git can't read gives false.
 export function onlyMergedBase(
   clone: string,
   approved: string,
@@ -701,10 +705,26 @@ export function onlyMergedBase(
     const run = Bun.spawnSync(["git", "-C", clone, ...args], { stdout: "pipe", stderr: "pipe" });
     return run.success ? run.stdout.toString().trim() : null;
   };
-  // merge-tree fails on a conflict, and prints the merged tree first otherwise.
+  // merge-tree fails on a conflict, and prints the merged tree first otherwise. Returns whether
+  // the commit's tree is what git alone makes of merging the two.
+  const automatic = (commit: string, one: string, two: string) => {
+    const tree = git("merge-tree", "--write-tree", one, two);
+    return tree !== null && tree.split("\n")[0] === git("rev-parse", `${commit}^{tree}`);
+  };
+  // The commit must build on the approved one, not rewrite it.
+  if (git("merge-base", "--is-ancestor", approved, sha) === null) return false;
+  // Every commit the builder made since the approval must be a merge git made alone. Checking
+  // only the last tree would miss a conflict resolved in an earlier merge whose side main undid
+  // since. The base's own commits are left out, as they are main's, not the PR's.
+  const added = git("rev-list", "--parents", sha, `^${approved}`, `^${base}`);
+  if (added === null) return false;
+  for (const line of added.split("\n").filter(Boolean)) {
+    const [commit = "", one = "", two = "", ...more] = line.split(" ");
+    if (two === "" || more.length > 0 || !automatic(commit, one, two)) return false;
+  }
+  // And the whole is the approved commit merged with the base, so nothing else crept in.
   const merged = git("merge-base", sha, base);
-  const tree = merged === null ? null : git("merge-tree", "--write-tree", approved, merged);
-  return tree !== null && tree.split("\n")[0] === git("rev-parse", `${sha}^{tree}`);
+  return merged !== null && automatic(sha, approved, merged);
 }
 
 // Reviews the thread's last submitted commit again, for sc review, such as after a review
