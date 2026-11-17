@@ -55,6 +55,18 @@ console.log(JSON.stringify(db.query("SELECT text FROM notes").all()));`);
   expect(texts[0]?.text).not.toContain("Esc");
 });
 
+test("a new round's drop takes only Skelcrew's notices, not the lead's message or a comment", () => {
+  const left = run(`
+import { dropOldEvents } from ${JSON.stringify(source("flow/messages.ts"))};
+queueMessage(db, tmux, "app-12", { sender: "skelcrew", text: "Merge main.", said: "a conflict", typed_in: [] });
+queueMessage(db, tmux, "app-12", { sender: "skelcrew", text: "Check failed.", said: "a failed check", typed_in: [] });
+queueMessage(db, tmux, "app-12", { sender: "skelcrew", text: "Comment: CSV too.", said: "a comment", typed_in: [{ kind: "comment", id: "7" }] });
+queueMessage(db, tmux, "app-12", { sender: "lead", text: "Use v2.", said: "Use v2.", typed_in: [] });
+dropOldEvents(db, "app-12");
+console.log(JSON.stringify(db.query("SELECT said FROM messages ORDER BY id").all()));`);
+  expect(JSON.parse(left)).toEqual([{ said: "a comment" }, { said: "Use v2." }]);
+});
+
 test("two comments with the same words both stay to be marked seen", () => {
   const kept = run(`
 const text = "Comment from simon: Thanks!";

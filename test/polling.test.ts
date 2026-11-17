@@ -461,6 +461,59 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
     await until(() => waiting() === 0);
   }, 60_000);
 
+  // A new round is a new commit, so a conflict or failed check told of the old one no longer
+  // holds. The lead's words and a person's comment still do.
+  test("a new round drops Skelcrew's waiting notices of the old one, but keeps the lead's message and your comment", async () => {
+    mkdirSync(builder(), { recursive: true });
+    writeFileSync(join(builder(), "busy"), "");
+    await approvedApp12();
+    pr({ conflicts: true, reviews: [skelReview], checks: [approved] });
+    await until(() => waiting() === 1);
+    pr({
+      conflicts: true,
+      reviews: [skelReview],
+      checks: [approved],
+      comments: [{ id: "51", author: you, text: "Also CSV." }],
+    });
+    await until(() => waiting() === 2);
+    // Runs sc as an agent would, from its own socket.
+    const hashed = (name: string) =>
+      new Bun.CryptoHasher("sha256").update(name).digest("hex").slice(0, 16);
+    const runDir = join(home, "run", "skelcrew");
+    const asAgent = (socketPath: string, args: string[], cwd = home) =>
+      Bun.spawnSync([process.execPath, main, ...args], {
+        env: { ...env(), SKELCREW_SOCKET: socketPath },
+        cwd,
+        stderr: "pipe",
+      });
+    const told = asAgent(join(runDir, "leads", hashed("simon/app"), "skelcrew.sock"), [
+      "tell",
+      "app-12",
+      "Keep the old names.",
+    ]);
+    expect(told.stderr.toString()).toBe("");
+    expect(waiting()).toBe(3);
+    // The builder fixes the conflict and submits a new round, while still busy.
+    pr({
+      reviews: [skelReview],
+      checks: [approved],
+      comments: [{ id: "51", author: you, text: "Also CSV." }],
+    });
+    writeFileSync(join(clone(), "change"), "2\n");
+    git(clone(), "add", "-A");
+    git(clone(), "commit", "-qm", "round 2");
+    const submitted = asAgent(
+      join(runDir, "threads", hashed("app-12"), "skelcrew.sock"),
+      ["submit", "Round 2"],
+      clone(),
+    );
+    expect(submitted.stderr.toString()).toBe("");
+    expect(waiting()).toBe(2);
+    rmSync(join(builder(), "busy"));
+    await until(() => typed().includes("Keep the old names.") && typed().includes("Also CSV."));
+    expect(typed()).not.toContain("conflicts with main");
+  }, 60_000);
+
   // An earlier Skelcrew gave up typing after half an hour, and left the thread approved, needing
   // you, while its PR still conflicted.
   test("a conflict whose notice an earlier attempt gave up on is told on the next poll", async () => {

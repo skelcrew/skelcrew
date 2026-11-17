@@ -215,6 +215,18 @@ export function deliverAllWaiting(db: Database, tmux: string): void {
     deliverMessages(db, tmux, folder);
 }
 
+// Drops Skelcrew's waiting messages that tell only of the thread's events, such as a failed
+// check or a merge conflict, as a new round makes them about an older commit. A conflict still
+// there is found and told again. The lead's messages stay, and so do those carrying a person's
+// review or comment on the PR, as people's words stay true whatever the commit.
+export function dropOldEvents(db: Database, folder: string): void {
+  const rows = db
+    .query("SELECT * FROM messages WHERE folder = ? AND sender = 'skelcrew'")
+    .all(folder);
+  for (const message of z.array(Message).parse(rows))
+    if (message.typed_in.length === 0) db.run("DELETE FROM messages WHERE id = ?", [message.id]);
+}
+
 // Cancels typing under way into the thread's builder, for a stop, a merge or sc rm, so nothing
 // is typed into it afterwards. Its messages stay saved, unless `drop`, for a thread that ended.
 export function stopDelivering(db: Database, folder: string, drop: boolean): void {
