@@ -70,7 +70,10 @@ export function threadWord(thread: Thread, maxRounds: number, now = Date.now()):
   // that the thread is ready to merge.
   const past = thread.needs_you && pastRoundLimit(thread, maxRounds);
   const failed = underWay || verdict === "failed";
-  const green = verdict === "approve" && (checks === "passing" || checks === null);
+  // A PR that conflicts isn't ready to merge, even when something else, such as its builder
+  // missing, makes the thread need you again.
+  const green =
+    verdict === "approve" && (checks === "passing" || checks === null) && thread.conflicts === null;
   if (past) return "round limit";
   if (thread.needs_you && !failed && green) return "approved";
   // Stopping without submitting is a question written as plain text.

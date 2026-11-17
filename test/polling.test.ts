@@ -453,6 +453,8 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
     await until(() => thread().needs_you === 1);
     pr({ conflicts: true, reviews: [skelReview], checks: [approved] });
     await until(() => thread().status === "working" && thread().needs_you === 0);
+    // Saved, so nothing that makes the thread need you meanwhile shows it ready again.
+    expect(thread().conflicts).toBe("main");
     expect(waiting()).toBe(1);
     await morePolls();
     expect(typed()).not.toContain("conflicts with main");

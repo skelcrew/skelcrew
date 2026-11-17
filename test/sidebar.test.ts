@@ -887,6 +887,7 @@ const state: Thread = {
   limit_reset: null,
   review_limited: false,
   review_reset: null,
+  conflicts: null,
   noting: null,
   body: null,
   title: null,

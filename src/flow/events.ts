@@ -229,17 +229,20 @@ export async function tellBuilder(
   const { seen, change, why } = decision;
   // Read before fetching, as a new round may start meanwhile.
   const round = noticeRound(thread.folder);
-  // Its status stays as it is, so while a fetch keeps failing, each poll finds the conflict
-  // again and tries again.
+  // The conflict is saved first, so an approval stops being ready to merge before any wait. Its
+  // status stays as it is, so while a fetch keeps failing, each poll finds the conflict again
+  // and tries again.
   const unready = decision.conflict !== null && thread.needs_you && !change.needs_you;
-  const before = unready
-    ? record(
-        db,
-        thread.folder,
-        { needs_you: false },
-        `its PR conflicts with ${decision.conflict}, so it isn't ready to merge`,
-      )
-    : thread;
+  const conflicts = decision.conflict ?? thread.conflicts;
+  const before =
+    conflicts !== thread.conflicts || unready
+      ? record(
+          db,
+          thread.folder,
+          unready ? { conflicts, needs_you: false } : { conflicts },
+          `its PR conflicts with ${conflicts}, so it isn't ready to merge`,
+        )
+      : thread;
   try {
     if (decision.conflict !== null) await refreshBase(db, thread, decision.conflict);
     const checks = await failedCheckMessages(db, thread, decision.failed);

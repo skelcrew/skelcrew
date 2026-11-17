@@ -34,6 +34,7 @@ const state: Thread = {
   limit_reset: null,
   review_limited: false,
   review_reset: null,
+  conflicts: null,
   noting: null,
   body: null,
   title: null,
@@ -66,6 +67,14 @@ test("an approval with green checks is ready to merge", () => {
   expect(status({ ...approved, checks: "passing" })).toBe("ready");
   expect(status({ ...approved, checks: null })).toBe("ready");
   expect(status({ ...approved, checks: "failing" })).toBe("needs you");
+});
+
+// An approved PR that conflicts left ready to merge. Something else making the thread need you
+// again, such as its builder missing while messages wait, doesn't make it ready.
+test("an approval whose PR conflicts isn't ready to merge, even once the thread needs you", () => {
+  const approved = { status: "waiting", verdict: "approve", checks: "passing" } as const;
+  expect(status({ ...approved, needs_you: true, conflicts: "main" })).toBe("needs you");
+  expect(status({ ...approved, conflicts: "main" })).toBe("idle");
 });
 
 test("a question, a stall, the round limit or a failed review needs you", () => {

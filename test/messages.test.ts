@@ -63,6 +63,23 @@ console.log(JSON.stringify(db.query("SELECT text FROM notes").all()));`);
   expect(texts[0]?.text).not.toContain("Esc");
 });
 
+// A conflict took an approved PR out of ready to merge, and its message waits for a builder
+// that is missing. The thread needs you for that, but its PR still conflicts, so it isn't ready.
+test("a missing builder makes an approved PR that conflicts need you, not ready to merge", () => {
+  const seen = run(`
+import { threadWord } from ${JSON.stringify(source("flow/status.ts"))};
+import { readThread } from ${JSON.stringify(source("flow/thread.ts"))};
+db.run("UPDATE threads SET verdict = 'approve', checks = 'passing', conflicts = 'main', pr = 7");
+queueMessage(db, tmux, "app-12", { sender: "skelcrew", text: "Merge main.", said: "a conflict", typed_in: [] });
+for (let i = 0; i < 30 && !readThread(db, "app-12").needs_you; i++) {
+  deliverAllWaiting(db, tmux);
+  await Bun.sleep(500);
+}
+const thread = readThread(db, "app-12");
+console.log(JSON.stringify({ needsYou: thread.needs_you, word: threadWord(thread, 3) }));`);
+  expect(JSON.parse(seen)).toEqual({ needsYou: true, word: "needs you" });
+});
+
 test("a new round's drop takes only Skelcrew's notices and the review's changes, not the lead's message or a comment", () => {
   const left = run(`
 import { dropOldEvents } from ${JSON.stringify(source("flow/messages.ts"))};

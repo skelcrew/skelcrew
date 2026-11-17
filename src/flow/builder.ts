@@ -172,6 +172,7 @@ export async function startThread(
       body,
       started: Date.now(),
       checks: null,
+      conflicts: null,
       reviewer: null,
       reviewed_by: null,
       review_round: null,

@@ -140,6 +140,7 @@ function prepareTables(db: Database): void {
     title: "TEXT",
     started: "INTEGER",
     checks: "TEXT",
+    conflicts: "TEXT",
     reviewer: "TEXT",
     reviewed_by: "TEXT",
     review_round: "INTEGER",

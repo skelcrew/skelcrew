@@ -48,6 +48,7 @@ function thread(change: Partial<Thread> = {}): Thread {
     limit_reset: null,
     review_limited: false,
     review_reset: null,
+    conflicts: null,
     noting: null,
     title: null,
     body: null,
