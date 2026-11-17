@@ -179,10 +179,15 @@ async function deliver(db: Database, tmux: string, folder: string, signal: Abort
     const { marks } = builderHarness(thread);
     const typed = await typeInto(tmux, folder, marks, message.text, { timeout: 10_000, signal });
     if (!typed) return;
-    // Deleted by its id even when this attempt was cancelled while pasting, as the message went
-    // in. Ids are never used again, so a message a new round dropped meanwhile takes no other.
+    // Read again, as an identical comment that came while it was typed joined it, and needs
+    // marking seen too. Deleted by its id even when this attempt was cancelled while pasting, as
+    // the message went in. Ids are never used again, so a message a new round dropped meanwhile
+    // takes no other.
+    const typedIn = Message.nullable().parse(
+      db.query("SELECT * FROM messages WHERE id = ?").get(message.id),
+    );
     db.run("DELETE FROM messages WHERE id = ?", [message.id]);
-    afterTyped(db, folder, message);
+    afterTyped(db, folder, typedIn ?? message);
   }
 }
 

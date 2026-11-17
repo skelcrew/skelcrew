@@ -6,7 +6,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
-import { source } from "./harness.ts";
+import { fakePlugin, source } from "./harness.ts";
 
 let home = "";
 beforeEach(() => {
@@ -134,6 +134,42 @@ console.log(JSON.stringify({ left: db.query("SELECT 1 FROM messages").all().leng
   expect(JSON.parse(left)).toEqual({ left: 0, updates: 1 });
   const received = readFileSync(join(home, "received.txt"), "utf8");
   expect(received.split("Use v2.").length - 1).toBe(1);
+});
+
+// The same words can come in a second comment while the first is being typed in. Both went
+// in, so both are marked seen on the PR.
+test("a comment that joins a message being typed in is marked seen too", () => {
+  const plugin = fakePlugin(home);
+  // A stand-in builder, idle at Claude Code's prompt, keeping each key as it comes, so the test
+  // sees the paste before its Enter.
+  writeFileSync(
+    join(home, "builder.sh"),
+    "#!/bin/sh\nprintf '\\033[?2004h'\nstty raw -echo\necho '❯'\nexec cat > received.txt\n",
+    { mode: 0o755 },
+  );
+  run(`
+import { readFileSync, existsSync } from "node:fs";
+db.run("UPDATE repositories SET forge = 'github'");
+db.run("UPDATE threads SET pr = 7");
+const received = ${JSON.stringify(join(home, "received.txt"))};
+const got = () => (existsSync(received) ? readFileSync(received, "utf8") : "");
+Bun.spawnSync(["tmux", "-L", tmux, "new-session", "-d", "-s", "app-12", "-c", ${JSON.stringify(home)}, ${JSON.stringify(join(home, "builder.sh"))}]);
+await Bun.sleep(300);
+const text = "simon commented on the PR: Thanks!";
+queueMessage(db, tmux, "app-12", { sender: "skelcrew", text, said: "a comment", typed_in: [{ kind: "comment", id: "1" }] });
+for (let i = 0; i < 200 && !got().includes("Thanks!"); i++) await Bun.sleep(10);
+if (got().includes("\\r")) throw new Error("the Enter came before the second comment");
+queueMessage(db, tmux, "app-12", { sender: "skelcrew", text, said: "a comment", typed_in: [{ kind: "comment", id: "2" }] });
+for (let i = 0; i < 100 && db.query("SELECT 1 FROM messages").get(); i++) await Bun.sleep(50);
+// The forge is asked in the background.
+await Bun.sleep(3000);`);
+  const asked = readFileSync(join(plugin, "asked"), "utf8")
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line))
+    .filter((question) => question.ask === "seen");
+  expect(asked.map((question) => question.id).sort()).toEqual(["1", "2"]);
+  expect(readFileSync(join(home, "received.txt"), "utf8").split("Thanks!").length - 1).toBe(1);
 });
 
 test("two comments with the same words both stay to be marked seen", () => {
