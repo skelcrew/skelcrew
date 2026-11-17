@@ -916,6 +916,53 @@ done`,
     expect(read(join(data(), "threads", "app-12.log"))).toContain("approval kept");
   }, 60_000);
 
+  test("a kept approval waits for CI's first check, so running CI keeps it from ready to merge", async () => {
+    const work = addApp();
+    verdict(1, "approve", "Ready to merge.");
+    startDaemon(socket, { ...env(), SKELCREW_CHECK_WAIT_MS: "60000" }, running);
+    await untilCloned();
+    expect((await skel(["start", "app-12"])).err).toBe("");
+    // The forge shows CI on each commit only once the test says so.
+    const showPr = (head: string, checks: { name: string; id: null; state: string }[]) =>
+      answer(plugin, "changed", {
+        items: [
+          taskItem("12", "Add export", { body: "As JSON" }),
+          prItem("7", "Add export", { branch: "skelcrew/12-add-export", head, checks }),
+        ],
+        next: null,
+      });
+    await until(() => opened() !== undefined);
+    showPr(pushed(), [{ name: "buildkite/test", id: null, state: "passed" }]);
+    await until(() => finished("success").length === 1);
+    await untilReviewSaved();
+
+    // The merge is pushed with no CI on it yet, only Skelcrew's own check, which reads as ready
+    // to merge to a poll. The kept approval waits for CI's check, across a poll, instead.
+    mergeMain(work, { OTHER: "other\n" });
+    expect((await skel(["submit", "Merged main"], { SKELCREW_SOCKET: builderSocket() })).err).toBe(
+      "",
+    );
+    const merged = git(clone(), "rev-parse", "HEAD");
+    await until(() => pushed() === merged);
+    const own = { name: "skelcrew/check", id: null, state: "passed" };
+    showPr(merged, [own]);
+    await Bun.sleep(35_000);
+    expect(finished("success").length).toBe(1);
+    expect(thread().needs_you).toBe(0);
+
+    // CI shows and still runs: the approval is kept, and the thread waits on CI, not on you.
+    showPr(merged, [own, { name: "buildkite/test", id: null, state: "running" }]);
+    await until(() => finished("success").length === 2, 60_000);
+    expect(finished("success")[1]).toMatchObject({
+      sha: merged,
+      description: "approval kept: only merged main",
+    });
+    await untilReviewSaved();
+    await until(() => thread().checks === "pending");
+    expect(thread()).toMatchObject({ status: "waiting", needs_you: 0 });
+    expect(read(join(codexHome(), "sessions", "count")).trim()).toBe("1");
+  }, 180_000);
+
   test("a submit that merges main and changes a line of the PR is reviewed again", async () => {
     const work = addApp();
     verdict(1, "approve", "Ready to merge.");

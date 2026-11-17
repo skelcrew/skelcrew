@@ -187,21 +187,8 @@ async function reviewRound(
   const { reviewer: reviewerRole, fallback, reviewMinutes } = threadConfig(thread);
   const reviewer = reviewerRole.harness;
   const limit = reviewLimit();
-  // A builder whose PR fell behind or conflicts with the base branch merges it and submits
-  // again. When that is all the commit does, the PR's own change is the one already approved, so
-  // the approval holds and CI alone decides whether it is ready. It counts only while the latest
-  // review approved, so a review asking for changes since is never skipped. The approved commit
-  // and the base are refs in Skelcrew's clone, which the push brought up to date.
   const skelcrewClone = cloneDir(thread.owner, thread.repo);
   const bases = `refs/skelcrew/bases/${thread.folder}`;
-  const approved = keep && thread.verdict === "approve" ? lastApproved(thread) : null;
-  if (approved !== null && onlyMergedBase(skelcrewClone, approved, sha, bases)) {
-    const body = `Approval kept: this commit only merges ${baseOf(thread)} into ${approved}, which Skelcrew's reviewer approved, and changes nothing else in the PR. CI still runs on it.`;
-    const verdict: Review = { verdict: "approve", body };
-    const kept = { verdict, by: thread.reviewed_by ?? reviewer, kept: approved };
-    await actOnVerdict(db, sessions, folder, sha, signal, kept, builderBack);
-    return;
-  }
   const setCheck = async (state: "pending" | "success" | "failure", description: string) => {
     if (hasForge) await setStatus(db, repository, { commit: sha, state, description });
   };
@@ -267,6 +254,22 @@ async function reviewRound(
 
     if (who === "reviewer" && whoRunsTheSuite({ ...noCi, waited: 0, checkWait }) === "reviewer")
       waitedInVain.add(repositoryName);
+  }
+  // A builder whose PR fell behind or conflicts with the base branch merges it and submits
+  // again. When that is all the commit does, the PR's own change is the one already approved, so
+  // the approval holds and CI alone decides whether it is ready. It counts only while the latest
+  // review approved, so a review asking for changes since is never skipped. The approved commit
+  // and the base are refs in Skelcrew's clone, which the push brought up to date. It comes after
+  // the wait for CI's first check, as an approval with no CI showing yet reads as ready to merge.
+  // Its check goes from pending to success, in that order.
+  const approved = keep && thread.verdict === "approve" ? lastApproved(thread) : null;
+  if (approved !== null && onlyMergedBase(skelcrewClone, approved, sha, bases)) {
+    const body = `Approval kept: this commit only merges ${baseOf(thread)} into ${approved}, which Skelcrew's reviewer approved, and changes nothing else in the PR. CI still runs on it.`;
+    const verdict: Review = { verdict: "approve", body };
+    const kept = { verdict, by: thread.reviewed_by ?? reviewer, kept: approved };
+    await pending;
+    await actOnVerdict(db, sessions, folder, sha, signal, kept, builderBack);
+    return;
   }
   // A review that has to wait is saved as queued, with when it joined, so the thread says so,
   // and a restart puts it back in the same place. One that starts at once is saved as
