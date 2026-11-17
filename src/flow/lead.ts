@@ -16,6 +16,7 @@ import {
   startCommandOf,
   startSession,
   stopSession,
+  watched,
 } from "../agents/sessions.ts";
 import { deliver, idle } from "../agents/transport.ts";
 import { agentRoles, repositoryCommands } from "../config.ts";
@@ -102,19 +103,55 @@ export function leadInstructions(
   return `${builtInRole("lead").instructions}\nYou are the lead of ${repository}. Skelcrew's clone of it is at ${clone}.\nWhen this session started, ${setupTold}, and ${testTold}.\n`;
 }
 
-// Reports whether a running lead on Claude Code was started with its agent view on, by a
-// release before Skelcrew turned it off, and sits idle, so restarting it loses nothing. Agent
-// view's background service can hand the lead a spare session of its own, which has neither
-// the lead's conversation, nor its model, nor its instructions. A busy lead is left until the
-// next time Skelcrew looks, such as when you open it with sc.
-async function agentViewOn(
+// The note typing under way for each repository's lead, by its owner/name.
+const noteTyping = new Map<string, Promise<void>>();
+
+// Ends a running lead on Claude Code that a release before this one started with agent view
+// on, so it can start again on its stored conversation, and returns whether it did. Agent
+// view's background service can hand the lead a spare session of its own, with neither the
+// lead's conversation, nor its model, nor its instructions. Nothing may be lost, so the lead
+// is kept when it has no saved conversation to come back to, when it is busy or holds a draft,
+// when you are looking at it, or when a note waits for it. The check runs in the lead's note
+// typing, so no note is typed while it runs. A lead kept is looked at again at its next start,
+// such as when you open it with sc.
+async function endIfAgentViewOn(
+  db: Database,
   sessions: string,
-  name: string,
-  harness: HarnessName | null,
+  repository: { owner: string; repo: string },
 ): Promise<boolean> {
-  if (harness !== "claude") return false;
+  const { owner, repo } = repository;
+  const { name, folder, session, harness } = leadOf(db, owner, repo);
+  const claude = harnessNamed("claude");
+  if (harness !== "claude" || session === null) return false;
   if (startCommandOf(sessions, name).includes("CLAUDE_CODE_DISABLE_AGENT_VIEW=1")) return false;
-  return idle(sessions, name, harnessNamed("claude").marks);
+  if (claude.saved(name, folder, session) === null) return false;
+  const check = async () => {
+    // A note saved but not yet typed, or a thread's need not yet told.
+    const where = "owner = ? AND repo = ?";
+    const notes = db.query(`SELECT 1 FROM notes WHERE ${where}`).get(owner, repo);
+    const noting = db
+      .query(`SELECT 1 FROM task_threads WHERE noting IS NOT NULL AND ${where}`)
+      .get(owner, repo);
+    if (notes !== null || noting !== null) return false;
+    // You are looked at last, right before the end, as idle takes a moment.
+    if (!(await idle(sessions, name, claude.marks))) return false;
+    if (watched(sessions, name)) return false;
+    console.log(
+      `${owner}/${repo}'s lead started with Claude Code's agent view on, so it restarts.`,
+    );
+    await stopSession(sessions, name);
+    return true;
+  };
+  const key = `${owner}/${repo}`;
+  const ended = (noteTyping.get(key) ?? Promise.resolve()).then(check);
+  noteTyping.set(
+    key,
+    ended.then(
+      () => {},
+      () => {},
+    ),
+  );
+  return ended;
 }
 
 // Keeps a repository's running lead or starts it, resuming its saved conversation when there
@@ -131,19 +168,15 @@ export async function startLead(
   const lead = leadOf(db, owner, repo);
   // A lead still running is kept. One started by a release before leads stayed on a clean exit
   // is given that setting now, or exiting it would end its session and never close its tab.
-  // One started with agent view on is restarted once idle, as agentViewOn says.
+  // One started with agent view on is restarted when nothing is lost, as endIfAgentViewOn says.
   // One whose harness ended leaves its screen behind, which is logged before its session is
   // ended to make room for the new one.
   if (hasSession(sessions, lead.name)) {
     const failed = failedScreen(sessions, lead.name);
     if (failed === null) {
       keepOnExit(sessions, lead.name);
-      if (!(await agentViewOn(sessions, lead.name, lead.harness))) return;
       // Its stored conversation brings it back where it was, now without agent view.
-      console.log(
-        `${owner}/${repo}'s lead started with Claude Code's agent view on, so it restarts.`,
-      );
-      await stopSession(sessions, lead.name);
+      if (!(await endIfAgentViewOn(db, sessions, repository))) return;
     } else {
       console.log(`${owner}/${repo}'s lead had ended:\n${failed}`);
       endSession(sessions, lead.name);
@@ -259,9 +292,6 @@ async function typeNotes(
       record(db, thread.folder, { noting: null }, "told the lead it needs you");
   }
 }
-
-// The note typing under way for each repository's lead, by its owner/name.
-const noteTyping = new Map<string, Promise<void>>();
 
 // Types the saved notes into each repository's lead, and returns at once, so the round or
 // request that saved a note never waits on a lead. Each lead's notes are typed one after

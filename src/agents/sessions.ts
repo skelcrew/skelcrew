@@ -244,6 +244,11 @@ export function hasSession(socket: string, name: string): boolean {
 export const startCommandOf = (socket: string, name: string): string =>
   tmux(socket, ["display-message", "-p", "-t", `=${name}:`, "#{pane_start_command}"]).out.trim();
 
+// Reports whether a terminal shows the named session, such as the screen showing the lead, so
+// someone may be typing into it.
+export const watched = (socket: string, name: string): boolean =>
+  Number(tmux(socket, ["display-message", "-p", "-t", `=${name}:`, "#{session_attached}"]).out) > 0;
+
 // Returns an ended agent's last screen, left behind by a failed command or a session kept on
 // exit, so Skelcrew can explain why the agent ended. Returns null while the command runs or no
 // dead pane is found.

@@ -517,22 +517,28 @@ describe.skipIf(insideSandbox)("with a lead per repository", () => {
     }
   });
 
-  // A lead that started before agent view was turned off would keep it on through every
-  // restart of the daemon. Once idle, it is brought back on its stored conversation.
-  test("brings back an idle lead that started with agent view on, on its stored conversation", async () => {
+  // Leaves the lead as an older release did: Claude Code with agent view on, showing `screen`,
+  // after a first start that stored its session id, which it returns. The daemon is stopped.
+  async function leadWithAgentViewOn(screen: string, saved = true): Promise<string> {
     setUp();
     addRepository("app");
     const first = serve();
     await untilAnswers();
     await open();
     const id = storedSession();
-    saveTranscript(id);
+    if (saved) saveTranscript(id);
     await stop(first);
     endLead();
-    // The lead as an older release left it: Claude Code idle at its prompt, with agent view on.
-    const idleLead = ["sh", "-c", "printf '❯\\n'; exec sleep 300"];
-    const start = ["new-session", "-d", "-s", leadName(), "-c", leadFolder(), "--", ...idleLead];
+    const shows = ["sh", "-c", `printf '%s\\n' '${screen}'; exec sleep 300`];
+    const start = ["new-session", "-d", "-s", leadName(), "-c", leadFolder(), "--", ...shows];
     Bun.spawnSync(["tmux", "-L", socket, ...start]);
+    return id;
+  }
+
+  // A lead that started before agent view was turned off would keep it on through every
+  // restart of the daemon. Once idle, it is brought back on its stored conversation.
+  test("brings back an idle lead that started with agent view on, on its stored conversation", async () => {
+    const id = await leadWithAgentViewOn("❯");
     const second = serve();
     await until(() => claudeCalls().includes("--resume"));
     expect(claudeCalls()).toBe(`--session-id ${id}\n--resume ${id}\n`);
@@ -543,6 +549,37 @@ describe.skipIf(insideSandbox)("with a lead per repository", () => {
     await untilAnswers();
     await open();
     expect(claudeLines()).toHaveLength(2);
+  });
+
+  // Restarting it then would replace a working lead with an empty conversation.
+  test("keeps a lead with agent view on that has no saved conversation to come back to", async () => {
+    const id = await leadWithAgentViewOn("❯", false);
+    serve();
+    await untilAnswers();
+    await open();
+    expect(claudeLines()).toHaveLength(1);
+    expect(storedSession()).toBe(id);
+  });
+
+  // Restarting it then would lose what you were typing.
+  test("keeps a lead with agent view on that holds a draft", async () => {
+    await leadWithAgentViewOn("❯ half a thought");
+    serve();
+    await untilAnswers();
+    await open();
+    expect(claudeLines()).toHaveLength(1);
+  });
+
+  // Restarting it while a note goes in would cut the note off.
+  test("keeps a lead with agent view on while a note waits for it", async () => {
+    await leadWithAgentViewOn("❯");
+    onDb((db) =>
+      db.run("INSERT INTO notes (owner, repo, text) VALUES ('simon', 'app', 'app-12 needs you')"),
+    );
+    serve();
+    await untilAnswers();
+    await open();
+    expect(claudeLines()).toHaveLength(1);
   });
 
   // A lead once filed three issues and started a thread on each from the human's first
