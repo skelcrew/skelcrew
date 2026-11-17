@@ -1,7 +1,7 @@
 // Runs Skelcrew's tests, for `bun run check` and for a builder running a few test files, as
 // bun scripts/test.ts [files]. The same run inside Skelcrew's own sandbox and outside it.
 
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { socketFolderInside } from "../src/agents/sandbox.ts";
@@ -49,6 +49,9 @@ const reporting = report
     ]
   : [];
 if (report) env.TEST_FILE_TIMES = fileTimes;
+// Written when the run is stopped at its limit, so a file that would start after that never does.
+const stoppedMark = join(own, "stopped");
+env.TEST_RUN_STOPPED = stoppedMark;
 // A dot per test as it ends, and each failure in full, so a slow run shows it is moving. Bun's
 // usual output in a parallel run prints a file only once it has ended, so a long file leaves
 // the screen silent for minutes. A test that hangs fails after a minute. Bun hands a whole file
@@ -64,6 +67,8 @@ const run = Bun.spawn(
     "--timeout",
     "60000",
     `--parallel=${workers}`,
+    "--preload",
+    join(import.meta.dir, "stopped.ts"),
     ...reporting,
     ...Bun.argv.slice(2),
   ],
@@ -80,9 +85,11 @@ let stopped = false;
 const stop = setTimeout(async () => {
   stopped = true;
   console.error(`\nThe tests ran past ${limit / 1000} seconds, so they were stopped.`);
+  // From now on, a file a worker would start ends that worker before any of its code runs.
+  writeFileSync(stoppedMark, "");
   // Bun writes its report only when it ends by itself, so its workers are stopped rather than
-  // Bun. It counts each file a worker had as cut off and hands the next to a new worker, which
-  // is stopped in turn, until Bun ends. Workers are Bun's own children, found by their parent,
+  // Bun. It counts each file a worker had as cut off and hands each waiting file to a worker,
+  // which ends at once, until Bun ends. Workers are Bun's own children, found by their parent,
   // never by name. Each is asked first, so the run's sweeps can end what its tests left running.
   // A worker still there two seconds later is killed, as a test can ignore being asked, and Bun
   // would then wait for it and never write the report.

@@ -2,7 +2,7 @@
 // in CI it prints how long each test took, and what a run starts never reaches the daemon of the
 // Skelcrew it runs in.
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -135,6 +135,28 @@ test("hangs", () => new Promise(() => {}), 600_000);
   expect(code).toBe(1);
   expect(timeOf(out, "quick.test.ts  quick").seconds).toBeGreaterThanOrEqual(0.1);
   expect(out).toMatch(/\n +cut off {2}stubborn\.test\.ts\n/);
+});
+
+// Files still waiting for a worker when the run is stopped never start: one that did could set
+// up after the limit and be killed before it cleared up. Nine files hang, more than a run's
+// workers, so the last one waits for a worker.
+test("a file still waiting when the run is stopped never starts, and is named as cut off", async () => {
+  const hangs =
+    'import { test } from "bun:test";\ntest("hangs", () => new Promise(() => {}), 600_000);\n';
+  const files = Array.from({ length: 9 }, (_, i) => `./hangs-${i}.test.ts`);
+  for (const file of files) writeFileSync(join(folder, file), hangs);
+  writeFileSync(
+    join(folder, "late.test.ts"),
+    `import { writeFileSync } from "node:fs";
+import { test } from "bun:test";
+writeFileSync(${JSON.stringify(join(folder, "late-started"))}, "");
+test("late", () => {});
+`,
+  );
+  const { out, code } = await runIn([...files, "./late.test.ts"], true, "3000");
+  expect(code).toBe(1);
+  expect(existsSync(join(folder, "late-started"))).toBe(false);
+  expect(out).toMatch(/\n +cut off {2}late\.test\.ts\n/);
 });
 
 // Stands in for the daemon of the Skelcrew a builder runs in, listening on this socket, and
