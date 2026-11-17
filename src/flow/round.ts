@@ -81,6 +81,9 @@ async function push(db: Database, folder: string, summary: string): Promise<stri
   return sha;
 }
 
+// What a round asks of one run of its review, before the task, the clone and the base are read.
+type Asked = Omit<Parameters<typeof review>[0], "clone" | "issue" | "base">;
+
 // The reviews of every thread, kept to limits.reviews at once. Each review runs the repository's
 // tests, so too many at once slow every one of them down.
 const reviews = new Queue();
@@ -133,7 +136,10 @@ async function reviewRound(
   // one after a timeout. A later run keeps the review's place, and says it is queued only when
   // it waits.
   let queued = waits;
-  const run = (given: Parameters<typeof review>[0]) => {
+  // The task, the clone and the base branch are read only once the review's turn comes and its
+  // check is pending, as reading them can fail, and a round still waiting on its check must not
+  // fail early.
+  const run = (given: Asked) => {
     if (!queued && reviews.full(limit)) {
       queued = true;
       record(db, folder, { queued: since }, `queued ${sha} for review`);
@@ -144,7 +150,13 @@ async function reviewRound(
           await pending;
           if (queued) record(db, folder, { queued: null }, `reviewing ${sha}`);
           queued = false;
-          return review(given);
+          return review({
+            ...given,
+            clone: cloneOf(thread),
+            issue: threadTask(db, thread),
+            // Setting up the thread's clone put the base branch there under origin/.
+            base: `origin/${baseOf(thread)}`,
+          });
         })
         // Leaving the queue early says why: the check's own error, or else that it was
         // cancelled, which a newer round did, so the round ends as cancelled rounds do.
@@ -156,10 +168,6 @@ async function reviewRound(
   };
   const plan = {
     given: {
-      clone: cloneOf(thread),
-      issue: threadTask(db, thread),
-      // Setting up the thread's clone put the base branch there under origin/.
-      base: `origin/${baseOf(thread)}`,
       commit: sha,
       signal,
       limit: reviewMinutes * 60_000,
@@ -234,10 +242,10 @@ async function reviewWithinLimits(
   tmux: string,
   folder: string,
   plan: {
-    given: Omit<Parameters<typeof review>[0], "harness" | "model"> & { signal: AbortSignal };
+    given: Omit<Asked, "harness" | "model"> & { signal: AbortSignal };
     role: { harness: HarnessName; model?: string };
     fallback: HarnessName | null;
-    run: (given: Parameters<typeof review>[0]) => Promise<Review | Limited>;
+    run: (given: Asked) => Promise<Review | Limited>;
   },
 ): Promise<{ verdict: Review; by: HarnessName }> {
   const { given, role, fallback, run } = plan;
