@@ -1197,13 +1197,16 @@ echo "Not logged in"; exit 1`,
     answer(plugin, "took", { took: true });
     changes([issue12()]);
     serve();
-    // Runs sc issue ls for app as a tool would, and returns its rows, or none while the daemon
-    // isn't listening yet.
-    const listed = () => {
-      const done = Bun.spawnSync([process.execPath, main, "issue", "ls", "app", "--json"], {
-        env: env(),
-        stderr: "pipe",
-      });
+    // Runs sc issue ls for app as a tool would, with `more` words such as --all, and returns its
+    // rows, or none while the daemon isn't listening yet.
+    const listed = (...more: string[]) => {
+      const done = Bun.spawnSync(
+        [process.execPath, main, "issue", "ls", "app", "--json", ...more],
+        {
+          env: env(),
+          stderr: "pipe",
+        },
+      );
       return done.success ? JSON.parse(done.stdout.toString()) : [];
     };
     await until(() => listed().length === 1);
@@ -1241,8 +1244,7 @@ echo "Not logged in"; exit 1`,
     pr({ labeled: true, reviews: [skelReview], checks: [approved, check(900, "passed")] });
     await until(() => thread().needs_you === 1);
     expect(listed()).toMatchObject([{ task: "app-12", issue: "#12", stage: "ready for review" }]);
-    // Merged, the task is too, and you stay assigned. The tracker closes the issue, which then
-    // leaves the list.
+    // Merged, the task is too, and you stay assigned. The tracker then closes the issue.
     pr({
       labeled: true,
       state: "merged",
@@ -1250,9 +1252,13 @@ echo "Not logged in"; exit 1`,
       checks: [approved, check(900, "passed")],
     });
     await until(() => thread().status === "done");
-    expect(listed()).toMatchObject([{ task: "app-12", issue: "#12", stage: "merged" }]);
+    // A merged task leaves the list at once, though its issue is still open, and only --all
+    // shows it.
+    expect(listed()).toEqual([]);
+    expect(listed("--all")).toMatchObject([{ task: "app-12", issue: "#12", stage: "merged" }]);
     changes([taskItem("12", "Add export", { state: "closed", labels: ["skelcrew"] })]);
-    await until(() => listed().length === 0);
+    await until(() => listed("--all")[0]?.issue === null);
+    expect(listed("--all")).toMatchObject([{ task: "app-12", stage: "merged" }]);
     expect(assigns()).toEqual([assignOn]);
   }, 60_000);
 

@@ -350,6 +350,21 @@ describe("sc ls", () => {
     ]);
   });
 
+  // The tracker can keep a merged task's issue open, such as when the PR didn't close it. The
+  // task is merged all the same, so only --all shows it.
+  test("--all adds a merged task whose issue is still open", async () => {
+    sql(`UPDATE threads SET status = 'done' WHERE task = '12';
+UPDATE tasks SET merged = 1 WHERE task = '12'`);
+    serve();
+    await untilAnswers();
+    const listed = JSON.parse((await skel(["ls", "app", "--json"])).out);
+    expect(listed.map((row: { task: string }) => row.task)).toEqual(["app-9", "app-10"]);
+    const all = JSON.parse((await skel(["issue", "ls", "app", "--all", "--json"])).out);
+    expect(all).toContainEqual(
+      expect.objectContaining({ task: "app-12", stage: "merged", issue: "#12" }),
+    );
+  });
+
   test("lists one repository's tasks, as JSON for tools", async () => {
     serve();
     await untilAnswers();
