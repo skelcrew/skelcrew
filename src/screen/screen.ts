@@ -1,7 +1,8 @@
 // The screen: the sidebar on the left of your terminal, with the agent or list you are looking
 // at on the right, the strip above it and the footer across the bottom. It is a second tmux
 // server, one session per open terminal, ended when you leave.
-import { applyConfig, envWithoutTmux, screenSocket, tmuxIsAtLeast } from "../agents/tmux.ts";
+import { applyConfig, attachCommand } from "../agents/sessions.ts";
+import { envWithoutTmux, screenSocket, tmuxIsAtLeast } from "../agents/tmux.ts";
 import { windowTitle } from "../say.ts";
 import { mainFile, singleFile } from "../version.ts";
 import type { Entry } from "./lists.ts";
@@ -138,19 +139,6 @@ const config = [
   ["set-hook", "-g", "window-resized", `resize-pane -t :.0 -x ${sidebarWidth}`],
 ];
 
-// Returns the command for the right pane: an ordinary tmux client attached to the session.
-// When the client ends, because the agent you were looking at ended or you left its session
-// with its own keys, it comes back on the lead's session, trying again while the lead
-// restarts. While there is no session to attach to, such as for a lead starting or a
-// repository just removed, it says so in one line, not tmux's error each second. TMUX must go,
-// or tmux refuses to attach from inside tmux.
-export function agentClient(agents: string, session: string, lead: string): string[] {
-  const client = `tmux -L "$1" -f /dev/null attach -t`;
-  const wait = `[ -n "$said" ] || { echo; echo 'Waiting for the lead to start.'; said=1; }`;
-  const script = `unset TMUX; ${client} "=$2" 2>/dev/null || ${wait}; while sleep 1; do ${client} "=$3" 2>/dev/null && said= || { ${wait}; }; done`;
-  return ["sh", "-c", script, "sh", agents, session, lead];
-}
-
 // Returns a command that runs this same Skelcrew with the given words. A Skelcrew built as a
 // single file runs itself. Otherwise Bun runs this checkout's main file.
 function skelcrewCommand(...words: string[]): string[] {
@@ -219,7 +207,7 @@ export async function openScreen(
   const open = [
     ...config,
     ...border,
-    ["new-session", "-s", name, "--", ...agentClient(agents, session, lead)],
+    ["new-session", "-s", name, "--", ...attachCommand(agents, session, lead)],
     ["set", "set-titles-string", windowTitle(env.SKELCREW_REMOTE_NAME)],
     ["split-window", "-hbd", "-l", String(sidebarWidth), "--", ...left],
     // The footer goes across the whole width, below both, as the screen's third pane.

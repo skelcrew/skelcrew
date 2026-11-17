@@ -15,7 +15,8 @@ import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import checkout from "../package.json";
-import { startSession, stillRunning, tmuxIsAtLeast } from "../src/agents/tmux.ts";
+import { type Labels, startSession, stillRunning } from "../src/agents/sessions.ts";
+import { tmuxIsAtLeast } from "../src/agents/tmux.ts";
 import type { Page } from "../src/flow/page.ts";
 import { leadPlaces } from "../src/paths.ts";
 import { drawPage } from "../src/screen/page.ts";
@@ -27,6 +28,8 @@ const screenFile = source("screen/screen.ts");
 const pathNow = process.env.PATH ?? "";
 const sidebar = sidebarWidth;
 const leaving = "Your agents keep running. Run sc to come back.";
+// The labels the sessions these tests start carry, as the lead of the repository they add.
+const labels: Labels = { repository: "simon/app", role: "lead" };
 // Longer than the waits below, so a test that fails says what it waited for.
 setDefaultTimeout(20_000);
 let home = "";
@@ -100,7 +103,7 @@ while test -d ${JSON.stringify(home)}; do read -r line && echo "$line" >> ${name
 `,
     { mode: 0o755 },
   );
-  startSession(agents, name, { folder: home, command: [script], env: { PATH: pathNow } });
+  startSession(agents, name, { folder: home, command: [script], env: { PATH: pathNow }, labels });
 }
 
 // The load the footer shows in these tests, in place of the machine's, which changes on its own.
@@ -340,7 +343,7 @@ exec cat > lead.keys
 `,
     { mode: 0o755 },
   );
-  startSession(agents, "lead", { folder: home, command: [script], env: { PATH: pathNow } });
+  startSession(agents, "lead", { folder: home, command: [script], env: { PATH: pathNow }, labels });
 }
 
 test("Shift+Enter reaches the agent as a key of its own, through both tmux servers", async () => {
@@ -2335,6 +2338,7 @@ test("sc repo rm while the screen shows the repository moves the screen on, and 
     folder: home,
     command: ["sh", "-c", "trap 'sleep 3; exit' HUP; echo I am lead; while :; do sleep 0.2; done"],
     env: { PATH: pathNow },
+    labels,
   });
   open("lead");
   await ready("lead");

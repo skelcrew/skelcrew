@@ -151,6 +151,20 @@ export async function stopOn(repository: string, task: string): Promise<string> 
   return checkReply(z.object({ stopped: z.string() }), reply).stopped;
 }
 
+// Asks the daemon what a thread's builder shows now, for sc peek, and returns the thread's
+// name and the screen as text. Throws when the builder isn't running.
+export async function peekAt(repository: string, task: string) {
+  const reply = await request({ command: "peek", repo: repository, task });
+  return checkReply(z.object({ thread: z.string(), screen: z.string() }), reply);
+}
+
+// Has the daemon stop the turn of a thread's builder, as Esc does, for sc interrupt, and
+// returns the thread's name. Throws when the builder isn't running.
+export async function interruptOn(repository: string, task: string): Promise<string> {
+  const reply = await request({ command: "interrupt", repo: repository, task });
+  return checkReply(z.object({ interrupted: z.string() }), reply).interrupted;
+}
+
 // Asks the daemon what sc rm would remove: the thread's name, its status, and its PR, if it has
 // one, so sc rm can say so before asking you.
 export async function previewRemoval(repository: string, task: string) {

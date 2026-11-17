@@ -6,8 +6,9 @@ import { basename, dirname, join } from "node:path";
 import { checkoutFolder, singleFile } from "../version.ts";
 import { seatbeltArgs } from "./seatbelt.ts";
 
-// Where the folder of the agent's socket appears inside, whatever its path outside.
-const socketFolderInside = "/run/skelcrew";
+// Where the folder of the agent's socket appears inside, whatever its path outside. Tests read it
+// too: a run that sees it is inside a sandbox, with the real daemon's socket in reach.
+export const socketFolderInside = "/run/skelcrew";
 
 // Returns a read-only mount so agents can read a folder without changing its files.
 export const ro = (p: string) => ["--ro-bind", p, p];

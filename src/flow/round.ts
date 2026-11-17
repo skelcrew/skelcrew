@@ -54,7 +54,7 @@ async function git(folder: string, ...args: string[]): Promise<string> {
 // cancels it first.
 async function push(
   db: Database,
-  tmux: string,
+  sessions: string,
   folder: string,
   summary: string,
   signal: AbortSignal,
@@ -85,7 +85,7 @@ async function push(
     // a newer submit makes it stale.
     const refused = refusedWorkflow(threadName(db, thread), errorText(error));
     if (refused === null) throw error;
-    typeInto(tmux, folder, builderHarness(thread).marks, refused, {
+    typeInto(sessions, folder, builderHarness(thread).marks, refused, {
       timeout: 30 * 60_000,
       signal,
     }).catch((failed) =>
@@ -168,7 +168,7 @@ const reviews = new Queue();
 // settles, as a review the daemon brings back can end before the builder's session is there.
 async function reviewRound(
   db: Database,
-  tmux: string,
+  sessions: string,
   folder: string,
   sha: string,
   signal: AbortSignal,
@@ -294,7 +294,7 @@ async function reviewRound(
           if (result.verdict === "limited") {
             if (limitOn(harness, Date.now()) === null)
               reachLimit(db, harness, result.reset, Date.now());
-          } else if (!signal.aborted) endLimit(db, tmux, harness, started);
+          } else if (!signal.aborted) endLimit(db, sessions, harness, started);
           return result;
         })
         // Leaving the queue early says why: the check's own error, or else that it was
@@ -323,14 +323,14 @@ async function reviewRound(
     fallback,
     run,
   };
-  let { verdict, by } = await reviewWithinLimits(db, tmux, folder, plan);
+  let { verdict, by } = await reviewWithinLimits(db, sessions, folder, plan);
   // A review that hung was ended. It runs once more, logged, and the lead hears of it at once,
   // so a hung review never sits unseen. A second that hangs gives a timed out review.
   if (verdict.verdict === "timed out" && !signal.aborted) {
     const why = `${threadName(db, thread)}'s review timed out after ${reviewMinutes}m; retrying`;
     record(db, folder, {}, why);
-    noteForLead(db, tmux, repositoryOf(db, thread), why);
-    ({ verdict, by } = await reviewWithinLimits(db, tmux, folder, plan));
+    noteForLead(db, sessions, repositoryOf(db, thread), why);
+    ({ verdict, by } = await reviewWithinLimits(db, sessions, folder, plan));
     if (verdict.verdict === "timed out")
       verdict = { verdict: "timed out", body: `its review timed out twice (${reviewMinutes}m)` };
   }
@@ -368,13 +368,13 @@ async function reviewRound(
     review_at: Date.now(),
   };
   record(db, folder, change, outcome.why);
-  typeLeadNotes(db, tmux);
+  typeLeadNotes(db, sessions);
   if (!tell) return;
   // The changes are saved, so a builder that never comes back, which ends the round, keeps them
   // for when you start it again.
   await builderBack;
   if (signal.aborted) return;
-  await typeChanges(db, tmux, folder, tell, signal);
+  await typeChanges(db, sessions, folder, tell, signal);
 }
 
 // Runs the review on the reviewer's harness and returns its verdict and the harness it ran on,
@@ -386,7 +386,7 @@ async function reviewRound(
 // cancelled, with a failed review its caller drops.
 async function reviewWithinLimits(
   db: Database,
-  tmux: string,
+  sessions: string,
   folder: string,
   plan: {
     given: Omit<Asked, "harness" | "model"> & { signal: AbortSignal };
@@ -410,9 +410,9 @@ async function reviewWithinLimits(
     const spare = fallback !== null && limitOn(fallback, now) === null ? fallback : null;
     // The lead hears of the reviewer's limit, and of the fallback's when that holds reviews too.
     const repository = repositoryOf(db, readThread(db, folder));
-    if (limit !== null) tellOfLimit(db, tmux, role.harness, repository, spare);
+    if (limit !== null) tellOfLimit(db, sessions, role.harness, repository, spare);
     if (limit !== null && spare === null && fallback !== null)
-      tellOfLimit(db, tmux, fallback, repository, null);
+      tellOfLimit(db, sessions, fallback, repository, null);
     // With no harness free, hold the review until a limit resets, and show that on the
     // thread. With the fallback limited too, it waits for whichever frees first.
     if (limit !== null && spare === null) {
@@ -452,13 +452,13 @@ const notHeld = { review_limited: false, review_reset: null };
 // A newer round makes them stale, so they are never typed once one starts.
 async function typeChanges(
   db: Database,
-  tmux: string,
+  sessions: string,
   folder: string,
   text: string,
   signal: AbortSignal,
 ): Promise<void> {
   // A builder can work long after it submits, but one busy this long has likely hung.
-  await typeInto(tmux, folder, builderHarness(readThread(db, folder)).marks, text, {
+  await typeInto(sessions, folder, builderHarness(readThread(db, folder)).marks, text, {
     timeout: 30 * 60_000,
     signal,
   });
@@ -492,7 +492,7 @@ export function roundRunning(folder: string): boolean {
 // settles once the round's push is done.
 function trackRound(
   db: Database,
-  tmux: string,
+  sessions: string,
   folder: string,
   cancel: AbortController,
   pushed: Promise<unknown>,
@@ -513,7 +513,7 @@ function trackRound(
       review_at: Date.now(),
     } satisfies Partial<Thread>;
     record(db, folder, change, `the round failed: ${why}`);
-    typeLeadNotes(db, tmux);
+    typeLeadNotes(db, sessions);
   });
   const round = { cancel, pushed, done, ended: false };
   done.then(() => {
@@ -526,7 +526,7 @@ function trackRound(
 // has ended.
 function pushAndReview(
   db: Database,
-  tmux: string,
+  sessions: string,
   folder: string,
   summary: string,
   earlier: Round | undefined,
@@ -535,11 +535,11 @@ function pushAndReview(
   // the order.
   const cancel = new AbortController();
   const before = earlier?.pushed.catch(() => {}) ?? Promise.resolve();
-  const pushed = before.then(() => push(db, tmux, folder, summary, cancel.signal));
+  const pushed = before.then(() => push(db, sessions, folder, summary, cancel.signal));
   const rest = Promise.all([pushed, earlier?.done]).then(([sha]) =>
-    reviewRound(db, tmux, folder, sha, cancel.signal),
+    reviewRound(db, sessions, folder, sha, cancel.signal),
   );
-  trackRound(db, tmux, folder, cancel, pushed, rest);
+  trackRound(db, sessions, folder, cancel, pushed, rest);
 }
 
 // Starts a round for sc submit, cancelling the thread's older round if one is still under
@@ -549,7 +549,7 @@ function pushAndReview(
 // about an older commit. Throws when your config or the repository's skelcrew.yaml isn't valid,
 // so the builder hears why, and for a thread sc stop is ending, whose builder may submit while
 // it exits.
-export function submitRound(db: Database, tmux: string, folder: string, summary: string): void {
+export function submitRound(db: Database, sessions: string, folder: string, summary: string): void {
   const thread = readThread(db, folder);
   const { maxRounds, reviewer } = threadConfig(thread);
   if (thread.status === "stopped")
@@ -581,7 +581,7 @@ export function submitRound(db: Database, tmux: string, folder: string, summary:
   // round's commit.
   const before = latestRounds.get(folder);
   before?.cancel.abort();
-  pushAndReview(db, tmux, folder, summary, before);
+  pushAndReview(db, sessions, folder, summary, before);
 }
 
 // Returns the commit Skelcrew last fetched from the thread's clone and pushed, or null when it
@@ -602,7 +602,12 @@ function lastPushed(thread: Thread): string | null {
 // push failed is pushed first. Refuses a thread that is done or stopped, one with nothing
 // submitted, and one whose review is still waiting or running, since that review answers
 // already. `byBuilder` says the thread's own builder asked, which counts as a submit in its turn.
-export function rerunReview(db: Database, tmux: string, folder: string, byBuilder: boolean): void {
+export function rerunReview(
+  db: Database,
+  sessions: string,
+  folder: string,
+  byBuilder: boolean,
+): void {
   // Refuse what there is nothing to do for: a thread that ended, a review already under way,
   // or no commit yet. A submit that was saved but never pushed counts as a commit.
   const thread = readThread(db, folder);
@@ -640,13 +645,13 @@ export function rerunReview(db: Database, tmux: string, folder: string, byBuilde
   // A submit not yet pushed goes through the whole round. A commit already pushed only needs
   // its review, after the earlier round has ended.
   earlier?.cancel.abort();
-  if (submitting !== null) pushAndReview(db, tmux, folder, submitting, earlier);
+  if (submitting !== null) pushAndReview(db, sessions, folder, submitting, earlier);
   else if (sha !== null) {
     const cancel = new AbortController();
     const rest = Promise.resolve(earlier?.done).then(() =>
-      reviewRound(db, tmux, folder, sha, cancel.signal),
+      reviewRound(db, sessions, folder, sha, cancel.signal),
     );
-    trackRound(db, tmux, folder, cancel, Promise.resolve(), rest);
+    trackRound(db, sessions, folder, cancel, Promise.resolve(), rest);
   }
 }
 
@@ -661,7 +666,7 @@ export function rerunReview(db: Database, tmux: string, folder: string, byBuilde
 // wait for `builderBack`, which the daemon settles once the builder is back or has failed.
 export function resumeRound(
   db: Database,
-  tmux: string,
+  sessions: string,
   folder: string,
   builderBack: Promise<unknown> = Promise.resolve(),
 ): void {
@@ -671,15 +676,15 @@ export function resumeRound(
   const { submitting, reviewing, queued, telling } = readThread(db, folder);
   const cancel = new AbortController();
   const none = Promise.resolve();
-  if (submitting !== null) pushAndReview(db, tmux, folder, submitting, undefined);
+  if (submitting !== null) pushAndReview(db, sessions, folder, submitting, undefined);
   else if (reviewing !== null)
     trackRound(
       db,
-      tmux,
+      sessions,
       folder,
       cancel,
       none,
-      reviewRound(db, tmux, folder, reviewing, cancel.signal, {
+      reviewRound(db, sessions, folder, reviewing, cancel.signal, {
         since: queued ?? 0,
         builderBack,
       }),
@@ -687,18 +692,18 @@ export function resumeRound(
   else if (telling !== null)
     trackRound(
       db,
-      tmux,
+      sessions,
       folder,
       cancel,
       none,
-      typeChanges(db, tmux, folder, telling, cancel.signal),
+      typeChanges(db, sessions, folder, telling, cancel.signal),
     );
 }
 
 // Lets a thread past the round limit go on, for sc start: counts its rounds of changes from
 // zero again, so it no longer needs you for them, and types the changes of the review that
 // reached the limit into the builder, as a round within the limit would have.
-export function goOn(db: Database, tmux: string, folder: string): void {
+export function goOn(db: Database, sessions: string, folder: string): void {
   const { held } = readThread(db, folder);
   const change = { rounds: 0, needs_you: false, held: null, telling: held };
   record(
@@ -713,11 +718,11 @@ export function goOn(db: Database, tmux: string, folder: string): void {
   const cancel = new AbortController();
   trackRound(
     db,
-    tmux,
+    sessions,
     folder,
     cancel,
     Promise.resolve(),
-    typeChanges(db, tmux, folder, held, cancel.signal),
+    typeChanges(db, sessions, folder, held, cancel.signal),
   );
 }
 
