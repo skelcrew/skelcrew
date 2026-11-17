@@ -50,7 +50,7 @@ const script = (name: string, body: string) => writeScript(home, name, body);
 // first round to the test. While the file busy is in its config folder after a round, it looks
 // busy, as Claude Code does mid-turn, and its turn ends once the file is gone. Once a round's
 // Stop hooks have run, the file ended holds its number. A ci.yml there goes into each round as
-// the repository's first workflow. With docs-only there, a round changes only docs/change.md,
+// the repository's first workflow. With docs-only there, a round changes only the file it names, else docs/change.md,
 // and with code-to-docs there, it moves src/app.ts to docs/app.md. As a reviewer, run with -p,
 // it approves, unless the file claude-limit beside it holds a moment in seconds since 1970
 // still to come: until then it says its usage limit is reached, as Claude Code did.
@@ -78,7 +78,10 @@ hook() {
 n=0
 round() {
   n=$((n+1))
-  if test -e "$CLAUDE_CONFIG_DIR/docs-only"; then mkdir -p docs; echo "$n" > docs/change.md; else echo "$n" > change; fi
+  if test -e "$CLAUDE_CONFIG_DIR/docs-only"; then
+    f=$(cat "$CLAUDE_CONFIG_DIR/docs-only"); f=\${f:-docs/change.md}
+    mkdir -p "$(dirname "$f")"; echo "$n" > "$f"
+  else echo "$n" > change; fi
   test -e "$CLAUDE_CONFIG_DIR/code-to-docs" && mkdir -p docs && git mv src/app.ts docs/app.md
   test -e "$CLAUDE_CONFIG_DIR/ci.yml" && mkdir -p .github/workflows && cp "$CLAUDE_CONFIG_DIR/ci.yml" .github/workflows/
   git add -A && git commit -qm "round $n"
@@ -500,6 +503,18 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
     expect(prompt).toContain("The change only touches docs and Markdown, so don't run the tests.");
     expect(prompt).not.toContain("run the repository's whole test suite");
     expect(prompt).not.toContain("ci.md");
+  }, 60_000);
+
+  // git quotes a name with letters outside ASCII, unless asked not to.
+  test("a change to a Markdown file with an accented name runs no tests", async () => {
+    addApp();
+    mkdirSync(builder(), { recursive: true });
+    writeFileSync(join(builder(), "docs-only"), "résumé.md");
+    verdict(1, "approve", "Ready to merge.");
+    await startApp12();
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), 30_000);
+    const prompt = read(join(codexHome(), "sessions", "prompt-1"));
+    expect(prompt).toContain("The change only touches docs and Markdown, so don't run the tests.");
   }, 60_000);
 
   // A file moved from code to docs removes code, though git would show only its new name.

@@ -179,16 +179,17 @@ async function reviewRound(
   // changed, so its review waits for no CI. The files are those changed since the base branch,
   // which the push fetched into the thread's own ref in Skelcrew's clone. Without rename
   // detection, a file moved from code into docs shows both names, so the code it removes
-  // counts. A base or diff Skelcrew can't read, as in a clone not set up yet, lists none, and
-  // the tests run.
+  // counts. Names end in a NUL, as git otherwise quotes one with letters outside ASCII, such
+  // as résumé.md. A base or diff Skelcrew can't read, as in a clone not set up yet, lists
+  // none, and the tests run.
   const bases = `refs/skelcrew/bases/${thread.folder}`;
-  const diff = ["git", "-C", cloneDir(thread.owner, thread.repo), "diff", "--name-only"];
+  const diff = ["git", "-C", cloneDir(thread.owner, thread.repo), "diff", "--name-only", "-z"];
   const changed = Bun.spawnSync([...diff, "--no-renames", `${bases}...${sha}`], {
     stdout: "pipe",
     stderr: "ignore",
   });
   const docsOnly =
-    changed.success && onlyDocs(changed.stdout.toString().split("\n").filter(Boolean));
+    changed.success && onlyDocs(changed.stdout.toString().split("\0").filter(Boolean));
   const repositoryName = `${thread.owner}/${thread.repo}`;
   const suite = (waited: boolean) => {
     const prs = openPrs(db, thread.owner, thread.repo);
