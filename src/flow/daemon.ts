@@ -420,8 +420,10 @@ export async function serve(tmux: string, every = 30_000): Promise<void> {
           limited: false,
           limit_reset: null,
         };
-        // Its error is over, so a "continue" still waiting to be typed for it must not land.
-        if (thread.erred) endWake(folder);
+        // The builder has something to work on, so a "continue" still waiting to be typed must
+        // not land. A wake already typing has cleared the error, so it is ended whatever the
+        // flags say. One whose "continue" ran this hook has nothing left to type.
+        endWake(folder);
         if (thread.asking || thread.stalled)
           record(db, folder, over, "its builder's question is over");
         else if (thread.erred) record(db, folder, over, "its builder was typed to after its error");

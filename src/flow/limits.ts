@@ -247,9 +247,9 @@ export function wakeAfterLimit(db: Database, tmux: string, folder: string): void
 
 // Types "continue" into a builder still idle on its harness's usage limit, whether the thread
 // works or waits, such as on CI, since you can talk to a builder in either. The limit is cleared
-// before typing, so the row never shows a limit that is over, and so the builder's own hook for
-// what is typed doesn't take "continue" for you fixing the error and cancel this wake. A
-// builder that couldn't be told is idle on its error with nobody to wake it, so the thread then
+// before typing, so the row never shows a limit that is over. Typing waits for the builder to be
+// idle, and anything else typed to it meanwhile ends the wake, so "continue" never lands on
+// top of it. A builder that couldn't be told is idle on its error with nobody to wake it, so the thread then
 // needs you. Nothing happens once `signal` aborts, as the error it was for has ended.
 async function continueBuilder(
   db: Database,
