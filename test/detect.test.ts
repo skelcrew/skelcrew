@@ -106,12 +106,15 @@ test("pyproject.toml counts as pytest only for a dependency on it or its setting
   expect(uses('[tool.poetry.group.dev.dependencies]\npytest = "^8.0"\n')).toEqual([
     "uv run pytest",
   ]);
-  expect(uses("[tool.pytest.ini_options]\naddopts = -q\n")).toEqual(["uv run pytest"]);
+  expect(uses('[tool.pytest.ini_options]\naddopts = "-q"\n')).toEqual(["uv run pytest"]);
   expect(
     uses(
       '# We use unittest, not pytest.\n[project]\nname = "pytest-free"\ndescription = "No pytest here"\ndependencies = []\n',
     ),
   ).toEqual([]);
+  expect(uses('[project]\ndescription = "pytest is not used"\ndependencies = []\n')).toEqual([]);
+  expect(uses('[project]\nkeywords = ["pytest"]\n')).toEqual([]);
+  expect(uses("[project\nnot toml")).toEqual([]);
 });
 
 // A lockfile names the package manager, not the test runner, such as unittest.

@@ -59,18 +59,63 @@ function scriptsOf(files: TopFiles, setup: string, run: string, fallback?: strin
   };
 }
 
+// What a pyproject.toml may hold that says whether the repository uses pytest: its settings
+// under [tool.pytest], and the places dependencies are declared, PEP 621's and PEP 735's as
+// requirement strings and Poetry's as tables keyed by package name.
+// Each part is optional, and one of the wrong shape counts as missing, so a pyproject.toml
+// detection can't make sense of shows no pytest rather than stop the settings.
+const Requirements = z.array(z.unknown()).optional().catch(undefined);
+const Lists = z.record(z.string(), z.array(z.unknown())).optional().catch(undefined);
+const Table = z.record(z.string(), z.unknown()).optional().catch(undefined);
+const Poetry = z.looseObject({
+  dependencies: Table,
+  "dev-dependencies": Table,
+  group: z
+    .record(z.string(), z.looseObject({ dependencies: Table }))
+    .optional()
+    .catch(undefined),
+});
+const Pyproject = z.looseObject({
+  project: z
+    .looseObject({ dependencies: Requirements, "optional-dependencies": Lists })
+    .optional()
+    .catch(undefined),
+  "dependency-groups": Lists,
+  tool: z
+    .looseObject({ pytest: z.unknown().optional(), poetry: Poetry.optional().catch(undefined) })
+    .optional()
+    .catch(undefined),
+});
+
 // Returns whether a pyproject.toml shows the repository uses pytest: its settings section, or a
-// dependency on it, either as a quoted requirement such as "pytest>=8" or as Poetry's
-// `pytest = "^8"`. Comments are dropped first, and a mere mention, such as in a description or
-// a project named pytest-free, shows nothing, as a wrong guess gives reviewers a command that
-// fails.
+// dependency on it. Only those count, never a mention elsewhere, such as in a description or a
+// comment, as a wrong guess gives reviewers a command the repository can't run. A file that
+// isn't valid TOML shows nothing.
 function usesPytest(pyproject: string): boolean {
-  const text = pyproject.replace(/#.*$/gm, "");
-  return (
-    /^\s*\[tool\.pytest[.\]]/m.test(text) ||
-    /["']pytest(?![\w.-])[^"']*["']/.test(text) ||
-    /^\s*pytest\s*=/m.test(text)
+  let read: z.infer<typeof Pyproject>;
+  try {
+    read = Pyproject.parse(Bun.TOML.parse(pyproject));
+  } catch {
+    return false;
+  }
+  const { project, tool } = read;
+  if (tool?.pytest !== undefined) return true;
+  // A requirement names its package first, such as "pytest>=8" or "pytest[testing]".
+  const requirements = [
+    ...(project?.dependencies ?? []),
+    ...Object.values(project?.["optional-dependencies"] ?? {}).flat(),
+    ...Object.values(read["dependency-groups"] ?? {}).flat(),
+  ];
+  const named = requirements.some(
+    (each) => typeof each === "string" && /^\s*pytest(?![\w.-])/i.test(each),
   );
+  const poetry = tool?.poetry;
+  const tables = [
+    poetry?.dependencies,
+    poetry?.["dev-dependencies"],
+    ...Object.values(poetry?.group ?? {}).map((group) => group.dependencies),
+  ];
+  return named || tables.some((table) => table !== undefined && "pytest" in table);
 }
 
 // Each kind of repository: what tells it apart, and what it says about itself. They are tried in
