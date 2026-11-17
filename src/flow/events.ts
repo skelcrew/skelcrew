@@ -117,9 +117,10 @@ export async function endThread(
   rmSync(cloneOf(thread), { recursive: true, force: true });
   // Skelcrew's clone keeps refs of the branch it pushed, named by the thread's folder. A thread
   // started over in that folder would be taken for one that pushed already, and without a forge
-  // ended at once, as its branch isn't on the remote.
+  // ended at once, as its branch isn't on the remote. Its last approval goes too, so it never
+  // holds for the new thread's work.
   const skelcrewClone = cloneDir(thread.owner, thread.repo);
-  for (const kind of ["threads", "bases", "remote"])
+  for (const kind of ["threads", "bases", "remote", "approved"])
     await quietly([
       "git",
       "-C",
