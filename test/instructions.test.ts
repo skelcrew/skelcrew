@@ -50,16 +50,20 @@ test("a builder is told the repository's setup and test commands", () => {
   expect(told).toEndWith(
     "Skelcrew set up your clone with `go mod download`. The repository's whole test suite runs with `make check`. That is for CI and the reviewer, so don't run it yourself. It shows how the repository runs its tests, lint and typecheck, so run the parts near your change.\n",
   );
-  // A repository may need no setup at all.
   expect(builderInstructions({ setup: [], test: ["go test ./..."] })).toEndWith(
-    "\n\nThe repository's whole test suite runs with `go test ./...`. That is for CI and the reviewer, so don't run it yourself. It shows how the repository runs its tests, lint and typecheck, so run the parts near your change.\n",
+    "\n\nNo setup command is configured. The repository's whole test suite runs with `go test ./...`. That is for CI and the reviewer, so don't run it yourself. It shows how the repository runs its tests, lint and typecheck, so run the parts near your change.\n",
   );
 });
 
-test("a builder told no commands are configured asks the lead rather than make one up", () => {
-  const told = builderInstructions({ setup: [], test: [] });
-  expect(told).toEndWith("\n\nThe repository's skelcrew.yaml names no setup or test commands.\n");
-  expect(told).toContain(
-    "If they name none, never make one up: ask the lead which to use with sc tell lead, and wait for its answer. That counts as blocked.",
+// Each command is told on its own, so a configured setup is never hidden by a missing test.
+test("a builder is told each command that isn't configured, and asks the lead rather than make one up", () => {
+  expect(builderInstructions({ setup: [], test: [] })).toEndWith(
+    "\n\nNo setup command is configured. No test command is configured.\n",
+  );
+  expect(builderInstructions({ setup: ["bun install"], test: [] })).toEndWith(
+    "\n\nSkelcrew set up your clone with `bun install`. No test command is configured.\n",
+  );
+  expect(builderInstructions({ setup: [], test: [] })).toContain(
+    "If one you need isn't configured, never make one up: ask the lead which to use with sc tell lead, and wait for its answer. That counts as blocked.",
   );
 });

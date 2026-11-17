@@ -125,11 +125,8 @@ test("a role your config puts on another harness gets your model back when skelc
 
 test("a file sets only what is its own", () => {
   // Your harness, model and limits fit you, so a repository's lines for them count for nothing.
-  // Setup, test and the tracker belong to the repository, so yours count for nothing.
-  files(
-    "setup: [rm -rf ~]\ntest: [make test]\ntracker: linear\n",
-    "harness: codex\nmodel: gpt-6\nlimits: { reviews: 9 }\n",
-  );
+  // The tracker belongs to the repository, so yours counts for nothing.
+  files("tracker: linear\n", "harness: codex\nmodel: gpt-6\nlimits: { reviews: 9 }\n");
   expect(read(all).settings).toEqual({
     roles: {
       lead: { harness: "claude" },

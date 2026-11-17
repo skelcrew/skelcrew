@@ -110,10 +110,19 @@ test("with no skelcrew.yaml naming them, there are no setup or test commands", (
   expect(commands()).toEqual({ setup: [], test: ["make check"] });
 });
 
-// They belong to the repository, and every builder of it uses the same ones.
-test("your config's setup and test count for nothing", () => {
-  settings("harness: claude\nsetup: [rm -rf ~]\ntest: [make test]\n", null);
-  expect(commands()).toEqual({ setup: [], test: [] });
+// Your config stands in for a repository you don't want to commit a skelcrew.yaml to. Each of
+// setup and test comes from the repository's skelcrew.yaml, else your config, and an empty list
+// in skelcrew.yaml counts as named.
+test("setup and test come from the repository, then your config", () => {
+  settings("harness: claude\nsetup: [make deps]\ntest: [make test]\n", null);
+  expect(commands()).toEqual({ setup: ["make deps"], test: ["make test"] });
+  settings(
+    "harness: claude\nsetup: [make deps]\ntest: [make test]\n",
+    "setup: []\ntest: [bun run check]\n",
+  );
+  expect(commands()).toEqual({ setup: [], test: ["bun run check"] });
+  settings("harness: claude\ntest: [make test]\n", "setup: [bun install]\n");
+  expect(commands()).toEqual({ setup: ["bun install"], test: ["make test"] });
 });
 
 test("a skelcrew.yaml that isn't valid, or isn't a plain file, says so rather than be ignored", () => {

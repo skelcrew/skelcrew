@@ -51,7 +51,7 @@ export type Role = { harness: HarnessName; model?: string };
 // Every setting, once the files and the defaults are merged. `rounds` is how many rounds of
 // changes a thread gets before it needs you, `reviews` how many reviews run at once on this
 // machine, and `setup` and `test` the commands that set up a thread's clone and run its whole
-// test suite, none when the repository names none. `fallback` is the harness reviews run on
+// test suite, none when no file names them. `fallback` is the harness reviews run on
 // while the reviewer's own waits out its usage limit, and `reviewMinutes` how long a review may
 // run before it is ended. `yourHarness` and `yourReviewer` are the harnesses
 // your config saved, with no default, so the first run can tell what you haven't picked yet, and
@@ -89,8 +89,9 @@ const keysOf: Record<Group, Key[]> = {
 
 // What each file may set. Your harness, model, limits, the reviewer's fallback, a review's time
 // and the repositories you declined the GitHub plugin for fit you, your account and your
-// machine, so a repository can't set them. Setup, test and the tracker belong to the
-// repository, so your config doesn't.
+// machine, so a repository can't set them. The tracker belongs to the repository, so your
+// config doesn't. Setup and test can come from either: yours stand in for a repository you
+// don't want to commit a skelcrew.yaml to.
 const yourKeys: Key[] = [
   "harness",
   "model",
@@ -98,6 +99,8 @@ const yourKeys: Key[] = [
   "builder",
   "reviewer",
   "max_rounds",
+  "setup",
+  "test",
   "limits",
   "review",
   "fallback",

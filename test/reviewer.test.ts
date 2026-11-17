@@ -635,7 +635,7 @@ describe("what the reviewer is told about the tests", () => {
   // Skelcrew never guesses a test command, so with none configured the reviewer runs nothing.
   test("with no test command configured, the reviewer reviews without running tests and says so", () => {
     const none =
-      "the repository's skelcrew.yaml names no test command, so don't run the tests. Review the code, and say in the body that you didn't run them, as none is configured.";
+      "no test command is configured, so don't run the tests. Review the code, and say in the body that you didn't run them, as none is configured.";
     expect(reviewerPrompt(issue, "origin/main", "run", [])).toContain(
       `No CI runs on this commit, so ${none}`,
     );

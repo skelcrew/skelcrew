@@ -39,12 +39,12 @@ const schema = JSON.stringify({
 export type Tests = { ci: string } | "run" | "docs only";
 
 // Returns what the reviewer does when it has to run the whole test suite: `run` it with the
-// commands under test: in the repository's skelcrew.yaml, or, with none, review without running
+// commands under test: in the repository's skelcrew.yaml or your config, or, with none, review without running
 // tests and say so. Skelcrew never guesses a test command, as a wrong guess would pass for a
 // real result.
 function runSuite(run: string, test: string[]): string {
   if (test.length > 0) return `${run}, with \`${test.join(" && ")}\`.`;
-  return "the repository's skelcrew.yaml names no test command, so don't run the tests. Review the code, and say in the body that you didn't run them, as none is configured.";
+  return "no test command is configured, so don't run the tests. Review the code, and say in the body that you didn't run them, as none is configured.";
 }
 
 // Returns what the reviewer is told about the tests. The whole test suite runs once per commit,
