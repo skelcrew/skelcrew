@@ -74,6 +74,16 @@ export const DaemonRequest = z.discriminatedUnion("command", [
     task: TaskId,
   }),
   z.object({
+    command: z.literal("peek"),
+    repo: z.string(),
+    task: TaskId,
+  }),
+  z.object({
+    command: z.literal("interrupt"),
+    repo: z.string(),
+    task: TaskId,
+  }),
+  z.object({
     command: z.literal("rm preview"),
     repo: z.string(),
     task: TaskId,
@@ -118,7 +128,8 @@ export type DaemonRequest = z.infer<typeof DaemonRequest>;
 // Who is on the other end of a socket: you, a repository's lead, or a thread's builder. An
 // agent may ask only for what its commands need. Trusting a repository is never a request:
 // only you can, in your own terminal. A builder may tell only its repository's lead, never
-// another thread, and may ask for a review of its own thread only. You type to a builder
+// another thread, and may ask for a review of its own thread only. You and a lead may look at a
+// builder's screen and stop its turn, but a builder may not, as it has only its own. You type to a builder
 // yourself in the sidebar, so you have no tell. Merging is yours alone, from the screen: no
 // agent may merge, as merging stays a human's choice.
 export type Caller = "you" | { lead: { owner: string; repo: string } } | Thread;
@@ -137,6 +148,8 @@ export const allowed = {
     "start new",
     "review",
     "stop",
+    "peek",
+    "interrupt",
     "rm preview",
     "rm",
     "merge",
@@ -153,6 +166,8 @@ export const allowed = {
     "start new",
     "review",
     "stop",
+    "peek",
+    "interrupt",
     "rm preview",
     "rm",
     "tell",

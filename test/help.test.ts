@@ -46,6 +46,8 @@ test("the help names every command", () => {
     "stop",
     "rm",
     "attach",
+    "peek",
+    "interrupt",
     "review",
     "plugin install",
     "plugin update",
@@ -193,7 +195,7 @@ test("the help lists the issue commands in a section of their own, and names thr
   expect(issues).not.toContain("  start ");
   // A user sees issues and threads only. Task is Skelcrew's own word, never shown.
   expect(out).not.toMatch(/\btasks?\b/i);
-  for (const command of ["stop", "rm", "attach", "review", "tell"])
+  for (const command of ["stop", "rm", "attach", "peek", "interrupt", "review", "tell"])
     expect(out).toContain(`  ${command} <thread>`);
 });
 

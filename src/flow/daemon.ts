@@ -4,7 +4,13 @@ import { dlopen, FFIType } from "bun:ffi";
 import { existsSync, mkdirSync, openSync, rmSync } from "node:fs";
 import { createServer, type Server, type Socket } from "node:net";
 import { dirname } from "node:path";
-import { processTree, stillRunning } from "../agents/sessions.ts";
+import {
+  agentRuns,
+  interruptSession,
+  processTree,
+  readSession,
+  stillRunning,
+} from "../agents/sessions.ts";
 import { openDb, type Repository } from "../db.ts";
 import { setupDone } from "../machine/setup.ts";
 import { keepUpToDate } from "../machine/update.ts";
@@ -310,6 +316,23 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         const name = threadName(db, thread);
         await stopThread(db, sessions, thread);
         return { stopped: name };
+      }
+      // Both act only on a builder that runs: one that ended leaves its last screen behind,
+      // which would read as what it shows now.
+      case "peek": {
+        const thread = findThread(db, request.repo, request.task);
+        const name = threadName(db, thread);
+        if (!agentRuns(sessions, thread.folder))
+          throw new Error(`${name}'s builder isn't running: the thread is ${thread.status}`);
+        return { thread: name, screen: readSession(sessions, thread.folder) };
+      }
+      case "interrupt": {
+        const thread = findThread(db, request.repo, request.task);
+        const name = threadName(db, thread);
+        if (!agentRuns(sessions, thread.folder))
+          throw new Error(`${name}'s builder isn't running: the thread is ${thread.status}`);
+        interruptSession(sessions, thread.folder);
+        return { interrupted: name };
       }
       case "rm preview": {
         const thread = findThread(db, request.repo, request.task);
