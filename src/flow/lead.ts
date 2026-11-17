@@ -181,7 +181,7 @@ async function typeNotes(
       db.query(`SELECT id, text FROM notes WHERE ${where} ORDER BY id`).get(owner, repo),
     );
     const row = db
-      .query(`SELECT * FROM threads WHERE noting IS NOT NULL AND ${where} ORDER BY rowid`)
+      .query(`SELECT * FROM task_threads WHERE noting IS NOT NULL AND ${where} ORDER BY rowid`)
       .get(owner, repo);
     const thread = Thread.nullable().parse(row);
     // Stop when nothing is left to say, or nobody is there to hear it. Wait while the lead is busy.

@@ -16,7 +16,7 @@ import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import type { Subprocess } from "bun";
 import { leadPlaces } from "../src/paths.ts";
-import { insideSandbox, read, source, until as wait } from "./harness.ts";
+import { insideSandbox, read, source, threadSql, until as wait } from "./harness.ts";
 
 const main = source("main.ts");
 const daemon = source("flow/daemon.ts");
@@ -405,11 +405,7 @@ const tabClosed = (repo = "app") =>
 // A stopped thread of the repository, for what lists threads.
 function addThread(repo: string, task: number): void {
   onDb((db) =>
-    db.run(
-      `INSERT INTO threads (owner, repo, task, folder, branch, status)
-        VALUES ('simon', ?, ?, ?, 'skelcrew/x', 'stopped')`,
-      [repo, task, `${repo}-${task}`],
-    ),
+    db.run(threadSql({ repo, task: String(task), branch: "skelcrew/x", status: "stopped" })),
   );
 }
 
