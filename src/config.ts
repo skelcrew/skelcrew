@@ -38,10 +38,24 @@ export const agentRoles = (repository?: Repository): Settings["roles"] =>
   readSettings(["roles"], repository).roles;
 
 // Returns what a repository's threads run with: each agent's harness and model, as agentRoles
-// gives them, and the round limit.
-export function threadConfig(repository: Repository): Settings["roles"] & { maxRounds: number } {
-  const { rounds, roles } = readSettings(["rounds", "roles"], repository);
-  return { ...roles, maxRounds: rounds };
+// gives them, the round limit, the harness reviews fall back to during a usage limit, or null
+// with none, and how many minutes a review may run. A fallback that is the reviewer's own harness
+// is none.
+export function threadConfig(repository: Repository): Settings["roles"] & {
+  maxRounds: number;
+  fallback: HarnessName | null;
+  reviewMinutes: number;
+} {
+  const { rounds, roles, fallback, reviewMinutes } = readSettings(
+    ["rounds", "roles", "fallback", "reviewMinutes"],
+    repository,
+  );
+  return {
+    ...roles,
+    maxRounds: rounds,
+    fallback: fallback === undefined || fallback === roles.reviewer.harness ? null : fallback,
+    reviewMinutes,
+  };
 }
 
 // Returns the setup commands in the repository's skelcrew.yaml, or none when it has none.

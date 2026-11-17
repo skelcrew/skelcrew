@@ -30,6 +30,10 @@ const File = z.looseObject({
   limits: z.looseObject({ reviews: z.number().int().positive().optional() }).optional(),
   setup: z.array(z.string()).optional(),
   tracker: z.string().nullish(),
+  review: z.looseObject({ timeout_minutes: z.number().positive().optional() }).optional(),
+  // Written as reviewer: { fallback: codex }, and picked out of the reviewer's lines on reading,
+  // so a bad one stops only a thread, not the lead.
+  fallback: HarnessName.optional(),
 });
 type File = z.infer<typeof File>;
 type Key = keyof typeof File.shape;
@@ -39,13 +43,17 @@ export type Role = { harness: HarnessName; model?: string };
 
 // Every setting, once the files and the defaults are merged. `rounds` is how many rounds of
 // changes a thread gets before it needs you, `reviews` how many reviews run at once on this
-// machine, and `setup` the commands that set up a thread's clone.
+// machine, and `setup` the commands that set up a thread's clone. `fallback` is the harness
+// reviews run on while the reviewer's own waits out its usage limit, and `reviewMinutes` how
+// long a review may run before it is ended.
 export type Settings = {
   roles: { lead: Role; builder: Role; reviewer: Role };
   rounds: number;
   reviews: number;
   setup: string[];
   tracker: string | undefined;
+  fallback: HarnessName | undefined;
+  reviewMinutes: number;
 };
 type Group = keyof Settings;
 
@@ -57,29 +65,44 @@ const keysOf: Record<Group, Key[]> = {
   reviews: ["limits"],
   setup: ["setup"],
   tracker: ["tracker"],
+  fallback: ["fallback"],
+  reviewMinutes: ["review"],
 };
 
-// What each file may set. Your harness, model and limits fit you and your machine, so a
-// repository can't set them. Setup and the tracker belong to the repository, so your config
-// doesn't.
-const yourKeys: Key[] = ["harness", "model", "lead", "builder", "reviewer", "max_rounds", "limits"];
+// What each file may set. Your harness, model, limits, the reviewer's fallback and a review's
+// time fit you, your account and your machine, so a repository can't set them. Setup and the
+// tracker belong to the repository, so your config doesn't.
+const yourKeys: Key[] = [
+  "harness",
+  "model",
+  "lead",
+  "builder",
+  "reviewer",
+  "max_rounds",
+  "limits",
+  "review",
+  "fallback",
+];
 const repositoryKeys: Key[] = ["lead", "builder", "reviewer", "max_rounds", "setup", "tracker"];
 const roleKeys: Key[] = ["lead", "builder", "reviewer"];
 
 // Returns the built-in defaults: Claude Code for every role, three rounds, no setup and no
-// tracker of the repository's own. Reviews default to a quarter of this machine's cores, at least
-// one, as each runs the repository's whole test suite and many at once fight over the CPU.
+// tracker of the repository's own, and 30 minutes for a review. Reviews default to a quarter of
+// this machine's cores, at least one, as each runs the repository's whole test suite and many at
+// once fight over the CPU.
 function builtInDefaults(): {
   harness: HarnessName;
   max_rounds: number;
   reviews: number;
   setup: string[];
+  reviewMinutes: number;
 } {
   return {
     harness: "claude",
     max_rounds: 3,
     reviews: Math.max(1, Math.floor(availableParallelism() / 4)),
     setup: [],
+    reviewMinutes: 30,
   };
 }
 
@@ -136,7 +159,19 @@ function readRepositoryFile(keys: Key[], repository: Repository): File {
 function pick(data: unknown, keys: Key[]): unknown {
   if (data === null || data === undefined) return {};
   if (typeof data !== "object" || Array.isArray(data)) return data;
-  return Object.fromEntries(Object.entries(data).filter(([key]) => keys.some((k) => k === key)));
+  const picked = Object.fromEntries(
+    Object.entries(data).filter(([key]) => keys.some((k) => k === key)),
+  );
+  // The fallback is written among the reviewer's lines, but it is a setting of its own.
+  const reviewer = "reviewer" in data ? data.reviewer : undefined;
+  if (
+    keys.includes("fallback") &&
+    typeof reviewer === "object" &&
+    reviewer &&
+    "fallback" in reviewer
+  )
+    picked.fallback = reviewer.fallback;
+  return picked;
 }
 
 // Returns `data` checked as a settings file, or throws `problem` with what is wrong.
@@ -169,11 +204,13 @@ function mergeSettings(layers: File[]): Settings {
     reviews: first((l) => l.limits?.reviews) ?? defaults.reviews,
     setup: first((l) => l.setup) ?? defaults.setup,
     tracker: first((l) => l.tracker),
+    fallback: first((l) => l.fallback),
+    reviewMinutes: first((l) => l.review?.timeout_minutes) ?? defaults.reviewMinutes,
   };
 }
 
-// Returns a role's harness and model from what each layer says of it, the one that wins first, and `top`,
-// the harness and model every role gets unless it names its own. A model name belongs to its
+// Returns a role's harness and model from what each layer says of it, the one that wins first,
+// and `top`, the harness and model every role gets unless it names its own. A model name belongs to its
 // harness, so a model goes along only while the role stays on the harness it was given with:
 // reviewer: { harness: codex } in skelcrew.yaml must never run Codex on your opus. With no
 // model left, the harness picks its default.

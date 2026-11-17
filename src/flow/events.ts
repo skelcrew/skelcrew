@@ -13,6 +13,7 @@ import { baseOf } from "./builder.ts";
 import type { Check, Decision } from "./decide.ts";
 import { deleteBranch, fetchInto, onRemote } from "./git.ts";
 import { typeLeadNotes } from "./lead.ts";
+import { endWake } from "./limits.ts";
 import { refreshClones } from "./repo.ts";
 import { endRound } from "./round.ts";
 import {
@@ -61,10 +62,12 @@ async function refreshBase(db: Database, thread: Thread, base: string): Promise<
 // or sc rm cancels the typing.
 export const typingEvents = new Map<string, AbortController>();
 
-// Cancels the round and the typing under way for the thread, ends its builder's session, and
-// waits for the builder to exit, so nothing types into it or changes the thread afterwards.
+// Cancels the round, the typing under way and any wake after a usage limit for the thread, ends
+// its builder's session, and waits for the builder to exit, so nothing types into it or changes
+// the thread afterwards.
 async function endBuilder(tmux: string, folder: string): Promise<void> {
   typingEvents.get(folder)?.abort();
+  endWake(folder);
   endRound(folder);
   // Claude Code can outlive the end of its session for a few seconds, still writing in the
   // clone.
@@ -89,7 +92,15 @@ export async function stopThread(db: Database, tmux: string, thread: Thread): Pr
   record(
     db,
     thread.folder,
-    { status: "stopped", needs_you: false, asking: false, stalled: false, erred: false },
+    {
+      status: "stopped",
+      needs_you: false,
+      asking: false,
+      stalled: false,
+      erred: false,
+      limited: false,
+      limit_reset: null,
+    },
     "stopped",
   );
   // Asked as it is marked stopped, before anything is waited on: an sc start that finds it
@@ -148,7 +159,15 @@ export async function removeThread(
     record(
       db,
       thread.folder,
-      { status: "stopped", needs_you: false, asking: false, stalled: false, erred: false },
+      {
+        status: "stopped",
+        needs_you: false,
+        asking: false,
+        stalled: false,
+        erred: false,
+        limited: false,
+        limit_reset: null,
+      },
       "removing",
     );
   // Asked before anything is waited on, so an sc start meanwhile assigns you after it, as for

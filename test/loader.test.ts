@@ -41,7 +41,7 @@ console.log(JSON.stringify(readSettings(${JSON.stringify(groups)}, { owner: "sim
   return { settings: out ? JSON.parse(out) : undefined, err: done.stderr.toString() };
 }
 
-const all = ["roles", "rounds", "reviews", "setup", "tracker"];
+const all = ["roles", "rounds", "reviews", "setup", "tracker", "fallback", "reviewMinutes"];
 const quarter = Math.max(1, Math.floor(availableParallelism() / 4));
 
 test("with no files, every setting is the built-in default", () => {
@@ -55,6 +55,7 @@ test("with no files, every setting is the built-in default", () => {
     rounds: 3,
     reviews: quarter,
     setup: [],
+    reviewMinutes: 30,
   });
 });
 
@@ -69,6 +70,7 @@ test("your config goes over the built-in defaults", () => {
     rounds: 5,
     reviews: 2,
     setup: [],
+    reviewMinutes: 30,
   });
 });
 
@@ -87,6 +89,7 @@ test("the repository's skelcrew.yaml goes over your config, key by key", () => {
     reviews: quarter,
     setup: ["make"],
     tracker: "none",
+    reviewMinutes: 30,
   });
 });
 
@@ -116,6 +119,7 @@ test("a file sets only what is its own", () => {
     rounds: 3,
     reviews: quarter,
     setup: [],
+    reviewMinutes: 30,
   });
 });
 
@@ -132,4 +136,19 @@ test("a setting skelcrew.yaml sets isn't read from your config, so a bad one the
   // A role is merged with yours, so yours is still read and checked.
   files("harness: claude\nreviewer: { harness: nope }\n", "reviewer: { harness: codex }\n");
   expect(read(["roles"]).err).toContain("config.yaml isn't valid");
+});
+
+test("the reviewer's fallback and a review's time come from your config alone, else the defaults", () => {
+  files(null, "reviewer: { fallback: codex }\nreview: { timeout_minutes: 99 }\n");
+  expect(read(["fallback", "reviewMinutes"]).settings).toMatchObject({ reviewMinutes: 30 });
+  expect(read(["fallback"]).settings?.fallback).toBeUndefined();
+  files("reviewer: { fallback: codex }\nreview: { timeout_minutes: 10 }\n", null);
+  expect(read(["fallback", "reviewMinutes"]).settings).toMatchObject({
+    fallback: "codex",
+    reviewMinutes: 10,
+  });
+  // A bad fallback stops only what reads it, not the roles the lead needs.
+  files("reviewer: { fallback: nope }\n", null);
+  expect(read(["roles"]).settings?.roles).toBeDefined();
+  expect(read(["fallback"]).err).toContain("config.yaml isn't valid");
 });

@@ -200,17 +200,17 @@ export function afterReview(
   maxRounds: number,
   ready: string | null,
 ): Outcome {
-  // A review that failed to give a verdict needs you, and counts no round.
-  if (review.verdict === "failed")
+  // A review that failed to give a verdict, or timed out, needs you, and counts no round.
+  if (review.verdict === "failed" || review.verdict === "timed out")
     return {
       check: "failure",
-      description: "review failed",
+      description: review.verdict === "failed" ? "review failed" : "review timed out",
       rounds,
       needsYou: true,
       status: "waiting",
       tell: null,
       held: null,
-      why: `review failed: ${review.body}`,
+      why: review.verdict === "failed" ? `review failed: ${review.body}` : review.body,
     };
   if (review.verdict === "approve" && ready !== null)
     return {
