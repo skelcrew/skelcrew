@@ -888,6 +888,20 @@ nameRepositories(db);`;
     expect(read(join(clone(), "ran"))).toBe("ran --flag\n");
   }, 60_000);
 
+  // A repository added just to fix something often has no skelcrew.yaml.
+  test("without a skelcrew.yaml, the setup command detected from the repository's files runs", async () => {
+    addApp({ "go.mod": "module app\n" });
+    mkdirSync(join(home, "tools"));
+    writeFileSync(join(home, "tools", "go"), '#!/bin/sh\necho "ran go $*" > ran\n', {
+      mode: 0o755,
+    });
+    startDaemon(socket, { ...env(), PATH: `${join(home, "tools")}:${env().PATH}` }, running);
+    await untilCloned();
+    await skel("start", "app-12");
+    await until(() => read(join(config("app-12"), "args")) !== "" || thread().status === "failed");
+    expect(read(join(clone(), "ran"))).toBe("ran go mod download\n");
+  }, 60_000);
+
   test("a setup command can't bring back a folder of yours by naming a program in it", async () => {
     mkdirSync(join(home, "tools"));
     writeFileSync(join(home, "tools", "tool"), "#!/bin/sh\necho ran > ran\n", { mode: 0o755 });
