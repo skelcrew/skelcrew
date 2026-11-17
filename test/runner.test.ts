@@ -56,6 +56,7 @@ async function runIn(files: string[], ci: boolean, limit = "") {
 }
 
 // CI is where the tests that start a real sandbox run, so its log shows where a slow run went.
+// A file's time includes its hooks, such as a slow beforeAll, which no test's time has.
 test("in CI a run prints its slowest tests and each file's time, and elsewhere neither", async () => {
   writeFileSync(
     join(folder, "slow.test.ts"),
@@ -66,7 +67,11 @@ test("takes no time", () => {});
   );
   writeFileSync(
     join(folder, "other.test.ts"),
-    'import { test } from "bun:test";\ntest("other", () => {});\n',
+    `import { afterAll, beforeAll, test } from "bun:test";
+beforeAll(() => Bun.sleep(800));
+afterAll(() => Bun.sleep(400));
+test("other", () => {});
+`,
   );
   const files = ["./slow.test.ts", "./other.test.ts"];
   const { out, code } = await runIn(files, true);
@@ -76,7 +81,7 @@ test("takes no time", () => {});
   expect(tests.indexOf("takes a while")).toBeLessThan(tests.indexOf("takes no time"));
   expect(tests).toContain("other.test.ts  other");
   const perFile = out.slice(out.indexOf("Time per file:"));
-  expect(perFile).toMatch(/\n +0\.4 s {2}slow\.test\.ts\n +0\.0 s {2}other\.test\.ts\n/);
+  expect(perFile).toMatch(/\n +1\.[2-9] s {2}other\.test\.ts\n +0\.[4-9] s {2}slow\.test\.ts\n/);
   const local = await runIn(files, false);
   expect(local.code).toBe(0);
   expect(local.out).not.toContain("slowest");

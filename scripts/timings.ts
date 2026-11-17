@@ -1,5 +1,5 @@
-// Reads the JUnit report of a test run and says where its time went: the slowest tests and the
-// time of each file. CI prints it, as the tests that start a real sandbox run only there.
+// Reads the JUnit report of a test run and the time of each file, and says where its time went:
+// the slowest tests and the slowest files. CI prints it, as the tests that start a real sandbox run only there.
 import { z } from "zod";
 
 // What a test case in Bun's report says. A file whose worker was stopped or crashed has one
@@ -11,6 +11,9 @@ const testCase = z.object({
   time: z.coerce.number().default(0),
 });
 
+// How long a whole test file took, as scripts/file-times.ts writes it, one to a line.
+const fileTime = z.object({ file: z.string(), seconds: z.number() });
+
 // Undoes the XML escapes Bun writes in an attribute.
 const fromXml = (text: string) =>
   text
@@ -21,10 +24,10 @@ const fromXml = (text: string) =>
     .replaceAll("&amp;", "&");
 
 // Returns the `count` slowest tests, then each file's time, slowest first, as lines for a log.
-// A file's time is what its tests took. A file cut off before it reported, such as one still
-// running when the run was stopped, has no times, so it says so, first, as it is likely the
-// slowest.
-export function timings(report: string, count: number): string {
+// `report` is Bun's JUnit report and `files` the lines of each file's time. A file cut off
+// before it reported, such as one still running when the run was stopped, has no time, so it
+// says so, first, as it is likely the slowest.
+export function timings(report: string, files: string, count: number): string {
   // Each test case's attributes, read as text and checked.
   const cases = [...report.matchAll(/<testcase\s([^>]*?)\s*\/?>/g)].map((match) =>
     testCase.parse(
@@ -50,14 +53,15 @@ export function timings(report: string, count: number): string {
       return `${seconds(one.time)}  ${one.file ?? ""}  ${name}`;
     });
 
-  // Adds up each file's tests.
-  const files = new Map<string, number>();
-  for (const one of ran) files.set(one.file ?? "", (files.get(one.file ?? "") ?? 0) + one.time);
+  // Each file's whole time, read line by line and checked.
   const perFile = [
     ...cutOff.map((file) => `${"cut off".padStart(9)}  ${file}`),
-    ...[...files]
-      .toSorted(([, a], [, b]) => b - a)
-      .map(([file, time]) => `${seconds(time)}  ${file}`),
+    ...files
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => fileTime.parse(JSON.parse(line)))
+      .toSorted((a, b) => b.seconds - a.seconds)
+      .map((one) => `${seconds(one.seconds)}  ${one.file}`),
   ];
   return ["The slowest tests:", ...slowest, "", "Time per file:", ...perFile, ""].join("\n");
 }

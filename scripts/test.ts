@@ -35,11 +35,20 @@ if (inside) {
   );
 }
 
-// In CI, Bun writes a JUnit report with each test's time, and the run prints where its time went
-// once it ends. The tests that start a real sandbox run only outside Skelcrew's own, so CI is
-// where their times show.
+// In CI, Bun writes a JUnit report with each test's time, a preload writes each file's, and the
+// run prints where its time went once it ends. The tests that start a real sandbox run only
+// outside Skelcrew's own, so CI is where their times show.
 const report = process.env.GITHUB_ACTIONS === "true" ? join(own, "report.xml") : "";
-const reporting = report ? ["--reporter=junit", `--reporter-outfile=${report}`] : [];
+const fileTimes = join(own, "file-times.jsonl");
+const reporting = report
+  ? [
+      "--reporter=junit",
+      `--reporter-outfile=${report}`,
+      "--preload",
+      join(import.meta.dir, "file-times.ts"),
+    ]
+  : [];
+if (report) env.TEST_FILE_TIMES = fileTimes;
 // A dot per test as it ends, and each failure in full, so a slow run shows it is moving. Bun's
 // usual output in a parallel run prints a file only once it has ended, so a long file leaves
 // the screen silent for minutes. A test that hangs fails after a minute. Bun hands a whole file
@@ -101,7 +110,8 @@ run.exited.then(async (code) => {
   // A report that can't be read is said, and the run still ends as its tests did.
   if (report && existsSync(report))
     try {
-      console.log(`\n${timings(await Bun.file(report).text(), 25)}`);
+      const files = existsSync(fileTimes) ? await Bun.file(fileTimes).text() : "";
+      console.log(`\n${timings(await Bun.file(report).text(), files, 25)}`);
     } catch (error) {
       console.error(`The test report couldn't be read: ${error}`);
     }
