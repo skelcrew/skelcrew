@@ -139,14 +139,17 @@ export async function endThread(
   rmSync(cloneOf(thread), { recursive: true, force: true });
   // The thread is marked done and its note saved in one transaction. A daemon that stops
   // between the two, or a note that fails to save, would otherwise leave a done thread, which no
-  // poll looks at again, and a lead that never hears of it. The note is typed only after: typing
+  // poll looks at again, and a lead that never hears of it. The note is saved first: marking
+  // the thread done also writes its log, which a failed transaction can't take back, so a note
+  // that fails to save leaves no end in the log either. The note is typed only after: typing
   // starts on a promise, once this has returned. Every note to the lead is one line, as a reason
   // given to sc rm may not be.
   db.transaction(() => {
+    if (note !== null) {
+      const line = `${threadName(db, thread)} ${note}`.replace(/\s+/g, " ").slice(0, 200);
+      noteForLead(db, sessions, thread, line, thread.folder);
+    }
     record(db, thread.folder, { status: "done", needs_you: false }, `${why}: ended the thread`);
-    if (note === null) return;
-    const line = `${threadName(db, thread)} ${note}`.replace(/\s+/g, " ").slice(0, 200);
-    noteForLead(db, sessions, thread, line, thread.folder);
   })();
 }
 

@@ -79,20 +79,25 @@ console.log(JSON.stringify({ status: readThread(db, thread.folder).status, notes
 });
 
 // A thread is marked done and its note for the lead saved together. A note that can't be
-// saved, as when the disk is full, leaves the thread short of done, and the next end saves both.
+// saved, as when the disk is full, leaves the thread short of done, with no end in its log, and
+// the next end saves both and logs it once.
 test("an end whose note can't be saved leaves the thread for the next end", () => {
   const seen =
     withThread(`db.run("CREATE TRIGGER fail_notes BEFORE INSERT ON notes BEGIN SELECT RAISE(ABORT, 'disk full'); END");
+// How many times the thread's log says it ended.
+const { readFileSync } = await import("node:fs");
+const ends = () => readFileSync(${JSON.stringify(join(home, ".local", "share", "skelcrew", "threads", "app-t1.log"))}, "utf8").split("ended the thread").length - 1;
 const failed = await endThread(db, socket, thread, "PR #7 was merged", "is done: #7 merged into main").then(() => "", (error) => String(error));
-const after = readThread(db, thread.folder).status;
+const after = { status: readThread(db, thread.folder).status, logged: ends() };
 db.run("DROP TRIGGER fail_notes");
 await endThread(db, socket, thread, "PR #7 was merged", "is done: #7 merged into main");
 const notes = db.query("SELECT text FROM notes").all();
-console.log(JSON.stringify({ failed, after, status: readThread(db, thread.folder).status, notes }));`);
+console.log(JSON.stringify({ failed, after, status: readThread(db, thread.folder).status, logged: ends(), notes }));`);
   expect(seen).toEqual({
     failed: "SQLiteError: disk full",
-    after: "working",
+    after: { status: "working", logged: 0 },
     status: "done",
+    logged: 1,
     notes: [{ text: "app-t1 is done: #7 merged into main" }],
   });
 });
