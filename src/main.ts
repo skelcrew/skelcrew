@@ -85,6 +85,8 @@ function usage(command?: string): never {
     "stop",
     "rm",
     "attach",
+    "peek",
+    "interrupt",
     "review",
     "submit",
     "tell",
@@ -361,14 +363,14 @@ async function prCommand(args: string[], json: boolean): Promise<void> {
   usage(command);
 }
 
-// Starts, stops, removes, re-reviews or attaches to the thread on a task such as app-13. sc
+// Starts, stops, removes, re-reviews, peeks at, interrupts or attaches to the thread on a task
+// such as app-13. sc
 // start also takes a repository, a title and a body, to start a thread with no tracker.
 async function threadCommand(args: string[]): Promise<void> {
   const [command, sub, ...rest] = args;
   const { attachToThread } = await import("./attach.ts");
-  const { previewRemoval, removeOn, reviewAgain, startNew, startOn, stopOn } = await import(
-    "./client.ts"
-  );
+  const { interruptOn, peekAt, previewRemoval, removeOn, reviewAgain, startNew, startOn, stopOn } =
+    await import("./client.ts");
   const task = splitTaskName(sub);
   // --short takes the thread's short title for the sidebar, on every form of sc start, and is
   // taken out before the other words are read. A blank one would show nothing, so it is a
@@ -437,6 +439,17 @@ async function threadCommand(args: string[]): Promise<void> {
     console.log(
       `Reviewing ${name}'s last commit again. Skelcrew posts the review on its pull request, and types any changes into its builder.`,
     );
+    return;
+  }
+  // The screen comes without the blank lines below what the builder drew.
+  if (command === "peek" && task && rest.length === 0) {
+    const { screen } = await peekAt(...task);
+    console.log(screen.trimEnd());
+    return;
+  }
+  if (command === "interrupt" && task && rest.length === 0) {
+    const name = await interruptOn(...task);
+    console.log(`Stopped ${name}'s turn, as Esc does. sc tell ${name} gives it what to do next.`);
     return;
   }
   if (command === "attach" && task && rest.length === 0) {
@@ -564,6 +577,8 @@ async function runCommand(args: string[]): Promise<void> {
     case "stop":
     case "rm":
     case "review":
+    case "peek":
+    case "interrupt":
     case "attach":
       return threadCommand(words);
     case "tell":

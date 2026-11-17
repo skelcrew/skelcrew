@@ -2,7 +2,7 @@
 // other's session once it can take them, and kept in the thread's log. They never go to a tracker or
 // forge.
 import type { Database } from "bun:sqlite";
-import { agentRuns } from "../agents/tmux.ts";
+import { agentRuns } from "../agents/sessions.ts";
 import { noteForLead } from "./lead.ts";
 import { messagesWaiting, queueMessage, whyWaiting } from "./messages.ts";
 import { log, readThread, type Thread, threadName } from "./thread.ts";
@@ -35,7 +35,7 @@ function wrapMessage(from: string, reply: string, text: string): string {
 // in ends its needing you.
 export async function messageBuilder(
   db: Database,
-  tmux: string,
+  sessions: string,
   thread: Thread,
   text: string,
 ): Promise<string> {
@@ -48,7 +48,7 @@ export async function messageBuilder(
       `${name}'s builder isn't running: the thread is stopped. sc start ${name} brings it back.`,
     );
   // A thread still setting up has no session yet, and one that failed or is done has none left.
-  if (!live || !agentRuns(tmux, thread.folder))
+  if (!live || !agentRuns(sessions, thread.folder))
     throw new Error(`${name}'s builder isn't running: the thread is ${thread.status}.`);
   if (thread.asking)
     throw new Error(
@@ -57,9 +57,9 @@ export async function messageBuilder(
   // Look before saving it, so the answer says whether it goes in now. Messages are typed in
   // order, so any still waiting go first.
   const ahead = messagesWaiting(db, thread);
-  const why = await whyWaiting(tmux, thread);
+  const why = await whyWaiting(sessions, thread);
   const message = wrapMessage("lead", "sc tell lead", text);
-  queueMessage(db, tmux, thread.folder, {
+  queueMessage(db, sessions, thread.folder, {
     sender: "lead",
     text: message,
     said: text,
@@ -74,8 +74,8 @@ export async function messageBuilder(
 // Has the daemon type a builder's message into its repository's lead, naming the thread it
 // comes from and how to answer, and logs it in the thread's log. Returns at once, like any
 // agent command.
-export function messageLead(db: Database, tmux: string, thread: Thread, text: string): void {
+export function messageLead(db: Database, sessions: string, thread: Thread, text: string): void {
   const name = threadName(db, thread);
-  noteForLead(db, tmux, thread, wrapMessage(name, `sc tell ${name}`, text));
+  noteForLead(db, sessions, thread, wrapMessage(name, `sc tell ${name}`, text));
   log(db, readThread(db, thread.folder), `its builder told the lead: ${text}`);
 }

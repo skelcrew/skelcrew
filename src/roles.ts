@@ -8,7 +8,7 @@ import { HarnessName } from "./agents/harness.ts";
 // flaky test", the lead would try to edit its read-only clone rather than start a thread. The
 // reviewer's tells it to assume the change is wrong, since a reviewer that trusts the builder
 // misses what the builder missed. Its {{title}}, {{body}} and {{base}} are blanks the review
-// fills in with the task and where the change starts.
+// fills in with the task and where the change starts, and {{tests}} with who runs the tests.
 import builder from "./defaults/roles/builder.md" with { type: "text" };
 import lead from "./defaults/roles/lead.md" with { type: "text" };
 import reviewer from "./defaults/roles/reviewer.md" with { type: "text" };

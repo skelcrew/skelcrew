@@ -8,9 +8,12 @@ import { source } from "./harness.ts";
 
 const main = source("main.ts");
 
+// Runs sc with no home. The run's own runtime folder, with no daemon in it, keeps a command
+// that asks the daemon from finding yours in /run/user.
 function skel(args: string[], env: Record<string, string> = {}) {
+  const runtime = process.env.XDG_RUNTIME_DIR ?? "";
   const run = Bun.spawnSync([process.execPath, main, ...args], {
-    env: { PATH: process.env.PATH ?? "", HOME: "/nonexistent", ...env },
+    env: { PATH: process.env.PATH ?? "", HOME: "/nonexistent", XDG_RUNTIME_DIR: runtime, ...env },
   });
   return { code: run.exitCode, out: run.stdout.toString(), err: run.stderr.toString() };
 }
@@ -46,6 +49,8 @@ test("the help names every command", () => {
     "stop",
     "rm",
     "attach",
+    "peek",
+    "interrupt",
     "review",
     "plugin install",
     "plugin update",
@@ -193,7 +198,7 @@ test("the help lists the issue commands in a section of their own, and names thr
   expect(issues).not.toContain("  start ");
   // A user sees issues and threads only. Task is Skelcrew's own word, never shown.
   expect(out).not.toMatch(/\btasks?\b/i);
-  for (const command of ["stop", "rm", "attach", "review", "tell"])
+  for (const command of ["stop", "rm", "attach", "peek", "interrupt", "review", "tell"])
     expect(out).toContain(`  ${command} <thread>`);
 });
 

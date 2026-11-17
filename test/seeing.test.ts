@@ -797,6 +797,80 @@ describe("sc repo ls", () => {
   });
 });
 
+describe("sc peek and sc interrupt", () => {
+  // app-12's builder shows a line of its own and keeps every key it gets, as a terminal in raw
+  // mode hands them on.
+  beforeEach(() => {
+    threads();
+    const builder = "stty raw -echo; echo 'Writing the export'; exec cat > keys";
+    tmux("respawn-pane", "-k", "-c", home, "-t", "=app-12:", "sh", "-c", builder);
+  });
+  const keys = () => read(join(home, "keys"));
+
+  test("sc peek prints what the builder shows now", async () => {
+    serve();
+    await untilAnswers();
+    await until(() => tmux("capture-pane", "-p", "-t", "=app-12:").stdout.includes("export"));
+    const peeked = await skel(["peek", "app-12"]);
+    expect(peeked.err).toBe("");
+    expect(peeked.out).toBe("Writing the export\n");
+  });
+
+  test("sc interrupt sends the builder Esc, and its session goes on", async () => {
+    serve();
+    await untilAnswers();
+    await until(() => tmux("capture-pane", "-p", "-t", "=app-12:").stdout.includes("export"));
+    const interrupted = await skel(["interrupt", "app-12"]);
+    expect(interrupted.err).toBe("");
+    expect(interrupted.out).toBe(
+      "Stopped app-12's turn, as Esc does. sc tell app-12 gives it what to do next.\n",
+    );
+    await until(() => keys() === "\x1b");
+    expect(tmux("has-session", "-t", "=app-12").success).toBe(true);
+  });
+
+  test("both refuse a builder that isn't running, saying what state its thread is in", async () => {
+    serve();
+    await untilAnswers();
+    const peeked = await skel(["peek", "app-9"]);
+    expect(peeked.code).not.toBe(0);
+    expect(peeked.err).toBe("Skelcrew: app-9's builder isn't running: the thread is failed\n");
+    const interrupted = await skel(["interrupt", "app-9"]);
+    expect(interrupted.err).toBe("Skelcrew: app-9's builder isn't running: the thread is failed\n");
+    expect((await skel(["peek", "app-99"])).err).toBe("Skelcrew: there is no thread app-99\n");
+    expect((await skel(["peek"])).err).toContain("sc peek was given arguments it doesn't take");
+  });
+
+  test("the lead can peek at and interrupt its own repository's builders only", async () => {
+    serve();
+    await untilAnswers();
+    await openApp();
+    await until(() => existsSync(leadSocket()));
+    await until(() => tmux("capture-pane", "-p", "-t", "=app-12:").stdout.includes("export"));
+    const peeked = await asAgent(["peek", "app-12"], leadSocket());
+    expect(peeked.err).toBe("");
+    expect(peeked.out).toBe("Writing the export\n");
+    expect((await asAgent(["interrupt", "app-12"], leadSocket())).err).toBe("");
+    await until(() => keys() === "\x1b");
+    const other = await asAgent(["peek", "site-7"], leadSocket());
+    expect(other.err).toContain("you are the lead of simon/app only, so site isn't yours");
+    expect((await asAgent(["interrupt", "site-7"], leadSocket())).code).not.toBe(0);
+  });
+
+  // A builder has only its own screen, which it already sees.
+  test("a builder can't peek or interrupt", async () => {
+    serve();
+    await untilAnswers();
+    const builder = await builderSocket();
+    for (const command of ["peek", "interrupt"]) {
+      const refused = await asAgent([command, "site-7"], builder);
+      expect(refused.code).not.toBe(0);
+      expect(refused.err).toBe("Skelcrew: the daemon doesn't know that request\n");
+    }
+    expect(keys()).toBe("");
+  });
+});
+
 describe("sc attach", () => {
   // The fake tmux has a session running for each file in ~/sessions, and a dead one, whose
   // builder exited, when that file says dead. It never reaches Skelcrew's real tmux server.

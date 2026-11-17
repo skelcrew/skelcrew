@@ -1,7 +1,7 @@
 // The right pane while you are on one of the sidebar's entries: the entry's list, and the pages
 // of the issues and PRs opened from it. It is a process of its own, in the screen's right pane,
 // so it ends with the screen and agents' sessions never see it.
-import { screenSocket, tmux } from "../agents/tmux.ts";
+import { screenTmux } from "../agents/tmux.ts";
 import { startOrMerge } from "../client.ts";
 import { openDb } from "../db.ts";
 import { type Page, readPage } from "../flow/page.ts";
@@ -148,7 +148,7 @@ export async function runPane(
   // Tells the sidebar something, as text typed into its pane, which it reads as it reads a
   // click on a tab.
   const tell = (what: "page" | "thread", value: string) =>
-    tmux(screenSocket(agents), [
+    screenTmux(agents, [
       "send-keys",
       "-t",
       `=${session}:.0`,

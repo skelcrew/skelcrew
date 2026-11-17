@@ -4,7 +4,7 @@
 // can count them.
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
-import { agentRuns } from "../agents/tmux.ts";
+import { agentRuns } from "../agents/sessions.ts";
 import { draftReason, midTurn, typeInto, whyBusy } from "../agents/typing.ts";
 import { markSeen } from "../plugins/ask.ts";
 import { errorText } from "../say.ts";
@@ -80,7 +80,7 @@ const missingSince = new Map<string, number>();
 // Has a working or waiting thread need you once its builder has been missing a while with
 // messages waiting, as nothing else would bring it back, such as a session that ended while a
 // review's changes waited. Its status becomes waiting, as no builder works on it.
-function noteMissing(db: Database, tmux: string, thread: Thread, why: string): void {
+function noteMissing(db: Database, sessions: string, thread: Thread, why: string): void {
   if (why !== notRunning) return void missingSince.delete(thread.folder);
   const since = missingSince.get(thread.folder) ?? Date.now();
   missingSince.set(thread.folder, since);
@@ -89,18 +89,18 @@ function noteMissing(db: Database, tmux: string, thread: Thread, why: string): v
   const wait = count === 1 ? "a message waits" : `${count} messages wait`;
   const missing = `${notRunning}, so ${wait} for it`;
   record(db, thread.folder, { needs_you: true, status: "waiting" }, missing);
-  typeLeadNotes(db, tmux);
+  typeLeadNotes(db, sessions);
 }
 
 // Returns why the thread's builder can't take a message right now, in plain words, or empty
 // text when it can. A stopped builder keeps its messages for when sc start brings it back. One
 // asking you a question waits too, as typing would answer it for you.
-export async function whyWaiting(tmux: string, thread: Thread): Promise<string> {
+export async function whyWaiting(sessions: string, thread: Thread): Promise<string> {
   if (thread.status !== "working" && thread.status !== "waiting")
     return `the thread is ${thread.status}`;
-  if (!agentRuns(tmux, thread.folder)) return notRunning;
+  if (!agentRuns(sessions, thread.folder)) return notRunning;
   if (thread.asking) return "it is asking the human a question";
-  return whyBusy(tmux, thread.folder, builderHarness(thread).marks);
+  return whyBusy(sessions, thread.folder, builderHarness(thread).marks);
 }
 
 // Saves a message for the thread's builder and has the daemon type it in as soon as the builder
@@ -110,7 +110,7 @@ export async function whyWaiting(tmux: string, thread: Thread): Promise<string> 
 // same words.
 export function queueMessage(
   db: Database,
-  tmux: string,
+  sessions: string,
   folder: string,
   message: Pick<Message, "sender" | "text" | "said" | "typed_in">,
 ): void {
@@ -129,7 +129,7 @@ export function queueMessage(
     const joined = JSON.stringify([...same.typed_in, ...added]);
     db.run("UPDATE messages SET typed_in = ? WHERE id = ?", [joined, same.id]);
   }
-  deliverMessages(db, tmux, folder);
+  deliverMessages(db, sessions, folder);
 }
 
 // Does what follows a message once it is in the builder. A lead's message becomes a change to
@@ -175,7 +175,7 @@ function afterTyped(db: Database, folder: string, message: Message): void {
 // to end the turn. For any other reason Esc would do nothing, or throw away a question the human
 // should answer. Every waiting message of the lead's counts, not only the next one to go in, as
 // one can wait behind a message of Skelcrew's.
-function noteLate(db: Database, tmux: string, thread: Thread, why: string) {
+function noteLate(db: Database, sessions: string, thread: Thread, why: string) {
   const rows = db
     .query("SELECT * FROM messages WHERE folder = ? AND sender = 'lead' AND noted = 0 AND at <= ?")
     .all(thread.folder, Date.now() - lateAfter);
@@ -190,7 +190,7 @@ function noteLate(db: Database, tmux: string, thread: Thread, why: string) {
     : "";
   noteForLead(
     db,
-    tmux,
+    sessions,
     thread,
     `${name}'s builder hasn't got ${yours} after 10 minutes: ${why}. Skelcrew types ${it} in once it can.${sooner}`,
   );
@@ -203,27 +203,27 @@ const delivering = new Map<string, { cancel: AbortController; ended: Promise<voi
 
 // Types the thread's waiting messages into its builder, oldest first, while it can take them,
 // and returns once none is left or it can't. The ones left wait for the next attempt.
-async function deliver(db: Database, tmux: string, folder: string, signal: AbortSignal) {
+async function deliver(db: Database, sessions: string, folder: string, signal: AbortSignal) {
   while (true) {
     const message = oldest(db, folder);
     if (message === null || signal.aborted) return;
     const thread = readThread(db, folder);
-    const waits = await whyWaiting(tmux, thread);
+    const waits = await whyWaiting(sessions, thread);
     if (signal.aborted) return;
     if (thread.status === "working" || thread.status === "waiting")
-      noteMissing(db, tmux, thread, waits);
+      noteMissing(db, sessions, thread, waits);
     // A draft that is this message, left unsent for a question, is sent now, with Enter alone.
     // A bare prompt means a person sent or cleared it, so a draft after that is theirs.
     if (waits === "" && message.pasted)
       db.run("UPDATE messages SET pasted = 0 WHERE id = ?", [message.id]);
     const unsent = waits === "" ? false : message.pasted;
     const why = waits === draftReason && unsent ? "" : waits;
-    if (why !== "") return noteLate(db, tmux, thread, why);
+    if (why !== "") return noteLate(db, sessions, thread, why);
     // The builder looked ready a moment ago, so typing shouldn't wait long. If it does, the
     // message stays saved for the next attempt.
     const { marks } = builderHarness(thread);
     const waitsFor = { timeout: 10_000, signal, unsent };
-    const typed = await typeInto(tmux, folder, marks, message.text, waitsFor);
+    const typed = await typeInto(sessions, folder, marks, message.text, waitsFor);
     // Saved, so the draft it left is known for this message's even after a restart.
     if (typed === "left unsent")
       db.run("UPDATE messages SET pasted = 1 WHERE id = ?", [message.id]);
@@ -243,10 +243,10 @@ async function deliver(db: Database, tmux: string, folder: string, signal: Abort
 // Starts typing the thread's waiting messages into its builder, unless that is under way
 // already, and returns at once. A failure, such as the session ending, is logged, and the
 // messages wait for the next attempt.
-export function deliverMessages(db: Database, tmux: string, folder: string): void {
+export function deliverMessages(db: Database, sessions: string, folder: string): void {
   if (delivering.has(folder)) return;
   const cancel = new AbortController();
-  const ended = deliver(db, tmux, folder, cancel.signal)
+  const ended = deliver(db, sessions, folder, cancel.signal)
     .catch((error) => console.log(`couldn't type into ${folder}'s builder: ${errorText(error)}`))
     .finally(() => {
       if (delivering.get(folder) === attempt) delivering.delete(folder);
@@ -258,10 +258,10 @@ export function deliverMessages(db: Database, tmux: string, folder: string): voi
 // Starts typing into every builder that has messages waiting. The daemon calls it every few
 // seconds, so a message reaches its builder soon after the builder can take it: after its
 // turn, its question, sc start or the daemon's start.
-export function deliverAllWaiting(db: Database, tmux: string): void {
+export function deliverAllWaiting(db: Database, sessions: string): void {
   const rows = db.query("SELECT DISTINCT folder FROM messages").all();
   for (const { folder } of z.array(z.object({ folder: z.string() })).parse(rows))
-    deliverMessages(db, tmux, folder);
+    deliverMessages(db, sessions, folder);
 }
 
 // Drops Skelcrew's waiting messages that tell only of the thread's events, such as a failed
@@ -271,7 +271,7 @@ export function deliverAllWaiting(db: Database, tmux: string): void {
 // the commit, and one left pasted at the prompt, as it would block the next as a draft. Typing
 // under way is cancelled first, as it may be typing one of them, and starts again with what is
 // left once it has ended. Notices still being prepared learn of the drop by noticeRound.
-export function dropOldEvents(db: Database, tmux: string, folder: string): void {
+export function dropOldEvents(db: Database, sessions: string, folder: string): void {
   roundsDropped.set(folder, noticeRound(folder) + 1);
   const ended = delivering.get(folder)?.ended ?? Promise.resolve();
   stopDelivering(db, folder, false);
@@ -281,7 +281,7 @@ export function dropOldEvents(db: Database, tmux: string, folder: string): void 
   for (const message of z.array(Message).parse(rows))
     if (message.typed_in.length === 0 && !message.pasted)
       db.run("DELETE FROM messages WHERE id = ?", [message.id]);
-  ended.then(() => deliverMessages(db, tmux, folder));
+  ended.then(() => deliverMessages(db, sessions, folder));
 }
 
 // How many times each thread's notices were dropped for a new round, by its folder.

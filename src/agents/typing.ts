@@ -1,6 +1,6 @@
 // Typing a message into an agent's session: waiting until its harness shows it is ready, then
 // pasting the message and its Enter, one message at a time per session.
-import { mustTmux, tmux } from "./tmux.ts";
+import { dropStaged, pasteStaged, readSession, sendKey, stagePaste } from "./sessions.ts";
 
 // How typing waits, in milliseconds. `moment` is the pause between two looks at the screen,
 // and between a paste and its Enter. `timeout` is how long to wait for the prompt to be ready
@@ -20,11 +20,6 @@ const statusLineWatch = 1500;
 // What a harness's screen shows: `busy` while a turn runs, and a line holding only `prompt`
 // once it is ready for a message.
 export type Marks = { busy: string; prompt: string };
-
-// Returns the visible pane text so Skelcrew can check whether the agent is ready for a
-// message.
-const readScreen = (socket: string, name: string) =>
-  mustTmux(socket, ["capture-pane", "-p", "-t", `=${name}:`]);
 
 // The reason typing gives for waiting while a person has unsent text at the agent's prompt.
 export const draftReason = "an unsent draft is at its prompt";
@@ -79,9 +74,9 @@ export async function whyBusy(
 ): Promise<string> {
   // Look twice, a moment apart. A line holding the mark that changed is the live status line.
   const moment = waits.moment ?? 500;
-  const before = readScreen(socket, name);
+  const before = readSession(socket, name);
   await Bun.sleep(moment);
-  const after = readScreen(socket, name);
+  const after = readSession(socket, name);
   if (before !== after) return whyChanged(before, after, marks);
   const why = notReady(after, marks);
   if (why !== "") return why;
@@ -89,7 +84,7 @@ export async function whyBusy(
   // redraw, as the first two looks can fall between two ticks of its timer.
   if (after.includes(marks.busy)) {
     await Bun.sleep(statusLineWatch);
-    const later = readScreen(socket, name);
+    const later = readSession(socket, name);
     if (later !== after) return whyChanged(after, later, marks);
   }
   return "";
@@ -137,12 +132,9 @@ export function typeInto(
   return turn;
 }
 
-// How many paste buffers this process has made, so each gets a name of its own.
-let buffersMade = 0;
-
 // Waits for the agent to be ready, then pastes and submits the message without losing long
-// text, and returns "typed". Throws if it stays busy too long, and removes the temporary paste
-// buffer after the attempt. Types nothing once the signal is aborted, however long it waited.
+// text, and returns "typed". Throws if it stays busy too long, and forgets the text it readied
+// for pasting after the attempt. Types nothing once the signal is aborted, however long it waited.
 // Aborted between the paste and its Enter, it still sends the message, which is in: unless for
 // a question, which the Enter would answer. Then it leaves the message at the prompt and returns
 // "left unsent", and the next typing of it, told so by `unsent`, presses Enter alone.
@@ -156,8 +148,8 @@ async function typeNow(
   const moment = waits.moment ?? 500;
   const timeout = waits.timeout ?? 60_000;
   const deadline = Date.now() + timeout;
-  // A paste buffer of its own, so two daemons or two messages never paste each other's text.
-  const buffer = `skelcrew-${process.pid}-${buffersMade++}`;
+  // The text readied on each pass, the last of which is pasted.
+  const staged: string[] = [];
   try {
     // Text typed while Claude Code is starting or busy can be lost, so wait until it is idle.
     // Check the signal after each wait too: the thread may have stopped meanwhile.
@@ -170,20 +162,17 @@ async function typeNow(
       // prompt means a person sent or cleared it, so it is typed afresh, and a draft after that
       // is a person's.
       if (why === draftReason && unsent) {
-        mustTmux(socket, ["send-keys", "-t", `=${name}:`, "Enter"]);
+        sendKey(socket, name, "Enter");
         return "typed";
       }
       if (why === "") unsent = false;
       if (why === "") {
-        // Someone scrolled back would swallow the Enter below, and the message would never be
-        // sent. Being scrolled back shows in neither the check above nor the pane's text, so
-        // it is left here, whether or not anyone is. It fails when nobody is, which is fine.
-        tmux(socket, ["send-keys", "-X", "-t", `=${name}:`, "cancel"]);
-        mustTmux(socket, ["load-buffer", "-b", buffer, "-"], text);
+        staged.push(stagePaste(socket, name, text));
         // A person can start typing after the last look, and the paste would send their draft
-        // along with the message. So look once more right before pasting, and wait again if
-        // the prompt isn't bare. A moment remains, but only a tmux call long.
-        if (notReady(readScreen(socket, name), marks) === "") break;
+        // along with the message. So the text is readied first, then the screen looked at once
+        // more right before pasting, and typing waits again if the prompt isn't bare. A moment
+        // remains, but only as long as the paste itself.
+        if (notReady(readSession(socket, name), marks) === "") break;
       } else if (Date.now() > deadline) {
         const waited = `${timeout / 1000}s`;
         // A person's draft gets a plain answer, as it isn't the agent being busy.
@@ -194,15 +183,14 @@ async function typeNow(
         throw new Error(`${name} wasn't idle for ${waited} (${why}), so nothing was typed`);
       }
     }
-    // Without the paste marks, Claude Code reads the Enter after a long message as a new
-    // line, and the message is never sent. So the Enter goes on its own, a moment after the
-    // paste.
-    mustTmux(socket, ["paste-buffer", "-p", "-b", buffer, "-t", `=${name}:`]);
+    // Without the paste marks, Claude Code reads the Enter after a long message as a new line,
+    // and the message is never sent. So the Enter goes on its own, a moment after the paste.
+    pasteStaged(socket, name, staged.at(-1) ?? "");
     await Bun.sleep(moment);
     if (waits.signal?.aborted && waits.signal.reason === forQuestion) return "left unsent";
-    mustTmux(socket, ["send-keys", "-t", `=${name}:`, "Enter"]);
+    sendKey(socket, name, "Enter");
     return "typed";
   } finally {
-    tmux(socket, ["delete-buffer", "-b", buffer]);
+    for (const readied of staged) dropStaged(socket, readied);
   }
 }
