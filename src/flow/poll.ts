@@ -23,7 +23,8 @@ import { endThread, tellBuilder, typingEvents } from "./events.ts";
 import { fetchInto, onRemote } from "./git.ts";
 import { noteForLead, typeLeadNotes } from "./lead.ts";
 import { forgeKnown, fullNameIs, repositories } from "./repo.ts";
-import { needsYou, readThread, record, Thread, threadName } from "./thread.ts";
+import { needsYou } from "./status.ts";
+import { readThread, record, Thread, threadName } from "./thread.ts";
 
 // The label that starts a thread on a task, added in its tracker by someone who may.
 const startLabel = "skelcrew";

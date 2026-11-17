@@ -38,24 +38,21 @@ import {
   startLead,
   typeLeadNotes,
 } from "./lead.ts";
-import { endWake, restoreLimits, wakeAfterLimit } from "./limits.ts";
+import { restoreLimits, wakeAfterLimit } from "./limits.ts";
 import { listRepositories, listTasks, listThreads, showPr, showTask } from "./list.ts";
 import { pollRepositories } from "./poll.ts";
 import { findRepository, fullNameIs, noRepositories, refreshClones, repositoryAt } from "./repo.ts";
 import { allowed, type Caller, DaemonRequest, parseJson } from "./requests.ts";
 import { endRound, goOn, rerunReview, resumeRound, submitRound } from "./round.ts";
-import { messageBuilder, messageLead, untagged } from "./tell.ts";
 import {
-  builderHarness,
-  endedTurnAsks,
-  findThread,
-  liveThreads,
-  readThread,
-  record,
-  type Thread,
-  threadName,
-  threadOn,
-} from "./thread.ts";
+  questionAnswered,
+  questionAsked,
+  questionClosed,
+  turnEnded,
+  turnFailed,
+} from "./status.ts";
+import { messageBuilder, messageLead } from "./tell.ts";
+import { findThread, liveThreads, record, type Thread, threadName, threadOn } from "./thread.ts";
 
 // Tries to hold the daemon lock and returns whether this process owns it, preventing
 // duplicate daemons. The kernel lets go of it when the process ends, however it ends, so a
@@ -372,95 +369,19 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         return { submitted: threadName(db, thread) };
       }
       case "question asked":
-        record(db, callingThread(caller).folder, { asking: true }, "its builder asked a question");
-        typeLeadNotes(db, sessions);
+        questionAsked(db, sessions, callingThread(caller).folder);
         return { asking: true };
-      case "turn ended": {
-        // The note quotes what the builder last said, so you see what it waits on. In quotes,
-        // and with no tags of Skelcrew's, it can't pass for Skelcrew's own words or another's.
-        // The quote, escapes included, is kept to 100 characters, as a note is cut at 200,
-        // which would lose the closing quote. Each " or \ doubles in length once escaped, so
-        // the words are cut until the quote fits.
-        const { folder } = callingThread(caller);
-        if (!endedTurnAsks(readThread(db, folder))) return { asking: false };
-        let words = untagged(request.said ?? "").slice(0, 100);
-        while (JSON.stringify(words).length > 100) words = words.slice(0, -1);
-        const said = words ? `, saying ${JSON.stringify(words)}` : "";
-        record(db, folder, { stalled: true }, `its builder stopped without submitting${said}`);
-        typeLeadNotes(db, sessions);
-        return { asking: true };
-      }
-      case "turn failed": {
-        // A usage limit, or a rate limit, passes by itself, so the builder is woken once it
-        // resets, and the thread doesn't need you for it. Any other error does. Only the kind of
-        // error the hook names decides: its message can hold the builder's own last words,
-        // such as about the rate limiting it was writing. The message only gives the reset.
-        const thread = callingThread(caller);
-        const said = request.message ?? "";
-        const limit =
-          request.error === "rate_limit"
-            ? { reset: builderHarness(thread).usageLimit(said, Date.now())?.reset ?? null }
-            : null;
-        if (limit !== null) {
-          const change = { erred: true, limited: true, limit_reset: limit.reset };
-          record(
-            db,
-            thread.folder,
-            change,
-            `its builder's harness reached its usage limit: ${said}`,
-          );
-          wakeAfterLimit(db, sessions, thread.folder);
-          return { erred: true };
-        }
-        // A limit it stopped on before is over: this error is new, and needs you, so the wake
-        // planned for the old one never types "continue" over it.
-        endWake(thread.folder);
-        const erred = { erred: true, limited: false, limit_reset: null };
-        record(db, thread.folder, erred, "its builder's harness stopped on an error");
-        typeLeadNotes(db, sessions);
+      case "turn ended":
+        return { asking: turnEnded(db, sessions, callingThread(caller).folder, request.said) };
+      case "turn failed":
+        turnFailed(db, sessions, callingThread(caller), request.error, request.message);
         return { erred: true };
-      }
-      case "question closed": {
-        // AskUserQuestion returned your answer, and the builder goes on in the same turn, so a
-        // submit earlier in it still counts. Your answer starts a new stretch of work all the
-        // same, which the sidebar times, as anything typed into the builder does.
-        const { folder } = callingThread(caller);
-        db.run("UPDATE threads SET working_since = ? WHERE folder = ?", [Date.now(), folder]);
-        if (readThread(db, folder).asking)
-          record(db, folder, { asking: false }, "its builder's question is over");
+      case "question closed":
+        questionClosed(db, callingThread(caller).folder);
         return { asking: false };
-      }
-      case "question answered": {
-        const { folder } = callingThread(caller);
-        const thread = readThread(db, folder);
-        // Whatever is typed into the builder starts a new stretch of work: a review's changes,
-        // a message from the lead, or your answer. The sidebar times the stretch. Not logged,
-        // as only the sidebar shows it.
-        db.run("UPDATE threads SET working_since = ? WHERE folder = ?", [Date.now(), folder]);
-        // Run before every message typed into the builder, so only a question or an error that
-        // was open is logged. Typing to a builder that stopped on an error means you fixed it,
-        // such as with /login, so it ends the error as it ends a question. A usage limit it
-        // stopped on ends too, as the builder now works again or meets it again. Typing to one
-        // that stopped without submitting answers it, whether you typed or the lead told it.
-        // Each message starts a new turn, with no submit in it yet.
-        const over = {
-          asking: false,
-          stalled: false,
-          erred: false,
-          submitted: false,
-          limited: false,
-          limit_reset: null,
-        };
-        // The builder has something to work on, so a "continue" still waiting to be typed must
-        // not land. A wake already typing has cleared the error, so it is ended whatever the
-        // flags say. One whose "continue" ran this hook has nothing left to type.
-        endWake(folder);
-        if (thread.asking || thread.stalled)
-          record(db, folder, over, "its builder's question is over");
-        else if (thread.erred) record(db, folder, over, "its builder was typed to after its error");
-        else if (thread.submitted) record(db, folder, { submitted: false });
+      case "question answered":
+        questionAnswered(db, callingThread(caller).folder);
         return { asking: false };
-      }
       case "start": {
         // A thread the task already has is brought back or let past its round limit, with no
         // poll, as nothing new is read from the tracker.
