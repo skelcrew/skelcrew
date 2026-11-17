@@ -21,6 +21,19 @@ const verdicts: Record<string, string> = {
   "timed out": "review timed out",
 };
 
+// The sidebar's fixed colours of a tab's badge, as tmux names them.
+const tmuxColours = { green: "colour120", yellow: "colour221", red: "colour210" };
+
+// Returns a tab's badge as its dots, each with its colour: how many threads need you, in red when
+// any went wrong and yellow otherwise, then how many are ready to merge, in green, such as •2 •1.
+// Each is left out at none.
+function dots(tab: Tab): [keyof typeof tmuxColours, string][] {
+  const shown: [keyof typeof tmuxColours, string][] = [];
+  if (tab.needYou) shown.push([tab.colour, `•${tab.needYou}`]);
+  if (tab.ready) shown.push(["green", `•${tab.ready}`]);
+  return shown;
+}
+
 // Returns text as tmux shows it as is. tmux reads the strip as a format, where #(...) would run
 // a shell command and #[...] restyle the line. Any title on GitHub could say that. The strip goes
 // through strftime too, so % is doubled for it to stay itself.
@@ -96,8 +109,8 @@ function header(where: string, left: number, version: string): string {
 }
 
 // Returns the tabs as a tmux format, and the columns they take, given each repository's tab, the
-// open one's owner/name, and the agent's width. Each tab is the repository's name, with a yellow
-// dot and a count when threads in it need you or failed, such as site •1, and two spaces on each
+// open one's owner/name, and the agent's width. Each tab is the repository's name, with its
+// badge when threads in it need you or are ready, such as site •2 •1, and two spaces on each
 // side, so the open one's grey reads as a tab. The open one is bold white on the grey a picked row
 // has, and the others dim. When they don't fit, those furthest from the open one give way, and a
 // dim count says how many. Each tab is a range of its own, named by its place in the list, so a
@@ -108,8 +121,11 @@ function drawTabs(tabs: Tab[], open: string, width: number): [string, number] {
     tabs.findIndex((tab) => tab.fullName === open),
     0,
   );
-  // Returns a tab's text: its name, with its count when threads in it need you or failed.
-  const label = (tab: Tab) => `  ${tab.name}${tab.count ? ` •${tab.count}` : ""}  `;
+  // Returns a tab's text: its name, with its badge.
+  const label = (tab: Tab) =>
+    `  ${tab.name}${dots(tab)
+      .map(([, text]) => ` ${text}`)
+      .join("")}  `;
   // Returns how many columns the tab at a place in the list takes, or none past either end.
   const tabWidth = (index: number) => {
     const tab = tabs[index];
@@ -130,13 +146,14 @@ function drawTabs(tabs: Tab[], open: string, width: number): [string, number] {
     else left = false;
   }
   // Tabs have greys of their own, so they stand apart from the sidebar and the agent: the open
-  // one bold white on a dark grey, the others dim on a lighter one. Every tab's dot is the
-  // sidebar's fixed yellow, as a theme's own can look like another colour. A dim count of those
-  // left out ends the row.
+  // one bold white on a dark grey, the others dim on a lighter one. A tab's dots are in the
+  // sidebar's fixed colours, as a theme's own can look like another colour. A dim count of those left out ends the row.
   const shown = tabs.slice(first, last + 1).map((tab, offset) => {
     const here = first + offset === at;
     const style = here ? "#[bg=colour234,fg=colour231,bold]" : "#[bg=colour237,fg=colour245]";
-    const badge = tab.count ? ` #[fg=colour221]•${tab.count}` : "";
+    const badge = dots(tab)
+      .map(([colour, text]) => ` #[fg=${tmuxColours[colour]}]${text}`)
+      .join("");
     return `#[range=user|${first + offset}]${style}  ${escaped(tab.name)}${badge}  #[default]#[norange]`;
   });
   const out = tabs.length - shown.length;
