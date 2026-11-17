@@ -63,20 +63,30 @@ export function outOfDate(): boolean {
   return true;
 }
 
-// Warns when this Skelcrew runs from a checkout at another commit than the laptop's build.
-// --remote never replaces a checkout, so without this a server could keep running old code
-// unnoticed through many merges. The warning goes to stderr, so `--json` output stays clean, and
-// the command still runs. A laptop on a release names no commit, so there is nothing to compare.
-// An agent's sandbox can inherit the laptop's build through tmux, and has no use for the warning.
+// Warns when this Skelcrew runs from a checkout behind the laptop's build: at another commit,
+// or without the laptop's release. --remote never replaces a checkout, so without this a server
+// could keep running old code unnoticed through many merges. The warning goes to stderr, so
+// `--json` output stays clean, and the command still runs. An agent's sandbox can inherit the
+// laptop's build through tmux, and has no use for the warning.
 function warnIfCheckoutDiffers(laptop: string): void {
-  if (isRelease(laptop) || process.env.SKELCREW_SANDBOX === "1") return;
+  if (process.env.SKELCREW_SANDBOX === "1") return;
   const here = laptopBuild();
   if (here === null) return;
-  // Short commits can differ in length between machines, as git lengthens them in bigger
-  // repositories, so one starting with the other counts as the same commit. Uncommitted changes
-  // on either side don't change which commit git pull would bring.
-  const [a, b] = [here.replace(dirty, ""), laptop.replace(dirty, "")];
-  if (a.startsWith(b) || b.startsWith(a)) return;
+  if (isRelease(laptop)) {
+    // A checkout at or past the release's tag holds the release. A tag the checkout hasn't
+    // fetched also means it is behind, as git pull brings the tags along.
+    const tagged = Bun.spawnSync(
+      ["git", "-C", checkoutFolder, "merge-base", "--is-ancestor", `v${laptop}`, "HEAD"],
+      { stdout: "ignore", stderr: "ignore" },
+    );
+    if (tagged.exitCode === 0) return;
+  } else {
+    // Short commits can differ in length between machines, as git lengthens them in bigger
+    // repositories, so one starting with the other counts as the same commit. Uncommitted
+    // changes on either side don't change which commit git pull would bring.
+    const [a, b] = [here.replace(dirty, ""), laptop.replace(dirty, "")];
+    if (a.startsWith(b) || b.startsWith(a)) return;
+  }
   const where = process.env.SKELCREW_REMOTE_NAME;
   // The folder under the server's home is shown with ~, as you would type it there.
   const home = homedir();
@@ -84,7 +94,7 @@ function warnIfCheckoutDiffers(laptop: string): void {
     ? `~${checkoutFolder.slice(home.length)}`
     : checkoutFolder;
   console.error(
-    `Skelcrew on ${where} runs from a checkout at ${readable(here)}, yours is ${readable(laptop)}. To update it, run git pull in ${folder} there.`,
+    `Skelcrew on ${where} runs from a checkout at ${readable(here)}, yours is ${isRelease(laptop) ? `release ${laptop}` : readable(laptop)}. To update it, run git pull in ${folder} there.`,
   );
 }
 

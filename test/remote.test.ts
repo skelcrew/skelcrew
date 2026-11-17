@@ -624,7 +624,16 @@ test("Skelcrew from a checkout at the laptop's commit says nothing", () => {
   expect(run.err).toBe("");
 });
 
-test("Skelcrew from a checkout says nothing to a laptop on a release", () => {
+test("Skelcrew from a checkout without the laptop's release warns how to update it", () => {
+  const run = farSkel(null, "0.4.2");
+  expect(run.code).toBe(0);
+  expect(run.err).toBe(
+    `Skelcrew on x runs from a checkout at ${laptop.commit}, yours is release 0.4.2. To update it, run git pull in ~/code/skel there.\n`,
+  );
+});
+
+test("Skelcrew from a checkout that holds the laptop's release says nothing", () => {
+  Bun.spawnSync(["git", "-C", laptop.folder, "tag", "v0.4.2"]);
   expect(farSkel(null, "0.4.2").err).toBe("");
 });
 
