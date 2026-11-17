@@ -4,8 +4,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseDocument } from "yaml";
 import type { HarnessName } from "./agents/harness.ts";
-import { detectCommands } from "./detect.ts";
-import { cloneDir, configDir } from "./paths.ts";
+import { configDir } from "./paths.ts";
 import { type Repository, readSettings, type Settings } from "./settings.ts";
 
 // Returns the path of your settings file.
@@ -48,19 +47,11 @@ export function threadConfig(repository: Repository): Settings["roles"] & {
   };
 }
 
-// A repository's setup or test commands, and whether Skelcrew detected them from its files
-// rather than read them in its skelcrew.yaml, so wherever they are shown can say so.
-export type Commands = { commands: string[]; detected: boolean };
-
 // Returns the repository's setup and test commands. Each comes from its skelcrew.yaml when it
-// names it, even as an empty list, and is otherwise detected from the files in Skelcrew's clone.
-// That clone is at the latest default branch, so detection follows it as it changes.
-export function repositoryCommands(repository: Repository): { setup: Commands; test: Commands } {
-  const named = readSettings(["setup", "test"], repository);
-  const found = detectCommands(cloneDir(repository.owner, repository.repo));
-  const pick = (given: string[] | undefined, detected: string[]): Commands =>
-    given ? { commands: given, detected: false } : { commands: detected, detected: true };
-  return { setup: pick(named.setup, found.setup), test: pick(named.test, found.test) };
+// names it, even as an empty list, and is otherwise detected from its files.
+export function repositoryCommands(repository: Repository): Pick<Settings, "setup" | "test"> {
+  const { setup, test } = readSettings(["setup", "test"], repository);
+  return { setup, test };
 }
 
 // Returns the plugin the repository's skelcrew.yaml names as its tracker, or nothing when it

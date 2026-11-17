@@ -772,28 +772,8 @@ reviewer: { harness: codex }
   expect(existsSync(join(clone("simon/app"), "README"))).toBe(true);
   expect(run.out).toContain("Added simon/app, as app.");
   expect(run.out).toContain("Wrote skelcrew.yaml. Commit and push it to start.");
-});
-
-test("init writes the setup and test it detects as real lines, and says they were detected", async () => {
-  writeFileSync(join(home, ".config", "skelcrew", "config.yaml"), "harness: claude\n");
-  const checkout = onGitHub("simon/app", "WRITE");
-  writeFileSync(join(checkout, "go.mod"), "module app\n");
-  writeFileSync(join(checkout, "Makefile"), "check:\n\tgo vet ./... && go test ./...\n");
-  const run = await skel(["init"], "", checkout);
-  expect(run.err).toBe("");
-  expect(run.out).not.toContain("Testing with");
-  expect(readFileSync(join(checkout, "skelcrew.yaml"), "utf8")).toBe(
-    `# Shared with everyone who works on this repository. Never put a secret here.
-lead:     { harness: claude }
-builder:  { harness: claude }
-reviewer: { harness: claude }
-# Detected by Skelcrew from this repository's files. Change them if they are wrong.
-setup: [go mod download]
-test: [make check]
-# Keeps this repository on git alone, with no tracker.
-# tracker: none
-`,
-  );
+  // The hint that names sc init would only repeat what you just ran.
+  expect(run.out).not.toContain("detected");
 });
 
 // YAML reads true, null or 123 as something other than text, which a model name must be.

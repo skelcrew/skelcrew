@@ -127,6 +127,14 @@ test("detection follows the files in Skelcrew's clone as they change", () => {
   expect(commands().test.commands).toEqual(["cargo test"]);
 });
 
+// A link could point at any file of yours, so it is never read.
+test("a linked file in the clone counts for nothing in detection", () => {
+  settings("harness: claude\n", null);
+  writeFileSync(join(home, "Makefile"), "check:\n");
+  symlinkSync(join(home, "Makefile"), join(clone(), "Makefile"));
+  expect(commands().test).toEqual({ commands: [], detected: true });
+});
+
 // An empty list says the repository has no setup, which detection mustn't override.
 test("an empty list in skelcrew.yaml counts as named", () => {
   settings("harness: claude\n", "setup: []\n");

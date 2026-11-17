@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { parse } from "yaml";
 import { z } from "zod";
 import { HarnessName } from "./agents/harness.ts";
+import { detectCommands, looksAt, readsText, type TopFiles } from "./detect.ts";
 import { cloneDir, configDir } from "./paths.ts";
 
 // A repository Skelcrew works on, by its owner and name.
@@ -45,13 +46,17 @@ const File = z.looseObject({
 type File = z.infer<typeof File>;
 type Key = keyof typeof File.shape;
 
+// A repository's setup or test commands, and whether Skelcrew detected them from its files
+// rather than read them in a file, so wherever they are shown can say so.
+export type Commands = { commands: string[]; detected: boolean };
+
 // The harness a role runs on, and its model, or none for the harness's default.
 export type Role = { harness: HarnessName; model?: string };
 
 // Every setting, once the files and the defaults are merged. `rounds` is how many rounds of
 // changes a thread gets before it needs you, `reviews` how many reviews run at once on this
-// machine, and `setup` and `test` the commands that set up a thread's clone and test it, or none
-// when the repository names none, so they can be detected instead. `fallback` is the harness
+// machine, and `setup` and `test` the commands that set up a thread's clone and test it, as
+// named or detected. `fallback` is the harness
 // reviews run on while the reviewer's own waits out its usage limit, and `reviewMinutes` how
 // long a review may run before it is ended. `yourHarness` and `yourReviewer` are the harnesses
 // your config saved, with no default, so the first run can tell what you haven't picked yet, and
@@ -60,8 +65,8 @@ export type Settings = {
   roles: { lead: Role; builder: Role; reviewer: Role };
   rounds: number;
   reviews: number;
-  setup: string[] | undefined;
-  test: string[] | undefined;
+  setup: Commands;
+  test: Commands;
   tracker: string | undefined;
   fallback: HarnessName | undefined;
   reviewMinutes: number;
@@ -155,7 +160,26 @@ export function readSettings<G extends Group>(
   const decided = (k: Key) =>
     shared[k] !== undefined && shared[k] !== null && !roleKeys.includes(k);
   const fromYours = wanted.filter((k) => yourKeys.includes(k) && !decided(k));
-  return mergeSettings([shared, readYourFile(fromYours)]);
+  // Detection is the lowest layer for setup and test, below the built-in defaults' none, and
+  // only looks when they are asked for.
+  const detecting = repository && (wanted.includes("setup") || wanted.includes("test"));
+  const detected = detecting ? detectCommands(readTopFiles(repository)) : { setup: [], test: [] };
+  return mergeSettings([shared, readYourFile(fromYours)], detected);
+}
+
+// Returns the files at the top of Skelcrew's clone of the repository that detection looks at,
+// with the text of those it reads. It reads the clone, which is at the latest default branch,
+// so what is detected follows that branch as it changes. A link is skipped, as for
+// skelcrew.yaml, since it could point at any file of yours.
+function readTopFiles(repository: Repository): TopFiles {
+  const clone = cloneDir(repository.owner, repository.repo);
+  const files: TopFiles = {};
+  for (const name of looksAt) {
+    const path = join(clone, name);
+    if (!lstatSync(path, { throwIfNoEntry: false })?.isFile()) continue;
+    files[name] = readsText.includes(name) ? readFileSync(path, "utf8") : "";
+  }
+  return files;
 }
 
 // Returns your config.yaml, holding only `keys`, checked. A file with none of them isn't read,
@@ -219,8 +243,9 @@ function check(data: unknown, problem: string): File {
 }
 
 // Merges the files, the one that wins first, over the built-in defaults: each setting comes from
-// the first that sets it, key by key.
-function mergeSettings(layers: File[]): Settings {
+// the first that sets it, key by key. Setup and test that no file names, not even as an empty
+// list, come from `detected`, the commands detected from the repository's files.
+function mergeSettings(layers: File[], detected: { setup: string[]; test: string[] }): Settings {
   const defaults = builtInDefaults();
   // The first value any layer sets for `get`.
   const first = <T>(get: (layer: File) => T | undefined | null) =>
@@ -239,8 +264,14 @@ function mergeSettings(layers: File[]): Settings {
     roles: { lead: role("lead"), builder: role("builder"), reviewer: role("reviewer") },
     rounds: first((l) => l.max_rounds) ?? defaults.max_rounds,
     reviews: first((l) => l.limits?.reviews) ?? defaults.reviews,
-    setup: first((l) => l.setup),
-    test: first((l) => l.test),
+    setup: commands(
+      first((l) => l.setup),
+      detected.setup,
+    ),
+    test: commands(
+      first((l) => l.test),
+      detected.test,
+    ),
     tracker: first((l) => l.tracker),
     fallback: first((l) => l.fallback),
     reviewMinutes: first((l) => l.review?.timeout_minutes) ?? defaults.reviewMinutes,
@@ -273,3 +304,7 @@ function mergeRole(
   }
   return model === undefined ? { harness } : { harness, model };
 }
+
+// Returns the commands a file names, or else the detected ones, saying which.
+const commands = (named: string[] | undefined, detected: string[]): Commands =>
+  named ? { commands: named, detected: false } : { commands: detected, detected: true };

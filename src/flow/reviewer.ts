@@ -7,9 +7,9 @@ import { z } from "zod";
 import { type HarnessName, harnessNamed } from "../agents/harness.ts";
 import { filterEnv, sandboxArgs, throwawayMounts } from "../agents/sandbox.ts";
 import { sandboxFolders } from "../agents/seatbelt.ts";
-import type { Commands } from "../config.ts";
 import { builtInRole } from "../roles.ts";
 import { errorText } from "../say.ts";
+import type { Commands } from "../settings.ts";
 import { limitOn } from "./limits.ts";
 
 // What a review round ends with: the reviewer's verdict and what it said, a failed review and

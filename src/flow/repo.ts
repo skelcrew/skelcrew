@@ -18,7 +18,6 @@ import { refuseCredentials } from "../agents/sandbox.ts";
 import { endSession, exitedCleanly, stopSession } from "../agents/sessions.ts";
 import { agentRoles, repositoryCommands } from "../config.ts";
 import { nameRepositories, openDb, Repository } from "../db.ts";
-import { detectCommands } from "../detect.ts";
 import { originHere, parseRemote } from "../machine/origin.ts";
 import { cloneDir, configDir, dataDir, leadPlaces } from "../paths.ts";
 import { askWhichForge, type Claimed } from "../plugins/ask.ts";
@@ -464,36 +463,24 @@ export async function addRepo(
 // quoted when YAML would read it as something else, such as a model named true or 123.
 const yamlValue = (value: string) => stringify(value).trim();
 
-// Returns the starter skelcrew.yaml for the checkout at `root`: a line saying the file is shared
-// and never holds a secret, your harness and model for each role as real lines, from your config,
-// and the setup and test Skelcrew detects in the checkout as real lines, saying they were
-// detected. One it can't detect is a commented example instead. It names no tracker, so a
-// repository on GitHub keeps its issues as tasks, and shows tracker: none commented out, so you
-// can find how to turn that off.
-function starterConfig(root: string): string {
+// Returns the starter skelcrew.yaml: a line saying the file is shared and never holds a secret,
+// your harness and model for each role as real lines, from your config, and setup and test as
+// commented examples. It names no tracker, so a repository on GitHub keeps its issues as tasks,
+// and shows tracker: none commented out, so you can find how to turn that off.
+function starterConfig(): string {
   // Each role is one line of { key: value } pairs, its name padded so the three line up.
   const roles = agentRoles();
   const line = (name: "lead" | "builder" | "reviewer") => {
     const parts = Object.entries(roles[name]).map(([key, value]) => `${key}: ${yamlValue(value)}`);
     return `${`${name}:`.padEnd(10)}{ ${parts.join(", ")} }`;
   };
-  // Each command list as YAML's one-line list, quoted where a comma or bracket would break it.
-  const found = detectCommands(root);
-  const list = (commands: string[]) =>
-    stringify(commands, { collectionStyle: "flow", flowCollectionPadding: false }).trim();
-  const commands = [
-    ...(found.setup.length > 0 || found.test.length > 0
-      ? ["# Detected by Skelcrew from this repository's files. Change them if they are wrong."]
-      : []),
-    found.setup.length > 0 ? `setup: ${list(found.setup)}` : "# setup: [bun install]",
-    found.test.length > 0 ? `test: ${list(found.test)}` : "# test: [bun test]",
-  ];
   return [
     "# Shared with everyone who works on this repository. Never put a secret here.",
     line("lead"),
     line("builder"),
     line("reviewer"),
-    ...commands,
+    "# setup: [bun install]",
+    "# test: [bun test]",
     "# Keeps this repository on git alone, with no tracker.",
     "# tracker: none",
     "",
@@ -529,10 +516,10 @@ export async function initRepo(sessions: string): Promise<void> {
   // A new file is made only where none is, so the write never follows a link.
   const file = join(root, "skelcrew.yaml");
   const there = lstatSync(file, { throwIfNoEntry: false }) !== undefined;
-  if (!there) writeFileSync(file, starterConfig(root), { flag: "wx" });
+  if (!there) writeFileSync(file, starterConfig(), { flag: "wx" });
   else console.log("skelcrew.yaml is there already, so Skelcrew left it as it is.");
-  // Bring the repository in, then say what was written and when Skelcrew will read it. The
-  // file just written says how the repository is tested, so no hint is needed.
+  // Bring the repository in, then say what was written and when Skelcrew will read it. The hint
+  // about sc init would only repeat what you just ran.
   await addRepo(root, sessions, false);
   if (!there) console.log("Wrote skelcrew.yaml. Commit and push it to start.");
 }
