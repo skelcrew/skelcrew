@@ -80,9 +80,9 @@ case "$CODEX_HOME" in */lead-*)
   exec 3<&0
   while IFS= read -r line; do printf '%s\\n' "$line" >> typed; done <&3 &
   for i in $(seq 3000); do
-    now=idle; test -e busy && now=busy
+    now=idle; test -e busy && now="busy $i"
     if [ "$now" != "$shown" ]; then
-      clear; if [ $now = busy ]; then echo "• Working (esc to interrupt)"; fi
+      clear; if [ "$now" != idle ]; then echo "• Working (\${i}s • esc to interrupt)"; fi
       echo "› Ask Codex to do anything"; shown=$now
     fi
     sleep 0.1

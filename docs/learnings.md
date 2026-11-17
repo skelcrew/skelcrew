@@ -11,16 +11,18 @@ that covers the code you are about to write.
 - **Send text as a bracketed paste, then Enter on its own a moment later.** Without the
   paste marks, Claude Code treats the Enter after a long message as a new line, and the
   message is never sent. `tmux paste-buffer -p` adds the marks.
-- **Idle means more than a quiet pane.** Claude Code is idle when "esc to interrupt" is
-  gone, a line holding only the `❯` prompt is on screen, and nothing has changed for a
-  moment. A bell or a changing window title doesn't mean a turn ended.
+- **Idle means more than a quiet pane.** Claude Code is idle when no live "esc to
+  interrupt" shows, a line holding only the `❯` prompt is on screen, and nothing has changed
+  for a moment. A bell or a changing window title doesn't mean a turn ended.
 - **The busy mark can sit in the agent's own text.** A builder that greps Skelcrew's code, or
-  quotes it, leaves "esc to interrupt" on its screen after its turn ends, and looks busy
-  forever, Esc or not. Look for the mark only where the harness draws it: the first line of
-  the block just above the input, ahead of any todo list, and the footer below the input.
-  A hook saying the turn ended can't stand in: a builder running before the upgrade fires
-  none, Esc runs none, and a turn may start with nothing typed in, such as when a background
-  task ends.
+  replies about it, leaves "esc to interrupt" on its screen after its turn ends, even just
+  above its input, and looks busy forever, Esc or not. Where the mark sits can't tell the two
+  apart. Whether it is live can: Claude Code's spinner and Codex's "Working" line redraw at
+  least every second, as their timer counts, and reply text sits still. So trust the Stop hook
+  that says a turn ended, and otherwise a mark that redraws. A still mark waits a few seconds
+  more, unless the hook said the turn ended: a builder running before Skelcrew watched its
+  hook fires none, and neither does Esc. The hook never hides a live mark, as a turn may start
+  with nothing typed in, such as when a background task ends.
 - **A person's draft at the prompt is not idle.** A paste lands after their unsent text, and
   the Enter sends both. Ready means a line holding the bare prompt mark, so a draft makes
   typing wait. A person can start a draft after the last look, so look again right before

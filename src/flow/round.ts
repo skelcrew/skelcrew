@@ -22,6 +22,7 @@ import {
   repositoryOf,
   type Thread,
   threadName,
+  turnEnded,
 } from "./thread.ts";
 
 // Runs git in Skelcrew's own clone and returns what it printed, throwing with its error when it
@@ -166,11 +167,16 @@ async function typeChanges(
   signal: AbortSignal,
 ): Promise<void> {
   const { marks } = builderHarness(readThread(db, folder));
+  const turnOver = () => readThread(db, folder).turn_ended;
   const typed = await typeInto(tmux, folder, marks, text, {
     timeout: Number.POSITIVE_INFINITY,
     signal,
+    turnOver,
   });
-  if (typed) record(db, folder, { telling: null }, "typed the review into the builder");
+  // A new turn starts now, before its hook can say so, so a message waiting waits for it.
+  if (!typed) return;
+  turnEnded(db, folder, false);
+  record(db, folder, { telling: null }, "typed the review into the builder");
 }
 
 // A thread's latest round, with what cancels its review. The next round pushes only after this

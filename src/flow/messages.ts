@@ -17,6 +17,7 @@ import {
   repositoryOf,
   type Thread,
   threadName,
+  turnEnded,
 } from "./thread.ts";
 
 // The PR's reviews and comments a message carries, for the forge to mark seen once it is typed.
@@ -68,7 +69,9 @@ export async function whyWaiting(db: Database, tmux: string, thread: Thread): Pr
     return `the thread is ${thread.status}`;
   if (!agentRuns(tmux, thread.folder)) return "its builder isn't running";
   if (thread.asking) return "it is asking the human a question";
-  return whyBusy(tmux, thread.folder, builderHarness(thread).marks);
+  // Its hook can say its turn ended while the look at its screen is under way.
+  const turnOver = () => readThread(db, thread.folder).turn_ended;
+  return whyBusy(tmux, thread.folder, builderHarness(thread).marks, { turnOver });
 }
 
 // Saves a message for the thread's builder and has the daemon type it in as soon as the builder
@@ -175,11 +178,15 @@ async function deliver(db: Database, tmux: string, folder: string, signal: Abort
     // The builder looked ready a moment ago, so typing shouldn't wait long. If it does, the
     // message stays saved for the next attempt.
     const { marks } = builderHarness(thread);
+    const turnOver = () => readThread(db, folder).turn_ended;
     const typed = await typeInto(tmux, folder, marks, message.text, {
       timeout: 10_000,
       signal,
+      turnOver,
     });
     if (!typed) return;
+    // A new turn starts now, before its hook can say so, so the next message waits for it.
+    turnEnded(db, folder, false);
     db.run("DELETE FROM messages WHERE id = ?", [message.id]);
     afterTyped(db, folder, message);
   }

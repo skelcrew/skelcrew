@@ -48,6 +48,7 @@ import {
   type Thread,
   threadName,
   threadOn,
+  turnEnded,
 } from "./thread.ts";
 
 // Tries to hold the daemon lock and returns whether this process owns it, preventing
@@ -350,6 +351,7 @@ export async function serve(tmux: string, every = 30_000): Promise<void> {
         // which would lose the closing quote. Each " or \ doubles in length once escaped, so
         // the words are cut until the quote fits.
         const { folder } = callingThread(caller);
+        turnEnded(db, folder, true);
         if (!endedTurnAsks(readThread(db, folder))) return { asking: false };
         let words = untagged(request.said ?? "").slice(0, 100);
         while (JSON.stringify(words).length > 100) words = words.slice(0, -1);
@@ -359,6 +361,7 @@ export async function serve(tmux: string, every = 30_000): Promise<void> {
         return { asking: true };
       }
       case "turn failed":
+        turnEnded(db, callingThread(caller).folder, true);
         record(
           db,
           callingThread(caller).folder,
@@ -384,6 +387,7 @@ export async function serve(tmux: string, every = 30_000): Promise<void> {
         // a message from the lead, or your answer. The sidebar times the stretch. Not logged,
         // as only the sidebar shows it.
         db.run("UPDATE threads SET working_since = ? WHERE folder = ?", [Date.now(), folder]);
+        turnEnded(db, folder, false);
         // Run before every message typed into the builder, so only a question or an error that
         // was open is logged. Typing to a builder that stopped on an error means you fixed it,
         // such as with /login, so it ends the error as it ends a question. Typing to one that
