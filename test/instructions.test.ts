@@ -41,33 +41,25 @@ for (const name of HarnessName.options)
     expect(told).not.toContain("once before each sc submit");
   });
 
-// A builder can't read your config.yaml from its sandbox, nor tell what Skelcrew detected, so it
-// is told the commands, and still never runs the whole suite.
-test("a builder is told the repository's setup and test commands, and which were detected", () => {
-  const told = builderInstructions({
-    setup: { commands: ["go mod download"], detected: true },
-    test: { commands: ["make check"], detected: false },
-  });
+// The lead settles the setup and test commands with the human once, so every builder uses the
+// same ones, and a builder with none asks rather than guess.
+test("a builder is told the repository's setup and test commands", () => {
+  const told = builderInstructions({ setup: ["go mod download"], test: ["make check"] });
   expect(told.startsWith(instructions.replace(/\n$/, ""))).toBe(true);
   expect(told).toContain("Never run the repository's whole test suite");
+  expect(told).toEndWith(
+    "Skelcrew set up your clone with `go mod download`. The repository's whole test suite runs with `make check`. That is for CI and the reviewer, so don't run it yourself. It shows how the repository runs its tests, lint and typecheck, so run the parts near your change.\n",
+  );
+  // A repository may need no setup at all.
+  expect(builderInstructions({ setup: [], test: ["go test ./..."] })).toEndWith(
+    "\n\nThe repository's whole test suite runs with `go test ./...`. That is for CI and the reviewer, so don't run it yourself. It shows how the repository runs its tests, lint and typecheck, so run the parts near your change.\n",
+  );
+});
+
+test("a builder told no commands are configured asks the lead rather than make one up", () => {
+  const told = builderInstructions({ setup: [], test: [] });
+  expect(told).toEndWith("\n\nThe repository's skelcrew.yaml names no setup or test commands.\n");
   expect(told).toContain(
-    "Skelcrew set up your clone with `go mod download`, which it detected from the repository's files.",
+    "If they name none, never make one up: ask the lead which to use with sc tell lead, and wait for its answer. That counts as blocked.",
   );
-  expect(told).toContain(
-    "The repository's whole test suite runs with `make check`. That is for CI and the reviewer, so don't run it yourself. It shows how the repository runs its tests, lint and typecheck, so run the parts near your change.",
-  );
-  const detected = builderInstructions({
-    setup: { commands: [], detected: true },
-    test: { commands: ["go test ./..."], detected: true },
-  });
-  expect(detected).not.toContain("Skelcrew set up your clone");
-  expect(detected).toContain(
-    "The repository's whole test suite runs with `go test ./...`, which Skelcrew detected from the repository's files, so it may be wrong.",
-  );
-  expect(
-    builderInstructions({
-      setup: { commands: [], detected: false },
-      test: { commands: [], detected: true },
-    }),
-  ).toBe(instructions);
 });

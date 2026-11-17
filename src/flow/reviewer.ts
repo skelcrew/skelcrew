@@ -9,7 +9,6 @@ import { filterEnv, sandboxArgs, throwawayMounts } from "../agents/sandbox.ts";
 import { sandboxFolders } from "../agents/seatbelt.ts";
 import { builtInRole } from "../roles.ts";
 import { errorText } from "../say.ts";
-import type { Commands } from "../settings.ts";
 import { limitOn } from "./limits.ts";
 
 // What a review round ends with: the reviewer's verdict and what it said, a failed review and
@@ -39,40 +38,37 @@ const schema = JSON.stringify({
 // or no one, on a change to docs and Markdown alone.
 export type Tests = { ci: string } | "run" | "docs only";
 
-// Returns how the reviewer runs the repository's tests: with the commands its skelcrew.yaml or
-// your config names, or else those Skelcrew detected from its files, saying which, so a reviewer that finds
-// a detected command wrong knows it is a guess. With neither, it works out how itself.
-function testedWith({ commands, detected }: Commands): string {
-  if (commands.length > 0)
-    return detected
-      ? `with \`${commands.join(" && ")}\`, which Skelcrew detected from the repository's files`
-      : `with \`${commands.join(" && ")}\``;
-  return "working out how from the repository, as it names no test command and Skelcrew detected none";
+// Returns what the reviewer does when it has to run the whole test suite: `run` it with the
+// commands under test: in the repository's skelcrew.yaml, or, with none, review without running
+// tests and say so. Skelcrew never guesses a test command, as a wrong guess would pass for a
+// real result.
+function runSuite(run: string, test: string[]): string {
+  if (test.length > 0) return `${run}, with \`${test.join(" && ")}\`.`;
+  return "the repository's skelcrew.yaml names no test command, so don't run the tests. Review the code, and say in the body that you didn't run them, as none is configured.";
 }
 
 // Returns what the reviewer is told about the tests. The whole test suite runs once per commit,
 // and only when code changed, as several threads running it at once overload the machine. So
 // with CI on the commit the reviewer reads CI's result from its file, without CI it runs the
-// suite, `test` saying how, and on a change to docs alone no one runs it.
-function testsTold(tests: Tests, test: Commands): string {
+// suite with `test`, and on a change to docs alone no one runs it.
+function testsTold(tests: Tests, test: string[]): string {
   if (tests === "docs only")
     return "The change only touches docs and Markdown, so don't run the tests. Say in the body that you didn't run them, as no code changed.";
   if (tests === "run")
-    return `No CI runs on this commit, so run the repository's whole test suite, ${testedWith(test)}.`;
-  return `The repository's CI runs the whole test suite on this commit, so don't run it yourself. Run a single test only to settle a doubt. CI's result for this commit is in ${tests.ci}: whether it passed, failed or is still running, and the end of each failed check's log. Skelcrew updates that file as CI goes on, so read it when you start and again just before you answer. When CI failed, name the failing tests as problems. When it lists checks and none of them runs the tests, such as only a deploy preview or a CLA check, run the whole test suite yourself, ${testedWith(test)}. When CI hasn't reported yet, or is still running as you answer, review the code anyway, and say in the body that CI is still running.`;
+    return `No CI runs on this commit, so ${runSuite("run the repository's whole test suite", test)}`;
+  return `The repository's CI runs the whole test suite on this commit, so don't run it yourself. Run a single test only to settle a doubt. CI's result for this commit is in ${tests.ci}: whether it passed, failed or is still running, and the end of each failed check's log. Skelcrew updates that file as CI goes on, so read it when you start and again just before you answer. When CI failed, name the failing tests as problems. When it lists checks and none of them runs the tests, such as only a deploy preview or a CLA check, ${runSuite("run the whole test suite yourself", test)} When CI hasn't reported yet, or is still running as you answer, review the code anyway, and say in the body that CI is still running.`;
 }
 
 // Returns what the reviewer is told: its built-in instructions, with the task it checks the
 // PR against, where the change starts, and who runs the tests and with what filled into their
-// blanks. All
-// blanks are filled in one pass, so a task whose text holds a blank's mark, or a `$&`, reaches
+// blanks. All blanks are filled in one pass, so a task whose text holds a blank's mark, or a `$&`, reaches
 // the reviewer as written. The file's last newline is dropped, as the reviewer has always been
 // told without one.
 export function reviewerPrompt(
   issue: { title: string; body: string },
   base: string,
   tests: Tests,
-  test: Commands,
+  test: string[],
 ): string {
   const blanks: Record<string, string> = { ...issue, base, tests: testsTold(tests, test) };
   const instructions = builtInRole("reviewer").instructions.replace(/\n$/, "");
@@ -215,12 +211,12 @@ function readVerdict(
 // reads CI's result rather than running the whole test suite. It is asked again every 15
 // seconds while the review runs, as CI usually finishes during it. `docsOnly` says the change
 // touches only docs and Markdown, so the reviewer runs no tests, and `ci` isn't asked. `test`
-// is how the reviewer runs the tests when it has to.
+// is the repository's test command, for when the reviewer has to run the suite.
 async function reviewNow(given: {
   clone: string;
   issue: { title: string; body: string };
   base: string;
-  test: Commands;
+  test: string[];
   commit: string;
   model?: string | undefined;
   harness: HarnessName;

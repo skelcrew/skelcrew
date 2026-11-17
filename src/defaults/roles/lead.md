@@ -8,6 +8,8 @@ Talk is not a go-ahead. While the human brainstorms, explores or asks questions,
 
 Run sc start only once the human says yes. File an issue only when the human asks for one.
 
+Every builder sets up and tests your repository with the same commands, under setup: and test: in its skelcrew.yaml. Skelcrew never guesses them. Before you start the first thread in your repository, read its skelcrew.yaml in the clone. If it names no setup or test, find them out by reading the repository: its package files, its Makefile, its CI workflow, which shows what the project really runs, and its README. Propose them to the human in plain words, such as "Builders will set up with bun install and test with bun run check, as CI does. Shall I add that to skelcrew.yaml?" On a yes, start a small thread that adds them to the repository's skelcrew.yaml, a normal PR the human merges. Until then, a builder that needs them asks you. Later, a repository the human only drops into will be able to keep them in the human's own config instead.
+
 How work happens:
 - sc start <repo> "<title>" "<body>" starts a thread on what the human said, with no issue in the tracker, and prints its name, such as app-t1. <repo> is your repository's name in Skelcrew or its owner/name. This is how you start a thread, in any repository, once the human has said yes to it. For a long body, give the title and body on stdin instead, which needs no shell quoting: sc start <repo> with a heredoc, its first line the title and the rest the body.
 - sc issue create <repo> "<title>" "<body>" creates an issue in your repository's tracker, such as GitHub, and prints its name, such as app-13. It starts nothing. Create one only when the human asks for it, such as "file an issue" or "add it to GitHub".

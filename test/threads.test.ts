@@ -888,8 +888,9 @@ nameRepositories(db);`;
     expect(read(join(clone(), "ran"))).toBe("ran --flag\n");
   }, 60_000);
 
-  // A repository added just to fix something often has no skelcrew.yaml.
-  test("without a skelcrew.yaml, the setup command detected from the repository's files runs", async () => {
+  // Skelcrew never guesses a setup command from the repository's files, as a wrong guess
+  // would run unseen. The lead settles it with you instead.
+  test("without a skelcrew.yaml, no setup command runs, even where one could be guessed", async () => {
     addApp({ "go.mod": "module app\n" });
     mkdirSync(join(home, "tools"));
     writeFileSync(join(home, "tools", "go"), '#!/bin/sh\necho "ran go $*" > ran\n', {
@@ -899,7 +900,8 @@ nameRepositories(db);`;
     await untilCloned();
     await skel("start", "app-12");
     await until(() => read(join(config("app-12"), "args")) !== "" || thread().status === "failed");
-    expect(read(join(clone(), "ran"))).toBe("ran go mod download\n");
+    expect(thread().status).not.toBe("failed");
+    expect(existsSync(join(clone(), "ran"))).toBe(false);
   }, 60_000);
 
   test("a setup command can't bring back a folder of yours by naming a program in it", async () => {

@@ -20,7 +20,7 @@ import { trackerOf } from "../plugins/ask.ts";
 import { builtInRole } from "../roles.ts";
 import { quietly } from "../run.ts";
 import { errorText } from "../say.ts";
-import type { Commands, Settings } from "../settings.ts";
+import type { Settings } from "../settings.ts";
 import { taskOf, threadTask } from "./copy.ts";
 import { pastRoundLimit } from "./decide.ts";
 import { fetchBranch } from "./git.ts";
@@ -304,44 +304,31 @@ export async function setUpThread(db: Database, thread: Thread): Promise<void> {
     );
   }
   // Make sure no git login reached the clone's settings before the builder can read them,
-  // then run the repository's setup commands in the sandbox. A failure says when the command
-  // was detected, so you know to name the right one in skelcrew.yaml or your config.
+  // then run the repository's setup commands in the sandbox.
   refuseCredentials(clone);
-  const { setup } = repositoryCommands(thread);
-  for (const command of setup.commands) {
+  for (const command of repositoryCommands(thread).setup) {
     const { argv, env } = setupCommand(clone, command);
-    const what = setup.detected
-      ? `the setup command Skelcrew detected, "${command}"`
-      : `the setup command "${command}"`;
-    await mustRun(argv, what, env);
+    await mustRun(argv, `the repository's skelcrew.yaml setup command "${command}"`, env);
   }
 }
 
-// Returns the builder's instructions: its built-in ones, then how the repository is set up and
-// tested, as skelcrew.yaml or your config names it or Skelcrew detected it. The builder can't read
-// your config from its sandbox, nor tell what was detected, so it is told, along with which were
-// detected, as a detected command can be wrong. The whole suite stays CI's and the reviewer's.
+// Returns the builder's instructions: its built-in ones, then the setup and test commands the
+// repository's skelcrew.yaml names, or that it names none. The lead settles them with you, so
+// every builder uses the same ones. A builder told there are none asks the lead rather than
+// guess, as a guessed command is often wrong and nobody would see it was a guess.
 export function builderInstructions(commands: Pick<Settings, "setup" | "test">): string {
-  const instructions = builtInRole("builder").instructions;
+  const instructions = builtInRole("builder").instructions.replace(/\n$/, "");
   const { setup, test } = commands;
-  const shown = ({ commands }: Commands) => `\`${commands.join(" && ")}\``;
-  const told = [
-    ...(setup.commands.length > 0
-      ? [
-          setup.detected
-            ? `Skelcrew set up your clone with ${shown(setup)}, which it detected from the repository's files.`
-            : `Skelcrew set up your clone with ${shown(setup)}.`,
-        ]
-      : []),
-    ...(test.commands.length > 0
-      ? [
-          `The repository's whole test suite runs with ${shown(test)}${test.detected ? ", which Skelcrew detected from the repository's files, so it may be wrong" : ""}. That is for CI and the reviewer, so don't run it yourself. It shows how the repository runs its tests, lint and typecheck, so run the parts near your change.`,
-        ]
-      : []),
-  ];
-  return told.length > 0
-    ? `${instructions.replace(/\n$/, "")}\n\n${told.join(" ")}\n`
-    : instructions;
+  const shown = (list: string[]) => `\`${list.join(" && ")}\``;
+  // A repository may need no setup, so only a missing test command means nothing is settled.
+  const told =
+    test.length === 0
+      ? "The repository's skelcrew.yaml names no setup or test commands."
+      : [
+          ...(setup.length > 0 ? [`Skelcrew set up your clone with ${shown(setup)}.`] : []),
+          `The repository's whole test suite runs with ${shown(test)}. That is for CI and the reviewer, so don't run it yourself. It shows how the repository runs its tests, lint and typecheck, so run the parts near your change.`,
+        ].join(" ");
+  return `${instructions}\n\n${told}\n`;
 }
 
 // Starts the thread's builder in a session, in the sandbox in its clone: bringing back the

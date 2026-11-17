@@ -16,6 +16,13 @@ const workflows =
 const waiting =
   " When the builder can't take it yet, sc tell says why, and sc ps counts the messages still waiting. If one still waits after 10 minutes, Skelcrew tells you why. When the builder is mid-turn, you may ask the human to press Esc in that thread if it shouldn't finish its turn first.";
 
+// What the lead's and builder's files added once Skelcrew stopped guessing a repository's setup
+// and test commands: the lead settles them with the human, and a builder with none asks the lead.
+const settling =
+  "\nEvery builder sets up and tests your repository with the same commands, under setup: and test: in its skelcrew.yaml. Skelcrew never guesses them. Before you start the first thread in your repository, read its skelcrew.yaml in the clone. If it names no setup or test, find them out by reading the repository: its package files, its Makefile, its CI workflow, which shows what the project really runs, and its README. Propose them to the human in plain words, such as \"Builders will set up with bun install and test with bun run check, as CI does. Shall I add that to skelcrew.yaml?\" On a yes, start a small thread that adds them to the repository's skelcrew.yaml, a normal PR the human merges. Until then, a builder that needs them asks you. Later, a repository the human only drops into will be able to keep them in the human's own config instead.\n";
+const asking =
+  "\nUse the setup and test commands named at the end of these instructions, as every builder of the repository uses the same ones. If they name none, never make one up: ask the lead which to use with sc tell lead, and wait for its answer. That counts as blocked.\n";
+
 // What the builder was told about the tests before the whole suite ran once per commit, in CI
 // or the reviewer, and what it is told now.
 const builderTestsBefore =
@@ -23,17 +30,22 @@ const builderTestsBefore =
 const builderTests =
   "Never run the repository's whole test suite: CI or the reviewer runs it once for each commit, and other agents share this machine, so whole suites running at once slow everyone down. While you work, run only the tests near your change. Before each sc submit, run the tests related to your change: the test files you touched and the tests of the code you changed. Run the repository's lint and typecheck too, if it has them.";
 
-test("the lead and builder files hold the instructions the code gave, but waiting messages and the builder's workflows and tests", () => {
+test("the lead and builder files hold the instructions the code gave, but for what was added since", () => {
   // The digests of src/agents/prompts/lead.md and builder.md before they moved.
   const lead = builtInRole("lead").instructions;
   expect(lead).toContain(waiting);
-  expect(sha256(lead.replace(waiting, ""))).toBe(
+  expect(lead).toContain(settling);
+  expect(sha256(lead.replace(waiting, "").replace(settling, ""))).toBe(
     "4a964d29382eddbab5268fa24921ee599fa1bde9bd1eb51341f5bee1cb577837",
   );
   const builder = builtInRole("builder").instructions;
   expect(builder).toContain(workflows);
   expect(builder).toContain(builderTests);
-  const before = builder.replace(workflows, "").replace(builderTests, builderTestsBefore);
+  expect(builder).toContain(asking);
+  const before = builder
+    .replace(workflows, "")
+    .replace(asking, "")
+    .replace(builderTests, builderTestsBefore);
   expect(sha256(before)).toBe("556629d5f335c1d5e635a1996a021041ea3e9fb75deaa593399ef84d70ee4d00");
 });
 
@@ -68,7 +80,7 @@ Answer "approve" only if it is ready to merge. Otherwise answer "changes", and i
 // Without CI on the commit, the reviewer runs the tests, as it always did.
 const runs =
   "No CI runs on this commit, so run the repository's whole test suite, with `bun test`.";
-const testedBy = { commands: ["bun test"], detected: false };
+const testedBy = ["bun test"];
 
 test("the reviewer is told exactly what its code told it, and who runs the tests", () => {
   const issue = { title: "Fix the flaky test", body: "It fails one run in ten." };
