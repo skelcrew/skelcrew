@@ -166,16 +166,22 @@ async function reviewRound(
   const setsUpCi = listed.success && listed.stdout.toString().trim() !== "";
   // A change to docs and Markdown alone is tested by no one, as CI skips it and no code
   // changed, so its review waits for no CI. The files are those changed since the base branch,
-  // which Skelcrew's clone holds as refs/heads/<base>. A diff Skelcrew can't read lists none,
-  // and the tests run.
-  const base = `refs/heads/${baseOf(thread)}`;
-  const diff = ["git", "-C", cloneDir(thread.owner, thread.repo), "diff", "--name-only"];
-  const changed = Bun.spawnSync([...diff, `${base}...${sha}`], {
-    stdout: "pipe",
-    stderr: "ignore",
-  });
-  const docsOnly =
-    changed.success && onlyDocs(changed.stdout.toString().split("\n").filter(Boolean));
+  // which Skelcrew's clone holds as refs/heads/<base>. Without rename detection, a file moved
+  // from code into docs shows both names, so the code it removes counts. A base or diff
+  // Skelcrew can't read, as in a clone not set up yet, lists none, and the tests run.
+  const docsOnly = (() => {
+    try {
+      const base = `refs/heads/${baseOf(thread)}`;
+      const diff = ["git", "-C", cloneDir(thread.owner, thread.repo), "diff", "--name-only"];
+      const changed = Bun.spawnSync([...diff, "--no-renames", `${base}...${sha}`], {
+        stdout: "pipe",
+        stderr: "ignore",
+      });
+      return changed.success && onlyDocs(changed.stdout.toString().split("\n").filter(Boolean));
+    } catch {
+      return false;
+    }
+  })();
   const repositoryName = `${thread.owner}/${thread.repo}`;
   const suite = (waited: boolean) => {
     const prs = openPrs(db, thread.owner, thread.repo);
