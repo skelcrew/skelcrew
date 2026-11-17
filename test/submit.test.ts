@@ -874,8 +874,7 @@ done`,
   }
 
   // Makes the forge show PR 7 with its head at the commit, with the checks given, from the next
-  // poll on. The daemon polls every 30 seconds, and a review waiting for CI looks again every 5,
-  // so a wait for what the forge shows lasts well past a minute on a busy CI runner.
+  // poll on. These tests' daemons poll every second, as they wait on what the forge shows.
   function showPr(head: string, checks: { name: string; id: null; state: string }[]): void {
     answer(plugin, "changed", {
       items: [
@@ -886,6 +885,9 @@ done`,
     });
   }
   const ciCheck = (state: string) => ({ name: "buildkite/test", id: null, state });
+  // Runs this test's daemon, polling the forge every second rather than every 30 seconds.
+  const servePolling = (more: Record<string, string> = {}) =>
+    startDaemon(socket, { ...env(), ...more }, running, 1_000);
 
   // Starts the daemon, has round 1 approved, then merges main into the branch as `mergeMain`
   // does and submits that. `ci` says on which commits the forge shows CI: none, only the
@@ -897,18 +899,21 @@ done`,
     more: { fix?: () => void; ci?: "none" | "approved" | "both"; merge?: string } = {},
   ): Promise<{ merged: string; daemon: Subprocess }> {
     const { fix, ci = "both", merge = "running" } = more;
-    const daemon = serve();
+    const daemon = servePolling();
     await untilCloned();
     expect((await skel(["start", "app-12"])).err).toBe("");
-    await until(() => opened() !== undefined, 90_000);
+    await until(() => opened() !== undefined, 60_000);
     if (ci !== "none") showPr(pushed(), [ciCheck("passed")]);
-    await until(() => finished("success").length === 1, 90_000);
+    await until(() => finished("success").length === 1, 60_000);
     await untilReviewSaved();
+    // The round after waits for CI's first check only once Skelcrew has seen CI on the PR, which
+    // comes with a poll. Tests set the wait for a first check without that to 0.
+    if (ci !== "none") await until(() => thread().checks === "passing", 60_000);
     mergeMain(work, files, fix);
     const again = await skel(["submit", "Merged main"], { SKELCREW_SOCKET: builderSocket() });
     expect(again.err).toBe("");
     const merged = git(clone(), "rev-parse", "HEAD");
-    await until(() => pushed() === merged, 90_000);
+    await until(() => pushed() === merged, 60_000);
     if (ci === "both") showPr(merged, [ciCheck(merge)]);
     return { merged, daemon };
   }
@@ -917,7 +922,7 @@ done`,
     const work = addApp();
     verdict(1, "approve", "Ready to merge.");
     const { merged } = await approveThenMerge(work, { OTHER: "other\n" }, { merge: "passed" });
-    await until(() => finished("success").length === 2, 150_000);
+    await until(() => finished("success").length === 2, 60_000);
     await untilReviewSaved();
 
     // No reviewer ran for the merge, and the check and a comment on the PR say why.
@@ -933,14 +938,14 @@ done`,
     // It stays approved, with no round counted.
     expect(thread()).toMatchObject({ status: "waiting", rounds: 0, verdict: "approve" });
     expect(read(join(data(), "threads", "app-12.log"))).toContain("approval kept");
-  }, 400_000);
+  }, 180_000);
 
   test("a submit that only merges main is reviewed when a CI check on it fails", async () => {
     const work = addApp();
     verdict(1, "approve", "Ready to merge.");
     verdict(2, "changes", "The merge broke the export.");
     const { merged } = await approveThenMerge(work, { OTHER: "other\n" }, { merge: "failed" });
-    await until(() => reviews().length === 2, 150_000);
+    await until(() => reviews().length === 2, 60_000);
     expect(existsSync(join(codexHome(), "sessions", "prompt-2"))).toBe(true);
     expect(reviews()[1]).toEqual({
       commit: merged,
@@ -948,20 +953,20 @@ done`,
       body: "The merge broke the export.",
     });
     expect(statuses().some((s) => s.description.startsWith("approval kept"))).toBe(false);
-  }, 400_000);
+  }, 180_000);
 
   test("without CI on the merge, a submit that only merges main is reviewed, so its tests run", async () => {
     const work = addApp();
     verdict(1, "approve", "Ready to merge.");
     verdict(2, "approve", "Tests pass.");
     const { merged } = await approveThenMerge(work, { OTHER: "other\n" }, { ci: "none" });
-    await until(() => finished("success").length === 2, 150_000);
+    await until(() => finished("success").length === 2, 60_000);
     expect(read(join(codexHome(), "sessions", "count")).trim()).toBe("2");
     expect(read(join(codexHome(), "sessions", "prompt-2"))).not.toContain(
       "CI runs the whole test suite on this commit",
     );
     expect(reviews()[1]).toEqual({ commit: merged, verdict: "approve", body: "Tests pass." });
-  }, 400_000);
+  }, 180_000);
 
   test("a merge whose wait for CI a restart cut short still keeps the approval", async () => {
     const work = addApp();
@@ -972,31 +977,32 @@ done`,
       { merge: "running" },
     );
     // CI still runs on the merge, so the approval waits for it to pass.
-    await until(() =>
-      read(join(data(), "threads", "app-12.log")).includes("waiting for CI to pass"),
+    await until(
+      () => read(join(data(), "threads", "app-12.log")).includes("waiting for CI to pass"),
+      60_000,
     );
     daemon.kill();
     await daemon.exited;
     expect(thread().reviewing).toBe(merged);
-    serve();
+    servePolling();
     showPr(merged, [ciCheck("passed")]);
-    await until(() => finished("success").length === 2, 150_000);
+    await until(() => finished("success").length === 2, 60_000);
     expect(finished("success")[1]).toMatchObject({
       sha: merged,
       description: "approval kept: only merged main",
     });
     expect(read(join(codexHome(), "sessions", "count")).trim()).toBe("1");
-  }, 400_000);
+  }, 180_000);
 
   test("a kept approval waits for CI's first check and for it to pass, never ready to merge before", async () => {
     const work = addApp();
     verdict(1, "approve", "Ready to merge.");
-    startDaemon(socket, { ...env(), SKELCREW_CHECK_WAIT_MS: "60000" }, running);
+    servePolling({ SKELCREW_CHECK_WAIT_MS: "60000" });
     await untilCloned();
     expect((await skel(["start", "app-12"])).err).toBe("");
     await until(() => opened() !== undefined);
     showPr(pushed(), [ciCheck("passed")]);
-    await until(() => finished("success").length === 1, 120_000);
+    await until(() => finished("success").length === 1, 60_000);
     await untilReviewSaved();
 
     // The merge is pushed with no CI on it yet, only Skelcrew's own check, which reads as ready
@@ -1009,25 +1015,25 @@ done`,
     await until(() => pushed() === merged);
     const own = { name: "skelcrew/check", id: null, state: "passed" };
     showPr(merged, [own]);
-    await Bun.sleep(35_000);
+    await Bun.sleep(5_000);
     expect(finished("success").length).toBe(1);
     expect(thread().needs_you).toBe(0);
 
     // CI shows and still runs: the approval waits for it, across a poll, without needing you.
     showPr(merged, [own, ciCheck("running")]);
-    await Bun.sleep(35_000);
+    await Bun.sleep(5_000);
     expect(finished("success").length).toBe(1);
     expect(thread()).toMatchObject({ reviewing: merged, needs_you: 0 });
 
     // CI passes, and the approval is kept with no reviewer run.
     showPr(merged, [own, ciCheck("passed")]);
-    await until(() => finished("success").length === 2, 150_000);
+    await until(() => finished("success").length === 2, 60_000);
     expect(finished("success")[1]).toMatchObject({
       sha: merged,
       description: "approval kept: only merged main",
     });
     expect(read(join(codexHome(), "sessions", "count")).trim()).toBe("1");
-  }, 400_000);
+  }, 180_000);
 
   test("a submit that merges main and changes a line of the PR is reviewed again", async () => {
     const work = addApp();
@@ -1035,10 +1041,10 @@ done`,
     verdict(2, "approve", "Still fine.");
     const fix = () => writeFileSync(join(clone(), "change"), "changed while merging\n");
     const { merged } = await approveThenMerge(work, { OTHER: "other\n" }, { fix });
-    await until(() => finished("success").length === 2, 150_000);
+    await until(() => finished("success").length === 2, 60_000);
     expect(read(join(codexHome(), "sessions", "count")).trim()).toBe("2");
     expect(reviews()[1]).toEqual({ commit: merged, verdict: "approve", body: "Still fine." });
-  }, 400_000);
+  }, 180_000);
 
   test("a submit that resolved a conflict with main in the PR's files is reviewed again", async () => {
     const work = addApp();
@@ -1046,10 +1052,10 @@ done`,
     verdict(2, "approve", "Still fine.");
     // Round 1 adds the file change, and main adds it too, so the merge conflicts.
     const { merged } = await approveThenMerge(work, { change: "main's own\n" });
-    await until(() => finished("success").length === 2, 150_000);
+    await until(() => finished("success").length === 2, 60_000);
     expect(read(join(codexHome(), "sessions", "count")).trim()).toBe("2");
     expect(reviews()[1]).toEqual({ commit: merged, verdict: "approve", body: "Still fine." });
-  }, 400_000);
+  }, 180_000);
 
   test("runs again a review the daemon's stop cut short", async () => {
     addApp();
