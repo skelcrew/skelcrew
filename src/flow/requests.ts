@@ -105,7 +105,13 @@ export const DaemonRequest = z.discriminatedUnion("command", [
   // `said` is the first line of the builder's last message, for the lead's note, when the
   // harness gives it.
   z.object({ command: z.literal("turn ended"), said: z.string().optional() }),
-  z.object({ command: z.literal("turn failed") }),
+  // `error` is the kind of error Claude Code's StopFailure hook gives, such as rate_limit, and
+  // `message` what it said, such as when the limit resets.
+  z.object({
+    command: z.literal("turn failed"),
+    error: z.string().optional(),
+    message: z.string().optional(),
+  }),
 ]);
 export type DaemonRequest = z.infer<typeof DaemonRequest>;
 

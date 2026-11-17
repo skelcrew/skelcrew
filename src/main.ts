@@ -286,9 +286,9 @@ async function agentCommand(args: string[]): Promise<void> {
     return;
   }
   // Run by a Claude Code builder's StopFailure hook, not by people, so usage leaves it out.
-  // Claude Code ignores what that hook prints.
+  // Claude Code ignores what that hook prints. It hands the hook the error on stdin.
   if (command === "turn" && sub === "failed" && rest.length === 0) {
-    await reportTurnFailed();
+    await reportTurnFailed(process.stdin.isTTY ? "" : await Bun.stdin.text());
     return;
   }
   // Leads started by an older Skelcrew run this hook with each message until they restart.

@@ -9,10 +9,14 @@ import { filterEnv, sandboxArgs, throwawayMounts } from "../agents/sandbox.ts";
 import { sandboxFolders } from "../agents/seatbelt.ts";
 import { builtInRole } from "../roles.ts";
 import { errorText } from "../say.ts";
+import { limitOn } from "./limits.ts";
 
-// What a review round ends with: the reviewer's verdict and what it said, or a failed review
-// and why, such as a reviewer that ran out of time.
-export type Review = { verdict: "approve" | "changes" | "failed"; body: string };
+// What a review round ends with: the reviewer's verdict and what it said, a failed review and
+// why, or a review that ran past its time limit and was ended.
+export type Review = { verdict: "approve" | "changes" | "failed" | "timed out"; body: string };
+// A review its harness's usage limit stopped, with the harness's error and when the limit
+// resets, or null when the harness didn't say. The round holds it and tries again.
+export type Limited = { verdict: "limited"; body: string; reset: number | null };
 
 // The answer a reviewer must give, checked as any outside input is. A failed verdict is never
 // the reviewer's to give: only Skelcrew says a review failed.
@@ -86,21 +90,71 @@ async function spawnReviewer(given: {
   return { out, err, code };
 }
 
+// Returns the error a reviewer that failed ended on, never a line of the prompt it was given:
+// the error its harness reports, else, when `guess`, the last line it printed on stderr, or
+// else stdout. A harness can echo the prompt as it starts, so the end of what it printed can be
+// the task's text rather than what went wrong. A task can hold a line that looks like the
+// harness's own error, such as "ERROR: connection refused" in a bug report, so the echoed
+// prompt is taken out before anything is read.
+function failureOf(
+  name: HarnessName,
+  finished: { out: string; err: string },
+  prompt: string,
+  guess: boolean,
+): string | null {
+  // The echoed prompt goes as one block, so an error printed after it stays, even one the
+  // task quotes word for word. It ends with no newline, so what the harness prints next would
+  // join its last line: a newline takes its place. Echoed some other way, only its lines can
+  // be told apart, and each line of it goes.
+  const block = prompt.trimEnd();
+  const echoed = new Set(prompt.split("\n").map((line) => line.trim()));
+  const own = (printed: string) => {
+    const at = printed.indexOf(block);
+    if (at >= 0) return `${printed.slice(0, at)}\n${printed.slice(at + block.length)}`;
+    return printed
+      .split("\n")
+      .filter((line) => line.trim() === "" || !echoed.has(line.trim()))
+      .join("\n");
+  };
+  const [out, err] = [own(finished.out), own(finished.err)];
+  const reported = harnessNamed(name).failure(out, err);
+  if (reported !== null) return reported.slice(0, 2000);
+  if (!guess) return null;
+  for (const printed of [err, out]) {
+    const last = printed.split("\n").findLast((line) => line.trim() !== "");
+    if (last !== undefined) return last.trim().slice(0, 2000);
+  }
+  return null;
+}
+
 // Returns the verdict of a reviewer that has ended, or a failed one saying why there is none:
-// it exited with an error, or answered outside the shape.
+// it exited with an error, or answered outside the shape. An error that says the harness's
+// usage limit is reached gives a limited review instead, with when the limit resets.
 function readVerdict(
   name: HarnessName,
   folder: string,
   finished: { out: string; err: string; code: number },
-): Review {
-  // A reviewer that exited with an error says why at the end of what it printed, so the
-  // verdict keeps that end.
-  const { out, err, code } = finished;
-  if (code !== 0)
-    return {
-      verdict: "failed",
-      body: `${name} exited with ${code}: ${err.trim().slice(-2000)}`,
-    };
+  prompt: string,
+): Review | Limited {
+  // A reviewer that exited with an error, or gave no answer, is asked what went wrong. One that
+  // exited cleanly has only the error its harness reports, as any other line is its work.
+  const { out, code } = finished;
+  const failed = (otherwise: string): Review | Limited => {
+    // Only the error the harness itself reports can be a usage limit. A line guessed at could
+    // be a test's output, and would hold every review on the harness for nothing.
+    const reported = failureOf(name, finished, prompt, false);
+    const error = reported ?? (code === 0 ? null : failureOf(name, finished, prompt, true));
+    const limit = reported === null ? null : harnessNamed(name).usageLimit(reported, Date.now());
+    if (error !== null && limit !== null) return { verdict: "limited", body: error, ...limit };
+    if (code === 0)
+      return {
+        verdict: "failed",
+        body: error === null ? otherwise : `the reviewer answered outside the shape: ${error}`,
+      };
+    const why = error === null ? "" : `: ${error}`;
+    return { verdict: "failed", body: `${name} exited with ${code}${why}` };
+  };
+  if (code !== 0) return failed("");
   // Each harness gives its answer in its own way, so the harness reads it, and the answer is
   // then checked against the shape the reviewer was asked for.
   let said: unknown;
@@ -108,7 +162,7 @@ function readVerdict(
     said = harnessNamed(name).answer(folder, out);
   } catch (error) {
     const why = errorText(error);
-    return { verdict: "failed", body: `the reviewer answered outside the shape: ${why}` };
+    return failed(`the reviewer answered outside the shape: ${why}`);
   }
   const verdict = Verdict.safeParse(said);
   if (!verdict.success)
@@ -132,7 +186,7 @@ async function reviewNow(given: {
   signal?: AbortSignal;
   limit?: number;
   env?: Record<string, string | undefined>;
-}): Promise<Review> {
+}): Promise<Review | Limited> {
   const { clone, issue, base, model, harness, limit = 30 * 60_000, env = process.env } = given;
   // Fail at once, with a reason you can act on, when the review was cancelled before its turn
   // or can't run on this machine.
@@ -156,7 +210,7 @@ async function reviewNow(given: {
   const whyStopped = (): Review | null => {
     if (given.signal?.aborted) return { verdict: "failed", body: "the review was cancelled" };
     if (timeout.aborted)
-      return { verdict: "failed", body: `the reviewer ran past ${limit / 60_000} minutes` };
+      return { verdict: "timed out", body: `the reviewer ran past ${limit / 60_000} minutes` };
     return null;
   };
   let argv: string[] = [];
@@ -195,15 +249,11 @@ async function reviewNow(given: {
     // stopped says so rather than reading half an answer.
     const before = whyStopped();
     if (before) return before;
-    const finished = await spawnReviewer({
-      argv,
-      env: sandboxEnv,
-      input: reviewerPrompt(issue, base),
-      signal,
-    });
+    const input = reviewerPrompt(issue, base);
+    const finished = await spawnReviewer({ argv, env: sandboxEnv, input, signal });
     const after = whyStopped();
     if (after) return after;
-    return readVerdict(harness, folder, finished);
+    return readVerdict(harness, folder, finished, input);
   } finally {
     // On a Mac the review may have been ended with SIGKILL, before the sandbox could remove
     // its own folders, one of them in /tmp.
@@ -214,7 +264,15 @@ async function reviewNow(given: {
 
 // Runs a review and returns its verdict. An error becomes a failed verdict, so a review that
 // throws ends its round as any failed review does. How many run at once is the round's to
-// limit.
-export function review(given: Parameters<typeof reviewNow>[0]): Promise<Review> {
+// limit. A review whose turn comes while its harness waits out a usage limit doesn't start,
+// and is limited at once, as a review that ran just before it may have hit that limit.
+export function review(given: Parameters<typeof reviewNow>[0]): Promise<Review | Limited> {
+  const limit = limitOn(given.harness, Date.now());
+  if (limit !== null)
+    return Promise.resolve({
+      verdict: "limited",
+      body: "its usage limit is reached",
+      reset: limit.reset,
+    });
   return reviewNow(given).catch((error): Review => ({ verdict: "failed", body: errorText(error) }));
 }

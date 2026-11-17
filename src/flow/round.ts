@@ -2,6 +2,7 @@
 // its PR opened on the first round, reviewed by a fresh reviewer, and the review typed back
 // into the builder's session when it asks for changes.
 import type { Database } from "bun:sqlite";
+import { type HarnessName, harnessNamed } from "../agents/harness.ts";
 import { typeInto } from "../agents/typing.ts";
 import { reviewLimit, threadConfig } from "../config.ts";
 import { cloneDir } from "../paths.ts";
@@ -12,9 +13,10 @@ import { baseOf } from "./builder.ts";
 import { threadTask } from "./copy.ts";
 import { afterReview, pastRoundLimit } from "./decide.ts";
 import { pushCommit } from "./git.ts";
-import { typeLeadNotes } from "./lead.ts";
+import { noteForLead, typeLeadNotes } from "./lead.ts";
+import { endLimit, limitOn, reachLimit, tellOfLimit, waitUntil } from "./limits.ts";
 import { Queue } from "./queue.ts";
-import { review } from "./reviewer.ts";
+import { type Limited, type Review, review } from "./reviewer.ts";
 import {
   builderHarness,
   cloneOf,
@@ -79,6 +81,9 @@ async function push(db: Database, folder: string, summary: string): Promise<stri
   return sha;
 }
 
+// What a round asks of one run of its review, before the task, the clone and the base are read.
+type Asked = Omit<Parameters<typeof review>[0], "clone" | "issue" | "base">;
+
 // The reviews of every thread, kept to limits.reviews at once. Each review runs the repository's
 // tests, so too many at once slow every one of them down.
 const reviews = new Queue();
@@ -107,7 +112,7 @@ async function reviewRound(
   const { pr } = thread;
   const hasForge = forgeOf(db, repository) !== null;
   if (hasForge && pr === null) throw new Error("the thread has no pull request to review");
-  const { reviewer: reviewerRole, maxRounds } = threadConfig(thread);
+  const { reviewer: reviewerRole, maxRounds, fallback, reviewMinutes } = threadConfig(thread);
   const reviewer = reviewerRole.harness;
   const limit = reviewLimit();
   const setCheck = async (state: "pending" | "success" | "failure", description: string) => {
@@ -127,34 +132,81 @@ async function reviewRound(
   const joined = { reviewing: sha, submitting: null, reviewer, queued: waits ? since : null };
   record(db, folder, joined, waits ? `queued ${sha} for review` : `reviewing ${sha}`);
   const queue = { limit, order: since, signal: AbortSignal.any([signal, checkFailed.signal]) };
-  const verdict = await reviews
-    .run(queue, async () => {
-      await pending;
-      if (waits) record(db, folder, { queued: null }, `reviewing ${sha}`);
-      return review({
-        clone: cloneOf(thread),
-        issue: threadTask(db, thread),
-        // Setting up the thread's clone put the base branch there under origin/.
-        base: `origin/${baseOf(thread)}`,
-        commit: sha,
-        model: reviewerRole.model,
-        harness: reviewer,
-        signal,
-      });
-    })
-    // Leaving the queue early says why: the check's own error, or else that it was cancelled,
-    // which a newer round did, so the round ends as cancelled rounds do.
-    .catch(async (error) => {
-      await pending;
-      throw error;
-    });
-  // Decide what the verdict means for the thread, then post it on the PR. A failed review is
-  // Skelcrew's problem, not the PR's, so it is never posted.
+  // Each run of the review takes a place in the queue: the first, one after a usage limit, and
+  // one after a timeout. A later run keeps the review's place, and says it is queued only when
+  // it waits.
+  let queued = waits;
+  // The task, the clone and the base branch are read only once the review's turn comes and its
+  // check is pending, as reading them can fail, and a round still waiting on its check must not
+  // fail early. What the run says of its harness's usage limit is saved before its place in the
+  // queue is given back, as giving it back starts the next review at once, which must see it.
+  // A run that met the limit holds every review on that harness until it resets. A review the
+  // queue didn't start, as the limit was already in force, changes nothing. Any other run that
+  // started after the limit was met means the harness works again, and the leads that heard
+  // of its limit hear that too. One that started before, running alongside the review that met
+  // it, says nothing of the limit.
+  const run = (given: Asked) => {
+    if (!queued && reviews.full(limit)) {
+      queued = true;
+      record(db, folder, { queued: since }, `queued ${sha} for review`);
+    }
+    return (
+      reviews
+        .run(queue, async () => {
+          await pending;
+          if (queued) record(db, folder, { queued: null }, `reviewing ${sha}`);
+          queued = false;
+          const started = Date.now();
+          const result = await review({
+            ...given,
+            clone: cloneOf(thread),
+            issue: threadTask(db, thread),
+            // Setting up the thread's clone put the base branch there under origin/.
+            base: `origin/${baseOf(thread)}`,
+          });
+          const { harness } = given;
+          if (result.verdict === "limited") {
+            if (limitOn(harness, Date.now()) === null)
+              reachLimit(db, harness, result.reset, Date.now());
+          } else if (!signal.aborted) endLimit(db, tmux, harness, started);
+          return result;
+        })
+        // Leaving the queue early says why: the check's own error, or else that it was
+        // cancelled, which a newer round did, so the round ends as cancelled rounds do.
+        .catch(async (error) => {
+          await pending;
+          throw error;
+        })
+    );
+  };
+  const plan = {
+    given: {
+      commit: sha,
+      signal,
+      limit: reviewMinutes * 60_000,
+    },
+    role: reviewerRole,
+    fallback,
+    run,
+  };
+  let { verdict, by } = await reviewWithinLimits(db, tmux, folder, plan);
+  // A review that hung was ended. It runs once more, logged, and the lead hears of it at once,
+  // so a hung review never sits unseen. A second that hangs gives a timed out review.
+  if (verdict.verdict === "timed out" && !signal.aborted) {
+    const why = `${threadName(db, thread)}'s review timed out after ${reviewMinutes}m; retrying`;
+    record(db, folder, {}, why);
+    noteForLead(db, tmux, repositoryOf(db, thread), why);
+    ({ verdict, by } = await reviewWithinLimits(db, tmux, folder, plan));
+    if (verdict.verdict === "timed out")
+      verdict = { verdict: "timed out", body: `its review timed out twice (${reviewMinutes}m)` };
+  }
+  // Decide what the verdict means for the thread, then post it on the PR. A failed or timed out
+  // review is Skelcrew's problem, not the PR's, so it is never posted.
   if (signal.aborted) return;
   const before = readThread(db, folder).rounds;
   const ready = hasForge ? null : `${threadName(db, thread)} is ready on branch ${thread.branch}`;
   const outcome = afterReview(before, verdict, maxRounds, ready);
-  if (verdict.verdict !== "failed" && pr !== null)
+  if ((verdict.verdict === "approve" || verdict.verdict === "changes") && pr !== null)
     await postReview(db, repository, {
       pr,
       commit: sha,
@@ -175,7 +227,7 @@ async function reviewRound(
     status,
     telling: tell,
     held,
-    reviewed_by: reviewer,
+    reviewed_by: by,
     review_round: before + 1,
     verdict: verdict.verdict,
     review_line: verdict.body.trim().split("\n")[0]?.slice(0, 200) ?? "",
@@ -190,6 +242,76 @@ async function reviewRound(
   if (signal.aborted) return;
   await typeChanges(db, tmux, folder, tell, signal);
 }
+
+// Runs the review on the reviewer's harness and returns its verdict and the harness it ran on,
+// waiting out that harness's usage limit. While the limit holds, the review runs on the
+// `fallback` harness, if you set one that isn't limited too, and its body says so. Otherwise it
+// is held, without a word to the builder, until the limit resets, or, with no reset time, until
+// the next try. All reviews held on a harness wait for that same moment. The thread shows the
+// limit meanwhile, and its lead hears of it once. A cancelled round returns as soon as it is
+// cancelled, with a failed review its caller drops.
+async function reviewWithinLimits(
+  db: Database,
+  tmux: string,
+  folder: string,
+  plan: {
+    given: Omit<Asked, "harness" | "model"> & { signal: AbortSignal };
+    role: { harness: HarnessName; model?: string };
+    fallback: HarnessName | null;
+    run: (given: Asked) => Promise<Review | Limited>;
+  },
+): Promise<{ verdict: Review; by: HarnessName }> {
+  const { given, role, fallback, run } = plan;
+  const { signal } = given;
+  while (true) {
+    // A cancelled review held on a limit no longer is: the round that cancelled it shows its own.
+    if (signal.aborted) {
+      if (readThread(db, folder).review_limited)
+        record(db, folder, notHeld, "the held review ended");
+      return { verdict: { verdict: "failed", body: "the review was cancelled" }, by: role.harness };
+    }
+    // Pick the harness: the reviewer's own, or the fallback while the reviewer's is limited.
+    const now = Date.now();
+    const limit = limitOn(role.harness, now);
+    const spare = fallback !== null && limitOn(fallback, now) === null ? fallback : null;
+    // The lead hears of the reviewer's limit, and of the fallback's when that holds reviews too.
+    const repository = repositoryOf(db, readThread(db, folder));
+    if (limit !== null) tellOfLimit(db, tmux, role.harness, repository, spare);
+    if (limit !== null && spare === null && fallback !== null)
+      tellOfLimit(db, tmux, fallback, repository, null);
+    // With no harness free, hold the review until a limit resets, and show that on the
+    // thread. With the fallback limited too, it waits for whichever frees first.
+    if (limit !== null && spare === null) {
+      const other = fallback === null ? null : limitOn(fallback, now);
+      const first = other !== null && other.until < limit.until ? other : limit;
+      const held = { review_limited: true, review_reset: first.reset };
+      const thread = readThread(db, folder);
+      if (!thread.review_limited || thread.review_reset !== first.reset)
+        record(db, folder, held, `${role.harness}'s usage limit holds the review`);
+      await waitUntil(first.until, signal);
+      continue;
+    }
+    // Run it, and show which harness has the thread now.
+    const harness = limit === null ? role.harness : (fallback ?? role.harness);
+    const running = { ...notHeld, reviewer: harness };
+    const thread = readThread(db, folder);
+    if (thread.review_limited || thread.reviewer !== harness)
+      record(db, folder, running, `reviewing on ${harness}`);
+    const model = harness === role.harness ? role.model : undefined;
+    // The run saved what it said of the harness's limit, so a limited one only waits again.
+    const result = await run({ ...given, harness, model });
+    if (result.verdict === "limited") continue;
+    if (signal.aborted) return { verdict: result, by: harness };
+    if (harness === role.harness) return { verdict: result, by: harness };
+    const { title } = harnessNamed(harness);
+    const why = `${harnessNamed(role.harness).title} reached its usage limit`;
+    const body = `This review ran on ${title}, as ${why}.\n\n${result.body}`;
+    return { verdict: { ...result, body }, by: harness };
+  }
+}
+
+// What a thread's review held on a usage limit becomes once it isn't.
+const notHeld = { review_limited: false, review_reset: null };
 
 // Types a review's changes into the builder once it is idle, then forgets them. They are
 // saved until then, so a stop of the daemon while the builder is busy doesn't lose them.
@@ -253,6 +375,7 @@ function trackRound(
       needs_you: true,
       status: "waiting",
       queued: null,
+      ...notHeld,
       review_at: Date.now(),
     } satisfies Partial<Thread>;
     record(db, folder, change, `the round failed: ${why}`);
@@ -312,6 +435,7 @@ export function submitRound(db: Database, tmux: string, folder: string, summary:
       queued: null,
       telling: null,
       held: null,
+      ...notHeld,
       // What CI said was about the commit before this one.
       checks: null,
       reviewer: reviewer.harness,
@@ -373,6 +497,7 @@ export function rerunReview(db: Database, tmux: string, folder: string, byBuilde
     ...(byBuilder ? { submitted: true } : {}),
     telling: null,
     held: null,
+    ...notHeld,
     reviewing: sha,
     review_at: Date.now(),
     queued: null,

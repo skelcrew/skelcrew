@@ -66,6 +66,16 @@ export const Thread = z.object({
   // Whether the builder's harness stopped on an error it can't get past alone, such as a lapsed
   // login. The builder then sits idle, so the thread needs you until you type to it.
   erred: z.coerce.boolean(),
+  // Whether the builder's harness stopped on its usage limit, which also sets erred. It is woken
+  // once the limit resets, so it doesn't need you. `limit_reset` is when, in milliseconds since
+  // 1970, or null when the harness didn't say.
+  limited: z.coerce.boolean(),
+  limit_reset: z.number().nullable(),
+  // The same for the thread's review, held until its harness's usage limit resets. Kept apart
+  // from the builder's, so the review starting never ends the builder's wait, and typing to the
+  // builder never ends the review's.
+  review_limited: z.coerce.boolean(),
+  review_reset: z.number().nullable(),
   // Why the thread started needing you, until a note saying so is typed into the lead.
   noting: z.string().nullable(),
   // The task's title and body when the thread started, for the strip, which looks each second
@@ -86,7 +96,7 @@ export const Thread = z.object({
   // Each one is saved here, so it reaches the thread's log with the rest of the thread.
   reviewed_by: HarnessName.nullable(),
   review_round: z.number().nullable(),
-  verdict: z.enum(["approve", "changes", "failed"]).nullable(),
+  verdict: z.enum(["approve", "changes", "failed", "timed out"]).nullable(),
   review_line: z.string().nullable(),
   // When the latest review was asked for, by sc submit or sc review, or ended, in milliseconds
   // since 1970, for sc ps. Null before the first, and in a row from before Skelcrew kept it.
@@ -121,8 +131,9 @@ export const builderHarness = (thread: Thread) => harnessNamed(thread.harness ??
 
 // Returns whether the thread needs you: for a review, the round limit or an approval, for the
 // builder's question or its stopping without submitting, or for its harness stopping on an error.
+// A usage limit isn't one, as the builder is woken once it resets.
 export const needsYou = (thread: Thread) =>
-  thread.needs_you || thread.asking || thread.stalled || thread.erred;
+  thread.needs_you || thread.asking || thread.stalled || (thread.erred && !thread.limited);
 
 // Returns whether the thread's review waits in the queue for a place, as limits.reviews already
 // runs. Only a working or waiting thread has a review going on: one stopped, failed or done
