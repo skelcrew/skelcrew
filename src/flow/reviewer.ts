@@ -315,8 +315,10 @@ async function reviewNow(given: {
     // by writing it. Plain copies and writes need no lock. git replaces the builder's index
     // whole, so the copy is never half written, and without one git starts from an empty
     // index. The other index is named only for these steps: the reviewer's own git, in this
-    // clone or any other, uses each one's own index. Every other step must work, or the
-    // reviewer never starts.
+    // clone or any other, uses each one's own index. The builder's locks then go from the
+    // view, as no git in the sandbox holds them, and a lock left there would stop the
+    // reviewer's own git. A Mac's copy keeps them for good otherwise. The builder's own stay.
+    // Every other step must work, or the reviewer never starts.
     const index = join(folder, "index");
     const checkout = [
       '{ cp "$(git rev-parse --git-dir)/index" "$1" 2>/dev/null || true; }',
@@ -324,6 +326,7 @@ async function reviewNow(given: {
       'GIT_INDEX_FILE="$1" git clean -q -fd',
       'cp "$1" "$(git rev-parse --git-dir)/index"',
       'printf "%s\\n" "$0" > "$(git rev-parse --git-path HEAD)"',
+      'rm -f "$(git rev-parse --git-path index.lock)" "$(git rev-parse --git-path HEAD.lock)"',
       "shift",
       'exec "$@"',
     ].join(" && ");

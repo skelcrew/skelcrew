@@ -188,17 +188,21 @@ describe.skipIf(insideSandbox)("reviewer", () => {
   });
 
   // A builder runs git whenever it likes, and each command can hold a lock in its clone, which
-  // the reviewer's view shows. The review takes neither lock, so it doesn't matter when they
-  // come or go: these are held for the whole review.
+  // the reviewer's view shows. The checkout takes neither lock, so it doesn't matter when they
+  // come, and the reviewer's own git can take them after it. These are held for the whole
+  // review.
   test("reviews the commit while a git command of the builder's holds its locks", async () => {
     writeFileSync(join(clone, "README"), "unsaved\n");
     writeFileSync(join(clone, ".git", "index.lock"), "");
     writeFileSync(join(clone, ".git", "HEAD.lock"), "");
+    // git add and git commit each need both locks.
     fakeCodex(approve, [
       '{ git rev-parse HEAD; cat README; git status --porcelain; } > "$CODEX_HOME/sessions/seen"',
+      "echo tried > README && git add README && git -c user.name=t -c user.email=t@t commit -qm tried",
+      'git log -1 --format=%s >> "$CODEX_HOME/sessions/seen"',
     ]);
     expect(await start()).toEqual({ verdict: "approve", body: "Looks right." });
-    expect(kept("seen")).toBe(`${commit}\napp\n`);
+    expect(kept("seen")).toBe(`${commit}\napp\ntried\n`);
     // The builder's git still holds them, and its clone is as it left it.
     expect(existsSync(join(clone, ".git", "index.lock"))).toBe(true);
     expect(existsSync(join(clone, ".git", "HEAD.lock"))).toBe(true);
