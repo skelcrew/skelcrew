@@ -474,6 +474,26 @@ await removeRepo("app", ${JSON.stringify(socket)});`;
   expect(existsSync(skelcrewClone)).toBe(false);
 });
 
+// A refresh still asking which forge claims a repository when sc repo rm runs must not clone
+// it afterwards.
+test("a repository removed while Skelcrew asks which forge claims it gets no clone", async () => {
+  addApp();
+  const db = new Database(join(data(), "skelcrew.db"));
+  db.run("UPDATE repositories SET claimed = 0");
+  db.close();
+  writeFileSync(join(plugin, "hold-claims"), "");
+  serve();
+  await until(() => existsSync(join(plugin, "held-claims")));
+  const code = `import { removeRepo } from ${JSON.stringify(source("flow/repo.ts"))};
+await removeRepo("app", ${JSON.stringify(socket)});`;
+  const removed = Bun.spawnSync([process.execPath, "-e", code], { env: env(), stderr: "pipe" });
+  expect(removed.stderr.toString()).toBe("");
+  // Let the refresh go on, and give it time to finish: a clone would appear within it.
+  rmSync(join(plugin, "hold-claims"));
+  await Bun.sleep(2000);
+  expect(existsSync(join(data(), "repos", "simon", "app"))).toBe(false);
+});
+
 // Two machines running Skelcrew on one repository both see the label, and only the one whose
 // claim the tracker grants may start it.
 test("a labeled task claimed elsewhere starts no thread, and a claim that fails is tried again", async () => {

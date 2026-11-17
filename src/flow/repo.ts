@@ -110,20 +110,21 @@ const cloneWork = new Map<string, Promise<void>>();
 // branch and builders, whose origin it is, fetch it as the remote has it. The poll calls it
 // each time, so a merge or a push to the default branch reaches builders within a poll. A
 // call while one runs waits for it, then refreshes again, so it always sees what the remote
-// had when it was asked. Throws what git said when it fails.
-export function refreshClone(db: Database, repository: Repository): Promise<void> {
+// had when it was asked. `adding` is for a repository being brought in, which is cloned before
+// it is saved. Throws what git said when it fails.
+export function refreshClone(db: Database, repository: Repository, adding = false): Promise<void> {
   const { owner, repo } = repository;
   const fullName = `${owner}/${repo}`;
-  // sc repo rm can run while this waits for the refresh before it, or while the clone is
-  // being made, and a clone made after the removal would stay where nothing removes it. A
-  // repository being brought in is cloned before it is saved, so whether it counts as removed
-  // depends on whether Skelcrew had it when the refresh was asked for.
-  const saved = () => repositories(db).some((r) => r.owner === owner && r.repo === repo);
-  const wasSaved = saved();
+  // sc repo rm can run at any wait before this refresh's git starts, or while it runs, and a
+  // clone made after the removal would stay where nothing removes it. So a repository not
+  // being brought in is refreshed only while Skelcrew has it, checked when its turn comes and
+  // again once git is done.
+  const removed = () =>
+    !adding && !repositories(db).some((r) => r.owner === owner && r.repo === repo);
   const run = (cloneWork.get(fullName) ?? Promise.resolve()).then(async () => {
-    if (wasSaved && !saved()) return;
+    if (removed()) return;
     await createOrUpdate(db, repository);
-    if (wasSaved && !saved()) rmSync(cloneDir(owner, repo), { recursive: true, force: true });
+    if (removed()) rmSync(cloneDir(owner, repo), { recursive: true, force: true });
   });
   // The next call waits for this one whether it fails or not, and the last one leaves no
   // entry behind.
@@ -331,7 +332,7 @@ async function bringIn(db: Database, details: RepositoryDetails): Promise<void> 
   // Clone before saving it, so a repository Skelcrew has always has a clone. One Skelcrew had
   // already only needed its clone back, such as after sc repo trust.
   if (!existsSync(cloneDir(owner, repo))) console.log(`Cloning ${fullName} for Skelcrew.`);
-  await refreshClone(db, repository);
+  await refreshClone(db, repository, true);
   if (known) return;
   if (claimed === null)
     await checkPush(db, repository, cloneDir(owner, repo)).catch((error) => {
