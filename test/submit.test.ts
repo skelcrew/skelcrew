@@ -208,8 +208,8 @@ const until = (done: () => boolean, timeout = 30_000) => wait(done, { timeout })
 const github = () => join(home, "github");
 
 // Puts simon/app on the fake GitHub and tells Skelcrew about it, as a repository you have opened,
-// whose lead the daemon starts, with the fake plugin as its tracker and forge. Returns a
-// checkout to push from. `files` are more files its first commit holds, by path.
+// whose lead the daemon starts, with the fake plugin as its tracker and forge, and `bun test` as
+// its test command. Returns a checkout to push from. `files` are more files its first commit holds, by path.
 function addApp(files: Record<string, string> = {}): string {
   const work = join(home, "work", "app");
   mkdirSync(work, { recursive: true });
@@ -218,7 +218,7 @@ function addApp(files: Record<string, string> = {}): string {
     mkdirSync(dirname(join(work, path)), { recursive: true });
     writeFileSync(join(work, path), text);
   }
-  writeFileSync(join(work, "skelcrew.yaml"), "tracker: github\n");
+  writeFileSync(join(work, "skelcrew.yaml"), "tracker: github\ntest: [bun test]\n");
   git(work, "init", "-q", "-b", "main");
   git(work, "add", ".");
   git(work, "commit", "-q", "-m", "start");
@@ -583,7 +583,9 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
     await startApp12();
     await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), 30_000);
     const prompt = read(join(codexHome(), "sessions", "prompt-1"));
-    expect(prompt).toContain("No CI runs on this commit, so run the repository's whole test suite");
+    expect(prompt).toContain(
+      "No CI runs on this commit, so run the repository's whole test suite, with `bun test`.",
+    );
   }, 60_000);
 
   test("tells the builder about sc submit, after the task rather than in it", async () => {
