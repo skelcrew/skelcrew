@@ -450,20 +450,70 @@ function commit(folder: string): void {
   Bun.spawnSync([...git, "commit", "-q", "-m", "later"]);
 }
 
-test("--remote warns when the server's checkout is behind your commit, then runs the command", async () => {
+// Returns the short commit a checkout is at.
+const at = (folder: string) =>
+  Bun.spawnSync(["git", "-C", folder, "rev-parse", "--short", "HEAD"]).stdout.toString().trim();
+
+// Runs the command a warning says to run on the server, there, and returns its exit code.
+function runAdvice(warning: string): number {
+  const command = warning.trim().split("\n").at(-1) ?? "";
+  const run = Bun.spawnSync(["sh", "-c", command], {
+    cwd: join(home, "server"),
+    env: { PATH: "/usr/bin:/bin", HOME: join(home, "server") },
+  });
+  return run.exitCode;
+}
+
+// What --remote says about a checkout behind your laptop, with the line that updates it.
+const behindWarning = (folder: string, yours: string, ref = yours, lead = "To update it,") =>
+  `Skelcrew on simon@workbox runs from a checkout at ${at(folder)}, yours is ${yours}. ${lead} run this there:\n  cd ${folder} && git fetch --tags && git checkout ${ref}\n`;
+
+test("--remote warns when the server's checkout is behind your commit, says how to reach it, then runs the command", async () => {
   const folder = checkoutOnServer();
   commit(laptop.folder);
-  const ahead = Bun.spawnSync(["git", "-C", laptop.folder, "rev-parse", "--short", "HEAD"]);
-  const at = Bun.spawnSync(["git", "-C", folder, "rev-parse", "--short", "HEAD"]);
   const run = await skel(["--remote", "simon@workbox", "ps"]);
-  expect(run.err).toBe(
-    `Skelcrew on simon@workbox runs from a checkout at ${at.stdout.toString().trim()}, yours is ${ahead.stdout.toString().trim()}. To update it, run git pull in ${folder} there.\n`,
-  );
+  expect(run.err).toBe(behindWarning(folder, at(laptop.folder)));
   expect(run.out).toBe("old Skelcrew ran ps\n");
   expect(run.code).toBe(0);
+  // Doing what it says brings the checkout to your commit, and the warning goes.
+  expect(runAdvice(run.err)).toBe(0);
+  expect(at(folder)).toBe(at(laptop.folder));
+  expect((await skel(["--remote", "simon@workbox", "ps"])).err).toBe("");
 });
 
-// Local changes on the server don't change which commit git pull would bring.
+// git pull fails in a checkout with no branch, and on another branch brings that branch.
+for (const [where, move] of [
+  ["with no branch", ["checkout", "-q", "--detach"]],
+  ["on another branch", ["checkout", "-q", "-b", "other"]],
+] as const) {
+  test(`--remote says how to reach your commit from a checkout ${where}`, async () => {
+    const folder = checkoutOnServer();
+    Bun.spawnSync(["git", "-C", folder, ...move]);
+    commit(laptop.folder);
+    const run = await skel(["--remote", "simon@workbox", "ps"]);
+    expect(run.err).toBe(behindWarning(folder, at(laptop.folder)));
+    expect(runAdvice(run.err)).toBe(0);
+    expect((await skel(["--remote", "simon@workbox", "ps"])).err).toBe("");
+  });
+}
+
+test("--remote says to put local changes aside first in a checkout behind your commit", async () => {
+  const folder = checkoutOnServer();
+  commit(laptop.folder);
+  writeFileSync(join(folder, "src", "main.ts"), "// a change on the server\n");
+  const run = await skel(["--remote", "simon@workbox", "ps"]);
+  expect(run.err).toBe(
+    behindWarning(
+      folder,
+      at(laptop.folder),
+      at(laptop.folder),
+      "It has local changes, so commit or stash them, then",
+    ),
+  );
+  expect(run.out).toBe("old Skelcrew ran ps\n");
+});
+
+// Local changes on the server don't change which commit it is at.
 test("--remote says nothing when the server's checkout, with local changes, is at your commit", async () => {
   const folder = checkoutOnServer();
   writeFileSync(join(folder, "src", "main.ts"), "// a change on the server\n");
@@ -477,15 +527,16 @@ test("--remote says nothing when the server's checkout is past your commit", asy
   expect((await skel(["--remote", "simon@workbox", "ps"])).err).toBe("");
 });
 
-test("--remote from a release warns when the server's checkout lacks its tag, and not once it has it", async () => {
+test("--remote from a release warns when the server's checkout lacks its tag, and says how to reach it", async () => {
   const folder = checkoutOnServer();
   const release = ["--define", 'SKELCREW_BUILD="0.4.2"'];
+  // The release is a commit the server hasn't fetched yet.
+  commit(laptop.folder);
+  Bun.spawnSync(["git", "-C", laptop.folder, "tag", "v0.4.2"]);
   const behind = await skel(["--remote", "simon@workbox", "ps"], "", home, release);
-  expect(behind.err).toBe(
-    `Skelcrew on simon@workbox runs from a checkout at ${laptop.commit}, yours is 0.4.2. To update it, run git pull in ${folder} there.\n`,
-  );
+  expect(behind.err).toBe(behindWarning(folder, "0.4.2", "v0.4.2"));
   expect(behind.out).toBe("old Skelcrew ran ps\n");
-  Bun.spawnSync(["git", "-C", folder, "tag", "v0.4.2"]);
+  expect(runAdvice(behind.err)).toBe(0);
   expect((await skel(["--remote", "simon@workbox", "ps"], "", home, release)).err).toBe("");
 });
 

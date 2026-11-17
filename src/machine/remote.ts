@@ -38,16 +38,24 @@ const pathOnServer = 'PATH="$HOME/.local/bin:$PATH"';
 // command, rather than leaving it to Skelcrew there, so a checkout too old to know of it still
 // warns, and it costs no round trip of its own. It runs only when the laptop passes its build.
 // A checkout at or past that commit, or holding that release's tag, is up to date. A commit or
-// tag the checkout has never fetched means it is behind, as git pull brings both. The warning
-// goes to stderr, so --json output stays clean, and the command runs either way.
+// tag the checkout has never fetched means it is behind. The warning goes to stderr, so --json
+// output stays clean, and the command runs either way.
 // It is one line, joined from these steps, so ssh's own line stays readable in logs.
 export const checkThenSc = [
   // A release is checked by its tag, and a commit with changes not committed by the commit.
   `b=\${SKELCREW_LAPTOP_BUILD%-dirty}`,
   "case $b in *.*.*) b=v$b;; esac",
-  // The checkout is the folder above the sc it runs, which is often a link to its bin/sc. A copy
-  // has no src/main.ts there, and needs no warning, as Skelcrew there checks its own build.
-  '[ -n "$b" ] && s=$(command -v sc) && d=$(cd "$(dirname "$(readlink -f "$s")")/.." && pwd) && [ -f "$d/src/main.ts" ] && ! git -C "$d" merge-base --is-ancestor "$b" HEAD 2>/dev/null && echo "Skelcrew on $SKELCREW_REMOTE_NAME runs from a checkout at $(git -C "$d" rev-parse --short HEAD), yours is $SKELCREW_LAPTOP_BUILD. To update it, run git pull in $d there." >&2',
+  // d is the checkout when it is behind, and empty otherwise. The checkout is the folder above
+  // the sc it runs, which is often a link to its bin/sc. A copy has no src/main.ts there, and
+  // needs no warning, as Skelcrew there checks its own build.
+  'd=$([ -n "$b" ] && s=$(command -v sc) && cd "$(dirname "$(readlink -f "$s")")/.." && [ -f src/main.ts ] && ! git merge-base --is-ancestor "$b" HEAD 2>/dev/null && pwd)',
+  // The way to update checks out the laptop's commit or tag itself. git pull can't: it fails in
+  // a checkout with no branch, and on another branch it brings that branch, not the laptop's.
+  // git checkout refuses to overwrite changes to tracked files, so those are named first. Files
+  // git doesn't track stay where they are, so they don't count.
+  'w="To update it, run this there:"',
+  '[ -n "$d" ] && [ -n "$(git -C "$d" status --porcelain --untracked-files=no)" ] && w="It has local changes, so commit or stash them, then run this there:"',
+  '[ -n "$d" ] && { echo "Skelcrew on $SKELCREW_REMOTE_NAME runs from a checkout at $(git -C "$d" rev-parse --short HEAD), yours is $SKELCREW_LAPTOP_BUILD. $w"; echo "  cd $d && git fetch --tags && git checkout $b"; } >&2',
   'exec sc "$@"',
 ].join("; ");
 
