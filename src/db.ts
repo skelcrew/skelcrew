@@ -128,27 +128,27 @@ function createTasks(db: Database): void {
 
 // Makes task_threads, which every reader of threads reads: each thread with its task's columns,
 // in one row, as Thread describes it. Its rowid is the thread's, so newest first still sorts by
-// when the thread started. It is made again only when the columns change, as making it changes
-// the file's schema, which every other connection then reads again. A database whose threads
-// haven't moved onto tasks yet gets a view of this connection's own, of its threads as they are,
-// so sc run before the new daemon starts still shows them.
+// when the thread started. A database whose threads haven't moved onto tasks yet gets a view of
+// its threads as they are, so sc run before the new daemon starts still shows them. The view is
+// kept in the file, not on one connection: when the daemon moves the threads onto tasks, it
+// makes the view again, and every connection already open reads the new one from then on. Both
+// views have the same columns in the same order, as Bun keeps a cached query's column names
+// when SQLite prepares it again for a changed view, and would put each value under another
+// column's name. It is made again only when it changes, as that changes the file's schema,
+// which every other connection then reads again.
 function viewThreads(db: Database): void {
-  if (!hasTasks(db)) {
-    db.run("CREATE TEMP VIEW IF NOT EXISTS task_threads AS SELECT rowid AS rowid, * FROM threads");
-    return;
-  }
-  db.run("DROP VIEW IF EXISTS temp.task_threads");
   const own = ["owner", "repo", "task", "folder", "branch", "base", "status", "session"];
+  const moved = hasTasks(db);
   const columns = [
     ...[...own, ...Object.keys(threadColumns)].map((column) => `th.${column}`),
-    ...Object.keys(taskColumns).map((column) => `k.${column}`),
+    ...Object.keys(taskColumns).map((column) => `${moved ? "k" : "th"}.${column}`),
   ];
   const view = `CREATE VIEW task_threads AS SELECT th.rowid AS rowid, ${columns.join(", ")}
-    FROM threads th JOIN tasks k ON k.owner = th.owner AND k.repo = th.repo AND k.task = th.task`;
+    FROM threads th${moved ? " JOIN tasks k ON k.owner = th.owner AND k.repo = th.repo AND k.task = th.task" : ""}`;
   const made = db.query("SELECT sql FROM sqlite_master WHERE type = 'view' AND name = ?");
   if (z.object({ sql: z.string() }).nullable().parse(made.get("task_threads"))?.sql === view)
     return;
-  db.run("DROP VIEW IF EXISTS main.task_threads");
+  db.run("DROP VIEW IF EXISTS task_threads");
   db.run(view);
 }
 

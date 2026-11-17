@@ -148,6 +148,20 @@ console.log(JSON.stringify({ rounds, short, status }));`;
   db.close();
 });
 
+test("a reader opened before the move reads the tasks after it", () => {
+  oldDatabase();
+  // The reader stands in for sc run before the new daemon starts, such as a screen left open.
+  const code = `import { openDb, moveToTasks } from ${JSON.stringify(source("db.ts"))};
+import { readThread, record } from ${JSON.stringify(source("flow/thread.ts"))};
+const reader = openDb();
+const before = readThread(reader, "app-15").rounds;
+const daemon = openDb();
+moveToTasks(daemon);
+record(daemon, "app-15", { rounds: 99 });
+console.log(JSON.stringify({ before, after: readThread(reader, "app-15").rounds }));`;
+  expect(JSON.parse(run(code))).toEqual({ before: 3, after: 99 });
+});
+
 // Sets up this machine as the first run would have, so the daemon starts. Its leads and
 // builders stay down: no repository is open, every thread but app-15 is done, and the remotes
 // are folders that aren't there, so nothing reaches the network.
