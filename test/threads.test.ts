@@ -21,6 +21,7 @@ import {
   source,
   startDaemon,
   taskItem,
+  threadSql,
   until,
 } from "./harness.ts";
 
@@ -184,7 +185,7 @@ function thread(): Record<string, unknown> {
   // The daemon may be writing, and a read that meets a write fails without a wait.
   db.run("PRAGMA busy_timeout = 5000");
   try {
-    const row = db.query("SELECT * FROM threads").get();
+    const row = db.query("SELECT * FROM task_threads").get();
     return row && typeof row === "object" ? { ...row } : {};
   } finally {
     db.close();
@@ -503,9 +504,7 @@ c.on("data", (d) => process.stdout.write(d));`;
     mkdirSync(victim, { recursive: true });
     writeFileSync(join(victim, "keep"), "mine\n");
     const db = new Database(join(data(), "skelcrew.db"));
-    db.run(
-      "INSERT INTO threads (owner, repo, task, folder, branch, status) VALUES ('simon', 'app', '12', '../victim', 'skelcrew/12', 'failed')",
-    );
+    db.run(threadSql({ task: "12", folder: "../victim", status: "failed" }));
     db.close();
     serve();
     await untilCloned();
@@ -628,7 +627,7 @@ nameRepositories(db);`;
     await stop(first);
     const db = new Database(join(data(), "skelcrew.db"));
     const updates = [{ from: "lead", at: Date.UTC(2026, 10, 16, 9, 30), text: "Keep CSV too." }];
-    db.run("UPDATE threads SET updates = ?", [JSON.stringify(updates)]);
+    db.run("UPDATE tasks SET updates = ?", [JSON.stringify(updates)]);
     db.close();
     Bun.spawnSync(["tmux", "-L", socket, "kill-session", "-t", "=app-12"]);
     rmSync(join(config("app-12"), "args"));
@@ -698,7 +697,7 @@ nameRepositories(db);`;
       await skel("stop", "app-12");
       const db = new Database(join(data(), "skelcrew.db"));
       db.run("PRAGMA busy_timeout = 5000");
-      db.run(`UPDATE threads SET ${columns}`);
+      db.run(`UPDATE tasks SET ${columns}`);
       db.close();
       expect((await skel("start", "app-12")).out).toContain("Started app-12 again");
       return thread().status;
@@ -837,7 +836,7 @@ nameRepositories(db);`;
     expect(issue.err).toBe("");
     expect(issue.out).toBe("Started app-12.\n");
     const db = new Database(join(data(), "skelcrew.db"));
-    const shorts = db.query("SELECT task, short FROM threads ORDER BY task").all();
+    const shorts = db.query("SELECT task, short FROM tasks ORDER BY task").all();
     db.close();
     expect(shorts).toEqual([
       { task: 12, short: "Export" },

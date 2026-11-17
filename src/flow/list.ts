@@ -140,9 +140,9 @@ export function listThreads(db: Database, repository?: string): ThreadRow[] {
   const one = repository ? findRepository(db, repository) : null;
   const all = one
     ? db
-        .query("SELECT * FROM threads WHERE owner = ? AND repo = ? ORDER BY rowid DESC")
+        .query("SELECT * FROM task_threads WHERE owner = ? AND repo = ? ORDER BY rowid DESC")
         .all(one.owner, one.repo)
-    : db.query("SELECT * FROM threads ORDER BY rowid DESC").all();
+    : db.query("SELECT * FROM task_threads ORDER BY rowid DESC").all();
   // A thread whose repository Skelcrew no longer has has no forge either.
   const withForge = repositories(db).filter((r) => forgeOf(db, r) !== null);
   return all.map((row) => {
@@ -185,7 +185,7 @@ function threadStatusOf(
   task: string,
 ): TaskRow["thread"] {
   const row = db
-    .query("SELECT * FROM threads WHERE owner = ? AND repo = ? AND task = ?")
+    .query("SELECT * FROM task_threads WHERE owner = ? AND repo = ? AND task = ?")
     .get(owner, repo, task);
   const thread = Thread.nullable().parse(row);
   return thread && { status: thread.status, needsYou: needsYou(thread) };
@@ -450,7 +450,7 @@ export async function showPr(
   if (!pr) throw new Error(`Skelcrew has no PR #${number} in ${owner}/${repo}`);
   // The thread on the PR, the newest, as a thread that starts over keeps its PR's number.
   const row = db
-    .query("SELECT * FROM threads WHERE owner = ? AND repo = ? AND pr = ? ORDER BY rowid DESC")
+    .query("SELECT * FROM task_threads WHERE owner = ? AND repo = ? AND pr = ? ORDER BY rowid DESC")
     .get(owner, repo, number);
   const thread = Thread.nullable().parse(row);
   // Each CI check, with the end of its log when it failed and has one.

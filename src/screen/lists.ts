@@ -66,7 +66,7 @@ export function roundLimit(thread: Thread): number {
 // Returns the open repository's threads that aren't done, newest first, each with its name and
 // word.
 function openThreads(db: Database, open: Open): Known[] {
-  const found = db.query(`SELECT * FROM threads
+  const found = db.query(`SELECT * FROM task_threads
       WHERE status != 'done' AND owner = ? AND repo = ? ORDER BY rowid DESC`);
   return found.all(open.owner, open.repo).map((row) => {
     const thread = Thread.parse(row);

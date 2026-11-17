@@ -19,7 +19,7 @@ import { createServer, type Server } from "node:net";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import { parse } from "yaml";
-import { git } from "./harness.ts";
+import { git, threadSql } from "./harness.ts";
 
 let home = "";
 let bin = "";
@@ -253,7 +253,7 @@ test("sc attach starts the daemon through systemd when it doesn't answer", async
   await skel("1\nsk-ant-oat01-good\n");
   rmSync(join(home, "started"));
   const db = `import { openDb } from ${JSON.stringify(join(checkout, "src", "db.ts"))};
-openDb().run("INSERT INTO threads (owner, repo, task, folder, branch, status) VALUES ('simon', 'app', 12, 'app-12', 'skelcrew/12', 'working')");`;
+openDb().run(${JSON.stringify(threadSql({ task: "12" }))});`;
   Bun.spawnSync([process.execPath, "-e", db], { env: { HOME: home } });
   writeFileSync(join(home, "calls"), "");
   const run = Bun.spawn([process.execPath, main(), "attach", "app-12"], {

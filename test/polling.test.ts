@@ -177,7 +177,7 @@ function thread(): Record<string, unknown> {
   // The daemon may be writing, and a read that meets a write fails without a wait.
   db.run("PRAGMA busy_timeout = 5000");
   try {
-    const row = db.query("SELECT * FROM threads").get();
+    const row = db.query("SELECT * FROM task_threads").get();
     return row && typeof row === "object" ? { ...row } : {};
   } finally {
     db.close();
@@ -585,13 +585,13 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
       opened.close();
     };
     // A newer round is being pushed, so the failure the forge shows is the older commit's.
-    db("UPDATE threads SET submitting = 'Round 2'");
+    db("UPDATE tasks SET submitting = 'Round 2'");
     pr({ reviews: [skelReview], checks: [approved, check(900, "failed")] });
     await morePolls();
     writeFileSync(join(plugin, "hold-changed"), "");
     await until(() => existsSync(join(plugin, "held-changed")));
     // The push lands and the review starts before the forge answers; the new commit's CI runs.
-    db("UPDATE threads SET submitting = NULL, reviewing = 'abc'");
+    db("UPDATE tasks SET submitting = NULL, reviewing = 'abc'");
     rmSync(join(plugin, "held-changed"));
     pr({ reviews: [skelReview], checks: [check(901, "running")] });
     rmSync(join(plugin, "hold-changed"));

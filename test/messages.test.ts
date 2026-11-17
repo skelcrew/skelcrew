@@ -6,7 +6,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
-import { fakePlugin, source } from "./harness.ts";
+import { fakePlugin, source, threadSql } from "./harness.ts";
 
 let home = "";
 beforeEach(() => {
@@ -27,8 +27,7 @@ afterEach(() => {
 // run before left, as a daemon starting again would.
 function run(body: string, again = false): string {
   const setup = `db.run(\`INSERT INTO repositories (name, owner, repo) VALUES ('app', 'simon', 'app');
-INSERT INTO threads (owner, repo, task, folder, branch, status)
-  VALUES ('simon', 'app', 12, 'app-12', 'skelcrew/12', 'waiting')\`);`;
+${threadSql({ task: "12", status: "waiting" })}\`);`;
   const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
 import { queueMessage, deliverAllWaiting } from ${JSON.stringify(source("flow/messages.ts"))};
 const db = openDb();
@@ -76,7 +75,8 @@ test("a builder whose session ends mid-turn, with a review's changes waiting, ma
 import { readThread } from ${JSON.stringify(source("flow/thread.ts"))};
 Bun.spawnSync(["tmux", "-L", tmux, "new-session", "-d", "-s", "app-12", ${JSON.stringify(join(home, "busy.sh"))}]);
 await Bun.sleep(300);
-db.run("UPDATE threads SET status = 'working', telling = 'Fix it.'");
+db.run("UPDATE threads SET status = 'working'");
+db.run("UPDATE tasks SET telling = 'Fix it.'");
 queueMessage(db, tmux, "app-12", { sender: "review", text: "Fix it.", said: "the review's changes", typed_in: [] });
 for (let i = 0; i < 4; i++) {
   deliverAllWaiting(db, tmux);
@@ -99,7 +99,7 @@ test("a missing builder makes an approved PR that conflicts need you, not ready 
   const seen = run(`
 import { threadWord } from ${JSON.stringify(source("flow/status.ts"))};
 import { readThread } from ${JSON.stringify(source("flow/thread.ts"))};
-db.run("UPDATE threads SET verdict = 'approve', checks = 'passing', conflicts = 'main', pr = 7");
+db.run("UPDATE tasks SET verdict = 'approve', checks = 'passing', conflicts = 'main', pr = 7");
 queueMessage(db, tmux, "app-12", { sender: "skelcrew", text: "Merge main.", said: "a conflict", typed_in: [] });
 for (let i = 0; i < 30 && !readThread(db, "app-12").needs_you; i++) {
   deliverAllWaiting(db, tmux);
@@ -212,7 +212,7 @@ for (let i = 0; i < 8; i++) {
   deliverAllWaiting(db, tmux);
   await Bun.sleep(500);
 }
-const { updates } = db.query("SELECT updates FROM threads").get();
+const { updates } = db.query("SELECT updates FROM tasks").get();
 console.log(JSON.stringify({ left: db.query("SELECT 1 FROM messages").all().length, updates: JSON.parse(updates).length }));`);
   expect(JSON.parse(left)).toEqual({ left: 0, updates: 1 });
   const received = readFileSync(join(home, "received.txt"), "utf8");
@@ -254,7 +254,7 @@ for (let i = 0; i < 12 && count() > 0; i++) {
   await Bun.sleep(500);
 }
 await Bun.sleep(500);
-const { updates } = db.query("SELECT updates FROM threads").get();
+const { updates } = db.query("SELECT updates FROM tasks").get();
 console.log(JSON.stringify({ during, waiting: count(), updates: JSON.parse(updates).length }));`);
   expect(JSON.parse(seen)).toEqual({
     during: { entered: false, waiting: 1 },
@@ -338,7 +338,7 @@ test("a comment that joins a message being typed in is marked seen too", () => {
   run(`
 import { readFileSync, existsSync } from "node:fs";
 db.run("UPDATE repositories SET forge = 'github'");
-db.run("UPDATE threads SET pr = 7");
+db.run("UPDATE tasks SET pr = 7");
 const received = ${JSON.stringify(join(home, "received.txt"))};
 const got = () => (existsSync(received) ? readFileSync(received, "utf8") : "");
 Bun.spawnSync(["tmux", "-L", tmux, "new-session", "-d", "-s", "app-12", "-c", ${JSON.stringify(home)}, ${JSON.stringify(join(home, "builder.sh"))}]);
