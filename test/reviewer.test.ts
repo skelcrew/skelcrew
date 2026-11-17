@@ -518,7 +518,7 @@ describe.skipIf(insideSandbox)("reviewer", () => {
     const timedOut = start({ limit: 1000, ci: slow });
     const next = start();
     expect(await cancelled).toEqual({ verdict: "failed", body: "the review was cancelled" });
-    expect(await timedOut).toMatchObject({ verdict: "failed" });
+    expect(await timedOut).toMatchObject({ verdict: "timed out" });
     expect((await timedOut).body).toContain("ran past");
     expect((await next).verdict).toBe("approve");
     expect(Date.now() - began).toBeLessThan(15_000);
