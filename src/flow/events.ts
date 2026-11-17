@@ -121,15 +121,22 @@ export async function endThread(
   note: string | null,
   removal = false,
 ): Promise<void> {
+  // A thread ends once, so the lead hears of it once. A poll and sc rm can both end the same
+  // thread, and the thread can even start over while a slow end waits. So this end goes on only
+  // while the thread is still the one it was asked to end, by when it started, and not done
+  // yet. And while sc rm is removing it, only sc rm's own end goes on: the lead hears what sc rm
+  // says, or nothing when the lead ran it. It is checked before anything is stopped or deleted,
+  // and again after waiting for the builder, with nothing waited on from there to marking the
+  // thread done.
+  const ours = () => {
+    const now = readThread(db, thread.folder);
+    if (now.started !== thread.started || now.status === "done") return false;
+    return removal || !removing.has(thread.folder);
+  };
+  if (!ours()) return;
   await endBuilder(db, sessions, thread.folder, true);
+  if (!ours()) return;
   rmSync(cloneOf(thread), { recursive: true, force: true });
-  // A thread ends once, so the lead hears of it once. A poll and sc rm can both reach here for
-  // the same thread, and sc rm can start while a poll waits above. So the end is the first
-  // one's to mark, unless sc rm is removing the thread: then only sc rm marks it, and the lead
-  // hears what sc rm says, or nothing when the lead ran it. Nothing is waited on between these
-  // checks and marking it done, so no other end can slip in between.
-  if (readThread(db, thread.folder).status === "done") return;
-  if (removing.has(thread.folder) && !removal) return;
   // The thread is marked done and its note saved in one transaction. A daemon that stops
   // between the two, or a note that fails to save, would otherwise leave a done thread, which no
   // poll looks at again, and a lead that never hears of it. The note is typed only after: typing
