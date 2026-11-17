@@ -986,6 +986,42 @@ done`,
     expect(read(join(codexHome(), "sessions", "prompt-2"))).toContain(`git diff ${main}...HEAD`);
   }, 180_000);
 
+  // The change was docs alone against main, but next lacks main's code, so against next it
+  // changes code, and its tests must run.
+  test("a PR retargeted while its review waits is tested as its new diff needs", async () => {
+    const work = addApp();
+    git(work, "push", "-q", "origin", "main:next");
+    writeFileSync(join(work, "app.ts"), "export const app = 1;\n");
+    git(work, "add", ".");
+    git(work, "commit", "-qm", "code on main");
+    git(work, "push", "-q", "origin", "main");
+    mkdirSync(builder(), { recursive: true });
+    writeFileSync(join(builder(), "docs-only"), "");
+    writeFileSync(join(plugin, "hold-status-pending"), "");
+    verdict(1, "approve", "Ready to merge.");
+    servePolling();
+    await untilCloned();
+    expect((await skel(["start", "app-12"])).err).toBe("");
+    await until(() => existsSync(join(plugin, "held-status")), 60_000);
+    answer(plugin, "changed", {
+      items: [
+        taskItem("12", "Add export", { body: "As JSON" }),
+        prItem("7", "Add export", {
+          branch: "skelcrew/12-add-export",
+          head: pushed(),
+          base: "next",
+        }),
+      ],
+      next: null,
+    });
+    await until(() => copiedPr().includes('"base":"next"'), 60_000);
+    rmSync(join(plugin, "hold-status-pending"));
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), 60_000);
+    const prompt = read(join(codexHome(), "sessions", "prompt-1"));
+    expect(prompt).not.toContain("only touches docs");
+    expect(prompt).toContain("run the repository's whole test suite");
+  }, 180_000);
+
   // Someone can change the branch a PR goes into on the forge. Diffed against the base the
   // thread started from, the reviewer would judge commits that aren't the PR's.
   test("a PR retargeted on the forge is reviewed against its new base", async () => {

@@ -5,7 +5,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { onlyMergedBase, whereItMeets } from "../src/flow/round.ts";
+import { changesOnlyDocs, onlyMergedBase, whereItMeets } from "../src/flow/round.ts";
 import { git } from "./harness.ts";
 
 let repo = "";
@@ -114,4 +114,14 @@ test("the review starts where the commit meets the base, past main's commits it 
 
 test("a base the clone doesn't have gives no place to start", () => {
   expect(whereItMeets(repo, "refs/skelcrew/bases/missing", approved)).toBeNull();
+});
+
+test("a change is docs alone only against the base it is measured from", () => {
+  git(repo, "checkout", "-q", "main");
+  git(repo, "checkout", "-q", "-b", "older");
+  git(repo, "checkout", "-q", "pr");
+  const docs = commit({ "notes.md": "notes\n" });
+  expect(changesOnlyDocs(repo, "pr~1", docs)).toBe(true);
+  expect(changesOnlyDocs(repo, "older", docs)).toBe(false);
+  expect(changesOnlyDocs(repo, "refs/skelcrew/bases/missing", docs)).toBe(false);
 });

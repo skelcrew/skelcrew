@@ -214,18 +214,9 @@ async function reviewRound(
   const setsUpCi = listed.success && listed.stdout.toString().trim() !== "";
   // A change to docs and Markdown alone is tested by no one, as CI skips it and no code
   // changed, so its review waits for no CI. The files are those changed since the base branch,
-  // which the push fetched into the thread's own ref in Skelcrew's clone. Without rename
-  // detection, a file moved from code into docs shows both names, so the code it removes
-  // counts. Names end in a NUL, as git otherwise quotes one with letters outside ASCII, such
-  // as résumé.md. A base or diff Skelcrew can't read, as in a clone not set up yet, lists
-  // none, and the tests run.
-  const diff = ["git", "-C", skelcrewClone, "diff", "--name-only", "-z"];
-  const changed = Bun.spawnSync([...diff, "--no-renames", `${bases}...${sha}`], {
-    stdout: "pipe",
-    stderr: "ignore",
-  });
-  const docsOnly =
-    changed.success && onlyDocs(changed.stdout.toString().split("\0").filter(Boolean));
+  // which the push fetched into the thread's own ref in Skelcrew's clone. The review asks
+  // again once it fetched the base anew, as the PR may have moved to another base meanwhile.
+  const docsOnly = changesOnlyDocs(skelcrewClone, bases, sha);
   const repositoryName = `${thread.owner}/${thread.repo}`;
   const suite = (waited: number) => {
     const prs = openPrs(db, thread.owner, thread.repo);
@@ -331,9 +322,14 @@ async function reviewRound(
               verdict: "failed" as const,
               body: `Skelcrew couldn't read where ${sha.slice(0, 7)} meets ${base} as the forge has it, so it can't tell the PR's change apart: ${fetched ?? "they share no commit"}`,
             };
+          // A PR moved to another base while the review waited can now change code, so a
+          // change that was docs alone is asked again, against the base just fetched. One that
+          // now changes code runs the tests, as there is then no CI result to read.
+          const docsOnly = given.docsOnly === true && changesOnlyDocs(skelcrewClone, bases, sha);
           const started = Date.now();
           const result = await review({
             ...given,
+            docsOnly,
             clone: cloneOf(thread),
             issue: threadTask(db, thread),
             base: from,
@@ -743,6 +739,19 @@ function lastApproved(thread: Thread): string | null {
 function prBase(db: Database, thread: Thread): string {
   const pr = thread.pr === null ? null : prOf(db, thread.owner, thread.repo, thread.pr);
   return pr?.base ?? baseOf(thread);
+}
+
+// Returns whether the commit, in the clone, changes only docs and Markdown since it met the
+// base, so no one runs the tests. Without rename detection, a file moved from code into docs
+// shows both names, so the code it removes counts. Names end in a NUL, as git otherwise quotes
+// one with letters outside ASCII, such as résumé.md. A base or diff git can't read, as in a
+// clone not set up yet, gives false, and the tests run.
+export function changesOnlyDocs(clone: string, base: string, sha: string): boolean {
+  const changed = Bun.spawnSync(
+    ["git", "-C", clone, "diff", "--name-only", "-z", "--no-renames", `${base}...${sha}`],
+    { stdout: "pipe", stderr: "ignore" },
+  );
+  return changed.success && onlyDocs(changed.stdout.toString().split("\0").filter(Boolean));
 }
 
 // Returns the commit where the commit meets the base, in the clone, which is where the PR's own
