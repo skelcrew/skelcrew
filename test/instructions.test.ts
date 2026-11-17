@@ -1,4 +1,4 @@
-// The builder's instructions, as each harness starts a builder with them. They never start
+// The builder's and lead's instructions, as each harness starts them. They never start
 // bubblewrap, so they run inside Skelcrew's sandbox too.
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { HarnessName, harnessNamed } from "../src/agents/harness.ts";
 import instructions from "../src/defaults/roles/builder.md" with { type: "text" };
 import { builderInstructions } from "../src/flow/builder.ts";
+import { leadInstructions } from "../src/flow/lead.ts";
 
 let home = "";
 beforeEach(() => {
@@ -65,5 +66,24 @@ test("a builder is told each command that isn't configured, and asks the lead ra
   );
   expect(builderInstructions({ setup: [], test: [] })).toContain(
     "If one you need isn't configured, never make one up: ask the lead which to use with sc tell lead, and wait for its answer. That counts as blocked.",
+  );
+});
+
+// The lead can't read the human's config from its sandbox, so it is told which commands are
+// configured, each on its own, and proposes only the ones that are missing.
+test("a lead is told its repository and each setup and test command, or that none is configured", () => {
+  const told = leadInstructions("simon/app", "/clones/simon/app", {
+    setup: ["bun install"],
+    test: ["bun run check"],
+  });
+  expect(told).toContain("Before you start the first thread in your repository");
+  expect(told).toEndWith(
+    "\nYou are the lead of simon/app. Skelcrew's clone of it is at /clones/simon/app.\nWhen this session started, the setup command was `bun install`, and the test command was `bun run check`.\n",
+  );
+  expect(leadInstructions("simon/app", "/c", { setup: [], test: ["go test ./..."] })).toEndWith(
+    "\nWhen this session started, no setup command was configured, and the test command was `go test ./...`.\n",
+  );
+  expect(leadInstructions("simon/app", "/c", { setup: [], test: [] })).toEndWith(
+    "\nWhen this session started, no setup command was configured, and no test command was configured.\n",
   );
 });
