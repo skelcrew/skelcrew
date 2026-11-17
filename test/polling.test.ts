@@ -683,11 +683,13 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
     expect(typed()).toContain("merge origin/next into");
   }, 60_000);
 
-  test("a merged PR ends the builder, removes the thread's clone and marks it done", async () => {
+  test("a merged PR ends the builder, removes the thread's clone and marks it done and merged", async () => {
     await approvedApp12();
     expect(fakeBuilders()).toHaveLength(1);
     pr({ state: "merged", reviews: [skelReview], checks: [approved] });
     await until(() => thread().status === "done");
+    // Its task is marked merged, which sc ls --all shows once the PR leaves Skelcrew's copy.
+    expect(thread().merged).toBe(1);
     expect(existsSync(clone())).toBe(false);
     expect(Bun.spawnSync(["tmux", "-L", socket, "has-session", "-t", "=app-12"]).success).toBe(
       false,
@@ -793,6 +795,8 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
     expect(thread().status).toBe("stopped");
     pr({ state: "merged", reviews: [skelReview], checks: [approved] });
     await until(() => thread().status === "done");
+    // Its task is marked merged, which sc ls --all shows once the PR leaves Skelcrew's copy.
+    expect(thread().merged).toBe(1);
     expect(existsSync(clone())).toBe(false);
   }, 60_000);
 
@@ -1175,11 +1179,12 @@ echo "Not logged in"; exit 1`,
     expect(assigns()).toEqual([assignOn]);
   }, 60_000);
 
-  test("a PR closed without merging takes you off its issue", async () => {
+  test("a PR closed without merging takes you off its issue, and its task isn't merged", async () => {
     await approvedApp12();
     await until(() => thread().assigned === 1);
     pr({ state: "closed", reviews: [skelReview], checks: [approved] });
     await until(() => thread().status === "done");
+    expect(thread().merged).toBe(0);
     await until(() => assigns().length === 2);
     expect(assigns()).toEqual([assignOn, assignOff]);
     await until(() => thread().assigned === 0);
