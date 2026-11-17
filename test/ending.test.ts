@@ -1,18 +1,25 @@
 // Ending a thread, run against a database of the test's own, with no daemon, tracker or forge.
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import { source } from "./harness.ts";
 
 let home = "";
+// The test's own tmux socket, never Skelcrew's. Only a test that starts a lead runs a server on it.
+let socket = "";
 beforeEach(() => {
   home = realpathSync(mkdtempSync(join(tmpdir(), "skel-ending-test-")));
+  socket = `skel-test-ending-${process.pid}-${Math.random().toString(36).slice(2)}`;
   mkdirSync(join(home, ".local", "share", "skelcrew", "repos", "simon", "app"), {
     recursive: true,
   });
 });
 afterEach(() => {
+  // Ending the server leaves its socket file behind.
+  Bun.spawnSync(["tmux", "-L", socket, "kill-server"], { stderr: "pipe" });
+  const folder = join(process.env.TMUX_TMPDIR ?? "/tmp", `tmux-${userInfo().uid}`);
+  rmSync(join(folder, socket), { force: true });
   rmSync(home, { recursive: true, force: true });
 });
 
@@ -35,7 +42,7 @@ console.log(JSON.stringify({ status: readThread(db, fresh.folder).status, clone:
 
 // Runs a script against the test's own home, with a thread app-t1 started on a repository with
 // no tracker or forge, and returns what it printed as JSON. The script has db, thread, the
-// imports below, and socket, a tmux socket on which no server runs, so no lead hears a note.
+// imports below, and socket, the test's tmux socket, where no lead runs unless the script starts one.
 function withThread(body: string): unknown {
   const code = `import { existsSync, mkdirSync } from "node:fs";
 import { openDb } from ${JSON.stringify(source("db.ts"))};
@@ -46,7 +53,7 @@ import { cloneOf, readThread, record } from ${JSON.stringify(source("flow/thread
 const db = openDb();
 db.run("INSERT INTO repositories (name, owner, repo, opened, remote, claimed) VALUES ('app', 'simon', 'app', 1, 'file:///nowhere', 1)");
 const thread = await startThread(db, { repo: "app", title: "Add export", body: "As JSON" });
-const socket = "skel-test-ending-${process.pid}";
+const socket = ${JSON.stringify(socket)};
 ${body}`;
   const run = Bun.spawnSync([process.execPath, "-e", code], {
     env: { ...process.env, HOME: home, XDG_RUNTIME_DIR: home },
