@@ -6,12 +6,19 @@ import { builtInRole, readRole } from "../src/roles.ts";
 
 const sha256 = (text: string) => new Bun.CryptoHasher("sha256").update(text).digest("hex");
 
-test("the lead and builder files hold the instructions the code gave, unchanged", () => {
+// What the builder's file added after its instructions moved there: Skelcrew can't push a
+// change to a workflow file.
+const workflows =
+  "\nNever change files under .github/: Skelcrew can't push a change to its workflows, and the push is refused. If the work needs a change there, leave it out, and say in your sc submit summary, which becomes the PR, what a person should change there instead.\n";
+
+test("the lead and builder files hold the instructions the code gave, and the builder's adds only workflows", () => {
   // The digests of src/agents/prompts/lead.md and builder.md before they moved.
   expect(sha256(builtInRole("lead").instructions)).toBe(
     "4a964d29382eddbab5268fa24921ee599fa1bde9bd1eb51341f5bee1cb577837",
   );
-  expect(sha256(builtInRole("builder").instructions)).toBe(
+  const builder = builtInRole("builder").instructions;
+  expect(builder).toContain(workflows);
+  expect(sha256(builder.replace(workflows, ""))).toBe(
     "556629d5f335c1d5e635a1996a021041ea3e9fb75deaa593399ef84d70ee4d00",
   );
 });
