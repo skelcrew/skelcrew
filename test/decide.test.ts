@@ -15,7 +15,7 @@ import {
   reviewCheck,
   whoRunsTheSuite,
 } from "../src/flow/decide.ts";
-import { endedTurnAsks } from "../src/flow/status.ts";
+import { endedTurnAsks, holdsQuestion } from "../src/flow/status.ts";
 import type { Thread } from "../src/flow/thread.ts";
 
 function thread(change: Partial<Thread> = {}): Thread {
@@ -615,6 +615,29 @@ test("a turn with no new work waits on a submit still under review, on CI or app
   // waits on.
   for (const [change] of cases)
     expect([change, endedTurnAsks(thread(change), false)]).toEqual([change, true]);
+});
+
+// A question hidden as a reply would leave you never hearing of it, so anything that may ask
+// counts as asking.
+test("a builder's last message holds a question wherever its question mark sits", () => {
+  const asks = [
+    "Which format should the export use?",
+    "Done.\n\nWhich format should the export use?\n1. JSON\n2. CSV",
+    "**Should I use JSON or YAML?**",
+    '"Should I use JSON or YAML?"',
+    "“Should I use JSON or YAML?”",
+    "_JSON or YAML?_ Let me know.",
+    "(Or should it be CSV?)",
+    "Shall I go on?\u00a0",
+  ];
+  const replies = [
+    "The lead's note about the import order came in after I had already fixed it.",
+    "It reads `thread?.pr` now.",
+    "See /search?q=export for the page.",
+  ];
+  for (const message of asks) expect([message, holdsQuestion(message)]).toEqual([message, true]);
+  for (const message of replies)
+    expect([message, holdsQuestion(message)]).toEqual([message, false]);
 });
 
 test("a push GitHub refuses for a workflow file says which file, and what to do", () => {

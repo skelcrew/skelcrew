@@ -3,6 +3,7 @@ import { createConnection } from "node:net";
 import { z } from "zod";
 import { PrView, RepositoryRow, TaskRow, TaskView, ThreadRow } from "./flow/list.ts";
 import { type DaemonRequest, parseJson } from "./flow/requests.ts";
+import { holdsQuestion } from "./flow/status.ts";
 import { cliSocket } from "./paths.ts";
 import { quietly } from "./run.ts";
 
@@ -246,10 +247,8 @@ export async function reportTurnEnded(): Promise<void> {
   const status = await quietly(["git", "status", "--porcelain"]);
   const head = await quietly(["git", "rev-parse", "--verify", "HEAD"]);
   const clean = status.ok && status.out.trim() === "" && head.ok;
-  // Codex has no question tool, so its builder asks by ending its turn with the question in
-  // plain text. A question mark that ends a sentence, anywhere in the message, counts as one,
-  // while code such as a?.b doesn't. A turn with no message given may have asked too.
-  const replied = message.trim() !== "" && !/\?(\s|$)/.test(message);
+  // A turn with no message given may have asked too.
+  const replied = message.trim() !== "" && !holdsQuestion(message);
   await request({
     command: "turn ended",
     ...(said ? { said } : {}),

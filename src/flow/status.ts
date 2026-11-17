@@ -49,6 +49,13 @@ export const endedTurnAsks = (thread: Thread, onlyReplied = false) =>
   !thread.erred &&
   !(onlyReplied && submitStands(thread));
 
+// Returns whether a builder's last message may ask you something. Codex has no question tool,
+// so its builder asks by ending its turn with the question in plain text. Any question mark
+// counts, also before closing Markdown or quotes, as in **JSON or YAML?**, except one followed
+// by a dot, a letter or a digit, as in code such as a?.b or a URL's ?q=1. Erring towards a
+// question only brings you in for nothing, so a ?? in code counts too.
+export const holdsQuestion = (message: string) => /\?(?![.?A-Za-z0-9])/.test(message);
+
 // Returns whether the thread's last submit still moves on without its builder: its review waits
 // or runs, or it was approved and waits on CI or you. Changes asked for, a failed check or a
 // conflict all need the builder to work again, so a turn without new work doesn't wait on them.

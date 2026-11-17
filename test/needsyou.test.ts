@@ -448,7 +448,7 @@ describe.skipIf(insideSandbox)("needs you", () => {
     addApp();
     await startApp12();
     submittedAsReviewing();
-    const said = "Done.\n\nWhich format should the export use?";
+    const said = "Done.\n\n**Should the export use JSON or YAML?**";
     await hook("stop", JSON.stringify({ last_assistant_message: said }));
     await untilNeedsYou(true);
     await until(() => notes() === 1);
