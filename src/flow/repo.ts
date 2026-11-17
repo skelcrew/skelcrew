@@ -16,7 +16,7 @@ import { stringify } from "yaml";
 import { z } from "zod";
 import { refuseCredentials } from "../agents/sandbox.ts";
 import { endSession, exitedCleanly, stopSession } from "../agents/sessions.ts";
-import { agentRoles, repositoryCommands } from "../config.ts";
+import { agentRoles } from "../config.ts";
 import { nameRepositories, openDb, Repository } from "../db.ts";
 import { originHere, parseRemote } from "../machine/origin.ts";
 import { cloneDir, configDir, dataDir, leadPlaces } from "../paths.ts";
@@ -452,13 +452,8 @@ async function openAgain(db: Database, sessions: string, had: Repository): Promi
 // remote URL or named by its owner/name on its forge, or with neither, the checkout you are
 // in, and says what it did. A folder that is there is taken as one. Asks whether you trust the
 // repository when it needs to, so it runs only in your own terminal. One Skelcrew has costs no
-// call to a forge, and is opened again. `sessions` names where its lead runs. With `hint`, a
-// repository just added gets a line saying how it will be tested, as sc init doesn't need one.
-export async function addRepo(
-  given: string | undefined,
-  sessions: string,
-  hint = true,
-): Promise<void> {
+// call to a forge, and is opened again. `sessions` names where its lead runs.
+export async function addRepo(given: string | undefined, sessions: string): Promise<void> {
   // Work out the remote URL: a folder's own remote, or what you gave when it is no folder.
   const db = openDb();
   const folder = given === undefined || existsSync(given) ? resolve(given ?? ".") : null;
@@ -479,18 +474,7 @@ export async function addRepo(
   const details = await identifyRepository(db, url);
   await bringIn(db, details);
   const added = repositories(db).find((r) => r.owner === details.owner && r.repo === details.repo);
-  if (!added) return;
-  console.log(`Added ${added.owner}/${added.repo}, as ${added.name}.`);
-  // Many repositories are added just to fix something, with no skelcrew.yaml to commit there,
-  // so say what Skelcrew detected, as a hint, never a question. A test command skelcrew.yaml or
-  // your config names needs no word.
-  const { test } = repositoryCommands(added);
-  if (!hint || !test.detected) return;
-  console.log(
-    test.commands.length > 0
-      ? `Testing with ${test.commands.join(" && ")} (detected). sc init writes a skelcrew.yaml to share it.`
-      : "No test command detected. Set one as test: in a skelcrew.yaml, which sc init writes.",
-  );
+  if (added) console.log(`Added ${added.owner}/${added.repo}, as ${added.name}.`);
 }
 
 // Returns a setting's value as YAML that reads back as the same text: plain when it can be,
@@ -552,9 +536,8 @@ export async function initRepo(sessions: string): Promise<void> {
   const there = lstatSync(file, { throwIfNoEntry: false }) !== undefined;
   if (!there) writeFileSync(file, starterConfig(), { flag: "wx" });
   else console.log("skelcrew.yaml is there already, so Skelcrew left it as it is.");
-  // Bring the repository in, then say what was written and when Skelcrew will read it. The hint
-  // about sc init would only repeat what you just ran.
-  await addRepo(root, sessions, false);
+  // Bring the repository in, then say what was written and when Skelcrew will read it.
+  await addRepo(root, sessions);
   if (!there) console.log("Wrote skelcrew.yaml. Commit and push it to start.");
 }
 

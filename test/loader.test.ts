@@ -1,5 +1,5 @@
 // The one loader every setting is read through: the repository's skelcrew.yaml first, then your
-// config.yaml, then the built-in defaults, with setup and test detected when no file names them.
+// config.yaml, then the built-in defaults.
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { availableParallelism, tmpdir } from "node:os";
@@ -54,8 +54,6 @@ const all = [
   "yourReviewer",
   "declined",
 ];
-// Setup or test that no file names, with nothing in the clone to detect them from.
-const none = { commands: [], detected: true };
 const quarter = Math.max(1, Math.floor(availableParallelism() / 4));
 
 test("with no files, every setting is the built-in default", () => {
@@ -68,8 +66,6 @@ test("with no files, every setting is the built-in default", () => {
     },
     rounds: 3,
     reviews: quarter,
-    setup: none,
-    test: none,
     reviewMinutes: 30,
     declined: [],
   });
@@ -85,8 +81,6 @@ test("your config goes over the built-in defaults", () => {
     },
     rounds: 5,
     reviews: 2,
-    setup: none,
-    test: none,
     reviewMinutes: 30,
     yourHarness: "codex",
     declined: [],
@@ -106,8 +100,7 @@ test("the repository's skelcrew.yaml goes over your config, key by key", () => {
     },
     rounds: 2,
     reviews: quarter,
-    setup: { commands: ["make"], detected: false },
-    test: none,
+    setup: ["make"],
     tracker: "none",
     reviewMinutes: 30,
     yourHarness: "claude",
@@ -137,8 +130,6 @@ test("a file sets only what is its own", () => {
     },
     rounds: 3,
     reviews: quarter,
-    setup: none,
-    test: none,
     reviewMinutes: 30,
     declined: [],
   });
