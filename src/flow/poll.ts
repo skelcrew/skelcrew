@@ -19,7 +19,7 @@ import { assignIssue, unassignIssue } from "./assign.ts";
 import { baseOf, startThread } from "./builder.ts";
 import { type Item, openTasks, prOf, saveItems } from "./copy.ts";
 import { ciState, decide, labeledToStart, type PullRequest } from "./decide.ts";
-import { endThread, tellBuilder, typingEvents } from "./events.ts";
+import { endThread, removing, tellBuilder, typingEvents } from "./events.ts";
 import { fetchInto, onRemote } from "./git.ts";
 import { noteForLead, typeLeadNotes } from "./lead.ts";
 import { forgeKnown, fullNameIs, repositories } from "./repo.ts";
@@ -162,10 +162,12 @@ async function actOnBranch(db: Database, tmux: string, repository: Repository, t
   if (thread.submitting !== null) return;
   if (!(await git("rev-parse", "--verify", "--quiet", ref("threads"))).ok) return;
   // Asking git takes a while, and sc rm may meanwhile have deleted the branch and ended the
-  // thread, or the thread started over. Only the thread as it was is ended.
+  // thread, or the thread started over. Only the thread as it was is ended. A thread sc rm is
+  // still removing is its to end, as it deleted the branch.
   const unchanged = () => {
     const now = readThread(db, thread.folder);
-    return now.status === thread.status && now.started === thread.started;
+    const same = now.status === thread.status && now.started === thread.started;
+    return same && !removing.has(thread.folder);
   };
   if (!(await onRemote(db, repository, thread.branch))) {
     if (unchanged()) await endThread(db, tmux, thread, `its branch ${thread.branch} was deleted`);

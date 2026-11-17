@@ -1599,4 +1599,38 @@ await serve(${JSON.stringify(socket)}, 200);`;
     expect(log()).not.toContain("was deleted");
     expect(onRemote()).toBe(true);
   }, 60_000);
+
+  // sc rm deletes the branch before it ends the thread. A poll in between must not take the
+  // thread for one whose branch someone else deleted. The fake remote holds the deletion open
+  // after the branch is gone, so the polls see that moment.
+  test("a poll while sc rm deletes the branch leaves the thread to sc rm", async () => {
+    const bare = addAppOnGit();
+    verdict(1, "approve", "Ready to merge.");
+    serveOutsideCheckout();
+    await untilCloned();
+    expect((await skel(["start", "app", "Add export", "As JSON"])).err).toBe("");
+    const log = () => read(join(data(), "threads", "app-t1.log"));
+    await until(() => log().includes("app-t1 is ready on branch skelcrew/t1-add-export"), 30_000);
+    const hook = join(bare, "hooks", "post-receive");
+    writeFileSync(
+      hook,
+      `while read old new ref; do
+  case "$new" in *[!0]*) ;; *)
+    : > "${home}/deleted"
+    i=0; while ! test -e "${home}/go" && test -d "${home}" && [ $i -lt 300 ]; do sleep 0.1; i=$((i+1)); done ;;
+  esac
+done`,
+    );
+    chmodSync(hook, 0o755);
+    const removing = skel(["rm", "app-t1"]);
+    await until(() => existsSync(join(home, "deleted")), 30_000);
+    // The daemon polls every 200 milliseconds, so this gives it several looks at the thread.
+    await Bun.sleep(1500);
+    writeFileSync(join(home, "go"), "");
+    const removed = await removing;
+    expect(removed.err).toBe("");
+    expect(removed.out).toContain("Removed app-t1.");
+    expect(log()).not.toContain("was deleted");
+    expect(log()).toContain('"why":"removed: ended the thread"');
+  }, 60_000);
 });
