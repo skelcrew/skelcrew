@@ -3,7 +3,7 @@
 // into the builder's session when it asks for changes.
 import type { Database } from "bun:sqlite";
 import { type HarnessName, harnessNamed } from "../agents/harness.ts";
-import { typeInto } from "../agents/typing.ts";
+import { deliver } from "../agents/transport.ts";
 import { reviewLimit, threadConfig } from "../config.ts";
 import { cloneDir } from "../paths.ts";
 import { failedLog, forgeOf, openPr, postReview, setStatus } from "../plugins/ask.ts";
@@ -85,7 +85,7 @@ async function push(
     // a newer submit makes it stale.
     const refused = refusedWorkflow(threadName(db, thread), errorText(error));
     if (refused === null) throw error;
-    typeInto(sessions, folder, builderHarness(thread).marks, refused, {
+    deliver(sessions, folder, builderHarness(thread).marks, refused, {
       timeout: 30 * 60_000,
       signal,
     }).catch((failed) =>
@@ -458,7 +458,7 @@ async function typeChanges(
   signal: AbortSignal,
 ): Promise<void> {
   // A builder can work long after it submits, but one busy this long has likely hung.
-  await typeInto(sessions, folder, builderHarness(readThread(db, folder)).marks, text, {
+  await deliver(sessions, folder, builderHarness(readThread(db, folder)).marks, text, {
     timeout: 30 * 60_000,
     signal,
   });

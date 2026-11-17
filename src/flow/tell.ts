@@ -3,7 +3,7 @@
 // forge.
 import type { Database } from "bun:sqlite";
 import { agentRuns } from "../agents/sessions.ts";
-import { typeInto } from "../agents/typing.ts";
+import { deliver } from "../agents/transport.ts";
 import { errorText } from "../say.ts";
 import { noteForLead } from "./lead.ts";
 import { builderHarness, log, readThread, record, type Thread, threadName } from "./thread.ts";
@@ -63,7 +63,7 @@ export function messageBuilder(
   // only once typed: then the reviewer never sees what the builder didn't, and messages keep
   // their order, as typing into a session goes one message at a time.
   const message = wrapMessage("lead", "sc tell lead", text);
-  typeInto(sessions, thread.folder, builderHarness(thread).marks, message, {
+  deliver(sessions, thread.folder, builderHarness(thread).marks, message, {
     timeout: 30 * 60_000,
   }).then(
     () => {

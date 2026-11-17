@@ -3,7 +3,7 @@
 import type { Database } from "bun:sqlite";
 import { rmSync } from "node:fs";
 import { agentRuns, stopSession } from "../agents/sessions.ts";
-import { typeInto } from "../agents/typing.ts";
+import { deliver } from "../agents/transport.ts";
 import { cloneDir } from "../paths.ts";
 import { closePr, failedLog, markSeen } from "../plugins/ask.ts";
 import { quietly } from "../run.ts";
@@ -241,7 +241,7 @@ export async function tellBuilder(
     if (!agentRuns(sessions, thread.folder)) throw new Error("its builder isn't running");
     // A builder can work long after an event, but one busy this long has likely hung.
     const { marks } = builderHarness(thread);
-    await typeInto(sessions, thread.folder, marks, text, {
+    await deliver(sessions, thread.folder, marks, text, {
       timeout: 30 * 60_000,
       signal: cancel.signal,
     });
