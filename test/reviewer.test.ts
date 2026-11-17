@@ -370,6 +370,21 @@ describe.skipIf(insideSandbox)("reviewer", () => {
     expect(kept("ci")).toBe("asked 1\nasked 2\n");
   }, 40_000);
 
+  // The reviewer can write in the folder CI's result goes in. What it leaves there must never
+  // lead a refresh to write to a file outside the sandbox.
+  test("a refresh of CI's result never writes through a link the reviewer left", async () => {
+    const outside = join(home, "outside");
+    writeFileSync(outside, "kept\n");
+    const ci = { has: () => true, read: async () => "CI passed.\n" };
+    fakeCodex(approve, [
+      'prompt="$CODEX_HOME/sessions/prompt"',
+      ciFile,
+      `for n in "$f" "$f.new"; do rm -f "$n"; ln -s ${outside} "$n"; done; sleep 17`,
+    ]);
+    expect((await start({ ci })).verdict).toBe("approve");
+    expect(readFileSync(outside, "utf8")).toBe("kept\n");
+  }, 40_000);
+
   // A review waits in the round's queue for its place, and CI may show a check meanwhile. So the
   // reviewer is told about CI from what holds as each review starts.
   test("whether CI runs on the commit is asked as each review starts", async () => {

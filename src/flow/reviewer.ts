@@ -184,7 +184,11 @@ async function reviewNow(given: {
   };
   let argv: string[] = [];
   // CI's result goes in the review's folder, which the reviewer sees. It is written whole and
-  // then moved in, so the reviewer never reads half of it. A failure to ask is written there
+  // then moved in, so the reviewer never reads half of it. The reviewer can write in that
+  // folder too, so Skelcrew never writes to a file there it didn't just make: each result goes
+  // to a new name, made only if nothing is there, which never follows a link, and the rename
+  // replaces whatever is at ci.md rather than writing into it. A write that fails leaves the
+  // result before in place. A failure to ask is written there
   // too, so the reviewer says it couldn't tell rather than taking an old result for current.
   // Asking the forge for a failed log can take a minute, longer than between two refreshes,
   // so a refresh is skipped while the one before still runs. Once the review ends, an answer
@@ -199,8 +203,11 @@ async function reviewNow(given: {
       const text = await read().catch((e) => `Skelcrew couldn't read CI: ${errorText(e)}\n`);
       // No await between this check and the write, so it never lands in a removed folder.
       if (ended) return;
-      writeFileSync(`${ciFile}.new`, text);
-      renameSync(`${ciFile}.new`, ciFile);
+      const aside = join(folder, `.ci-${crypto.randomUUID()}.md`);
+      writeFileSync(aside, text, { flag: "wx" });
+      renameSync(aside, ciFile);
+    } catch {
+      // Something the reviewer left in the way: it keeps reading the result before.
     } finally {
       refreshing = false;
     }
