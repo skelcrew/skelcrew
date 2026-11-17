@@ -221,12 +221,10 @@ async function typeNotes(
     if (!(await idle(sessions, name, marks))) continue;
     // Saved notes go first, then a thread that needs you. A note can be dropped while the lead
     // is busy, such as a thread's end note once the thread starts over, so it is looked for
-    // again before typing, and its typing is cancelled if it goes meanwhile. It is known by its
-    // ID and its text together: SQLite gives a new note the ID of the last one deleted, and a
-    // note saved meanwhile must never be taken for this one, nor deleted as it.
+    // again before typing, and its typing is cancelled if it goes meanwhile. A note's ID is never
+    // used twice, so a note saved meanwhile is never taken for this one, nor deleted as it.
     if (note !== null) {
-      const same = "id = ? AND text = ?";
-      if (!db.query(`SELECT 1 FROM notes WHERE ${same}`).get(note.id, note.text)) continue;
+      if (!db.query("SELECT 1 FROM notes WHERE id = ?").get(note.id)) continue;
       const cancel = new AbortController();
       typingNote.set(note.id, cancel);
       try {
@@ -234,7 +232,7 @@ async function typeNotes(
       } finally {
         typingNote.delete(note.id);
       }
-      db.run(`DELETE FROM notes WHERE ${same}`, [note.id, note.text]);
+      db.run("DELETE FROM notes WHERE id = ?", [note.id]);
       continue;
     }
     if (thread === null || thread.noting === null) return;

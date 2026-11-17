@@ -117,10 +117,11 @@ console.log(JSON.stringify({ queued, notes }));`);
   });
 });
 
-// SQLite gives a new note the ID of the last one deleted. A thread starting over drops its end
-// note while it is being typed, after its paste, which still goes in. A note saved right then
-// takes its ID, and must still reach the lead, not be deleted as the note just typed.
-test("a note saved while a dropped end note is typed still reaches the lead", () => {
+// A thread starting over drops its end note even while it is being typed, after its paste,
+// which still goes in. If the new thread then ends the same way, its note says the same. It
+// must still reach the lead, not be deleted as the note just typed, so no note's ID is ever
+// used twice.
+test("a thread that ends again while its dropped end note is typed still tells the lead", () => {
   const typed = join(home, "typed");
   // A lead at its prompt that keeps every byte typed into it, a paste as soon as it arrives.
   const lead = `printf '\\033[?2004h'; stty -echo -icanon min 1; echo '❯'; exec cat >> ${typed}`;
@@ -130,20 +131,22 @@ const typedSoFar = () => (existsSync(${JSON.stringify(typed)}) ? readFileSync(${
 const until = async (done) => { for (let i = 0; i < 400 && !done(); i++) await Bun.sleep(25); return done(); };
 const tmux = (...args) => Bun.spawnSync(["tmux", "-L", socket, "-f", "/dev/null", ...args]);
 tmux("new-session", "-d", "-s", leadPlaces("simon", "app").name, "-x", "100", "-y", "30", "sh", "-c", ${JSON.stringify(lead)});
+// Each note sent, with its Enter after its paste, which the terminal hands on as a new line.
+const sent = () => typedSoFar().split("app-t1 is done: #7 merged into main\\x1b[201~\\n").length - 1;
 try {
   await endThread(db, socket, thread, "PR #7 was merged", "is done: #7 merged into main");
-  const { id } = db.query("SELECT id FROM notes").get();
+  const first = db.query("SELECT id FROM notes").get().id;
   // The end note is pasted, and its Enter comes a moment later.
   const pasted = await until(() => typedSoFar().includes("app-t1 is done"));
-  await startThread(db, { repo: "app", task: "t1" });
-  noteForLead(db, socket, thread, "started app-t2 from github: Fix login");
-  const reused = db.query("SELECT id FROM notes").get()?.id === id;
-  // Sent, with its Enter after its paste, which the terminal hands on as a new line, so
-  // nothing is left typing once tmux ends.
-  const delivered = await until(() => typedSoFar().includes("Fix login\\x1b[201~\\n"));
-  console.log(JSON.stringify({ pasted, reused, delivered }));
+  await Bun.sleep(5);
+  const fresh = await startThread(db, { repo: "app", task: "t1" });
+  await endThread(db, socket, fresh, "PR #7 was merged", "is done: #7 merged into main");
+  const second = db.query("SELECT id FROM notes").get()?.id;
+  // Both are sent, so nothing is left typing once tmux ends.
+  const delivered = await until(() => sent() === 2);
+  console.log(JSON.stringify({ pasted, newId: second !== undefined && second !== first, delivered }));
 } finally {
   tmux("kill-server");
 }`);
-  expect(seen).toEqual({ pasted: true, reused: true, delivered: true });
+  expect(seen).toEqual({ pasted: true, newId: true, delivered: true });
 });
