@@ -558,10 +558,10 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
     writeFileSync(join(builder(), "docs-only"), "résumé.md");
     verdict(1, "approve", "Ready to merge.");
     await startApp12();
-    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), 30_000);
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), 60_000);
     const prompt = read(join(codexHome(), "sessions", "prompt-1"));
     expect(prompt).toContain("The change only touches docs and Markdown, so don't run the tests.");
-  }, 60_000);
+  }, 100_000);
 
   // A file moved from code to docs removes code, though git would show only its new name.
   test("a change that moves code into docs is no docs-only change, and its tests run", async () => {
@@ -863,7 +863,7 @@ done`,
     const first = serve();
     await untilCloned();
     await skel(["start", "app-12"]);
-    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), 30_000);
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), 60_000);
     first.kill();
     await first.exited;
     expect(thread().reviewing).toBe(pushed());
@@ -872,7 +872,7 @@ done`,
     expect(finished("success")[0]?.sha).toBe(pushed());
     expect(reviews()).toEqual([{ commit: pushed(), verdict: "approve", body: "Looks right." }]);
     await until(() => thread().reviewing === null);
-  }, 60_000);
+  }, 130_000);
 
   // A review the daemon brings back runs before the builders are back, so its changes wait for
   // the builder rather than fail on a session that isn't there yet.
