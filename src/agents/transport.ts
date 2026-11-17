@@ -1,5 +1,7 @@
-// Typing a message into an agent's session: waiting until its harness shows it is ready, then
-// pasting the message and its Enter, one message at a time per session.
+// The transport module, built in: gets text into an agent and says when the agent is idle. It
+// works on any host's sessions, as it uses only the sessions module's paste, keys and read. It
+// tells idle from the screen: the harness's status line isn't live and a bare prompt shows,
+// which also shows a person's unsent draft. It delivers one message at a time per session, as a paste then Enter.
 import { dropStaged, pasteStaged, readSession, sendKey, stagePaste } from "./sessions.ts";
 
 // How typing waits, in milliseconds. `moment` is the pause between two looks at the screen,
@@ -90,9 +92,9 @@ export async function whyBusy(
   return "";
 }
 
-// Reports whether the agent shows a quiet, ready prompt, by its harness's marks, so Skelcrew can
-// avoid interrupting work.
-export async function isIdle(
+// Reports whether the agent is idle: its screen is quiet and shows a bare prompt, by its
+// harness's marks. Skelcrew checks it before typing a lead's notes, so it never interrupts work.
+export async function idle(
   socket: string,
   name: string,
   marks: Marks,
@@ -104,10 +106,12 @@ export async function isIdle(
 // One message at a time per session, so two pastes can't land before either's Enter.
 const typingQueues = new Map<string, Promise<void>>();
 
-// Queues a message for the session and returns a promise that settles after its typing
-// attempt, with what became of it. Messages wait their turn so two pastes cannot arrive
-// before either message's Enter. `marks` are those of the harness running in the session.
-export function typeInto(
+// Delivers a message into the agent once it is idle, never into a turn still running and never
+// on top of a person's unsent draft. Returns a promise that settles after the attempt, with
+// what became of the message, and rejects if the agent stays busy too long. Messages to one
+// session wait their turn, so two pastes cannot arrive before either message's Enter. `marks`
+// are the harness's in the session.
+export function deliver(
   socket: string,
   name: string,
   marks: Marks,

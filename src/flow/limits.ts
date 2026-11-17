@@ -3,7 +3,7 @@
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
 import { HarnessName, harnessNamed } from "../agents/harness.ts";
-import { typeInto } from "../agents/typing.ts";
+import { deliver } from "../agents/transport.ts";
 import { errorText } from "../say.ts";
 import { noteForLead, typeLeadNotes } from "./lead.ts";
 import { builderHarness, readThread, record } from "./thread.ts";
@@ -283,7 +283,7 @@ async function continueBuilder(
   record(db, folder, over, "its harness's usage limit reset, so Skelcrew types continue");
   try {
     const { marks } = builderHarness(thread);
-    await typeInto(sessions, folder, marks, "continue", { timeout: 60_000, signal });
+    await deliver(sessions, folder, marks, "continue", { timeout: 60_000, signal });
   } catch (error) {
     // A builder that met the limit again, or was typed to, since has a newer state to keep.
     if (signal.aborted || readThread(db, folder).erred) return;

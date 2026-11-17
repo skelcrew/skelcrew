@@ -1,0 +1,87 @@
+// The status module's five words: what a host shows for each thread's builder, from the same
+// fields as its word in the sidebar.
+import { expect, test } from "bun:test";
+import { statusOf } from "../src/flow/status.ts";
+import type { Thread } from "../src/flow/thread.ts";
+
+// A thread at work, with nothing else going on.
+const state: Thread = {
+  owner: "simon",
+  repo: "app",
+  task: "12",
+  folder: "app-12",
+  branch: "skelcrew/12",
+  base: null,
+  status: "working",
+  session: null,
+  rounds: 0,
+  pr: 34,
+  needs_you: false,
+  submitting: null,
+  reviewing: null,
+  queued: null,
+  telling: null,
+  held: null,
+  seen: [],
+  last_review: 0,
+  last_comment: 0,
+  last_check: 0,
+  asking: false,
+  stalled: false,
+  submitted: false,
+  erred: false,
+  limited: false,
+  limit_reset: null,
+  review_limited: false,
+  review_reset: null,
+  noting: null,
+  body: null,
+  title: null,
+  started: null,
+  checks: null,
+  reviewer: null,
+  reviewed_by: null,
+  review_round: null,
+  verdict: null,
+  review_line: null,
+  review_at: null,
+  harness: null,
+  short: null,
+  assigned: false,
+  changed: null,
+  updates: [],
+};
+const status = (more: Partial<Thread>) => statusOf({ ...state, ...more }, 3);
+
+test("a working builder works, and one waiting on its review or checks idles", () => {
+  expect(status({})).toBe("working");
+  expect(status({ status: "waiting", reviewing: "abc" })).toBe("idle");
+  expect(status({ status: "waiting", verdict: "approve", checks: "pending" })).toBe("idle");
+  expect(status({ status: "stopped" })).toBe("idle");
+  expect(status({ status: "done" })).toBe("idle");
+});
+
+test("an approval with green checks is ready to merge", () => {
+  const approved = { status: "waiting", needs_you: true, verdict: "approve" } as const;
+  expect(status({ ...approved, checks: "passing" })).toBe("ready");
+  expect(status({ ...approved, checks: null })).toBe("ready");
+  expect(status({ ...approved, checks: "failing" })).toBe("needs you");
+});
+
+test("a question, a stall, the round limit or a failed review needs you", () => {
+  expect(status({ asking: true })).toBe("needs you");
+  expect(status({ stalled: true })).toBe("needs you");
+  expect(status({ status: "waiting", needs_you: true, rounds: 4 })).toBe("needs you");
+  expect(status({ status: "waiting", needs_you: true, verdict: "failed" })).toBe("needs you");
+});
+
+test("a harness that stopped on an error, or a thread that failed, is in error", () => {
+  expect(status({ erred: true })).toBe("error");
+  expect(status({ status: "failed" })).toBe("error");
+  expect(status({ status: "failed", needs_you: true })).toBe("error");
+});
+
+test("a builder waiting out its usage limit idles, as it is woken once the limit resets", () => {
+  expect(status({ erred: true, limited: true })).toBe("idle");
+  expect(status({ erred: true, limited: true, asking: true })).toBe("needs you");
+});

@@ -5,11 +5,12 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { printThreads, type ThreadRow } from "../src/flow/list.ts";
+import { threadWord } from "../src/flow/status.ts";
 import type { Thread } from "../src/flow/thread.ts";
 import { draw as drawWith, noticeLines } from "../src/screen/layout.ts";
 import type { EntryCount } from "../src/screen/lists.ts";
 import { nextList, nextRow, rowAtLine } from "../src/screen/moves.ts";
-import { type Row, threadAge, threadWord } from "../src/screen/rows.ts";
+import { type Row, threadAge } from "../src/screen/rows.ts";
 import { sidebarWidth } from "../src/screen/screen.ts";
 import { source } from "./harness.ts";
 

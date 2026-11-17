@@ -5,7 +5,7 @@
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
 import { agentRuns } from "../agents/sessions.ts";
-import { draftReason, midTurn, typeInto, whyBusy } from "../agents/typing.ts";
+import { deliver, draftReason, midTurn, whyBusy } from "../agents/transport.ts";
 import { markSeen } from "../plugins/ask.ts";
 import { errorText } from "../say.ts";
 import { noteForLead, typeLeadNotes } from "./lead.ts";
@@ -203,7 +203,7 @@ const delivering = new Map<string, { cancel: AbortController; ended: Promise<voi
 
 // Types the thread's waiting messages into its builder, oldest first, while it can take them,
 // and returns once none is left or it can't. The ones left wait for the next attempt.
-async function deliver(db: Database, sessions: string, folder: string, signal: AbortSignal) {
+async function typeWaiting(db: Database, sessions: string, folder: string, signal: AbortSignal) {
   while (true) {
     const message = oldest(db, folder);
     if (message === null || signal.aborted) return;
@@ -223,7 +223,7 @@ async function deliver(db: Database, sessions: string, folder: string, signal: A
     // message stays saved for the next attempt.
     const { marks } = builderHarness(thread);
     const waitsFor = { timeout: 10_000, signal, unsent };
-    const typed = await typeInto(sessions, folder, marks, message.text, waitsFor);
+    const typed = await deliver(sessions, folder, marks, message.text, waitsFor);
     // Saved, so the draft it left is known for this message's even after a restart.
     if (typed === "left unsent")
       db.run("UPDATE messages SET pasted = 1 WHERE id = ?", [message.id]);
@@ -246,7 +246,7 @@ async function deliver(db: Database, sessions: string, folder: string, signal: A
 export function deliverMessages(db: Database, sessions: string, folder: string): void {
   if (delivering.has(folder)) return;
   const cancel = new AbortController();
-  const ended = deliver(db, sessions, folder, cancel.signal)
+  const ended = typeWaiting(db, sessions, folder, cancel.signal)
     .catch((error) => console.log(`couldn't type into ${folder}'s builder: ${errorText(error)}`))
     .finally(() => {
       if (delivering.get(folder) === attempt) delivering.delete(folder);

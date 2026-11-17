@@ -4,11 +4,10 @@
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
 import { noProgress } from "../agents/progress.ts";
-import { pastRoundLimit } from "../flow/decide.ts";
 import { leadOf } from "../flow/lead.ts";
-import { clockTime } from "../flow/limits.ts";
 import { messagesWaiting, waitingText } from "../flow/messages.ts";
-import { fullNameOf, needsYou, queuedForReview, Thread, threadName } from "../flow/thread.ts";
+import { needsYou, threadWord } from "../flow/status.ts";
+import { fullNameOf, Thread, threadName } from "../flow/thread.ts";
 import { green, grey, red, yellow } from "./look.ts";
 import { builderProgress, tokenText } from "./progress.ts";
 
@@ -70,50 +69,6 @@ export function threadMark(row: Pick<Row, "status" | "needsYou" | "word">): Mark
   if (row.word.startsWith("limit")) return ["○", grey];
   if (row.word === "approved") return ["●", green];
   return row.needsYou ? ["●", yellow] : marks[row.status];
-}
-
-// Returns the word for what the thread is doing, given the rounds of changes it may have. Its
-// status and needs you stay as they are: the word only describes them, from what they and the
-// latest review say. Past the limit a thread goes on needing you while its builder submits, so
-// that comes before a round under way. A round that failed keeps its submit or review saved.
-// A thread can need you for a reason with no word of its own, such as a builder that couldn't be
-// told about an event. Its word is then "needs you", rather than something untrue. A review or
-// builder waiting out its harness's usage limit says when the limit resets, as this machine's
-// clock shows it, such as "limit · 13:59", or only "limit" when the harness didn't say. Anything
-// that needs you comes before a limit, which only waits.
-export function threadWord(thread: Thread, maxRounds: number, now = Date.now()): string {
-  const { status, verdict, checks } = thread;
-  // A thread that failed, stopped or is done says just that. Otherwise a question from its builder
-  // comes first, then its harness stopping on an error, then why it needs you, then what it is
-  // doing.
-  if (status === "failed" || status === "stopped" || status === "done") return status;
-  const underWay = thread.submitting !== null || thread.reviewing !== null;
-  if (thread.asking) return "question";
-  if (thread.erred && !thread.limited) return "error";
-  // The round limit and an approval say what you must do next, so they stay ahead of a builder
-  // that stopped without submitting. Otherwise any reply it gave you, or the lead, would hide
-  // that the thread is ready to merge.
-  const past = thread.needs_you && pastRoundLimit(thread, maxRounds);
-  const failed = underWay || verdict === "failed";
-  const green = verdict === "approve" && (checks === "passing" || checks === null);
-  if (past) return "round limit";
-  if (thread.needs_you && !failed && green) return "approved";
-  // Stopping without submitting is a question written as plain text.
-  if (thread.stalled) return "question";
-  if (thread.needs_you && verdict === "timed out" && !underWay) return "review timed out";
-  if (thread.needs_you) return failed ? "review failed" : "needs you";
-  // Not needing you: a builder or a review waiting out a usage limit says until when.
-  const limitWord = (reset: number | null) =>
-    reset === null ? "limit" : `limit · ${clockTime(reset, now)}`;
-  if (thread.erred && thread.limited) return limitWord(thread.limit_reset);
-  if (thread.review_limited) return limitWord(thread.review_reset);
-  // A review waiting for a place shows as queued, any other round under way as reviewing, and
-  // a review's changes still waiting to be typed into the builder as changes. Otherwise it
-  // works or waits on checks.
-  if (queuedForReview(thread)) return "queued for review";
-  if (underWay) return "reviewing";
-  if (thread.telling !== null) return "changes";
-  return status === "working" ? "working" : "checks";
 }
 
 // Returns whether the thread's reviewer has it now: a review waiting for a place, running, or

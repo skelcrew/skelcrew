@@ -152,7 +152,7 @@ test("a question asked between a message's paste and its Enter leaves it unsent 
   );
   const seen = run(`
 import { readFileSync, existsSync } from "node:fs";
-import { forQuestion } from ${JSON.stringify(source("agents/typing.ts"))};
+import { forQuestion } from ${JSON.stringify(source("agents/transport.ts"))};
 import { stopDelivering } from ${JSON.stringify(source("flow/messages.ts"))};
 const received = ${JSON.stringify(join(home, "received.txt"))};
 const got = () => (existsSync(received) ? readFileSync(received, "utf8") : "");
@@ -211,7 +211,7 @@ const got = () => (existsSync(received) ? readFileSync(received, "utf8") : "");
 const count = () => db.query("SELECT 1 FROM messages").all().length;`;
   run(`
 ${reading}
-import { forQuestion } from ${JSON.stringify(source("agents/typing.ts"))};
+import { forQuestion } from ${JSON.stringify(source("agents/transport.ts"))};
 import { stopDelivering } from ${JSON.stringify(source("flow/messages.ts"))};
 Bun.spawnSync(["tmux", "-L", tmux, "new-session", "-d", "-s", "app-12", "-c", ${JSON.stringify(home)}, ${JSON.stringify(join(home, "builder.sh"))}]);
 await Bun.sleep(300);
