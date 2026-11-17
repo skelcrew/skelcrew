@@ -62,6 +62,36 @@ console.log(JSON.stringify(db.query("SELECT text FROM notes").all()));`);
   expect(texts[0]?.text).not.toContain("Esc");
 });
 
+// A review's changes wait while the builder is mid-turn, and then its session ends. A session
+// that is gone counts over a screen that last looked busy, so the thread needs you.
+test("a builder whose session ends mid-turn, with a review's changes waiting, makes the thread need you", () => {
+  // A stand-in builder mid-turn, whose status line redraws as Claude Code's does.
+  writeFileSync(
+    join(home, "busy.sh"),
+    '#!/bin/sh\nwhile true; do echo "esc to interrupt $(date +%N)"; sleep 0.2; done\n',
+    { mode: 0o755 },
+  );
+  const seen = run(`
+import { readThread } from ${JSON.stringify(source("flow/thread.ts"))};
+Bun.spawnSync(["tmux", "-L", tmux, "new-session", "-d", "-s", "app-12", ${JSON.stringify(join(home, "busy.sh"))}]);
+await Bun.sleep(300);
+db.run("UPDATE threads SET status = 'working', telling = 'Fix it.'");
+queueMessage(db, tmux, "app-12", { sender: "review", text: "Fix it.", said: "the review's changes", typed_in: [] });
+for (let i = 0; i < 4; i++) {
+  deliverAllWaiting(db, tmux);
+  await Bun.sleep(500);
+}
+const before = readThread(db, "app-12").needs_you;
+Bun.spawnSync(["tmux", "-L", tmux, "kill-session", "-t", "=app-12"]);
+for (let i = 0; i < 40 && !readThread(db, "app-12").needs_you; i++) {
+  deliverAllWaiting(db, tmux);
+  await Bun.sleep(500);
+}
+const thread = readThread(db, "app-12");
+console.log(JSON.stringify({ before, after: thread.needs_you, telling: thread.telling }));`);
+  expect(JSON.parse(seen)).toEqual({ before: false, after: true, telling: "Fix it." });
+}, 40_000);
+
 // A conflict took an approved PR out of ready to merge, and its message waits for a builder
 // that is missing. The thread needs you for that, but its PR still conflicts, so it isn't ready.
 test("a missing builder makes an approved PR that conflicts need you, not ready to merge", () => {

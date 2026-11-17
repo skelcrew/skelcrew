@@ -1033,6 +1033,10 @@ done`,
     writeFileSync(join(builder(), "busy"), "");
     await startApp12();
     await until(() => thread().telling !== null, 30_000);
+    // Skelcrew watches a builder for a second after it starts, and one that ends within it
+    // failed to start. With no CI to wait for, the review can come back within that second, so
+    // the session ends only once the watch is over, as for a builder that ended mid-work.
+    await until(() => Date.now() > Number(thread().working_since) + 2000);
     Bun.spawnSync(["tmux", "-L", socket, "kill-session", "-t", "=app-12"]);
     await until(() => thread().needs_you === 1, 30_000);
     expect(String(thread().telling)).toContain("The export has no test.");
