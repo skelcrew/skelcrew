@@ -53,7 +53,8 @@ const subagent = "01a1c003-ffff-7380-b6d9-c7ec08342361";
 // runs the Interrupt hooks instead. A hook's input is what the test left in its file, or {}. Text
 // typed into the builder goes in its file typed, and runs UserPromptSubmit, as talk does. renew
 // renews the login as Codex does from 0.167: it follows the link to it, writes the renewal beside
-// its target and renames it over it.
+// its target and renames it over it. Its arguments are written aside and moved into place, so a
+// test that sees the file never reads them half written.
 function fakeCodex(): void {
   script(
     "codex",
@@ -66,7 +67,7 @@ function fakeCodex(): void {
 fi
 cd "$CODEX_HOME"
 # Its arguments last, as tests wait for them before reading the others.
-env > env; echo "$OLDPWD" > pwd; printf '%s\\n' "$@" > args
+env > env; echo "$OLDPWD" > pwd; printf '%s\\n' "$@" > args.part; mv args.part args
 if [ "$1" != resume ]; then
   mkdir -p sessions/2026/11/09
   meta() { printf '{"type":"session_meta","payload":{"id":"%s","cwd":"%s","source":%s}}\\n' "$1" "$OLDPWD" "$2"; }
@@ -163,8 +164,9 @@ const env = () => homeEnv(home);
 // Runs sc as you would.
 const skel = (args: string[]) => runSkel(args, env());
 
-// A daemon's work takes its time here, so a wait lasts 15 seconds unless a test says otherwise.
-const until = (done: () => boolean, timeout = 15_000) => wait(done, { timeout });
+// A daemon's work takes its time here, and longer on a busy CI runner, so a wait lasts 30
+// seconds unless a test says otherwise.
+const until = (done: () => boolean, timeout = 30_000) => wait(done, { timeout });
 
 // Puts simon/app on the fake GitHub and tells Skelcrew about it.
 function addApp(): void {
@@ -191,7 +193,7 @@ async function app12(): Promise<{ status: string; needsYou: boolean } | undefine
 
 // Waits until app-12 needs you, or no longer does.
 async function untilNeedsYou(wanted: boolean) {
-  const deadline = Date.now() + 15_000;
+  const deadline = Date.now() + 30_000;
   while ((await app12())?.needsYou !== wanted) {
     if (Date.now() > deadline) throw new Error(`gave up waiting for needs you to be ${wanted}`);
     await Bun.sleep(100);
@@ -282,9 +284,11 @@ describe.skipIf(insideSandbox)("codex", () => {
     await act("stop", JSON.stringify({ hook_event_name: "Stop", last_assistant_message: said }));
     expect(read(join(builder(), "hooks"))).toBe("");
     await untilNeedsYou(true);
-    await until(() => read(join(lead(), "typed")).includes("app-12 needs you"));
-    expect(read(join(lead(), "typed"))).toContain(
-      'app-12 needs you: its builder stopped without submitting, saying "Should the export keep empty rows?"',
+    // The note reaches the lead a piece at a time, so the test waits for all of it.
+    await until(() =>
+      read(join(lead(), "typed")).includes(
+        'app-12 needs you: its builder stopped without submitting, saying "Should the export keep empty rows?"',
+      ),
     );
     // Another turn ending while it still waits is no news.
     await act("stop");
