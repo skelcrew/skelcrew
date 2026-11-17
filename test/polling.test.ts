@@ -882,7 +882,7 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
       env: env(),
     });
     expect(JSON.parse(listed.stdout.toString())).toMatchObject([
-      { issue: "app-12", stage: "issue" },
+      { task: "app-12", issue: "#12", stage: "issue" },
     ]);
     const again = Bun.spawnSync([process.execPath, main, "rm", "app-12"], {
       env: env(),
@@ -1085,14 +1085,24 @@ echo "Not logged in"; exit 1`,
     };
     await until(() => listed().length === 1);
     expect(listed()).toEqual([
-      { issue: "app-12", stage: "issue", title: "Add export", thread: null },
+      {
+        task: "app-12",
+        stage: "issue",
+        title: "Add export",
+        short: null,
+        issue: "#12",
+        thread: null,
+        pr: null,
+        checks: null,
+        review: null,
+      },
     ]);
     // Nothing starts until the label is added.
     await morePolls();
     expect(claims()).toEqual([]);
     changes([issue12(true)]);
     await until(() => thread().task === 12);
-    expect(listed()).toMatchObject([{ issue: "app-12", stage: "working" }]);
+    expect(listed()).toMatchObject([{ task: "app-12", issue: "#12", stage: "working" }]);
     expect(thread().issue_link).toBe("https://github.com/simon/app/issues/12");
     await until(() => thread().assigned === 1);
     expect(claims()).toEqual([claim12]);
@@ -1107,7 +1117,7 @@ echo "Not logged in"; exit 1`,
     // Approved with every check green, it waits for you to merge.
     pr({ labeled: true, reviews: [skelReview], checks: [approved, check(900, "passed")] });
     await until(() => thread().needs_you === 1);
-    expect(listed()).toMatchObject([{ issue: "app-12", stage: "ready for review" }]);
+    expect(listed()).toMatchObject([{ task: "app-12", issue: "#12", stage: "ready for review" }]);
     // Merged, the task is too, and you stay assigned. The tracker closes the issue, which then
     // leaves the list.
     pr({
@@ -1117,7 +1127,7 @@ echo "Not logged in"; exit 1`,
       checks: [approved, check(900, "passed")],
     });
     await until(() => thread().status === "done");
-    expect(listed()).toMatchObject([{ issue: "app-12", stage: "merged" }]);
+    expect(listed()).toMatchObject([{ task: "app-12", issue: "#12", stage: "merged" }]);
     changes([taskItem("12", "Add export", { state: "closed", labels: ["skelcrew"] })]);
     await until(() => listed().length === 0);
     expect(assigns()).toEqual([assignOn]);
