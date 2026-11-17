@@ -910,7 +910,9 @@ exec "${realGit}" "$@"`,
     );
     pr({ state: "merged", reviews: [skelReview], checks: [approved] });
     await until(() => existsSync(held));
-    // The lead runs sc rm. Once it marks the thread stopped, it is removing it.
+    // The lead runs sc rm. Once it asks the forge to close the PR, it is removing the thread.
+    // Its status says nothing here: with its builder gone while the poll is held, the thread
+    // can be marked failed, which sc rm doesn't mark stopped.
     const hashed = new Bun.CryptoHasher("sha256").update("simon/app").digest("hex").slice(0, 16);
     const leadSocket = join(home, "run", "skelcrew", "leads", hashed, "skelcrew.sock");
     const removing = Bun.spawn([process.execPath, main, "rm", "app-12"], {
@@ -918,9 +920,13 @@ exec "${realGit}" "$@"`,
       stderr: "pipe",
     });
     running.push(removing);
-    await until(() => thread().status === "stopped");
+    // An sc rm that fails ends before that, and says why.
+    const closing = () => asked(plugin).some((q) => q.ask === "close pr");
+    await until(() => closing() || removing.exitCode !== null);
     writeFileSync(go, "");
-    expect(await removing.exited).toBe(0);
+    await removing.exited;
+    expect(await new Response(removing.stderr).text()).toBe("");
+    expect(removing.exitCode).toBe(0);
     expect(thread().status).toBe("done");
     await morePolls();
     const leadTyped = read(join(data(), "claude", leadName, "typed"));
