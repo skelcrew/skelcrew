@@ -1056,6 +1056,36 @@ done`,
     expect(read(join(codexHome(), "sessions", "prompt-2"))).toContain(`git diff ${next}...HEAD`);
   }, 180_000);
 
+  // Against next, which lacks main's new commit, the merge brings in more than its base.
+  test("a PR retargeted while its merge waits for CI is reviewed, not kept approved", async () => {
+    const work = addApp();
+    git(work, "push", "-q", "origin", "main:next");
+    verdict(1, "approve", "Ready to merge.");
+    verdict(2, "approve", "Reviewed against next.");
+    const { merged } = await approveThenMerge(work);
+    await until(() => read(join(data(), "threads", "app-12.log")).includes("waiting for CI"));
+    const retargeted = (state: string) =>
+      answer(plugin, "changed", {
+        items: [
+          taskItem("12", "Add export", { body: "As JSON" }),
+          prItem("7", "Add export", {
+            branch: "skelcrew/12-add-export",
+            head: merged,
+            base: "next",
+            checks: [ciCheck(state)],
+          }),
+        ],
+        next: null,
+      });
+    retargeted("running");
+    await until(() => copiedPr().includes('"base":"next"'), 60_000);
+    retargeted("passed");
+    await until(() => reviews().length === 2, 60_000);
+    expect(read(join(codexHome(), "sessions", "count")).trim()).toBe("2");
+    expect(reviews()[1]).toMatchObject({ commit: merged, body: "Reviewed against next." });
+    expect(statuses().some((s) => s.description.startsWith("approval kept"))).toBe(false);
+  }, 180_000);
+
   test("a merge whose wait for CI a restart cut short still keeps the approval", async () => {
     const work = addApp();
     verdict(1, "approve", "Ready to merge.");

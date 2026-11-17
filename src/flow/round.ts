@@ -261,11 +261,27 @@ async function reviewRound(
   const merged = approved !== null && onlyMergedBase(skelcrewClone, approved, sha, bases);
   if (approved !== null && merged && pr !== null && suite(Number.POSITIVE_INFINITY) === "ci") {
     const waiting = { reviewing: sha, submitting: null, reviewer, queued: null };
-    record(db, folder, waiting, `only merged ${baseOf(thread)}: waiting for CI to pass on ${sha}`);
+    record(
+      db,
+      folder,
+      waiting,
+      `only merged ${prBase(db, thread)}: waiting for CI to pass on ${sha}`,
+    );
     const ci = await ciEnds(db, thread, pr, sha, AbortSignal.any([signal, checkFailed.signal]));
     if (signal.aborted) return;
-    if (ci === "passing") {
-      const body = `Approval kept: this commit only merges ${baseOf(thread)} into ${approved}, which Skelcrew's reviewer approved, and changes nothing else in the PR. Every CI check on it passed.`;
+    // The PR may have moved to another base while CI ran, against which the commit can do more
+    // than merge it. So the approval is kept only if it still only merges the PR's base as the
+    // forge has it now. A base that can't be fetched gets a review, which says why it failed.
+    const base = prBase(db, thread);
+    const still =
+      ci === "passing" &&
+      (await fetchInto(db, repository, skelcrewClone, base, bases).then(
+        () => onlyMergedBase(skelcrewClone, approved, sha, bases),
+        () => false,
+      ));
+    if (signal.aborted) return;
+    if (still) {
+      const body = `Approval kept: this commit only merges ${base} into ${approved}, which Skelcrew's reviewer approved, and changes nothing else in the PR. Every CI check on it passed.`;
       const verdict: Review = { verdict: "approve", body };
       const kept = { verdict, by: thread.reviewed_by ?? reviewer, kept: approved };
       await pending;
@@ -273,6 +289,8 @@ async function reviewRound(
       return;
     }
     if (ci === "failing") record(db, folder, {}, `CI failed on ${sha}, so it is reviewed`);
+    else if (ci === "passing")
+      record(db, folder, {}, `${sha} does more than merge ${base}, so it is reviewed`);
   }
   // A review that has to wait is saved as queued, with when it joined, so the thread says so,
   // and a restart puts it back in the same place. One that starts at once is saved as
@@ -413,13 +431,13 @@ async function actOnVerdict(
   const before = thread.rounds;
   const ready = hasForge ? null : `${threadName(db, thread)} is ready on branch ${thread.branch}`;
   const decided = afterReview(before, verdict, maxRounds, ready);
-  const keptWhy = `approval kept: only merged ${baseOf(thread)} into ${kept}`;
+  const keptWhy = `approval kept: only merged ${prBase(db, thread)} into ${kept}`;
   const outcome =
     kept === null
       ? decided
       : {
           ...decided,
-          description: `approval kept: only merged ${baseOf(thread)}`,
+          description: `approval kept: only merged ${prBase(db, thread)}`,
           why: ready === null ? `${keptWhy}, so it waits on CI` : `${keptWhy}; ${ready}`,
         };
   if ((verdict.verdict === "approve" || verdict.verdict === "changes") && pr !== null)
