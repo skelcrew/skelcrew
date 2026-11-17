@@ -1837,8 +1837,11 @@ await serve(${JSON.stringify(socket)}, 200);`;
     expect(log()).toContain("wrong approach");
     expect(asked(plugin).filter((q) => q.ask !== "claims")).toEqual([]);
 
-    // Started over, it isn't taken for a thread whose branch was deleted, and gets as far as
-    // the first did.
+    // Skelcrew's clone still has the refs of the first thread's push, as after a daemon that
+    // stopped part way through an end. Started over, it isn't taken for a thread whose branch
+    // was deleted, and gets as far as the first did.
+    const refs = () => git(join(data(), "repos", "simon", "app"), "for-each-ref", "refs/skelcrew/");
+    expect(refs()).toContain("refs/skelcrew/threads/");
     const before = log().split(ready).length;
     expect((await skel(["start", "app-t1"])).out).toBe("Started app-t1.\n");
     await until(() => log().split(ready).length > before, 30_000);

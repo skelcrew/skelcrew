@@ -129,6 +129,27 @@ export async function startThread(
     for (let n = 2; taken(free); n++) free = `${folder}-${n}`;
     return free;
   };
+  // Skelcrew's clone keeps refs of what a thread pushed and had approved, named by its folder.
+  // A thread starting over in a failed or done thread's folder would be taken for one that
+  // pushed already, and without a forge ended at once, and an old approval could hold for its
+  // work. So they go now, before the new thread is recorded and can push. Ending a thread
+  // leaves them, as nothing reads a done thread's refs, and an end cut short would leave them
+  // anyway. A thread that isn't failed or done keeps them, and is refused below.
+  const ended = Thread.nullable().parse(
+    db
+      .query(`SELECT * FROM task_threads ${where} AND status IN ('failed', 'done')`)
+      .get(owner, repo, task),
+  );
+  if (ended)
+    for (const kind of ["threads", "bases", "remote", "approved"])
+      await quietly([
+        "git",
+        "-C",
+        cloneDir(owner, repo),
+        "update-ref",
+        "-d",
+        `refs/skelcrew/${kind}/${ended.folder}`,
+      ]);
   // Check again for a thread and record the new one in one transaction, so a failed or done
   // thread's row is never removed without the new one taking its place.
   return db.transaction(() => {
