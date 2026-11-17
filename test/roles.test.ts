@@ -21,19 +21,19 @@ const waiting =
 const leadTasks = [
   [
     "- sc issue ls lists open issues, and sc ps lists threads, with their status, whether they need the human, and each one's PR, CI and review, such as #242, failed and changes r3.",
-    "- sc ls lists tasks: open issues, and the work on each. Each row says what is happening, such as waiting · #242 · CI failed · changes r3, and whether it needs the human. sc ls --all adds tasks whose work ended. sc ps lists threads, with the same columns.",
+    "- sc ls lists open issues and the work on each, one row each. Each row says what is happening, such as waiting · #242 · CI failed · changes r3, and whether it needs the human. sc ls --all adds work that ended. sc ps lists threads, with the same columns.",
   ],
   [
     "- sc pr show app-13, or a PR's number such as sc pr show 242, shows a PR: its state, branch, thread, checks, latest review and description, with the log of each failed check. Use it to see why CI failed or what a review asked for.",
-    "- sc show app-13 shows a task: its issue, threads, PR with its checks and review, and its description as its reviewer gets it, then the PR's latest review and description, with the log of each failed check. Use it to see why CI failed or what a review asked for. sc pr show 242 shows the task of PR 242 the same way.",
+    "- sc show app-13 shows one piece of work: its issue, threads, PR with its checks and review, and its description as its reviewer gets it, then the PR's latest review and description, with the log of each failed check. Use it to see why CI failed or what a review asked for. sc pr show 242 shows the work on PR 242 the same way.",
   ],
   [
     "Skelcrew keeps its own copy: sc issue ls and sc issue show app-13 show issues, with the title and body a builder sees, and sc ps and sc pr show show PRs.",
-    "Skelcrew keeps its own copy: sc ls and sc show app-13 show issues, tasks and their PRs, with the title and description a builder sees.",
+    "Skelcrew keeps its own copy: sc ls and sc show app-13 show issues, threads and their PRs, with the title and description a builder sees.",
   ],
   [
     '- sc tell app-13 "<text>" types a message into that thread\'s builder once it is idle,',
-    '- sc tell app-13 "<text>", or sc tell app-13/builder "<text>", types a message into that task\'s builder once it is idle,',
+    '- sc tell app-13 "<text>", or sc tell app-13/builder "<text>", types a message into that thread\'s builder once it is idle,',
   ],
 ];
 
