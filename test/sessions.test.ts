@@ -1,5 +1,5 @@
-// The sessions module on tmux, and typing into a session, against a fake harness on a tmux server
-// of the test's own.
+// The sessions module on tmux, and the built-in transport on top of it, against a fake harness
+// on a tmux server of the test's own.
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import {
   existsSync,
@@ -29,7 +29,7 @@ import {
   stopSession,
 } from "../src/agents/sessions.ts";
 import { tmuxIsAtLeast } from "../src/agents/tmux.ts";
-import { isIdle, type Marks, typeInto } from "../src/agents/typing.ts";
+import { deliver, idle, type Marks } from "../src/agents/transport.ts";
 import { source, until as wait } from "./harness.ts";
 
 const moment = 100;
@@ -98,7 +98,7 @@ const read = (file: string) =>
 
 test("a typed message with several lines arrives whole, as one paste and one Enter", async () => {
   start("lead", harness());
-  await typeInto(socket, "lead", claude.marks, "fix the bug\nthen run the tests", { moment });
+  await deliver(socket, "lead", claude.marks, "fix the bug\nthen run the tests", { moment });
   // The terminal turns the Enter tmux sends into a newline, so one newline means one Enter.
   await until(() => read("received.txt").endsWith("\n"));
   await Bun.sleep(moment * 3);
@@ -109,15 +109,15 @@ test("a message arrives whole while someone is scrolled back, and the agent read
   start("lead", harness());
   await showing("lead", claude.marks.prompt);
   Bun.spawnSync(["tmux", "-L", socket, "copy-mode", "-t", "=lead:"]);
-  expect(await isIdle(socket, "lead", claude.marks, { moment })).toBe(true);
-  await typeInto(socket, "lead", claude.marks, "fix the bug", { moment });
+  expect(await idle(socket, "lead", claude.marks, { moment })).toBe(true);
+  await deliver(socket, "lead", claude.marks, "fix the bug", { moment });
   await until(() => read("received.txt").endsWith("\n"));
   expect(read("received.txt")).toBe("\x1b[200~fix the bug\x1b[201~\n");
 });
 
 test("typing waits while the harness is busy, then goes through", async () => {
   start("lead", harness(1));
-  await typeInto(socket, "lead", claude.marks, "hello", { moment });
+  await deliver(socket, "lead", claude.marks, "hello", { moment });
   await until(() => read("received.txt").endsWith("\n"));
   expect(read("lost.txt")).toBe("");
   expect(read("received.txt")).toBe("\x1b[200~hello\x1b[201~\n");
@@ -126,7 +126,7 @@ test("typing waits while the harness is busy, then goes through", async () => {
 test("typing goes by the busy and ready marks of the harness it types into", async () => {
   const marks = { busy: "esc to stop", prompt: "›" };
   start("lead", harness(1, marks));
-  await typeInto(socket, "lead", marks, "hello", { moment });
+  await deliver(socket, "lead", marks, "hello", { moment });
   await until(() => read("received.txt").endsWith("\n"));
   expect(read("lost.txt")).toBe("");
   expect(read("received.txt")).toBe("\x1b[200~hello\x1b[201~\n");
@@ -135,7 +135,7 @@ test("typing goes by the busy and ready marks of the harness it types into", asy
 test("typing gives up when the harness stays busy", async () => {
   start("lead", harness(30));
   await showing("lead", claude.marks.busy);
-  const typing = typeInto(socket, "lead", claude.marks, "hello", { moment, timeout: 500 });
+  const typing = deliver(socket, "lead", claude.marks, "hello", { moment, timeout: 500 });
   await expect(typing).rejects.toThrow("esc to interrupt");
   expect(read("lost.txt")).toBe("");
 });
@@ -143,11 +143,11 @@ test("typing gives up when the harness stays busy", async () => {
 test("a message cancelled while the harness is busy is never typed", async () => {
   start("lead", harness(1));
   const cancel = new AbortController();
-  const typing = typeInto(socket, "lead", claude.marks, "stale", { moment, signal: cancel.signal });
+  const typing = deliver(socket, "lead", claude.marks, "stale", { moment, signal: cancel.signal });
   await Bun.sleep(300);
   cancel.abort();
   await typing;
-  typeInto(socket, "lead", claude.marks, "fresh", { moment });
+  deliver(socket, "lead", claude.marks, "fresh", { moment });
   await until(() => read("received.txt").endsWith("\n"));
   expect(read("received.txt")).toBe("\x1b[200~fresh\x1b[201~\n");
 });
@@ -155,15 +155,15 @@ test("a message cancelled while the harness is busy is never typed", async () =>
 test("typing says so when it gives up because there is no prompt", async () => {
   start("lead", ["sh", "-c", "echo starting; sleep 30"]);
   await showing("lead", "starting");
-  const typing = typeInto(socket, "lead", claude.marks, "hello", { moment, timeout: 300 });
+  const typing = deliver(socket, "lead", claude.marks, "hello", { moment, timeout: 300 });
   await expect(typing).rejects.toThrow("prompt");
 });
 
 test("two messages typed at once both arrive whole, in order, each sent", async () => {
   start("lead", harness());
   await Promise.all([
-    typeInto(socket, "lead", claude.marks, "first\nmessage", { moment }),
-    typeInto(socket, "lead", claude.marks, "second", { moment }),
+    deliver(socket, "lead", claude.marks, "first\nmessage", { moment }),
+    deliver(socket, "lead", claude.marks, "second", { moment }),
   ]);
   await until(() => read("received.txt").endsWith("second\x1b[201~\n"));
   expect(read("received.txt")).toBe("\x1b[200~first\nmessage\x1b[201~\n\x1b[200~second\x1b[201~\n");
@@ -212,7 +212,7 @@ for (const [title, marks, draft] of drafts) {
     writeFileSync(join(home, "draft"), draft);
     start("lead", drafting(marks));
     await showing("lead", draft);
-    const typing = typeInto(socket, "lead", marks, "hello", { moment });
+    const typing = deliver(socket, "lead", marks, "hello", { moment });
     // Long enough for several looks at the screen, each of which must leave the draft alone.
     await Bun.sleep(moment * 8);
     expect(read("received.txt")).toBe("");
@@ -228,7 +228,7 @@ for (const [title, marks, draft] of drafts) {
     writeFileSync(join(home, "draft"), draft);
     start("lead", drafting(marks));
     await showing("lead", draft);
-    const typing = typeInto(socket, "lead", marks, "hello", { moment, timeout: 500 });
+    const typing = deliver(socket, "lead", marks, "hello", { moment, timeout: 500 });
     await expect(typing).rejects.toThrow("unsent draft");
     expect(read("received.txt")).toBe("");
   });
@@ -259,7 +259,7 @@ exec "${real}" "$@"
   process.env.PATH = `${bin}:${path}`;
   try {
     start("lead", drafting(claude.marks));
-    const typing = typeInto(socket, "lead", claude.marks, "hello", { moment });
+    const typing = deliver(socket, "lead", claude.marks, "hello", { moment });
     await until(() => existsSync(join(home, "draft")));
     await Bun.sleep(moment * 8);
     expect(read("received.txt")).toBe("");
@@ -528,8 +528,8 @@ test("idle means a quiet pane showing the prompt, and not busy", async () => {
   await showing("busy", claude.marks.busy);
   await showing("drawing", "❯");
   await showing("other", "ready");
-  expect(await isIdle(socket, "waiting", claude.marks, { moment })).toBe(true);
-  expect(await isIdle(socket, "busy", claude.marks, { moment })).toBe(false);
-  expect(await isIdle(socket, "drawing", claude.marks, { moment })).toBe(false);
-  expect(await isIdle(socket, "other", claude.marks, { moment })).toBe(false);
+  expect(await idle(socket, "waiting", claude.marks, { moment })).toBe(true);
+  expect(await idle(socket, "busy", claude.marks, { moment })).toBe(false);
+  expect(await idle(socket, "drawing", claude.marks, { moment })).toBe(false);
+  expect(await idle(socket, "other", claude.marks, { moment })).toBe(false);
 });

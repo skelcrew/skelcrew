@@ -15,7 +15,7 @@ import {
   type Labels,
   startSession,
 } from "../agents/sessions.ts";
-import { isIdle, typeInto } from "../agents/typing.ts";
+import { deliver, idle } from "../agents/transport.ts";
 import { agentRoles } from "../config.ts";
 import { Repository } from "../db.ts";
 import { cloneDir, leadPlaces } from "../paths.ts";
@@ -189,15 +189,15 @@ async function typeNotes(
     if (!agentRuns(sessions, name)) return;
     // A lead that is running has started, so it has a harness.
     const { marks } = harnessNamed(harness ?? "claude");
-    if (!(await isIdle(sessions, name, marks))) continue;
+    if (!(await idle(sessions, name, marks))) continue;
     // Saved notes go first, then a thread that needs you.
     if (note !== null) {
-      await typeInto(sessions, name, marks, note.text);
+      await deliver(sessions, name, marks, note.text);
       db.run("DELETE FROM notes WHERE id = ?", [note.id]);
       continue;
     }
     if (thread === null || thread.noting === null) return;
-    await typeInto(sessions, name, marks, `${threadName(db, thread)} needs you: ${thread.noting}`);
+    await deliver(sessions, name, marks, `${threadName(db, thread)} needs you: ${thread.noting}`);
     // The thread may have stopped needing you and started again while this was typed.
     if (readThread(db, thread.folder).noting === thread.noting)
       record(db, thread.folder, { noting: null }, "told the lead it needs you");
