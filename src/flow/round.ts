@@ -4,7 +4,7 @@
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
 import { type HarnessName, harnessNamed } from "../agents/harness.ts";
-import { reviewLimit, threadConfig } from "../config.ts";
+import { repositoryCommands, reviewLimit, threadConfig } from "../config.ts";
 import { cloneDir } from "../paths.ts";
 import { failedLog, forgeOf, openPr, postReview, setStatus } from "../plugins/ask.ts";
 import { quietly } from "../run.ts";
@@ -149,8 +149,9 @@ function ciOfCommit(db: Database, thread: Thread, pr: number, sha: string): () =
   };
 }
 
-// What a round asks of one run of its review, before the task, the clone and the base are read.
-type Asked = Omit<Parameters<typeof review>[0], "clone" | "issue" | "base">;
+// What a round asks of one run of its review, before the task, the clone, the base and the test
+// commands are read.
+type Asked = Omit<Parameters<typeof review>[0], "clone" | "issue" | "base" | "test">;
 
 // The reviews of every thread, kept to limits.reviews at once. A review of a commit CI doesn't
 // run on runs the repository's whole test suite, so too many at once slow every one of them
@@ -262,9 +263,9 @@ async function reviewRound(
   // one after a timeout. A later run keeps the review's place, and says it is queued only when
   // it waits.
   let queued = waits;
-  // The task, the clone and the base branch are read only once the review's turn comes and its
-  // check is pending, as reading them can fail, and a round still waiting on its check must not
-  // fail early. What the run says of its harness's usage limit is saved before its place in the
+  // The task, the clone, the base branch and the test commands are read only once the review's
+  // turn comes and its check is pending, as reading them can fail, and a round still waiting on
+  // its check must not fail early. What the run says of its harness's usage limit is saved before its place in the
   // queue is given back, as giving it back starts the next review at once, which must see it.
   // A run that met the limit holds every review on that harness until it resets. A review the
   // queue didn't start, as the limit was already in force, changes nothing. Any other run that
@@ -289,6 +290,7 @@ async function reviewRound(
             issue: threadTask(db, thread),
             // Setting up the thread's clone put the base branch there under origin/.
             base: `origin/${baseOf(thread)}`,
+            test: repositoryCommands(thread).test,
           });
           const { harness } = given;
           if (result.verdict === "limited") {

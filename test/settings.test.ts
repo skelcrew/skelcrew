@@ -1,7 +1,15 @@
 // Settings in two layers: the repository's committed skelcrew.yaml, read from Skelcrew's clone of
 // it, over your own config.yaml.
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { availableParallelism, tmpdir } from "node:os";
 import { join } from "node:path";
 import { source } from "./harness.ts";
@@ -30,7 +38,7 @@ function settings(yours: string, shared: string | null): void {
 // Runs code against config.ts in a process of its own, as homedir() keeps the HOME this one
 // started with, and returns what it printed and the error it ended with, if any.
 function run(code: string): { out: string; err: string } {
-  const script = `import { repositorySetup, reviewLimit, threadConfig } from ${JSON.stringify(source("config.ts"))};
+  const script = `import { repositoryCommands, reviewLimit, threadConfig } from ${JSON.stringify(source("config.ts"))};
 const app = { owner: "simon", repo: "app" };
 ${code}`;
   const done = Bun.spawnSync([process.execPath, "-e", script], {
@@ -91,13 +99,87 @@ test("your model for a role doesn't follow it onto the harness skelcrew.yaml pic
   expect(forApp().reviewer).toEqual({ harness: "claude", model: "sonnet" });
 });
 
-test("setup comes from the skelcrew.yaml in Skelcrew's clone", () => {
+// Returns app's setup and test commands, and whether each was detected.
+const commands = () => JSON.parse(run("console.log(JSON.stringify(repositoryCommands(app)));").out);
+
+test("setup and test come from the skelcrew.yaml in Skelcrew's clone", () => {
   settings("harness: claude\n", "setup: [bun install, make]\ntest: [bun test]\n");
-  expect(run("console.log(JSON.stringify(repositorySetup(app)));").out).toBe(
-    '["bun install","make"]\n',
-  );
+  writeFileSync(join(clone(), "go.mod"), "");
+  expect(commands()).toEqual({
+    setup: { commands: ["bun install", "make"], detected: false },
+    test: { commands: ["bun test"], detected: false },
+  });
+});
+
+test("what skelcrew.yaml doesn't name is detected from the repository's files", () => {
+  settings("harness: claude\n", "test: [make check]\n");
+  writeFileSync(join(clone(), "go.mod"), "");
+  expect(commands()).toEqual({
+    setup: { commands: ["go mod download"], detected: true },
+    test: { commands: ["make check"], detected: false },
+  });
   settings("harness: claude\n", null);
-  expect(run("console.log(JSON.stringify(repositorySetup(app)));").out).toBe("[]\n");
+  expect(commands()).toEqual({
+    setup: { commands: ["go mod download"], detected: true },
+    test: { commands: ["go test ./..."], detected: true },
+  });
+});
+
+// Skelcrew's clone follows the default branch, so what is detected follows it too.
+test("detection follows the files in Skelcrew's clone as they change", () => {
+  settings("harness: claude\n", null);
+  writeFileSync(join(clone(), "go.mod"), "");
+  expect(commands().test.commands).toEqual(["go test ./..."]);
+  rmSync(join(clone(), "go.mod"));
+  writeFileSync(join(clone(), "Cargo.toml"), "");
+  expect(commands().test.commands).toEqual(["cargo test"]);
+});
+
+// A link could point at any file of yours, so it is never read.
+test("a linked file in the clone counts for nothing in detection", () => {
+  settings("harness: claude\n", null);
+  writeFileSync(join(home, "Makefile"), "check:\n");
+  symlinkSync(join(home, "Makefile"), join(clone(), "Makefile"));
+  expect(commands().test).toEqual({ commands: [], detected: true });
+});
+
+// Detection only stands in for what no file names, so a file it can't read never stops
+// commands that are named.
+test("named setup and test never read the files detection looks at", () => {
+  settings("harness: claude\nsetup: []\n", "test: [make test]\n");
+  writeFileSync(join(clone(), "package.json"), "{}");
+  chmodSync(join(clone(), "package.json"), 0);
+  expect(commands()).toEqual({
+    setup: { commands: [], detected: false },
+    test: { commands: ["make test"], detected: false },
+  });
+  // With one left to detect, the unreadable file is read and says so.
+  settings("harness: claude\n", "test: [make test]\n");
+  expect(run("repositoryCommands(app);").err).toContain("EACCES");
+});
+
+// An empty list says the repository has no setup, which detection mustn't override.
+test("an empty list in skelcrew.yaml counts as named", () => {
+  settings("harness: claude\n", "setup: []\n");
+  writeFileSync(join(clone(), "go.mod"), "");
+  expect(commands().setup).toEqual({ commands: [], detected: false });
+});
+
+// Each of setup and test comes from the repository's skelcrew.yaml, else your config, else
+// detection. Your empty list turns detection off, as the repository's does.
+test("setup and test come from the repository, then your config, then detection", () => {
+  settings("harness: claude\nsetup: []\ntest: [make test]\n", "test: [bun run check]\n");
+  writeFileSync(join(clone(), "go.mod"), "");
+  expect(commands()).toEqual({
+    setup: { commands: [], detected: false },
+    test: { commands: ["bun run check"], detected: false },
+  });
+  settings("harness: claude\ntest: [make test]\n", null);
+  writeFileSync(join(clone(), "go.mod"), "");
+  expect(commands()).toEqual({
+    setup: { commands: ["go mod download"], detected: true },
+    test: { commands: ["make test"], detected: false },
+  });
 });
 
 test("a skelcrew.yaml that isn't valid, or isn't a plain file, says so rather than be ignored", () => {
@@ -106,7 +188,7 @@ test("a skelcrew.yaml that isn't valid, or isn't a plain file, says so rather th
   settings("harness: claude\n", null);
   writeFileSync(join(home, "secret"), "setup: [cat secret]\n");
   symlinkSync(join(home, "secret"), join(clone(), "skelcrew.yaml"));
-  expect(run("repositorySetup(app);").err).toContain("isn't a plain file");
+  expect(run("repositoryCommands(app);").err).toContain("isn't a plain file");
 });
 
 test("how many reviews run at once comes from your config only, else a quarter of the cores", () => {
