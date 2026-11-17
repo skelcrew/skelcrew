@@ -308,7 +308,7 @@ export async function setUpThread(db: Database, thread: Thread): Promise<void> {
   // Make sure no git login reached the clone's settings before the builder can read them,
   // then run the repository's setup commands in the sandbox.
   refuseCredentials(clone);
-  for (const command of repositoryCommands(thread).setup) {
+  for (const command of repositoryCommands(thread).setup ?? []) {
     const { argv, env } = setupCommand(clone, command);
     await mustRun(argv, `the setup command "${command}"`, env);
   }
@@ -323,14 +323,20 @@ export function builderInstructions(commands: Pick<Settings, "setup" | "test">):
   const instructions = builtInRole("builder").instructions.replace(/\n$/, "");
   const { setup, test } = commands;
   const shown = (list: string[]) => `\`${list.join(" && ")}\``;
+  // A missing command is one the builder may need to ask about. An empty list says on purpose
+  // that there is none, so the builder isn't sent to the lead for it.
   const setupTold =
-    setup.length > 0
-      ? `Skelcrew set up your clone with ${shown(setup)}.`
-      : "No setup command is configured.";
+    setup === undefined
+      ? "No setup command is configured."
+      : setup.length === 0
+        ? "Setup is configured as none, so Skelcrew ran no setup command."
+        : `Skelcrew set up your clone with ${shown(setup)}.`;
   const testTold =
-    test.length > 0
-      ? `The repository's whole test suite runs with ${shown(test)}. That is for CI and the reviewer, so don't run it yourself. It shows how the repository runs its tests, lint and typecheck, so run the parts near your change.`
-      : "No test command is configured.";
+    test === undefined
+      ? "No test command is configured."
+      : test.length === 0
+        ? "Test is configured as none, so the repository has no test suite to run."
+        : `The repository's whole test suite runs with ${shown(test)}. That is for CI and the reviewer, so don't run it yourself. It shows how the repository runs its tests, lint and typecheck, so run the parts near your change.`;
   return `${instructions}\n\n${setupTold} ${testTold}\n`;
 }
 

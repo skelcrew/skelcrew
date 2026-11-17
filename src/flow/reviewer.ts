@@ -39,19 +39,22 @@ const schema = JSON.stringify({
 export type Tests = { ci: string } | "run" | "docs only";
 
 // Returns what the reviewer does when it has to run the whole test suite: `run` it with the
-// commands under test: in the repository's skelcrew.yaml or your config, or, with none, review without running
-// tests and say so. Skelcrew never guesses a test command, as a wrong guess would pass for a
-// real result.
-function runSuite(run: string, test: string[]): string {
-  if (test.length > 0) return `${run}, with \`${test.join(" && ")}\`.`;
-  return "no test command is configured, so don't run the tests. Review the code, and say in the body that you didn't run them, as none is configured.";
+// commands under test: in the repository's skelcrew.yaml or your config. With none named, or
+// with test configured as none, it reviews without running tests and says why. Skelcrew never
+// guesses a test command, as a wrong guess would pass for a real result.
+function runSuite(run: string, test: string[] | undefined): string {
+  if (test === undefined)
+    return "no test command is configured, so don't run the tests. Review the code, and say in the body that you didn't run them, as none is configured.";
+  if (test.length === 0)
+    return "don't run the tests: the repository is configured with none. Review the code, and say in the body that you didn't run them, as it has none.";
+  return `${run}, with \`${test.join(" && ")}\`.`;
 }
 
 // Returns what the reviewer is told about the tests. The whole test suite runs once per commit,
 // and only when code changed, as several threads running it at once overload the machine. So
 // with CI on the commit the reviewer reads CI's result from its file, without CI it runs the
 // suite with `test`, and on a change to docs alone no one runs it.
-function testsTold(tests: Tests, test: string[]): string {
+function testsTold(tests: Tests, test: string[] | undefined): string {
   if (tests === "docs only")
     return "The change only touches docs and Markdown, so don't run the tests. Say in the body that you didn't run them, as no code changed.";
   if (tests === "run")
@@ -68,7 +71,7 @@ export function reviewerPrompt(
   issue: { title: string; body: string },
   base: string,
   tests: Tests,
-  test: string[],
+  test: string[] | undefined,
 ): string {
   const blanks: Record<string, string> = { ...issue, base, tests: testsTold(tests, test) };
   const instructions = builtInRole("reviewer").instructions.replace(/\n$/, "");
@@ -216,7 +219,7 @@ async function reviewNow(given: {
   clone: string;
   issue: { title: string; body: string };
   base: string;
-  test: string[];
+  test: string[] | undefined;
   commit: string;
   model?: string | undefined;
   harness: HarnessName;

@@ -51,7 +51,8 @@ export type Role = { harness: HarnessName; model?: string };
 // Every setting, once the files and the defaults are merged. `rounds` is how many rounds of
 // changes a thread gets before it needs you, `reviews` how many reviews run at once on this
 // machine, and `setup` and `test` the commands that set up a thread's clone and run its whole
-// test suite, none when no file names them. `fallback` is the harness reviews run on
+// test suite. Each is missing when no file names it, and an empty list when a file says on purpose
+// that the repository needs none. `fallback` is the harness reviews run on
 // while the reviewer's own waits out its usage limit, and `reviewMinutes` how long a review may
 // run before it is ended. `yourHarness` and `yourReviewer` are the harnesses
 // your config saved, with no default, so the first run can tell what you haven't picked yet, and
@@ -60,8 +61,8 @@ export type Settings = {
   roles: { lead: Role; builder: Role; reviewer: Role };
   rounds: number;
   reviews: number;
-  setup: string[];
-  test: string[];
+  setup: string[] | undefined;
+  test: string[] | undefined;
   tracker: string | undefined;
   fallback: HarnessName | undefined;
   reviewMinutes: number;
@@ -242,8 +243,8 @@ function mergeSettings(layers: File[]): Settings {
     roles: { lead: role("lead"), builder: role("builder"), reviewer: role("reviewer") },
     rounds: first((l) => l.max_rounds) ?? defaults.max_rounds,
     reviews: first((l) => l.limits?.reviews) ?? defaults.reviews,
-    setup: first((l) => l.setup) ?? [],
-    test: first((l) => l.test) ?? [],
+    setup: first((l) => l.setup),
+    test: first((l) => l.test),
     tracker: first((l) => l.tracker),
     fallback: first((l) => l.fallback),
     reviewMinutes: first((l) => l.review?.timeout_minutes) ?? defaults.reviewMinutes,

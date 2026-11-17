@@ -48,7 +48,7 @@ export function threadConfig(repository: Repository): Settings["roles"] & {
 }
 
 // Returns the repository's setup and test commands: each from its skelcrew.yaml, else your
-// config, or none. Skelcrew never guesses them: the lead settles them with you once, and every
+// config, or missing when neither names it. An empty list named on purpose stays empty. Skelcrew never guesses them: the lead settles them with you once, and every
 // builder and reviewer then uses the same ones.
 export function repositoryCommands(repository: Repository): Pick<Settings, "setup" | "test"> {
   const { setup, test } = readSettings(["setup", "test"], repository);

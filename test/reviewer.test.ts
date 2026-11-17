@@ -636,11 +636,18 @@ describe("what the reviewer is told about the tests", () => {
   test("with no test command configured, the reviewer reviews without running tests and says so", () => {
     const none =
       "no test command is configured, so don't run the tests. Review the code, and say in the body that you didn't run them, as none is configured.";
-    expect(reviewerPrompt(issue, "origin/main", "run", [])).toContain(
+    expect(reviewerPrompt(issue, "origin/main", "run", undefined)).toContain(
       `No CI runs on this commit, so ${none}`,
     );
-    expect(reviewerPrompt(issue, "origin/main", { ci: "/tmp/review/ci.md" }, [])).toContain(
+    expect(reviewerPrompt(issue, "origin/main", { ci: "/tmp/review/ci.md" }, undefined)).toContain(
       `such as only a deploy preview or a CLA check, ${none}`,
+    );
+  });
+
+  // An empty list says on purpose that the repository has no tests to run.
+  test("with test configured as none, the reviewer runs no tests and says the repository has none", () => {
+    expect(reviewerPrompt(issue, "origin/main", "run", [])).toContain(
+      "No CI runs on this commit, so don't run the tests: the repository is configured with none. Review the code, and say in the body that you didn't run them, as it has none.",
     );
   });
 

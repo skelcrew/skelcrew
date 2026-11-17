@@ -84,10 +84,19 @@ export function leadInstructions(
 ): string {
   const { setup, test } = commands;
   const shown = (list: string[]) => `\`${list.join(" && ")}\``;
+  // An empty list says on purpose that there is none, so the lead doesn't propose one.
   const setupTold =
-    setup.length > 0 ? `the setup command was ${shown(setup)}` : "no setup command was configured";
+    setup === undefined
+      ? "no setup command was configured"
+      : setup.length === 0
+        ? "setup was configured as none"
+        : `the setup command was ${shown(setup)}`;
   const testTold =
-    test.length > 0 ? `the test command was ${shown(test)}` : "no test command was configured";
+    test === undefined
+      ? "no test command was configured"
+      : test.length === 0
+        ? "test was configured as none"
+        : `the test command was ${shown(test)}`;
   return `${builtInRole("lead").instructions}\nYou are the lead of ${repository}. Skelcrew's clone of it is at ${clone}.\nWhen this session started, ${setupTold}, and ${testTold}.\n`;
 }
 

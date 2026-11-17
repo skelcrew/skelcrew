@@ -120,9 +120,10 @@ test("with no skelcrew.yaml naming them, there are no setup or test commands", (
   settings("harness: claude\n", null);
   writeFileSync(join(clone(), "go.mod"), "");
   writeFileSync(join(clone(), "package.json"), JSON.stringify({ scripts: { test: "jest" } }));
-  expect(commands()).toEqual({ setup: [], test: [] });
+  // JSON drops a setting no file names, so it reads as missing here.
+  expect(commands()).toEqual({});
   settings("harness: claude\n", "test: [make check]\n");
-  expect(commands()).toEqual({ setup: [], test: ["make check"] });
+  expect(commands()).toEqual({ test: ["make check"] });
 });
 
 // Your config stands in for a repository you don't want to commit a skelcrew.yaml to. Each of
