@@ -236,8 +236,16 @@ export async function reportTurnEnded(): Promise<void> {
   const said = message.trim().split("\n")[0]?.trim();
   // The hook runs in the builder's own clone, inside its sandbox. Untracked files count as work
   // left over, whatever the clone's settings say about showing them. A folder git can't read
-  // sends no commit, so the turn counts as new work.
-  const status = await quietly(["git", "status", "--porcelain", "--untracked-files=all"]);
+  // sends no commit, so the turn counts as new work. git status would take the clone's
+  // index.lock to refresh the index, and the hook runs right after sc submit, as the reviewer
+  // checks the commit out in its view of the clone. A lock there makes that checkout refuse.
+  const status = await quietly([
+    "git",
+    "--no-optional-locks",
+    "status",
+    "--porcelain",
+    "--untracked-files=all",
+  ]);
   const head = await quietly(["git", "rev-parse", "--verify", "HEAD"]);
   const clean = status.ok && status.out.trim() === "" && head.ok;
   await request({
