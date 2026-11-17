@@ -103,6 +103,8 @@ while test -d ${JSON.stringify(home)}; do read -r line && echo "$line" >> ${name
   startSession(agents, name, { folder: home, command: [script], env: { PATH: pathNow } });
 }
 
+// The load the footer shows in these tests, in place of the machine's, which changes on its own.
+const fixedLoad = "cpu 12%  mem 3.4/16G";
 // What goes ahead of Skelcrew in a terminal's command, such as a PATH that changes what it finds.
 let before = "";
 // Whether the terminals send Shift+Enter and other modified keys as keys of their own when asked,
@@ -127,7 +129,10 @@ await Bun.write(${JSON.stringify(join(home, `left-${window}`))}, "left");`,
   );
   const named = `${where ? `SKELCREW_REMOTE_NAME=${where} ` : ""}${before}`;
   const title = `printf '\\033]2;my shell\\007'`;
-  const command = `${title}; ${named}TERM=${term} ${process.execPath} ${script}; sleep 300`;
+  // The footer shows a fixed load, so a quiet screen writes nothing at all. `before` comes after
+  // it, so a test can set it empty to see the machine's own.
+  const load = `SKELCREW_FIXED_LOAD='${fixedLoad}' `;
+  const command = `${title}; ${load}${named}TERM=${term} ${process.execPath} ${script}; sleep 300`;
   const start = ["new-session", "-d", "-s", window, "-x", width, "-y", "30", command];
   // The terminal must already send extended keys when the screen asks for them, as tmux ignores
   // a request it got while they were off.
@@ -791,8 +796,10 @@ test("the strip ends the top row, and the agent's height stays as you switch", a
   expect(readFileSync(join(home, "app-12.size"), "utf8")).toBe(height);
 });
 
-// The bottom row as you see it, across the whole screen, and the row above it.
-const footer = () => (seen().split("\n")[29] ?? "").trimEnd();
+// The bottom row as you see it, across the whole screen, without the load at its right end, and
+// the row above it. A screen fewer than 30 rows high names its own last row.
+const footer = (row = 29) =>
+  (seen().split("\n")[row] ?? "").replace(/ +cpu \d+% {2}mem [\d.]+\/\d+G *$/, "").trimEnd();
 const aboveFooter = () => (seen().split("\n")[28] ?? "").trimEnd();
 // What the footer says under a list or page: the keys you need most and ? keys, then s or m on a
 // row that can be started or merged.
@@ -810,6 +817,27 @@ test("the footer runs across the screen under a thin line, with move and quit, t
   toSecondThread();
   await until(() => seen().includes("I am app-7"), "app-7");
   await until(() => footer() === "  ⌥↑↓ move  ⌥Q quit  Esc stops codex", "app-7's footer");
+});
+
+test("a pinned load sits at the right end of the footer", async () => {
+  open("lead");
+  await ready("lead");
+  await until(() => (seen().split("\n")[29] ?? "").trimEnd().endsWith(fixedLoad), "the load");
+  expect(footer()).toBe("  ⌥↑↓ move  ⌥Q quit  Esc stops claude");
+});
+
+test("the footer ends with the machine's own load, even with no thread working", async () => {
+  before = "SKELCREW_FIXED_LOAD= ";
+  sql("UPDATE threads SET status = 'waiting' WHERE status = 'working'");
+  open("lead");
+  await ready("lead");
+  // The load shows from its second sample, 5 seconds after the footer starts.
+  await until(
+    () => /cpu \d+% {2}mem [\d.]+\/\d+G *$/.test(seen().split("\n")[29] ?? ""),
+    "the load",
+  );
+  expect(seen()).not.toContain(fixedLoad);
+  expect(footer()).toBe("  ⌥↑↓ move  ⌥Q quit  Esc stops claude");
 });
 
 test("under a list or page the footer adds ? keys, and s or m while the row can take it, and the agent's height stays", async () => {
@@ -1924,7 +1952,7 @@ test("the list of keys has the same keys as sc --help, in the same order", async
 test("keys that need more than a third of the screen scroll with the wheel", async () => {
   await openList("Issues", "80");
   tmux(terminal, "resize-window", "-t", "=one:", "-x", "80", "-y", "12");
-  await until(() => seen().split("\n")[11]?.trimEnd() === startKeys, "the resize");
+  await until(() => footer(11) === startKeys, "the resize");
   type("?");
   await until(() => keyItems().includes("alt + ↑/↓ to move in the sidebar"), "the list of keys");
   // The screen has twelve rows, so the keys have four of the five they need at this width.

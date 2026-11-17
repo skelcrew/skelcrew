@@ -1,9 +1,12 @@
 // The footer: the bottom row of the screen, across the sidebar and the right side, under a thin
-// line. It has the keys you need most, then those for what the right side shows. Above it, while
+// line. It has the keys you need most, then those for what the right side shows, and the machine's
+// load at its right end. Above it, while
 // you toggle them on, the list of keys shows under a thin line of its own. It runs in the
 // screen's third pane, across the bottom, and sizes that pane to what it shows.
+import { cpus } from "node:os";
 import { screenSocket, tmux, tmuxIsAtLeast } from "../agents/tmux.ts";
 import { keyLines } from "./keys.ts";
+import { cpuBusy, cpuSample, loadText, memoryInUse, readMemory } from "./load.ts";
 import { edge, fitted, grey, pad, paint, removeControlCodes } from "./look.ts";
 
 // The keys you need most, which the footer always starts with.
@@ -27,16 +30,28 @@ export function listFooter(key: "s" | "m" | null): string {
 
 // Returns the footer's pane as lines, from the top, for a screen `width` columns wide: a thin
 // line, then the keys shown, if any, under a thin line of their own, then the footer's text, dim
-// and two columns in. `ruled` says whether the top line is drawn: on tmux before 3.6 the border
-// above the pane is tmux's thin line already. It reads nothing, so what you see can be tested
-// without a terminal.
-export function drawFooter(said: string, keys: string[], width: number, ruled: boolean): string[] {
+// and two columns in. `load` is the machine's load, already coloured, or empty while it isn't
+// known. It goes at the right end, two columns in, and is left out when the text and it don't
+// both fit, so it gives way before any key. `ruled` says whether the top line is drawn: on tmux
+// before 3.6 the border above the pane is tmux's thin line already. It reads nothing, so what you
+// see can be tested without a terminal.
+export function drawFooter(
+  said: string,
+  keys: string[],
+  width: number,
+  ruled: boolean,
+  load: string,
+): string[] {
   const rule = paint(edge, "─".repeat(Math.max(width, 0)));
-  const text = fitted(removeControlCodes(said), Math.max(width - 2 * pad.length, 0));
+  const room = Math.max(width - 2 * pad.length, 0);
+  const text = fitted(removeControlCodes(said), room);
+  // The load needs two columns between it and the text, and the rest of the room is the gap.
+  const gap = room - Bun.stringWidth(text) - Bun.stringWidth(load);
+  const right = load && gap >= 2 ? `${" ".repeat(gap)}${load}${pad}` : "";
   return [
     ...(ruled ? [rule] : []),
     ...(keys.length > 0 ? [...keys.map((line) => paint(grey, line)), rule] : []),
-    paint(grey, `${pad}${text}`),
+    `${paint(grey, `${pad}${text}`)}${right}`,
   ];
 }
 
@@ -65,8 +80,10 @@ const input = new RegExp(
 // screen's session, whose third pane this is. It shows what it was last told, and the list of
 // keys while they are toggled on, taking as many rows as they need, up to a third of the screen.
 // More keys than that scroll with the wheel. A click on ? keys shows or hides them, and a click
-// on them hides them. It writes only when what shows changed, so a quiet screen sends nothing
-// over a slow link.
+// on them hides them. It reads the machine's load every 5 seconds. It writes only when what shows
+// changed, so between changes of the load it sends nothing over a slow link. Tests pin the load
+// with SKELCREW_FIXED_LOAD, which Skelcrew itself never sets: it is shown as the load, dim, and
+// nothing is measured, so a test can check that a quiet screen writes nothing at all.
 export async function runFooter(agents: string, session: string): Promise<void> {
   const socket = screenSocket(agents);
   const self = `=${session}:.2`;
@@ -79,6 +96,10 @@ export async function runFooter(agents: string, session: string): Promise<void> 
   // How many lines were drawn last, which puts the footer's own row last. A click is read by
   // this, not by the pane's height, as a click can come before tmux has told of a resize.
   let drawn = 0;
+  // The machine's load, which shows from the second sample on, as the CPU figure needs two.
+  const fixed = process.env.SKELCREW_FIXED_LOAD;
+  let load = fixed ? paint(grey, removeControlCodes(fixed)) : "";
+  let sample = cpuSample(cpus());
   const width = () => process.stdout.columns || 80;
   // Draws what shows, after sizing the pane to it. The keys take at most a third of the screen,
   // so the agent above keeps most of it, and scroll inside that.
@@ -88,7 +109,7 @@ export async function runFooter(agents: string, session: string): Promise<void> 
     const window = Number(tmux(socket, ["display", "-p", "-t", self, "#{window_height}"]).out);
     const room = Math.min(all.length, Math.max(Math.floor(((window || 23) + 1) / 3), 1));
     top = Math.min(Math.max(top, 0), all.length - room);
-    const lines = drawFooter(said, all.slice(top, top + room), width(), ruled);
+    const lines = drawFooter(said, all.slice(top, top + room), width(), ruled, load);
     drawn = lines.length;
     // The pane grows or shrinks to the lines, which takes rows from the sidebar and the right
     // side, or gives them back. tmux then sends a resize, which draws again.
@@ -127,6 +148,18 @@ export async function runFooter(agents: string, session: string): Promise<void> 
     }
     draw();
   });
+  // Reads the load every 5 seconds, and draws only when its text changed, as drawing asks tmux
+  // for the window's height. A pinned load is never read.
+  if (!fixed)
+    setInterval(() => {
+      const now = cpuSample(cpus());
+      const memory = memoryInUse(readMemory());
+      const text = loadText(cpuBusy(sample, now), memory.used, memory.total);
+      sample = now;
+      if (text === load) return;
+      load = text;
+      draw();
+    }, 5000);
   // Draws now and on each resize, until the pane goes and its input closes.
   process.on("SIGWINCH", () => {
     lastFrame = "";

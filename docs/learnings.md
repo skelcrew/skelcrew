@@ -404,6 +404,10 @@ Skelcrew no longer supports Sprites itself. These are for the Sprite machine plu
   inside the box. A click elsewhere on the screen does nothing, with or without `-k`.
 - **`capture-pane -e` shows a terminal link with an id tmux made up**, as `ESC]8;id=...;url`.
   A test that looks for `ESC]8;;url` finds nothing.
+- **Bun's `os.cpus()` reads the times when you first look at them, not when you call it.**
+  Keep its result, wait, and read it then, and it holds the times from that moment: the CPU
+  figure from two samples read 0%. Seen on Bun 1.3.14 on Linux. Copy the numbers out as you
+  call it.
 
 ## Tests
 
