@@ -44,6 +44,15 @@ afterEach(endTest);
 async function copyOnceSettled(): Promise<string> {
   const written = join(home, "written");
   tmux(terminal, "pipe-pane", "-O", "-t", "=one:", `cat >> ${written}`);
+  await untilQuiet(written);
+  // Emptied rather than removed: tmux's cat keeps writing to the file it opened, and adds to its
+  // end.
+  writeFileSync(written, "");
+  return written;
+}
+
+// Returns once the copy of what the screen writes has grown by nothing for half a second.
+async function untilQuiet(written: string): Promise<void> {
   const size = () => (existsSync(written) ? statSync(written).size : 0);
   let last = size();
   let quietSince = Date.now();
@@ -56,10 +65,6 @@ async function copyOnceSettled(): Promise<string> {
     last = size();
     quietSince = Date.now();
   }
-  // Emptied rather than removed: tmux's cat keeps writing to the file it opened, and adds to its
-  // end.
-  writeFileSync(written, "");
-  return written;
 }
 
 // The list and the sidebar read Skelcrew's copy again each second, so two seconds see each of
@@ -217,10 +222,13 @@ UPDATE threads SET needs_you = 1 WHERE folder = 'app-7'`);
   await Bun.sleep(minute - Date.now());
   await twoRefreshes();
   expect(readFileSync(written, "utf8")).toBe("");
-  // app-7 no longer needing you shows that the sidebar has read the threads after the minute,
-  // and app-12's row still shows no time.
+  // app-7 no longer needing you shows that the sidebar has read the threads after the minute.
+  // That redraw writes app-7's row, and a time drawn by then would be written too.
   sql("UPDATE threads SET needs_you = 0 WHERE folder = 'app-7'");
   await until(() => !seen().includes("needs you"), "the sidebar to read the threads again");
+  await untilQuiet(written);
+  expect(Bun.stripANSI(readFileSync(written, "utf8"))).not.toMatch(/<1m|\b\d+[mhd]\b/);
+  // And app-12's row still shows no time.
   const rows = seen().split("\n");
   const row = rows.findIndex((line) => line.includes("app-12"));
   expect(rows[row + 1]?.split("│")[0]?.trim()).toBe("checks · claude");

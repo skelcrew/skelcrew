@@ -26,7 +26,7 @@ afterEach(() => {
 // set, as homedir() keeps the HOME this process started with. `again` runs it on the database a
 // run before left, as a daemon starting again would. `env` adds to the process's environment.
 // Each deliverAllWaiting the code awaits is one whole attempt, as the daemon makes every few
-// seconds.
+// seconds. caughtUp() waits until a stand-in builder has read everything typed into it.
 function run(body: string, again = false, env: Record<string, string> = {}): string {
   const setup = `db.run(\`INSERT INTO repositories (name, owner, repo) VALUES ('app', 'simon', 'app');
 ${threadSql({ task: "12", status: "waiting" })}\`);`;
@@ -34,6 +34,18 @@ ${threadSql({ task: "12", status: "waiting" })}\`);`;
 import { queueMessage, deliverAllWaiting, deliverMessages } from ${JSON.stringify(source("flow/messages.ts"))};
 const db = openDb();
 const tmux = ${JSON.stringify(socket)};
+let acks = 0;
+// Types a NUL into app-12's stand-in builder and waits until it kept it in received.txt. Keys
+// reach the builder in order, so it has then read whatever was typed before. A terminal shows
+// nothing for a NUL. \`line\` adds an Enter, for a builder that reads whole lines.
+async function caughtUp(line = false) {
+  acks++;
+  Bun.spawnSync(["tmux", "-L", tmux, "send-keys", "-t", "=app-12:", "-H", "00", ...(line ? ["0d"] : [])]);
+  const kept = async () =>
+    (await Bun.file(${JSON.stringify(join(home, "received.txt"))}).text().catch(() => "")).split("\\0").length - 1;
+  for (let i = 0; i < 300 && (await kept()) < acks; i++) await Bun.sleep(10);
+  if ((await kept()) < acks) throw new Error("the builder never caught up");
+}
 ${again ? "" : setup}
 ${body}`;
   const done = Bun.spawnSync([process.execPath, "-e", code], {
@@ -155,11 +167,7 @@ await Bun.sleep(300);
 db.run("UPDATE threads SET state = 'working'");
 queueMessage(db, tmux, "app-12", { sender: "lead", text: "Use v2.", said: "Use v2.", typed_in: [] });
 for (let i = 0; i < 4; i++) await deliverAllWaiting(db, tmux);
-// A line typed after the attempts comes after anything they typed, so once the builder kept it,
-// it kept whatever they typed too.
-Bun.spawnSync(["tmux", "-L", tmux, "send-keys", "-t", "=app-12:", "-l", "attempts over\\r"]);
-for (let i = 0; i < 200 && !got().includes("attempts over"); i++) await Bun.sleep(10);
-if (!got().includes("attempts over")) throw new Error("the builder never kept the line");
+await caughtUp(true);
 const during = got().includes("Use v2.");
 // The turn's Stop hook ran.
 db.run("UPDATE threads SET state = 'idle'");
@@ -198,6 +206,7 @@ for (let i = 0; i < 100 && db.query("SELECT 1 FROM messages").get(); i++) {
 }
 // The builder keeps what it got once its Enter reaches it.
 for (let i = 0; i < 200 && !got().includes("Use v2."); i++) await Bun.sleep(10);
+await caughtUp(true);
 console.log(JSON.stringify(db.query("SELECT said FROM messages").all()));`);
   expect(JSON.parse(left)).toEqual([]);
   const received = readFileSync(join(home, "received.txt"), "utf8");
@@ -234,6 +243,7 @@ for (let i = 0; i < 100 && db.query("SELECT 1 FROM messages").get(); i++) {
 }
 await deliverAllWaiting(db, tmux);
 await deliverAllWaiting(db, tmux);
+await caughtUp();
 const { updates } = db.query("SELECT updates FROM tasks").get();
 console.log(JSON.stringify({ left: db.query("SELECT 1 FROM messages").all().length, updates: JSON.parse(updates).length }));`);
   expect(JSON.parse(left)).toEqual({ left: 0, updates: 1 });
@@ -267,10 +277,9 @@ if (got().includes("\\r")) throw new Error("the Enter came before the question")
 // As the daemon does when the builder's hook says it asked a question.
 db.run("UPDATE threads SET asking = 1");
 stopDelivering(db, "app-12", false, forQuestion);
-// Once the cancelled attempt ends, nothing presses Enter. Keys it sent reach the builder soon
-// after.
+// Once the cancelled attempt ends, nothing presses Enter.
 await deliverMessages(db, tmux, "app-12");
-await Bun.sleep(200);
+await caughtUp();
 const during = { entered: got().includes("\\r"), waiting: count() };
 // The question is over.
 db.run("UPDATE threads SET asking = 0");
@@ -278,7 +287,7 @@ for (let i = 0; i < 100 && count() > 0; i++) {
   await deliverAllWaiting(db, tmux);
   await Bun.sleep(50);
 }
-for (let i = 0; i < 200 && !got().endsWith("\\r"); i++) await Bun.sleep(10);
+await caughtUp();
 const { updates } = db.query("SELECT updates FROM tasks").get();
 console.log(JSON.stringify({ during, waiting: count(), updates: JSON.parse(updates).length }));`);
   expect(JSON.parse(seen)).toEqual({
@@ -288,7 +297,7 @@ console.log(JSON.stringify({ during, waiting: count(), updates: JSON.parse(updat
   });
   const received = readFileSync(join(home, "received.txt"), "utf8");
   expect(received.split("Use v2.").length - 1).toBe(1);
-  expect(received).toEndWith("\r");
+  expect(received.replaceAll("\0", "")).toEndWith("\r");
 });
 
 // Skelcrew can start again while a message sits pasted at the prompt for a question. It still
@@ -338,7 +347,7 @@ for (let i = 0; i < 100 && count() > 0; i++) {
   await deliverAllWaiting(db, tmux);
   await Bun.sleep(50);
 }
-for (let i = 0; i < 200 && !got().includes("Use v2."); i++) await Bun.sleep(10);
+await caughtUp();
 console.log(JSON.stringify({ waiting: count() }));`,
     true,
   );
@@ -378,7 +387,8 @@ for (let i = 0; i < 100 && db.query("SELECT 1 FROM messages").get(); i++) await 
 // The forge is asked in the background, so this waits until it was asked twice.
 const asked = ${JSON.stringify(join(plugin, "asked"))};
 const seen = () => (existsSync(asked) ? readFileSync(asked, "utf8").split('"ask":"seen"').length - 1 : 0);
-for (let i = 0; i < 300 && seen() < 2; i++) await Bun.sleep(10);`);
+for (let i = 0; i < 300 && seen() < 2; i++) await Bun.sleep(10);
+await caughtUp();`);
   const asked = readFileSync(join(plugin, "asked"), "utf8")
     .trim()
     .split("\n")
