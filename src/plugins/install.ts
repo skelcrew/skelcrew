@@ -193,8 +193,8 @@ export function askYes(question: string): boolean | null {
 // Returns every command a plugin's manifest runs, each as its list of words, in the order sc
 // shows them when it asks.
 function commandsOf(manifest: Manifest): string[][] {
-  const { build = [], setup, call, git_credentials, add, exec, push } = manifest;
-  return [...build, setup, call, git_credentials, add, exec, push].filter(
+  const { build = [], setup, call, git_credentials, add, exec, push, session, attach } = manifest;
+  return [...build, setup, call, git_credentials, add, exec, push, session, attach].filter(
     (words) => words !== undefined,
   );
 }
@@ -204,8 +204,8 @@ function commandsOf(manifest: Manifest): string[][] {
 // again asks only once it changes. Words joined with spaces would let ["sh", "a b"] pass for
 // ["sh", "a", "b"], and a list without the fields would let a command move to another field.
 function approvalOf(manifest: Manifest): string {
-  const { build, setup, call, git_credentials, add, exec, push } = manifest;
-  return JSON.stringify({ build, setup, call, git_credentials, add, exec, push });
+  const { build, setup, call, git_credentials, add, exec, push, session, attach } = manifest;
+  return JSON.stringify({ build, setup, call, git_credentials, add, exec, push, session, attach });
 }
 
 // Shows what the plugin is and runs, and asks whether to `verb` it, such as Install. It says the

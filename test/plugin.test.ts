@@ -296,21 +296,35 @@ test("a manifest with jobs: that mixes machine with tracker still reads, as I/O"
 // The shape of a runtime plugin such as herdr, which phase 5 builds on.
 test("a runtime plugin can provide sessions, transport and status, with their commands", async () => {
   const folder = join(home, "skelcrew-fake");
-  fakePlugin(folder, "0.1.0", 'session: ["true"]\nattach: ["true"]\n');
+  fakePlugin(folder, "0.1.0", "session: [sh, session.sh]\nattach: [sh, attach.sh]\n");
   const manifest = join(folder, "skelcrew-plugin.yaml");
   const runtime = "kind: runtime\nprovides: [sessions, transport, status]";
   writeFileSync(
     manifest,
     readFileSync(manifest, "utf8").replace("kind: io\nprovides: [tracker, forge]", runtime),
   );
-  expect((await skel(["plugin", "install", "./skelcrew-fake"], "y\n")).code).toBe(0);
+  // Its session and attach commands run as you too, so the question shows them.
+  const installed = await skel(["plugin", "install", "./skelcrew-fake"], "y\n");
+  expect(installed.code).toBe(0);
+  expect(installed.out).toContain("  sh session.sh\n  sh attach.sh\nInstall it? [Y/n]");
   expect((await skel(["plugin", "ls"])).out).toBe(
     "fake 0.1.0 runtime: sessions, transport, status\n",
   );
+  // A change to either is asked about before it builds again, so with no terminal it doesn't.
+  for (const [from, to] of [
+    ["session.sh", "other-session.sh"],
+    ["attach.sh", "other-attach.sh"],
+  ]) {
+    writeFileSync(manifest, readFileSync(manifest, "utf8").replace(`[sh, ${from}]`, `[sh, ${to}]`));
+    const unasked = await skel(["update", "-g", "fake"], "", "", {}, home, false);
+    expect(unasked.code).toBe(1);
+    expect(unasked.err).toContain("Skelcrew left out fake");
+    writeFileSync(manifest, readFileSync(manifest, "utf8").replace(`[sh, ${to}]`, `[sh, ${from}]`));
+  }
   expect((await skel(["plugin", "rm", "fake"])).code).toBe(0);
 
   // Sessions need a way to attach your terminal.
-  writeFileSync(manifest, readFileSync(manifest, "utf8").replace('attach: ["true"]\n', ""));
+  writeFileSync(manifest, readFileSync(manifest, "utf8").replace("attach: [sh, attach.sh]\n", ""));
   const refused = await skel(["plugin", "install", "./skelcrew-fake"], "y\n");
   expect(refused.code).toBe(1);
   expect(refused.err).toContain("a sessions plugin needs attach");
