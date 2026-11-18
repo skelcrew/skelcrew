@@ -238,7 +238,7 @@ async function recordThread(
       last_comment: null,
       last_check: null,
       asking: false,
-      stalled: false,
+      turn_ended: false,
       submitted: false,
       erred: false,
       limited: false,
@@ -289,9 +289,10 @@ async function recordThread(
     // A note that the old thread ended may still wait for a busy lead. The new thread has the
     // same name, and the lead would drop it from what it holds open, so the note goes too.
     dropEndNotes(db, thread.folder);
+    // Its turn_ended is set, so the daemon's move of an earlier release's threads passes it by.
     db.run(
-      `INSERT INTO threads (owner, repo, task, folder, branch, base, status, session, started, host, host_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO threads (owner, repo, task, folder, branch, base, status, session, started, turn_ended, host, host_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
       [
         owner,
         repo,

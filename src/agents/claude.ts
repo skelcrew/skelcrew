@@ -39,8 +39,9 @@ const settings = JSON.stringify(base);
 // watches, so its asking needs you until the question is over. Answering runs PostToolUse,
 // within the same turn, but setting it aside with Esc or "Chat about this" runs no hook at all,
 // so whatever is typed into the builder next also ends it. A builder whose turn stops on an
-// error sits idle, so that needs you too, until you fix it and type to the builder, and one that
-// stops without sc submit is waiting on you too, such as with a question written as plain text.
+// error sits idle, so that needs you too, until you fix it and type to the builder. One that
+// stops without sc submit sends its last message to the lead, such as a question written as
+// plain text.
 // Pressing Esc runs no hook, so Skelcrew reads that from the screen. A lead's hooks flag nothing:
 // you see a lead whenever you open its repository. The commands answer at once, and print
 // nothing, since UserPromptSubmit adds what a hook prints to the message.

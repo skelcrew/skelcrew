@@ -263,7 +263,7 @@ const thread = (change: Partial<Thread>): Thread => ({
   merge_at: null,
   merge_waits: null,
   merge_noted: null,
-  stalled: false,
+  turn_ended: false,
   submitted: false,
   queued: null,
   review_at: null,

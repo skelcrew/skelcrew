@@ -13,7 +13,7 @@ import { errorText } from "../say.ts";
 import { pastRoundLimit } from "./decide.ts";
 import { leadOf } from "./lead.ts";
 import { clockTime, endWake, wakeAfterLimit } from "./limits.ts";
-import { messageLead, stopDelivering, typeLeadNotes, untagged } from "./messages.ts";
+import { messageLead, stopDelivering, typeLeadNotes } from "./messages.ts";
 import type { DaemonRequest } from "./requests.ts";
 import { lastPushed } from "./round.ts";
 import {
@@ -30,28 +30,30 @@ import {
 export type Status = "working" | "idle" | "needs you" | "ready" | "error";
 
 // Returns whether the thread needs you: for a review, the round limit or an approval, for the
-// builder's question or its stopping without submitting, or for its harness stopping on an error.
-// A usage limit isn't one, as the builder is woken once it resets.
+// builder's question, or for its harness stopping on an error. A usage limit isn't one, as the
+// builder is woken once it resets. Nor is a builder that stopped without submitting: its last
+// message goes to the lead, who brings a real question to you.
 export const needsYou = (thread: Thread) =>
-  thread.needs_you || thread.asking || thread.stalled || (thread.erred && !thread.limited);
+  thread.needs_you || thread.asking || (thread.erred && !thread.limited);
 
-// Returns whether a builder that just ended its turn is waiting on you, on any harness. A
-// builder that stops without sc submit in that turn has a question for you, written as plain
-// text, or is stuck, and nothing else would tell you. One that submitted waits on its review.
-// One asking with AskUserQuestion, or stopped on an error, already needs you, and one already
-// waiting has nothing new to say. The status is not enough: a review can set it back to working
-// while the builder that submitted is still finishing its turn. `unchanged` says the builder's
-// clone holds nothing beyond its last submit. Such a turn most likely only answered a message,
-// such as the lead's, so while that submit is reviewed, waits on CI or is approved, it waits on
-// that too. Its words can't be read for a question, which need not end in a question mark, so
-// they go to the lead instead, who passes a question on to you.
-export const endedTurnAsks = (thread: Thread, unchanged = false) =>
+// Returns whether a builder that just ended its turn did so without sc submit, on any harness.
+// Such a builder may have a question written as plain text, or be stuck, or have only replied,
+// so its last message goes to the lead. One that submitted, or ran sc review, waits on its
+// review. One asking with AskUserQuestion, or stopped on an error, already needs you. The status
+// is not enough: a review can set it back to working while the builder that submitted is still
+// finishing its turn.
+export const endedWithoutSubmit = (thread: Thread) =>
   (thread.status === "working" || thread.status === "waiting") &&
   !thread.submitted &&
   !thread.asking &&
-  !thread.stalled &&
-  !thread.erred &&
-  !(unchanged && submitStands(thread));
+  !thread.erred;
+
+// Returns whether a turn that ended without a submit still waits on the last one, so it doesn't
+// show as turn ended. `unchanged` says the builder's clone holds nothing beyond its last submit.
+// Such a turn most likely only answered a message, such as the lead's, so while that submit is
+// reviewed, waits on CI or is approved, the thread waits on that.
+export const waitsOnSubmit = (thread: Thread, unchanged: boolean) =>
+  unchanged && submitStands(thread);
 
 // Returns whether the thread's last submit still moves on without its builder: its review waits
 // or runs, or it was approved and waits on CI or you. The thread's status doesn't matter: a
@@ -336,18 +338,17 @@ export function threadWord(thread: Thread, maxRounds: number, now = Date.now()):
   const underWay = thread.submitting !== null || thread.reviewing !== null;
   if (thread.asking) return "question";
   if (thread.erred && !thread.limited) return "error";
-  // The round limit and an approval say what you must do next, so they stay ahead of a builder
-  // that stopped without submitting. Otherwise any reply it gave you, or the lead, would hide
-  // that the thread is ready to merge.
+  // The round limit and an approval say what you must do next, so they come before any other
+  // reason the thread needs you.
   const past = thread.needs_you && pastRoundLimit(thread, maxRounds);
   const failed = underWay || verdict === "failed";
   if (past) return "round limit";
   if (readyToMerge(thread)) return "approved";
-  // Stopping without submitting may be a question written as plain text, or only a reply, so
-  // its word doesn't claim a question. The lead's note quotes what the builder last said.
-  if (thread.stalled) return "turn ended";
   if (thread.needs_you && verdict === "timed out" && !underWay) return "review timed out";
   if (thread.needs_you) return failed ? "review failed" : "needs you";
+  // Not needing you: a builder that stopped without submitting waits on the lead, who got its
+  // last message. Its word doesn't claim a question, as it may be only a reply.
+  if (thread.turn_ended) return "turn ended";
   // Not needing you: a builder or a review waiting out a usage limit says until when.
   const limitWord = (reset: number | null) =>
     reset === null ? "limit" : `limit · ${clockTime(reset, now)}`;
@@ -372,50 +373,34 @@ export function questionAsked(db: Database, sessions: string, folder: string): v
   typeLeadNotes(db, sessions);
 }
 
-// The builder's turn ended, from its harness's Stop hook, with the first line of what it last
-// said, and, when nothing in its clone is uncommitted, the commit it has checked out and its
-// whole last message. A builder that didn't submit in that turn waits on you, so the thread
-// needs you and the lead hears of it. The exception is a turn with no new work while the last
-// submit is still on its way: the lead gets the builder's last message instead, so a question
-// in it still reaches you through the lead. Returns whether it waits on you.
+// The builder's turn ended, from its harness's Stop hook, with its last message and, when
+// nothing in its clone is uncommitted, the commit it has checked out. A builder that didn't
+// submit in that turn shows as turn ended, and its last message goes to the lead, who brings a
+// question in it to you. A turn with no new work while the last submit is still on its way
+// waits on that submit instead.
 export function turnEnded(
   db: Database,
   sessions: string,
   folder: string,
-  ended: { said?: string | undefined; head?: string | undefined; message?: string | undefined },
-): boolean {
+  ended: { head?: string | undefined; message?: string | undefined },
+): void {
   const thread = readThread(db, folder);
-  const said = ended.said;
+  if (!endedWithoutSubmit(thread)) return;
+  // The lead reads the builder's own words, as a message from it, so a question need not end
+  // in a question mark to reach you. A harness that gave none still says the turn ended.
+  const said = ended.message ? `, saying:\n\n${ended.message}` : ".";
+  messageLead(db, sessions, thread, `My turn ended without a submit${said}`);
   const unchanged = ended.head !== undefined && ended.head === lastPushed(thread);
-  if (!endedTurnAsks(thread, unchanged)) {
-    // Only a turn that would have needed you but for its submit still under way is passed on.
-    // Any other, such as one that submitted, says nothing new.
-    if (!endedTurnAsks(thread)) return false;
-    if (ended.message)
-      messageLead(
-        db,
-        sessions,
-        thread,
-        `My turn ended without a submit, saying:\n\n${ended.message}`,
-      );
+  if (waitsOnSubmit(thread, unchanged)) {
     // A comment on an approved PR set the thread working. The builder only answered it, so the
     // thread waits on its approved submit again, and the next poll can find it ready to merge.
     // A review under way sets the status itself once it ends.
     if (thread.status === "working" && thread.reviewing === null)
       record(db, folder, { status: "waiting" }, "its builder only replied, so it waits on CI");
-    return false;
+    return;
   }
-  // The note quotes what the builder last said, so you see what it waits on. In quotes,
-  // and with no tags of Skelcrew's, it can't pass for Skelcrew's own words or another's.
-  // The quote, escapes included, is kept to 100 characters, as a note is cut at 200,
-  // which would lose the closing quote. Each " or \ doubles in length once escaped, so
-  // the words are cut until the quote fits.
-  let words = untagged(said ?? "").slice(0, 100);
-  while (JSON.stringify(words).length > 100) words = words.slice(0, -1);
-  const quote = words ? `, saying ${JSON.stringify(words)}` : "";
-  record(db, folder, { stalled: true }, `its builder stopped without submitting${quote}`);
-  typeLeadNotes(db, sessions);
-  return true;
+  if (!thread.turn_ended)
+    record(db, folder, { turn_ended: true }, "its builder stopped without submitting");
 }
 
 // The builder's turn ended on an error, from Claude Code's StopFailure hook, with the kind of
@@ -467,11 +452,11 @@ export function questionAnswered(db: Database, folder: string): void {
   // was open is logged. Typing to a builder that stopped on an error means you fixed it,
   // such as with /login, so it ends the error as it ends a question. A usage limit it
   // stopped on ends too, as the builder now works again or meets it again. Typing to one
-  // that stopped without submitting answers it, whether you typed or the lead told it.
+  // that stopped without submitting gives it work again, whether you typed or the lead told it.
   // Each message starts a new turn, with no submit in it yet.
   const over = {
     asking: false,
-    stalled: false,
+    turn_ended: false,
     erred: false,
     submitted: false,
     limited: false,
@@ -481,9 +466,9 @@ export function questionAnswered(db: Database, folder: string): void {
   // not land. A wake already typing has cleared the error, so it is ended whatever the
   // flags say. One whose "continue" ran this hook has nothing left to type.
   endWake(folder);
-  if (thread.asking || thread.stalled) record(db, folder, over, "its builder's question is over");
+  if (thread.asking) record(db, folder, over, "its builder's question is over");
   else if (thread.erred) record(db, folder, over, "its builder was typed to after its error");
-  else if (thread.submitted) record(db, folder, { submitted: false });
+  else if (thread.submitted || thread.turn_ended) record(db, folder, over);
 }
 
 // Returns what a thread's row in the list of threads says of its merge when ready, with what it

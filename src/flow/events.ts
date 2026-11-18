@@ -203,7 +203,7 @@ async function stopNow(
       status: "stopped",
       needs_you: false,
       asking: false,
-      stalled: false,
+      turn_ended: false,
       erred: false,
       limited: false,
       limit_reset: null,

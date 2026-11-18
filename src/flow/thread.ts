@@ -69,7 +69,7 @@ export const Thread = z.object({
   asking: z.coerce.boolean(),
   // Whether the builder ended its turn without sc submit, a question or an error, and so sits
   // waiting on you. Kept apart from asking: no question is open, so the lead may still tell it.
-  stalled: z.coerce.boolean(),
+  turn_ended: z.coerce.boolean(),
   // Whether the builder ran sc submit in its current turn, so the turn's end waits on a review
   // rather than on you. Whatever is typed into the builder starts a new turn, and clears it.
   submitted: z.coerce.boolean(),
