@@ -172,3 +172,10 @@ test("a reviewer role that leaves out the blanks still gets the task, the base a
     `Task Fix the flaky test: It fails one run in ten.. Since origin/main. ${runs}`,
   );
 });
+
+test("a role file that opens frontmatter must close it, and a model can't be empty", () => {
+  expect(() => readRole("---\nharness: codex\nReview it.\n")).toThrow("never closes");
+  expect(() => readRole('---\nmodel: ""\n---\nReview it.\n')).toThrow("model");
+  // Closing on the file's last line, with no newline after it, is fine.
+  expect(readRole("---\nharness: codex\n---")).toEqual({ harness: "codex", instructions: "" });
+});

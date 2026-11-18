@@ -19,18 +19,22 @@ import reviewer from "./defaults/roles/reviewer.md" with { type: "text" };
 // setting put there by mistake doesn't look as if it counts.
 const Frontmatter = z.strictObject({
   harness: HarnessName.optional(),
-  model: z.string().optional(),
+  // An empty model would reach the harness and stop its agent from starting.
+  model: z.string().min(1).optional(),
 });
 
 // A role as its file gives it. The built-in roles name no harness or model, so yours count.
 export type Role = z.infer<typeof Frontmatter> & { instructions: string };
 
 // Reads a role file: the frontmatter between two `---` lines, if it has one, and the rest as
-// its instructions, kept byte for byte. Throws, naming the problem, when the frontmatter
-// isn't valid.
+// its instructions, kept byte for byte. Throws, naming the problem, when the frontmatter isn't
+// valid, or opens and never closes: read as instructions, it would hand the agent its settings
+// as text and run it on a harness and model the file didn't mean.
 export function readRole(text: string): Role {
-  const match = /^---\n([\s\S]*?)^---\n/m.exec(text);
-  if (match?.index !== 0) return { instructions: text };
+  if (!text.startsWith("---\n")) return { instructions: text };
+  const match = /^---\n([\s\S]*?)^---(?:\n|$)/m.exec(text);
+  if (match?.index !== 0)
+    throw new Error("the role's frontmatter opens with --- and never closes with another ---");
   const front = Frontmatter.safeParse(parse(match[1] ?? "") ?? {});
   if (!front.success)
     throw new Error(`the role's frontmatter isn't valid: ${z.prettifyError(front.error)}`);

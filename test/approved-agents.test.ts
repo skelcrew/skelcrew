@@ -276,3 +276,20 @@ test("a role file naming the harness the role is on already keeps the model skel
     model: "sonnet",
   });
 });
+
+test("a reviewer file whose frontmatter never closes stops reviews only", () => {
+  agentsFile("roles/reviewer.md", "---\nharness: codex\nReview it.\n");
+  agentsFile("roles/builder.md", '---\nmodel: ""\n---\nBuild it.\n');
+  agentsFile("roles/lead.md", "Lead it.\n");
+  commit("roles");
+  inHome(approveCurrent);
+  expect(inHome('return repositoryRole("lead", app).instructions;')).toBe("Lead it.\n");
+  expect(inHome('return readSettings(["lead"], app).lead;')).toEqual({
+    harness: "claude",
+    model: "opus",
+  });
+  expect(() => inHome('return readSettings(["reviewer"], app);')).toThrow("never closes");
+  expect(() => inHome('return readSettings(["builder"], app);')).toThrow(
+    ".agents/roles/builder.md",
+  );
+});
