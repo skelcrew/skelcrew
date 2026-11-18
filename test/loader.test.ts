@@ -55,6 +55,7 @@ const all = [
   "yourHarness",
   "yourReviewer",
   "declined",
+  "leadArms",
 ];
 const quarter = Math.max(1, Math.floor(availableParallelism() / 4));
 const eighth = Math.max(1, Math.floor(availableParallelism() / 2 / 4));
@@ -70,6 +71,7 @@ test("with no files, every setting is the built-in default", () => {
     checks: eighth,
     reviewMinutes: 30,
     declined: [],
+    leadArms: false,
   });
 });
 
@@ -85,6 +87,7 @@ test("your config goes over the built-in defaults", () => {
     reviewMinutes: 30,
     yourHarness: "codex",
     declined: [],
+    leadArms: false,
   });
 });
 
@@ -105,6 +108,7 @@ test("the repository's skelcrew.yaml goes over your config, key by key", () => {
     reviewMinutes: 30,
     yourHarness: "claude",
     declined: [],
+    leadArms: false,
   });
 });
 
@@ -120,8 +124,12 @@ test("a role your config puts on another harness gets your model back when skelc
 
 test("a file sets only what is its own", () => {
   // Your harness, model and limits fit you, so a repository's lines for them count for nothing.
-  // The tracker belongs to the repository, so yours counts for nothing.
-  files("tracker: linear\n", "harness: codex\nmodel: gpt-6\nlimits: { reviews: 9 }\n");
+  // The tracker belongs to the repository, so yours counts for nothing. Only you can let the lead
+  // arm merges, so the repository's line for that counts for nothing too.
+  files(
+    "tracker: linear\n",
+    "harness: codex\nmodel: gpt-6\nlimits: { reviews: 9 }\nlead: { may_arm_merges: true }\n",
+  );
   expect(read(all).settings).toEqual({
     lead: { harness: "claude" },
     builder: { harness: "claude" },
@@ -131,6 +139,7 @@ test("a file sets only what is its own", () => {
     checks: eighth,
     reviewMinutes: 30,
     declined: [],
+    leadArms: false,
   });
 });
 
@@ -183,6 +192,7 @@ test("what your config saved reads apart from the defaults", () => {
   files(null, "reviewer: { harness: codex }\n");
   expect(read(["yourHarness", "yourReviewer", "declined"]).settings).toMatchObject({
     declined: [],
+    leadArms: false,
   });
   expect(read(["yourHarness"]).settings?.yourHarness).toBeUndefined();
   expect(read(["yourReviewer"]).settings?.yourReviewer).toBeUndefined();

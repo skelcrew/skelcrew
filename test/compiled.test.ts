@@ -93,7 +93,7 @@ test("runs a plugin's bun commands on the Bun inside it", async () => {
   const installed = await run(["plugin", "install", folder], skel, "y\n");
   expect(installed.err).toBe("");
   expect(readFileSync(join(folder, "built"), "utf8")).toBe("fake");
-  expect((await run(["plugin", "ls"])).out).toBe("fake 0.1.0 tracker\n");
+  expect((await run(["plugin", "ls"])).out).toBe("fake 0.1.0 io: tracker\n");
 });
 
 test("points the daemon's service at itself", async () => {

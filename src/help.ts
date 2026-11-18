@@ -50,7 +50,7 @@ const sections: [string, [string, string][]][] = [
       ["plugin update [<name>]", "Move one, or all, to its newest version"],
       ["plugin setup <name>", "Run its setup again, such as to sign in again"],
       ["plugin rm <name>", "Remove one, with its settings and tokens"],
-      ["plugin ls", "Plugins installed, with their jobs"],
+      ["plugin ls", "Plugins installed, with their kind and what they provide"],
     ],
   ],
   [
