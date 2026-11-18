@@ -96,7 +96,7 @@ test("a lead is told its repository and each setup and test command, or that non
       setup: ["bun install"],
       test: ["bun run check"],
     },
-    ["default"],
+    [{ name: "default", text: "" }],
   );
   expect(told).toContain("Before you start the first thread in your repository");
   expect(told).toEndWith(
@@ -111,7 +111,7 @@ test("a lead is told its repository and each setup and test command, or that non
         setup: undefined,
         test: ["go test ./..."],
       },
-      ["default"],
+      [{ name: "default", text: "" }],
     ),
   ).toEndWith(
     "\nWhen this session started, no setup command was configured, and the test command was `go test ./...`.\n",
@@ -125,7 +125,7 @@ test("a lead is told its repository and each setup and test command, or that non
         setup: undefined,
         test: undefined,
       },
-      ["default"],
+      [{ name: "default", text: "" }],
     ),
   ).toEndWith(
     "\nWhen this session started, no setup command was configured, and no test command was configured.\n",
@@ -140,11 +140,15 @@ test("a lead triages a task's flow, and is told the flows only when there are ot
   expect(role).toContain("Whenever you pick a flow other than default, tell the human");
   expect(role).toContain("A task keeps its flow from start to end.");
   const commands = { setup: undefined, test: undefined };
-  expect(leadInstructions(role, "simon/app", "/c", commands, ["default"])).toEndWith(
-    "and no test command was configured.\n",
-  );
-  expect(leadInstructions(role, "simon/app", "/c", commands, ["default", "quick"])).toEndWith(
-    "and no test command was configured.\nIts flows, in the .agents/ the human approved, are default, quick.\n",
+  expect(
+    leadInstructions(role, "simon/app", "/c", commands, [{ name: "default", text: "" }]),
+  ).toEndWith("and no test command was configured.\n");
+  const flows = [
+    { name: "default", text: "review:\n  rounds: 3\n" },
+    { name: "quick", text: "# For one-line fixes.\nreview:\n  rounds: 1" },
+  ];
+  expect(leadInstructions(role, "simon/app", "/c", commands, flows)).toEndWith(
+    "and no test command was configured.\nIts flows, from the .agents/ the human approved, are default, quick. Their files:\n\ndefault:\nreview:\n  rounds: 3\n\nquick:\n# For one-line fixes.\nreview:\n  rounds: 1\n",
   );
 });
 
@@ -156,7 +160,7 @@ test("an empty list is told as configured to none, not as missing", () => {
   );
   expect(
     leadInstructions(builtInRole("lead").instructions, "simon/app", "/c", { setup: [], test: [] }, [
-      "default",
+      { name: "default", text: "" },
     ]),
   ).toEndWith(
     "\nWhen this session started, setup was configured as none, and test was configured as none.\n",

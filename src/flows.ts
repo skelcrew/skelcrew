@@ -6,26 +6,39 @@ import { z } from "zod";
 import { agentsFile, agentsFolder, approvedAgents } from "./approved-agents.ts";
 import defaultFlow from "./defaults/flows/default.yaml" with { type: "text" };
 
-// What a flow file may hold: today's stages and their one setting, the round limit. Anything
-// else is refused rather than ignored, so a setting put there by mistake doesn't look as if it
-// counts. Each stage runs today's role, so a flow may name only that one: a builder stage on
-// the reviewer, or a role with no agents behind it, would otherwise read as if it counted.
-const Flow = z.strictObject({
-  build: z.strictObject({ role: z.literal("builder").optional() }).nullish(),
-  review: z
-    .strictObject({
-      role: z.literal("reviewer").optional(),
-      rounds: z.number().int().positive().optional(),
-    })
-    .nullish(),
-});
-type Flow = z.infer<typeof Flow>;
-
 // A flow's name, which names its file in .agents/flows/, so it can't hold a slash or start with a
 // dot and reach another file.
 export const FlowName = z
   .string()
   .regex(/^[a-z0-9][a-z0-9_-]*$/i, "a flow's name is letters, digits, - and _");
+
+// The role a stage runs: its built-in one, or a role of the repository's own, named as its file
+// in .agents/roles/ is, so the name can't reach another file either. The lead and the other
+// stage's built-in role are refused: the lead belongs to the repository, not a task, and the
+// builder's and reviewer's instructions are written for their own stage.
+const stageRole = (own: string, other: string) =>
+  z
+    .string()
+    .regex(/^[a-z0-9][a-z0-9_-]*$/i, "a role's name is letters, digits, - and _")
+    .refine(
+      (role) => role !== "lead" && role !== other,
+      `the stage runs ${own} or a role of its own`,
+    )
+    .optional();
+
+// What a flow file may hold: today's stages, the role each runs, and the round limit. Anything
+// else is refused rather than ignored, so a setting put there by mistake doesn't look as if it
+// counts.
+const Flow = z.strictObject({
+  build: z.strictObject({ role: stageRole("builder", "reviewer") }).nullish(),
+  review: z
+    .strictObject({
+      role: stageRole("reviewer", "builder"),
+      rounds: z.number().int().positive().optional(),
+    })
+    .nullish(),
+});
+type Flow = z.infer<typeof Flow>;
 
 // The built-in default flow's file, byte for byte, which sc init writes out. Bun types a file
 // imported as text loosely, so it is checked to be text.
@@ -78,7 +91,24 @@ export function repositoryFlows(place: {
   return ["default", ...named.sort()];
 }
 
+// Returns each flow a repository's tasks can run, as repositoryFlows names them, with its file's
+// text: the built-in one for `default` when the repository has no file for it. The lead triages
+// with these, from the .agents/ you approved, since the clone it can read may hold flow files
+// you haven't approved yet.
+export function flowTexts(place: {
+  owner: string;
+  repo: string;
+  agents?: string | null;
+}): { name: string; text: string }[] {
+  const tree = place.agents === undefined ? approvedAgents(place) : place.agents;
+  return repositoryFlows(place).map((name) => {
+    const text = tree === null ? null : agentsFile(place, tree, `flows/${name}.yaml`);
+    return { name, text: text ?? builtInFlowText };
+  });
+}
+
 // Throws unless the repository's tasks can run `flow`, saying which flows they can, for sc start.
+// A flow whose stages can't run, such as one naming a role with no file, is refused too.
 // `name` is the repository's name in Skelcrew, and the tree counts as for repositoryFlows.
 export function checkFlow(
   place: { owner: string; repo: string; agents?: string | null },
@@ -88,6 +118,44 @@ export function checkFlow(
   const flows = repositoryFlows(place);
   if (!flows.includes(flow))
     throw new Error(`${name} has no flow ${flow}. Its flows are ${flows.join(", ")}.`);
+  // A flow that names a role the repository lacks is refused now, rather than fail the thread.
+  flowRoles({ ...place, flow });
+}
+
+// Returns the roles a task's stages run, from its flow's file: the built-in default flow's when
+// the flow is `default` and the repository has no file for it. A role other than the built-in
+// one must have its file in the same .agents/ tree, or the flow is refused, naming it, rather
+// than run a stage on instructions nobody wrote. The rounds are left unread, so a bad one stops
+// only what reads the round limit.
+export function flowRoles(place: {
+  owner: string;
+  repo: string;
+  agents?: string | null;
+  flow?: string;
+}): { build: string; review: string } {
+  const tree = place.agents === undefined ? approvedAgents(place) : place.agents;
+  const flow = place.flow ?? "default";
+  const path = `flows/${flow}.yaml`;
+  const text = tree === null ? null : agentsFile(place, tree, path);
+  if (text === null && flow !== "default")
+    throw new Error(`${place.owner}/${place.repo} has no flow ${flow} in its .agents/flows/`);
+  const where = `.agents/${path} in ${place.owner}/${place.repo}`;
+  let read: Flow;
+  try {
+    read = readFlow(text ?? builtInFlowText, true);
+  } catch (error) {
+    throw new Error(`${where}: ${error instanceof Error ? error.message : error}`);
+  }
+  const roles = { build: read.build?.role ?? "builder", review: read.review?.role ?? "reviewer" };
+  for (const role of [roles.build, roles.review])
+    if (role !== "builder" && role !== "reviewer") {
+      const file = tree === null ? null : agentsFile(place, tree, `roles/${role}.md`);
+      if (file === null)
+        throw new Error(
+          `${where}: it names the role ${role}, which has no .agents/roles/${role}.md`,
+        );
+    }
+  return roles;
 }
 
 // Returns the round limit a repository's own flow sets, or nothing when the flow is `default`

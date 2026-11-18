@@ -16,7 +16,7 @@ import {
 } from "../agents/sessions.ts";
 import { approvedAgents } from "../approved-agents.ts";
 import { agentRole, repositoryCommands, roundLimit } from "../config.ts";
-import { checkFlow } from "../flows.ts";
+import { checkFlow, flowRoles } from "../flows.ts";
 import { cloneDir, threadSocket } from "../paths.ts";
 import { trackerOf } from "../plugins/ask.ts";
 import { repositoryRole } from "../roles.ts";
@@ -479,9 +479,10 @@ export async function startBuilder(db: Database, sessions: string, thread: Threa
     // task in its own words, and the builder still has it after a long conversation is
     // compacted. It asks the builder to ask you only when it must: its question waits on a
     // screen nobody watches.
-    // The builder role's instructions come from the .agents/ the task started with.
+    // The build stage's role, from the task's flow, and its instructions come from the .agents/
+    // the task started with.
     system: builderInstructions(
-      repositoryRole("builder", thread).instructions,
+      repositoryRole(flowRoles(thread).build, thread).instructions,
       repositoryCommands(thread),
     ),
     ...start,

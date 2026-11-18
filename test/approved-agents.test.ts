@@ -318,23 +318,28 @@ test("the flow file goes over your config's max_rounds, which goes over the buil
   expect(roundsOf()).toBe(4);
 });
 
-test("a flow file that isn't valid stops only what reads the round limit, naming the file", () => {
+test("a flow file that isn't valid stops only what reads the flow, naming the file", () => {
   agentsFile("flows/default.yaml", "review:\n  rounds: 2\n  skip: true\n");
   commit("flow");
   inHome(approveCurrent);
   expect(() => roundsOf()).toThrow(".agents/flows/default.yaml in simon/app");
-  expect(inHome('return readSettings(["builder"], app).builder;')).toEqual({
+  // The flow says who builds, so the builder stops too, but the lead runs on.
+  expect(() => inHome('return readSettings(["builder"], app).builder;')).toThrow(
+    ".agents/flows/default.yaml in simon/app",
+  );
+  expect(inHome('return readSettings(["lead"], app).lead;')).toEqual({
     harness: "claude",
     model: "opus",
   });
 });
 
-test("a flow may name only the role each stage runs today, for both stages", () => {
+test("a stage can't run the lead or the other stage's built-in role", () => {
   for (const flow of [
     "build:\n  role: reviewer\n",
-    "build:\n  role: tester\n",
+    "build:\n  role: lead\n",
     "review:\n  role: builder\n  rounds: 2\n",
-    "review:\n  role: critic\n  rounds: 2\n",
+    "review:\n  role: lead\n  rounds: 2\n",
+    "review:\n  role: ../secret\n  rounds: 2\n",
   ]) {
     agentsFile("flows/default.yaml", flow);
     commit("flow");
@@ -417,4 +422,69 @@ test("a flow file that is a link isn't a flow", () => {
   commit("link");
   inHome(approveCurrent);
   expect(flowsOf()).toEqual(["default"]);
+});
+
+// Runs `code` with flowRoles and repositoryRole at hand, for a stage's role as an agent gets it.
+const stageOf = (code: string) =>
+  inHome(`const { flowRoles } = await import(${JSON.stringify(source("flows.ts"))}); ${code}`);
+
+test("a flow's stage runs a role of the repository's own, with its file's instructions, harness and model", () => {
+  agentsFile(
+    "flows/default.yaml",
+    "build:\n  role: tester\nreview:\n  role: critic\n  rounds: 2\n",
+  );
+  agentsFile("roles/tester.md", "---\nharness: codex\n---\nTest first.\n");
+  agentsFile("roles/critic.md", "Be hard on it.\n");
+  commit("roles");
+  inHome(approveCurrent);
+  expect(stageOf("return flowRoles(app);")).toEqual({ build: "tester", review: "critic" });
+  expect(stageOf("return repositoryRole(flowRoles(app).build, app).instructions;")).toBe(
+    "Test first.\n",
+  );
+  // A role with no harness or model of its own gets the stage's, from your config.
+  expect(inHome('return readSettings(["builder"], app).builder;')).toEqual({ harness: "codex" });
+  expect(inHome('return readSettings(["reviewer"], app).reviewer;')).toEqual({
+    harness: "claude",
+    model: "opus",
+  });
+  expect(roundsOf()).toBe(2);
+  // A task on the built-in files runs the built-in default flow's roles.
+  expect(stageOf("return flowRoles({ ...app, agents: null });")).toEqual({
+    build: "builder",
+    review: "reviewer",
+  });
+});
+
+test("a flow naming a role with no file is refused, naming the role", () => {
+  agentsFile("flows/default.yaml", "review:\n  role: critic\n");
+  commit("flow");
+  inHome(approveCurrent);
+  expect(() => stageOf("return flowRoles(app);")).toThrow(
+    "it names the role critic, which has no .agents/roles/critic.md",
+  );
+  expect(() => inHome('return readSettings(["reviewer"], app).reviewer;')).toThrow(
+    "has no .agents/roles/critic.md",
+  );
+  // sc start refuses it before a thread starts on it.
+  expect(() =>
+    stageOf(
+      `const { checkFlow } = await import(${JSON.stringify(source("flows.ts"))}); checkFlow(app, "app", "default");`,
+    ),
+  ).toThrow("it names the role critic");
+});
+
+test("the lead reads each flow as approved, not as the clone holds it now", () => {
+  agentsFile("flows/quick.yaml", "review:\n  rounds: 1\n");
+  commit("flows");
+  inHome(approveCurrent);
+  agentsFile("flows/quick.yaml", "review:\n  rounds: 9\n");
+  commit("unapproved");
+  const texts = inHome(
+    `const { flowTexts, builtInFlowText } = await import(${JSON.stringify(source("flows.ts"))}); return [flowTexts(app), builtInFlowText];`,
+  );
+  const [flows, builtIn] = Array.isArray(texts) ? texts : [];
+  expect(flows).toEqual([
+    { name: "default", text: builtIn },
+    { name: "quick", text: "review:\n  rounds: 1\n" },
+  ]);
 });

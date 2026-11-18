@@ -7,9 +7,9 @@ import { join } from "node:path";
 import { parse } from "yaml";
 import { z } from "zod";
 import { HarnessName } from "./agents/harness.ts";
-import { builtInRounds, repositoryRounds } from "./flows.ts";
+import { builtInRounds, flowRoles, repositoryRounds } from "./flows.ts";
 import { cloneDir, configDir } from "./paths.ts";
-import { type RoleName, repositoryRole } from "./roles.ts";
+import { repositoryRole } from "./roles.ts";
 
 // A repository Skelcrew works on, by its owner and name. `agents` is the tree of .agents/ whose
 // role files count, as repositoryRole takes it: a task's own, or without it the one you approved.
@@ -204,9 +204,14 @@ export function readSettings<G extends Group>(
   // flow, `default` unless it named another, go over max_rounds. Only the files of the settings
   // asked for are read, so a broken reviewer file never stops the lead.
   const agentsFiles: File = {};
+  // The builder's and reviewer's are those of the role the task's flow runs in their stage,
+  // which is theirs unless the flow names one of the repository's own.
   for (const name of ["lead", "builder", "reviewer"] as const)
-    if (repository && groups.some((group) => group === name))
-      agentsFiles[name] = roleFileSettings(name, repository);
+    if (repository && groups.some((group) => group === name)) {
+      const roles = name === "lead" ? null : flowRoles(repository);
+      const role = roles === null ? "lead" : name === "builder" ? roles.build : roles.review;
+      agentsFiles[name] = roleFileSettings(role, repository);
+    }
   // The flow file is checked even when your override decides the round limit, as its stages
   // still say which roles run.
   if (repository && groups.some((group) => group === "rounds"))
@@ -226,7 +231,7 @@ export function readSettings<G extends Group>(
 
 // Returns the harness and model a repository's role file names, or nothing when it names neither
 // or the repository has no file for the role.
-function roleFileSettings(name: RoleName, repository: Repository): RoleSettings | undefined {
+function roleFileSettings(name: string, repository: Repository): RoleSettings | undefined {
   const { harness, model } = repositoryRole(name, repository);
   if (harness === undefined && model === undefined) return undefined;
   return { ...(harness && { harness }), ...(model && { model }) };

@@ -46,18 +46,21 @@ export function builtInRole(name: RoleName): Role {
 export type RoleName = "lead" | "builder" | "reviewer";
 
 // Returns a role as a repository's agents get it: from its file in the .agents/ tree `agents`
-// names, or with none there, the built-in one. A task passes the tree it started with, or null
+// names, or with none there, the built-in one. A role a flow names that isn't built in has only
+// its file, so without one it throws, naming the file. A task passes the tree it started with, or null
 // when it started on the built-in roles. Without one, the version of .agents/ you approved
 // counts, as for the lead and a task starting now. Throws, naming the file, when its frontmatter
 // isn't valid, rather than run an agent on a role it doesn't describe.
 export function repositoryRole(
-  name: RoleName,
+  name: string,
   place: { owner: string; repo: string; agents?: string | null },
 ): Role {
   const tree = place.agents === undefined ? approvedAgents(place) : place.agents;
   const path = `roles/${name}.md`;
   const text = tree === null ? null : agentsFile(place, tree, path);
-  if (text === null) return builtInRole(name);
+  if (text === null && (name === "lead" || name === "builder" || name === "reviewer"))
+    return builtInRole(name);
+  if (text === null) throw new Error(`.agents/${path} in ${place.owner}/${place.repo} isn't there`);
   try {
     return readRole(text);
   } catch (error) {
