@@ -33,13 +33,21 @@ import {
 import { holdCheckSlot } from "./checks.ts";
 import { saveItems } from "./copy.ts";
 import { removeThread, stopThread } from "./events.ts";
+import { noCommits } from "./git.ts";
 import { closeExitedLeads, lastOpened, leadOf, openedRepositories, startLead } from "./lead.ts";
 import { restoreLimits, wakeAfterLimit } from "./limits.ts";
 import { listRepositories, listTasks, listThreads, showTask } from "./list.ts";
 import { armMerge, cancelMerge, refuseWithoutForge, threadToMerge } from "./merging.ts";
 import { deliverAllWaiting, messageBuilder, messageLead, typeLeadNotes } from "./messages.ts";
 import { pollRepositories } from "./poll.ts";
-import { findRepository, fullNameIs, noRepositories, refreshClones, repositoryAt } from "./repo.ts";
+import {
+  findRepository,
+  fullNameIs,
+  hasNoCommits,
+  noRepositories,
+  refreshClones,
+  repositoryAt,
+} from "./repo.ts";
 import { allowed, type Caller, DaemonRequest, parseJson } from "./requests.ts";
 import { endRound, goOn, rerunReview, resumeRound, submitRound } from "./round.ts";
 import { doing, watchForStalls } from "./stall.ts";
@@ -474,6 +482,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
               record(db, started.folder, { short: request.short }, "given a short title");
             return { started: `Started ${threadName(db, started)}.` };
           }
+          if (await hasNoCommits(db, repository)) throw new Error(noCommits(repository));
           thread = await startThread(db, request);
         } finally {
           startingTasks.delete(key);
@@ -485,6 +494,8 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         return { started: `Started ${threadName(db, thread)}.` };
       }
       case "start new": {
+        const repository = findRepository(db, request.repo);
+        if (await hasNoCommits(db, repository)) throw new Error(noCommits(repository));
         const thread = await startThread(db, request);
         setUpAndStart(thread);
         return { started: `Started ${threadName(db, thread)}.` };

@@ -158,8 +158,9 @@ const until = (done: () => boolean, timeout = 15_000) => wait(done, { timeout })
 
 // Puts simon/app on the fake GitHub and tells Skelcrew about it, as a repository you have opened,
 // whose lead the daemon starts, with the fake plugin as its tracker and forge. Returns a
-// checkout to push from.
-function addApp(): string {
+// checkout to push from. An empty one is on GitHub with no commits yet, as a repository just
+// created is, and the checkout's commit is its first to push.
+function addApp(empty = false): string {
   const work = join(home, "work", "app");
   mkdirSync(work, { recursive: true });
   writeFileSync(join(work, "README"), "app\n");
@@ -167,7 +168,9 @@ function addApp(): string {
   git(work, "init", "-q", "-b", "main");
   git(work, "add", ".");
   git(work, "commit", "-q", "-m", "start");
-  git(home, "clone", "-q", "--bare", work, join(home, "github", "simon", "app.git"));
+  const bare = join(home, "github", "simon", "app.git");
+  if (empty) git(home, "init", "-q", "--bare", "-b", "main", bare);
+  else git(home, "clone", "-q", "--bare", work, bare);
   const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
 openDb().run("INSERT INTO repositories (name, owner, repo, opened, forge, remote, claimed) VALUES ('app', 'simon', 'app', 1, 'github', 'https://github.com/simon/app.git', 1)");`;
   const added = Bun.spawnSync([process.execPath, "-e", code], { env: env(), stderr: "pipe" });
@@ -409,6 +412,169 @@ test("a push straight to main and a merge of a PR without a thread both reach Sk
   expect(existsSync(join(skelcrewClone, "feature"))).toBe(true);
 });
 
+// A repository just created on GitHub has no commits, so no default branch to fetch. Polling it
+// must neither fail nor fill the log, and its first commit must reach Skelcrew's clone.
+test("an empty repository is polled quietly, refuses a thread plainly, and its first commit reaches Skelcrew's clone", async () => {
+  const work = addApp(true);
+  changes([issue12(), prItem("34", "Bump deps")]);
+  serve();
+  // Issues and PRs still reach Skelcrew's copy, and the log says once that there are no commits.
+  await until(() => copied().rows.length === 2);
+  expect(copied().rows).toEqual(["pr 34", "task 12"]);
+  await morePolls();
+  const log = read(daemonLog());
+  expect(log).not.toContain("failed");
+  expect(log.split("simon/app has no commits yet").length).toBe(2);
+  // A thread has nothing to start from, from the default branch or one named with --from.
+  // sc start says so rather than starting one whose setup can only fail.
+  for (const from of [[], ["--from", "main"]]) {
+    const started = Bun.spawnSync([process.execPath, main, "start", "app-12", ...from], {
+      env: env(),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(started.stdout.toString()).toBe("");
+    expect(started.stderr.toString()).toBe(
+      "Skelcrew: simon/app has no commits yet, so a thread has nothing to start from. Push a first commit, then start it again.\n",
+    );
+    expect(started.exitCode).toBe(1);
+    expect(thread()).toEqual({});
+  }
+  // The first commit pushed reaches Skelcrew's clone at the next poll, and the log says so once.
+  git(work, "push", "-q", join(home, "github", "simon", "app.git"), "main");
+  const skelcrewClone = join(data(), "repos", "simon", "app");
+  await until(() => existsSync(join(skelcrewClone, "README")));
+  const first = git(work, "rev-parse", "HEAD").trim();
+  expect(git(skelcrewClone, "rev-parse", "HEAD").trim()).toBe(first);
+  await morePolls();
+  expect(read(daemonLog())).toContain(
+    `Skelcrew's clone of simon/app has its first commit, ${first.slice(0, 7)}`,
+  );
+  expect(read(daemonLog()).split("has its first commit").length).toBe(2);
+  expect(read(daemonLog())).not.toContain("couldn't update");
+});
+
+// The first commit can come before the refresh after the one that made the clone, and the log
+// must still have said the repository was empty.
+test("an empty repository is logged as it is cloned, and its clone follows the branch its first commit made the default", () => {
+  const work = addApp(true);
+  const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
+import { refreshClone, repositories } from ${JSON.stringify(source("flow/repo.ts"))};
+const db = openDb();
+const [app] = repositories(db);
+if (!app) throw new Error("no repository");
+await refreshClone(db, app);`;
+  const refresh = () => {
+    const run = Bun.spawnSync([process.execPath, "-e", code], {
+      env: env(),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(run.stderr.toString()).toBe("");
+    return run.stdout.toString();
+  };
+  expect(refresh()).toBe("simon/app has no commits yet\n");
+  // The first commit goes to develop, which becomes the default branch, rather than to the
+  // main the remote named when it was cloned. The clone follows, as threads' PRs go there.
+  const bare = join(home, "github", "simon", "app.git");
+  git(work, "push", "-q", bare, "main:develop");
+  git(bare, "symbolic-ref", "HEAD", "refs/heads/develop");
+  const first = git(work, "rev-parse", "HEAD").trim().slice(0, 7);
+  expect(refresh()).toBe(`Skelcrew's clone of simon/app has its first commit, ${first}\n`);
+  const skelcrewClone = join(data(), "repos", "simon", "app");
+  expect(git(skelcrewClone, "symbolic-ref", "--short", "HEAD").trim()).toBe("develop");
+  expect(git(skelcrewClone, "rev-parse", "--short=7", "HEAD").trim()).toBe(first);
+});
+
+// A claim made while there is nothing to start from would keep the label from starting the
+// task once there is.
+test("a labeled task on an empty repository is neither claimed nor started until its first commit, even before it is cloned", async () => {
+  const work = addApp(true);
+  answer(plugin, "took", { took: true });
+  changes([issue12(true)]);
+  // Hold the clone the daemon makes as it starts, so polls run before it is there, as they
+  // can on a slow remote.
+  script(
+    "git",
+    `case "$*" in *"clone --quiet https://github.com/"*)
+  touch "$HOME/held"
+  while [ ! -e "$HOME/go" ] && [ -d "$HOME" ]; do sleep 0.05; done ;;
+esac
+exec ${Bun.which("git") ?? "git"} "$@"`,
+  );
+  // With no lead open, which would wait for the clone as it starts, polling starts at once.
+  const db = new Database(join(data(), "skelcrew.db"));
+  db.run("UPDATE repositories SET opened = NULL");
+  db.close();
+  serve();
+  await until(() => existsSync(join(home, "held")));
+  await until(() => copied().rows.length === 1);
+  await morePolls();
+  expect(claims()).toEqual([]);
+  writeFileSync(join(home, "go"), "");
+  await until(() => read(daemonLog()).includes("simon/app has no commits yet"));
+  await morePolls();
+  expect(claims()).toEqual([]);
+  expect(thread()).toEqual({});
+  git(work, "push", "-q", join(home, "github", "simon", "app.git"), "main");
+  await until(() => thread().task === 12);
+  expect(claims()).toEqual([claim12]);
+});
+
+// Every branch can be deleted from a repository Skelcrew has already cloned, and its clone
+// keeps the old commits. The repository is empty all the same.
+test("a repository emptied after Skelcrew cloned it starts no thread until its next first commit", async () => {
+  const work = addApp();
+  answer(plugin, "took", { took: true });
+  changes([]);
+  serve();
+  const skelcrewClone = join(data(), "repos", "simon", "app");
+  await until(() => existsSync(join(skelcrewClone, "README")));
+  const bare = join(home, "github", "simon", "app.git");
+  git(bare, "update-ref", "-d", "refs/heads/main");
+  await until(() => read(daemonLog()).includes("simon/app has no commits yet"));
+  // sc start says so, and a task labeled now is neither claimed nor started.
+  const started = Bun.spawnSync([process.execPath, main, "start", "app-12"], {
+    env: env(),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect(started.stderr.toString()).toBe(
+    "Skelcrew: simon/app has no commits yet, so a thread has nothing to start from. Push a first commit, then start it again.\n",
+  );
+  changes([issue12(true)]);
+  await until(() => copied().rows.length === 1);
+  await morePolls();
+  expect(claims()).toEqual([]);
+  expect(thread()).toEqual({});
+  // The next first commit goes to develop, which becomes the default, and is logged as a
+  // first commit. The labeled task then starts.
+  writeFileSync(join(work, "again"), "1\n");
+  git(work, "add", ".");
+  git(work, "commit", "-q", "-m", "again");
+  git(work, "push", "-q", bare, "main:develop");
+  git(bare, "symbolic-ref", "HEAD", "refs/heads/develop");
+  const first = git(work, "rev-parse", "HEAD").trim();
+  await until(() => read(daemonLog()).includes(`has its first commit, ${first.slice(0, 7)}`));
+  expect(read(daemonLog())).not.toContain("moved its default branch");
+  expect(git(skelcrewClone, "symbolic-ref", "--short", "HEAD").trim()).toBe("develop");
+  expect(git(skelcrewClone, "rev-parse", "HEAD").trim()).toBe(first);
+  await until(() => thread().task === 12);
+  expect(claims()).toEqual([claim12]);
+});
+
+// A remote whose HEAD names a branch that is gone has commits all the same, and the log must
+// say what is wrong rather than take it for an empty repository.
+test("a repository whose default branch is gone still logs why its clone can't update", async () => {
+  addApp();
+  git(join(home, "github", "simon", "app.git"), "symbolic-ref", "HEAD", "refs/heads/gone");
+  changes([]);
+  serve();
+  await until(() => read(daemonLog()).includes("couldn't update Skelcrew's clone of simon/app"));
+  expect(read(daemonLog())).toContain("couldn't find remote ref HEAD");
+  expect(read(daemonLog())).not.toContain("no commits yet");
+});
+
 // git can reach the remote while the tracker or forge is down, and builders must not fall
 // behind for it.
 test("a push straight to main reaches Skelcrew's clone while the forge fails to answer", async () => {
@@ -522,6 +688,17 @@ test("a labeled task claimed elsewhere starts no thread, and a claim that fails 
 
 // bubblewrap can't start inside Skelcrew's own sandbox, so only there builders can't start.
 describe.skipIf(insideSandbox)("polling a forge", () => {
+  // The lead works in Skelcrew's clone, which for an empty repository is a checkout of nothing.
+  test("an empty repository's lead starts and stays", async () => {
+    addApp(true);
+    changes([issue12()]);
+    serve();
+    await until(() => existsSync(join(data(), "claude", leadName, "typed")));
+    await morePolls();
+    expect(read(daemonLog())).toContain("simon/app has no commits yet");
+    expect(read(daemonLog())).not.toContain("the lead exited");
+  });
+
   test("a PR's checks are saved for the strip, without Skelcrew's own review check", async () => {
     await approvedApp12();
     await morePolls();
