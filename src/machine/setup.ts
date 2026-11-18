@@ -337,9 +337,10 @@ export function firstRun(from?: string): boolean {
     else checkLinuxTools(env);
     console.log("Setting up Skelcrew...\n");
   }
-  // Read once git is known to be there.
+  // Read once git is known to be there. The offer installs a plugin, which only a yes at a
+  // terminal can do, so with no terminal it isn't made.
   const remote = from ?? originHere();
-  const github = gitHubToOffer(remote);
+  const github = process.stdin.isTTY ? gitHubToOffer(remote) : null;
   if (github !== null && remote !== null) offerGitHub(github, remote);
   if (!done) {
     // The steps left are worked out again after each one, as the harness you pick decides

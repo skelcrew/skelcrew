@@ -117,12 +117,17 @@ function checkSkelcrewVersion(manifest: Manifest): void {
     );
 }
 
-// Asks a question that Enter, y or yes answers yes, and returns true for yes, false for any
-// other answer, and null when the input ended with no answer at all, as it does with no terminal
-// or after Ctrl-D. Bun's own prompt gives null both for a bare Enter and for the end of the input,
-// which would take silence for a yes. The answer is read a byte at a time, so a question after
-// this one still finds its own line.
+// Asks a question at your terminal that Enter, y or yes answers yes. Returns true for yes, false
+// for any other answer, and null when there is no answer: with no terminal, or after Ctrl-D.
+// Only a terminal counts, so an answer piped in from a script or the engine never installs a
+// plugin. Bun's own prompt gives null both for a bare Enter and for the end of the input, which
+// would take silence for a yes. The answer is read a byte at a time, so a question after this one
+// still finds its own line.
 export function askYes(question: string): boolean | null {
+  if (!process.stdin.isTTY) {
+    console.log(`${question} There is no terminal to answer in, so Skelcrew takes that as no.`);
+    return null;
+  }
   writeSync(1, `${question} `);
   const byte = Buffer.alloc(1);
   let line = "";
@@ -315,13 +320,20 @@ export function updatePlugin(db: Database, plugin: Plugin, options: Options = {}
     return;
   }
   const tag = wanted ?? newestTag(source);
-  if (!wanted && !newer(tag.slice(1), current.version)) {
-    console.log(`${name} is at its newest version, ${current.version}.`);
+  const atNewest = () => console.log(`${name} is at its newest version, ${current.version}.`);
+  if (!wanted && newer(current.version, tag.slice(1))) {
+    atNewest();
     return;
   }
   const cloned = cloneTag(source, tag, commit);
   const { staged, manifest } = cloned;
   try {
+    // The newest tag can be the installed version moved to another commit, which is an update
+    // too, shown and asked about like any other.
+    if (!wanted && manifest.version === current.version && cloned.commit === commitOf(folder)) {
+      atNewest();
+      return;
+    }
     if (manifest.name !== name)
       throw new Error(`${source} now names its plugin ${manifest.name}, not ${name}`);
     checkSkelcrewVersion(manifest);
@@ -352,12 +364,27 @@ export function updatePlugin(db: Database, plugin: Plugin, options: Options = {}
   }
 }
 
-// Updates the named plugin, or every one, for sc update -g.
+// Updates the named plugin, or every one, for sc update -g. A plugin your files name that isn't
+// installed here is installed at its newest version instead, after asking, so its lock moves
+// too. `name` is a plugin's name or its owner/repo.
 export function updatePlugins(name?: string): void {
   const db = openDb();
-  const chosen = name ? [findPlugin(db, name)] : installedPlugins(db);
-  if (chosen.length === 0) console.log("No plugins installed.");
+  const lock = yourLock(db);
+  const installed = installedPlugins(db);
+  const missing = yourPlugins().filter(
+    (source) => !installed.some((plugin) => plugin.source === source),
+  );
+  const chosen = installed.filter(
+    (plugin) => name === undefined || plugin.name === name || plugin.source === name,
+  );
+  const toInstall = missing.filter(
+    (source) => name === undefined || source === name || lock[source]?.name === name,
+  );
+  if (name !== undefined && chosen.length + toInstall.length === 0)
+    throw new Error(`there is no plugin named ${name}: sc plugins lists them`);
+  if (chosen.length + toInstall.length === 0) console.log("No plugins installed.");
   for (const plugin of chosen) updatePlugin(db, plugin);
+  for (const source of toInstall) installPlugin(source);
 }
 
 // Removes a plugin with its settings and tokens. A plugin from GitHub loses its folders and its

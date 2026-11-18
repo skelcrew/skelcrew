@@ -17,7 +17,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse } from "yaml";
-import { git, source } from "./harness.ts";
+import { git, inTerminal, source } from "./harness.ts";
 
 let home = "";
 
@@ -107,23 +107,28 @@ afterEach(() => {
   rmSync(home, { recursive: true, force: true });
 });
 
-// Runs sc as the release given, or as a build from a checkout, with what you type.
+// Runs sc as the release given, or as a build from a checkout. What you type goes in at a
+// terminal, as only an answer there installs a plugin, unless `terminal` says it is piped in.
 async function skel(
   args: string[],
   typed = "",
   release = "",
   more: Record<string, string> = {},
   cwd = home,
+  terminal = typed !== "",
 ) {
   const stamp = release ? ["--define", `SKELCREW_BUILD=${JSON.stringify(release)}`] : [];
-  const run = Bun.spawn([process.execPath, ...stamp, source("main.ts"), ...args], {
+  const argv = [process.execPath, ...stamp, source("main.ts"), ...args];
+  const env = {
+    PATH: `${join(home, "bin")}:${process.env.PATH ?? ""}`,
+    HOME: home,
+    XDG_RUNTIME_DIR: join(home, "run"),
+    ...more,
+  };
+  if (terminal) return inTerminal(argv, { typed, env, cwd });
+  const run = Bun.spawn(argv, {
     cwd,
-    env: {
-      PATH: `${join(home, "bin")}:${process.env.PATH ?? ""}`,
-      HOME: home,
-      XDG_RUNTIME_DIR: join(home, "run"),
-      ...more,
-    },
+    env,
     stdin: new Blob([typed]),
     stdout: "pipe",
     stderr: "pipe",
@@ -560,11 +565,13 @@ test("sc add -g installs after asking, names the plugin in your config and pins 
   expect((await skel(["plugins"])).out).toBe("fake 0.2.0 io: tracker, forge\n");
 });
 
-test("with no answer to read, as with no terminal, nothing installs", async () => {
+test("without a terminal nothing installs, even with a yes piped in", async () => {
   publish("skelcrew/skelcrew-fake", "0.1.0");
-  const run = await skel(["add", "-g", "skelcrew/skelcrew-fake"], "");
+  const run = await skel(["add", "-g", "skelcrew/skelcrew-fake"], "y\n", "", {}, home, false);
   expect(run.code).toBe(0);
-  expect(run.out).toContain("Skelcrew didn't install fake.");
+  expect(run.out).toContain(
+    "Install it? [Y/n] There is no terminal to answer in, so Skelcrew takes that as no.\nSkelcrew didn't install fake.",
+  );
   expect(existsSync(join(plugins(), "fake"))).toBe(false);
   expect(existsSync(yourLockFile())).toBe(false);
   expect(existsSync(yourConfig())).toBe(false);

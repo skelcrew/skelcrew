@@ -19,7 +19,7 @@ import { createServer, type Server } from "node:net";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import { parse } from "yaml";
-import { git, threadSql } from "./harness.ts";
+import { git, inTerminal, threadSql } from "./harness.ts";
 
 let home = "";
 let bin = "";
@@ -493,6 +493,20 @@ function checkoutWith(name: string, remote?: string): string {
 
 const offer = "Install the GitHub plugin? [Y/n]";
 
+// Runs plain sc, or the command in `args`, in `cwd` with a terminal as its input, typing `typed`
+// into it. Skelcrew offers and installs a plugin only to an answer at a terminal. The token's
+// question reads keys one by one there, through stty.
+function atTerminal(typed: string, cwd = home, args: string[] = []) {
+  if (!existsSync(join(bin, "stty"))) symlinkSync(Bun.which("stty") ?? "stty", join(bin, "stty"));
+  const env = {
+    PATH: bin,
+    HOME: home,
+    XDG_RUNTIME_DIR: join(home, "run"),
+    TMPDIR: join(home, "tmp"),
+  };
+  return inTerminal([process.execPath, main(), ...args], { typed, env, cwd });
+}
+
 // The GitHub plugin is offered where you work on a GitHub repository, and only there, on any run
 // until it is installed or you say no.
 test("offers the GitHub plugin only in a checkout on github.com, on any run", async () => {
@@ -502,11 +516,11 @@ test("offers the GitHub plugin only in a checkout on github.com, on any run", as
   expect(outside.code).toBe(0);
   expect(outside.out).not.toContain("GitHub");
   const folder = checkoutWith("app");
-  expect((await skel("", bin, main(), folder)).out).not.toContain("GitHub");
+  expect((await atTerminal("", folder)).out).not.toContain("GitHub");
   git(folder, "remote", "add", "origin", "git@gitlab.com:simon/app.git");
-  expect((await skel("", bin, main(), folder)).out).not.toContain("GitHub");
+  expect((await atTerminal("", folder)).out).not.toContain("GitHub");
   git(folder, "remote", "set-url", "origin", "git@github.com:simon/app.git");
-  const later = await skel("n\n", bin, main(), join(folder));
+  const later = await atTerminal("n\n", folder);
   expect(later.out).toStartWith(
     "GitHub detected.\n\nThe GitHub plugin lets Skelcrew work with issues, pull requests\nand CI on your repositories. Install the GitHub plugin? [Y/n]",
   );
@@ -516,7 +530,7 @@ test("a no holds for the repository, in every checkout of it, and another reposi
   noGitHubPlugin();
   fakeGitHub();
   const app = checkoutWith("app", "git@github.com:simon/app.git");
-  const first = await skel("n\n1\nsk-ant-oat01-good\n", bin, main(), app);
+  const first = await atTerminal("n\n1\nsk-ant-oat01-good\n", app);
   expect(first.code).toBe(0);
   expect(first.out).toContain(offer);
   expect(first.out).toContain(
@@ -529,10 +543,10 @@ test("a no holds for the repository, in every checkout of it, and another reposi
     github_declined: ["simon/app"],
   });
   const again = checkoutWith("app-again", "https://github.com/Simon/app.git");
-  expect((await skel("", bin, main(), again)).out).not.toContain("GitHub");
-  expect((await skel("", bin, main(), app)).out).not.toContain("GitHub");
+  expect((await atTerminal("", again)).out).not.toContain("GitHub");
+  expect((await atTerminal("", app)).out).not.toContain("GitHub");
   const site = checkoutWith("site", "git@github.com:simon/site.git");
-  const other = await skel("n\n", bin, main(), site);
+  const other = await atTerminal("n\n", site);
   expect(other.out).toContain(offer);
   expect(parse(readFileSync(config(), "utf8")).github_declined).toEqual([
     "simon/app",
@@ -546,7 +560,7 @@ test("over --remote, the offer reads the remote sc brought from your laptop", as
   noGitHubPlugin();
   fakeGitHub();
   await skel("1\nsk-ant-oat01-good\n");
-  const run = await skel("n\n", bin, main(), home, {}, ["--from", "git@github.com:simon/app.git"]);
+  const run = await atTerminal("n\n", home, ["--from", "git@github.com:simon/app.git"]);
   expect(run.out).toContain(offer);
   expect(parse(readFileSync(config(), "utf8")).github_declined).toEqual(["simon/app"]);
 });
@@ -613,7 +627,7 @@ function siteOnGitHub(): string {
 // line saying Skelcrew is set up goes straight on to bringing the repository in.
 test("a yes installs the GitHub plugin with no second question, writes nothing here, and the lead opens", async () => {
   const site = siteOnGitHub();
-  const run = await skel("\n1\nsk-ant-oat01-good\n", bin, main(), site);
+  const run = await atTerminal("\n1\nsk-ant-oat01-good\n", site);
   expect(run.err).toBe("");
   expect(run.code).toBe(0);
   expect(run.out).toContain(
@@ -630,7 +644,7 @@ test("a yes installs the GitHub plugin with no second question, writes nothing h
 test("on a run after setup, a yes installs the plugin and the lead opens, with nothing written here", async () => {
   const site = siteOnGitHub();
   await skel("1\nsk-ant-oat01-good\n");
-  const run = await skel("\n", bin, main(), site);
+  const run = await atTerminal("\n", site);
   expect(run.err).toBe("");
   expect(run.out).toStartWith("GitHub detected.");
   expect(run.out).toContain("Installed github 0.1.0.");
@@ -1093,7 +1107,7 @@ function publishFake(...versions: string[]): void {
 }
 
 const lock = () => join(home, ".config", "skelcrew", "skelcrew.lock");
-const install = (typed = "") => skel(typed, bin, main(), home, {}, ["install"]);
+const install = (typed = "") => atTerminal(typed, home, ["install"]);
 const fakeCommit = (version: string) =>
   git(join(home, "github", "simon", "skelcrew-fake"), "rev-parse", `v${version}^{commit}`);
 // Writes your config and lock as another machine of yours would have them: the fake plugin at
@@ -1174,6 +1188,45 @@ test("a changed commit in the lock asks again, and a tag moved since it was lock
   expect(refused.code).toBe(1);
   expect(refused.err).toContain("and your lock says");
   expect(refused.err).toContain("sc update -g fake");
+  // The command the error names installs the tag where it is now, after asking, and moves the
+  // lock to it, so sc install is satisfied.
+  const updated = await atTerminal("y\n", home, ["update", "-g", "fake"]);
+  expect(updated.err).toBe("");
+  expect(updated.out).toContain("Install it? [Y/n]");
+  expect(updated.out).toContain("Installed fake 0.1.0.");
+  expect(readFileSync(lock(), "utf8")).toContain(fakeCommit("0.1.0"));
+  expect((await install()).out).toContain("Nothing to install");
+});
+
+test("sc update -g moves an installed plugin to its tag's new commit, after asking", async () => {
+  noGitHubPlugin();
+  fakeGitHub();
+  publishFake("0.1.0");
+  await skel("1\nsk-ant-oat01-good\n");
+  lockFake("0.1.0");
+  await install("y\n");
+  expect((await atTerminal("", home, ["update", "-g", "fake"])).out).toContain(
+    "fake is at its newest version, 0.1.0.",
+  );
+  publishFake("0.1.0");
+  writeFileSync(join(home, "calls"), "");
+  const moved = await atTerminal("y\n", home, ["update", "-g", "fake"]);
+  expect(moved.err).toBe("");
+  expect(moved.out).toContain("Update it? [Y/n]");
+  expect(calls()).toBe("fake setup 0.1.0\n");
+  expect(readFileSync(lock(), "utf8")).toContain(fakeCommit("0.1.0"));
+});
+
+test("sc install without a terminal installs nothing, even with a yes piped in", async () => {
+  noGitHubPlugin();
+  fakeGitHub();
+  publishFake("0.1.0");
+  await skel("1\nsk-ant-oat01-good\n");
+  lockFake("0.1.0");
+  const run = await skel("y\n", bin, main(), home, {}, ["install"]);
+  expect(run.out).toContain("There is no terminal to answer in");
+  expect(run.out).toContain("Skelcrew didn't install fake.");
+  expect(existsSync(join(home, ".local", "share", "skelcrew", "plugins", "fake"))).toBe(false);
 });
 
 // The harness and its login are there, as copied from another machine, and only the service is
@@ -1186,7 +1239,7 @@ test("plain sc on a machine that isn't set up installs your plugins too", async 
   writeFileSync(config(), "harness: claude\n");
   writeFileSync(token(), "sk-ant-oat01-good\n");
   lockFake("0.1.0");
-  const run = await skel("y\n");
+  const run = await atTerminal("y\n");
   expect(run.err).toBe("");
   expect(run.out).toContain("Installed fake 0.1.0.");
   expect(calls()).toContain("fake setup 0.1.0\n");

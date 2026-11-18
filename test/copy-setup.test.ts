@@ -16,7 +16,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
-import { git, source } from "./harness.ts";
+import { git, inTerminal, source } from "./harness.ts";
 
 let root = "";
 const laptop = () => join(root, "laptop");
@@ -117,13 +117,17 @@ const firstRunUnfinished = () =>
 
 // Runs sc on a machine with this home, with what you type, and returns what it said.
 async function skel(home: string, args: string[], typed = "") {
-  const run = Bun.spawn([process.execPath, source("main.ts"), ...args], {
+  const argv = [process.execPath, source("main.ts"), ...args];
+  const env = {
+    HOME: home,
+    XDG_RUNTIME_DIR: join(home, "run"),
+    PATH: `${join(root, home === server() ? "serverbin" : "bin")}:/usr/bin:/bin`,
+  };
+  // Answers are typed at a terminal, as only an answer there installs a plugin.
+  if (typed !== "") return inTerminal(argv, { typed, env, cwd: home });
+  const run = Bun.spawn(argv, {
     cwd: home,
-    env: {
-      HOME: home,
-      XDG_RUNTIME_DIR: join(home, "run"),
-      PATH: `${join(root, home === server() ? "serverbin" : "bin")}:/usr/bin:/bin`,
-    },
+    env,
     stdin: new Blob([typed]),
     stdout: "pipe",
     stderr: "pipe",
