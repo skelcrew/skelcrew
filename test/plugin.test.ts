@@ -607,13 +607,30 @@ test("sc add -g installs after asking, names the plugin in your config and pins 
 test("without a terminal nothing installs, even with a yes piped in", async () => {
   publish("skelcrew/skelcrew-fake", "0.1.0");
   const run = await skel(["add", "-g", "skelcrew/skelcrew-fake"], "y\n", "", {}, home, false);
-  expect(run.code).toBe(0);
-  expect(run.out).toContain(
-    "Install it? [Y/n] There is no terminal to answer in, so Skelcrew takes that as no.\nSkelcrew didn't install fake.",
+  // It fails, so a script running it can tell the plugin isn't installed.
+  expect(run.code).toBe(1);
+  expect(run.out).toContain("Install it? [Y/n] There is no terminal to answer in.\n");
+  expect(run.err).toContain(
+    "installing fake runs its commands, which needs your yes at a terminal, so Skelcrew didn't run them",
   );
   expect(existsSync(join(plugins(), "fake"))).toBe(false);
   expect(existsSync(yourLockFile())).toBe(false);
   expect(existsSync(yourConfig())).toBe(false);
+});
+
+test("sc update -g without a terminal fails, and leaves the plugin and lock as they were", async () => {
+  publish("skelcrew/skelcrew-fake", "0.1.0");
+  await skel(["add", "-g", "skelcrew/skelcrew-fake"], "y\n");
+  publish("skelcrew/skelcrew-fake", "0.2.0");
+  const run = await skel(["update", "-g", "fake"], "y\n", "", {}, home, false);
+  expect(run.code).toBe(1);
+  expect(run.err).toContain(
+    "updating fake runs its commands, which needs your yes at a terminal, so Skelcrew didn't run them",
+  );
+  expect((await skel(["plugins"])).out).toBe("fake 0.1.0 io: tracker, forge\n");
+  expect(parse(readFileSync(yourLockFile(), "utf8"))["skelcrew/skelcrew-fake"].version).toBe(
+    "0.1.0",
+  );
 });
 
 test("sc update -g rewrites the lock only when you say yes", async () => {

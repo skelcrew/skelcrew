@@ -330,7 +330,8 @@ export function setupDone(): boolean {
 // lead. In a checkout of a GitHub repository it offers the GitHub plugin, on any run. A yes
 // makes GitHub the repository's tracker too, with nothing written into the checkout. `from` is
 // the remote sc --remote brings from your laptop, since the checkout is there. Returns whether it
-// had anything to set up or offer.
+// had anything to set up or offer. sc install marks the machine set up after it, once your
+// plugins are in too.
 export function firstRun(from?: string): boolean {
   const done = setupDone();
   // The tools are found where your login shell finds them, even over ssh, so a codex
@@ -370,21 +371,23 @@ export function firstRun(from?: string): boolean {
     if (yours && other && !Bun.which(other.program, { PATH: env.PATH ?? "" }))
       console.log(`\n${other.title} isn't installed, so reviews run on ${yours.title}.`);
   }
-  if (!done) {
-    mkdirSync(dataDir(), { recursive: true });
-    writeFileSync(setUpFile(), "");
-    console.log("\nSkelcrew is set up.");
-  }
   return !done || github !== null;
 }
 
 // Makes this machine match your files, for sc install: the first run's steps, then your personal
 // plugins at the versions your lock pins, each new or changed one after asking. Safe to run
-// again: with nothing to do, it says so. `from` is as for the first run.
+// again: with nothing to do, it says so. `from` is as for the first run. The machine is marked
+// set up only once your plugins are in, so after a plugin that failed to install, plain sc runs
+// all of this again.
 export function install(from?: string): void {
+  const done = setupDone();
   const setUp = firstRun(from);
   const plugins = installYourPlugins(from ?? originHere());
-  if (!setUp && !plugins)
+  if (!done) {
+    mkdirSync(dataDir(), { recursive: true });
+    writeFileSync(setUpFile(), "");
+    console.log("\nSkelcrew is set up.");
+  } else if (!setUp && !plugins)
     console.log("Nothing to install: this machine has everything your files ask for.");
 }
 

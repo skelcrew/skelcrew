@@ -183,12 +183,13 @@ async function machineCommand(args: string[]): Promise<void> {
     return;
   }
   const { serve } = await import("./flow/daemon.ts");
-  const { firstRun } = await import("./machine/setup.ts");
+  const { install } = await import("./machine/setup.ts");
   const { upInBackground } = await import("./attach.ts");
-  // Run by sc remote add on the machine it sets up, not by people, so usage leaves it out. The
-  // daemon starts there too, so sc --remote finds it running.
+  // Run by sc remote add on the machine it sets up, not by people, so usage leaves it out. It is
+  // all of sc install, as only that marks the machine set up. The daemon starts there too, so sc
+  // --remote finds it running.
   if (command === "first-run" && args.length === 1) {
-    firstRun();
+    install();
     await upInBackground();
     return;
   }

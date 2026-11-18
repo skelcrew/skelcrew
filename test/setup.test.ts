@@ -1278,7 +1278,10 @@ test("sc install with no answer to read installs nothing", async () => {
   await skel("1\nsk-ant-oat01-good\n");
   lockFake("0.1.0");
   const run = await install("");
-  expect(run.out).toContain("Skelcrew didn't install fake.");
+  expect(run.code).toBe(1);
+  expect(run.err).toContain(
+    "installing fake runs its commands, which needs your yes at a terminal",
+  );
   expect(existsSync(join(home, ".local", "share", "skelcrew", "plugins", "fake"))).toBe(false);
 });
 
@@ -1385,7 +1388,11 @@ test("sc install without a terminal installs nothing, even with a yes piped in",
   lockFake("0.1.0");
   const run = await skel("y\n", bin, main(), home, {}, ["install"]);
   expect(run.out).toContain("There is no terminal to answer in");
-  expect(run.out).toContain("Skelcrew didn't install fake.");
+  // It fails, so a script running it can tell the machine doesn't match your files.
+  expect(run.code).toBe(1);
+  expect(run.err).toContain(
+    "installing fake runs its commands, which needs your yes at a terminal",
+  );
   expect(existsSync(join(home, ".local", "share", "skelcrew", "plugins", "fake"))).toBe(false);
 });
 
@@ -1402,6 +1409,26 @@ test("plain sc on a machine that isn't set up installs your plugins too", async 
   const run = await atTerminal("y\n");
   expect(run.err).toBe("");
   expect(run.out).toContain("Installed fake 0.1.0.");
+  expect(calls()).toContain("fake setup 0.1.0\n");
+});
+
+// A plugin that fails to install leaves the machine not set up, so the next plain sc tries again.
+test("after a first run whose plugin failed to install, plain sc installs it again", async () => {
+  noGitHubPlugin();
+  fakeGitHub();
+  mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
+  writeFileSync(config(), "harness: claude\n");
+  writeFileSync(token(), "sk-ant-oat01-good\n");
+  // The plugin isn't published yet, so fetching it fails.
+  appendFileSync(config(), "plugins: [simon/skelcrew-fake]\n");
+  const failed = await atTerminal("y\n");
+  expect(failed.code).not.toBe(0);
+  expect(failed.out).not.toContain("Skelcrew is set up.");
+  publishFake("0.1.0");
+  const retried = await atTerminal("y\n");
+  expect(retried.err).toBe("");
+  expect(retried.out).toContain("Installed fake 0.1.0.");
+  expect(retried.out).toContain("Skelcrew is set up.");
   expect(calls()).toContain("fake setup 0.1.0\n");
 });
 

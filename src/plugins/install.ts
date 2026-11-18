@@ -170,7 +170,7 @@ function checkSkelcrewVersion(manifest: Manifest): void {
 // still finds its own line.
 export function askYes(question: string): boolean | null {
   if (!process.stdin.isTTY) {
-    console.log(`${question} There is no terminal to answer in, so Skelcrew takes that as no.`);
+    console.log(`${question} There is no terminal to answer in.`);
     return null;
   }
   writeSync(1, `${question} `);
@@ -205,6 +205,14 @@ function confirmPlugin(manifest: Manifest, from: string, verb: string): boolean 
   );
   return askYes(`${verb} it? [Y/n]`);
 }
+
+// Returns the error for a plugin's commands that would run with no terminal to answer whether
+// they may, such as `doing` "installing fake". It fails the command, so a script that runs sc
+// install can tell the machine doesn't match your files yet.
+const unanswered = (doing: string) =>
+  new Error(
+    `${doing} runs its commands, which needs your yes at a terminal, so Skelcrew didn't run them`,
+  );
 
 // Runs one of a plugin's commands in your terminal, in the plugin's folder, so a setup can ask
 // you things. `remote` is the remote of the checkout sc ran in, handed over as SKELCREW_REMOTE so
@@ -296,7 +304,9 @@ export function installPlugin(given: string, options: Options = {}): boolean {
     const manifest = readManifest(folder);
     refuseInstalled(db, manifest.name);
     checkSkelcrewVersion(manifest);
-    if (!confirmPlugin(manifest, folder, "Install")) {
+    const answer = confirmPlugin(manifest, folder, "Install");
+    if (answer === null) throw unanswered(`installing ${manifest.name}`);
+    if (!answer) {
       console.log(`Skelcrew didn't install ${manifest.name}.`);
       return false;
     }
@@ -318,11 +328,13 @@ export function installPlugin(given: string, options: Options = {}): boolean {
   try {
     refuseInstalled(db, manifest.name);
     checkSkelcrewVersion(manifest);
-    if (!ask) console.log(`Installing ${manifest.name} ${manifest.version} from ${given}...`);
-    else if (!confirmPlugin(manifest, given, "Install")) {
+    const answer = ask ? confirmPlugin(manifest, given, "Install") : true;
+    if (answer === null) throw unanswered(`installing ${manifest.name}`);
+    if (!answer) {
       console.log(`Skelcrew didn't install ${manifest.name}.`);
       return false;
     }
+    if (!ask) console.log(`Installing ${manifest.name} ${manifest.version} from ${given}...`);
     // Anything left of an earlier install of the name goes, as the plugin isn't installed.
     const folder = join(pluginsDir(), manifest.name, manifest.version);
     rmSync(dirname(folder), { recursive: true, force: true });
@@ -374,10 +386,7 @@ export function updatePlugin(db: Database, plugin: Plugin, options: Options = {}
   // its commands may have changed since it was installed. Its setup is for sc setup.
   if (source === null) {
     const answer = ask ? confirmPlugin(current, folder, "Build") : true;
-    if (answer === null)
-      throw new Error(
-        `building ${name} again runs its commands, which needs your yes at a terminal, so Skelcrew didn't run them`,
-      );
+    if (answer === null) throw unanswered(`building ${name} again`);
     if (!answer) {
       console.log(`Skelcrew didn't build ${name} again.`);
       return;
@@ -405,7 +414,9 @@ export function updatePlugin(db: Database, plugin: Plugin, options: Options = {}
     if (manifest.name !== name)
       throw new Error(`${source} now names its plugin ${manifest.name}, not ${name}`);
     checkSkelcrewVersion(manifest);
-    if (ask && !confirmPlugin(manifest, source, "Update")) {
+    const answer = ask ? confirmPlugin(manifest, source, "Update") : true;
+    if (answer === null) throw unanswered(`updating ${name}`);
+    if (!answer) {
       console.log(`Skelcrew didn't update ${name}.`);
       return;
     }
