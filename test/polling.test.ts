@@ -225,7 +225,9 @@ const assignOn = { ask: "assign", repository: "simon/app", task: "12", on: true 
 const assignOff = { ...assignOn, on: false };
 const claim12 = { ask: "took", repository: "simon/app", task: "12" };
 
-// Waits for the number of polls to grow by a few, so anything they would do is done.
+// Waits for the number of polls to grow by a few, so anything they would do is done. A
+// repository's polls run one at a time, and each asks what changed first. So by the third new
+// ask, a poll that began after this call has ended, with all it asked the forge.
 async function morePolls(n = 3) {
   const before = polls();
   await until(() => polls() >= before + n);
@@ -1819,8 +1821,19 @@ exec ${bwrap} "$@"`,
       )
         .stdout.toString()
         .trim();
-    const arm = () =>
-      runSkelInTerminal(socket, env(), ["merge", "--when-ready", "app-12"], question, "y");
+    // Arms a new plan, and checks sc said so. A plan still armed, such as after a cancel that
+    // was refused, would otherwise carry on as if it were the new one.
+    const arm = async () => {
+      const said = await runSkelInTerminal(
+        socket,
+        env(),
+        ["merge", "--when-ready", "app-12"],
+        question,
+        "y",
+      );
+      expect(said).toContain("app-12 merges once it is approved and green.");
+      return said;
+    };
 
     test("n arms nothing, y arms it, and no agent or script without a terminal can", async () => {
       await approvedApp12();
@@ -1938,30 +1951,29 @@ exec ${bwrap} "$@"`,
       );
 
       // Cancelled and armed again, the same commit is a new plan, with a record of its own. The
-      // forge keeps refusing, so each poll asks it to merge again, and a cancel that lands while
-      // it is asked is refused. So the cancel is asked again until no merge is under way.
+      // forge keeps refusing, so each poll asks it to merge again, and a cancel meanwhile is
+      // refused. So the cancel goes while the next poll is held before it asks anything: the
+      // polls before it, and their merges, are done by then.
       const cancel = { command: "merge cancel", repo: "app", task: "12" };
-      const merging = {
-        error: "app-12 is merging on its forge right now, so it can't be cancelled",
-      };
-      let cancelled = await askOn(join(home, "run", "skelcrew.sock"), cancel);
-      for (let tries = 0; Bun.deepEquals(cancelled, merging) && tries < 100; tries++) {
-        await Bun.sleep(50);
-        cancelled = await askOn(join(home, "run", "skelcrew.sock"), cancel);
-      }
-      expect(cancelled).toEqual({
+      rmSync(join(plugin, "held-changed"), { force: true });
+      writeFileSync(join(plugin, "hold-changed"), "");
+      await until(() => existsSync(join(plugin, "held-changed")));
+      expect(await askOn(join(home, "run", "skelcrew.sock"), cancel)).toEqual({
         said: "app-12 won't merge by itself. It waits for you to merge it.",
       });
       expect(thread().merge_plan).toBeNull();
+      rmSync(join(plugin, "hold-changed"));
       await arm();
       await until(() => records().length === 2);
       await morePolls();
       expect(records()).toHaveLength(2);
 
-      // While the forge merges, a cancel is refused, as it could no longer stop the merge.
+      // While the forge merges, a cancel is refused, as it could no longer stop the merge. The
+      // forge is told to agree only once a merge is held. A merge asked before the hold ended
+      // before the held one began, as one poll runs at a time, so none merges unheld.
       writeFileSync(join(plugin, "hold-merge-pr"), "");
-      answer(plugin, "merge pr", null);
       await until(() => existsSync(join(plugin, "held-merge-pr")));
+      answer(plugin, "merge pr", null);
       expect(
         await askOn(join(home, "run", "skelcrew.sock"), {
           command: "merge cancel",
@@ -2002,22 +2014,24 @@ exec ${bwrap} "$@"`,
       await morePolls();
       expect(merges()).toEqual([]);
       expect(thread().merge_plan).toBe("armed");
-      sc("merge", "--cancel", "app-12");
+      // With a check failing, no poll asks the forge to merge, so the cancel is never refused.
+      expect(sc("merge", "--cancel", "app-12").stderr.toString()).toBe("");
 
       // A pending review, with the PR green all along: the plan stays armed and waits for it.
       // Its record is posted and the forge refuses the merge first, so the plan is ready but
       // for the review, which is kept pending by holding its post on the PR.
-      sc("merge", "--cancel", "app-12");
       answer(plugin, "merge pr", { refused: "Not yet" });
       await arm();
       green();
       await until(() => thread().merge_waits === "the forge, which refused: Not yet");
       writeFileSync(join(plugin, "hold-review"), "");
       expect(sc("review", "app-12").stderr.toString()).toBe("");
-      await until(() => thread().reviewing !== null);
+      // A poll that began before the review can still be asking the forge to merge. The first
+      // poll to wait on the review comes after it, as one poll runs at a time, so only then is
+      // the count of merges asked settled, and the forge may agree.
+      await until(() => thread().merge_waits === "its review");
       const tried = merges().length;
       answer(plugin, "merge pr", null);
-      await until(() => thread().merge_waits === "its review");
       await morePolls();
       expect(thread().reviewing).not.toBeNull();
       expect(merges()).toHaveLength(tried);
@@ -2030,7 +2044,8 @@ exec ${bwrap} "$@"`,
       expect(merges()).toHaveLength(tried);
 
       // A stop, with the PR green: the plan stays armed, for when the thread starts again.
-      sc("merge", "--cancel", "app-12");
+      // Its checks still run, so no merge is under way to refuse the cancel.
+      expect(sc("merge", "--cancel", "app-12").stderr.toString()).toBe("");
       await holdRecord();
       expect(sc("stop", "app-12").stderr.toString()).toBe("");
       rmSync(join(plugin, "hold-review"));
@@ -2084,11 +2099,13 @@ exec ${bwrap} "$@"`,
       await arm();
       green();
       await until(() => thread().merge_waits === "the forge, which refused: Not yet");
-      const tried = merges().length;
-      // A poll holds on the forge while a review runs and ends.
+      // A poll holds on the forge while a review runs and ends. The polls before it, and the
+      // merges they asked, are done once it holds, as one poll runs at a time.
       rmSync(join(plugin, "held-changed"), { force: true });
       writeFileSync(join(plugin, "hold-changed"), "");
       await until(() => existsSync(join(plugin, "held-changed")));
+      const tried = merges().length;
+      const heldPoll = polls();
       const reviewedAt = thread().review_at;
       const sc = Bun.spawnSync([process.execPath, main, "review", "app-12"], {
         env: env(),
@@ -2096,6 +2113,8 @@ exec ${bwrap} "$@"`,
       });
       expect(sc.stderr.toString()).toBe("");
       await until(() => thread().reviewing === null && thread().review_at !== reviewedAt, 30_000);
+      // The poll is still held: no poll has asked since.
+      expect(polls()).toBe(heldPoll);
       // The held poll gets the PR green, as it was before the review. Every later poll gets
       // its new check still running, which the forge would show for the new round.
       green();
@@ -2122,7 +2141,9 @@ exec ${bwrap} "$@"`,
       pr({ head: pushed(), reviews: [skelReview], checks: [approved] });
       await until(() => existsSync(join(plugin, "held-review")));
       const cancel = { command: "merge cancel", repo: "app", task: "12" };
-      await askOn(join(home, "run", "skelcrew.sock"), cancel);
+      expect(await askOn(join(home, "run", "skelcrew.sock"), cancel)).toEqual({
+        said: "app-12 won't merge by itself. It waits for you to merge it.",
+      });
       rmSync(join(plugin, "hold-review"));
       await morePolls();
       expect(thread()).toMatchObject({ merge_plan: null, merge_waits: null });
@@ -2166,8 +2187,11 @@ exec ${bwrap} "$@"`,
       await morePolls();
       expect(merges()).toEqual([]);
 
-      // Removing the thread disarms it.
+      // Removing the thread disarms it. A green PR would merge two polls after arming, which
+      // can come before sc rm, so the PR conflicts again and the plan waits on that.
+      pr({ head: pushed(), conflicts: true, reviews: [skelReview], checks: [approved] });
       await arm();
+      await until(() => thread().merge_waits === "its conflict with main to be fixed");
       expect(thread().merge_plan).toBe("armed");
       const removed = Bun.spawnSync([process.execPath, main, "rm", "app-12"], {
         env: { ...env(), SKELCREW_SOCKET: leadSocket() },
