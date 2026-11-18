@@ -150,7 +150,12 @@ test("a terminal a few lines high still shows the agent, and Ctrl-Q still leaves
   await ready("lead");
   for (const height of ["4", "3", "2", "1"]) {
     tmux(terminal, "resize-window", "-t", "=one:", "-x", "120", "-y", height);
-    await Bun.sleep(200);
+    // The screen learns the terminal's new height a moment later, through the client in it. A
+    // fixed wait could end before that on a busy machine, and check a height never reached.
+    await until(
+      () => tmux(screen, "list-clients", "-F", "#{client_height}").out.trim() === height,
+      `the screen to be ${height} lines high`,
+    );
     expect(screenSessions()).toHaveLength(1);
   }
   tmux(terminal, "resize-window", "-t", "=one:", "-x", "120", "-y", "30");
