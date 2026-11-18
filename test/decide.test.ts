@@ -15,6 +15,7 @@ import {
   reviewCheck,
   whoRunsTheSuite,
 } from "../src/flow/decide.ts";
+import { taskStage } from "../src/flow/stage.ts";
 import { endedTurnAsks } from "../src/flow/status.ts";
 import type { Thread } from "../src/flow/thread.ts";
 
@@ -231,11 +232,43 @@ test("green checks without Skelcrew's approval don't need you", () => {
   expect(acted(thread(), pr({ checks: [run(30, "test", "passed")] })).change).toEqual({});
 });
 
+// The green checks are still saved, except while a newer round is pushed, as the forge then
+// shows the older commit's.
 test("green checks don't need you while the builder works or a round is under way", () => {
   const checks = [approved];
-  expect(acted(thread({ status: "working" }), pr({ checks })).change).toEqual({});
-  expect(acted(thread({ reviewing: "abc" }), pr({ checks })).change).toEqual({});
+  const green = { ci_passed: true };
+  expect(acted(thread({ status: "working" }), pr({ checks })).change).toEqual(green);
+  expect(acted(thread({ reviewing: "abc" }), pr({ checks })).change).toEqual(green);
   expect(acted(thread({ submitting: "Round 2" }), pr({ checks })).change).toEqual({});
+});
+
+// A check can be run again, fail, or vanish, such as Skelcrew's own when its status is reset,
+// after a poll found them all green. Each poll says again whether they are.
+test("green checks saved by one poll are taken back by a later one that finds any not green", () => {
+  const ready = thread({ needs_you: true, ci_passed: true, verdict: "approve" });
+  const green = [approved, run(30, "test", "passed")];
+  expect(acted(ready, pr({ checks: green })).change).toEqual({});
+  expect(taskStage(ready, true)).toBe("ready for review");
+  const notGreen = [
+    [approved, run(30, "test", "running")],
+    [approved, run(30, "test", "failed")],
+    [{ ...approved, state: "running" as const }, run(30, "test", "passed")],
+    [{ ...approved, state: "failed" as const }, run(30, "test", "passed")],
+    [run(30, "test", "passed")],
+  ];
+  for (const checks of notGreen) {
+    const decision = acted(ready, pr({ checks }));
+    expect(decision.change).toMatchObject({ ci_passed: false });
+    // The thread it leaves is no longer ready for review.
+    const after = thread({ ...ready, ...decision.change });
+    expect(taskStage(after, true)).toBe("working");
+    // Green again saves it so. A failed check set the builder working, and only a thread
+    // that waits on you is ready for review.
+    const again = acted(after, pr({ checks: green })).change;
+    expect(again).toMatchObject({ ci_passed: true });
+    const stage = after.status === "waiting" ? "ready for review" : "working";
+    expect(taskStage(thread({ ...after, ...again }), true)).toBe(stage);
+  }
 });
 
 test("a thread that already needs you isn't marked again", () => {
@@ -399,7 +432,8 @@ test("a merge conflict is told once: the builder works on it until it submits", 
 
 test("an approved PR with a conflict doesn't need you yet", () => {
   const decision = acted(thread(), pr({ conflicts: true, checks: [approved] }));
-  expect(decision.change).toEqual({ status: "working", needs_you: false });
+  // Its checks are green, saved as such, but the conflict keeps it from being ready.
+  expect(decision.change).toEqual({ status: "working", needs_you: false, ci_passed: true });
 });
 
 test("a thread never polled before starts after the PR's history, acting on none of it", () => {
