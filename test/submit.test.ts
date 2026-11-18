@@ -1013,7 +1013,7 @@ done`,
     verdict(1, "approve", "Ready to merge.");
     verdict(2, "approve", "Tests pass.");
     await approveThenMerge(work, { ci: false });
-    await until(() => existsSync(join(codexHome(), "sessions", "prompt-2")), 60_000);
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-2")), longWait);
     const main = git(work, "rev-parse", "HEAD");
     expect(read(join(codexHome(), "sessions", "main-2")).trim()).not.toBe(main);
     expect(read(join(codexHome(), "sessions", "prompt-2"))).toContain(`git diff ${main}...HEAD`);
@@ -1032,10 +1032,10 @@ done`,
     writeFileSync(join(builder(), "docs-only"), "");
     writeFileSync(join(plugin, "hold-status-pending"), "");
     verdict(1, "approve", "Ready to merge.");
-    servePolling();
+    serve({ every: 1_000 });
     await untilCloned();
     expect((await skel(["start", "app-12"])).err).toBe("");
-    await until(() => existsSync(join(plugin, "held-status")), 60_000);
+    await until(() => existsSync(join(plugin, "held-status")), longWait);
     answer(plugin, "changed", {
       items: [
         taskItem("12", "Add export", { body: "As JSON" }),
@@ -1047,9 +1047,9 @@ done`,
       ],
       next: null,
     });
-    await until(() => copiedPr().includes('"base":"next"'), 60_000);
+    await until(() => copiedPr().includes('"base":"next"'), longWait);
     rmSync(join(plugin, "hold-status-pending"));
-    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), 60_000);
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), longWait);
     const prompt = read(join(codexHome(), "sessions", "prompt-1"));
     expect(prompt).not.toContain("only touches docs");
     expect(prompt).toContain("run the repository's whole test suite");
@@ -1063,10 +1063,10 @@ done`,
     const next = git(work, "rev-parse", "HEAD");
     verdict(1, "approve", "Ready to merge.");
     verdict(2, "approve", "Fine.");
-    servePolling();
+    serve({ every: 1_000 });
     await untilCloned();
     expect((await skel(["start", "app-12"])).err).toBe("");
-    await until(() => finished("success").length === 1, 60_000);
+    await until(() => finished("success").length === 1, longWait);
     await untilReviewSaved();
     answer(plugin, "changed", {
       items: [
@@ -1079,13 +1079,13 @@ done`,
       ],
       next: null,
     });
-    await until(() => copiedPr().includes('"base":"next"'), 60_000);
+    await until(() => copiedPr().includes('"base":"next"'), longWait);
     // main moves and the branch takes it in, so main and next now meet the branch apart.
     mergeMain(work);
     expect((await skel(["submit", "Merged main"], { SKELCREW_SOCKET: builderSocket() })).err).toBe(
       "",
     );
-    await until(() => existsSync(join(codexHome(), "sessions", "prompt-2")), 60_000);
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-2")), longWait);
     expect(read(join(codexHome(), "sessions", "prompt-2"))).toContain(`git diff ${next}...HEAD`);
   }, 180_000);
 
@@ -1111,9 +1111,9 @@ done`,
         next: null,
       });
     retargeted("running");
-    await until(() => copiedPr().includes('"base":"next"'), 60_000);
+    await until(() => copiedPr().includes('"base":"next"'), longWait);
     retargeted("passed");
-    await until(() => reviews().length === 2, 60_000);
+    await until(() => reviews().length === 2, longWait);
     expect(read(join(codexHome(), "sessions", "count")).trim()).toBe("2");
     expect(reviews()[1]).toMatchObject({ commit: merged, body: "Reviewed against next." });
     expect(statuses().some((s) => s.description.startsWith("approval kept"))).toBe(false);
