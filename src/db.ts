@@ -27,7 +27,8 @@ export function nameRepositories(db: Database): void {
 
 // A thread's own columns past the first few: what belongs to its agent. `submitted` is whether
 // the builder ran sc submit in its current turn, and `turn_ended` whether it ended a turn without
-// one since, which waits on the lead. The rest of the flags say why it needs you.
+// one since, which waits on the lead. It is null on a thread an earlier release saved, until the
+// daemon moves its `stalled` over. The rest of the flags say why it needs you.
 // `noting` holds a note for the lead about that, kept until it is typed in, so one the daemon's
 // stop cut short carries on when it starts again. `changed` is when anything last went in the
 // thread's log. `working_since` is when the builder's current stretch of work began, for the
@@ -46,7 +47,7 @@ const threadColumns = {
   erred: "INTEGER NOT NULL DEFAULT 0",
   limited: "INTEGER NOT NULL DEFAULT 0",
   limit_reset: "INTEGER",
-  turn_ended: "INTEGER NOT NULL DEFAULT 0",
+  turn_ended: "INTEGER",
   submitted: "INTEGER NOT NULL DEFAULT 0",
   noting: "TEXT",
   started: "INTEGER",
@@ -150,8 +151,15 @@ function createTasks(db: Database): void {
 function viewThreads(db: Database): void {
   const own = ["owner", "repo", "task", "folder", "branch", "base", "status", "session"];
   const moved = hasTasks(db);
+  // A thread an earlier release saved shows its `stalled` until the daemon moves it, so the
+  // screen and sc show a turn that ended while a daemon of that release still runs.
+  const stalled = hasThreadColumn(db, "stalled");
+  const threadColumn = (column: string) =>
+    column === "turn_ended" && stalled
+      ? "COALESCE(th.turn_ended, th.stalled) AS turn_ended"
+      : `th.${column}`;
   const columns = [
-    ...[...own, ...Object.keys(threadColumns)].map((column) => `th.${column}`),
+    ...[...own, ...Object.keys(threadColumns)].map(threadColumn),
     ...Object.keys(taskColumns).map((column) => `${moved ? "k" : "th"}.${column}`),
   ];
   const view = `CREATE VIEW task_threads AS SELECT th.rowid AS rowid, ${columns.join(", ")}
@@ -256,13 +264,8 @@ function prepareTables(db: Database): void {
   // The rest of a thread's columns, added as the repositories' are. A database from before
   // tasks keeps the task's columns on its threads too, where moveToTasks reads them, so they are
   // added here for every release's database. Nothing reads them from threads after that.
-  // A database from a release where a turn that ended without a submit needed you has
-  // `stalled` and no `turn_ended`. Checked before the columns are added, so it is seen once.
-  const hasColumn = (column: string) =>
-    db.query("SELECT 1 FROM pragma_table_info('threads') WHERE name = ?").get(column) !== null;
-  const stalledBefore = hasColumn("stalled") && !hasColumn("turn_ended");
   for (const [column, type] of Object.entries({ ...threadColumns, ...taskColumns }))
-    if (!hasColumn(column)) db.run(`ALTER TABLE threads ADD COLUMN ${column} ${type}`);
+    if (!hasThreadColumn(db, column)) db.run(`ALTER TABLE threads ADD COLUMN ${column} ${type}`);
   // A new database starts with tasks. One from an earlier release waits for its daemon to move
   // its threads onto tasks, as only the daemon knows no other daemon still writes to it.
   if (fresh) createTasks(db);
@@ -351,23 +354,35 @@ function prepareTables(db: Database): void {
     folder TEXT NOT NULL,
     source TEXT
   )`);
-  if (stalledBefore) moveStalled(db);
 }
 
-// Upgrades the threads whose builder stopped without submitting while that needed you. Such a
-// turn now waits on the lead, which reads the builder's last message. These turns never sent
-// the lead one, so it gets a note to ask the builder instead, whether or not it already heard
-// that the thread needed you. A note it hasn't heard yet would say the thread needs you, which
-// is no longer so, so it goes. Runs once, as the thread then has `turn_ended`.
-function moveStalled(db: Database): void {
-  db.run("UPDATE threads SET turn_ended = stalled");
-  db.run(`INSERT INTO notes (owner, repo, text)
-    SELECT th.owner, th.repo, r.name || '-' || th.task || '''s builder ended its turn without sc submit before Skelcrew sent such turns to you, so its last message never reached you. Ask it what it waits on with sc tell ' || r.name || '-' || th.task || ', and bring a question to the human.'
-    FROM threads th JOIN repositories r ON r.owner = th.owner AND r.repo = th.repo
-    WHERE th.turn_ended = 1 AND th.status IN ('working', 'waiting') ORDER BY th.rowid`);
-  // Only a thread that no longer needs you loses its note. One that still does keeps it.
-  db.run(`UPDATE threads SET noting = NULL WHERE turn_ended = 1 AND needs_you = 0
-    AND asking = 0 AND (erred = 0 OR limited = 1)`);
+// Returns whether the database's threads table has the column.
+const hasThreadColumn = (db: Database, column: string) =>
+  db.query("SELECT 1 FROM pragma_table_info('threads') WHERE name = ?").get(column) !== null;
+
+// Upgrades the threads an earlier release saved, whose `turn_ended` is still null, from its
+// `stalled`: a builder that stopped without submitting, which then needed you. Such a turn now
+// waits on the lead, which reads the builder's last message. These turns never sent the lead
+// one, so it gets a note to ask the builder instead, whether or not it already heard that the
+// thread needed you. A note it hasn't heard yet would say the thread needs you, which is no
+// longer so, so it goes. Only the daemon runs it, once it holds the lock that keeps a second
+// daemon out: a daemon of the earlier release, still running, could change `stalled` after
+// the move. A thread saved since has `turn_ended`, so each thread moves once.
+export function moveTurnEnded(db: Database): void {
+  if (!hasThreadColumn(db, "stalled")) return;
+  const unmoved = "turn_ended IS NULL";
+  // One transaction, so a move cut short leaves every thread to the next start.
+  db.transaction(() => {
+    db.run(`INSERT INTO notes (owner, repo, text)
+      SELECT th.owner, th.repo, r.name || '-' || th.task || '''s builder ended its turn without sc submit before Skelcrew sent such turns to you, so its last message never reached you. Ask it what it waits on with sc tell ' || r.name || '-' || th.task || ', and bring a question to the human.'
+      FROM threads th JOIN repositories r ON r.owner = th.owner AND r.repo = th.repo
+      WHERE th.${unmoved} AND th.stalled = 1 AND th.status IN ('working', 'waiting')
+      ORDER BY th.rowid`);
+    // Only a thread that no longer needs you loses its note. One that still does keeps it.
+    db.run(`UPDATE threads SET noting = NULL WHERE ${unmoved} AND stalled = 1 AND needs_you = 0
+      AND asking = 0 AND (erred = 0 OR limited = 1)`);
+    db.run(`UPDATE threads SET turn_ended = stalled WHERE ${unmoved}`);
+  }).immediate();
 }
 
 // Upgrades a database from before each repository had its own lead. The machine's one lead

@@ -235,7 +235,9 @@ console.log(JSON.stringify({ kept, third }));`;
 });
 
 // A turn that ended without a submit once needed you, and never sent the lead the builder's
-// last message. After the upgrade it waits on the lead, so the lead must hear of it once.
+// last message. After the upgrade it waits on the lead, so the lead must hear of it once. A new
+// screen opens the database first, while the earlier release's daemon still runs and changes its
+// threads, so only the new daemon, once it holds its lock, moves them.
 test("a thread whose turn ended before the upgrade has its lead told once, and no longer needs you", () => {
   const data = join(home, ".local", "share", "skelcrew");
   mkdirSync(data, { recursive: true });
@@ -248,20 +250,36 @@ test("a thread whose turn ended before the upgrade has its lead told once, and n
     folder TEXT NOT NULL UNIQUE, branch TEXT NOT NULL, base TEXT, status TEXT NOT NULL,
     session TEXT, stalled INTEGER NOT NULL DEFAULT 0, noting TEXT, PRIMARY KEY (owner, repo, task))`);
   // app-12's lead already heard it needed you. app-13's note still waits. app-14 is done.
+  // app-15's builder works, and app-16's turn ended, until the old daemon changes them.
   old.run(`INSERT INTO threads VALUES
     ('simon', 'app', 12, 'app-12', 'skelcrew/12', NULL, 'waiting', NULL, 1, NULL),
     ('simon', 'app', 13, 'app-13', 'skelcrew/13', NULL, 'working', NULL, 1, 'its builder stopped without submitting'),
-    ('simon', 'app', 14, 'app-14', 'skelcrew/14', NULL, 'done', NULL, 1, NULL)`);
+    ('simon', 'app', 14, 'app-14', 'skelcrew/14', NULL, 'done', NULL, 1, NULL),
+    ('simon', 'app', 15, 'app-15', 'skelcrew/15', NULL, 'working', NULL, 0, NULL),
+    ('simon', 'app', 16, 'app-16', 'skelcrew/16', NULL, 'working', NULL, 1, NULL)`);
   old.close();
-  const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
+  const code = `import { Database } from "bun:sqlite";
+import { moveTurnEnded, openDb } from ${JSON.stringify(source("db.ts"))};
 import { liveThreads } from ${JSON.stringify(source("flow/thread.ts"))};
 import { needsYou } from ${JSON.stringify(source("flow/status.ts"))};
+// A new screen opens the database.
 openDb().close();
+// The old daemon, still running, sees app-15's builder stop and app-16's get an answer.
+const oldDaemon = new Database(process.argv[1]);
+oldDaemon.run("UPDATE threads SET stalled = 1, noting = 'its builder stopped without submitting' WHERE folder = 'app-15'");
+oldDaemon.run("UPDATE threads SET stalled = 0 WHERE folder = 'app-16'");
+oldDaemon.close();
+// The new daemon starts, twice, as after a restart.
+for (const start of [1, 2]) {
+  const db = openDb();
+  moveTurnEnded(db);
+  db.close();
+}
 const db = openDb();
 const threads = liveThreads(db).map((t) => ({ folder: t.folder, turn_ended: t.turn_ended, noting: t.noting, needsYou: needsYou(t) }));
 const notes = db.query("SELECT owner, repo, text FROM notes ORDER BY id").all();
 console.log(JSON.stringify({ threads, notes }));`;
-  const run = Bun.spawnSync([process.execPath, "-e", code], {
+  const run = Bun.spawnSync([process.execPath, "-e", code, join(data, "skelcrew.db")], {
     env: { ...process.env, HOME: home },
     stdout: "pipe",
     stderr: "pipe",
@@ -271,10 +289,11 @@ console.log(JSON.stringify({ threads, notes }));`;
   expect(threads).toEqual([
     { folder: "app-12", turn_ended: true, noting: null, needsYou: false },
     { folder: "app-13", turn_ended: true, noting: null, needsYou: false },
+    { folder: "app-15", turn_ended: true, noting: null, needsYou: false },
+    { folder: "app-16", turn_ended: false, noting: null, needsYou: false },
   ]);
-  // Opening the database again, as every sc and the daemon do, tells the lead nothing more.
   expect(notes).toEqual(
-    ["app-12", "app-13"].map((name) => ({
+    ["app-12", "app-13", "app-15"].map((name) => ({
       owner: "simon",
       repo: "app",
       text: `${name}'s builder ended its turn without sc submit before Skelcrew sent such turns to you, so its last message never reached you. Ask it what it waits on with sc tell ${name}, and bring a question to the human.`,
