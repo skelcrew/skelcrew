@@ -109,6 +109,30 @@ export const given: {
   holding: boolean;
 } = { before: "", extendedKeys: false, mergeAnswer: {}, holding: false };
 
+// Puts a tmux in front of the real one that notes each time the sidebar asks for the agents'
+// panes, as it does first in every refresh. A refresh that changes nothing writes nothing, so
+// this is how a test sees one. It must be set before the screen opens.
+export function noteRefreshes(): void {
+  const folder = join(home, "noting");
+  mkdirSync(folder);
+  writeFileSync(
+    join(folder, "tmux"),
+    `#!/bin/sh\ncase "$*" in *"list-panes -a -F #{pane_dead}"*) echo >> ${join(home, "refreshes")} ;; esac\nexec ${Bun.which("tmux") ?? "tmux"} "$@"\n`,
+    { mode: 0o755 },
+  );
+  given.before = `PATH=${folder}:$PATH `;
+}
+
+// How many refreshes the sidebar has started.
+export const refreshesStarted = () => read("refreshes").split("\n").length - 1;
+
+// Returns once the sidebar has started two refreshes from now. The first reads Skelcrew's copy
+// as it is now, and the second starts only once the first has drawn what it read.
+export async function sidebarRefreshedTwice(): Promise<void> {
+  const before = refreshesStarted();
+  await until(() => refreshesStarted() >= before + 2, "the sidebar to refresh twice");
+}
+
 // Opens the screen on an agent in a terminal of its own, whose title until then is "my shell",
 // and which logs how Skelcrew exited. `where` is the name a laptop's sc --remote passes along.
 export function open(

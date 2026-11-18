@@ -46,13 +46,30 @@ console.log(JSON.stringify({ status: readThread(db, fresh.folder).status, clone:
   expect(seen).toEqual({ status: "working", clone: true, notes: [] });
 });
 
+// A failure note still waiting for the lead, such as while the human reads further up in it,
+// would reach the lead after the thread started over, and the lead would ask for a start the
+// thread already had.
+test("a thread that starts over drops the note that it failed, still waiting for the lead", () => {
+  // failThread logs as the daemon would, which would mix with what the script prints.
+  const seen = withThread(`const print = console.log;
+console.log = () => {};
+failThread(db, socket, thread, new Error("its setup command failed"));
+console.log = print;
+const held = db.query("SELECT text FROM notes").all().map((note) => note.text);
+await Bun.sleep(5);
+await startThread(db, { repo: "app", task: "${own}1" });
+const notes = db.query("SELECT text FROM notes").all();
+console.log(JSON.stringify({ held, notes }));`);
+  expect(seen).toEqual({ held: [`app-${own}1 failed: its setup command failed`], notes: [] });
+});
+
 // Runs a script against the test's own home, with a thread app-wr1, by this machine's code, started on a repository with
 // no tracker or forge, and returns what it printed as JSON. The script has db, thread, the
 // imports below, and socket, the test's tmux socket, where no lead runs unless the script starts one.
 function withThread(body: string): unknown {
   const code = `import { existsSync, mkdirSync } from "node:fs";
 import { openDb } from ${JSON.stringify(source("db.ts"))};
-import { startThread } from ${JSON.stringify(source("flow/builder.ts"))};
+import { failThread, startThread } from ${JSON.stringify(source("flow/builder.ts"))};
 import { endThread, removing } from ${JSON.stringify(source("flow/events.ts"))};
 import { noteForLead } from ${JSON.stringify(source("flow/messages.ts"))};
 import { cloneOf, readThread, record } from ${JSON.stringify(source("flow/thread.ts"))};

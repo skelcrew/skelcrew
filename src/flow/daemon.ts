@@ -256,7 +256,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       await listenFor(thread);
       await startBuilder(db, sessions, thread);
     } catch (error) {
-      failThread(db, thread, error);
+      failThread(db, sessions, thread, error);
     }
   };
   // Brings back a stopped thread's builder for sc start, with --resume on its last session
@@ -271,7 +271,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       await bringBack(db, sessions, thread);
       resumeRound(db, sessions, thread.folder);
     } catch (error) {
-      failThread(db, thread, error);
+      failThread(db, sessions, thread, error);
     }
   };
   // Carries out a request the caller may make, and returns the reply to send. The switch has
@@ -642,7 +642,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       (error) => {
         endRound(thread.folder);
         settled();
-        failThread(db, thread, error);
+        failThread(db, sessions, thread, error);
       },
     );
   }
