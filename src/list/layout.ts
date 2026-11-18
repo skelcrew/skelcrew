@@ -46,9 +46,11 @@ export function keysFor(row: Row | undefined, tabs: number): string {
 // Returns the top line: Skelcrew in bold, its version and where it runs, dim, and the open
 // repository's name, then the other repositories at the right end, each with a yellow dot and
 // how many of its threads need you, or red when one went wrong. The other repositories give way
-// first when the line is short.
+// first when the line is short, then the end of the line is cut, without its colours.
 function topLine(frame: Frame, width: number): string {
   const place = frame.where ? ` on ${frame.where}` : "";
+  const plain = ` Skelcrew v${frame.version}${place} · ${frame.name}`;
+  if (Bun.stringWidth(plain) > width) return fitted(plain, width);
   const left = ` ${paint(bright, "Skelcrew")} ${paint(grey, `v${frame.version}${place}`)} · ${frame.name}`;
   const others = frame.tabs
     .filter((tab) => tab.name !== frame.name)
@@ -64,18 +66,21 @@ function topLine(frame: Frame, width: number): string {
 
 // Returns one row as a line. The row you are on has ▸ before its mark and the grey behind it.
 // The name takes `nameWidth` columns, and the title what is left beside the end of the row, which
-// sits at the right edge.
+// sits at the right edge. On a narrow terminal the title gives way first, then the end of the
+// row and the name are cut, so the line never wraps, which would push the rest down. Only a
+// terminal narrower than the mark and the gaps, 9 columns, is too narrow even for that.
 function rowLine(row: Row, here: boolean, nameWidth: number, width: number): string {
   const colour = (c: Colour) => markColours[c];
   const lead = `${here ? " ▸ " : "   "}${tinted(here, colour(row.mark.colour), row.mark.sign)} `;
   // A name is plain text, white on the row you are on, as the theme's own text can be dark on
   // the grey there. The lead's is bold.
-  const padded = row.name.padEnd(nameWidth);
+  const nameRoom = Math.max(Math.min(nameWidth, width - 9), 0);
+  const padded = filled(fitted(row.name, nameRoom), nameRoom);
   const name = row.part === "lead" || here ? tinted(here, bright, padded) : padded;
-  const ends = Bun.stringWidth(row.says);
-  const room = Math.max(width - 9 - nameWidth - ends, 0);
+  const says = fitted(row.says, Math.max(width - 9 - nameRoom, 0));
+  const room = Math.max(width - 9 - nameRoom - Bun.stringWidth(says), 0);
   const title = filled(fitted(row.title, room), room);
-  const line = `${lead}${name}  ${title}  ${tinted(here, colour(row.colour), row.says)}`;
+  const line = `${lead}${name}  ${title}  ${tinted(here, colour(row.colour), says)}`;
   return here ? shaded(line, width) : line;
 }
 
@@ -98,12 +103,13 @@ export function drawList(
   rows.forEach((row, i) => {
     if (row.part !== part) {
       if (body.length > 0) body.push({ text: "", row: null });
-      if (row.part !== "lead") body.push({ text: ` ${headings[row.part]}`, row: null });
+      if (row.part !== "lead")
+        body.push({ text: fitted(` ${headings[row.part]}`, size.width), row: null });
       part = row.part;
     }
     body.push({ text: rowLine(row, i === here, nameWidth, size.width), row: i });
   });
-  const notice = frame.notice ? [paint(yellow, ` ${frame.notice}`)] : [];
+  const notice = frame.notice ? [paint(yellow, fitted(` ${frame.notice}`, size.width))] : [];
   const head = [topLine(frame, size.width), ...notice, ""];
   const room = Math.max(size.height - head.length - 2, 1);
   // Scrolls just enough to keep the row you are on in view.
@@ -112,7 +118,9 @@ export function drawList(
   from = Math.min(from, Math.max(body.length - room, 0));
   const shown = body.slice(from, from + room).map((line) => line.text);
   const blank = Array.from({ length: room - shown.length }, () => "");
-  const bottom = ` ${frame.bottom}`;
+  // A question or a reason must stay on its one line, so it is cut to fit, and the load gives
+  // way first.
+  const bottom = fitted(` ${frame.bottom}`, size.width);
   const load = frame.load ? `${frame.load} ` : "";
   const gap = size.width - Bun.stringWidth(bottom) - Bun.stringWidth(Bun.stripANSI(load));
   const last = gap > 1 ? `${paint(grey, bottom)}${" ".repeat(gap)}${load}` : paint(grey, bottom);

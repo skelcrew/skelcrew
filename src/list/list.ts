@@ -3,7 +3,7 @@
 // comes back here, on the same row. It also starts an issue, merges a task ready for review and
 // opens its PR, each asking first where it can't be taken back.
 import { cpus } from "node:os";
-import { attachSession, listSessions } from "../agents/sessions.ts";
+import { attachSession, listSessions, typeKeys } from "../agents/sessions.ts";
 import { openRepository, startOrMerge } from "../client.ts";
 import { openDb } from "../db.ts";
 import { updateNotice } from "../machine/update.ts";
@@ -54,6 +54,8 @@ export async function runList(agents: string, repository: string): Promise<void>
   let working = false;
   let attached = false;
   let lastFrame = "";
+  // Keys your terminal sent that the list hasn't acted on yet, oldest first.
+  const typed: string[] = [];
   const fixed = process.env.SKELCREW_FIXED_LOAD;
   let load = fixed ? paint(grey, removeControlCodes(fixed)) : "";
   let sample = cpuSample(cpus());
@@ -140,9 +142,13 @@ export async function runList(agents: string, repository: string): Promise<void>
 
   // Attaches you full screen to an agent's session, and comes back to the list once you leave
   // it, on the same row. The list stops reading keys meanwhile, so every key reaches the agent.
+  // Keys you typed after Enter that the list hasn't acted on yet, such as ones that came with
+  // Enter in one read, were meant for the agent, so they are typed into it first.
   const attach = async (session: string) => {
     attached = true;
     process.stdin.pause();
+    const after = typed.splice(0).join("");
+    if (after) typeKeys(agents, session, after);
     giveBack();
     const failed = await attachSession(agents, session);
     takeTerminal();
@@ -258,13 +264,22 @@ export async function runList(agents: string, repository: string): Promise<void>
   takeTerminal();
   refresh();
   // Keys are acted on one after another, as attaching or asking the daemon takes a while and
-  // keys typed meanwhile must not race it.
-  let queue = Promise.resolve();
-  process.stdin.on("data", (bytes) => {
-    for (const [sent] of bytes.toString().matchAll(keyPattern)) {
-      const key = keyNames[sent] ?? sent;
-      queue = queue.then(() => press(key)).catch((error) => say(errorText(error)));
+  // keys typed meanwhile must not race it. They wait in `typed`, as your terminal sent them, so
+  // attaching can hand those after Enter to the agent.
+  let acting = false;
+  const act = async () => {
+    if (acting) return;
+    acting = true;
+    while (true) {
+      const sent = typed.shift();
+      if (sent === undefined) break;
+      await press(keyNames[sent] ?? sent).catch((error) => say(errorText(error)));
     }
+    acting = false;
+  };
+  process.stdin.on("data", (bytes) => {
+    for (const [sent] of bytes.toString().matchAll(keyPattern)) typed.push(sent);
+    void act();
   });
   process.on("SIGWINCH", () => {
     lastFrame = "";

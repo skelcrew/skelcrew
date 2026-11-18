@@ -190,6 +190,18 @@ test("each part has its heading, the row you are on has ▸, and every line fits
   expect(lines).toHaveLength(20);
 });
 
+test("on a narrow terminal every line fits, the row you are on and a question included", () => {
+  const asking = { ...frame, bottom: "Merge app#41 into main? y/n, a question longer than this" };
+  for (const width of [10, 20, 30, 45]) {
+    const lines = drawList(rows(), 2, 0, asking, { width, height: 20 }).lines.map((line) =>
+      Bun.stripANSI(line),
+    );
+    for (const line of lines) expect(Bun.stringWidth(line)).toBeLessThanOrEqual(width);
+    expect(lines.filter((line) => line.includes("▸"))).toHaveLength(1);
+    expect(lines.at(-1)).toStartWith(width > 20 ? " Merge app#41" : " Merge");
+  }
+});
+
 test("a list taller than the terminal scrolls to keep the row you are on in view", () => {
   const lines = drawn(5, 8);
   expect(lines).toHaveLength(8);
@@ -326,6 +338,48 @@ test("an agent that ends while you are attached brings you back to the list, on 
   await until(() => seen().includes("q quit"), "the list again");
   expect(here()).toStartWith("▸ ○ app-7");
   expect(read(join(home, "left"))).toBe("");
+});
+
+// Keys typed fast, or over a slow link, can reach the list in one read with the Enter before them.
+test("keys that come with Enter reach the agent, not the list", async () => {
+  await open();
+  press("Down");
+  press("Down");
+  await until(() => here().startsWith("▸ ○ app-7"), "app-7's row");
+  // q and m would leave the list or merge, were the list to read them.
+  type("\rq m now\r");
+  await until(() => read(join(home, "app-7.typed")) === "q m now\n", "what was typed");
+  expect(read(join(home, "left"))).toBe("");
+  press("M-q");
+  await until(() => here().startsWith("▸ ○ app-7"), "the list again");
+});
+
+// You may have the agent open in a terminal of your own too, which isn't the list's to close.
+test("an agent that ends detaches only the list's own client", async () => {
+  await open();
+  tmux(
+    "new-session",
+    "-d",
+    "-s",
+    "two",
+    "-x",
+    "80",
+    "-y",
+    "24",
+    `TMUX= tmux -L ${agents} attach -t =app-7`,
+  );
+  const clients = () =>
+    Bun.spawnSync(["tmux", "-L", agents, "list-clients", "-F", "#S"]).stdout.toString().trim();
+  await until(() => clients() === "app-7", "the other client");
+  press("Down");
+  press("Down");
+  await until(() => here().startsWith("▸ ○ app-7"), "app-7's row");
+  press("Enter");
+  await until(() => clients() === "app-7\napp-7", "both clients");
+  type("bye");
+  press("Enter");
+  await until(() => seen().includes("q quit"), "the list again");
+  expect(clients()).toBe("app-7");
 });
 
 test("Enter on the lead attaches to it", async () => {

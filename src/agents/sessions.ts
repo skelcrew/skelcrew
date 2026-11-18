@@ -381,6 +381,12 @@ export function listSessions(
 export const readSession = (socket: string, name: string) =>
   mustTmux(socket, ["capture-pane", "-p", "-t", `=${name}:`]);
 
+// Types text into the agent in the named session as if from your keyboard, keys such as Enter
+// included, for keys you typed just before attaching to it.
+export function typeKeys(socket: string, name: string, text: string): void {
+  tmux(socket, ["send-keys", "-t", `=${name}:`, "-l", text]);
+}
+
 // Sends one key to the agent in the named session, such as Enter after a pasted message.
 export function sendKey(socket: string, name: string, key: "Enter" | "Escape"): void {
   mustTmux(socket, ["send-keys", "-t", `=${name}:`, key]);
@@ -443,8 +449,13 @@ export async function attachSession(socket: string, name: string): Promise<strin
     env,
     stdio: ["inherit", "inherit", "pipe"],
   });
+  // Only this attachment's client is detached, found by its process, as you may have the same
+  // agent open in another terminal too.
   const watch = setInterval(() => {
-    if (!agentRuns(socket, name)) tmux(socket, ["detach-client", "-s", `=${name}`]);
+    if (agentRuns(socket, name)) return;
+    const clients = tmux(socket, ["list-clients", "-F", "#{client_pid} #{client_tty}"]).out;
+    const mine = clients.split("\n").find((line) => line.startsWith(`${client.pid} `));
+    if (mine) tmux(socket, ["detach-client", "-t", mine.slice(`${client.pid} `.length)]);
   }, 500);
   const [code, said] = await Promise.all([client.exited, new Response(client.stderr).text()]);
   clearInterval(watch);
