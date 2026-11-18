@@ -13,6 +13,7 @@ import { markSeen } from "../plugins/ask.ts";
 import { errorText } from "../say.ts";
 import { leadOf } from "./lead.ts";
 import { repositories } from "./repo.ts";
+import type { Caller } from "./requests.ts";
 import {
   builderHarness,
   log,
@@ -342,7 +343,9 @@ function wrapMessage(from: string, reply: string, text: string): string {
 }
 
 // Saves the lead's message for the thread's builder, to be typed in as soon as the builder can
-// take it, and returns the line sc tell prints. When it can't be typed in right away, the line
+// take it, and returns the line sc tell prints. Only a lead may tell a builder, and only one of
+// its own repository's threads, so `from` is checked here whoever calls: a builder never steers
+// another builder, and no lead reaches another repository. When it can't be typed in right away, the line
 // says why, so the lead never waits without knowing. A message still waiting after 10 minutes
 // brings the lead a note. Refuses a builder that isn't running rather than keeping the message,
 // which could reach it long after it mattered. Refuses one asking you a question with its
@@ -352,12 +355,19 @@ function wrapMessage(from: string, reply: string, text: string): string {
 export async function messageBuilder(
   db: Database,
   sessions: string,
+  from: Caller,
   thread: Thread,
   text: string,
 ): Promise<string> {
+  const name = threadName(db, thread);
+  if (from === "you" || !("lead" in from))
+    throw new Error(`Only a lead can tell ${name}'s builder.`);
+  if (from.lead.owner !== thread.owner || from.lead.repo !== thread.repo)
+    throw new Error(
+      `${name} belongs to ${thread.owner}/${thread.repo}, so only that repository's lead can tell it.`,
+    );
   // Refuse first: a stopped thread gets the command that brings it back, any other one without
   // a session gets its status.
-  const name = threadName(db, thread);
   const live = thread.status === "working" || thread.status === "waiting";
   if (thread.status === "stopped")
     throw new Error(
@@ -389,8 +399,12 @@ export async function messageBuilder(
 
 // Has the daemon type a builder's message into its repository's lead, naming the thread it
 // comes from and how to answer, and logs it in the thread's log. Returns at once, like any
-// agent command.
-export function messageLead(db: Database, sessions: string, thread: Thread, text: string): void {
+// agent command. Only a builder may tell a lead, and only its own repository's: the lead is
+// found from the thread in `from`, so no sender can pick another.
+export function messageLead(db: Database, sessions: string, from: Caller, text: string): void {
+  if (from === "you" || "lead" in from)
+    throw new Error("Only a thread's builder can tell its lead.");
+  const thread = from;
   const name = threadName(db, thread);
   noteForLead(db, sessions, thread, wrapMessage(name, `sc tell ${name}`, text));
   log(db, readThread(db, thread.folder), `its builder told the lead: ${text}`);

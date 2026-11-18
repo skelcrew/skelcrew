@@ -373,10 +373,10 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       }
       case "tell": {
         const thread = findThread(db, request.repo, request.task);
-        return { told: await messageBuilder(db, sessions, thread, request.text) };
+        return { told: await messageBuilder(db, sessions, caller, thread, request.text) };
       }
       case "tell lead":
-        messageLead(db, sessions, callingThread(caller), request.text);
+        messageLead(db, sessions, caller, request.text);
         return { told: "lead" };
       case "submit": {
         const thread = callingThread(caller);
