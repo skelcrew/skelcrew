@@ -299,7 +299,7 @@ After that, when the default branch brings an `.agents/` different from the one 
 
 Skelcrew keeps its own clone of every repository it works on, in `~/.local/share/skelcrew/repos/<owner>/<repo>/`, at the latest default branch. A repository comes in only when you add it, in your own terminal: with `sc` in a checkout of it, `sc init`, or `sc repo add`, which takes a checkout's path, its full name on its forge, such as `simon/site`, or nothing for the checkout you are in. After that its short name works everywhere. The lead can't bring one in: it asks you to add it and open it. `sc repo ls` lists them and `sc repo rm <name>` removes Skelcrew's clone.
 
-**Opening a repository.** The repository is the context, as the folder is for `claude` in a terminal. `sc` in a checkout opens that repository's list, matched by its remote. A repository Skelcrew doesn't have yet is added first, so the first `sc` in any clone goes straight to work. A remote that still uses a repository's old name, such as from before a rename, is matched by asking its forge once. Skelcrew remembers the answer and prints the `git remote set-url` that updates the remote. Outside any repository, `sc` opens the repository you opened last. With no repositories yet, it says `Skelcrew has no repositories yet. Run sc in a checkout of one.` In a repository with no remote, `sc` opens nothing, as opening another repository there would look as if Skelcrew had ignored where you are. It says, with each command on a line of its own and a blank line at the end:
+**Opening a repository.** The repository is the context, as the folder is for `claude` in a terminal. `sc` in a checkout opens that repository, matched by its remote: its split screen, or its list with `sc --list`, as **The list** says. A repository Skelcrew doesn't have yet is added first, so the first `sc` in any clone goes straight to work. A remote that still uses a repository's old name, such as from before a rename, is matched by asking its forge once. Skelcrew remembers the answer and prints the `git remote set-url` that updates the remote. Outside any repository, `sc` opens the repository you opened last. With no repositories yet, it says `Skelcrew has no repositories yet. Run sc in a checkout of one.` In a repository with no remote, `sc` opens nothing, as opening another repository there would look as if Skelcrew had ignored where you are. It says, with each command on a line of its own and a blank line at the end:
 
 ```
 This git repository has no remote. To add a remote and push it:
@@ -332,7 +332,8 @@ Every command that lists or shows something takes `--json`, for tools. Commands 
 
 | Command | What it does |
 | --- | --- |
-| `sc [--from <owner/repo>]` | Shows the list of the repository you are in. Runs `sc install` first on a machine that isn't set up, and starts the engine in the background first if it isn't running. |
+| `sc [--from <owner/repo>]` | Opens the split screen on the lead of the repository you are in, as **The list** says. Runs `sc install` first on a machine that isn't set up, and starts the engine in the background first if it isn't running. |
+| `sc --list [--from <owner/repo>]` | Shows the list of the repository you are in, and otherwise does what plain `sc` does. |
 | `sc init` | Writes `skelcrew.yaml` and `.agents/` from the built-in defaults, and adds the repository. |
 | `sc install` | Makes the machine match the files, as **Installing** says. Safe to run again: with nothing to do, it says so. In a checkout, it covers that repository and your personal files. Outside one, every repository Skelcrew has. |
 | `sc add <plugin>` | Adds a plugin to the repository: `plugins:` in `skelcrew.yaml` and its exact version in `skelcrew.lock`. Then installs it, after asking. |
@@ -345,7 +346,7 @@ Every command that lists or shows something takes `--json`, for tools. Commands 
 | `sc up --bg` | Runs the engine as the background service, under systemd or launchd, and returns. |
 | `sc --remote <host> install` | Sends your personal files to the server and runs `sc install` there. On a server with no Skelcrew, asks, then puts Skelcrew there first. |
 | `sc --remote <host> up --bg` | Runs the engine on the server as its background service. |
-| `sc --remote <host> [command]` | Runs any command on the server, over `ssh -t`. With no command, opens the server's list. |
+| `sc --remote <host> [command]` | Runs any command on the server, over `ssh -t`. With no command, opens the server's split screen, and with `--list` its list. |
 | `sc repo add [<path> \| <owner/repo>]` | Adds a repository: the checkout at the path, the one named, or the checkout you are in. Asks whether you trust it when it needs to. |
 | `sc repo ls` | Lists the repositories, with their short names, trackers and forges, and a tracker `skelcrew.yaml` names that isn't installed. |
 | `sc repo rm <name>` | Removes Skelcrew's clone of a repository. Refuses while the repository has live threads, and names them. The lead never needs it, and asks you instead. |
@@ -405,7 +406,7 @@ A plugin you are writing can be added from a folder, such as `sc add -g ./skelcr
 
 ## The engine
 
-The engine is Skelcrew's daemon: one per machine, on the machine where its agents run. `sc up` runs it in the foreground, logging as it goes, until Ctrl-C stops it. `sc up --bg` installs or updates the systemd user service, with lingering turned on (`loginctl enable-linger`) so it runs after you log out and after a reboot, or on a Mac the launchd agent. It then starts the engine there if none answers, restarts one that runs another release or commit, and returns. Plain `sc` and `sc attach` do the same before showing anything. The service runs `sc up`. On systemd, the engine reads a changed service file at its next start. launchd keeps the definition it loaded, so on a Mac a changed file is loaded at once, which restarts the engine. An engine run outside the service, such as `sc up` in a terminal, is told apart by its process id. When it runs other code than `sc`, `sc` asks you to stop it rather than restart the service, and starts no service beside it.
+The engine is Skelcrew's daemon: one per machine, on the machine where its agents run. `sc up` runs it in the foreground, logging as it goes, until Ctrl-C stops it. `sc up --bg` installs or updates the systemd user service, with lingering turned on (`loginctl enable-linger`) so it runs after you log out and after a reboot, or on a Mac the launchd agent. It then starts the engine there if none answers, restarts one that runs another release or commit, and returns. Plain `sc`, `sc --list` and `sc attach` do the same before showing anything. The service runs `sc up`. On systemd, the engine reads a changed service file at its next start. launchd keeps the definition it loaded, so on a Mac a changed file is loaded at once, which restarts the engine. An engine run outside the service, such as `sc up` in a terminal, is told apart by its process id. When it runs other code than `sc`, `sc` asks you to stop it rather than restart the service, and starts no service beside it.
 
 1. If an engine is already running, `sc up` says so and exits.
 2. If the machine isn't set up, it exits and tells you to run `sc install`. The engine never asks questions, since systemd has no one to answer them.
@@ -718,7 +719,9 @@ The engine calls `status` for every change, from wherever it came: a hook, the s
 
 ## The list
 
-`sc` shows a list: a picker, not a layout. You pick a row, and Skelcrew either attaches you full screen to an agent or does what the row offers. Detaching, with Alt-Q, brings you back to the list. There is no sidebar, no split, and no tmux server of the screen's own.
+Two ways to see a repository exist side by side, until you choose which one stays: the split screen and the list. Plain `sc` opens the split screen: a sidebar of the repository's tasks and a tab for each repository, with the lead beside them, on a tmux server of the screen's own. Picking a thread in the sidebar shows its builder beside it, and `sc attach` opens the screen on a builder. `sc --list` shows the list instead. The rest of this section describes the list.
+
+`sc --list` shows a list: a picker, not a layout. You pick a row, and Skelcrew either attaches you full screen to an agent or does what the row offers. Detaching, with Alt-Q, brings you back to the list. There is no sidebar, no split, and no tmux server of the screen's own.
 
 ```
  Skelcrew v0.6.0 · app                                        site •1  docs
@@ -780,7 +783,7 @@ While messages wait for a builder, the row says how many, such as `1 message wai
 | `m` | Ready for review | Asks `Merge app#41 into main? y/n`, then merges it on the forge. Not offered without a forge, where the line says so. If the forge refuses, the line says why |
 | `y` `n` | A request from the lead | Answers it |
 | Tab | Anywhere | The next repository |
-| `q` | Anywhere | Leaves the list. Everything keeps running. Skelcrew prints `Your agents keep running. Run sc to come back.` |
+| `q` | Anywhere | Leaves the list. Everything keeps running. Skelcrew prints `Your agents keep running. Run sc --list to come back.` |
 
 The engine does what the keys ask, as only it talks to the tracker and forge. Merging and starting stay yours: the lead can't press these keys, and the merge confirm says when the PR changes `.agents/`.
 
@@ -796,7 +799,7 @@ The engine runs on the same machine as its agents. So `--remote` is only "run `s
 
 - `sc --remote <host> install` sets the server up. Your personal setup is one setup for all your machines, so a server feels like your laptop. It sends your personal files first: `config.yaml`, your lock file and the agents' Claude Code token. `session:` goes with them, so herdr on the laptop means herdr on the server. A runtime plugin that provides only `machine` is skipped there, as it is used where you run `--remote`. Then it runs `sc install` there. Each plugin's setup and `codex login` run there once, in your terminal, since a sign-in that renews itself cancels the one before, and two machines sharing it would break each other. On a server with no Skelcrew, it asks, then puts Skelcrew there first: the laptop's release, built for that machine and checked against its checksums, or one built from your checkout when you run Skelcrew from one.
 - `sc --remote <host> up --bg` runs the engine there as its background service.
-- `sc --remote <host> <command>` runs `ssh -t <host> sc --from <owner/repo> <command>`, passing the repository you are in on the laptop, so it acts on that repository there. With no command, it opens the server's list, and Enter attaches through tmux there.
+- `sc --remote <host> <command>` runs `ssh -t <host> sc --from <owner/repo> <command>`, passing the repository you are in on the laptop, so it acts on that repository there. With no command, it opens the server's split screen, and with `--list` its list, where Enter attaches through tmux there.
 
 You send your setup when you change it, as you would run `npm install` after changing `package.json`. A `sc --remote` whose personal lock differs from the server's says so, and names the `install` that fixes it. What runs stays on the machine that runs it: tasks, their clones, the engine and its state. Nothing comes back to the laptop.
 

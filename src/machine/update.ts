@@ -1,17 +1,13 @@
-// Updates: a release of Skelcrew installs the latest release over itself in the background, and the
-// sidebar says so until Skelcrew runs on it. A build from a checkout never does: git pull updates
-// it.
-import { chmodSync, mkdirSync, readFileSync, renameSync, rmSync } from "node:fs";
+// Updates: a release of Skelcrew installs the latest release over itself in the background, notes
+// it in the database, and the list says so until Skelcrew runs on it. A build from a checkout never
+// does: git pull updates it.
+import type { Database } from "bun:sqlite";
+import { chmodSync, renameSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { z } from "zod";
-import { dataDir } from "../paths.ts";
 import { quietly } from "../run.ts";
 import { errorText } from "../say.ts";
 import { isRelease, release, releases, singleFile } from "../version.ts";
-
-// Where the daemon notes the release it installed, for the sidebar's notice. It holds the
-// release followed by a line end.
-const installedFile = () => join(dataDir(), "installed");
 
 // The release file for this machine, named as the install script names it. A Mac running sc
 // through Rosetta asks for the x64 file again, which is the one it already runs.
@@ -61,7 +57,11 @@ export async function downloadRelease(at: string, name: string, want: string) {
 // goes in, so a broken download never replaces a Skelcrew that works. It is staged beside `file`
 // and renamed over it: macOS kills a program whose file was written over in place, and the
 // running daemon keeps the old file until it restarts.
-export async function installLatest(file: string, base: string): Promise<string | null> {
+export async function installLatest(
+  file: string,
+  base: string,
+  db: Database,
+): Promise<string | null> {
   const at = `${base}/latest/download`;
   const want = await releaseSum(at, asset);
   // Comparing sums costs only the small checksums file.
@@ -81,10 +81,10 @@ export async function installLatest(file: string, base: string): Promise<string 
         `the latest release won't start here, so it wasn't installed: ${started.said}`,
       );
     renameSync(staged, file);
-    // Noted only once it is in place, so the sidebar never offers a restart into a release
-    // that isn't there.
-    mkdirSync(dataDir(), { recursive: true });
-    await Bun.write(installedFile(), `${version}\n`);
+    // Noted only once it is in place, so the list never offers a restart into a release that
+    // isn't there.
+    db.run("DELETE FROM installed");
+    db.run("INSERT INTO installed (release) VALUES (?)", [version]);
     return version;
   } finally {
     // Only a staged file that never went in is still there.
@@ -96,12 +96,12 @@ export async function installLatest(file: string, base: string): Promise<string 
 // and logs what it did. A new release most days makes an hour soon enough, and a look costs
 // one small download. The note of an earlier install goes, as this daemon runs on whatever is
 // installed now. A build from a checkout, or a Skelcrew that isn't one file, is left alone.
-export function keepUpToDate(): void {
-  rmSync(installedFile(), { force: true });
+export function keepUpToDate(db: Database): void {
+  db.run("DELETE FROM installed");
   if (!release || !singleFile) return;
   // A failed look is only logged, as the next one an hour later tries again.
   const look = () =>
-    installLatest(process.execPath, releases).then(
+    installLatest(process.execPath, releases, db).then(
       (installed) => {
         if (installed) console.log(`installed Skelcrew ${installed}. It runs from the next sc.`);
       },
@@ -111,15 +111,13 @@ export function keepUpToDate(): void {
   setInterval(look, 60 * 60 * 1000);
 }
 
-// Returns the sidebar's notice of a release installed in the background, or nothing when Skelcrew
-// already runs on it. Read each time the sidebar looks, as the daemon can install one at any
-// moment.
-export function updateNotice(): string {
-  let text = "";
-  try {
-    text = readFileSync(installedFile(), "utf8").trim();
-  } catch {}
-  // A note that isn't a release number, such as one half written, shows nothing.
+// Returns the notice of a release installed in the background, for the list and the sidebar, or
+// nothing when Skelcrew already runs on it. Read from the database each time they look, as the
+// daemon can install one at any moment.
+export function updateNotice(db: Database): string {
+  const row = db.query("SELECT release FROM installed").get();
+  const text = z.object({ release: z.string() }).nullable().catch(null).parse(row)?.release ?? "";
+  // A note that isn't a release number shows nothing.
   const installed = z.string().refine(isRelease).safeParse(text);
   if (!installed.success || installed.data === release) return "";
   return `Skelcrew ${installed.data} installed · restart to use it`;

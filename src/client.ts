@@ -390,11 +390,15 @@ export async function reportTurnInterrupted(): Promise<void> {
   await request({ command: "turn interrupted" });
 }
 
-// Has the daemon open a repository, by its owner/name, when the sidebar switches to its tab or
-// finds its lead crashed. The daemon starts the repository's lead if it isn't running, and marks
-// it as the one you opened last. A repository whose tab you closed stays closed, as the screen
-// may still show its tab for a moment. The sidebar doesn't wait for an answer, and if the
-// daemon is down nothing happens.
-export async function openRepository(fullName: string): Promise<void> {
-  await ask({ command: "lead", from: fullName, tab: true }, 60_000);
+// Has the daemon open a repository, by its owner/name, when the list moves to it with Tab, or
+// you press Enter on its lead. The daemon starts the repository's lead if it isn't running, and
+// marks it as the one you opened last. With `tab`, a repository whose tab you closed by exiting
+// its lead stays closed, as the list may still show it for a moment. Without, as Enter on the
+// lead asks, it opens again. Returns why the lead couldn't start, as the daemon says, or that
+// the daemon didn't answer, or null once it runs.
+export async function openRepository(fullName: string, tab: boolean): Promise<string | null> {
+  const reply = await ask({ command: "lead", from: fullName, ...(tab ? { tab } : {}) }, 60_000);
+  if (reply === null) return "the daemon didn't answer: run sc to start it";
+  const failed = z.object({ error: z.string() }).safeParse(reply);
+  return failed.success ? failed.data.error : null;
 }
