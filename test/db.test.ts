@@ -202,6 +202,38 @@ console.log(JSON.stringify({ before, start, recorded, logged: readThread(db, "ap
   expect(logged).toBeGreaterThanOrEqual(start);
 });
 
+// A notes table from before notes' IDs were never used twice moves to one where they never are,
+// keeping its notes and their IDs.
+test("an earlier notes table keeps its notes and never gives a deleted note's ID again", () => {
+  const data = join(home, ".local", "share", "skelcrew");
+  mkdirSync(data, { recursive: true });
+  const old = new Database(join(data, "skelcrew.db"));
+  old.run("CREATE TABLE notes (id INTEGER PRIMARY KEY, text TEXT NOT NULL, owner TEXT, repo TEXT)");
+  old.run("INSERT INTO notes (id, text, owner, repo) VALUES (1, 'first', 'simon', 'app')");
+  old.run("INSERT INTO notes (id, text, owner, repo) VALUES (2, 'second', 'simon', 'app')");
+  old.close();
+  const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
+const db = openDb();
+const kept = db.query("SELECT id, text FROM notes ORDER BY id").all();
+db.run("DELETE FROM notes WHERE id = 2");
+db.run("INSERT INTO notes (owner, repo, text) VALUES ('simon', 'app', 'third')");
+const third = db.query("SELECT id FROM notes WHERE text = 'third'").get().id;
+console.log(JSON.stringify({ kept, third }));`;
+  const run = Bun.spawnSync([process.execPath, "-e", code], {
+    env: { ...process.env, HOME: home },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect(run.stderr.toString()).toBe("");
+  expect(JSON.parse(run.stdout.toString())).toEqual({
+    kept: [
+      { id: 1, text: "first" },
+      { id: 2, text: "second" },
+    ],
+    third: 3,
+  });
+});
+
 // Threads with no issue are named by a code of the machine's, so two machines working on one
 // repository never both have an app-t4 meaning different work.
 test("a machine's code is two letters from its name, so names from two machines differ", async () => {

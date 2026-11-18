@@ -42,6 +42,16 @@ for (const name of HarnessName.options)
     expect(told).not.toContain("once before each sc submit");
   });
 
+// Skelcrew keeps its clone, the builder's origin, current with the forge, but never moves the
+// builder's own origin/ refs. A builder that compares with them unfetched would say it
+// already has main when it doesn't.
+test("a builder fetches before it compares with or merges the base branch", () => {
+  const told = builderInstructions({ setup: undefined, test: undefined });
+  expect(told).toContain(
+    "Before you compare your branch with its base branch or merge it, such as main, run git fetch origin first.",
+  );
+});
+
 // The lead settles the setup and test commands with the human once, so every builder uses the
 // same ones, and a builder with none asks rather than guess.
 test("a builder is told the repository's setup and test commands", () => {
@@ -49,10 +59,10 @@ test("a builder is told the repository's setup and test commands", () => {
   expect(told.startsWith(instructions.replace(/\n$/, ""))).toBe(true);
   expect(told).toContain("Never run the repository's whole test suite");
   expect(told).toEndWith(
-    "Skelcrew set up your clone with `go mod download`. The repository's whole test suite runs with `make check`. That is for CI and the reviewer, so don't run it yourself. It shows how the repository runs its tests, lint and typecheck, so run the parts near your change.\n",
+    "Skelcrew set up your clone with `go mod download`. The repository's whole test suite runs with `make check`. That is for CI and the reviewer, so don't run it yourself. If you ever must, run `sc check`, which runs it once one of this machine's check slots is free, never the command itself. It shows how the repository runs its tests, lint and typecheck, so run the parts near your change.\n",
   );
   expect(builderInstructions({ setup: undefined, test: ["go test ./..."] })).toEndWith(
-    "\n\nNo setup command is configured. The repository's whole test suite runs with `go test ./...`. That is for CI and the reviewer, so don't run it yourself. It shows how the repository runs its tests, lint and typecheck, so run the parts near your change.\n",
+    "\n\nNo setup command is configured. The repository's whole test suite runs with `go test ./...`. That is for CI and the reviewer, so don't run it yourself. If you ever must, run `sc check`, which runs it once one of this machine's check slots is free, never the command itself. It shows how the repository runs its tests, lint and typecheck, so run the parts near your change.\n",
   );
 });
 

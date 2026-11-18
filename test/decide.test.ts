@@ -127,12 +127,16 @@ function acted(t: Thread, p: PullRequest) {
 }
 
 test("a merged PR ends the thread", () => {
-  expect(decide(thread(), pr({ state: "merged" }), given)).toEqual({ end: "PR #7 was merged" });
+  expect(decide(thread(), pr({ state: "merged" }), given)).toEqual({
+    end: "PR #7 was merged",
+    note: "is done: #7 merged into main",
+  });
 });
 
 test("a PR closed without merging ends the thread too", () => {
   expect(decide(thread(), pr({ state: "closed" }), given)).toEqual({
     end: "PR #7 was closed without merging",
+    note: "ended: #7 closed without merging",
   });
 });
 
@@ -445,6 +449,7 @@ const suiteOn = (prs: PullRequest[], more: Partial<Parameters<typeof whoRunsTheS
     waitedInVain: false,
     waited: 0,
     checkWait: 40_000,
+    ciWait: 120_000,
     ...more,
   });
 const ci = [approved, run(30, "test", "running")];

@@ -187,6 +187,39 @@ describe.skipIf(insideSandbox)("reviewer", () => {
     expect(readFileSync(join(clone, "README"), "utf8")).toBe("unsaved\n");
   });
 
+  // A builder runs git whenever it likes, and each command can hold a lock in its clone, which
+  // the reviewer's view shows. The checkout takes neither lock, so it doesn't matter when they
+  // come, and the reviewer's own git can take them after it. These are held for the whole
+  // review.
+  test("reviews the commit while a git command of the builder's holds its locks", async () => {
+    writeFileSync(join(clone, "README"), "unsaved\n");
+    writeFileSync(join(clone, ".git", "index.lock"), "");
+    writeFileSync(join(clone, ".git", "HEAD.lock"), "");
+    // git add and git commit each need both locks.
+    fakeCodex(approve, [
+      '{ git rev-parse HEAD; cat README; git status --porcelain; } > "$CODEX_HOME/sessions/seen"',
+      "echo tried > README && git add README && git -c user.name=t -c user.email=t@t commit -qm tried",
+      'git log -1 --format=%s >> "$CODEX_HOME/sessions/seen"',
+    ]);
+    expect(await start()).toEqual({ verdict: "approve", body: "Looks right." });
+    expect(kept("seen")).toBe(`${commit}\napp\ntried\n`);
+    // The builder's git still holds them, and its clone is as it left it.
+    expect(existsSync(join(clone, ".git", "index.lock"))).toBe(true);
+    expect(existsSync(join(clone, ".git", "HEAD.lock"))).toBe(true);
+    expect(readFileSync(join(clone, "README"), "utf8")).toBe("unsaved\n");
+  });
+
+  // The reviewer and the tests it runs use git in other repositories too, such as one a test
+  // makes in a temporary folder, and each must keep its own index.
+  test("git in another repository uses that repository's own index", async () => {
+    fakeCodex(approve, [
+      'other=$(mktemp -d) && git -C "$other" init -q && echo x > "$other/f"',
+      'git -C "$other" add f && git -C "$other" ls-files > "$CODEX_HOME/sessions/seen"',
+    ]);
+    expect(await start()).toEqual({ verdict: "approve", body: "Looks right." });
+    expect(kept("seen")).toBe("f\n");
+  });
+
   test("keeps Codex's instructions as they were, and its login and sessions writable", async () => {
     mkdirSync(join(codexHome(), "rules"), { recursive: true });
     for (const file of ["config.toml", "AGENTS.md", "rules/default.rules", "auth.json"])
@@ -627,7 +660,7 @@ describe("what the reviewer is told about the tests", () => {
   test("without CI, the reviewer runs the whole test suite itself", () => {
     const prompt = reviewerPrompt(issue, "origin/main", "run", named);
     expect(prompt).toContain(
-      "No CI runs on this commit, so run the repository's whole test suite, with `bun install && bun run check`.",
+      "No CI runs on this commit, so run the repository's whole test suite with `sc check`, which runs `bun install && bun run check` once one of this machine's check slots is free. Never run that command directly, as other agents share this machine.",
     );
     expect(prompt).not.toContain("ci.md");
   });
@@ -669,7 +702,7 @@ describe("what the reviewer is told about the tests", () => {
   test("with CI whose checks run no tests, the reviewer runs the whole test suite itself", () => {
     const prompt = reviewerPrompt(issue, "origin/main", { ci: "/tmp/review/ci.md" }, named);
     expect(prompt).toContain(
-      "When it lists checks and none of them runs the tests, such as only a deploy preview or a CLA check, run the whole test suite yourself, with `bun install && bun run check`.",
+      "When it lists checks and none of them runs the tests, such as only a deploy preview or a CLA check, run the whole test suite yourself with `sc check`, which runs `bun install && bun run check` once one of this machine's check slots is free. Never run that command directly, as other agents share this machine.",
     );
   });
 

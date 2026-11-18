@@ -1,23 +1,31 @@
-// A builder's messages waiting to be typed in: the lead's sc tell, and what Skelcrew tells it of
-// its PR's events. They wait in the database until the builder can take them, so none is
-// dropped while it is busy or stopped, or while the daemon restarts, and sc ps and the sidebar
-// can count them.
+// The messages module: every message Skelcrew types into an agent goes through here, on the
+// transport. It holds who may tell whom, the <skelcrew> tag around an agent's words, and each
+// agent's queue. A builder's messages are the lead's sc tell and what Skelcrew tells it of its
+// PR's events. They wait in the database until the builder can take them, so none is dropped
+// while it is busy or stopped, or while the daemon restarts, and sc ps and the sidebar can count
+// them. A lead's notes wait there too, until the lead is idle or has started.
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
+import { harnessNamed } from "../agents/harness.ts";
 import { agentRuns } from "../agents/sessions.ts";
-import { deliver, draftReason, midTurn, whyBusy } from "../agents/transport.ts";
+import { deliver, draftReason, idle, midTurn, whyBusy } from "../agents/transport.ts";
 import { markSeen } from "../plugins/ask.ts";
 import { errorText } from "../say.ts";
-import { noteForLead, typeLeadNotes } from "./lead.ts";
+import { leadOf } from "./lead.ts";
+import { repositories } from "./repo.ts";
+import type { Caller } from "./requests.ts";
 import {
   builderHarness,
   log,
   readThread,
   record,
   repositoryOf,
-  type Thread,
+  Thread,
   threadName,
 } from "./thread.ts";
+
+// A note waiting to be typed into a lead, or null when none waits.
+const Note = z.object({ id: z.number(), text: z.string() }).nullable();
 
 // The PR's reviews and comments a message carries, for the forge to mark seen once it is typed.
 const TypedIn = z.array(z.object({ kind: z.enum(["review", "comment"]), id: z.string() }));
@@ -305,4 +313,210 @@ export const noticeRound = (folder: string) => roundsDropped.get(folder) ?? 0;
 export function stopDelivering(db: Database, folder: string, drop: boolean, reason?: string): void {
   delivering.get(folder)?.cancel.abort(reason);
   if (drop) db.run("DELETE FROM messages WHERE folder = ?", [folder]);
+}
+
+// Types "continue" into a builder idle on its harness's usage limit, once it can take it, so it
+// goes on with the turn the limit cut off. It goes around the builder's queue: the wake that
+// calls it has its own rules, and gives up once anything else is typed to the builder. Throws
+// after a minute without typing, or once `signal` aborts.
+export function typeContinue(sessions: string, thread: Thread, signal: AbortSignal) {
+  const { marks } = builderHarness(thread);
+  return deliver(sessions, thread.folder, marks, "continue", { timeout: 60_000, signal });
+}
+
+// Returns an agent's text with any <skelcrew or </skelcrew> removed, so it can't open or close
+// Skelcrew's tag and pass what follows off as coming from someone else.
+export function untagged(text: string): string {
+  let inside = text;
+  // One pass isn't enough: removing the inner tag of </skel</skelcrew>crew> leaves a whole
+  // </skelcrew>.
+  while (/<\/skelcrew>|<skelcrew/i.test(inside))
+    inside = inside.replace(/<\/skelcrew>|<skelcrew/gi, "");
+  return inside;
+}
+
+// Returns the message wrapped in Skelcrew's tag, saying who it is from and the command to answer
+// with, so the receiving agent never takes it for the human. The tag marks where it starts and
+// ends, and the text inside stays plain, without tags of its own.
+function wrapMessage(from: string, reply: string, text: string): string {
+  return `<skelcrew from="${from}" reply="${reply}">\n${untagged(text)}\n</skelcrew>`;
+}
+
+// Saves the lead's message for the thread's builder, to be typed in as soon as the builder can
+// take it, and returns the line sc tell prints. Only a lead may tell a builder, and only one of
+// its own repository's threads, so `from` is checked here whoever calls: a builder never steers
+// another builder, and no lead reaches another repository. When it can't be typed in right away, the line
+// says why, so the lead never waits without knowing. A message still waiting after 10 minutes
+// brings the lead a note. Refuses a builder that isn't running rather than keeping the message,
+// which could reach it long after it mattered. Refuses one asking you a question with its
+// harness's question tool too: typing then would answer it for you. One that stopped without
+// submitting may be told, as the lead can often answer what it waits on, and the message typed
+// in ends its needing you.
+export async function messageBuilder(
+  db: Database,
+  sessions: string,
+  from: Caller,
+  thread: Thread,
+  text: string,
+): Promise<string> {
+  const name = threadName(db, thread);
+  if (from === "you" || !("lead" in from))
+    throw new Error(`Only a lead can tell ${name}'s builder.`);
+  if (from.lead.owner !== thread.owner || from.lead.repo !== thread.repo)
+    throw new Error(
+      `${name} belongs to ${thread.owner}/${thread.repo}, so only that repository's lead can tell it.`,
+    );
+  // Refuse first: a stopped thread gets the command that brings it back, any other one without
+  // a session gets its status.
+  const live = thread.status === "working" || thread.status === "waiting";
+  if (thread.status === "stopped")
+    throw new Error(
+      `${name}'s builder isn't running: the thread is stopped. sc start ${name} brings it back.`,
+    );
+  // A thread still setting up has no session yet, and one that failed or is done has none left.
+  if (!live || !agentRuns(sessions, thread.folder))
+    throw new Error(`${name}'s builder isn't running: the thread is ${thread.status}.`);
+  if (thread.asking)
+    throw new Error(
+      `${name}'s builder is asking the human a question, and typing now would answer it. Tell the human instead.`,
+    );
+  // Look before saving it, so the answer says whether it goes in now. Messages are typed in
+  // order, so any still waiting go first.
+  const ahead = messagesWaiting(db, thread);
+  const why = await whyWaiting(sessions, thread);
+  const message = wrapMessage("lead", "sc tell lead", text);
+  queueMessage(db, sessions, thread.folder, {
+    sender: "lead",
+    text: message,
+    said: text,
+    typed_in: [],
+  });
+  if (why === "" && ahead === 0) return `Telling ${name}'s builder now: it is idle.`;
+  const earlier = ahead === 1 ? "1 earlier message waits" : `${ahead} earlier messages wait`;
+  const reasons = [why, ahead > 0 ? earlier : ""].filter((reason) => reason).join(", and ");
+  return `${name}'s builder can't take it yet: ${reasons}. Skelcrew types it in once it can, and tells you if it still waits in 10 minutes.`;
+}
+
+// Has the daemon type a builder's message into its repository's lead, naming the thread it
+// comes from and how to answer, and logs it in the thread's log. Returns at once, like any
+// agent command. Only a builder may tell a lead, and only its own repository's: the lead is
+// found from the thread in `from`, so no sender can pick another. A reviewer sends nothing.
+export function messageLead(db: Database, sessions: string, from: Caller, text: string): void {
+  if (from === "you" || "lead" in from || "review" in from)
+    throw new Error("Only a thread's builder can tell its lead.");
+  const thread = from;
+  const name = threadName(db, thread);
+  noteForLead(db, sessions, thread, wrapMessage(name, `sc tell ${name}`, text));
+  log(db, readThread(db, thread.folder), `its builder told the lead: ${text}`);
+}
+
+// Types each saved note for a repository's lead into it, one at a time, such as "started
+// app-12 from github: Fix the login redirect" or "app-12 needs you: its builder asked a
+// question", and forgets it once typed. It waits as long as the lead is busy, checking again
+// each time whether a note about a thread needing you is still wanted, so a question you
+// answered meanwhile is never announced. A lead that isn't running, or never started, gets
+// nothing: its notes stay saved until it starts.
+async function typeNotes(
+  db: Database,
+  sessions: string,
+  owner: string,
+  repo: string,
+): Promise<void> {
+  const { name, harness } = leadOf(db, owner, repo);
+  const where = "owner = ? AND repo = ?";
+  // Each pass reads the oldest note and the first thread waiting to be announced, so what was
+  // saved while typing is seen too.
+  while (true) {
+    const note = Note.parse(
+      db.query(`SELECT id, text FROM notes WHERE ${where} ORDER BY id`).get(owner, repo),
+    );
+    const row = db
+      .query(`SELECT * FROM task_threads WHERE noting IS NOT NULL AND ${where} ORDER BY rowid`)
+      .get(owner, repo);
+    const thread = Thread.nullable().parse(row);
+    // Stop when nothing is left to say, or nobody is there to hear it. Wait while the lead is busy.
+    if (note === null && (thread === null || thread.noting === null)) return;
+    if (!agentRuns(sessions, name)) return;
+    // A lead that is running has started, so it has a harness.
+    const { marks } = harnessNamed(harness ?? "claude");
+    if (!(await idle(sessions, name, marks))) continue;
+    // Saved notes go first, then a thread that needs you. A note can be dropped while the lead
+    // is busy, such as a thread's end note once the thread starts over, so it is looked for
+    // again before typing, and its typing is cancelled if it goes meanwhile. A note's ID is never
+    // used twice, so a note saved meanwhile is never taken for this one, nor deleted as it.
+    if (note !== null) {
+      if (!db.query("SELECT 1 FROM notes WHERE id = ?").get(note.id)) continue;
+      const cancel = new AbortController();
+      typingNote.set(note.id, cancel);
+      try {
+        await deliver(sessions, name, marks, note.text, { signal: cancel.signal });
+      } finally {
+        typingNote.delete(note.id);
+      }
+      db.run("DELETE FROM notes WHERE id = ?", [note.id]);
+      continue;
+    }
+    if (thread === null || thread.noting === null) return;
+    await deliver(sessions, name, marks, `${threadName(db, thread)} needs you: ${thread.noting}`);
+    // The thread may have stopped needing you and started again while this was typed.
+    if (readThread(db, thread.folder).noting === thread.noting)
+      record(db, thread.folder, { noting: null }, "told the lead it needs you");
+  }
+}
+
+// The saved note being typed into a lead, by its ID, with what cancels its typing.
+const typingNote = new Map<number, AbortController>();
+
+// Drops the notes that a thread ended which still wait for its lead, cancelling one being
+// typed. A thread starting over in the same folder has the same name, and the lead would take
+// the old end for the new thread's and drop it from what it holds open. A note already pasted
+// at the lead's prompt is still sent: typing presses Enter a moment after the paste, and
+// leaving it there would block every later note behind an unsent draft.
+export function dropEndNotes(db: Database, folder: string): void {
+  const ids = z
+    .array(z.object({ id: z.number() }))
+    .parse(db.query("SELECT id FROM notes WHERE ended = ?").all(folder));
+  for (const { id } of ids) typingNote.get(id)?.abort();
+  db.run("DELETE FROM notes WHERE ended = ?", [folder]);
+}
+
+// The note typing under way for each repository's lead, by its owner/name.
+const noteTyping = new Map<string, Promise<void>>();
+
+// Types the saved notes into each repository's lead, and returns at once, so the round or
+// request that saved a note never waits on a lead. Each lead's notes are typed one after
+// another, so a note is never pasted twice, and two notes never share one Enter. A busy lead
+// holds up no other lead. A note that fails to be typed stays saved. The next call tries it
+// again: at the next note, the next time you open a lead with sc, or the daemon's next start.
+export function typeLeadNotes(db: Database, sessions: string): void {
+  for (const { owner, repo } of repositories(db)) {
+    // Chain onto the lead's typing under way, so its notes go in one after another.
+    const key = `${owner}/${repo}`;
+    const before = noteTyping.get(key) ?? Promise.resolve();
+    noteTyping.set(
+      key,
+      before
+        .then(() => typeNotes(db, sessions, owner, repo))
+        .catch((error) => console.log(`couldn't tell ${key}'s lead: ${errorText(error)}`)),
+    );
+  }
+}
+
+// Saves a note for the lead of a repository, and has the daemon type it in. Notes already
+// wait while the lead is busy, and stay saved while it isn't running, so a note is never lost.
+// `ended` is the folder of the thread whose end the note reports, if it does.
+export function noteForLead(
+  db: Database,
+  sessions: string,
+  repository: { owner: string; repo: string },
+  text: string,
+  ended: string | null = null,
+): void {
+  db.run("INSERT INTO notes (owner, repo, text, ended) VALUES (?, ?, ?, ?)", [
+    repository.owner,
+    repository.repo,
+    text,
+    ended,
+  ]);
+  typeLeadNotes(db, sessions);
 }

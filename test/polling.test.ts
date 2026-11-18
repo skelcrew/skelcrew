@@ -616,6 +616,21 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
     await until(() => waiting() === 0);
   }, 60_000);
 
+  // A builder already running keeps its origin/main where it last fetched. Main moved on the
+  // forge, so the notice names main's new commit for the builder to check its fetch against.
+  test("a conflict notice names the commit main is on at the forge, after main moved", async () => {
+    const work = await approvedApp12();
+    writeFileSync(join(work, "LATER"), "later\n");
+    git(work, "add", ".");
+    git(work, "commit", "-qm", "main moved");
+    git(work, "push", "-q", join(home, "github", "simon", "app.git"), "main");
+    const main = git(work, "rev-parse", "HEAD");
+    pr({ conflicts: true, reviews: [skelReview], checks: [approved] });
+    await until(() => typed().includes("conflicts with main"));
+    expect(typed()).toContain(`The forge's main is at ${main}.`);
+    expect(typed()).toContain("git fetch origin");
+  }, 60_000);
+
   // The builder fetches the base from Skelcrew's clone, so it is told only once that clone has
   // the base. A base Skelcrew can't fetch yet must not leave the PR advertised as ready.
   test("an approved PR conflicting with a base Skelcrew can't fetch leaves ready to merge, and is told once it can", async () => {
@@ -839,16 +854,20 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
     await approvedApp12();
     expect(fakeBuilders()).toHaveLength(1);
     pr({ state: "merged", reviews: [skelReview], checks: [approved] });
-    await until(() => thread().status === "done");
-    expect(existsSync(clone())).toBe(false);
+    // The thread is saved as done before its clone goes, so the test waits for both.
+    await until(() => thread().status === "done" && !existsSync(clone()));
     expect(Bun.spawnSync(["tmux", "-L", socket, "has-session", "-t", "=app-12"]).success).toBe(
       false,
     );
     expect(fakeBuilders()).toEqual([]);
     expect(thread().needs_you).toBe(0);
+    // The lead hears it is done, so it stops listing the PR as ready to merge.
+    const leadTyped = () => read(join(data(), "claude", leadName, "typed"));
+    await until(() => leadTyped().includes("app-12 is done: #7 merged into main"));
     // A thread that is done isn't polled again. Its repository still is, for labeled issues.
     await morePolls();
     expect(asked(plugin).at(-1)).toMatchObject({ ask: "changed", prs: [] });
+    expect(leadTyped().split("app-12 is done").length - 1).toBe(1);
   }, 60_000);
 
   // m on the screen's list of PRs asks on your socket. The lead's and builders' sockets refuse it,
@@ -944,13 +963,13 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
     Bun.spawnSync([process.execPath, main, "stop", "app-12"], { env: env() });
     expect(thread().status).toBe("stopped");
     pr({ state: "merged", reviews: [skelReview], checks: [approved] });
-    await until(() => thread().status === "done");
-    expect(existsSync(clone())).toBe(false);
+    // The thread is saved as done before its clone goes, so the test waits for both.
+    await until(() => thread().status === "done" && !existsSync(clone()));
   }, 60_000);
 
   // The lead may remove a thread, as it may stop one, and a builder may not. The task stays
   // open, so the thread starts over on it.
-  test("sc rm closes the thread's PR with the reason, ends its builder, removes its clone, and the task can start over", async () => {
+  test("sc rm closes the thread's PR with the reason, ends its builder, removes its clone, tells the lead only when you ran it, and the task can start over", async () => {
     await approvedApp12();
     const branch = String(thread().branch);
     // Runs sc rm as an agent would, with its own socket.
@@ -1008,6 +1027,10 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
       stderr: "pipe",
     });
     expect(again.stderr.toString()).toContain("app-12 is done already");
+    // The lead removed it itself, so it hears nothing of it: not even the closed PR a poll sees.
+    await morePolls();
+    const leadTyped = () => read(join(data(), "claude", leadName, "typed"));
+    expect(leadTyped()).not.toContain("app-12 ended");
     // The forge deletes the branch as it closes the PR, which the fake plugin leaves to the test.
     git(join(home, "github", "simon", "app.git"), "branch", "-D", branch);
 
@@ -1035,6 +1058,9 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
       comment: null,
     });
     expect(thread().status).toBe("done");
+    // Removed by you, it is news to the lead.
+    await until(() => leadTyped().includes("app-12 ended: you removed it, closing #7"));
+    expect(leadTyped().split("app-12 ended").length - 1).toBe(1);
   }, 60_000);
 
   // A forge answers what changed since the last poll, and nothing changes on the PR while
@@ -1327,7 +1353,7 @@ echo "Not logged in"; exit 1`,
     expect(assigns()).toEqual([assignOn]);
   }, 60_000);
 
-  test("a PR closed without merging takes you off its issue", async () => {
+  test("a PR closed without merging takes you off its issue and tells the lead", async () => {
     await approvedApp12();
     await until(() => thread().assigned === 1);
     pr({ state: "closed", reviews: [skelReview], checks: [approved] });
@@ -1335,6 +1361,8 @@ echo "Not logged in"; exit 1`,
     await until(() => assigns().length === 2);
     expect(assigns()).toEqual([assignOn, assignOff]);
     await until(() => thread().assigned === 0);
+    const leadTyped = () => read(join(data(), "claude", leadName, "typed"));
+    await until(() => leadTyped().includes("app-12 ended: #7 closed without merging"));
   }, 60_000);
 
   // A thread that failed still holds its issue, so you stay assigned, and starting it over

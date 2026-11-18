@@ -60,6 +60,11 @@ export class Queue {
     return this.running + this.waiting.length >= limit;
   }
 
+  // Returns how much work waits for a place, so work that joins now can say where it stands.
+  inLine(): number {
+    return this.waiting.length;
+  }
+
   // Starts waiting work, first in order, while the limit leaves places free.
   private startWaiting(): void {
     while (this.running < this.limit) {
