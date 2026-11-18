@@ -24,6 +24,10 @@ const waiting =
 // and test commands: the lead settles them with the human, and a builder with none asks the lead.
 const settling =
   "\nEvery builder sets up and tests your repository with the same commands, under setup: and test: in its skelcrew.yaml, or in the human's own config.yaml. Skelcrew never guesses them. The end of these instructions says which were configured, in either file, when this session started. You can't read the human's config, so go by that, and by the skelcrew.yaml in the clone for any added since. Before you start the first thread in your repository, settle any that is missing. Find it out by reading the repository: its package files, its Makefile, its CI workflow, which shows what the project really runs, and its README. Propose only the missing ones to the human in plain words, such as \"Builders will set up with bun install and test with bun run check, as CI does. Shall I add that to skelcrew.yaml?\" On a yes, start a small thread that adds them to the repository's skelcrew.yaml, a normal PR the human merges. Until then, a builder that needs them asks you. Later, a repository the human only drops into will be able to keep them under repos: in the human's own config instead.\n";
+// What the lead's file added once a lead came back after a restart without its conversation:
+// it looks at Skelcrew's state before anything else.
+const restarted =
+  "\nThis conversation can start without its history, such as when Skelcrew couldn't bring the last one back. When it has none, or the human asks where things stand, run sc ps and sc ls first: they show your threads and issues. Don't look for the work in your own folder, which holds nothing of it.\n";
 const asking =
   "\nUse the setup and test commands named at the end of these instructions, as every builder of the repository uses the same ones. If one you need isn't configured, never make one up: ask the lead which to use with sc tell lead, and wait for its answer. That counts as blocked.\n";
 
@@ -60,6 +64,10 @@ const builderTests =
 const threadEnds =
   'When a thread ends, Skelcrew types a one line note too, such as "app-12 is done: #7 merged into main" or "app-12 ended: #7 closed without merging". It comes from Skelcrew, not the human. Drop the thread from what you hold open: never list it as ready to merge again. When useful, tell the human in one line what it unblocks, such as a thread waiting on its work. A thread you removed with sc rm brings no note.\n\n';
 
+// What the lead's file added for a merge when ready: only the human arms one, at their own
+// terminal, and the lead may cancel one.
+const mergeWhenReady = `You can't merge, and you can't arm a merge either. When the human wants a PR merged once it is ready, tell them to run sc merge --when-ready app-12 in their own terminal: it asks them y/n there, and Skelcrew then merges it as soon as it is approved and green. sc ps shows "when ready" under MERGE for such a thread. You may run sc merge --cancel app-12 when the human asks, as cancelling is always safe. If an armed merge still waits after a review round, such as on a conflict or a failing check, Skelcrew types a one line note, such as "app-12 still waits to merge when ready, on its failing checks to be fixed.". Tell the human only if it needs them.\n\n`;
+
 // What the builder's file added later: it tells the lead only what the lead needs, as Skelcrew
 // already shows its progress.
 const tellingTheLead =
@@ -70,14 +78,19 @@ test("the lead and builder files hold the instructions the code gave, but for wh
   let lead = builtInRole("lead").instructions;
   expect(lead).toContain(waiting);
   expect(lead).toContain(settling);
+  expect(lead).toContain(restarted);
   expect(lead).toContain(threadEnds);
+  expect(lead).toContain(mergeWhenReady);
+  lead = lead.replace(mergeWhenReady, "");
   for (const [before = "", now = ""] of leadTasks) {
     expect(lead).toContain(now);
     lead = lead.replace(now, before);
   }
-  expect(sha256(lead.replace(waiting, "").replace(settling, "").replace(threadEnds, ""))).toBe(
-    "4a964d29382eddbab5268fa24921ee599fa1bde9bd1eb51341f5bee1cb577837",
+  const without = [waiting, settling, restarted, threadEnds].reduce(
+    (text, added) => text.replace(added, ""),
+    lead,
   );
+  expect(sha256(without)).toBe("4a964d29382eddbab5268fa24921ee599fa1bde9bd1eb51341f5bee1cb577837");
   const builder = builtInRole("builder").instructions;
   expect(builder).toContain(workflows);
   expect(builder).toContain(builderTests);

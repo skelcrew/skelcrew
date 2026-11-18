@@ -34,21 +34,77 @@ export async function cloneRepository(
   await git(db, repository, ["clone", "--quiet", repository.remote, folder]);
 }
 
+// Fetches a ref of the remote, such as HEAD for its default branch, into the folder's
+// FETCH_HEAD. Returns false, rather than throwing, when the remote has no refs at all: a
+// repository with no commits yet, such as one just created on GitHub. A failed fetch alone
+// doesn't prove that, as a remote can have branches while its HEAD names one that is gone, so
+// only then is the remote asked what it has.
+async function fetchRef(
+  db: Database,
+  repository: Repository,
+  folder: string,
+  ref: string,
+): Promise<boolean> {
+  try {
+    await git(db, repository, ["-C", folder, "fetch", "--quiet", repository.remote, ref]);
+    return true;
+  } catch (error) {
+    // Only a ref the remote lacks can mean it is empty. Any other failure, such as a damaged
+    // clone, is the fetch's own to report.
+    if (!String(error).includes("couldn't find remote ref")) throw error;
+    if (await remoteEmpty(db, repository)) return false;
+    throw error;
+  }
+}
+
+// Returns whether the repository's remote has no refs at all, as one with no commits yet. A
+// remote that can't be listed isn't taken for empty.
+export async function remoteEmpty(db: Database, repository: Repository): Promise<boolean> {
+  const listed = await git(db, repository, ["ls-remote", repository.remote]).catch(() => null);
+  return listed === "";
+}
+
+// Returns the commit the clone in the folder is on, or nothing for a clone of a repository
+// with no commits yet, whose HEAD names no commit.
+export const headCommit = (db: Database, repository: Repository, folder: string) =>
+  git(db, repository, ["-C", folder, "rev-parse", "--verify", "--quiet", "HEAD"]).catch(() => "");
+
 // Resets Skelcrew's clone in the folder to the latest default branch, so the lead reads current
 // code and builders, whose origin it is, fetch the default branch as the remote has it.
-// Fetching HEAD follows the default branch even after it is renamed. Returns the commit the
-// clone was on and the one it is on now, so a move can be logged.
+// Returns the commit the clone was on and the one it is on now, so a move can be logged. Both
+// are empty while the repository has no commits, which leaves the clone as it is, and the
+// first is empty for a clone made before its first commit. `wasEmpty` says the remote had no
+// commits at the last update, which a clone that had some before keeps no sign of.
 export async function updateClone(
   db: Database,
   repository: Repository,
   folder: string,
+  wasEmpty = false,
 ): Promise<{ before: string; after: string }> {
-  await git(db, repository, ["-C", folder, "fetch", "--quiet", repository.remote, "HEAD"]);
-  const [before = "", after = ""] = (
-    await git(db, repository, ["-C", folder, "rev-parse", "HEAD", "FETCH_HEAD"])
-  ).split("\n");
+  // Fetching HEAD follows the default branch even after it is renamed.
+  if (!(await fetchRef(db, repository, folder, "HEAD"))) return { before: "", after: "" };
+  // Every poll gets here, so both commits are read with one git. Only a clone with no commit
+  // of its own makes it fail, and then only the fetched one is read.
+  const [before = "", after = ""] = await git(db, repository, [
+    "-C",
+    folder,
+    "rev-parse",
+    "HEAD",
+    "FETCH_HEAD",
+  ]).then(
+    (both) => both.split("\n"),
+    async () => ["", await git(db, repository, ["-C", folder, "rev-parse", "FETCH_HEAD"])],
+  );
+  // A clone of an empty repository is on the branch it was on before, which the first push
+  // can make another, and threads take the clone's branch as their PR's base. So the clone
+  // first moves to the default branch the remote names now.
+  if (before === "" || wasEmpty) {
+    const said = await git(db, repository, ["ls-remote", "--symref", repository.remote, "HEAD"]);
+    const branch = said.match(/^ref: (refs\/heads\/\S+)\tHEAD$/m)?.[1];
+    if (branch) await git(db, repository, ["-C", folder, "symbolic-ref", "HEAD", branch]);
+  }
   // Every poll gets here, and resetting reads the whole working tree, so it runs only when
-  // the default branch moved.
+  // the default branch moved. A clone with no commit yet takes the first one this way too.
   if (before !== after)
     await git(db, repository, ["-C", folder, "reset", "--quiet", "--hard", "FETCH_HEAD"]);
   return { before, after };
@@ -56,7 +112,8 @@ export async function updateClone(
 
 // Fetches a branch, or the default branch when none is given, into the folder's FETCH_HEAD,
 // for a thread's clone to start from. Fetched by URL, so no remote holding it is saved in the
-// folder's .git/config, which agents read.
+// folder's .git/config, which agents read. Throws, saying so plainly, for a repository with no
+// commits yet, as git's own words wouldn't tell you why.
 export async function fetchBranch(
   db: Database,
   repository: Repository,
@@ -64,8 +121,12 @@ export async function fetchBranch(
   branch: string | null,
 ): Promise<void> {
   const ref = branch ? `refs/heads/${branch}` : "HEAD";
-  await git(db, repository, ["-C", folder, "fetch", "--quiet", repository.remote, ref]);
+  if (!(await fetchRef(db, repository, folder, ref))) throw new Error(noCommits(repository));
 }
+
+// What Skelcrew says when a thread is started on a repository with no commits yet.
+export const noCommits = (repository: Repository) =>
+  `${repository.owner}/${repository.repo} has no commits yet, so a thread has nothing to start from. Push a first commit, then start it again.`;
 
 // Brings a branch of the repository into Skelcrew's clone in the folder, as a ref of its own.
 // Without `ref`, as the branch itself, so a builder whose clone has Skelcrew's as origin can fetch
@@ -151,6 +212,14 @@ export async function checkPush(
   repository: Repository,
   folder: string,
 ): Promise<void> {
+  // A clone of a repository with no commits yet has no HEAD to push. A commit of nothing, made
+  // only to name in the dry run, stands in, and is never pushed nor put on a branch.
+  let head = await headCommit(db, repository, folder);
+  if (head === "") {
+    const tree = await git(db, repository, ["-C", folder, "mktree"]);
+    const who = ["-c", "user.name=Skelcrew", "-c", "user.email=skelcrew@localhost"];
+    head = await git(db, repository, [...who, "-C", folder, "commit-tree", "-m", "check", tree]);
+  }
   // Leave out your SSH agent, as the daemon won't have it when it pushes for real.
   const { SSH_AUTH_SOCK: _agent, ...env } = process.env;
   await git(
@@ -163,7 +232,7 @@ export async function checkPush(
       "--dry-run",
       "--quiet",
       repository.remote,
-      "HEAD:refs/heads/skelcrew-check",
+      `${head}:refs/heads/skelcrew-check`,
     ],
     env,
   );

@@ -16,6 +16,7 @@ import { messagesWaiting } from "./messages.ts";
 import { ciSummary, reviewVerdict } from "./page.ts";
 import { findRepository, noRepositories, repositories, repositoryAt } from "./repo.ts";
 import { roundRunning } from "./round.ts";
+import { Stage, taskStage } from "./stage.ts";
 import { needsYou } from "./status.ts";
 import { queuedForReview, Thread, threadName, threadOn } from "./thread.ts";
 
@@ -70,7 +71,8 @@ function tabClosed(db: Database, r: { owner: string; repo: string }): boolean {
 // and `checks` are null without a PR, and `review` without a forge, where sc ps leaves those
 // columns empty. `checks` is what the PR's CI says, without Skelcrew's own check. `review` is
 // where Skelcrew's reviewer stands: its round, and when it was asked for or ended, as an ISO
-// time. `waiting` is how many messages wait to be typed into its builder.
+// time. `waiting` is how many messages wait to be typed into its builder. `merge` is its merge
+// when ready, with what it waits on, or null with none.
 export const ThreadRow = z.object({
   thread: z.string(),
   short: z.string().nullable(),
@@ -90,6 +92,7 @@ export const ThreadRow = z.object({
     })
     .nullable(),
   waiting: z.number(),
+  merge: z.object({ waits: z.string().nullable() }).nullable().default(null),
 });
 export type ThreadRow = z.infer<typeof ThreadRow>;
 
@@ -154,6 +157,7 @@ function threadRow(db: Database, thread: Thread, forge: boolean): ThreadRow {
     checks: pr === null ? null : ciOf(thread, copy),
     review: forge ? reviewOf(thread) : null,
     waiting: messagesWaiting(db, thread),
+    merge: thread.merge_plan === null ? null : { waits: thread.merge_waits },
   };
 }
 
@@ -176,12 +180,13 @@ export function listThreads(db: Database, repository?: string): ThreadRow[] {
 }
 
 // A task as sc ls shows it: its name, such as app-12, its title and the short title the lead
-// gave it, its issue while that is open in Skelcrew's copy, such as #12, and how its builder
-// stands, or null with no thread. `pr` and `checks` are as sc ps gives them for its thread, and
+// gave it, its stage, its issue while that is open in Skelcrew's copy, such as #12, and how its
+// builder stands, or null with no thread. `pr` and `checks` are as sc ps gives them for its thread, and
 // null with none. `review` is where Skelcrew's review stands, with a forge or without one, and
 // null with no thread.
 export const TaskRow = z.object({
   task: z.string(),
+  stage: Stage,
   title: z.string(),
   short: z.string().nullable(),
   issue: z.string().nullable(),
@@ -201,7 +206,9 @@ const issueId = (id: string) => (/^\d+$/.test(id) ? `#${id}` : id);
 // Returns the tasks of every repository, or of one, for sc ls: each task with a thread, newest
 // first, then each open issue with none, newest first, across all the repositories asked for.
 // They come from Skelcrew's database and its copy of the tracker, so the tracker isn't asked.
-// Text from the tracker and the lead has its control codes removed.
+// A task whose work goes on, a failed thread's included, shows the title it started with, as its
+// builder and reviewer see it, however the issue was edited since. Text from the tracker and the
+// lead has its control codes removed.
 export function listTasks(db: Database, repository?: string): TaskRow[] {
   const chosen = repository ? [findRepository(db, repository)] : repositories(db);
   // Each repository's threads and open issues, kept with when each began, so the two lists can
@@ -212,15 +219,17 @@ export function listTasks(db: Database, repository?: string): TaskRow[] {
     const rows = db
       .query("SELECT rowid AS at, * FROM task_threads WHERE owner = ? AND repo = ?")
       .all(r.owner, r.repo);
-    // A task with a thread takes its title from the open issue, which has the tracker's latest
-    // words, or else from what the thread saved as it started.
+    // A task whose thread is done takes its title from the open issue, which has the tracker's
+    // latest words. Otherwise it keeps what the thread saved as it started.
     const worked = rows.map((saved) => {
       const thread = Thread.parse(saved);
       const row = threadRow(db, thread, forge);
       const issue = open.find((item) => item.id === thread.task);
+      const latest = thread.status === "done" ? issue?.title : undefined;
       const task: TaskRow = {
         task: `${r.name}-${thread.task}`,
-        title: removeControlCodes(issue?.title ?? thread.title ?? ""),
+        stage: taskStage(thread, issue !== undefined),
+        title: removeControlCodes(latest ?? thread.title ?? issue?.title ?? ""),
         short: row.short,
         issue: issue ? issueId(issue.id) : null,
         thread: { status: row.status, needsYou: row.needsYou, queued: row.queued },
@@ -237,6 +246,7 @@ export function listTasks(db: Database, repository?: string): TaskRow[] {
       .map((item) => {
         const task: TaskRow = {
           task: `${r.name}-${item.id}`,
+          stage: "issue",
           title: removeControlCodes(item.title),
           short: null,
           issue: issueId(item.id),
@@ -281,14 +291,15 @@ export const PrPage = z.object({
 });
 export type PrPage = z.infer<typeof PrPage>;
 
-// One task as sc show shows it. `body` is its description as its reviewer gets it. `issue` is
-// the issue it came from, such as #12, with its link while Skelcrew's copy has it, or null for a
-// task with no issue, such as app-t1. `threads` names each of its threads with its role, such
+// One task as sc show shows it, with its stage. `body` is its description as its reviewer gets
+// it. `issue` is the issue it came from, such as #12, with the link the task started with, or the
+// one in Skelcrew's copy for a task not started, or null for a task with no issue, such as app-t1. `threads` names each of its threads with its role, such
 // as app-12/builder. `pr` is its PR's number, as sc ps gives it, and `review` where Skelcrew's
 // review stands, with a forge or without one. `prPage` is its PR from Skelcrew's copy, or null once the copy no longer has
 // it, as after a merge.
 export const TaskView = z.object({
   task: z.string(),
+  stage: Stage,
   title: z.string(),
   issue: z.object({ id: z.string(), link: z.string().nullable() }).nullable(),
   threads: z.array(
@@ -396,14 +407,16 @@ export async function showTask(
     if (task === undefined) throw new Error(`Skelcrew has no task with PR #${which.pr} in ${name}`);
   }
   if (task === undefined) throw new Error("sc show needs a task, such as app-12");
-  // The task's description: as its reviewer gets it while its thread is current, or else from
-  // its open issue, or from what its thread saved as it started.
+  // The task's description: as its reviewer gets it while its thread is current. A failed thread
+  // still holds its task until it starts over, so it shows the words it started with, though
+  // without the lead's messages, which starting over leaves behind. A done thread shows its open
+  // issue's latest words, or else what it saved as it started.
   const thread = threadOn(db, name, task);
   const issue = openTasks(db, owner, repo).find((item) => item.id === task);
   if (!thread && !issue) throw new Error(`there is no task ${name}-${task}`);
   const current = thread && thread.status !== "done" && thread.status !== "failed";
   const described =
-    thread && (current || !issue)
+    thread && (thread.status !== "done" || !issue)
       ? threadTask(db, current ? thread : { ...thread, updates: [] })
       : { title: issue?.title ?? "", body: issue?.body ?? "" };
   // Its issue, unless it is a task of Skelcrew's own, such as t1.
@@ -412,8 +425,9 @@ export async function showTask(
   const pr = row?.pr ?? null;
   return {
     task: `${name}-${task}`,
+    stage: taskStage(thread, issue !== undefined),
     title: removeControlCodes(described.title),
-    issue: own ? null : { id: issueId(task), link: issue?.link ?? null },
+    issue: own ? null : { id: issueId(task), link: thread?.issue_link ?? issue?.link ?? null },
     threads: row
       ? [{ thread: `${name}-${task}/builder`, status: row.status, needsYou: row.needsYou }]
       : [],
@@ -486,7 +500,8 @@ function shortName(name: string, room: number): string {
 // its title, takes the rest, so a long one doesn't push the rest out of sight. --json has
 // both whole. The title comes from the tracker and the short title from the lead, so their
 // control codes are removed, which could break a row or reach your terminal. A review shows
-// its round, such as changes r3. WAITING counts the messages waiting for each builder.
+// its round, such as changes r3. WAITING counts the messages waiting for each builder. MERGE
+// says when ready for a thread with a merge when ready armed.
 export function printThreads(threads: ThreadRow[], json: boolean): void {
   if (json) {
     console.log(JSON.stringify(threads));
@@ -500,6 +515,8 @@ export function printThreads(threads: ThreadRow[], json: boolean): void {
   // wait their turn, so the status says which. WAITING shows only while a message waits for
   // some builder, so it takes no room from the others the rest of the time.
   const waiting = threads.some((t) => t.waiting > 0);
+  // MERGE shows only while a thread has a merge when ready.
+  const merging = threads.some((t) => t.merge !== null);
   const rows = threads.map((t) => {
     const review = t.review === null ? "" : t.review.state;
     const round = t.review?.round == null ? "" : ` r${t.review.round}`;
@@ -510,11 +527,20 @@ export function printThreads(threads: ThreadRow[], json: boolean): void {
       `${review}${round}`,
       t.needsYou ? "yes" : "",
       ...(waiting ? [t.waiting === 0 ? "" : `${t.waiting}`] : []),
+      ...(merging ? [t.merge === null ? "" : "when ready"] : []),
     ];
   });
   // The name and title share what those columns, and the two spaces after each column but the
   // last, leave of a row. The title keeps at least room for its heading.
-  const heading = ["STATUS", "PR", "CI", "REVIEW", "NEEDS YOU", ...(waiting ? ["WAITING"] : [])];
+  const heading = [
+    "STATUS",
+    "PR",
+    "CI",
+    "REVIEW",
+    "NEEDS YOU",
+    ...(waiting ? ["WAITING"] : []),
+    ...(merging ? ["MERGE"] : []),
+  ];
   const others = heading.reduce((sum, _, i) => sum + columnWidth([heading, ...rows], i), 0);
   const left = psWidth - others - 2 * (heading.length + 1);
   const room = Math.min(nameRoom.most, Math.max(left - "TITLE".length, nameRoom.least));
@@ -549,16 +575,17 @@ function happening(task: TaskRow): string {
 // out of sight.
 const titleRoom = 40;
 
-// Prints tasks for sc ls: as JSON for tools, or else as a table with each task's name, its
-// short title or its title, and what is happening on it.
+// Prints tasks for sc ls: as JSON for tools, or else as a table with each task's name, its stage,
+// its short title or its title, and what is happening on it.
 export function printTasks(tasks: TaskRow[], json: boolean): void {
   if (json) console.log(JSON.stringify(tasks));
   else if (tasks.length === 0) console.log("There are no tasks.");
   else
     table(
-      ["TASK", "TITLE", "STATUS"],
+      ["TASK", "STAGE", "TITLE", "STATUS"],
       tasks.map((task) => [
         task.task,
+        task.stage,
         fitted(task.short ?? task.title, titleRoom),
         happening(task),
       ]),
@@ -585,6 +612,7 @@ export function printTask(task: TaskView, json: boolean): void {
         ? `#${task.pr}  ${prPage.state}  ${prPage.branch} → ${prPage.base}`
         : `#${task.pr}`;
   const facts = [
+    ["Stage", task.stage],
     ["Issue", issue ?? "none"],
     // Each thread on a line of its own.
     ...(threads.length === 0

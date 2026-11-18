@@ -119,7 +119,8 @@ export async function stopThread(db: Database, sessions: string, thread: Thread)
 // its clone by deleting the folder, never running git in it. `why` goes in the thread's log.
 // `note`, such as "is done: #7 merged into main", goes to its repository's lead after the
 // thread's name, so the lead stops listing it as open. With null, as when the lead removed it,
-// the lead hears nothing. `removal` is true only for sc rm's own end: a thread sc rm is
+// the lead hears nothing. `merged` says whether its changes were merged, which the task keeps,
+// as its stage shows. `removal` is true only for sc rm's own end: a thread sc rm is
 // removing is its to end, even when a poll saw its PR merged or closed first.
 export async function endThread(
   db: Database,
@@ -127,6 +128,7 @@ export async function endThread(
   thread: Thread,
   why: string,
   note: string | null,
+  merged: boolean,
   removal = false,
 ): Promise<void> {
   // A thread ends once, so the lead hears of it once. A poll and sc rm can both end the same
@@ -156,7 +158,9 @@ export async function endThread(
       const line = `${threadName(db, thread)} ${note}`.replace(/\s+/g, " ").slice(0, 200);
       noteForLead(db, sessions, thread, line, thread.folder);
     }
-    record(db, thread.folder, { status: "done", needs_you: false }, `${why}: ended the thread`);
+    // A merge when ready ends with its thread, so nothing armed outlives it.
+    const ended = { status: "done" as const, needs_you: false, merged, merge_plan: null };
+    record(db, thread.folder, ended, `${why}: ended the thread`);
   })();
   // Its clone goes only once the end is saved, so a thread whose end failed keeps it. Nothing
   // is waited on since the checks above, so a thread started over in this folder meanwhile
@@ -241,7 +245,7 @@ export async function removeThread(
     const closing = pr === null ? "" : `, closing #${pr}`;
     const note = `ended: you removed it${closing}${reason ? `: ${reason}` : ""}`;
     const why = reason ? `removed: ${reason}` : "removed";
-    await endThread(db, sessions, thread, why, byLead ? null : note, true);
+    await endThread(db, sessions, thread, why, byLead ? null : note, false, true);
   } finally {
     removing.delete(thread.folder);
   }

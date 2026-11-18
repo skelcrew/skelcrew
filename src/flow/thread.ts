@@ -102,6 +102,12 @@ export const Thread = z.object({
   // Null when it doesn't, or once a new round starts, as the conflict is found again if still
   // there. Null in a row from before Skelcrew kept it.
   conflicts: z.string().nullable(),
+  // Whether the latest poll found every check on the PR passed, Skelcrew's own approval
+  // included. Each poll saves it again, and a new round clears it. Its saved checks can't say
+  // so alone: they are also empty while the forge hasn't been asked yet, so an approval that
+  // needs you for another reason would read as ready to merge before CI ran. False in a row
+  // from before Skelcrew kept it, until the next poll.
+  ci_passed: z.coerce.boolean(),
   // The harness of the review waiting or running, which can differ from the latest finished
   // one's once you change your config.
   reviewer: HarnessName.nullable(),
@@ -139,6 +145,27 @@ export const Thread = z.object({
   // What the builder is doing, as its harness's hooks and its screen tell. Null until its first
   // hook runs, and in a row from before Skelcrew kept it.
   state: AgentState.nullable(),
+  // Whether the work ended with its changes merged: its PR merged, or without a forge, its
+  // branch reached its base. False while it goes on, and once it ended any other way.
+  merged: z.coerce.boolean(),
+  // The link to the issue the task came from, saved as it started, or null for a task with no
+  // issue. A task that started before Skelcrew kept it has the link Skelcrew's copy still had.
+  issue_link: z.string().nullable(),
+  // The line a PR's body needs to close the task's issue on merge, such as "Closes #12", saved as
+  // the task starts. Empty for a task with no issue. Null only in a row from before Skelcrew
+  // kept it, which takes the line from Skelcrew's copy of the tracker.
+  closes: z.string().nullable(),
+  // A merge when ready you armed, so Skelcrew merges the PR once it is approved and green, or
+  // null with none, and then nothing merges by itself. Who armed it and when, what it waits on
+  // as the last poll found, and the review round the lead last heard it still waits after.
+  merge_plan: z.enum(["armed"]).nullable(),
+  // The armed plan's own ID, new each time it is armed, so a plan cancelled and armed again is
+  // never taken for the one before.
+  merge_id: z.string().nullable(),
+  merge_by: z.string().nullable(),
+  merge_at: z.number().nullable(),
+  merge_waits: z.string().nullable(),
+  merge_noted: z.number().nullable(),
 });
 export type Thread = z.infer<typeof Thread>;
 
