@@ -58,6 +58,8 @@ const working: Thread = {
   merged: false,
   issue_link: null,
   closes: null,
+  host: "tmux",
+  host_id: null,
   merge_plan: null,
   merge_id: null,
   merge_by: null,

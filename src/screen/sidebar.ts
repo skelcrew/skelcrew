@@ -7,6 +7,7 @@ import {
   attachCommand,
   exitedCleanly,
   listSessions,
+  listTmuxSessions,
   shownSession,
   showSession,
 } from "../agents/sessions.ts";
@@ -15,8 +16,11 @@ import { openRepository } from "../client.ts";
 import { openDb } from "../db.ts";
 import { leadOf } from "../flow/lead.ts";
 import { doing, watchForStalls } from "../flow/stall.ts";
+import { liveThreads } from "../flow/thread.ts";
 import { updateNotice } from "../machine/update.ts";
 import { leadPlaces, screenLogFile } from "../paths.ts";
+import { quoteForSh } from "../plugins/plugin.ts";
+import { attachOnHostLine, pluginHost } from "../plugins/runtime.ts";
 import { version } from "../version.ts";
 import { agentFooter, tellFooter } from "./footer.ts";
 import { draw, entryPlace, noticeLines, type Size } from "./layout.ts";
@@ -66,6 +70,23 @@ export async function runSidebar(
   // its terminal, and what it last drew.
   const db = openDb();
   let open = repositoryAndLead(db, repository);
+  // The builders running on a plugin's host, by their thread's folder, with the line that attaches
+  // to each, as the last look at the hosts found them. The look runs in the background, one at a
+  // time, as a host can be slow, and the sidebar never waits on it.
+  let hosted = new Map<string, string>();
+  let lookingAtHosts = false;
+  const lookAtHosts = () => {
+    if (lookingAtHosts) return;
+    lookingAtHosts = true;
+    hostedBuilders(db)
+      .then((found) => {
+        hosted = found;
+      })
+      .catch(() => {})
+      .finally(() => {
+        lookingAtHosts = false;
+      });
+  };
   let tabs = repositoryTabs(db, roundLimit);
   const rightPane = `=${session}:.1`;
   let tty = paneTty(agents, rightPane);
@@ -98,8 +119,9 @@ export async function runSidebar(
     if (leaving) return;
     // tmux first, then the tabs: the daemon closes a tab before it ends the lead's session, so
     // a lead found gone here with its tab still read as open has crashed.
-    const found = doing("asking tmux for the agents' sessions", () => listSessions(agents));
-    const running = found.flatMap((one) => (one.running ? [one.name] : []));
+    const found = doing("asking tmux for the agents' sessions", () => listTmuxSessions(agents));
+    const running = [...found.flatMap((one) => (one.running ? [one.name] : [])), ...hosted.keys()];
+    lookAtHosts();
     const exited = doing("asking tmux whether the lead exited", () =>
       exitedCleanly(agents, open.lead),
     );
@@ -190,11 +212,18 @@ export async function runSidebar(
     }
     // An entry's list runs in the pane in place of what was there. Coming from a list, or onto
     // a client still attaching, a new client starts on the agent. Otherwise the client switches.
+    // A builder on a plugin's host runs that host's attach in the pane, and the lead comes back
+    // once you leave it, as after a tmux session.
     const entry = entries.find((candidate) => entryPlace(candidate.entry) === next);
     const fullName = `${open.owner}/${open.repo}`;
+    const onHost = hosted.get(next);
     if (entry)
       respawnPane(agents, rightPane, paneCommand(agents, session, entry.entry, where, fullName));
-    else if (isEntry(shown) || shownSession(agents, tty) === null) {
+    else if (onHost !== undefined) {
+      const lead = attachCommand(agents, open.lead, open.lead).map(quoteForSh).join(" ");
+      respawnPane(agents, rightPane, ["sh", "-c", `${onHost}; exec ${lead}`]);
+      tty = paneTty(agents, rightPane);
+    } else if (isEntry(shown) || shownSession(agents, tty) === null) {
       respawnPane(agents, rightPane, attachCommand(agents, next, open.lead));
       tty = paneTty(agents, rightPane);
     } else showSession(agents, tty, next);
@@ -259,4 +288,23 @@ export async function runSidebar(
   setInterval(refresh, 1000);
   await new Promise((gone) => process.stdin.on("close", gone));
   process.exit(0);
+}
+
+// Returns the builders running on a plugin's host, by their thread's folder, each with the line
+// that attaches to it, for the sidebar. Each host is asked once for all its builders. A host
+// that fails shows none of them as running.
+async function hostedBuilders(db: ReturnType<typeof openDb>): Promise<Map<string, string>> {
+  const found = new Map<string, string>();
+  const threads = liveThreads(db).filter(
+    (thread) => thread.host !== null && thread.host !== "tmux" && thread.host_id !== null,
+  );
+  for (const name of new Set(threads.map((thread) => thread.host ?? ""))) {
+    const host = pluginHost(db, name);
+    if (host === null) continue;
+    const listed = await listSessions(host).catch(() => []);
+    for (const thread of threads)
+      if (thread.host === name && listed.some((one) => one.name === thread.host_id && one.running))
+        found.set(thread.folder, attachOnHostLine(host, thread.host_id ?? ""));
+  }
+  return found;
 }

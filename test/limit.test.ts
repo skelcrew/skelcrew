@@ -254,6 +254,8 @@ const thread = (change: Partial<Thread>): Thread => ({
   changed: null,
   updates: [],
   state: null,
+  host: "tmux",
+  host_id: null,
   merged: false,
   issue_link: null,
   closes: null,

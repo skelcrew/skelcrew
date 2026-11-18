@@ -102,6 +102,36 @@ test("clicking a row switches the right side and leaves your typing there", asyn
   await until(() => existsSync(join(home, "app-7.typed")), "the typing");
 });
 
+// Until the list replaces the screen, a builder on a plugin's host is reached from the sidebar
+// too: its row shows it running, and picking it runs the host's own attach on the right.
+test("picking a builder on a plugin's host attaches to it through that host", async () => {
+  tmux(agents, "kill-session", "-t", "=app-12");
+  const plugin = join(home, "plugin-fake");
+  mkdirSync(plugin, { recursive: true });
+  writeFileSync(
+    join(plugin, "session.sh"),
+    `read -r question; echo >> listed; echo '{"sessions":[{"id":"fake-app-12","running":true,"labels":null}]}'\n`,
+  );
+  writeFileSync(join(plugin, "attach.sh"), 'echo "I am $1 on fake"; exec sleep 300\n');
+  writeFileSync(
+    join(plugin, "skelcrew-plugin.yaml"),
+    "name: fake\nversion: 0.1.0\nskelcrew: 0.1.0\nabout: A host\nkind: runtime\nprovides: [sessions]\nsession: [sh, session.sh]\nattach: [sh, attach.sh]\n",
+  );
+  sql(`INSERT INTO plugins (name, folder) VALUES ('fake', '${plugin}');
+UPDATE threads SET host = 'fake', host_id = 'fake-app-12' WHERE folder = 'app-12'`);
+  open("lead");
+  await ready("lead");
+  // The sidebar asks the host in the background: once it asks a second time, it has the first
+  // answer, and shows the builder running.
+  await until(
+    () => read(join("plugin-fake", "listed")).split("\n").length > 2,
+    "the sidebar to ask the host",
+  );
+  toFirstThread();
+  await until(() => seen().includes("I am fake-app-12 on fake"), "the host's attach");
+  await until(() => selected().includes("app-12"), "the sidebar to follow");
+});
+
 test("sc attach's screen starts on the agent it names, marked in the sidebar", async () => {
   open("app-7");
   await ready("app-7");
