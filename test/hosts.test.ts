@@ -607,3 +607,59 @@ process.exit(0);`,
   );
   expect(said).toBe("its builder's session host gone isn't installed any more\nworking gone 1\n");
 });
+
+test("an end that starts while a message is being typed waits for its Enter first", () => {
+  const prompt = join(home, "prompt.sh");
+  writeFileSync(prompt, `#!/bin/sh\necho "${claude.marks.prompt}"\ncat > received.txt\n`, {
+    mode: 0o755,
+  });
+  const fake = join(home, ".config", "skelcrew", "plugins", "fake");
+  const said = runWithFakeHost(
+    "sessions",
+    `const fs = require("node:fs");
+const host = (await builderSession(db, "unused", readThread(db, "app-12"))).host;
+const labels = { repository: "simon/app", role: "builder", task: "app-12" };
+await startSession(host, "app-12", { folder: ${JSON.stringify(home)}, command: [${JSON.stringify(prompt)}], env: { PATH: process.env.PATH }, labels });
+const asked = () => fs.readFileSync(${JSON.stringify(join(fake, "asked"))}, "utf8").trim().split("\\n").map((line) => JSON.parse(line).ask);
+db.run("INSERT INTO messages (folder, sender, text, said, at, typed_in) VALUES ('app-12', 'lead', 'hello', 'hello', 0, '[]')");
+deliverMessages(db, "unused", "app-12");
+// The end starts the moment the message is pasted, before its Enter.
+const deadline = Date.now() + 15_000;
+while (!asked().includes("paste") && Date.now() < deadline) await Bun.sleep(5);
+await endThread(db, "unused", readThread(db, "app-12"), "its PR was merged", null);
+const order = asked().filter((ask) => ask === "paste" || ask === "keys" || ask === "end");
+console.log(order.join(" "));
+process.exit(0);`,
+    { host: "fake", host_id: "fake-app-12" },
+  );
+  expect(said).toBe("paste keys end\n");
+}, 40_000);
+
+test("a second stop while one is under way is refused, so a restart after keeps its builder", () => {
+  const fake = join(home, ".config", "skelcrew", "plugins", "fake");
+  const said = runWithFakeHost(
+    "sessions",
+    `const fs = require("node:fs");
+const { record } = await import(${JSON.stringify(source("flow/thread.ts"))});
+const host = (await builderSession(db, "unused", readThread(db, "app-12"))).host;
+const labels = { repository: "simon/app", role: "builder", task: "app-12" };
+const run = () => startSession(host, "app-12", { folder: ${JSON.stringify(home)}, command: ["sleep", "30"], env: {}, labels });
+await run();
+// The host takes two seconds to end it.
+fs.writeFileSync(${JSON.stringify(join(fake, "slow-end"))}, "");
+const first = stopThread(db, "unused", readThread(db, "app-12")).then(() => "stopped", (error) => error.message);
+const second = await stopThread(db, "unused", readThread(db, "app-12")).then(() => "stopped", (error) => error.message);
+console.log(second);
+console.log(await first);
+// It starts again on the host, and nothing of the stops changes it after.
+fs.rmSync(${JSON.stringify(join(fake, "slow-end"))});
+const id = await run();
+record(db, "app-12", { status: "working", host: "fake", host_id: id });
+await Bun.sleep(2500);
+const after = readThread(db, "app-12");
+console.log(after.status, after.host, await hasSession(host, id));
+process.exit(0);`,
+    { host: "fake", host_id: "fake-app-12" },
+  );
+  expect(said).toBe("simon/app-12 is being stopped already\nstopped\nworking fake true\n");
+}, 40_000);

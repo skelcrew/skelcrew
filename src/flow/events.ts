@@ -84,11 +84,17 @@ export const removing = new Set<string>();
 // names. A builder whose host can't be reached, or won't end, throws and keeps its host: it may
 // still run, and must neither get a second builder nor lose its clone under it.
 async function endBuilder(db: Database, sessions: string, folder: string, drop: boolean) {
-  // Nothing is typed into it while its host ends it, and its messages are dropped only once it
-  // has ended: one that can't be ended may still run, and keeps them, typed in as before.
-  await pauseDelivering(db, folder, async () => {
-    endWake(folder);
-    endRound(folder);
+  // At once: the round and any wake stop, and nothing more is typed into it, even while an
+  // earlier end still runs.
+  endWake(folder);
+  endRound(folder);
+  // Ends of one builder go one at a time, each after the one before has settled, so a slow end
+  // never finishes after a later one and the builder started since. Nothing is typed into it
+  // while its host ends it, and its messages are dropped only once it has ended: one that can't
+  // be ended may still run, and keeps them, typed in as before.
+  const before = endsUnderWay.get(folder) ?? Promise.resolve();
+  const end = pauseDelivering(db, folder, async () => {
+    await before;
     const { host, id } = await builderSession(db, sessions, readThread(db, folder));
     // Claude Code can outlive the end of its session for a few seconds, still writing in the
     // clone.
@@ -96,7 +102,19 @@ async function endBuilder(db: Database, sessions: string, folder: string, drop: 
     if (drop) stopDelivering(db, folder, true);
     record(db, folder, { host: null, host_id: null });
   });
+  const settled = end.then(
+    () => {},
+    () => {},
+  );
+  endsUnderWay.set(folder, settled);
+  settled.then(() => {
+    if (endsUnderWay.get(folder) === settled) endsUnderWay.delete(folder);
+  });
+  return end;
 }
+
+// The end of each thread's builder under way, by its folder, which settles once it is over.
+const endsUnderWay = new Map<string, Promise<void>>();
 
 // The threads sc stop is ending the builder of, by folder. A builder may submit while it exits,
 // which is refused, as the thread is about to be stopped.
@@ -135,6 +153,9 @@ async function stopLiveThread(
   drop: boolean,
   why: string,
 ): Promise<void> {
+  // A second stop or sc rm while one is under way is refused, as the first may still fail.
+  if (stopping.has(thread.folder))
+    throw new Error(`${threadName(db, thread)} is being stopped already`);
   stopping.add(thread.folder);
   try {
     await endBuilder(db, sessions, thread.folder, drop);

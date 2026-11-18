@@ -265,8 +265,10 @@ async function typeWaiting(db: Database, sessions: string, folder: string, signa
 // meanwhile: the end may still fail, and leave the builder running with its messages.
 const paused = new Map<string, number>();
 
-// Runs `end`, which ends the thread's builder, with typing into the builder paused all the while
-// and any typing under way cancelled first, and returns what it returns. The messages are kept,
+// Runs `end`, which ends the thread's builder, with typing into the builder paused all the while,
+// and returns what it returns. Typing under way is cancelled first, and waited for: a message
+// already pasted still gets its Enter, so the end never cuts a paste short, and nothing is typed
+// once the end has started. The messages are kept,
 // and typing goes on as before once `end` is over, such as after it failed.
 export async function pauseDelivering<T>(
   db: Database,
@@ -276,6 +278,7 @@ export async function pauseDelivering<T>(
   paused.set(folder, (paused.get(folder) ?? 0) + 1);
   stopDelivering(db, folder, false);
   try {
+    await delivering.get(folder)?.ended;
     return await end();
   } finally {
     const left = (paused.get(folder) ?? 1) - 1;
