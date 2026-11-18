@@ -145,16 +145,29 @@ test("the sidebar is whole after the terminal goes narrower than it and straight
   expect(selected()).toBe("◆ lead");
 });
 
+// The size of the screen's agent pane, as stty gives it in the agent: its rows, then its
+// columns. The agent's pane comes after the sidebar's.
+const agentPaneSize = () =>
+  tmux(screen, "list-panes", "-F", "#{pane_index} #{pane_height} #{pane_width}")
+    .out.split("\n")
+    .find((pane) => pane.startsWith("1 "))
+    ?.slice(2);
+
 test("a terminal a few lines high still shows the agent, and Ctrl-Q still leaves", async () => {
   open("lead");
   await ready("lead");
   for (const height of ["4", "3", "2", "1"]) {
     tmux(terminal, "resize-window", "-t", "=one:", "-x", "120", "-y", height);
-    // The screen learns the terminal's new height a moment later, through the client in it. A
-    // fixed wait could end before that on a busy machine, and check a height never reached.
+    // The screen learns the terminal's new height a moment later, through the client in it, and
+    // passes it on to the agent's pane. Its window is never under three lines, which leaves the
+    // agent's pane one line high at each of these heights. The agent notes each size it is
+    // given, so once it notes its pane's one line, the screen has dealt with this height.
     await until(
-      () => tmux(screen, "list-clients", "-F", "#{client_height}").out.trim() === height,
-      `the screen to be ${height} lines high`,
+      () =>
+        tmux(screen, "list-clients", "-F", "#{client_height}").out.trim() === height &&
+        agentPaneSize()?.startsWith("1 ") === true &&
+        read("lead.size").trim() === agentPaneSize(),
+      `the screen to take in ${height} lines`,
     );
     expect(screenSessions()).toHaveLength(1);
   }
