@@ -3,7 +3,15 @@
 // does, waits at Codex's prompt, and runs the hook commands Skelcrew gives it on the command line.
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { createConnection } from "node:net";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
@@ -50,10 +58,11 @@ const subagent = "01a1c003-ffff-7380-b6d9-c7ec08342361";
 // environment and folder, and a new session saves its conversation. As the lead, it waits at
 // Codex's prompt and keeps what is typed into it. As a builder, it runs the hook commands the
 // command line gives for an event when the test leaves a file named for it, then adds a line to
-// the file ran. stop runs Stop, talk UserPromptSubmit, and interrupt Interrupt. Interrupt is what
-// Codex runs when you press Esc: an interrupted turn returns before its Stop hooks, and its abort
-// runs the Interrupt hooks instead. A hook's input is what the test left in its file, or {}. Text
-// typed into the builder goes in its file typed, and runs UserPromptSubmit, as talk does. Both
+// the file ran: the hook's event, then the ID on the first line of the test's file. stop runs
+// Stop, talk UserPromptSubmit, and interrupt Interrupt. Interrupt is what Codex runs when you
+// press Esc: an interrupted turn returns before its Stop hooks, and its abort runs the Interrupt
+// hooks instead. A hook's input is the rest of the test's file, or {}. Text typed into the
+// builder goes in its file typed, and runs UserPromptSubmit, as talk does, with no ID. Both
 // look busy while the file busy is in their CODEX_HOME, with a Working line that counts seconds,
 // as Codex's does. error ends the builder's turn on an error as an unknown model does: Codex
 // prints it and sits at its prompt, with no hook. renew renews the login as Codex does from
@@ -102,7 +111,7 @@ for (const arg of (await Bun.file("args").text()).split("\\n"))
     for (const group of Bun.TOML.parse(\`x=\${arg.slice(name.length)}\`).x)
       for (const hook of group.hooks) console.log(hook.command);' "$1" |
   while IFS= read -r command; do printf '%s' "$input" | sh -c "$command" >> hooks 2>&1; done
-  echo "$1" >> ran
+  echo "$1\${3:+ $3}" >> ran
 }
 printf '\\033[?2004h'
 stty -echo
@@ -110,7 +119,7 @@ exec 3<&0
 end=$(printf '\\033[201~')
 while IFS= read -r line; do
   printf '%s\\n' "$line" >> typed
-  case "$line" in *"$end"*) : > talk ;; esac
+  case "$line" in *"$end"*) : > typed-talk ;; esac
 done <&3 &
 echo "› Ask Codex to do anything"
 : > ready
@@ -121,11 +130,12 @@ for i in $(seq 3000); do
     clear; if [ "$now" != idle ]; then echo "• Working (\${i}s • esc to interrupt)"; fi
     echo "› Ask Codex to do anything"; shown=$now
   fi
-  test -e error && { rm -f error busy; clear; echo "■ unexpected status 400 Bad Request"; echo "› Ask Codex to do anything"; shown=idle; echo error >> ran; }
-  test -e stop && { said=$(cat stop); rm stop; hook Stop "$said"; }
-  test -e interrupt && { rm interrupt; hook Interrupt; }
-  test -e talk && { rm talk; hook UserPromptSubmit; }
-  test -e renew && { rm renew; login=$(readlink -f auth.json); echo renewed > "$login.new" && mv "$login.new" "$login"; echo renewed >> ran; }
+  test -e error && { id=$(head -n 1 error); rm -f error busy; clear; echo "■ unexpected status 400 Bad Request"; echo "› Ask Codex to do anything"; shown=idle; echo "error $id" >> ran; }
+  test -e stop && { id=$(head -n 1 stop); said=$(tail -n +2 stop); rm stop; hook Stop "$said" "$id"; }
+  test -e interrupt && { id=$(head -n 1 interrupt); rm interrupt; hook Interrupt "" "$id"; }
+  test -e talk && { id=$(head -n 1 talk); rm talk; hook UserPromptSubmit "" "$id"; }
+  test -e typed-talk && { rm typed-talk; hook UserPromptSubmit; }
+  test -e renew && { id=$(head -n 1 renew); rm renew; login=$(readlink -f auth.json); echo renewed > "$login.new" && mv "$login.new" "$login"; echo "renewed $id" >> ran; }
   sleep 0.1
 done`,
   );
@@ -214,16 +224,16 @@ const ranLine = {
 };
 
 // Has the fake builder do something, as Codex would, with `input` as what its hooks read, and
-// waits until it has. It waits for this step's own line: text typed into the builder runs
-// UserPromptSubmit too, and that line coming in first must not pass for a Stop.
+// waits until it has. The step gets an ID of its own, and the wait is for its line in ran: text
+// typed into the builder runs UserPromptSubmit too, whose line must not pass for this step's,
+// even while one is under way as the step starts. The file is written aside and moved into
+// place, so the builder never reads it half written.
 async function act(step: keyof typeof ranLine, input = "") {
-  const done = () =>
-    read(join(builder(), "ran"))
-      .split("\n")
-      .filter((line) => line === ranLine[step]).length;
-  const before = done();
-  writeFileSync(join(builder(), step), input);
-  await until(() => done() > before);
+  const id = crypto.randomUUID();
+  const file = join(builder(), step);
+  writeFileSync(`${file}.part`, `${id}\n${input}`);
+  renameSync(`${file}.part`, file);
+  await until(() => read(join(builder(), "ran")).split("\n").includes(`${ranLine[step]} ${id}`));
 }
 
 // The fake builder's arguments, one to a line.
