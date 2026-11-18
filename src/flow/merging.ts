@@ -113,7 +113,7 @@ const merging = new Set<string>();
 const recorded = new Set<string>();
 
 // Merges an armed thread's PR once it is ready, from a poll, with the PR as its forge just
-// returned it. It merges at the approved commit, so a push after the approval is never merged,
+// returned it and the thread as it was when the poll began, `before`. It merges at the approved commit, so a push after the approval is never merged,
 // at a poll after the one that posted a review on the PR saying who asked for it. Whether the PR merges cleanly is the
 // forge's to say as it merges: a refusal keeps the plan armed, with the forge's reason as what
 // it waits on. Once merged, it ends the thread, and the lead's one note says it merged when
@@ -122,11 +122,24 @@ const recorded = new Set<string>();
 export async function mergeIfReady(
   db: Database,
   sessions: string,
-  folder: string,
+  before: Thread,
   pr: PullRequest,
 ): Promise<void> {
+  const { folder } = before;
   const thread = readThread(db, folder);
   if (thread.merge_plan !== "armed" || thread.status === "done" || removing.has(folder)) return;
+  // `pr` is what the forge said while this poll ran. A round that moved on meanwhile, such as
+  // a review that started or ended, makes it stale: the checks of the new round may not be in
+  // it yet. The next poll acts on the PR as it is after the round.
+  const moved =
+    thread.started !== before.started ||
+    thread.submitting !== before.submitting ||
+    thread.reviewing !== before.reviewing ||
+    thread.rounds !== before.rounds ||
+    thread.review_round !== before.review_round ||
+    thread.review_at !== before.review_at ||
+    thread.verdict !== before.verdict;
+  if (moved) return;
   const name = threadName(db, thread);
   const approved = lastPushed(thread);
   let waits = mergeWaitsOn(thread, pr, approved);

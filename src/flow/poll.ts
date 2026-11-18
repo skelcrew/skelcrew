@@ -276,7 +276,7 @@ async function pollRepository(
       // A thread sc rm is removing is its to end.
       // One that fails is logged, so the poll's other threads still get their events.
       if (!removing.has(before.folder))
-        await mergeIfReady(db, sessions, before.folder, pr).catch((error) =>
+        await mergeIfReady(db, sessions, before, pr).catch((error) =>
           console.log(`couldn't merge ${before.folder} when ready: ${errorText(error)}`),
         );
     }

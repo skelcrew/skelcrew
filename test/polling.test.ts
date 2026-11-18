@@ -1598,16 +1598,12 @@ echo "Not logged in"; exit 1`,
       );
     }, 90_000);
 
-    // The record is posted before the merge, and the thread can change while the forge takes
-    // it. Each change below comes while the fake forge holds the record. Skelcrew's copy then
-    // stops showing the PR green, so only the check made after the record can stop the merge
-    // still under way, which acted on the PR as it was.
-    test("a failing check, a new review or a stop while the record is posted stops the merge", async () => {
+    // The thread or its checks can change while the forge takes the record. The PR stays green
+    // in Skelcrew's copy in each case below, so only the change itself can stop the merge.
+    test("a failing check, a pending review or a stop while the record is posted stops the merge", async () => {
       await approvedApp12();
       const head = pushed();
       const green = () => pr({ head, reviews: [skelReview], checks: [approved] });
-      const notGreen = () =>
-        pr({ head, reviews: [skelReview], checks: [{ ...approved, state: "running" }] });
       const sc = (...words: string[]) =>
         Bun.spawnSync([process.execPath, main, ...words], { env: env(), stderr: "pipe" });
       // Arms a new plan, which posts a record of its own, and holds that record.
@@ -1617,12 +1613,6 @@ echo "Not logged in"; exit 1`,
         await arm();
         green();
         await until(() => existsSync(join(plugin, "held-review")));
-      };
-      const release = async () => {
-        notGreen();
-        rmSync(join(plugin, "hold-review"));
-        await morePolls();
-        expect(merges()).toEqual([]);
       };
 
       // A check that fails on the same commit: the merge acts on the checks the forge reports
@@ -1636,19 +1626,79 @@ echo "Not logged in"; exit 1`,
       expect(thread().merge_plan).toBe("armed");
       sc("merge", "--cancel", "app-12");
 
-      // A new review: the plan stays armed and waits for it.
-      await holdRecord();
+      // A pending review, with the PR green all along: the plan stays armed and waits for it.
+      // Its record is posted and the forge refuses the merge first, so the plan is ready but
+      // for the review, which is kept pending by holding its post on the PR.
+      sc("merge", "--cancel", "app-12");
+      answer(plugin, "merge pr", { refused: "Not yet" });
+      await arm();
+      green();
+      await until(() => thread().merge_waits === "the forge, which refused: Not yet");
+      writeFileSync(join(plugin, "hold-review"), "");
       expect(sc("review", "app-12").stderr.toString()).toBe("");
-      await release();
+      await until(() => thread().reviewing !== null);
+      const tried = merges().length;
+      answer(plugin, "merge pr", null);
+      await until(() => thread().merge_waits === "its review");
+      await morePolls();
+      expect(thread().reviewing).not.toBeNull();
+      expect(merges()).toHaveLength(tried);
       expect(thread().merge_plan).toBe("armed");
+      // Once the review ends, the PR stops being green, so this phase merges nothing after it.
+      pr({ head, reviews: [skelReview], checks: [{ ...approved, state: "running" }] });
+      rmSync(join(plugin, "hold-review"));
       await until(() => thread().reviewing === null && thread().submitting === null, 30_000);
+      await morePolls();
+      expect(merges()).toHaveLength(tried);
 
-      // A stop: the plan stays armed, for when the thread starts again.
+      // A stop, with the PR green: the plan stays armed, for when the thread starts again.
       sc("merge", "--cancel", "app-12");
       await holdRecord();
       expect(sc("stop", "app-12").stderr.toString()).toBe("");
-      await release();
+      rmSync(join(plugin, "hold-review"));
+      await morePolls();
+      expect(merges()).toHaveLength(tried);
       expect(thread()).toMatchObject({ status: "stopped", merge_plan: "armed" });
+    }, 150_000);
+
+    // A poll asks the forge, then acts on its answer. A review that ends while the forge
+    // answers makes that answer stale: the new round's checks may not be in it. The merge then
+    // waits for a poll that began after the review.
+    test("a review that ends while the forge answers a poll waits for the next poll", async () => {
+      await approvedApp12();
+      const head = pushed();
+      const green = () => pr({ head, reviews: [skelReview], checks: [approved] });
+      // The record is posted and the forge refuses the merge, so the plan is armed and ready.
+      answer(plugin, "merge pr", { refused: "Not yet" });
+      await arm();
+      green();
+      await until(() => thread().merge_waits === "the forge, which refused: Not yet");
+      const tried = merges().length;
+      // A poll holds on the forge while a review runs and ends.
+      rmSync(join(plugin, "held-changed"), { force: true });
+      writeFileSync(join(plugin, "hold-changed"), "");
+      await until(() => existsSync(join(plugin, "held-changed")));
+      const reviewedAt = thread().review_at;
+      const sc = Bun.spawnSync([process.execPath, main, "review", "app-12"], {
+        env: env(),
+        stderr: "pipe",
+      });
+      expect(sc.stderr.toString()).toBe("");
+      await until(() => thread().reviewing === null && thread().review_at !== reviewedAt, 30_000);
+      // The held poll gets the PR green, as it was before the review. Every later poll gets
+      // its new check still running, which the forge would show for the new round.
+      green();
+      writeFileSync(
+        join(plugin, "changed.once.json"),
+        readFileSync(join(plugin, "changed.json"), "utf8"),
+      );
+      pr({ head, reviews: [skelReview], checks: [{ ...approved, state: "running" }] });
+      answer(plugin, "merge pr", null);
+      rmSync(join(plugin, "hold-changed"));
+      await until(() => !existsSync(join(plugin, "changed.once.json")));
+      await morePolls();
+      expect(merges()).toHaveLength(tried);
+      expect(thread().merge_plan).toBe("armed");
     }, 120_000);
 
     test("sc rm while the record is posted stops the merge and drops the plan", async () => {
