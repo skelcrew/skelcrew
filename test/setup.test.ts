@@ -1528,6 +1528,22 @@ test("on a machine already set up, a declined plugin your files name makes plain
   expect((await atTerminal("")).out).not.toContain("[Y/n]");
 });
 
+// A failed sc install takes the mark away too, so plain sc tries again.
+test("on a machine already set up, sc install failing for want of a terminal makes plain sc ask again", async () => {
+  noGitHubPlugin();
+  fakeGitHub();
+  publishFake("0.1.0");
+  await skel("1\nsk-ant-oat01-good\n");
+  lockFake("0.1.0");
+  const failed = await skel("", bin, main(), home, {}, ["install"]);
+  expect(failed.code).toBe(1);
+  expect(failed.err).toContain("Skelcrew left out simon/skelcrew-fake");
+  const asked = await atTerminal("y\n");
+  expect(asked.err).toBe("");
+  expect(asked.out).toContain("Install it? [Y/n]");
+  expect(asked.out).toContain("Installed fake 0.1.0.");
+});
+
 // On a new machine your files decide which GitHub plugin it gets, so the offer, which would
 // install its newest version, isn't made.
 test("in a GitHub checkout, files that name the GitHub plugin skip the offer, and sc install gets the locked commit", async () => {

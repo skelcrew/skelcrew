@@ -149,7 +149,7 @@ async function leadCommand(from?: string): Promise<void> {
   const { firstRun, install, installFinished } = await import("./machine/setup.ts");
   // A machine where sc install never ran to its end gets all of it, your plugins included.
   if (installFinished()) firstRun(from);
-  else install(from);
+  else install(from, true);
   await upInBackground();
   // In a repository with no remote, sc opens nothing, even with tabs open or no repositories
   // yet. Opening another repository there would look as if Skelcrew had ignored where you are.

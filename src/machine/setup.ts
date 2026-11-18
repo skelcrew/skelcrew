@@ -382,29 +382,29 @@ export function firstRun(from?: string): boolean {
 // plugins at the versions your lock pins, each new or changed one after asking. Safe to run
 // again: with nothing to do, it says so. `from` is as for the first run. The machine is marked
 // set up only once your plugins are in, and loses the mark while one is missing, so after a plugin
-// that failed to install, or one you said no to, plain sc runs all of this again. A machine set up by an older release gets the marks
-// here too.
-export function install(from?: string): void {
+// that failed to install, or one you said no to, plain sc runs all of this again. A machine set up
+// by an older release gets the marks here too. `plain` is set when plain sc runs this, which says
+// nothing when there was nothing to do.
+export function install(from?: string, plain = false): void {
   const finished = installFinished();
+  // The mark goes until this ends with every plugin in, so a failure on the way, such as a plugin
+  // that needs your yes with no terminal, leaves plain sc to run this again.
+  rmSync(installDoneFile(), { force: true });
   const setUp = firstRun(from);
   const { changed: plugins, left } = installYourPlugins(from ?? originHere());
-  // A plugin still missing takes the mark away, even from a machine that had it, such as after
+  // A plugin still missing keeps the mark away, even from a machine that had it, such as after
   // you named a new plugin and said no to it, so plain sc asks again.
-  if (left.length > 0) {
-    rmSync(installDoneFile(), { force: true });
+  if (left.length > 0)
     console.log(
       `\nSkelcrew isn't set up yet, as your config.yaml names ${left.join(", ")}, which this machine doesn't have at the version your lock pins. Plain sc asks again. To leave it out here and everywhere, run sc remove -g with its name.`,
     );
-  } else {
-    if (!finished) {
-      mkdirSync(dataDir(), { recursive: true });
-      writeFileSync(setUpFile(), "");
-      writeFileSync(installDoneFile(), "");
-    }
+  else {
+    mkdirSync(dataDir(), { recursive: true });
+    writeFileSync(setUpFile(), "");
+    writeFileSync(installDoneFile(), "");
     if (!finished && (setUp || plugins)) console.log("\nSkelcrew is set up.");
-    // A machine set up by an older release takes the marks without a word, as plain sc runs this
-    // there once.
-    else if (finished && !setUp && !plugins)
+    // Plain sc on a machine set up by an older release takes the marks without a word.
+    else if (!plain && !setUp && !plugins)
       console.log("Nothing to install: this machine has everything your files ask for.");
   }
 }
