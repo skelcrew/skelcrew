@@ -1588,6 +1588,77 @@ echo "Not logged in"; exit 1`,
     expect([...claims(), ...assigns()]).toEqual([]);
   }, 60_000);
 
+  // The test above stops the daemon as the review of app-t1's first round starts. bubblewrap
+  // starts its sandbox's first process in its own time, and that process only asks to die with
+  // bwrap once it runs. A stop that ends bwrap in between leaves it waiting forever on a bwrap
+  // that is gone, with bwrap's own command line, and no longer under the daemon. Here bwrap
+  // stands in for that, for the review only, so the stop always lands in between. Told to end,
+  // it starts a process that can't be ended with SIGTERM, and goes. As it starts, it also leaves
+  // one that is under the daemon no more, as bwrap's would be had bwrap ended before the stop.
+  // The next daemon brings the review back, and is stopped as soon as its bwrap starts. Each
+  // time, nothing is left running once the daemon has exited. bubblewrap is Linux's sandbox, so
+  // a Mac never starts it.
+  test.skipIf(process.platform === "darwin")(
+    "a thread with no issue whose daemon stops as its review starts leaves no sandbox running",
+    async () => {
+      const bwrap = Bun.which("bwrap") ?? "bwrap";
+      // A process that can't be ended with SIGTERM, which says its ID in the file it is given.
+      script("stuck", 'trap "" TERM; echo $$ > "$1"; exec sleep 300');
+      // Each bwrap of a review writes its own ID, and those of what it leaves, in pids, and
+      // says it started with a file of its own in started.
+      const pids = join(home, "pids");
+      const started = join(home, "started");
+      mkdirSync(pids);
+      mkdirSync(started);
+      script(
+        "bwrap",
+        `case "$*" in *" codex "*)
+  echo $$ > ${pids}/outer-$$
+  trap 'stuck ${pids}/late-$$ & until test -s ${pids}/late-$$; do sleep 0.01; done; exit 1' TERM
+  (stuck ${pids}/early-$$ &)
+  until test -s ${pids}/early-$$; do sleep 0.01; done
+  touch ${started}/$$
+  while :; do sleep 0.05; done ;;
+esac
+exec ${bwrap} "$@"`,
+      );
+      // A process that ended but nobody reaped yet shows as Z, and runs nothing. ps works on a
+      // Mac too, which has no /proc.
+      const runs = (pid: number) => {
+        const ps = Bun.spawnSync(["ps", "-o", "stat=", "-p", String(pid)], { stdout: "pipe" });
+        const state = ps.stdout.toString().trim();
+        return state !== "" && !state.startsWith("Z");
+      };
+      // What every review's bwrap started that still runs. Asked as soon as the daemon has
+      // exited, without a wait, so the daemon's stop must have ended them.
+      const leftRunning = () =>
+        readdirSync(pids)
+          .map((file) => Number(read(join(pids, file))))
+          .filter(runs);
+      addApp();
+      const first = serve();
+      await until(() => existsSync(join(data(), "repos", "simon", "app", "README")));
+      const sc = Bun.spawnSync([process.execPath, main, "start", "app", "Add export", "As JSON"], {
+        env: env(),
+        stderr: "pipe",
+      });
+      expect(sc.stderr.toString()).toBe("");
+      await until(() => readdirSync(started).length === 1, 30_000);
+      first.kill();
+      await first.exited;
+      expect(leftRunning()).toEqual([]);
+      expect(readdirSync(pids).length).toBe(3);
+      // The review the stop cut short comes back with the next daemon.
+      const second = serve();
+      await until(() => readdirSync(started).length === 2, 30_000);
+      second.kill();
+      await second.exited;
+      expect(leftRunning()).toEqual([]);
+      expect(readdirSync(pids).length).toBe(6);
+    },
+    90_000,
+  );
+
   // A task's ID names the thread's folder, which setup deletes before it clones, so an ID
   // from a tracker that climbs out of Skelcrew's threads folder must never reach it.
   test("a task ID from the tracker that isn't a plain name is refused, and nothing is deleted", async () => {
@@ -1751,9 +1822,21 @@ echo "Not logged in"; exit 1`,
         `Merging when ready, as asked by ${login()} on `,
       );
 
-      // Cancelled and armed again, the same commit is a new plan, with a record of its own.
+      // Cancelled and armed again, the same commit is a new plan, with a record of its own. The
+      // forge keeps refusing, so each poll asks it to merge again, and a cancel that lands while
+      // it is asked is refused. So the cancel is asked again until no merge is under way.
       const cancel = { command: "merge cancel", repo: "app", task: "12" };
-      await askOn(join(home, "run", "skelcrew.sock"), cancel);
+      const merging = {
+        error: "app-12 is merging on its forge right now, so it can't be cancelled",
+      };
+      let cancelled = await askOn(join(home, "run", "skelcrew.sock"), cancel);
+      for (let tries = 0; Bun.deepEquals(cancelled, merging) && tries < 100; tries++) {
+        await Bun.sleep(50);
+        cancelled = await askOn(join(home, "run", "skelcrew.sock"), cancel);
+      }
+      expect(cancelled).toEqual({
+        said: "app-12 won't merge by itself. It waits for you to merge it.",
+      });
       expect(thread().merge_plan).toBeNull();
       await arm();
       await until(() => records().length === 2);
