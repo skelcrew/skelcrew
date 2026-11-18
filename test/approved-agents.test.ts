@@ -293,3 +293,23 @@ test("a reviewer file whose frontmatter never closes stops reviews only", () => 
     ".agents/roles/builder.md",
   );
 });
+
+test("a task whose .agents/ version the clone lost stops, rather than run on other instructions", () => {
+  agentsFile("roles/builder.md", "First way.\n");
+  commit("roles");
+  inHome(approveCurrent);
+  const tree = inHome("return agents.approvedAgents(app);");
+  // Skelcrew's clone made again, from a history that never had that version.
+  rmSync(clone, { recursive: true, force: true });
+  mkdirSync(clone, { recursive: true });
+  git("init", "-q", "-b", "main");
+  writeFileSync(join(clone, "README"), "app\n");
+  commit("start");
+  expect(() => builderOf(`{ ...app, agents: ${JSON.stringify(tree)} }`)).toThrow(
+    "no longer has the .agents/ version",
+  );
+  // A tree that has the version but no file for a role still gives the built-in one.
+  expect(builderOf("{ ...app, agents: null }")).toMatchObject({
+    told: builtInRole("builder").instructions,
+  });
+});

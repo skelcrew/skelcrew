@@ -1044,3 +1044,23 @@ test("sc says once which old role keys your config.yaml uses, what replaces them
   expect((await skel([])).out).not.toContain("replaces it");
   expect(readFileSync(file, "utf8")).toBe(yours);
 });
+
+test("repo trust shows the whole .agents/ when the clone lost the version you approved", async () => {
+  const checkout = onGitHub("simon/app", "WRITE");
+  mkdirSync(join(checkout, ".agents", "roles"), { recursive: true });
+  writeFileSync(join(checkout, ".agents", "roles", "builder.md"), "First way.\n");
+  git(checkout, "add", "-A");
+  git(checkout, "commit", "-q", "-m", "roles");
+  git(checkout, "push", "-q", join(home, "github", "simon", "app.git"), "HEAD:main");
+  await skel(["repo", "add"], "y\n", checkout);
+  // The approval names a version no clone has, as after the clone was made again.
+  const approvals = join(home, ".config", "skelcrew", "approved-agents.yaml");
+  writeFileSync(approvals, `simon/app: ${"a".repeat(40)}\n`);
+  const run = await skel(["repo", "trust", "simon/app"], "y\n");
+  expect(run.err).toBe("");
+  expect(run.out).toContain("no longer has the version you approved");
+  expect(run.out).toContain("+First way.");
+  expect(readFileSync(approvals, "utf8")).toBe(
+    `simon/app: ${git(checkout, "rev-parse", "HEAD:.agents").trim()}\n`,
+  );
+});
