@@ -221,19 +221,21 @@ function createTasks(db: Database): void {
 function viewThreads(db: Database): void {
   const own = ["owner", "repo", "task", "folder", "branch", "base", "status", "session"];
   const moved = hasTasks(db);
-  // A database from an earlier release keeps its `stalled` column, which a daemon of that
-  // release still reads from this view until it stops. So the view keeps a `stalled` where that
-  // release had it, with the same value as `turn_ended`, and puts `turn_ended` last, where a
-  // query that daemon already prepared reads nothing. Until the new daemon moves a thread, its
-  // `turn_ended` shows its `stalled`, so the screen and sc show a turn that ended meanwhile.
-  const stalled = hasThreadColumn(db, "stalled");
-  const turnEnded = "COALESCE(th.turn_ended, th.stalled)";
+  // A daemon of an earlier release reads `stalled` from this view until it stops. So the view
+  // has a `stalled` where that release had it, with the same value as `turn_ended`, and puts
+  // `turn_ended` last, where a query that daemon already prepared reads nothing. Every database
+  // has the same columns, so none depends on whether the threads table still has its own
+  // `stalled`. Until the new daemon moves a thread, its `turn_ended` shows that `stalled`, so the
+  // screen and sc show a turn that ended meanwhile.
+  const turnEnded = hasThreadColumn(db, "stalled")
+    ? "COALESCE(th.turn_ended, th.stalled)"
+    : "th.turn_ended";
   const threadColumn = (column: string) =>
-    column === "turn_ended" && stalled ? `${turnEnded} AS stalled` : `th.${column}`;
+    column === "turn_ended" ? `${turnEnded} AS stalled` : `th.${column}`;
   const columns = [
     ...[...own, ...Object.keys(threadColumns)].map(threadColumn),
     ...Object.keys(taskColumns).map((column) => `${moved ? "k" : "th"}.${column}`),
-    ...(stalled ? [`${turnEnded} AS turn_ended`] : []),
+    `${turnEnded} AS turn_ended`,
   ];
   const view = `CREATE VIEW task_threads AS SELECT th.rowid AS rowid, ${columns.join(", ")}
     FROM threads th${moved ? " JOIN tasks k ON k.owner = th.owner AND k.repo = th.repo AND k.task = th.task" : ""}`;

@@ -301,6 +301,29 @@ console.log(JSON.stringify({ threads, notes }));`;
   );
 });
 
+// A daemon of the earlier release reads \`stalled\` from the database's view. A database made by
+// this release has it too, with the same value as \`turn_ended\`.
+test("a new database's view has stalled with the same value as turn_ended", () => {
+  const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
+const db = openDb();
+for (const [task, ended] of [[12, 1], [13, 0]]) {
+  db.run("INSERT INTO threads (owner, repo, task, folder, branch, status, turn_ended) VALUES ('simon', 'app', ?, ?, ?, 'working', ?)",
+    [task, "app-" + task, "skelcrew/" + task, ended]);
+  db.run("INSERT INTO tasks (owner, repo, task) VALUES ('simon', 'app', ?)", [task]);
+}
+console.log(JSON.stringify(db.query("SELECT folder, stalled, turn_ended FROM task_threads ORDER BY rowid").all()));`;
+  const run = Bun.spawnSync([process.execPath, "-e", code], {
+    env: { ...process.env, HOME: home },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect(run.stderr.toString()).toBe("");
+  expect(JSON.parse(run.stdout.toString())).toEqual([
+    { folder: "app-12", stalled: 1, turn_ended: 1 },
+    { folder: "app-13", stalled: 0, turn_ended: 0 },
+  ]);
+});
+
 // A daemon of the earlier release reads every thread from the database's view, and keeps the
 // queries it prepared. A new screen opening the database makes the view again while that daemon
 // still runs. The daemon must go on seeing its builders' turns that ended, or it loses track of
@@ -310,9 +333,15 @@ test("a daemon of the earlier release still sees turns that ended once a new scr
 import { openDb } from ${JSON.stringify(source("db.ts"))};
 import { liveThreads } from ${JSON.stringify(source("flow/thread.ts"))};
 // The earlier release's database: this one's, with the column \`stalled\` where \`turn_ended\`
-// is. Renaming the column renames it in the view too, as that release made it.
+// is, and a view of each thread's and task's columns, without \`turn_ended\` at its end.
 const made = openDb();
 made.run("ALTER TABLE threads RENAME COLUMN turn_ended TO stalled");
+const names = (table) => made.query("SELECT name FROM pragma_table_info(?)").all(table).map((c) => c.name);
+const own = names("threads");
+const viewed = names("task_threads").filter((c) => c !== "rowid" && c !== "turn_ended");
+made.run("DROP VIEW task_threads");
+made.run(\`CREATE VIEW task_threads AS SELECT th.rowid AS rowid, \${viewed.map((c) => (own.includes(c) ? "th." : "k.") + c).join(", ")}
+  FROM threads th JOIN tasks k ON k.owner = th.owner AND k.repo = th.repo AND k.task = th.task\`);
 for (const [task, stalled] of [[12, 1], [13, 0]]) {
   made.run("INSERT INTO threads (owner, repo, task, folder, branch, status, stalled, noting) VALUES ('simon', 'app', ?, ?, ?, 'working', ?, ?)",
     [task, "app-" + task, "skelcrew/" + task, stalled, "note " + task]);
