@@ -287,7 +287,8 @@ function prepareTables(db: Database): void {
   // daemon doesn't bring its lead back until you open it again. `lead_state` is what its lead
   // is doing, as a thread's `state` says for its builder. `agents_noted` is the tree of an
   // .agents/ you haven't approved that the lead was told of, or `none` for one removed, so it is
-  // told once.
+  // told once. `lead_flows` is whether the lead knows of flows, from the instructions it started
+  // with or a note, so a lead already running when Skelcrew learned of them is told once.
   const repositoryColumns = {
     open_issues: "INTEGER NOT NULL DEFAULT 0",
     open_prs: "INTEGER NOT NULL DEFAULT 0",
@@ -302,6 +303,7 @@ function prepareTables(db: Database): void {
     tab_closed: "INTEGER NOT NULL DEFAULT 0",
     lead_state: "TEXT",
     agents_noted: "TEXT",
+    lead_flows: "INTEGER NOT NULL DEFAULT 0",
   };
   // SQLite has no ADD COLUMN IF NOT EXISTS, so each column is looked up first.
   for (const [column, type] of Object.entries(repositoryColumns))

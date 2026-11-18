@@ -5,7 +5,8 @@
 import type { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
 import { z } from "zod";
-import { agentsOnDefaultBranch, agentsWaiting } from "../approved-agents.ts";
+import { hasSession } from "../agents/sessions.ts";
+import { agentsOnDefaultBranch, agentsWaiting, markApproved } from "../approved-agents.ts";
 import { roundLimit } from "../config.ts";
 import type { Repository } from "../db.ts";
 import { cloneDir } from "../paths.ts";
@@ -24,7 +25,7 @@ import { type Item, openTasks, prOf, saveItems } from "./copy.ts";
 import { ciState, decide, labeledToStart, type PullRequest } from "./decide.ts";
 import { endThread, removing, tellBuilder, tellingEvents } from "./events.ts";
 import { fetchInto, onRemote } from "./git.ts";
-import { keepLeadFlows } from "./lead.ts";
+import { approvedFlowsTold, leadOf } from "./lead.ts";
 import { noteForLead, typeLeadNotes } from "./messages.ts";
 import { forgeKnown, fullNameIs, refreshClone, repositories } from "./repo.ts";
 import { needsYou } from "./status.ts";
@@ -241,6 +242,27 @@ function noteUnapprovedAgents(db: Database, sessions: string, repository: Reposi
     );
 }
 
+// Tells a lead that was already running when Skelcrew learned of flows what its instructions
+// now say of them, once, as a running lead keeps the instructions it started with until its
+// session starts again. A lead that starts later gets them in its instructions, which marks it
+// told, so it gets no note.
+function tellLeadOfFlows(db: Database, sessions: string, repository: Repository): void {
+  const where = "WHERE owner = ? AND repo = ?";
+  const row = db
+    .query(`SELECT lead_flows FROM repositories ${where}`)
+    .get(repository.owner, repository.repo);
+  const told = z.object({ lead_flows: z.coerce.boolean() }).nullable().parse(row);
+  if (told === null || told.lead_flows) return;
+  if (!hasSession(sessions, leadOf(db, repository.owner, repository.repo).name)) return;
+  db.run(`UPDATE repositories SET lead_flows = 1 ${where}`, [repository.owner, repository.repo]);
+  noteForLead(
+    db,
+    sessions,
+    repository,
+    `Skelcrew was updated: each task now runs a flow, default unless sc start --flow <name> names another. ${approvedFlowsTold(cloneDir(repository.owner, repository.repo))} When the approved .agents/ has flows other than default, pick the one that fits each task you start or propose, read from there, not from .agents/flows/ in the clone, and add --flow <name> to sc start. Whenever you pick one other than default, tell the human, naming the flow and why. A task keeps its flow from start to end. A task started from the skelcrew label runs default, and you can switch it with sc start app-12 --flow <name> until its builder first submits, unless the flow builds with another role.`,
+  );
+}
+
 // Polls one repository. Asks its tracker and its forge what changed since the `next` each
 // plugin last gave, kept in `nexts`, or for everything open when there is none. Brings
 // Skelcrew's copy up to date, taking tasks only from its tracker and PRs only from its forge,
@@ -289,7 +311,8 @@ async function pollRepository(
       await refreshClone(db, repository)
         .then(() => {
           noteUnapprovedAgents(db, sessions, repository);
-          keepLeadFlows(db, repository);
+          markApproved(repository);
+          tellLeadOfFlows(db, sessions, repository);
         })
         .catch((error) =>
           console.log(`couldn't update Skelcrew's clone of ${owner}/${repo}: ${errorText(error)}`),

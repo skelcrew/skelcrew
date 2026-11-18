@@ -438,6 +438,29 @@ test("a push that changes .agents/ tells the lead once that the human must appro
   expect(agentsNotes()).toHaveLength(1);
 });
 
+// A lead already running when Skelcrew learned of flows keeps the instructions it started with,
+// so it is told of them once. Its session stands in for a lead from before the update.
+test("a lead running from before flows is told of them once", async () => {
+  addApp();
+  changes([]);
+  Bun.spawnSync(["tmux", "-L", socket, "new-session", "-d", "-s", leadName, "sleep 300"]);
+  serve();
+  // What the daemon told, or saved to tell, app's lead about flows.
+  const flowNotes = () => {
+    const db = new Database(join(data(), "skelcrew.db"), { readonly: true });
+    db.run("PRAGMA busy_timeout = 5000");
+    const saved = db.query("SELECT text FROM notes").all();
+    db.close();
+    const texts = saved.map((row) => String(Object.values(Object(row))[0]));
+    const typedIn = read(join(data(), "claude", leadName, "typed")).split("\n");
+    return [...texts, ...typedIn].filter((text) => text.includes("each task now runs a flow"));
+  };
+  await until(() => flowNotes().length > 0);
+  expect(flowNotes()[0]).toContain("refs/skelcrew/agents/approved");
+  await morePolls();
+  expect(flowNotes()).toHaveLength(1);
+});
+
 // git can reach the remote while the tracker or forge is down, and builders must not fall
 // behind for it.
 test("a push straight to main reaches Skelcrew's clone while the forge fails to answer", async () => {

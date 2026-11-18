@@ -74,6 +74,26 @@ export function approveAgents(place: Place, tree: string | null): void {
   if (tree !== null && gitIn(place, ["update-ref", `refs/skelcrew/agents/${tree}`, tree]) === null)
     throw new Error(`Skelcrew's clone of ${place.owner}/${place.repo} has no tree ${tree}`);
   writeApprovals({ ...readApprovals(), [`${place.owner}/${place.repo}`]: tree ?? "none" });
+  markApproved(place);
+}
+
+// The ref in Skelcrew's clone at the .agents/ you approved, where the lead reads the flows it
+// triages with. Its sandbox shows it the clone read-only, so it can't change what it reads, and
+// what it reads is what tasks run, not a change on the default branch you haven't approved.
+// Without the ref, you approved the built-in files.
+export const approvedRef = "refs/skelcrew/agents/approved";
+
+// Points approvedRef at the .agents/ you approved for the repository, or removes it for the
+// built-in files. It costs one git call when it already does, so the daemon runs it at each
+// poll, which also gives the ref to a repository approved before it existed.
+export function markApproved(place: Place): void {
+  const tree = approvedAgents(place);
+  const now = gitIn(place, ["rev-parse", "--verify", "--quiet", approvedRef])?.trim() || null;
+  if (now === tree) return;
+  gitIn(
+    place,
+    tree === null ? ["update-ref", "-d", approvedRef] : ["update-ref", approvedRef, tree],
+  );
 }
 
 // Forgets what you approved for the repository, for sc repo rm, so adding it again asks again.

@@ -96,39 +96,26 @@ test("a lead is told its repository and each setup and test command, or that non
       setup: ["bun install"],
       test: ["bun run check"],
     },
-    "/f",
   );
   expect(told).toContain("Before you start the first thread in your repository");
-  expect(told).toEndWith(
-    "\nYou are the lead of simon/app. Skelcrew's clone of it is at /clones/simon/app.\nWhen this session started, the setup command was `bun install`, and the test command was `bun run check`.\nThe flows the human approved are in /f, one file each, such as default.yaml.\n",
+  expect(told).toContain(
+    "\nYou are the lead of simon/app. Skelcrew's clone of it is at /clones/simon/app.\nWhen this session started, the setup command was `bun install`, and the test command was `bun run check`.\n",
   );
   expect(
-    leadInstructions(
-      builtInRole("lead").instructions,
-      "simon/app",
-      "/c",
-      {
-        setup: undefined,
-        test: ["go test ./..."],
-      },
-      "/f",
-    ),
-  ).toEndWith(
-    "\nWhen this session started, no setup command was configured, and the test command was `go test ./...`.\nThe flows the human approved are in /f, one file each, such as default.yaml.\n",
+    leadInstructions(builtInRole("lead").instructions, "simon/app", "/c", {
+      setup: undefined,
+      test: ["go test ./..."],
+    }),
+  ).toContain(
+    "\nWhen this session started, no setup command was configured, and the test command was `go test ./...`.\n",
   );
   expect(
-    leadInstructions(
-      builtInRole("lead").instructions,
-      "simon/app",
-      "/c",
-      {
-        setup: undefined,
-        test: undefined,
-      },
-      "/f",
-    ),
-  ).toEndWith(
-    "\nWhen this session started, no setup command was configured, and no test command was configured.\nThe flows the human approved are in /f, one file each, such as default.yaml.\n",
+    leadInstructions(builtInRole("lead").instructions, "simon/app", "/c", {
+      setup: undefined,
+      test: undefined,
+    }),
+  ).toContain(
+    "\nWhen this session started, no setup command was configured, and no test command was configured.\n",
   );
 });
 
@@ -141,10 +128,8 @@ test("a lead triages a task's flow, from the folder of the flows the human appro
   expect(role).toContain("A task keeps its flow from start to end.");
   expect(role).toContain("not the files in .agents/flows/ in the clone");
   const commands = { setup: undefined, test: undefined };
-  expect(
-    leadInstructions(role, "simon/app", "/c", commands, "/leads/app/approved-flows"),
-  ).toEndWith(
-    "and no test command was configured.\nThe flows the human approved are in /leads/app/approved-flows, one file each, such as default.yaml.\n",
+  expect(leadInstructions(role, "simon/app", "/c", commands)).toEndWith(
+    "and no test command was configured.\nThe .agents/ the human approved is at refs/skelcrew/agents/approved in the clone. List its flows with git -C /c ls-tree --name-only refs/skelcrew/agents/approved flows/, and read one with git -C /c show refs/skelcrew/agents/approved:flows/<name>.yaml. Without that ref, or with no flows there, tasks run only Skelcrew's built-in default flow.\n",
   );
 });
 
@@ -155,14 +140,8 @@ test("an empty list is told as configured to none, not as missing", () => {
     "\n\nSetup is configured as none, so Skelcrew ran no setup command. Test is configured as none, so the repository has no test suite to run.\n",
   );
   expect(
-    leadInstructions(
-      builtInRole("lead").instructions,
-      "simon/app",
-      "/c",
-      { setup: [], test: [] },
-      "/f",
-    ),
-  ).toEndWith(
-    "\nWhen this session started, setup was configured as none, and test was configured as none.\nThe flows the human approved are in /f, one file each, such as default.yaml.\n",
+    leadInstructions(builtInRole("lead").instructions, "simon/app", "/c", { setup: [], test: [] }),
+  ).toContain(
+    "\nWhen this session started, setup was configured as none, and test was configured as none.\n",
   );
 });

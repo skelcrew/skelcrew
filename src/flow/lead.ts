@@ -2,7 +2,6 @@
 // folder, kept alive in a session of its own.
 import type { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
-import { join } from "node:path";
 import { z } from "zod";
 import { HarnessName, harnessNamed } from "../agents/harness.ts";
 import {
@@ -15,9 +14,9 @@ import {
   type Labels,
   startSession,
 } from "../agents/sessions.ts";
+import { approvedRef, markApproved } from "../approved-agents.ts";
 import { agentRole, repositoryCommands } from "../config.ts";
 import { Repository } from "../db.ts";
-import { writeFlowFiles } from "../flows.ts";
 import { cloneDir, leadPlaces } from "../paths.ts";
 import { repositoryRole } from "../roles.ts";
 import { errorText } from "../say.ts";
@@ -73,14 +72,13 @@ export function lastOpened(db: Database): Repository | null {
 // clone is, then the setup and test commands its skelcrew.yaml or your config names, each on its
 // own, or that none is configured. The lead can't read your config from its sandbox, so it is
 // told, and proposes to you only the commands that are missing. They are as of the lead's start:
-// once a thread adds them to skelcrew.yaml, the lead reads them there. Last comes the folder of
-// the flows you approved, which Skelcrew keeps current, so the lead triages by what tasks run.
+// once a thread adds them to skelcrew.yaml, the lead reads them there. Last comes where the lead
+// reads the flows you approved, so it triages by what tasks run.
 export function leadInstructions(
   role: string,
   repository: string,
   clone: string,
   commands: Pick<Settings, "setup" | "test">,
-  flows: string,
 ): string {
   const { setup, test } = commands;
   const shown = (list: string[]) => `\`${list.join(" && ")}\``;
@@ -97,20 +95,13 @@ export function leadInstructions(
       : test.length === 0
         ? "test was configured as none"
         : `the test command was ${shown(test)}`;
-  return `${role}\nYou are the lead of ${repository}. Skelcrew's clone of it is at ${clone}.\nWhen this session started, ${setupTold}, and ${testTold}.\nThe flows the human approved are in ${flows}, one file each, such as default.yaml.\n`;
+  return `${role}\nYou are the lead of ${repository}. Skelcrew's clone of it is at ${clone}.\nWhen this session started, ${setupTold}, and ${testTold}.\n${approvedFlowsTold(clone)}\n`;
 }
 
-// Returns the folder of the flows you approved for a repository, inside its lead's own folder,
-// which the lead can read from its sandbox.
-const flowsFolder = (lead: { folder: string }) => join(lead.folder, "approved-flows");
-
-// Brings the lead's copy of the flows you approved up to date, for each poll, as you can approve
-// a new .agents/ while the lead runs. A lead that never started has no folder yet, and gets its
-// copy as it starts.
-export function keepLeadFlows(db: Database, repository: { owner: string; repo: string }): void {
-  const lead = leadOf(db, repository.owner, repository.repo);
-  if (existsSync(lead.folder)) writeFlowFiles(repository, flowsFolder(lead));
-}
+// Returns where the lead reads the flows you approved, given its clone: the ref at the .agents/
+// you approved, which a git command lists and shows from its read-only clone.
+export const approvedFlowsTold = (clone: string) =>
+  `The .agents/ the human approved is at ${approvedRef} in the clone. List its flows with git -C ${clone} ls-tree --name-only ${approvedRef} flows/, and read one with git -C ${clone} show ${approvedRef}:flows/<name>.yaml. Without that ref, or with no flows there, tasks run only Skelcrew's built-in default flow.`;
 
 // Keeps a repository's running lead or starts it, resuming its saved conversation when there
 // is one. A lead's first start picks the harness your config names for leads, and the lead
@@ -154,8 +145,10 @@ export async function startLead(
     "UPDATE repositories SET lead_session = ?, lead_harness = ? WHERE owner = ? AND repo = ?",
     [session, harness.name, owner, repo],
   );
-  // The flows you approved, where the lead reads them as it triages.
-  writeFlowFiles(repository, flowsFolder(lead));
+  // The lead reads the flows you approved at their ref, and starts with today's instructions, so
+  // it needs no note of them.
+  markApproved(repository);
+  db.run("UPDATE repositories SET lead_flows = 1 WHERE owner = ? AND repo = ?", [owner, repo]);
   const { argv, env } = await harness.start({
     name: lead.name,
     socket: lead.socket,
@@ -172,7 +165,6 @@ export async function startLead(
       `${owner}/${repo}`,
       clone,
       repositoryCommands(repository),
-      flowsFolder(lead),
     ),
     ...(resume ? { resume } : { sessionId: session }),
   });

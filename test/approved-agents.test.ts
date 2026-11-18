@@ -5,7 +5,6 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
-  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -474,38 +473,34 @@ test("a flow naming a role with no file is refused, naming the role", () => {
   ).toThrow("it names the role critic");
 });
 
-test("the lead's copy of the flows is the approved one, and follows each new approval", () => {
-  const folder = join(home, "approved-flows");
-  const write = () =>
-    inHome(
-      `const { writeFlowFiles } = await import(${JSON.stringify(source("flows.ts"))}); writeFlowFiles(app, ${JSON.stringify(folder)}); return null;`,
+test("the lead reads the approved flows at a ref only Skelcrew moves, as each approval changes", () => {
+  const atRef = (path: string) => {
+    const shown = Bun.spawnSync(
+      ["git", "-C", clone, "show", `refs/skelcrew/agents/approved:${path}`],
+      {
+        stdout: "pipe",
+        stderr: "pipe",
+      },
     );
-  const files = () =>
-    Object.fromEntries(
-      readdirSync(folder)
-        .sort()
-        .map((file) => [file, readFileSync(join(folder, file), "utf8")]),
-    );
-  const builtIn = readFileSync(source("defaults/flows/default.yaml"), "utf8");
-  write();
-  expect(files()).toEqual({ "default.yaml": builtIn });
+    return shown.success ? shown.stdout.toString() : null;
+  };
   agentsFile("flows/quick.yaml", "review:\n  rounds: 1\n");
   commit("flows");
+  expect(atRef("flows/quick.yaml")).toBeNull();
   inHome(approveCurrent);
-  write();
-  expect(files()).toEqual({ "default.yaml": builtIn, "quick.yaml": "review:\n  rounds: 1\n" });
+  expect(atRef("flows/quick.yaml")).toBe("review:\n  rounds: 1\n");
   // A change you haven't approved stays out.
   agentsFile("flows/quick.yaml", "review:\n  rounds: 9\n");
   commit("unapproved");
-  write();
-  expect(files()).toEqual({ "default.yaml": builtIn, "quick.yaml": "review:\n  rounds: 1\n" });
-  // A flow gone from the approved .agents/ goes from the lead's copy.
-  rmSync(join(clone, ".agents", "flows", "quick.yaml"));
-  agentsFile("flows/careful.yaml", "review:\n  rounds: 5\n");
-  commit("careful");
+  expect(atRef("flows/quick.yaml")).toBe("review:\n  rounds: 1\n");
+  // The built-in files have no ref.
+  inHome("agents.approveAgents(app, null); return null;");
+  expect(atRef("flows/quick.yaml")).toBeNull();
+  // An approval from before the ref gets it once the daemon marks it.
   inHome(approveCurrent);
-  write();
-  expect(files()).toEqual({ "careful.yaml": "review:\n  rounds: 5\n", "default.yaml": builtIn });
+  git("update-ref", "-d", "refs/skelcrew/agents/approved");
+  inHome("agents.markApproved(app); return null;");
+  expect(atRef("flows/quick.yaml")).toBe("review:\n  rounds: 9\n");
 });
 
 test("sc start's check of a flow's round limit refuses a bad one, unless your override decides it", () => {
