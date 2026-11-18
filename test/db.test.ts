@@ -329,43 +329,55 @@ test("a name stays taken on another machine once claimed", async () => {
   expect(await namesFrom(startOn(lapdog, remote, ["Two"]))).toEqual(["app-lp2"]);
 }, 60_000);
 
-// A repository just added has no clone yet, and the refresh that makes it first asks its forge,
-// which can give another URL to clone from, such as https in place of ssh, as its login works
-// there. The name is claimed at that URL with the forge's login, as a private repository lets
-// nobody in without it.
-test("the first thread with no issue claims its name at the URL its forge gave, with its login", async () => {
-  const { remote, homes } = twoMachines();
-  const [laptop = ""] = homes;
-  // The remote is private: git refuses any command on it that doesn't carry the forge's login,
-  // which git gets as a credential helper. A folder remote would need no login otherwise.
-  const bin = join(laptop, "bin");
-  mkdirSync(bin);
-  writeFileSync(
-    join(bin, "git"),
-    `#!/bin/sh
+// Skelcrew asks a repository's forge once, as it refreshes its clone, and the forge can give
+// another URL to clone from, such as https in place of ssh, as its login works there. A
+// repository just added has no clone yet. One added before its forge's plugin was installed has
+// a clone, but no forge yet. Either way the name is claimed at the forge's URL with its login,
+// as a private repository lets nobody in without it.
+test.each([
+  ["just added", false],
+  ["cloned before its forge was known", true],
+])(
+  "the first thread with no issue on a repository %s claims its name with its forge's URL and login",
+  async (_, cloned) => {
+    const { remote, homes } = twoMachines();
+    const [laptop = ""] = homes;
+    if (cloned) {
+      const clone = join(laptop, ".local", "share", "skelcrew", "repos", "simon", "app");
+      Bun.spawnSync(["git", "clone", "-q", remote, clone]);
+    }
+    // The remote is private: git refuses any command on it that doesn't carry the forge's login,
+    // which git gets as a credential helper. A folder remote would need no login otherwise.
+    const bin = join(laptop, "bin");
+    mkdirSync(bin);
+    writeFileSync(
+      join(bin, "git"),
+      `#!/bin/sh
 case "$*" in *${JSON.stringify(remote)}*)
   case "$*" in *"credential.helper=!"*) ;; *) echo "fatal: Authentication failed" >&2; exit 128 ;; esac ;;
 esac
 exec ${Bun.which("git") ?? "git"} "$@"
 `,
-    { mode: 0o755 },
-  );
-  const before = join(home, "unreachable.git");
-  const forge = fakePlugin(laptop);
-  const answer = {
-    key: "simon/app",
-    name: "app",
-    link: "l",
-    clone: remote,
-    push: true,
-    fork: false,
-  };
-  writeFileSync(join(forge, "claims.json"), JSON.stringify({ [before]: answer }));
-  const run = startOn(laptop, before, ["One"], `db.run("UPDATE repositories SET claimed = 0");`);
-  expect(await namesFrom(run)).toEqual(["app-lp1"]);
-  const claims = Bun.spawnSync(["git", "ls-remote", remote, "refs/skelcrew/names/*"]);
-  expect(claims.stdout.toString()).toContain("refs/skelcrew/names/lp1");
-}, 60_000);
+      { mode: 0o755 },
+    );
+    const before = join(home, "unreachable.git");
+    const forge = fakePlugin(laptop);
+    const answer = {
+      key: "simon/app",
+      name: "app",
+      link: "l",
+      clone: remote,
+      push: true,
+      fork: false,
+    };
+    writeFileSync(join(forge, "claims.json"), JSON.stringify({ [before]: answer }));
+    const run = startOn(laptop, before, ["One"], `db.run("UPDATE repositories SET claimed = 0");`);
+    expect(await namesFrom(run)).toEqual(["app-lp1"]);
+    const claims = Bun.spawnSync(["git", "ls-remote", remote, "refs/skelcrew/names/*"]);
+    expect(claims.stdout.toString()).toContain("refs/skelcrew/names/lp1");
+  },
+  60_000,
+);
 
 // A name claimed on a repository with no commits yet, such as one just created, is a ref of the
 // remote all the same. The repository must still count as empty, so starting a thread there

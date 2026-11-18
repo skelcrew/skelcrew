@@ -26,7 +26,7 @@ import { ownTask, taskOf, threadTask } from "./copy.ts";
 import { pastRoundLimit } from "./decide.ts";
 import { claimedNames, claimName, fetchBranch } from "./git.ts";
 import { dropEndNotes } from "./messages.ts";
-import { findRepository, forgeAuthor, refreshClones } from "./repo.ts";
+import { findRepository, forgeAuthor, forgeKnown, refreshClones } from "./repo.ts";
 import {
   builderHarness,
   cloneOf,
@@ -113,9 +113,10 @@ async function recordThread(
     const code = machineCode(db);
     const clone = cloneDir(owner, repo);
     // Its clone, which the daemon may still be making, is where the claim is pushed from. The
-    // refresh that makes it may first learn the repository's forge, which can give it another
-    // URL, the one the forge's login works at, so the repository is read again after it.
-    if (!existsSync(clone)) await refreshClones(db);
+    // refresh also learns the repository's forge the first time, such as one added before its
+    // forge's plugin was installed, which can give it another URL, the one the forge's login
+    // works at. So it is waited for until both are there, and the repository read again after.
+    if (!existsSync(clone) || !forgeKnown(db, repository)) await refreshClones(db);
     const current = findRepository(db, given.repo);
     const claimed = await claimedNames(db, current, code);
     const started = db
