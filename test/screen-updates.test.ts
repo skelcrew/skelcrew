@@ -41,11 +41,15 @@ beforeEach(startTest);
 afterEach(endTest);
 
 // Has tmux copy what the screen writes to your terminal into a file, and gives back the file,
-// empty, once the screen has settled. tmux redraws a pane's border a moment after the pane
-// opens, so the screen has settled once it has written nothing for half a second.
+// empty, once the screen has settled. The sidebar takes in what just changed, such as a page
+// opening, at its next refresh, and tmux redraws its border after that. On a busy machine that
+// can come after half a second of quiet. So the screen has settled once the sidebar has
+// refreshed twice from now, and then nothing was written for half a second. The test must call
+// noteRefreshes first.
 async function copyOnceSettled(): Promise<string> {
   const written = join(home, "written");
   tmux(terminal, "pipe-pane", "-O", "-t", "=one:", `cat >> ${written}`);
+  await sidebarRefreshedTwice();
   await untilQuiet(written);
   // Emptied rather than removed: tmux's cat keeps writing to the file it opened, and adds to its
   // end.
