@@ -385,6 +385,14 @@ test("a plugin from a folder is used where it is, and update builds it again", a
   const again = await skel(["update", "-g", "fake"], "", "", {}, home, false);
   expect(again.code).toBe(0);
   expect(again.out).not.toContain("Build it?");
+  // A command whose words differ is a change, even when they read the same joined with spaces.
+  writeFileSync(
+    manifest,
+    readFileSync(manifest, "utf8").replace("[bun, build.ts]", '["bun build.ts"]'),
+  );
+  const regrouped = await skel(["update", "-g", "fake"], "", "", {}, home, false);
+  expect(regrouped.code).toBe(1);
+  expect(regrouped.err).toContain("Skelcrew left out fake");
 
   const removed = await skel(["plugin", "rm", "fake"]);
   expect(removed.out).toContain("Removed fake");

@@ -190,14 +190,22 @@ export function askYes(question: string): boolean | null {
   return ["", "y", "yes"].includes(line.trim().toLowerCase());
 }
 
-// Returns every command a plugin's manifest runs, each as one line of words, in the order sc
-// shows them when it asks. A folder plugin's are kept as you approved them, so building it again
-// asks only once they change.
-function commandsOf(manifest: Manifest): string[] {
+// Returns every command a plugin's manifest runs, each as its list of words, in the order sc
+// shows them when it asks.
+function commandsOf(manifest: Manifest): string[][] {
   const { build = [], setup, call, git_credentials, add, exec, push } = manifest;
-  return [...build, setup, call, git_credentials, add, exec, push]
-    .filter((words) => words !== undefined)
-    .map((words) => words.join(" "));
+  return [...build, setup, call, git_credentials, add, exec, push].filter(
+    (words) => words !== undefined,
+  );
+}
+
+// Returns what you approve of a plugin as text to keep: each command under the manifest field it
+// comes from, with its words apart. A folder plugin's is kept as you approved it, so building it
+// again asks only once it changes. Words joined with spaces would let ["sh", "a b"] pass for
+// ["sh", "a", "b"], and a list without the fields would let a command move to another field.
+function approvalOf(manifest: Manifest): string {
+  const { build, setup, call, git_credentials, add, exec, push } = manifest;
+  return JSON.stringify({ build, setup, call, git_credentials, add, exec, push });
 }
 
 // Shows what the plugin is and runs, and asks whether to `verb` it, such as Install. It says the
@@ -207,7 +215,7 @@ function commandsOf(manifest: Manifest): string[] {
 function confirmPlugin(manifest: Manifest, from: string, verb: string): boolean | null {
   const { name, version, kind, provides } = manifest;
   const kindName = kind === "io" ? "an I/O" : "a runtime";
-  const commands = commandsOf(manifest).map((line) => `  ${removeControlCodes(line)}`);
+  const commands = commandsOf(manifest).map((words) => `  ${removeControlCodes(words.join(" "))}`);
   console.log(
     `${name} ${version} from ${removeControlCodes(from)} is ${kindName} plugin that provides ${provides.join(", ")}. It runs these as you, outside Skelcrew's sandbox:\n${commands.join("\n")}`,
   );
@@ -348,7 +356,7 @@ export function installPlugin(given: string, options: Options = {}): boolean {
     db.run("INSERT INTO plugins (name, folder, source, approved) VALUES (?, ?, NULL, ?)", [
       manifest.name,
       folder,
-      JSON.stringify(commandsOf(manifest)),
+      approvalOf(manifest),
     ]);
     markUnclaimed(db, manifest);
     console.log(`Installed ${manifest.name} ${manifest.version}.`);
@@ -420,7 +428,7 @@ export function updatePlugin(db: Database, plugin: Plugin, options: Options = {}
   // A folder of yours gets only its build again. When its commands differ from those you
   // approved, it shows what it runs now and asks first. Its setup is for sc setup.
   if (source === null) {
-    const commands = JSON.stringify(commandsOf(current));
+    const commands = approvalOf(current);
     const row = db.query("SELECT approved FROM plugins WHERE name = ?").get(name);
     const approved = z.object({ approved: z.string().nullable() }).parse(row).approved;
     const answer = ask && commands !== approved ? confirmPlugin(current, folder, "Build") : true;
