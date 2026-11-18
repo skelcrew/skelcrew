@@ -359,12 +359,17 @@ test("sc start refuses a task whose round limit isn't valid, from its flow file 
   await untilCloned();
   await untilApproved();
   const bad = await skel("start", "app", "Fix typo", "In the README", "--flow", "quick");
+  expect(bad.err).toContain("app's flow quick (.agents/flows/quick.yaml) has no valid round limit");
   expect(bad.err).toContain(".agents/flows/quick.yaml in simon/app");
   const config = join(home, ".config", "skelcrew", "config.yaml");
   writeFileSync(config, "harness: claude\nmax_rounds: 0\n");
+  // The flow names no rounds, so your config's bad max_rounds is its round limit.
+  const builtIn = "app's flow default (Skelcrew's built-in default flow) has no valid round limit";
   const yours = await skel("start", "app", "Fix typo", "In the README");
+  expect(yours.err).toContain(builtIn);
   expect(yours.err).toContain(`${config} isn't valid`);
   const issue = await skel("start", "app-12");
+  expect(issue.err).toContain(builtIn);
   expect(issue.err).toContain(`${config} isn't valid`);
   expect(flows()).toEqual([]);
 });
@@ -974,7 +979,9 @@ nameRepositories(db);`;
     // A switch to a flow whose round limit isn't valid is refused, naming where it is.
     const yours = join(home, ".config", "skelcrew", "config.yaml");
     writeFileSync(yours, "harness: claude\nmax_rounds: 0\n");
-    expect((await skel("start", "app-12", "--flow", "lax")).err).toContain(`${yours} isn't valid`);
+    const lax = (await skel("start", "app-12", "--flow", "lax")).err;
+    expect(lax).toContain("app's flow lax (.agents/flows/lax.yaml) has no valid round limit");
+    expect(lax).toContain(`${yours} isn't valid`);
     expect(flows()).toEqual([{ task: 12, flow: "quick" }]);
     writeFileSync(yours, "harness: claude\n");
     // Once its builder has submitted, the task keeps its flow to the end.
