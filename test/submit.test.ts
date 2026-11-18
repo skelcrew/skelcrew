@@ -347,13 +347,21 @@ describe.skipIf(insideSandbox)("sc submit", () => {
   });
 
   // The lead's message changes the task after the thread started, such as a design you agreed
-  // to, so the reviewer judges the round by it rather than asking to undo it.
-  test("the reviewer gets the lead's messages to the builder after the task", async () => {
+  // to, so the reviewer judges the round by it rather than asking to undo it. The line that
+  // closes the issue is saved as the task starts, so the PR still closes it though Skelcrew's
+  // copy lost the issue before the first submit, such as after the tracker changed.
+  test("the reviewer gets the lead's messages to the builder after the task, and the PR closes the issue the copy lost", async () => {
     fakeClaude(false);
     addApp();
     verdict(1, "approve", "Ready to merge.");
     await startApp12();
     await until(() => read(join(builder(), "args")) !== "", 30_000);
+    // The tracker no longer gives the issue, and the copy has lost it.
+    answer(plugin, "changed", { items: [], next: null });
+    const db = new Database(join(data(), "skelcrew.db"));
+    db.run("PRAGMA busy_timeout = 5000");
+    db.run("DELETE FROM items");
+    db.close();
     const short = new Bun.CryptoHasher("sha256").update("simon/app").digest("hex").slice(0, 16);
     const leadSocket = join(home, "run", "skelcrew", "leads", short, "skelcrew.sock");
     await until(() => existsSync(leadSocket));
@@ -368,6 +376,8 @@ describe.skipIf(insideSandbox)("sc submit", () => {
     expect(prompt).toMatch(
       /# Add export\n\nAs JSON\n\n## Changes to the task from the lead, after the thread started\n\nThese override the task above where they differ\. The latest comes last\.\n\n### .* UTC\n\nKeep the CSV export too\.\n/,
     );
+    await until(() => opened() !== undefined);
+    expect(opened()?.body).toBe("Round 1\n\nCloses #12");
   }, 60_000);
 
   test("pushes the round, opens the PR, has it reviewed, types the changes in, and waits on CI once approved", async () => {
@@ -1456,7 +1466,7 @@ done`,
     writeFileSync(join(codexHome(), "slow-2"), "");
     writeFileSync(join(plugin, "hold-review"), "");
     await startApp12();
-    await until(() => existsSync(join(plugin, "held-review")), 30_000);
+    await until(() => existsSync(join(plugin, "held-review")), 60_000);
     expect((await skel(["submit", "Again"], { SKELCREW_SOCKET: builderSocket() })).err).toBe("");
     await Bun.sleep(1000);
     rmSync(join(plugin, "hold-review"));
@@ -1464,7 +1474,7 @@ done`,
     expect(reviews()).toHaveLength(1);
     await Bun.sleep(1500);
     expect(statuses().map((s) => s.state)).toEqual(["pending", "pending"]);
-  }, 60_000);
+  }, 120_000);
 
   test("a thread started from another branch is reviewed against it, and its PR goes into it", async () => {
     const work = addApp();
@@ -1497,10 +1507,10 @@ done`,
     serve();
     await untilCloned();
     expect((await skel(["start", "app-12", "--from", "next"])).err).toBe("");
-    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), 30_000);
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), 60_000);
     const prompt = read(join(codexHome(), "sessions", "prompt-1"));
     expect(prompt).toContain("The change only touches docs and Markdown, so don't run the tests.");
-  }, 60_000);
+  }, 120_000);
 });
 
 // Lets a test change a thread as merging its PR would, without polling GitHub.

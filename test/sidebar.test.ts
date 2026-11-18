@@ -952,6 +952,7 @@ const state: Thread = {
   review_limited: false,
   review_reset: null,
   conflicts: null,
+  ci_passed: false,
   noting: null,
   body: null,
   title: null,
@@ -969,6 +970,9 @@ const state: Thread = {
   changed: null,
   updates: [],
   state: null,
+  merged: false,
+  issue_link: null,
+  closes: null,
   merge_plan: null,
   merge_id: null,
   merge_by: null,
@@ -1000,7 +1004,9 @@ test("a newer submit is reviewing, not queued, until its own review waits", () =
 // what you must do next.
 test("a builder that stopped without submitting doesn't hide anything that needs you", () => {
   const ended = { ...needing, turn_ended: true };
-  expect(word({ ...ended, verdict: "approve", checks: "passing" })).toBe("approved");
+  expect(word({ ...ended, verdict: "approve", checks: "passing", ci_passed: true })).toBe(
+    "approved",
+  );
   expect(word({ ...ended, verdict: "changes", rounds: 4, held: "fix" })).toBe("round limit");
   expect(word({ ...ended, verdict: "approve", checks: "failing" })).toBe("needs you");
   expect(word({ ...ended, verdict: "failed" })).toBe("review failed");
@@ -1015,8 +1021,9 @@ test("a builder that took up the changes is working again", () => {
 test("each reason a thread needs you has its own word", () => {
   expect(word({ asking: true })).toBe("question");
   expect(word({ erred: true })).toBe("error");
-  expect(word({ ...needing, verdict: "approve", checks: "passing" })).toBe("approved");
-  expect(word({ ...needing, verdict: "approve" })).toBe("approved");
+  const green = { ...needing, verdict: "approve", ci_passed: true } as const;
+  expect(word({ ...green, checks: "passing" })).toBe("approved");
+  expect(word(green)).toBe("approved");
   expect(word({ ...needing, verdict: "changes", rounds: 4, held: "fix" })).toBe("round limit");
   expect(word({ ...needing, verdict: "failed" })).toBe("review failed");
   expect(word({ ...needing, verdict: "timed out" })).toBe("review timed out");
@@ -1035,6 +1042,8 @@ test("past the round limit it stays so while the builder submits again", () => {
 test("approved is only said of a PR whose checks don't say otherwise", () => {
   expect(word({ ...needing, verdict: "approve", checks: "failing" })).toBe("needs you");
   expect(word({ ...needing, verdict: "approve", checks: "pending" })).toBe("needs you");
+  // No poll has seen its checks since the approval.
+  expect(word({ ...needing, verdict: "approve" })).toBe("needs you");
 });
 
 test("a thread that needs you for no reason in the table says just that", () => {

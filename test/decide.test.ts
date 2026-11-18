@@ -4,6 +4,7 @@
 import { expect, test } from "bun:test";
 import {
   afterReview,
+  allGreen,
   type Check,
   ciResult,
   ciState,
@@ -51,6 +52,7 @@ function thread(change: Partial<Thread> = {}): Thread {
     review_limited: false,
     review_reset: null,
     conflicts: null,
+    ci_passed: false,
     noting: null,
     title: null,
     body: null,
@@ -68,6 +70,9 @@ function thread(change: Partial<Thread> = {}): Thread {
     changed: null,
     updates: [],
     state: null,
+    merged: false,
+    issue_link: null,
+    closes: null,
     merge_plan: null,
     merge_id: null,
     merge_by: null,
@@ -443,6 +448,18 @@ test("a PR's CI reads as passing, failing or still running, and Skelcrew's own c
   expect(ciState(pr({ checks: [changes, passed] }))).toBe("passing");
   expect(ciState(pr({ checks: [passed, going] }))).toBe("pending");
   expect(ciState(pr({ checks: [failed, going] }))).toBe("failing");
+});
+
+// Unlike the saved CI state, Skelcrew's own check counts: it is the approval.
+test("a PR is all green only while every check passed, Skelcrew's own included", () => {
+  const passed = run(30, "test", "passed");
+  expect(allGreen(pr({ checks: [approved, passed] }))).toBe(true);
+  expect(allGreen(pr({ checks: [approved] }))).toBe(true);
+  expect(allGreen(pr({ checks: [approved, run(30, "test", "running")] }))).toBe(false);
+  expect(allGreen(pr({ checks: [approved, run(30, "test", "failed")] }))).toBe(false);
+  expect(allGreen(pr({ checks: [{ ...approved, state: "running" }, passed] }))).toBe(false);
+  expect(allGreen(pr({ checks: [{ ...approved, state: "failed" }, passed] }))).toBe(false);
+  expect(allGreen(pr({ checks: [passed] }))).toBe(false);
 });
 
 // Who runs the suite on commit abc, the head of PR 7, with these open PRs in the repository.

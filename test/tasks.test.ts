@@ -127,6 +127,10 @@ test("after the move, every command and the screen show the same threads under t
   oldDatabase();
   // The saved database's app has GitHub as its forge, which shows its PRs.
   fakePlugin(home);
+  // The first poll after the upgrade finds every check on app-13's approved PR green, as the
+  // earlier release took them to be. Until a poll says so, it waits, as tested below.
+  run(`import { openDb } from ${JSON.stringify(source("db.ts"))};
+openDb().run("UPDATE threads SET ci_passed = 1 WHERE folder = 'app-13'");`);
   // Before the new daemon moves it, sc shows the threads as they are.
   const shownThen = shownBefore();
   turnEndedWaits(shownThen);
@@ -157,6 +161,23 @@ test("after the move, every command and the screen show the same threads under t
   // And each PR sc pr show showed, on its task, as its page showed it.
   for (const { pr, thread, ...page } of prs.filter((pr: unknown) => typeof pr !== "string"))
     expect(named(thread)).toMatchObject({ pr, prPage: page });
+  // Each task has its stage. app-13 is approved with its checks green, the stopped and failed
+  // threads keep their tasks working, and app-16's issue closed with no merge Skelcrew saw.
+  const stages = {
+    "app-12": "working",
+    "app-13": "ready for review",
+    "app-14": "working",
+    "app-15": "working",
+    "app-16": "closed",
+    "app-17": "issue",
+    "app-t1": "working",
+    "notes-t1": "working",
+    "notes-t2": "working",
+  };
+  expect(
+    Object.fromEntries(ls.map((row: Task & { stage: string }) => [row.task, row.stage])),
+  ).toEqual(stages);
+  for (const [name, stage] of Object.entries(stages)) expect(named(name)).toMatchObject({ stage });
   // A task whose issue closed and whose PR left the copy still shows, from what it saved.
   expect(named("app-16")).toMatchObject({ pr: 42, prPage: null });
   // Each thread has its task, and a copy of the database from before waits beside it.
@@ -165,6 +186,14 @@ test("after the move, every command and the screen show the same threads under t
     db.query("SELECT owner, repo, task FROM threads ORDER BY rowid").all(),
   );
   expect(db.query("SELECT DISTINCT role FROM threads").all()).toEqual([{ role: "builder" }]);
+  // Each task from an issue still in the copy keeps the link to it, and the line that closes it.
+  expect(
+    db.query("SELECT task, issue_link, closes FROM tasks WHERE task = 13 OR task = 't1'").all(),
+  ).toEqual([
+    { task: 13, issue_link: "https://github.com/simon/app/issues/13", closes: "Closes #13" },
+    { task: "t1", issue_link: null, closes: null },
+    { task: "t1", issue_link: null, closes: null },
+  ]);
   db.close();
   const copy = join(data(), "skelcrew-before-tasks.db");
   expect(tables(copy)).not.toContain("tasks");
@@ -190,6 +219,124 @@ console.log(JSON.stringify({ rounds, short, status }));`;
   });
   db.close();
 });
+
+// Leaves the database as the first release with tasks did: moved, with a tasks table without
+// the columns added since: whether the work merged, the link to its issue, the line that
+// closes it and whether CI passed after the approval.
+function earlierTasks(): void {
+  oldDatabase();
+  run(`import { openDb, moveToTasks } from ${JSON.stringify(source("db.ts"))};
+moveToTasks(openDb());`);
+  const earlier = new Database(dbFile());
+  earlier.run("DROP VIEW task_threads");
+  earlier.run("ALTER TABLE tasks DROP COLUMN merged");
+  earlier.run("ALTER TABLE tasks DROP COLUMN issue_link");
+  earlier.run("ALTER TABLE tasks DROP COLUMN closes");
+  earlier.run("ALTER TABLE tasks DROP COLUMN ci_passed");
+  earlier.close();
+}
+
+// Any sc run adds the columns, but the earlier release's daemon may still be running, so
+// filling them waits for the new one.
+test("a tasks table from an earlier release gains the task's newer columns, unfilled", () => {
+  earlierTasks();
+  const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
+import { readThread } from ${JSON.stringify(source("flow/thread.ts"))};
+const { rounds, merged, issue_link, closes } = readThread(openDb(), "app-15");
+console.log(JSON.stringify({ rounds, merged, issue_link, closes }));`;
+  expect(JSON.parse(run(code))).toEqual({
+    rounds: 3,
+    merged: false,
+    issue_link: null,
+    closes: null,
+  });
+});
+
+// The earlier release showed an approval that needs you as ready to merge, without a poll
+// saying every check passed. It waits for a poll to say so, as its saved checks can be stale.
+test("an approval an earlier release showed as ready to merge waits for a poll", () => {
+  earlierTasks();
+  const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
+import { readThread } from ${JSON.stringify(source("flow/thread.ts"))};
+import { taskStage } from ${JSON.stringify(source("flow/stage.ts"))};
+const db = openDb();
+const stage = (folder) => [readThread(db, folder).ci_passed, taskStage(readThread(db, folder), true)];
+console.log(JSON.stringify({ approved: stage("app-13"), working: stage("app-15") }));`;
+  expect(JSON.parse(run(code))).toEqual({
+    approved: [false, "working"],
+    working: [false, "working"],
+  });
+});
+
+// Writes the logs of three threads whose work ended before Skelcrew kept whether it merged:
+// app-16's PR merged, app-12's merged as a merge when ready, and app-14 was removed after an
+// earlier start of it had merged nothing. Marks app-12 and app-14 done, as they were left.
+function endedBeforeMerges(): void {
+  const logs = join(data(), "threads");
+  mkdirSync(logs, { recursive: true });
+  const line = (why: string) => `${JSON.stringify({ at: "2026-11-10T09:00:00Z", why })}\n`;
+  writeFileSync(
+    join(logs, "app-16.log"),
+    `${line("started")}${line("PR #42 was merged: ended the thread")}`,
+  );
+  writeFileSync(
+    join(logs, "app-12.log"),
+    `${line("started")}${line("PR #7 was merged when ready: ended the thread")}`,
+  );
+  writeFileSync(
+    join(logs, "app-14.log"),
+    `${line("PR #30 was merged: ended the thread")}${line("started")}{"cut sh\n${line("removed: started over: ended the thread")}`,
+  );
+  const db = new Database(dbFile());
+  db.run("UPDATE threads SET status = 'done' WHERE folder IN ('app-12', 'app-14')");
+  db.close();
+}
+
+// Returns which of the tasks app-12, app-14 and app-16 are marked merged.
+function mergedTasks(): unknown {
+  const db = new Database(dbFile(), { readonly: true });
+  const rows = db
+    .query("SELECT task, merged FROM tasks WHERE task IN (12, 14, 16) ORDER BY task")
+    .all();
+  db.close();
+  return rows;
+}
+
+test("the move marks tasks merged whose thread's log says their PR merged", () => {
+  oldDatabase();
+  endedBeforeMerges();
+  run(`import { openDb, moveToTasks } from ${JSON.stringify(source("db.ts"))};
+moveToTasks(openDb());`);
+  expect(mergedTasks()).toEqual([
+    { task: 12, merged: 1 },
+    { task: 14, merged: 0 },
+    { task: 16, merged: 1 },
+  ]);
+});
+
+// sc run while the earlier release's daemon still runs adds the columns. That daemon then
+// merges app-16 and removes app-14, and the new daemon, once it starts, fills them in.
+test("the new daemon fills a tasks table from an earlier release, after the old daemon's last merge", async () => {
+  earlierTasks();
+  run(`import { openDb } from ${JSON.stringify(source("db.ts"))};
+openDb();`);
+  endedBeforeMerges();
+  machineSetUp();
+  serve();
+  await until(() => existsSync(join(home, "run", "skelcrew.sock")), { timeout: 30_000 });
+  expect(mergedTasks()).toEqual([
+    { task: 12, merged: 1 },
+    { task: 14, merged: 0 },
+    { task: 16, merged: 1 },
+  ]);
+  const db = new Database(dbFile(), { readonly: true });
+  expect(db.query("SELECT issue_link, closes FROM tasks WHERE task = 15").get()).toEqual({
+    issue_link: "https://github.com/simon/app/issues/15",
+    closes: "Closes #15",
+  });
+  expect(db.query("SELECT * FROM upgrades").all()).toEqual([]);
+  db.close();
+}, 60_000);
 
 test("a reader opened before the move reads the tasks after it", () => {
   oldDatabase();
