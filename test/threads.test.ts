@@ -348,6 +348,27 @@ test("sc start --flow runs a task on a flow file of the repository, and refuses 
   ]);
 });
 
+// A round limit that isn't valid, wherever it comes from, refuses the start before any work
+// begins, naming where it is.
+test("sc start refuses a task whose round limit isn't valid, from its flow file or your config", async () => {
+  const work = addFlows();
+  writeFileSync(join(work, ".agents", "flows", "quick.yaml"), "review:\n  rounds: 0\n");
+  git(work, "commit", "-q", "-am", "bad rounds");
+  git(work, "push", "-q", "origin", "main");
+  serve();
+  await untilCloned();
+  await untilApproved();
+  const bad = await skel("start", "app", "Fix typo", "In the README", "--flow", "quick");
+  expect(bad.err).toContain(".agents/flows/quick.yaml in simon/app");
+  const config = join(home, ".config", "skelcrew", "config.yaml");
+  writeFileSync(config, "harness: claude\nmax_rounds: 0\n");
+  const yours = await skel("start", "app", "Fix typo", "In the README");
+  expect(yours.err).toContain(`${config} isn't valid`);
+  const issue = await skel("start", "app-12");
+  expect(issue.err).toContain(`${config} isn't valid`);
+  expect(flows()).toEqual([]);
+});
+
 // Bringing a repository in by naming it is gone: you add one in your own terminal.
 test("a repository Skelcrew doesn't have, named by its owner/name, is no repository", async () => {
   onGitHub({}, "site");
@@ -764,21 +785,6 @@ nameRepositories(db);`;
     expect(await stoppedWith("telling = 'Add a test.'")).toBe("working");
   }, 60_000);
 
-  // The round limit is read only for a thread it can matter to, so a bad one fails the new
-  // thread with the reason rather than refusing sc start.
-  test("a bad max_rounds fails a new thread, and sc start still answers", async () => {
-    addApp();
-    writeFileSync(
-      join(home, ".config", "skelcrew", "config.yaml"),
-      "harness: claude\nmax_rounds: 0\n",
-    );
-    serve();
-    await untilCloned();
-    expect((await skel("start", "app-12")).out).toBe("Started app-12.\n");
-    await until(() => thread().status === "failed");
-    await until(() => read(join(data(), "threads", "app-12.log")).includes("isn't valid"));
-  }, 60_000);
-
   // The daemon brings back threads once the lead has started, which takes a moment.
   test("a thread started while the daemon starts the lead isn't taken for one cut short", async () => {
     addApp({ "skelcrew.yaml": "setup: [sleep 3]\n" });
@@ -941,6 +947,8 @@ nameRepositories(db);`;
     mkdirSync(join(work, ".agents", "roles"), { recursive: true });
     writeFileSync(join(work, ".agents", "flows", "careful.yaml"), "build:\n  role: tester\n");
     writeFileSync(join(work, ".agents", "roles", "tester.md"), "Write the test first.\n");
+    // And lax names no rounds, so your config's max_rounds gives its round limit.
+    writeFileSync(join(work, ".agents", "flows", "lax.yaml"), "build:\n  role: builder\n");
     git(work, "add", ".");
     git(work, "commit", "-q", "-m", "careful");
     git(work, "push", "-q", "origin", "main");
@@ -954,7 +962,7 @@ nameRepositories(db);`;
     expect(switched.out).toBe("app-12 now runs the flow quick.\n");
     expect(flows()).toEqual([{ task: 12, flow: "quick" }]);
     expect((await skel("start", "app-12", "--flow", "slow")).err).toBe(
-      "Skelcrew: app has no flow slow. Its flows are default, careful, quick.\n",
+      "Skelcrew: app has no flow slow. Its flows are default, careful, lax, quick.\n",
     );
     // Its builder already runs as builder, so a flow that builds as another role is refused, and
     // the builder keeps the instructions it started with.
@@ -963,6 +971,12 @@ nameRepositories(db);`;
     );
     expect(flows()).toEqual([{ task: 12, flow: "quick" }]);
     expect(read(join(config("app-12"), "args"))).not.toContain("Write the test first.");
+    // A switch to a flow whose round limit isn't valid is refused, naming where it is.
+    const yours = join(home, ".config", "skelcrew", "config.yaml");
+    writeFileSync(yours, "harness: claude\nmax_rounds: 0\n");
+    expect((await skel("start", "app-12", "--flow", "lax")).err).toContain(`${yours} isn't valid`);
+    expect(flows()).toEqual([{ task: 12, flow: "quick" }]);
+    writeFileSync(yours, "harness: claude\n");
     // Once its builder has submitted, the task keeps its flow to the end.
     const db = new Database(join(data(), "skelcrew.db"));
     db.run("PRAGMA busy_timeout = 5000");

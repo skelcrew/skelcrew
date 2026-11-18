@@ -503,24 +503,36 @@ test("the lead reads the approved flows at a ref only Skelcrew moves, as each ap
   expect(atRef("flows/quick.yaml")).toBe("review:\n  rounds: 9\n");
 });
 
-test("sc start's check of a flow's round limit refuses a bad one, unless your override decides it", () => {
-  agentsFile("flows/quick.yaml", "review:\n  rounds: 0\n");
-  commit("flow");
+test("a role of the repository's own takes its own roles: lines, never the stage's built-in role's", () => {
+  agentsFile("flows/default.yaml", "build:\n  role: tester\n");
+  agentsFile("roles/tester.md", "Test first.\n");
+  commit("roles");
   inHome(approveCurrent);
-  const check = () =>
-    inHome(
-      `const { checkFlowRounds } = await import(${JSON.stringify(source("settings.ts"))}); checkFlowRounds({ ...app, flow: "quick" }); return null;`,
-    );
-  expect(() => check()).toThrow(".agents/flows/quick.yaml in simon/app");
+  const config = join(home, ".config", "skelcrew", "config.yaml");
+  const builder = () => inHome('return readSettings(["builder"], app).builder;');
+  // roles: builder: is the built-in builder's, which doesn't run here.
+  writeFileSync(config, "harness: claude\nmodel: opus\nroles: { builder: { harness: codex } }\n");
+  expect(builder()).toEqual({ harness: "claude", model: "opus" });
   writeFileSync(
-    join(home, ".config", "skelcrew", "config.yaml"),
-    "repos: { simon/app: { max_rounds: 7 } }\n",
+    config,
+    "harness: claude\nmodel: opus\nroles: { builder: { harness: codex }, tester: { model: sonnet } }\n",
   );
-  expect(check()).toBeNull();
-  // A bad max_rounds outside the flow file isn't the flow's, and fails the thread later instead.
-  writeFileSync(join(home, ".config", "skelcrew", "config.yaml"), "max_rounds: 0\n");
-  agentsFile("flows/quick.yaml", "build:\n  role: builder\n");
-  commit("flow");
+  expect(builder()).toEqual({ harness: "claude", model: "sonnet" });
+  // Your override under repos: goes over your general settings for the role, as for any role.
+  writeFileSync(
+    config,
+    "harness: claude\nmodel: opus\nroles: { tester: { model: sonnet } }\nrepos: { simon/app: { roles: { tester: { harness: codex, model: gpt-6 } } } }\n",
+  );
+  expect(builder()).toEqual({ harness: "codex", model: "gpt-6" });
+  // The role file's harness goes over your general settings, and your override over the file.
+  agentsFile("roles/tester.md", "---\nharness: codex\n---\nTest first.\n");
+  commit("tester");
   inHome(approveCurrent);
-  expect(check()).toBeNull();
+  writeFileSync(config, "harness: claude\nmodel: opus\nroles: { tester: { model: sonnet } }\n");
+  expect(builder()).toEqual({ harness: "codex" });
+  writeFileSync(
+    config,
+    "harness: claude\nmodel: opus\nrepos: { simon/app: { roles: { tester: { harness: claude } } } }\n",
+  );
+  expect(builder()).toEqual({ harness: "claude", model: "opus" });
 });

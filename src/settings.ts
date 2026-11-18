@@ -197,20 +197,30 @@ export function readSettings<G extends Group>(
   // merges, as a model goes along only while the role stays on the harness it was given with.
   const decidedBy = (layers: File[]) => (k: Key) =>
     !roleKeys.includes(k) && layers.some((l) => l[k] !== undefined && l[k] !== null);
-  const overrides = repository ? readOverrides(wanted, repository) : {};
+  // `builder` and `reviewer` are the roles the task's flow runs in the build and review stages,
+  // which are those two unless the flow names one of the repository's own, such as tester. A
+  // role's settings, in every layer, are then the ones of the role that runs.
+  const runs = { lead: "lead", builder: "builder", reviewer: "reviewer" };
+  if (repository && groups.some((group) => group === "builder" || group === "reviewer")) {
+    const stages = flowRoles(repository);
+    runs.builder = stages.build;
+    runs.reviewer = stages.review;
+  }
+  // The names of the roles asked for, as roles: lines name them.
+  const roleNames = (["lead", "builder", "reviewer"] as const)
+    .filter((name) => groups.some((group) => group === name))
+    .map((name) => runs[name]);
+  const overrides = repository ? readOverrides(wanted, repository, roleNames) : {};
   // The repository's .agents/, a layer of its own just over skelcrew.yaml, as its files replace
   // that file's old keys: the role files' harness and model go over lead:, builder: and
   // reviewer:, as a model must follow the harness each layer leaves, and the rounds of the task's
   // flow, `default` unless it named another, go over max_rounds. Only the files of the settings
   // asked for are read, so a broken reviewer file never stops the lead.
   const agentsFiles: File = {};
-  // The builder's and reviewer's are those of the role the task's flow runs in their stage,
-  // which is theirs unless the flow names one of the repository's own.
   for (const name of ["lead", "builder", "reviewer"] as const)
     if (repository && groups.some((group) => group === name)) {
-      const roles = name === "lead" ? null : flowRoles(repository);
-      const role = roles === null ? "lead" : name === "builder" ? roles.build : roles.review;
-      agentsFiles[name] = roleFileSettings(role, repository);
+      const file = roleFileSettings(runs[name], repository);
+      if (file) agentsFiles.roles = { ...agentsFiles.roles, [runs[name]]: file };
     }
   // The flow file is checked even when your override decides the round limit, as its stages
   // still say which roles run.
@@ -226,17 +236,7 @@ export function readSettings<G extends Group>(
     : {};
   const decided = decidedBy([overrides, agentsFiles, shared]);
   const fromYours = wanted.filter((k) => yourKeys.includes(k) && !decided(k));
-  return mergeSettings([overrides, agentsFiles, shared, readYourFile(fromYours)]);
-}
-
-// Reads the round limit of a task's flow file, as readSettings would, for sc start and a switch
-// of flow, so a flow file with a bad one is refused before any work begins. When your override
-// under repos: decides the round limit, the file's isn't read, as it never counts. A bad
-// max_rounds elsewhere, such as in your config.yaml, still fails the thread with the reason
-// once it is read, as it isn't the flow's.
-export function checkFlowRounds(repository: Repository): void {
-  const overrides = readOverrides(["max_rounds"], repository);
-  repositoryRounds(repository, overrides.max_rounds !== undefined && overrides.max_rounds !== null);
+  return mergeSettings([overrides, agentsFiles, shared, readYourFile(fromYours, roleNames)], runs);
 }
 
 // Returns the harness and model a repository's role file names, or nothing when it names neither
@@ -255,17 +255,17 @@ function yourConfig(): unknown {
 
 // Returns your config.yaml, holding only `keys`, checked. A file with none of them isn't read,
 // so a broken one stops only what it could change.
-function readYourFile(keys: Key[]): File {
+function readYourFile(keys: Key[], roleNames: string[]): File {
   if (keys.length === 0) return {};
   const file = join(configDir(), "config.yaml");
-  return check(pick(yourConfig(), keys), `${file} isn't valid`);
+  return check(pick(yourConfig(), keys, roleNames), `${file} isn't valid`);
 }
 
 // Returns your overrides for the repository, from repos: in your config.yaml, holding only the
 // `keys` an override may set, checked. A repository is named by its owner/name, in any case, as
 // forges ignore case in names. Only its own entry is checked, so a mistake in another
 // repository's stops only that one.
-function readOverrides(keys: Key[], repository: Repository): File {
+function readOverrides(keys: Key[], repository: Repository, roleNames: string[]): File {
   const wanted = keys.filter((k) => overrideKeys.includes(k));
   if (wanted.length === 0) return {};
   const file = join(configDir(), "config.yaml");
@@ -278,7 +278,7 @@ function readOverrides(keys: Key[], repository: Repository): File {
     Object.entries(repos.data.repos ?? {}).find(([key]) => key.toLowerCase() === name) ?? [];
   if (entry === undefined || entry === null) return {};
   const problem = `${file} isn't valid under repos: ${repository.owner}/${repository.repo}`;
-  return check(pick(entry, wanted), problem);
+  return check(pick(entry, wanted, roleNames), problem);
 }
 
 // Returns the repository's skelcrew.yaml, holding only `keys`, checked, or nothing when it has
@@ -292,7 +292,7 @@ function readRepositoryFile(keys: Key[], repository: Repository): File {
   if (!stat) return {};
   if (!stat.isFile())
     throw new Error("the repository's skelcrew.yaml isn't a plain file, so Skelcrew won't read it");
-  const read = pick(parseYaml(file, "the repository's skelcrew.yaml"), keys);
+  const read = pick(parseYaml(file, "the repository's skelcrew.yaml"), keys, []);
   return check(read, "the repository's skelcrew.yaml isn't valid");
 }
 
@@ -308,7 +308,7 @@ function parseYaml(path: string, name: string): unknown {
 
 // Returns the `keys` of what a file held. An empty file, or one that isn't a mapping, gives
 // nothing to keep, and File's check says so for the second.
-function pick(data: unknown, keys: Key[]): unknown {
+function pick(data: unknown, keys: Key[], roleNames: string[]): unknown {
   if (data === null || data === undefined) return {};
   if (typeof data !== "object" || Array.isArray(data)) return data;
   // The fallback and your reviewer's harness are written among the reviewer's lines, but read
@@ -317,11 +317,11 @@ function pick(data: unknown, keys: Key[]): unknown {
   const picked = Object.fromEntries(
     Object.entries(data).filter(([key]) => !nested.includes(key) && keys.some((k) => k === key)),
   );
-  // Of roles:, only the roles asked for are kept, so a mistake in another role stops only its
-  // own agents. One that isn't a mapping is kept whole, for the check to refuse.
+  // Of roles:, only the roles asked for are kept, by `roleNames`, so a mistake in another role
+  // stops only its own agents. One that isn't a mapping is kept whole, for the check to refuse.
   if (isMapping(picked.roles))
     picked.roles = Object.fromEntries(
-      Object.entries(picked.roles).filter(([name]) => keys.some((k) => k === name)),
+      Object.entries(picked.roles).filter(([name]) => roleNames.includes(name)),
     );
   // The new shape's reviewer comes last, so it wins where both shapes say something.
   const roles = "roles" in data ? data.roles : undefined;
@@ -350,8 +350,12 @@ function check(data: unknown, problem: string): File {
 }
 
 // Merges the files, the one that wins first, over the built-in defaults: each setting comes from
-// the first that sets it, key by key. The last layer is your config.
-function mergeSettings(layers: File[]): Settings {
+// the first that sets it, key by key. The last layer is your config. `runs` names the role that
+// runs as each of the lead, builder and reviewer, for a flow that names one of its own.
+function mergeSettings(
+  layers: File[],
+  runs: Record<"lead" | "builder" | "reviewer", string>,
+): Settings {
   const defaults = builtInDefaults();
   // The first value any layer sets for `get`.
   const first = <T>(get: (layer: File) => T | undefined | null) =>
@@ -363,11 +367,13 @@ function mergeSettings(layers: File[]): Settings {
   // builder: and reviewer: lines, which go over the layer's own harness and model for every
   // role. That last one counts as a layer's say on the role, so a harness your override under
   // repos: names goes over a role line in the repository's skelcrew.yaml, as the override does.
-  const role = (name: "lead" | "builder" | "reviewer") =>
+  // A role of the repository's own has only its roles: lines, never the stage's built-in role's,
+  // so with none it gets your harness and model, as any role does.
+  const role = (stage: "lead" | "builder" | "reviewer") =>
     mergeRole(
       layers.flatMap((l) => [
-        { role: l.roles?.[name] },
-        { role: l[name] },
+        { role: l.roles?.[runs[stage]] },
+        ...(runs[stage] === stage ? [{ role: l[stage] }] : []),
         ...(l === yours ? [] : [{ role: { harness: l.harness, model: l.model }, everyRole: true }]),
       ]),
       top,

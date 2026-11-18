@@ -11,7 +11,7 @@ import {
   readSession,
   stillRunning,
 } from "../agents/sessions.ts";
-import { repositoryCommands } from "../config.ts";
+import { repositoryCommands, roundLimit } from "../config.ts";
 import { finishUpgrade, moveToTasks, openDb, type Repository } from "../db.ts";
 import { checkFlow, flowRoles } from "../flows.ts";
 import { setupDone } from "../machine/setup.ts";
@@ -19,7 +19,6 @@ import { keepUpToDate } from "../machine/update.ts";
 import { cloneDir, daemonCodeFile, daemonSocket, reviewSocket, threadSocket } from "../paths.ts";
 import { createTask, mergePr } from "../plugins/ask.ts";
 import { errorText } from "../say.ts";
-import { checkFlowRounds } from "../settings.ts";
 import { checkoutFolder, git, release, singleFile } from "../version.ts";
 import { assignIssue } from "./assign.ts";
 import {
@@ -246,6 +245,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   // the builder may have submitted since the caller looked. The builder is already running, or
   // starting, on its flow's build role, with that role's instructions, harness and model, so a
   // flow that builds with another role is refused: it would run a builder it doesn't describe.
+  // The round limit it would run with is read too, so a bad one refuses the switch.
   const switchFlow = (at: Thread, flow: string, short?: string) => {
     const now = readThread(db, at.folder);
     const name = threadName(db, now);
@@ -253,7 +253,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       throw new Error(`${name} keeps the flow ${now.flow}, as its builder has submitted already.`);
     const repository = findRepository(db, `${now.owner}/${now.repo}`);
     checkFlow(now, repository.name, flow);
-    checkFlowRounds({ ...now, flow });
+    roundLimit({ ...now, flow });
     const building = flowRoles(now).build;
     const wanted = flowRoles({ ...now, flow }).build;
     if (wanted !== building)
@@ -503,6 +503,11 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
               record(db, started.folder, { short: request.short }, "given a short title");
             return { started: `Started ${threadName(db, started)}.` };
           }
+          // The flow and the round limit the task would run with are read first, so a bad one,
+          // wherever it comes from, refuses the start with the reason before any work begins.
+          const flow = request.flow ?? "default";
+          checkFlow({ owner, repo }, repository.name, flow);
+          roundLimit({ owner, repo, flow });
           thread = await startThread(db, request);
         } finally {
           startingTasks.delete(key);
@@ -514,6 +519,11 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         return { started: `Started ${threadName(db, thread)}.` };
       }
       case "start new": {
+        // As for a start on a task: a bad round limit refuses it before any work begins.
+        const { owner, repo, name } = findRepository(db, request.repo);
+        const flow = request.flow ?? "default";
+        checkFlow({ owner, repo }, name, flow);
+        roundLimit({ owner, repo, flow });
         const thread = await startThread(db, request);
         setUpAndStart(thread);
         return { started: `Started ${threadName(db, thread)}.` };
