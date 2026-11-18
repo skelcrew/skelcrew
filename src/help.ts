@@ -8,8 +8,8 @@ const sections: [string, [string, string][]][] = [
     "COMMANDS",
     [
       ["(no command)", "Open this repository's lead, with the sidebar"],
-      ["ls [<repo>]", "Tasks, with each one's status, PR, CI and review"],
-      ["show <task>", "A task: description, threads, PR, checks, review"],
+      ["ls [<repo>]", "Tasks, with each one's stage, status, PR, CI and review"],
+      ["show <task>", "A task: stage, description, threads, PR, checks, review"],
       ["ps [<repo>]", "Threads: status, PR, CI, review, needs you"],
       ["start <issue> [--from <branch>]", "Start, resume, or go on past the limit"],
       ['start <repo> "<title>" "<body>"', "Start a thread, with no issue in the tracker"],

@@ -720,13 +720,48 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
     expect(typed()).toContain("The check test failed");
     expect(asked(plugin)).toContainEqual({ ask: "log", repository: "simon/app", check: "900" });
     await until(() => handled("900"));
-    expect(thread()).toMatchObject({ status: "working", needs_you: 0 });
+    expect(thread()).toMatchObject({ status: "working", needs_you: 0, ci_passed: 0 });
     const first = running[0];
     first?.kill();
     await first?.exited;
     serve();
     await morePolls();
     expect(typed().split("The check test failed").length - 1).toBe(1);
+  }, 60_000);
+
+  // A check can fail on one run and pass on the next, with no new round. The task follows the
+  // latest run: ready for review, working while the builder hears of the failure, then ready
+  // again once the check passes and the builder has nothing new to submit.
+  test("an approved PR whose check fails, then passes on a run again, is ready for review again", async () => {
+    await approvedApp12();
+    const stage = () => {
+      const done = Bun.spawnSync([process.execPath, main, "ls", "app", "--json"], { env: env() });
+      return done.success ? JSON.parse(done.stdout.toString())[0]?.stage : undefined;
+    };
+    pr({ reviews: [skelReview], checks: [approved, check(900, "passed")] });
+    await until(() => thread().needs_you === 1);
+    expect(thread()).toMatchObject({ status: "waiting", ci_passed: 1 });
+    expect(stage()).toBe("ready for review");
+    // The check runs again and fails: the builder is told, and the task is at work again.
+    pr({ reviews: [skelReview], checks: [approved, check(901, "failed")] });
+    await until(() => typed().includes("The check test failed"));
+    await until(() => handled("901"));
+    expect(thread()).toMatchObject({ status: "working", needs_you: 0, ci_passed: 0 });
+    expect(stage()).toBe("working");
+    // It runs once more and passes, which the next poll saves.
+    pr({ reviews: [skelReview], checks: [approved, check(902, "passed")] });
+    await until(() => thread().ci_passed === 1);
+    // The builder's turn ends at the commit already approved, with nothing new to submit, as
+    // Claude Code's hooks would say. The approval stands, and the next poll finds it green.
+    const short = new Bun.CryptoHasher("sha256").update("app-12").digest("hex").slice(0, 16);
+    const builderSocket = join(home, "run", "skelcrew", "threads", short, "skelcrew.sock");
+    expect(await askOn(builderSocket, { command: "question answered" })).toEqual({ asking: false });
+    const head = git(join(data(), "threads", "app-12"), "rev-parse", "HEAD");
+    const ended = { command: "turn ended", head, message: "It was a flaky run." };
+    expect(await askOn(builderSocket, ended)).toEqual({ asking: false });
+    await until(() => thread().needs_you === 1);
+    expect(thread()).toMatchObject({ status: "waiting", stalled: 0, ci_passed: 1 });
+    expect(stage()).toBe("ready for review");
   }, 60_000);
 
   // An event is handled at once, and its message waits for the builder however long it is busy.
@@ -1198,6 +1233,13 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
       false,
     );
     expect(fakeBuilders()).toEqual([]);
+    // Its issue is still open, so the task goes back to stage issue.
+    const listed = Bun.spawnSync([process.execPath, main, "issue", "ls", "app", "--json"], {
+      env: env(),
+    });
+    expect(JSON.parse(listed.stdout.toString())).toMatchObject([
+      { task: "app-12", issue: "#12", stage: "issue" },
+    ]);
     const again = Bun.spawnSync([process.execPath, main, "rm", "app-12"], {
       env: env(),
       stderr: "pipe",
@@ -1386,6 +1428,79 @@ echo "Not logged in"; exit 1`,
     expect(claims()).toEqual([claim12]);
     expect(assigns()).toEqual([assignOn]);
   }, 30_000);
+
+  // The tracker is where tasks come from and where Skelcrew shows how they go: an open issue is a
+  // task in stage issue, its label starts it, and the issue is claimed, assigned and closed by
+  // the PR's merge, through the tracker's own signals.
+  test("an open issue is a task in stage issue, its label starts it, and its merge closes the issue", async () => {
+    addApp();
+    answer(plugin, "took", { took: true });
+    changes([issue12()]);
+    serve();
+    // Runs sc issue ls for app as a tool would, with `more` words such as --all, and returns its
+    // rows, or none while the daemon isn't listening yet.
+    const listed = (...more: string[]) => {
+      const done = Bun.spawnSync(
+        [process.execPath, main, "issue", "ls", "app", "--json", ...more],
+        {
+          env: env(),
+          stderr: "pipe",
+        },
+      );
+      return done.success ? JSON.parse(done.stdout.toString()) : [];
+    };
+    await until(() => listed().length === 1);
+    expect(listed()).toEqual([
+      {
+        task: "app-12",
+        stage: "issue",
+        title: "Add export",
+        short: null,
+        issue: "#12",
+        thread: null,
+        pr: null,
+        checks: null,
+        review: null,
+      },
+    ]);
+    // Nothing starts until the label is added.
+    await morePolls();
+    expect(claims()).toEqual([]);
+    changes([issue12(true)]);
+    await until(() => thread().task === 12);
+    expect(listed()).toMatchObject([{ task: "app-12", issue: "#12", stage: "working" }]);
+    expect(thread().issue_link).toBe("https://github.com/simon/app/issues/12");
+    await until(() => thread().assigned === 1);
+    expect(claims()).toEqual([claim12]);
+    expect(assigns()).toEqual([assignOn]);
+    // The PR the builder opens holds the line that closes the issue on merge.
+    await until(
+      () => thread().pr === 7 && thread().reviewing === null && thread().submitting === null,
+      30_000,
+    );
+    const opened = asked(plugin).find((q) => q.ask === "open pr");
+    expect(String(opened?.body)).toEndWith("\n\nCloses #12");
+    // Approved with every check green, it waits for you to merge.
+    pr({ labeled: true, reviews: [skelReview], checks: [approved, check(900, "passed")] });
+    await until(() => thread().needs_you === 1);
+    expect(listed()).toMatchObject([{ task: "app-12", issue: "#12", stage: "ready for review" }]);
+    // Merged, the task is too, and you stay assigned. The tracker then closes the issue.
+    pr({
+      labeled: true,
+      state: "merged",
+      reviews: [skelReview],
+      checks: [approved, check(900, "passed")],
+    });
+    await until(() => thread().status === "done");
+    // A merged task leaves the list at once, though its issue is still open, and only --all
+    // shows it.
+    expect(listed()).toEqual([]);
+    expect(listed("--all")).toMatchObject([{ task: "app-12", issue: "#12", stage: "merged" }]);
+    changes([taskItem("12", "Add export", { state: "closed", labels: ["skelcrew"] })]);
+    await until(() => listed("--all")[0]?.issue === null);
+    expect(listed("--all")).toMatchObject([{ task: "app-12", stage: "merged" }]);
+    expect(assigns()).toEqual([assignOn]);
+  }, 60_000);
 
   // The claim only keeps two daemons from both starting by the label. You decide by hand, and
   // sc start claims it too, so the issue shows Skelcrew took it.

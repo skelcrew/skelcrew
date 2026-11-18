@@ -213,6 +213,7 @@ export async function mergeIfReady(
         thread,
         `PR #${thread.pr} was merged when ready`,
         `is done: #${thread.pr} merged into ${pr.base} when ready, as the human asked`,
+        true,
       );
       return;
     }
