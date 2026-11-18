@@ -8,6 +8,7 @@ import { parse, stringify } from "yaml";
 import { z } from "zod";
 import { configFile, yourConfigDocument } from "../config.ts";
 import { configDir } from "../paths.ts";
+import { errorText } from "../say.ts";
 import { readSettings } from "../settings.ts";
 import { installedPlugins, readManifest, Version } from "./plugin.ts";
 
@@ -65,22 +66,29 @@ export function yourLock(db: Database): Lock {
     if (!lock.success) throw new Error(`${file} isn't valid: ${z.prettifyError(lock.error)}`);
     return lock.data;
   }
-  // A plugin from a folder of yours has no version to pin, so only those from GitHub count. One
-  // whose folder can't be read is left out, rather than stop every plugin command.
+  // A plugin from a folder of yours has no version to pin, so only those from GitHub count.
   const lock: Lock = {};
-  for (const { source, folder } of installedPlugins(db)) {
+  const sources: string[] = [];
+  for (const { name, source, folder } of installedPlugins(db)) {
     if (source === null) continue;
+    sources.push(source);
+    // One whose folder can't be read is said and left out of the lock, rather than stop every
+    // plugin command. Your config.yaml still names it, so it isn't lost from your setup. Its
+    // folder is broken, so installing it again is what pins it.
     try {
-      const { name, version } = readManifest(folder);
-      lock[source] = { name, version, commit: commitOf(folder) };
-    } catch {}
+      const manifest = readManifest(folder);
+      lock[source] = { name: manifest.name, version: manifest.version, commit: commitOf(folder) };
+    } catch (error) {
+      console.log(
+        `Skelcrew couldn't pin ${name} from ${source} in your lock: ${errorText(error)}. To install it again, pinned: sc remove -g ${name}, then sc add -g ${source}`,
+      );
+    }
   }
-  if (Object.keys(lock).length === 0) return lock;
-  writeLock(lock);
+  if (Object.keys(lock).length > 0) writeLock(lock);
   // Added to the plugins your config names already, such as a new one copied from another
   // machine, so the setup carries all of them.
   const named = yourPlugins();
-  const added = Object.keys(lock).filter((source) => !named.includes(source));
+  const added = sources.filter((source) => !named.includes(source));
   if (added.length > 0) setYourPlugins([...named, ...added]);
   return lock;
 }

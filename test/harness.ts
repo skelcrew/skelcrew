@@ -58,10 +58,10 @@ export function homeEnv(home: string): Record<string, string> {
 const quoteForSh = (word: string) => `'${word.replaceAll("'", "'\\''")}'`;
 
 // Runs a program with a terminal as its input, as you run sc at yours, and types `typed` into
-// it, then the end of the input. Skelcrew asks before installing a plugin only at a terminal,
-// so a test that answers yes needs one. util-linux's script gives the program the terminal.
-// The program's output goes to files rather than the terminal, so it reads as from a pipe, and
-// the terminal's echo of what was typed stays out of it.
+// it, then Ctrl-D, which ends the input. Skelcrew asks before installing a plugin only at a
+// terminal, so a test that answers yes needs one. Bun gives the program the terminal, on Linux and
+// macOS alike. The program's output goes to files through sh rather than to the terminal, so it
+// reads as from a pipe, and the terminal's echo of what was typed stays out of it.
 export async function inTerminal(
   argv: string[],
   options: { typed: string; env: Record<string, string>; cwd: string },
@@ -70,14 +70,15 @@ export async function inTerminal(
   const [out, err] = [join(folder, "out"), join(folder, "err")];
   try {
     const command = `exec ${argv.map(quoteForSh).join(" ")} >${quoteForSh(out)} 2>${quoteForSh(err)}`;
-    const run = Bun.spawn([Bun.which("script") ?? "script", "-qec", command, "/dev/null"], {
+    // The terminal's own output is only the echo, read and dropped so it never fills up.
+    const run = Bun.spawn(["/bin/sh", "-c", command], {
       cwd: options.cwd,
-      env: { ...options.env, SHELL: "/bin/sh" },
-      stdin: new Blob([options.typed]),
-      stdout: "ignore",
-      stderr: "ignore",
+      env: options.env,
+      terminal: { cols: 120, rows: 40, data() {} },
     });
+    run.terminal?.write(`${options.typed}\x04`);
     const code = await run.exited;
+    run.terminal?.close();
     return { out: read(out), err: read(err), code };
   } finally {
     rmSync(folder, { recursive: true, force: true });

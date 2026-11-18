@@ -716,3 +716,27 @@ test("the move into a lock adds this machine's plugins to the ones your config n
     "skelcrew/skelcrew-fake",
   ]);
 });
+
+// A plugin whose folder can't be read stays in your config, so your setup still carries it.
+test("the move into a lock pins what it can read, and names in your config and reports the rest", async () => {
+  publish("skelcrew/skelcrew-fake", "0.1.0");
+  await skel(["add", "-g", "skelcrew/skelcrew-fake"], "y\n");
+  const db = new Database(join(home, ".local", "share", "skelcrew", "skelcrew.db"));
+  db.run(
+    "INSERT INTO plugins (name, folder, source) VALUES ('other', '/nowhere', 'skelcrew/skelcrew-other')",
+  );
+  db.close();
+  rmSync(yourLockFile());
+  rmSync(yourConfig());
+  const run = await skel(["update", "-g", "fake"]);
+  expect(run.out).toContain(
+    "Skelcrew couldn't pin other from skelcrew/skelcrew-other in your lock: /nowhere has no skelcrew-plugin.yaml, so it isn't a plugin. To install it again, pinned: sc remove -g other, then sc add -g skelcrew/skelcrew-other\n",
+  );
+  expect(parse(readFileSync(yourConfig(), "utf8")).plugins).toEqual([
+    "skelcrew/skelcrew-fake",
+    "skelcrew/skelcrew-other",
+  ]);
+  expect(Object.keys(parse(readFileSync(yourLockFile(), "utf8")))).toEqual([
+    "skelcrew/skelcrew-fake",
+  ]);
+});
