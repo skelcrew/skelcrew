@@ -246,7 +246,7 @@ describe.skipIf(insideSandbox)("sc tell", () => {
     expect(builderToThread.err).toContain("doesn't know that request");
     const youToThread = await skel(["tell", "app-12", "Hello."]);
     expect(youToThread.code).not.toBe(0);
-    expect(youToThread.err).toContain("press Enter on it in the list");
+    expect(youToThread.err).toContain("pick it in the sidebar");
     await Bun.sleep(1000);
     expect(typed(builder())).not.toContain("Hello.");
   }, 60_000);

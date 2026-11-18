@@ -1,6 +1,6 @@
 // Running the daemon in the background, as sc up --bg does, then showing you a repository's
-// list, or the screen on a thread's builder, once it runs this Skelcrew's code. Plain sc shows
-// the list, and sc attach the screen.
+// lead or a thread's builder once it runs this Skelcrew's code. Plain sc opens the screen on a
+// lead, sc --list shows the lead's repository as a list, and sc attach opens a builder.
 import { z } from "zod";
 import { agentRuns } from "./agents/sessions.ts";
 import { ask } from "./client.ts";
@@ -125,11 +125,18 @@ export async function upInBackground(): Promise<boolean> {
   return false;
 }
 
-// Makes sure a lead is running, then shows the list of the lead's repository until you leave
-// it with q. The daemon must already run, as plain sc starts it first. The lead is for `from`,
-// an owner/repo, or else for the repository you opened last. With `tab`, only a repository
-// whose tab is open will do. Returns false, with no list shown, when every tab is closed.
-export async function showList(sessions: string, from?: string, tab = false): Promise<boolean> {
+// Makes sure a lead is running, then opens the screen on the lead until you leave with Alt-Q,
+// or with `list` shows the list of the lead's repository until you leave it with q. Both exist
+// side by side until the human picks one. The daemon must already run, as plain sc starts it
+// first. The lead is for `from`, an owner/repo, or else for the repository you opened last.
+// With `tab`, only a repository whose tab is open will do. Returns false, showing nothing, when
+// every tab is closed.
+export async function attachToLead(
+  sessions: string,
+  list: boolean,
+  from?: string,
+  tab = false,
+): Promise<boolean> {
   // Asking for the lead brings it back if it ended while the daemon kept running. Starting it
   // takes longer than a status, hence the longer wait.
   const reply = await ask(
@@ -142,7 +149,8 @@ export async function showList(sessions: string, from?: string, tab = false): Pr
     throw new Error("the daemon answered in a way this Skelcrew doesn't understand");
   if ("error" in lead.data) throw new Error(lead.data.error);
   if ("closed" in lead.data) return false;
-  await runList(sessions, lead.data.repository);
+  if (list) await runList(sessions, lead.data.repository);
+  else await openScreen(sessions, lead.data.lead, lead.data.lead, lead.data.repository);
   return true;
 }
 

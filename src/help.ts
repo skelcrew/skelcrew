@@ -7,7 +7,8 @@ const sections: [string, [string, string][]][] = [
   [
     "COMMANDS",
     [
-      ["(no command)", "This repository's list: its lead, issues and tasks"],
+      ["(no command)", "Open this repository's lead, with the sidebar"],
+      ["--list", "This repository's list: its lead, issues and tasks"],
       ["ls [<repo>]", "Tasks, with each one's stage, status, PR, CI and review"],
       ["show <task>", "A task: stage, description, threads, PR, checks, review"],
       ["ps [<repo>]", "Threads: status, PR, CI, review, needs you"],
