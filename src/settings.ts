@@ -192,10 +192,18 @@ export function readSettings<G extends Group>(
   // Each layer is read from the one that wins first, and a setting a layer above decides isn't
   // read again below it, so a bad value there can't stop a setting it doesn't decide. Roles are
   // the exception: every layer's say on them merges, as a model goes along only while the role
-  // stays on the harness it was given with.
-  const decidedBy = (layers: File[]) => (k: Key) =>
-    !roleKeys.includes(k) && layers.some((l) => l[k] !== undefined && l[k] !== null);
+  // stays on the harness it was given with. Only a say in your override naming both a harness
+  // and a model for the role, its own or for every role, decides it whatever is below, so then
+  // nothing below is read for that role.
   const overrides = repository ? readOverrides(wanted, repository) : {};
+  const roleDecided = (k: Key) =>
+    (k === "lead" || k === "builder" || k === "reviewer") &&
+    [overrides.roles?.[k], overrides[k], overrides].some(
+      (say) => say?.harness !== undefined && say.model !== undefined,
+    );
+  const decidedBy = (layers: File[]) => (k: Key) =>
+    roleDecided(k) ||
+    (!roleKeys.includes(k) && layers.some((l) => l[k] !== undefined && l[k] !== null));
   // The repository's .agents/, a layer of its own just over skelcrew.yaml, as its files replace
   // that file's old keys: the role files' harness and model go over lead:, builder: and
   // reviewer:, as a model must follow the harness each layer leaves, and the default flow's
@@ -203,7 +211,7 @@ export function readSettings<G extends Group>(
   // reviewer file never stops the lead.
   const agentsFiles: File = {};
   for (const name of ["lead", "builder", "reviewer"] as const)
-    if (repository && groups.some((group) => group === name))
+    if (repository && groups.some((group) => group === name) && !roleDecided(name))
       agentsFiles[name] = roleFileSettings(name, repository);
   // The flow file is checked even when your override decides the round limit, as its stages
   // still say which roles run.

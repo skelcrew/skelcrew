@@ -348,3 +348,23 @@ test("a role your repos: override puts back on your harness gets your model agai
   );
   expect(read(["builder"]).settings?.builder).toEqual({ harness: "claude" });
 });
+
+test("a role your repos: override decides whole isn't read below it, so a bad one there stops nothing", () => {
+  files(
+    "harness: claude\nbuilder: { harness: invalid }\nrepos: { simon/app: { harness: codex, model: gpt } }\n",
+    "builder: { harness: invalid }\nreviewer: { model: [1] }\n",
+  );
+  const settings = read(roleGroups);
+  expect(settings.err).toBe("");
+  expect([settings.settings?.builder, settings.settings?.reviewer]).toEqual([
+    { harness: "codex", model: "gpt" },
+    { harness: "codex", model: "gpt" },
+  ]);
+  // An override naming only a harness leaves the repository's model on that harness counting,
+  // so the repository's line is still read.
+  files(
+    "harness: claude\nrepos: { simon/app: { harness: codex } }\n",
+    "builder: { harness: invalid }\n",
+  );
+  expect(read(["builder"]).err).toContain("skelcrew.yaml isn't valid");
+});
