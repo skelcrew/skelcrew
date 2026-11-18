@@ -4,6 +4,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { z } from "zod";
 import { HarnessName, harnessNamed } from "../src/agents/harness.ts";
 import instructions from "../src/defaults/roles/builder.md" with { type: "text" };
 import { builderInstructions } from "../src/flow/builder.ts";
@@ -20,16 +21,18 @@ afterEach(() => {
   rmSync(home, { recursive: true, force: true });
 });
 
-// Returns the instructions a harness's start left for its agent, from the file it points the
-// harness at: Claude Code's --append-system-prompt-file, or the AGENTS.override.md in Codex's
-// own home.
-function toldIn(started: { argv: string[]; env: Record<string, string> }): string {
-  const { argv, env } = started;
+// Returns the instructions a harness's start left for its agent, from the file its command
+// names: Claude Code's --append-system-prompt-file, or the setting Codex's shell reads back as
+// its developer instructions.
+function toldIn(started: { argv: string[] }): string {
+  const { argv } = started;
   const flag = argv.indexOf("--append-system-prompt-file");
-  const file =
-    flag > -1 ? argv[flag + 1] : env.CODEX_HOME && join(env.CODEX_HOME, "AGENTS.override.md");
+  if (flag > -1) return readFileSync(argv[flag + 1] ?? "", "utf8");
+  const file = argv.find((arg) => arg.endsWith("/instructions.toml"));
   if (!file) throw new Error("the harness was given no instructions file");
-  return readFileSync(file, "utf8");
+  const setting = readFileSync(file, "utf8");
+  expect(setting).toStartWith("developer_instructions=");
+  return z.string().parse(JSON.parse(setting.slice("developer_instructions=".length)));
 }
 
 // tmux refuses a start command past about 16 KB, so instructions of any size leave the

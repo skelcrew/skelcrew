@@ -70,9 +70,11 @@ function fakeCodex(): void {
   echo '{"models":[{"slug":"gpt-6.1-sol"},{"slug":"gpt-6-luna"}]}'; exit 0
 fi
 cd "$CODEX_HOME"
-# Its arguments last, as tests wait for them before reading the others. Its instructions go in
-# told, moved into place like its arguments.
-cat AGENTS.override.md > told.part; mv told.part told
+# Its arguments last, as tests wait for them before reading the others. Its developer
+# instructions go in told, moved into place like its arguments.
+: > told.part
+for a; do case "$a" in developer_instructions=*) printf '%s' "\${a#developer_instructions=}" > told.part ;; esac; done
+mv told.part told
 env > env; echo "$OLDPWD" > pwd; printf '%s\\n' "$@" > args.part; mv args.part args
 if [ "$1" != resume ]; then
   mkdir -p sessions/2026/11/09

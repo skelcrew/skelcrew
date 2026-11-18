@@ -324,19 +324,17 @@ async function startCommand(given: {
   // that another session loads. It stays, so codex resume finds the conversation.
   const sessions = join(dataDir(home), "codex-sessions");
   const sessionHome = join(sessions, name);
-  const instructions = join(sessionHome, "AGENTS.override.md");
+  const instructions = join(sessionHome, "instructions.toml");
   // Skelcrew writes here with your rights, and the agent can change what is in its folder. A
   // link it left would send that write to any file of yours.
   for (const p of [sessions, sessionHome, instructions])
     if (lstatSync(p, { throwIfNoEntry: false })?.isSymbolicLink())
       throw new Error(`${p} is a link, so Skelcrew won't write through it`);
   mkdirSync(sessionHome, { recursive: true, mode: 0o700 });
-  // The instructions go in the session's own CODEX_HOME, which Codex reads as its global
-  // instructions. Codex takes developer instructions only on the command line, and tmux refuses
-  // a start command past about 16 KB. Codex reads AGENTS.override.md there in place of
-  // AGENTS.md, so one the agent wrote is replaced at each start rather than winning over
-  // Skelcrew's. A repository's own AGENTS.md adds to this file, never replaces it.
-  if (system) writeFileSync(instructions, system);
+  // The instructions, as the setting Codex takes on its command line, go in a file of the
+  // session's own. tmux refuses a start command past about 16 KB, so they are read back
+  // inside the sandbox. No line end, which the shell would drop anyway.
+  if (system) writeFileSync(instructions, `developer_instructions=${tomlString(system)}`);
   // Skelcrew's own folder first, so a login the first run just saved there moves to the shared
   // folder before this session links to it.
   shareLogin(home);
@@ -362,6 +360,9 @@ async function startCommand(given: {
   command.push("-c", `projects.${tomlString(cwd)}.trust_level="trusted"`);
   command.push("-c", "check_for_update_on_startup=false", "-c", "tui.disable_paste_burst=true");
   command.push("-c", "features.hooks=true", ...agentHooks);
+  // As developer instructions, which weigh more than an AGENTS.md. Codex takes them only as a
+  // -c, so this one names the file and the shell below puts what the file holds in its place.
+  if (system) command.push("-c", instructions);
   if (model) command.push("-m", model);
   if (resume) command.push(resume);
   // After --, so a message that starts with - is never taken for an option.
@@ -372,7 +373,22 @@ async function startCommand(given: {
   kept.CODEX_HOME = sessionHome;
   // Only a builder has a thread. The lead is what you type into, so it keeps its priority.
   const path = env.PATH ?? "";
-  const argv = sandboxArgs({ home, path, mounts, socket, cwd, command, normalPriority: !thread });
+  // A shell inside the sandbox swaps each word that is the instructions file's path for what
+  // the file holds, then becomes codex. The start command tmux takes stays short.
+  const swap =
+    'f=$1; shift; for a; do shift; [ "$a" = "$f" ] && a=$(cat "$f"); set -- "$@" "$a"; done; exec "$@"';
+  const started = system ? ["sh", "-c", swap, "sh", instructions, ...command] : command;
+  const argv = sandboxArgs({
+    home,
+    path,
+    mounts,
+    socket,
+    cwd,
+    command: started,
+    // Codex, not the shell before it, is the program whose folder the sandbox must show.
+    programs: ["codex"],
+    normalPriority: !thread,
+  });
   return { argv, env: kept };
 }
 
