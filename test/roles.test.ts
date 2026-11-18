@@ -158,7 +158,9 @@ ${tests}
 
 Check that it does what this asks and nothing else, and look for bugs, edge cases it misses, missing tests and failing ones.
 
-Answer "approve" only if it is ready to merge. Otherwise answer "changes", and in the body name each problem, where it is and why it matters, so the builder can fix it.`;
+List each problem in the findings, one per entry: what it is, where it is and why it matters, so the builder can fix it. In the body, say in a few lines what you checked and how, such as which tests ran.
+
+Answer "changes" with at least one finding. When you found no problem, answer "approve" with no findings, whatever CI's state: Skelcrew waits for every check to pass before the PR is ready.`;
 }
 
 // Without CI on the commit, the reviewer runs the tests, as it always did.

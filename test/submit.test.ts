@@ -80,7 +80,7 @@ case " $* " in *" -p "*)
     echo '{"type":"result","is_error":true,"result":"Claude AI usage limit reached|'"$reset"'"}'
     exit 1
   fi
-  echo '{"type":"result","structured_output":{"verdict":"approve","body":"Ready to merge."}}'
+  echo '{"type":"result","structured_output":{"verdict":"approve","body":"Ready to merge.","findings":[]}}'
   exit 0 ;;
 esac
 for a; do [ "$prev" = --settings ] && settings=$a; [ "$prev" = --append-system-prompt-file ] && told=$a; prev=$a; done
@@ -144,9 +144,19 @@ cp "$CODEX_HOME/verdict-$n" "$out"`,
   );
 }
 
-function verdict(n: number, said: "approve" | "changes", body: string): void {
+// Gives review n's answer. Changes name the body as their one finding, unless `findings` says
+// otherwise.
+function verdict(
+  n: number,
+  said: "approve" | "changes",
+  body: string,
+  findings: string[] = said === "changes" ? [body] : [],
+): void {
   mkdirSync(codexHome(), { recursive: true });
-  writeFileSync(join(codexHome(), `verdict-${n}`), JSON.stringify({ verdict: said, body }));
+  writeFileSync(
+    join(codexHome(), `verdict-${n}`),
+    JSON.stringify({ verdict: said, body, findings }),
+  );
 }
 
 beforeEach(() => {
@@ -296,10 +306,18 @@ const statuses = (): Status[] =>
       state: String(q.state),
       description: String(q.description),
     }));
+// A review's body without the line Skelcrew puts first, naming its round and commit, so a test
+// reads what the reviewer said and found.
+const said = (body: unknown) => String(body).replace(/^Round \d+ · commit \w+\n\n/, "");
 const reviews = () =>
   asked(plugin)
     .filter((q) => q.ask === "review")
-    .map(({ commit, verdict, body }) => ({ commit, verdict, body }));
+    .map(({ commit, verdict, body }) => ({ commit, verdict, body: said(body) }));
+// The edits Skelcrew asked of its review on the PR, in place of posting another.
+const edits = () =>
+  asked(plugin)
+    .filter((q) => q.ask === "edit review")
+    .map(({ pr, id, verdict, body }) => ({ pr, id, verdict, body }));
 // PR 7 as Skelcrew's copy of the forge holds it, or nothing yet.
 function copiedPr(): string {
   const db = new Database(join(data(), "skelcrew.db"));
@@ -416,9 +434,25 @@ describe.skipIf(insideSandbox)("sc submit", () => {
       [second, "pending"],
       [second, "success"],
     ]);
+    // The fake forge can't edit, so the second verdict, which differs, is posted anew.
     expect(reviews()).toEqual([
-      { commit: first, verdict: "changes", body: "The export has no test." },
+      {
+        commit: first,
+        verdict: "changes",
+        body: "The export has no test.\n\n1. The export has no test.",
+      },
       { commit: second, verdict: "approve", body: "Ready to merge." },
+    ]);
+    expect(asked(plugin).find((q) => q.ask === "review")?.body).toBe(
+      `Round 1 · commit ${first.slice(0, 7)}\n\nThe export has no test.\n\n1. The export has no test.`,
+    );
+    expect(edits()).toEqual([
+      {
+        pr: 7,
+        id: "1001",
+        verdict: "approve",
+        body: `Round 2 · commit ${second.slice(0, 7)}\n\nReady to merge.`,
+      },
     ]);
     expect(typedMessages()).toBe(1);
     expect(read(join(builder(), "typed"))).toContain("The export has no test.");
@@ -446,6 +480,92 @@ describe.skipIf(insideSandbox)("sc submit", () => {
     await until(() => read(join(data(), "threads", "app-12.log")).includes("approved"));
     expect(read(join(data(), "threads", "app-12.log"))).toContain("Round 1");
   }, 60_000);
+
+  // Ready waits on every check, so CI still running is no reason to ask for changes.
+  test("a clean diff while CI runs is approved and counts no round", async () => {
+    addApp();
+    verdict(1, "approve", "CI pending. I found no code problems.");
+    await startApp12();
+    await until(() => finished("success").length === 1, 30_000);
+    await until(() => read(join(data(), "threads", "app-12.log")).includes("waits on CI"));
+    expect(reviews()).toEqual([
+      { commit: pushed(), verdict: "approve", body: "CI pending. I found no code problems." },
+    ]);
+    expect(thread()).toMatchObject({ rounds: 0, verdict: "approve", needs_you: 0 });
+    expect(typedMessages()).toBe(0);
+  }, 60_000);
+
+  // A review that only waited on CI once asked for changes it couldn't name. That answer is
+  // now refused: nothing reaches the PR, and no round counts.
+  test("changes with no findings post nothing, count no round, and need you", async () => {
+    addApp();
+    verdict(1, "changes", "CI pending. I found no code problems.", []);
+    await startApp12();
+    await until(() => finished("failure").length === 1, 30_000);
+    expect(finished("failure")[0]?.description).toBe("review failed");
+    await until(() => thread().needs_you === 1);
+    expect(reviews()).toEqual([]);
+    expect(thread()).toMatchObject({ rounds: 0 });
+    expect(typedMessages()).toBe(0);
+  }, 60_000);
+
+  // Each round edits the review the first one posted, so the PR shows the latest verdict once.
+  test("a second round edits Skelcrew's one review on the PR rather than posting another", async () => {
+    addApp();
+    answer(plugin, "edit review", { edited: true });
+    verdict(1, "changes", "The export has no test.");
+    verdict(2, "approve", "Ready to merge.");
+    await startApp12();
+    await until(() => finished("success").length === 1, 30_000);
+    await until(() => read(join(data(), "threads", "app-12.log")).includes("waits on CI"));
+    expect(reviews()).toHaveLength(1);
+    expect(edits()).toEqual([
+      {
+        pr: 7,
+        id: "1001",
+        verdict: "approve",
+        body: `Round 2 · commit ${pushed().slice(0, 7)}\n\nReady to merge.`,
+      },
+    ]);
+    expect(read(join(data(), "threads", "app-12.log"))).toContain("edited its review 1001");
+    // The PR now shows only round 2, and the log keeps round 1 whole.
+    expect(read(join(data(), "threads", "app-12.log"))).toContain(
+      "the review said (changes): Round 1 · commit",
+    );
+    expect(read(join(data(), "threads", "app-12.log"))).toContain("1. The export has no test.");
+  }, 60_000);
+
+  // A forge that can't edit gets a new review only when what it says changed, so a round that
+  // finds the same problems again adds nothing to the PR.
+  test("a forge that can't edit gets no new review when the verdict and findings are the same", async () => {
+    addApp();
+    verdict(1, "changes", "The export has no test.");
+    verdict(2, "changes", "Ran the tests again.", ["The export has no test."]);
+    verdict(3, "approve", "Ready to merge.");
+    await startApp12();
+    await until(() => finished("success").length === 1, 45_000);
+    await until(() => read(join(data(), "threads", "app-12.log")).includes("waits on CI"));
+    expect(reviews().map((r) => r.verdict)).toEqual(["changes", "approve"]);
+    expect(edits()).toHaveLength(2);
+    // The builder still hears every round.
+    expect(read(join(builder(), "typed"))).toContain("Ran the tests again.");
+  }, 90_000);
+
+  // Someone can delete Skelcrew's review from the PR. The next round posts it again, though it
+  // says the same, so the PR never goes without one.
+  test("a review deleted from the PR is posted again, even when it would say the same", async () => {
+    addApp();
+    answer(plugin, "edit review", { edited: false, gone: true });
+    verdict(1, "changes", "The export has no test.");
+    verdict(2, "changes", "Ran the tests again.", ["The export has no test."]);
+    verdict(3, "approve", "Ready to merge.");
+    await startApp12();
+    await until(() => finished("success").length === 1, 45_000);
+    await until(() => read(join(data(), "threads", "app-12.log")).includes("waits on CI"));
+    expect(reviews().map((r) => r.verdict)).toEqual(["changes", "changes", "approve"]);
+    // Each round edits the review the round before posted.
+    expect(edits().map((e) => e.id)).toEqual(["1001", "1002"]);
+  }, 90_000);
 
   // So it is always clear on the forge whether you or Skelcrew wrote a commit.
   test("commits are authored by the forge's bot, with you as co-author", async () => {
@@ -987,6 +1107,7 @@ done`,
   test("a submit that only merges main keeps the approval once every CI check on it passed", async () => {
     const work = addApp();
     verdict(1, "approve", "Ready to merge.");
+    answer(plugin, "edit review", { edited: true });
     const { merged } = await approveThenMerge(work, { merge: "passed" });
     await until(() => finished("success").length === 2, longWait);
     await untilReviewSaved();
@@ -998,8 +1119,11 @@ done`,
       state: "success",
       description: "approval kept: only merged main",
     });
-    const kept = reviews()[1];
-    expect(kept).toMatchObject({ commit: merged, verdict: "approve" });
+    // The PR's one review is edited to say so.
+    expect(reviews()).toHaveLength(1);
+    const kept = edits()[0];
+    expect(kept).toMatchObject({ pr: 7, id: "1001", verdict: "approve" });
+    expect(String(kept?.body)).toContain(`commit ${merged.slice(0, 7)}`);
     expect(String(kept?.body)).toContain("only merges main");
     // It stays approved, with no round counted.
     expect(thread()).toMatchObject({ status: "waiting", rounds: 0, verdict: "approve" });
@@ -1017,7 +1141,7 @@ done`,
     expect(reviews()[1]).toEqual({
       commit: merged,
       verdict: "changes",
-      body: "The merge broke the export.",
+      body: "The merge broke the export.\n\n1. The merge broke the export.",
     });
     expect(statuses().some((s) => s.description.startsWith("approval kept"))).toBe(false);
   }, 180_000);
@@ -1026,13 +1150,14 @@ done`,
     const work = addApp();
     verdict(1, "approve", "Ready to merge.");
     verdict(2, "approve", "Tests pass.");
+    answer(plugin, "edit review", { edited: true });
     const { merged } = await approveThenMerge(work, { ci: false });
     await until(() => finished("success").length === 2, longWait);
     expect(read(join(codexHome(), "sessions", "count")).trim()).toBe("2");
     expect(read(join(codexHome(), "sessions", "prompt-2"))).not.toContain(
       "CI runs the whole test suite on this commit",
     );
-    expect(reviews()[1]).toEqual({ commit: merged, verdict: "approve", body: "Tests pass." });
+    expect(edits()[0]?.body).toBe(`Round 1 · commit ${merged.slice(0, 7)}\n\nTests pass.`);
   }, 180_000);
 
   // The builder merged main as GitHub has it, but its own origin/main is still where the thread
@@ -1124,6 +1249,7 @@ done`,
     git(work, "push", "-q", "origin", "main:next");
     verdict(1, "approve", "Ready to merge.");
     verdict(2, "approve", "Reviewed against next.");
+    answer(plugin, "edit review", { edited: true });
     const { merged } = await approveThenMerge(work);
     await until(() => read(join(data(), "threads", "app-12.log")).includes("waiting for CI"));
     const retargeted = (state: string) =>
@@ -1142,9 +1268,11 @@ done`,
     retargeted("running");
     await until(() => copiedPr().includes('"base":"next"'), longWait);
     retargeted("passed");
-    await until(() => reviews().length === 2, longWait);
+    await until(() => edits().length === 1, longWait);
     expect(read(join(codexHome(), "sessions", "count")).trim()).toBe("2");
-    expect(reviews()[1]).toMatchObject({ commit: merged, body: "Reviewed against next." });
+    expect(edits()[0]?.body).toBe(
+      `Round 1 · commit ${merged.slice(0, 7)}\n\nReviewed against next.`,
+    );
     expect(statuses().some((s) => s.description.startsWith("approval kept"))).toBe(false);
   }, 180_000);
 
@@ -1575,7 +1703,7 @@ describe.skipIf(insideSandbox)("sc review", () => {
     expect(reviews()[0]).toEqual({
       commit: first,
       verdict: "changes",
-      body: "The export has no test.",
+      body: "The export has no test.\n\n1. The export has no test.",
     });
     expect(read(join(builder(), "typed"))).toContain("The export has no test.");
     await until(() => read(join(data(), "threads", "app-12.log")).includes("waits on CI"));

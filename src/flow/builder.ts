@@ -272,6 +272,7 @@ async function recordThread(
       merge_asked: null,
       merge_waits: null,
       merge_noted: null,
+      review_post: null,
     };
     // A failed or done thread's row gives way to the new one, and messages that waited for its
     // builder go with it, as they were about the old work. Its task starts afresh too, with no

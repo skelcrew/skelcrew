@@ -82,7 +82,8 @@ const threadColumns = {
 // task came from, saved as it starts, and null for a task with no issue, such as wr1. `closes` is
 // the line a PR's body needs to close that issue on merge, saved as it starts too, so its PR
 // closes it though the tracker or Skelcrew's copy of it changed since. It is empty when there is
-// none, and null only in a row from before Skelcrew kept it.
+// none, and null only in a row from before Skelcrew kept it. `review_post` is Skelcrew's review
+// on the PR, as JSON: the PR, the review's ID and what it last said, so each round edits it.
 export const taskColumns = {
   title: "TEXT",
   body: "TEXT",
@@ -111,6 +112,7 @@ export const taskColumns = {
   review_at: "INTEGER",
   review_limited: "INTEGER NOT NULL DEFAULT 0",
   review_reset: "INTEGER",
+  review_post: "TEXT",
   merged: "INTEGER NOT NULL DEFAULT 0",
   issue_link: "TEXT",
   closes: "TEXT",

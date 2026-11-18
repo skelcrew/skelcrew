@@ -63,6 +63,7 @@ const working: Thread = {
   merge_asked: null,
   merge_waits: null,
   merge_noted: null,
+  review_post: null,
 };
 const thread = (more: Partial<Thread>) => ({ ...working, ...more });
 

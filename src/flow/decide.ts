@@ -388,6 +388,26 @@ type Outcome = {
   why: string;
 };
 
+// Returns what a reviewer said in words: its body, then each finding numbered, for the builder
+// and the PR to read.
+function reviewText(review: { body: string; findings: string[] }): string {
+  const findings = review.findings.map((finding, n) => `${n + 1}. ${finding.trim()}`);
+  return [review.body.trim(), ...(findings.length > 0 ? [findings.join("\n")] : [])]
+    .filter((part) => part !== "")
+    .join("\n\n");
+}
+
+// Returns the body of Skelcrew's review comment on a PR: which round and commit it covers, then
+// what the reviewer said and found. The one comment is edited each round, so its first line says
+// which review it now holds. The forge adds the verdict above it.
+export function reviewComment(
+  review: { body: string; findings: string[] },
+  round: number,
+  commit: string,
+): string {
+  return `Round ${round} · commit ${commit.slice(0, 7)}\n\n${reviewText(review)}`;
+}
+
 // Decides what a finished review means for a thread that has had `rounds` rounds of changes.
 // It returns Skelcrew's check to set, the thread's new state, and what to type into the
 // builder, if anything. The builder gets max_rounds rounds of changes. Changes asked for after
@@ -443,7 +463,7 @@ export function afterReview(
     description: "Skelcrew's reviewer asked for changes",
     rounds: counted,
   };
-  const tell = `Skelcrew's reviewer asked for changes:\n\n${review.body}\n\nFix what it asks, commit, and run sc submit "<summary>" again.`;
+  const tell = `Skelcrew's reviewer asked for changes:\n\n${reviewText(review)}\n\nFix what it asks, commit, and run sc submit "<summary>" again.`;
   if (counted > maxRounds)
     return {
       ...changes,
