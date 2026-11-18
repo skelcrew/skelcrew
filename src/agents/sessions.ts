@@ -395,18 +395,18 @@ export async function stopSession(host: Host, name: string, timeout = 10_000): P
 
 // Lists the sessions on a host, each with its labels and whether its agent is running, so a
 // starting daemon can find them. A builder that exited keeps its session and last screen, which
-// would look like it still runs. A plugin's host lists its own, each named by its ID there.
+// would look like it still runs. A plugin's host lists its own, each named by its ID there,
+// with null labels for a session started without them. Labels Skelcrew can't read make the whole
+// answer an error: taken for none, they would hide a builder the daemon started but stopped
+// before saving its ID, and the thread would start a second builder in the same clone.
 export async function listSessions(
   host: Host,
 ): Promise<{ name: string; running: boolean; labels: Labels | null }[]> {
   if (typeof host === "string") return listTmuxSessions(host);
-  const Listed = z.object({ id: z.string(), running: z.boolean(), labels: z.unknown() });
+  const Listed = z.object({ id: z.string(), running: z.boolean(), labels: Labels.nullable() });
   const answer = z.object({ sessions: z.array(Listed) });
   const { sessions } = await askHost(host, { ask: "list" }, answer);
-  return sessions.map(({ id, running, labels }) => {
-    const checked = Labels.safeParse(labels);
-    return { name: id, running, labels: checked.success ? checked.data : null };
-  });
+  return sessions.map(({ id, running, labels }) => ({ name: id, running, labels }));
 }
 
 // Lists the sessions on Skelcrew's tmux server as listSessions does, at once, for the sidebar,

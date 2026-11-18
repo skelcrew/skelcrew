@@ -327,6 +327,23 @@ record(db, "app-12", { needs_you: false });`);
   expect(said).toEqual([{ id: "fake-app-12", status: "working", reason: "working" }]);
 }, 30_000);
 
+// Labels the host gives back that Skelcrew can't read could be the lost builder's, so recovery
+// fails rather than take the builder for gone and start a second one in the same clone.
+test("a builder whose ID never got saved isn't taken for gone when its host garbles its labels", () => {
+  const stored = join(home, ".config", "skelcrew", "plugins", "fake", "sessions", "fake-app-12");
+  const said = runWithFakeHost(
+    "sessions",
+    `const fs = require("node:fs");
+const host = (await builderSession(db, "unused", readThread(db, "app-12"))).host;
+await startSession(host, "app-12", { folder: ${JSON.stringify(home)}, command: ["sleep", "30"], env: {}, labels: { repository: "simon/app", role: "builder", task: "app-12" } });
+fs.writeFileSync(${JSON.stringify(join(stored, "labels.json"))}, JSON.stringify({ repository: "simon/app", role: "boss" }));
+console.log(await builderSession(db, "unused", readThread(db, "app-12")).then(() => "found", (error) => error.message));
+console.log(readThread(db, "app-12").host_id);`,
+    { host: "fake", host_id: null },
+  );
+  expect(said).toBe("fake answered list in a way Skelcrew doesn't understand\nnull\n");
+});
+
 test("recovery never takes the builder of a task whose ID only ends the same", () => {
   const said = runWithFakeHost(
     "sessions",
