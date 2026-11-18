@@ -2,7 +2,6 @@
 // PR by itself as soon as it is approved and green. Arming it, cancelling it, and the merge
 // itself. Without an armed plan nothing merges by itself.
 import type { Database } from "bun:sqlite";
-import { userInfo } from "node:os";
 import { forgeOf, mergePr, postReview } from "../plugins/ask.ts";
 import { errorText } from "../say.ts";
 import { mergeStuck, mergeWaitsOn, type PullRequest } from "./decide.ts";
@@ -78,7 +77,7 @@ export function armMerge(
   const plan = {
     merge_plan: "armed" as const,
     merge_id: crypto.randomUUID(),
-    merge_by: userInfo().username,
+    merge_by: loginName(),
     merge_at: Date.now(),
     merge_waits: null,
     merge_noted: null,
@@ -95,6 +94,14 @@ export function refuseWithoutForge(db: Database, thread: Thread): void {
     throw new Error(
       `${threadName(db, thread)}'s repository has no forge, so Skelcrew can't merge it when ready. Once it is approved, merge its branch ${thread.branch} yourself.`,
     );
+}
+
+// Returns your login name on this machine, for the record on the PR of who asked. Bun's
+// userInfo reads it from USER, which the daemon may run without, as a service does, and then
+// says "unknown", so the system is asked.
+function loginName(): string {
+  const id = Bun.spawnSync(["id", "-un"], { stdout: "pipe", stderr: "ignore" });
+  return (id.success && id.stdout.toString().trim()) || "you";
 }
 
 // Drops the thread's merge when ready, and returns what to say. Cancelling is always safe, so

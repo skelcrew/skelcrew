@@ -883,6 +883,9 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
     expect(await askOn(lead, merge)).toEqual(unknown);
     expect(await askOn(builder, merge)).toEqual(unknown);
     const merges = () => asked(plugin).filter((q) => q.ask === "merge pr");
+    // Your login name, as the system has it: the daemon runs without USER, which Bun's userInfo
+    // reads.
+    const login = () => Bun.spawnSync(["id", "-un"], { stdout: "pipe" }).stdout.toString().trim();
     expect(merges()).toEqual([]);
 
     // The forge says why it won't merge, such as a rule on the branch, and that is the error.
@@ -1509,7 +1512,7 @@ echo "Not logged in"; exit 1`,
       expect(thread().merge_plan).toBeNull();
 
       expect(await arm()).toContain("app-12 merges once it is approved and green.");
-      expect(thread()).toMatchObject({ merge_plan: "armed", merge_by: userInfo().username });
+      expect(thread()).toMatchObject({ merge_plan: "armed", merge_by: login() });
       // sc ps says so.
       const ps = Bun.spawnSync([process.execPath, main, "ps"], { env: env(), stdout: "pipe" });
       expect(ps.stdout.toString()).toContain("when ready");
@@ -1568,7 +1571,7 @@ echo "Not logged in"; exit 1`,
       expect(records()).toHaveLength(1);
       expect(records()[0]).toMatchObject({ pr: 7, commit: head, verdict: "approve" });
       expect(String(records()[0]?.body)).toStartWith(
-        `Merging when ready, as asked by ${userInfo().username} on `,
+        `Merging when ready, as asked by ${login()} on `,
       );
 
       // Cancelled and armed again, the same commit is a new plan, with a record of its own.
