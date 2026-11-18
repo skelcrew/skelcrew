@@ -526,8 +526,11 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         // poll, as nothing new is read from the tracker.
         const before = threadOn(db, request.repo, request.task);
         const atWork = before !== null && ["working", "waiting"].includes(before.status);
-        // A flow for a thread at work switches it, as switchFlow allows.
-        if (before && atWork && request.flow) {
+        // Another flow for a thread at work switches it, as switchFlow allows. The flow it runs
+        // already is no switch, so sc start goes on as without one, such as past the round limit.
+        const switching =
+          before !== null && request.flow !== undefined && request.flow !== before.flow;
+        if (before && atWork && switching && request.flow) {
           switchFlow(before, request.flow, request.short);
           return { started: `${threadName(db, before)} now runs the flow ${request.flow}.` };
         }
@@ -539,11 +542,8 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         }
         // A stopped thread switches to another flow named here as one at work does, before it
         // comes back, and is refused, staying stopped, where switchFlow refuses.
-        const switching =
-          before?.status === "stopped" &&
-          request.flow !== undefined &&
-          request.flow !== before.flow;
-        if (before && switching && request.flow) switchFlow(before, request.flow);
+        if (before?.status === "stopped" && switching && request.flow)
+          switchFlow(before, request.flow);
         const choice = startChoice(before);
         if (before && choice === "bring back") {
           const name = threadName(db, before);
@@ -578,7 +578,8 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
           // as its builder hasn't submitted meanwhile.
           const started = threadOn(db, request.repo, request.task);
           if (!before && started) {
-            if (request.flow) switchFlow(started, request.flow, request.short);
+            if (request.flow && request.flow !== started.flow)
+              switchFlow(started, request.flow, request.short);
             else if (request.short)
               record(db, started.folder, { short: request.short }, "given a short title");
             return { started: `Started ${threadName(db, started)}.` };

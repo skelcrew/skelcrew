@@ -1047,6 +1047,10 @@ nameRepositories(db);`;
     expect((await skel("start", "app-12", "--flow", "default")).err).toBe(
       "Skelcrew: app-12 keeps the flow quick, as its builder has submitted already.\n",
     );
+    // The flow it runs already is no switch, so sc start does what it would without --flow.
+    const same = await skel("start", "app-12", "--flow", "quick", "--short", "Quick fix");
+    expect(same.err).toBe("");
+    expect(same.out).toBe('Gave app-12 the short title "Quick fix".\n');
     // So does a stopped one, which stays stopped.
     expect((await skel("stop", "app-12")).code).toBe(0);
     expect((await skel("start", "app-12", "--flow", "default")).err).toBe(
