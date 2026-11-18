@@ -1028,8 +1028,8 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
     await approvedApp12();
     expect(fakeBuilders()).toHaveLength(1);
     pr({ state: "merged", reviews: [skelReview], checks: [approved] });
-    await until(() => thread().status === "done");
-    expect(existsSync(clone())).toBe(false);
+    // The thread is saved as done before its clone goes, so the test waits for both.
+    await until(() => thread().status === "done" && !existsSync(clone()));
     expect(Bun.spawnSync(["tmux", "-L", socket, "has-session", "-t", "=app-12"]).success).toBe(
       false,
     );
@@ -1137,8 +1137,8 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
     Bun.spawnSync([process.execPath, main, "stop", "app-12"], { env: env() });
     expect(thread().status).toBe("stopped");
     pr({ state: "merged", reviews: [skelReview], checks: [approved] });
-    await until(() => thread().status === "done");
-    expect(existsSync(clone())).toBe(false);
+    // The thread is saved as done before its clone goes, so the test waits for both.
+    await until(() => thread().status === "done" && !existsSync(clone()));
   }, 60_000);
 
   // The lead may remove a thread, as it may stop one, and a builder may not. The task stays

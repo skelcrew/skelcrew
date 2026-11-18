@@ -310,8 +310,31 @@ async function reviewNow(given: {
     // The builder can go on changing its clone after it submits, so the reviewer sees the
     // submitted commit, with what the builder changed since put aside. Ignored files, such
     // as installed packages, stay for the tests. git runs in the sandbox, as the clone's
-    // .git is the builder's to plant settings in.
-    const checkout = 'git checkout -q -f --detach "$0" && git clean -q -fd && exec "$@"';
+    // .git is the builder's to plant settings in. The builder runs git whenever it likes, and
+    // a command of its holds index.lock or HEAD.lock in its .git, which the view shows. A
+    // checkout needs both, so the review never takes them. It reads the commit into an index
+    // in the review's folder, started from a copy of the builder's so unchanged files aren't
+    // rewritten, and puts that index in the view's .git. Then it points HEAD at the commit
+    // by writing it. Plain copies and writes need no lock. They copy with cat, as the
+    // repository's tests stand in for cp. git replaces the builder's index
+    // whole, so the copy is never half written, and without one git starts from an empty
+    // index. The other index is named only for these steps: the reviewer's own git, in this
+    // clone or any other, uses each one's own index. The builder's locks then go from the
+    // view, as no git in the sandbox holds them, and a lock left there would stop the
+    // reviewer's own git. A Mac's copy keeps them for good otherwise. The builder's own stay.
+    // Every other step must work, or the reviewer never starts.
+    const index = join(folder, "index");
+    const checkout = [
+      'index="$(git rev-parse --git-dir)/index"',
+      '{ ! test -e "$index" || cat "$index" > "$1"; }',
+      'GIT_INDEX_FILE="$1" git read-tree --reset -u "$0"',
+      'GIT_INDEX_FILE="$1" git clean -q -fd',
+      'cat "$1" > "$index"',
+      'printf "%s\\n" "$0" > "$(git rev-parse --git-path HEAD)"',
+      'rm -f "$(git rev-parse --git-path index.lock)" "$(git rev-parse --git-path HEAD.lock)"',
+      "shift",
+      'exec "$@"',
+    ].join(" && ");
     // The sandbox shows the socket's folder, so it is left out while the daemon hasn't made it,
     // such as when a test runs a review alone. sc check then says the daemon didn't answer.
     const socket = given.socket && existsSync(dirname(given.socket)) ? given.socket : undefined;
@@ -321,7 +344,7 @@ async function reviewNow(given: {
       ...(socket ? { socket } : {}),
       mounts: [...mounts, ...launch.mounts],
       cwd: at,
-      command: ["sh", "-c", checkout, given.commit, ...launch.command],
+      command: ["sh", "-c", checkout, given.commit, index, ...launch.command],
       programs: launch.command.slice(0, 1),
     });
     // CI's result is there before the reviewer starts, and kept current while it runs. The

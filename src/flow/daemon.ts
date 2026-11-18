@@ -33,17 +33,10 @@ import { holdCheckSlot } from "./checks.ts";
 import { saveItems } from "./copy.ts";
 import { removeThread, stopThread } from "./events.ts";
 import { noCommits } from "./git.ts";
-import {
-  closeExitedLeads,
-  lastOpened,
-  leadOf,
-  openedRepositories,
-  startLead,
-  typeLeadNotes,
-} from "./lead.ts";
+import { closeExitedLeads, lastOpened, leadOf, openedRepositories, startLead } from "./lead.ts";
 import { restoreLimits, wakeAfterLimit } from "./limits.ts";
 import { listRepositories, listTasks, listThreads, showTask } from "./list.ts";
-import { deliverAllWaiting } from "./messages.ts";
+import { deliverAllWaiting, messageBuilder, messageLead, typeLeadNotes } from "./messages.ts";
 import { pollRepositories } from "./poll.ts";
 import {
   findRepository,
@@ -65,7 +58,6 @@ import {
   turnEnded,
   turnFailed,
 } from "./status.ts";
-import { messageBuilder, messageLead } from "./tell.ts";
 import { findThread, liveThreads, record, type Thread, threadName, threadOn } from "./thread.ts";
 
 // Tries to hold the daemon lock and returns whether this process owns it, preventing
@@ -396,10 +388,10 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       }
       case "tell": {
         const thread = findThread(db, request.repo, request.task);
-        return { told: await messageBuilder(db, sessions, thread, request.text) };
+        return { told: await messageBuilder(db, sessions, caller, thread, request.text) };
       }
       case "tell lead":
-        messageLead(db, sessions, callingThread(caller), request.text);
+        messageLead(db, sessions, caller, request.text);
         return { told: "lead" };
       case "submit": {
         const thread = callingThread(caller);
