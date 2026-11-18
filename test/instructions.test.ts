@@ -200,13 +200,13 @@ test("sc merge --asked-file sends the file's words exactly, and refuses an empty
     };
   };
   try {
-    // The file tool may end the file with a line break, which isn't part of the words.
+    // A request that ends with a line break keeps it.
     writeFileSync(join(home, "asked.txt"), `${words}\n`);
     const armed = await asLead("asked.txt");
     expect(armed.err).toBe("");
     expect(armed.out).toContain("app-12 merges once it is approved and green.");
     expect(requests).toEqual([
-      { command: "merge when ready", repo: "app", task: "12", asked: words },
+      { command: "merge when ready", repo: "app", task: "12", asked: `${words}\n` },
     ]);
     expect(existsSync(ran)).toBe(false);
     writeFileSync(join(home, "empty.txt"), " \n\n");

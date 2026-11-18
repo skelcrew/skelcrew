@@ -2118,7 +2118,7 @@ exec ${bwrap} "$@"`,
       // The lead writes them to a file with its file tool, and sc merge, as the lead runs it on
       // its own socket, reads them from there, by the PR's number.
       const file = join(home, "asked.txt");
-      writeFileSync(file, `${words}\n`);
+      writeFileSync(file, words);
       const asLead = () =>
         Bun.spawnSync(
           [process.execPath, main, "merge", "--when-ready", "#7", "--asked-file", file],

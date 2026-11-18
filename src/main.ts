@@ -469,11 +469,10 @@ async function mergeCommand(args: string[]): Promise<void> {
   } else if (task && !given) which = { repo: task[0], task: task[1] };
   else usage("merge");
   // Your words come in a file the lead wrote with its own file tool, so they never pass through
-  // a shell, which could run or change them. The file's last line break, which a file tool may
-  // add, goes.
+  // a shell, which could run or change them. They are read unchanged, a last line break included.
   if (asked !== undefined) {
     const { readFileSync } = await import("node:fs");
-    const words = readFileSync(asked, "utf8").replace(/\n$/, "");
+    const words = readFileSync(asked, "utf8");
     if (!words.trim())
       throw new Error(
         `${asked} is empty: write the human's words in it, exactly as they wrote them`,
