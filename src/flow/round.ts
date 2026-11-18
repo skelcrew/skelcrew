@@ -25,7 +25,7 @@ import { endLimit, limitOn, reachLimit, tellOfLimit, waitUntil } from "./limits.
 import { dropOldEvents, noteForLead, queueMessage, typeLeadNotes } from "./messages.ts";
 import { Queue } from "./queue.ts";
 import { type Limited, type Review, review } from "./reviewer.ts";
-import { cloneOf, readThread, record, repositoryOf, type Thread, threadName } from "./thread.ts";
+import { cloneOf, readThread, record, repositoryOf, Thread, threadName } from "./thread.ts";
 
 // Runs git in Skelcrew's own clone and returns what it printed, throwing with its error when it
 // fails.
@@ -760,6 +760,22 @@ async function ciEnds(
     const state = shown?.head === sha ? ciState(shown) : null;
     if (state === "passing" || state === "failing") return state;
     await Bun.sleep(5_000);
+  }
+}
+
+// Saves on each approved thread the commit its approval stands for, when the database doesn't
+// have it, as for an approval from before reviews saved it there. Skelcrew's clone keeps that
+// commit as a ref, so the list, which reads only the database, can still merge it. The daemon
+// runs this as it starts. A thread whose ref is gone keeps none, and merges on the forge.
+export function saveApprovedCommits(db: Database): void {
+  const approved = db
+    .query(`SELECT * FROM task_threads WHERE verdict = 'approve' AND reviewed_commit IS NULL
+      AND status != 'done'`)
+    .all()
+    .map((row) => Thread.parse(row));
+  for (const thread of approved) {
+    const commit = lastApproved(thread);
+    if (commit !== null) record(db, thread.folder, { reviewed_commit: commit });
   }
 }
 

@@ -39,7 +39,14 @@ import { deliverAllWaiting, messageBuilder, messageLead, typeLeadNotes } from ".
 import { pollRepositories } from "./poll.ts";
 import { findRepository, fullNameIs, noRepositories, refreshClones, repositoryAt } from "./repo.ts";
 import { allowed, type Caller, DaemonRequest, parseJson } from "./requests.ts";
-import { endRound, goOn, rerunReview, resumeRound, submitRound } from "./round.ts";
+import {
+  endRound,
+  goOn,
+  rerunReview,
+  resumeRound,
+  saveApprovedCommits,
+  submitRound,
+} from "./round.ts";
 import {
   keepState,
   noticeIdleScreens,
@@ -143,6 +150,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   const db = openDb();
   moveToTasks(db);
   finishUpgrade(db);
+  saveApprovedCommits(db);
   // The checkout and commit this daemon's code came from, for sc status. Read once at start,
   // since a git pull afterwards doesn't change the code that runs.
   const runningCode = singleFile

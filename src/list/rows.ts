@@ -4,7 +4,6 @@
 // repository, with how many of its threads need you.
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
-import { threadConfig } from "../config.ts";
 import { openTasks, prOf, type Task } from "../flow/copy.ts";
 import { reviewCheck } from "../flow/decide.ts";
 import { leadOf } from "../flow/lead.ts";
@@ -50,16 +49,12 @@ export type Open = { owner: string; repo: string };
 // A repository's tab: its name in Skelcrew, its owner/name, and its badge.
 export type Tab = Badge & { name: string; fullName: string };
 
-// Returns a thread's round limit, from its repository's skelcrew.yaml or your config. Settings
-// that aren't valid already stop rounds, with the reason, and mustn't also take the list away.
-// Such a thread then reads as never past the limit.
-function roundLimit(thread: Thread): number {
-  try {
-    return threadConfig(thread).maxRounds;
-  } catch {
-    return Number.POSITIVE_INFINITY;
-  }
-}
+// Returns a round limit that puts the thread past it exactly when its database row says so,
+// as the list reads no settings files. A review past the round limit holds its changes until
+// sc start lets the thread go on, so a thread that holds changes is past the limit, and any
+// other isn't.
+const roundLimit = (thread: Thread) =>
+  thread.held === null ? Number.POSITIVE_INFINITY : thread.rounds - 1;
 
 // Returns how long ago a moment was, in the fewest letters: <1m, then 5m, 2h, 3d. Rounded down,
 // so the text changes at most once a minute, and the list writes nothing in between.
@@ -74,19 +69,21 @@ function threadAge(started: number, now: number): string {
 // of work began. Null before the builder first started.
 const Working = z.object({ working_since: z.number().nullable() });
 
-// What the list reads of a lead beyond leadOf: what its hooks last said it does.
-const LeadState = z.object({ lead_state: z.string().nullable() });
+// What the list reads of a lead beyond leadOf: what its hooks last said it does, and whether you
+// closed its tab by exiting it.
+const LeadState = z.object({ lead_state: z.string().nullable(), tab_closed: z.coerce.boolean() });
 
 // Returns the lead's row. It says whether the lead runs, and when it does, what its hooks last
-// said it is doing, with its harness.
-function leadRow(db: Database, open: Open, running: string[]): Row {
+// said it is doing, with its harness. The daemon keeps the lead of every open tab running, so a
+// lead runs unless you exited it, which closed its tab. Enter has the daemon start it either way.
+function leadRow(db: Database, open: Open): Row {
   const lead = leadOf(db, open.owner, open.repo);
-  const runs = running.includes(lead.name);
-  const state = LeadState.parse(
+  const { lead_state: state, tab_closed: closed } = LeadState.parse(
     db
-      .query("SELECT lead_state FROM repositories WHERE owner = ? AND repo = ?")
+      .query("SELECT lead_state, tab_closed FROM repositories WHERE owner = ? AND repo = ?")
       .get(open.owner, open.repo),
-  ).lead_state;
+  );
+  const runs = !closed;
   // The hooks say asking while a question waits on you, and nothing before the first one ran.
   const word = !runs ? "stopped" : state === "asking" ? "asks you" : (state ?? "running");
   return {
@@ -120,7 +117,6 @@ function taskRow(
   repoName: string,
   saved: unknown,
   issues: Task[],
-  running: string[],
   now: number,
 ): Row {
   const thread = Thread.parse(saved);
@@ -185,7 +181,8 @@ function taskRow(
         },
       };
   }
-  const runs = running.includes(thread.folder);
+  // A builder runs while its thread works or waits. One that stopped or failed doesn't.
+  const runs = thread.status === "working" || thread.status === "waiting";
   return {
     part: ready ? "ready" : "working",
     name,
@@ -205,15 +202,16 @@ function taskRow(
 // Returns the repository's rows as the database and tmux have them now, at a moment in
 // milliseconds: its lead, then its open issues no thread works on, newest first, then its tasks
 // with agents on them, those that need you first and then newest first, so the list reaches them
-// fastest, then those ready for review. `running` names the sessions whose agents run.
-export function listRows(db: Database, open: Open, running: string[], now: number): Row[] {
+// fastest, then those ready for review. It reads only the database, never tmux or a settings
+// file, so the list opens at once and works on any session host.
+export function listRows(db: Database, open: Open, now: number): Row[] {
   const repository = findRepository(db, `${open.owner}/${open.repo}`);
   const issues = openTasks(db, open.owner, open.repo);
   const saved = db
     .query(`SELECT * FROM task_threads WHERE status != 'done' AND owner = ? AND repo = ?
       ORDER BY rowid DESC`)
     .all(open.owner, open.repo);
-  const tasks = saved.map((row) => taskRow(db, open, repository.name, row, issues, running, now));
+  const tasks = saved.map((row) => taskRow(db, open, repository.name, row, issues, now));
   // An issue whose work ended, such as by sc rm, is back in stage issue, to start again, as its
   // thread is done.
   const waiting = issues
@@ -242,7 +240,7 @@ export function listRows(db: Database, open: Open, running: string[], now: numbe
   const working = tasks.filter((row) => row.part === "working");
   const needing = working.filter((row) => row.mark.sign === "●");
   return [
-    leadRow(db, open, running),
+    leadRow(db, open),
     ...waiting,
     ...needing,
     ...working.filter((row) => row.mark.sign !== "●"),

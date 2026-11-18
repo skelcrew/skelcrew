@@ -164,7 +164,7 @@ test("takes every step on the first run, and none on the second", async () => {
   // Only Skelcrew's own lines: you run claude setup-token yourself, in another terminal. Then the
   // list, printed once as there is no terminal, which the list's own tests check.
   expect(first.out).toContain(" Skelcrew v");
-  expect(first.out.replace(/ Skelcrew v[\s\S]*stopped\n/, "")).toBe(
+  expect(first.out.replace(/ Skelcrew v[\s\S]*$/, "")).toBe(
     [
       "Setting up Skelcrew...",
       "",

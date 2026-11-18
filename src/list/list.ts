@@ -3,7 +3,7 @@
 // comes back here, on the same row. It also starts an issue, merges a task ready for review and
 // opens its PR, each asking first where it can't be taken back.
 import { cpus } from "node:os";
-import { attachSession, listSessions, typeKeys } from "../agents/sessions.ts";
+import { attachSession, typeKeys } from "../agents/sessions.ts";
 import { openRepository, startOrMerge } from "../client.ts";
 import { openDb } from "../db.ts";
 import { updateNotice } from "../machine/update.ts";
@@ -102,9 +102,8 @@ export async function runList(agents: string, repository: string): Promise<void>
   // review, so one Enter reaches it, or else on the lead.
   const refresh = () => {
     if (attached) return;
-    const running = listSessions(agents).flatMap((found) => (found.running ? [found.name] : []));
     const name = rows[here]?.name;
-    rows = listRows(db, open, running, Date.now());
+    rows = listRows(db, open, Date.now());
     const at = name === undefined ? -1 : rows.findIndex((row) => row.name === name);
     const needing = rows.findIndex((row) => row.part !== "lead" && row.mark.sign === "●");
     if (at >= 0) here = at;
@@ -116,8 +115,7 @@ export async function runList(agents: string, repository: string): Promise<void>
   // Without a terminal, such as in a pipe, there are no keys to read, so the list is printed once,
   // whole and without colours, and sc returns.
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
-    const running = listSessions(agents).flatMap((found) => (found.running ? [found.name] : []));
-    rows = listRows(db, open, running, Date.now());
+    rows = listRows(db, open, Date.now());
     // Tall enough for every row, its heading and the blank line before it.
     const size = { width: 100, height: rows.length * 3 + 6 };
     const { lines } = drawList(
@@ -193,14 +191,13 @@ export async function runList(agents: string, repository: string): Promise<void>
   // a working task's builder. Asks before starting an issue. Opens a ready task's PR, or copies
   // its link, or without a forge says which branch waits for you.
   const openRow = async (row: Row) => {
-    // A lead that isn't running, such as one you exited, is started first.
+    // The daemon starts the lead first if it isn't running, such as one you exited or one that
+    // crashed, as only it knows. The list reads only the database, which can't tell a crash.
     if (row.part === "lead" && row.session) {
-      if (!row.running) {
-        say("Starting the lead…");
-        const failed = await openRepository(`${open.owner}/${open.repo}`, false);
-        said = null;
-        if (failed) return say(`The lead didn't start: ${failed}`);
-      }
+      if (!row.running) say("Starting the lead…");
+      const failed = await openRepository(`${open.owner}/${open.repo}`, false);
+      said = null;
+      if (failed) return say(`The lead didn't start: ${failed}`);
       return attach(row.session);
     }
     if (row.part === "issue" && row.start) {

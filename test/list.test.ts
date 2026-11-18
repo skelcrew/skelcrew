@@ -77,12 +77,12 @@ afterEach(() => {
   rmSync(home, { recursive: true, force: true });
 });
 
-// Returns app's rows as the list reads them, with `running` naming the sessions that run, and
-// `bin` a folder of programs found before the real ones.
-function rows(running: string[] = [], bin = ""): Row[] {
+// Returns app's rows as the list reads them, with `bin` a folder of programs found before the
+// real ones.
+function rows(bin = ""): Row[] {
   const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
 import { listRows } from ${JSON.stringify(source("list/rows.ts"))};
-console.log(JSON.stringify(listRows(openDb(), { owner: "simon", repo: "app" }, ${JSON.stringify(running)}, Date.now())));`;
+console.log(JSON.stringify(listRows(openDb(), { owner: "simon", repo: "app" }, Date.now())));`;
   const path = bin ? `${bin}:${process.env.PATH ?? ""}` : (process.env.PATH ?? "");
   const run = Bun.spawnSync([process.execPath, "-e", code], {
     env: { ...env(), PATH: path },
@@ -100,7 +100,7 @@ test("the lead comes first, then issues, then working tasks with those that need
     "ready | app-14 | Fix the export header | #41 · approved · CI passed",
   );
   expect(shown).toEqual([
-    ["lead", "lead", "", "stopped · claude"],
+    ["lead", "lead", "", "running · claude"],
     ["issue", "app-31", "Export as CSV", ""],
     ["working", "app-12", "Rate limit the API", "needs you: question · codex"],
     ["working", "app-9", "Old work", "stopped · claude"],
@@ -160,7 +160,7 @@ ${itemSql("app", "pr", task + 100, `PR ${task}`, "2026-11-06T10:00:00Z", { head:
   writeFileSync(join(bin, "git"), `#!/bin/sh\necho "$@" >> ${join(home, "git-calls")}\n`, {
     mode: 0o755,
   });
-  const ready = rows([], bin).filter((row) => row.part === "ready");
+  const ready = rows(bin).filter((row) => row.part === "ready");
   expect(ready).toHaveLength(6);
   expect(ready.every((row) => row.merge !== null && "ask" in row.merge)).toBe(true);
   expect(read(join(home, "git-calls"))).toBe("");
@@ -225,16 +225,50 @@ test("a forge's base branch reaches the merge question without its control codes
   expect(merge && "ask" in merge ? merge.ask : "").toBe("Merge app#41 into main ]0;evil ? y/n");
 });
 
+// The list reads only the database: a builder runs while its thread works or waits, and a lead
+// while its tab is open, as the daemon keeps it running.
 test("a row knows whether its agent runs, and the lead says what its hooks last said", () => {
   sql("UPDATE repositories SET lead_state = 'asking' WHERE repo = 'app';");
-  const running = rows(["lead", "app-7"]);
+  const running = rows();
   expect(running.find((row) => row.name === "lead")).toMatchObject({
     says: "asks you · claude",
     colour: "yellow",
     running: true,
   });
   expect(running.find((row) => row.name === "app-7")?.running).toBe(true);
-  expect(running.find((row) => row.name === "app-12")?.running).toBe(false);
+  expect(running.find((row) => row.name === "app-9")?.running).toBe(false);
+  sql("UPDATE repositories SET tab_closed = 1 WHERE repo = 'app';");
+  expect(rows().find((row) => row.name === "lead")).toMatchObject({
+    says: "stopped · claude",
+    running: false,
+  });
+});
+
+// The list reads no settings file, so it knows a thread is past its round limit from the changes
+// the review held back for you.
+test("a task past its round limit says so, from the changes its review held", () => {
+  sql(
+    "UPDATE tasks SET rounds = 4, held = 'Rename it.' WHERE task = '7'; UPDATE threads SET needs_you = 1, status = 'waiting' WHERE folder = 'app-7';",
+  );
+  expect(rows().find((row) => row.name === "app-7")?.says).toBe("needs you: round limit · claude");
+});
+
+// A git that fails stands in for tmux and settings too: drawing must never need either.
+test("the rows come from the database alone, with no tmux and no settings file", () => {
+  const bin = join(home, "bin");
+  mkdirSync(bin, { recursive: true });
+  for (const program of ["tmux", "git"])
+    writeFileSync(
+      join(bin, program),
+      `#!/bin/sh\necho "${program} $@" >> ${join(home, "calls")}\nexit 1\n`,
+      { mode: 0o755 },
+    );
+  writeFileSync(
+    join(home, ".local", "share", "skelcrew", "repos", "simon", "app", "skelcrew.yaml"),
+    "max_rounds: [not a number\n",
+  );
+  expect(rows(bin).map((row) => row.name)).toContain("app-14");
+  expect(read(join(home, "calls"))).toBe("");
 });
 
 // The list as drawn, given its rows, at 80 columns and 20 lines.
@@ -538,6 +572,8 @@ test("a forge's refusal shows as words, its control codes never reaching your te
 
 test("Enter on a lead that can't start says why, and attaches to nothing", async () => {
   leadAnswer = { error: "Claude Code's login for agents is gone: run sc to set it up" };
+  // You exited the lead, which closed its tab.
+  sql("UPDATE repositories SET tab_closed = 1 WHERE repo = 'app';");
   await open();
   Bun.spawnSync(["tmux", "-L", agents, "kill-session", "-t", "=lead"]);
   for (const _ of [1, 2, 3]) press("Up");
