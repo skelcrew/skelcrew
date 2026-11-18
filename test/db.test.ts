@@ -296,7 +296,8 @@ for (const title of ${JSON.stringify(titles)})
   names.push(threadName(db, await startThread(db, { repo: "app", title, body: "b" })));
 console.log(JSON.stringify(names));`;
   return Bun.spawn([process.execPath, "-e", code], {
-    env: { ...process.env, HOME: machine },
+    // A git of the machine's own in its bin folder, if a test gives it one, goes first.
+    env: { ...process.env, HOME: machine, PATH: `${join(machine, "bin")}:${process.env.PATH}` },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -330,10 +331,25 @@ test("a name stays taken on another machine once claimed", async () => {
 
 // A repository just added has no clone yet, and the refresh that makes it first asks its forge,
 // which can give another URL to clone from, such as https in place of ssh, as its login works
-// there. The name is claimed at that URL, as the one it had before may not let Skelcrew in.
-test("the first thread with no issue claims its name at the URL its forge gave", async () => {
+// there. The name is claimed at that URL with the forge's login, as a private repository lets
+// nobody in without it.
+test("the first thread with no issue claims its name at the URL its forge gave, with its login", async () => {
   const { remote, homes } = twoMachines();
   const [laptop = ""] = homes;
+  // The remote is private: git refuses any command on it that doesn't carry the forge's login,
+  // which git gets as a credential helper. A folder remote would need no login otherwise.
+  const bin = join(laptop, "bin");
+  mkdirSync(bin);
+  writeFileSync(
+    join(bin, "git"),
+    `#!/bin/sh
+case "$*" in *${JSON.stringify(remote)}*)
+  case "$*" in *"credential.helper=!"*) ;; *) echo "fatal: Authentication failed" >&2; exit 128 ;; esac ;;
+esac
+exec ${Bun.which("git") ?? "git"} "$@"
+`,
+    { mode: 0o755 },
+  );
   const before = join(home, "unreachable.git");
   const forge = fakePlugin(laptop);
   const answer = {
