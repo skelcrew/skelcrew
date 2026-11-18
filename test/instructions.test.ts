@@ -21,22 +21,21 @@ afterEach(() => {
   rmSync(home, { recursive: true, force: true });
 });
 
-// Returns the instructions a harness's start left for its agent, from the file its command
-// names: Claude Code's --append-system-prompt-file, or the setting Codex's shell reads back as
-// its developer instructions.
-function toldIn(started: { argv: string[] }): string {
-  const { argv } = started;
+// Returns the instructions a harness's start left for its agent, from the file it points the
+// harness at: Claude Code's --append-system-prompt-file, or the profile Codex is started with.
+function toldIn(started: { argv: string[]; env: Record<string, string> }): string {
+  const { argv, env } = started;
   const flag = argv.indexOf("--append-system-prompt-file");
   if (flag > -1) return readFileSync(argv[flag + 1] ?? "", "utf8");
-  const file = argv.find((arg) => arg.endsWith("/instructions.toml"));
-  if (!file) throw new Error("the harness was given no instructions file");
-  const setting = readFileSync(file, "utf8");
-  expect(setting).toStartWith("developer_instructions=");
-  return z.string().parse(JSON.parse(setting.slice("developer_instructions=".length)));
+  const profile = argv[argv.indexOf("-p") + 1];
+  if (!profile || !env.CODEX_HOME) throw new Error("the harness was given no instructions file");
+  const setting = readFileSync(join(env.CODEX_HOME, `${profile}.config.toml`), "utf8");
+  return z.object({ developer_instructions: z.string() }).parse(Bun.TOML.parse(setting))
+    .developer_instructions;
 }
 
-// tmux refuses a start command past about 16 KB, so instructions of any size leave the
-// command as long as it was.
+// tmux refuses a start command past about 16 KB, and Linux an argument past 128 KB, so
+// instructions of any size leave the command as long as it was.
 for (const name of HarnessName.options)
   test(`on ${name}, long instructions reach the agent whole and leave its command short`, async () => {
     const start = (system: string) =>
@@ -49,7 +48,7 @@ for (const name of HarnessName.options)
         prompt: "Add export",
         env: { HOME: home, PATH: process.env.PATH ?? "" },
       });
-    const long = `${"Be careful. ".repeat(6000)}The end of the instructions.`;
+    const long = `${"Be careful. ".repeat(20_000)}The end of the instructions.`;
     const short = await start("Be careful.");
     const started = await start(long);
     expect(toldIn(started)).toBe(long);

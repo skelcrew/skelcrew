@@ -49,8 +49,10 @@ that covers the code you are about to write.
 - **Pass instructions in a file, not on the command line.** tmux refuses a start command
   past about 16 KB with "command too long", and a lead's instructions grew close to that.
   Claude Code reads them with `--append-system-prompt-file`. Codex takes developer
-  instructions only as a `-c`, so a shell inside the sandbox reads that `-c` from a file. An
-  `AGENTS.md` won't do: Codex gives it less weight than developer instructions.
+  instructions from a profile, `$CODEX_HOME/<name>.config.toml` chosen with `-p <name>`. An
+  argument won't do either: Linux refuses one past 128 KB. An `AGENTS.md` won't do: Codex
+  gives it less weight than developer instructions. A repository's `.codex/config.toml` beats
+  the profile, but Codex loads it only for a folder trusted in a config file, not with `-c`.
 - **Check a login with `claude auth status --json`.** `.claude.json` exists after any
   launch, logged in or not, so finding it proves nothing.
 - **`AskUserQuestion` waits on a screen nobody watches.** A builder that asks with it
