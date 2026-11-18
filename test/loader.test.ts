@@ -401,3 +401,15 @@ test("a lower role's model your override replaces isn't checked, while the harne
   files("harness: claude\n", "builder: { harness: codex, model: [bad] }\n");
   expect(read(["builder"]).err).toContain("skelcrew.yaml isn't valid: builder.model");
 });
+
+test("a model alone in your repos: override isn't read for a role it can't fit", () => {
+  files(
+    "harness: claude\nrepos: { simon/app: { model: [bad] } }\n",
+    "builder: { harness: codex }\n",
+  );
+  const settings = read(["builder"]);
+  expect(settings.err).toBe("");
+  expect(settings.settings?.builder).toEqual({ harness: "codex" });
+  // For a role on your harness it counts, and is refused.
+  expect(read(["lead"]).err).toContain("isn't valid under repos: simon/app: model");
+});

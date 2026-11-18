@@ -296,12 +296,13 @@ function roleOf(name: RoleName, repository: Repository | undefined): Role {
     const say = says[from];
     if (say === undefined) return yourModel();
     const harness = say.harness();
-    const model = say.model();
     // A model named counts, unless it is a layer's model for every role, given without a
-    // harness, and the role isn't on your harness.
-    if (model !== undefined && (!say.everyRole || harness !== undefined)) return model;
-    const below = namedFrom(from + 1);
-    if (model !== undefined && (below === undefined || isYourHarness(below))) return model;
+    // harness, and the role isn't on your harness. Then it can't count, so it isn't read.
+    const forAny = say.everyRole === true && harness === undefined;
+    const below = forAny ? namedFrom(from + 1) : undefined;
+    const fits = !forAny || below === undefined || isYourHarness(below);
+    const model = fits ? say.model() : undefined;
+    if (model !== undefined) return model;
     // A say that moves the role to another harness drops the model below it, and the role gets
     // your model again only when it moves onto your harness.
     if (harness !== undefined && !onHarness(from + 1, harness))
