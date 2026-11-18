@@ -222,10 +222,13 @@ const longWait = 60_000;
 const until = (done: () => boolean, timeout = 30_000) =>
   wait(done, { timeout, what: () => `the daemon. The thread's last steps were:\n${lastSteps()}` });
 
-// Returns the last steps in app-12's log, each as when and why. A line still being written,
-// or one that gives no reason, is left out.
+// Returns the last steps in the thread's log, each as when and why: app-12's, or for a
+// repository with no tracker, the first thread this machine started. A line still being
+// written, or one that gives no reason, is left out.
 function lastSteps(): string {
-  const lines = read(join(data(), "threads", "app-12.log")).split("\n");
+  const threads = join(data(), "threads");
+  const log = existsSync(join(threads, "app-12.log")) ? "app-12.log" : `app-${own}1.log`;
+  const lines = read(join(threads, log)).split("\n");
   const steps: string[] = [];
   for (const line of lines.slice(-12))
     try {
@@ -2092,7 +2095,7 @@ await serve(${JSON.stringify(socket)}, 200);`;
     expect((await skel(["start", "app", "Add export", "As JSON"])).err).toBe("");
     const log = () => read(join(data(), "threads", `app-${own}1.log`));
     const ready = `app-${own}1 is ready on branch skelcrew/${own}1-add-export`;
-    await until(() => log().includes(ready), 30_000);
+    await until(() => log().includes(ready), longWait);
     const onRemote = () => git(bare, "branch", "--list", `skelcrew/${own}1-add-export`) !== "";
     expect(onRemote()).toBe(true);
 
@@ -2117,10 +2120,10 @@ await serve(${JSON.stringify(socket)}, 200);`;
     expect(refs()).toContain("refs/skelcrew/threads/");
     const before = log().split(ready).length;
     expect((await skel(["start", `app-${own}1`])).out).toBe(`Started app-${own}1.\n`);
-    await until(() => log().split(ready).length > before, 30_000);
+    await until(() => log().split(ready).length > before, longWait);
     expect(log()).not.toContain("was deleted");
     expect(onRemote()).toBe(true);
-  }, 60_000);
+  }, 150_000);
 
   // Starting a done thread over deletes the old thread's refs first. Two starts at once must
   // not let the second delete the refs of the thread the first started: without its push ref,

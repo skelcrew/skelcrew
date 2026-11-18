@@ -10,6 +10,7 @@ import {
   agents,
   clickRow,
   endTest,
+  fixedLoad,
   home,
   issueUrl,
   leaving,
@@ -46,8 +47,10 @@ afterEach(endTest);
 // opening, at its next refresh, and tmux redraws its border after that. On a busy machine that
 // can come after half a second of quiet. So the screen has settled once the sidebar has
 // refreshed twice from now, and then nothing was written for half a second. The test must call
-// noteRefreshes first.
+// noteRefreshes first. The footer runs on its own and draws first whenever it has started,
+// which a busy machine can put seconds later, so the copy waits for its load to show too.
 async function copyOnceSettled(): Promise<string> {
+  await until(() => (seen().split("\n")[29] ?? "").includes(fixedLoad), "the footer");
   const written = join(home, "written");
   tmux(terminal, "pipe-pane", "-O", "-t", "=one:", `cat >> ${written}`);
   await sidebarRefreshedTwice();
