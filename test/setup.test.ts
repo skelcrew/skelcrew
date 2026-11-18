@@ -582,6 +582,9 @@ function checkoutWith(name: string, remote?: string): string {
 // The offer is the plugin's own question, showing what it runs.
 const offer =
   "github 0.1.0 from skelcrew/skelcrew-github is an I/O plugin that provides tracker, forge.";
+// The offer's own question, asked before anything is fetched.
+const offered =
+  "GitHub detected.\n\nThe GitHub plugin lets Skelcrew work with issues, pull requests\nand CI on your repositories.\nAdd it? [Y/n]";
 
 // Runs plain sc, or the command in `args`, in `cwd` with a terminal as its input, typing `typed`
 // into it. Skelcrew offers and installs a plugin only to an answer at a terminal. The token's
@@ -612,10 +615,9 @@ test("offers the GitHub plugin only in a checkout on github.com, on any run", as
   expect((await atTerminal("", folder)).out).not.toContain("GitHub");
   git(folder, "remote", "set-url", "origin", "git@github.com:simon/app.git");
   const later = await atTerminal("n\n", folder);
-  expect(later.out).toStartWith(
-    `GitHub detected.\n\nThe GitHub plugin lets Skelcrew work with issues, pull requests\nand CI on your repositories.\n${offer}`,
-  );
-  expect(later.out).toContain("\nInstall it? [Y/n]");
+  expect(later.out).toStartWith(offered);
+  // A no fetches nothing, so the plugin's own question never comes.
+  expect(later.out).not.toContain(offer);
 });
 
 test("a no holds for the repository, in every checkout of it, and another repository asks once", async () => {
@@ -625,12 +627,12 @@ test("a no holds for the repository, in every checkout of it, and another reposi
   const app = checkoutWith("app", "git@github.com:simon/app.git");
   const first = await atTerminal("n\n1\nsk-ant-oat01-good\n", app);
   expect(first.code).toBe(0);
-  expect(first.out).toContain(offer);
+  expect(first.out).toContain(offered);
   expect(first.out).toContain(
     "Skelcrew won't ask again for simon/app. To install it: sc add -g skelcrew/skelcrew-github",
   );
   // The offer comes before the first step.
-  expect(first.out.indexOf(offer)).toBeLessThan(first.out.indexOf("Choose the coding agent"));
+  expect(first.out.indexOf(offered)).toBeLessThan(first.out.indexOf("Choose the coding agent"));
   expect(parse(readFileSync(config(), "utf8"))).toMatchObject({
     harness: "claude",
     github_declined: ["simon/app"],
@@ -640,7 +642,7 @@ test("a no holds for the repository, in every checkout of it, and another reposi
   expect((await atTerminal("", app)).out).not.toContain("GitHub");
   const site = checkoutWith("site", "git@github.com:simon/site.git");
   const other = await atTerminal("n\n", site);
-  expect(other.out).toContain(offer);
+  expect(other.out).toContain(offered);
   expect(parse(readFileSync(config(), "utf8")).github_declined).toEqual([
     "simon/app",
     "simon/site",
@@ -649,13 +651,30 @@ test("a no holds for the repository, in every checkout of it, and another reposi
   expect(git(app, "status", "--porcelain")).toBe("");
 });
 
+// The offer is asked from the checkout's remote alone, so a no is saved with GitHub out of reach.
+test("a no to the offer needs no network, and is saved with GitHub out of reach", async () => {
+  noGitHubPlugin();
+  // github.com leads to a folder that isn't there, and nothing is published.
+  writeFileSync(
+    join(home, ".gitconfig"),
+    `[url "file://${home}/nowhere/"]\n\tinsteadOf = https://github.com/\n\tinsteadOf = git@github.com:\n`,
+  );
+  await skel("1\nsk-ant-oat01-good\n");
+  const app = checkoutWith("app", "git@github.com:simon/app.git");
+  const run = await atTerminal("n\n", app);
+  expect(run.out).toContain(offered);
+  expect(run.out).not.toContain("Couldn't install");
+  expect(run.out).toContain("Skelcrew won't ask again for simon/app.");
+  expect(parse(readFileSync(config(), "utf8")).github_declined).toEqual(["simon/app"]);
+});
+
 test("over --remote, the offer reads the remote sc brought from your laptop", async () => {
   noGitHubPlugin();
   fakeGitHub();
   publishGitHubPlugin();
   await skel("1\nsk-ant-oat01-good\n");
   const run = await atTerminal("n\n", home, ["--from", "git@github.com:simon/app.git"]);
-  expect(run.out).toContain(offer);
+  expect(run.out).toContain(offered);
   expect(parse(readFileSync(config(), "utf8")).github_declined).toEqual(["simon/app"]);
 });
 
@@ -716,17 +735,18 @@ function siteOnGitHub(): string {
   return site;
 }
 
-// Enter takes the offer, which is the plugin's one question. GitHub is then the repository's
-// tracker, so nothing is written into the checkout, and the line saying Skelcrew is set up goes
-// straight on to bringing the repository in.
-test("a yes installs the GitHub plugin after one question, writes nothing here, and the lead opens", async () => {
+// Enter takes the offer, and Enter again the plugin's own question, which shows what it runs.
+// GitHub is then the repository's tracker, so nothing is written into the checkout, and the line
+// saying Skelcrew is set up goes straight on to bringing the repository in.
+test("a yes installs the GitHub plugin after the offer and its own question, writes nothing here, and the lead opens", async () => {
   const site = siteOnGitHub();
-  const run = await atTerminal("\n1\nsk-ant-oat01-good\n", site);
+  const run = await atTerminal("\n\n1\nsk-ant-oat01-good\n", site);
   expect(run.err).toBe("");
   expect(run.code).toBe(0);
+  expect(run.out).toContain(offered);
   expect(run.out).toContain(offer);
   expect(run.out).toContain("Install it? [Y/n] Installed github 0.1.0.\n");
-  expect(run.out.match(/\[Y\/n\]/g)).toHaveLength(1);
+  expect(run.out.match(/\[Y\/n\]/g)).toHaveLength(2);
   expect(run.out).not.toContain("[y/N]");
   expect(readFileSync(join(home, "handed"), "utf8")).toBe("https://github.com/simon/site\n");
   expect(run.out).not.toContain("sc init");
@@ -740,7 +760,7 @@ test("a yes installs the GitHub plugin after one question, writes nothing here, 
 test("on a run after setup, a yes installs the plugin and the lead opens, with nothing written here", async () => {
   const site = siteOnGitHub();
   await skel("1\nsk-ant-oat01-good\n");
-  const run = await atTerminal("\n", site);
+  const run = await atTerminal("\n\n", site);
   expect(run.err).toBe("");
   expect(run.out).toStartWith("GitHub detected.");
   expect(run.out).toContain("Installed github 0.1.0.");
