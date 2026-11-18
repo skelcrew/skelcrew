@@ -1,8 +1,7 @@
 // Trust for a repository's .agents/: the version of it you approved, for each repository, and
 // reading its files. Its role instructions decide what agents are told, so only a version you
 // approved ever steers them, and a change to it waits until you approve that too.
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse, stringify } from "yaml";
 import { z } from "zod";
@@ -19,36 +18,19 @@ const approvalsFile = () => join(configDir(), "approved-agents.yaml");
 // read as an option.
 const Approvals = z.record(z.string(), z.string().regex(/^([0-9a-f]{40}|[0-9a-f]{64}|none)$/));
 
-// Returns the file of the .agents/ sc init wrote, for each repository, kept beside what you
-// approved: each line holds the git tree of the files as written, approved once the default
-// branch has exactly that tree.
-const writtenFile = () => join(configDir(), "written-agents.yaml");
-
-// Returns the approvals in `file`, checked, or none when there is no file.
-function readFile(file: string): Record<string, string> {
+// Returns every repository's approval, checked, or none before you approved anything.
+function readApprovals(): Record<string, string> {
+  const file = approvalsFile();
   if (!existsSync(file)) return {};
   const read = Approvals.safeParse(parse(readFileSync(file, "utf8")) ?? {});
   if (!read.success) throw new Error(`${file} isn't valid: ${z.prettifyError(read.error)}`);
   return read.data;
 }
 
-// Saves the approvals in `file`.
-function writeFile(file: string, approvals: Record<string, string>): void {
+// Saves every repository's approval.
+function writeApprovals(approvals: Record<string, string>): void {
   mkdirSync(configDir(), { recursive: true });
-  writeFileSync(file, Object.keys(approvals).length ? stringify(approvals) : "");
-}
-
-// Returns every repository's approval, checked, or none before you approved anything. An
-// .agents/ sc init wrote is approved here first, once its repository's default branch has it
-// exactly as written: those files are the built-in defaults with your own harness and model, so
-// you would only be asked about what you wrote yourself. Until it is pushed, the default branch
-// doesn't have it, and approving it then would tell the lead it waits for you.
-function readApprovals(): Record<string, string> {
-  for (const [name, tree] of Object.entries(readFile(writtenFile()))) {
-    const [owner = "", repo = ""] = name.split("/");
-    if (agentsOnDefaultBranch({ owner, repo }) === tree) approveAgents({ owner, repo }, tree);
-  }
-  return readFile(approvalsFile());
+  writeFileSync(approvalsFile(), Object.keys(approvals).length ? stringify(approvals) : "");
 }
 
 // Runs git in Skelcrew's clone of the repository and returns what it printed, or null when it
@@ -88,53 +70,17 @@ export const agentsWaiting = (place: Place): boolean =>
 // Approves a tree of .agents/ for the repository, or the built-in roles with null. A ref in
 // Skelcrew's clone keeps the tree, so a force push that drops it from the default branch can't
 // let git clean it away from tasks that started on it.
-// Any answer settles what sc init wrote for the repository, so that is forgotten. The approvals
-// are read raw here, as reading them through readApprovals would approve what sc init wrote
-// again.
 export function approveAgents(place: Place, tree: string | null): void {
-  const name = `${place.owner}/${place.repo}`;
   if (tree !== null && gitIn(place, ["update-ref", `refs/skelcrew/agents/${tree}`, tree]) === null)
-    throw new Error(`Skelcrew's clone of ${name} has no tree ${tree}`);
-  writeFile(approvalsFile(), { ...readFile(approvalsFile()), [name]: tree ?? "none" });
-  forgetWritten(name);
-}
-
-// Forgets the .agents/ sc init wrote for the repository named `name`, as owner/repo.
-function forgetWritten(name: string): void {
-  const written = readFile(writtenFile());
-  if (written[name] === undefined) return;
-  const { [name]: _gone, ...rest } = written;
-  writeFile(writtenFile(), rest);
+    throw new Error(`Skelcrew's clone of ${place.owner}/${place.repo} has no tree ${tree}`);
+  writeApprovals({ ...readApprovals(), [`${place.owner}/${place.repo}`]: tree ?? "none" });
 }
 
 // Forgets what you approved for the repository, for sc repo rm, so adding it again asks again.
 export function forgetAgents(place: Place): void {
-  const name = `${place.owner}/${place.repo}`;
-  forgetWritten(name);
   if (!agentsAnswered(place)) return;
-  const { [name]: _gone, ...rest } = readApprovals();
-  writeFile(approvalsFile(), rest);
-}
-
-// Remembers the .agents/ sc init just wrote in `checkout`, a checkout of the repository, so it
-// is approved once the default branch has it exactly as written. Its git tree is worked out in
-// the checkout, as Skelcrew's clone doesn't have it before it is pushed, through an index of
-// its own, so what you have staged there stays as it is. One that git can't add, such as one
-// your .gitignore leaves out, is not remembered, and is asked about as any other.
-export function approveWhenPushed(place: Place, checkout: string): void {
-  const folder = mkdtempSync(join(tmpdir(), "skelcrew-index-"));
-  try {
-    const env = { ...process.env, GIT_INDEX_FILE: join(folder, "index") };
-    const git = (args: string[]) =>
-      Bun.spawnSync(["git", "-C", checkout, ...args], { env, stdout: "pipe", stderr: "pipe" });
-    if (!git(["add", "--", ".agents"]).success) return;
-    const tree = git(["write-tree", "--prefix=.agents/"]);
-    if (!tree.success) return;
-    const name = `${place.owner}/${place.repo}`;
-    writeFile(writtenFile(), { ...readFile(writtenFile()), [name]: tree.stdout.toString().trim() });
-  } finally {
-    rmSync(folder, { recursive: true, force: true });
-  }
+  const { [`${place.owner}/${place.repo}`]: _gone, ...rest } = readApprovals();
+  writeApprovals(rest);
 }
 
 // Returns what changed in .agents/ from the tree `from` to the tree `to`, as git shows a change,

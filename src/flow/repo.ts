@@ -16,23 +16,15 @@ import { stringify } from "yaml";
 import { z } from "zod";
 import { refuseCredentials } from "../agents/sandbox.ts";
 import { endSession, exitedCleanly, stopSession } from "../agents/sessions.ts";
-import {
-  agentsAnswered,
-  approveWhenPushed,
-  askAboutAgents,
-  forgetAgents,
-} from "../approved-agents.ts";
+import { agentsAnswered, askAboutAgents, forgetAgents } from "../approved-agents.ts";
 import { agentRole } from "../config.ts";
 import { nameRepositories, openDb, Repository } from "../db.ts";
-import { builtInFlowText } from "../flows.ts";
 import { originHere, parseRemote } from "../machine/origin.ts";
 import { cloneDir, configDir, dataDir, leadPlaces } from "../paths.ts";
 import { askWhichForge, type Claimed } from "../plugins/ask.ts";
 import { setUpPlugin } from "../plugins/install.ts";
 import { SetupNeeded } from "../plugins/plugin.ts";
-import { builtInRole } from "../roles.ts";
 import { errorText } from "../say.ts";
-import { readSettings } from "../settings.ts";
 import { checkPush, cloneRepository, updateClone } from "./git.ts";
 
 // What sc says outside any repository while Skelcrew has none yet, so you know where to run it.
@@ -493,32 +485,33 @@ export async function addRepo(given: string | undefined, sessions: string): Prom
   if (added) console.log(`Added ${added.owner}/${added.repo}, as ${added.name}.`);
 }
 
+// Returns a setting's value as YAML that reads back as the same text: plain when it can be,
+// quoted when YAML would read it as something else, such as a model named true or 123.
+const yamlValue = (value: string) => stringify(value).trim();
+
 // Returns the starter skelcrew.yaml: a line saying the file is shared and never holds a secret,
-// and setup and test as commented examples, as Skelcrew never guesses them. It names no tracker,
-// so a repository on GitHub keeps its issues as tasks, and shows tracker: none commented out, so
-// you can find how to turn that off. Harnesses and models go in the role files instead.
-const starterConfig = () =>
-  [
+// your harness and model for each role as real lines, from your config, and setup and test as
+// commented examples. It names no tracker, so a repository on GitHub keeps its issues as tasks,
+// and shows tracker: none commented out, so you can find how to turn that off.
+function starterConfig(): string {
+  // Each role is one line of { key: value } pairs, its name padded so the three line up.
+  const line = (name: "lead" | "builder" | "reviewer") => {
+    const parts = Object.entries(agentRole(name)).map(
+      ([key, value]) => `${key}: ${yamlValue(value)}`,
+    );
+    return `${`${name}:`.padEnd(10)}{ ${parts.join(", ")} }`;
+  };
+  return [
     "# Shared with everyone who works on this repository. Never put a secret here.",
+    line("lead"),
+    line("builder"),
+    line("reviewer"),
     "# setup: [bun install]",
     "# test: [bun test]",
     "# Keeps this repository on git alone, with no tracker.",
     "# tracker: none",
     "",
   ].join("\n");
-
-// Returns the starter .agents/, as each file's path in it and its text: the built-in roles with
-// your harness and model for each as real lines, so the repository works the same for a
-// teammate, and the built-in default flow with your round limit.
-function starterAgents(): [string, string][] {
-  const roles = (["lead", "builder", "reviewer"] as const).map((name): [string, string] => [
-    `roles/${name}.md`,
-    // stringify quotes a model YAML would read as something else, such as one named true.
-    `---\n${stringify(agentRole(name))}---\n${builtInRole(name).instructions}`,
-  ]);
-  const rounds = readSettings(["rounds"]).rounds;
-  const flow = builtInFlowText.replace(/^( {2}rounds: )\d+/m, `$1${rounds}`);
-  return [...roles, ["flows/default.yaml", flow]];
 }
 
 // Returns the top folder of the checkout you are in, or null outside one.
@@ -530,53 +523,31 @@ export function checkoutTop(): string | null {
   return top.success ? top.stdout.toString().trim() : null;
 }
 
-// Sets up the checkout you are in for Skelcrew, for sc init: writes the starter skelcrew.yaml and
-// .agents/ at its top, leaving either as it is when it is there, then adds the repository as sc
-// repo add does. Stops outside a git repository, and in one with no remote, as Skelcrew works
-// from its own clone. That clone is at the default branch, so it says the files count only once
-// pushed there. The .agents/ it writes is approved once pushed as written, as it holds only the
-// built-in files and your own settings. `sessions` names where the repository's lead runs.
+// Sets up the checkout you are in for Skelcrew, for sc init: writes the starter skelcrew.yaml at
+// its top, or leaves one that is there as it is, then adds the repository as sc repo add does.
+// Stops outside a git repository, and in one with no remote, as Skelcrew works from its own
+// clone. That clone is at the default branch, so it says the file counts only once pushed there.
+// `sessions` names where the repository's lead runs.
 export async function initRepo(sessions: string): Promise<void> {
-  // Stop before writing anything where the files couldn't count: outside a checkout, or in one
+  // Stop before writing anything where the file couldn't count: outside a checkout, or in one
   // with no remote for Skelcrew to clone.
   const root = checkoutTop();
   if (root === null)
     throw new Error(
       "sc init runs in a checkout of a git repository, and this folder isn't in one.",
     );
-  const remote = originHere(root);
-  if (!remote)
+  if (!originHere(root))
     throw new Error(
       "sc init needs the repository's remote, and this checkout has none. Push it somewhere first, such as to GitHub.",
     );
-  // Each is made only where nothing is at its path, and with wx, so a write never follows a link.
-  const isThere = (path: string) => lstatSync(path, { throwIfNoEntry: false }) !== undefined;
-  const wrote: string[] = [];
-  if (isThere(join(root, "skelcrew.yaml")))
-    console.log("skelcrew.yaml is there already, so Skelcrew left it as it is.");
-  else {
-    writeFileSync(join(root, "skelcrew.yaml"), starterConfig(), { flag: "wx" });
-    wrote.push("skelcrew.yaml");
-  }
-  // An .agents/ that is there is the repository's own, so none of its files is added to.
-  if (isThere(join(root, ".agents")))
-    console.log(".agents/ is there already, so Skelcrew left it as it is.");
-  else {
-    for (const [path, text] of starterAgents()) {
-      const file = join(root, ".agents", path);
-      mkdirSync(dirname(file), { recursive: true });
-      writeFileSync(file, text, { flag: "wx" });
-    }
-    wrote.push(".agents/");
-  }
+  // A new file is made only where none is, so the write never follows a link.
+  const file = join(root, "skelcrew.yaml");
+  const there = lstatSync(file, { throwIfNoEntry: false }) !== undefined;
+  if (!there) writeFileSync(file, starterConfig(), { flag: "wx" });
+  else console.log("skelcrew.yaml is there already, so Skelcrew left it as it is.");
   // Bring the repository in, then say what was written and when Skelcrew will read it.
   await addRepo(root, sessions);
-  const added = repositoryAt(openDb(), remote);
-  if (added && wrote.includes(".agents/")) approveWhenPushed(added, root);
-  if (wrote.length > 0)
-    console.log(
-      `Wrote ${wrote.join(" and ")}. Commit and push ${wrote.length > 1 ? "them" : "it"} to start.`,
-    );
+  if (!there) console.log("Wrote skelcrew.yaml. Commit and push it to start.");
 }
 
 // Records your trust from outside the sandbox and brings in the repository: one Skelcrew has,
