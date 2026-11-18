@@ -1749,18 +1749,21 @@ await serve(${JSON.stringify(socket)}, 200);`;
     await untilCloned();
     const started = await skel(["start", "app", "Add export", "As JSON"]);
     expect(started.err).toBe("");
-    const log = () => read(join(data(), "threads", "app-t1.log"));
-    await until(() => log().includes("app-t1 is ready on branch skelcrew/t1-add-export"), 30_000);
+    const log = () => read(join(data(), "threads", `app-${own}1.log`));
+    await until(
+      () => log().includes(`app-${own}1 is ready on branch skelcrew/${own}1-add-export`),
+      30_000,
+    );
     // Someone else pushes to the thread's branch.
     const work = join(home, "work", "app");
-    git(work, "fetch", "-q", bare, "skelcrew/t1-add-export");
+    git(work, "fetch", "-q", bare, `skelcrew/${own}1-add-export`);
     git(work, "checkout", "-q", "-B", "other", "FETCH_HEAD");
     writeFileSync(join(work, "OTHER"), "other\n");
     git(work, "add", ".");
     git(work, "commit", "-q", "-m", "Someone else's change");
-    git(work, "push", "-q", bare, "HEAD:refs/heads/skelcrew/t1-add-export");
+    git(work, "push", "-q", bare, `HEAD:refs/heads/skelcrew/${own}1-add-export`);
     const moved = git(work, "rev-parse", "HEAD");
-    const typed = () => read(join(data(), "claude", "app-t1", "typed"));
+    const typed = () => read(join(data(), "claude", `app-${own}1`, "typed"));
     await until(() => typed().includes(`moved on the remote to ${moved}`), 30_000);
     expect(log()).toContain(
       `its branch moved on the remote to ${moved}, so it isn't ready to merge`,
@@ -1781,25 +1784,28 @@ await serve(${JSON.stringify(socket)}, 200);`;
     await untilCloned();
     const started = await skel(["start", "app", "Add export", "As JSON"]);
     expect(started.err).toBe("");
-    const log = () => read(join(data(), "threads", "app-t1.log"));
-    await until(() => log().includes("app-t1 is ready on branch skelcrew/t1-add-export"), 30_000);
+    const log = () => read(join(data(), "threads", `app-${own}1.log`));
+    await until(
+      () => log().includes(`app-${own}1 is ready on branch skelcrew/${own}1-add-export`),
+      30_000,
+    );
     // The remote goes out of reach, and someone else's push moves the thread's branch there.
     const away = `${bare}.away`;
     renameSync(bare, away);
     const work = join(home, "work", "app");
-    git(work, "fetch", "-q", away, "skelcrew/t1-add-export");
+    git(work, "fetch", "-q", away, `skelcrew/${own}1-add-export`);
     git(work, "checkout", "-q", "-B", "other", "FETCH_HEAD");
     writeFileSync(join(work, "OTHER"), "other\n");
     git(work, "add", ".");
     git(work, "commit", "-q", "-m", "Someone else's change");
-    git(work, "push", "-q", away, "HEAD:refs/heads/skelcrew/t1-add-export");
+    git(work, "push", "-q", away, `HEAD:refs/heads/skelcrew/${own}1-add-export`);
     const moved = git(work, "rev-parse", "HEAD");
     // The builder submits a round, whose push fails.
-    const clone = join(data(), "threads", "app-t1");
+    const clone = join(data(), "threads", `app-${own}1`);
     writeFileSync(join(clone, "change"), "2\n");
     git(clone, "add", "-A");
     git(clone, "commit", "-qm", "round 2");
-    const short = new Bun.CryptoHasher("sha256").update("app-t1").digest("hex").slice(0, 16);
+    const short = new Bun.CryptoHasher("sha256").update(`app-${own}1`).digest("hex").slice(0, 16);
     const t1Socket = join(home, "run", "skelcrew", "threads", short, "skelcrew.sock");
     const submitted = await skel(["submit", "Round 2"], {
       SKELCREW_SANDBOX: "1",
@@ -1807,7 +1813,7 @@ await serve(${JSON.stringify(socket)}, 200);`;
     });
     expect(submitted.err).toBe("");
     await until(() => log().includes("the round failed"), 30_000);
-    const typed = () => read(join(data(), "claude", "app-t1", "typed"));
+    const typed = () => read(join(data(), "claude", `app-${own}1`, "typed"));
     expect(typed()).not.toContain("moved on the remote");
     // Back in reach, a poll sees the branch moved, though the submit is still pending.
     renameSync(away, bare);
