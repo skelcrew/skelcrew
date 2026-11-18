@@ -1542,8 +1542,16 @@ echo "Not logged in"; exit 1`,
         asked(plugin).filter(
           (q) => q.ask === "review" && String(q.body).startsWith("Merging when ready"),
         );
+      // A forge that fails to merge, such as when it is down, keeps the plan armed and says why.
       answer(plugin, "merge pr", { refused: "Pull Request is not mergeable" });
+      writeFileSync(join(plugin, "fail-merge-pr"), "GitHub is down");
       pr({ head, reviews: [skelReview], checks: [approved, check(6, "passed")] });
+      await until(
+        () => thread().merge_waits === "the forge, which failed: github failed: GitHub is down",
+      );
+      expect(thread()).toMatchObject({ merge_plan: "armed" });
+      expect(thread().status).not.toBe("done");
+      rmSync(join(plugin, "fail-merge-pr"));
       await until(
         () => thread().merge_waits === "the forge, which refused: Pull Request is not mergeable",
       );
@@ -1556,7 +1564,7 @@ echo "Not logged in"; exit 1`,
         pr: 7,
         commit: head,
       });
-      // Posted once for the commit, however often the forge refuses.
+      // The record is posted once for the plan, however often the forge fails or refuses.
       expect(records()).toHaveLength(1);
       expect(records()[0]).toMatchObject({ pr: 7, commit: head, verdict: "approve" });
       expect(String(records()[0]?.body)).toStartWith(

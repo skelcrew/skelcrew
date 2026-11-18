@@ -232,6 +232,7 @@ async function recordThread(
       updates: [],
       state: null,
       merge_plan: null,
+      merge_id: null,
       merge_by: null,
       merge_at: null,
       merge_waits: null,

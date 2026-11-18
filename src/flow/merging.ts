@@ -4,6 +4,7 @@
 import type { Database } from "bun:sqlite";
 import { userInfo } from "node:os";
 import { forgeOf, mergePr, postReview } from "../plugins/ask.ts";
+import { errorText } from "../say.ts";
 import { mergeStuck, mergeWaitsOn, type PullRequest } from "./decide.ts";
 import { endThread, removing } from "./events.ts";
 import { noteForLead } from "./messages.ts";
@@ -79,6 +80,7 @@ export function armMerge(
   if (thread.merge_plan === "armed") return `${name} already merges when it is ready.`;
   const plan = {
     merge_plan: "armed" as const,
+    merge_id: crypto.randomUUID(),
     merge_by: userInfo().username,
     merge_at: Date.now(),
     merge_waits: null,
@@ -138,18 +140,25 @@ export async function mergeIfReady(
     // The PR records who asked, with a review on the approved commit, the call every forge
     // answers. It goes before the merge, as a merged PR may take no review, and once for each
     // commit of each plan while the daemon runs, so a merge the forge keeps refusing doesn't
-    // post it again at every poll. A plan armed again, or a thread started over, is a new plan,
-    // by when it was armed and when its thread started, so it gets a record of its own.
-    const key = `${folder} ${thread.started} ${thread.merge_at} ${approved}`;
+    // post it again at every poll. A plan armed again, or a thread started over, has a new ID,
+    // so it gets a record of its own.
+    const key = `${thread.merge_id} ${approved}`;
+    // A forge that fails, such as when it is down, leaves the plan armed, says why it waits,
+    // and is tried again at the next poll. It never holds up the poll's other threads.
+    const failed = (error: unknown) => `the forge, which failed: ${errorText(error)}`;
     if (!recorded.has(key)) {
       const body = `Merging when ready, as asked by ${thread.merge_by ?? "you"} on ${asked}.`;
-      await postReview(db, repository, {
-        pr: thread.pr,
-        commit: approved,
-        verdict: "approve",
-        body,
-      });
-      recorded.add(key);
+      try {
+        await postReview(db, repository, {
+          pr: thread.pr,
+          commit: approved,
+          verdict: "approve",
+          body,
+        });
+        recorded.add(key);
+      } catch (error) {
+        waits = failed(error);
+      }
     }
     // The review took a while, and the thread may have changed meanwhile: cancelled, stopped,
     // removed, started over, or sent for another review. So it is read again and must still be
@@ -160,18 +169,22 @@ export async function mergeIfReady(
     const samePlan =
       now.merge_plan === "armed" &&
       now.started === thread.started &&
-      now.merge_at === thread.merge_at &&
+      now.merge_id === thread.merge_id &&
       !removing.has(folder);
     if (!samePlan || lastPushed(now) !== approved || mergeWaitsOn(now, pr, approved) !== null)
       return;
-    merging.add(folder);
-    let refused: string | null;
-    try {
-      refused = await mergePr(db, repository, { pr: thread.pr, commit: approved });
-    } finally {
-      merging.delete(folder);
+    let refused: string | null = null;
+    if (waits === null) {
+      merging.add(folder);
+      try {
+        refused = await mergePr(db, repository, { pr: thread.pr, commit: approved });
+      } catch (error) {
+        waits = failed(error);
+      } finally {
+        merging.delete(folder);
+      }
     }
-    if (refused === null) {
+    if (waits === null && refused === null) {
       await endThread(
         db,
         sessions,
@@ -181,7 +194,7 @@ export async function mergeIfReady(
       );
       return;
     }
-    waits = `the forge, which refused: ${refused}`;
+    if (refused !== null) waits = `the forge, which refused: ${refused}`;
   }
   // What it waits on changes only now and then, so the log isn't filled with every poll.
   if (waits !== thread.merge_waits)
