@@ -12,6 +12,7 @@ import { z } from "zod";
 import { leadPlaces } from "../src/paths.ts";
 import {
   answer,
+  asked,
   fakePlugin,
   git,
   homeEnv,
@@ -357,9 +358,13 @@ describe.skipIf(insideSandbox)("codex", () => {
       daemon.kill();
       await daemon.exited;
     }
+    // The new daemon asks the tracker last as it starts, after it brought back the lead and
+    // set going the builder's return and the lead's notes. A fixed wait could end before that
+    // on a busy machine, and the checks below would pass before a restart could break them.
+    const polls = () => asked(plugin).filter((question) => question.ask === "changed").length;
+    const before = polls();
     startDaemon(socket, env(), running);
-    await until(() => existsSync(join(home, "run", "skelcrew.sock")));
-    await Bun.sleep(1500);
+    await until(() => polls() > before);
     expect((await app12())?.needsYou).toBe(true);
     expect(notesAbout12()).toBe(1);
   }, 60_000);

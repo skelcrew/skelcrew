@@ -141,8 +141,9 @@ function open(repo: string): Promise<string> {
   });
 }
 
-// A daemon's work takes its time here, so a wait lasts 15 seconds unless a test says otherwise.
-const until = (done: () => boolean, timeout = 15_000) => wait(done, { timeout });
+// A daemon's work takes its time here, and longer on a busy CI runner, so a wait lasts 30
+// seconds unless a test says otherwise.
+const until = (done: () => boolean, timeout = 30_000) => wait(done, { timeout });
 
 // Puts simon/app, or another of simon's repositories, on the fake GitHub and tells Skelcrew about
 // it.
@@ -247,7 +248,10 @@ describe.skipIf(insideSandbox)("sc tell", () => {
     const youToThread = await skel(["tell", "app-12", "Hello."]);
     expect(youToThread.code).not.toBe(0);
     expect(youToThread.err).toContain("pick it in the sidebar");
-    await Bun.sleep(1000);
+    // The lead's message comes after both refusals, so once the builder has it, a refused
+    // message that got through would be there too.
+    expect((await skel(["tell", "app-12", "Goodbye."], "lead")).err).toBe("");
+    await until(() => typed(builder()).includes("Goodbye."));
     expect(typed(builder())).not.toContain("Hello.");
   }, 60_000);
 
@@ -259,7 +263,10 @@ describe.skipIf(insideSandbox)("sc tell", () => {
     const told = await skel(["tell", "app-12", "Hello."], "web's lead");
     expect(told.code).not.toBe(0);
     expect(told.err).toContain("you are the lead of simon/web only, so app isn't yours");
-    await Bun.sleep(1000);
+    // app's own lead tells it after the refusal, so once the builder has that, a refused
+    // message that got through would be there too.
+    expect((await skel(["tell", "app-12", "Goodbye."], "lead")).err).toBe("");
+    await until(() => typed(builder()).includes("Goodbye."));
     expect(typed(builder())).not.toContain("Hello.");
   }, 60_000);
 
