@@ -1822,9 +1822,21 @@ exec ${bwrap} "$@"`,
         `Merging when ready, as asked by ${login()} on `,
       );
 
-      // Cancelled and armed again, the same commit is a new plan, with a record of its own.
+      // Cancelled and armed again, the same commit is a new plan, with a record of its own. The
+      // forge keeps refusing, so each poll asks it to merge again, and a cancel that lands while
+      // it is asked is refused. So the cancel is asked again until no merge is under way.
       const cancel = { command: "merge cancel", repo: "app", task: "12" };
-      await askOn(join(home, "run", "skelcrew.sock"), cancel);
+      const merging = {
+        error: "app-12 is merging on its forge right now, so it can't be cancelled",
+      };
+      let cancelled = await askOn(join(home, "run", "skelcrew.sock"), cancel);
+      for (let tries = 0; Bun.deepEquals(cancelled, merging) && tries < 100; tries++) {
+        await Bun.sleep(50);
+        cancelled = await askOn(join(home, "run", "skelcrew.sock"), cancel);
+      }
+      expect(cancelled).toEqual({
+        said: "app-12 won't merge by itself. It waits for you to merge it.",
+      });
       expect(thread().merge_plan).toBeNull();
       await arm();
       await until(() => records().length === 2);
