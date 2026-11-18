@@ -276,3 +276,55 @@ test("a role file naming the harness the role is on already keeps the model skel
     model: "sonnet",
   });
 });
+
+const roundsOf = (where = "app") => inHome(`return readSettings(["rounds"], ${where}).rounds;`);
+
+test("today's max_rounds still gives its rounds, until an approved flow file names its own", () => {
+  writeFileSync(join(clone, "skelcrew.yaml"), "max_rounds: 5\n");
+  commit("settings");
+  expect(roundsOf()).toBe(5);
+  // A flow file you haven't approved counts for nothing.
+  agentsFile("flows/default.yaml", "review:\n  rounds: 2\n");
+  commit("flow");
+  expect(roundsOf()).toBe(5);
+  inHome(approveCurrent);
+  expect(roundsOf()).toBe(2);
+  // A task keeps the .agents/ it started with, and one on the built-in files keeps max_rounds.
+  expect(roundsOf("{ ...app, agents: null }")).toBe(5);
+});
+
+test("a flow file naming no rounds leaves max_rounds counting, and your override beats both", () => {
+  writeFileSync(join(clone, "skelcrew.yaml"), "max_rounds: 5\n");
+  agentsFile("flows/default.yaml", "build:\n  role: builder\n");
+  commit("flow");
+  inHome(approveCurrent);
+  expect(roundsOf()).toBe(5);
+  agentsFile("flows/default.yaml", "review:\n  rounds: 2\n");
+  commit("flow");
+  inHome(approveCurrent);
+  writeFileSync(
+    join(home, ".config", "skelcrew", "config.yaml"),
+    "max_rounds: 9\nrepos: { simon/app: { max_rounds: 7 } }\n",
+  );
+  expect(roundsOf()).toBe(7);
+});
+
+test("the flow file goes over your config's max_rounds, which goes over the built-in flow", () => {
+  writeFileSync(join(home, ".config", "skelcrew", "config.yaml"), "max_rounds: 6\n");
+  expect(roundsOf()).toBe(6);
+  agentsFile("flows/default.yaml", "review:\n  rounds: 4\n");
+  commit("flow");
+  inHome(approveCurrent);
+  expect(roundsOf()).toBe(4);
+});
+
+test("a flow file that isn't valid stops only what reads the round limit, naming the file", () => {
+  agentsFile("flows/default.yaml", "review:\n  rounds: 2\n  skip: true\n");
+  commit("flow");
+  inHome(approveCurrent);
+  expect(() => roundsOf()).toThrow(".agents/flows/default.yaml in simon/app");
+  expect(inHome('return readSettings(["builder"], app).builder;')).toEqual({
+    harness: "claude",
+    model: "opus",
+  });
+});

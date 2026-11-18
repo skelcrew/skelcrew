@@ -1,0 +1,6 @@
+# .agents/flows/default.yaml: today's flow. Build, review, CI, ready.
+build:
+  role: builder
+review:
+  role: reviewer
+  rounds: 3 # after this many rounds of changes, the task needs you

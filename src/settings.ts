@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { parse } from "yaml";
 import { z } from "zod";
 import { HarnessName } from "./agents/harness.ts";
+import { builtInRounds, repositoryRounds } from "./flows.ts";
 import { cloneDir, configDir } from "./paths.ts";
 import { type RoleName, repositoryRole } from "./roles.ts";
 
@@ -155,8 +156,8 @@ const overrideKeys: Key[] = [
 ];
 const roleKeys: Key[] = ["lead", "builder", "reviewer", "roles"];
 
-// Returns the built-in defaults: Claude Code for every role, three rounds and 30 minutes for a
-// // review. Setup, test and the tracker have none. Reviews default to a quarter of this machine's
+// Returns the built-in defaults: Claude Code for every role, the built-in flow's rounds and 30
+// minutes for a review. Setup, test and the tracker have none. Reviews default to a quarter of this machine's
 // cores, at least one, as a review of a commit CI doesn't run on runs the repository's whole test
 // suite, and many at once fight over the CPU. Checks default to half the cores divided by four,
 // at least one: a test suite usually runs about four processes of its own, so half the cores
@@ -170,7 +171,7 @@ function builtInDefaults(): {
 } {
   return {
     harness: "claude",
-    max_rounds: 3,
+    max_rounds: builtInRounds(),
     reviews: Math.max(1, Math.floor(availableParallelism() / 4)),
     checks: Math.max(1, Math.floor(availableParallelism() / 2 / 4)),
     reviewMinutes: 30,
@@ -194,21 +195,26 @@ export function readSettings<G extends Group>(
         repository,
       )
     : {};
-  // The role files' harness and model, a layer of their own just over skelcrew.yaml's lines, as
-  // they go over those lines and a model must follow the harness each layer leaves. Only the
-  // files of the roles asked for are read, so a broken reviewer file never stops the lead.
-  const roleFiles: File = {};
+  // The repository's .agents/, a layer of its own just over skelcrew.yaml, as its files replace
+  // that file's old keys: the role files' harness and model go over lead:, builder: and
+  // reviewer:, as a model must follow the harness each layer leaves, and the default flow's
+  // rounds go over max_rounds. Only the files of the settings asked for are read, so a broken
+  // reviewer file never stops the lead.
+  const agentsFiles: File = {};
   for (const name of ["lead", "builder", "reviewer"] as const)
     if (repository && groups.some((group) => group === name))
-      roleFiles[name] = roleFileSettings(name, repository);
+      agentsFiles[name] = roleFileSettings(name, repository);
+  if (repository && groups.some((group) => group === "rounds"))
+    agentsFiles.max_rounds = repositoryRounds(repository);
   // A setting your override or the repository sets is not read from the rest of your config, so
   // a bad value there can't stop a repository that decides it. A role is the exception: yours
   // merges with the repository's, as a model goes along only while the role stays on your
   // harness.
   const decided = (k: Key) =>
-    [overrides, shared].some((l) => l[k] !== undefined && l[k] !== null) && !roleKeys.includes(k);
+    [overrides, agentsFiles, shared].some((l) => l[k] !== undefined && l[k] !== null) &&
+    !roleKeys.includes(k);
   const fromYours = wanted.filter((k) => yourKeys.includes(k) && !decided(k));
-  return mergeSettings([overrides, roleFiles, shared, readYourFile(fromYours)]);
+  return mergeSettings([overrides, agentsFiles, shared, readYourFile(fromYours)]);
 }
 
 // Returns the harness and model a repository's role file names, or nothing when it names neither
