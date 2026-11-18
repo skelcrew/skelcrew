@@ -242,6 +242,11 @@ async function deliverOnHost(
   if (waits.signal?.aborted) return "not typed";
   const timeout = waits.timeout ?? 60_000;
   const question = { ask: "deliver", id, text, timeout: Number.isFinite(timeout) ? timeout : null };
-  const done = await askHostLater(host, question, z.unknown(), waits.signal);
+  // The host gets half a minute past its own timeout to say it gave up, then is ended.
+  const limit = Number.isFinite(timeout) ? timeout + 30_000 : undefined;
+  const done = await askHostLater(host, question, z.unknown(), {
+    signal: waits.signal,
+    timeout: limit,
+  });
   return done === null && waits.signal?.aborted ? "not typed" : "typed";
 }

@@ -299,3 +299,24 @@ console.log(readThread(db, "app-12").host);`,
   );
   expect(said).toBe("its builder's session host gone isn't installed any more\ngone\n");
 });
+
+test("a host that hangs on one status is ended, and hears the changes after it", () => {
+  const settings = join(home, ".config", "skelcrew", "plugins", "fake");
+  mkdirSync(settings, { recursive: true });
+  writeFileSync(join(settings, "hang-status"), "");
+  const said = statusesAfter(`record(db, "app-12", { needs_you: true }, "a review failed");
+record(db, "app-12", { needs_you: false });`);
+  expect(said).toEqual([{ id: "fake-app-12", status: "working", reason: "working" }]);
+}, 30_000);
+
+test("recovery never takes the builder of a task whose ID only ends the same", () => {
+  const said = runWithFakeHost(
+    "sessions",
+    `const host = builderSession(db, "unused", readThread(db, "app-12")).host;
+startSession(host, "app-other-12", { folder: ${JSON.stringify(home)}, command: ["sleep", "30"], env: {}, labels: { repository: "simon/app", role: "builder", task: "app-other-12" } });
+console.log(builderSession(db, "unused", readThread(db, "app-12")).id);
+console.log(readThread(db, "app-12").host_id);`,
+    { host: "fake", host_id: null },
+  );
+  expect(said).toBe("app-12\nnull\n");
+});

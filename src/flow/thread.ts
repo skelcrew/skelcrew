@@ -167,13 +167,15 @@ export function builderSession(
   if (host === null) throw new Error(hostGone(thread));
   if (thread.host_id !== null || typeof host === "string")
     return { host, id: thread.host_id ?? thread.folder };
-  // Its task's name can gain its repository's owner since it started, so it is matched by the
-  // task's ID at its end.
+  // The builder's task label is its thread's name when it started: its repository's short name
+  // or, once another repository shares that, its owner and name, then its task's ID. Either is
+  // matched whole, so task 12 never takes the builder of task other-12.
+  const names = [`${thread.repo}-${thread.task}`, `${fullNameOf(thread)}-${thread.task}`];
   const found = listSessions(host).find(
     ({ labels }) =>
       labels?.role === "builder" &&
       labels.repository === fullNameOf(thread) &&
-      labels.task?.endsWith(`-${thread.task}`),
+      names.includes(labels.task ?? ""),
   );
   if (!found) return { host, id: thread.folder };
   record(db, thread.folder, { host_id: found.name }, "found its builder on its host");

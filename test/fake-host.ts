@@ -4,7 +4,7 @@
 // It notes each question it is asked in `asked`, and each status it is given in `statuses`. Its
 // own transport, when the test's manifest says it provides one, takes an agent as idle unless
 // its screen shows Claude Code's busy mark, and types a message in one step, noting it in
-// `delivered`.
+// `delivered`. With a file hang-status, the first status it is given hangs.
 import {
   appendFileSync,
   existsSync,
@@ -122,11 +122,17 @@ const answers: Record<string, () => unknown> = {
     type(question.id, `\x1b[200~${question.text}\x1b[201~\n`);
     appendFileSync(join(dir, "delivered"), `${JSON.stringify(question)}\n`);
   },
-  status: () =>
+  // With a file hang-status, the first status it is given hangs, as a broken host would.
+  status: async () => {
+    if (existsSync(join(dir, "hang-status"))) {
+      rmSync(join(dir, "hang-status"));
+      await Bun.sleep(60_000);
+    }
     appendFileSync(
       join(dir, "statuses"),
       `${JSON.stringify({ id: question.id, status: question.status, reason: question.reason })}\n`,
-    ),
+    );
+  },
 };
 
 try {

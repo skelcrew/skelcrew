@@ -191,6 +191,10 @@ export function noticeIdleScreens(db: Database, sessions: string): void {
 // hears only of changes. A daemon that starts again reports each one afresh.
 const reported = new Map<string, string>();
 
+// How long a host may take to hear a status, in milliseconds. Showing a status is quick, so one
+// that takes longer is hung, and is ended so the reports after it still go.
+const statusTimeout = 5000;
+
 // The reports still being sent to each builder's host, by the same key, so they arrive in the
 // order the changes happened.
 const reporting = new Map<string, Promise<void>>();
@@ -222,7 +226,7 @@ export function reportStatus(db: Database, thread: Thread): void {
   // so the next change, or the daemon's next start, says it again.
   const question = { ask: "status", id, ...said };
   const sent = (reporting.get(key) ?? Promise.resolve())
-    .then(() => askHostLater(host, question, z.unknown()))
+    .then(() => askHostLater(host, question, z.unknown(), { timeout: statusTimeout }))
     .then(
       () => {},
       (error) => {

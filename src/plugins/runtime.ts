@@ -100,20 +100,37 @@ export function askHost<T>(
 
 // Asks the host a question whose answer can take a while, such as delivering a message once its
 // agent is idle, without holding up the daemon meanwhile. Returns null when `signal` aborts
-// first: the command is killed then, so it types nothing more.
+// first: the command is killed then, so it types nothing more. Past `timeout` milliseconds, when
+// given, it is killed too and this throws, so a hung plugin can't hold back what waits after it.
+// It runs in a process group of its own, which is killed whole: a program it started could
+// otherwise hold its output open, and the wait for that output would never end.
 export async function askHostLater<T>(
   host: PluginHost,
   question: { ask: string; [key: string]: unknown },
   Answer: z.ZodType<T>,
-  signal?: AbortSignal,
+  limits: { signal?: AbortSignal | undefined; timeout?: number | undefined } = {},
 ): Promise<T | null> {
+  const { signal, timeout } = limits;
   const run = Bun.spawn(sessionCommand(host).argv, {
     ...sessionCommand(host),
     stdin: new Blob([`${JSON.stringify(question)}\n`]),
     stdout: "pipe",
     stderr: "pipe",
+    detached: true,
   });
-  const kill = () => run.kill("SIGKILL");
+  const kill = () => {
+    try {
+      process.kill(-run.pid, "SIGKILL");
+    } catch {}
+  };
+  let late = false;
+  const timer =
+    timeout === undefined
+      ? undefined
+      : setTimeout(() => {
+          late = true;
+          kill();
+        }, timeout);
   signal?.addEventListener("abort", kill);
   try {
     const [out, err, code] = await Promise.all([
@@ -122,8 +139,13 @@ export async function askHostLater<T>(
       run.exited,
     ]);
     if (signal?.aborted) return null;
+    if (late)
+      throw new Error(
+        `${host.plugin} didn't answer ${question.ask} within ${timeout} milliseconds`,
+      );
     return checkAnswer(host, question, { out, err, code }, Answer);
   } finally {
+    clearTimeout(timer);
     signal?.removeEventListener("abort", kill);
   }
 }
