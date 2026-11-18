@@ -173,27 +173,29 @@ export async function claimName(
   folder: string,
   name: string,
 ): Promise<boolean> {
-  // A commit of the claim's own. Were two machines to push the same commit, git would send
-  // nothing for the second and call it a success, so the message holds a random ID.
+  // A commit of the claim's own, of no files, so it works in any clone, even one with no commit
+  // yet. Were two machines to push the same commit, git would send nothing for the second and
+  // call it a success, so the message holds a random ID.
   const who = { GIT_AUTHOR_NAME: "Skelcrew", GIT_AUTHOR_EMAIL: "skelcrew@localhost" };
   const identity = {
     ...who,
     GIT_COMMITTER_NAME: who.GIT_AUTHOR_NAME,
     GIT_COMMITTER_EMAIL: who.GIT_AUTHOR_EMAIL,
   };
-  const commit = await git(
-    db,
-    repository,
-    [
-      "-C",
-      folder,
-      "commit-tree",
-      "HEAD^{tree}",
-      "-m",
-      `Skelcrew claims ${name}: ${crypto.randomUUID()}`,
-    ],
-    { ...process.env, ...identity },
-  );
+  const empty = await git(db, repository, [
+    "-C",
+    folder,
+    "hash-object",
+    "-w",
+    "-t",
+    "tree",
+    "/dev/null",
+  ]);
+  const message = `Skelcrew claims ${name}: ${crypto.randomUUID()}`;
+  const commit = await git(db, repository, ["-C", folder, "commit-tree", empty, "-m", message], {
+    ...process.env,
+    ...identity,
+  });
   // A lease with nothing after the colon lets the push create the ref only where it doesn't
   // exist yet. The remote checks that as it takes the push, so of two machines claiming one
   // name at once, only one gets it.

@@ -1716,7 +1716,7 @@ await serve(${JSON.stringify(socket)}, 200);`;
     expect(row()).toMatchObject({ status: "done" });
     await until(() =>
       read(join(lead(), "typed")).includes(
-        "app-t1 is done: its branch skelcrew/t1-add-export merged into main",
+        `app-${own}1 is done: its branch skelcrew/${own}1-add-export merged into main`,
       ),
     );
   }, 60_000);
@@ -1982,19 +1982,19 @@ await serve(${JSON.stringify(socket)}, 200);`;
     serveOutsideCheckout();
     await untilCloned();
     expect((await skel(["start", "app", "Add export", "As JSON"])).err).toBe("");
-    const log = () => read(join(data(), "threads", "app-t1.log"));
-    const ready = "app-t1 is ready on branch skelcrew/t1-add-export";
+    const log = () => read(join(data(), "threads", `app-${own}1.log`));
+    const ready = `app-${own}1 is ready on branch skelcrew/${own}1-add-export`;
     await until(() => log().includes(ready), 30_000);
-    expect((await skel(["rm", "app-t1"])).err).toBe("");
+    expect((await skel(["rm", `app-${own}1`])).err).toBe("");
     const realGit = Bun.which("git");
     const clone = join(data(), "repos", "simon", "app");
     const first = join(home, "first-deletion");
     script(
       "git",
-      `case "$*" in *"update-ref -d refs/skelcrew/threads/app-t1"*)
+      `case "$*" in *"update-ref -d refs/skelcrew/threads/app-${own}1"*)
   if ! mkdir "${first}" 2>/dev/null; then
     for i in $(seq 300); do
-      "${realGit}" -C "${clone}" rev-parse --verify --quiet refs/skelcrew/threads/app-t1 >/dev/null && break
+      "${realGit}" -C "${clone}" rev-parse --verify --quiet refs/skelcrew/threads/app-${own}1 >/dev/null && break
       sleep 0.1
     done
   fi ;;
@@ -2002,14 +2002,19 @@ esac
 exec "${realGit}" "$@"`,
     );
     const before = log().split(ready).length;
-    const starts = await Promise.all([skel(["start", "app-t1"]), skel(["start", "app-t1"])]);
-    expect(starts.map((s) => s.out).filter((out) => out === "Started app-t1.\n")).toHaveLength(1);
-    expect(starts.map((s) => s.err).join("")).toContain("app-t1 has a thread already");
+    const starts = await Promise.all([
+      skel(["start", `app-${own}1`]),
+      skel(["start", `app-${own}1`]),
+    ]);
+    expect(starts.map((s) => s.out).filter((out) => out === `Started app-${own}1.\n`)).toHaveLength(
+      1,
+    );
+    expect(starts.map((s) => s.err).join("")).toContain(`app-${own}1 has a thread already`);
     await until(() => log().split(ready).length > before, 30_000);
     // You merge the new thread's branch, and Skelcrew sees it.
     const work = join(home, "work", "app");
     git(work, "pull", "-q", bare, "main");
-    git(work, "fetch", "-q", bare, "skelcrew/t1-add-export");
+    git(work, "fetch", "-q", bare, `skelcrew/${own}1-add-export`);
     git(work, "merge", "--squash", "-q", "FETCH_HEAD");
     git(work, "commit", "-q", "-m", "Add export");
     git(work, "push", "-q", bare, "main");
