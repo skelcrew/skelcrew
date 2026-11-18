@@ -374,15 +374,11 @@ export function updatePlugin(db: Database, plugin: Plugin, options: Options = {}
     setLocked(db, source, lockedAs(current, commitOf(folder)));
     console.log(`${name} is at its newest version, ${current.version}.`);
   };
-  if (!wanted && newer(current.version, tag.slice(1))) {
-    atNewest();
-    return;
-  }
   const cloned = cloneTag(source, tag, commit);
   const { staged, manifest } = cloned;
   try {
-    // The newest tag can be the installed version moved to another commit, which is an update
-    // too, shown and asked about like any other.
+    // The newest tag can be the installed version moved to another commit, or an older version
+    // when a newer tag was deleted. Either is a change, shown and asked about like any other.
     if (!wanted && manifest.version === current.version && cloned.commit === commitOf(folder)) {
       atNewest();
       return;

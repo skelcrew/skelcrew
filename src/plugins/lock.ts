@@ -84,12 +84,14 @@ export function yourLock(db: Database): Lock {
       );
     }
   }
-  if (Object.keys(lock).length > 0) writeLock(lock);
   // Added to the plugins your config names already, such as a new one copied from another
-  // machine, so the setup carries all of them.
+  // machine, so the setup carries all of them. Your config goes first and the lock last: the
+  // lock's file is what marks the move done, so a config that can't be read or written stops
+  // the move with no lock, and the next command tries it again. Doing it twice adds nothing twice.
   const named = yourPlugins();
   const added = sources.filter((source) => !named.includes(source));
   if (added.length > 0) setYourPlugins([...named, ...added]);
+  if (Object.keys(lock).length > 0) writeLock(lock);
   return lock;
 }
 

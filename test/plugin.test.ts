@@ -4,6 +4,7 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -746,4 +747,49 @@ test("the move into a lock pins what it can read, and names in your config and r
   expect(Object.keys(parse(readFileSync(yourLockFile(), "utf8")))).toEqual([
     "skelcrew/skelcrew-fake",
   ]);
+});
+
+// The lock's file marks the move done, so it is written only once your config has its plugins.
+test("the move into a lock tries again after your config couldn't be read or written", async () => {
+  publish("skelcrew/skelcrew-fake", "0.1.0");
+  await skel(["add", "-g", "skelcrew/skelcrew-fake"], "y\n");
+  rmSync(yourLockFile());
+  writeFileSync(yourConfig(), "plugins: [\n");
+  const unread = await skel(["plugins"]);
+  expect(unread.code).toBe(1);
+  expect(unread.err).toContain("isn't valid YAML");
+  expect(existsSync(yourLockFile())).toBe(false);
+  writeFileSync(yourConfig(), "harness: claude\n");
+  chmodSync(yourConfig(), 0o444);
+  const unwritten = await skel(["plugins"]);
+  expect(unwritten.code).toBe(1);
+  expect(existsSync(yourLockFile())).toBe(false);
+  chmodSync(yourConfig(), 0o644);
+  const done = await skel(["plugins"]);
+  expect(done.err).toBe("");
+  expect(readFileSync(yourConfig(), "utf8")).toBe(
+    "harness: claude\nplugins:\n  - skelcrew/skelcrew-fake\n",
+  );
+  expect(Object.keys(parse(readFileSync(yourLockFile(), "utf8")))).toEqual([
+    "skelcrew/skelcrew-fake",
+  ]);
+});
+
+// Such as when a release's tag was deleted: the newest tag left is what update moves to.
+test("sc update -g moves a plugin newer than every tag back to the newest one, after asking", async () => {
+  publish("skelcrew/skelcrew-fake", "0.1.0", "0.2.0");
+  await skel(["add", "-g", "skelcrew/skelcrew-fake"], "y\n");
+  git(onGitHub("skelcrew/skelcrew-fake"), "tag", "-d", "v0.2.0");
+  const locked = () => parse(readFileSync(yourLockFile(), "utf8"))["skelcrew/skelcrew-fake"];
+  const declined = await skel(["update", "-g", "fake"], "n\n");
+  expect(declined.out).toContain("Skelcrew didn't update fake.");
+  expect(locked().version).toBe("0.2.0");
+  const updated = await skel(["update", "-g", "fake"], "y\n");
+  expect(updated.err).toBe("");
+  expect(updated.out).toContain("Updated fake from 0.2.0 to 0.1.0.");
+  expect(locked()).toEqual({
+    name: "fake",
+    version: "0.1.0",
+    commit: tagCommit("skelcrew/skelcrew-fake", "0.1.0"),
+  });
 });
