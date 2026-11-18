@@ -341,12 +341,14 @@ test("a role your repos: override puts back on your harness gets your model agai
     { harness: "claude", model: "opus" },
     { harness: "codex" },
   ]);
-  // A model of yours that isn't valid counts as none there, and stops nothing.
+  // Your model counts there, so one that isn't valid is refused, while the lead, on Codex, never
+  // reads it.
   files(
     "harness: claude\nmodel: [1]\nrepos: { simon/app: { harness: codex, roles: { builder: { harness: claude } } } }\n",
     null,
   );
-  expect(read(["builder"]).settings?.builder).toEqual({ harness: "claude" });
+  expect(read(["builder"]).err).toContain("config.yaml isn't valid");
+  expect(read(["lead"]).settings?.lead).toEqual({ harness: "codex" });
 });
 
 test("a role your repos: override decides whole isn't read below it, so a bad one there stops nothing", () => {
@@ -367,4 +369,22 @@ test("a role your repos: override decides whole isn't read below it, so a bad on
     "builder: { harness: invalid }\n",
   );
   expect(read(["builder"]).err).toContain("skelcrew.yaml isn't valid");
+});
+
+test("an override that decides a role from several of its own lines reads nothing below it", () => {
+  files(
+    "harness: claude\nrepos: { simon/app: { harness: codex, roles: { builder: { model: gpt } } } }\n",
+    "builder: { harness: invalid }\n",
+  );
+  const settings = read(["builder"]);
+  expect(settings.err).toBe("");
+  expect(settings.settings?.builder).toEqual({ harness: "codex", model: "gpt" });
+});
+
+test("your model that would be used is checked, though your override names the harness", () => {
+  files("harness: claude\nmodel: [1]\nrepos: { simon/app: { harness: claude } }\n", null);
+  expect(read(["builder"]).err).toContain("config.yaml isn't valid");
+  // On another harness, your model isn't used, so it isn't read.
+  files("harness: claude\nmodel: [1]\nrepos: { simon/app: { harness: codex } }\n", null);
+  expect(read(["builder"]).settings?.builder).toEqual({ harness: "codex" });
 });
