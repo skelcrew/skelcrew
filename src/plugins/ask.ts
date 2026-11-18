@@ -280,6 +280,24 @@ export async function postReview(
   return posted.id;
 }
 
+// Edits a review Skelcrew posted on the PR in place, with a new verdict and body, so the PR keeps
+// one review that says the latest round rather than one per round. Returns false when the forge
+// can't edit it, such as one deleted since. A plugin that answers nothing, such as an older one,
+// can't edit either.
+export async function editReview(
+  db: Database,
+  repository: Repository,
+  review: { pr: number; id: string; verdict: "approve" | "changes"; body: string },
+): Promise<boolean> {
+  const answer = await callPlugin(
+    db,
+    requireForge(db, repository),
+    { ask: "edit review", repository: repositoryKey(repository), ...review },
+    z.object({ edited: z.boolean() }).nullable(),
+  );
+  return answer?.edited ?? false;
+}
+
 // Sets Skelcrew's own check on the commit, so branch protection can require the review's verdict.
 export async function setStatus(
   db: Database,

@@ -11,16 +11,24 @@ import { builtInRole } from "../roles.ts";
 import { errorText } from "../say.ts";
 import { limitOn } from "./limits.ts";
 
-// What a review round ends with: the reviewer's verdict and what it said, a failed review and
-// why, or a review that ran past its time limit and was ended.
-export type Review = { verdict: "approve" | "changes" | "failed" | "timed out"; body: string };
+// What a review round ends with: the reviewer's verdict, what it said and each problem it found,
+// a failed review and why, or a review that ran past its time limit and was ended.
+export type Review =
+  | { verdict: "approve"; body: string; findings: string[] }
+  | { verdict: "changes"; body: string; findings: string[] }
+  | { verdict: "failed"; body: string }
+  | { verdict: "timed out"; body: string };
 // A review its harness's usage limit stopped, with the harness's error and when the limit
 // resets, or null when the harness didn't say. The round holds it and tries again.
 export type Limited = { verdict: "limited"; body: string; reset: number | null };
 
 // The answer a reviewer must give, checked as any outside input is. A failed verdict is never
 // the reviewer's to give: only Skelcrew says a review failed.
-const Verdict = z.strictObject({ verdict: z.enum(["approve", "changes"]), body: z.string() });
+const Verdict = z.strictObject({
+  verdict: z.enum(["approve", "changes"]),
+  body: z.string(),
+  findings: z.array(z.string()),
+});
 
 // The JSON schema of the reviewer's answer, which every harness holds the model to. OpenAI's
 // strict mode needs every property required and no others allowed.
@@ -29,8 +37,9 @@ const schema = JSON.stringify({
   properties: {
     verdict: { type: "string", enum: ["approve", "changes"] },
     body: { type: "string" },
+    findings: { type: "array", items: { type: "string" } },
   },
-  required: ["verdict", "body"],
+  required: ["verdict", "body", "findings"],
   additionalProperties: false,
 });
 
@@ -60,7 +69,7 @@ function testsTold(tests: Tests, test: string[] | undefined): string {
     return "The change only touches docs and Markdown, so don't run the tests. Say in the body that you didn't run them, as no code changed.";
   if (tests === "run")
     return `No CI runs on this commit, so ${runSuite("run the repository's whole test suite", test)}`;
-  return `The repository's CI runs the whole test suite on this commit, so don't run it yourself. Run a single test only to settle a doubt. CI's result for this commit is in ${tests.ci}: whether it passed, failed or is still running, and the end of each failed check's log. Skelcrew updates that file as CI goes on, so read it when you start and again just before you answer. When CI failed, name the failing tests as problems. When it lists checks and none of them runs the tests, such as only a deploy preview or a CLA check, ${runSuite("run the whole test suite yourself", test)} When CI hasn't reported yet, or is still running as you answer, review the code anyway, and say in the body that CI is still running.`;
+  return `The repository's CI runs the whole test suite on this commit, so don't run it yourself. Run a single test only to settle a doubt. CI's result for this commit is in ${tests.ci}: whether it passed, failed or is still running, and the end of each failed check's log. Skelcrew updates that file as CI goes on, so read it when you start and again just before you answer. When CI failed, list each failing test as a finding. When it lists checks and none of them runs the tests, such as only a deploy preview or a CLA check, ${runSuite("run the whole test suite yourself", test)} When CI hasn't reported yet, or is still running as you answer, review the code anyway: CI running is never a finding, as the PR is ready only once every check passes. Then approve clean code, and say "CI pending" in the body.`;
 }
 
 // Returns what the reviewer is told: its built-in instructions, with the task it checks the
@@ -239,6 +248,11 @@ function readVerdict(
       verdict: "failed",
       body: `the reviewer answered outside the shape: ${z.prettifyError(verdict.error)}`,
     };
+  // Changes asked for with no problem named would leave the builder nothing to fix and count a
+  // round for nothing, such as a review that only waited on CI. A diff with no findings is clean,
+  // so it is approved, and readiness still waits on every check.
+  if (verdict.data.verdict === "changes" && verdict.data.findings.length === 0)
+    return { ...verdict.data, verdict: "approve" };
   return verdict.data;
 }
 

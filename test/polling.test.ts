@@ -97,7 +97,7 @@ function fakeCodex(): void {
     "codex",
     `for a; do [ "$prev" = -o ] && out=$a; prev=$a; done
 cat > /dev/null
-echo '{"verdict":"approve","body":"Ready to merge."}' > "$out"`,
+echo '{"verdict":"approve","body":"Ready to merge.","findings":[]}' > "$out"`,
   );
 }
 
