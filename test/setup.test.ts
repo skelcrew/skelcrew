@@ -498,7 +498,15 @@ esac`,
   expect(loaded).toBe(readFileSync(plist(), "utf8"));
   expect(loaded).toContain("<string>up</string>");
   expect(loaded).toContain(`<string>${bin}:/usr/bin</string>`);
-  expect(calls()).toContain(`launchctl bootout gui/${uid}/dev.skelcrew.daemon\n`);
+  expect(calls()).toContain(
+    `launchctl bootout gui/${uid}/dev.skelcrew.daemon\nlaunchctl bootstrap gui/${uid} ${plist()}\n`,
+  );
+
+  // An unchanged file is left as launchd loaded it.
+  writeFileSync(join(home, "calls"), "");
+  expect((await skelOnMac("", `${bin}:/usr/bin`)).code).toBe(0);
+  expect(calls()).not.toContain("bootout");
+  expect(calls()).not.toContain("bootstrap");
 });
 
 test("on a Mac, escapes a PATH for the agent's definition", async () => {
