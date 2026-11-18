@@ -1,6 +1,7 @@
 // Loaded before each test file in CI, by scripts/test.ts: writes how long the whole file took to
 // the file TEST_FILE_TIMES names. Bun's report can't give this: its time for a file leaves out
-// the file's hooks, so a slow beforeAll would hide there.
+// the file's hooks, so a slow beforeAll would hide there. In Bun 1.3.14, a file whose beforeAll
+// takes 1 s and afterAll 0.5 s, with one instant test, has <testsuite time="0">.
 import { afterAll } from "bun:test";
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { relative } from "node:path";
