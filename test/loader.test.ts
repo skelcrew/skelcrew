@@ -266,3 +266,38 @@ test("roles: naming the harness a role is on already keeps the old line's model"
   );
   expect(read(["builder"]).settings?.builder).toEqual({ harness: "claude", model: "sonnet" });
 });
+
+test("a harness your repos: override names goes over the repository's role lines", () => {
+  files(
+    "harness: claude\nmodel: opus\nrepos: { simon/app: { harness: codex } }\n",
+    "builder: { harness: claude, model: opus }\n",
+  );
+  const moved = read([...roleGroups, "yourHarness"]).settings;
+  expect([moved?.lead, moved?.builder, moved?.reviewer, moved?.yourHarness]).toEqual([
+    { harness: "codex" },
+    { harness: "codex" },
+    { harness: "codex" },
+    "claude",
+  ]);
+  // A model alone in the override fits only a role still on your harness.
+  files(
+    "harness: claude\nrepos: { simon/app: { model: sonnet } }\n",
+    "reviewer: { harness: codex }\n",
+  );
+  const alone = read(roleGroups).settings;
+  expect([alone?.lead, alone?.builder, alone?.reviewer]).toEqual([
+    { harness: "claude", model: "sonnet" },
+    { harness: "claude", model: "sonnet" },
+    { harness: "codex" },
+  ]);
+  // A role the override names itself goes over its own harness for every role.
+  files(
+    "harness: claude\nrepos: { simon/app: { harness: codex, roles: { builder: { harness: claude, model: haiku } } } }\n",
+    null,
+  );
+  const named = read(["builder", "lead"]).settings;
+  expect([named?.builder, named?.lead]).toEqual([
+    { harness: "claude", model: "haiku" },
+    { harness: "codex" },
+  ]);
+});
