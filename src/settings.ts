@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { parse } from "yaml";
 import { z } from "zod";
 import { HarnessName } from "./agents/harness.ts";
-import { builtInRounds, flowRoles, repositoryRounds } from "./flows.ts";
+import { builtInRounds, flowRoles, hasFlowFile, repositoryRounds } from "./flows.ts";
 import { cloneDir, configDir } from "./paths.ts";
 import { type RoleName, repositoryRole } from "./roles.ts";
 
@@ -178,15 +178,18 @@ export function readSettings<G extends Group>(
   if (repository && groups.some((group) => group === "rounds"))
     agentsFiles.max_rounds = repositoryRounds(repository, decidedBy([overrides])("max_rounds"));
   // sc init asks without a repository, for the starter skelcrew.yaml it writes. The old
-  // max_rounds in skelcrew.yaml was the default flow's round limit, so another flow without
-  // rounds of its own never takes it, and gets yours or the built-in one.
+  // max_rounds in skelcrew.yaml stands in for the default flow's file until it has one. So a
+  // flow with a file of its own never takes it, though the file names no rounds, nor does any
+  // other flow, which always has one. Such a flow gets yours or the built-in round limit, and a
+  // bad max_rounds, left unread, doesn't stop it.
   const aboveShared = decidedBy([overrides, agentsFiles]);
-  const otherFlow = (repository?.flow ?? "default") !== "default";
   const shared = repository
     ? readRepositoryFile(
         wanted.filter(
           (k) =>
-            repositoryKeys.includes(k) && !aboveShared(k) && !(k === "max_rounds" && otherFlow),
+            repositoryKeys.includes(k) &&
+            !aboveShared(k) &&
+            !(k === "max_rounds" && hasFlowFile(repository)),
         ),
         repository,
       )

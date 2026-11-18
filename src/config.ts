@@ -4,8 +4,7 @@ import { appendFileSync, existsSync, lstatSync, mkdirSync, readFileSync } from "
 import { join } from "node:path";
 import { parse, parseDocument } from "yaml";
 import type { HarnessName } from "./agents/harness.ts";
-import { agentsFile, approvedAgents } from "./approved-agents.ts";
-import { flowRoles, repositoryFlows } from "./flows.ts";
+import { flowRoles, hasFlowFile, repositoryFlows } from "./flows.ts";
 import { cloneDir, configDir, dataDir } from "./paths.ts";
 import type { RoleName } from "./roles.ts";
 import { type Repository, type Role, readSettings, type Settings } from "./settings.ts";
@@ -54,10 +53,9 @@ export function checkFlow(
   try {
     roundLimit({ ...place, flow });
   } catch (error) {
-    const tree = place.agents === undefined ? approvedAgents(place) : place.agents;
-    const path = `flows/${flow}.yaml`;
-    const own = tree !== null && agentsFile(place, tree, path) !== null;
-    const where = own ? `.agents/${path}` : "Skelcrew's built-in default flow";
+    const where = hasFlowFile({ ...place, flow })
+      ? `.agents/flows/${flow}.yaml`
+      : "Skelcrew's built-in default flow";
     throw new Error(
       `${name}'s flow ${flow} (${where}) has no valid round limit: ${error instanceof Error ? error.message : error}`,
     );

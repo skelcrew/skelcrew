@@ -293,12 +293,20 @@ test("today's max_rounds still gives its rounds, until an approved flow file nam
   expect(roundsOf("{ ...app, agents: null }")).toBe(5);
 });
 
-test("a flow file naming no rounds leaves max_rounds counting, and your override beats both", () => {
+test("a default flow file replaces max_rounds though it names no rounds, and your override beats both", () => {
   writeFileSync(join(clone, "skelcrew.yaml"), "max_rounds: 5\n");
   agentsFile("flows/default.yaml", "build:\n  role: builder\n");
   commit("flow");
   inHome(approveCurrent);
-  expect(roundsOf()).toBe(5);
+  // The flow file names no rounds, so yours count, or else the built-in flow's.
+  expect(roundsOf()).toBe(3);
+  writeFileSync(join(home, ".config", "skelcrew", "config.yaml"), "rounds: 2\n");
+  expect(roundsOf()).toBe(2);
+  // A bad max_rounds is left unread, so it stops nothing.
+  writeFileSync(join(clone, "skelcrew.yaml"), "max_rounds: 0\n");
+  expect(roundsOf()).toBe(2);
+  // A task on the built-in files has no flow file, so max_rounds counts and is checked.
+  expect(() => roundsOf("{ ...app, agents: null }")).toThrow("skelcrew.yaml isn't valid");
   agentsFile("flows/default.yaml", "review:\n  rounds: 2\n");
   commit("flow");
   inHome(approveCurrent);
