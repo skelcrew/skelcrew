@@ -35,6 +35,7 @@ import { removeThread, stopThread } from "./events.ts";
 import { closeExitedLeads, lastOpened, leadOf, openedRepositories, startLead } from "./lead.ts";
 import { restoreLimits, wakeAfterLimit } from "./limits.ts";
 import { listRepositories, listTasks, listThreads, showTask } from "./list.ts";
+import { armMerge, cancelMerge, refuseWithoutForge, threadToMerge } from "./merging.ts";
 import { deliverAllWaiting, messageBuilder, messageLead, typeLeadNotes } from "./messages.ts";
 import { pollRepositories } from "./poll.ts";
 import { findRepository, fullNameIs, noRepositories, refreshClones, repositoryAt } from "./repo.ts";
@@ -198,8 +199,8 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   // Returns the request limited to the calling lead's own repository. A request about another
   // repository is refused, and the error tells the lead to ask you to open that one. sc ps and
   // sc ls with no repository mean every repository, which for a lead is its own, and sc pr show
-  // with a PR number means the lead's own repository, wherever it ran. Your requests and a
-  // builder's are returned unchanged.
+  // and sc merge --cancel with a PR number mean the lead's own repository, wherever it ran.
+  // Your requests and a builder's are returned unchanged.
   const limitToOwnRepository = (request: DaemonRequest, caller: Caller): DaemonRequest => {
     const leadRepository = leadOfCaller(caller);
     if (leadRepository === null) return request;
@@ -208,7 +209,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
     const own = `${leadRepository.owner}/${leadRepository.repo}`;
     if ((request.command === "ps" || request.command === "task ls") && !request.repo)
       return { ...request, repo: own };
-    if (request.command === "task show" && !request.repo) {
+    if ((request.command === "task show" || request.command === "merge cancel") && !request.repo) {
       const { from, ...rest } = request;
       return { ...rest, repo: own };
     }
@@ -379,6 +380,22 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         );
         return { merged: `Merged ${repository.name}#${request.pr}.` };
       }
+      // What sc merge --when-ready asks you about at your terminal before it arms.
+      case "merge preview": {
+        const thread = threadToMerge(db, request);
+        refuseWithoutForge(db, thread);
+        // Its whole title, not the short one, so you can tell which PR you agree to.
+        return {
+          thread: threadName(db, thread),
+          pr: thread.pr,
+          title: thread.title,
+          started: thread.started,
+        };
+      }
+      case "merge when ready":
+        return { said: armMerge(db, threadToMerge(db, request), request.seen) };
+      case "merge cancel":
+        return { said: cancelMerge(db, threadToMerge(db, request)) };
       case "tell": {
         const thread = findThread(db, request.repo, request.task);
         return { told: await messageBuilder(db, sessions, caller, thread, request.text) };

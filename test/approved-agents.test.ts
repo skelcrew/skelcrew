@@ -413,3 +413,83 @@ test("an empty harness or model in a role file is refused where it counts", () =
     model: "sonnet",
   });
 });
+
+test("a reviewer file whose frontmatter never closes stops reviews only", () => {
+  agentsFile("roles/reviewer.md", "---\nharness: codex\nReview it.\n");
+  agentsFile("roles/builder.md", '---\nmodel: ""\n---\nBuild it.\n');
+  agentsFile("roles/lead.md", "Lead it.\n");
+  commit("roles");
+  inHome(approveCurrent);
+  expect(inHome('return repositoryRole("lead", app).instructions;')).toBe("Lead it.\n");
+  expect(inHome('return readSettings(["lead"], app).lead;')).toEqual({
+    harness: "claude",
+    model: "opus",
+  });
+  expect(() => inHome('return readSettings(["reviewer"], app);')).toThrow("never closes");
+  expect(() => inHome('return readSettings(["builder"], app);')).toThrow(
+    ".agents/roles/builder.md",
+  );
+});
+
+test("a task whose .agents/ version the clone lost stops, rather than run on other instructions", () => {
+  agentsFile("roles/builder.md", "First way.\n");
+  commit("roles");
+  inHome(approveCurrent);
+  const tree = inHome("return agents.approvedAgents(app);");
+  // Skelcrew's clone made again, from a history that never had that version.
+  rmSync(clone, { recursive: true, force: true });
+  mkdirSync(clone, { recursive: true });
+  git("init", "-q", "-b", "main");
+  writeFileSync(join(clone, "README"), "app\n");
+  commit("start");
+  expect(() => builderOf(`{ ...app, agents: ${JSON.stringify(tree)} }`)).toThrow(
+    "no longer has the .agents/ version",
+  );
+  // A tree that has the version but no file for a role still gives the built-in one.
+  expect(builderOf("{ ...app, agents: null }")).toMatchObject({
+    told: builtInRole("builder").instructions,
+  });
+});
+
+test("a version lost after its roles were read once still stops the agents that need it", () => {
+  agentsFile("roles/builder.md", "First way.\n");
+  commit("roles");
+  inHome(approveCurrent);
+  // Read, then the clone made again without the version, then read again, in one process.
+  const remake = [
+    `rm -rf ${JSON.stringify(clone)}`,
+    `mkdir -p ${JSON.stringify(clone)}`,
+    `git -C ${JSON.stringify(clone)} init -q -b main`,
+  ].join(" && ");
+  const outcome = inHome(`const first = repositoryRole("builder", app).instructions;
+Bun.spawnSync(["sh", "-c", ${JSON.stringify(remake)}]);
+try { repositoryRole("builder", app); return { first, again: "read" }; }
+catch (error) { return { first, again: String(error) }; }`);
+  expect(outcome).toMatchObject({ first: "First way.\n" });
+  expect(String(Object(outcome).again)).toContain("no longer has the .agents/ version");
+});
+
+test("a role file with Windows line endings that never closes stops only its own role", () => {
+  agentsFile("roles/reviewer.md", "---\r\nharness: codex\r\nReview it.\r\n");
+  agentsFile("roles/lead.md", "---\r\nmodel: sonnet\r\n---\r\nLead it.\r\n");
+  commit("roles");
+  inHome(approveCurrent);
+  expect(inHome('return readSettings(["lead"], app).lead;')).toEqual({
+    harness: "claude",
+    model: "sonnet",
+  });
+  expect(() => inHome('return readSettings(["reviewer"], app);')).toThrow("never closes");
+});
+
+test("rounds: in your config goes under the flow file, and rounds: in your override over it", () => {
+  agentsFile("flows/default.yaml", "review:\n  rounds: 4\n");
+  commit("flow");
+  inHome(approveCurrent);
+  writeFileSync(join(home, ".config", "skelcrew", "config.yaml"), "rounds: 6\nmax_rounds: 9\n");
+  expect(roundsOf()).toBe(4);
+  writeFileSync(
+    join(home, ".config", "skelcrew", "config.yaml"),
+    "repos: { simon/app: { rounds: 7, max_rounds: 8 } }\n",
+  );
+  expect(roundsOf()).toBe(7);
+});

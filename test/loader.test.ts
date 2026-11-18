@@ -495,3 +495,55 @@ test("a harness or model left empty isn't valid, and is refused where it counts"
   expect(replaced.err).toBe("");
   expect(replaced.settings?.builder).toEqual({ harness: "codex", model: "gpt" });
 });
+
+test("a harness or model under repos: goes over the repository's role lines, as an override", () => {
+  files(
+    "harness: claude\nmodel: opus\nrepos:\n  simon/app: { harness: codex }\n",
+    "builder: { harness: claude, model: sonnet }\n",
+  );
+  expect(read(["builder", "lead"]).settings).toMatchObject({
+    builder: { harness: "codex" },
+    lead: { harness: "codex" },
+  });
+  // A model alone belongs to your harness, so it reaches only the roles left on it.
+  files(
+    "harness: claude\nmodel: opus\nrepos:\n  simon/app: { model: sonnet }\n",
+    "reviewer: { harness: codex }\n",
+  );
+  expect(read(["builder", "reviewer"]).settings).toMatchObject({
+    builder: { harness: "claude", model: "sonnet" },
+    reviewer: { harness: "codex" },
+  });
+  // The override's own role lines still go over its harness.
+  files(
+    "harness: claude\nrepos:\n  simon/app: { harness: codex, roles: { lead: { harness: claude } } }\n",
+    null,
+  );
+  expect(read(["lead", "builder"]).settings).toMatchObject({
+    lead: { harness: "claude" },
+    builder: { harness: "codex" },
+  });
+});
+
+test("a model alone under repos: goes over the repository's role models on your harness", () => {
+  files(
+    "harness: claude\nrepos:\n  simon/app: { model: sonnet }\n",
+    "builder: { model: opus }\nreviewer: { harness: codex, model: gpt-6 }\n",
+  );
+  expect(read(["builder", "reviewer"]).settings).toMatchObject({
+    builder: { harness: "claude", model: "sonnet" },
+    reviewer: { harness: "codex", model: "gpt-6" },
+  });
+});
+
+test("rounds: in your config replaces max_rounds:, which still works, and under repos: too", () => {
+  files("max_rounds: 5\n", null);
+  expect(read(["rounds"]).settings?.rounds).toBe(5);
+  files("max_rounds: 5\nrounds: 4\n", null);
+  expect(read(["rounds"]).settings?.rounds).toBe(4);
+  files("rounds: 4\nrepos:\n  simon/app: { rounds: 6, max_rounds: 9 }\n", "max_rounds: 2\n");
+  expect(read(["rounds"]).settings?.rounds).toBe(6);
+  expect(read(["rounds"], "other").settings?.rounds).toBe(4);
+  files("rounds: 0\n", null);
+  expect(read(["rounds"]).err).toContain("config.yaml isn't valid");
+});

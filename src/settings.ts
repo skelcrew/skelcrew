@@ -27,6 +27,10 @@ const File = z.looseObject({
   harness: HarnessName.optional(),
   model: Model.optional(),
   max_rounds: z.number().int().positive().optional(),
+  // Your round limit in the new shape, which replaces max_rounds in your config.yaml, at the top
+  // and under repos:. A repository's skelcrew.yaml keeps max_rounds until its flow file gives
+  // rounds.
+  rounds: z.number().int().positive().optional(),
   limits: z
     .looseObject({
       reviews: z.number().int().positive().optional(),
@@ -88,7 +92,7 @@ const keysOf: Record<Group, Key[]> = {
   lead: [],
   builder: [],
   reviewer: [],
-  rounds: ["max_rounds"],
+  rounds: ["rounds", "max_rounds"],
   reviews: ["limits"],
   checks: ["limits"],
   setup: ["setup"],
@@ -109,6 +113,7 @@ const keysOf: Record<Group, Key[]> = {
 const yourKeys: Key[] = [
   "harness",
   "model",
+  "rounds",
   "max_rounds",
   "setup",
   "test",
@@ -123,7 +128,7 @@ const repositoryKeys: Key[] = ["max_rounds", "setup", "test", "tracker"];
 // roleOf reads: what the repository's own files may, but its tracker. What is only yours, such as limits, stays in your
 // general settings, as an override is about one repository and limits are about your machine.
 // The tracker is shared with everyone who works on the repository, so no one changes it alone.
-const overrideKeys: Key[] = ["max_rounds", "setup", "test"];
+const overrideKeys: Key[] = ["rounds", "max_rounds", "setup", "test"];
 
 // Returns the built-in defaults: Claude Code for every role, the built-in flow's rounds and 30
 // minutes for a review. Setup, test and the tracker have none. Reviews default to a quarter of this machine's
@@ -158,8 +163,11 @@ export function readSettings<G extends Group>(
   const wanted = groups.flatMap((group) => keysOf[group]);
   // Each layer is read from the one that wins first, and a setting a layer above decides isn't
   // read again below it, so a bad value there can't stop a setting it doesn't decide.
+  // rounds and the old max_rounds are one setting, so either one decides both.
+  const sameSetting = (k: Key): Key[] =>
+    k === "rounds" || k === "max_rounds" ? ["rounds", "max_rounds"] : [k];
   const decidedBy = (layers: File[]) => (k: Key) =>
-    layers.some((l) => l[k] !== undefined && l[k] !== null);
+    layers.some((l) => sameSetting(k).some((key) => l[key] !== undefined && l[key] !== null));
   const overrides = repository ? readOverrides(wanted, repository) : {};
   // The default flow's rounds go over max_rounds in skelcrew.yaml, which they replace. The flow
   // file is checked even when your override decides the round limit, as its stages still say
@@ -441,7 +449,8 @@ function mergeSettings(layers: File[], roles: Partial<Record<RoleName, Role>>): 
     lead: roles.lead ?? unread,
     builder: roles.builder ?? unread,
     reviewer: roles.reviewer ?? unread,
-    rounds: first((l) => l.max_rounds) ?? defaults.max_rounds,
+    // In each layer, rounds goes over the old max_rounds.
+    rounds: first((l) => l.rounds ?? l.max_rounds) ?? defaults.max_rounds,
     reviews: first((l) => l.limits?.reviews) ?? defaults.reviews,
     checks: first((l) => l.limits?.checks) ?? defaults.checks,
     setup: first((l) => l.setup),
