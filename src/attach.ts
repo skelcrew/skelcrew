@@ -1,5 +1,6 @@
-// Attaching you to a repository's lead or a thread's builder, after making sure the daemon
-// runs on this Skelcrew's code. Plain sc attaches to a lead, and sc attach to a builder.
+// Running the daemon in the background, as sc up --bg does, and attaching you to a repository's
+// lead or a thread's builder once it runs this Skelcrew's code. Plain sc attaches to a lead, and
+// sc attach to a builder.
 import { z } from "zod";
 import { agentRuns } from "./agents/sessions.ts";
 import { ask } from "./client.ts";
@@ -7,7 +8,7 @@ import { tellOldKeys } from "./config.ts";
 import { openDb } from "./db.ts";
 import { leadOf } from "./flow/lead.ts";
 import { findThread } from "./flow/thread.ts";
-import { restartDaemon, startDaemon } from "./machine/service.ts";
+import { installService, restartDaemon, servicePid, startDaemon } from "./machine/service.ts";
 import { openScreen } from "./screen/screen.ts";
 import { checkoutFolder, git, release, singleFile } from "./version.ts";
 
@@ -20,14 +21,16 @@ const LeadReply = z.union([
 ]);
 
 // What the daemon says it runs: its release, or for a daemon from a checkout, that checkout's
-// folder and the commit it started on. A field an older daemon doesn't report comes back empty.
+// folder and the commit it started on, and its process id. A field an older daemon doesn't
+// report comes back empty.
 const DaemonBuild = z
   .object({
     release: z.string().catch(""),
     folder: z.string().catch(""),
     commit: z.string().catch(""),
+    pid: z.number().catch(0),
   })
-  .catch({ release: "", folder: "", commit: "" });
+  .catch({ release: "", folder: "", commit: "", pid: 0 });
 
 // Returns what the daemon runs, or null when no daemon answers.
 async function daemonRuns(): Promise<z.infer<typeof DaemonBuild> | null> {
@@ -48,6 +51,29 @@ function daemonShouldRun(running: z.infer<typeof DaemonBuild>): string | null {
   return commit === "" || running.commit === commit ? null : `commit ${commit}`;
 }
 
+// How long a restarted daemon may take to answer on what this Skelcrew wants, in milliseconds.
+// Tests set SKELCREW_RESTART_WAIT_MS shorter, so a daemon that never comes back doesn't cost
+// them ten seconds.
+const restartWait = z.coerce
+  .number()
+  .min(0)
+  .catch(10_000)
+  .parse(process.env.SKELCREW_RESTART_WAIT_MS ?? 10_000);
+
+// Reports whether the daemon that answered runs outside its service, such as sc up or an older
+// sc serve in a terminal. Told by its process id, which every daemon reports, so it holds for a
+// daemon of an older release too. One that reports none can't be told, and counts as the service's.
+const outsideService = (running: z.infer<typeof DaemonBuild>) =>
+  running.pid !== 0 && running.pid !== servicePid();
+
+// The error for a daemon outside its service that runs other code than this Skelcrew. Restarting
+// the service can't end it, and a new daemon can't start while it holds the lock, so only you can
+// stop it.
+const stopItFirst = (want: string) =>
+  new Error(
+    `Skelcrew's daemon runs outside its service, such as with sc up in a terminal, on other code than ${want}. Stop it, such as with Ctrl-C, then run sc again. Your agents keep running.`,
+  );
+
 // Restarts the daemon when it runs another release than this Skelcrew, or another commit of this
 // checkout. So a release installed in the background, or a git pull, takes over the next time
 // you run sc. Agents keep running, as only the daemon restarts.
@@ -55,27 +81,39 @@ export async function restartStaleDaemon(): Promise<void> {
   const running = await daemonRuns();
   const want = running && daemonShouldRun(running);
   if (!want) return;
+  if (outsideService(running)) throw stopItFirst(want);
   console.log(`Restarting the daemon on ${want}. Your agents keep running.`);
   const log = restartDaemon();
   // Done once a daemon answers that runs what this Skelcrew wants. The old one can still
   // answer for a moment while it stops.
-  const deadline = Date.now() + 10_000;
+  const deadline = Date.now() + restartWait;
   while (true) {
     const now = await daemonRuns();
     if (now && !daemonShouldRun(now)) return;
     if (Date.now() > deadline)
       throw new Error(
-        `Skelcrew's daemon didn't come back on ${want} within 10 seconds: ${log} shows why`,
+        `Skelcrew's daemon didn't come back on ${want} within ${restartWait / 1000} seconds: ${log} shows why`,
       );
     await Bun.sleep(100);
   }
 }
 
-// Makes sure the daemon runs this Skelcrew's code before you attach to an agent. A daemon on
-// another release or commit is restarted, and one that doesn't answer is started.
-async function ensureDaemon(): Promise<void> {
+// Runs the daemon as the background service on this Skelcrew's code, and returns once it
+// answers. This is sc up --bg, and plain sc and sc attach do it before attaching. The service is
+// installed first, or rewritten when the PATH or Skelcrew it needs moved. A daemon on another
+// release or commit is restarted, and one that doesn't answer is started. A daemon outside the
+// service is left running, and true comes back to say so: a service started beside it would
+// fail on the lock, and fail again on each retry until systemd gave up on it.
+export async function upInBackground(): Promise<boolean> {
+  const before = await daemonRuns();
+  if (before && outsideService(before)) {
+    const want = daemonShouldRun(before);
+    if (want) throw stopItFirst(want);
+    return true;
+  }
+  installService();
   await restartStaleDaemon();
-  if (await daemonRuns()) return;
+  if (await daemonRuns()) return false;
   const log = startDaemon();
   // The service manager returns before the daemon listens, so wait until it answers.
   const deadline = Date.now() + 10_000;
@@ -84,16 +122,16 @@ async function ensureDaemon(): Promise<void> {
       throw new Error(`Skelcrew's daemon didn't answer within 10 seconds: ${log} shows why`);
     await Bun.sleep(100);
   }
+  return false;
 }
 
-// Makes sure the daemon and a lead are running, then opens the screen on the lead until you
-// leave with Alt-Q. The lead is for `from`, an owner/repo, or else for the repository you
-// opened last. With `tab`, only a repository whose tab is open will do. Returns false, with no
-// screen opened, when every tab is closed. Before the screen takes over your terminal, it names
-// once any old keys the opened repository's skelcrew.yaml still uses: only the daemon knows
-// which repository you opened last.
+// Makes sure a lead is running, then opens the screen on the lead until you leave with Alt-Q.
+// The daemon must already run, as plain sc starts it first. The lead is for `from`, an
+// owner/repo, or else for the repository you opened last. With `tab`, only a repository whose
+// tab is open will do. Returns false, with no screen opened, when every tab is closed. Before
+// the screen takes over your terminal, it names once any old keys the opened repository's
+// skelcrew.yaml still uses: only the daemon knows which repository you opened last.
 export async function attachToLead(sessions: string, from?: string, tab = false): Promise<boolean> {
-  await ensureDaemon();
   // Asking for the lead brings it back if it ended while the daemon kept running. Starting it
   // takes longer than a status, hence the longer wait.
   const reply = await ask(
@@ -126,7 +164,7 @@ export async function attachToThread(
     throw new Error(
       `${repository}-${task}'s builder isn't running: the thread is ${thread.status}`,
     );
-  await ensureDaemon();
+  await upInBackground();
   // Attaching to a thread opens its repository, as plain sc in a checkout of it would, which
   // opens its tab again if you closed it by exiting its lead, and starts that lead. It is asked
   // each time, not only for a tab the database says is closed: a lead you exited a moment ago

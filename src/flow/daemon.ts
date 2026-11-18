@@ -1,9 +1,11 @@
-// The daemon, run by sc serve: keeps each repository's lead and the threads' builders
+// The daemon, run by sc up: keeps each repository's lead and the threads' builders
 // running, and answers the CLI and the agents on their sockets.
+
 import { dlopen, FFIType } from "bun:ffi";
 import { existsSync, mkdirSync, openSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server, type Socket } from "node:net";
 import { dirname } from "node:path";
+import { z } from "zod";
 import {
   agentRuns,
   interruptSession,
@@ -31,17 +33,27 @@ import {
   statusOnceBack,
 } from "./builder.ts";
 import { holdCheckSlot } from "./checks.ts";
-import { saveItems } from "./copy.ts";
+import { ownTask, saveItems } from "./copy.ts";
 import { removeThread, stopThread } from "./events.ts";
+import { noCommits } from "./git.ts";
 import { closeExitedLeads, lastOpened, leadOf, openedRepositories, startLead } from "./lead.ts";
 import { restoreLimits, wakeAfterLimit } from "./limits.ts";
 import { listRepositories, listTasks, listThreads, showTask } from "./list.ts";
 import { armMerge, cancelMerge, refuseWithoutForge, threadToMerge } from "./merging.ts";
 import { deliverAllWaiting, messageBuilder, messageLead, typeLeadNotes } from "./messages.ts";
 import { pollRepositories } from "./poll.ts";
-import { findRepository, fullNameIs, noRepositories, refreshClones, repositoryAt } from "./repo.ts";
+import {
+  findRepository,
+  fullNameIs,
+  hasNoCommits,
+  noRepositories,
+  refreshClones,
+  repositoryAt,
+} from "./repo.ts";
 import { allowed, type Caller, DaemonRequest, parseJson } from "./requests.ts";
+import { killReviewers } from "./reviewer.ts";
 import { endRound, goOn, rerunReview, resumeRound, submitRound } from "./round.ts";
+import { doing, watchForStalls } from "./stall.ts";
 import {
   keepState,
   noticeIdleScreens,
@@ -108,6 +120,15 @@ function callingThread(caller: Caller): Thread {
   return thread;
 }
 
+// How long the processes the daemon started get to end once it stops, in milliseconds, before
+// they are killed. Tests set SKELCREW_STOP_WAIT_MS shorter, so a process that ignores the stop
+// doesn't cost them five seconds.
+const stopWait = z.coerce
+  .number()
+  .min(0)
+  .catch(5000)
+  .parse(process.env.SKELCREW_STOP_WAIT_MS ?? 5000);
+
 // Ends the daemon on a signal: removes its sockets, ends the processes it started, and exits.
 // The agents' sessions aren't the daemon's processes, so agents keep working while the
 // daemon is down. The processes it started, such as a git clone or a reviewer, are ended and
@@ -119,7 +140,7 @@ function callingThread(caller: Caller): Thread {
 function endWhatItStarted(sockets: string[]): void {
   // Remove the sockets first, so no caller reaches a daemon on its way out.
   for (const socket of sockets) rmSync(socket, { force: true });
-  // Ask everything the daemon started to end, give it five seconds, then kill what is left.
+  // Ask everything the daemon started to end, give it a while, then kill what is left.
   const started = processTree(process.pid).slice(1);
   const end = (pids: number[], signal: NodeJS.Signals) => {
     for (const pid of pids)
@@ -128,9 +149,12 @@ function endWhatItStarted(sockets: string[]): void {
       } catch {}
   };
   end(started, "SIGTERM");
-  const deadline = Date.now() + 5000;
+  const deadline = Date.now() + stopWait;
   while (stillRunning(started).length > 0 && Date.now() < deadline) Bun.sleepSync(50);
   end(stillRunning(started), "SIGKILL");
+  // A reviewer's sandbox can leave a process that is no longer under the daemon, so the look
+  // above misses it, and that would wait forever.
+  killReviewers();
   process.exit(0);
 }
 
@@ -171,6 +195,9 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
     await listen(createServer(answer(caller)), socket);
     sockets.push(socket);
   };
+  // End cleanly on the service's stop or on Ctrl-C, from here on. That comes before any review
+  // is brought back, as a stop without it would leave the review running.
+  for (const signal of ["SIGTERM", "SIGINT"]) process.on(signal, () => endWhatItStarted(sockets));
   // The function that polls one repository at once, for sc start. It is set once polling
   // starts, and sc start waits for it until then. So a builder never starts from a task an
   // earlier daemon saved, which may be out of date.
@@ -399,8 +426,9 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         const name = threadName(db, thread);
         await removeThread(db, sessions, thread, request.reason, leadOfCaller(caller) !== null);
         // The issue it worked on stays open in the tracker, so sc rm can say so. A thread
-        // started on what you told the lead is numbered with a t, such as app-t1, and has none.
-        return { removed: name, issue: /^t\d+$/.test(thread.task) ? null : thread.task };
+        // started on what you told the lead is named by the machine's code, such as app-wr1,
+        // and has none.
+        return { removed: name, issue: ownTask(thread.task) ? null : thread.task };
       }
       case "merge": {
         const repository = findRepository(db, request.repo);
@@ -522,6 +550,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
               record(db, started.folder, { short: request.short }, "given a short title");
             return { started: `Started ${threadName(db, started)}.` };
           }
+          if (await hasNoCommits(db, repository)) throw new Error(noCommits(repository));
           thread = await startThread(db, request);
         } finally {
           startingTasks.delete(key);
@@ -533,6 +562,8 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         return { started: `Started ${threadName(db, thread)}.` };
       }
       case "start new": {
+        const repository = findRepository(db, request.repo);
+        if (await hasNoCommits(db, repository)) throw new Error(noCommits(repository));
         const thread = await startThread(db, request);
         setUpAndStart(thread);
         return { started: `Started ${threadName(db, thread)}.` };
@@ -596,6 +627,8 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   // would overwrite a limit a review met meanwhile and forget when it was met, so a review
   // that started before it could end it by finishing.
   restoreLimits(db);
+  // A freeze leaves nothing else in the log, so the daemon logs its own stalls.
+  watchForStalls("The daemon");
   // Taken before any request comes in, so a thread started meanwhile, still setting up,
   // isn't taken for one whose setup the daemon's stop cut short.
   const before = liveThreads(db);
@@ -616,19 +649,21 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   // A lead you exited while the daemon was down closes its tab, before any request could open
   // it, and isn't brought back. From here on, the daemon looks each second for a lead you exit.
   closeExitedLeads(db, sessions);
-  setInterval(() => closeExitedLeads(db, sessions), 1000);
+  setInterval(
+    () => doing("closing the tabs of exited leads", () => closeExitedLeads(db, sessions)),
+    1000,
+  );
   // From here on, the daemon also looks every two seconds for a working agent whose screen
   // shows it idle, where no hook said so. A session that ends during a look only ends that look.
   setInterval(() => {
     try {
-      noticeIdleScreens(db, sessions);
+      doing("looking at the agents' screens", () => noticeIdleScreens(db, sessions));
     } catch (error) {
       console.log(`couldn't look at the agents' screens: ${errorText(error)}`);
     }
   }, 2000);
-  // Open your socket, and end cleanly on the service's stop or on Ctrl-C.
+  // Open your socket.
   await open(path, "you");
-  for (const signal of ["SIGTERM", "SIGINT"]) process.on(signal, () => endWhatItStarted(sockets));
   console.log(`Listening on ${path}.`);
   // Bring back the lead of each repository you have opened. One that fails is logged, and the
   // rest still start.

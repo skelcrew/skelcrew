@@ -547,3 +547,43 @@ test("rounds: in your config replaces max_rounds:, which still works, and under 
   files("rounds: 0\n", null);
   expect(read(["rounds"]).err).toContain("config.yaml isn't valid");
 });
+
+test("where a file names rounds: and the old max_rounds:, only rounds: is read", () => {
+  files("rounds: 4\nmax_rounds: 0\n", null);
+  expect(read(["rounds"]).settings?.rounds).toBe(4);
+  files("repos: { simon/app: { rounds: 5, max_rounds: many } }\n", null);
+  expect(read(["rounds"]).settings?.rounds).toBe(5);
+  // The new key is the one that counts, so a bad one is refused though the old one is fine.
+  files("rounds: 0\nmax_rounds: 4\n", null);
+  expect(read(["rounds"]).err).toContain("config.yaml isn't valid");
+});
+
+test("many bad role values below an override that decides the role stop nothing, and quickly", () => {
+  // Bad harnesses and models in every lower layer. Trying every combination of them would take
+  // millions of merges.
+  files(
+    "harness: invalid\nmodel: [1]\nroles: { builder: { harness: nope, model: [2] } }\nbuilder: { harness: no, model: [3] }\nrepos: { simon/app: { roles: { builder: { harness: codex, model: gpt } } } }\n",
+    "builder: { harness: bad, model: [4] }\n",
+  );
+  const started = Date.now();
+  const settings = read(["builder"]);
+  expect(settings.err).toBe("");
+  expect(settings.settings?.builder).toEqual({ harness: "codex", model: "gpt" });
+  expect(Date.now() - started).toBeLessThan(10_000);
+  // Without the override, they decide the builder, and the first that counts is refused.
+  files(
+    "harness: invalid\nmodel: [1]\nroles: { builder: { harness: nope, model: [2] } }\nbuilder: { harness: no, model: [3] }\n",
+    "builder: { harness: bad, model: [4] }\n",
+  );
+  expect(read(["builder"]).err).toContain("skelcrew.yaml isn't valid: builder.harness");
+  // Every harness and model bad, in every layer: trying each combination of them took seconds.
+  files(
+    "harness: a\nmodel: [1]\nroles: { builder: { harness: b, model: [2] } }\nbuilder: { harness: c, model: [3] }\nrepos: { simon/app: { harness: d, model: [4], roles: { builder: { harness: e, model: [5] } }, builder: { harness: f, model: [6] } } }\n",
+    "builder: { harness: g, model: [7] }\n",
+  );
+  const worst = Date.now();
+  expect(read(["builder"]).err).toContain(
+    "isn't valid under repos: simon/app: roles.builder.harness",
+  );
+  expect(Date.now() - worst).toBeLessThan(3_000);
+});

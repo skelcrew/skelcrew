@@ -116,7 +116,7 @@ export async function startOn(
 }
 
 // Has the daemon start a thread on a title and body, for sc start in a repository with no
-// tracker, and returns what it did, in a sentence naming the thread, such as app-t1. `short` is
+// tracker, and returns what it did, in a sentence naming the thread, such as app-wr1. `short` is
 // its short title for the sidebar, and `flow` the flow it runs.
 export async function startNew(
   repository: string,

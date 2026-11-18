@@ -187,8 +187,11 @@ export async function startLead(
   });
   // A remote can be slow or away, and attaching waits on this.
   refreshClones(db).catch((error) => console.log(errorText(error)));
+  // A lead that had a conversation but starts a new one says so, as it starts without its
+  // history and the log is all that tells why.
+  const lost = stored !== null && resume === null ? `, as ${stored} wasn't saved` : "";
   console.log(
-    `${resume ? "Brought back" : "Started"} ${owner}/${repo}'s lead, session ${session}.`,
+    `${resume ? "Brought back" : "Started"} ${owner}/${repo}'s lead, session ${session}${lost}.`,
   );
   await checkAgentStarted(sessions, lead.name, "lead");
 }
