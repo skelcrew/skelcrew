@@ -213,9 +213,10 @@ function sayIn(data: unknown, path: string[], problem: string): Say {
   }
   if (at !== undefined && at !== null && !isMapping(at)) return broken(path.length);
   const mapping = isMapping(at) ? at : {};
-  // Returns the field `key` checked with `schema`.
+  // Returns the field `key` checked with `schema`. A bare `model:` is YAML's null, which is a
+  // value that isn't valid, not a missing one, so it never quietly gives the default.
   const field = <T>(key: "harness" | "model", schema: z.ZodType<T>): Value<T> => {
-    const read = schema.optional().safeParse(mapping[key] ?? undefined);
+    const read = schema.optional().safeParse(mapping[key]);
     if (read.success) return { value: read.data };
     const where = [...path, key].join(".");
     return { bad: new Error(`${problem}: ${where}: ${z.prettifyError(read.error)}`) };

@@ -396,3 +396,20 @@ test("a role file's harness and model are checked only where they count", () => 
     told: "Build it.\n",
   });
 });
+
+test("an empty harness or model in a role file is refused where it counts", () => {
+  agentsFile("roles/builder.md", "---\nmodel:\n---\nBuild it.\n");
+  commit("roles");
+  inHome(approveCurrent);
+  expect(() => inHome('return readSettings(["builder"], app);')).toThrow(
+    ".agents/roles/builder.md in simon/app isn't valid: model",
+  );
+  writeFileSync(
+    join(home, ".config", "skelcrew", "config.yaml"),
+    "harness: claude\nrepos: { simon/app: { roles: { builder: { model: sonnet } } } }\n",
+  );
+  expect(inHome('return readSettings(["builder"], app).builder;')).toEqual({
+    harness: "claude",
+    model: "sonnet",
+  });
+});

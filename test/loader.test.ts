@@ -475,3 +475,23 @@ test("a role line that isn't a mapping stops its role only where it could count"
   files("harness: claude\n", "builder: bad\n");
   expect(read(["builder"]).err).toContain("skelcrew.yaml isn't valid: builder isn't a mapping");
 });
+
+test("a harness or model left empty isn't valid, and is refused where it counts", () => {
+  files("harness: claude\nbuilder: { harness: null }\n", null);
+  expect(read(["builder"]).err).toContain("builder.harness");
+  files("harness: claude\nbuilder: { model: null }\n", "builder: { model: }\n");
+  expect(read(["builder"]).err).toContain("skelcrew.yaml isn't valid: builder.model");
+  files("harness: null\n", null);
+  expect(read(["lead"]).err).toContain("config.yaml isn't valid: harness");
+  // An empty one in your override counts over everything below it, so it is refused.
+  files("harness: claude\nrepos: { simon/app: { roles: { builder: { model: null } } } }\n", null);
+  expect(read(["builder"]).err).toContain("under repos: simon/app: roles.builder.model");
+  // Your override replaces both, so empty ones below it stop nothing.
+  files(
+    "harness: claude\nmodel: null\nrepos: { simon/app: { roles: { builder: { harness: codex, model: gpt } } } }\n",
+    "builder: { harness: null, model: null }\n",
+  );
+  const replaced = read(["builder"]);
+  expect(replaced.err).toBe("");
+  expect(replaced.settings?.builder).toEqual({ harness: "codex", model: "gpt" });
+});
