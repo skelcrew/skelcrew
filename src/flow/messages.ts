@@ -261,11 +261,34 @@ async function typeWaiting(db: Database, sessions: string, folder: string, signa
   }
 }
 
+// How many ends of each thread's builder are under way, by its folder. Nothing is typed into it
+// meanwhile: the end may still fail, and leave the builder running with its messages.
+const paused = new Map<string, number>();
+
+// Runs `end`, which ends the thread's builder, with typing into the builder paused all the while
+// and any typing under way cancelled first, and returns what it returns. The messages are kept,
+// and typing goes on as before once `end` is over, such as after it failed.
+export async function pauseDelivering<T>(
+  db: Database,
+  folder: string,
+  end: () => Promise<T>,
+): Promise<T> {
+  paused.set(folder, (paused.get(folder) ?? 0) + 1);
+  stopDelivering(db, folder, false);
+  try {
+    return await end();
+  } finally {
+    const left = (paused.get(folder) ?? 1) - 1;
+    if (left > 0) paused.set(folder, left);
+    else paused.delete(folder);
+  }
+}
+
 // Starts typing the thread's waiting messages into its builder, unless that is under way
-// already, and returns at once. A failure, such as the session ending, is logged, and the
+// already, or paused while the builder is being ended, and returns at once. A failure, such as the session ending, is logged, and the
 // messages wait for the next attempt.
 export function deliverMessages(db: Database, sessions: string, folder: string): void {
-  if (delivering.has(folder)) return;
+  if (delivering.has(folder) || (paused.get(folder) ?? 0) > 0) return;
   const cancel = new AbortController();
   const ended = typeWaiting(db, sessions, folder, cancel.signal)
     .catch((error) => console.log(`couldn't type into ${folder}'s builder: ${errorText(error)}`))

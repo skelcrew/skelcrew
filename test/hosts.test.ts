@@ -518,3 +518,46 @@ process.exit(0);`,
     "couldn't look at stuck-app-13's screen: stuck answered list in a way Skelcrew doesn't understand";
   expect(said).toBe(`idle working true\n${released}\n`);
 }, 40_000);
+
+test("nothing is typed into a builder while a slow host fails to end it, and its messages wait", () => {
+  const prompt = join(home, "prompt.sh");
+  writeFileSync(prompt, `#!/bin/sh\necho "${claude.marks.prompt}"\ncat > received.txt\n`, {
+    mode: 0o755,
+  });
+  const fake = join(home, ".config", "skelcrew", "plugins", "fake");
+  const received = join(home, "received.txt");
+  const said = runWithFakeHost(
+    "sessions",
+    `const fs = require("node:fs");
+const host = (await builderSession(db, "unused", readThread(db, "app-12"))).host;
+const labels = { repository: "simon/app", role: "builder", task: "app-12" };
+await startSession(host, "app-12", { folder: ${JSON.stringify(home)}, command: [${JSON.stringify(prompt)}], env: { PATH: process.env.PATH }, labels });
+const waiting = () => db.query("SELECT COUNT(*) AS n FROM messages").get().n;
+const typed = () => fs.existsSync(${JSON.stringify(received)}) ? fs.readFileSync(${JSON.stringify(received)}, "utf8") : "";
+// The host takes two seconds to end it, then fails.
+fs.writeFileSync(${JSON.stringify(join(fake, "slow-end"))}, "");
+fs.writeFileSync(${JSON.stringify(join(fake, "fail-end"))}, "");
+db.run("INSERT INTO messages (folder, sender, text, said, at, typed_in) VALUES ('app-12', 'lead', 'hello', 'hello', 0, '[]')");
+const ending = endThread(db, "unused", readThread(db, "app-12"), "its PR was merged", null).catch((error) => error.message);
+// The daemon tries to type waiting messages every two seconds, here more often.
+let done = false;
+ending.then(() => (done = true));
+while (!done) {
+  deliverMessages(db, "unused", "app-12");
+  await Bun.sleep(100);
+}
+console.log(await ending);
+console.log(waiting(), JSON.stringify(typed()));
+fs.rmSync(${JSON.stringify(join(fake, "slow-end"))});
+// Once the end failed, typing goes on as before.
+deliverMessages(db, "unused", "app-12");
+const deadline = Date.now() + 15_000;
+while (!typed().endsWith("\\n") && Date.now() < deadline) await Bun.sleep(100);
+console.log(waiting(), JSON.stringify(typed()));
+process.exit(0);`,
+    { host: "fake", host_id: "fake-app-12" },
+  );
+  expect(said).toBe(
+    `fake couldn't end: the host is down for a moment\n1 ""\n0 ${JSON.stringify("\x1b[200~hello\x1b[201~\n")}\n`,
+  );
+}, 40_000);

@@ -15,6 +15,7 @@ import { endWake, wakeAfterLimit } from "./limits.ts";
 import {
   noteForLead,
   noticeRound,
+  pauseDelivering,
   queueMessage,
   stopDelivering,
   typeLeadNotes,
@@ -83,17 +84,18 @@ export const removing = new Set<string>();
 // names. A builder whose host can't be reached, or won't end, throws and keeps its host: it may
 // still run, and must neither get a second builder nor lose its clone under it.
 async function endBuilder(db: Database, sessions: string, folder: string, drop: boolean) {
-  // Its messages are dropped only once it has ended: one that can't be ended may still run,
-  // and keeps them.
-  stopDelivering(db, folder, false);
-  endWake(folder);
-  endRound(folder);
-  const { host, id } = await builderSession(db, sessions, readThread(db, folder));
-  // Claude Code can outlive the end of its session for a few seconds, still writing in the
-  // clone.
-  await stopSession(host, id);
-  if (drop) stopDelivering(db, folder, true);
-  record(db, folder, { host: null, host_id: null });
+  // Nothing is typed into it while its host ends it, and its messages are dropped only once it
+  // has ended: one that can't be ended may still run, and keeps them, typed in as before.
+  await pauseDelivering(db, folder, async () => {
+    endWake(folder);
+    endRound(folder);
+    const { host, id } = await builderSession(db, sessions, readThread(db, folder));
+    // Claude Code can outlive the end of its session for a few seconds, still writing in the
+    // clone.
+    await stopSession(host, id);
+    if (drop) stopDelivering(db, folder, true);
+    record(db, folder, { host: null, host_id: null });
+  });
 }
 
 // The threads sc stop is ending the builder of, by folder. A builder may submit while it exits,
