@@ -624,5 +624,5 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   // Start polling, which also lets any sc start waiting on it go ahead, and keep Skelcrew itself
   // up to date.
   polling.resolve(pollRepositories(db, sessions, every, setUpAndStart, startingTasks));
-  keepUpToDate();
+  keepUpToDate(db);
 }

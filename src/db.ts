@@ -392,6 +392,9 @@ function prepareTables(db: Database): void {
   // new note the ID of the last one deleted. Typing a note deletes it by its ID once it is in,
   // and a note dropped while it was typed, such as a thread's end once the thread starts over,
   // must not hand its ID to a note saved meanwhile, which would then be deleted unheard.
+  // The release the daemon installed in the background, for the list's notice, until it runs
+  // on it. At most one row.
+  db.run("CREATE TABLE IF NOT EXISTS installed (release TEXT NOT NULL)");
   db.run(
     "CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY AUTOINCREMENT, text TEXT NOT NULL)",
   );

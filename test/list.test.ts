@@ -244,6 +244,21 @@ test("a row knows whether its agent runs, and the lead says what its hooks last 
   });
 });
 
+// The notice of a release installed in the background comes from the database too, never from a
+// file. The list, printed once as there is no terminal, shows only the database's.
+test("the notice of an installed release comes from the database, not a file", () => {
+  writeFileSync(join(home, ".local", "share", "skelcrew", "installed"), "9.9.8\n");
+  const printed = () => {
+    const code = `import { runList } from ${JSON.stringify(source("list/list.ts"))};
+await runList("skel-test-${process.pid}-none", "simon/app");`;
+    const run = Bun.spawnSync([process.execPath, "-e", code], { env: env(), stderr: "pipe" });
+    return run.stdout.toString();
+  };
+  expect(printed()).not.toContain("installed");
+  sql("INSERT INTO installed (release) VALUES ('9.9.9');");
+  expect(printed()).toContain("Skelcrew 9.9.9 installed · restart to use it");
+});
+
 // The list reads no settings file, so it knows a thread is past its round limit from the changes
 // the review held back for you.
 test("a task past its round limit says so, from the changes its review held", () => {

@@ -77,7 +77,7 @@ export async function runList(agents: string, repository: string): Promise<void>
   const frameWith = (bottom: (tabs: number) => string, shownLoad: string): Frame => {
     const tabs = repositoryTabs(db, open);
     const name = tabs.find((tab) => tab.fullName === `${open.owner}/${open.repo}`)?.name ?? "";
-    const notice = updateNotice();
+    const notice = updateNotice(db);
     return { version, where, name, tabs, notice, bottom: bottom(tabs.length), load: shownLoad };
   };
 

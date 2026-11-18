@@ -116,7 +116,7 @@ export async function runSidebar(
       }
       switchTo(next.fullName);
     }
-    notice = noticeLines(updateNotice(), size().width);
+    notice = noticeLines(updateNotice(db), size().width);
     rows = sidebarRows(db, running, roundLimit, Date.now(), open);
     entries = entryCounts(db, open);
     // An agent can end and its client move to the lead by itself, so the session shown is asked
