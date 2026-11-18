@@ -1661,6 +1661,39 @@ echo "Not logged in"; exit 1`,
       expect(thread()).toMatchObject({ status: "stopped", merge_plan: "armed" });
     }, 150_000);
 
+    // A review asked for while the record is posted keeps the plan waiting until it ends, with
+    // the PR green all along. The review is kept pending by holding its pending check, so the
+    // record can go through on its own.
+    test("a review started while the record is posted holds the merge until it ends", async () => {
+      await approvedApp12();
+      const head = pushed();
+      writeFileSync(join(plugin, "hold-review"), "");
+      await arm();
+      pr({ head, reviews: [skelReview], checks: [approved] });
+      await until(() => existsSync(join(plugin, "held-review")));
+      writeFileSync(join(plugin, "hold-status-pending"), "");
+      const sc = Bun.spawnSync([process.execPath, main, "review", "app-12"], {
+        env: env(),
+        stderr: "pipe",
+      });
+      expect(sc.stderr.toString()).toBe("");
+      await until(() => thread().reviewing !== null && existsSync(join(plugin, "held-status")));
+      const reviewedAt = thread().review_at;
+      // The record goes through while the review is still pending: nothing merges.
+      rmSync(join(plugin, "hold-review"));
+      await until(() => thread().merge_waits === "its review");
+      await morePolls();
+      expect(thread().reviewing).not.toBeNull();
+      expect(merges()).toEqual([]);
+      expect(thread().merge_plan).toBe("armed");
+      // Once the review ends, approved, the next poll merges the approved commit.
+      rmSync(join(plugin, "hold-status-pending"));
+      await until(() => merges().length === 1, 30_000);
+      expect(merges()[0]).toMatchObject({ pr: 7, commit: head });
+      expect(thread().review_at).not.toBe(reviewedAt);
+      await until(() => thread().status === "done");
+    }, 120_000);
+
     // A poll asks the forge, then acts on its answer. A review that ends while the forge
     // answers makes that answer stale: the new round's checks may not be in it. The merge then
     // waits for a poll that began after the review.
