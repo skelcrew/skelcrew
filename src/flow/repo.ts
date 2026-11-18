@@ -136,6 +136,10 @@ export function refreshClone(db: Database, repository: Repository, adding = fals
   return run;
 }
 
+// The repositories, by owner/name, whose remote had no commits at their last refresh, so the
+// log says so once rather than at every poll.
+const emptySeen = new Set<string>();
+
 // Creates Skelcrew's clone of the repository, or brings the one it has up to date, logging
 // when its default branch moves. The lead reads the clone, so a clone whose config holds a
 // credential is deleted rather than left there for it.
@@ -147,9 +151,19 @@ async function createOrUpdate(db: Database, repository: Repository): Promise<voi
   if (existsSync(clone)) {
     const { before, after } = await updateClone(db, repository, clone);
     deleteIfCredentials(clone);
-    if (before !== after)
+    // An empty repository is logged once, rather than at every poll, until its first commit.
+    const fullName = `${owner}/${repo}`;
+    if (after === "") {
+      if (!emptySeen.has(fullName)) console.log(`${fullName} has no commits yet`);
+      emptySeen.add(fullName);
+      return;
+    }
+    emptySeen.delete(fullName);
+    if (before === "")
+      console.log(`Skelcrew's clone of ${fullName} has its first commit, ${after.slice(0, 7)}`);
+    else if (before !== after)
       console.log(
-        `Skelcrew's clone of ${owner}/${repo} moved its default branch from ${before.slice(0, 7)} to ${after.slice(0, 7)}`,
+        `Skelcrew's clone of ${fullName} moved its default branch from ${before.slice(0, 7)} to ${after.slice(0, 7)}`,
       );
     return;
   }
