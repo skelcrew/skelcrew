@@ -1,10 +1,10 @@
 // Skelcrew's database, opened over one that lacks the newer columns.
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { source, threadSql } from "./harness.ts";
+import { fakePlugin, source, threadSql } from "./harness.ts";
 
 let home = "";
 beforeEach(() => {
@@ -326,6 +326,29 @@ test("a name stays taken on another machine once claimed", async () => {
   const [laptop = "", lapdog = ""] = homes;
   expect(await namesFrom(startOn(laptop, remote, ["One"]))).toEqual(["app-lp1"]);
   expect(await namesFrom(startOn(lapdog, remote, ["Two"]))).toEqual(["app-lp2"]);
+}, 60_000);
+
+// A repository just added has no clone yet, and the refresh that makes it first asks its forge,
+// which can give another URL to clone from, such as https in place of ssh, as its login works
+// there. The name is claimed at that URL, as the one it had before may not let Skelcrew in.
+test("the first thread with no issue claims its name at the URL its forge gave", async () => {
+  const { remote, homes } = twoMachines();
+  const [laptop = ""] = homes;
+  const before = join(home, "unreachable.git");
+  const forge = fakePlugin(laptop);
+  const answer = {
+    key: "simon/app",
+    name: "app",
+    link: "l",
+    clone: remote,
+    push: true,
+    fork: false,
+  };
+  writeFileSync(join(forge, "claims.json"), JSON.stringify({ [before]: answer }));
+  const run = startOn(laptop, before, ["One"], `db.run("UPDATE repositories SET claimed = 0");`);
+  expect(await namesFrom(run)).toEqual(["app-lp1"]);
+  const claims = Bun.spawnSync(["git", "ls-remote", remote, "refs/skelcrew/names/*"]);
+  expect(claims.stdout.toString()).toContain("refs/skelcrew/names/lp1");
 }, 60_000);
 
 // A name claimed on a repository with no commits yet, such as one just created, is a ref of the

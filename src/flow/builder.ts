@@ -108,9 +108,12 @@ async function recordThread(
     // remote, which only one machine can, trying the next number while another got there first.
     const code = machineCode(db);
     const clone = cloneDir(owner, repo);
-    // Its clone, which the daemon may still be making, is where the claim is pushed from.
+    // Its clone, which the daemon may still be making, is where the claim is pushed from. The
+    // refresh that makes it may first learn the repository's forge, which can give it another
+    // URL, the one the forge's login works at, so the repository is read again after it.
     if (!existsSync(clone)) await refreshClones(db);
-    const claimed = await claimedNames(db, repository, code);
+    const current = findRepository(db, given.repo);
+    const claimed = await claimedNames(db, current, code);
     const started = db
       .query("SELECT task FROM threads WHERE owner = ? AND repo = ? AND task GLOB ?")
       .all(owner, repo, `${code}[0-9]*`)
@@ -119,7 +122,7 @@ async function recordThread(
       Number(id.slice(code.length).match(/^\d+/)?.[0] ?? 0),
     );
     let number = Math.max(0, ...numbers) + 1;
-    while (!(await claimName(db, repository, clone, `${code}${number}`))) number++;
+    while (!(await claimName(db, current, clone, `${code}${number}`))) number++;
     task = `${code}${number}`;
     ({ title, body } = given);
   } else {
