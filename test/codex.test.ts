@@ -354,6 +354,11 @@ describe.skipIf(insideSandbox)("codex", () => {
     await act("stop");
     await untilNeedsYou(true);
     await until(() => notesAbout12() === 1);
+    // The daemon forgets the note only once it has typed all of it. A daemon stopped before
+    // then types it again as it starts, so a note is never lost.
+    await until(() =>
+      read(join(data(), "threads", "app-12.log")).includes("told the lead it needs you"),
+    );
     for (const daemon of running.splice(0)) {
       daemon.kill();
       await daemon.exited;
