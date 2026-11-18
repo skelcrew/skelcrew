@@ -613,7 +613,7 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
     await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), 30_000);
     const prompt = read(join(codexHome(), "sessions", "prompt-1"));
     expect(prompt).toContain(
-      "No CI runs on this commit, so run the repository's whole test suite, with `bun test`.",
+      "No CI runs on this commit, so run the repository's whole test suite with `sc check`, which runs `bun test` once one of this machine's check slots is free. Never run that command directly, as other agents share this machine.",
     );
   }, 60_000);
 
@@ -1576,6 +1576,11 @@ await serve(${JSON.stringify(socket)}, 200);`;
     // log, which comes last.
     await until(() => log().includes("is merged into main"), 30_000);
     expect(row()).toMatchObject({ status: "done" });
+    await until(() =>
+      read(join(lead(), "typed")).includes(
+        "app-t1 is done: its branch skelcrew/t1-add-export merged into main",
+      ),
+    );
   }, 60_000);
 
   // Runs the daemon from a folder that isn't a git checkout, as the service does, polling every
@@ -1816,14 +1821,62 @@ await serve(${JSON.stringify(socket)}, 200);`;
     expect(log()).toContain("wrong approach");
     expect(asked(plugin).filter((q) => q.ask !== "claims")).toEqual([]);
 
-    // Started over, it isn't taken for a thread whose branch was deleted, and gets as far as
-    // the first did.
+    // Skelcrew's clone still has the refs of the first thread's push, as after a daemon that
+    // stopped part way through an end. Started over, it isn't taken for a thread whose branch
+    // was deleted, and gets as far as the first did.
+    const refs = () => git(join(data(), "repos", "simon", "app"), "for-each-ref", "refs/skelcrew/");
+    expect(refs()).toContain("refs/skelcrew/threads/");
     const before = log().split(ready).length;
     expect((await skel(["start", "app-t1"])).out).toBe("Started app-t1.\n");
     await until(() => log().split(ready).length > before, 30_000);
     expect(log()).not.toContain("was deleted");
     expect(onRemote()).toBe(true);
   }, 60_000);
+
+  // Starting a done thread over deletes the old thread's refs first. Two starts at once must
+  // not let the second delete the refs of the thread the first started: without its push ref,
+  // a poll never sees its branch merged. The stand-in for git holds every later deletion of a
+  // push ref until the new thread has pushed, as a slow deletion would.
+  test("two starts over at once start one thread, whose merge still ends it", async () => {
+    const bare = addAppOnGit();
+    verdict(1, "approve", "Ready to merge.");
+    verdict(2, "approve", "Ready again.");
+    serveOutsideCheckout();
+    await untilCloned();
+    expect((await skel(["start", "app", "Add export", "As JSON"])).err).toBe("");
+    const log = () => read(join(data(), "threads", "app-t1.log"));
+    const ready = "app-t1 is ready on branch skelcrew/t1-add-export";
+    await until(() => log().includes(ready), 30_000);
+    expect((await skel(["rm", "app-t1"])).err).toBe("");
+    const realGit = Bun.which("git");
+    const clone = join(data(), "repos", "simon", "app");
+    const first = join(home, "first-deletion");
+    script(
+      "git",
+      `case "$*" in *"update-ref -d refs/skelcrew/threads/app-t1"*)
+  if ! mkdir "${first}" 2>/dev/null; then
+    for i in $(seq 300); do
+      "${realGit}" -C "${clone}" rev-parse --verify --quiet refs/skelcrew/threads/app-t1 >/dev/null && break
+      sleep 0.1
+    done
+  fi ;;
+esac
+exec "${realGit}" "$@"`,
+    );
+    const before = log().split(ready).length;
+    const starts = await Promise.all([skel(["start", "app-t1"]), skel(["start", "app-t1"])]);
+    expect(starts.map((s) => s.out).filter((out) => out === "Started app-t1.\n")).toHaveLength(1);
+    expect(starts.map((s) => s.err).join("")).toContain("app-t1 has a thread already");
+    await until(() => log().split(ready).length > before, 30_000);
+    // You merge the new thread's branch, and Skelcrew sees it.
+    const work = join(home, "work", "app");
+    git(work, "pull", "-q", bare, "main");
+    git(work, "fetch", "-q", bare, "skelcrew/t1-add-export");
+    git(work, "merge", "--squash", "-q", "FETCH_HEAD");
+    git(work, "commit", "-q", "-m", "Add export");
+    git(work, "push", "-q", bare, "main");
+    await until(() => log().includes("is merged into main"), 30_000);
+  }, 90_000);
 
   // sc rm deletes the branch before it ends the thread. A poll in between must not take the
   // thread for one whose branch someone else deleted. The fake remote holds the deletion open

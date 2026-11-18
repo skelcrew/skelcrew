@@ -1,8 +1,8 @@
 // Runs a fresh adversarial reviewer in the sandbox for each thread's PR, on the harness your
 // config names for reviews.
-import { mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { z } from "zod";
 import { type HarnessName, harnessNamed } from "../agents/harness.ts";
 import { filterEnv, sandboxArgs, throwawayMounts } from "../agents/sandbox.ts";
@@ -38,8 +38,9 @@ const schema = JSON.stringify({
 // or no one, on a change to docs and Markdown alone.
 export type Tests = { ci: string } | "run" | "docs only";
 
-// Returns what the reviewer does when it has to run the whole test suite: `run` it with the
-// commands under test: in the repository's skelcrew.yaml or your config. With none named, or
+// Returns what the reviewer does when it has to run the whole test suite: `run` it through sc
+// check, which runs the commands under test: in the repository's skelcrew.yaml or your config,
+// once one of the machine's check slots is free. With none named, or
 // with test configured as none, it reviews without running tests and says why. Skelcrew never
 // guesses a test command, as a wrong guess would pass for a real result.
 function runSuite(run: string, test: string[] | undefined): string {
@@ -47,7 +48,7 @@ function runSuite(run: string, test: string[] | undefined): string {
     return "no test command is configured, so don't run the tests. Review the code, and say in the body that you didn't run them, as none is configured.";
   if (test.length === 0)
     return "don't run the tests: the repository is configured with none. Review the code, and say in the body that you didn't run them, as it has none.";
-  return `${run}, with \`${test.join(" && ")}\`.`;
+  return `${run} with \`sc check\`, which runs \`${test.join(" && ")}\` once one of this machine's check slots is free. Never run that command directly, as other agents share this machine.`;
 }
 
 // Returns what the reviewer is told about the tests. The whole test suite runs once per commit,
@@ -214,7 +215,8 @@ function readVerdict(
 // reads CI's result rather than running the whole test suite. It is asked again every 15
 // seconds while the review runs, as CI usually finishes during it. `docsOnly` says the change
 // touches only docs and Markdown, so the reviewer runs no tests, and `ci` isn't asked. `test`
-// is the repository's test command, for when the reviewer has to run the suite.
+// is the repository's test command, for when the reviewer has to run the suite, which it does
+// through sc check on `socket`, the thread's reviewer socket.
 async function reviewNow(given: {
   clone: string;
   issue: { title: string; body: string };
@@ -228,6 +230,7 @@ async function reviewNow(given: {
   env?: Record<string, string | undefined>;
   ci?: { has: () => boolean; read: () => Promise<string> } | undefined;
   docsOnly?: boolean;
+  socket?: string;
 }): Promise<Review | Limited> {
   const { clone, issue, base, model, harness, limit = 30 * 60_000, env = process.env } = given;
   // Fail at once, with a reason you can act on, when the review was cancelled before its turn
@@ -332,9 +335,13 @@ async function reviewNow(given: {
       "shift",
       'exec "$@"',
     ].join(" && ");
+    // The sandbox shows the socket's folder, so it is left out while the daemon hasn't made it,
+    // such as when a test runs a review alone. sc check then says the daemon didn't answer.
+    const socket = given.socket && existsSync(dirname(given.socket)) ? given.socket : undefined;
     argv = sandboxArgs({
       home,
       path,
+      ...(socket ? { socket } : {}),
       mounts: [...mounts, ...launch.mounts],
       cwd: at,
       command: ["sh", "-c", checkout, given.commit, index, ...launch.command],

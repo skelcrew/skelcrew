@@ -104,6 +104,9 @@ export const DaemonRequest = z.discriminatedUnion("command", [
   }),
   z.object({ command: z.literal("tell lead"), text: z.string().min(1) }),
   z.object({ command: z.literal("submit"), summary: z.string().min(1) }),
+  // `from` is the remote of the checkout you ran sc check in, which names the repository whose
+  // test command it runs. An agent's own socket names its repository instead.
+  z.object({ command: z.literal("check"), from: z.string().optional() }),
   z.object({ command: z.literal("question asked") }),
   z.object({ command: z.literal("question answered") }),
   z.object({ command: z.literal("question closed") }),
@@ -127,14 +130,19 @@ export const DaemonRequest = z.discriminatedUnion("command", [
 ]);
 export type DaemonRequest = z.infer<typeof DaemonRequest>;
 
-// Who is on the other end of a socket: you, a repository's lead, or a thread's builder. An
+// Who is on the other end of a socket: you, a repository's lead, a thread's builder, or a
+// thread's reviewer, which may only run sc check. An
 // agent may ask only for what its commands and its harness's hooks need. Trusting a repository
 // is never a request: only you can, in your own terminal. A builder may tell only its
 // repository's lead, never another thread, and may ask for a review of its own thread only. You
 // and a lead may look at a builder's screen and stop its turn, but a builder may not, as it has
 // only its own. You type to a builder yourself in the sidebar, so you have no tell. Merging is
 // yours alone, from the screen: no agent may merge, as merging stays a human's choice.
-export type Caller = "you" | { lead: { owner: string; repo: string } } | Thread;
+export type Caller =
+  | "you"
+  | { lead: { owner: string; repo: string } }
+  | Thread
+  | { review: Thread };
 // The requests each kind of caller may make. The daemon refuses any other before acting.
 export const allowed = {
   you: [
@@ -154,6 +162,7 @@ export const allowed = {
     "rm preview",
     "rm",
     "merge",
+    "check",
   ],
   lead: [
     "status",
@@ -181,6 +190,7 @@ export const allowed = {
   builder: [
     "status",
     "submit",
+    "check",
     "review",
     "tell lead",
     "question asked",
@@ -190,6 +200,7 @@ export const allowed = {
     "turn failed",
     "turn interrupted",
   ],
+  review: ["check"],
 };
 
 // Returns a decoded socket message, or undefined so invalid JSON can be rejected without

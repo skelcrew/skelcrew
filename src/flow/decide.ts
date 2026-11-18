@@ -18,10 +18,10 @@ export const reviewCheck = "skelcrew/check";
 // you, whatever its builder or reviewer does, until you let it go on.
 export const pastRoundLimit = (thread: Thread, maxRounds: number) => thread.rounds > maxRounds;
 
-// What decide says to do with a thread: end it, with the reason, or tell its builder what is
-// new and change the thread.
+// What decide says to do with a thread: end it, with the reason for its log and the note for
+// its lead, or tell its builder what is new and change the thread.
 export type Decision =
-  | { end: string }
+  | { end: string; note: string }
   | {
       // The IDs of the reviews, comments and check runs handled once this decision is carried
       // out, among those the PR shows.
@@ -140,9 +140,18 @@ function handledBefore(thread: Thread, pr: PullRequest): Set<string> | null {
 // anyone can comment, and what is typed in steers the builder. Skelcrew's own reviews come from
 // its forge's app, a bot.
 export function decide(thread: Thread, pr: PullRequest, given: { maxRounds: number }): Decision {
-  // A merged or closed PR ends the thread.
-  if (pr.state === "merged") return { end: `PR #${thread.pr} was merged` };
-  if (pr.state === "closed") return { end: `PR #${thread.pr} was closed without merging` };
+  // A merged or closed PR ends the thread. The lead hears which, so it stops listing the PR as
+  // open.
+  if (pr.state === "merged")
+    return {
+      end: `PR #${thread.pr} was merged`,
+      note: `is done: #${thread.pr} merged into ${pr.base}`,
+    };
+  if (pr.state === "closed")
+    return {
+      end: `PR #${thread.pr} was closed without merging`,
+      note: `ended: #${thread.pr} closed without merging`,
+    };
   // A thread with nothing to go on takes in everything the PR shows as handled, so its whole
   // history isn't typed into the builder at once.
   const runs = pr.checks.flatMap((check) => (check.id === null ? [] : [check.id]));

@@ -24,6 +24,7 @@ import type { Settings } from "../settings.ts";
 import { taskOf, threadTask } from "./copy.ts";
 import { pastRoundLimit } from "./decide.ts";
 import { fetchBranch } from "./git.ts";
+import { dropEndNotes } from "./lead.ts";
 import { findRepository, forgeAuthor, refreshClones } from "./repo.ts";
 import {
   builderHarness,
@@ -68,11 +69,28 @@ export function statusOnceBack(stopped: Thread): "waiting" | "working" {
 // since the lead waits on the answer. Setting up its clone and starting its builder come
 // after, and can take minutes. `given` is a start request, so its `repo` is the repository's
 // name in Skelcrew or its owner/name, and its `short` the short title the lead gave, if any.
-export async function startThread(
+// Starts go one at a time: a start over first deletes the old thread's refs, and a second
+// start of the same task, running alongside, could delete the refs of the thread the first
+// just started. One at a time, the second finds that thread and is refused.
+export function startThread(
   db: Database,
   given:
     | { repo: string; task: string; from?: string | undefined; short?: string | undefined }
     | { repo: string; title: string; body: string; short?: string | undefined },
+): Promise<Thread> {
+  const start = startsBefore.then(() => recordThread(db, given));
+  // A start that fails holds up none after it.
+  startsBefore = start.catch(() => {});
+  return start;
+}
+
+// The last start under way, which the next one waits for.
+let startsBefore: Promise<unknown> = Promise.resolve();
+
+// Records a new thread for startThread, which runs one at a time, and returns it.
+async function recordThread(
+  db: Database,
+  given: Parameters<typeof startThread>[1],
 ): Promise<Thread> {
   // Find the repository and whether a tracker holds its tasks, which decides where a named
   // task's title and body come from.
@@ -129,6 +147,31 @@ export async function startThread(
     for (let n = 2; taken(free); n++) free = `${folder}-${n}`;
     return free;
   };
+  // Skelcrew's clone keeps refs of what a thread pushed and had approved, named by its folder.
+  // A thread starting over in a failed or done thread's folder would be taken for one that
+  // pushed already, and without a forge ended at once, and an old approval could hold for its
+  // work. So they go now, before the new thread is recorded and can push, and a ref git can't
+  // delete refuses the start. Only a ref that is there is deleted: there is none with no
+  // clone, as after a setup that couldn't clone, nor for a folder no ref can be named after,
+  // which setting up refuses later. Ending a thread leaves them, as nothing reads a done
+  // thread's refs, and an end cut short would leave them anyway. A thread that isn't failed or
+  // done keeps them, and is refused below.
+  const ended = Thread.nullable().parse(
+    db
+      .query(`SELECT * FROM task_threads ${where} AND status IN ('failed', 'done')`)
+      .get(owner, repo, task),
+  );
+  const git = (...args: string[]) => quietly(["git", "-C", cloneDir(owner, repo), ...args]);
+  if (ended)
+    for (const kind of ["threads", "bases", "remote", "approved"]) {
+      const ref = `refs/skelcrew/${kind}/${ended.folder}`;
+      if (!(await git("rev-parse", "--verify", "--quiet", ref)).ok) continue;
+      const { ok, said } = await git("update-ref", "-d", ref);
+      if (!ok)
+        throw new Error(
+          `couldn't start ${name}-${task} over, as Skelcrew couldn't delete ${ref}: ${said}`,
+        );
+    }
   // Check again for a thread and record the new one in one transaction, so a failed or done
   // thread's row is never removed without the new one taking its place.
   return db.transaction(() => {
@@ -194,6 +237,9 @@ export async function startThread(
     // PR, rounds, review or updates.
     db.run(`DELETE FROM threads ${where}`, [owner, repo, task]);
     db.run("DELETE FROM messages WHERE folder = ?", [thread.folder]);
+    // A note that the old thread ended may still wait for a busy lead. The new thread has the
+    // same name, and the lead would drop it from what it holds open, so the note goes too.
+    dropEndNotes(db, thread.folder);
     db.run(
       `INSERT INTO threads (owner, repo, task, folder, branch, base, status, session, started)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -336,7 +382,7 @@ export function builderInstructions(commands: Pick<Settings, "setup" | "test">):
       ? "No test command is configured."
       : test.length === 0
         ? "Test is configured as none, so the repository has no test suite to run."
-        : `The repository's whole test suite runs with ${shown(test)}. That is for CI and the reviewer, so don't run it yourself. It shows how the repository runs its tests, lint and typecheck, so run the parts near your change.`;
+        : `The repository's whole test suite runs with ${shown(test)}. That is for CI and the reviewer, so don't run it yourself. If you ever must, run \`sc check\`, which runs it once one of this machine's check slots is free, never the command itself. It shows how the repository runs its tests, lint and typecheck, so run the parts near your change.`;
   return `${instructions}\n\n${setupTold} ${testTold}\n`;
 }
 
