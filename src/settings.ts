@@ -344,18 +344,20 @@ function mergeSettings(overrides: File, files: File[]): Settings {
     overrides.harness === undefined
       ? undefined
       : { harness: overrides.harness, model: overrides.model };
-  // Each layer's say on one role, merged. In each layer, roles: goes over the old lead:,
-  // builder: and reviewer: lines.
-  const role = (name: "lead" | "builder" | "reviewer") =>
-    mergeRole(
-      [
-        overrides.roles?.[name],
-        overrides[name],
-        moved,
-        ...files.flatMap((l) => [l.roles?.[name], l[name]]),
-      ],
+  // Each layer's say on one role, merged: the files first, then your overrides over them. In
+  // each layer, roles: goes over the old lead:, builder: and reviewer: lines.
+  const role = (name: "lead" | "builder" | "reviewer") => {
+    const merged = mergeRole(
+      files.flatMap((l) => [l.roles?.[name], l[name]]),
       top,
     );
+    // A model alone under repos: goes over the files' model for a role still on your harness,
+    // as the model belongs to that harness.
+    const own = overrides.harness === undefined && overrides.model !== undefined;
+    const lifted =
+      own && merged.harness === top.harness ? { ...merged, model: overrides.model } : merged;
+    return mergeRole([overrides.roles?.[name], overrides[name], moved], top, lifted);
+  };
   return {
     lead: role("lead"),
     builder: role("builder"),
@@ -378,13 +380,14 @@ function mergeSettings(overrides: File, files: File[]): Settings {
 // and `top`, the harness and model every role gets unless it names its own. A model name belongs
 // to its harness, so a model goes along only while the role stays on the harness it was given with:
 // reviewer: { harness: codex } in skelcrew.yaml must never run Codex on your opus. With no
-// model left, the harness picks its default.
+// model left, the harness picks its default. `below` is where the layers start from: your
+// harness and model, unless the role was already merged from lower layers.
 function mergeRole(
   layers: (z.infer<typeof RoleSettings> | undefined)[],
   top: { harness: HarnessName; model: string | undefined },
+  below: { harness: HarnessName; model?: string | undefined } = top,
 ): Role {
-  let harness = top.harness;
-  let model = top.model;
+  let { harness, model } = below;
   // From the last layer to the first, so each one goes over what is below it. A layer that
   // moves the role to another harness drops the model below it, and the role gets your model
   // again only when it moves back onto your harness.

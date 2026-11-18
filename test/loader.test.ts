@@ -295,3 +295,14 @@ test("a harness or model under repos: goes over the repository's role lines, as 
     builder: { harness: "codex" },
   });
 });
+
+test("a model alone under repos: goes over the repository's role models on your harness", () => {
+  files(
+    "harness: claude\nrepos:\n  simon/app: { model: sonnet }\n",
+    "builder: { model: opus }\nreviewer: { harness: codex, model: gpt-6 }\n",
+  );
+  expect(read(["builder", "reviewer"]).settings).toMatchObject({
+    builder: { harness: "claude", model: "sonnet" },
+    reviewer: { harness: "codex", model: "gpt-6" },
+  });
+});
