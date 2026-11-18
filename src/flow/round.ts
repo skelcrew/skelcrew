@@ -122,6 +122,16 @@ const checkWait = z.coerce
   .catch(40_000)
   .parse(process.env.SKELCREW_CHECK_WAIT_MS ?? 40_000);
 
+// How long a review waits for CI's first check on its commit, when CI shows on another PR or
+// the commit has workflows. A forge shows a check within seconds of a push, and Skelcrew's copy
+// has it by the next poll, 30 seconds later. Tests of a review that waits it out set
+// SKELCREW_CI_WAIT_MS, so they don't pay two minutes each.
+const ciWait = z.coerce
+  .number()
+  .min(0)
+  .catch(2 * 60_000)
+  .parse(process.env.SKELCREW_CI_WAIT_MS ?? 2 * 60_000);
+
 // The repositories, as owner/repo, where a review waited the whole time for a first check and
 // no PR showed one: they have no CI that runs on PRs, such as a workflow that runs only on a
 // release, or no CI at all. Their reviews wait no more, so that costs a repository at most once
@@ -221,7 +231,16 @@ async function reviewRound(
     const prs = openPrs(db, thread.owner, thread.repo);
     const own = pr === null ? null : prOf(db, thread.owner, thread.repo, pr);
     const inVain = waitedInVain.has(repositoryName);
-    const given = { own, commit: sha, prs, setsUpCi, waitedInVain: inVain, waited, checkWait };
+    const given = {
+      own,
+      commit: sha,
+      prs,
+      setsUpCi,
+      waitedInVain: inVain,
+      waited,
+      checkWait,
+      ciWait,
+    };
     return whoRunsTheSuite(given);
   };
   if (pr !== null && !docsOnly && suite(0) === "wait") {
@@ -243,7 +262,10 @@ async function reviewRound(
     const prs = openPrs(db, thread.owner, thread.repo);
     const noCi = { own: null, commit: sha, prs, setsUpCi: false, waitedInVain: true };
 
-    if (who === "reviewer" && whoRunsTheSuite({ ...noCi, waited: 0, checkWait }) === "reviewer")
+    if (
+      who === "reviewer" &&
+      whoRunsTheSuite({ ...noCi, waited: 0, checkWait, ciWait }) === "reviewer"
+    )
       waitedInVain.add(repositoryName);
   }
   // A builder whose PR fell behind or conflicts with the base branch merges it and submits

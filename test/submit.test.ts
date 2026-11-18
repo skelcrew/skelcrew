@@ -60,8 +60,8 @@ const script = (name: string, body: string) => writeScript(home, name, body);
 // Stop hooks have run, the file ended holds its number. A ci.yml there goes into each round as
 // the repository's first workflow. With docs-only there, a round changes only the file it names, else docs/change.md,
 // and with code-to-docs there, it moves src/app.ts to docs/app.md. As a reviewer, run with -p,
-// it approves, unless the file claude-limit beside it holds a moment in seconds since 1970
-// still to come: until then it says its usage limit is reached, as Claude Code did. Its
+// it approves, unless the file claude-limit beside it says limit: then it says its usage
+// limit is reached until 3 seconds from when it runs, as Claude Code did. Its
 // arguments are written aside and moved into place, so a test that sees the file never reads
 // them half written.
 function fakeClaude(submits = true): void {
@@ -70,8 +70,8 @@ function fakeClaude(submits = true): void {
     `case "$CLAUDE_CONFIG_DIR" in */lead-*) stty -echo; echo "❯"; exec cat > "$CLAUDE_CONFIG_DIR/typed" ;; esac
 case " $* " in *" -p "*)
   cat > /dev/null
-  reset=$(cat "$(dirname "$0")/claude-limit" 2>/dev/null)
-  if [ -n "$reset" ] && [ "$(date +%s)" -lt "$reset" ]; then
+  if [ "$(cat "$(dirname "$0")/claude-limit" 2>/dev/null)" = limit ]; then
+    reset=$(( $(date +%s) + 3 ))
     echo '{"type":"result","is_error":true,"result":"Claude AI usage limit reached|'"$reset"'"}'
     exit 1
   fi
@@ -188,8 +188,12 @@ function config(more: string): void {
 // What this test's processes run with.
 const env = () => homeEnv(home);
 
-// Runs this test's daemon, which the test's clean-up stops.
-const serve = () => startDaemon(socket, env(), running);
+// Runs this test's daemon, which the test's clean-up stops. `daemon` can add to its
+// environment, and say how often it polls the forge, in milliseconds, for a test that waits on
+// what the forge shows, rather than every 30 seconds.
+type Daemon = { every?: number; env?: Record<string, string> };
+const serve = (daemon: Daemon = {}) =>
+  startDaemon(socket, { ...env(), ...daemon.env }, running, daemon.every);
 
 // Runs sc as you would, or as a builder would with its thread's socket.
 const skel = (args: string[], more: Record<string, string> = {}) =>
@@ -202,8 +206,28 @@ const builderSocket = () => {
 };
 
 // A daemon's work takes its time here, and longer on a busy CI runner, so a wait lasts 30
-// seconds unless a test says otherwise.
-const until = (done: () => boolean, timeout = 30_000) => wait(done, { timeout });
+// seconds unless a test says otherwise. One that gives up shows the end of the thread's log,
+// so a failure on CI says which step the thread stalled at, and when.
+// A wait for a step behind a whole round: the builder's turn, a sandbox starting for the
+// review, and a poll of the forge or a short wait for CI. Each takes seconds alone, but four
+// test files run at once on a small CI runner, so these waits get twice the usual time.
+const longWait = 60_000;
+
+const until = (done: () => boolean, timeout = 30_000) =>
+  wait(done, { timeout, what: () => `the daemon. The thread's last steps were:\n${lastSteps()}` });
+
+// Returns the last steps in app-12's log, each as when and why. A line still being written,
+// or one that gives no reason, is left out.
+function lastSteps(): string {
+  const lines = read(join(data(), "threads", "app-12.log")).split("\n");
+  const steps: string[] = [];
+  for (const line of lines.slice(-12))
+    try {
+      const { at, why } = JSON.parse(line);
+      if (why) steps.push(`${at} ${why}`);
+    } catch {}
+  return steps.join("\n");
+}
 
 const github = () => join(home, "github");
 
@@ -286,8 +310,9 @@ const opened = () => asked(plugin).find((q) => q.ask === "open pr");
 const typedMessages = () => read(join(builder(), "typed")).split("\x1b[201~").length - 1;
 const finished = (state: string) => statuses().filter((s) => s.state === state);
 
-async function startApp12() {
-  serve();
+// Starts the daemon, as `serve` does, and app-12 once Skelcrew has cloned app.
+async function startApp12(daemon: Daemon = {}) {
+  serve(daemon);
   await untilCloned();
   expect((await skel(["start", "app-12"])).err).toBe("");
 }
@@ -429,7 +454,8 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
   test("once CI shows a check on the PR's commit, the reviewer reads CI's result rather than running the suite", async () => {
     addApp({ ".github/workflows/ci.yml": "on: pull_request\n" });
     verdict(1, "approve", "Ready to merge.");
-    await startApp12();
+    // The check shows at the next poll.
+    await startApp12({ every: 1_000 });
     await until(() => opened() !== undefined, 30_000);
     answer(plugin, "changed", {
       items: [
@@ -442,7 +468,7 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
       ],
       next: null,
     });
-    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), 60_000);
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), longWait);
     const prompt = read(join(codexHome(), "sessions", "prompt-1"));
     expect(prompt).toContain(
       "CI runs the whole test suite on this commit, so don't run it yourself",
@@ -466,13 +492,14 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
       next: null,
     });
     verdict(1, "approve", "Ready to merge.");
-    await startApp12();
-    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), 180_000);
+    // The review waits out its wait for CI, so the wait is short.
+    await startApp12({ env: { SKELCREW_CI_WAIT_MS: "5000" } });
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), longWait);
     const prompt = read(join(codexHome(), "sessions", "prompt-1"));
     expect(prompt).toContain("No CI runs on this commit, so run the repository's whole test suite");
     expect(prompt).not.toContain("CI is still running");
     expect(prompt).not.toContain("ci.md");
-  }, 240_000);
+  }, 100_000);
 
   // CI the PR adds runs on the PR too, but shows no check until the forge starts it.
   test("on a PR that adds the first workflow, the review waits for CI's check, then reads its result", async () => {
@@ -480,7 +507,8 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
     mkdirSync(builder(), { recursive: true });
     writeFileSync(join(builder(), "ci.yml"), "on: pull_request\n");
     verdict(1, "approve", "Ready to merge.");
-    await startApp12();
+    // The check shows at the next poll.
+    await startApp12({ every: 1_000 });
     await until(() => opened() !== undefined, 30_000);
     // No check yet, so no review either.
     await Bun.sleep(5_000);
@@ -496,7 +524,7 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
       ],
       next: null,
     });
-    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), 60_000);
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), longWait);
     const prompt = read(join(codexHome(), "sessions", "prompt-1"));
     expect(prompt).toContain(
       "CI runs the whole test suite on this commit, so don't run it yourself",
@@ -508,7 +536,8 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
   test("without workflows or CI on other PRs, the review waits for an outside check, then reads its result", async () => {
     addApp();
     verdict(1, "approve", "Ready to merge.");
-    startDaemon(socket, { ...env(), SKELCREW_CHECK_WAIT_MS: "60000" }, running);
+    // The check shows at the next poll.
+    serve({ every: 1_000, env: { SKELCREW_CHECK_WAIT_MS: "60000" } });
     await untilCloned();
     expect((await skel(["start", "app-12"])).err).toBe("");
     await until(() => opened() !== undefined, 30_000);
@@ -526,7 +555,7 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
       ],
       next: null,
     });
-    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), 60_000);
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), longWait);
     const prompt = read(join(codexHome(), "sessions", "prompt-1"));
     expect(prompt).toContain(
       "CI runs the whole test suite on this commit, so don't run it yourself",
@@ -539,15 +568,20 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
     addApp({ ".github/workflows/release.yml": "on: release\n" });
     verdict(1, "changes", "The export has no test.");
     verdict(2, "approve", "Ready to merge.");
-    await startApp12();
-    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), 180_000);
+    // The first review waits out its wait for CI, so the wait is short.
+    await startApp12({ env: { SKELCREW_CI_WAIT_MS: "5000" } });
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), longWait);
     const first = read(join(codexHome(), "sessions", "prompt-1"));
     expect(first).toContain("No CI runs on this commit, so run the repository's whole test suite");
-    // The second round's review would wait 2 minutes more if it waited again.
-    await until(() => existsSync(join(codexHome(), "sessions", "prompt-2")), 60_000);
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-2")), longWait);
     const second = read(join(codexHome(), "sessions", "prompt-2"));
     expect(second).toContain("No CI runs on this commit, so run the repository's whole test suite");
-  }, 280_000);
+    // Only the first review waited.
+    const waits = read(join(data(), "threads", "app-12.log")).match(
+      /waiting for CI's first check/g,
+    );
+    expect(waits).toHaveLength(1);
+  }, 150_000);
 
   // CI skips a change to docs and Markdown alone, so the review neither waits for it nor runs
   // the tests.
@@ -571,7 +605,7 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
     writeFileSync(join(builder(), "docs-only"), "résumé.md");
     verdict(1, "approve", "Ready to merge.");
     await startApp12();
-    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), 60_000);
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), longWait);
     const prompt = read(join(codexHome(), "sessions", "prompt-1"));
     expect(prompt).toContain("The change only touches docs and Markdown, so don't run the tests.");
   }, 100_000);
@@ -787,14 +821,17 @@ done`,
       join(home, ".config", "skelcrew", "config.yaml"),
       "harness: claude\nreviewer: { harness: claude }\n",
     );
-    // Claude Code says when its limit resets, in seconds since 1970. Far enough off that the
-    // first review meets it however slowly the builder starts.
-    const reset = Math.ceil(Date.now() / 1000) + 30;
-    writeFileSync(join(home, "bin", "claude-limit"), `${reset}\n`);
+    // Each review meets the limit until the test lifts it, so the first one does, however
+    // slowly the builder starts. The limit is lifted as soon as Skelcrew holds the review,
+    // and a review that runs before then meets it once more.
+    writeFileSync(join(home, "bin", "claude-limit"), "limit");
+    const started = Date.now();
     await startApp12();
     await until(() => thread().review_limited === 1, 30_000);
-    expect(thread()).toMatchObject({ needs_you: 0, review_reset: reset * 1000 });
-    await until(() => finished("success").length === 1, 45_000);
+    expect(thread()).toMatchObject({ needs_you: 0 });
+    expect(Number(thread().review_reset)).toBeGreaterThan(started);
+    writeFileSync(join(home, "bin", "claude-limit"), "done");
+    await until(() => finished("success").length === 1, 30_000);
     await untilReviewSaved();
     expect(thread()).toMatchObject({ review_limited: 0, review_reset: null, needs_you: 0 });
     expect(reviews()).toEqual([{ commit: pushed(), verdict: "approve", body: "Ready to merge." }]);
@@ -891,10 +928,6 @@ done`,
     });
   }
   const ciCheck = (state: string) => ({ name: "buildkite/test", id: null, state });
-  // Runs this test's daemon, polling the forge every second rather than every 30 seconds.
-  const servePolling = (more: Record<string, string> = {}) =>
-    startDaemon(socket, { ...env(), ...more }, running, 1_000);
-
   // Starts the daemon, has round 1 approved, then merges main into the branch as `mergeMain`
   // does and submits that. With `ci`, the forge shows CI passed on the approved commit, and on
   // the merge once it is pushed, in the state `merge` gives. Returns the commit submitted and
@@ -904,21 +937,21 @@ done`,
     more: { ci?: boolean; merge?: string } = {},
   ): Promise<{ merged: string; daemon: Subprocess }> {
     const { ci = true, merge = "running" } = more;
-    const daemon = servePolling();
+    const daemon = serve({ every: 1_000 });
     await untilCloned();
     expect((await skel(["start", "app-12"])).err).toBe("");
-    await until(() => opened() !== undefined, 60_000);
+    await until(() => opened() !== undefined, longWait);
     if (ci) showPr(pushed(), [ciCheck("passed")]);
-    await until(() => finished("success").length === 1, 60_000);
+    await until(() => finished("success").length === 1, longWait);
     await untilReviewSaved();
     // The round after waits for CI's first check only once Skelcrew has seen CI on the PR, which
     // comes with a poll. Tests set the wait for a first check without that to 0.
-    if (ci) await until(() => thread().checks === "passing", 60_000);
+    if (ci) await until(() => thread().checks === "passing", longWait);
     mergeMain(work);
     const again = await skel(["submit", "Merged main"], { SKELCREW_SOCKET: builderSocket() });
     expect(again.err).toBe("");
     const merged = git(clone(), "rev-parse", "HEAD");
-    await until(() => pushed() === merged, 60_000);
+    await until(() => pushed() === merged, longWait);
     if (ci) showPr(merged, [ciCheck(merge)]);
     return { merged, daemon };
   }
@@ -927,7 +960,7 @@ done`,
     const work = addApp();
     verdict(1, "approve", "Ready to merge.");
     const { merged } = await approveThenMerge(work, { merge: "passed" });
-    await until(() => finished("success").length === 2, 60_000);
+    await until(() => finished("success").length === 2, longWait);
     await untilReviewSaved();
 
     // No reviewer ran for the merge, and the check and a comment on the PR say why.
@@ -950,7 +983,7 @@ done`,
     verdict(1, "approve", "Ready to merge.");
     verdict(2, "changes", "The merge broke the export.");
     const { merged } = await approveThenMerge(work, { merge: "failed" });
-    await until(() => reviews().length === 2, 60_000);
+    await until(() => reviews().length === 2, longWait);
     expect(existsSync(join(codexHome(), "sessions", "prompt-2"))).toBe(true);
     expect(reviews()[1]).toEqual({
       commit: merged,
@@ -965,7 +998,7 @@ done`,
     verdict(1, "approve", "Ready to merge.");
     verdict(2, "approve", "Tests pass.");
     const { merged } = await approveThenMerge(work, { ci: false });
-    await until(() => finished("success").length === 2, 60_000);
+    await until(() => finished("success").length === 2, longWait);
     expect(read(join(codexHome(), "sessions", "count")).trim()).toBe("2");
     expect(read(join(codexHome(), "sessions", "prompt-2"))).not.toContain(
       "CI runs the whole test suite on this commit",
@@ -980,7 +1013,7 @@ done`,
     verdict(1, "approve", "Ready to merge.");
     verdict(2, "approve", "Tests pass.");
     await approveThenMerge(work, { ci: false });
-    await until(() => existsSync(join(codexHome(), "sessions", "prompt-2")), 60_000);
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-2")), longWait);
     const main = git(work, "rev-parse", "HEAD");
     expect(read(join(codexHome(), "sessions", "main-2")).trim()).not.toBe(main);
     expect(read(join(codexHome(), "sessions", "prompt-2"))).toContain(`git diff ${main}...HEAD`);
@@ -999,10 +1032,10 @@ done`,
     writeFileSync(join(builder(), "docs-only"), "");
     writeFileSync(join(plugin, "hold-status-pending"), "");
     verdict(1, "approve", "Ready to merge.");
-    servePolling();
+    serve({ every: 1_000 });
     await untilCloned();
     expect((await skel(["start", "app-12"])).err).toBe("");
-    await until(() => existsSync(join(plugin, "held-status")), 60_000);
+    await until(() => existsSync(join(plugin, "held-status")), longWait);
     answer(plugin, "changed", {
       items: [
         taskItem("12", "Add export", { body: "As JSON" }),
@@ -1014,9 +1047,9 @@ done`,
       ],
       next: null,
     });
-    await until(() => copiedPr().includes('"base":"next"'), 60_000);
+    await until(() => copiedPr().includes('"base":"next"'), longWait);
     rmSync(join(plugin, "hold-status-pending"));
-    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), 60_000);
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), longWait);
     const prompt = read(join(codexHome(), "sessions", "prompt-1"));
     expect(prompt).not.toContain("only touches docs");
     expect(prompt).toContain("run the repository's whole test suite");
@@ -1030,10 +1063,10 @@ done`,
     const next = git(work, "rev-parse", "HEAD");
     verdict(1, "approve", "Ready to merge.");
     verdict(2, "approve", "Fine.");
-    servePolling();
+    serve({ every: 1_000 });
     await untilCloned();
     expect((await skel(["start", "app-12"])).err).toBe("");
-    await until(() => finished("success").length === 1, 60_000);
+    await until(() => finished("success").length === 1, longWait);
     await untilReviewSaved();
     answer(plugin, "changed", {
       items: [
@@ -1046,13 +1079,13 @@ done`,
       ],
       next: null,
     });
-    await until(() => copiedPr().includes('"base":"next"'), 60_000);
+    await until(() => copiedPr().includes('"base":"next"'), longWait);
     // main moves and the branch takes it in, so main and next now meet the branch apart.
     mergeMain(work);
     expect((await skel(["submit", "Merged main"], { SKELCREW_SOCKET: builderSocket() })).err).toBe(
       "",
     );
-    await until(() => existsSync(join(codexHome(), "sessions", "prompt-2")), 60_000);
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-2")), longWait);
     expect(read(join(codexHome(), "sessions", "prompt-2"))).toContain(`git diff ${next}...HEAD`);
   }, 180_000);
 
@@ -1078,9 +1111,9 @@ done`,
         next: null,
       });
     retargeted("running");
-    await until(() => copiedPr().includes('"base":"next"'), 60_000);
+    await until(() => copiedPr().includes('"base":"next"'), longWait);
     retargeted("passed");
-    await until(() => reviews().length === 2, 60_000);
+    await until(() => reviews().length === 2, longWait);
     expect(read(join(codexHome(), "sessions", "count")).trim()).toBe("2");
     expect(reviews()[1]).toMatchObject({ commit: merged, body: "Reviewed against next." });
     expect(statuses().some((s) => s.description.startsWith("approval kept"))).toBe(false);
@@ -1093,7 +1126,7 @@ done`,
     // CI still runs on the merge, so the approval waits for it to pass.
     await until(
       () => read(join(data(), "threads", "app-12.log")).includes("waiting for CI to pass"),
-      60_000,
+      longWait,
     );
     // While CI runs, the thread holds the commit as under review: never kept, ready or needing you.
     await Bun.sleep(3_000);
@@ -1102,9 +1135,9 @@ done`,
     daemon.kill();
     await daemon.exited;
     expect(thread().reviewing).toBe(merged);
-    servePolling();
+    serve({ every: 1_000 });
     showPr(merged, [ciCheck("passed")]);
-    await until(() => finished("success").length === 2, 60_000);
+    await until(() => finished("success").length === 2, longWait);
     expect(finished("success")[1]).toMatchObject({
       sha: merged,
       description: "approval kept: only merged main",
@@ -1120,7 +1153,7 @@ done`,
     const first = serve();
     await untilCloned();
     await skel(["start", "app-12"]);
-    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), 60_000);
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), longWait);
     first.kill();
     await first.exited;
     expect(thread().reviewing).toBe(pushed());
@@ -1169,7 +1202,7 @@ done`,
     mkdirSync(codexHome(), { recursive: true });
     writeFileSync(join(codexHome(), "held-1"), "");
     await startApp12();
-    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), 60_000);
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), longWait);
     // app-13 gets a PR of its own, and the forge now refuses every check.
     answer(plugin, "open pr", { number: 8 });
     writeFileSync(join(plugin, "fail-status"), "the forge is down");
@@ -1187,7 +1220,7 @@ done`,
         db.close();
       }
     };
-    await until(() => app13().needs_you === 1, 60_000);
+    await until(() => app13().needs_you === 1, longWait);
     expect(app13().queued).toBeNull();
     expect((await skel(["ps", "app", "--json"])).out).toContain(
       '"thread":"app-13","short":null,"title":"Add import","status":"waiting","needsYou":true,"queued":false',
@@ -1204,7 +1237,7 @@ done`,
     const first = serve();
     await untilCloned();
     await skel(["start", "app-12"]);
-    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), 60_000);
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), longWait);
     first.kill();
     await first.exited;
     const db = new Database(join(data(), "skelcrew.db"));
@@ -1212,7 +1245,7 @@ done`,
     db.close();
     answer(plugin, "changed", { items: [], next: null });
     serve();
-    await until(() => finished("success").length + finished("failure").length === 1, 60_000);
+    await until(() => finished("success").length + finished("failure").length === 1, longWait);
     expect(finished("success")[0]?.sha).toBe(pushed());
   }, 120_000);
 
@@ -1385,11 +1418,11 @@ done`,
     writeFileSync(join(codexHome(), "slow-2"), "");
     writeFileSync(join(plugin, "hold-status-success"), "");
     await startApp12();
-    await until(() => existsSync(join(plugin, "held-status")), 60_000);
+    await until(() => existsSync(join(plugin, "held-status")), longWait);
     expect((await skel(["submit", "Again"], { SKELCREW_SOCKET: builderSocket() })).err).toBe("");
     await Bun.sleep(1000);
     rmSync(join(plugin, "hold-status-success"));
-    await until(() => statuses().length === 3, 60_000);
+    await until(() => statuses().length === 3, longWait);
     expect(statuses().map((s) => s.state)).toEqual(["pending", "success", "pending"]);
   }, 120_000);
 
