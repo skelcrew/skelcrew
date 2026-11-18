@@ -764,6 +764,31 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
     await until(() => typed().includes(`moved on the forge to ${merged}`));
   }, 60_000);
 
+  // A notice waits until the builder can take it, and a submit meanwhile drops it. The builder
+  // must still learn what to merge, from its refused push.
+  test("a branch-moved notice dropped while waiting for a busy builder is told again by the refused push", async () => {
+    mkdirSync(builder(), { recursive: true });
+    writeFileSync(join(builder(), "busy"), "");
+    const work = await approvedApp12();
+    const merged = moveBranch(work);
+    const moved = prItem("7", "Add export", {
+      head: merged,
+      reviews: [skelReview],
+      checks: [approved],
+    });
+    changes([issue12(), moved]);
+    await until(() => waiting() === 1);
+    expect(handled(`head:${merged}`)).toBe(true);
+    // The busy builder submits without the merge, dropping the waiting notice. Its push is
+    // refused, and tells it again.
+    submitRound2();
+    await until(() => read(join(data(), "threads", "app-12.log")).includes("the round failed"));
+    expect(waiting()).toBeGreaterThan(0);
+    rmSync(join(builder(), "busy"));
+    await until(() => typed().includes(`moved on the forge to ${merged}`));
+    await until(() => existsSync(join(clone(), "STACKED")));
+  }, 60_000);
+
   // The builder can submit before a poll sees the branch move. git refuses the push, as it is
   // never forced, and the builder is told what to merge.
   test("a round pushed after the branch moved on the forge is refused, and its builder is told to merge it", async () => {

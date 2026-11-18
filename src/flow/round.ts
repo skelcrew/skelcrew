@@ -16,6 +16,7 @@ import {
   branchMoved,
   ciResult,
   ciState,
+  forgetMoves,
   headSeen,
   onlyDocs,
   pastRoundLimit,
@@ -711,7 +712,9 @@ function pushAndReview(
 // way, and returns at once: a shell command can't block long, so pushing and the review go on
 // in the background. The submit is saved first, so a stop of the daemon can't lose it. A
 // review still waiting to be typed in, or held past the round limit, is dropped, as it is
-// about an older commit, and so are Skelcrew's waiting messages of the PR's events. Throws when your config or the repository's skelcrew.yaml isn't valid,
+// about an older commit, and so are Skelcrew's waiting messages of the PR's events. Which moved
+// branch commits were told is forgotten with them, so the builder hears of one again if its new
+// round doesn't merge it. Throws when your config or the repository's skelcrew.yaml isn't valid,
 // so the builder hears why, and for a thread sc stop is ending, whose builder may submit while
 // it exits.
 export function submitRound(db: Database, sessions: string, folder: string, summary: string): void {
@@ -738,6 +741,7 @@ export function submitRound(db: Database, sessions: string, folder: string, summ
       // What CI said, and the conflict found, were about the commit before this one.
       checks: null,
       conflicts: null,
+      seen: forgetMoves(thread.seen),
       reviewer: reviewer.harness,
       review_at: Date.now(),
     },
