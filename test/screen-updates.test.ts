@@ -1,7 +1,7 @@
 // Lists and pages that follow Skelcrew's copy as it changes, and what the screen writes to
 // your terminal while nothing changes.
 import { afterEach, beforeEach, expect, setDefaultTimeout, test } from "bun:test";
-import { existsSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { stillRunning } from "../src/agents/sessions.ts";
 import { itemSql, threadSql } from "./harness.ts";
@@ -38,22 +38,46 @@ setDefaultTimeout(20_000);
 beforeEach(startTest);
 afterEach(endTest);
 
+// Has tmux copy what the screen writes to your terminal into a file, and gives back the file,
+// empty, once the screen has settled. tmux redraws a pane's border a moment after the pane
+// opens, so the screen has settled once it has written nothing for half a second.
+async function copyOnceSettled(): Promise<string> {
+  const written = join(home, "written");
+  tmux(terminal, "pipe-pane", "-O", "-t", "=one:", `cat >> ${written}`);
+  const size = () => (existsSync(written) ? statSync(written).size : 0);
+  let last = size();
+  let quietSince = Date.now();
+  // A screen that never settles fails the test once the copy starts, as it writes there too.
+  const deadline = Date.now() + 5000;
+  while (Date.now() - quietSince < 500 && Date.now() < deadline) {
+    await Bun.sleep(50);
+    if (size() === last) continue;
+    last = size();
+    quietSince = Date.now();
+  }
+  // Emptied rather than removed: tmux's cat keeps writing to the file it opened, and adds to its
+  // end.
+  writeFileSync(written, "");
+  return written;
+}
+
+// The list and the sidebar read Skelcrew's copy again each second, so two seconds see each of
+// them do it at least once.
+const twoRefreshes = () => Bun.sleep(2000);
+
 test("a list or page left open writes nothing", async () => {
   sql("UPDATE threads SET status = 'waiting', changed = 0 WHERE status = 'working'");
   await openList("Threads");
-  await Bun.sleep(1500);
-  const written = join(home, "written");
-  tmux(terminal, "pipe-pane", "-O", "-t", "=one:", `cat >> ${written}`);
-  await Bun.sleep(3000);
-  expect(existsSync(written) ? readFileSync(written, "utf8") : "").toBe("");
+  const written = await copyOnceSettled();
+  await twoRefreshes();
+  expect(readFileSync(written, "utf8")).toBe("");
   clickRow("Issues");
   await onRight("Not started");
   press("Enter");
   await onRight("line 1 of the description");
-  await Bun.sleep(1500);
-  rmSync(written, { force: true });
-  await Bun.sleep(3000);
-  expect(existsSync(written) ? readFileSync(written, "utf8") : "").toBe("");
+  await copyOnceSettled();
+  await twoRefreshes();
+  expect(readFileSync(written, "utf8")).toBe("");
 });
 
 test("a list follows Skelcrew's copy as it changes", async () => {
@@ -101,7 +125,7 @@ test("a list scrolled with the wheel stays where you put it as it reads the copy
   // already hides app-139, and the last moves fewer lines, so the wait is for the end.
   await until(() => !right().includes("app-125"), "the list to scroll to its end");
   const scrolled = right();
-  await Bun.sleep(2500);
+  await twoRefreshes();
   expect(right()).toBe(scrolled);
 });
 
@@ -175,18 +199,16 @@ test("two terminals can each be on a list of their own", async () => {
 });
 
 test("with nothing working, an open screen sends your terminal nothing at all", async () => {
-  // Close enough to a minute that a time shown on any row would change during the wait.
-  const started = Date.now() - 56_000;
-  sql(`UPDATE threads SET status = 'waiting', started = ${started} WHERE status = 'working'`);
+  sql(`UPDATE threads SET status = 'waiting', started = ${Date.now()} WHERE status = 'working'`);
   open("lead");
   await ready("lead");
   await until(() => seen().includes("checks · claude"), "the threads");
-  // tmux redraws its border once as the screen settles.
-  await Bun.sleep(1500);
-  const written = join(home, "written");
-  tmux(terminal, "pipe-pane", "-O", "-t", "=one:", `cat >> ${written}`);
-  await Bun.sleep(4000);
-  expect(existsSync(written) ? readFileSync(written, "utf8") : "").toBe("");
+  const written = await copyOnceSettled();
+  // Half a second short of a minute, so a time shown on any row would change during the wait.
+  // Under a minute, such a time would show the same either way, so this alone writes nothing.
+  sql(`UPDATE threads SET started = ${Date.now() - 59_500} WHERE status = 'waiting'`);
+  await twoRefreshes();
+  expect(readFileSync(written, "utf8")).toBe("");
 });
 
 test("a working thread's time moves on by itself, and writes when it does", async () => {
