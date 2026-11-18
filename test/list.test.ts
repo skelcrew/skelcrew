@@ -361,6 +361,17 @@ test("the list opens on the first task that needs you, and q leaves it with ever
   expect(sessions.stdout.toString().trim().split("\n").sort()).toEqual(["app-12", "app-7", "lead"]);
 });
 
+// Leaving gives the terminal back, so a key that came with q must never act after it.
+test("a key that comes with q in one read does nothing once the list has left", async () => {
+  await open();
+  await until(() => here().startsWith("▸ ● app-12"), "app-12's row");
+  type("q\r");
+  await until(() => read(join(home, "left")) === "left", "the list to leave");
+  await Bun.sleep(500);
+  const clients = Bun.spawnSync(["tmux", "-L", agents, "list-clients"]).stdout.toString();
+  expect(clients).toBe("");
+});
+
 test("Enter attaches to the builder, every key reaches it, and Alt-Q comes back on the same row", async () => {
   await open();
   press("Down");

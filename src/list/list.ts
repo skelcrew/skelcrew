@@ -249,9 +249,11 @@ export async function runList(agents: string, repository: string): Promise<void>
   // Acts on one key. A question takes only y and n, and anything else is a no. A line that says
   // something goes at the next key, which then does what it does. Nothing acts while the daemon
   // is at work on an answer.
+  // Leaves the list, once the list is ready to leave. `left` says it has.
   let leave: () => void = () => {};
+  let left = false;
   const press = async (key: string) => {
-    if (working) return;
+    if (working || left) return;
     if (asking) {
       const action = asking;
       asking = null;
@@ -300,7 +302,9 @@ export async function runList(agents: string, repository: string): Promise<void>
     if (acting) return;
     acting = true;
     while (true) {
-      const key = typed.shift();
+      // Once the list has left, nothing more is acted on: a key that came with q, such as
+      // Enter, would otherwise attach after the terminal was given back.
+      const key = left ? undefined : typed.shift();
       if (key === undefined) break;
       const named = keyNames[key.sent] ?? key.sent;
       await press(named).catch((error) => say(errorText(error)));
@@ -344,8 +348,12 @@ export async function runList(agents: string, repository: string): Promise<void>
     draw();
   }, 5000);
   await new Promise<void>((done) => {
-    leave = done;
-    process.stdin.on("close", done);
+    leave = () => {
+      left = true;
+      typed.length = 0;
+      done();
+    };
+    process.stdin.on("close", leave);
   });
   clearInterval(looks);
   clearInterval(loads);
