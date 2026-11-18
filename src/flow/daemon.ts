@@ -19,6 +19,7 @@ import { keepUpToDate } from "../machine/update.ts";
 import { cloneDir, daemonCodeFile, daemonSocket, reviewSocket, threadSocket } from "../paths.ts";
 import { createTask, mergePr } from "../plugins/ask.ts";
 import { errorText } from "../say.ts";
+import { checkFlowRounds } from "../settings.ts";
 import { checkoutFolder, git, release, singleFile } from "../version.ts";
 import { assignIssue } from "./assign.ts";
 import {
@@ -252,6 +253,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       throw new Error(`${name} keeps the flow ${now.flow}, as its builder has submitted already.`);
     const repository = findRepository(db, `${now.owner}/${now.repo}`);
     checkFlow(now, repository.name, flow);
+    checkFlowRounds({ ...now, flow });
     const building = flowRoles(now).build;
     const wanted = flowRoles({ ...now, flow }).build;
     if (wanted !== building)

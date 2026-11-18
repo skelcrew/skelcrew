@@ -22,7 +22,7 @@ import { trackerOf } from "../plugins/ask.ts";
 import { repositoryRole } from "../roles.ts";
 import { quietly } from "../run.ts";
 import { errorText } from "../say.ts";
-import type { Settings } from "../settings.ts";
+import { checkFlowRounds, type Settings } from "../settings.ts";
 import { taskOf, threadTask } from "./copy.ts";
 import { pastRoundLimit } from "./decide.ts";
 import { fetchBranch } from "./git.ts";
@@ -117,6 +117,7 @@ async function recordThread(
   const agents = approvedAgents({ owner, repo });
   const flow = given.flow ?? "default";
   checkFlow({ owner, repo, agents }, name, flow);
+  checkFlowRounds({ owner, repo, agents, flow });
   const where = "WHERE owner = ? AND repo = ? AND task = ?";
   let task: string;
   let title: string;

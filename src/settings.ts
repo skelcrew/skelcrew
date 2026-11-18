@@ -229,6 +229,16 @@ export function readSettings<G extends Group>(
   return mergeSettings([overrides, agentsFiles, shared, readYourFile(fromYours)]);
 }
 
+// Reads the round limit of a task's flow file, as readSettings would, for sc start and a switch
+// of flow, so a flow file with a bad one is refused before any work begins. When your override
+// under repos: decides the round limit, the file's isn't read, as it never counts. A bad
+// max_rounds elsewhere, such as in your config.yaml, still fails the thread with the reason
+// once it is read, as it isn't the flow's.
+export function checkFlowRounds(repository: Repository): void {
+  const overrides = readOverrides(["max_rounds"], repository);
+  repositoryRounds(repository, overrides.max_rounds !== undefined && overrides.max_rounds !== null);
+}
+
 // Returns the harness and model a repository's role file names, or nothing when it names neither
 // or the repository has no file for the role.
 function roleFileSettings(name: string, repository: Repository): RoleSettings | undefined {
