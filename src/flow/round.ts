@@ -546,7 +546,7 @@ async function actOnVerdict(
 // Puts a review's verdict and findings on the PR as Skelcrew's one review there, so the PR shows
 // the latest round rather than a review per round. It edits the review an earlier round posted.
 // When the forge can't edit it, it posts a new one only if the verdict or findings changed, so a
-// round that found the same again adds nothing. The rounds one by one stay in the thread's log.
+// round that found the same again adds nothing. One deleted from the PR is posted again. The rounds one by one stay in the thread's log.
 // What it posted is saved on the thread at once, so a later round edits it though this one is
 // cancelled. Two rounds of a thread never post at once: a round's review starts only once the
 // round before has ended, posting included, so the later round always reads what the earlier
@@ -566,14 +566,20 @@ async function postOrEdit(
   const earlier = thread.review_post?.pr === pr ? thread.review_post : null;
   // A forge that fails to edit, such as a plugin that doesn't know the question yet, is treated
   // as one that can't, so the review still reaches the PR.
-  const edited =
-    earlier !== null &&
-    (await editReview(db, repository, { pr, id: earlier.id, verdict, body }).catch(() => false));
+  const edit =
+    earlier === null
+      ? "gone"
+      : await editReview(db, repository, { pr, id: earlier.id, verdict, body }).catch(
+          () => "can't" as const,
+        );
+  const edited = edit === "edited";
+  // A review deleted from the PR is posted again even when it would say the same, so the PR
+  // always shows one.
   const same =
     earlier !== null &&
     earlier.verdict === verdict &&
     JSON.stringify(earlier.findings) === JSON.stringify(findings);
-  if (!edited && same) return;
+  if (edit === "can't" && same) return;
   const id =
     edited && earlier !== null
       ? earlier.id

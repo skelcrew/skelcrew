@@ -551,6 +551,22 @@ describe.skipIf(insideSandbox)("sc submit", () => {
     expect(read(join(builder(), "typed"))).toContain("Ran the tests again.");
   }, 90_000);
 
+  // Someone can delete Skelcrew's review from the PR. The next round posts it again, though it
+  // says the same, so the PR never goes without one.
+  test("a review deleted from the PR is posted again, even when it would say the same", async () => {
+    addApp();
+    answer(plugin, "edit review", { edited: false, gone: true });
+    verdict(1, "changes", "The export has no test.");
+    verdict(2, "changes", "Ran the tests again.", ["The export has no test."]);
+    verdict(3, "approve", "Ready to merge.");
+    await startApp12();
+    await until(() => finished("success").length === 1, 45_000);
+    await until(() => read(join(data(), "threads", "app-12.log")).includes("waits on CI"));
+    expect(reviews().map((r) => r.verdict)).toEqual(["changes", "changes", "approve"]);
+    // Each round edits the review the round before posted.
+    expect(edits().map((e) => e.id)).toEqual(["1001", "1002"]);
+  }, 90_000);
+
   // So it is always clear on the forge whether you or Skelcrew wrote a commit.
   test("commits are authored by the forge's bot, with you as co-author", async () => {
     addApp();
