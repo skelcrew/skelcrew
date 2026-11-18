@@ -428,7 +428,8 @@ export function builderInstructions(
 // Starts the thread's builder in a session, in the sandbox in its clone: bringing back the
 // conversation it saved, or else afresh with the task as its reviewer gets it as its first
 // message: the title and body from Skelcrew's copy, and the lead's messages after them. Throws
-// when it exits as soon as it starts. A builder's first start picks the harness your config
+// when it exits as soon as it starts, or when its settings, its round limit included, aren't
+// valid. A builder's first start picks the harness your config
 // names, and saves it with the thread, which keeps it from then on: a conversation can't move to
 // another harness. The session id is stored before the builder starts, so the builder can be
 // brought back after its session is gone.
@@ -438,6 +439,10 @@ export async function startBuilder(db: Database, sessions: string, thread: Threa
   const clone = cloneOf(thread);
   const stored = thread.session;
   const role = agentRole("builder", thread);
+  // The round limit isn't needed until the first review, but is read now, so a bad one fails
+  // the thread with the reason as it starts, rather than leave it working toward a review that
+  // can't run.
+  roundLimit(thread);
   const harness = stored === null ? harnessNamed(role.harness) : builderHarness(thread);
   const resume = stored === null ? null : harness.saved(thread.folder, clone, stored);
   const session = resume ?? crypto.randomUUID();
