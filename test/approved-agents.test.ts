@@ -468,7 +468,7 @@ test("a flow naming a role with no file is refused, naming the role", () => {
   // sc start refuses it before a thread starts on it.
   expect(() =>
     stageOf(
-      `const { checkFlow } = await import(${JSON.stringify(source("flows.ts"))}); checkFlow(app, "app", "default");`,
+      `const { checkFlow } = await import(${JSON.stringify(source("config.ts"))}); checkFlow(app, "app", "default");`,
     ),
   ).toThrow("it names the role critic");
 });
@@ -535,4 +535,17 @@ test("a role of the repository's own takes its own roles: lines, never the stage
     "harness: claude\nmodel: opus\nrepos: { simon/app: { roles: { tester: { harness: claude } } } }\n",
   );
   expect(builder()).toEqual({ harness: "claude", model: "opus" });
+});
+
+test("skelcrew.yaml's max_rounds is the default flow's, so another flow without rounds never takes it", () => {
+  writeFileSync(join(clone, "skelcrew.yaml"), "max_rounds: 5\n");
+  agentsFile("flows/quick.yaml", "build:\n  role: builder\n");
+  commit("flows");
+  inHome(approveCurrent);
+  expect(roundsOf()).toBe(5);
+  expect(roundsOf('{ ...app, flow: "quick" }')).toBe(3);
+  // Your config's max_rounds is your default for any flow.
+  writeFileSync(join(home, ".config", "skelcrew", "config.yaml"), "max_rounds: 6\n");
+  expect(roundsOf('{ ...app, flow: "quick" }')).toBe(6);
+  expect(roundsOf()).toBe(5);
 });

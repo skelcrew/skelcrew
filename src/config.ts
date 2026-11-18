@@ -4,6 +4,7 @@ import { appendFileSync, existsSync, lstatSync, mkdirSync, readFileSync } from "
 import { join } from "node:path";
 import { parse, parseDocument } from "yaml";
 import type { HarnessName } from "./agents/harness.ts";
+import { flowRoles, repositoryFlows } from "./flows.ts";
 import { cloneDir, configDir, dataDir } from "./paths.ts";
 import type { RoleName } from "./roles.ts";
 import { type Repository, type Role, readSettings, type Settings } from "./settings.ts";
@@ -31,6 +32,23 @@ export const agentRole = (name: RoleName, repository?: Repository): Role =>
 // Returns how many rounds of changes a repository's thread gets before it needs you.
 export const roundLimit = (repository: Repository): number =>
   readSettings(["rounds"], repository).rounds;
+
+// Throws unless the repository's tasks can run `flow`, for every start of a task and a switch of
+// its flow, so a task never starts on a flow that would fail it once work began. It refuses a
+// flow the repository doesn't have, saying which it has, one naming a role with no file, and one
+// whose round limit, wherever it comes from, isn't valid. `name` is the repository's name in
+// Skelcrew, and the .agents/ tree counts as for repositoryFlows.
+export function checkFlow(
+  place: { owner: string; repo: string; agents?: string | null },
+  name: string,
+  flow: string,
+): void {
+  const flows = repositoryFlows(place);
+  if (!flows.includes(flow))
+    throw new Error(`${name} has no flow ${flow}. Its flows are ${flows.join(", ")}.`);
+  flowRoles({ ...place, flow });
+  roundLimit({ ...place, flow });
+}
 
 // Returns what a repository's reviews run with: the reviewer's harness and model, as agentRole
 // gives them, the harness reviews fall back to during a usage limit, or null with none, how many

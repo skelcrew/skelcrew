@@ -226,11 +226,17 @@ export function readSettings<G extends Group>(
   // still say which roles run.
   if (repository && groups.some((group) => group === "rounds"))
     agentsFiles.max_rounds = repositoryRounds(repository, decidedBy([overrides])("max_rounds"));
-  // sc init asks without a repository, for the starter skelcrew.yaml it writes.
+  // sc init asks without a repository, for the starter skelcrew.yaml it writes. The old
+  // max_rounds in skelcrew.yaml was the default flow's round limit, so another flow without
+  // rounds of its own never takes it, and gets yours or the built-in one.
   const aboveShared = decidedBy([overrides, agentsFiles]);
+  const otherFlow = (repository?.flow ?? "default") !== "default";
   const shared = repository
     ? readRepositoryFile(
-        wanted.filter((k) => repositoryKeys.includes(k) && !aboveShared(k)),
+        wanted.filter(
+          (k) =>
+            repositoryKeys.includes(k) && !aboveShared(k) && !(k === "max_rounds" && otherFlow),
+        ),
         repository,
       )
     : {};

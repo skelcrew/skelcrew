@@ -91,21 +91,6 @@ export function repositoryFlows(place: {
   return ["default", ...named.sort()];
 }
 
-// Throws unless the repository's tasks can run `flow`, saying which flows they can, for sc start.
-// A flow whose stages can't run, such as one naming a role with no file, is refused too.
-// `name` is the repository's name in Skelcrew, and the tree counts as for repositoryFlows.
-export function checkFlow(
-  place: { owner: string; repo: string; agents?: string | null },
-  name: string,
-  flow: string,
-): void {
-  const flows = repositoryFlows(place);
-  if (!flows.includes(flow))
-    throw new Error(`${name} has no flow ${flow}. Its flows are ${flows.join(", ")}.`);
-  // A flow that names a role the repository lacks is refused now, rather than fail the thread.
-  flowRoles({ ...place, flow });
-}
-
 // Returns the roles a task's stages run, from its flow's file: the built-in default flow's when
 // the flow is `default` and the repository has no file for it. A role other than the built-in
 // one must have its file in the same .agents/ tree, or the flow is refused, naming it, rather

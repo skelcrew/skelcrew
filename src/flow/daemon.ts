@@ -11,9 +11,9 @@ import {
   readSession,
   stillRunning,
 } from "../agents/sessions.ts";
-import { repositoryCommands, roundLimit } from "../config.ts";
+import { checkFlow, repositoryCommands } from "../config.ts";
 import { finishUpgrade, moveToTasks, openDb, type Repository } from "../db.ts";
-import { checkFlow, flowRoles } from "../flows.ts";
+import { flowRoles } from "../flows.ts";
 import { setupDone } from "../machine/setup.ts";
 import { keepUpToDate } from "../machine/update.ts";
 import { cloneDir, daemonCodeFile, daemonSocket, reviewSocket, threadSocket } from "../paths.ts";
@@ -253,7 +253,6 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       throw new Error(`${name} keeps the flow ${now.flow}, as its builder has submitted already.`);
     const repository = findRepository(db, `${now.owner}/${now.repo}`);
     checkFlow(now, repository.name, flow);
-    roundLimit({ ...now, flow });
     const building = flowRoles(now).build;
     const wanted = flowRoles({ ...now, flow }).build;
     if (wanted !== building)
@@ -503,11 +502,6 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
               record(db, started.folder, { short: request.short }, "given a short title");
             return { started: `Started ${threadName(db, started)}.` };
           }
-          // The flow and the round limit the task would run with are read first, so a bad one,
-          // wherever it comes from, refuses the start with the reason before any work begins.
-          const flow = request.flow ?? "default";
-          checkFlow({ owner, repo }, repository.name, flow);
-          roundLimit({ owner, repo, flow });
           thread = await startThread(db, request);
         } finally {
           startingTasks.delete(key);
@@ -519,11 +513,6 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         return { started: `Started ${threadName(db, thread)}.` };
       }
       case "start new": {
-        // As for a start on a task: a bad round limit refuses it before any work begins.
-        const { owner, repo, name } = findRepository(db, request.repo);
-        const flow = request.flow ?? "default";
-        checkFlow({ owner, repo }, name, flow);
-        roundLimit({ owner, repo, flow });
         const thread = await startThread(db, request);
         setUpAndStart(thread);
         return { started: `Started ${threadName(db, thread)}.` };

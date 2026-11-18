@@ -15,8 +15,8 @@ import {
   startSession,
 } from "../agents/sessions.ts";
 import { approvedAgents } from "../approved-agents.ts";
-import { agentRole, repositoryCommands, roundLimit } from "../config.ts";
-import { checkFlow, flowRoles } from "../flows.ts";
+import { agentRole, checkFlow, repositoryCommands, roundLimit } from "../config.ts";
+import { flowRoles } from "../flows.ts";
 import { cloneDir, threadSocket } from "../paths.ts";
 import { trackerOf } from "../plugins/ask.ts";
 import { repositoryRole } from "../roles.ts";
@@ -71,8 +71,9 @@ export function statusOnceBack(stopped: Thread): "waiting" | "working" {
 // since the lead waits on the answer. Setting up its clone and starting its builder come
 // after, and can take minutes. `given` is a start request, so its `repo` is the repository's
 // name in Skelcrew or its owner/name, its `short` the short title the lead gave, if any, and
-// its `flow` the flow the lead picked, `default` when none. A flow the repository doesn't have,
-// in the .agents/ you approved, is refused, naming the ones it has.
+// its `flow` the flow the lead picked, `default` when none. A flow checkFlow refuses, such as one
+// the .agents/ you approved doesn't have or one with a bad round limit, refuses the start, from
+// sc start or a label alike, before any work begins.
 // Starts go one at a time: a start over first deletes the old thread's refs, and a second
 // start of the same task, running alongside, could delete the refs of the thread the first
 // just started. One at a time, the second finds that thread and is refused.

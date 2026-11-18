@@ -572,6 +572,21 @@ test("a labeled task claimed elsewhere starts no thread, and a claim that fails 
   expect(thread()).toEqual({});
 }, 30_000);
 
+// A labelled task whose round limit isn't valid would fail once work began, so it never starts,
+// and the daemon's log says why.
+test("a labeled task whose round limit isn't valid starts no thread", async () => {
+  addApp();
+  writeFileSync(
+    join(home, ".config", "skelcrew", "config.yaml"),
+    "harness: claude\nmax_rounds: 0\n",
+  );
+  changes([issue12(true)]);
+  serve();
+  await until(() => read(daemonLog()).includes("couldn't start 12 in simon/app"));
+  expect(read(daemonLog())).toContain("isn't valid");
+  expect(thread()).toEqual({});
+}, 30_000);
+
 // bubblewrap can't start inside Skelcrew's own sandbox, so only there builders can't start.
 describe.skipIf(insideSandbox)("polling a forge", () => {
   test("a PR's checks are saved for the strip, without Skelcrew's own review check", async () => {
