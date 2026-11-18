@@ -428,6 +428,15 @@ test("a branch with no PR that moved tells the builder once, and leaves ready to
   expect(decideBranch(ready, "f00d", given)).toBeNull();
 });
 
+// A thread saved before Skelcrew kept the IDs it has seen has none, and no PR whose history they
+// would hold back, so its builder still learns of the move.
+test("a branch with no PR that moved is told for a thread saved before seen IDs were kept", () => {
+  const older = thread({ pr: null, seen: null });
+  const decision = decideBranch(older, "f00d", { ...given, moved: true });
+  expect(decision).toMatchObject({ moved: "f00d", seen: ["head:f00d"] });
+  expect(decision?.notice).toEqual([expect.stringContaining("moved on the remote to f00d")]);
+});
+
 // A round whose push failed stays submitting. Its push may have failed before it could tell the
 // builder, so the poll still does.
 test("a branch that moved is told while a round is submitting", () => {

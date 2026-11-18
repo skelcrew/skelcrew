@@ -293,15 +293,15 @@ export function decide(
 // a repository with no forge, or one whose PR didn't open after its push. `moved` says the head
 // holds commits Skelcrew never pushed for the thread. The builder is told once for each such
 // commit, as decide tells it for a PR, and the thread stops being ready to merge. Returns null
-// when there is nothing to tell. A thread saved before Skelcrew kept the IDs it has seen has no
-// place to remember it, so it is left to its refused push.
+// when there is nothing to tell. A thread saved before Skelcrew kept the IDs it has seen starts
+// with none: with no PR, it has no history the IDs would hold back.
 export function decideBranch(
   thread: Thread,
   head: string,
   given: { maxRounds: number; moved: boolean },
 ): Exclude<Decision, { end: string }> | null {
-  const { seen } = thread;
-  if (!given.moved || seen === null || seen.includes(headSeen(head))) return null;
+  const seen = thread.seen ?? [];
+  if (!given.moved || seen.includes(headSeen(head))) return null;
   const notice = branchMoved(thread.branch, head);
   return {
     seen: [...seen, headSeen(head)],

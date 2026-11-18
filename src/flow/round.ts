@@ -86,15 +86,17 @@ async function push(
     // git refuses a push that would drop commits the branch has on the forge, as it is never
     // forced. The branch is fetched into Skelcrew's clone, the builder's origin, to merge. A
     // poll that told the builder of the same commit already said it all. One this tells is
-    // saved as seen, so a poll doesn't tell it again. A thread that never took in its PR's
-    // history has seen nothing, and saving one ID would make the rest look new.
+    // saved as seen, so a poll doesn't tell it again. A thread with a PR that never took in its
+    // history has seen nothing, and saving one ID would make the rest look new. One with no PR
+    // has no history to hold back.
     let told = false;
     if (refused === null && /\[rejected\].*\((non-fast-forward|fetch first)\)/.test(said)) {
       await fetchInto(db, repository, skelcrewClone, thread.branch);
       const at = await git(skelcrewClone, "rev-parse", `refs/heads/${thread.branch}`);
       refused = `${name}'s push was refused. ${branchMoved(thread.branch, at)}`;
       why = "its push was refused, as its branch moved on the remote";
-      const { seen } = readThread(db, folder);
+      const now = readThread(db, folder);
+      const seen = now.seen ?? (now.pr === null ? [] : null);
       told = seen?.includes(headSeen(at)) ?? false;
       if (seen !== null && !told && !signal.aborted)
         record(db, folder, { seen: [...seen, headSeen(at)] });
