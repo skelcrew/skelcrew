@@ -132,9 +132,6 @@ async function leadCommand(from?: string): Promise<void> {
   const { originHere } = await import("./machine/origin.ts");
   const { firstRun } = await import("./machine/setup.ts");
   firstRun(from);
-  // Your config may still use keys a newer shape replaced, which sc names once.
-  const { tellOldKeys } = await import("./config.ts");
-  tellOldKeys();
   // In a repository with no remote, sc opens nothing, even with tabs open or no repositories
   // yet. Opening another repository there would look as if Skelcrew had ignored where you are.
   const origin = originHere();
@@ -146,6 +143,10 @@ async function leadCommand(from?: string): Promise<void> {
   }
   // Adds the repository you ran sc from if Skelcrew doesn't have it yet.
   const found = await bringInFrom(from);
+  // Your config and the repository's skelcrew.yaml may still use keys a newer shape replaced,
+  // which sc names once.
+  const { tellOldKeys } = await import("./config.ts");
+  tellOldKeys(found);
   if (repositories(openDb()).length === 0) return;
   // Outside any repository, sc opens the repository you opened last only while it has a tab.
   // With every tab closed, you closed them on purpose, so it opens none and says what sc needs.

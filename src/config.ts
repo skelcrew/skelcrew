@@ -1,10 +1,10 @@
 // Your config.yaml as the first run edits it, and the settings the rest of Skelcrew asks for,
 // each read through the one loader in settings.ts.
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, lstatSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse, parseDocument } from "yaml";
 import type { HarnessName } from "./agents/harness.ts";
-import { configDir, dataDir } from "./paths.ts";
+import { cloneDir, configDir, dataDir } from "./paths.ts";
 import type { RoleName } from "./roles.ts";
 import { type Repository, type Role, readSettings, type Settings } from "./settings.ts";
 
@@ -73,28 +73,54 @@ export const reviewLimit = (): number => readSettings(["reviews"]).reviews;
 // your config isn't valid.
 export const checkLimit = (): number => readSettings(["checks"]).checks;
 
-// Says once, for each old key your config.yaml still uses for a role, lead:, builder: or
-// reviewer:, which new key replaces it. The old keys still work, so nothing breaks, but you
-// should know your config has a new shape. Skelcrew changes no file of yours itself. What was
-// said is kept in Skelcrew's data folder, so it is said once per key. A config that can't be
-// read says nothing here, as reading the settings says what is wrong with it.
-export function tellOldKeys(): void {
+// Says once, for each old key still in use, which new one replaces it: lead:, builder: and
+// reviewer: in your config.yaml, replaced by roles:, and, for the repository named by its
+// owner/repo, lead:, builder:, reviewer: and max_rounds in its skelcrew.yaml, replaced by its
+// .agents/. The old keys still work, so nothing breaks, but you should know of the new shape.
+// Skelcrew changes no file itself. What was said is kept in Skelcrew's data folder, so it is
+// said once per key. A file that can't be read says nothing here, as reading the settings says
+// what is wrong with it.
+export function tellOldKeys(repository: string | undefined): void {
   const told = join(dataDir(), "told-old-keys");
   const before = existsSync(told) ? readFileSync(told, "utf8").split("\n") : [];
-  let data: unknown;
-  try {
-    data = parse(readFileSync(configFile(), "utf8"));
-  } catch {
-    return;
-  }
-  if (typeof data !== "object" || data === null) return;
-  for (const name of ["lead", "builder", "reviewer"]) {
-    const key = `config.yaml ${name}`;
-    if (!(name in data) || before.includes(key)) continue;
-    console.log(
-      `Your config.yaml's ${name}: is read as roles: { ${name}: … }, which replaces it. It keeps working, and Skelcrew changes no file itself.`,
-    );
+  // Says `text` unless the key was said before, and remembers it.
+  const tell = (key: string, text: string) => {
+    if (before.includes(key)) return;
+    console.log(`${text} It keeps working, and Skelcrew changes no file itself.`);
     mkdirSync(dataDir(), { recursive: true });
     appendFileSync(told, `${key}\n`);
+  };
+  const roles = ["lead", "builder", "reviewer"];
+  const yours = readYaml(configFile());
+  for (const name of roles.filter((name) => name in yours))
+    tell(
+      `config.yaml ${name}`,
+      `Your config.yaml's ${name}: is read as roles: { ${name}: … }, which replaces it.`,
+    );
+  if (repository === undefined) return;
+  // Read from Skelcrew's clone, as the settings are, and never through a link.
+  const [owner = "", repo = ""] = repository.split("/");
+  const file = join(cloneDir(owner, repo), "skelcrew.yaml");
+  const shared = lstatSync(file, { throwIfNoEntry: false })?.isFile() ? readYaml(file) : {};
+  const named = `${repository}'s skelcrew.yaml has`;
+  for (const name of roles.filter((name) => name in shared))
+    tell(
+      `${repository} skelcrew.yaml ${name}`,
+      `${named} ${name}:, read as the harness and model in .agents/roles/${name}.md, which replaces it.`,
+    );
+  if ("max_rounds" in shared)
+    tell(
+      `${repository} skelcrew.yaml max_rounds`,
+      `${named} max_rounds:, read as rounds: in .agents/flows/default.yaml, which replaces it.`,
+    );
+}
+
+// Returns the mapping a YAML file holds, or an empty one when it can't be read or isn't one.
+function readYaml(file: string): object {
+  try {
+    const data: unknown = parse(readFileSync(file, "utf8"));
+    return typeof data === "object" && data !== null ? data : {};
+  } catch {
+    return {};
   }
 }

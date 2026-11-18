@@ -1112,3 +1112,23 @@ test("sc says once which old role keys your config.yaml uses, what replaces them
   expect((await skel([])).out).not.toContain("replaces it");
   expect(readFileSync(file, "utf8")).toBe(yours);
 });
+
+test("sc says once which old keys the repository's skelcrew.yaml uses, what replaces them, and changes nothing", async () => {
+  const checkout = onGitHub("simon/app", "WRITE");
+  const yours = "setup: [make]\nbuilder: { model: sonnet }\nmax_rounds: 5\n";
+  writeFileSync(join(checkout, "skelcrew.yaml"), yours);
+  git(checkout, "add", "-A");
+  git(checkout, "commit", "-q", "-m", "settings");
+  git(checkout, "push", "-q", join(home, "github", "simon", "app.git"), "HEAD:main");
+  const first = await skel([], "", checkout);
+  expect(first.err).toBe("");
+  expect(first.out).toContain(
+    "simon/app's skelcrew.yaml has builder:, read as the harness and model in .agents/roles/builder.md, which replaces it.",
+  );
+  expect(first.out).toContain(
+    "simon/app's skelcrew.yaml has max_rounds:, read as rounds: in .agents/flows/default.yaml, which replaces it.",
+  );
+  expect(first.out).not.toContain("lead:");
+  expect((await skel([], "", checkout)).out).not.toContain("replaces it");
+  expect(readFileSync(join(clone("simon/app"), "skelcrew.yaml"), "utf8")).toBe(yours);
+});
