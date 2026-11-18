@@ -203,11 +203,15 @@ test("with nothing working, an open screen sends your terminal nothing at all", 
   open("lead");
   await ready("lead");
   await until(() => seen().includes("checks · claude"), "the threads");
+  // Two seconds short of a minute, so a time shown on any row would change during the wait. The
+  // sidebar refreshes at least once before the minute, and still under a minute, such a time
+  // would show the same as before, so this alone writes nothing.
+  const minute = Date.now() + 2000;
+  sql(`UPDATE threads SET started = ${minute - 60_000} WHERE status = 'waiting'`);
   const written = await copyOnceSettled();
-  // Half a second short of a minute, so a time shown on any row would change during the wait.
-  // Under a minute, such a time would show the same either way, so this alone writes nothing.
-  sql(`UPDATE threads SET started = ${Date.now() - 59_500} WHERE status = 'waiting'`);
-  await twoRefreshes();
+  expect(Date.now()).toBeLessThan(minute);
+  // The wait ends once the sidebar has refreshed after the minute, with a little to spare.
+  await Bun.sleep(minute + 1200 - Date.now());
   expect(readFileSync(written, "utf8")).toBe("");
 });
 
