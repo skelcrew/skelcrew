@@ -39,11 +39,13 @@ const leadFolder = (repo = "app") =>
 
 // Stands in for Claude Code, staying up like the real one until its session ends. It runs in
 // the lead's sandbox, where the home folder is hidden, so it notes its calls in the folder it
-// starts in, the lead's own, one line each, though the lead's instructions span several.
+// starts in, the lead's own, one line each, though the lead's instructions span several. Each
+// line ends with whether Claude Code's agent view was off.
 function fakeClaude(body: string): void {
+  const view = "agent-view-off=$CLAUDE_CODE_DISABLE_AGENT_VIEW";
   writeFileSync(
     join(home, "bin", "claude"),
-    `#!/bin/sh\necho "claude $*" | tr '\\n' ' ' >> calls\necho >> calls\n${body}\n`,
+    `#!/bin/sh\necho "claude $* ${view}" | tr '\\n' ' ' >> calls\necho >> calls\n${body}\n`,
     { mode: 0o755 },
   );
 }
@@ -491,8 +493,11 @@ describe.skipIf(insideSandbox)("with a lead per repository", () => {
     expect(hasLead(leadName("web"))).toBe(false);
   });
 
-  // Without them it would edit code in its own folder rather than hand the work to a thread.
-  test("starts and brings back the lead with its instructions, naming its repository", async () => {
+  // Without its instructions it would edit code in its own folder rather than hand the work
+  // to a thread. With Claude Code's agent view on, the lead's conversation ran in Claude Code's
+  // background service under an id Skelcrew never knew, which swapped it for a spare session on
+  // the default model.
+  test("starts and brings back the lead with its instructions, naming its repository, on its model with agent view off", async () => {
     setUp();
     addRepository("app");
     const first = serve();
@@ -509,6 +514,8 @@ describe.skipIf(insideSandbox)("with a lead per repository", () => {
       // The lead talks to the human, who sees issues and threads, never Skelcrew's word task.
       expect(line).not.toMatch(/\btasks?\b/i);
       expect(line).toContain("You are the lead of simon/app.");
+      expect(line).toContain("--model opus");
+      expect(line.trimEnd()).toEndWith("agent-view-off=1");
     }
   });
 
@@ -542,6 +549,33 @@ describe.skipIf(insideSandbox)("with a lead per repository", () => {
     const [line] = claudeLines();
     expect(line).toContain('--short "<words>"');
     expect(line).toContain('sc start app-12 --short "Login redirect"');
+  });
+
+  // A lead an older release started has Claude Code's agent view on. Its live conversation can
+  // be one Claude Code's background service runs, under an id Skelcrew never stored, so
+  // restarting it on the stored id would lose that conversation. It is kept until its next
+  // start, which turns agent view off.
+  test("keeps a lead that runs with agent view on across a restart of the daemon", async () => {
+    setUp();
+    addRepository("app");
+    const first = serve();
+    await untilAnswers();
+    await open();
+    saveTranscript(storedSession());
+    await stop(first);
+    endLead();
+    // The lead as an older release left it: Claude Code idle at its prompt, with agent view on.
+    const idleLead = ["sh", "-c", "printf '❯\\n'; exec sleep 300"];
+    const start = ["new-session", "-d", "-s", leadName(), "-c", leadFolder(), "--", ...idleLead];
+    Bun.spawnSync(["tmux", "-L", socket, ...start]);
+    serve();
+    await untilAnswers();
+    expect(await open()).toEqual({ lead: leadName(), repository: "simon/app" });
+    expect(claudeLines()).toHaveLength(1);
+    // Still the old lead's own process, at its prompt.
+    const pane = ["display-message", "-p", "-t", `=${leadName()}:`, "#{pane_start_command}"];
+    const shown = Bun.spawnSync(["tmux", "-L", socket, ...pane], { stdout: "pipe" });
+    expect(shown.stdout.toString()).toContain("exec sleep 300");
   });
 
   // Claude Code can't resume a conversation it never saved, nor start a new one under its id.

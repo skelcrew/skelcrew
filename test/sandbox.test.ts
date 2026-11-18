@@ -108,6 +108,15 @@ function asLead(script: string) {
   return run(argv, env);
 }
 
+// Claude Code's agent view keeps a service in the session's config folder that can hand a
+// restarted lead a spare session of its own, on the default model, without its conversation
+// or instructions. Nothing is started here, so this runs inside Skelcrew's sandbox too.
+test("Claude Code starts every agent with its agent view off", () => {
+  saveToken();
+  const { env } = claude.start({ ...lead(), name: "lead", socket: socketPath, env: outside() });
+  expect(env.CLAUDE_CODE_DISABLE_AGENT_VIEW).toBe("1");
+});
+
 // bubblewrap can't start inside Skelcrew's own sandbox, so only there these tests can't run.
 describe.skipIf(insideSandbox)("sandbox", () => {
   test("the lead writes in its folder and nowhere else", async () => {
@@ -339,6 +348,7 @@ console.log(JSON.stringify(claude.start({ name: "lead", ...${JSON.stringify(lead
         "--resume",
         "abc-123",
         "Fix the bug",
+        "CLAUDE_CODE_DISABLE_AGENT_VIEW=1",
         "CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false",
         "CLAUDE_CODE_HARBOR_KITE=false",
         "CLAUDE_CODE_OAUTH_TOKEN=tok-123",
