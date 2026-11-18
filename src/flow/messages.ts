@@ -293,17 +293,22 @@ export async function deliverAllWaiting(db: Database, sessions: string): Promise
 // the commit, and one left pasted at the prompt, as it would block the next as a draft. Typing
 // under way is cancelled first, as it may be typing one of them, and starts again with what is
 // left once it has ended. Notices still being prepared learn of the drop by noticeRound.
-export function dropOldEvents(db: Database, sessions: string, folder: string): void {
+// Returns the texts dropped, so what they told can be told again if it still holds.
+export function dropOldEvents(db: Database, sessions: string, folder: string): string[] {
   roundsDropped.set(folder, noticeRound(folder) + 1);
   const ended = delivering.get(folder)?.ended ?? Promise.resolve();
   stopDelivering(db, folder, false);
   const rows = db
     .query("SELECT * FROM messages WHERE folder = ? AND sender IN ('skelcrew', 'review')")
     .all(folder);
+  const dropped: string[] = [];
   for (const message of z.array(Message).parse(rows))
-    if (message.typed_in.length === 0 && !message.pasted)
+    if (message.typed_in.length === 0 && !message.pasted) {
       db.run("DELETE FROM messages WHERE id = ?", [message.id]);
+      dropped.push(message.text);
+    }
   ended.then(() => deliverMessages(db, sessions, folder));
+  return dropped;
 }
 
 // How many times each thread's notices were dropped for a new round, by its folder.
