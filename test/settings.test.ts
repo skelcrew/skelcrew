@@ -109,6 +109,16 @@ test("only your config lets the lead arm merges, and it is off by default", () =
     "lead: { may_arm_merges: false }\n",
   );
   expect(leadArms()).toBe("true");
+  // Nor can an override for one repository under repos:, as only your general settings count.
+  settings("harness: claude\nrepos:\n  simon/app:\n    lead: { may_arm_merges: true }\n", null);
+  expect(leadArms()).toBe("false");
+  // Nor can anything in the repository's .agents/, such as a settings file put there.
+  settings("harness: claude\n", null);
+  mkdirSync(join(clone(), ".agents"), { recursive: true });
+  writeFileSync(join(clone(), ".agents", "skelcrew.yaml"), "lead: { may_arm_merges: true }\n");
+  writeFileSync(join(clone(), ".agents", "config.yaml"), "lead: { may_arm_merges: true }\n");
+  expect(leadArms()).toBe("false");
+  rmSync(join(clone(), ".agents"), { recursive: true });
   // A top-level line counts for nothing, and a value that isn't true or false is refused.
   settings("harness: claude\nmay_arm_merges: true\n", null);
   expect(leadArms()).toBe("false");

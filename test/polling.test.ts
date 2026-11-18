@@ -2111,8 +2111,10 @@ exec ${bwrap} "$@"`,
     // nothing else changes: the merge still waits for the approved head to be green.
     test("a lead you let arm merges arms one with your words, and builders still can't", async () => {
       await approvedApp12();
-      // Your words as you wrote them, over two lines and with a double space.
-      const words = "merge #7\nwhen it's  ready";
+      // Your words as you wrote them: over two lines, with a double space, quotes, and what a
+      // shell would run if they were put in its quotes.
+      const ran = join(home, "ran");
+      const words = `merge "#7"\nwhen it's  ready, $(touch ${ran}) \`touch ${ran}\``;
       // sc merge as the lead runs it, on its own socket.
       const asLead = (...more: string[]) =>
         Bun.spawnSync([process.execPath, main, "merge", "--when-ready", "#7", ...more], {
@@ -2143,21 +2145,27 @@ exec ${bwrap} "$@"`,
       });
       expect(thread().merge_plan).toBeNull();
 
-      // The lead arms it by the PR's number, with no question at a terminal.
-      const armed = asLead("--asked", words);
+      // The lead arms it by the PR's number, with no question at a terminal, giving your words
+      // in a quoted heredoc as its instructions say, so the shell changes nothing in them.
+      const heredoc = `"$SC" "$MAIN" merge --when-ready '#7' --asked - <<'HUMAN_WORDS'\n${words}\nHUMAN_WORDS\n`;
+      const armed = Bun.spawnSync(["sh", "-c", heredoc], {
+        env: { ...env(), SKELCREW_SOCKET: leadSocket(), SC: process.execPath, MAIN: main },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
       expect(armed.stderr.toString()).toBe("");
       expect(armed.stdout.toString()).toContain("app-12 merges once it is approved and green.");
       expect(thread()).toMatchObject({ merge_plan: "armed", merge_by: `${login()} via the lead` });
-      // The thread's log and the daemon's keep your words, and the lead gets a note saying what
-      // it armed, so you see it in the conversation.
-      // The log keeps them exactly, and the note puts them on one line.
+      expect(existsSync(ran)).toBe(false);
+      // The thread's log and the daemon's keep your words exactly, and the lead gets a note
+      // saying what it armed, with them on one line, so you see it in the conversation.
       const why = `the lead armed a merge when ready on #7, as the human asked: ${JSON.stringify(words)}`;
       // Each line of the thread's log is JSON, so its quotes are escaped there.
       expect(read(join(data(), "threads", "app-12.log"))).toContain(`"why":${JSON.stringify(why)}`);
       await until(() => read(daemonLog()).includes(`app-12: ${why}`));
       await until(() =>
         leadTyped().includes(
-          `Armed: #7 (app-12) merges once it is approved and green, as the human asked: "merge #7 when it's ready". sc merge --cancel app-12 stops that.`,
+          `Armed: #7 (app-12) merges once it is approved and green, as the human asked: "merge "#7" when it's ready, $(touch ${ran}) \`touch ${ran}\`". sc merge --cancel app-12 stops that.`,
         ),
       );
 

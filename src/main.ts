@@ -467,8 +467,16 @@ async function mergeCommand(args: string[]): Promise<void> {
     which = { pr: Number(number), ...(from ? { from } : {}) };
   } else if (task && !given) which = { repo: task[0], task: task[1] };
   else usage("merge");
+  // `--asked -` takes your words on stdin, as the lead gives them in a heredoc whose quoted
+  // delimiter keeps the shell from changing them: quotes, $() and backticks stay as you wrote
+  // them. The heredoc's own last line break goes.
   if (asked !== undefined) {
-    console.log(await planMerge(command, { ...which, asked }));
+    let words = asked;
+    if (asked === "-") {
+      if (process.stdin.isTTY) throw new Error("sc merge read no words on stdin for --asked -");
+      words = (await Bun.stdin.text()).replace(/\n$/, "");
+    }
+    console.log(await planMerge(command, { ...which, asked: words }));
     return;
   }
   if (command === "merge when ready") {
