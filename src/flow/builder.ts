@@ -241,6 +241,12 @@ async function recordThread(
       // run there, and is ended before the new one starts.
       host: before?.host ?? null,
       host_id: before?.host_id ?? null,
+      merge_plan: null,
+      merge_id: null,
+      merge_by: null,
+      merge_at: null,
+      merge_waits: null,
+      merge_noted: null,
     };
     // A failed or done thread's row gives way to the new one, and messages that waited for its
     // builder go with it, as they were about the old work. Its task starts afresh too, with no

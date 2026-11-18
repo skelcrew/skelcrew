@@ -39,11 +39,13 @@ const leadFolder = (repo = "app") =>
 
 // Stands in for Claude Code, staying up like the real one until its session ends. It runs in
 // the lead's sandbox, where the home folder is hidden, so it notes its calls in the folder it
-// starts in, the lead's own, one line each, though the lead's instructions span several.
+// starts in, the lead's own, one line each, though the lead's instructions span several. Each
+// line ends with whether Claude Code's agent view was off.
 function fakeClaude(body: string): void {
+  const view = "agent-view-off=$CLAUDE_CODE_DISABLE_AGENT_VIEW";
   writeFileSync(
     join(home, "bin", "claude"),
-    `#!/bin/sh\necho "claude $*" | tr '\\n' ' ' >> calls\necho >> calls\n${body}\n`,
+    `#!/bin/sh\necho "claude $* ${view}" | tr '\\n' ' ' >> calls\necho >> calls\n${body}\n`,
     { mode: 0o755 },
   );
 }
@@ -254,24 +256,48 @@ test("refuses to start before the first run, and says to run sc", async () => {
   expect(hasLead()).toBe(false);
 });
 
-// sc serve stays for the services an older Skelcrew installed, which still run it.
+// Before the first run sc up stops at once, so these reach the daemon without starting one on
+// Skelcrew's own tmux server.
+test("sc up runs the daemon, and sc serve does too after saying sc up replaces it", () => {
+  const env = {
+    HOME: home,
+    XDG_RUNTIME_DIR: join(home, "run"),
+    PATH: `${join(home, "bin")}:${process.env.PATH ?? ""}`,
+  };
+  const up = Bun.spawnSync([process.execPath, main, "up"], { env, stderr: "pipe" });
+  expect(up.exitCode).toBe(1);
+  expect(up.stderr.toString()).toBe(
+    "Skelcrew: the first run isn't done on this machine: run sc first\n",
+  );
+  const serve = Bun.spawnSync([process.execPath, main, "serve"], { env, stderr: "pipe" });
+  expect(serve.exitCode).toBe(1);
+  expect(serve.stderr.toString()).toBe(
+    "sc serve is now sc up, and sc serve will go in a later release.\nSkelcrew: the first run isn't done on this machine: run sc first\n",
+  );
+});
+
 test("sc up and sc serve refuse inside Skelcrew's sandbox, where Skelcrew's state is hidden", async () => {
   setUp();
-  for (const words of [["up"], ["up", "--bg"], ["serve"]]) {
-    const run = Bun.spawnSync([process.execPath, main, ...words], {
-      env: {
-        HOME: home,
-        XDG_RUNTIME_DIR: join(home, "run"),
-        PATH: `${join(home, "bin")}:${process.env.PATH ?? ""}`,
-        SKELCREW_SANDBOX: "1",
-      },
-      stderr: "pipe",
-    });
-    expect(run.exitCode).toBe(1);
-    expect(run.stderr.toString()).toBe(
-      "Skelcrew: running the daemon is only for your own terminal, not for agents\n",
-    );
-  }
+  const refused = Bun.spawnSync([process.execPath, main, "up", "--bg"], {
+    env: { HOME: home, XDG_RUNTIME_DIR: join(home, "run"), SKELCREW_SANDBOX: "1" },
+    stderr: "pipe",
+  });
+  expect(refused.stderr.toString()).toBe(
+    "Skelcrew: running the daemon is only for your own terminal, not for agents\n",
+  );
+  const run = Bun.spawnSync([process.execPath, main, "serve"], {
+    env: {
+      HOME: home,
+      XDG_RUNTIME_DIR: join(home, "run"),
+      PATH: `${join(home, "bin")}:${process.env.PATH ?? ""}`,
+      SKELCREW_SANDBOX: "1",
+    },
+    stderr: "pipe",
+  });
+  expect(run.exitCode).toBe(1);
+  expect(run.stderr.toString()).toBe(
+    "Skelcrew: running the daemon is only for your own terminal, not for agents\n",
+  );
   expect(existsSync(join(home, "run", "skelcrew.sock"))).toBe(false);
 });
 
@@ -426,6 +452,7 @@ const stoppedApp1 = {
   checks: null,
   review: null,
   waiting: 0,
+  merge: null,
 };
 
 // bubblewrap can't start inside Skelcrew's own sandbox, so only there a lead can't start.
@@ -493,8 +520,11 @@ describe.skipIf(insideSandbox)("with a lead per repository", () => {
     expect(hasLead(leadName("web"))).toBe(false);
   });
 
-  // Without them it would edit code in its own folder rather than hand the work to a thread.
-  test("starts and brings back the lead with its instructions, naming its repository", async () => {
+  // Without its instructions it would edit code in its own folder rather than hand the work
+  // to a thread. With Claude Code's agent view on, the lead's conversation ran in Claude Code's
+  // background service under an id Skelcrew never knew, which swapped it for a spare session on
+  // the default model.
+  test("starts and brings back the lead with its instructions, naming its repository, on its model with agent view off", async () => {
     setUp();
     addRepository("app");
     const first = serve();
@@ -511,6 +541,8 @@ describe.skipIf(insideSandbox)("with a lead per repository", () => {
       // The lead talks to the human, who sees issues and threads, never Skelcrew's word task.
       expect(line).not.toMatch(/\btasks?\b/i);
       expect(line).toContain("You are the lead of simon/app.");
+      expect(line).toContain("--model opus");
+      expect(line.trimEnd()).toEndWith("agent-view-off=1");
     }
   });
 
@@ -544,6 +576,33 @@ describe.skipIf(insideSandbox)("with a lead per repository", () => {
     const [line] = claudeLines();
     expect(line).toContain('--short "<words>"');
     expect(line).toContain('sc start app-12 --short "Login redirect"');
+  });
+
+  // A lead an older release started has Claude Code's agent view on. Its live conversation can
+  // be one Claude Code's background service runs, under an id Skelcrew never stored, so
+  // restarting it on the stored id would lose that conversation. It is kept until its next
+  // start, which turns agent view off.
+  test("keeps a lead that runs with agent view on across a restart of the daemon", async () => {
+    setUp();
+    addRepository("app");
+    const first = serve();
+    await untilAnswers();
+    await open();
+    saveTranscript(storedSession());
+    await stop(first);
+    endLead();
+    // The lead as an older release left it: Claude Code idle at its prompt, with agent view on.
+    const idleLead = ["sh", "-c", "printf '❯\\n'; exec sleep 300"];
+    const start = ["new-session", "-d", "-s", leadName(), "-c", leadFolder(), "--", ...idleLead];
+    Bun.spawnSync(["tmux", "-L", socket, ...start]);
+    serve();
+    await untilAnswers();
+    expect(await open()).toEqual({ lead: leadName(), repository: "simon/app" });
+    expect(claudeLines()).toHaveLength(1);
+    // Still the old lead's own process, at its prompt.
+    const pane = ["display-message", "-p", "-t", `=${leadName()}:`, "#{pane_start_command}"];
+    const shown = Bun.spawnSync(["tmux", "-L", socket, ...pane], { stdout: "pipe" });
+    expect(shown.stdout.toString()).toContain("exec sleep 300");
   });
 
   // Claude Code can't resume a conversation it never saved, nor start a new one under its id.

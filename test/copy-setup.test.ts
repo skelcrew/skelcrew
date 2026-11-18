@@ -99,8 +99,8 @@ function setUpLaptop(config = "harness: claude\n"): void {
   writeFileSync(join(laptopConfig(), "claude-token"), "sk-ant-oat01-laptop\n", { mode: 0o600 });
 }
 
-// Gives the server a finished first run of its own: a harness, the agents' token and the
-// daemon's service. Skelcrew there runs nothing for a machine that isn't set up, so the setup is
+// Gives the server a finished first run of its own, a harness and the agents' token, and the
+// daemon's service that plain sc installs after it. Skelcrew there runs nothing for a machine that isn't set up, so the setup is
 // only ever copied to one that is.
 function setUpServer(): void {
   const units = join(server(), ".config", "systemd", "user");
@@ -111,8 +111,8 @@ function setUpServer(): void {
   writeFileSync(join(units, "skelcrew.service"), "");
 }
 
-// Undoes the server's first run, as if it stopped partway: before the agents' login.
-const firstRunUnfinished = () => rmSync(join(serverConfig(), "claude-token"), { force: true });
+// Undoes the server's first run, as if it stopped before the agents' login.
+const firstRunUnfinished = () => rmSync(join(serverConfig(), "claude-token"));
 
 // Runs sc on a machine with this home, with what you type, and returns what it said.
 async function skel(home: string, args: string[], typed = "") {

@@ -92,6 +92,13 @@ function kickstart(restart: boolean): void {
   loadLaunchAgent();
 }
 
+// Returns the process id of the daemon launchd runs as the agent, or 0 when it runs none.
+// launchctl print has no stable format, so a line such as "pid = 123" is looked for.
+export function launchAgentPid(): number {
+  const printed = launchctl(["print", `${domain()}/${label}`]);
+  return printed.ok ? Number(printed.said.match(/^\s*pid = (\d+)$/m)?.[1] ?? 0) : 0;
+}
+
 // Restarts the daemon, for a Skelcrew newer than the one the daemon runs: a newer release, or a
 // checkout on another commit. launchd ends the running daemon first, and agents keep running in
 // tmux.

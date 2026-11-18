@@ -20,6 +20,8 @@ const sections: [string, [string, string][]][] = [
       ["peek <thread>", "What that builder shows now, without attaching"],
       ["interrupt <thread>", "Stop that builder's turn, as Esc does"],
       ["review <task>", "Run the task's last review again"],
+      ["merge --when-ready <thread> | <#pr>", "Merge it once it is approved and green"],
+      ["merge --cancel <thread> | <#pr>", "Stop a merge when ready"],
     ],
   ],
   [
@@ -56,8 +58,13 @@ const sections: [string, [string, string][]][] = [
     [
       ["remote add <host>", "Set up a server, over ssh"],
       ["--remote <host> [command]", "Run sc on a server, over ssh"],
-      ["up", "Run the daemon here, with its log, until Ctrl-C"],
-      ["up --bg", "Run the daemon as a background service, under systemd or launchd"],
+    ],
+  ],
+  [
+    "THE DAEMON",
+    [
+      ["up", "Run the daemon here, until Ctrl-C"],
+      ["up --bg", "Run it as a systemd or launchd service, and return"],
     ],
   ],
   [

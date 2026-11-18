@@ -6,6 +6,7 @@ import { dirname, join } from "node:path";
 import { checkoutFolder, singleFile } from "../version.ts";
 import {
   daemonLog,
+  launchAgentPid,
   loadLaunchAgent,
   plistFile,
   plistText,
@@ -94,9 +95,9 @@ WantedBy=default.target
 }
 
 // Installs or updates the daemon service, enabling it and lingering on the first
-// installation. On a Mac it is a launchd agent instead. Checked on every plain sc, but only by comparing files, so a moved
-// bun, harness or checkout reaches the daemon at its next start without a systemctl call each
-// time.
+// installation. On a Mac it is a launchd agent instead. Checked on every plain sc, but only by
+// comparing files, so a moved bun, harness or checkout reaches the daemon without a systemctl
+// or launchctl call each time: on systemd at its next start, and on a Mac at once.
 export function installService(): void {
   const mac = process.platform === "darwin";
   const file = serviceFile();
@@ -124,6 +125,9 @@ export function installService(): void {
   mkdirSync(dirname(file), { recursive: true });
   writeFileSync(file, unit);
   try {
+    // launchd keeps the definition it loaded, and would start the daemon again on it after a
+    // crash, so a changed file is loaded at once. That restarts the daemon, and agents keep
+    // running in tmux.
     if (mac) {
       loadLaunchAgent();
       return;
@@ -143,6 +147,21 @@ export function installService(): void {
     else writeFileSync(file, before);
     throw error;
   }
+}
+
+// Returns the process id of the daemon the service runs, or 0 when it runs none or isn't
+// installed. A daemon that answers with another id runs outside the service, such as sc up in
+// a terminal, which the service manager can neither restart nor start a second daemon beside.
+export function servicePid(): number {
+  if (process.platform === "darwin") return launchAgentPid();
+  const show = Bun.spawnSync(
+    ["systemctl", "--user", "show", "-p", "MainPID", "--value", "skelcrew"],
+    {
+      stdout: "pipe",
+      stderr: "pipe",
+    },
+  );
+  return show.success ? Number(show.stdout.toString().trim()) || 0 : 0;
 }
 
 // Starts the daemon's service on this machine, and returns where its log is, for when it

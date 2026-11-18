@@ -34,9 +34,14 @@ export function nameRepositories(db: Database): void {
 // thread's log, which would otherwise fill with it. `state` is what the builder is doing, from
 // its harness's hooks and its screen. It changes with every turn, so it is kept out of the
 // thread's log too. `role` is what the agent does on its task, and every thread so far is a
-// builder. `host` is the session host its builder runs on, tmux or a runtime plugin, and `host_id`
-// the session's ID there, which on tmux is the folder. A thread from before hosts runs on tmux. A
-// thread whose builder you stopped has no host, so it starts again on the current one.
+// builder. `merge_plan` is `armed` while you have armed a merge when ready on the thread.
+// `merge_id` is that plan's own ID, new each time it is armed. `merge_by` and `merge_at` say
+// who armed it and when, for the PR's record. `merge_waits` is what an armed merge waits on, as the last poll
+// found, and `merge_noted` the review round the lead last heard it still waits after. They are
+// the thread's, so a thread that starts over begins with none. `host` is the session host its
+// builder runs on, tmux or a runtime plugin, and `host_id` the session's ID there, which on tmux
+// is the folder. A thread from before hosts runs on tmux. A thread whose builder you stopped has
+// no host, so it starts again on the current one.
 const threadColumns = {
   needs_you: "INTEGER NOT NULL DEFAULT 0",
   asking: "INTEGER NOT NULL DEFAULT 0",
@@ -54,6 +59,12 @@ const threadColumns = {
   role: "TEXT NOT NULL DEFAULT 'builder'",
   host: "TEXT DEFAULT 'tmux'",
   host_id: "TEXT",
+  merge_plan: "TEXT",
+  merge_id: "TEXT",
+  merge_by: "TEXT",
+  merge_at: "INTEGER",
+  merge_waits: "TEXT",
+  merge_noted: "INTEGER",
 };
 
 // A task's columns past its repository and ID: what belongs to the work rather than the agent

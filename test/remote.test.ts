@@ -638,7 +638,7 @@ function serverCheckout(name = "skel"): string {
 }
 
 // Writes the daemon's systemd unit on the server, starting the given Skelcrew with `command`:
-// up, or serve as an older Skelcrew wrote it.
+// up, or serve in a unit an older Skelcrew wrote.
 function unit(skel: string, command = "up"): void {
   const units = join(home, "server", ".config", "systemd", "user");
   mkdirSync(units, { recursive: true });
@@ -659,7 +659,8 @@ test("the update goes by what the daemon's service runs, not by ~/.local/bin", a
   expect(calls()).not.toMatch(/^systemctl --user restart/m);
 });
 
-test("the update reads a service an older Skelcrew wrote, which runs sc serve", async () => {
+// A server whose service an older Skelcrew installed runs sc serve, and is found all the same.
+test("the update finds the checkout of a service that runs sc serve", async () => {
   installed("0000000");
   const checkout = serverCheckout();
   unit(join(checkout, "bin", "sc"), "serve");

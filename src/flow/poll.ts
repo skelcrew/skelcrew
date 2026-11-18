@@ -22,8 +22,9 @@ import { type Item, openTasks, prOf, saveItems } from "./copy.ts";
 import { ciState, decide, labeledToStart, type PullRequest } from "./decide.ts";
 import { endThread, removing, tellBuilder, tellingEvents } from "./events.ts";
 import { fetchInto, onRemote } from "./git.ts";
+import { mergeIfReady } from "./merging.ts";
 import { noteForLead, typeLeadNotes } from "./messages.ts";
-import { forgeKnown, fullNameIs, refreshClone, repositories } from "./repo.ts";
+import { forgeKnown, fullNameIs, hasNoCommits, refreshClone, repositories } from "./repo.ts";
 import { needsYou } from "./status.ts";
 import { readThread, record, Thread, threadName } from "./thread.ts";
 
@@ -39,7 +40,7 @@ const startLabel = "skelcrew";
 // of its own, such as the branch to start from. A task in `passed`, named the same way, is one
 // this daemon won't start by its label: someone else claimed it, or its claim was this
 // daemon's but the thread failed to start. Kept in memory, so the tracker isn't asked about it
-// on every poll.
+// on every poll. Nothing starts until Skelcrew's clone has a commit.
 async function startLabeled(
   db: Database,
   sessions: string,
@@ -60,7 +61,16 @@ async function startLabeled(
     const key = `${fullName}#${task.id}`;
     return task.labels.includes(startLabel) && !starting.has(key) && !passed.has(key);
   });
-  for (const task of labeledToStart(threads, labeled)) {
+  const toStart = labeledToStart(threads, labeled);
+  // A repository with no commits yet has nothing for a thread to start from, and a claim made
+  // now would keep its label from starting it once it has some. Until Skelcrew's clone is made,
+  // as while the daemon starts, nothing tells, so labeled tasks wait for it.
+  if (
+    toStart.length > 0 &&
+    (!existsSync(cloneDir(owner, repo)) || (await hasNoCommits(db, repository)))
+  )
+    return;
+  for (const task of toStart) {
     const key = `${fullName}#${task.id}`;
     // A claim that fails, such as on a network error, starts nothing and is tried again on the
     // next poll, so a task is never started without its claim.
@@ -269,7 +279,15 @@ async function pollRepository(
       // only what changed, and events held back for a thread, such as one stopped, were left
       // out of its `seen`, so its PR is acted on again until they are handed over.
       const pr = before.pr === null ? null : prOf(db, owner, repo, before.pr);
-      if (pr) await actOnPr(db, sessions, before, pr);
+      if (!pr) continue;
+      await actOnPr(db, sessions, before, pr);
+      // Once the PR's events are acted on, an armed merge when ready merges it if it is ready.
+      // A thread sc rm is removing is its to end.
+      // One that fails is logged, so the poll's other threads still get their events.
+      if (!removing.has(before.folder))
+        await mergeIfReady(db, sessions, before, pr).catch((error) =>
+          console.log(`couldn't merge ${before.folder} when ready: ${errorText(error)}`),
+        );
     }
   }
 }

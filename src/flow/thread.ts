@@ -146,6 +146,17 @@ export const Thread = z.object({
   host: z.string().nullable(),
   // The builder's session ID on its host, or null for its folder, which is its name on tmux.
   host_id: z.string().nullable(),
+  // A merge when ready you armed, so Skelcrew merges the PR once it is approved and green, or
+  // null with none, and then nothing merges by itself. Who armed it and when, what it waits on
+  // as the last poll found, and the review round the lead last heard it still waits after.
+  merge_plan: z.enum(["armed"]).nullable(),
+  // The armed plan's own ID, new each time it is armed, so a plan cancelled and armed again is
+  // never taken for the one before.
+  merge_id: z.string().nullable(),
+  merge_by: z.string().nullable(),
+  merge_at: z.number().nullable(),
+  merge_waits: z.string().nullable(),
+  merge_noted: z.number().nullable(),
 });
 export type Thread = z.infer<typeof Thread>;
 
