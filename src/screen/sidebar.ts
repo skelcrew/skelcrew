@@ -14,8 +14,9 @@ import { paneTty, paneWidth, respawnPane, screenTmux, showStrip } from "../agent
 import { openRepository } from "../client.ts";
 import { openDb } from "../db.ts";
 import { leadOf } from "../flow/lead.ts";
+import { doing, watchForStalls } from "../flow/stall.ts";
 import { updateNotice } from "../machine/update.ts";
-import { leadPlaces } from "../paths.ts";
+import { leadPlaces, screenLogFile } from "../paths.ts";
 import { version } from "../version.ts";
 import { agentFooter, tellFooter } from "./footer.ts";
 import { draw, entryPlace, noticeLines, type Size } from "./layout.ts";
@@ -58,6 +59,9 @@ export async function runSidebar(
   where: string,
   repository: string,
 ): Promise<void> {
+  // A freeze of the screen leaves nothing behind, as everything the sidebar says is drawn in
+  // your terminal. So it logs its own stalls to a file, with the step it was stuck on.
+  watchForStalls("The screen's sidebar", screenLogFile());
   // What the sidebar keeps between redraws: the open repository and its tabs, the right pane and
   // its terminal, and what it last drew.
   const db = openDb();
@@ -94,10 +98,13 @@ export async function runSidebar(
     if (leaving) return;
     // tmux first, then the tabs: the daemon closes a tab before it ends the lead's session, so
     // a lead found gone here with its tab still read as open has crashed.
-    const running = listSessions(agents).flatMap((found) => (found.running ? [found.name] : []));
-    const exited = exitedCleanly(agents, open.lead);
+    const found = doing("asking tmux for the agents' sessions", () => listSessions(agents));
+    const running = found.flatMap((one) => (one.running ? [one.name] : []));
+    const exited = doing("asking tmux whether the lead exited", () =>
+      exitedCleanly(agents, open.lead),
+    );
     const before = tabs;
-    tabs = repositoryTabs(db, roundLimit);
+    tabs = doing("reading the tabs", () => repositoryTabs(db, roundLimit));
     // A repository you removed, or whose lead you exited, has no tab left. The sidebar moves to
     // the tab that took its place, or the one before when it was last. With no tab left, the
     // screen leaves as Alt-Q does.
@@ -117,14 +124,14 @@ export async function runSidebar(
       switchTo(next.fullName);
     }
     notice = noticeLines(updateNotice(db), size().width);
-    rows = sidebarRows(db, running, roundLimit, Date.now(), open);
-    entries = entryCounts(db, open);
+    rows = doing("reading the rows", () => sidebarRows(db, running, roundLimit, Date.now(), open));
+    entries = doing("counting the lists", () => entryCounts(db, open));
     // An agent can end and its client move to the lead by itself, so the session shown is asked
     // of tmux, unless a list shows. With no client on the right while the lead isn't running,
     // the right side is waiting for the lead, such as after a builder ended while its lead was
     // gone, so the lead is what it shows.
     if (!isEntry(shown)) {
-      const client = shownSession(agents, tty);
+      const client = doing("asking tmux which agent shows", () => shownSession(agents, tty));
       if (client) shown = client;
       else if (!running.includes(open.lead)) shown = open.lead;
     }
@@ -136,14 +143,14 @@ export async function runSidebar(
       openRepository(`${open.owner}/${open.repo}`, true);
     }
     // The header, the tabs and the strip go to tmux's status line, and only when they changed.
-    const width = paneWidth(agents, rightPane);
+    const width = doing("asking tmux the agent's width", () => paneWidth(agents, rightPane));
     const left = size().width + 1;
     const fullName = `${open.owner}/${open.repo}`;
     const look = { rows, shown, page, tabs, open: fullName, where, version };
     const top = drawTop(look, { left, width });
     if (top !== lastStrip) {
       lastStrip = top;
-      showStrip(agents, session, top);
+      doing("drawing the strip", () => showStrip(agents, session, top));
     }
     // The footer under an agent, also only when it changed. Moving onto an agent hides the list
     // of keys, as every key but the Alt ones is the agent's there. A list or page tells the
@@ -155,8 +162,10 @@ export async function runSidebar(
       const footer = agentFooter(agent?.agentHarness ?? "");
       if (footer !== lastFooter) {
         lastFooter = footer;
-        tellFooter(agents, session, "keys", "hide");
-        tellFooter(agents, session, "footer", footer);
+        doing("drawing the footer", () => {
+          tellFooter(agents, session, "keys", "hide");
+          tellFooter(agents, session, "footer", footer);
+        });
       }
     }
     // Then the sidebar itself, the notice above the rest, also only when it changed.
@@ -164,7 +173,9 @@ export async function runSidebar(
     if (frame === lastFrame) return;
     lastFrame = frame;
     // Every line fills the pane, so nothing of the last frame is left to clear.
-    process.stdout.write(`\x1b[H${frame.replaceAll("\n", "\r\n")}`);
+    doing("drawing the sidebar", () =>
+      process.stdout.write(`\x1b[H${frame.replaceAll("\n", "\r\n")}`),
+    );
   };
   // Puts what was picked on the right, if anything was. A client can switch between agents, but
   // a list needs the pane to run something else, and so does a client still attaching, which

@@ -16,6 +16,7 @@ import { versionLine } from "./version.ts";
 // refused because a prompt injection could trick an agent into it.
 const agentRefusals: Record<string, string> = {
   "": "showing the list",
+  up: "running the daemon",
   serve: "running the daemon",
   "repo add": "adding a repository",
   "repo rm": "removing a repository",
@@ -34,12 +35,12 @@ const agentRefusals: Record<string, string> = {
   "plugin ls": "listing plugins",
 };
 
-// Splits a task's name, such as app-13, or app-t1 for a thread with no tracker, into its
+// Splits a task's name, such as app-13, or app-wr1 for a thread with no tracker, into its
 // repository and task. Gives nothing when the word isn't a task's name. Repository names can
 // hold dashes, so the task is what follows the last one.
 function splitTaskName(word?: string): [string, string] | undefined {
   // The greedy first group takes every dash but the last.
-  const parts = word?.match(/^(.+)-(t?\d+)$/);
+  const parts = word?.match(/^(.+)-([a-z]{0,2}\d+)$/);
   return parts?.[1] && parts[2] ? [parts[1], parts[2]] : undefined;
 }
 
@@ -88,6 +89,7 @@ function bodyFor(command: string, body: string): string {
 function usage(command?: string): never {
   // The commands that have words after them, so a mistake there is in the arguments.
   const known = [
+    "up",
     "serve",
     "init",
     "repo",
@@ -122,17 +124,19 @@ function usage(command?: string): never {
   process.exit(1);
 }
 
-// Sets up Skelcrew if needed, then shows the list of a repository: the one you ran sc from, the
-// one --from names, or else the one you opened last. With no repositories there is nothing to
-// show, and bringInFrom has already said so.
+// Sets up Skelcrew if needed and runs the daemon in the background, as sc up --bg does, then
+// shows the list of a repository: the one you ran sc from, the one --from names, or else the
+// one you opened last. With no repositories there is nothing to show, and bringInFrom has
+// already said so.
 async function listCommand(from?: string): Promise<void> {
   // Loaded only here, so sc --remote on your laptop never loads them.
-  const { showList } = await import("./attach.ts");
+  const { showList, upInBackground } = await import("./attach.ts");
   const { openDb } = await import("./db.ts");
   const { bringInFrom, checkoutTop, repositories } = await import("./flow/repo.ts");
   const { originHere } = await import("./machine/origin.ts");
   const { firstRun } = await import("./machine/setup.ts");
   firstRun(from);
+  await upInBackground();
   // In a repository with no remote, sc opens nothing, even with tabs open or no repositories
   // yet. Opening another repository there would look as if Skelcrew had ignored where you are.
   const origin = originHere();
@@ -154,7 +158,8 @@ async function listCommand(from?: string): Promise<void> {
 }
 
 // Runs sc first-run, which sets up this machine, sc take-setup, which takes the setup your laptop
-// sent, or sc serve, which runs the daemon.
+// sent, or sc up, which runs the daemon: in the foreground, or with --bg as the background
+// service. sc serve is the older name of sc up, kept for services installed before sc up.
 async function machineCommand(args: string[]): Promise<void> {
   const [command] = args;
   // Run by sc --remote and sc remote add from your laptop, not by people, so usage leaves it out.
@@ -165,12 +170,33 @@ async function machineCommand(args: string[]): Promise<void> {
   }
   const { serve } = await import("./flow/daemon.ts");
   const { firstRun } = await import("./machine/setup.ts");
-  // Run by sc remote add on the machine it sets up, not by people, so usage leaves it out.
+  const { upInBackground } = await import("./attach.ts");
+  // Run by sc remote add on the machine it sets up, not by people, so usage leaves it out. The
+  // daemon starts there too, so sc --remote finds it running.
   if (command === "first-run" && args.length === 1) {
     firstRun();
+    await upInBackground();
     return;
   }
+  if (command === "up" && args.length === 1) {
+    await serve("skelcrew");
+    return;
+  }
+  if (command === "up" && args.length === 2 && args[1] === "--bg") {
+    // The service has no one to answer the first run's questions, so it would only fail.
+    const { setupDone } = await import("./machine/setup.ts");
+    if (!setupDone()) throw new Error("the first run isn't done on this machine: run sc first");
+    const outside = await upInBackground();
+    console.log(
+      outside
+        ? "Skelcrew's daemon already runs outside its service, such as with sc up in a terminal. Stop it to run it in the background."
+        : "Skelcrew's daemon is running in the background.",
+    );
+    return;
+  }
+  // A service installed by an older Skelcrew runs sc serve until the next sc rewrites it.
   if (command === "serve" && args.length === 1) {
+    console.error("sc serve is now sc up, and sc serve will go in a later release.");
     await serve("skelcrew");
     return;
   }
@@ -685,6 +711,7 @@ async function runCommand(args: string[]): Promise<void> {
   switch (first) {
     case "first-run":
     case "take-setup":
+    case "up":
     case "serve":
       return machineCommand(words);
     case "sidebar":

@@ -24,12 +24,22 @@ const waiting =
 // and test commands: the lead settles them with the human, and a builder with none asks the lead.
 const settling =
   "\nEvery builder sets up and tests your repository with the same commands, under setup: and test: in its skelcrew.yaml, or in the human's own config.yaml. Skelcrew never guesses them. The end of these instructions says which were configured, in either file, when this session started. You can't read the human's config, so go by that, and by the skelcrew.yaml in the clone for any added since. Before you start the first thread in your repository, settle any that is missing. Find it out by reading the repository: its package files, its Makefile, its CI workflow, which shows what the project really runs, and its README. Propose only the missing ones to the human in plain words, such as \"Builders will set up with bun install and test with bun run check, as CI does. Shall I add that to skelcrew.yaml?\" On a yes, start a small thread that adds them to the repository's skelcrew.yaml, a normal PR the human merges. Until then, a builder that needs them asks you. Later, a repository the human only drops into will be able to keep them under repos: in the human's own config instead.\n";
+// What the lead's file added once a lead came back after a restart without its conversation:
+// it looks at Skelcrew's state before anything else.
+const restarted =
+  "\nThis conversation can start without its history, such as when Skelcrew couldn't bring the last one back. When it has none, or the human asks where things stand, run sc ps and sc ls first: they show your threads and issues. Don't look for the work in your own folder, which holds nothing of it.\n";
 const asking =
   "\nUse the setup and test commands named at the end of these instructions, as every builder of the repository uses the same ones. If one you need isn't configured, never make one up: ask the lead which to use with sc tell lead, and wait for its answer. That counts as blocked.\n";
 
-// What the lead was told about issues, threads and PRs before sc ls and sc show, and about the
-// sidebar before the list, each with what it is told now.
+// What the lead was told about issues, threads and PRs before sc ls and sc show, before threads
+// with no issue were named by their machine's code, and about the sidebar before the list, each
+// with what it is told now.
 const leadTasks = [
+  ["prints its name, such as app-t1.", "prints its name, such as app-wr1."],
+  [
+    "such as app-t1, has nothing that stays open, and sc start app-t1 starts it over.",
+    "such as app-wr1, has nothing that stays open, and sc start app-wr1 starts it over.",
+  ],
   [
     "- sc issue ls lists open issues, and sc ps lists threads, with their status, whether they need the human, and each one's PR, CI and review, such as #242, failed and changes r3.",
     "- sc ls lists open issues and the work on each, one row each. Each row says what is happening, such as waiting · #242 · CI failed · changes r3, and whether it needs the human. sc ls --all adds work that ended. sc ps lists threads, with the same columns.",
@@ -82,6 +92,7 @@ test("the lead and builder files hold the instructions the code gave, but for wh
   let lead = builtInRole("lead").instructions;
   expect(lead).toContain(waiting);
   expect(lead).toContain(settling);
+  expect(lead).toContain(restarted);
   expect(lead).toContain(threadEnds);
   expect(lead).toContain(mergeWhenReady);
   lead = lead.replace(mergeWhenReady, "");
@@ -89,9 +100,11 @@ test("the lead and builder files hold the instructions the code gave, but for wh
     expect(lead).toContain(now);
     lead = lead.replace(now, before);
   }
-  expect(sha256(lead.replace(waiting, "").replace(settling, "").replace(threadEnds, ""))).toBe(
-    "4a964d29382eddbab5268fa24921ee599fa1bde9bd1eb51341f5bee1cb577837",
+  const without = [waiting, settling, restarted, threadEnds].reduce(
+    (text, added) => text.replace(added, ""),
+    lead,
   );
+  expect(sha256(without)).toBe("4a964d29382eddbab5268fa24921ee599fa1bde9bd1eb51341f5bee1cb577837");
   const builder = builtInRole("builder").instructions;
   expect(builder).toContain(workflows);
   expect(builder).toContain(builderTests);
