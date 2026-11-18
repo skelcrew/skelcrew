@@ -8,6 +8,7 @@ import { configFile, yourConfigDocument } from "../config.ts";
 import { openDb } from "../db.ts";
 import { claudeTokenFile, configDir } from "../paths.ts";
 import { addPlugin, installYourPlugins } from "../plugins/install.ts";
+import { yourPlugins } from "../plugins/lock.ts";
 import { installedPlugins } from "../plugins/plugin.ts";
 import { errorText } from "../say.ts";
 import { readSettings } from "../settings.ts";
@@ -215,11 +216,14 @@ const githubPlugin = "skelcrew/skelcrew-github";
 const hasGitHubPlugin = () => installedPlugins(openDb()).some((p) => p.name === "github");
 
 // Returns the repository to offer the GitHub plugin for, as owner/name, or null for none: a
-// remote that isn't on github.com, a machine with the plugin, or a repository you said no for.
-// Only the remote is read, with no call to GitHub, as plain sc must start fast.
+// remote that isn't on github.com, a machine with the plugin, files of yours that name it already,
+// or a repository you said no for. Files that name it leave it to sc install, at the version your
+// lock pins, which the offer's newest version would replace. Only files are read, with no call
+// to GitHub, as plain sc must start fast.
 function gitHubToOffer(remote: string | null): string | null {
   const found = remote === null ? null : parseRemote(remote);
   if (found?.host !== "github.com" || hasGitHubPlugin()) return null;
+  if (yourPlugins().includes(githubPlugin)) return null;
   const repository = `${found.owner}/${found.repo}`;
   // GitHub's names ignore case, so a no for Simon/App covers simon/app.
   const declined = readSettings(["declined"]).declined.map((name) => name.toLowerCase());

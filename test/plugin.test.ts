@@ -314,7 +314,11 @@ test("a plugin from a folder is used where it is, and update builds it again", a
   fakePlugin(folder, "0.1.0");
   const installed = await skel(["plugin", "install", "./skelcrew-fake"], "y\n");
   expect(installed.err).toBe("");
-  expect(installed.out).toContain("Installed fake 0.1.0.");
+  expect(installed.out).toContain(
+    "Installed fake 0.1.0.\nA plugin from a folder is on this machine only, so your config.yaml and lock leave it out.\n",
+  );
+  // Its path means nothing on another machine, so your files don't name it.
+  expect(existsSync(join(home, ".config", "skelcrew", "config.yaml"))).toBe(false);
   expect(JSON.parse(readFileSync(join(folder, "built"), "utf8")).version).toBe("0.1.0");
   expect(existsSync(join(plugins(), "fake"))).toBe(false);
   expect(JSON.parse((await skel(["plugin", "ls", "--json"])).out)[0].from).toBe(folder);
@@ -673,4 +677,23 @@ test("agents can't run the plugin commands", async () => {
     expect(code).toBe(1);
     expect(err).toContain("is only for your own terminal, not for agents");
   }
+});
+
+// A lock copied from another machine can pin an older version than this machine has.
+test("sc update -g at the newest version pins it in your lock, so sc install doesn't move it back", async () => {
+  publish("skelcrew/skelcrew-fake", "0.1.0", "0.2.0");
+  await skel(["add", "-g", "skelcrew/skelcrew-fake"], "y\n");
+  const older = tagCommit("skelcrew/skelcrew-fake", "0.1.0");
+  writeFileSync(
+    yourLockFile(),
+    `skelcrew/skelcrew-fake: { name: fake, version: 0.1.0, commit: ${older} }\n`,
+  );
+  const updated = await skel(["update", "-g", "fake"]);
+  expect(updated.out).toBe("fake is at its newest version, 0.2.0.\n");
+  expect(parse(readFileSync(yourLockFile(), "utf8"))["skelcrew/skelcrew-fake"]).toEqual({
+    name: "fake",
+    version: "0.2.0",
+    commit: tagCommit("skelcrew/skelcrew-fake", "0.2.0"),
+  });
+  expect((await skel(["plugins"])).out).toBe("fake 0.2.0 io: tracker, forge\n");
 });

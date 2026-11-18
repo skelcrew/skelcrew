@@ -340,7 +340,12 @@ export function updatePlugin(db: Database, plugin: Plugin, options: Options = {}
     return;
   }
   const tag = wanted ?? newestTag(source);
-  const atNewest = () => console.log(`${name} is at its newest version, ${current.version}.`);
+  // At its newest version, the lock is pinned at what is installed, as a lock copied from
+  // another machine can pin an older one, which sc install would otherwise move back to.
+  const atNewest = () => {
+    setLocked(db, source, lockedAs(current, commitOf(folder)));
+    console.log(`${name} is at its newest version, ${current.version}.`);
+  };
   if (!wanted && newer(current.version, tag.slice(1))) {
     atNewest();
     return;
@@ -432,11 +437,17 @@ export function removePlugin(name: string): void {
 }
 
 // Adds a personal plugin, for sc add -g: installs it after asking, then names it under plugins:
-// in your config.yaml, beside the version your lock now pins. A folder of yours is only
-// installed, as it has no version to pin. Returns whether it was installed.
+// in your config.yaml, beside the version your lock now pins. A folder of yours is installed on
+// this machine only: its path means nothing on another machine, and it has no version to pin, so
+// it stays out of your files and says so. Returns whether it was installed.
 export function addPlugin(given: string, remote = originHere()): boolean {
   if (!installPlugin(given, { remote })) return false;
-  if (given.startsWith(".") || given.startsWith("/")) return true;
+  if (given.startsWith(".") || given.startsWith("/")) {
+    console.log(
+      "A plugin from a folder is on this machine only, so your config.yaml and lock leave it out.",
+    );
+    return true;
+  }
   setYourPlugins([...yourPlugins().filter((source) => source !== given), given]);
   return true;
 }

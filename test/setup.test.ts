@@ -1260,3 +1260,27 @@ test("plain sc on a machine that isn't set up installs your plugins too", async 
   expect(run.out).toContain("Installed fake 0.1.0.");
   expect(calls()).toContain("fake setup 0.1.0\n");
 });
+
+// On a new machine your files decide which GitHub plugin it gets, so the offer, which would
+// install its newest version, isn't made.
+test("in a GitHub checkout, files that name the GitHub plugin skip the offer, and sc install gets the locked commit", async () => {
+  const site = siteOnGitHub();
+  await skel("1\nsk-ant-oat01-good\n");
+  const plugin = join(home, "github", "skelcrew", "skelcrew-github");
+  const locked = git(plugin, "rev-parse", "HEAD");
+  // The tag moves on after your lock pinned it.
+  git(plugin, "commit", "-q", "--allow-empty", "-m", "later");
+  git(plugin, "tag", "-f", "v0.1.0");
+  appendFileSync(config(), "plugins: [skelcrew/skelcrew-github]\n");
+  writeFileSync(
+    lock(),
+    `skelcrew/skelcrew-github: { name: github, version: 0.1.0, commit: ${locked} }\n`,
+  );
+  const run = await atTerminal("y\n", site, ["install"]);
+  expect(run.err).toBe("");
+  expect(run.out).not.toContain("GitHub detected");
+  expect(run.out).toContain("Installed github 0.1.0.");
+  const folder = join(home, ".local", "share", "skelcrew", "plugins", "github", "0.1.0");
+  expect(git(folder, "rev-parse", "HEAD")).toBe(locked);
+  expect(readFileSync(lock(), "utf8")).toContain(locked);
+});
