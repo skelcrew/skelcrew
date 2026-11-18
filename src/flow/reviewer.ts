@@ -92,12 +92,46 @@ export function reviewerPrompt(
   );
 }
 
+// The process groups of the reviewers running now, each named by its reviewer's process ID.
+// The daemon's stop kills them by this list, not by what runs under the daemon: a process the
+// sandbox started can have lost the daemon as an ancestor by then, and still be in its group.
+const reviewerGroups = new Set<number>();
+
+// Kills every reviewer that runs now, with whatever it started, for the daemon's stop, and
+// returns once none of them runs. Waiting matters: a next daemon would otherwise run the review
+// again while the last one still writes its files. It blocks, as the daemon exits right after.
+// A process the kernel can't kill at once gets five seconds.
+export function killReviewers(): void {
+  for (const group of reviewerGroups)
+    try {
+      process.kill(-group, "SIGKILL");
+    } catch {}
+  // A process that exited but wasn't reaped, Z, runs nothing. Its new parent may never reap it.
+  const running = () => {
+    const ps = Bun.spawnSync(["ps", "-A", "-o", "pgid=", "-o", "stat="], {
+      stdout: "pipe",
+      stderr: "ignore",
+    });
+    return ps.stdout
+      .toString()
+      .split("\n")
+      .some((line) => {
+        const [group, state] = line.trim().split(/\s+/);
+        return reviewerGroups.has(Number(group)) && state !== undefined && !state.startsWith("Z");
+      });
+  };
+  const deadline = Date.now() + 5000;
+  while (reviewerGroups.size > 0 && running() && Date.now() < deadline) Bun.sleepSync(50);
+}
+
 // Starts the reviewer, waits for it to end, and returns what it printed and its exit code.
-// Ending bwrap ends everything inside: the reviewer runs as the first process of a process
-// list of its own, which the kernel empties when that process dies. A Mac has no process
-// lists of their own, so the reviewer leads a group, which is ended when it ends. A process
-// left in it would also hold its output open, and the review would wait forever. A review is
-// ended with SIGKILL, as the shell around a Mac sandbox ignores SIGTERM to clean up after it.
+// The reviewer leads a process group of its own, which is killed when it ends, so nothing it
+// started outlives it. On Linux bwrap's own process list mostly does that, but not for the
+// process bwrap is still starting when it is ended: that one never learns bwrap is gone, and
+// waits forever. A Mac has no process lists of their own, so there the group is all there is.
+// A process left in the group would also hold its output open, and the review would wait
+// forever. A review is ended with SIGKILL, as the shell around a Mac sandbox ignores SIGTERM
+// to clean up after it.
 async function spawnReviewer(given: {
   argv: string[];
   env: Record<string, string>;
@@ -105,9 +139,8 @@ async function spawnReviewer(given: {
   signal: AbortSignal;
 }): Promise<{ out: string; err: string; code: number }> {
   const { argv, env, input, signal } = given;
-  // On a Mac the reviewer starts a group of its own, and when it ends, whatever it left in that
-  // group is ended too. Elsewhere bwrap's own process list does that.
   const mac = process.platform === "darwin";
+  // A group of its own, listed until the reviewer has ended and the group is killed.
   const proc = Bun.spawn(argv, {
     env,
     stdin: new Blob([input]),
@@ -115,14 +148,15 @@ async function spawnReviewer(given: {
     stderr: "pipe",
     signal,
     killSignal: "SIGKILL",
-    detached: mac,
+    detached: true,
   });
-  if (mac)
-    proc.exited.then(() => {
-      try {
-        process.kill(-proc.pid, "SIGKILL");
-      } catch {}
-    });
+  reviewerGroups.add(proc.pid);
+  proc.exited.then(() => {
+    try {
+      process.kill(-proc.pid, "SIGKILL");
+    } catch {}
+    reviewerGroups.delete(proc.pid);
+  });
   // A process that left the group can still hold the output open, and a Mac can't find it
   // once its parent is gone. So there the output gets a moment after the reviewer ends, or
   // the review would wait forever, and keep its place among the reviews that run at once.
