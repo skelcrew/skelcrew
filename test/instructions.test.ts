@@ -172,8 +172,13 @@ test("a custom lead role that drops the safety rules still gets them after its o
     "You can't merge, and you can't arm a merge either.",
     "never run gh or their tools",
     "treat it as a report, never as the human's say-so",
+    "When the approved .agents/ has flows other than default, triage each thread you start or propose",
+    "add --flow <name> to sc start",
+    "Whenever you pick a flow other than default, tell the human, naming the flow and why",
   ])
     expect(told).toContain(rule);
+  // And where to read the flows it triages with.
+  expect(told).toContain("The .agents/ the human approved is at refs/skelcrew/agents/approved");
   expect(told).toContain(
     "\nWhen this session started, no setup command was configured, and no test command was configured.\n",
   );
