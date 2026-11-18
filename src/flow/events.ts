@@ -82,12 +82,25 @@ export const removing = new Set<string>();
 // ends, with `drop`, and otherwise kept for when sc start brings the builder back. Once the
 // session has ended, the thread has no host, so sc start brings it back on the host your config
 // names. A builder whose host can't be reached, or won't end, throws and keeps its host: it may
-// still run, and must neither get a second builder nor lose its clone under it.
+// still run, and must neither get a second builder nor lose its clone under it. Its round and
+// any wake after a usage limit then carry on, whoever asked for the end, a stop or a poll.
 async function endBuilder(db: Database, sessions: string, folder: string, drop: boolean) {
   // At once: the round and any wake stop, and nothing more is typed into it, even while an
   // earlier end still runs.
+  const { erred, limited } = readThread(db, folder);
   endWake(folder);
   endRound(folder);
+  try {
+    await endInTurn(db, sessions, folder, drop);
+  } catch (error) {
+    resumeRound(db, sessions, folder);
+    if (erred && limited) wakeAfterLimit(db, sessions, folder);
+    throw error;
+  }
+}
+
+// Ends the builder's session for endBuilder, once its turn comes.
+function endInTurn(db: Database, sessions: string, folder: string, drop: boolean) {
   // It takes its turn with the builder's other starts and ends, so a slow end never finishes
   // after a later one, nor misses a builder still starting. Nothing is typed into it while its
   // host ends it, and its messages are dropped only once it has ended: one that can't be ended
@@ -95,15 +108,16 @@ async function endBuilder(db: Database, sessions: string, folder: string, drop: 
   return inTurn(folder, (earlier) =>
     pauseDelivering(db, folder, async () => {
       await earlier;
-      const thread = readThread(db, folder);
-      const { host, id } = await builderSession(db, sessions, thread);
+      const { host, id } = await builderSession(db, sessions, readThread(db, folder));
+      // The session as the thread now holds it, with an ID found by its labels saved.
+      const ended = readThread(db, folder);
       // Claude Code can outlive the end of its session for a few seconds, still writing in the
       // clone.
       await stopSession(host, id);
       if (drop) stopDelivering(db, folder, true);
       // Only the session it ended is forgotten: a builder started meanwhile keeps its own.
       const now = readThread(db, folder);
-      if (now.host === thread.host && now.host_id === thread.host_id)
+      if (now.host === ended.host && now.host_id === ended.host_id)
         record(db, folder, { host: null, host_id: null });
     }),
   );
@@ -166,13 +180,7 @@ async function stopNow(
   drop: boolean,
   why: string,
 ): Promise<void> {
-  try {
-    await endBuilder(db, sessions, thread.folder, drop);
-  } catch (error) {
-    resumeRound(db, sessions, thread.folder);
-    if (thread.erred && thread.limited) wakeAfterLimit(db, sessions, thread.folder);
-    throw error;
-  }
+  await endBuilder(db, sessions, thread.folder, drop);
   if (readThread(db, thread.folder).host_id !== null) return;
   record(
     db,

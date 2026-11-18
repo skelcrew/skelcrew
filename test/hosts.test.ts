@@ -386,30 +386,36 @@ console.log(after.status, after.host, after.host_id, await hasSession(host, "fak
   );
 });
 
-test("a builder on its usage limit is still woken after a stop that failed", () => {
-  const prompt = join(home, "prompt.sh");
-  writeFileSync(prompt, `#!/bin/sh\necho "${claude.marks.prompt}"\ncat > received.txt\n`, {
-    mode: 0o755,
-  });
-  const said = runWithFakeHost(
-    "sessions",
-    `const host = (await builderSession(db, "unused", readThread(db, "app-12"))).host;
+// Both a stop and an end a poll asks for, such as for a merge, cancel the wake as they start.
+for (const [by, ending] of [
+  ["a stop", `stopThread(db, "unused", readThread(db, "app-12"))`],
+  ["a merge's end", `endThread(db, "unused", readThread(db, "app-12"), "its PR was merged", null)`],
+]) {
+  test(`a builder on its usage limit is still woken after ${by} that failed`, () => {
+    const prompt = join(home, "prompt.sh");
+    writeFileSync(prompt, `#!/bin/sh\necho "${claude.marks.prompt}"\ncat > received.txt\n`, {
+      mode: 0o755,
+    });
+    const said = runWithFakeHost(
+      "sessions",
+      `const host = (await builderSession(db, "unused", readThread(db, "app-12"))).host;
 const labels = { repository: "simon/app", role: "builder", task: "app-12" };
 await startSession(host, "app-12", { folder: ${JSON.stringify(home)}, command: [${JSON.stringify(prompt)}], env: { PATH: process.env.PATH }, labels });
 require("node:fs").writeFileSync(${JSON.stringify(join(home, ".config", "skelcrew", "plugins", "fake", "garble-end"))}, "");
-console.log(await stopThread(db, "unused", readThread(db, "app-12")).catch((error) => error.message));
+console.log(await ${ending}.catch((error) => error.message));
 const received = ${JSON.stringify(join(home, "received.txt"))};
 const fs = require("node:fs");
 const deadline = Date.now() + 20_000;
 while (Date.now() < deadline && !(fs.existsSync(received) && fs.readFileSync(received, "utf8").endsWith("\\n"))) await Bun.sleep(100);
 console.log(JSON.stringify(fs.existsSync(received) ? fs.readFileSync(received, "utf8") : ""));
 process.exit(0);`,
-    { host: "fake", host_id: "fake-app-12", erred: 1, limited: 1, limit_reset: 1 },
-  );
-  expect(said).toBe(
-    `fake answered end in a way Skelcrew doesn't understand\n${JSON.stringify("\x1b[200~continue\x1b[201~\n")}\n`,
-  );
-}, 40_000);
+      { host: "fake", host_id: "fake-app-12", erred: 1, limited: 1, limit_reset: 1 },
+    );
+    expect(said).toBe(
+      `fake answered end in a way Skelcrew doesn't understand\n${JSON.stringify("\x1b[200~continue\x1b[201~\n")}\n`,
+    );
+  }, 40_000);
+}
 
 test("a message a host answers with nothing stays queued, and goes in on the next try", () => {
   const prompt = join(home, "prompt.sh");
@@ -727,3 +733,18 @@ process.exit(0);`,
   // The stop waited for the start, ended what it started, and left nothing running.
   expect(said).toBe("stopped\nstopped null start end false\n");
 }, 40_000);
+
+test("a builder found on its host by its labels is stopped, and its thread marked stopped", () => {
+  const said = runWithFakeHost(
+    "sessions",
+    `const host = (await builderSession(db, "unused", readThread(db, "app-12"))).host;
+const labels = { repository: "simon/app", role: "builder", task: "app-12" };
+await startSession(host, "app-12", { folder: ${JSON.stringify(home)}, command: ["sleep", "30"], env: {}, labels });
+console.log(await stopThread(db, "unused", readThread(db, "app-12")).then(() => "stopped", (error) => error.message));
+const after = readThread(db, "app-12");
+console.log(after.status, after.host, after.host_id, await hasSession(host, "fake-app-12"));
+process.exit(0);`,
+    { host: "fake", host_id: null },
+  );
+  expect(said).toBe("stopped\nstopped null null false\n");
+});
