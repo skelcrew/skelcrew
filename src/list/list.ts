@@ -281,8 +281,8 @@ export async function runList(agents: string, repository: string): Promise<void>
   // Keys are acted on one after another, as attaching or asking the daemon takes a while and
   // keys typed meanwhile must not race it. They wait in `typed`, as your terminal sent them, with
   // the read each came in, so attaching can hand those after Enter to the agent. Whatever Enter
-  // did, the rest of its read was typed before you could see it, such as a y that would answer
-  // the question Enter asks, so the list never acts on it.
+  // did, and whenever a key asks a question, the rest of its read was typed before you could see
+  // it, such as a y that would answer that question, so the list never acts on it.
   let acting = false;
   const act = async () => {
     if (acting) return;
@@ -292,7 +292,7 @@ export async function runList(agents: string, repository: string): Promise<void>
       if (key === undefined) break;
       const named = keyNames[key.sent] ?? key.sent;
       await press(named).catch((error) => say(errorText(error)));
-      if (named === "enter") while (typed[0]?.read === key.read) typed.shift();
+      if (named === "enter" || asking) while (typed[0]?.read === key.read) typed.shift();
     }
     acting = false;
   };

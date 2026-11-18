@@ -514,6 +514,19 @@ test("keys that come with Enter on an issue are dropped, so they can't answer it
   await until(() => asked.includes("start simon/app 31"), "the start");
 });
 
+test("a y that comes with m in one read can't answer the merge question", async () => {
+  await open();
+  for (const _ of [1, 2, 3]) press("Down");
+  await until(() => here().startsWith("▸ ● app-14"), "the ready row");
+  type("my");
+  await until(() => seen().includes("Merge app#41 into main? y/n"), "the question");
+  await Bun.sleep(300);
+  expect(seen()).toContain("Merge app#41 into main? y/n");
+  expect(asked.filter((line) => line.startsWith("merge"))).toEqual([]);
+  type("y");
+  await until(() => asked.includes(`merge simon/app 41 ${approved}`), "the merge");
+});
+
 test("m on a task ready for review asks first, and y merges it at the commit you saw", async () => {
   await open();
   for (const _ of [1, 2, 3]) press("Down");
