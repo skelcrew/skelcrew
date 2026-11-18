@@ -943,7 +943,6 @@ const state: Thread = {
   harness: null,
   short: null,
   assigned: false,
-  own: false,
   changed: null,
   updates: [],
   state: null,

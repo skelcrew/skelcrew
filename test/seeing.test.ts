@@ -519,7 +519,7 @@ describe("sc show", () => {
 
   // A task with no issue shows the title and body it started with, and no issue.
   test("shows a task with no issue, with the lead's messages", async () => {
-    sql(threadSql({ task: "t1", own: 1, session: "s1", title: "Add docs", body: "A page." }));
+    sql(threadSql({ task: "t1", session: "s1", title: "Add docs", body: "A page." }));
     tmux("new-session", "-d", "-s", "app-t1", "stty -echo; echo ❯; exec sleep 300");
     serve();
     await untilAnswers();

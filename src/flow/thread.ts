@@ -125,9 +125,6 @@ export const Thread = z.object({
   // Whether Skelcrew assigned you the thread's issue, rather than you being assigned already, so
   // it takes you off only an issue it put you on.
   assigned: z.coerce.boolean(),
-  // Whether the task is Skelcrew's own, started with no issue in the tracker behind it. Its ID
-  // is then its machine's code and a number, such as wr4, or t4 from before machines had codes.
-  own: z.coerce.boolean(),
   // When anything last went in the thread's log, in milliseconds since 1970, for the list of
   // threads. Null in a row from before Skelcrew kept it.
   changed: z.number().nullable(),

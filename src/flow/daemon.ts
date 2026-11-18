@@ -28,7 +28,7 @@ import {
   startThread,
   statusOnceBack,
 } from "./builder.ts";
-import { saveItems } from "./copy.ts";
+import { ownTask, saveItems } from "./copy.ts";
 import { removeThread, stopThread } from "./events.ts";
 import {
   closeExitedLeads,
@@ -365,7 +365,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         // The issue it worked on stays open in the tracker, so sc rm can say so. A thread
         // started on what you told the lead is named by the machine's code, such as app-wr1,
         // and has none.
-        return { removed: name, issue: thread.own ? null : thread.task };
+        return { removed: name, issue: ownTask(thread.task) ? null : thread.task };
       }
       case "merge": {
         const repository = findRepository(db, request.repo);

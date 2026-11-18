@@ -288,27 +288,70 @@ test("two machines with the same code starting threads at once never take one na
   expect(names.every((name) => /^app-lp[1-6]$/.test(name))).toBe(true);
 }, 60_000);
 
-// A claimed name stays claimed after its branch goes, such as once its PR merged, and an issue
-// in Skelcrew's copy of the tracker holds its ID too.
-test("a name stays taken once claimed, and an issue's ID is never given to a thread", async () => {
+// A claimed name stays claimed once its branch is gone, such as once its PR merged.
+test("a name stays taken on another machine once claimed", async () => {
   const { remote, homes } = twoMachines();
   const [laptop = "", lapdog = ""] = homes;
   expect(await namesFrom(startOn(laptop, remote, ["One"]))).toEqual(["app-lp1"]);
-  const issue = `db.run("INSERT INTO items (owner, repo, kind, id, state, created, item) VALUES ('simon', 'app', 'task', 'lp2', 'open', 'x', '{}')");`;
-  expect(await namesFrom(startOn(lapdog, remote, ["Two"], issue))).toEqual(["app-lp3"]);
+  expect(await namesFrom(startOn(lapdog, remote, ["Two"]))).toEqual(["app-lp2"]);
 }, 60_000);
 
-test("a database keeps its code, threads with no issue are its own, and t names keep working", async () => {
+// An issue created after a thread with no issue, with the thread's ID, such as lp1, would share
+// its name. The copy of the tracker leaves it out, so app-lp1 stays the thread's alone.
+test("an issue whose ID has the shape of Skelcrew's own is left out of the copy", async () => {
   const { remote, homes } = twoMachines();
   const [laptop = ""] = homes;
-  const old = threadSql({ task: "t4", status: "done", title: "Old", own: 1 });
+  expect(await namesFrom(startOn(laptop, remote, ["One"]))).toEqual(["app-lp1"]);
+  const issue = (id: string) => ({
+    kind: "task",
+    id,
+    title: `Issue ${id}`,
+    body: "",
+    state: "open",
+    author: null,
+    labels: [],
+    link: `https://example.com/${id}`,
+    created: "2026-11-05T10:00:00Z",
+    updated: "2026-11-05T10:00:00Z",
+    closes: "",
+  });
+  const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
+import { saveItems } from ${JSON.stringify(source("flow/copy.ts"))};
+import { showTask } from ${JSON.stringify(source("flow/list.ts"))};
+const db = openDb();
+saveItems(db, "simon", "app", ${JSON.stringify([issue("lp1"), issue("t4"), issue("t4abc"), issue("12")])}, ["task"]);
+const shown = await showTask(db, { repo: "app", task: "lp1" });
+console.log(JSON.stringify({ ids: db.query("SELECT id FROM items ORDER BY id").all(),
+  title: shown.title, issue: shown.issue }));`;
+  const run = Bun.spawnSync([process.execPath, "-e", code], {
+    env: { ...process.env, HOME: laptop },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect(run.stderr.toString()).toBe("");
+  const lines = run.stdout.toString().trim().split("\n");
+  expect(lines.slice(0, -1)).toEqual([
+    "left out issue lp1 of simon/app: Skelcrew names its own tasks like that",
+    "left out issue t4 of simon/app: Skelcrew names its own tasks like that",
+  ]);
+  expect(JSON.parse(lines.at(-1) ?? "")).toEqual({
+    ids: [{ id: "12" }, { id: "t4abc" }],
+    title: "One",
+    issue: null,
+  });
+}, 60_000);
+
+test("a database keeps its code, and t names keep working", async () => {
+  const { remote, homes } = twoMachines();
+  const [laptop = ""] = homes;
+  const old = threadSql({ task: "t4", status: "done", title: "Old" });
   const before = `db.run(${JSON.stringify(old)});`;
   expect(await namesFrom(startOn(laptop, remote, ["One"], before))).toEqual(["app-lp1"]);
   const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
 import { findThread } from ${JSON.stringify(source("flow/thread.ts"))};
 const db = openDb();
 const one = findThread(db, "app", "lp1");
-console.log(JSON.stringify({ old: findThread(db, "app", "t4").folder, branch: one.branch, own: one.own }));`;
+console.log(JSON.stringify({ old: findThread(db, "app", "t4").folder, branch: one.branch }));`;
   const run = Bun.spawnSync([process.execPath, "-e", code], {
     env: { ...process.env, HOME: laptop },
     stdout: "pipe",
@@ -318,40 +361,5 @@ console.log(JSON.stringify({ old: findThread(db, "app", "t4").folder, branch: on
   expect(JSON.parse(run.stdout.toString())).toEqual({
     old: "app-t4",
     branch: "skelcrew/lp1-one",
-    own: true,
   });
 }, 60_000);
-
-// A database from before Skelcrew kept which tasks are its own read a t and a number as one.
-test("a database from before marks its t tasks as Skelcrew's own, and its issues as the tracker's", () => {
-  const data = join(home, ".local", "share", "skelcrew");
-  mkdirSync(data, { recursive: true });
-  const old = new Database(join(data, "skelcrew.db"));
-  old.run(`CREATE TABLE threads (owner TEXT NOT NULL, repo TEXT NOT NULL, task INTEGER NOT NULL,
-    folder TEXT NOT NULL UNIQUE, branch TEXT NOT NULL, base TEXT, status TEXT NOT NULL,
-    session TEXT, PRIMARY KEY (owner, repo, task))`);
-  old.run(`CREATE TABLE tasks (owner TEXT NOT NULL, repo TEXT NOT NULL, task INTEGER NOT NULL,
-    title TEXT, PRIMARY KEY (owner, repo, task))`);
-  for (const task of ["t4", "12", "ab12"]) {
-    old.run("INSERT INTO threads VALUES ('simon', 'app', ?, ?, 'b', NULL, 'working', NULL)", [
-      task,
-      `app-${task}`,
-    ]);
-    old.run("INSERT INTO tasks VALUES ('simon', 'app', ?, NULL)", [task]);
-  }
-  old.close();
-  const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
-const db = openDb();
-console.log(JSON.stringify(db.query("SELECT task, own FROM tasks ORDER BY task").all()));`;
-  const run = Bun.spawnSync([process.execPath, "-e", code], {
-    env: { ...process.env, HOME: home },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  expect(run.stderr.toString()).toBe("");
-  expect(JSON.parse(run.stdout.toString())).toEqual([
-    { task: 12, own: 0 },
-    { task: "ab12", own: 0 },
-    { task: "t4", own: 1 },
-  ]);
-});

@@ -10,7 +10,7 @@ import { cloneDir } from "../paths.ts";
 import { failedLog, forgeOf, trackerOf } from "../plugins/ask.ts";
 import { errorText } from "../say.ts";
 import { filled, fitted, removeControlCodes } from "../screen/look.ts";
-import { type Item, openTasks, prOf, threadTask } from "./copy.ts";
+import { type Item, openTasks, ownTask, prOf, threadTask } from "./copy.ts";
 import { reviewCheck } from "./decide.ts";
 import { messagesWaiting } from "./messages.ts";
 import { ciSummary, reviewVerdict } from "./page.ts";
@@ -402,7 +402,7 @@ export async function showTask(
       ? threadTask(db, current ? thread : { ...thread, updates: [] })
       : { title: issue?.title ?? "", body: issue?.body ?? "" };
   // Its issue, unless it is a task of Skelcrew's own, such as wr1.
-  const own = thread?.own ?? false;
+  const own = ownTask(task);
   const row = thread && threadRow(db, thread, forge);
   const pr = row?.pr ?? null;
   return {

@@ -309,7 +309,7 @@ test("threads come as needs you, ready to merge, working, then stopped, with all
   const at = (day: number, hour: number) => new Date(2026, 10, day, hour, 32).getTime();
   const sql = `${repository}
 ${threadSql({ task: "12", pr: 31, harness: "codex", title: "Fix login", changed: at(13, 14) })}
-${threadSql({ task: "t1", own: 1, status: "waiting", title: "Tidy up", changed: at(12, 9), needs_you: 0, asking: 1 })}
+${threadSql({ task: "t1", status: "waiting", title: "Tidy up", changed: at(12, 9), needs_you: 0, asking: 1 })}
 ${threadSql({ task: "13", status: "stopped", title: "Old", started: at(2, 9) })}
 ${threadSql({ task: "14", status: "done", title: "Gone" })}
 ${threadSql({ task: "15", status: "failed", title: "Broke" })}
@@ -344,17 +344,6 @@ ${threadSql({ task: "17", status: "waiting", title: "Done", needs_you: 1, verdic
     true,
   ]);
   expect(threads[0]?.rows[2]?.session).toBe("app-t1");
-});
-
-// Which tasks are Skelcrew's own is kept, never read from the ID, as a tracker's can look alike.
-test("a thread on an issue whose ID looks like Skelcrew's own still shows its issue", () => {
-  const sql = `${repository}
-${threadSql({ task: "ab12", title: "Tracked" })}
-${threadSql({ task: "ab13", own: 1, title: "Own" })}`;
-  expect(shape(after(sql).threads)[0]?.[1]).toEqual([
-    ["○", "app-ab13", "Own", "working", "claude", "", ""],
-    ["○", "app-ab12", "Tracked", "working", "claude", "#ab12", ""],
-  ]);
 });
 
 test("while a review runs, a thread's harness is its reviewer's", () => {

@@ -22,7 +22,7 @@ import { builtInRole } from "../roles.ts";
 import { quietly } from "../run.ts";
 import { errorText } from "../say.ts";
 import type { Settings } from "../settings.ts";
-import { taskOf, threadTask } from "./copy.ts";
+import { ownTask, taskOf, threadTask } from "./copy.ts";
 import { pastRoundLimit } from "./decide.ts";
 import { claimedNames, claimName, fetchBranch } from "./git.ts";
 import { findRepository, forgeAuthor, refreshClones } from "./repo.ts";
@@ -84,32 +84,26 @@ export async function startThread(
   let task: string;
   let title: string;
   let body: string;
-  let own: boolean;
   if ("title" in given) {
-    // The next number after those this machine's code already holds: by its threads, by the
-    // remote's claims, which other machines with the same code see too, and by issues in the
-    // copy of the tracker, whose IDs can look the same. Then claim it on the remote, which only
-    // one machine can, trying the next number while another machine got there first.
+    // The next number after those this machine's code already holds: by its threads, and by the
+    // remote's claims, which other machines with the same code see too. Then claim it on the
+    // remote, which only one machine can, trying the next number while another got there first.
     const code = machineCode(db);
     const clone = cloneDir(owner, repo);
     // Its clone, which the daemon may still be making, is where the claim is pushed from.
     if (!existsSync(clone)) await refreshClones(db);
     const claimed = await claimedNames(db, repository, code);
-    const known = (sql: string) =>
-      db
-        .query(sql)
-        .all(owner, repo, `${code}[0-9]*`)
-        .map((row) => z.object({ id: z.string() }).parse(row).id);
-    const numbers = [
-      ...claimed,
-      ...known("SELECT task AS id FROM threads WHERE owner = ? AND repo = ? AND task GLOB ?"),
-      ...known("SELECT id FROM items WHERE owner = ? AND repo = ? AND kind = 'task' AND id GLOB ?"),
-    ].map((id) => Number(id.slice(code.length).match(/^\d+/)?.[0] ?? 0));
+    const started = db
+      .query("SELECT task FROM threads WHERE owner = ? AND repo = ? AND task GLOB ?")
+      .all(owner, repo, `${code}[0-9]*`)
+      .map((row) => z.object({ task: z.string() }).parse(row).task);
+    const numbers = [...claimed, ...started].map((id) =>
+      Number(id.slice(code.length).match(/^\d+/)?.[0] ?? 0),
+    );
     let number = Math.max(0, ...numbers) + 1;
     while (!(await claimName(db, repository, clone, `${code}${number}`))) number++;
     task = `${code}${number}`;
     ({ title, body } = given);
-    own = true;
   } else {
     // A named task takes its words from Skelcrew's copy of the tracker. One of the repository's
     // own, or one the tracker no longer has, can only start over on the words its failed or
@@ -118,8 +112,7 @@ export async function startThread(
     const had = Thread.nullable().parse(
       db.query(`SELECT * FROM task_threads ${where}`).get(owner, repo, task),
     );
-    own = had?.own ?? false;
-    if (tracked && !own) {
+    if (tracked && !ownTask(task)) {
       const found = taskOf(db, owner, repo, task);
       if (found.state !== "open") throw new Error(`there is no open issue ${task} in ${name}`);
       ({ title, body } = found);
@@ -205,7 +198,6 @@ export async function startThread(
       // A thread that failed still holds its issue, so starting it over keeps that Skelcrew
       // assigned you.
       assigned: before?.assigned ?? false,
-      own,
       changed: null,
       updates: [],
       state: null,
@@ -231,9 +223,9 @@ export async function startThread(
       ],
     );
     db.run(
-      `INSERT OR REPLACE INTO tasks (owner, repo, task, own, title, body, short, assigned, seen)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, '[]')`,
-      [owner, repo, task, own, title, body, thread.short, thread.assigned],
+      `INSERT OR REPLACE INTO tasks (owner, repo, task, title, body, short, assigned, seen)
+        VALUES (?, ?, ?, ?, ?, ?, ?, '[]')`,
+      [owner, repo, task, title, body, thread.short, thread.assigned],
     );
     log(db, thread);
     return thread;

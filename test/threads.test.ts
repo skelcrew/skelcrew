@@ -834,23 +834,19 @@ nameRepositories(db);`;
     expect(claims).toContain(`refs/skelcrew/names/${own}2`);
   }, 60_000);
 
-  // A tracker's ID can look like a machine's own, such as wr1. Its thread is still the issue's,
-  // and a thread with no issue never takes its ID.
-  test("an issue whose ID looks like a machine's own keeps its ID and its tracker", async () => {
+  // An issue with the shape of Skelcrew's own ID, such as wr1, would share its name with a thread
+  // started with no issue. Skelcrew leaves it out, so the name stays the thread's.
+  test("an issue whose ID has the shape of a machine's own is left out", async () => {
     addApp();
     known.push(taskItem(`${own}1`, "Add import", { body: "From CSV" }));
     answer(plugin, "changed", { items: known, next: null });
     serve();
     await untilCloned();
-    const run = await skel("start", `app-${own}1`);
-    expect(run.err).toBe("");
+    const refused = await skel("start", `app-${own}1`);
+    expect(refused.err).toContain(`there is no open issue ${own}1 in app`);
+    const run = await skel("start", "app", "Add export", "As JSON");
     expect(run.out).toBe(`Started app-${own}1.\n`);
-    expect(thread()).toMatchObject({ task: `${own}1`, title: "Add import", body: "From CSV" });
-    const shown = JSON.parse((await skel("show", `app-${own}1`, "--json")).out);
-    expect(shown.issue).toMatchObject({ id: `${own}1` });
-    expect((await skel("start", "app", "Add export", "As JSON")).out).toBe(
-      `Started app-${own}2.\n`,
-    );
+    expect(thread()).toMatchObject({ task: `${own}1`, title: "Add export" });
   }, 60_000);
 
   // The lead names each thread it starts in two or three words, for the sidebar's row.

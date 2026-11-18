@@ -61,10 +61,8 @@ const threadColumns = {
 // for the sidebar. `assigned` is whether Skelcrew assigned you the task's issue, so it takes you
 // off only then. `updates` holds the lead's messages to the builder, as JSON, since they change
 // the task its reviewer checks against. `review_at` is when the latest review was asked for or
-// ended, for sc ps. `own` is whether the task is Skelcrew's own, started on what you told the
-// lead with no issue in the tracker, as a tracker's ID can look like one of Skelcrew's.
+// ended, for sc ps.
 export const taskColumns = {
-  own: "INTEGER NOT NULL DEFAULT 0",
   title: "TEXT",
   body: "TEXT",
   short: "TEXT",
@@ -272,13 +270,6 @@ function prepareTables(db: Database): void {
     session TEXT,
     PRIMARY KEY (owner, repo, task)
   )`);
-  // Before Skelcrew kept which tasks are its own, a t and a number, such as t4, marked them. So a
-  // table gaining the column marks those, once, and they keep their names and meaning.
-  for (const table of hasTasks(db) ? ["threads", "tasks"] : ["threads"])
-    if (!db.query(`SELECT 1 FROM pragma_table_info('${table}') WHERE name = 'own'`).get()) {
-      db.run(`ALTER TABLE ${table} ADD COLUMN own INTEGER NOT NULL DEFAULT 0`);
-      db.run(`UPDATE ${table} SET own = 1 WHERE task GLOB 't[0-9]*'`);
-    }
   // The rest of a thread's columns, added as the repositories' are. A database from before
   // tasks keeps the task's columns on its threads too, where moveToTasks reads them, so they are
   // added here for every release's database. Nothing reads them from threads after that.
