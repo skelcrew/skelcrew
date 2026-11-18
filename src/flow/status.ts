@@ -8,7 +8,7 @@ import { harnessNamed } from "../agents/harness.ts";
 import { agentRuns, readSession } from "../agents/sessions.ts";
 import { forQuestion, type Marks, quietSince } from "../agents/transport.ts";
 import { threadConfig } from "../config.ts";
-import { askHost, type Host, hostNamed } from "../plugins/runtime.ts";
+import { askHostLater, type Host, hostNamed, pluginHost } from "../plugins/runtime.ts";
 import { errorText } from "../say.ts";
 import { pastRoundLimit } from "./decide.ts";
 import { leadOf } from "./lead.ts";
@@ -123,9 +123,10 @@ const agentKey = (agent: Agent) =>
 // so a mark gone before the change can't turn the new turn idle.
 export function keepState(db: Database, agent: Agent, state: AgentState): void {
   lastLook.delete(agentKey(agent));
-  if ("folder" in agent)
+  if ("folder" in agent) {
     db.run("UPDATE threads SET state = ? WHERE folder = ?", [state, agent.folder]);
-  else
+    reportStatus(db, readThread(db, agent.folder));
+  } else
     db.run("UPDATE repositories SET lead_state = ? WHERE owner = ? AND repo = ?", [
       state,
       agent.owner,
@@ -190,31 +191,61 @@ export function noticeIdleScreens(db: Database, sessions: string): void {
 // hears only of changes. A daemon that starts again reports each one afresh.
 const reported = new Map<string, string>();
 
-// Reports each builder's status to its host, when the host is a plugin that provides status and
+// The reports still being sent to each builder's host, by the same key, so they arrive in the
+// order the changes happened.
+const reporting = new Map<string, Promise<void>>();
+
+// Reports the builder's status to its host, when the host is a plugin that provides status and
 // the status changed since it last heard: working, idle, needs you, ready or error, with the
-// thread's word as the reason, such as question or round limit. The daemon runs it every two
-// seconds, so a change from anywhere reaches the host: a hook, the screen check, CI or a review.
+// thread's word as the reason, such as question or round limit. Every change to a thread goes
+// through record or keepState, which call this, so the host hears each one, from a hook, the
+// screen check, CI or a review alike. It doesn't wait for the host, so the daemon never does.
 // tmux shows no status, so its builders are left out, and Skelcrew's own list shows theirs.
-export function reportStatuses(db: Database, sessions: string): void {
-  for (const thread of liveThreads(db)) {
-    const host = hostNamed(db, sessions, thread.host ?? "tmux");
-    if (host === null || typeof host === "string" || !host.status) continue;
-    const id = thread.host_id ?? thread.folder;
-    const key = `${host.plugin}/${id}`;
-    // A host that fails to hear one is asked again at the next look, and the rest still hear.
-    try {
-      const { maxRounds } = threadConfig(thread);
-      const status = statusOf(thread, maxRounds);
-      const reason = threadWord(thread, maxRounds);
-      if (reported.get(key) === `${status} ${reason}`) continue;
-      askHost(host, { ask: "status", id, status, reason }, z.unknown());
-      reported.set(key, `${status} ${reason}`);
-    } catch (error) {
-      console.log(
-        `couldn't report ${thread.folder}'s status to ${host.plugin}: ${errorText(error)}`,
-      );
-    }
+export function reportStatus(db: Database, thread: Thread): void {
+  if (thread.host === null || thread.host === "tmux" || thread.host_id === null) return;
+  const host = pluginHost(db, thread.host);
+  if (host === null || !host.status) return;
+  let said: { status: Status; reason: string };
+  try {
+    const { maxRounds } = threadConfig(thread);
+    said = { status: statusOf(thread, maxRounds), reason: threadWord(thread, maxRounds) };
+  } catch (error) {
+    console.log(`couldn't work out ${thread.folder}'s status: ${errorText(error)}`);
+    return;
   }
+  const id = thread.host_id;
+  const key = `${host.plugin}/${id}`;
+  const text = `${said.status} ${said.reason}`;
+  if (reported.get(key) === text) return;
+  reported.set(key, text);
+  // After the reports before it, whether or not they got through. One that fails is forgotten,
+  // so the next change, or the daemon's next start, says it again.
+  const question = { ask: "status", id, ...said };
+  const sent = (reporting.get(key) ?? Promise.resolve())
+    .then(() => askHostLater(host, question, z.unknown()))
+    .then(
+      () => {},
+      (error) => {
+        if (reported.get(key) === text) reported.delete(key);
+        console.log(
+          `couldn't report ${thread.folder}'s status to ${host.plugin}: ${errorText(error)}`,
+        );
+      },
+    );
+  reporting.set(key, sent);
+  sent.then(() => {
+    if (reporting.get(key) === sent) reporting.delete(key);
+  });
+}
+
+// Forgets what a host last heard from a session, as one starting under the same ID has told it
+// nothing yet.
+export const forgetStatus = (plugin: string, id: string) => reported.delete(`${plugin}/${id}`);
+
+// Reports every live builder's status to its host, for a daemon that starts, as the host heard
+// nothing from it yet.
+export function reportStatuses(db: Database): void {
+  for (const thread of liveThreads(db)) reportStatus(db, thread);
 }
 
 // Returns the word for what the thread is doing, given the rounds of changes it may have. Its

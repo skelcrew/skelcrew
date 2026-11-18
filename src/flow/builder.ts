@@ -27,8 +27,10 @@ import { pastRoundLimit } from "./decide.ts";
 import { fetchBranch } from "./git.ts";
 import { dropEndNotes, typeLeadNotes } from "./messages.ts";
 import { findRepository, forgeAuthor, refreshClones } from "./repo.ts";
+import { forgetStatus } from "./status.ts";
 import {
   builderHarness,
+  builderSession,
   cloneOf,
   folderName,
   hostGone,
@@ -447,8 +449,12 @@ export async function startBuilder(db: Database, sessions: string, thread: Threa
   // start fails the thread with a reason.
   const repository = `${thread.owner}/${thread.repo}`;
   const labels: Labels = { repository, role: "builder", task: threadName(db, thread) };
+  // The host is saved before the session starts, so a daemon that stops in between finds the
+  // builder there by its labels, rather than starting it again elsewhere.
+  record(db, thread.folder, { host: hostName, host_id: null });
   const id = startSession(host, thread.folder, { folder: clone, command: argv, env, labels });
-  record(db, thread.folder, { host: hostName, host_id: id });
+  forgetStatus(hostName, id);
+  record(db, thread.folder, { host_id: id });
   console.log(`${resume ? "Brought back" : "Started"} the builder of ${thread.folder}.`);
   await checkAgentStarted(host, id, "builder");
 }
@@ -464,14 +470,13 @@ export async function bringBack(db: Database, sessions: string, thread: Thread):
     throw new Error("the daemon stopped while setting up the thread: run sc start again");
   // A builder you stopped has no host left to look on.
   if (thread.host !== null) {
-    const host = hostNamed(db, sessions, thread.host);
-    if (host === null) {
+    if (hostNamed(db, sessions, thread.host) === null) {
       record(db, thread.folder, { needs_you: true }, hostGone(thread));
       typeLeadNotes(db, sessions);
       return;
     }
     // A session whose agent ended is ended too, so the new one can take its name.
-    const id = thread.host_id ?? thread.folder;
+    const { host, id } = builderSession(db, sessions, thread);
     if (agentRuns(host, id)) return;
     if (hasSession(host, id)) endSession(host, id);
   }

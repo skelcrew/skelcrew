@@ -78,22 +78,18 @@ export const removing = new Set<string>();
 // Cancels the round, any typing under way into the thread's builder and any wake after a usage
 // limit, ends its session, and waits for the builder to exit, so nothing types into it or
 // changes the thread afterwards. Messages still waiting for it are dropped once the thread
-// ends, with `drop`, and otherwise kept for when sc start brings the builder back. The thread
-// then has no host, so sc start brings it back on the host your config names. A builder whose
-// host plugin is gone can't be reached to end it, which is logged.
+// ends, with `drop`, and otherwise kept for when sc start brings the builder back. Once the
+// session has ended, the thread has no host, so sc start brings it back on the host your config
+// names. A builder whose host can't be reached, or won't end, throws and keeps its host: it may
+// still run, and must neither get a second builder nor lose its clone under it.
 async function endBuilder(db: Database, sessions: string, folder: string, drop: boolean) {
   stopDelivering(db, folder, drop);
   endWake(folder);
   endRound(folder);
-  const thread = readThread(db, folder);
-  try {
-    const { host, id } = builderSession(db, sessions, thread);
-    // Claude Code can outlive the end of its session for a few seconds, still writing in the
-    // clone.
-    await stopSession(host, id);
-  } catch (error) {
-    console.log(`couldn't end ${folder}'s builder: ${errorText(error)}`);
-  }
+  const { host, id } = builderSession(db, sessions, readThread(db, folder));
+  // Claude Code can outlive the end of its session for a few seconds, still writing in the
+  // clone.
+  await stopSession(host, id);
   record(db, folder, { host: null, host_id: null });
 }
 

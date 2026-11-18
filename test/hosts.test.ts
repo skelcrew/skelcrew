@@ -29,7 +29,7 @@ import {
 } from "../src/agents/sessions.ts";
 import { deliver, idle, whyBusy } from "../src/agents/transport.ts";
 import type { PluginHost } from "../src/plugins/runtime.ts";
-import { until as wait } from "./harness.ts";
+import { homeEnv, source, threadSql, until as wait } from "./harness.ts";
 
 const moment = 100;
 let home = "";
@@ -44,12 +44,14 @@ beforeEach(() => {
   name = `fake-${Math.random().toString(36).slice(2)}`;
 });
 afterEach(() => {
-  // Each session's process group ends with the test, whatever it left running.
-  const sessions = join(settings(), "sessions");
-  for (const id of existsSync(sessions) ? readdirSync(sessions) : [])
-    try {
-      process.kill(-Number(readFileSync(join(sessions, id, "pid"), "utf8")), "SIGKILL");
-    } catch {}
+  // Each session's process group ends with the test, whatever it left running, on the host
+  // this process asks and on the one a process of the test's own home asks.
+  const fake = join(home, ".config", "skelcrew", "plugins", "fake");
+  for (const sessions of [join(settings(), "sessions"), join(fake, "sessions")])
+    for (const id of existsSync(sessions) ? readdirSync(sessions) : [])
+      try {
+        process.kill(-Number(readFileSync(join(sessions, id, "pid"), "utf8")), "SIGKILL");
+      } catch {}
   rmSync(settings(), { recursive: true, force: true });
   rmSync(home, { recursive: true, force: true });
 });
@@ -201,4 +203,99 @@ test("a host that fails says what failed, naming the plugin", () => {
   const on = host();
   mkdirSync(join(settings(), "sessions", "fake-app-12"), { recursive: true });
   expect(() => readSession(on, "fake-app-12")).toThrow(`${name} couldn't read`);
+});
+
+// Runs `code` against Skelcrew's database in a process of its own with the test's home, where a
+// thread app-12 runs on the fake host, installed as fake with sessions and status, and returns
+// what the host was told of its status, in order.
+function statusesAfter(code: string): { id: string; status: string; reason: string }[] {
+  runWithFakeHost("sessions, status", code, { host: "fake", host_id: "fake-app-12" });
+  const said = join(home, ".config", "skelcrew", "plugins", "fake", "statuses");
+  return readFileSync(said, "utf8")
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+}
+
+// Runs `code` in a process of its own with the test's home, after installing the fake host as a
+// plugin named fake, providing `provides`, and saving thread app-12 with `row`. Returns what
+// the code printed.
+function runWithFakeHost(provides: string, code: string, row: Record<string, string | null>) {
+  const folder = join(home, "plugin-fake");
+  mkdirSync(folder, { recursive: true });
+  writeFileSync(
+    join(folder, "skelcrew-plugin.yaml"),
+    `name: fake
+version: 0.1.0
+skelcrew: 0.1.0
+about: A session host for tests
+kind: runtime
+provides: [${provides}]
+session: [bun, ${JSON.stringify(join(import.meta.dir, "fake-host.ts"))}]
+attach: ["true"]
+`,
+  );
+  const script = `import { openDb } from ${JSON.stringify(source("db.ts"))};
+import { record } from ${JSON.stringify(source("flow/thread.ts"))};
+import { forgetStatus, keepState } from ${JSON.stringify(source("flow/status.ts"))};
+import { builderSession, readThread } from ${JSON.stringify(source("flow/thread.ts"))};
+import { stopThread } from ${JSON.stringify(source("flow/events.ts"))};
+import { startSession } from ${JSON.stringify(source("agents/sessions.ts"))};
+const db = openDb();
+db.run("INSERT INTO plugins (name, folder) VALUES ('fake', ?)", [${JSON.stringify(folder)}]);
+db.exec(${JSON.stringify(threadSql({ task: "12", session: "s", ...row }))});
+${code}`;
+  const run = Bun.spawnSync([process.execPath, "-e", script], {
+    env: { ...process.env, ...homeEnv(home) },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  if (!run.success) throw new Error(run.stderr.toString());
+  return run.stdout.toString();
+}
+
+test("a host that shows status hears every change, in order, even quick ones", () => {
+  const said = statusesAfter(`record(db, "app-12", { needs_you: true }, "a review failed");
+record(db, "app-12", { needs_you: false });
+keepState(db, { folder: "app-12" }, "idle");
+keepState(db, { folder: "app-12" }, "working");
+record(db, "app-12", { rounds: 1 });`);
+  expect(said).toEqual([
+    { id: "fake-app-12", status: "needs you", reason: "needs you" },
+    { id: "fake-app-12", status: "working", reason: "working" },
+    { id: "fake-app-12", status: "idle", reason: "working" },
+    { id: "fake-app-12", status: "working", reason: "working" },
+  ]);
+});
+
+test("a session starting again under the same ID hears its status afresh", () => {
+  const said = statusesAfter(`keepState(db, { folder: "app-12" }, "idle");
+keepState(db, { folder: "app-12" }, "idle");
+forgetStatus("fake", "fake-app-12");
+keepState(db, { folder: "app-12" }, "idle");`);
+  expect(said.map(({ status }) => status)).toEqual(["idle", "idle"]);
+});
+
+test("a builder whose ID never got saved is found on its host by its labels", () => {
+  const said = runWithFakeHost(
+    "sessions",
+    `const host = builderSession(db, "unused", readThread(db, "app-12")).host;
+startSession(host, "app-12", { folder: ${JSON.stringify(home)}, command: ["sleep", "30"], env: {}, labels: { repository: "simon/app", role: "builder", task: "app-12" } });
+console.log(builderSession(db, "unused", readThread(db, "app-12")).id);
+console.log(readThread(db, "app-12").host_id);`,
+    { host: "fake", host_id: null },
+  );
+  expect(said).toBe("fake-app-12\nfake-app-12\n");
+});
+
+test("a builder that can't be ended keeps its host, and the stop says why", () => {
+  const said = runWithFakeHost(
+    "sessions",
+    `const thread = readThread(db, "app-12");
+const error = await stopThread(db, "unused", thread).catch((error) => error.message);
+console.log(error);
+console.log(readThread(db, "app-12").host);`,
+    { host: "gone", host_id: "gone-app-12" },
+  );
+  expect(said).toBe("its builder's session host gone isn't installed any more\ngone\n");
 });

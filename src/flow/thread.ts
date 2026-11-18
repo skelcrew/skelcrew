@@ -5,11 +5,12 @@ import { appendFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import { HarnessName, harnessNamed } from "../agents/harness.ts";
+import { listSessions } from "../agents/sessions.ts";
 import { taskColumns } from "../db.ts";
 import { threadsDir } from "../paths.ts";
 import { type Host, hostNamed } from "../plugins/runtime.ts";
 import { findRepository } from "./repo.ts";
-import { needsYou } from "./status.ts";
+import { needsYou, reportStatus } from "./status.ts";
 
 // What an agent is doing: working on a turn, idle at its prompt, asking you a question with its
 // harness's question tool, or stopped on an error its harness reported.
@@ -154,6 +155,9 @@ export const builderHarness = (thread: Thread) => harnessNamed(thread.harness ??
 // Returns the host the thread's builder session runs on and its ID there, for everything that
 // reaches the builder. A stopped thread has no session, and is looked for on tmux, where nothing
 // of it runs. Throws when its host is a plugin no longer installed, as it can't be reached.
+// A plugin's host gives the ID as it starts the session, and the daemon could stop before saving
+// it. So a thread on a plugin with no ID saved finds its builder by the labels it started with,
+// and saves its ID then, so it is never started a second time.
 export function builderSession(
   db: Database,
   sessions: string,
@@ -161,7 +165,19 @@ export function builderSession(
 ): { host: Host; id: string } {
   const host = hostNamed(db, sessions, thread.host ?? "tmux");
   if (host === null) throw new Error(hostGone(thread));
-  return { host, id: thread.host_id ?? thread.folder };
+  if (thread.host_id !== null || typeof host === "string")
+    return { host, id: thread.host_id ?? thread.folder };
+  // Its task's name can gain its repository's owner since it started, so it is matched by the
+  // task's ID at its end.
+  const found = listSessions(host).find(
+    ({ labels }) =>
+      labels?.role === "builder" &&
+      labels.repository === fullNameOf(thread) &&
+      labels.task?.endsWith(`-${thread.task}`),
+  );
+  if (!found) return { host, id: thread.folder };
+  record(db, thread.folder, { host_id: found.name }, "found its builder on its host");
+  return { host, id: found.name };
 }
 
 // Returns why a thread's builder can't be reached when its host plugin is gone.
@@ -269,6 +285,7 @@ export function record(
   // see exactly what the database holds.
   const thread = readThread(db, folder);
   log(db, thread, why);
+  reportStatus(db, thread);
   return thread;
 }
 

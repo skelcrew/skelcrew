@@ -563,15 +563,15 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   setInterval(() => closeExitedLeads(db, sessions), 1000);
   // From here on, the daemon also looks every two seconds for a working agent whose screen
   // shows it idle, where no hook said so. A session that ends during a look only ends that look.
-  // A host that shows status hears each change at the same pace.
   setInterval(() => {
     try {
       noticeIdleScreens(db, sessions);
     } catch (error) {
       console.log(`couldn't look at the agents' screens: ${errorText(error)}`);
     }
-    reportStatuses(db, sessions);
   }, 2000);
+  // A host that shows status hears each builder's as it is now, and each change from here on.
+  reportStatuses(db);
   // Open your socket, and end cleanly on the service's stop or on Ctrl-C.
   await open(path, "you");
   for (const signal of ["SIGTERM", "SIGINT"]) process.on(signal, () => endWhatItStarted(sockets));

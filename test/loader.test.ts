@@ -54,6 +54,7 @@ const all = [
   "yourHarness",
   "yourReviewer",
   "declined",
+  "host",
 ];
 const quarter = Math.max(1, Math.floor(availableParallelism() / 4));
 const eighth = Math.max(1, Math.floor(availableParallelism() / 2 / 4));
@@ -71,11 +72,15 @@ test("with no files, every setting is the built-in default", () => {
     checks: eighth,
     reviewMinutes: 30,
     declined: [],
+    host: "tmux",
   });
 });
 
 test("your config goes over the built-in defaults", () => {
-  files("harness: codex\nmodel: gpt-6\nmax_rounds: 5\nlimits: { reviews: 2 }\n", null);
+  files(
+    "harness: codex\nmodel: gpt-6\nmax_rounds: 5\nlimits: { reviews: 2 }\nsession: herdr\n",
+    null,
+  );
   expect(read(all).settings).toEqual({
     roles: {
       lead: { harness: "codex", model: "gpt-6" },
@@ -88,6 +93,7 @@ test("your config goes over the built-in defaults", () => {
     reviewMinutes: 30,
     yourHarness: "codex",
     declined: [],
+    host: "herdr",
   });
 });
 
@@ -110,6 +116,7 @@ test("the repository's skelcrew.yaml goes over your config, key by key", () => {
     reviewMinutes: 30,
     yourHarness: "claude",
     declined: [],
+    host: "tmux",
   });
 });
 
@@ -126,7 +133,10 @@ test("a role your config puts on another harness gets your model back when skelc
 test("a file sets only what is its own", () => {
   // Your harness, model and limits fit you, so a repository's lines for them count for nothing.
   // The tracker belongs to the repository, so yours counts for nothing.
-  files("tracker: linear\n", "harness: codex\nmodel: gpt-6\nlimits: { reviews: 9 }\n");
+  files(
+    "tracker: linear\n",
+    "harness: codex\nmodel: gpt-6\nlimits: { reviews: 9 }\nsession: rex\n",
+  );
   expect(read(all).settings).toEqual({
     roles: {
       lead: { harness: "claude" },
@@ -138,6 +148,7 @@ test("a file sets only what is its own", () => {
     checks: eighth,
     reviewMinutes: 30,
     declined: [],
+    host: "tmux",
   });
 });
 

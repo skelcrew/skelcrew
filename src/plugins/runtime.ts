@@ -24,8 +24,12 @@ export type Host = string | PluginHost;
 // Returns the host of that name: tmux, on the agents' tmux server `sessions`, or an installed
 // runtime plugin that provides sessions. Null when no such plugin is installed, such as one you
 // removed while a thread still ran on it.
-export function hostNamed(db: Database, sessions: string, name: string): Host | null {
-  if (name === "tmux") return sessions;
+export const hostNamed = (db: Database, sessions: string, name: string): Host | null =>
+  name === "tmux" ? sessions : pluginHost(db, name);
+
+// Returns the installed runtime plugin of that name as a host, or null when none that provides
+// sessions is installed.
+export function pluginHost(db: Database, name: string): PluginHost | null {
   const plugin = installedPlugins(db).find((installed) => installed.name === name);
   if (!plugin) return null;
   const manifest = readManifest(plugin.folder);
