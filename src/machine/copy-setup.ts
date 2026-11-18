@@ -2,6 +2,7 @@
 // your config.yaml, the agents' Claude Code token, and your plugins at the laptop's versions.
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { parseDocument } from "yaml";
 import { z } from "zod";
 import { openDb } from "../db.ts";
 import { claudeTokenFile, configDir, dataDir } from "../paths.ts";
@@ -33,20 +34,35 @@ const sentFile = () => join(configDir(), "laptop-setup.json");
 
 // Returns the setup on this machine, or null when there is none yet: without config.yaml the
 // first run never ran here. A plugin from a folder of yours has no version to match, and a
-// machine plugin belongs on the laptop, so neither is part of it.
+// machine plugin belongs on the laptop, so neither is part of it. A machine plugin is left out
+// of plugins: in the config sent too, or sc install there would offer to install it.
 export function setupHere(): Setup | null {
   if (!existsSync(configFile())) return null;
   const token = existsSync(claudeTokenFile()) ? readFileSync(claudeTokenFile(), "utf8") : null;
   // Opening the database would make one, so a machine without one has no plugins.
   const db = existsSync(join(dataDir(), "skelcrew.db")) ? openDb() : null;
+  const machine: string[] = [];
   const plugins = (db ? installedPlugins(db) : []).flatMap(({ name, folder, source }) => {
     if (source === null) return [];
     const { provides, version } = readManifest(folder);
-    return provides.includes("machine")
-      ? []
-      : [{ name, source, version, commit: commitOf(folder) }];
+    if (!provides.includes("machine")) return [{ name, source, version, commit: commitOf(folder) }];
+    machine.push(source);
+    return [];
   });
-  return { config: readFileSync(configFile(), "utf8"), token, plugins };
+  return { config: withoutPlugins(readFileSync(configFile(), "utf8"), machine), token, plugins };
+}
+
+// Returns config.yaml's text with these plugins taken out of plugins:, and the key gone once
+// none are left. Text with none of them is returned as it is, so a server's own config, which
+// has no machine plugin, matches the laptop's it was copied from.
+function withoutPlugins(config: string, sources: string[]): string {
+  const document = parseDocument(config);
+  const named = z.array(z.string()).safeParse(document.toJS()?.plugins);
+  if (!named.success || !named.data.some((one) => sources.includes(one))) return config;
+  const kept = named.data.filter((one) => !sources.includes(one));
+  if (kept.length === 0) document.delete("plugins");
+  else document.set("plugins", kept);
+  return document.toString();
 }
 
 // Returns a short fingerprint of a setup. The laptop passes its own with each command, so the

@@ -269,8 +269,16 @@ test("a machine plugin stays on the laptop", async () => {
   publish(["0.1.0"], true);
   expect((await skel(laptop(), ["plugin", "install", "owner/fake"], "\n")).code).toBe(0);
   await remote("ps");
-  expect(serverFile("config.yaml")).toBe("harness: claude\nplugins:\n  - owner/fake\n");
+  // The server's config leaves it out, so sc install there doesn't offer to install it.
+  expect(serverFile("config.yaml")).toBe("harness: claude\n");
   expect(await serverSources()).toEqual({});
+  const install = await skel(server(), ["install"]);
+  expect(install.out).toBe("Nothing to install: this machine has everything your files ask for.\n");
+  expect(await serverSources()).toEqual({});
+  // The setup there now matches the laptop's, so the next command sends nothing.
+  writeFileSync(join(root, "calls"), "");
+  await remote("ps");
+  expect(calls()).not.toContain("scp");
 });
 
 test("a laptop with no setup copies nothing", async () => {
