@@ -24,7 +24,7 @@ import { askWhichForge, type Claimed } from "../plugins/ask.ts";
 import { setUpPlugin } from "../plugins/install.ts";
 import { SetupNeeded } from "../plugins/plugin.ts";
 import { errorText } from "../say.ts";
-import { checkPush, cloneRepository, updateClone } from "./git.ts";
+import { checkPush, cloneRepository, headCommit, remoteEmpty, updateClone } from "./git.ts";
 
 // What sc says outside any repository while Skelcrew has none yet, so you know where to run it.
 export const noRepositories = "Skelcrew has no repositories yet. Run sc in a checkout of one.";
@@ -176,6 +176,13 @@ async function createOrUpdate(db: Database, repository: Repository): Promise<voi
   deleteIfCredentials(part);
   mkdirSync(dirname(clone), { recursive: true });
   renameSync(part, clone);
+  // An empty repository is logged now, as its first commit could come before the next refresh.
+  // A clone with no commit can also come from a remote whose HEAD names a missing branch, so
+  // the remote is asked too.
+  if ((await headCommit(db, repository, clone)) === "" && (await remoteEmpty(db, repository))) {
+    console.log(`${owner}/${repo} has no commits yet`);
+    emptySeen.add(`${owner}/${repo}`);
+  }
 }
 
 // Deletes the clone and throws when it holds a credential, so the lead can't read your login.

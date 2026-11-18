@@ -451,6 +451,31 @@ test("an empty repository is polled quietly, refuses a thread plainly, and its f
   expect(read(daemonLog())).not.toContain("couldn't update");
 });
 
+// The first commit can come before the refresh after the one that made the clone, and the log
+// must still have said the repository was empty.
+test("an empty repository is logged as it is cloned, though its first commit comes before the next refresh", () => {
+  const work = addApp(true);
+  const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
+import { refreshClone, repositories } from ${JSON.stringify(source("flow/repo.ts"))};
+const db = openDb();
+const [app] = repositories(db);
+if (!app) throw new Error("no repository");
+await refreshClone(db, app);`;
+  const refresh = () => {
+    const run = Bun.spawnSync([process.execPath, "-e", code], {
+      env: env(),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(run.stderr.toString()).toBe("");
+    return run.stdout.toString();
+  };
+  expect(refresh()).toBe("simon/app has no commits yet\n");
+  git(work, "push", "-q", join(home, "github", "simon", "app.git"), "main");
+  const first = git(work, "rev-parse", "HEAD").trim().slice(0, 7);
+  expect(refresh()).toBe(`Skelcrew's clone of simon/app has its first commit, ${first}\n`);
+});
+
 // A remote whose HEAD names a branch that is gone has commits all the same, and the log must
 // say what is wrong rather than take it for an empty repository.
 test("a repository whose default branch is gone still logs why its clone can't update", async () => {
