@@ -146,20 +146,29 @@ test("Right opens the row on each kind of list, as Enter does", async () => {
   await until(() => seen().includes("I am app-12"), "the agent");
 });
 
+// Presses Esc, and returns once the screen has read it. tmux holds an Esc about half a second,
+// in case it starts a longer key, and a key within that would join it. So ? goes after that, and
+// keys arrive in order: once ? shows the keys, the Esc came before it. A second ? hides them.
+async function pressEscape(): Promise<void> {
+  press("Escape");
+  await Bun.sleep(800);
+  type("?");
+  await until(() => seen().includes("to go back from a page"), "the list of keys");
+  type("?");
+  await until(() => !seen().includes("to go back from a page"), "the list of keys to hide");
+}
+
 // In an agent Esc stops its turn, so Esc going back on a page would teach your hand to reach for
-// it to leave an agent too. An Esc takes about half a second to arrive through the terminals, so
-// each wait is longer than that.
+// it to leave an agent too.
 test("Esc does nothing on a list or a page", async () => {
   await openList("Issues");
   press("Down");
-  press("Escape");
-  await Bun.sleep(1500);
+  await pressEscape();
   expect(right()).toContain("↑↓ move");
   expect(selected()).toContain("Issues");
   press("Enter");
   await onRight("← back");
-  press("Escape");
-  await Bun.sleep(1500);
+  await pressEscape();
   expect(right()).toContain("← back");
   expect(right()).toContain("Fix login");
 });
