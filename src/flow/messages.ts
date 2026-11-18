@@ -224,12 +224,22 @@ function noteLate(db: Database, sessions: string, thread: Thread, why: string) {
 
 // The attempt under way for each thread, by its folder, with what cancels it and what settles
 // once it ends. A cancelled attempt stays here until it ends, so no second one starts while it
-// may still be pressing Enter on a message it pasted, and type that message again.
-const delivering = new Map<string, { cancel: AbortController; ended: Promise<void> }>();
+// may still be pressing Enter on a message it pasted, and type that message again. `typing`
+// holds the ID of the message it is typing, if any: its paste may be on its way to a plugin's
+// host, so the message is kept until the attempt ends.
+type Attempt = { cancel: AbortController; ended: Promise<void>; typing: { id: number | null } };
+const delivering = new Map<string, Attempt>();
 
 // Types the thread's waiting messages into its builder, oldest first, while it can take them,
-// and returns once none is left or it can't. The ones left wait for the next attempt.
-async function typeWaiting(db: Database, sessions: string, folder: string, signal: AbortSignal) {
+// and returns once none is left or it can't. The ones left wait for the next attempt. It notes
+// in `typing` the message it is typing.
+async function typeWaiting(
+  db: Database,
+  sessions: string,
+  folder: string,
+  signal: AbortSignal,
+  typing: { id: number | null },
+) {
   while (true) {
     const message = oldest(db, folder);
     if (message === null || signal.aborted) return;
@@ -254,7 +264,10 @@ async function typeWaiting(db: Database, sessions: string, folder: string, signa
     // presses Enter alone rather than wait forever behind what looks like a person's draft.
     const pasted = () => db.run("UPDATE messages SET pasted = 1 WHERE id = ?", [message.id]);
     const waitsFor = { timeout: 10_000, signal, unsent, pasted };
-    const typed = await deliver(host, id, marks, message.text, waitsFor);
+    typing.id = message.id;
+    const typed = await deliver(host, id, marks, message.text, waitsFor).finally(() => {
+      typing.id = null;
+    });
     if (typed !== "typed") return;
     // Read again, as an identical comment that came while it was typed joined it, and needs
     // marking seen too. Deleted by its id even when this attempt was cancelled while pasting, as
@@ -304,12 +317,13 @@ export function deliverMessages(db: Database, sessions: string, folder: string):
   if (under) return under.ended;
   if ((paused.get(folder) ?? 0) > 0) return Promise.resolve();
   const cancel = new AbortController();
-  const ended = typeWaiting(db, sessions, folder, cancel.signal)
+  const typing: { id: number | null } = { id: null };
+  const ended = typeWaiting(db, sessions, folder, cancel.signal, typing)
     .catch((error) => console.log(`couldn't type into ${folder}'s builder: ${errorText(error)}`))
     .finally(() => {
       if (delivering.get(folder) === attempt) delivering.delete(folder);
     });
-  const attempt = { cancel, ended };
+  const attempt = { cancel, ended, typing };
   delivering.set(folder, attempt);
   return ended;
 }
@@ -331,22 +345,46 @@ export async function deliverAllWaiting(db: Database, sessions: string): Promise
 // the commit, and one left pasted at the prompt, as it would block the next as a draft. Typing
 // under way is cancelled first, as it may be typing one of them, and starts again with what is
 // left once it has ended. Notices still being prepared learn of the drop by noticeRound.
-// Returns the texts dropped, so what they told can be told again if it still holds.
-export function dropOldEvents(db: Database, sessions: string, folder: string): string[] {
+// The message the cancelled attempt is typing waits for it to end: its paste may already be on
+// its way to a plugin's host, and deleting it then would leave its draft at the prompt unknown,
+// blocking every later message. It is dropped once the attempt ends only if it never got in.
+// Returns the texts dropped at once, and a promise of those dropped once the attempt ends, so
+// what they told can be told again if it still holds.
+export function dropOldEvents(
+  db: Database,
+  sessions: string,
+  folder: string,
+): { dropped: string[]; later: Promise<string[]> } {
   roundsDropped.set(folder, noticeRound(folder) + 1);
-  const ended = delivering.get(folder)?.ended ?? Promise.resolve();
+  const attempt = delivering.get(folder);
+  const ended = attempt?.ended ?? Promise.resolve();
+  const inFlight = attempt?.typing.id ?? null;
   stopDelivering(db, folder, false);
-  const rows = db
-    .query("SELECT * FROM messages WHERE folder = ? AND sender IN ('skelcrew', 'review')")
-    .all(folder);
-  const dropped: string[] = [];
-  for (const message of z.array(Message).parse(rows))
-    if (message.typed_in.length === 0 && !message.pasted) {
-      db.run("DELETE FROM messages WHERE id = ?", [message.id]);
-      dropped.push(message.text);
-    }
-  ended.then(() => deliverMessages(db, sessions, folder));
-  return dropped;
+  // Drops each message that can go among the rows, and returns their texts.
+  const drop = (rows: unknown[]) => {
+    const dropped: string[] = [];
+    for (const message of z.array(Message).parse(rows))
+      if (message.typed_in.length === 0 && !message.pasted) {
+        db.run("DELETE FROM messages WHERE id = ?", [message.id]);
+        dropped.push(message.text);
+      }
+    return dropped;
+  };
+  const events = "folder = ? AND sender IN ('skelcrew', 'review')";
+  const dropped = drop(
+    db.query(`SELECT * FROM messages WHERE ${events} AND id IS NOT ?`).all(folder, inFlight),
+  );
+  // Once the attempt ends, the message it was typing is gone if it went in, and marked pasted if
+  // it waits at the prompt. Otherwise it never got in, and is dropped too. Only it is looked at:
+  // a message saved since belongs to the new round.
+  const later = ended.then(() => {
+    const left = drop(
+      db.query(`SELECT * FROM messages WHERE ${events} AND id = ?`).all(folder, inFlight),
+    );
+    deliverMessages(db, sessions, folder);
+    return left;
+  });
+  return { dropped, later };
 }
 
 // How many times each thread's notices were dropped for a new round, by its folder.

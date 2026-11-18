@@ -801,10 +801,16 @@ export function submitRound(db: Database, sessions: string, folder: string, summ
     `submitted: ${summary}`,
   );
   // A moved branch's notice dropped here never reached the builder, so its commit is forgotten.
-  const dropped = dropOldEvents(db, sessions, folder);
-  const { seen } = readThread(db, folder);
-  const kept = forgetMoves(seen, thread.branch, dropped);
-  if (JSON.stringify(kept) !== JSON.stringify(seen)) record(db, folder, { seen: kept });
+  // A notice being typed as the round started is dropped only once its typing ends, if it never
+  // got in, so its commit is forgotten then.
+  const forget = (dropped: string[]) => {
+    const { seen } = readThread(db, folder);
+    const kept = forgetMoves(seen, thread.branch, dropped);
+    if (JSON.stringify(kept) !== JSON.stringify(seen)) record(db, folder, { seen: kept });
+  };
+  const { dropped, later } = dropOldEvents(db, sessions, folder);
+  forget(dropped);
+  later.then(forget);
   // The older round is cancelled, but its push still runs first, so the branch ends on this
   // round's commit.
   const before = latestRounds.get(folder);

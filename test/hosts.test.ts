@@ -253,7 +253,7 @@ import { noticeIdleScreens } from ${JSON.stringify(source("flow/status.ts"))};
 import { wakeAfterLimit } from ${JSON.stringify(source("flow/limits.ts"))};
 import { hasSession, startSession } from ${JSON.stringify(source("agents/sessions.ts"))};
 import { endEarlierBuilder, startOnHost } from ${JSON.stringify(source("flow/builder.ts"))};
-import { deliverMessages, queueMessage } from ${JSON.stringify(source("flow/messages.ts"))};
+import { deliverMessages, dropOldEvents, queueMessage } from ${JSON.stringify(source("flow/messages.ts"))};
 const db = openDb();
 db.run("INSERT INTO plugins (name, folder) VALUES ('fake', ?)", [${JSON.stringify(folder)}]);
 db.exec(${JSON.stringify(threadSql({ task: "12", session: "s", ...row }))});
@@ -591,6 +591,68 @@ process.exit(0);`,
     `couldn't type into app-12's builder: fake couldn't keys: the host is down for a moment
 {"n":1,"pasted":1} ""
 {"n":0,"pasted":null} ${JSON.stringify("hello\n")}
+`,
+  );
+}, 40_000);
+
+// A new round drops Skelcrew's old notices, but one whose paste is already on its way to the host
+// may land, so it is kept until that typing ends. Its Enter failing then leaves it known as the
+// draft at the prompt, and the next attempt sends it, rather than wait behind it forever.
+test("a notice whose paste is on its way when a new round drops it is kept, and sent", () => {
+  const agent = join(home, "agent.ts");
+  // Shows the prompt, bare or with what was pasted at it, and logs each line sent.
+  writeFileSync(
+    agent,
+    `const fs = require("node:fs");
+let draft = "";
+const show = () => process.stdout.write("\\x1b[2J${claude.marks.prompt}" + (draft ? " " + draft : "") + "\\n");
+show();
+for await (const chunk of Bun.stdin.stream()) {
+  for (const key of new TextDecoder().decode(chunk).replace(/\\x1b\\[20[01]~/g, "")) {
+    if (key === "\\n") {
+      fs.appendFileSync("received.txt", draft + "\\n");
+      draft = "";
+    } else draft += key;
+  }
+  show();
+}
+`,
+  );
+  const fake = join(home, ".config", "skelcrew", "plugins", "fake");
+  const received = join(home, "received.txt");
+  const said = runWithFakeHost(
+    "sessions",
+    `const fs = require("node:fs");
+const host = (await builderSession(db, "unused", readThread(db, "app-12"))).host;
+const labels = { repository: "simon/app", role: "builder", task: "app-12" };
+await startSession(host, "app-12", { folder: ${JSON.stringify(home)}, command: [process.execPath, ${JSON.stringify(agent)}], env: { PATH: process.env.PATH }, labels });
+const typed = () => fs.existsSync(${JSON.stringify(received)}) ? fs.readFileSync(${JSON.stringify(received)}, "utf8") : "";
+const rows = () => JSON.stringify(db.query("SELECT text, pasted FROM messages ORDER BY id").all());
+db.run("INSERT INTO messages (folder, sender, text, said, at, typed_in) VALUES ('app-12', 'skelcrew', 'old', 'old', 0, '[]')");
+// The host takes two seconds over the paste, then fails the Enter after it.
+fs.writeFileSync(${JSON.stringify(join(fake, "slow-paste"))}, "");
+fs.writeFileSync(${JSON.stringify(join(fake, "fail-keys"))}, "");
+const asked = () => fs.readFileSync(${JSON.stringify(join(fake, "asked"))}, "utf8");
+const typing = deliverMessages(db, "unused", "app-12");
+while (!asked().includes('"ask":"paste"')) await Bun.sleep(20);
+// A notice of the new round is saved after the drop, and the drop leaves it alone.
+const { dropped, later } = dropOldEvents(db, "unused", "app-12");
+db.run("INSERT INTO messages (folder, sender, text, said, at, typed_in) VALUES ('app-12', 'skelcrew', 'new', 'new', 0, '[]')");
+console.log(JSON.stringify(dropped), rows());
+await typing;
+console.log(JSON.stringify(await later), rows());
+const deadline = Date.now() + 15_000;
+while (typed() !== "old\\nnew\\n" && Date.now() < deadline) await deliverMessages(db, "unused", "app-12");
+console.log(JSON.stringify(typed()), rows());
+process.exit(0);`,
+    { host: "fake", host_id: "fake-app-12" },
+  );
+  const both = `[{"text":"old","pasted":0},{"text":"new","pasted":0}]`;
+  expect(said).toBe(
+    `[] ${both}
+couldn't type into app-12's builder: fake couldn't keys: the host is down for a moment
+[] [{"text":"old","pasted":1},{"text":"new","pasted":0}]
+${JSON.stringify("old\nnew\n")} []
 `,
   );
 }, 40_000);
