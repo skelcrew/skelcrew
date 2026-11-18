@@ -21,7 +21,7 @@ import {
   reviewCheck,
   whoRunsTheSuite,
 } from "../src/flow/decide.ts";
-import { endedTurnAsks } from "../src/flow/status.ts";
+import { endedWithoutSubmit, waitsOnSubmit } from "../src/flow/status.ts";
 import type { Thread } from "../src/flow/thread.ts";
 
 function thread(change: Partial<Thread> = {}): Thread {
@@ -47,7 +47,7 @@ function thread(change: Partial<Thread> = {}): Thread {
     last_comment: null,
     last_check: null,
     asking: false,
-    stalled: false,
+    turn_ended: false,
     submitted: false,
     erred: false,
     limited: false,
@@ -682,18 +682,19 @@ test("without a forge, an approved review needs you at once, saying where the br
 
 // Needs no sandbox, so the rule is checked in every test run, even inside a builder's sandbox,
 // where the tests that start builders skip.
-test("a builder's turn that ends without a submit needs you, and no other does", () => {
+test("a builder's turn that ends without a submit counts as one, and no other does", () => {
   const cases: [Partial<Thread>, boolean][] = [
     // Stopped without submitting, while working, or while waiting on a review or CI.
     [{ status: "working" }, true],
     [{ status: "waiting" }, true],
+    // An earlier turn that ended the same way doesn't hide this one's message.
+    [{ status: "working", turn_ended: true }, true],
     // It submitted in this turn, or asked for a review again, so the turn waits on the review.
     [{ status: "working", submitted: true }, false],
     [{ status: "waiting", submitted: true }, false],
-    // A question still open, an error, or an earlier stop already has the thread needing you.
+    // A question still open, or an error, already has the thread needing you.
     [{ status: "working", asking: true }, false],
     [{ status: "working", erred: true }, false],
-    [{ status: "working", stalled: true }, false],
     // Needing you for a review's reason says nothing about the builder, so the stop still counts.
     [{ status: "waiting", needs_you: true }, true],
     // A thread with no builder running has no turn to end.
@@ -701,8 +702,8 @@ test("a builder's turn that ends without a submit needs you, and no other does",
     [{ status: "failed" }, false],
     [{ status: "done" }, false],
   ];
-  for (const [change, asks] of cases)
-    expect([change, endedTurnAsks(thread(change))]).toEqual([change, asks]);
+  for (const [change, ends] of cases)
+    expect([change, endedWithoutSubmit(thread(change))]).toEqual([change, ends]);
 });
 
 // A builder whose clone holds nothing beyond its last submit most likely only answered a
@@ -712,25 +713,25 @@ test("a turn with no new work waits on a submit still under review, on CI or app
   const approved = { status: "waiting" as const, verdict: "approve" as const };
   const cases: [Partial<Thread>, boolean][] = [
     // Its submit is reviewed, waits on CI, or is approved and waits on you to merge.
-    [{ status: "working", reviewing: sha }, false],
-    [{ ...approved, checks: "pending" }, false],
-    [{ ...approved, checks: "passing", needs_you: true }, false],
+    [{ status: "working", reviewing: sha }, true],
+    [{ ...approved, checks: "pending" }, true],
+    [{ ...approved, checks: "passing", needs_you: true }, true],
     // A comment on the PR set it working again, but the approval stands.
-    [{ ...approved, status: "working", checks: "passing" }, false],
+    [{ ...approved, status: "working", checks: "passing" }, true],
     // Its submit needs it to work again: changes asked for, a failed check or a conflict.
-    [{ status: "working", verdict: "changes" }, true],
-    [{ status: "working", verdict: "changes", telling: "Add a test." }, true],
-    [{ ...approved, checks: "failing" }, true],
-    [{ ...approved, conflicts: "main" }, true],
+    [{ status: "working", verdict: "changes" }, false],
+    [{ status: "working", verdict: "changes", telling: "Add a test." }, false],
+    [{ ...approved, checks: "failing" }, false],
+    [{ ...approved, conflicts: "main" }, false],
     // A review that failed, or none yet, has nothing to wait on.
-    [{ status: "waiting", verdict: "failed", needs_you: true }, true],
-    [{ status: "working" }, true],
+    [{ status: "waiting", verdict: "failed", needs_you: true }, false],
+    [{ status: "working" }, false],
   ];
-  for (const [change, asks] of cases)
-    expect([change, endedTurnAsks(thread(change), true)]).toEqual([change, asks]);
-  // New work, uncommitted or not yet submitted, needs you whatever the submit waits on.
+  for (const [change, waits] of cases)
+    expect([change, waitsOnSubmit(thread(change), true)]).toEqual([change, waits]);
+  // New work, uncommitted or not yet submitted, shows as turn ended whatever the submit waits on.
   for (const [change] of cases)
-    expect([change, endedTurnAsks(thread(change), false)]).toEqual([change, true]);
+    expect([change, waitsOnSubmit(thread(change), false)]).toEqual([change, false]);
 });
 
 test("a push GitHub refuses for a workflow file says which file, and what to do", () => {
