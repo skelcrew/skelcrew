@@ -45,7 +45,8 @@ export function keysFor(row: Row | undefined, tabs: number): string {
 
 // Returns the top line: Skelcrew in bold, its version and where it runs, dim, and the open
 // repository's name, then the other repositories at the right end, each with a yellow dot and
-// how many of its threads need you, or red when one went wrong. The other repositories give way
+// how many of its threads need you, or red when one went wrong, then a green dot and how many
+// wait for you to merge. They are counted apart, so a finished task is never told twice. The other repositories give way
 // first when the line is short, then the end of the line is cut, without its colours.
 function topLine(frame: Frame, width: number): string {
   const place = frame.where ? ` on ${frame.where}` : "";
@@ -56,7 +57,9 @@ function topLine(frame: Frame, width: number): string {
     .filter((tab) => tab.name !== frame.name)
     .map((tab) => {
       const colour = tab.colour === "red" ? markColours.red : yellow;
-      return tab.needYou ? `${tab.name} ${paint(colour, `•${tab.needYou}`)}` : tab.name;
+      const needing = tab.needYou ? [paint(colour, `•${tab.needYou}`)] : [];
+      const ready = tab.ready ? [paint(markColours.green, `•${tab.ready}`)] : [];
+      return [tab.name, ...needing, ...ready].join(" ");
     })
     .join("  ");
   const room = width - Bun.stringWidth(Bun.stripANSI(left)) - 2;

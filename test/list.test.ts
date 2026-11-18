@@ -229,6 +229,18 @@ test("on a narrow terminal every line fits, the row you are on and a question in
   }
 });
 
+test("another repository's badge counts what needs you in yellow and what is ready to merge in green", () => {
+  const tabs = [
+    { name: "app", fullName: "simon/app", needYou: 0, colour: "yellow" as const, ready: 0 },
+    { name: "docs", fullName: "simon/docs", needYou: 0, colour: "yellow" as const, ready: 1 },
+    { name: "site", fullName: "simon/site", needYou: 2, colour: "yellow" as const, ready: 1 },
+  ];
+  const [top = ""] = drawList(rows(), 0, 0, { ...frame, tabs }, { width: 80, height: 20 }).lines;
+  expect(Bun.stripANSI(top)).toEndWith("docs •1  site •2 •1 ");
+  expect(top).toContain("\x1b[38;5;120m•1");
+  expect(top).toContain("\x1b[38;5;221m•2");
+});
+
 test("a list taller than the terminal scrolls to keep the row you are on in view", () => {
   const lines = drawn(5, 8);
   expect(lines).toHaveLength(8);
