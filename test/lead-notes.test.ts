@@ -55,6 +55,7 @@ function run(body: string): string {
 import { leadOf } from ${JSON.stringify(source("flow/lead.ts"))};
 import { messageLead, noteForLead } from ${JSON.stringify(source("flow/messages.ts"))};
 import { turnEnded } from ${JSON.stringify(source("flow/status.ts"))};
+import { failThread } from ${JSON.stringify(source("flow/builder.ts"))};
 import { readThread, record } from ${JSON.stringify(source("flow/thread.ts"))};
 import { existsSync, readFileSync } from "node:fs";
 const db = openDb();
@@ -90,6 +91,9 @@ ${body}`;
   if (!done.success) throw new Error(done.stderr.toString());
   return done.stdout.toString();
 }
+
+// Returns the last line the code printed, for code that also logs as the daemon would.
+const lastLine = (body: string) => run(body).trim().split("\n").at(-1) ?? "";
 
 // The lead's session isn't running here, so what the lead is sent stays saved, to be read back.
 test("a turn in which the builder told the lead forwards nothing more at its end", () => {
@@ -191,4 +195,28 @@ console.log(JSON.stringify({ during, after: received() }));`),
   expect(seen.during).toEqual({ received: "", scrolled: "1" });
   expect(seen.after.split("\x1b[201~")).toHaveLength(2);
   expect(seen.after).not.toContain("needs you");
+});
+
+// A thread that fails while the human reads further up waits like the rest, then comes ahead
+// of Skelcrew's routine notes.
+test("a thread that fails while the human has scrolled back in the lead is told first, once they are back", () => {
+  // failThread logs to the daemon's output too, so only the last line is what the code printed.
+  const seen = JSON.parse(
+    lastLine(`
+await lead();
+await watch();
+tmuxLead("copy-mode");
+noteForLead(db, tmux, app, "started app-13 from github: Add import");
+failThread(db, tmux, readThread(db, "app-12"), new Error("its setup command failed"));
+await Bun.sleep(3000);
+const during = received();
+tmuxLead("send-keys", "-X", "cancel");
+await until(() => waiting() === 0 && received().includes("Add import"));
+console.log(JSON.stringify({ during, after: received() }));`),
+  );
+  expect(seen.during).toBe("");
+  const failed = seen.after.indexOf("app-12 failed: its setup command failed");
+  expect(failed).toBeGreaterThan(-1);
+  expect(failed).toBeLessThan(seen.after.indexOf("started app-13 from github: Add import"));
+  expect(seen.after.split("\x1b[201~")).toHaveLength(2);
 });
