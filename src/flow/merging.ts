@@ -84,6 +84,7 @@ export function armMerge(
     merge_id: crypto.randomUUID(),
     merge_by: asked === null ? loginName() : `${loginName()} via the lead`,
     merge_at: Date.now(),
+    merge_asked: asked,
     merge_waits: null,
     merge_noted: null,
   };

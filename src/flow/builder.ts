@@ -268,6 +268,7 @@ async function recordThread(
       merge_id: null,
       merge_by: null,
       merge_at: null,
+      merge_asked: null,
       merge_waits: null,
       merge_noted: null,
     };

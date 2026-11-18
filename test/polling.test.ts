@@ -2151,7 +2151,12 @@ exec ${bwrap} "$@"`,
       const armed = asLead();
       expect(armed.stderr.toString()).toBe("");
       expect(armed.stdout.toString()).toContain("app-12 merges once it is approved and green.");
-      expect(thread()).toMatchObject({ merge_plan: "armed", merge_by: `${login()} via the lead` });
+      // The plan keeps your words exactly, as what let it merge.
+      expect(thread()).toMatchObject({
+        merge_plan: "armed",
+        merge_by: `${login()} via the lead`,
+        merge_asked: words,
+      });
       expect(existsSync(ran)).toBe(false);
       // The thread's log and the daemon's keep your words exactly, and the lead gets a note
       // saying what it armed, with them on one line, so you see it in the conversation.
@@ -2165,6 +2170,13 @@ exec ${bwrap} "$@"`,
         ),
       );
 
+      // The plan and your words outlast a restart of the daemon.
+      const first = running.splice(0, 1)[0];
+      first?.kill();
+      await first?.exited;
+      serve();
+      expect(thread()).toMatchObject({ merge_plan: "armed", merge_asked: words });
+
       // Green at the approved head, it merges, and the PR's record says the lead armed it.
       const head = pushed();
       pr({ head, reviews: [skelReview], checks: [approved] });
@@ -2176,7 +2188,8 @@ exec ${bwrap} "$@"`,
         `Merging when ready, as asked by ${login()} via the lead on `,
       );
       expect(merges()[0]).toMatchObject({ pr: 7, commit: head });
-    }, 60_000);
+      expect(thread().merge_asked).toBe(words);
+    }, 90_000);
 
     test("an armed merge waits on a new push and failing CI, then merges the approved head", async () => {
       await approvedApp12();
