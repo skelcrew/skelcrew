@@ -6,7 +6,8 @@
 // its screen shows Claude Code's busy mark, and types a message in one step, noting it in
 // `delivered`. With a file hang-status, the first status it is given hangs, and with a file
 // garble-<question> it answers that question with nothing, with fail-<question> it fails it
-// once, and with slow-<question> it takes two seconds over it. With a file lose-start, it starts the
+// once, with slow-<question> it takes two seconds over it, and with hold-<question> it holds it
+// from a given time on. With a file lose-start, it starts the
 // next session but fails before saying its ID.
 import {
   appendFileSync,
@@ -146,6 +147,15 @@ const answers: Record<string, () => unknown> = {
 // With a file garble-<question>, it does nothing and answers with nothing at all, as a broken
 // host might.
 if (existsSync(join(dir, `garble-${question.ask}`))) process.exit(0);
+// With a file hold-<question> holding a number, it holds that question from its nth time on,
+// counting each time it was asked, until the file goes.
+const hold = join(dir, `hold-${question.ask}`);
+if (existsSync(hold)) {
+  const times = readFileSync(join(dir, "asked"), "utf8")
+    .split("\n")
+    .filter((line) => line && JSON.parse(line).ask === question.ask).length;
+  if (times >= Number(readFileSync(hold, "utf8"))) while (existsSync(hold)) await Bun.sleep(20);
+}
 // With a file slow-<question>, it takes two seconds over that question, as a slow host would.
 if (existsSync(join(dir, `slow-${question.ask}`))) await Bun.sleep(2000);
 // With a file fail-<question>, it fails that question once, as a host down for a moment would.

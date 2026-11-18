@@ -27,7 +27,7 @@ import {
   stillRunning,
   stopSession,
 } from "../src/agents/sessions.ts";
-import { deliver, idle, whyBusy } from "../src/agents/transport.ts";
+import { deliver, forQuestion, idle, whyBusy } from "../src/agents/transport.ts";
 import type { PluginHost } from "../src/plugins/runtime.ts";
 import { homeEnv, source, threadSql, until as wait } from "./harness.ts";
 
@@ -663,3 +663,20 @@ process.exit(0);`,
   );
   expect(said).toBe("simon/app-12 is being stopped already\nstopped\nworking fake true\n");
 }, 40_000);
+
+test("a question asked while the host is still on the last look before a paste stops the paste", async () => {
+  const on = host();
+  const id = await start(on, harness());
+  await until(async () => (await readSession(on, id)).includes(claude.marks.prompt));
+  // Two looks find it idle, and the host holds the third, the last before the paste.
+  const before = asked().filter((ask) => ask === "read").length;
+  writeFileSync(join(settings(), "hold-read"), String(before + 3));
+  const cancel = new AbortController();
+  const typing = deliver(on, id, claude.marks, "hello", { moment, signal: cancel.signal });
+  await until(() => asked().filter((ask) => ask === "read").length === before + 3);
+  cancel.abort(forQuestion);
+  rmSync(join(settings(), "hold-read"));
+  expect(await typing).toBe("not typed");
+  expect(asked()).not.toContain("paste");
+  expect(read("received.txt")).toBe("");
+});

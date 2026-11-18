@@ -211,6 +211,9 @@ async function typeNow(
         throw new Error(`${name} wasn't idle for ${waited} (${why}), so nothing was typed`);
       }
     }
+    // The last look can take a while on a plugin's host, and the agent may have asked a question
+    // meanwhile, which the paste would land in.
+    if (waits.signal?.aborted) return "not typed";
     // Without the paste marks, Claude Code reads the Enter after a long message as a new line,
     // and the message is never sent. So the Enter goes on its own, a moment after the paste.
     await pasteStaged(socket, name, staged.at(-1) ?? "");
