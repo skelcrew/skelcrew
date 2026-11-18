@@ -58,10 +58,15 @@ async function fetchRef(
 }
 
 // Returns whether the repository's remote has no refs at all, as one with no commits yet. A
-// remote that can't be listed isn't taken for empty.
+// remote that can't be listed isn't taken for empty. The names Skelcrew claims for threads with
+// no issue are refs too, made even on an empty remote, but they hold no commit of the
+// repository's, so they don't count.
 export async function remoteEmpty(db: Database, repository: Repository): Promise<boolean> {
   const listed = await git(db, repository, ["ls-remote", repository.remote]).catch(() => null);
-  return listed === "";
+  if (listed === null) return false;
+  return listed
+    .split("\n")
+    .every((line) => line === "" || line.split("\t")[1]?.startsWith(claimRef("")));
 }
 
 // Returns the commit the clone in the folder is on, or nothing for a clone of a repository

@@ -328,6 +328,45 @@ test("a name stays taken on another machine once claimed", async () => {
   expect(await namesFrom(startOn(lapdog, remote, ["Two"]))).toEqual(["app-lp2"]);
 }, 60_000);
 
+// A name claimed on a repository with no commits yet, such as one just created, is a ref of the
+// remote all the same. The repository must still count as empty, so starting a thread there
+// says it has no commits, rather than failing in git's words.
+test("a name claimed on an empty repository leaves it empty", async () => {
+  const { homes } = twoMachines();
+  const [laptop = ""] = homes;
+  const remote = join(home, "empty.git");
+  Bun.spawnSync(["git", "init", "-q", "--bare", "-b", "main", remote]);
+  const check = `import { hasNoCommits } from ${JSON.stringify(source("flow/repo.ts"))};
+import { fetchBranch } from ${JSON.stringify(source("flow/git.ts"))};
+import { cloneDir } from ${JSON.stringify(source("paths.ts"))};
+const [repository] = db.query("SELECT * FROM repositories").all();
+const fetched = await fetchBranch(db, repository, cloneDir("simon", "app"), null).then(() => "fetched", (error) => error.message);
+console.log(JSON.stringify([await hasNoCommits(db, repository), fetched]));`;
+  const run = Bun.spawn(
+    [
+      process.execPath,
+      "-e",
+      `import { openDb } from ${JSON.stringify(source("db.ts"))};
+import { startThread } from ${JSON.stringify(source("flow/builder.ts"))};
+import { threadName } from ${JSON.stringify(source("flow/thread.ts"))};
+const db = openDb();
+db.run("INSERT INTO repositories (name, owner, repo, remote) VALUES ('app', 'simon', 'app', ?)", [${JSON.stringify(remote)}]);
+console.log(threadName(db, await startThread(db, { repo: "app", title: "One", body: "b" })));
+${check}`,
+    ],
+    { env: { ...process.env, HOME: laptop }, stdout: "pipe", stderr: "pipe" },
+  );
+  const [out, err] = [await new Response(run.stdout).text(), await new Response(run.stderr).text()];
+  expect(err).toBe("");
+  // Making the clone logs that the repository is empty first.
+  const [name = "", result = ""] = out.trim().split("\n").slice(-2);
+  expect(name).toBe("app-lp1");
+  expect(JSON.parse(result)).toEqual([
+    true,
+    "simon/app has no commits yet, so a thread has nothing to start from. Push a first commit, then start it again.",
+  ]);
+}, 60_000);
+
 // An issue created after a thread with no issue, with the thread's ID, such as lp1, would share
 // its name. The copy of the tracker leaves it out, so app-lp1 stays the thread's alone.
 test("an issue whose ID has the shape of Skelcrew's own is left out of the copy", async () => {
