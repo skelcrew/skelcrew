@@ -4,7 +4,8 @@
 // It notes each question it is asked in `asked`, and each status it is given in `statuses`. Its
 // own transport, when the test's manifest says it provides one, takes an agent as idle unless
 // its screen shows Claude Code's busy mark, and types a message in one step, noting it in
-// `delivered`. With a file hang-status, the first status it is given hangs.
+// `delivered`. With a file hang-status, the first status it is given hangs, and with a file
+// garble-<question> it answers that question with nothing.
 import {
   appendFileSync,
   existsSync,
@@ -135,6 +136,9 @@ const answers: Record<string, () => unknown> = {
   },
 };
 
+// With a file garble-<question>, it does nothing and answers with nothing at all, as a broken
+// host might.
+if (existsSync(join(dir, `garble-${question.ask}`))) process.exit(0);
 try {
   const answer = await answers[question.ask]?.();
   console.log(JSON.stringify(answer ?? null));

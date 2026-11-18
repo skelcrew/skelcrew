@@ -65,16 +65,19 @@ function checkAnswer<T>(
     const last = done.err.trim().split("\n").at(-1) || `it exited with code ${done.code}`;
     throw new Error(`${host.plugin} couldn't ${question.ask}: ${last}`);
   }
-  // Output that isn't JSON fails the check below, with the same error as a wrong answer.
+  // Output that isn't JSON, empty output included, is refused like a wrong answer: a host that
+  // printed nothing may not have done what it was asked, such as type a message in.
+  const misunderstood = new Error(
+    `${host.plugin} answered ${question.ask} in a way Skelcrew doesn't understand`,
+  );
   let answer: unknown;
   try {
     answer = JSON.parse(done.out);
   } catch {
-    answer = undefined;
+    throw misunderstood;
   }
   const checked = Answer.safeParse(answer);
-  if (!checked.success)
-    throw new Error(`${host.plugin} answered ${question.ask} in a way Skelcrew doesn't understand`);
+  if (!checked.success) throw misunderstood;
   return checked.data;
 }
 

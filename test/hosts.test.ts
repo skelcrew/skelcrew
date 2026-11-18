@@ -288,16 +288,21 @@ console.log(readThread(db, "app-12").host_id);`,
   expect(said).toBe("fake-app-12\nfake-app-12\n");
 });
 
-test("a builder that can't be ended keeps its host, and the stop says why", () => {
+test("a builder that can't be ended keeps its host, and stopping it again tries again", () => {
   const said = runWithFakeHost(
     "sessions",
     `const thread = readThread(db, "app-12");
 const error = await stopThread(db, "unused", thread).catch((error) => error.message);
 console.log(error);
-console.log(readThread(db, "app-12").host);`,
+const after = readThread(db, "app-12");
+console.log(after.status, after.host);
+const again = await stopThread(db, "unused", after).catch((error) => error.message);
+console.log(again);`,
     { host: "gone", host_id: "gone-app-12" },
   );
-  expect(said).toBe("its builder's session host gone isn't installed any more\ngone\n");
+  // Stopping again tries again, rather than taking the thread for stopped already.
+  const reason = "its builder's session host gone isn't installed any more";
+  expect(said).toBe(`${reason}\nstopped gone\n${reason}\n`);
 });
 
 test("a host that hangs on one status is ended, and hears the changes after it", () => {
@@ -319,4 +324,15 @@ console.log(readThread(db, "app-12").host_id);`,
     { host: "fake", host_id: null },
   );
   expect(said).toBe("app-12\nnull\n");
+});
+
+test("a host that answers a delivery with nothing hasn't delivered it", async () => {
+  const on = host({ transport: true });
+  const id = start(on, harness());
+  await until(() => readSession(on, id).includes(claude.marks.prompt));
+  writeFileSync(join(settings(), "garble-deliver"), "");
+  const typing = deliver(on, id, claude.marks, "hello", { moment });
+  await expect(typing).rejects.toThrow(
+    `${name} answered deliver in a way Skelcrew doesn't understand`,
+  );
 });

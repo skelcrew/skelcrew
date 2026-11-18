@@ -102,6 +102,10 @@ async function endBuilder(db: Database, sessions: string, folder: string, drop: 
 // builder hasn't started yet.
 export async function stopThread(db: Database, sessions: string, thread: Thread): Promise<void> {
   const name = threadName(db, thread);
+  // A stopped thread that still has a host is one whose builder couldn't be ended, such as on a
+  // host plugin that was gone. It may still run, so stopping it again tries again to end it.
+  if (thread.status === "stopped" && thread.host !== null)
+    return endBuilder(db, sessions, thread.folder, false);
   if (thread.status === "stopped") throw new Error(`${name} is stopped already`);
   if (thread.status !== "working" && thread.status !== "waiting")
     throw new Error(`${name} is ${thread.status}, so it has no builder to stop`);
