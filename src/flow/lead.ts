@@ -101,7 +101,7 @@ export function leadInstructions(
 // Returns where the lead reads the flows you approved, given its clone: the ref at the .agents/
 // you approved, which a git command lists and shows from its read-only clone.
 export const approvedFlowsTold = (clone: string) =>
-  `The .agents/ the human approved is at ${approvedRef} in the clone. List its flows with git -C ${clone} ls-tree --name-only ${approvedRef} flows/, and read one with git -C ${clone} show ${approvedRef}:flows/<name>.yaml. Without that ref, or with no flows there, tasks run only Skelcrew's built-in default flow.`;
+  `The .agents/ the human approved is at ${approvedRef} in the clone. List its flows with git -C ${clone} ls-tree --name-only ${approvedRef} flows/, and read one with git -C ${clone} show ${approvedRef}:flows/<name>.yaml. Without that ref, or with no flows there, threads run only Skelcrew's built-in default flow.`;
 
 // Keeps a repository's running lead or starts it, resuming its saved conversation when there
 // is one. A lead's first start picks the harness your config names for leads, and the lead

@@ -453,7 +453,7 @@ test("a lead running from before flows is told of them once", async () => {
     db.close();
     const texts = saved.map((row) => String(Object.values(Object(row))[0]));
     const typedIn = read(join(data(), "claude", leadName, "typed")).split("\n");
-    return [...texts, ...typedIn].filter((text) => text.includes("each task now runs a flow"));
+    return [...texts, ...typedIn].filter((text) => text.includes("each thread now runs a flow"));
   };
   await until(() => flowNotes().length > 0);
   expect(flowNotes()[0]).toContain("refs/skelcrew/agents/approved");

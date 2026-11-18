@@ -125,11 +125,11 @@ test("a lead triages a task's flow, from the folder of the flows the human appro
   const role = builtInRole("lead").instructions;
   expect(role).toContain("sc start app-13 --flow <name>");
   expect(role).toContain("Whenever you pick a flow other than default, tell the human");
-  expect(role).toContain("A task keeps its flow from start to end.");
+  expect(role).toContain("A thread keeps its flow from start to end.");
   expect(role).toContain("not the files in .agents/flows/ in the clone");
   const commands = { setup: undefined, test: undefined };
   expect(leadInstructions(role, "simon/app", "/c", commands)).toEndWith(
-    "and no test command was configured.\nThe .agents/ the human approved is at refs/skelcrew/agents/approved in the clone. List its flows with git -C /c ls-tree --name-only refs/skelcrew/agents/approved flows/, and read one with git -C /c show refs/skelcrew/agents/approved:flows/<name>.yaml. Without that ref, or with no flows there, tasks run only Skelcrew's built-in default flow.\n",
+    "and no test command was configured.\nThe .agents/ the human approved is at refs/skelcrew/agents/approved in the clone. List its flows with git -C /c ls-tree --name-only refs/skelcrew/agents/approved flows/, and read one with git -C /c show refs/skelcrew/agents/approved:flows/<name>.yaml. Without that ref, or with no flows there, threads run only Skelcrew's built-in default flow.\n",
   );
 });
 
