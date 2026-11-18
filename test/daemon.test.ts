@@ -550,6 +550,33 @@ describe.skipIf(insideSandbox)("with a lead per repository", () => {
     expect(line).toContain('sc start app-12 --short "Login redirect"');
   });
 
+  // A lead an older release started has Claude Code's agent view on. Its live conversation can
+  // be one Claude Code's background service runs, under an id Skelcrew never stored, so
+  // restarting it on the stored id would lose that conversation. It is kept until its next
+  // start, which turns agent view off.
+  test("keeps a lead that runs with agent view on across a restart of the daemon", async () => {
+    setUp();
+    addRepository("app");
+    const first = serve();
+    await untilAnswers();
+    await open();
+    saveTranscript(storedSession());
+    await stop(first);
+    endLead();
+    // The lead as an older release left it: Claude Code idle at its prompt, with agent view on.
+    const idleLead = ["sh", "-c", "printf '❯\\n'; exec sleep 300"];
+    const start = ["new-session", "-d", "-s", leadName(), "-c", leadFolder(), "--", ...idleLead];
+    Bun.spawnSync(["tmux", "-L", socket, ...start]);
+    serve();
+    await untilAnswers();
+    expect(await open()).toEqual({ lead: leadName(), repository: "simon/app" });
+    expect(claudeLines()).toHaveLength(1);
+    // Still the old lead's own process, at its prompt.
+    const pane = ["display-message", "-p", "-t", `=${leadName()}:`, "#{pane_start_command}"];
+    const shown = Bun.spawnSync(["tmux", "-L", socket, ...pane], { stdout: "pipe" });
+    expect(shown.stdout.toString()).toContain("exec sleep 300");
+  });
+
   // Claude Code can't resume a conversation it never saved, nor start a new one under its id.
   test("starts a lead nobody talked to afresh, with a new session id", async () => {
     setUp();
