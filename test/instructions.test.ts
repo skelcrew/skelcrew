@@ -149,19 +149,45 @@ test("a lead let arm merges arms one only when the human asks in the conversatio
 });
 
 // The human's words can hold anything, so the command the lead is told to run must hand them to
-// sc unchanged: quotes, $() and backticks are never run, nor do they break the command.
+// sc unchanged: quotes, $() and backticks are never run, nor do they break the command. A line
+// that is a heredoc's delimiter would end the words early, so the lead makes one up that no line
+// of the words is, as its instructions say. Here the words even hold the instructions' example.
 test("the command a lead is told to arm with passes any words to sc unchanged", () => {
   const told = leadInstructions("simon/app", "/c", { setup: undefined, test: undefined }, true);
   const example = told.match(/\nsc merge --when-ready app-12 --asked - <<'(\w+)'\n<[^\n]*>\n\1\n/);
-  expect(example).not.toBeNull();
+  const shown = example?.[1] ?? "";
+  expect(shown).toMatch(/^WORDS_[a-z0-9]{8}$/);
+  expect(told).toContain(
+    "Make up the delimiter each time: WORDS_ and eight random letters and digits",
+  );
+  expect(told).toContain("check that none is, and make up another if one is");
   const ran = join(home, "ran");
-  const words = `merge "#7" when it's ready\n  $(touch ${ran}) and \`touch ${ran}\` and $HOME 'too'`;
+  const words = [
+    `merge "#7" when it's ready`,
+    `  $(touch ${ran}) and \`touch ${ran}\` and $HOME 'too'`,
+    shown,
+    "HUMAN_WORDS",
+    `touch ${ran}`,
+  ].join("\n");
+  // The delimiter as the lead makes it up: random, and made up again while a line is it.
+  const lines = words.split("\n");
+  let delimiter = shown;
+  while (lines.includes(delimiter))
+    delimiter = `WORDS_${crypto.randomUUID().replaceAll("-", "").slice(0, 8)}`;
+  const command = String(example?.[0])
+    .replaceAll(shown, delimiter)
+    .replace(/<[^\n]*>/, () => words);
   // sc stands in as a shell function that keeps what it was given.
   const out = join(home, "out");
-  const script = `sc() { printf '%s\\n' "$*" > ${out}.args; cat > ${out}.stdin; }\n${String(example?.[0]).replace(/<[^\n]*>/, words)}`;
+  const script = `sc() { printf '%s\\n' "$*" > ${out}.args; cat > ${out}.stdin; }\n${command}`;
   const shell = Bun.spawnSync(["sh", "-c", script], { stderr: "pipe" });
   expect(shell.stderr.toString()).toBe("");
   expect(readFileSync(`${out}.args`, "utf8")).toBe("merge --when-ready app-12 --asked -\n");
   expect(readFileSync(`${out}.stdin`, "utf8")).toBe(`${words}\n`);
   expect(existsSync(ran)).toBe(false);
+  // With the example's delimiter as it stands, the words would end early and their last line
+  // would run, which is why the lead makes up its own.
+  const fixed = String(example?.[0]).replace(/<[^\n]*>/, () => words);
+  Bun.spawnSync(["sh", "-c", `sc() { cat > /dev/null; }\n${fixed}`], { stderr: "pipe" });
+  expect(existsSync(ran)).toBe(true);
 });

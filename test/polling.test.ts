@@ -2111,10 +2111,10 @@ exec ${bwrap} "$@"`,
     // nothing else changes: the merge still waits for the approved head to be green.
     test("a lead you let arm merges arms one with your words, and builders still can't", async () => {
       await approvedApp12();
-      // Your words as you wrote them: over two lines, with a double space, quotes, and what a
-      // shell would run if they were put in its quotes.
+      // Your words as you wrote them: over lines, with a double space, quotes, what a shell would
+      // run if they were put in its quotes, and a line that is the lead's example delimiter.
       const ran = join(home, "ran");
-      const words = `merge "#7"\nwhen it's  ready, $(touch ${ran}) \`touch ${ran}\``;
+      const words = `merge "#7"\nwhen it's  ready, $(touch ${ran}) \`touch ${ran}\`\nWORDS_q7x2k9mf`;
       // sc merge as the lead runs it, on its own socket.
       const asLead = (...more: string[]) =>
         Bun.spawnSync([process.execPath, main, "merge", "--when-ready", "#7", ...more], {
@@ -2147,7 +2147,8 @@ exec ${bwrap} "$@"`,
 
       // The lead arms it by the PR's number, with no question at a terminal, giving your words
       // in a quoted heredoc as its instructions say, so the shell changes nothing in them.
-      const heredoc = `"$SC" "$MAIN" merge --when-ready '#7' --asked - <<'HUMAN_WORDS'\n${words}\nHUMAN_WORDS\n`;
+      // Its delimiter is made up, and is none of the lines of your words.
+      const heredoc = `"$SC" "$MAIN" merge --when-ready '#7' --asked - <<'WORDS_m4c8z1rt'\n${words}\nWORDS_m4c8z1rt\n`;
       const armed = Bun.spawnSync(["sh", "-c", heredoc], {
         env: { ...env(), SKELCREW_SOCKET: leadSocket(), SC: process.execPath, MAIN: main },
         stdout: "pipe",
@@ -2165,7 +2166,7 @@ exec ${bwrap} "$@"`,
       await until(() => read(daemonLog()).includes(`app-12: ${why}`));
       await until(() =>
         leadTyped().includes(
-          `Armed: #7 (app-12) merges once it is approved and green, as the human asked: "merge "#7" when it's ready, $(touch ${ran}) \`touch ${ran}\`". sc merge --cancel app-12 stops that.`,
+          `Armed: #7 (app-12) merges once it is approved and green, as the human asked: "merge "#7" when it's ready, $(touch ${ran}) \`touch ${ran}\` WORDS_q7x2k9mf". sc merge --cancel app-12 stops that.`,
         ),
       );
 
