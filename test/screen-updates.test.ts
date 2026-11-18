@@ -1,7 +1,7 @@
 // Lists and pages that follow Skelcrew's copy as it changes, and what the screen writes to
 // your terminal while nothing changes.
 import { afterEach, beforeEach, expect, setDefaultTimeout, test } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { stillRunning } from "../src/agents/sessions.ts";
 import { itemSql, threadSql } from "./harness.ts";
@@ -10,23 +10,24 @@ import {
   agents,
   clickRow,
   endTest,
-  given,
   home,
   issueUrl,
   leaving,
   listsRunning,
+  noteRefreshes,
   onRight,
   open,
   openIssue,
   openList,
   openOnGitHub,
   press,
-  read,
   ready,
+  refreshesStarted,
   right,
   screen,
   seen,
   sidebar,
+  sidebarRefreshedTwice,
   sql,
   startTest,
   terminal,
@@ -71,30 +72,6 @@ async function untilQuiet(written: string): Promise<void> {
     last = size();
     quietSince = Date.now();
   }
-}
-
-// Puts a tmux in front of the real one that notes each time the sidebar asks for the agents'
-// panes, as it does first in every refresh. A refresh that changes nothing writes nothing, so
-// this is how a test sees one. It must be set before the screen opens.
-function noteRefreshes(): void {
-  const folder = join(home, "noting");
-  mkdirSync(folder);
-  writeFileSync(
-    join(folder, "tmux"),
-    `#!/bin/sh\ncase "$*" in *"list-panes -a -F #{pane_dead}"*) echo >> ${join(home, "refreshes")} ;; esac\nexec ${Bun.which("tmux") ?? "tmux"} "$@"\n`,
-    { mode: 0o755 },
-  );
-  given.before = `PATH=${folder}:$PATH `;
-}
-
-// How many refreshes the sidebar has started.
-const refreshesStarted = () => read("refreshes").split("\n").length - 1;
-
-// Returns once the sidebar has started two refreshes from now. The first reads Skelcrew's copy
-// as it is now, and the second starts only once the first has drawn what it read.
-async function sidebarRefreshedTwice(): Promise<void> {
-  const before = refreshesStarted();
-  await until(() => refreshesStarted() >= before + 2, "the sidebar to refresh twice");
 }
 
 // Returns once the list and the sidebar have each read Skelcrew's copy again at least once. The
