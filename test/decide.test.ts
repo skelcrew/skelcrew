@@ -411,12 +411,14 @@ test("a branch that moved is never ready to merge, even once told", () => {
   expect(acted(told, moved).change).toEqual({ needs_you: true });
 });
 
-// A push under way carries the builder's commit, and is refused if the branch moved, which
-// tells the builder then.
-test("a branch that moved while a round is being pushed isn't told by the poll", () => {
+// A round whose push failed stays submitting. Its push may have failed before it could tell the
+// builder, so the poll still does.
+test("a branch that moved is told while a round is submitting", () => {
   const moved = pr({ head: "f00d" });
   const decision = decide(thread({ submitting: "Round 2" }), moved, { ...given, moved: true });
-  expect(decision).toMatchObject({ notice: [], moved: null });
+  if ("end" in decision) throw new Error(decision.end);
+  expect(decision).toMatchObject({ moved: "f00d", seen: ["head:f00d"] });
+  expect(decision.notice).toEqual([expect.stringContaining("moved on the forge to f00d")]);
 });
 
 test("a branch at the commit Skelcrew pushed hasn't moved", () => {

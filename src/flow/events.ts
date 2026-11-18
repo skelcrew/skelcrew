@@ -9,7 +9,7 @@ import { quietly } from "../run.ts";
 import { errorText } from "../say.ts";
 import { unassignIssue } from "./assign.ts";
 import { baseOf } from "./builder.ts";
-import type { Check, Decision } from "./decide.ts";
+import { type Check, type Decision, headSeen } from "./decide.ts";
 import { deleteBranch, fetchInto, onRemote } from "./git.ts";
 import { endWake } from "./limits.ts";
 import {
@@ -322,7 +322,13 @@ export async function tellBuilder(
     // A round submitted meanwhile is a new commit, so the notices of the older one would send
     // the builder after a problem it may have fixed, even once that round's push is done and
     // its review runs. People's words still hold.
-    const notices = noticeRound(thread.folder) !== round ? [] : [...checks, ...told];
+    const dropped = noticeRound(thread.folder) !== round;
+    const notices = dropped ? [] : [...checks, ...told];
+    // A dropped notice of a branch that moved leaves its commit unhandled. The new round's push
+    // may be refused for it and fail to tell the builder, and a later poll then tells it.
+    const movedTo = decision.moved;
+    const handled =
+      dropped && movedTo !== null ? seen.filter((id) => id !== headSeen(movedTo)) : seen;
     // Saves one message of these texts, unless there are none. The thread's log gets the first
     // line of each.
     const firstLines = (texts: string[]) => texts.map((t) => t.split("\n")[0]).join("; ");
@@ -337,7 +343,7 @@ export async function tellBuilder(
     };
     send(notices, []);
     send(decision.tell, decision.typedIn);
-    record(db, thread.folder, moved ? { seen } : { seen, ...change }, why);
+    record(db, thread.folder, moved ? { seen: handled } : { seen: handled, ...change }, why);
     typeLeadNotes(db, sessions);
   } catch (error) {
     console.log(

@@ -142,6 +142,10 @@ export function branchMoved(branch: string, commit: string): string {
   return `Your branch ${branch} moved on the forge to ${commit}, with commits you don't have, such as a PR merged into it. Before changing anything else, run git fetch origin, merge origin/${branch} into your branch and commit, then go on. A round submitted without them is refused.`;
 }
 
+// Returns the ID among those a thread has seen that says its builder was told its branch moved
+// on the forge to the commit, so it is told once.
+export const headSeen = (commit: string) => `head:${commit}`;
+
 // Decides what the thread's PR, as its forge returned it, means for the thread: whether it
 // ended, what to type into the builder, and how the thread changes. `moved` says the forge's
 // head holds commits Skelcrew never pushed for the thread. Events are handled once:
@@ -231,13 +235,10 @@ export function decide(
       `The PR conflicts with ${conflict}. Run git fetch origin, merge origin/${conflict} into your branch and fix the conflict, then commit and run sc submit "<summary>" again.`,
     );
   // A branch that moved on the forge is told once for each commit it moved to, remembered
-  // among the IDs seen. A push under way would carry the builder's commit and be refused, which
-  // tells the builder then.
-  const head = pr.head === null ? null : `head:${pr.head}`;
-  const moved =
-    given.moved && thread.submitting === null && head !== null && !before.has(head)
-      ? pr.head
-      : null;
+  // among the IDs seen. It is told while a round is submitting too, as a push refused for it
+  // may have failed to tell the builder, and a failed round stays submitting.
+  const head = pr.head === null ? null : headSeen(pr.head);
+  const moved = given.moved && head !== null && !before.has(head) ? pr.head : null;
   if (moved !== null) notice.push(branchMoved(thread.branch, moved));
   // The IDs the PR no longer shows can never come back, so they are left out. The branch's
   // head is kept while it stays where it was told.

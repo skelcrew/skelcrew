@@ -16,6 +16,7 @@ import {
   branchMoved,
   ciResult,
   ciState,
+  headSeen,
   onlyDocs,
   pastRoundLimit,
   refusedWorkflow,
@@ -82,15 +83,23 @@ async function push(
     let refused = refusedWorkflow(name, said);
     let why = "its push was refused for changing a workflow file";
     // git refuses a push that would drop commits the branch has on the forge, as it is never
-    // forced. The branch is fetched into Skelcrew's clone, the builder's origin, to merge.
+    // forced. The branch is fetched into Skelcrew's clone, the builder's origin, to merge. A
+    // poll that told the builder of the same commit already said it all. One this tells is
+    // saved as seen, so a poll doesn't tell it again. A thread that never took in its PR's
+    // history has seen nothing, and saving one ID would make the rest look new.
+    let told = false;
     if (refused === null && /\[rejected\].*\((non-fast-forward|fetch first)\)/.test(said)) {
       await fetchInto(db, repository, skelcrewClone, thread.branch);
       const at = await git(skelcrewClone, "rev-parse", `refs/heads/${thread.branch}`);
       refused = `${name}'s push was refused. ${branchMoved(thread.branch, at)}`;
       why = "its push was refused, as its branch moved on the forge";
+      const { seen } = readThread(db, folder);
+      told = seen?.includes(headSeen(at)) ?? false;
+      if (seen !== null && !told && !signal.aborted)
+        record(db, folder, { seen: [...seen, headSeen(at)] });
     }
     if (refused === null) throw error;
-    if (!signal.aborted)
+    if (!signal.aborted && !told)
       queueMessage(db, sessions, folder, {
         sender: "skelcrew",
         text: refused,

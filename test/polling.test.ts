@@ -736,6 +736,34 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
     expect(thread()).toMatchObject({ status: "working", needs_you: 0 });
   }, 60_000);
 
+  // A submit while the moved branch's notice is being made drops that notice, as it is about
+  // the older round. The new round's push can fail without telling the builder, so the commit
+  // stays unhandled and a later poll tells it.
+  test("a branch-moved notice dropped by a submit is told once the new round's push fails", async () => {
+    const work = await approvedApp12();
+    const merged = moveBranch(work);
+    // A failed check's log holds the notice back after the branch was fetched.
+    writeFileSync(join(plugin, "hold-log"), "");
+    const moved = prItem("7", "Add export", {
+      head: merged,
+      reviews: [skelReview],
+      checks: [approved, check(901, "failed")],
+    });
+    changes([issue12(), moved]);
+    await until(() => existsSync(join(plugin, "held-log")));
+    // The forge's git is out of reach, so the new round's push fails, telling nobody.
+    const bare = join(home, "github", "simon", "app.git");
+    renameSync(bare, `${bare}.away`);
+    submitRound2();
+    await until(() => read(join(data(), "threads", "app-12.log")).includes("the round failed"));
+    rmSync(join(plugin, "hold-log"));
+    await morePolls();
+    expect(typed()).not.toContain("moved on the forge");
+    // Once git reaches the forge again, a poll tells the builder.
+    renameSync(`${bare}.away`, bare);
+    await until(() => typed().includes(`moved on the forge to ${merged}`));
+  }, 60_000);
+
   // The builder can submit before a poll sees the branch move. git refuses the push, as it is
   // never forced, and the builder is told what to merge.
   test("a round pushed after the branch moved on the forge is refused, and its builder is told to merge it", async () => {
