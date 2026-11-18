@@ -3,7 +3,7 @@
 // itself. Without an armed plan nothing merges by itself.
 import type { Database } from "bun:sqlite";
 import { userInfo } from "node:os";
-import { forgeOf, mergePr } from "../plugins/ask.ts";
+import { forgeOf, mergePr, postReview } from "../plugins/ask.ts";
 import { mergeStuck, mergeWaitsOn, type PullRequest } from "./decide.ts";
 import { endThread } from "./events.ts";
 import { noteForLead } from "./messages.ts";
@@ -106,11 +106,17 @@ export function cancelMerge(db: Database, thread: Thread): string {
 // it could no longer stop the merge.
 const merging = new Set<string>();
 
+// The approved commits whose PR already has the review saying who asked to merge it when ready,
+// as folder and commit.
+const recorded = new Set<string>();
+
 // Merges an armed thread's PR once it is ready, from a poll, with the PR as its forge just
 // returned it. It merges at the approved commit, so a push after the approval is never merged,
-// and posts a comment saying it merged as you asked. Then it ends the thread, and the lead's
-// one note says it merged when ready. Otherwise it saves what the merge waits on, for the
-// thread's row, and tells the lead once per review round when that needs someone to act.
+// after a review on the PR saying who asked for it. Whether the PR merges cleanly is the
+// forge's to say as it merges: a refusal keeps the plan armed, with the forge's reason as what
+// it waits on. Once merged, it ends the thread, and the lead's one note says it merged when
+// ready. Otherwise it saves what the merge waits on, for the thread's row, and tells the lead
+// once per review round when that needs someone to act.
 export async function mergeIfReady(
   db: Database,
   sessions: string,
@@ -128,14 +134,30 @@ export async function mergeIfReady(
       month: "long",
       year: "numeric",
     });
-    const comment = `Merged when ready, as asked by ${thread.merge_by ?? "you"} on ${asked}.`;
     const repository = repositoryOf(db, thread);
-    // Marked before the forge is asked, with nothing waited on since the plan was read, so a
-    // cancel either came first and this never merges, or comes after and is refused.
+    // The PR records who asked, with a review on the approved commit, the call every forge
+    // answers. It goes before the merge, as a merged PR may take no review, and once for each
+    // commit while the daemon runs, so a merge the forge keeps refusing doesn't post it again
+    // at every poll.
+    const key = `${folder} ${approved}`;
+    if (!recorded.has(key)) {
+      const body = `Merging when ready, as asked by ${thread.merge_by ?? "you"} on ${asked}.`;
+      await postReview(db, repository, {
+        pr: thread.pr,
+        commit: approved,
+        verdict: "approve",
+        body,
+      });
+      recorded.add(key);
+    }
+    // The review took a while, and a cancel meanwhile must stop the merge. Read again, then
+    // marked as merging with nothing waited on in between, so a cancel either came first and
+    // this never merges, or comes after and is refused.
+    if (readThread(db, folder).merge_plan !== "armed") return;
     merging.add(folder);
     let refused: string | null;
     try {
-      refused = await mergePr(db, repository, { pr: thread.pr, commit: approved, comment });
+      refused = await mergePr(db, repository, { pr: thread.pr, commit: approved });
     } finally {
       merging.delete(folder);
     }

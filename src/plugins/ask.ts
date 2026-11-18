@@ -234,13 +234,12 @@ export async function openPr(
 
 // Merges the PR on the forge, for m on the screen and a merge when ready, but only while its
 // head is still the commit you saw approved, so a push after you looked is never merged unseen.
-// A comment, when there is one, goes on the PR once it merged, saying why it merged. Returns
-// null once merged, or the forge's reason for refusing, such as a conflict or a rule on the
-// branch.
+// Returns null once merged, or the forge's reason for refusing, such as a conflict or a rule on
+// the branch.
 export async function mergePr(
   db: Database,
   repository: Repository,
-  merge: { pr: number; commit: string; comment?: string },
+  merge: { pr: number; commit: string },
 ): Promise<string | null> {
   const answer = await callPlugin(
     db,

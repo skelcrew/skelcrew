@@ -1536,10 +1536,36 @@ echo "Not logged in"; exit 1`,
       expect(thread().merge_plan).toBe("armed");
       expect(leadTyped().split("still waits to merge when ready").length - 1).toBe(1);
 
-      // Green at the approved head, it merges that commit, with a comment saying who asked.
+      // Green at the approved head, it first posts a review on that commit saying who asked.
+      // The forge decides whether it merges cleanly: a refusal keeps it armed, and says why.
+      const records = () =>
+        asked(plugin).filter(
+          (q) => q.ask === "review" && String(q.body).startsWith("Merging when ready"),
+        );
+      answer(plugin, "merge pr", { refused: "Pull Request is not mergeable" });
+      pr({ head, reviews: [skelReview], checks: [approved, check(6, "passed")] });
+      await until(
+        () => thread().merge_waits === "the forge, which refused: Pull Request is not mergeable",
+      );
+      await morePolls();
+      expect(thread().merge_plan).toBe("armed");
+      expect(merges().length).toBeGreaterThan(1);
+      expect(merges()[0]).toMatchObject({
+        ask: "merge pr",
+        repository: "simon/app",
+        pr: 7,
+        commit: head,
+      });
+      // Posted once for the commit, however often the forge refuses.
+      expect(records()).toHaveLength(1);
+      expect(records()[0]).toMatchObject({ pr: 7, commit: head, verdict: "approve" });
+      expect(String(records()[0]?.body)).toStartWith(
+        `Merging when ready, as asked by ${userInfo().username} on `,
+      );
+
       // While the forge merges, a cancel is refused, as it could no longer stop the merge.
       writeFileSync(join(plugin, "hold-merge-pr"), "");
-      pr({ head, reviews: [skelReview], checks: [approved, check(6, "passed")] });
+      answer(plugin, "merge pr", null);
       await until(() => existsSync(join(plugin, "held-merge-pr")));
       expect(
         await askOn(join(home, "run", "skelcrew.sock"), {
@@ -1549,16 +1575,6 @@ echo "Not logged in"; exit 1`,
         }),
       ).toEqual({ error: "app-12 is merging on its forge right now, so it can't be cancelled" });
       rmSync(join(plugin, "hold-merge-pr"));
-      await until(() => merges().length === 1);
-      expect(merges()[0]).toMatchObject({
-        ask: "merge pr",
-        repository: "simon/app",
-        pr: 7,
-        commit: head,
-      });
-      expect(String(merges()[0]?.comment)).toStartWith(
-        `Merged when ready, as asked by ${userInfo().username} on `,
-      );
       await until(() => thread().status === "done" && !existsSync(clone()));
       await until(() =>
         leadTyped().includes("app-12 is done: #7 merged into main when ready, as the human asked"),
