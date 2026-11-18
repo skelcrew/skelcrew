@@ -95,12 +95,16 @@ async function endBuilder(db: Database, sessions: string, folder: string, drop: 
   const before = endsUnderWay.get(folder) ?? Promise.resolve();
   const end = pauseDelivering(db, folder, async () => {
     await before;
-    const { host, id } = await builderSession(db, sessions, readThread(db, folder));
+    const thread = readThread(db, folder);
+    const { host, id } = await builderSession(db, sessions, thread);
     // Claude Code can outlive the end of its session for a few seconds, still writing in the
     // clone.
     await stopSession(host, id);
     if (drop) stopDelivering(db, folder, true);
-    record(db, folder, { host: null, host_id: null });
+    // Only the session it ended is forgotten: a builder started meanwhile keeps its own.
+    const now = readThread(db, folder);
+    if (now.host === thread.host && now.host_id === thread.host_id)
+      record(db, folder, { host: null, host_id: null });
   });
   const settled = end.then(
     () => {},
@@ -116,9 +120,10 @@ async function endBuilder(db: Database, sessions: string, folder: string, drop: 
 // The end of each thread's builder under way, by its folder, which settles once it is over.
 const endsUnderWay = new Map<string, Promise<void>>();
 
-// The threads sc stop is ending the builder of, by folder. A builder may submit while it exits,
-// which is refused, as the thread is about to be stopped.
-export const stopping = new Set<string>();
+// The stops under way, by the folder of the thread whose builder they end, each settling once it
+// is over. A builder may submit while it exits, which is refused, as its thread is about to be
+// stopped.
+export const stopping = new Map<string, Promise<void>>();
 
 // Stops the thread for sc stop: ends its builder as a merge would, then marks it stopped, but
 // keeps its clone, branch and PR, so sc start can bring the builder back where it was. A submit,
@@ -145,27 +150,41 @@ export async function stopThread(db: Database, sessions: string, thread: Thread)
 // ended, and its builder's submits are refused meanwhile. One whose host can't be reached, or
 // won't end it, may still run, so the thread stays as it was: its round and any wake after a
 // usage limit carry on, its messages wait for it, and this throws why. `drop` drops its
-// messages once it has ended, for a thread that is going.
-async function stopLiveThread(
+// messages once it has ended, for a thread that is going. A second stop or sc rm while one is
+// under way joins it, and gets its outcome, rather than ending the builder again.
+function stopLiveThread(
   db: Database,
   sessions: string,
   thread: Thread,
   drop: boolean,
   why: string,
 ): Promise<void> {
-  // A second stop or sc rm while one is under way is refused, as the first may still fail.
-  if (stopping.has(thread.folder))
-    throw new Error(`${threadName(db, thread)} is being stopped already`);
-  stopping.add(thread.folder);
+  const under = stopping.get(thread.folder);
+  if (under) return under;
+  const stop = stopNow(db, sessions, thread, drop, why).finally(() => {
+    if (stopping.get(thread.folder) === stop) stopping.delete(thread.folder);
+  });
+  stopping.set(thread.folder, stop);
+  return stop;
+}
+
+// Ends the builder and marks the thread stopped, for stopLiveThread. The thread is marked only if
+// no builder has started on it since: one whose end cleared its session and found no other.
+async function stopNow(
+  db: Database,
+  sessions: string,
+  thread: Thread,
+  drop: boolean,
+  why: string,
+): Promise<void> {
   try {
     await endBuilder(db, sessions, thread.folder, drop);
   } catch (error) {
     resumeRound(db, sessions, thread.folder);
     if (thread.erred && thread.limited) wakeAfterLimit(db, sessions, thread.folder);
     throw error;
-  } finally {
-    stopping.delete(thread.folder);
   }
+  if (readThread(db, thread.folder).host_id !== null) return;
   record(
     db,
     thread.folder,

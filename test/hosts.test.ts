@@ -635,7 +635,7 @@ process.exit(0);`,
   expect(said).toBe("paste keys end\n");
 }, 40_000);
 
-test("a second stop while one is under way is refused, so a restart after keeps its builder", () => {
+test("a second stop while one is under way joins it, and a restart after keeps its builder", () => {
   const fake = join(home, ".config", "skelcrew", "plugins", "fake");
   const said = runWithFakeHost(
     "sessions",
@@ -651,6 +651,7 @@ const first = stopThread(db, "unused", readThread(db, "app-12")).then(() => "sto
 const second = await stopThread(db, "unused", readThread(db, "app-12")).then(() => "stopped", (error) => error.message);
 console.log(second);
 console.log(await first);
+console.log(fs.readFileSync(${JSON.stringify(join(fake, "asked"))}, "utf8").split("\\n").filter((line) => line.includes('"end"')).length);
 // It starts again on the host, and nothing of the stops changes it after.
 fs.rmSync(${JSON.stringify(join(fake, "slow-end"))});
 const id = await run();
@@ -661,7 +662,8 @@ console.log(after.status, after.host, await hasSession(host, id));
 process.exit(0);`,
     { host: "fake", host_id: "fake-app-12" },
   );
-  expect(said).toBe("simon/app-12 is being stopped already\nstopped\nworking fake true\n");
+  // The host was asked to end it once, and both stops say it stopped.
+  expect(said).toBe("stopped\nstopped\n1\nworking fake true\n");
 }, 40_000);
 
 test("a question asked while the host is still on the last look before a paste stops the paste", async () => {
@@ -680,3 +682,26 @@ test("a question asked while the host is still on the last look before a paste s
   expect(asked()).not.toContain("paste");
   expect(read("received.txt")).toBe("");
 });
+
+test("a builder started while a slow stop ends the one before keeps its host, and its thread runs", () => {
+  const fake = join(home, ".config", "skelcrew", "plugins", "fake");
+  const said = runWithFakeHost(
+    "sessions",
+    `const fs = require("node:fs");
+const { record } = await import(${JSON.stringify(source("flow/thread.ts"))});
+const host = (await builderSession(db, "unused", readThread(db, "app-12"))).host;
+const labels = { repository: "simon/app", role: "builder", task: "app-12" };
+await startSession(host, "app-12", { folder: ${JSON.stringify(home)}, command: ["sleep", "30"], env: {}, labels });
+fs.writeFileSync(${JSON.stringify(join(fake, "slow-end"))}, "");
+const stopped = stopThread(db, "unused", readThread(db, "app-12"));
+// A new builder's session is saved while the host still ends the old one.
+await Bun.sleep(500);
+record(db, "app-12", { host_id: "fake-new" });
+await stopped;
+const after = readThread(db, "app-12");
+console.log(after.status, after.host, after.host_id);
+process.exit(0);`,
+    { host: "fake", host_id: "fake-app-12" },
+  );
+  expect(said).toBe("working fake fake-new\n");
+}, 40_000);
