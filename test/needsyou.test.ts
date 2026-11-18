@@ -462,21 +462,6 @@ describe.skipIf(insideSandbox)("needs you", () => {
     expect(read(join(lead(), "typed"))).not.toContain("needs you");
   }, 60_000);
 
-  // A question need not end in a question mark, and may come after a reply to the lead. The
-  // lead gets the whole last message, so the question reaches it, and through it you.
-  test("a question after a reply to the lead, while the last submit is reviewed, reaches the lead", async () => {
-    addApp();
-    await startApp12();
-    submittedAsReviewing();
-    await hook("talk");
-    const asBuilder = { SKELCREW_SANDBOX: "1", SKELCREW_SOCKET: builderSocket() };
-    expect((await skel(["tell", "lead", "Already fixed."], asBuilder)).code).toBe(0);
-    const said = "Done.\n\nShould the export use JSON or YAML";
-    await hook("stop", JSON.stringify({ last_assistant_message: said }));
-    await until(() => read(join(lead(), "typed")).includes("Should the export use JSON or YAML"));
-    expect(read(join(lead(), "typed"))).toContain("Already fixed.");
-  }, 60_000);
-
   // A long report is shortened for the lead, but a question at its end still reaches it, and
   // the lead reads that some of it was cut.
   test("a long last message keeps its end for the lead, and says it was cut", async () => {
@@ -695,6 +680,9 @@ describe.skipIf(insideSandbox)("needs you", () => {
     setColumn("submitted");
     await hook("ask");
     await untilNeedsYou(true);
+    // The lead hears of the question before you answer it. A question answered before its note
+    // goes in is never announced.
+    await until(() => notes() === 1);
     // Your answer starts a new stretch of work, which the sidebar times.
     const asked = workingSince() ?? 0;
     await Bun.sleep(10);

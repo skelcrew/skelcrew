@@ -27,7 +27,7 @@ export function nameRepositories(db: Database): void {
 }
 
 // A thread's own columns past the first few: what belongs to its agent. `submitted` is whether
-// the builder ran sc submit in its current turn, and `turn_ended` whether it ended a turn without
+// the builder ran sc submit in its current turn, `told_lead` whether it ran sc tell lead in it, and `turn_ended` whether it ended a turn without
 // one since, which waits on the lead. It is null on a thread an earlier release saved, until the
 // daemon moves its `stalled` over. The rest of the flags say why it needs you.
 // `noting` holds a note for the lead about that, kept until it is typed in, so one the daemon's
@@ -50,6 +50,7 @@ const threadColumns = {
   limit_reset: "INTEGER",
   turn_ended: "INTEGER",
   submitted: "INTEGER NOT NULL DEFAULT 0",
+  told_lead: "INTEGER NOT NULL DEFAULT 0",
   noting: "TEXT",
   started: "INTEGER",
   harness: "TEXT",
@@ -421,8 +422,9 @@ function prepareTables(db: Database): void {
     "CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY AUTOINCREMENT, text TEXT NOT NULL)",
   );
   // A note names its repository, and one from before each repository had its own lead names
-  // none until adoptOldLead gives it one. A note that a thread ended names that thread's
-  // folder in `ended`, so a thread starting over there can drop it before the lead hears it.
+  // none until adoptOldLead gives it one. A note that a thread ended or failed names that
+  // thread's folder in `ended`, so a thread starting over there can drop it before the lead
+  // hears it.
   for (const column of ["owner", "repo", "ended"])
     if (!db.query("SELECT 1 FROM pragma_table_info('notes') WHERE name = ?").get(column))
       db.run(`ALTER TABLE notes ADD COLUMN ${column} TEXT`);
@@ -441,6 +443,10 @@ function prepareTables(db: Database): void {
     db.run("DROP TABLE notes");
     db.run("ALTER TABLE notes_new RENAME TO notes");
   }
+  // `urgent` marks a note the human may need soon, such as a builder's message, which goes
+  // ahead of Skelcrew's routine notes when several wait for the lead.
+  if (!db.query("SELECT 1 FROM pragma_table_info('notes') WHERE name = 'urgent'").get())
+    db.run("ALTER TABLE notes ADD COLUMN urgent INTEGER NOT NULL DEFAULT 0");
   // A lead table means a database from before each repository had its own lead.
   if (db.query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'lead'").get())
     adoptOldLead(db);
