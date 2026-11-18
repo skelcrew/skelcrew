@@ -32,6 +32,8 @@ const keyNames: Record<string, string> = {
 };
 const esc = "\x1b";
 const keyPattern = new RegExp(`${esc}\\[[AB]|${esc}O[AB]|[\\s\\S]`, "g");
+// The start of an escape sequence at the end of a read, whose end may come in the next one.
+const endOfSequence = new RegExp(`${esc}[[O]?$`);
 
 // Runs the list in your terminal for the repository named by its owner/name, until you press q.
 // `agents` is the sessions' tmux server. It looks again each second, and writes only when what
@@ -54,8 +56,10 @@ export async function runList(agents: string, repository: string): Promise<void>
   let working = false;
   let attached = false;
   let lastFrame = "";
-  // Keys your terminal sent that the list hasn't acted on yet, oldest first.
+  // Keys your terminal sent that the list hasn't acted on yet, oldest first, and the start of an
+  // escape sequence whose end hasn't come yet.
   const typed: string[] = [];
+  let partial = "";
   const fixed = process.env.SKELCREW_FIXED_LOAD;
   let load = fixed ? paint(grey, removeControlCodes(fixed)) : "";
   let sample = cpuSample(cpus());
@@ -147,7 +151,8 @@ export async function runList(agents: string, repository: string): Promise<void>
   const attach = async (session: string) => {
     attached = true;
     process.stdin.pause();
-    const after = typed.splice(0).join("");
+    const after = typed.splice(0).join("") + partial;
+    partial = "";
     if (after) typeKeys(agents, session, after);
     giveBack();
     const failed = await attachSession(agents, session);
@@ -277,9 +282,25 @@ export async function runList(agents: string, repository: string): Promise<void>
     }
     acting = false;
   };
-  process.stdin.on("data", (bytes) => {
-    for (const [sent] of bytes.toString().matchAll(keyPattern)) typed.push(sent);
+  // An arrow's escape sequence can come in two reads, as over ssh. So a read that ends partway
+  // into one keeps that end until the next read completes it. Esc alone looks the same, so what
+  // is kept counts as typed once no more comes for a moment, as terminals and editors do.
+  let flush: ReturnType<typeof setTimeout> | undefined;
+  const take = (text: string) => {
+    for (const [sent] of text.matchAll(keyPattern)) typed.push(sent);
     void act();
+  };
+  process.stdin.on("data", (bytes) => {
+    clearTimeout(flush);
+    const text = partial + bytes.toString();
+    partial = text.match(endOfSequence)?.[0] ?? "";
+    take(text.slice(0, text.length - partial.length));
+    if (partial)
+      flush = setTimeout(() => {
+        const kept = partial;
+        partial = "";
+        take(kept);
+      }, 100);
   });
   process.on("SIGWINCH", () => {
     lastFrame = "";

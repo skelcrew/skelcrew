@@ -382,6 +382,19 @@ test("an agent that ends detaches only the list's own client", async () => {
   expect(clients()).toBe("app-7");
 });
 
+// Over ssh an arrow's escape sequence can arrive in two reads.
+test("an arrow whose escape sequence comes in two pieces still moves", async () => {
+  await open();
+  type("\x1b[");
+  type("B");
+  await until(() => here().startsWith("▸ ○ app-9"), "the row below");
+  // Esc alone is still a key, which moves nothing.
+  type("\x1b");
+  await Bun.sleep(300);
+  type("\x1b[A");
+  await until(() => here().startsWith("▸ ● app-12"), "the row above");
+});
+
 test("Enter on the lead attaches to it", async () => {
   await open();
   for (const _ of [1, 2, 3]) press("Up");
