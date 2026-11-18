@@ -71,18 +71,28 @@ export const headCommit = (db: Database, repository: Repository, folder: string)
 
 // Resets Skelcrew's clone in the folder to the latest default branch, so the lead reads current
 // code and builders, whose origin it is, fetch the default branch as the remote has it.
-// Returns the commit the clone was on and the one it is on now, so a move can be logged. Either
-// is empty while there is no commit: the clone's before its first, the remote's while the
-// repository has none, which leaves the clone as it is.
+// Returns the commit the clone was on and the one it is on now, so a move can be logged. Both
+// are empty while the repository has no commits, which leaves the clone as it is, and the
+// first is empty for a clone made before its first commit.
 export async function updateClone(
   db: Database,
   repository: Repository,
   folder: string,
 ): Promise<{ before: string; after: string }> {
-  const before = await headCommit(db, repository, folder);
   // Fetching HEAD follows the default branch even after it is renamed.
-  if (!(await fetchRef(db, repository, folder, "HEAD"))) return { before, after: "" };
-  const after = await git(db, repository, ["-C", folder, "rev-parse", "FETCH_HEAD"]);
+  if (!(await fetchRef(db, repository, folder, "HEAD"))) return { before: "", after: "" };
+  // Every poll gets here, so both commits are read with one git. Only a clone with no commit
+  // of its own makes it fail, and then only the fetched one is read.
+  const [before = "", after = ""] = await git(db, repository, [
+    "-C",
+    folder,
+    "rev-parse",
+    "HEAD",
+    "FETCH_HEAD",
+  ]).then(
+    (both) => both.split("\n"),
+    async () => ["", await git(db, repository, ["-C", folder, "rev-parse", "FETCH_HEAD"])],
+  );
   // A clone of an empty repository is on the branch the remote's HEAD named then, which the
   // first push can make another, and threads take the clone's branch as their PR's base. So
   // the clone first moves to the default branch the remote names now.
