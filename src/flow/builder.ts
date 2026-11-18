@@ -439,9 +439,8 @@ export async function startBuilder(db: Database, sessions: string, thread: Threa
   const clone = cloneOf(thread);
   const stored = thread.session;
   const role = agentRole("builder", thread);
-  // The round limit isn't needed until the first review, but is read now, so a bad one fails
-  // the thread with the reason as it starts, rather than leave it working toward a review that
-  // can't run.
+  // The round limit is checked as the builder starts, so a bad one fails the new thread with
+  // the reason, rather than only its first review once the builder has worked a round.
   roundLimit(thread);
   const harness = stored === null ? harnessNamed(role.harness) : builderHarness(thread);
   const resume = stored === null ? null : harness.saved(thread.folder, clone, stored);
