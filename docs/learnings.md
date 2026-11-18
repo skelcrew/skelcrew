@@ -78,7 +78,19 @@ that covers the code you are about to write.
 
   In 2.1.325, `claude daemon run` quits when agent view is off, so that service never starts.
   A lead already running with it on can't be restarted safely: Skelcrew would resume the id it
-  stored, not the conversation in use.
+  stored, not the conversation in use. So Simon chose to leave such leads running, with no code
+  to restart them. Each gets agent view off at its next start. Upgrading is one step by hand,
+  done once for each such lead, before its next start:
+  1. Find the conversation in use: the newest `.jsonl` under the lead's
+     `~/.local/share/skelcrew/claude/<lead>/projects/<folder>/`.
+  2. Set the repository's `lead_session` in `~/.local/share/skelcrew/skelcrew.db` to that file's
+     name without `.jsonl`:
+     `UPDATE repositories SET lead_session = '<id>' WHERE owner = '<owner>' AND repo = '<repo>'`.
+  3. Exit the lead with `/exit` and open it again with `sc`. It comes back on that conversation,
+     with agent view off, its model and its instructions.
+
+  Skipping the step brings the lead back on the conversation Skelcrew stored, which may be an
+  older one.
 - **Claude Code can outlive SIGTERM for a few seconds.** Wait for it to exit before
   removing the thread's clone or anything else it uses.
 - **`Stop` runs on neither an error nor Esc.** Its hooks reference says `Stop` "does not run if
