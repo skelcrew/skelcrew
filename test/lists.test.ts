@@ -346,6 +346,19 @@ ${threadSql({ task: "17", status: "waiting", title: "Done", needs_you: 1, verdic
   expect(threads[0]?.rows[2]?.session).toBe("app-t1");
 });
 
+test("a thread with a merge when ready says so last, with what it waits on", () => {
+  const sql = `${repository}
+${threadSql({ task: "12", status: "waiting", merge_plan: "armed", merge_waits: "its checks" })}
+${threadSql({ task: "13", status: "failed", merge_plan: "armed", merge_waits: "its checks" })}
+${threadSql({ task: "14", status: "waiting", merge_plan: "armed" })}`;
+  const rows = after(sql).threads.flatMap((group) => group.rows);
+  expect(rows.map((row) => [row.name, row.ends.at(-1)?.[0]])).toEqual([
+    ["app-13", "merge when ready · waits on its thread, which failed"],
+    ["app-14", "merge when ready"],
+    ["app-12", "merge when ready · waits on its checks"],
+  ]);
+});
+
 test("while a review runs, a thread's harness is its reviewer's", () => {
   const sql = `${repository} ${threadSql({ task: "12", status: "waiting", harness: "claude", reviewing: "abc", reviewer: "codex" })}`;
   expect(shape(after(sql).threads)[0]?.[1]).toEqual([

@@ -1,0 +1,132 @@
+// Merge when ready: a merge you arm once, from your own terminal, so Skelcrew merges a thread's
+// PR by itself as soon as it is approved and green. Arming it, cancelling it, and the merge
+// itself. Without an armed plan nothing merges by itself.
+import type { Database } from "bun:sqlite";
+import { userInfo } from "node:os";
+import { forgeOf, mergePr } from "../plugins/ask.ts";
+import { mergeStuck, mergeWaitsOn, type PullRequest } from "./decide.ts";
+import { endThread } from "./events.ts";
+import { noteForLead } from "./messages.ts";
+import { findRepository, repositoryAt } from "./repo.ts";
+import { lastPushed } from "./round.ts";
+import { readThread, record, repositoryOf, Thread, threadName, threadOn } from "./thread.ts";
+
+// Returns the thread a merge when ready names: by its task, such as app-12, or by its PR's
+// number in the repository `repo` names, or else the one of the checkout sc ran in, `from`.
+// Throws when there is none, or its thread is done, as a done thread has nothing to merge.
+export function threadToMerge(
+  db: Database,
+  which: {
+    repo?: string | undefined;
+    from?: string | undefined;
+    task?: string | undefined;
+    pr?: number | undefined;
+  },
+): Thread {
+  const repository =
+    which.repo !== undefined
+      ? findRepository(db, which.repo)
+      : which.from !== undefined
+        ? repositoryAt(db, which.from)
+        : undefined;
+  if (!repository)
+    throw new Error(
+      "name the thread, such as app-12, or run sc merge in a checkout of its repository",
+    );
+  const { owner, repo, name } = repository;
+  // A PR's number names the thread that opened it, the newest one should a task have had two.
+  let thread: Thread | null = null;
+  if (which.pr !== undefined) {
+    const row = db
+      .query(
+        "SELECT * FROM task_threads WHERE owner = ? AND repo = ? AND pr = ? ORDER BY rowid DESC",
+      )
+      .get(owner, repo, which.pr);
+    thread = Thread.nullable().parse(row);
+    if (!thread) throw new Error(`Skelcrew has no thread with PR #${which.pr} in ${name}`);
+  } else if (which.task !== undefined) {
+    thread = threadOn(db, name, which.task);
+    if (!thread) throw new Error(`there is no thread ${name}-${which.task}`);
+  }
+  if (!thread) throw new Error("name the thread, such as app-12, or its PR, such as #7");
+  if (thread.status === "done") throw new Error(`${threadName(db, thread)} is done already`);
+  return thread;
+}
+
+// Arms a merge when ready on the thread, for sc merge --when-ready, which only you can run, at
+// your terminal, and returns what to say. It saves who armed it and when, for the PR's comment
+// once it merges. Refuses a repository with no forge, as Skelcrew merges no branch there: you
+// merge it yourself once it is approved.
+export function armMerge(db: Database, thread: Thread): string {
+  const name = threadName(db, thread);
+  if (forgeOf(db, repositoryOf(db, thread)) === null)
+    throw new Error(
+      `${name}'s repository has no forge, so Skelcrew can't merge it when ready. Once it is approved, merge its branch ${thread.branch} yourself.`,
+    );
+  if (thread.merge_plan === "armed") return `${name} already merges when it is ready.`;
+  const plan = {
+    merge_plan: "armed" as const,
+    merge_by: userInfo().username,
+    merge_at: Date.now(),
+    merge_waits: null,
+    merge_noted: null,
+  };
+  record(db, thread.folder, plan, "you armed a merge when ready");
+  return `${name} merges once it is approved and green. sc merge --cancel ${name} stops that.`;
+}
+
+// Drops the thread's merge when ready, and returns what to say. Cancelling is always safe, so
+// the lead may do it too, and nothing asks first.
+export function cancelMerge(db: Database, thread: Thread): string {
+  const name = threadName(db, thread);
+  if (thread.merge_plan === null) return `${name} had no merge when ready.`;
+  const none = { merge_plan: null, merge_waits: null, merge_noted: null };
+  record(db, thread.folder, none, "its merge when ready was cancelled");
+  return `${name} won't merge by itself. It waits for you to merge it.`;
+}
+
+// Merges an armed thread's PR once it is ready, from a poll, with the PR as its forge just
+// returned it. It merges at the approved commit, so a push after the approval is never merged,
+// and posts a comment saying it merged as you asked. Then it ends the thread, and the lead's
+// one note says it merged when ready. Otherwise it saves what the merge waits on, for the
+// thread's row, and tells the lead once per review round when that needs someone to act.
+export async function mergeIfReady(
+  db: Database,
+  sessions: string,
+  folder: string,
+  pr: PullRequest,
+): Promise<void> {
+  const thread = readThread(db, folder);
+  if (thread.merge_plan !== "armed" || thread.status === "done") return;
+  const name = threadName(db, thread);
+  const approved = lastPushed(thread);
+  let waits = mergeWaitsOn(thread, pr, approved);
+  if (waits === null && approved !== null && thread.pr !== null) {
+    const asked = new Date(thread.merge_at ?? Date.now()).toLocaleDateString("en-GB", {
+      day: "numeric",
+      month: "long",
+      year: "numeric",
+    });
+    const comment = `Merged when ready, as asked by ${thread.merge_by ?? "you"} on ${asked}.`;
+    const repository = repositoryOf(db, thread);
+    const refused = await mergePr(db, repository, { pr: thread.pr, commit: approved, comment });
+    if (refused === null) {
+      await endThread(
+        db,
+        sessions,
+        thread,
+        `PR #${thread.pr} was merged when ready`,
+        `is done: #${thread.pr} merged into ${pr.base} when ready, as the human asked`,
+      );
+      return;
+    }
+    waits = `the forge, which refused: ${refused}`;
+  }
+  // What it waits on changes only now and then, so the log isn't filled with every poll.
+  if (waits !== thread.merge_waits)
+    record(db, folder, { merge_waits: waits }, `its merge when ready waits on ${waits}`);
+  if (mergeStuck(thread, waits)) {
+    record(db, folder, { merge_noted: thread.review_round });
+    noteForLead(db, sessions, thread, `${name} still waits to merge when ready, on ${waits}.`);
+  }
+}

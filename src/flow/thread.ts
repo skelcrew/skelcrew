@@ -139,6 +139,14 @@ export const Thread = z.object({
   // What the builder is doing, as its harness's hooks and its screen tell. Null until its first
   // hook runs, and in a row from before Skelcrew kept it.
   state: AgentState.nullable(),
+  // A merge when ready you armed, so Skelcrew merges the PR once it is approved and green, or
+  // null with none, and then nothing merges by itself. Who armed it and when, what it waits on
+  // as the last poll found, and the review round the lead last heard it still waits after.
+  merge_plan: z.enum(["armed"]).nullable(),
+  merge_by: z.string().nullable(),
+  merge_at: z.number().nullable(),
+  merge_waits: z.string().nullable(),
+  merge_noted: z.number().nullable(),
 });
 export type Thread = z.infer<typeof Thread>;
 

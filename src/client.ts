@@ -138,6 +138,32 @@ export async function startOrMerge(asked: DaemonRequest): Promise<void> {
   await request(asked);
 }
 
+// Has the daemon arm or cancel a merge when ready, for sc merge, and returns what to say. The
+// thread is named by its repository and task, or by its PR's number, with `from` naming the
+// repository of the checkout sc ran in. Only your own socket arms one.
+export async function planMerge(
+  command: "merge when ready" | "merge cancel",
+  which: { repo?: string; task?: string; pr?: number; from?: string },
+): Promise<string> {
+  const reply = await request({ command, ...which });
+  return checkReply(z.object({ said: z.string() }), reply).said;
+}
+
+// Asks the daemon which thread and PR sc merge --when-ready names, with its title, so it can
+// ask you about it before arming.
+export async function previewMerge(which: {
+  repo?: string;
+  task?: string;
+  pr?: number;
+  from?: string;
+}) {
+  const reply = await request({ command: "merge preview", ...which });
+  return checkReply(
+    z.object({ thread: z.string(), pr: z.number().nullable(), title: z.string().nullable() }),
+    reply,
+  );
+}
+
 // Has the daemon stop a thread, for sc stop, and returns the thread's name. The daemon
 // answers once the builder has exited.
 export async function stopOn(repository: string, task: string): Promise<string> {

@@ -257,8 +257,10 @@ function pr(given: {
   comments?: { id: string; author: object | null; text: string }[];
   checks?: object[];
   labeled?: boolean;
+  head?: string;
 }): void {
   const pr7 = prItem("7", "Add export", {
+    ...(given.head ? { head: given.head } : {}),
     state: given.state ?? "open",
     conflicts: given.conflicts ?? false,
     base: given.base ?? "main",
@@ -1426,4 +1428,134 @@ echo "Not logged in"; exit 1`,
     expect(copied().rows).toEqual([]);
     expect(read(join(victim, "keep"))).toBe("mine\n");
   }, 60_000);
+
+  // A merge when ready is armed only by you, at your own terminal, after a y.
+  describe("merge when ready", () => {
+    const hashed = (name: string) =>
+      new Bun.CryptoHasher("sha256").update(name).digest("hex").slice(0, 16);
+    const runDir = () => join(home, "run", "skelcrew");
+    const leadSocket = () => join(runDir(), "leads", hashed("simon/app"), "skelcrew.sock");
+    const builderSocket = () => join(runDir(), "threads", hashed("app-12"), "skelcrew.sock");
+    const question = "Merge #7 (app-12 Add export) when it's approved and green? [y/N]";
+    const merges = () => asked(plugin).filter((q) => q.ask === "merge pr");
+    const leadTyped = () => read(join(data(), "claude", leadName, "typed"));
+    // The commit Skelcrew pushed and its reviewer approved, as Skelcrew's clone keeps it.
+    const pushed = () =>
+      Bun.spawnSync(
+        [
+          "git",
+          "-C",
+          join(data(), "repos", "simon", "app"),
+          "rev-parse",
+          "refs/skelcrew/threads/app-12",
+        ],
+        { stdout: "pipe" },
+      )
+        .stdout.toString()
+        .trim();
+    const arm = () =>
+      runSkelInTerminal(socket, env(), ["merge", "--when-ready", "app-12"], question, "y");
+
+    test("n arms nothing, y arms it, and no agent or script without a terminal can", async () => {
+      await approvedApp12();
+      const kept = await runSkelInTerminal(
+        socket,
+        env(),
+        ["merge", "--when-ready", "app-12"],
+        question,
+        "n",
+      );
+      expect(kept).toContain("Nothing is armed: app-12 waits for you to merge it.");
+      expect(thread().merge_plan).toBeNull();
+
+      // Without a terminal nothing asks, so nothing arms.
+      const piped = Bun.spawnSync([process.execPath, main, "merge", "--when-ready", "app-12"], {
+        env: env(),
+        stdin: "pipe",
+        stderr: "pipe",
+      });
+      expect(piped.stderr.toString()).toContain("run it at your own terminal");
+      // The lead's and the builder's sockets don't take it at all.
+      const request = { command: "merge when ready", repo: "app", task: "12" };
+      const unknown = { error: "the daemon doesn't know that request" };
+      expect(await askOn(leadSocket(), request)).toEqual(unknown);
+      expect(await askOn(builderSocket(), request)).toEqual(unknown);
+      expect(thread().merge_plan).toBeNull();
+
+      expect(await arm()).toContain("app-12 merges once it is approved and green.");
+      expect(thread()).toMatchObject({ merge_plan: "armed", merge_by: userInfo().username });
+      // sc ps says so.
+      const ps = Bun.spawnSync([process.execPath, main, "ps"], { env: env(), stdout: "pipe" });
+      expect(ps.stdout.toString()).toContain("when ready");
+    }, 60_000);
+
+    test("an armed merge waits on a new push and failing CI, then merges the approved head", async () => {
+      await approvedApp12();
+      await arm();
+      const head = pushed();
+      expect(head).toMatch(/^[0-9a-f]{40}$/);
+      // A push nobody reviewed is never merged, and the lead hears it waits, once a round.
+      pr({ head: "b".repeat(40), reviews: [skelReview], checks: [approved] });
+      await until(() => thread().merge_waits === "a review of its newest commit");
+      await until(() =>
+        leadTyped().includes(
+          "app-12 still waits to merge when ready, on a review of its newest commit.",
+        ),
+      );
+      // Failing CI waits too.
+      pr({ head, reviews: [skelReview], checks: [approved, check(5, "failed")] });
+      await until(() => thread().merge_waits === "its failing checks to be fixed");
+      await morePolls();
+      expect(merges()).toEqual([]);
+      expect(thread().merge_plan).toBe("armed");
+      expect(leadTyped().split("still waits to merge when ready").length - 1).toBe(1);
+
+      // Green at the approved head, it merges that commit, with a comment saying who asked.
+      pr({ head, reviews: [skelReview], checks: [approved, check(6, "passed")] });
+      await until(() => merges().length === 1);
+      expect(merges()[0]).toMatchObject({
+        ask: "merge pr",
+        repository: "simon/app",
+        pr: 7,
+        commit: head,
+      });
+      expect(String(merges()[0]?.comment)).toStartWith(
+        `Merged when ready, as asked by ${userInfo().username} on `,
+      );
+      await until(() => thread().status === "done" && !existsSync(clone()));
+      await until(() =>
+        leadTyped().includes("app-12 is done: #7 merged into main when ready, as the human asked"),
+      );
+    }, 90_000);
+
+    test("an armed merge waits on a conflict, and once cancelled or its thread removed, never merges", async () => {
+      await approvedApp12();
+      await arm();
+      // A conflict waits for the builder to fix it in a new round.
+      pr({ head: pushed(), conflicts: true, reviews: [skelReview], checks: [approved] });
+      await until(() => thread().merge_waits === "its conflict with main to be fixed");
+      expect(merges()).toEqual([]);
+      // The lead may cancel without asking, as cancelling is always safe.
+      const cancel = { command: "merge cancel", repo: "app", task: "12" };
+      expect(await askOn(leadSocket(), cancel)).toEqual({
+        said: "app-12 won't merge by itself. It waits for you to merge it.",
+      });
+      expect(thread().merge_plan).toBeNull();
+      pr({ head: pushed(), reviews: [skelReview], checks: [approved] });
+      await morePolls();
+      expect(merges()).toEqual([]);
+
+      // Removing the thread disarms it.
+      await arm();
+      expect(thread().merge_plan).toBe("armed");
+      const removed = Bun.spawnSync([process.execPath, main, "rm", "app-12"], {
+        env: { ...env(), SKELCREW_SOCKET: leadSocket() },
+        stderr: "pipe",
+      });
+      expect(removed.stderr.toString()).toBe("");
+      await until(() => thread().status === "done");
+      expect(thread().merge_plan).toBeNull();
+      expect(merges()).toEqual([]);
+    }, 90_000);
+  });
 });

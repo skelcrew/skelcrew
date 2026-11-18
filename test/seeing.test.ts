@@ -194,6 +194,7 @@ describe("sc ps", () => {
         checks: null,
         review: null,
         waiting: 0,
+        merge: null,
       },
     ]);
     expect(JSON.parse((await skel(["ps", "--json", "app"])).out)).toHaveLength(2);
@@ -261,6 +262,7 @@ ${threadSql({ task: "3", status: "stopped", title: "Old", reviewing: "abc", queu
         checks: null,
         review: null,
         waiting: 0,
+        merge: null,
       },
     ]);
   });
@@ -704,6 +706,7 @@ describe("with a forge", () => {
       checks: "failed",
       review: { state: "changes", round: 3, at: "2025-11-16T11:00:00.000Z" },
       waiting: 0,
+      merge: null,
     });
     expect(json[0].review).toEqual({
       state: "reviewing",
