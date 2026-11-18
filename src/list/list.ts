@@ -35,7 +35,8 @@ const keyPattern = new RegExp(`${esc}\\[[AB]|${esc}O[AB]|[\\s\\S]`, "g");
 // The start of an escape sequence at the end of a read, whose end may come in the next one.
 const endOfSequence = new RegExp(`${esc}[[O]?$`);
 
-// Runs the list in your terminal for the repository named by its owner/name, until you press q.
+// Runs the list in your terminal for the repository named by its owner/name, until you press q,
+// then says your agents keep running.
 // `agents` is the sessions' tmux server. It looks again each second, and writes only when what
 // shows changed, as over a slow link each write costs. The load at the end of the bottom line is
 // read every 5 seconds. Tests pin it with SKELCREW_FIXED_LOAD, which Skelcrew itself never sets,
@@ -338,4 +339,5 @@ export async function runList(agents: string, repository: string): Promise<void>
   clearInterval(loads);
   process.stdin.pause();
   giveBack();
+  console.log("Your agents keep running. Run sc to come back.");
 }

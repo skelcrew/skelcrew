@@ -144,7 +144,7 @@ function taskRow(
       ? [`needs you: ${word}`, harness]
       : [word, harness, round, age, pr].filter(Boolean);
   // m merges the PR only at the commit Skelcrew's reviewer approved, and only while it is the
-  // head the forge last sent and CI passed there. The thread's own verdict and checks can lag
+  // head the forge last sent and CI passed there, as the forge's copy of the PR shows. The thread's own verdict and checks can lag
   // behind a push, so they never stand for a newer head. A forge too old to send the head
   // commit can't merge either, as it lacks the call too.
   let merge: Action | null = null;
@@ -158,7 +158,12 @@ function taskRow(
       };
     else if (approved !== copy.head)
       merge = { refused: `${named} has a newer commit than the one approved: wait for its review` };
-    else if (!ci.every((check) => check.state === "passed"))
+    // No checks in the copy is a pass only for a repository with no CI, which its polls saved
+    // as none. Otherwise CI may not have started on the approved commit yet.
+    else if (
+      (ci.length === 0 && thread.checks !== null) ||
+      !ci.every((check) => check.state === "passed")
+    )
       merge = { refused: `${named}'s checks haven't passed on the approved commit yet` };
     else
       merge = {

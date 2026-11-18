@@ -105,7 +105,6 @@ export async function showList(sessions: string, from?: string, tab = false): Pr
   if ("error" in lead.data) throw new Error(lead.data.error);
   if ("closed" in lead.data) return false;
   await runList(sessions, lead.data.repository);
-  console.log("Your agents keep running. Run sc to come back.");
   return true;
 }
 

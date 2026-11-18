@@ -27,11 +27,9 @@ let forge = "";
 
 const hint = "Skelcrew has no repositories yet. Run sc in a checkout of one.";
 // What Skelcrew says once you leave the screen.
-const left = "Your agents keep running. Run sc to come back.\n";
-// Returns what sc printed without the list, which it prints once as there is no terminal, and
-// which the list's own tests check.
-const withoutList = (out: string) =>
-  out.replace(/^ Skelcrew v[\s\S]*?\n(?=Your agents keep running)/m, "");
+// The start of the list, which sc prints once, and alone, when there is no terminal. The list's
+// own tests check the rest.
+const listTop = " Skelcrew v";
 const clone = (full: string) => join(home, ".local", "share", "skelcrew", "repos", full);
 const trustFile = () => join(home, ".config", "skelcrew", "trusted");
 
@@ -261,11 +259,11 @@ test("asks its forge nothing and fetches nothing for a repository Skelcrew has",
     writeFileSync(join(home, "calls"), "");
     const again = await skel([], "", checkout);
     expect(again.err).toBe("");
-    expect(withoutList(again.out)).toBe(left);
+    expect(again.out).toStartWith(listTop);
     expect(attached()).toBe(true);
   }
   writeFileSync(join(home, "calls"), "");
-  expect(withoutList((await skel(["--from", "simon/app"])).out)).toBe(left);
+  expect((await skel(["--from", "simon/app"])).out).toStartWith(listTop);
   expect(claimsAsked()).toEqual(["https://github.com/simon/app"]);
   expect(existsSync(join(clone("simon/app"), "NEWS"))).toBe(false);
 });
@@ -294,7 +292,7 @@ test("outside a repository, says how to bring one in, and attaches to nothing, w
   expect(claimsAsked()).toEqual([]);
   expect(calls()).not.toContain("daemon lead");
   await skel([], "", onGitHub("simon/app", "WRITE"));
-  expect(withoutList((await skel([])).out)).toBe(left);
+  expect((await skel([])).out).toStartWith(listTop);
 });
 
 test("--from brings in the repository it names, wherever Skelcrew runs", async () => {

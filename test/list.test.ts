@@ -22,6 +22,8 @@ let standIn: Server | null = null;
 let approved = "";
 // What the stand-in daemon was asked, as one line each.
 const asked: string[] = [];
+// A CI check that passed, as the forge's copy of a PR has it.
+const passed = [{ name: "test", id: "1", state: "passed" }];
 // What the stand-in daemon answers when asked for a lead, and to merge.
 let leadAnswer: object = {};
 let mergeAnswer: object = { merged: "Merged." };
@@ -59,7 +61,7 @@ beforeEach(() => {
   VALUES ('app', 'simon', 'app', 1, 's', 'claude', 'github');
 INSERT INTO repositories (name, owner, repo) VALUES ('site', 'simon', 'site');
 ${itemSql("app", "task", 31, "Export as CSV", "2026-11-05T10:00:00Z")}
-${itemSql("app", "pr", 41, "Fix the export header", "2026-11-06T10:00:00Z", { head: approved })}
+${itemSql("app", "pr", 41, "Fix the export header", "2026-11-06T10:00:00Z", { head: approved, checks: passed })}
 ${threadSql({ task: "7", title: "Login redirect", harness: "claude", started: Date.now() - 300_000 })}
 ${threadSql({ task: "12", title: "Rate limit the API", harness: "codex", asking: 1, needs_you: 1 })}
 ${threadSql({ task: "9", title: "Old work", status: "stopped" })}
@@ -153,8 +155,21 @@ test("a ready task whose PR moved past the approved commit, or whose checks ther
   });
 });
 
+// The thread can still say CI passed while the forge's copy of the approved head has no checks
+// yet. Only a repository with no CI, whose polls saved none, merges without them.
+test("a ready task whose approved head has no checks yet can't be merged, unless it has no CI", () => {
+  const unchecked = { head: approved, checks: [] };
+  sql(itemSql("app", "pr", 41, "Fix the export header", "2026-11-06T10:00:00Z", unchecked));
+  expect(rows().find((row) => row.name === "app-14")?.merge).toEqual({
+    refused: "app#41's checks haven't passed on the approved commit yet",
+  });
+  sql("UPDATE tasks SET checks = NULL WHERE task = '14';");
+  const merge = rows().find((row) => row.name === "app-14")?.merge;
+  expect(merge && "ask" in merge ? merge.ask : "").toBe("Merge app#41 into main? y/n");
+});
+
 test("a forge's base branch reaches the merge question without its control codes", () => {
-  const base = { head: approved, base: "main\x1b]0;evil\x07" };
+  const base = { head: approved, checks: passed, base: "main\x1b]0;evil\x07" };
   sql(itemSql("app", "pr", 41, "Fix the export header", "2026-11-06T10:00:00Z", base));
   const merge = rows().find((row) => row.name === "app-14")?.merge;
   expect(merge && "ask" in merge ? merge.ask : "").toBe("Merge app#41 into main ]0;evil ? y/n");

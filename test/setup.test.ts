@@ -182,7 +182,6 @@ test("takes every step on the first run, and none on the second", async () => {
       "Keeping Skelcrew running after you log out or restart.",
       "",
       "Skelcrew is set up.",
-      "Your agents keep running. Run sc to come back.",
       "",
     ].join("\n"),
   );
