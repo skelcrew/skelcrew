@@ -81,7 +81,10 @@ export async function runList(agents: string, repository: string): Promise<void>
   // Draws what shows, filling the terminal, only when it changed.
   const draw = () => {
     if (attached) return;
-    const bottom = (tabs: number) => said ?? asking?.ask ?? keysFor(rows[here], tabs);
+    // What the bottom line says can come from outside, such as a forge's reason for refusing a
+    // merge, so its control codes never reach your terminal.
+    const bottom = (tabs: number) =>
+      removeControlCodes(said ?? asking?.ask ?? keysFor(rows[here], tabs));
     const size = { width: process.stdout.columns || 80, height: process.stdout.rows || 24 };
     const drawn = drawList(rows, here, top, frameWith(bottom, load), size);
     top = drawn.top;
@@ -92,15 +95,15 @@ export async function runList(agents: string, repository: string): Promise<void>
   };
 
   // Reads the rows again, keeping you on the same row by its name, or at the same place when it
-  // went. The first time, you start on the first thread that needs you, so one Enter reaches it,
-  // or else on the lead.
+  // went. The first time, you start on the first task that needs you, working or ready for
+  // review, so one Enter reaches it, or else on the lead.
   const refresh = () => {
     if (attached) return;
     const running = listSessions(agents).flatMap((found) => (found.running ? [found.name] : []));
     const name = rows[here]?.name;
     rows = listRows(db, open, running, Date.now());
     const at = name === undefined ? -1 : rows.findIndex((row) => row.name === name);
-    const needing = rows.findIndex((row) => row.part === "working" && row.mark.sign === "●");
+    const needing = rows.findIndex((row) => row.part !== "lead" && row.mark.sign === "●");
     if (at >= 0) here = at;
     else if (here < 0) here = Math.max(needing, 0);
     else here = Math.min(here, rows.length - 1);
@@ -187,8 +190,9 @@ export async function runList(agents: string, repository: string): Promise<void>
     if (row.part === "lead" && row.session) {
       if (!row.running) {
         say("Starting the lead…");
-        await openRepository(`${open.owner}/${open.repo}`, false);
+        const failed = await openRepository(`${open.owner}/${open.repo}`, false);
         said = null;
+        if (failed) return say(`The lead didn't start: ${failed}`);
       }
       return attach(row.session);
     }

@@ -22,6 +22,9 @@ let standIn: Server | null = null;
 let approved = "";
 // What the stand-in daemon was asked, as one line each.
 const asked: string[] = [];
+// What the stand-in daemon answers when asked for a lead, and to merge.
+let leadAnswer: object = {};
+let mergeAnswer: object = { merged: "Merged." };
 
 const env = () => ({ ...process.env, HOME: home, XDG_RUNTIME_DIR: join(home, "run") });
 
@@ -67,6 +70,8 @@ afterEach(() => {
   standIn?.close();
   standIn = null;
   asked.length = 0;
+  leadAnswer = {};
+  mergeAnswer = { merged: "Merged." };
   for (const socket of [terminal, agents]) {
     Bun.spawnSync(["tmux", "-L", socket, "kill-server"], { stderr: "ignore" });
     // tmux leaves the socket file behind after kill-server.
@@ -148,6 +153,13 @@ test("a ready task whose PR moved past the approved commit, or whose checks ther
   });
 });
 
+test("a forge's base branch reaches the merge question without its control codes", () => {
+  const base = { head: approved, base: "main\x1b]0;evil\x07" };
+  sql(itemSql("app", "pr", 41, "Fix the export header", "2026-11-06T10:00:00Z", base));
+  const merge = rows().find((row) => row.name === "app-14")?.merge;
+  expect(merge && "ask" in merge ? merge.ask : "").toBe("Merge app#41 into main ]0;evil ? y/n");
+});
+
 test("a row knows whether its agent runs, and the lead says what its hooks last said", () => {
   sql("UPDATE repositories SET lead_state = 'asking' WHERE repo = 'app';");
   const running = rows(["lead", "app-7"]);
@@ -209,7 +221,7 @@ test("a list taller than the terminal scrolls to keep the row you are on in view
 });
 
 // Stands in for the daemon on the test's own socket: it logs each request and answers a start or
-// a merge as the daemon would.
+// a merge as the daemon would, and a lead or a merge with what a test sets.
 function daemon(): void {
   const Request = z.object({
     command: z.string(),
@@ -228,8 +240,13 @@ function daemon(): void {
       if (command === "lead") asked.push(`open ${from}${tab ? " from a tab" : ""}`);
       if (command === "start") asked.push(`start ${repo} ${task}`);
       if (command === "merge") asked.push(`merge ${repo} ${pr} ${commit}`);
-      const said = command === "start" ? { started: "Started." } : { merged: "Merged." };
-      connection.end(`${JSON.stringify(command === "lead" ? {} : said)}\n`);
+      const said =
+        command === "lead"
+          ? leadAnswer
+          : command === "start"
+            ? { started: "Started." }
+            : mergeAnswer;
+      connection.end(`${JSON.stringify(said)}\n`);
     }),
   );
   mkdirSync(join(home, "run"), { recursive: true, mode: 0o700 });
@@ -393,6 +410,42 @@ test("an arrow whose escape sequence comes in two pieces still moves", async () 
   await Bun.sleep(300);
   type("\x1b[A");
   await until(() => here().startsWith("▸ ● app-12"), "the row above");
+});
+
+test("with only a task ready for review needing you, the list opens on it", async () => {
+  sql("UPDATE threads SET asking = 0, needs_you = 0 WHERE folder = 'app-12';");
+  await open();
+  expect(here()).toStartWith("▸ ● app-14");
+});
+
+test("a forge's refusal shows as words, its control codes never reaching your terminal", async () => {
+  mergeAnswer = { error: "Refused:\x1b]0;evil\x07 the branch conflicts" };
+  await open();
+  for (const _ of [1, 2, 3]) press("Down");
+  await until(() => here().startsWith("▸ ● app-14"), "the ready row");
+  type("m");
+  await until(() => seen().includes("y/n"), "the question");
+  type("y");
+  await until(() => seen().includes("the branch conflicts"), "the refusal");
+  expect(seen()).toContain("Refused: ]0;evil  the branch conflicts");
+  const title = tmux("display-message", "-p", "-t", "=one:", "#{pane_title}").stdout.toString();
+  expect(title).not.toContain("evil");
+});
+
+test("Enter on a lead that can't start says why, and attaches to nothing", async () => {
+  leadAnswer = { error: "Claude Code's login for agents is gone: run sc to set it up" };
+  await open();
+  Bun.spawnSync(["tmux", "-L", agents, "kill-session", "-t", "=lead"]);
+  for (const _ of [1, 2, 3]) press("Up");
+  await until(
+    () => here().startsWith("▸ ◆ lead") && here().includes("stopped"),
+    "the lead stopped",
+  );
+  press("Enter");
+  await until(
+    () => seen().includes("The lead didn't start: Claude Code's login for agents is gone"),
+    "why the lead didn't start",
+  );
 });
 
 test("Enter on the lead attaches to it", async () => {

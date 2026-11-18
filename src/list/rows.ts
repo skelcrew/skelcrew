@@ -162,7 +162,7 @@ function taskRow(
       merge = { refused: `${named}'s checks haven't passed on the approved commit yet` };
     else
       merge = {
-        ask: `Merge ${named} into ${copy.base}? y/n`,
+        ask: `Merge ${named} into ${removeControlCodes(copy.base)}? y/n`,
         working: `Merging ${named}…`,
         request: {
           command: "merge",
