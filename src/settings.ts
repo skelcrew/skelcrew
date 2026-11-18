@@ -60,7 +60,9 @@ type Key = keyof typeof File.shape;
 // The harness a role runs on, and its model, or none for the harness's default.
 export type Role = { harness: HarnessName; model?: string };
 
-// Every setting, once the files and the defaults are merged. `rounds` is how many rounds of
+// Every setting, once the files and the defaults are merged. `lead`, `builder` and `reviewer` are
+// each role's harness and model, read one by one, so a mistake in one role's settings stops only
+// the agents of that role. `rounds` is how many rounds of
 // changes a thread gets before it needs you, `reviews` how many reviews run at once on this
 // machine, `checks` how many test suites run at once through sc check, and `setup` and `test` the commands that set up a thread's clone and run its whole
 // test suite. Each is missing when no file names it, and an empty list when a file says on purpose
@@ -70,7 +72,9 @@ export type Role = { harness: HarnessName; model?: string };
 // your config saved, with no default, so the first run can tell what you haven't picked yet, and
 // `declined` the repositories never offered the GitHub plugin again.
 export type Settings = {
-  roles: { lead: Role; builder: Role; reviewer: Role };
+  lead: Role;
+  builder: Role;
+  reviewer: Role;
   rounds: number;
   reviews: number;
   checks: number;
@@ -85,10 +89,12 @@ export type Settings = {
 };
 type Group = keyof Settings;
 
-// The keys of the files behind each setting. A role's model belongs to its harness, so the
-// roles are read together with your harness and model.
+// The keys of the files behind each setting. A role's model belongs to its harness, so a role is
+// read together with your harness and model.
 const keysOf: Record<Group, Key[]> = {
-  roles: ["harness", "model", "lead", "builder", "reviewer", "roles"],
+  lead: ["harness", "model", "lead", "roles"],
+  builder: ["harness", "model", "builder", "roles"],
+  reviewer: ["harness", "model", "reviewer", "roles"],
   rounds: ["max_rounds"],
   reviews: ["limits"],
   checks: ["limits"],
@@ -188,9 +194,10 @@ export function readSettings<G extends Group>(
         repository,
       )
     : {};
-  // A role file's harness and model go over the role's line in skelcrew.yaml, key by key.
-  if (repository && groups.includes("roles" as G))
-    for (const name of ["lead", "builder", "reviewer"] as const)
+  // A role file's harness and model go over the role's line in skelcrew.yaml, key by key. Only
+  // the files of the roles asked for are read, so a broken reviewer file never stops the lead.
+  for (const name of ["lead", "builder", "reviewer"] as const)
+    if (repository && groups.some((group) => group === name))
       shared[name] = overRole(roleFileSettings(name, repository), shared[name]);
   // A setting your override or the repository sets is not read from the rest of your config, so
   // a bad value there can't stop a repository that decides it. A role is the exception: yours
@@ -304,6 +311,12 @@ function pick(data: unknown, keys: Key[]): unknown {
   const picked = Object.fromEntries(
     Object.entries(data).filter(([key]) => !nested.includes(key) && keys.some((k) => k === key)),
   );
+  // Of roles:, only the roles asked for are kept, so a mistake in another role stops only its
+  // own agents. One that isn't a mapping is kept whole, for the check to refuse.
+  if (isMapping(picked.roles))
+    picked.roles = Object.fromEntries(
+      Object.entries(picked.roles).filter(([name]) => keys.some((k) => k === name)),
+    );
   // The new shape's reviewer comes last, so it wins where both shapes say something.
   const roles = "roles" in data ? data.roles : undefined;
   const reviewers = [
@@ -318,6 +331,10 @@ function pick(data: unknown, keys: Key[]): unknown {
     }
   return picked;
 }
+
+// Returns whether YAML data is a mapping, such as { model: opus }.
+const isMapping = (data: unknown): data is Record<string, unknown> =>
+  typeof data === "object" && data !== null && !Array.isArray(data);
 
 // Returns `data` checked as a settings file, or throws `problem` with what is wrong.
 function check(data: unknown, problem: string): File {
@@ -344,7 +361,9 @@ function mergeSettings(layers: File[]): Settings {
       top,
     );
   return {
-    roles: { lead: role("lead"), builder: role("builder"), reviewer: role("reviewer") },
+    lead: role("lead"),
+    builder: role("builder"),
+    reviewer: role("reviewer"),
     rounds: first((l) => l.max_rounds) ?? defaults.max_rounds,
     reviews: first((l) => l.limits?.reviews) ?? defaults.reviews,
     checks: first((l) => l.limits?.checks) ?? defaults.checks,

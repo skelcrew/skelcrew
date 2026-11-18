@@ -132,6 +132,9 @@ async function leadCommand(from?: string): Promise<void> {
   const { originHere } = await import("./machine/origin.ts");
   const { firstRun } = await import("./machine/setup.ts");
   firstRun(from);
+  // Your config may still use keys a newer shape replaced, which sc names once.
+  const { tellOldKeys } = await import("./config.ts");
+  tellOldKeys();
   // In a repository with no remote, sc opens nothing, even with tabs open or no repositories
   // yet. Opening another repository there would look as if Skelcrew had ignored where you are.
   const origin = originHere();

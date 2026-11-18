@@ -41,8 +41,9 @@ console.log(JSON.stringify(readSettings(${JSON.stringify(groups)}, { owner: "sim
   return { settings: out ? JSON.parse(out) : undefined, err: done.stderr.toString() };
 }
 
+const roleGroups = ["lead", "builder", "reviewer"];
 const all = [
-  "roles",
+  ...roleGroups,
   "rounds",
   "reviews",
   "checks",
@@ -61,11 +62,9 @@ const eighth = Math.max(1, Math.floor(availableParallelism() / 2 / 4));
 test("with no files, every setting is the built-in default", () => {
   files(null, null);
   expect(read(all).settings).toEqual({
-    roles: {
-      lead: { harness: "claude" },
-      builder: { harness: "claude" },
-      reviewer: { harness: "claude" },
-    },
+    lead: { harness: "claude" },
+    builder: { harness: "claude" },
+    reviewer: { harness: "claude" },
     rounds: 3,
     reviews: quarter,
     checks: eighth,
@@ -77,11 +76,9 @@ test("with no files, every setting is the built-in default", () => {
 test("your config goes over the built-in defaults", () => {
   files("harness: codex\nmodel: gpt-6\nmax_rounds: 5\nlimits: { reviews: 2 }\n", null);
   expect(read(all).settings).toEqual({
-    roles: {
-      lead: { harness: "codex", model: "gpt-6" },
-      builder: { harness: "codex", model: "gpt-6" },
-      reviewer: { harness: "codex", model: "gpt-6" },
-    },
+    lead: { harness: "codex", model: "gpt-6" },
+    builder: { harness: "codex", model: "gpt-6" },
+    reviewer: { harness: "codex", model: "gpt-6" },
     rounds: 5,
     reviews: 2,
     checks: eighth,
@@ -97,11 +94,9 @@ test("the repository's skelcrew.yaml goes over your config, key by key", () => {
     "max_rounds: 2\nlead: { model: haiku }\nsetup: [make]\ntracker: none\n",
   );
   expect(read(all).settings).toEqual({
-    roles: {
-      lead: { harness: "claude", model: "haiku" },
-      builder: { harness: "claude", model: "sonnet" },
-      reviewer: { harness: "claude", model: "opus" },
-    },
+    lead: { harness: "claude", model: "haiku" },
+    builder: { harness: "claude", model: "sonnet" },
+    reviewer: { harness: "claude", model: "opus" },
     rounds: 2,
     reviews: quarter,
     checks: eighth,
@@ -118,7 +113,7 @@ test("a role your config puts on another harness gets your model back when skelc
     "harness: claude\nmodel: opus\nreviewer: { harness: codex, model: gpt-6 }\n",
     "reviewer: { harness: claude }\n",
   );
-  expect(read(["roles"]).settings?.roles).toMatchObject({
+  expect(read(roleGroups).settings).toMatchObject({
     reviewer: { harness: "claude", model: "opus" },
   });
 });
@@ -128,11 +123,9 @@ test("a file sets only what is its own", () => {
   // The tracker belongs to the repository, so yours counts for nothing.
   files("tracker: linear\n", "harness: codex\nmodel: gpt-6\nlimits: { reviews: 9 }\n");
   expect(read(all).settings).toEqual({
-    roles: {
-      lead: { harness: "claude" },
-      builder: { harness: "claude" },
-      reviewer: { harness: "claude" },
-    },
+    lead: { harness: "claude" },
+    builder: { harness: "claude" },
+    reviewer: { harness: "claude" },
     rounds: 3,
     reviews: quarter,
     checks: eighth,
@@ -143,7 +136,7 @@ test("a file sets only what is its own", () => {
 
 test("only the settings asked for are checked, and a bad one names its file", () => {
   files("harness: claude\nmax_rounds: 0\n", "setup: make\n");
-  expect(read(["roles"]).settings?.roles).toBeDefined();
+  expect(read(roleGroups).settings?.lead).toBeDefined();
   expect(read(["rounds"]).err).toContain("config.yaml isn't valid");
   expect(read(["setup"]).err).toContain("the repository's skelcrew.yaml isn't valid");
 });
@@ -153,7 +146,7 @@ test("a setting skelcrew.yaml sets isn't read from your config, so a bad one the
   expect(read(["rounds"]).settings?.rounds).toBe(2);
   // A role is merged with yours, so yours is still read and checked.
   files("harness: claude\nreviewer: { harness: nope }\n", "reviewer: { harness: codex }\n");
-  expect(read(["roles"]).err).toContain("config.yaml isn't valid");
+  expect(read(roleGroups).err).toContain("config.yaml isn't valid");
 });
 
 test("the reviewer's fallback and a review's time come from your config alone, else the defaults", () => {
@@ -167,7 +160,7 @@ test("the reviewer's fallback and a review's time come from your config alone, e
   });
   // A bad fallback stops only what reads it, not the roles the lead needs.
   files("reviewer: { fallback: nope }\n", null);
-  expect(read(["roles"]).settings?.roles).toBeDefined();
+  expect(read(roleGroups).settings?.lead).toBeDefined();
   expect(read(["fallback"]).err).toContain("config.yaml isn't valid");
 });
 
@@ -199,7 +192,7 @@ test("roles: in your config is read as lead:, builder: and reviewer: were, and w
     "harness: claude\nmodel: opus\nbuilder: { harness: claude, model: sonnet }\nroles:\n  builder: { model: haiku }\n  reviewer: { harness: codex }\n",
     null,
   );
-  expect(read(["roles"]).settings?.roles).toEqual({
+  expect(read(roleGroups).settings).toMatchObject({
     lead: { harness: "claude", model: "opus" },
     builder: { harness: "claude", model: "haiku" },
     reviewer: { harness: "codex" },
@@ -209,9 +202,9 @@ test("roles: in your config is read as lead:, builder: and reviewer: were, and w
     "builder: { harness: claude, model: opus }\nroles: { builder: { harness: codex } }\n",
     null,
   );
-  expect(read(["roles"]).settings?.roles).toMatchObject({ builder: { harness: "codex" } });
+  expect(read(roleGroups).settings).toMatchObject({ builder: { harness: "codex" } });
   files("roles: { builder: { harness: emacs } }\n", null);
-  expect(read(["roles"]).err).toContain("config.yaml isn't valid");
+  expect(read(roleGroups).err).toContain("config.yaml isn't valid");
 });
 
 test("repos: overrides go over the repository's files, for the repository they name only", () => {
@@ -219,8 +212,9 @@ test("repos: overrides go over the repository's files, for the repository they n
     "harness: claude\nrepos:\n  simon/app:\n    setup: [make app]\n    max_rounds: 7\n    roles: { builder: { model: sonnet } }\n  simon/other:\n    setup: [make other]\n",
     "setup: [make]\nmax_rounds: 2\nbuilder: { model: haiku }\n",
   );
-  expect(read(["roles", "rounds", "setup"]).settings).toMatchObject({
-    roles: { builder: { harness: "claude", model: "sonnet" }, lead: { harness: "claude" } },
+  expect(read([...roleGroups, "rounds", "setup"]).settings).toMatchObject({
+    builder: { harness: "claude", model: "sonnet" },
+    lead: { harness: "claude" },
     rounds: 7,
     setup: ["make app"],
   });
@@ -236,10 +230,31 @@ test("repos: can't set what is only yours, and a bad entry stops only its own re
     "repos:\n  simon/app: { limits: { reviews: 9 }, harness: codex }\n  simon/other: { max_rounds: 0 }\n",
     null,
   );
-  expect(read(["reviews", "rounds", "roles"]).settings).toMatchObject({
+  expect(read(["reviews", "rounds", "lead"]).settings).toMatchObject({
     reviews: quarter,
     rounds: 3,
-    roles: { lead: { harness: "codex" } },
+    lead: { harness: "codex" },
   });
   expect(read(["rounds"], "other").err).toContain("isn't valid");
+});
+
+test("a mistake in one role's settings stops only that role's agents", () => {
+  files(
+    "harness: claude\nroles: { reviewer: { harness: nope } }\nbuilder: { harness: emacs }\n",
+    null,
+  );
+  expect(read(["lead"]).settings?.lead).toEqual({ harness: "claude" });
+  expect(read(["builder"]).err).toContain("config.yaml isn't valid");
+  expect(read(["reviewer"]).err).toContain("config.yaml isn't valid");
+});
+
+test("the reviewer's fallback and your reviewer's harness are read from roles: too, over the old shape", () => {
+  files(
+    "reviewer: { harness: claude, fallback: claude }\nroles: { reviewer: { harness: codex, fallback: codex } }\n",
+    null,
+  );
+  expect(read(["fallback", "yourReviewer"]).settings).toMatchObject({
+    fallback: "codex",
+    yourReviewer: "codex",
+  });
 });

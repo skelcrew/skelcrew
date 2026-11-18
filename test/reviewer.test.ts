@@ -572,8 +572,8 @@ describe("starting a review", () => {
   function roleFor(role: string, settings: string): unknown {
     mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
     writeFileSync(join(home, ".config", "skelcrew", "config.yaml"), settings);
-    const code = `import { agentRoles } from ${JSON.stringify(source("config.ts"))};
-console.log(JSON.stringify(agentRoles().${role}));`;
+    const code = `import { agentRole } from ${JSON.stringify(source("config.ts"))};
+console.log(JSON.stringify(agentRole(${JSON.stringify(role)})));`;
     const run = Bun.spawnSync([process.execPath, "-e", code], { env: env(), stdout: "pipe" });
     return JSON.parse(run.stdout.toString());
   }

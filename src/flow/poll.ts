@@ -6,7 +6,7 @@ import type { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
 import { z } from "zod";
 import { agentsOnDefaultBranch, agentsWaiting } from "../approved-agents.ts";
-import { threadConfig } from "../config.ts";
+import { roundLimit } from "../config.ts";
 import type { Repository } from "../db.ts";
 import { cloneDir } from "../paths.ts";
 import {
@@ -121,7 +121,7 @@ async function actOnPr(
   if (!["working", "waiting", "stopped"].includes(thread.status)) return;
   // Read only for a thread with a PR, so a bad max_rounds never fails the copy's update, nor
   // sc start, which polls first.
-  const { maxRounds } = threadConfig(thread);
+  const maxRounds = roundLimit(thread);
   // The decision is pure; what follows carries it out. The poll is stale when a round
   // changed the thread since it began.
   const decision = decide(thread, pr, { maxRounds });

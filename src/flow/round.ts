@@ -4,7 +4,7 @@
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
 import { type HarnessName, harnessNamed } from "../agents/harness.ts";
-import { repositoryCommands, reviewLimit, threadConfig } from "../config.ts";
+import { repositoryCommands, reviewConfig, reviewLimit, roundLimit } from "../config.ts";
 import { cloneDir, reviewSocket } from "../paths.ts";
 import { failedLog, forgeOf, openPr, postReview, setStatus } from "../plugins/ask.ts";
 import { repositoryRole } from "../roles.ts";
@@ -195,7 +195,7 @@ async function reviewRound(
   const { pr } = thread;
   const hasForge = forgeOf(db, repository) !== null;
   if (hasForge && pr === null) throw new Error("the thread has no pull request to review");
-  const { reviewer: reviewerRole, fallback, reviewMinutes } = threadConfig(thread);
+  const { reviewer: reviewerRole, fallback, reviewMinutes } = reviewConfig(thread);
   const reviewer = reviewerRole.harness;
   const limit = reviewLimit();
   const skelcrewClone = cloneDir(thread.owner, thread.repo);
@@ -448,7 +448,7 @@ async function actOnVerdict(
   const repository = repositoryOf(db, thread);
   const { pr } = thread;
   const hasForge = forgeOf(db, repository) !== null;
-  const { maxRounds } = threadConfig(thread);
+  const maxRounds = roundLimit(thread);
   // Decide what the verdict means for the thread, then post it on the PR. A failed or timed out
   // review is Skelcrew's problem, not the PR's, so it is never posted. A kept approval says so
   // on the check and in the log, in place of the reviewer's.
@@ -697,7 +697,7 @@ function pushAndReview(
 // it exits.
 export function submitRound(db: Database, sessions: string, folder: string, summary: string): void {
   const thread = readThread(db, folder);
-  const { maxRounds, reviewer } = threadConfig(thread);
+  const { maxRounds, reviewer } = reviewConfig(thread);
   if (thread.status === "stopped")
     throw new Error("this thread was stopped, so Skelcrew won't push it");
   // Past the round limit the thread still needs you, whatever the builder does.
@@ -886,7 +886,7 @@ export function rerunReview(
   const sha = submitting === null ? lastPushed(thread) : null;
   if (submitting === null && sha === null)
     throw new Error(`${name} has no submitted commit to review yet`);
-  const { maxRounds } = threadConfig(thread);
+  const maxRounds = roundLimit(thread);
   // Past the round limit the thread still needs you, whatever the review says.
   const needs_you = pastRoundLimit(thread, maxRounds);
   // The commit is saved as under review at once, so a second sc review asked before the

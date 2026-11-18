@@ -1,11 +1,12 @@
 // Your config.yaml as the first run edits it, and the settings the rest of Skelcrew asks for,
 // each read through the one loader in settings.ts.
-import { existsSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { parseDocument } from "yaml";
+import { parse, parseDocument } from "yaml";
 import type { HarnessName } from "./agents/harness.ts";
-import { configDir } from "./paths.ts";
-import { type Repository, readSettings, type Settings } from "./settings.ts";
+import { configDir, dataDir } from "./paths.ts";
+import type { RoleName } from "./roles.ts";
+import { type Repository, type Role, readSettings, type Settings } from "./settings.ts";
 
 // Returns the path of your settings file.
 export const configFile = () => join(configDir(), "config.yaml");
@@ -21,29 +22,35 @@ export function yourConfigDocument() {
   return config;
 }
 
-// Returns the harness and model of the lead, builders and reviewers. For a repository, its
-// skelcrew.yaml goes over your config. Without one, only your config counts.
-export const agentRoles = (repository?: Repository): Settings["roles"] =>
-  readSettings(["roles"], repository).roles;
+// Returns the harness and model of one role: the lead, builders or reviewers. For a repository,
+// its files go over your config. Without one, only your config counts. Only that role is read, so
+// a mistake in another role's settings or file stops only that role's agents.
+export const agentRole = (name: RoleName, repository?: Repository): Role =>
+  readSettings([name], repository)[name];
 
-// Returns what a repository's threads run with: each agent's harness and model, as agentRoles
-// gives them, the round limit, the harness reviews fall back to during a usage limit, or null
-// with none, and how many minutes a review may run. A fallback that is the reviewer's own harness
+// Returns how many rounds of changes a repository's thread gets before it needs you.
+export const roundLimit = (repository: Repository): number =>
+  readSettings(["rounds"], repository).rounds;
+
+// Returns what a repository's reviews run with: the reviewer's harness and model, as agentRole
+// gives them, the harness reviews fall back to during a usage limit, or null with none, how many
+// minutes a review may run, and the round limit. A fallback that is the reviewer's own harness
 // is none.
-export function threadConfig(repository: Repository): Settings["roles"] & {
-  maxRounds: number;
+export function reviewConfig(repository: Repository): {
+  reviewer: Role;
   fallback: HarnessName | null;
   reviewMinutes: number;
+  maxRounds: number;
 } {
-  const { rounds, roles, fallback, reviewMinutes } = readSettings(
-    ["rounds", "roles", "fallback", "reviewMinutes"],
+  const { rounds, reviewer, fallback, reviewMinutes } = readSettings(
+    ["rounds", "reviewer", "fallback", "reviewMinutes"],
     repository,
   );
   return {
-    ...roles,
-    maxRounds: rounds,
-    fallback: fallback === undefined || fallback === roles.reviewer.harness ? null : fallback,
+    reviewer,
+    fallback: fallback === undefined || fallback === reviewer.harness ? null : fallback,
     reviewMinutes,
+    maxRounds: rounds,
   };
 }
 
@@ -65,3 +72,29 @@ export const reviewLimit = (): number => readSettings(["reviews"]).reviews;
 // Returns how many test suites may run at once through sc check on this machine. Throws when
 // your config isn't valid.
 export const checkLimit = (): number => readSettings(["checks"]).checks;
+
+// Says once, for each old key your config.yaml still uses for a role, lead:, builder: or
+// reviewer:, which new key replaces it. The old keys still work, so nothing breaks, but you
+// should know your config has a new shape. Skelcrew changes no file of yours itself. What was
+// said is kept in Skelcrew's data folder, so it is said once per key. A config that can't be
+// read says nothing here, as reading the settings says what is wrong with it.
+export function tellOldKeys(): void {
+  const told = join(dataDir(), "told-old-keys");
+  const before = existsSync(told) ? readFileSync(told, "utf8").split("\n") : [];
+  let data: unknown;
+  try {
+    data = parse(readFileSync(configFile(), "utf8"));
+  } catch {
+    return;
+  }
+  if (typeof data !== "object" || data === null) return;
+  for (const name of ["lead", "builder", "reviewer"]) {
+    const key = `config.yaml ${name}`;
+    if (!(name in data) || before.includes(key)) continue;
+    console.log(
+      `Your config.yaml's ${name}: is read as roles: { ${name}: … }, which replaces it. It keeps working, and Skelcrew changes no file itself.`,
+    );
+    mkdirSync(dataDir(), { recursive: true });
+    appendFileSync(told, `${key}\n`);
+  }
+}

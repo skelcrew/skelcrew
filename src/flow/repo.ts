@@ -17,7 +17,7 @@ import { z } from "zod";
 import { refuseCredentials } from "../agents/sandbox.ts";
 import { endSession, exitedCleanly, stopSession } from "../agents/sessions.ts";
 import { agentsAnswered, askAboutAgents, forgetAgents } from "../approved-agents.ts";
-import { agentRoles } from "../config.ts";
+import { agentRole } from "../config.ts";
 import { nameRepositories, openDb, Repository } from "../db.ts";
 import { originHere, parseRemote } from "../machine/origin.ts";
 import { cloneDir, configDir, dataDir, leadPlaces } from "../paths.ts";
@@ -495,9 +495,10 @@ const yamlValue = (value: string) => stringify(value).trim();
 // and shows tracker: none commented out, so you can find how to turn that off.
 function starterConfig(): string {
   // Each role is one line of { key: value } pairs, its name padded so the three line up.
-  const roles = agentRoles();
   const line = (name: "lead" | "builder" | "reviewer") => {
-    const parts = Object.entries(roles[name]).map(([key, value]) => `${key}: ${yamlValue(value)}`);
+    const parts = Object.entries(agentRole(name)).map(
+      ([key, value]) => `${key}: ${yamlValue(value)}`,
+    );
     return `${`${name}:`.padEnd(10)}{ ${parts.join(", ")} }`;
   };
   return [

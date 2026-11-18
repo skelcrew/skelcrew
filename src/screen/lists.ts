@@ -3,7 +3,7 @@
 // the tracker, never the tracker itself, as the sidebar and an open list read them each second.
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
-import { threadConfig } from "../config.ts";
+import { roundLimit as roundLimitOf } from "../config.ts";
 import { type Item, itemAt, openPrs, openTasks } from "../flow/copy.ts";
 import { needsDecision, readyToMerge, type Shown, shownOf } from "../flow/marks.ts";
 import { repositories } from "../flow/repo.ts";
@@ -55,7 +55,7 @@ type Known = Shown & { thread: Thread; name: string };
 // list away. Such a thread then reads as never past the limit.
 export function roundLimit(thread: Thread): number {
   try {
-    return threadConfig(thread).maxRounds;
+    return roundLimitOf(thread);
   } catch {
     return Number.POSITIVE_INFINITY;
   }

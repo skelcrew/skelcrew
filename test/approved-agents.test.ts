@@ -78,7 +78,7 @@ console.log(JSON.stringify(await (async () => { ${code} })()));`;
 const approveCurrent = "agents.approveAgents(app, agents.agentsOnDefaultBranch(app)); return null;";
 const builderOf = (where = "app") =>
   inHome(
-    `return { role: readSettings(["roles"], ${where}).roles.builder, told: repositoryRole("builder", ${where}).instructions };`,
+    `return { role: readSettings(["builder"], ${where}).builder, told: repositoryRole("builder", ${where}).instructions };`,
   );
 
 test("an .agents/ you never approved steers nothing: every role stays built in", () => {
@@ -234,7 +234,7 @@ test("a role file goes over skelcrew.yaml's line key by key, and a new harness d
   );
   commit("roles");
   inHome(approveCurrent);
-  expect(inHome('return readSettings(["roles"], app).roles;')).toMatchObject({
+  expect(inHome('return readSettings(["builder", "reviewer"], app);')).toMatchObject({
     builder: { harness: "codex", model: "gpt-6-mini" },
     reviewer: { harness: "claude", model: "opus" },
   });
@@ -249,4 +249,19 @@ test("the change shown is between the versions given, whatever the default branc
   const shown = String(inHome(`return agents.agentsChange(app, null, ${JSON.stringify(first)});`));
   expect(shown).toContain("+First way.");
   expect(shown).not.toContain("Second way.");
+});
+
+test("a broken role file stops only its own role: the lead still starts", () => {
+  agentsFile("roles/reviewer.md", "---\nrounds: 5\n---\nReview it.\n");
+  agentsFile("roles/lead.md", "---\nmodel: sonnet\n---\nLead it.\n");
+  commit("roles");
+  inHome(approveCurrent);
+  expect(
+    inHome(
+      'return { role: readSettings(["lead"], app).lead, told: repositoryRole("lead", app).instructions };',
+    ),
+  ).toEqual({ role: { harness: "claude", model: "sonnet" }, told: "Lead it.\n" });
+  expect(() => inHome('return readSettings(["reviewer"], app);')).toThrow(
+    ".agents/roles/reviewer.md",
+  );
 });

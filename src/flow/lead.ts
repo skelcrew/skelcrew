@@ -14,7 +14,7 @@ import {
   type Labels,
   startSession,
 } from "../agents/sessions.ts";
-import { agentRoles, repositoryCommands } from "../config.ts";
+import { agentRole, repositoryCommands } from "../config.ts";
 import { Repository } from "../db.ts";
 import { cloneDir, leadPlaces } from "../paths.ts";
 import { repositoryRole } from "../roles.ts";
@@ -129,7 +129,7 @@ export async function startLead(
     throw new Error(`Skelcrew couldn't clone ${owner}/${repo}, so its lead can't start yet`);
   // Pick the harness and the conversation to bring back, if the harness still has it, and save
   // both before starting.
-  const role = agentRoles(repository).lead;
+  const role = agentRole("lead", repository);
   const harness = harnessNamed(lead.harness ?? role.harness);
   const stored = lead.session;
   const resume = stored === null ? null : harness.saved(lead.name, lead.folder, stored);

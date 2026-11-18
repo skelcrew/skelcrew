@@ -15,7 +15,7 @@ import {
   startSession,
 } from "../agents/sessions.ts";
 import { approvedAgents } from "../approved-agents.ts";
-import { repositoryCommands, threadConfig } from "../config.ts";
+import { agentRole, repositoryCommands, roundLimit } from "../config.ts";
 import { cloneDir, threadSocket } from "../paths.ts";
 import { trackerOf } from "../plugins/ask.ts";
 import { repositoryRole } from "../roles.ts";
@@ -46,7 +46,7 @@ import {
 export function startChoice(thread: Thread | null): "bring back" | "go on" | "new thread" {
   if (thread?.status === "stopped") return "bring back";
   const live = thread?.status === "working" || thread?.status === "waiting";
-  if (thread && live && pastRoundLimit(thread, threadConfig(thread).maxRounds)) return "go on";
+  if (thread && live && pastRoundLimit(thread, roundLimit(thread))) return "go on";
   return "new thread";
 }
 
@@ -428,7 +428,7 @@ export async function startBuilder(db: Database, sessions: string, thread: Threa
   // A saved conversation the harness can't find starts afresh under a new id.
   const clone = cloneOf(thread);
   const stored = thread.session;
-  const role = threadConfig(thread).builder;
+  const role = agentRole("builder", thread);
   const harness = stored === null ? harnessNamed(role.harness) : builderHarness(thread);
   const resume = stored === null ? null : harness.saved(thread.folder, clone, stored);
   const session = resume ?? crypto.randomUUID();
