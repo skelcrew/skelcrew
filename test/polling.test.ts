@@ -453,7 +453,7 @@ test("an empty repository is polled quietly, refuses a thread plainly, and its f
 
 // The first commit can come before the refresh after the one that made the clone, and the log
 // must still have said the repository was empty.
-test("an empty repository is logged as it is cloned, though its first commit comes before the next refresh", () => {
+test("an empty repository is logged as it is cloned, and its clone follows the branch its first commit made the default", () => {
   const work = addApp(true);
   const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
 import { refreshClone, repositories } from ${JSON.stringify(source("flow/repo.ts"))};
@@ -471,9 +471,16 @@ await refreshClone(db, app);`;
     return run.stdout.toString();
   };
   expect(refresh()).toBe("simon/app has no commits yet\n");
-  git(work, "push", "-q", join(home, "github", "simon", "app.git"), "main");
+  // The first commit goes to develop, which becomes the default branch, rather than to the
+  // main the remote named when it was cloned. The clone follows, as threads' PRs go there.
+  const bare = join(home, "github", "simon", "app.git");
+  git(work, "push", "-q", bare, "main:develop");
+  git(bare, "symbolic-ref", "HEAD", "refs/heads/develop");
   const first = git(work, "rev-parse", "HEAD").trim().slice(0, 7);
   expect(refresh()).toBe(`Skelcrew's clone of simon/app has its first commit, ${first}\n`);
+  const skelcrewClone = join(data(), "repos", "simon", "app");
+  expect(git(skelcrewClone, "symbolic-ref", "--short", "HEAD").trim()).toBe("develop");
+  expect(git(skelcrewClone, "rev-parse", "--short=7", "HEAD").trim()).toBe(first);
 });
 
 // A remote whose HEAD names a branch that is gone has commits all the same, and the log must

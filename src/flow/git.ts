@@ -83,6 +83,14 @@ export async function updateClone(
   // Fetching HEAD follows the default branch even after it is renamed.
   if (!(await fetchRef(db, repository, folder, "HEAD"))) return { before, after: "" };
   const after = await git(db, repository, ["-C", folder, "rev-parse", "FETCH_HEAD"]);
+  // A clone of an empty repository is on the branch the remote's HEAD named then, which the
+  // first push can make another, and threads take the clone's branch as their PR's base. So
+  // the clone first moves to the default branch the remote names now.
+  if (before === "") {
+    const said = await git(db, repository, ["ls-remote", "--symref", repository.remote, "HEAD"]);
+    const branch = said.match(/^ref: (refs\/heads\/\S+)\tHEAD$/m)?.[1];
+    if (branch) await git(db, repository, ["-C", folder, "symbolic-ref", "HEAD", branch]);
+  }
   // Every poll gets here, and resetting reads the whole working tree, so it runs only when
   // the default branch moved. A clone with no commit yet takes the first one this way too.
   if (before !== after)
