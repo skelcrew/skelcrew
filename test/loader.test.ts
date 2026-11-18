@@ -433,3 +433,20 @@ test("a model alone in your repos: override isn't read for a role it can't fit",
   // For a role on your harness it counts, and is refused.
   expect(read(["lead"]).err).toContain("isn't valid under repos: simon/app: model");
 });
+
+test("your override's model for every role fits the role's last harness, wherever that is set", () => {
+  // The override puts the builder back on your harness, so its model goes along.
+  files(
+    "harness: claude\nrepos: { simon/app: { model: sonnet, roles: { builder: { harness: claude } } } }\n",
+    "builder: { harness: codex }\n",
+  );
+  expect(read(["builder"]).settings?.builder).toEqual({ harness: "claude", model: "sonnet" });
+  // The override puts the builder on Codex, so its model can't fit, and a bad one stops nothing.
+  files(
+    "harness: claude\nrepos: { simon/app: { model: [bad], roles: { builder: { harness: codex } } } }\n",
+    "builder: { harness: claude }\n",
+  );
+  const moved = read(["builder"]);
+  expect(moved.err).toBe("");
+  expect(moved.settings?.builder).toEqual({ harness: "codex" });
+});

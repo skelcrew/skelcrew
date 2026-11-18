@@ -309,9 +309,16 @@ function roleOf(name: RoleName, repository: Repository | undefined): Role {
     // A say that moves the role to another harness drops the model below it, and the role gets
     // your model again only when it moves onto your harness. When nothing below names a model,
     // that is the model whichever harness the role was on below, so the harness below isn't read.
+    // The harness a say reaches here with is the role's last one, so a layer's model for every
+    // role below it, given without a harness, fits it when it is yours, and goes along.
     const modelBelow = says.slice(from + 1).some((below) => below.namesModel());
-    if (harness !== undefined && (!modelBelow || !onHarness(from + 1, harness)))
-      return isYourHarness(harness) ? yourModel() : undefined;
+    if (harness !== undefined && (!modelBelow || !onHarness(from + 1, harness))) {
+      if (!isYourHarness(harness)) return undefined;
+      const forEveryRole = says
+        .slice(from + 1)
+        .find((below) => below.everyRole && below.harness() === undefined && below.namesModel());
+      return forEveryRole?.model() ?? yourModel();
+    }
     return modelFrom(from + 1);
   };
   const harness = harnessFrom(0);
