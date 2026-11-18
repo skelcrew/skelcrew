@@ -43,6 +43,9 @@ const File = z.looseObject({
   // The reviewer's harness as your config saved it, picked out of the reviewer's lines the same
   // way. One that isn't valid counts as none, so the first run asks for it again.
   your_reviewer: HarnessName.optional().catch(undefined),
+  // Whether you let the lead arm a merge when ready when you ask it to in the conversation,
+  // written as lead: { may_arm_merges: true } and picked out of the lead's lines on reading.
+  may_arm_merges: z.boolean().optional(),
   // The repositories, by full name, never offered the GitHub plugin again because you said no
   // in one of their checkouts.
   github_declined: z.array(z.string()).optional(),
@@ -61,7 +64,8 @@ export type Role = { harness: HarnessName; model?: string };
 // while the reviewer's own waits out its usage limit, and `reviewMinutes` how long a review may
 // run before it is ended. `yourHarness` and `yourReviewer` are the harnesses
 // your config saved, with no default, so the first run can tell what you haven't picked yet, and
-// `declined` the repositories never offered the GitHub plugin again.
+// `declined` the repositories never offered the GitHub plugin again. `leadArms` is whether the
+// lead may arm a merge when ready when you ask it to, off unless you turn it on.
 export type Settings = {
   roles: { lead: Role; builder: Role; reviewer: Role };
   rounds: number;
@@ -75,6 +79,7 @@ export type Settings = {
   yourHarness: HarnessName | undefined;
   yourReviewer: HarnessName | undefined;
   declined: string[];
+  leadArms: boolean;
 };
 type Group = keyof Settings;
 
@@ -93,11 +98,13 @@ const keysOf: Record<Group, Key[]> = {
   yourHarness: ["harness"],
   yourReviewer: ["your_reviewer"],
   declined: ["github_declined"],
+  leadArms: ["may_arm_merges"],
 };
 
 // What each file may set. Your harness, model, limits, the reviewer's fallback, a review's time
 // and the repositories you declined the GitHub plugin for fit you, your account and your
-// machine, so a repository can't set them. The tracker belongs to the repository, so your
+// machine, so a repository can't set them. Letting the lead arm merges grants an agent what is
+// yours, so only you can, never a repository. The tracker belongs to the repository, so your
 // config doesn't. Setup and test can come from either: yours stand in for a repository you
 // don't want to commit a skelcrew.yaml to.
 const yourKeys: Key[] = [
@@ -114,6 +121,7 @@ const yourKeys: Key[] = [
   "fallback",
   "your_reviewer",
   "github_declined",
+  "may_arm_merges",
 ];
 const repositoryKeys: Key[] = [
   "lead",
@@ -211,9 +219,10 @@ function parseYaml(path: string, name: string): unknown {
 function pick(data: unknown, keys: Key[]): unknown {
   if (data === null || data === undefined) return {};
   if (typeof data !== "object" || Array.isArray(data)) return data;
-  // The fallback and your reviewer's harness are written among the reviewer's lines, but read
-  // on their own. A top-level line of either name counts for nothing, as it never did.
-  const nested = ["fallback", "your_reviewer"];
+  // The fallback and your reviewer's harness are written among the reviewer's lines, and
+  // may_arm_merges among the lead's, but each is read on its own. A top-level line of any of
+  // these names counts for nothing.
+  const nested = ["fallback", "your_reviewer", "may_arm_merges"];
   const picked = Object.fromEntries(
     Object.entries(data).filter(([key]) => !nested.includes(key) && keys.some((k) => k === key)),
   );
@@ -223,6 +232,9 @@ function pick(data: unknown, keys: Key[]): unknown {
     if (keys.includes("your_reviewer") && "harness" in reviewer)
       picked.your_reviewer = reviewer.harness;
   }
+  const lead = "lead" in data ? data.lead : undefined;
+  if (keys.includes("may_arm_merges") && typeof lead === "object" && lead !== null)
+    if ("may_arm_merges" in lead) picked.may_arm_merges = lead.may_arm_merges;
   return picked;
 }
 
@@ -263,6 +275,7 @@ function mergeSettings(layers: File[]): Settings {
     yourHarness: first((l) => l.harness),
     yourReviewer: first((l) => l.your_reviewer),
     declined: first((l) => l.github_declined) ?? [],
+    leadArms: first((l) => l.may_arm_merges) ?? false,
   };
 }
 
