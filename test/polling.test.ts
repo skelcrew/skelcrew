@@ -414,23 +414,29 @@ test("a push straight to main and a merge of a PR without a thread both reach Sk
 // must neither fail nor fill the log, and its first commit must reach Skelcrew's clone.
 test("an empty repository is polled quietly, refuses a thread plainly, and its first commit reaches Skelcrew's clone", async () => {
   const work = addApp(true);
-  changes([issue12()]);
+  changes([issue12(), prItem("34", "Bump deps")]);
   serve();
-  await until(() => copied().rows.length === 1);
+  // Issues and PRs still reach Skelcrew's copy, and the log says once that there are no commits.
+  await until(() => copied().rows.length === 2);
+  expect(copied().rows).toEqual(["pr 34", "task 12"]);
   await morePolls();
   const log = read(daemonLog());
   expect(log).not.toContain("failed");
   expect(log.split("simon/app has no commits yet").length).toBe(2);
-  // A thread has nothing to start from, and says so rather than what git said.
-  const started = Bun.spawnSync([process.execPath, main, "start", "app-12"], {
-    env: env(),
-    stderr: "pipe",
-  });
-  expect(started.stderr.toString()).toBe("");
-  await until(() => thread().status === "failed");
-  expect(read(daemonLog())).toContain(
-    "app-12 failed: simon/app has no commits yet, so a thread has nothing to start from",
-  );
+  // A thread has nothing to start from, from the default branch or one named with --from, and
+  // says so rather than what git said.
+  const refusal = "simon/app has no commits yet, so a thread has nothing to start from";
+  for (const from of [[], ["--from", "main"]]) {
+    const failures = read(daemonLog()).split(refusal).length;
+    const started = Bun.spawnSync([process.execPath, main, "start", "app-12", ...from], {
+      env: env(),
+      stderr: "pipe",
+    });
+    expect(started.stderr.toString()).toBe("");
+    await until(() => read(daemonLog()).split(refusal).length > failures);
+    expect(thread().status).toBe("failed");
+    expect(read(daemonLog())).toContain(`app-12 failed: ${refusal}`);
+  }
   // The first commit pushed reaches Skelcrew's clone at the next poll, and the log says so once.
   git(work, "push", "-q", join(home, "github", "simon", "app.git"), "main");
   const skelcrewClone = join(data(), "repos", "simon", "app");
@@ -443,6 +449,18 @@ test("an empty repository is polled quietly, refuses a thread plainly, and its f
   );
   expect(read(daemonLog()).split("has its first commit").length).toBe(2);
   expect(read(daemonLog())).not.toContain("couldn't update");
+});
+
+// A remote whose HEAD names a branch that is gone has commits all the same, and the log must
+// say what is wrong rather than take it for an empty repository.
+test("a repository whose default branch is gone still logs why its clone can't update", async () => {
+  addApp();
+  git(join(home, "github", "simon", "app.git"), "symbolic-ref", "HEAD", "refs/heads/gone");
+  changes([]);
+  serve();
+  await until(() => read(daemonLog()).includes("couldn't update Skelcrew's clone of simon/app"));
+  expect(read(daemonLog())).toContain("couldn't find remote ref HEAD");
+  expect(read(daemonLog())).not.toContain("no commits yet");
 });
 
 // git can reach the remote while the tracker or forge is down, and builders must not fall
@@ -558,6 +576,17 @@ test("a labeled task claimed elsewhere starts no thread, and a claim that fails 
 
 // bubblewrap can't start inside Skelcrew's own sandbox, so only there builders can't start.
 describe.skipIf(insideSandbox)("polling a forge", () => {
+  // The lead works in Skelcrew's clone, which for an empty repository is a checkout of nothing.
+  test("an empty repository's lead starts and stays", async () => {
+    addApp(true);
+    changes([issue12()]);
+    serve();
+    await until(() => existsSync(join(data(), "claude", leadName, "typed")));
+    await morePolls();
+    expect(read(daemonLog())).toContain("simon/app has no commits yet");
+    expect(read(daemonLog())).not.toContain("the lead exited");
+  });
+
   test("a PR's checks are saved for the strip, without Skelcrew's own review check", async () => {
     await approvedApp12();
     await morePolls();

@@ -663,6 +663,20 @@ describe("a repository no forge claims", () => {
     expect(existsSync(join(clone("simon/notes"), "README"))).toBe(true);
   });
 
+  // A repository just created has no commit for the push check to push, nor a default branch.
+  test("an empty one is added too, once git can push to it", async () => {
+    const work = elsewhere();
+    const bare = join(home, "elsewhere", "simon", "notes.git");
+    rmSync(bare, { recursive: true, force: true });
+    git(home, "init", "-q", "--bare", "-b", "main", bare);
+    const run = await skel(["repo", "add"], "y\n", work);
+    expect(run.err).toBe("");
+    expect(run.out).toContain("Added simon/notes, as notes.");
+    expect(await listed()).toEqual([["notes", "simon/notes", "none"]]);
+    // The check's stand-in commit went nowhere.
+    expect(git(bare, "for-each-ref").trim()).toBe("");
+  });
+
   test("isn't added when git refuses to push, and Skelcrew says what to fix", async () => {
     const real = Bun.which("git") ?? "git";
     writeFileSync(
