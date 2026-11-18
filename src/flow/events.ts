@@ -276,7 +276,7 @@ export async function tellBuilder(
   const unreadyWhy =
     conflicts !== thread.conflicts || decision.moved === null
       ? `its PR conflicts with ${conflicts}, so it isn't ready to merge`
-      : `its branch moved on the forge to ${decision.moved}, so it isn't ready to merge`;
+      : `its branch moved on the remote to ${decision.moved}, so it isn't ready to merge`;
   const before =
     conflicts !== thread.conflicts || unready
       ? record(

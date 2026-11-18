@@ -1715,6 +1715,37 @@ await serve(${JSON.stringify(socket)}, 200);`;
     );
   }, 60_000);
 
+  // With no forge, someone else's push to the thread's branch still reaches its builder, and
+  // the branch it had ready to merge isn't ready any more.
+  test("a thread's branch that moved on a remote with no forge is told to its builder", async () => {
+    const bare = addAppOnGit();
+    verdict(1, "approve", "Ready to merge.");
+    const code = `import { serve } from ${JSON.stringify(source("flow/daemon.ts"))};
+await serve(${JSON.stringify(socket)}, 200);`;
+    running.push(
+      Bun.spawn([process.execPath, "-e", code], { env: env(), stdout: "ignore", stderr: "ignore" }),
+    );
+    await untilCloned();
+    const started = await skel(["start", "app", "Add export", "As JSON"]);
+    expect(started.err).toBe("");
+    const log = () => read(join(data(), "threads", "app-t1.log"));
+    await until(() => log().includes("app-t1 is ready on branch skelcrew/t1-add-export"), 30_000);
+    // Someone else pushes to the thread's branch.
+    const work = join(home, "work", "app");
+    git(work, "fetch", "-q", bare, "skelcrew/t1-add-export");
+    git(work, "checkout", "-q", "-B", "other", "FETCH_HEAD");
+    writeFileSync(join(work, "OTHER"), "other\n");
+    git(work, "add", ".");
+    git(work, "commit", "-q", "-m", "Someone else's change");
+    git(work, "push", "-q", bare, "HEAD:refs/heads/skelcrew/t1-add-export");
+    const moved = git(work, "rev-parse", "HEAD");
+    const typed = () => read(join(data(), "claude", "app-t1", "typed"));
+    await until(() => typed().includes(`moved on the remote to ${moved}`), 30_000);
+    expect(log()).toContain(
+      `its branch moved on the remote to ${moved}, so it isn't ready to merge`,
+    );
+  }, 60_000);
+
   // Runs the daemon from a folder that isn't a git checkout, as the service does, polling every
   // 200 milliseconds. git that runs outside Skelcrew's clone then fails. `more` adds to its
   // environment, such as a GIT_TRACE file that shows what git the daemon runs.

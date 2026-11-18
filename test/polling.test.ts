@@ -691,7 +691,7 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
       checks: [approved],
     });
     changes([issue12(), moved]);
-    await until(() => typed().includes(`moved on the forge to ${merged}`));
+    await until(() => typed().includes(`moved on the remote to ${merged}`));
     // It is no longer ready to merge, as the builder hasn't got what is on its branch.
     expect(thread()).toMatchObject({ status: "working", needs_you: 0 });
     // The fake builder merged it from its origin, as it was told.
@@ -703,7 +703,7 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
     expect(onForge(git(clone(), "rev-parse", "HEAD"))).toBe(true);
     // Told once, however many polls see the same commit.
     await morePolls();
-    expect(typed().split(`moved on the forge to ${merged}`).length - 1).toBe(1);
+    expect(typed().split(`moved on the remote to ${merged}`).length - 1).toBe(1);
   }, 60_000);
 
   // The builder must fetch the moved branch from Skelcrew's clone, so it is told only once that
@@ -724,15 +724,15 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
     changes([issue12(), moved]);
     await until(() => thread().needs_you === 0);
     expect(read(join(data(), "threads", "app-12.log"))).toContain(
-      `its branch moved on the forge to ${merged}, so it isn't ready to merge`,
+      `its branch moved on the remote to ${merged}, so it isn't ready to merge`,
     );
     // Each poll fails to fetch, and the thread never goes back to ready.
     await morePolls();
     expect(thread().needs_you).toBe(0);
-    expect(typed()).not.toContain("moved on the forge");
+    expect(typed()).not.toContain("moved on the remote");
     // Once git can reach the forge, the builder is told.
     renameSync(`${bare}.away`, bare);
-    await until(() => typed().includes(`moved on the forge to ${merged}`));
+    await until(() => typed().includes(`moved on the remote to ${merged}`));
     expect(thread()).toMatchObject({ status: "working", needs_you: 0 });
   }, 60_000);
 
@@ -758,10 +758,10 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
     await until(() => read(join(data(), "threads", "app-12.log")).includes("the round failed"));
     rmSync(join(plugin, "hold-log"));
     await morePolls();
-    expect(typed()).not.toContain("moved on the forge");
+    expect(typed()).not.toContain("moved on the remote");
     // Once git reaches the forge again, a poll tells the builder.
     renameSync(`${bare}.away`, bare);
-    await until(() => typed().includes(`moved on the forge to ${merged}`));
+    await until(() => typed().includes(`moved on the remote to ${merged}`));
   }, 60_000);
 
   // A notice waits until the builder can take it, and a submit meanwhile drops it. The builder
@@ -785,8 +785,34 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
     await until(() => read(join(data(), "threads", "app-12.log")).includes("the round failed"));
     expect(waiting()).toBeGreaterThan(0);
     rmSync(join(builder(), "busy"));
-    await until(() => typed().includes(`moved on the forge to ${merged}`));
+    await until(() => typed().includes(`moved on the remote to ${merged}`));
     await until(() => existsSync(join(clone(), "STACKED")));
+  }, 60_000);
+
+  // A push can go through while opening the PR fails. The branch is on the forge and can move
+  // there, but no PR shows its head, so Skelcrew watches the branch itself.
+  test("a thread whose PR didn't open is told when its branch moves on the forge", async () => {
+    const work = addApp();
+    writeFileSync(join(plugin, "fail-open-pr"), "the forge is down");
+    changes([issue12()]);
+    serve();
+    await until(() => existsSync(join(data(), "repos", "simon", "app", "README")));
+    const started = Bun.spawnSync([process.execPath, main, "start", "app-12"], {
+      env: env(),
+      stderr: "pipe",
+    });
+    expect(started.stderr.toString()).toBe("");
+    await until(
+      () => read(join(data(), "threads", "app-12.log")).includes("the round failed"),
+      30_000,
+    );
+    expect(thread().pr).toBeNull();
+    const merged = moveBranch(work);
+    await until(() => typed().includes(`moved on the remote to ${merged}`));
+    await until(() => existsSync(join(clone(), "STACKED")));
+    // Told once, however many polls see the same commit.
+    await morePolls();
+    expect(typed().split(`moved on the remote to ${merged}`).length - 1).toBe(1);
   }, 60_000);
 
   // The builder can submit before a poll sees the branch move. git refuses the push, as it is
@@ -795,7 +821,7 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
     const work = await approvedApp12();
     const merged = moveBranch(work);
     submitRound2();
-    await until(() => typed().includes(`moved on the forge to ${merged}`));
+    await until(() => typed().includes(`moved on the remote to ${merged}`));
     expect(onForge(merged)).toBe(true);
     expect(read(join(data(), "threads", "app-12.log"))).toContain("the round failed");
     // Merged, the next round keeps the merged PR's commit.

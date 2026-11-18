@@ -135,11 +135,11 @@ function handledBefore(thread: Thread, pr: PullRequest): Set<string> | null {
   ]);
 }
 
-// Returns what tells the builder its branch moved on the forge to `commit`, with commits it
+// Returns what tells the builder its branch moved on the remote to `commit`, with commits it
 // hasn't got, such as a PR merged into it. Its next push would be refused, and pushing over them
 // would lose them, so it merges them before anything else.
 export function branchMoved(branch: string, commit: string): string {
-  return `Your branch ${branch} moved on the forge to ${commit}, with commits you don't have, such as a PR merged into it. Before changing anything else, run git fetch origin, merge origin/${branch} into your branch and commit, then go on. A round submitted without them is refused.`;
+  return `Your branch ${branch} moved on the remote to ${commit}, with commits you don't have, such as a PR merged into it. Before changing anything else, run git fetch origin, merge origin/${branch} into your branch and commit, then go on. A round submitted without them is refused.`;
 }
 
 // Returns the ID among those a thread has seen that says its builder was told its branch moved
@@ -287,6 +287,34 @@ export function decide(
       why: "approved by Skelcrew's reviewer with every check green, so it is ready to merge",
     };
   return { seen, tell, notice, typedIn, failed, conflict, moved, change: {}, why: "" };
+}
+
+// Decides what a branch at `head` on its remote means for a thread with no PR to poll: one in
+// a repository with no forge, or one whose PR didn't open after its push. `moved` says the head
+// holds commits Skelcrew never pushed for the thread. The builder is told once for each such
+// commit, as decide tells it for a PR, and the thread stops being ready to merge. Returns null
+// when there is nothing to tell. A thread saved before Skelcrew kept the IDs it has seen has no
+// place to remember it, so it is left to its refused push.
+export function decideBranch(
+  thread: Thread,
+  head: string,
+  given: { maxRounds: number; moved: boolean },
+): Exclude<Decision, { end: string }> | null {
+  const { seen } = thread;
+  if (!given.moved || seen === null || seen.includes(headSeen(head))) return null;
+  const notice = branchMoved(thread.branch, head);
+  return {
+    seen: [...seen, headSeen(head)],
+    tell: [],
+    notice: [notice],
+    typedIn: [],
+    failed: [],
+    conflict: null,
+    moved: head,
+    // Past the round limit the thread still needs you, as the builder's next round would.
+    change: { status: "working", needs_you: pastRoundLimit(thread, given.maxRounds) },
+    why: `told the builder: ${notice.split(". ")[0]}`,
+  };
 }
 
 // A task labeled to start, by its ID and title.

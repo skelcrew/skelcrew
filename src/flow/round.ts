@@ -93,7 +93,7 @@ async function push(
       await fetchInto(db, repository, skelcrewClone, thread.branch);
       const at = await git(skelcrewClone, "rev-parse", `refs/heads/${thread.branch}`);
       refused = `${name}'s push was refused. ${branchMoved(thread.branch, at)}`;
-      why = "its push was refused, as its branch moved on the forge";
+      why = "its push was refused, as its branch moved on the remote";
       const { seen } = readThread(db, folder);
       told = seen?.includes(headSeen(at)) ?? false;
       if (seen !== null && !told && !signal.aborted)

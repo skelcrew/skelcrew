@@ -8,6 +8,7 @@ import {
   ciResult,
   ciState,
   decide,
+  decideBranch,
   labeledToStart,
   onlyDocs,
   type PullRequest,
@@ -386,7 +387,7 @@ test("a branch that moved on the forge tells the builder to merge it, once", () 
   if ("end" in decision) throw new Error(decision.end);
   expect(decision.moved).toBe("f00d");
   expect(decision.notice).toEqual([
-    expect.stringContaining("skelcrew/12-add-export moved on the forge to f00d"),
+    expect.stringContaining("skelcrew/12-add-export moved on the remote to f00d"),
   ]);
   expect(decision.notice[0]).toContain(
     "git fetch origin, merge origin/skelcrew/12-add-export into your branch",
@@ -411,6 +412,22 @@ test("a branch that moved is never ready to merge, even once told", () => {
   expect(acted(told, moved).change).toEqual({ needs_you: true });
 });
 
+// A thread with no PR to poll, such as one in a repository with no forge, learns of its moved
+// branch from its branch alone.
+test("a branch with no PR that moved tells the builder once, and leaves ready to merge", () => {
+  const ready = thread({ pr: null, needs_you: true, seen: ["51"] });
+  const decision = decideBranch(ready, "f00d", { ...given, moved: true });
+  expect(decision).toMatchObject({
+    moved: "f00d",
+    seen: ["51", "head:f00d"],
+    change: { status: "working", needs_you: false },
+  });
+  expect(decision?.notice).toEqual([expect.stringContaining("moved on the remote to f00d")]);
+  const told = thread({ pr: null, seen: decision?.seen ?? [] });
+  expect(decideBranch(told, "f00d", { ...given, moved: true })).toBeNull();
+  expect(decideBranch(ready, "f00d", given)).toBeNull();
+});
+
 // A round whose push failed stays submitting. Its push may have failed before it could tell the
 // builder, so the poll still does.
 test("a branch that moved is told while a round is submitting", () => {
@@ -418,7 +435,7 @@ test("a branch that moved is told while a round is submitting", () => {
   const decision = decide(thread({ submitting: "Round 2" }), moved, { ...given, moved: true });
   if ("end" in decision) throw new Error(decision.end);
   expect(decision).toMatchObject({ moved: "f00d", seen: ["head:f00d"] });
-  expect(decision.notice).toEqual([expect.stringContaining("moved on the forge to f00d")]);
+  expect(decision.notice).toEqual([expect.stringContaining("moved on the remote to f00d")]);
 });
 
 test("a branch at the commit Skelcrew pushed hasn't moved", () => {

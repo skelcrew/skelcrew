@@ -19,7 +19,7 @@ import { errorText } from "../say.ts";
 import { assignIssue, unassignIssue } from "./assign.ts";
 import { baseOf, startThread } from "./builder.ts";
 import { type Item, openTasks, prOf, saveItems } from "./copy.ts";
-import { ciState, decide, labeledToStart, type PullRequest } from "./decide.ts";
+import { ciState, decide, decideBranch, labeledToStart, type PullRequest } from "./decide.ts";
 import { endThread, removing, tellBuilder, tellingEvents } from "./events.ts";
 import { fetchInto, onRemote } from "./git.ts";
 import { noteForLead, typeLeadNotes } from "./messages.ts";
@@ -103,13 +103,13 @@ async function startLabeled(
   }
 }
 
-// Returns whether the PR's head holds commits Skelcrew never pushed for the thread, such as a
-// PR merged into its branch, or someone else's push. Its builder must merge them, as its next
-// push would be refused. Just after a push the forge's copy can still show an older commit
-// Skelcrew pushed, which holds nothing new.
-async function movedOnForge(thread: Thread, pr: PullRequest): Promise<boolean> {
+// Returns whether the branch's head on its remote holds commits Skelcrew never pushed for the
+// thread, such as a PR merged into it, or someone else's push. Its builder must merge them, as
+// its next push would be refused. Just after a push the forge's copy can still show an older
+// commit Skelcrew pushed, which holds nothing new.
+async function movedOnRemote(thread: Thread, head: string | null): Promise<boolean> {
   const pushed = lastPushed(thread);
-  if (pr.head === null || pushed === null || pr.head === pushed) return false;
+  if (head === null || pushed === null || head === pushed) return false;
   // A commit Skelcrew's clone never fetched is no ancestor either, so git failing counts.
   const skelcrewClone = cloneDir(thread.owner, thread.repo);
   const older = await quietly([
@@ -118,10 +118,49 @@ async function movedOnForge(thread: Thread, pr: PullRequest): Promise<boolean> {
     skelcrewClone,
     "merge-base",
     "--is-ancestor",
-    pr.head,
+    head,
     pushed,
   ]);
   return !older.ok;
+}
+
+// Tells the builder of a thread with no PR to poll when its branch on the remote, at `head`,
+// holds commits Skelcrew never pushed. Only a thread at work or waiting is told, and one whose
+// events are being told is left to that, as for a PR.
+async function actOnMovedBranch(
+  db: Database,
+  sessions: string,
+  before: Thread,
+  head: string,
+): Promise<void> {
+  if (!(await movedOnRemote(before, head))) return;
+  const thread = readThread(db, before.folder);
+  if (!["working", "waiting"].includes(thread.status) || tellingEvents.has(thread.folder)) return;
+  const { maxRounds } = threadConfig(thread);
+  const decision = decideBranch(thread, head, { maxRounds, moved: true });
+  // Not waited on, as for a PR's events.
+  if (decision !== null) tellBuilder(db, sessions, thread, decision);
+}
+
+// Acts on the branch of a thread with a forge but no PR: its push went through, and opening
+// its PR failed. The branch is on the forge, where it can move, but no PR shows its head, so
+// the branch is fetched to see whether it moved. A branch the forge won't give is left be.
+async function actOnBranchWithoutPr(
+  db: Database,
+  sessions: string,
+  repository: Repository,
+  thread: Thread,
+): Promise<void> {
+  if (!["working", "waiting"].includes(thread.status) || lastPushed(thread) === null) return;
+  const skelcrewClone = cloneDir(thread.owner, thread.repo);
+  const ref = `refs/skelcrew/remote/${thread.folder}`;
+  const fetched = await fetchInto(db, repository, skelcrewClone, thread.branch, ref).then(
+    () => true,
+    () => false,
+  );
+  if (!fetched) return;
+  const head = await quietly(["git", "-C", skelcrewClone, "rev-parse", "--verify", ref]);
+  if (head.ok) await actOnMovedBranch(db, sessions, thread, head.out.trim());
 }
 
 // Acts on what the thread's PR, as its forge just returned it, means for the thread. `before`
@@ -137,7 +176,7 @@ async function actOnPr(
   // Act on the thread as it is now, since it may have ended or moved on while the forge
   // answered. One already done or failed has nothing left to act on.
   const { folder } = before;
-  const moved = await movedOnForge(before, pr);
+  const moved = await movedOnRemote(before, pr.head);
   const thread = readThread(db, folder);
   if (!["working", "waiting", "stopped"].includes(thread.status)) return;
   // Read only for a thread with a PR, so a bad max_rounds never fails the copy's update, nor
@@ -186,7 +225,8 @@ async function actOnPr(
 // Ends a thread of a repository with no forge once its branch is done with: when merging it
 // into its base would change nothing, which a merge, a squash and a rebase all leave, or when
 // it is gone from the remote. Only a branch Skelcrew has pushed counts, as before that it isn't on
-// the remote at all.
+// the remote at all. A branch still open that moved on the remote without its builder is told
+// to the builder.
 async function actOnBranch(db: Database, sessions: string, repository: Repository, thread: Thread) {
   const skelcrewClone = cloneDir(thread.owner, thread.repo);
   const ref = (kind: string) => `refs/skelcrew/${kind}/${thread.folder}`;
@@ -221,7 +261,8 @@ async function actOnBranch(db: Database, sessions: string, repository: Repositor
   await fetchInto(db, repository, skelcrewClone, thread.branch, ref("remote"));
   const merged = await git("merge-tree", "--write-tree", ref("bases"), ref("remote"));
   const tree = await git("rev-parse", `${ref("bases")}^{tree}`);
-  if (merged.ok && tree.ok && merged.out.trim().split("\n")[0] === tree.out.trim() && unchanged())
+  const done = merged.ok && tree.ok && merged.out.trim().split("\n")[0] === tree.out.trim();
+  if (done && unchanged())
     await endThread(
       db,
       sessions,
@@ -229,13 +270,18 @@ async function actOnBranch(db: Database, sessions: string, repository: Repositor
       `its branch ${thread.branch} is merged into ${base}`,
       `is done: its branch ${thread.branch} merged into ${base}`,
     );
+  // A branch still open may have moved on the remote without its builder, such as by someone
+  // else's push, which the builder must merge.
+  if (done) return;
+  const head = await git("rev-parse", "--verify", ref("remote"));
+  if (head.ok) await actOnMovedBranch(db, sessions, thread, head.out.trim());
 }
 
 // Polls one repository. Asks its tracker and its forge what changed since the `next` each
 // plugin last gave, kept in `nexts`, or for everything open when there is none. Brings
 // Skelcrew's copy up to date, taking tasks only from its tracker and PRs only from its forge,
 // and Skelcrew's clone's default branch with it. Then starts threads on its tasks labeled to start. Then acts on what each thread's PR means
-// for it, or, with no forge, on each thread's branch. Thread rows are read again once the
+// for it, or, with no forge or no PR, on each thread's branch. Thread rows are read again once the
 // answers are in, since a round can change them meanwhile.
 async function pollRepository(
   db: Database,
@@ -281,7 +327,7 @@ async function pollRepository(
       );
   }
   // With the copy up to date, start labeled tasks, then act on each thread: by its PR with a
-  // forge, or by its branch without one.
+  // forge, or by its branch without one, or without a PR.
   if (trackerOf(db, repository) !== null)
     await startLabeled(db, sessions, repository, setUpAndStart, starting, passed);
   const hasForge = forgeOf(db, repository) !== null;
@@ -293,6 +339,7 @@ async function pollRepository(
       // out of its `seen`, so its PR is acted on again until they are handed over.
       const pr = before.pr === null ? null : prOf(db, owner, repo, before.pr);
       if (pr) await actOnPr(db, sessions, before, pr);
+      else if (before.pr === null) await actOnBranchWithoutPr(db, sessions, repository, before);
     }
   }
 }
