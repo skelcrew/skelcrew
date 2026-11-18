@@ -268,7 +268,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       failThread(db, sessions, thread, error);
     }
   };
-  // Switches a thread at work to another flow, and gives it a short title too when one comes
+  // Switches a thread at work, or a stopped one about to come back, to another flow, and gives it a short title too when one comes
   // with it. A task started from a label runs the default flow, and the lead can switch it to
   // one that fits better, but only until its builder first submits: after that, the review and
   // its round limit are under way, so the task keeps its flow to the end. Read again here, as
@@ -507,19 +507,21 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
           record(db, before.folder, { short: request.short }, "given a short title");
           return { started: `Gave ${threadName(db, before)} the short title "${request.short}".` };
         }
-        // A stopped thread comes back on the flow it had, so another named here is refused
-        // rather than left unread.
-        if (before?.status === "stopped" && request.flow && request.flow !== before.flow)
-          throw new Error(
-            `${threadName(db, before)} keeps the flow ${before.flow} it started with.`,
-          );
+        // A stopped thread switches to another flow named here as one at work does, before it
+        // comes back, and is refused, staying stopped, where switchFlow refuses.
+        const switching =
+          before?.status === "stopped" &&
+          request.flow !== undefined &&
+          request.flow !== before.flow;
+        if (before && switching && request.flow) switchFlow(before, request.flow);
         const choice = startChoice(before);
         if (before && choice === "bring back") {
           const name = threadName(db, before);
           resume(before, request.short);
           // Its stop took you off its issue, so starting it again puts you back.
           assignIssue(db, before, true);
-          return { started: `Started ${name} again: its builder is back where it was.` };
+          const on = switching ? ` on the flow ${request.flow}` : "";
+          return { started: `Started ${name} again${on}: its builder is back where it was.` };
         }
         if (before && choice === "go on") {
           goOn(db, sessions, before.folder);

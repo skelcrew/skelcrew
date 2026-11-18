@@ -1018,6 +1018,22 @@ nameRepositories(db);`;
     expect(lax).toContain(`${yours} isn't valid`);
     expect(flows()).toEqual([{ task: 12, flow: "quick" }]);
     writeFileSync(yours, "harness: claude\n");
+    // A stopped thread whose builder hasn't submitted switches too, and comes back on that flow.
+    expect((await skel("stop", "app-12")).code).toBe(0);
+    expect((await skel("start", "app-12", "--flow", "careful")).err).toBe(
+      "Skelcrew: app-12 keeps the flow quick: its builder already runs as builder, and careful builds as tester. To run careful, start it over: sc rm app-12, then sc start app-12 --flow careful.\n",
+    );
+    expect(thread().status).toBe("stopped");
+    const back = await skel("start", "app-12", "--flow", "default");
+    expect(back.err).toBe("");
+    expect(back.out).toBe(
+      "Started app-12 again on the flow default: its builder is back where it was.\n",
+    );
+    expect(flows()).toEqual([{ task: 12, flow: "default" }]);
+    await until(() => thread().status === "working" && hasSession("app-12"));
+    expect((await skel("start", "app-12", "--flow", "quick")).out).toBe(
+      "app-12 now runs the flow quick.\n",
+    );
     // Once its builder has submitted, the task keeps its flow to the end.
     const db = new Database(join(data(), "skelcrew.db"));
     db.run("PRAGMA busy_timeout = 5000");
@@ -1031,11 +1047,12 @@ nameRepositories(db);`;
     expect((await skel("start", "app-12", "--flow", "default")).err).toBe(
       "Skelcrew: app-12 keeps the flow quick, as its builder has submitted already.\n",
     );
-    // A stopped thread comes back on its flow too.
+    // So does a stopped one, which stays stopped.
     expect((await skel("stop", "app-12")).code).toBe(0);
     expect((await skel("start", "app-12", "--flow", "default")).err).toBe(
-      "Skelcrew: app-12 keeps the flow quick it started with.\n",
+      "Skelcrew: app-12 keeps the flow quick, as its builder has submitted already.\n",
     );
+    expect(thread().status).toBe("stopped");
   }, 60_000);
 
   // Programs often live under the home folder, which the sandbox hides, as npm does under nvm.
