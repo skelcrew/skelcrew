@@ -13,7 +13,7 @@ import {
   readSession,
   stillRunning,
 } from "../agents/sessions.ts";
-import { repositoryCommands } from "../config.ts";
+import { leadMayArmMerges, repositoryCommands } from "../config.ts";
 import { finishUpgrade, moveToTasks, moveTurnEnded, openDb, type Repository } from "../db.ts";
 import { setupDone } from "../machine/setup.ts";
 import { keepUpToDate } from "../machine/update.ts";
@@ -237,8 +237,9 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   };
   // Returns the request limited to the calling lead's own repository. A request about another
   // repository is refused, and the error tells the lead to ask you to open that one. sc ps and
-  // sc ls with no repository mean every repository, which for a lead is its own, and sc pr show
-  // and sc merge --cancel with a PR number mean the lead's own repository, wherever it ran.
+  // sc ls with no repository mean every repository, which for a lead is its own, and sc pr show,
+  // sc merge --when-ready and sc merge --cancel with a PR number mean the lead's own repository,
+  // wherever it ran.
   // Your requests and a builder's are returned unchanged.
   const limitToOwnRepository = (request: DaemonRequest, caller: Caller): DaemonRequest => {
     const leadRepository = leadOfCaller(caller);
@@ -248,7 +249,11 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
     const own = `${leadRepository.owner}/${leadRepository.repo}`;
     if ((request.command === "ps" || request.command === "task ls") && !request.repo)
       return { ...request, repo: own };
-    if ((request.command === "task show" || request.command === "merge cancel") && !request.repo) {
+    const byNumber =
+      request.command === "task show" ||
+      request.command === "merge when ready" ||
+      request.command === "merge cancel";
+    if (byNumber && !request.repo) {
       const { from, ...rest } = request;
       return { ...rest, repo: own };
     }
@@ -436,8 +441,25 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
           started: thread.started,
         };
       }
-      case "merge when ready":
-        return { said: armMerge(db, threadToMerge(db, request), request.seen) };
+      // You arm one at your terminal, after saying y. A lead arms one only when you let it in
+      // your config, and only with the words you asked it in, which it gives in a file.
+      case "merge when ready": {
+        const thread = threadToMerge(db, request);
+        if (leadOfCaller(caller) === null) {
+          if (request.asked !== undefined)
+            throw new Error("--asked-file is the lead's: at your terminal, sc merge asks you y/N");
+          return { said: armMerge(db, sessions, thread, { seen: request.seen }) };
+        }
+        if (!leadMayArmMerges())
+          throw new Error(
+            "the human hasn't let you arm a merge when ready: ask them to run sc merge --when-ready in their own terminal",
+          );
+        if (!request.asked?.trim())
+          throw new Error(
+            "give what the human asked with --asked-file, a file holding their exact words",
+          );
+        return { said: armMerge(db, sessions, thread, { asked: request.asked }) };
+      }
       case "merge cancel":
         return { said: cancelMerge(db, threadToMerge(db, request)) };
       case "tell": {

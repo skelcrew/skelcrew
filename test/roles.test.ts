@@ -77,8 +77,8 @@ const threadEnds =
   'When a thread ends, Skelcrew types a one line note too, such as "app-12 is done: #7 merged into main" or "app-12 ended: #7 closed without merging". It comes from Skelcrew, not the human. Drop the thread from what you hold open: never list it as ready to merge again. When useful, tell the human in one line what it unblocks, such as a thread waiting on its work. A thread you removed with sc rm brings no note.\n\n';
 
 // What the lead's file added for a merge when ready: only the human arms one, at their own
-// terminal, and the lead may cancel one.
-const mergeWhenReady = `You can't merge, and you can't arm a merge either. When the human wants a PR merged once it is ready, tell them to run sc merge --when-ready app-12 in their own terminal: it asks them y/n there, and Skelcrew then merges it as soon as it is approved and green. sc ps shows "when ready" under MERGE for such a thread. You may run sc merge --cancel app-12 when the human asks, as cancelling is always safe. If an armed merge still waits after a review round, such as on a conflict or a failing check, Skelcrew types a one line note, such as "app-12 still waits to merge when ready, on its failing checks to be fixed.". Tell the human only if it needs them.\n\n`;
+// terminal, unless they let the lead, and the lead may cancel one.
+const mergeWhenReady = `You can't merge. Arming a merge when ready is the human's too, unless the end of these instructions says they let you arm one. When they haven't and the human wants a PR merged once it is ready, tell them to run sc merge --when-ready app-12 in their own terminal: it asks them y/n there, and Skelcrew then merges it as soon as it is approved and green. sc ps shows "when ready" under MERGE for such a thread. You may run sc merge --cancel app-12 when the human asks, as cancelling is always safe. If an armed merge still waits after a review round, such as on a conflict or a failing check, Skelcrew types a one line note, such as "app-12 still waits to merge when ready, on its failing checks to be fixed.". Tell the human only if it needs them.\n\n`;
 
 // What the builder was told a turn that ended without sc submit does, before its last message
 // went to the lead, and what it is told now.
@@ -158,7 +158,9 @@ ${tests}
 
 Check that it does what this asks and nothing else, and look for bugs, edge cases it misses, missing tests and failing ones.
 
-Answer "approve" only if it is ready to merge. Otherwise answer "changes", and in the body name each problem, where it is and why it matters, so the builder can fix it.`;
+List each problem in the findings, one per entry: what it is, where it is and why it matters, so the builder can fix it. In the body, say in a few lines what you checked and how, such as which tests ran.
+
+Answer "changes" with at least one finding. When you found no problem, answer "approve" with no findings, whatever CI's state: Skelcrew waits for every check to pass before the PR is ready.`;
 }
 
 // Without CI on the commit, the reviewer runs the tests, as it always did.

@@ -21,6 +21,16 @@ export type AgentState = z.infer<typeof AgentState>;
 // milliseconds since 1970, and its text.
 const TaskUpdate = z.object({ from: z.literal("lead"), at: z.number(), text: z.string() });
 
+// Skelcrew's review on a PR: the PR, the review's ID on the forge, and the verdict and findings it
+// last said, so each round edits that one review, or posts again only when what it says changed.
+const ReviewPost = z.object({
+  pr: z.number(),
+  id: z.string(),
+  verdict: z.enum(["approve", "changes"]),
+  findings: z.array(z.string()),
+});
+export type ReviewPost = z.infer<typeof ReviewPost>;
+
 // A thread with its task, as Skelcrew's database keeps them, one row per thread from the
 // task_threads view. The task's fields are those openDb's taskColumns name, and they are saved on
 // the task. It is checked on every read, since the row comes back from disk. Its folder names it
@@ -174,8 +184,17 @@ export const Thread = z.object({
   merge_id: z.string().nullable(),
   merge_by: z.string().nullable(),
   merge_at: z.number().nullable(),
+  // Your words, exactly, when you asked the lead to arm the plan, or null when you armed it at
+  // your terminal.
+  merge_asked: z.string().nullable(),
   merge_waits: z.string().nullable(),
   merge_noted: z.number().nullable(),
+  // Skelcrew's review on the task's PR, or null before its first. It names its PR, so a PR
+  // opened again after sc rm gets a review of its own.
+  review_post: z
+    .string()
+    .nullable()
+    .transform((saved) => (saved === null ? null : ReviewPost.parse(JSON.parse(saved)))),
 });
 export type Thread = z.infer<typeof Thread>;
 
@@ -293,9 +312,11 @@ export function record(
     if (columns.length > 0)
       db.run(
         `UPDATE ${table} SET ${columns.map(([column]) => `${column} = ?`).join(", ")} ${where}`,
-        // The IDs seen and the lead's updates are lists, kept as JSON.
+        // The IDs seen, the lead's updates and Skelcrew's review on the PR are kept as JSON.
         [
-          ...columns.map(([, value]) => (Array.isArray(value) ? JSON.stringify(value) : value)),
+          ...columns.map(([, value]) =>
+            typeof value === "object" && value !== null ? JSON.stringify(value) : value,
+          ),
           folder,
         ],
       );

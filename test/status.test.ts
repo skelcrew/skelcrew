@@ -63,8 +63,10 @@ const state: Thread = {
   merge_id: null,
   merge_by: null,
   merge_at: null,
+  merge_asked: null,
   merge_waits: null,
   merge_noted: null,
+  review_post: null,
 };
 const status = (more: Partial<Thread>) => statusOf({ ...state, ...more }, 3);
 

@@ -68,3 +68,8 @@ export const checkLimit = (): number => readSettings(["checks"]).checks;
 // Returns the host new sessions start on: tmux, or the name of a runtime plugin. It is yours
 // alone, as how you watch your agents is, so a repository's skelcrew.yaml can't set it.
 export const sessionHost = (): string => readSettings(["host"]).host;
+
+// Returns whether you let the lead arm a merge when ready when you ask it to in the
+// conversation. Only your config.yaml can say so, so a repository's files never grant it. Off
+// unless you turn it on. Throws when your config isn't valid.
+export const leadMayArmMerges = (): boolean => readSettings(["leadArms"]).leadArms;
