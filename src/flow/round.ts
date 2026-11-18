@@ -20,6 +20,7 @@ import {
   refusedWorkflow,
   whoRunsTheSuite,
 } from "./decide.ts";
+import { stopping } from "./events.ts";
 import { fetchInto, pushCommit } from "./git.ts";
 import { endLimit, limitOn, reachLimit, tellOfLimit, waitUntil } from "./limits.ts";
 import { dropOldEvents, noteForLead, queueMessage, typeLeadNotes } from "./messages.ts";
@@ -695,7 +696,7 @@ function pushAndReview(
 export function submitRound(db: Database, sessions: string, folder: string, summary: string): void {
   const thread = readThread(db, folder);
   const { maxRounds, reviewer } = threadConfig(thread);
-  if (thread.status === "stopped")
+  if (thread.status === "stopped" || stopping.has(folder))
     throw new Error("this thread was stopped, so Skelcrew won't push it");
   // Past the round limit the thread still needs you, whatever the builder does.
   const needs_you = pastRoundLimit(thread, maxRounds);

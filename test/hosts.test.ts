@@ -220,7 +220,11 @@ function statusesAfter(code: string): { id: string; status: string; reason: stri
 // Runs `code` in a process of its own with the test's home, after installing the fake host as a
 // plugin named fake, providing `provides`, and saving thread app-12 with `row`. Returns what
 // the code printed.
-function runWithFakeHost(provides: string, code: string, row: Record<string, string | null>) {
+function runWithFakeHost(
+  provides: string,
+  code: string,
+  row: Record<string, string | number | null>,
+) {
   const folder = join(home, "plugin-fake");
   mkdirSync(folder, { recursive: true });
   writeFileSync(
@@ -374,3 +378,28 @@ console.log(after.status, after.host, after.host_id, hasSession(host, "fake-app-
     "fake answered end in a way Skelcrew doesn't understand\nworking fake fake-app-12 true\n",
   );
 });
+
+test("a builder on its usage limit is still woken after a stop that failed", () => {
+  const prompt = join(home, "prompt.sh");
+  writeFileSync(prompt, `#!/bin/sh\necho "${claude.marks.prompt}"\ncat > received.txt\n`, {
+    mode: 0o755,
+  });
+  const said = runWithFakeHost(
+    "sessions",
+    `const host = builderSession(db, "unused", readThread(db, "app-12")).host;
+const labels = { repository: "simon/app", role: "builder", task: "app-12" };
+startSession(host, "app-12", { folder: ${JSON.stringify(home)}, command: [${JSON.stringify(prompt)}], env: { PATH: process.env.PATH }, labels });
+require("node:fs").writeFileSync(${JSON.stringify(join(home, ".config", "skelcrew", "plugins", "fake", "garble-end"))}, "");
+console.log(await stopThread(db, "unused", readThread(db, "app-12")).catch((error) => error.message));
+const received = ${JSON.stringify(join(home, "received.txt"))};
+const fs = require("node:fs");
+const deadline = Date.now() + 20_000;
+while (Date.now() < deadline && !(fs.existsSync(received) && fs.readFileSync(received, "utf8").endsWith("\\n"))) await Bun.sleep(100);
+console.log(JSON.stringify(fs.existsSync(received) ? fs.readFileSync(received, "utf8") : ""));
+process.exit(0);`,
+    { host: "fake", host_id: "fake-app-12", erred: 1, limited: 1, limit_reset: 1 },
+  );
+  expect(said).toBe(
+    `fake answered end in a way Skelcrew doesn't understand\n${JSON.stringify("\x1b[200~continue\x1b[201~\n")}\n`,
+  );
+}, 40_000);

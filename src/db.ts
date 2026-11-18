@@ -250,12 +250,8 @@ function prepareTables(db: Database): void {
   // tasks keeps the task's columns on its threads too, where moveToTasks reads them, so they are
   // added here for every release's database. Nothing reads them from threads after that.
   for (const [column, type] of Object.entries({ ...threadColumns, ...taskColumns }))
-    if (!db.query("SELECT 1 FROM pragma_table_info('threads') WHERE name = ?").get(column)) {
+    if (!db.query("SELECT 1 FROM pragma_table_info('threads') WHERE name = ?").get(column))
       db.run(`ALTER TABLE threads ADD COLUMN ${column} ${type}`);
-      // A thread already stopped has no session left, so it gets no host, which tells it from
-      // one whose builder couldn't be ended.
-      if (column === "host") db.run("UPDATE threads SET host = NULL WHERE status = 'stopped'");
-    }
   // A new database starts with tasks. One from an earlier release waits for its daemon to move
   // its threads onto tasks, as only the daemon knows no other daemon still writes to it.
   if (fresh) createTasks(db);
