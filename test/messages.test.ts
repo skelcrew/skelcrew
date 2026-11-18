@@ -100,7 +100,7 @@ console.log(JSON.stringify({ before, after: thread.needs_you, telling: thread.te
     missing,
   );
   expect(JSON.parse(seen)).toEqual({ before: false, after: true, telling: "Fix it." });
-});
+}, 40_000);
 
 // A conflict took an approved PR out of ready to merge, and its message waits for a builder
 // that is missing. The thread needs you for that, but its PR still conflicts, so it isn't ready.

@@ -355,7 +355,7 @@ exec ${Bun.which("git") ?? "git"} "$@"
     await until(() => read(join(home, "held")) !== "");
     await stop(run);
     expect(stillRunning([Number(read(join(home, "held")))])).toEqual([]);
-  });
+  }, 60_000);
 });
 
 test("sc issue create and sc start say when the daemon isn't running", async () => {

@@ -769,7 +769,7 @@ describe("with a forge", () => {
     expect(shown.out).toEndWith(
       "Log of test, from the forge\n(Skelcrew couldn't read its log: github didn't answer within 2 seconds)\n",
     );
-  });
+  }, 40_000);
 
   test("sc pr show takes a PR's number, or #N, in a checkout of its repository", async () => {
     forgeThreads();

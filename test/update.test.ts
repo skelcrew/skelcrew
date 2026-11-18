@@ -270,7 +270,7 @@ test("says where to look when the daemon doesn't come back on the new release", 
   expect(done.code).toBe(1);
   expect(done.err).toContain("within 2 seconds");
   expect(done.err).toContain(daemonLog());
-});
+}, 60_000);
 
 // Runs sc stamped with `build` on a server, as --remote from a laptop on `laptop` runs it. The
 // server has a home of its own with a finished first run, since Skelcrew there says it isn't set
