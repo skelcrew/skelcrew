@@ -47,9 +47,10 @@ async function copyOnceSettled(): Promise<string> {
   const size = () => (existsSync(written) ? statSync(written).size : 0);
   let last = size();
   let quietSince = Date.now();
-  // A screen that never settles fails the test once the copy starts, as it writes there too.
+  // A screen still writing after five seconds never settles, and fails the test.
   const deadline = Date.now() + 5000;
-  while (Date.now() - quietSince < 500 && Date.now() < deadline) {
+  while (Date.now() - quietSince < 500) {
+    if (Date.now() > deadline) throw new Error("the screen kept writing for five seconds");
     await Bun.sleep(50);
     if (size() === last) continue;
     last = size();
