@@ -109,10 +109,24 @@ export async function fetchBranch(
   branch: string | null,
 ): Promise<void> {
   const ref = branch ? `refs/heads/${branch}` : "HEAD";
-  if (!(await fetchRef(db, repository, folder, ref)))
-    throw new Error(
-      `${repository.owner}/${repository.repo} has no commits yet, so a thread has nothing to start from. Push a first commit, then start it again.`,
-    );
+  if (!(await fetchRef(db, repository, folder, ref))) throw new Error(noCommits(repository));
+}
+
+// What Skelcrew says when a thread is started on a repository with no commits yet.
+const noCommits = (repository: Repository) =>
+  `${repository.owner}/${repository.repo} has no commits yet, so a thread has nothing to start from. Push a first commit, then start it again.`;
+
+// Throws, saying so plainly, when the repository has no commits yet, so sc start answers with
+// the reason rather than starting a thread whose setup can only fail. Skelcrew's clone in the
+// folder, kept current by the poll, has a commit for any other repository, which costs no
+// call to the remote.
+export async function refuseEmpty(
+  db: Database,
+  repository: Repository,
+  folder: string,
+): Promise<void> {
+  if ((await headCommit(db, repository, folder)) !== "") return;
+  if (await remoteEmpty(db, repository)) throw new Error(noCommits(repository));
 }
 
 // Brings a branch of the repository into Skelcrew's clone in the folder, as a ref of its own.

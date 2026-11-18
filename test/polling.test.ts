@@ -423,19 +423,20 @@ test("an empty repository is polled quietly, refuses a thread plainly, and its f
   const log = read(daemonLog());
   expect(log).not.toContain("failed");
   expect(log.split("simon/app has no commits yet").length).toBe(2);
-  // A thread has nothing to start from, from the default branch or one named with --from, and
-  // says so rather than what git said.
-  const refusal = "simon/app has no commits yet, so a thread has nothing to start from";
+  // A thread has nothing to start from, from the default branch or one named with --from.
+  // sc start says so rather than starting one whose setup can only fail.
   for (const from of [[], ["--from", "main"]]) {
-    const failures = read(daemonLog()).split(refusal).length;
     const started = Bun.spawnSync([process.execPath, main, "start", "app-12", ...from], {
       env: env(),
+      stdout: "pipe",
       stderr: "pipe",
     });
-    expect(started.stderr.toString()).toBe("");
-    await until(() => read(daemonLog()).split(refusal).length > failures);
-    expect(thread().status).toBe("failed");
-    expect(read(daemonLog())).toContain(`app-12 failed: ${refusal}`);
+    expect(started.stdout.toString()).toBe("");
+    expect(started.stderr.toString()).toBe(
+      "Skelcrew: simon/app has no commits yet, so a thread has nothing to start from. Push a first commit, then start it again.\n",
+    );
+    expect(started.exitCode).toBe(1);
+    expect(thread()).toEqual({});
   }
   // The first commit pushed reaches Skelcrew's clone at the next poll, and the log says so once.
   git(work, "push", "-q", join(home, "github", "simon", "app.git"), "main");

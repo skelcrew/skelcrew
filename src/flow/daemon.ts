@@ -32,6 +32,7 @@ import {
 import { holdCheckSlot } from "./checks.ts";
 import { saveItems } from "./copy.ts";
 import { removeThread, stopThread } from "./events.ts";
+import { refuseEmpty } from "./git.ts";
 import {
   closeExitedLeads,
   lastOpened,
@@ -463,6 +464,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
               record(db, started.folder, { short: request.short }, "given a short title");
             return { started: `Started ${threadName(db, started)}.` };
           }
+          await refuseEmpty(db, repository, cloneDir(owner, repo));
           thread = await startThread(db, request);
         } finally {
           startingTasks.delete(key);
@@ -474,6 +476,8 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         return { started: `Started ${threadName(db, thread)}.` };
       }
       case "start new": {
+        const repository = findRepository(db, request.repo);
+        await refuseEmpty(db, repository, cloneDir(repository.owner, repository.repo));
         const thread = await startThread(db, request);
         setUpAndStart(thread);
         return { started: `Started ${threadName(db, thread)}.` };
