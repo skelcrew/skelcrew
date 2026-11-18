@@ -635,7 +635,7 @@ test("sc plugins says what sc install would change", async () => {
   expect((await skel(["plugins"])).out).toBe(
     [
       "fake 0.2.0 io: tracker, forge. sc install moves it to 0.1.0.",
-      "skelcrew/skelcrew-new from skelcrew/skelcrew-new isn't installed. sc install installs its newest version.",
+      "skelcrew/skelcrew-new from skelcrew/skelcrew-new isn't installed. sc update -g skelcrew/skelcrew-new pins and installs it.",
       "",
     ].join("\n"),
   );
@@ -699,4 +699,20 @@ test("sc update -g at the newest version pins it in your lock, so sc install doe
     commit: tagCommit("skelcrew/skelcrew-fake", "0.2.0"),
   });
   expect((await skel(["plugins"])).out).toBe("fake 0.2.0 io: tracker, forge\n");
+});
+
+// Such as a config copied from another machine, with a plugin this one doesn't have yet.
+test("the move into a lock adds this machine's plugins to the ones your config names already", async () => {
+  publish("skelcrew/skelcrew-fake", "0.1.0");
+  await skel(["add", "-g", "skelcrew/skelcrew-fake"], "y\n");
+  rmSync(yourLockFile());
+  writeFileSync(yourConfig(), "plugins: [skelcrew/skelcrew-new]\n");
+  await skel(["plugins"]);
+  expect(parse(readFileSync(yourConfig(), "utf8")).plugins).toEqual([
+    "skelcrew/skelcrew-new",
+    "skelcrew/skelcrew-fake",
+  ]);
+  expect(Object.keys(parse(readFileSync(yourLockFile(), "utf8")))).toEqual([
+    "skelcrew/skelcrew-fake",
+  ]);
 });

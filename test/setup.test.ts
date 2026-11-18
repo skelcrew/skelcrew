@@ -1347,3 +1347,24 @@ test("when the forge won't serve the locked commit, sc install takes the tag onl
   expect(gone.err).toContain(`its tag v0.1.0 is at ${fakeCommit("0.1.0").slice(0, 12)} now`);
   expect(readFileSync(lock(), "utf8")).toBe(lockBefore);
 });
+
+// Only sc update -g moves your lock, so sc install only names a plugin the lock is missing.
+test("sc install leaves a plugin your lock lacks to sc update -g, and the lock as it is", async () => {
+  noGitHubPlugin();
+  fakeGitHub();
+  publishFake("0.1.0");
+  await skel("1\nsk-ant-oat01-good\n");
+  appendFileSync(config(), "plugins: [simon/skelcrew-fake]\n");
+  writeFileSync(lock(), "# From my laptop, before simon/skelcrew-fake.\n");
+  const run = await install("y\n");
+  expect(run.err).toBe("");
+  expect(run.out).toBe(
+    "simon/skelcrew-fake isn't in your lock, so sc install leaves it. sc update -g simon/skelcrew-fake pins it, after showing what it runs.\n",
+  );
+  expect(readFileSync(lock(), "utf8")).toBe("# From my laptop, before simon/skelcrew-fake.\n");
+  expect(existsSync(join(home, ".local", "share", "skelcrew", "plugins", "fake"))).toBe(false);
+  const updated = await atTerminal("y\n", home, ["update", "-g", "simon/skelcrew-fake"]);
+  expect(updated.out).toContain("Installed fake 0.1.0.");
+  expect(readFileSync(lock(), "utf8")).toContain(fakeCommit("0.1.0"));
+  expect((await install()).out).toContain("Nothing to install");
+});

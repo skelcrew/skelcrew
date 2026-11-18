@@ -49,8 +49,8 @@ function writeLock(lock: Lock): void {
 }
 
 // Returns your lock, checked. A machine set up before the lock existed has none yet: its plugins
-// from GitHub are written into a new lock as they are, and into plugins: in your config.yaml when
-// it has no such line. So the move reinstalls nothing and asks nothing again.
+// from GitHub are written into a new lock as they are, and added to plugins: in your config.yaml.
+// So the move reinstalls nothing and asks nothing again.
 export function yourLock(db: Database): Lock {
   const file = lockFile();
   if (existsSync(file)) {
@@ -77,7 +77,11 @@ export function yourLock(db: Database): Lock {
   }
   if (Object.keys(lock).length === 0) return lock;
   writeLock(lock);
-  if (!yourConfigDocument().has("plugins")) setYourPlugins(Object.keys(lock));
+  // Added to the plugins your config names already, such as a new one copied from another
+  // machine, so the setup carries all of them.
+  const named = yourPlugins();
+  const added = Object.keys(lock).filter((source) => !named.includes(source));
+  if (added.length > 0) setYourPlugins([...named, ...added]);
   return lock;
 }
 

@@ -261,7 +261,7 @@ openDb().run("INSERT INTO repositories (owner, repo, name, forge) VALUES ('simon
   expect(run.out).toContain("Your command still runs.");
   expect(await serverSources()).toEqual({ fake: "owner/other" });
   expect(await serverPlugins()).toBe(
-    "fake 0.2.0 io: tracker\nowner/fake from owner/fake isn't installed. sc install installs its newest version.\n",
+    "fake 0.2.0 io: tracker\nowner/fake from owner/fake isn't installed. sc update -g owner/fake pins and installs it.\n",
   );
 });
 
