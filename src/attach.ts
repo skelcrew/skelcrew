@@ -47,6 +47,15 @@ function daemonShouldRun(running: z.infer<typeof DaemonBuild>): string | null {
   return commit === "" || running.commit === commit ? null : `commit ${commit}`;
 }
 
+// How long a restarted daemon may take to answer on what this Skelcrew wants, in milliseconds.
+// Tests set SKELCREW_RESTART_WAIT_MS shorter, so a daemon that never comes back doesn't cost
+// them ten seconds.
+const restartWait = z.coerce
+  .number()
+  .min(0)
+  .catch(10_000)
+  .parse(process.env.SKELCREW_RESTART_WAIT_MS ?? 10_000);
+
 // Restarts the daemon when it runs another release than this Skelcrew, or another commit of this
 // checkout. So a release installed in the background, or a git pull, takes over the next time
 // you run sc. Agents keep running, as only the daemon restarts.
@@ -58,13 +67,13 @@ export async function restartStaleDaemon(): Promise<void> {
   const log = restartDaemon();
   // Done once a daemon answers that runs what this Skelcrew wants. The old one can still
   // answer for a moment while it stops.
-  const deadline = Date.now() + 10_000;
+  const deadline = Date.now() + restartWait;
   while (true) {
     const now = await daemonRuns();
     if (now && !daemonShouldRun(now)) return;
     if (Date.now() > deadline)
       throw new Error(
-        `Skelcrew's daemon didn't come back on ${want} within 10 seconds: ${log} shows why`,
+        `Skelcrew's daemon didn't come back on ${want} within ${restartWait / 1000} seconds: ${log} shows why`,
       );
     await Bun.sleep(100);
   }
