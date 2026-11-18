@@ -1,7 +1,8 @@
 // The test runner, scripts/test.ts: a run that goes past its time limit is stopped and fails,
-// and what a run starts never reaches the daemon of the Skelcrew it runs in.
+// in CI it prints how long each test took, and what a run starts never reaches the daemon of the
+// Skelcrew it runs in.
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -35,6 +36,131 @@ test("hangs", () => new Promise(() => {}), 600_000);
   const [err, code] = await Promise.all([new Response(run.stderr).text(), run.exited]);
   expect(err).toContain("so they were stopped");
   expect(code).toBe(1);
+});
+
+// Runs scripts/test.ts on the given test files in the test's folder, as CI runs it when `ci`,
+// and gives back what it printed and its exit code. The folder has no bunfig.toml, so the run
+// loads no preload of Skelcrew's.
+async function runIn(files: string[], ci: boolean, limit = "") {
+  const env: Record<string, string> = { PATH: process.env.PATH ?? "", HOME: folder };
+  if (ci) env.GITHUB_ACTIONS = "true";
+  if (limit) env.SKELCREW_TESTS_LIMIT = limit;
+  const run = Bun.spawn([process.execPath, runner, ...files], {
+    cwd: folder,
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [out, code] = await Promise.all([new Response(run.stdout).text(), run.exited]);
+  return { out, code };
+}
+
+// The seconds a line of the timings gives for what follows them, such as a file and a test's
+// name, and where that line is in what the run printed. A busy machine makes a sleep last
+// longer, so tests check that a time is at least what was slept, and the order, never one value.
+function timeOf(out: string, what: string): { seconds: number; at: number } {
+  const lines = out.split("\n");
+  const at = lines.findIndex((line) => line.trimStart().endsWith(` s  ${what}`));
+  return { seconds: Number.parseFloat(lines[at]?.trim() ?? ""), at };
+}
+
+// CI is where the tests that start a real sandbox run, so its log shows where a slow run went.
+// A file's time includes its hooks, such as a slow beforeAll, which no test's time has, and the
+// preloads bunfig.toml names, which load before the runner's own. Here one takes half a second.
+test("in CI a run prints its slowest tests and each file's time, and elsewhere neither", async () => {
+  writeFileSync(join(folder, "bunfig.toml"), '[test]\npreload = ["./slow-preload.ts"]\n');
+  writeFileSync(join(folder, "slow-preload.ts"), "Bun.sleepSync(500);\n");
+  writeFileSync(
+    join(folder, "slow.test.ts"),
+    `import { test } from "bun:test";
+test("takes a while", () => Bun.sleep(400));
+test("takes no time", () => {});
+`,
+  );
+  writeFileSync(
+    join(folder, "other.test.ts"),
+    `import { afterAll, beforeAll, test } from "bun:test";
+beforeAll(() => Bun.sleep(800));
+afterAll(() => Bun.sleep(400));
+test("other", () => {});
+`,
+  );
+  const files = ["./slow.test.ts", "./other.test.ts"];
+  const { out, code } = await runIn(files, true);
+  expect(code).toBe(0);
+  const tests = out.slice(out.indexOf("The slowest tests:"), out.indexOf("Time per file:"));
+  const slowTest = timeOf(tests, "slow.test.ts  takes a while");
+  expect(slowTest.seconds).toBeGreaterThanOrEqual(0.4);
+  expect(slowTest.at).toBeLessThan(timeOf(tests, "slow.test.ts  takes no time").at);
+  expect(timeOf(tests, "other.test.ts  other").at).toBeGreaterThan(0);
+  // Each file, with at least what its tests, hooks and the preload slept. A busy machine can
+  // delay either file, so their order isn't checked.
+  const perFile = out.slice(out.indexOf("Time per file:"));
+  const [other, slow] = [timeOf(perFile, "other.test.ts"), timeOf(perFile, "slow.test.ts")];
+  expect(other.seconds).toBeGreaterThanOrEqual(1.7);
+  expect(slow.seconds).toBeGreaterThanOrEqual(0.9);
+  expect(other.at).toBeGreaterThan(0);
+  expect(slow.at).toBeGreaterThan(0);
+  const local = await runIn(files, false);
+  expect(local.code).toBe(0);
+  expect(local.out).not.toContain("slowest");
+});
+
+// A run stopped at its limit is the one whose times matter most.
+test("in CI a run stopped at its limit still prints the times it has, and names the files it stopped", async () => {
+  writeFileSync(
+    join(folder, "quick.test.ts"),
+    'import { test } from "bun:test";\ntest("quick", () => Bun.sleep(100));\n',
+  );
+  writeFileSync(
+    join(folder, "hangs.test.ts"),
+    'import { test } from "bun:test";\ntest("hangs", () => new Promise(() => {}), 600_000);\n',
+  );
+  const { out, code } = await runIn(["./quick.test.ts", "./hangs.test.ts"], true, "3000");
+  expect(code).toBe(1);
+  expect(timeOf(out, "quick.test.ts  quick").seconds).toBeGreaterThanOrEqual(0.1);
+  expect(out).toMatch(/\n +cut off {2}hangs\.test\.ts\n/);
+});
+
+// A test that hangs and ignores being asked to stop, so only a kill ends its worker.
+test("in CI a run stopped at its limit prints its times even when a worker ignores SIGTERM", async () => {
+  writeFileSync(
+    join(folder, "quick.test.ts"),
+    'import { test } from "bun:test";\ntest("quick", () => Bun.sleep(100));\n',
+  );
+  writeFileSync(
+    join(folder, "stubborn.test.ts"),
+    `import { test } from "bun:test";
+process.on("SIGTERM", () => {});
+test("hangs", () => new Promise(() => {}), 600_000);
+`,
+  );
+  const { out, code } = await runIn(["./quick.test.ts", "./stubborn.test.ts"], true, "3000");
+  expect(code).toBe(1);
+  expect(timeOf(out, "quick.test.ts  quick").seconds).toBeGreaterThanOrEqual(0.1);
+  expect(out).toMatch(/\n +cut off {2}stubborn\.test\.ts\n/);
+});
+
+// Files still waiting for a worker when the run is stopped never start: one that did could set
+// up after the limit and be killed before it cleared up. Nine files hang, more than a run's
+// workers, so the last one waits for a worker.
+test("a file still waiting when the run is stopped never starts, and is named as cut off", async () => {
+  const hangs =
+    'import { test } from "bun:test";\ntest("hangs", () => new Promise(() => {}), 600_000);\n';
+  const files = Array.from({ length: 9 }, (_, i) => `./hangs-${i}.test.ts`);
+  for (const file of files) writeFileSync(join(folder, file), hangs);
+  writeFileSync(
+    join(folder, "late.test.ts"),
+    `import { writeFileSync } from "node:fs";
+import { test } from "bun:test";
+writeFileSync(${JSON.stringify(join(folder, "late-started"))}, "");
+test("late", () => {});
+`,
+  );
+  const { out, code } = await runIn([...files, "./late.test.ts"], true, "3000");
+  expect(code).toBe(1);
+  expect(existsSync(join(folder, "late-started"))).toBe(false);
+  expect(out).toMatch(/\n +cut off {2}late\.test\.ts\n/);
 });
 
 // Stands in for the daemon of the Skelcrew a builder runs in, listening on this socket, and

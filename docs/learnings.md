@@ -63,6 +63,50 @@ that covers the code you are about to write.
   to fall back, the sandbox hides `/tmp`, and every session opens with "Cross-session
   messaging is off". The variable is Claude Code's internal name, not a documented one, so
   check it still works after an update.
+- **Turn off Claude Code's agent view** with `CLAUDE_CODE_DISABLE_AGENT_VIEW=1`. Its
+  background service (`claude daemon`) runs in the session's config folder. In November 2026
+  the records showed this:
+  - Skelcrew's journal: it started a lead with `--session-id`, brought it back once with
+    `--resume` on that id, and never started it again, freeze included. That conversation's
+    file stayed in use for two more days, so the process in the lead's session kept running.
+  - The lead's `daemon.log` and conversation files: a minute after that first start, a second
+    conversation began, which the service ran, started by a slash command (`bg spawned <id>
+    (slash)`). The human worked in it, through agent view, under an id Skelcrew never stored.
+  - The day after, as the human started the screen again after a freeze, the service handed
+    out a spare session in its place (`bg claimed-spare <id> (fleet)`). It was a new
+    conversation on Claude Code's default model, without the lead's instructions.
+
+  In 2.1.325, `claude daemon run` quits when agent view is off, so that service never starts.
+  A lead already running with it on can't be restarted safely: Skelcrew would resume the id it
+  stored, not the conversation in use. So Simon chose to leave such leads running, with no code
+  to restart them. Each gets agent view off at its next start. Upgrading is one step by hand,
+  done once for each such lead, before its next start:
+  1. Find the conversation you want to keep by what is in it, never by which file is newest: a
+     spare Claude Code handed out later is newer, and holds none of your work. This prints, for
+     each of the lead's conversations, its id, the model of its last answer, how many messages
+     it has and the start of the last one typed in:
+
+     ```sh
+     for f in ~/.local/share/skelcrew/claude/<lead>/projects/*/*.jsonl; do bun -e '
+     const lines = (await Bun.file(process.argv[1]).text()).split("\n").filter(Boolean)
+       .map((l) => { try { return JSON.parse(l) } catch { return {} } });
+     const typed = lines.filter((l) => l.type === "user" && typeof l.message?.content === "string");
+     const model = lines.filter((l) => l.type === "assistant").at(-1)?.message?.model ?? "none";
+     console.log(process.argv[1].split("/").at(-1).replace(".jsonl", ""), model,
+       `${typed.length} messages`, JSON.stringify((typed.at(-1)?.message.content ?? "").slice(0, 80)));
+     ' "$f"; done
+     ```
+
+     Pick the one whose last message is the last thing you said to the lead. One on the default
+     model with few messages is a spare.
+  2. Set the repository's `lead_session` in `~/.local/share/skelcrew/skelcrew.db` to that file's
+     name without `.jsonl`:
+     `UPDATE repositories SET lead_session = '<id>' WHERE owner = '<owner>' AND repo = '<repo>'`.
+  3. Exit the lead with `/exit` and open it again with `sc`. It comes back on that conversation,
+     with agent view off, its model and its instructions.
+
+  Skipping the step brings the lead back on the conversation Skelcrew stored, which may be an
+  older one.
 - **Claude Code can outlive SIGTERM for a few seconds.** Wait for it to exit before
   removing the thread's clone or anything else it uses.
 - **`Stop` runs on neither an error nor Esc.** Its hooks reference says `Stop` "does not run if

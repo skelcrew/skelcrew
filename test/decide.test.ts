@@ -4,11 +4,17 @@
 import { expect, test } from "bun:test";
 import {
   afterReview,
+  allGreen,
+  branchMoved,
   type Check,
   ciResult,
   ciState,
   decide,
+  decideBranch,
+  forgetMoves,
   labeledToStart,
+  mergeStuck,
+  mergeWaitsOn,
   onlyDocs,
   type PullRequest,
   refusedWorkflow,
@@ -49,6 +55,7 @@ function thread(change: Partial<Thread> = {}): Thread {
     review_limited: false,
     review_reset: null,
     conflicts: null,
+    ci_passed: false,
     noting: null,
     title: null,
     body: null,
@@ -66,6 +73,15 @@ function thread(change: Partial<Thread> = {}): Thread {
     changed: null,
     updates: [],
     state: null,
+    merged: false,
+    issue_link: null,
+    closes: null,
+    merge_plan: null,
+    merge_id: null,
+    merge_by: null,
+    merge_at: null,
+    merge_waits: null,
+    merge_noted: null,
     ...change,
   };
 }
@@ -117,7 +133,7 @@ function pr(change: Partial<PullRequest> = {}): PullRequest {
   };
 }
 
-const given = { maxRounds: 3 };
+const given = { maxRounds: 3, moved: false };
 
 // The decision for a thread whose PR is open and not ending.
 function acted(t: Thread, p: PullRequest) {
@@ -378,6 +394,89 @@ test("a merge conflict is told once: the builder works on it until it submits", 
   expect(acted(thread({ reviewing: "abc" }), conflicting).notice).toEqual([]);
 });
 
+// A PR merged into the thread's branch, or someone else's push, moves the branch on the forge
+// with commits its builder hasn't got. Its next push would be refused, so it merges them first.
+test("a branch that moved on the forge tells the builder to merge it, once", () => {
+  const moved = pr({ head: "f00d", checks: [approved] });
+  const decision = decide(thread({ needs_you: true }), moved, { ...given, moved: true });
+  if ("end" in decision) throw new Error(decision.end);
+  expect(decision.moved).toBe("f00d");
+  expect(decision.notice).toEqual([
+    expect.stringContaining("skelcrew/12-add-export moved on the remote to f00d"),
+  ]);
+  expect(decision.notice[0]).toContain(
+    "git fetch origin, merge origin/skelcrew/12-add-export into your branch",
+  );
+  // It isn't ready to merge while the builder hasn't got what is on its branch.
+  expect(decision.change).toEqual({ status: "working", needs_you: false });
+  // Told, the same head is never told again.
+  const told = thread({ seen: decision.seen });
+  const again = decide(told, moved, { ...given, moved: true });
+  if ("end" in again) throw new Error(again.end);
+  expect(again).toMatchObject({ notice: [], moved: null, seen: decision.seen });
+});
+
+// A review of the builder's previous commit can approve after the branch moved and the builder
+// was told. No review saw the new commits, so the PR isn't ready until the builder pushes them.
+test("a branch that moved is never ready to merge, even once told", () => {
+  const moved = pr({ head: "f00d", checks: [approved] });
+  const told = thread({ seen: ["head:f00d"] });
+  const decision = decide(told, moved, { ...given, moved: true });
+  expect(decision).toMatchObject({ notice: [], moved: null, change: {} });
+  // The same PR, at a commit Skelcrew pushed, is ready.
+  expect(acted(told, moved).change).toEqual({ needs_you: true });
+});
+
+// A thread with no PR to poll, such as one in a repository with no forge, learns of its moved
+// branch from its branch alone.
+test("a branch with no PR that moved tells the builder once, and leaves ready to merge", () => {
+  const ready = thread({ pr: null, needs_you: true, seen: ["51"] });
+  const decision = decideBranch(ready, "f00d", { ...given, moved: true });
+  expect(decision).toMatchObject({
+    moved: "f00d",
+    seen: ["51", "head:f00d"],
+    change: { status: "working", needs_you: false },
+  });
+  expect(decision?.notice).toEqual([expect.stringContaining("moved on the remote to f00d")]);
+  const told = thread({ pr: null, seen: decision?.seen ?? [] });
+  expect(decideBranch(told, "f00d", { ...given, moved: true })).toBeNull();
+  expect(decideBranch(ready, "f00d", given)).toBeNull();
+});
+
+// A thread saved before Skelcrew kept the IDs it has seen has none, and no PR whose history they
+// would hold back, so its builder still learns of the move.
+test("a branch with no PR that moved is told for a thread saved before seen IDs were kept", () => {
+  const older = thread({ pr: null, seen: null });
+  const decision = decideBranch(older, "f00d", { ...given, moved: true });
+  expect(decision).toMatchObject({ moved: "f00d", seen: ["head:f00d"] });
+  expect(decision?.notice).toEqual([expect.stringContaining("moved on the remote to f00d")]);
+});
+
+// A submit drops Skelcrew's notices still waiting. A moved branch's notice it dropped never
+// reached the builder, so its commit is told again. One the builder got stays told.
+test("a submit forgets only the moved commits whose notices it dropped", () => {
+  const branch = "skelcrew/12-add-export";
+  const seen = ["51", "head:aaa", "head:bbb"];
+  const dropped = [`app-12's push was refused. ${branchMoved(branch, "bbb")}`, "Other."];
+  expect(forgetMoves(seen, branch, dropped)).toEqual(["51", "head:aaa"]);
+  expect(forgetMoves(seen, branch, [])).toEqual(seen);
+  expect(forgetMoves(null, branch, dropped)).toBeNull();
+});
+
+// A round whose push failed stays submitting. Its push may have failed before it could tell the
+// builder, so the poll still does.
+test("a branch that moved is told while a round is submitting", () => {
+  const moved = pr({ head: "f00d" });
+  const decision = decide(thread({ submitting: "Round 2" }), moved, { ...given, moved: true });
+  if ("end" in decision) throw new Error(decision.end);
+  expect(decision).toMatchObject({ moved: "f00d", seen: ["head:f00d"] });
+  expect(decision.notice).toEqual([expect.stringContaining("moved on the remote to f00d")]);
+});
+
+test("a branch at the commit Skelcrew pushed hasn't moved", () => {
+  expect(acted(thread(), pr({ head: "f00d" }))).toMatchObject({ notice: [], moved: null });
+});
+
 test("an approved PR with a conflict doesn't need you yet", () => {
   const decision = acted(thread(), pr({ conflicts: true, checks: [approved] }));
   expect(decision.change).toEqual({ status: "working", needs_you: false });
@@ -435,6 +534,18 @@ test("a PR's CI reads as passing, failing or still running, and Skelcrew's own c
   expect(ciState(pr({ checks: [changes, passed] }))).toBe("passing");
   expect(ciState(pr({ checks: [passed, going] }))).toBe("pending");
   expect(ciState(pr({ checks: [failed, going] }))).toBe("failing");
+});
+
+// Unlike the saved CI state, Skelcrew's own check counts: it is the approval.
+test("a PR is all green only while every check passed, Skelcrew's own included", () => {
+  const passed = run(30, "test", "passed");
+  expect(allGreen(pr({ checks: [approved, passed] }))).toBe(true);
+  expect(allGreen(pr({ checks: [approved] }))).toBe(true);
+  expect(allGreen(pr({ checks: [approved, run(30, "test", "running")] }))).toBe(false);
+  expect(allGreen(pr({ checks: [approved, run(30, "test", "failed")] }))).toBe(false);
+  expect(allGreen(pr({ checks: [{ ...approved, state: "running" }, passed] }))).toBe(false);
+  expect(allGreen(pr({ checks: [{ ...approved, state: "failed" }, passed] }))).toBe(false);
+  expect(allGreen(pr({ checks: [passed] }))).toBe(false);
 });
 
 // Who runs the suite on commit abc, the head of PR 7, with these open PRs in the repository.
@@ -634,4 +745,56 @@ test("a push refused for any other reason gets no workflow message", () => {
   const said =
     "git push failed: ! [rejected] abc -> b (non-fast-forward)\nerror: failed to push some refs";
   expect(refusedWorkflow("app-12", said)).toBeNull();
+});
+
+// A merge when ready merges only the commit Skelcrew's reviewer approved, while it is still the
+// PR's head, with every check passed and nothing in the way. Otherwise it says what it waits on.
+test("a merge when ready waits until the approved head is green and merges cleanly", () => {
+  const head = "a".repeat(40);
+  const ready = thread({ status: "waiting", verdict: "approve" });
+  const green = pr({ head, checks: [approved, run(1, "test", "passed")] });
+  expect(mergeWaitsOn(ready, green, head)).toBeNull();
+  // A new push waits for its own approval, and a push nobody reviewed is never merged.
+  expect(mergeWaitsOn({ ...ready, submitting: "Fix" }, green, head)).toBe("its review");
+  expect(mergeWaitsOn({ ...ready, reviewing: head }, green, head)).toBe("its review");
+  expect(mergeWaitsOn(ready, pr({ ...green, head: "b".repeat(40) }), head)).toBe(
+    "a review of its newest commit",
+  );
+  expect(mergeWaitsOn({ ...ready, verdict: "changes" }, green, head)).toBe("an approval");
+  // A conflict or a failing check needs the builder, and running checks only time.
+  expect(mergeWaitsOn(ready, pr({ ...green, conflicts: true }), head)).toBe(
+    "its conflict with main to be fixed",
+  );
+  expect(mergeWaitsOn({ ...ready, conflicts: "main" }, green, head)).toBe(
+    "its conflict with main to be fixed",
+  );
+  const failing = pr({ ...green, checks: [approved, run(1, "test", "failed")] });
+  expect(mergeWaitsOn(ready, failing, head)).toBe("its failing checks to be fixed");
+  const running = pr({ ...green, checks: [approved, run(1, "test", "running")] });
+  expect(mergeWaitsOn(ready, running, head)).toBe("its checks");
+  // Skelcrew's own check counts too, as it carries the review's verdict.
+  const pending = pr({ ...green, checks: [{ ...approved, state: "running" }] });
+  expect(mergeWaitsOn(ready, pending, head)).toBe("its checks");
+  // A PR the forge shows without Skelcrew's check yet isn't green, with CI or without.
+  expect(mergeWaitsOn(ready, pr({ ...green, checks: [] }), head)).toBe("its checks");
+  const ciOnly = pr({ ...green, checks: [run(1, "test", "passed")] });
+  expect(mergeWaitsOn(ready, ciOnly, head)).toBe("its checks");
+  // A thread that failed or stopped keeps its plan, and says why it waits.
+  expect(mergeWaitsOn({ ...ready, status: "failed" }, green, head)).toBe(
+    "its thread, which failed",
+  );
+  expect(mergeWaitsOn({ ...ready, status: "stopped" }, green, head)).toBe(
+    "its thread, which is stopped",
+  );
+});
+
+test("the lead hears an armed merge still waits once per review round, and only when it is stuck", () => {
+  const armed = thread({ merge_plan: "armed", review_round: 2 });
+  expect(mergeStuck(armed, "an approval")).toBe(true);
+  expect(mergeStuck({ ...armed, merge_noted: 2 }, "an approval")).toBe(false);
+  expect(mergeStuck({ ...armed, merge_noted: 1 }, "its conflict with main to be fixed")).toBe(true);
+  expect(mergeStuck(armed, "its checks")).toBe(false);
+  expect(mergeStuck(armed, "its review")).toBe(false);
+  expect(mergeStuck(armed, null)).toBe(false);
+  expect(mergeStuck({ ...armed, review_round: null }, "an approval")).toBe(false);
 });

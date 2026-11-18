@@ -113,7 +113,7 @@ export async function startOn(
 }
 
 // Has the daemon start a thread on a title and body, for sc start in a repository with no
-// tracker, and returns what it did, in a sentence naming the thread, such as app-t1. `short` is
+// tracker, and returns what it did, in a sentence naming the thread, such as app-wr1. `short` is
 // its short title for the sidebar.
 export async function startNew(
   repository: string,
@@ -136,6 +136,43 @@ export async function startNew(
 // reason for refusing a merge. Only your own socket takes a merge, so no agent can merge.
 export async function startOrMerge(asked: DaemonRequest): Promise<void> {
   await request(asked);
+}
+
+// Has the daemon arm or cancel a merge when ready, for sc merge, and returns what to say. The
+// thread is named by its repository and task, or by its PR's number, with `from` naming the
+// repository of the checkout sc ran in. Only your own socket arms one.
+export async function planMerge(
+  command: "merge when ready" | "merge cancel",
+  which: {
+    repo?: string;
+    task?: string;
+    pr?: number;
+    from?: string;
+    seen?: { pr: number; started: number | null };
+  },
+): Promise<string> {
+  const reply = await request({ command, ...which });
+  return checkReply(z.object({ said: z.string() }), reply).said;
+}
+
+// Asks the daemon which thread and PR sc merge --when-ready names, with its title and when the
+// thread started, so it can ask you about it before arming, and arm only that.
+export async function previewMerge(which: {
+  repo?: string;
+  task?: string;
+  pr?: number;
+  from?: string;
+}) {
+  const reply = await request({ command: "merge preview", ...which });
+  return checkReply(
+    z.object({
+      thread: z.string(),
+      pr: z.number().nullable(),
+      title: z.string().nullable(),
+      started: z.number().nullable(),
+    }),
+    reply,
+  );
 }
 
 // Has the daemon stop a thread, for sc stop, and returns the thread's name. The daemon

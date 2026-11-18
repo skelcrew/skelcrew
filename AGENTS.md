@@ -6,8 +6,9 @@ before changing anything it covers.
 The traps earlier versions found are in `docs/learnings.md`. Read the part that covers
 typing into a session, starting Claude Code or the sandbox before touching them.
 
-We launch a beta on Monday 16 November 2026. The launch and its milestones are in the
-spec. Until then, work that doesn't serve the launch waits.
+The spec describes Skelcrew v6, and parts of it aren't built yet. The order of work is in
+`docs/v6.md`: the phases that take the code to the spec. Until v6 lands, work that doesn't
+serve it waits.
 
 ## The goal: simple and clear
 

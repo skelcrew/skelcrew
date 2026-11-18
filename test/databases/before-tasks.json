@@ -32,7 +32,8 @@
       "prUrl": null,
       "checks": null,
       "review": null,
-      "waiting": 0
+      "waiting": 0,
+      "merge": null
     },
     {
       "thread": "notes-t1",
@@ -46,7 +47,8 @@
       "prUrl": null,
       "checks": null,
       "review": null,
-      "waiting": 0
+      "waiting": 0,
+      "merge": null
     },
     {
       "thread": "app-t1",
@@ -64,7 +66,8 @@
         "round": null,
         "at": null
       },
-      "waiting": 0
+      "waiting": 0,
+      "merge": null
     },
     {
       "thread": "app-16",
@@ -82,7 +85,8 @@
         "round": 2,
         "at": "2026-11-10T09:01:40.000Z"
       },
-      "waiting": 0
+      "waiting": 0,
+      "merge": null
     },
     {
       "thread": "app-15",
@@ -100,7 +104,8 @@
         "round": null,
         "at": null
       },
-      "waiting": 0
+      "waiting": 0,
+      "merge": null
     },
     {
       "thread": "app-14",
@@ -118,7 +123,8 @@
         "round": null,
         "at": null
       },
-      "waiting": 0
+      "waiting": 0,
+      "merge": null
     },
     {
       "thread": "app-13",
@@ -136,7 +142,8 @@
         "round": 1,
         "at": "2026-11-10T09:01:30.000Z"
       },
-      "waiting": 0
+      "waiting": 0,
+      "merge": null
     },
     {
       "thread": "app-12",
@@ -154,7 +161,8 @@
         "round": 2,
         "at": "2026-11-10T09:01:10.000Z"
       },
-      "waiting": 1
+      "waiting": 1,
+      "merge": null
     }
   ],
   "psNotes": [
@@ -170,7 +178,8 @@
       "prUrl": null,
       "checks": null,
       "review": null,
-      "waiting": 0
+      "waiting": 0,
+      "merge": null
     },
     {
       "thread": "notes-t1",
@@ -184,7 +193,8 @@
       "prUrl": null,
       "checks": null,
       "review": null,
-      "waiting": 0
+      "waiting": 0,
+      "merge": null
     }
   ],
   "issues": [

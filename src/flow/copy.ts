@@ -17,7 +17,7 @@ const Author = z.object({
 // A comment on an item, or the text of a review on a PR.
 const Comment = z.object({ id: z.string(), text: z.string(), author: Author.nullable() });
 
-// A task's ID in its tracker, or Skelcrew's own for a thread with no task there, such as t1. It
+// A task's ID in its tracker, or Skelcrew's own for a thread with no task there, such as wr1. It
 // names the thread's folder, which setup deletes, and its branch, so it holds only letters,
 // digits, underscores and dashes, starting with a letter or digit: never a / or a .. that
 // would reach outside Skelcrew's threads folder.
@@ -25,6 +25,12 @@ export const TaskId = z
   .string()
   .max(64)
   .regex(/^[A-Za-z0-9][\w-]*$/);
+
+// Returns whether a task is Skelcrew's own, started with no issue in the tracker behind it. Its ID
+// is its machine's code and a number, such as wr4, or a t and a number from before machines had
+// codes, such as t4. A thread's name is its repository and its task's ID, so this shape is kept
+// for Skelcrew alone: saveItems leaves out an issue whose ID has it.
+export const ownTask = (task: string) => /^[a-z]{1,2}\d+$/.test(task);
 
 // What an item has whatever its kind. An ID is the tracker's own, such as "12" on GitHub, and
 // is checked as the plugin answers, so one that isn't a plain name is refused once, there.
@@ -97,12 +103,21 @@ export function saveItems(
           WHERE owner = ? AND repo = ? AND kind = ? AND state = 'open'`,
         [owner, repo, kind],
       );
-    for (const item of items)
+    // An issue whose ID has the shape of Skelcrew's own would share its name with a thread
+    // started with no issue, and starting one would reach the other, so it is left out.
+    for (const item of items) {
+      if (item.kind === "task" && ownTask(item.id)) {
+        console.log(
+          `left out issue ${item.id} of ${owner}/${repo}: Skelcrew names its own tasks like that`,
+        );
+        continue;
+      }
       db.run(
         `INSERT OR REPLACE INTO items (owner, repo, kind, id, state, created, item)
           VALUES (?, ?, ?, ?, ?, ?, ?)`,
         [owner, repo, item.kind, item.id, item.state, item.created, JSON.stringify(item)],
       );
+    }
     // Forget the items that are no longer open, unless a thread still working, waiting or
     // stopped points to one by its task or PR.
     db.run(
@@ -191,11 +206,15 @@ export function itemAt(db: Database, link: string): Item | null {
   return parseItems(rows)[0] ?? null;
 }
 
-// Returns the task a thread works on, for its reviewer, its PR and sc issue show: its item in
-// Skelcrew's copy, where the tracker's latest words are, or else what the thread saved as it
-// started, as for a thread with no task in the tracker. Only a task from the copy has a line
-// that closes it. The lead's messages to the builder follow the body, oldest first, as changes
-// to the task: a reviewer that didn't see them would ask the builder to undo what you agreed.
+// Returns the task a thread works on, for its builder, its reviewer, its PR and sc issue show:
+// the title and body saved as it started. Later edits to the issue never reach a started task,
+// so the reviewer checks against what the builder was given, and the lead passes on what
+// matters as a message. A row from before Skelcrew saved them falls back on the copy's words.
+// The line that closes its issue is the one saved as it started too, so its PR closes the issue
+// though the tracker or the copy changed since, and an empty one closes nothing, whatever the
+// copy says now. A row from before Skelcrew saved it takes the copy's. The lead's messages to the builder follow
+// the body, oldest first, as changes to the task: a reviewer that didn't see them would ask the
+// builder to undo what you agreed.
 export function threadTask(
   db: Database,
   thread: {
@@ -204,17 +223,20 @@ export function threadTask(
     task: string;
     title: string | null;
     body: string | null;
+    closes: string | null;
     updates: { at: number; text: string }[];
   },
 ): { title: string; body: string; closes: string | null } {
-  // taskOf throws when the copy has no such task, which is the sign to use the thread's own.
-  let task: { title: string; body: string; closes: string | null };
+  // taskOf throws when the copy has no such task, as for a task with no issue.
+  let issue: Task | null = null;
   try {
-    const { title, body, closes } = taskOf(db, thread.owner, thread.repo, thread.task);
-    task = { title, body, closes };
-  } catch {
-    task = { title: thread.title ?? "", body: thread.body ?? "", closes: null };
-  }
+    issue = taskOf(db, thread.owner, thread.repo, thread.task);
+  } catch {}
+  const task = {
+    title: thread.title ?? issue?.title ?? "",
+    body: thread.title === null ? (issue?.body ?? "") : (thread.body ?? ""),
+    closes: thread.closes ?? issue?.closes ?? null,
+  };
   if (thread.updates.length === 0) return task;
   // Each message under the time it was typed in, in UTC, as the reviewer has no time zone.
   const updates = thread.updates.map(

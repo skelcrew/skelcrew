@@ -106,7 +106,7 @@ test("points the daemon's service at itself", async () => {
   writeFileSync(unit, "");
   fake("systemctl", 'test "$2" = daemon-reload');
   await run([]);
-  expect(readFileSync(unit, "utf8")).toContain(`ExecStart="${skel}" serve\n`);
+  expect(readFileSync(unit, "utf8")).toContain(`ExecStart="${skel}" up\n`);
 });
 
 test("says which release it is, or which commit a build from a checkout came from", () => {
