@@ -357,5 +357,6 @@ export async function runList(agents: string, repository: string): Promise<void>
   clearInterval(loads);
   process.stdin.pause();
   giveBack();
-  console.log("Your agents keep running. Run sc to come back.");
+  // Plain sc opens the split screen, so the way back to the list names --list.
+  console.log("Your agents keep running. Run sc --list to come back.");
 }

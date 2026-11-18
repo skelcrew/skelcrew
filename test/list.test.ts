@@ -464,6 +464,7 @@ test("the list opens on the first task that needs you, and q leaves it with ever
   expect(here()).toStartWith("▸ ● app-12");
   type("q");
   await until(() => read(join(home, "left")) === "left", "the list to leave");
+  expect(seen()).toContain("Your agents keep running. Run sc --list to come back.");
   const sessions = Bun.spawnSync(["tmux", "-L", agents, "list-sessions", "-F", "#S"]);
   expect(sessions.stdout.toString().trim().split("\n").sort()).toEqual(["app-12", "app-7", "lead"]);
 });

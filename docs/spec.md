@@ -775,7 +775,7 @@ While messages wait for a builder, the row says how many, such as `1 message wai
 | `m` | Ready for review | Asks `Merge app#41 into main? y/n`, then merges it on the forge. Not offered without a forge, where the line says so. If the forge refuses, the line says why |
 | `y` `n` | A request from the lead | Answers it |
 | Tab | Anywhere | The next repository |
-| `q` | Anywhere | Leaves the list. Everything keeps running. Skelcrew prints `Your agents keep running. Run sc to come back.` |
+| `q` | Anywhere | Leaves the list. Everything keeps running. Skelcrew prints `Your agents keep running. Run sc --list to come back.` |
 
 The engine does what the keys ask, as only it talks to the tracker and forge. Merging and starting stay yours: the lead can't press these keys, and the merge confirm says when the PR changes `.agents/`.
 
