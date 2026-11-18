@@ -613,6 +613,21 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
     await until(() => waiting() === 0);
   }, 60_000);
 
+  // A builder already running keeps its origin/main where it last fetched. Main moved on the
+  // forge, so the notice names main's new commit for the builder to check its fetch against.
+  test("a conflict notice names the commit main is on at the forge, after main moved", async () => {
+    const work = await approvedApp12();
+    writeFileSync(join(work, "LATER"), "later\n");
+    git(work, "add", ".");
+    git(work, "commit", "-qm", "main moved");
+    git(work, "push", "-q", join(home, "github", "simon", "app.git"), "main");
+    const main = git(work, "rev-parse", "HEAD");
+    pr({ conflicts: true, reviews: [skelReview], checks: [approved] });
+    await until(() => typed().includes("conflicts with main"));
+    expect(typed()).toContain(`The forge's main is at ${main}.`);
+    expect(typed()).toContain("git fetch origin");
+  }, 60_000);
+
   // The builder fetches the base from Skelcrew's clone, so it is told only once that clone has
   // the base. A base Skelcrew can't fetch yet must not leave the PR advertised as ready.
   test("an approved PR conflicting with a base Skelcrew can't fetch leaves ready to merge, and is told once it can", async () => {

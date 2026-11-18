@@ -270,6 +270,17 @@ const reviews = () =>
   asked(plugin)
     .filter((q) => q.ask === "review")
     .map(({ commit, verdict, body }) => ({ commit, verdict, body }));
+// PR 7 as Skelcrew's copy of the forge holds it, or nothing yet.
+function copiedPr(): string {
+  const db = new Database(join(data(), "skelcrew.db"));
+  db.run("PRAGMA busy_timeout = 5000");
+  try {
+    const row = db.query("SELECT item FROM items WHERE kind = 'pr' AND id = '7'").get();
+    return row && typeof row === "object" && "item" in row ? String(row.item) : "";
+  } finally {
+    db.close();
+  }
+}
 // The PR Skelcrew opened, as it asked the forge, or nothing.
 const opened = () => asked(plugin).find((q) => q.ask === "open pr");
 const typedMessages = () => read(join(builder(), "typed")).split("\x1b[201~").length - 1;
@@ -373,7 +384,9 @@ describe.skipIf(insideSandbox)("sc submit", () => {
 
     const prompt = read(join(codexHome(), "sessions", "prompt-1"));
     expect(prompt).toContain("Add export");
-    expect(prompt).toContain("git diff origin/main...HEAD");
+    // The diff starts where the branch meets main as GitHub has it, which here is main's tip.
+    const main = git(join(github(), "simon", "app.git"), "rev-parse", "main");
+    expect(prompt).toContain(`git diff ${main}...HEAD`);
     expect(read(join(codexHome(), "sessions", "branches-1"))).toContain("origin/main");
 
     // Approved, it waits on CI: polling GitHub marks it needs you once every check is green.
@@ -960,6 +973,119 @@ done`,
     expect(reviews()[1]).toEqual({ commit: merged, verdict: "approve", body: "Tests pass." });
   }, 180_000);
 
+  // The builder merged main as GitHub has it, but its own origin/main is still where the thread
+  // started. Diffed against that, main's new commits would read as the PR's.
+  test("a merge of main is reviewed against main as the forge has it, not the builder's older copy", async () => {
+    const work = addApp();
+    verdict(1, "approve", "Ready to merge.");
+    verdict(2, "approve", "Tests pass.");
+    await approveThenMerge(work, { ci: false });
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-2")), 60_000);
+    const main = git(work, "rev-parse", "HEAD");
+    expect(read(join(codexHome(), "sessions", "main-2")).trim()).not.toBe(main);
+    expect(read(join(codexHome(), "sessions", "prompt-2"))).toContain(`git diff ${main}...HEAD`);
+  }, 180_000);
+
+  // The change was docs alone against main, but next lacks main's code, so against next it
+  // changes code, and its tests must run.
+  test("a PR retargeted while its review waits is tested as its new diff needs", async () => {
+    const work = addApp();
+    git(work, "push", "-q", "origin", "main:next");
+    writeFileSync(join(work, "app.ts"), "export const app = 1;\n");
+    git(work, "add", ".");
+    git(work, "commit", "-qm", "code on main");
+    git(work, "push", "-q", "origin", "main");
+    mkdirSync(builder(), { recursive: true });
+    writeFileSync(join(builder(), "docs-only"), "");
+    writeFileSync(join(plugin, "hold-status-pending"), "");
+    verdict(1, "approve", "Ready to merge.");
+    servePolling();
+    await untilCloned();
+    expect((await skel(["start", "app-12"])).err).toBe("");
+    await until(() => existsSync(join(plugin, "held-status")), 60_000);
+    answer(plugin, "changed", {
+      items: [
+        taskItem("12", "Add export", { body: "As JSON" }),
+        prItem("7", "Add export", {
+          branch: "skelcrew/12-add-export",
+          head: pushed(),
+          base: "next",
+        }),
+      ],
+      next: null,
+    });
+    await until(() => copiedPr().includes('"base":"next"'), 60_000);
+    rmSync(join(plugin, "hold-status-pending"));
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), 60_000);
+    const prompt = read(join(codexHome(), "sessions", "prompt-1"));
+    expect(prompt).not.toContain("only touches docs");
+    expect(prompt).toContain("run the repository's whole test suite");
+  }, 180_000);
+
+  // Someone can change the branch a PR goes into on the forge. Diffed against the base the
+  // thread started from, the reviewer would judge commits that aren't the PR's.
+  test("a PR retargeted on the forge is reviewed against its new base", async () => {
+    const work = addApp();
+    git(work, "push", "-q", "origin", "main:next");
+    const next = git(work, "rev-parse", "HEAD");
+    verdict(1, "approve", "Ready to merge.");
+    verdict(2, "approve", "Fine.");
+    servePolling();
+    await untilCloned();
+    expect((await skel(["start", "app-12"])).err).toBe("");
+    await until(() => finished("success").length === 1, 60_000);
+    await untilReviewSaved();
+    answer(plugin, "changed", {
+      items: [
+        taskItem("12", "Add export", { body: "As JSON" }),
+        prItem("7", "Add export", {
+          branch: "skelcrew/12-add-export",
+          head: pushed(),
+          base: "next",
+        }),
+      ],
+      next: null,
+    });
+    await until(() => copiedPr().includes('"base":"next"'), 60_000);
+    // main moves and the branch takes it in, so main and next now meet the branch apart.
+    mergeMain(work);
+    expect((await skel(["submit", "Merged main"], { SKELCREW_SOCKET: builderSocket() })).err).toBe(
+      "",
+    );
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-2")), 60_000);
+    expect(read(join(codexHome(), "sessions", "prompt-2"))).toContain(`git diff ${next}...HEAD`);
+  }, 180_000);
+
+  // Against next, which lacks main's new commit, the merge brings in more than its base.
+  test("a PR retargeted while its merge waits for CI is reviewed, not kept approved", async () => {
+    const work = addApp();
+    git(work, "push", "-q", "origin", "main:next");
+    verdict(1, "approve", "Ready to merge.");
+    verdict(2, "approve", "Reviewed against next.");
+    const { merged } = await approveThenMerge(work);
+    await until(() => read(join(data(), "threads", "app-12.log")).includes("waiting for CI"));
+    const retargeted = (state: string) =>
+      answer(plugin, "changed", {
+        items: [
+          taskItem("12", "Add export", { body: "As JSON" }),
+          prItem("7", "Add export", {
+            branch: "skelcrew/12-add-export",
+            head: merged,
+            base: "next",
+            checks: [ciCheck(state)],
+          }),
+        ],
+        next: null,
+      });
+    retargeted("running");
+    await until(() => copiedPr().includes('"base":"next"'), 60_000);
+    retargeted("passed");
+    await until(() => reviews().length === 2, 60_000);
+    expect(read(join(codexHome(), "sessions", "count")).trim()).toBe("2");
+    expect(reviews()[1]).toMatchObject({ commit: merged, body: "Reviewed against next." });
+    expect(statuses().some((s) => s.description.startsWith("approval kept"))).toBe(false);
+  }, 180_000);
+
   test("a merge whose wait for CI a restart cut short still keeps the approval", async () => {
     const work = addApp();
     verdict(1, "approve", "Ready to merge.");
@@ -1295,7 +1421,8 @@ done`,
     expect((await skel(["start", "app-12", "--from", "next"])).err).toBe("");
     await until(() => finished("success").length === 1, 30_000);
     expect(opened()?.base).toBe("next");
-    expect(read(join(codexHome(), "sessions", "prompt-1"))).toContain("origin/next...HEAD");
+    const next = git(work, "rev-parse", "next");
+    expect(read(join(codexHome(), "sessions", "prompt-1"))).toContain(`git diff ${next}...HEAD`);
     expect(read(join(codexHome(), "sessions", "branches-1"))).toContain("origin/next");
   }, 60_000);
 
