@@ -8,7 +8,7 @@ import { closePr, failedLog } from "../plugins/ask.ts";
 import { quietly } from "../run.ts";
 import { errorText } from "../say.ts";
 import { unassignIssue } from "./assign.ts";
-import { baseOf } from "./builder.ts";
+import { baseOf, inTurn } from "./builder.ts";
 import type { Check, Decision } from "./decide.ts";
 import { deleteBranch, fetchInto, onRemote } from "./git.ts";
 import { endWake, wakeAfterLimit } from "./limits.ts";
@@ -88,37 +88,26 @@ async function endBuilder(db: Database, sessions: string, folder: string, drop: 
   // earlier end still runs.
   endWake(folder);
   endRound(folder);
-  // Ends of one builder go one at a time, each after the one before has settled, so a slow end
-  // never finishes after a later one and the builder started since. Nothing is typed into it
-  // while its host ends it, and its messages are dropped only once it has ended: one that can't
-  // be ended may still run, and keeps them, typed in as before.
-  const before = endsUnderWay.get(folder) ?? Promise.resolve();
-  const end = pauseDelivering(db, folder, async () => {
-    await before;
-    const thread = readThread(db, folder);
-    const { host, id } = await builderSession(db, sessions, thread);
-    // Claude Code can outlive the end of its session for a few seconds, still writing in the
-    // clone.
-    await stopSession(host, id);
-    if (drop) stopDelivering(db, folder, true);
-    // Only the session it ended is forgotten: a builder started meanwhile keeps its own.
-    const now = readThread(db, folder);
-    if (now.host === thread.host && now.host_id === thread.host_id)
-      record(db, folder, { host: null, host_id: null });
-  });
-  const settled = end.then(
-    () => {},
-    () => {},
+  // It takes its turn with the builder's other starts and ends, so a slow end never finishes
+  // after a later one, nor misses a builder still starting. Nothing is typed into it while its
+  // host ends it, and its messages are dropped only once it has ended: one that can't be ended
+  // may still run, and keeps them, typed in as before.
+  return inTurn(folder, (earlier) =>
+    pauseDelivering(db, folder, async () => {
+      await earlier;
+      const thread = readThread(db, folder);
+      const { host, id } = await builderSession(db, sessions, thread);
+      // Claude Code can outlive the end of its session for a few seconds, still writing in the
+      // clone.
+      await stopSession(host, id);
+      if (drop) stopDelivering(db, folder, true);
+      // Only the session it ended is forgotten: a builder started meanwhile keeps its own.
+      const now = readThread(db, folder);
+      if (now.host === thread.host && now.host_id === thread.host_id)
+        record(db, folder, { host: null, host_id: null });
+    }),
   );
-  endsUnderWay.set(folder, settled);
-  settled.then(() => {
-    if (endsUnderWay.get(folder) === settled) endsUnderWay.delete(folder);
-  });
-  return end;
 }
-
-// The end of each thread's builder under way, by its folder, which settles once it is over.
-const endsUnderWay = new Map<string, Promise<void>>();
 
 // The stops under way, by the folder of the thread whose builder they end, each settling once it
 // is over. A builder may submit while it exits, which is refused, as its thread is about to be

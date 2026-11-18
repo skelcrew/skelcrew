@@ -251,7 +251,7 @@ import { builderSession, readThread } from ${JSON.stringify(source("flow/thread.
 import { endThread, removeThread, stopThread } from ${JSON.stringify(source("flow/events.ts"))};
 import { noticeIdleScreens } from ${JSON.stringify(source("flow/status.ts"))};
 import { hasSession, startSession } from ${JSON.stringify(source("agents/sessions.ts"))};
-import { endEarlierBuilder } from ${JSON.stringify(source("flow/builder.ts"))};
+import { endEarlierBuilder, startOnHost } from ${JSON.stringify(source("flow/builder.ts"))};
 import { deliverMessages, queueMessage } from ${JSON.stringify(source("flow/messages.ts"))};
 const db = openDb();
 db.run("INSERT INTO plugins (name, folder) VALUES ('fake', ?)", [${JSON.stringify(folder)}]);
@@ -704,4 +704,26 @@ process.exit(0);`,
     { host: "fake", host_id: "fake-app-12" },
   );
   expect(said).toBe("working fake fake-new\n");
+}, 40_000);
+
+test("a stop that comes while the host is still starting the builder ends the builder it starts", () => {
+  const fake = join(home, ".config", "skelcrew", "plugins", "fake");
+  const said = runWithFakeHost(
+    "sessions",
+    `const fs = require("node:fs");
+const host = (await builderSession(db, "unused", readThread(db, "app-12"))).host;
+// The host takes two seconds to start the builder, and the stop comes meanwhile.
+fs.writeFileSync(${JSON.stringify(join(fake, "slow-start"))}, "");
+const starting = startOnHost(db, readThread(db, "app-12"), { host, name: "fake" }, { folder: ${JSON.stringify(home)}, command: ["sleep", "30"], env: {} });
+await Bun.sleep(500);
+console.log(await stopThread(db, "unused", readThread(db, "app-12")).then(() => "stopped", (error) => error.message));
+await starting;
+const after = readThread(db, "app-12");
+const asked = fs.readFileSync(${JSON.stringify(join(fake, "asked"))}, "utf8").trim().split("\\n").map((line) => JSON.parse(line).ask);
+console.log(after.status, after.host, asked.filter((ask) => ask === "start" || ask === "end").join(" "), await hasSession(host, "fake-app-12"));
+process.exit(0);`,
+    { host: "fake", host_id: null },
+  );
+  // The stop waited for the start, ended what it started, and left nothing running.
+  expect(said).toBe("stopped\nstopped null start end false\n");
 }, 40_000);

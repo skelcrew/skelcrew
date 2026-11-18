@@ -18,7 +18,7 @@ import {
 import { repositoryCommands, sessionHost, threadConfig } from "../config.ts";
 import { cloneDir, threadSocket } from "../paths.ts";
 import { trackerOf } from "../plugins/ask.ts";
-import { hostNamed } from "../plugins/runtime.ts";
+import { type Host, hostNamed } from "../plugins/runtime.ts";
 import { builtInRole } from "../roles.ts";
 import { quietly } from "../run.ts";
 import { errorText } from "../say.ts";
@@ -457,23 +457,61 @@ export async function startBuilder(db: Database, sessions: string, thread: Threa
     system: builderInstructions(repositoryCommands(thread)),
     ...start,
   });
-  // Start it in a session of its own, then watch a moment for it to exit at once, so a broken
-  // start fails the thread with a reason.
-  const repository = `${thread.owner}/${thread.repo}`;
-  const labels: Labels = { repository, role: "builder", task: threadName(db, thread) };
-  // The host is saved before the session starts, so a daemon that stops in between finds the
-  // builder there by its labels, rather than starting it again elsewhere.
-  record(db, thread.folder, { host: hostName, host_id: null });
-  const id = await startSession(host, thread.folder, {
-    folder: clone,
-    command: argv,
-    env,
-    labels,
-  });
-  forgetStatus(hostName, id);
-  record(db, thread.folder, { host_id: id });
+  await startOnHost(db, thread, { host, name: hostName }, { folder: clone, command: argv, env });
   console.log(`${resume ? "Brought back" : "Started"} the builder of ${thread.folder}.`);
-  await checkAgentStarted(host, id, "builder");
+}
+
+// Starts the thread's builder in a session of its own on the host, running `command`, then
+// watches a moment for it to exit at once, so a broken start fails the thread with a reason. It
+// takes its turn with the builder's ends, so a stop that comes while the host starts it waits,
+// and then ends the builder it started. A thread stopped or ended while this waited its turn
+// starts nothing, and this throws.
+export function startOnHost(
+  db: Database,
+  thread: Thread,
+  on: { host: Host; name: string },
+  session: { folder: string; command: string[]; env: Record<string, string> },
+): Promise<void> {
+  return inTurn(thread.folder, async (earlier) => {
+    await earlier;
+    const { status } = readThread(db, thread.folder);
+    if (status !== "working" && status !== "waiting")
+      throw new Error(`the thread was ${status} while its builder started`);
+    const repository = `${thread.owner}/${thread.repo}`;
+    const labels: Labels = { repository, role: "builder", task: threadName(db, thread) };
+    // The host is saved before the session starts, so a daemon that stops in between finds the
+    // builder there by its labels, rather than starting it again elsewhere.
+    record(db, thread.folder, { host: on.name, host_id: null });
+    const id = await startSession(on.host, thread.folder, { ...session, labels });
+    forgetStatus(on.name, id);
+    record(db, thread.folder, { host_id: id });
+    await checkAgentStarted(on.host, id, "builder");
+  });
+}
+
+// The starts and ends under way of each thread's builder, by its folder, each settling once it
+// is over.
+const turns = new Map<string, Promise<void>>();
+
+// Runs `work` as the next start or end of the thread's builder, and returns its outcome. `work`
+// is given what settles once every earlier one is over, and waits for it before it asks the
+// host: so one never finishes after a later one, and an end never misses a builder still
+// starting. Its place is taken at once, so the order is the order they were asked for.
+export function inTurn<T>(
+  folder: string,
+  work: (earlier: Promise<void>) => Promise<T>,
+): Promise<T> {
+  const earlier = turns.get(folder) ?? Promise.resolve();
+  const done = work(earlier);
+  const settled = done.then(
+    () => {},
+    () => {},
+  );
+  turns.set(folder, settled);
+  settled.then(() => {
+    if (turns.get(folder) === settled) turns.delete(folder);
+  });
+  return done;
 }
 
 // Ends the builder an earlier start of a thread starting over may have left running, before its
