@@ -250,7 +250,30 @@ test("repos: overrides go over the repository's files, for the repository they n
   expect(read(["setup"], "third").settings?.setup).toBeUndefined();
 });
 
-test("repos: can't set what is only yours, and a bad entry stops only its own repository", () => {
+// An override is you differing from the repository's files, or from your general settings, for
+// one repository. So the tracker, the reviewer's fallback and a review's time come from it first.
+test("repos: overrides set the tracker, the reviewer's fallback and a review's time first", () => {
+  files(
+    "reviewer: { fallback: claude }\nreview: { timeout_minutes: 10 }\nrepos:\n  simon/app:\n    tracker: none\n    roles: { reviewer: { fallback: codex } }\n    review: { timeout_minutes: 45 }\n",
+    "tracker: linear\n",
+  );
+  expect(read(["tracker", "fallback", "reviewMinutes"]).settings).toMatchObject({
+    tracker: "none",
+    fallback: "codex",
+    reviewMinutes: 45,
+  });
+  // Another repository keeps its own tracker and your general settings.
+  expect(read(["tracker", "fallback", "reviewMinutes"], "other").settings).toMatchObject({
+    fallback: "claude",
+    reviewMinutes: 10,
+  });
+  // A bad one stops only what reads it, naming the override.
+  files("repos: { simon/app: { reviewer: { fallback: nope } } }\n", null);
+  expect(read(["fallback"]).err).toContain("isn't valid under repos: simon/app");
+  expect(read(["tracker", "reviewMinutes"]).err).toBe("");
+});
+
+test("repos: can't set what is about your machine, and a bad entry stops only its own repository", () => {
   files(
     "repos:\n  simon/app: { limits: { reviews: 9 }, harness: codex }\n  simon/other: { max_rounds: 0 }\n",
     null,
