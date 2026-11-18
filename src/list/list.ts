@@ -254,6 +254,8 @@ export async function runList(agents: string, repository: string): Promise<void>
   let left = false;
   const press = async (key: string) => {
     if (working || left) return;
+    // q and Ctrl-C leave from anywhere, an open question included, which then does nothing.
+    if (key === "q") return leave();
     if (asking) {
       const action = asking;
       asking = null;
@@ -274,7 +276,6 @@ export async function runList(agents: string, repository: string): Promise<void>
     }
     said = null;
     const row = rows[here];
-    if (key === "q") return leave();
     if (key === "up" || key === "down") {
       here = Math.min(Math.max(here + (key === "up" ? -1 : 1), 0), rows.length - 1);
       return draw();

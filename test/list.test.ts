@@ -372,6 +372,21 @@ test("a key that comes with q in one read does nothing once the list has left", 
   expect(clients).toBe("");
 });
 
+for (const [key, name] of [
+  ["q", "q"],
+  ["\x03", "Ctrl-C"],
+] as const)
+  test(`${name} leaves the list while a question is open, and answers nothing`, async () => {
+    await open();
+    press("Up");
+    await until(() => here().startsWith("▸ ○ app-31"), "the issue's row");
+    press("Enter");
+    await until(() => seen().includes("Start app-31? y/n"), "the question");
+    type(key);
+    await until(() => read(join(home, "left")) === "left", "the list to leave");
+    expect(asked.filter((line) => line.startsWith("start"))).toEqual([]);
+  });
+
 test("Enter attaches to the builder, every key reaches it, and Alt-Q comes back on the same row", async () => {
   await open();
   press("Down");
