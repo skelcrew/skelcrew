@@ -117,7 +117,7 @@ function pr(change: Partial<PullRequest> = {}): PullRequest {
   };
 }
 
-const given = { maxRounds: 3 };
+const given = { maxRounds: 3, moved: false };
 
 // The decision for a thread whose PR is open and not ending.
 function acted(t: Thread, p: PullRequest) {
@@ -376,6 +376,40 @@ test("a merge conflict is told once: the builder works on it until it submits", 
   const conflicting = pr({ conflicts: true });
   expect(acted(thread({ status: "working" }), conflicting).notice).toEqual([]);
   expect(acted(thread({ reviewing: "abc" }), conflicting).notice).toEqual([]);
+});
+
+// A PR merged into the thread's branch, or someone else's push, moves the branch on the forge
+// with commits its builder hasn't got. Its next push would be refused, so it merges them first.
+test("a branch that moved on the forge tells the builder to merge it, once", () => {
+  const moved = pr({ head: "f00d", checks: [approved] });
+  const decision = decide(thread({ needs_you: true }), moved, { ...given, moved: true });
+  if ("end" in decision) throw new Error(decision.end);
+  expect(decision.moved).toBe("f00d");
+  expect(decision.notice).toEqual([
+    expect.stringContaining("skelcrew/12-add-export moved on the forge to f00d"),
+  ]);
+  expect(decision.notice[0]).toContain(
+    "git fetch origin, merge origin/skelcrew/12-add-export into your branch",
+  );
+  // It isn't ready to merge while the builder hasn't got what is on its branch.
+  expect(decision.change).toEqual({ status: "working", needs_you: false });
+  // Told, the same head is never told again.
+  const told = thread({ seen: decision.seen });
+  const again = decide(told, moved, { ...given, moved: true });
+  if ("end" in again) throw new Error(again.end);
+  expect(again).toMatchObject({ notice: [], moved: null, seen: decision.seen });
+});
+
+// A push under way carries the builder's commit, and is refused if the branch moved, which
+// tells the builder then.
+test("a branch that moved while a round is being pushed isn't told by the poll", () => {
+  const moved = pr({ head: "f00d" });
+  const decision = decide(thread({ submitting: "Round 2" }), moved, { ...given, moved: true });
+  expect(decision).toMatchObject({ notice: [], moved: null });
+});
+
+test("a branch at the commit Skelcrew pushed hasn't moved", () => {
+  expect(acted(thread(), pr({ head: "f00d" }))).toMatchObject({ notice: [], moved: null });
 });
 
 test("an approved PR with a conflict doesn't need you yet", () => {

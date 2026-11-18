@@ -58,8 +58,9 @@ const typed = () => read(join(builder(), "typed"));
 const script = (name: string, body: string) => writeScript(home, name, body);
 
 // Stands in for Claude Code. As the builder, it commits a round and runs sc submit, then
-// waits at a ❯ prompt, keeping what is typed into it. Told of a conflict, it fetches
-// origin and merges the base, as Claude Code would, keeping what git said. While the file
+// waits at a ❯ prompt, keeping what is typed into it. Told to merge a branch, for a conflict or
+// its own branch that moved, it fetches origin and merges it, as Claude Code would, keeping
+// what git said. While the file
 // busy is in its config folder, it looks busy, as Claude Code does mid-turn.
 function fakeClaude(): void {
   script(
@@ -75,10 +76,10 @@ stty -echo
 echo "❯"
 while IFS= read -r line; do
   printf '%s\\n' "$line" >> "$CLAUDE_CONFIG_DIR/typed"
-  case "$line" in *"conflicts with"*)
+  case "$line" in *"merge origin/"*)
     { touch "$(git remote get-url origin)/written" && echo "origin is writable"
       base=$(printf '%s' "$line" | sed -n 's|.*merge origin/\\([^ ]*\\) into.*|\\1|p')
-      git fetch -q origin && git merge "origin/$base"; } > "$CLAUDE_CONFIG_DIR/merged" 2>&1 ;;
+      git fetch -q origin && git merge --no-edit "origin/$base"; } > "$CLAUDE_CONFIG_DIR/merged" 2>&1 ;;
   esac
 done
 exec sleep 300`,
@@ -648,6 +649,77 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
     git(work, "push", "-q", join(home, "github", "simon", "app.git"), "HEAD:refs/heads/release");
     await until(() => typed().includes("conflicts with release"));
     expect(thread()).toMatchObject({ status: "working", needs_you: 0 });
+  }, 60_000);
+
+  // Someone else moves app-12's branch on the forge, as merging a PR stacked on it does, and
+  // returns the commit it is on now.
+  function moveBranch(work: string): string {
+    const bare = join(home, "github", "simon", "app.git");
+    const branch = String(thread().branch);
+    git(work, "fetch", "-q", bare, branch);
+    git(work, "checkout", "-q", "-B", "stacked", "FETCH_HEAD");
+    writeFileSync(join(work, "STACKED"), "stacked\n");
+    git(work, "add", ".");
+    git(work, "commit", "-qm", "Merge the stacked PR");
+    git(work, "push", "-q", bare, `HEAD:refs/heads/${branch}`);
+    return git(work, "rev-parse", "HEAD");
+  }
+
+  // Returns whether the branch of app-12 on the forge holds the commit.
+  const onForge = (commit: string) =>
+    Bun.spawnSync([
+      "git",
+      "-C",
+      join(home, "github", "simon", "app.git"),
+      "merge-base",
+      "--is-ancestor",
+      commit,
+      String(thread().branch),
+    ]).success;
+
+  // Stacked threads make this a normal flow: a PR into the thread's branch is merged on the
+  // forge, and the builder's origin, Skelcrew's clone, holds only what Skelcrew pushed.
+  test("a PR merged into a thread's branch on the forge reaches its builder, and its next push keeps it", async () => {
+    const work = await approvedApp12();
+    pr({ reviews: [skelReview], checks: [approved] });
+    await until(() => thread().needs_you === 1);
+    const merged = moveBranch(work);
+    const moved = prItem("7", "Add export", {
+      head: merged,
+      reviews: [skelReview],
+      checks: [approved],
+    });
+    changes([issue12(), moved]);
+    await until(() => typed().includes(`moved on the forge to ${merged}`));
+    // It is no longer ready to merge, as the builder hasn't got what is on its branch.
+    expect(thread()).toMatchObject({ status: "working", needs_you: 0 });
+    // The fake builder merged it from its origin, as it was told.
+    await until(() => existsSync(join(clone(), "STACKED")));
+    submitRound2();
+    await until(() => thread().submitting === null);
+    expect(read(join(data(), "threads", "app-12.log"))).not.toContain("the round failed");
+    expect(onForge(merged)).toBe(true);
+    expect(onForge(git(clone(), "rev-parse", "HEAD"))).toBe(true);
+    // Told once, however many polls see the same commit.
+    await morePolls();
+    expect(typed().split(`moved on the forge to ${merged}`).length - 1).toBe(1);
+  }, 60_000);
+
+  // The builder can submit before a poll sees the branch move. git refuses the push, as it is
+  // never forced, and the builder is told what to merge.
+  test("a round pushed after the branch moved on the forge is refused, and its builder is told to merge it", async () => {
+    const work = await approvedApp12();
+    const merged = moveBranch(work);
+    submitRound2();
+    await until(() => typed().includes(`moved on the forge to ${merged}`));
+    expect(onForge(merged)).toBe(true);
+    expect(read(join(data(), "threads", "app-12.log"))).toContain("the round failed");
+    // Merged, the next round keeps the merged PR's commit.
+    await until(() => existsSync(join(clone(), "STACKED")));
+    expect(asAgent("builder", ["submit", "Round 3"], clone())).toBe("");
+    await until(() => thread().submitting === null);
+    expect(onForge(merged)).toBe(true);
+    expect(onForge(git(clone(), "rev-parse", "HEAD"))).toBe(true);
   }, 60_000);
 
   // Runs sc as an agent would, inside its sandbox, from the socket of app-12's builder or of

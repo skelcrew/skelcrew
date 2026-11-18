@@ -293,6 +293,15 @@ export async function tellBuilder(
             (text) =>
               `${text} The forge's ${base} is at ${at}. After git fetch origin, git rev-parse origin/${base} gives the same commit.`,
           );
+    // The builder merges a branch that moved from Skelcrew's clone, its origin, which holds
+    // only what Skelcrew pushed until it fetches the branch.
+    if (decision.moved !== null)
+      await fetchInto(
+        db,
+        repositoryOf(db, thread),
+        cloneDir(thread.owner, thread.repo),
+        thread.branch,
+      );
     const checks = await failedCheckMessages(db, thread, decision.failed);
     // Fetching can take a while, and the thread may have stopped or ended meanwhile, whose
     // events stay unhandled. Or a newer round may have moved it on, such as to approved. Its

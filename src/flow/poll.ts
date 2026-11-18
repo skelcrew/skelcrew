@@ -24,6 +24,7 @@ import { endThread, removing, tellBuilder, tellingEvents } from "./events.ts";
 import { fetchInto, onRemote } from "./git.ts";
 import { noteForLead, typeLeadNotes } from "./messages.ts";
 import { forgeKnown, fullNameIs, refreshClone, repositories } from "./repo.ts";
+import { lastPushed } from "./round.ts";
 import { needsYou } from "./status.ts";
 import { readThread, record, Thread, threadName } from "./thread.ts";
 
@@ -102,6 +103,27 @@ async function startLabeled(
   }
 }
 
+// Returns whether the PR's head holds commits Skelcrew never pushed for the thread, such as a
+// PR merged into its branch, or someone else's push. Its builder must merge them, as its next
+// push would be refused. Just after a push the forge's copy can still show an older commit
+// Skelcrew pushed, which holds nothing new.
+async function movedOnForge(thread: Thread, pr: PullRequest): Promise<boolean> {
+  const pushed = lastPushed(thread);
+  if (pr.head === null || pushed === null || pr.head === pushed) return false;
+  // A commit Skelcrew's clone never fetched is no ancestor either, so git failing counts.
+  const skelcrewClone = cloneDir(thread.owner, thread.repo);
+  const older = await quietly([
+    "git",
+    "-C",
+    skelcrewClone,
+    "merge-base",
+    "--is-ancestor",
+    pr.head,
+    pushed,
+  ]);
+  return !older.ok;
+}
+
 // Acts on what the thread's PR, as its forge just returned it, means for the thread. `before`
 // is the thread as it was when the poll began: a round that moved on while the forge answered
 // may have pushed a newer commit, and what the forge said about the checks would be the older
@@ -115,6 +137,7 @@ async function actOnPr(
   // Act on the thread as it is now, since it may have ended or moved on while the forge
   // answered. One already done or failed has nothing left to act on.
   const { folder } = before;
+  const moved = await movedOnForge(before, pr);
   const thread = readThread(db, folder);
   if (!["working", "waiting", "stopped"].includes(thread.status)) return;
   // Read only for a thread with a PR, so a bad max_rounds never fails the copy's update, nor
@@ -122,7 +145,7 @@ async function actOnPr(
   const { maxRounds } = threadConfig(thread);
   // The decision is pure; what follows carries it out. The poll is stale when a round
   // changed the thread since it began.
-  const decision = decide(thread, pr, { maxRounds });
+  const decision = decide(thread, pr, { maxRounds, moved });
   const stale =
     thread.submitting !== before.submitting ||
     thread.reviewing !== before.reviewing ||

@@ -13,6 +13,7 @@ import { baseOf } from "./builder.ts";
 import { openPrs, prOf, threadTask } from "./copy.ts";
 import {
   afterReview,
+  branchMoved,
   ciResult,
   ciState,
   onlyDocs,
@@ -42,8 +43,8 @@ async function git(folder: string, ...args: string[]): Promise<string> {
 // is none yet, with the line that closes its task at the end of its body. Returns the commit.
 // git never runs inside the thread's clone: the builder controls everything there, .git
 // included, and a planted setting would run with your rights. A push refused for changing a
-// workflow file throws saying so, and types that into the builder, unless a newer round
-// cancels it first.
+// workflow file, or because the branch moved on the forge without the builder, throws saying
+// so, and types that into the builder, unless a newer round cancels it first.
 async function push(
   db: Database,
   sessions: string,
@@ -71,17 +72,29 @@ async function push(
   try {
     await pushCommit(db, repository, skelcrewClone, sha, thread.branch);
   } catch (error) {
-    // A push refused for changing a workflow file fails the round with words a person can act
-    // on, and the builder hears them too, so it can undo the change and submit again. It waits
-    // as every message to the builder does, as it has likely not ended its turn yet, and a newer
-    // submit drops it as stale.
-    const refused = refusedWorkflow(threadName(db, thread), errorText(error));
+    // A push refused for changing a workflow file, or for a branch that moved on the forge,
+    // such as by a PR merged into it, fails the round with words a person can act on. The
+    // builder hears them too, so it can fix it and submit again. It waits as every message to
+    // the builder does, as it has likely not ended its turn yet, and a newer submit drops it
+    // as stale.
+    const said = errorText(error);
+    const name = threadName(db, thread);
+    let refused = refusedWorkflow(name, said);
+    let why = "its push was refused for changing a workflow file";
+    // git refuses a push that would drop commits the branch has on the forge, as it is never
+    // forced. The branch is fetched into Skelcrew's clone, the builder's origin, to merge.
+    if (refused === null && /\[rejected\].*\((non-fast-forward|fetch first)\)/.test(said)) {
+      await fetchInto(db, repository, skelcrewClone, thread.branch);
+      const at = await git(skelcrewClone, "rev-parse", `refs/heads/${thread.branch}`);
+      refused = `${name}'s push was refused. ${branchMoved(thread.branch, at)}`;
+      why = "its push was refused, as its branch moved on the forge";
+    }
     if (refused === null) throw error;
     if (!signal.aborted)
       queueMessage(db, sessions, folder, {
         sender: "skelcrew",
         text: refused,
-        said: "its push was refused for changing a workflow file",
+        said: why,
         typed_in: [],
       });
     throw new Error(refused);
