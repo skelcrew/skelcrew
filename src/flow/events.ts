@@ -20,7 +20,7 @@ import {
   typeLeadNotes,
 } from "./messages.ts";
 import { refreshClone } from "./repo.ts";
-import { endRound } from "./round.ts";
+import { endRound, resumeRound } from "./round.ts";
 import {
   builderSession,
   cloneOf,
@@ -99,7 +99,9 @@ async function endBuilder(db: Database, sessions: string, folder: string, drop: 
 // again. It no longer needs you: you stopped it, and its builder's question ended with it.
 // It takes you off its issue, if Skelcrew assigned you. Marked first, so a builder that
 // submits while it exits is refused. Refuses a thread that has no builder to stop, or whose
-// builder hasn't started yet.
+// builder hasn't started yet. A builder whose host can't be reached, or won't end, may still
+// run: its thread is refused before anything changes, or goes back to what it was, with its
+// host, so sc stop can try again.
 export async function stopThread(db: Database, sessions: string, thread: Thread): Promise<void> {
   const name = threadName(db, thread);
   // A stopped thread that still has a host is one whose builder couldn't be ended, such as on a
@@ -112,6 +114,8 @@ export async function stopThread(db: Database, sessions: string, thread: Thread)
   // Its setup would go on to start the builder after the stop.
   if (thread.session === null)
     throw new Error(`${name} is still setting up: stop it once its builder has started`);
+  // Its host is found first, so one whose plugin is gone leaves the thread as it is.
+  builderSession(db, sessions, thread);
   record(
     db,
     thread.folder,
@@ -129,7 +133,17 @@ export async function stopThread(db: Database, sessions: string, thread: Thread)
   // Asked as it is marked stopped, before anything is waited on: an sc start that finds it
   // stopped meanwhile asks to assign you, and that must come after.
   unassignIssue(db, thread.folder);
-  await endBuilder(db, sessions, thread.folder, false);
+  try {
+    await endBuilder(db, sessions, thread.folder, false);
+  } catch (error) {
+    // The builder may still run, so the thread goes back to working or waiting as it was, and
+    // its round carries on.
+    const { status, needs_you, asking, stalled, erred, limited, limit_reset } = thread;
+    const back = { status, needs_you, asking, stalled, erred, limited, limit_reset };
+    record(db, thread.folder, back, `couldn't stop its builder: ${errorText(error)}`);
+    resumeRound(db, sessions, thread.folder);
+    throw error;
+  }
 }
 
 // Ends the thread once its PR is merged or closed, or for sc rm: ends its builder, and removes

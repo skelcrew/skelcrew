@@ -301,9 +301,9 @@ const again = await stopThread(db, "unused", after).catch((error) => error.messa
 console.log(again);`,
     { host: "gone", host_id: "gone-app-12" },
   );
-  // Stopping again tries again, rather than taking the thread for stopped already.
+  // The thread stays as it was, with its host, so stopping it again tries again.
   const reason = "its builder's session host gone isn't installed any more";
-  expect(said).toBe(`${reason}\nstopped gone\n${reason}\n`);
+  expect(said).toBe(`${reason}\nworking gone\n${reason}\n`);
 });
 
 test("a host that hangs on one status is ended, and hears the changes after it", () => {
@@ -353,4 +353,24 @@ console.log(hasSession(host, "fake-app-12"), readThread(db, "app-12").host);`,
     { host: "fake", host_id: null, status: "failed" },
   );
   expect(said).toBe("fake couldn't start: lost the answer true\nfalse null\n");
+});
+
+test("a builder whose host fails to end it goes back to working, with its host", () => {
+  const settings = join(home, ".config", "skelcrew", "plugins", "fake");
+  mkdirSync(settings, { recursive: true });
+  const said = runWithFakeHost(
+    "sessions",
+    `const host = builderSession(db, "unused", readThread(db, "app-12")).host;
+const labels = { repository: "simon/app", role: "builder", task: "app-12" };
+startSession(host, "app-12", { folder: ${JSON.stringify(home)}, command: ["sleep", "30"], env: {}, labels });
+require("node:fs").writeFileSync(${JSON.stringify(join(home, ".config", "skelcrew", "plugins", "fake", "garble-end"))}, "");
+const error = await stopThread(db, "unused", readThread(db, "app-12")).catch((error) => error.message);
+const after = readThread(db, "app-12");
+console.log(error);
+console.log(after.status, after.host, after.host_id, hasSession(host, "fake-app-12"));`,
+    { host: "fake", host_id: "fake-app-12" },
+  );
+  expect(said).toBe(
+    "fake answered end in a way Skelcrew doesn't understand\nworking fake fake-app-12 true\n",
+  );
 });
