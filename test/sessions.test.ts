@@ -152,6 +152,42 @@ test("a message cancelled while the harness is busy is never typed", async () =>
   expect(read("received.txt")).toBe("\x1b[200~fresh\x1b[201~\n");
 });
 
+// A reason the caller gives to wait, such as the human scrolled back in the lead, can come up
+// while typing already waits on a busy agent, and still holds the message.
+test("a caller's reason to hold that comes up while typing waits holds the message until it ends", async () => {
+  start("lead", harness(1));
+  await showing("lead", claude.marks.busy);
+  let held = "";
+  const typing = deliver(socket, "lead", claude.marks, "hello", { moment, hold: () => held });
+  held = "the human has scrolled back in it";
+  await showing("lead", claude.marks.prompt);
+  await Bun.sleep(1000);
+  expect(read("received.txt")).toBe("");
+  held = "";
+  expect(await typing).toBe("typed");
+  await until(() => read("received.txt").endsWith("\n"));
+  expect(read("received.txt")).toBe("\x1b[200~hello\x1b[201~\n");
+});
+
+// A message gone stale while typing waited, such as a question answered meanwhile, is never
+// typed: the hold cancels it.
+test("a hold that cancels the typing leaves the message untyped", async () => {
+  start("lead", harness(1));
+  const cancel = new AbortController();
+  const hold = () => {
+    cancel.abort();
+    return "";
+  };
+  const typed = await deliver(socket, "lead", claude.marks, "stale", {
+    moment,
+    signal: cancel.signal,
+    hold,
+  });
+  expect(typed).toBe("not typed");
+  await Bun.sleep(300);
+  expect(read("received.txt")).toBe("");
+});
+
 // A stand-in for Claude Code that draws the screen given, laid out as Claude Code's: what the
 // agent said, then its input between two rules, then its footer. It keeps what is typed in.
 // SECONDS in a line is a timer: the screen is then redrawn once a second with it counting, as

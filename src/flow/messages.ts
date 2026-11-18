@@ -9,7 +9,7 @@ import type { Database } from "bun:sqlite";
 import { z } from "zod";
 import { harnessNamed } from "../agents/harness.ts";
 import { agentRuns, scrolledBack } from "../agents/sessions.ts";
-import { deliver, draftReason, idle, midTurn, type Typed, whyBusy } from "../agents/transport.ts";
+import { deliver, draftReason, midTurn, type Typed, whyBusy } from "../agents/transport.ts";
 import { markSeen } from "../plugins/ask.ts";
 import { errorText } from "../say.ts";
 import { leadOf } from "./lead.ts";
@@ -423,7 +423,7 @@ export function messageLead(db: Database, sessions: string, from: Caller, text: 
     throw new Error("Only a thread's builder can tell its lead.");
   const thread = from;
   const name = threadName(db, thread);
-  noteForLead(db, sessions, thread, wrapMessage(name, `sc tell ${name}`, text));
+  noteForLead(db, sessions, thread, wrapMessage(name, `sc tell ${name}`, text), null, true);
   record(db, thread.folder, { told_lead: true }, `its builder told the lead: ${text}`);
 }
 
@@ -433,9 +433,9 @@ export function messageLead(db: Database, sessions: string, from: Caller, text: 
 // a person's unsent draft is at its prompt, and while the human watching it has scrolled back,
 // as the paste would throw them back to the bottom. Everything that waited then goes in as one
 // message, its notes a blank line apart, so the chat jumps once. Threads needing you come first,
-// as the human must see them soonest. Each pass checks again whether a thread still needs you, so
-// a question you answered meanwhile is never announced. A lead that isn't running, or never
-// started, gets nothing: its notes stay saved until it starts.
+// then urgent notes such as a builder's message, then the rest, as the human must see those
+// soonest. A lead that isn't running, or never started, gets nothing: its notes stay saved until
+// it starts.
 async function typeNotes(
   db: Database,
   sessions: string,
@@ -444,53 +444,52 @@ async function typeNotes(
 ): Promise<void> {
   const { name, harness } = leadOf(db, owner, repo);
   const where = "owner = ? AND repo = ?";
-  // Each pass reads every note and every thread waiting to be announced, so what was saved
-  // while the lead was busy goes in with the rest.
-  while (true) {
-    const rows = db.query(`SELECT id, text FROM notes WHERE ${where} ORDER BY id`).all(owner, repo);
-    const notes = z.array(Note).parse(rows);
-    const threads = z
-      .array(Thread)
-      .parse(
-        db
-          .query(`SELECT * FROM task_threads WHERE noting IS NOT NULL AND ${where} ORDER BY rowid`)
-          .all(owner, repo),
-      );
-    // Stop when nothing is left to say, or nobody is there to hear it.
-    if (notes.length === 0 && threads.length === 0) return;
-    if (!agentRuns(sessions, name)) return;
-    // A lead that is running has started, so it has a harness. idle() takes a moment to look,
-    // so a scrolled back lead is looked at again soon, without a wait of its own. Typing looks
-    // at the screen once more before its paste, so a person who scrolls back in that moment is
-    // still thrown back down: a moment remains, as for a draft.
-    const { marks } = harnessNamed(harness ?? "claude");
-    if (!(await idle(sessions, name, marks)) || scrolledBack(sessions, name)) continue;
-    // A note can be dropped while the lead is busy, such as a thread's end note once the thread
-    // starts over, so the notes are read again before typing. Dropping one cancels the typing, and
-    // the next pass types what is left. A note's ID is never used twice, so a note saved
-    // meanwhile is never taken for one of these, nor deleted as it.
-    const kept = notes.filter(({ id }) => db.query("SELECT 1 FROM notes WHERE id = ?").get(id));
-    const needing = threads.flatMap(({ folder }) => {
-      const now = readThread(db, folder);
-      return now.noting === null ? [] : [now];
-    });
+  // Returns what the lead would be told now: the threads needing you, the notes in the order
+  // they go in, and the message they make together.
+  const batch = () => {
+    const sql = `SELECT id, text FROM notes WHERE ${where} ORDER BY urgent DESC, id`;
+    const notes = z.array(Note).parse(db.query(sql).all(owner, repo));
+    const rows = db
+      .query(`SELECT * FROM task_threads WHERE noting IS NOT NULL AND ${where} ORDER BY rowid`)
+      .all(owner, repo);
+    const needing = z.array(Thread).parse(rows);
     const lines = [
       ...needing.map((thread) => `${threadName(db, thread)} needs you: ${thread.noting}`),
-      ...kept.map(({ text }) => text),
+      ...notes.map(({ text }) => text),
     ];
-    if (lines.length === 0) continue;
+    return { notes, needing, text: lines.join("\n\n") };
+  };
+  while (true) {
+    const now = batch();
+    // Stop when nothing is left to say, or nobody is there to hear it.
+    if (now.text === "") return;
+    if (!agentRuns(sessions, name)) return;
+    // A lead that is running has started, so it has a harness.
+    const { marks } = harnessNamed(harness ?? "claude");
+    // Typing asks this right before readying the paste and again right before it goes in. What
+    // would be said may have changed while the lead was busy or scrolled back: a question you
+    // answered, a thread's end note dropped as it starts over, or a new note to go in with the
+    // rest. Then this typing is cancelled, and the next pass types what is said now.
     const cancel = new AbortController();
-    for (const { id } of kept) typingNote.set(id, cancel);
+    const hold = () => {
+      if (batch().text !== now.text) cancel.abort();
+      return scrolledBack(sessions, name) ? "the human has scrolled back in it" : "";
+    };
+    // dropEndNotes cancels typing too, should it drop a note in the moment of the paste.
+    for (const { id } of now.notes) typingNote.set(id, cancel);
     let typed: Typed;
     try {
-      typed = await deliver(sessions, name, marks, lines.join("\n\n"), { signal: cancel.signal });
+      // However long the lead stays busy, the notes wait for it, as they must reach it.
+      const waits = { signal: cancel.signal, hold, timeout: Number.POSITIVE_INFINITY };
+      typed = await deliver(sessions, name, marks, now.text, waits);
     } finally {
-      for (const { id } of kept) typingNote.delete(id);
+      for (const { id } of now.notes) typingNote.delete(id);
     }
     if (typed !== "typed") continue;
-    for (const { id } of kept) db.run("DELETE FROM notes WHERE id = ?", [id]);
+    // A note's ID is never used twice, so a note saved meanwhile is never deleted as one of these.
+    for (const { id } of now.notes) db.run("DELETE FROM notes WHERE id = ?", [id]);
     // A thread may have stopped needing you and started again while this was typed.
-    for (const thread of needing)
+    for (const thread of now.needing)
       if (readThread(db, thread.folder).noting === thread.noting)
         record(db, thread.folder, { noting: null }, "told the lead it needs you");
   }
@@ -536,19 +535,22 @@ export function typeLeadNotes(db: Database, sessions: string): void {
 
 // Saves a note for the lead of a repository, and has the daemon type it in. Notes already
 // wait while the lead is busy, and stay saved while it isn't running, so a note is never lost.
-// `ended` is the folder of the thread whose end the note reports, if it does.
+// `ended` is the folder of the thread whose end the note reports, if it does. An `urgent` note,
+// such as a builder's message, goes ahead of the rest when several wait.
 export function noteForLead(
   db: Database,
   sessions: string,
   repository: { owner: string; repo: string },
   text: string,
   ended: string | null = null,
+  urgent = false,
 ): void {
-  db.run("INSERT INTO notes (owner, repo, text, ended) VALUES (?, ?, ?, ?)", [
+  db.run("INSERT INTO notes (owner, repo, text, ended, urgent) VALUES (?, ?, ?, ?, ?)", [
     repository.owner,
     repository.repo,
     text,
     ended,
+    urgent ? 1 : 0,
   ]);
   typeLeadNotes(db, sessions);
 }

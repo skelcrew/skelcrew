@@ -8,8 +8,17 @@ import { dropStaged, pasteStaged, readSession, sendKey, stagePaste } from "./ses
 // and between a paste and its Enter. `timeout` is how long to wait for the prompt to be ready
 // before giving up, which may be Infinity. Once `signal` is aborted, nothing is typed. `unsent`
 // says the message was pasted before and left unsent for a question, so a draft at the prompt
-// is it, not a person's.
-type Waits = { moment?: number; timeout?: number; signal?: AbortSignal; unsent?: boolean };
+// is it, not a person's. `hold` gives a reason of the caller's to wait, or empty text for none,
+// such as a person scrolled back in the lead's chat. It is asked right before the text is
+// readied and again right before the paste, so a reason that comes up while typing waits still
+// counts. It may abort `signal`, such as when the message it would send went stale.
+type Waits = {
+  moment?: number;
+  timeout?: number;
+  signal?: AbortSignal;
+  unsent?: boolean;
+  hold?: () => string;
+};
 
 // What became of a message typed in: sent, left pasted at the prompt unsent for a question, or
 // not typed at all.
@@ -187,13 +196,18 @@ async function typeNow(
         return "typed";
       }
       if (why === "") unsent = false;
-      if (why === "") {
+      // The caller's reason is asked before readying the text, as readying it leaves copy mode.
+      const held = why === "" ? (waits.hold?.() ?? "") : "";
+      if (waits.signal?.aborted) return "not typed";
+      if (why === "" && held === "") {
         staged.push(stagePaste(socket, name, text));
         // A person can start typing after the last look, and the paste would send their draft
         // along with the message. So the text is readied first, then the screen looked at once
         // more right before pasting, and typing waits again if the prompt isn't bare. A moment
         // remains, but only as long as the paste itself.
-        if (notReady(readSession(socket, name), marks) === "") break;
+        if (notReady(readSession(socket, name), marks) === "" && (waits.hold?.() ?? "") === "")
+          break;
+        if (waits.signal?.aborted) return "not typed";
       } else if (Date.now() > deadline) {
         const waited = `${timeout / 1000}s`;
         // A person's draft gets a plain answer, as it isn't the agent being busy.
@@ -201,7 +215,7 @@ async function typeNow(
           throw new Error(
             `${name} had an unsent draft at its prompt for ${waited}, so nothing was typed`,
           );
-        throw new Error(`${name} wasn't idle for ${waited} (${why}), so nothing was typed`);
+        throw new Error(`${name} wasn't idle for ${waited} (${why || held}), so nothing was typed`);
       }
     }
     // Without the paste marks, Claude Code reads the Enter after a long message as a new line,

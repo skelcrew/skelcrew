@@ -110,7 +110,7 @@ console.log(JSON.stringify(db.query("SELECT text FROM notes ORDER BY id").all().
 
 // A paste while the human reads further up would throw them back to the bottom. Back at the
 // bottom, everything that waited goes in as one message, once. A thread needing you goes first,
-// though it came last.
+// though it came last, then the builder's message, then Skelcrew's routine note.
 test("messages for a lead the human has scrolled back in wait, then go in together", () => {
   const seen = JSON.parse(
     run(`
@@ -133,8 +133,8 @@ console.log(JSON.stringify({ during, after: received(), noting: readThread(db, "
   const needs = typed.indexOf("app-12 needs you: its builder asked a question");
   const started = typed.indexOf("started app-13 from github: Add import");
   expect(needs).toBeGreaterThan(-1);
-  expect(needs).toBeLessThan(started);
-  expect(started).toBeLessThan(typed.indexOf("First part done."));
+  expect(needs).toBeLessThan(typed.indexOf("First part done."));
+  expect(typed.indexOf("First part done.")).toBeLessThan(started);
   expect(seen.noting).toBeNull();
 });
 
@@ -164,4 +164,31 @@ await until(() => received().includes("Add import"));
 console.log(JSON.stringify({ during }));`),
   );
   expect(seen.during).toBe("");
+});
+
+// Typing can wait a long while, such as on a draft. Scrolling back meanwhile still holds the
+// messages, and a question answered meanwhile is no longer announced.
+test("scrolling back while the lead's messages wait on a draft holds them, and an answered question drops out", () => {
+  const seen = JSON.parse(
+    run(`
+await lead();
+await watch();
+Bun.write(home + "/draft", "");
+await until(() => tmuxLead("capture-pane", "-p").includes("half a thought"));
+record(db, "app-12", { asking: true }, "its builder asked a question");
+messageLead(db, tmux, readThread(db, "app-12"), "First part done.");
+await Bun.sleep(1500);
+tmuxLead("copy-mode");
+record(db, "app-12", { asking: false }, "its builder's question is over");
+(await import("node:fs")).rmSync(home + "/draft");
+await Bun.sleep(3000);
+const during = { received: received(), scrolled: tmuxLead("display-message", "-p", "#{pane_in_mode}").trim() };
+tmuxLead("send-keys", "-X", "cancel");
+await until(() => waiting() === 0 && received().includes("First part done."));
+await Bun.sleep(1000);
+console.log(JSON.stringify({ during, after: received() }));`),
+  );
+  expect(seen.during).toEqual({ received: "", scrolled: "1" });
+  expect(seen.after.split("\x1b[201~")).toHaveLength(2);
+  expect(seen.after).not.toContain("needs you");
 });

@@ -442,6 +442,10 @@ function prepareTables(db: Database): void {
     db.run("DROP TABLE notes");
     db.run("ALTER TABLE notes_new RENAME TO notes");
   }
+  // `urgent` marks a note the human may need soon, such as a builder's message, which goes
+  // ahead of Skelcrew's routine notes when several wait for the lead.
+  if (!db.query("SELECT 1 FROM pragma_table_info('notes') WHERE name = 'urgent'").get())
+    db.run("ALTER TABLE notes ADD COLUMN urgent INTEGER NOT NULL DEFAULT 0");
   // A lead table means a database from before each repository had its own lead.
   if (db.query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'lead'").get())
     adoptOldLead(db);
