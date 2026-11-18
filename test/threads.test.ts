@@ -987,7 +987,12 @@ nameRepositories(db);`;
     // Once its builder has submitted, the task keeps its flow to the end.
     const db = new Database(join(data(), "skelcrew.db"));
     db.run("PRAGMA busy_timeout = 5000");
-    db.run("UPDATE tasks SET review_at = 1 WHERE task = 12");
+    // A first review under way, before it is timed, as in a repository with no forge.
+    db.run("UPDATE tasks SET reviewing = 'abc' WHERE task = 12");
+    expect((await skel("start", "app-12", "--flow", "default")).err).toBe(
+      "Skelcrew: app-12 keeps the flow quick, as its builder has submitted already.\n",
+    );
+    db.run("UPDATE tasks SET reviewing = NULL, review_at = 1 WHERE task = 12");
     db.close();
     expect((await skel("start", "app-12", "--flow", "default")).err).toBe(
       "Skelcrew: app-12 keeps the flow quick, as its builder has submitted already.\n",

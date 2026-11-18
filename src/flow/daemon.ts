@@ -249,7 +249,10 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   const switchFlow = (at: Thread, flow: string, short?: string) => {
     const now = readThread(db, at.folder);
     const name = threadName(db, now);
-    if (now.pr !== null || now.submitting !== null || now.review_at !== null)
+    // Any sign of a submit counts: a review under way sets `reviewing` and clears `submitting`
+    // before it sets `review_at`, and a repository with no forge has no PR.
+    const submitted = [now.pr, now.submitting, now.reviewing, now.review_at, now.review_round];
+    if (submitted.some((sign) => sign !== null) || now.rounds > 0)
       throw new Error(`${name} keeps the flow ${now.flow}, as its builder has submitted already.`);
     const repository = findRepository(db, `${now.owner}/${now.repo}`);
     checkFlow(now, repository.name, flow);
