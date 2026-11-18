@@ -376,8 +376,9 @@ export function questionAsked(db: Database, sessions: string, folder: string): v
 // The builder's turn ended, from its harness's Stop hook, with its last message and, when
 // nothing in its clone is uncommitted, the commit it has checked out. A builder that didn't
 // submit in that turn shows as turn ended, and its last message goes to the lead, who brings a
-// question in it to you. A turn with no new work while the last submit is still on its way
-// waits on that submit instead.
+// question in it to you. One that told the lead in that turn with sc tell lead sends nothing
+// more, as the lead already has its words. A turn with no new work while the last submit is
+// still on its way waits on that submit instead.
 export function turnEnded(
   db: Database,
   sessions: string,
@@ -385,11 +386,15 @@ export function turnEnded(
   ended: { head?: string | undefined; message?: string | undefined },
 ): void {
   const thread = readThread(db, folder);
-  if (!endedWithoutSubmit(thread)) return;
   // The lead reads the builder's own words, as a message from it, so a question need not end
   // in a question mark to reach you. A harness that gave none still says the turn ended.
   const said = ended.message ? `, saying:\n\n${ended.message}` : ".";
-  messageLead(db, sessions, thread, `My turn ended without a submit${said}`);
+  const forward = endedWithoutSubmit(thread) && !thread.told_lead;
+  if (forward) messageLead(db, sessions, thread, `My turn ended without a submit${said}`);
+  // The turn is over, so a turn after it with nothing typed in, such as when a background task
+  // ends, starts with the lead not yet told. Cleared after forwarding, which marks it told.
+  if (readThread(db, folder).told_lead) record(db, folder, { told_lead: false });
+  if (!endedWithoutSubmit(thread)) return;
   const unchanged = ended.head !== undefined && ended.head === lastPushed(thread);
   if (waitsOnSubmit(thread, unchanged)) {
     // A comment on an approved PR set the thread working. The builder only answered it, so the
@@ -453,12 +458,13 @@ export function questionAnswered(db: Database, folder: string): void {
   // such as with /login, so it ends the error as it ends a question. A usage limit it
   // stopped on ends too, as the builder now works again or meets it again. Typing to one
   // that stopped without submitting gives it work again, whether you typed or the lead told it.
-  // Each message starts a new turn, with no submit in it yet.
+  // Each message starts a new turn, with no submit and no sc tell lead in it yet.
   const over = {
     asking: false,
     turn_ended: false,
     erred: false,
     submitted: false,
+    told_lead: false,
     limited: false,
     limit_reset: null,
   };
@@ -468,7 +474,7 @@ export function questionAnswered(db: Database, folder: string): void {
   endWake(folder);
   if (thread.asking) record(db, folder, over, "its builder's question is over");
   else if (thread.erred) record(db, folder, over, "its builder was typed to after its error");
-  else if (thread.submitted || thread.turn_ended) record(db, folder, over);
+  else if (thread.submitted || thread.told_lead || thread.turn_ended) record(db, folder, over);
 }
 
 // Returns what a thread's row in the list of threads says of its merge when ready, with what it

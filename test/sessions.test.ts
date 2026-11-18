@@ -153,6 +153,106 @@ test("a message cancelled while the harness is busy is never typed", async () =>
   expect(read("received.txt")).toBe("\x1b[200~fresh\x1b[201~\n");
 });
 
+// A reason the caller gives to wait, such as the human scrolled back in the lead, can come up
+// while typing already waits on a busy agent, and still holds the message.
+test("a caller's reason to hold that comes up while typing waits holds the message until it ends", async () => {
+  start("lead", harness(1));
+  await showing("lead", claude.marks.busy);
+  let held = "";
+  const typing = deliver(socket, "lead", claude.marks, "hello", { moment, hold: () => held });
+  held = "the human has scrolled back in it";
+  await showing("lead", claude.marks.prompt);
+  await Bun.sleep(1000);
+  expect(read("received.txt")).toBe("");
+  held = "";
+  expect(await typing).toBe("typed");
+  await until(() => read("received.txt").endsWith("\n"));
+  expect(read("received.txt")).toBe("\x1b[200~hello\x1b[201~\n");
+});
+
+// A message gone stale while typing waited, such as a question answered meanwhile, is never
+// typed: the hold cancels it.
+test("a hold that cancels the typing leaves the message untyped", async () => {
+  start("lead", harness(1));
+  const cancel = new AbortController();
+  const hold = () => {
+    cancel.abort();
+    return "";
+  };
+  const typed = await deliver(socket, "lead", claude.marks, "stale", {
+    moment,
+    signal: cancel.signal,
+    hold,
+  });
+  expect(typed).toBe("not typed");
+  await Bun.sleep(300);
+  expect(read("received.txt")).toBe("");
+});
+
+// The message can go stale between the hold's first look and its last, right before the paste.
+test("a hold that cancels the typing at its last look, before the paste, leaves the message untyped", async () => {
+  start("lead", harness());
+  await showing("lead", claude.marks.prompt);
+  const cancel = new AbortController();
+  let looks = 0;
+  const hold = () => {
+    looks++;
+    if (looks === 2) cancel.abort();
+    return "";
+  };
+  const typed = await deliver(socket, "lead", claude.marks, "stale", {
+    moment,
+    signal: cancel.signal,
+    hold,
+  });
+  expect({ typed, looks }).toEqual({ typed: "not typed", looks: 2 });
+  await Bun.sleep(300);
+  expect(read("received.txt")).toBe("");
+});
+
+// Someone can scroll back in the moment between the paste and its Enter. The Enter would go to
+// copy mode instead of the agent, and the message would sit at its prompt unsent, so the Enter
+// waits until they are back at the bottom.
+test("an Enter after the paste waits while the caller holds it, such as someone scrolled back", async () => {
+  start("lead", harness());
+  await showing("lead", claude.marks.prompt);
+  const inMode = () =>
+    Bun.spawnSync([
+      "tmux",
+      "-L",
+      socket,
+      "display-message",
+      "-p",
+      "-t",
+      "=lead:",
+      "#{pane_in_mode}",
+    ])
+      .stdout.toString()
+      .trim() === "1";
+  let looks = 0;
+  const hold = () => {
+    looks++;
+    // The last look before the paste finds nobody scrolled back. Someone scrolls back just
+    // after the paste, before its Enter.
+    if (looks === 2)
+      setTimeout(
+        () => Bun.spawnSync(["tmux", "-L", socket, "copy-mode", "-t", "=lead:"]),
+        moment / 2,
+      );
+    return inMode() ? "someone has scrolled back in it" : "";
+  };
+  const typing = deliver(socket, "lead", claude.marks, "hello", { moment, hold });
+  // The stand-in reads whole lines, so nothing shows in what it received before the Enter.
+  await until(inMode);
+  await Bun.sleep(1000);
+  expect(inMode()).toBe(true);
+  expect(read("received.txt")).toBe("");
+  Bun.spawnSync(["tmux", "-L", socket, "send-keys", "-t", "=lead:", "-X", "cancel"]);
+  expect(await typing).toBe("typed");
+  await until(() => read("received.txt").endsWith("\n"));
+  expect(read("received.txt")).toBe("\x1b[200~hello\x1b[201~\n");
+});
+
 // A stand-in for Claude Code that draws the screen given, laid out as Claude Code's: what the
 // agent said, then its input between two rules, then its footer. It keeps what is typed in.
 // SECONDS in a line is a timer: the screen is then redrawn once a second with it counting, as
