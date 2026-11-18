@@ -128,8 +128,7 @@ export function flowRoles(place: {
 }
 
 // Returns whether the task's flow, `default` when none is given, has a file of its own in the
-// repository's .agents/ tree, which counts as for repositoryFlows. Until the default flow has
-// one, the old max_rounds in skelcrew.yaml stands in for its rounds.
+// repository's .agents/ tree, which counts as for repositoryFlows, so an error can name it.
 export function hasFlowFile(place: {
   owner: string;
   repo: string;

@@ -341,8 +341,9 @@ function prepareTables(db: Database): void {
   // daemon doesn't bring its lead back until you open it again. `lead_state` is what its lead
   // is doing, as a thread's `state` says for its builder. `agents_noted` is the tree of an
   // .agents/ you haven't approved that the lead was told of, or `none` for one removed, so it is
-  // told once. `lead_flows` is whether the lead knows of flows, from the instructions it started
-  // with or a note, so a lead already running when Skelcrew learned of them is told once.
+  // told once. `lead_flows` is whether the lead knows how to pick a thread's flow, from the
+  // instructions it started with or a note, so a running lead that wasn't told is told once its
+  // repository has approved flows other than default.
   const repositoryColumns = {
     open_issues: "INTEGER NOT NULL DEFAULT 0",
     open_prs: "INTEGER NOT NULL DEFAULT 0",

@@ -545,17 +545,19 @@ test("a role of the repository's own takes its own roles: lines, never the stage
   expect(builder()).toEqual({ harness: "claude", model: "opus" });
 });
 
-test("skelcrew.yaml's max_rounds is the default flow's, so another flow without rounds never takes it", () => {
+test("skelcrew.yaml's max_rounds counts until the repository has any flow file, then for no flow", () => {
   writeFileSync(join(clone, "skelcrew.yaml"), "max_rounds: 5\n");
+  commit("settings");
+  expect(roundsOf()).toBe(5);
   agentsFile("flows/quick.yaml", "build:\n  role: builder\n");
   commit("flows");
   inHome(approveCurrent);
-  expect(roundsOf()).toBe(5);
+  expect(roundsOf()).toBe(3);
   expect(roundsOf('{ ...app, flow: "quick" }')).toBe(3);
   // Your config's max_rounds is your default for any flow.
   writeFileSync(join(home, ".config", "skelcrew", "config.yaml"), "max_rounds: 6\n");
   expect(roundsOf('{ ...app, flow: "quick" }')).toBe(6);
-  expect(roundsOf()).toBe(5);
+  expect(roundsOf()).toBe(6);
 });
 
 test("a role file's harness and model are checked only where they count", () => {
