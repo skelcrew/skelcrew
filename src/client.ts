@@ -141,7 +141,7 @@ export async function startOrMerge(asked: DaemonRequest): Promise<void> {
 // Has the daemon arm or cancel a merge when ready, for sc merge, and returns what to say. The
 // thread is named by its repository and task, or by its PR's number, with `from` naming the
 // repository of the checkout sc ran in. Your own socket arms one with `seen`, what you said y to,
-// and a lead you let arm merges with `asked`, your words to it.
+// and a lead you let arm merges with `asked`, your words to it, exactly.
 export async function planMerge(
   command: "merge when ready" | "merge cancel",
   which: {

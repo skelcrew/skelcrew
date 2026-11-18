@@ -2112,48 +2112,43 @@ exec ${bwrap} "$@"`,
     test("a lead you let arm merges arms one with your words, and builders still can't", async () => {
       await approvedApp12();
       // Your words as you wrote them: over lines, with a double space, quotes, what a shell would
-      // run if they were put in its quotes, and a line that is the lead's example delimiter.
+      // run, and lines that were once heredoc delimiters.
       const ran = join(home, "ran");
-      const words = `merge "#7"\nwhen it's  ready, $(touch ${ran}) \`touch ${ran}\`\nWORDS_q7x2k9mf`;
-      // sc merge as the lead runs it, on its own socket.
-      const asLead = (...more: string[]) =>
-        Bun.spawnSync([process.execPath, main, "merge", "--when-ready", "#7", ...more], {
-          env: { ...env(), SKELCREW_SOCKET: leadSocket() },
-          stdout: "pipe",
-          stderr: "pipe",
-        });
+      const words = `merge "#7"\nwhen it's  ready, $(touch ${ran}) \`touch ${ran}\`\nHUMAN_WORDS\nWORDS_q7x2k9mf\ntouch ${ran}`;
+      // The lead writes them to a file with its file tool, and sc merge, as the lead runs it on
+      // its own socket, reads them from there, by the PR's number.
+      const file = join(home, "asked.txt");
+      writeFileSync(file, `${words}\n`);
+      const asLead = () =>
+        Bun.spawnSync(
+          [process.execPath, main, "merge", "--when-ready", "#7", "--asked-file", file],
+          { env: { ...env(), SKELCREW_SOCKET: leadSocket() }, stdout: "pipe", stderr: "pipe" },
+        );
       // Off by default: the lead is refused, and nothing is armed.
-      expect(asLead("--asked", words).stderr.toString()).toContain(notLet);
+      expect(asLead().stderr.toString()).toContain(notLet);
       expect(thread().merge_plan).toBeNull();
 
       const config = join(home, ".config", "skelcrew", "config.yaml");
       writeFileSync(config, `${read(config)}lead: { may_arm_merges: true }\n`);
-      // Builders stay refused, the lead must quote you, and --asked is never yours.
+      // Builders stay refused, the lead must give your words, and --asked-file is never yours.
       const request = { command: "merge when ready", repo: "app", task: "12", asked: words };
       expect(await askOn(builderSocket(), request)).toEqual({
         error: "the daemon doesn't know that request",
       });
       const { asked: _, ...unquoted } = request;
       expect(await askOn(leadSocket(), unquoted)).toEqual({
-        error: `quote what the human asked, such as --asked "merge app-12 when it's ready"`,
+        error: "give what the human asked with --asked-file, a file holding their exact words",
       });
       expect(await askOn(leadSocket(), { ...request, asked: "  " })).toMatchObject({
-        error: expect.stringContaining("quote what the human asked"),
+        error: expect.stringContaining("give what the human asked"),
       });
       expect(await askOn(join(home, "run", "skelcrew.sock"), request)).toEqual({
-        error: "--asked is the lead's: at your terminal, sc merge asks you y/N",
+        error: "--asked-file is the lead's: at your terminal, sc merge asks you y/N",
       });
       expect(thread().merge_plan).toBeNull();
 
-      // The lead arms it by the PR's number, with no question at a terminal, giving your words
-      // in a quoted heredoc as its instructions say, so the shell changes nothing in them.
-      // Its delimiter is made up, and is none of the lines of your words.
-      const heredoc = `"$SC" "$MAIN" merge --when-ready '#7' --asked - <<'WORDS_m4c8z1rt'\n${words}\nWORDS_m4c8z1rt\n`;
-      const armed = Bun.spawnSync(["sh", "-c", heredoc], {
-        env: { ...env(), SKELCREW_SOCKET: leadSocket(), SC: process.execPath, MAIN: main },
-        stdout: "pipe",
-        stderr: "pipe",
-      });
+      // The lead arms it, with no question at a terminal.
+      const armed = asLead();
       expect(armed.stderr.toString()).toBe("");
       expect(armed.stdout.toString()).toContain("app-12 merges once it is approved and green.");
       expect(thread()).toMatchObject({ merge_plan: "armed", merge_by: `${login()} via the lead` });
@@ -2166,7 +2161,7 @@ exec ${bwrap} "$@"`,
       await until(() => read(daemonLog()).includes(`app-12: ${why}`));
       await until(() =>
         leadTyped().includes(
-          `Armed: #7 (app-12) merges once it is approved and green, as the human asked: "merge "#7" when it's ready, $(touch ${ran}) \`touch ${ran}\` WORDS_q7x2k9mf". sc merge --cancel app-12 stops that.`,
+          `Armed: #7 (app-12) merges once it is approved and green, as the human asked: "merge "#7" when it's ready, $(touch ${ran}) \`touch ${ran}\` HUMAN_WORDS WORDS_q7x2k9mf touch ${ran}". sc merge --cancel app-12 stops that.`,
         ),
       );
 

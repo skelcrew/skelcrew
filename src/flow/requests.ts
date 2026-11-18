@@ -106,7 +106,7 @@ export const DaemonRequest = z.discriminatedUnion("command", [
   // `from` is the remote of the checkout sc ran in, which names the repository when `repo`
   // doesn't. Arming one carries what you said y to, `seen`: the PR's number and when its thread
   // started, so a thread started over meanwhile, with another PR, is never armed. A lead you let
-  // arm merges sends `asked` instead: your words in the conversation, quoted.
+  // arm merges sends `asked` instead: your words in the conversation, exactly.
   z.object({
     command: z.enum(["merge preview", "merge when ready", "merge cancel"]),
     repo: z.string().optional(),

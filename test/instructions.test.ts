@@ -1,21 +1,15 @@
 // The builder's and lead's instructions, as each harness starts them. They never start
 // bubblewrap, so they run inside Skelcrew's sandbox too.
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  realpathSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { HarnessName, harnessNamed } from "../src/agents/harness.ts";
 import instructions from "../src/defaults/roles/builder.md" with { type: "text" };
 import { builderInstructions } from "../src/flow/builder.ts";
 import { leadInstructions } from "../src/flow/lead.ts";
+import { source } from "./harness.ts";
 
 let home = "";
 beforeEach(() => {
@@ -148,46 +142,77 @@ test("a lead let arm merges arms one only when the human asks in the conversatio
   expect(told).not.toContain("hasn't let you");
 });
 
-// The human's words can hold anything, so the command the lead is told to run must hand them to
-// sc unchanged: quotes, $() and backticks are never run, nor do they break the command. A line
-// that is a heredoc's delimiter would end the words early, so the lead makes one up that no line
-// of the words is, as its instructions say. Here the words even hold the instructions' example.
-test("the command a lead is told to arm with passes any words to sc unchanged", () => {
+// The human's words can hold anything, so the lead never puts them through its shell: it writes
+// them to a file with its file tool, and sc reads them from there.
+test("a lead gives the human's words in a file it writes with its file tool, never the shell", () => {
   const told = leadInstructions("simon/app", "/c", { setup: undefined, test: undefined }, true);
-  const example = told.match(/\nsc merge --when-ready app-12 --asked - <<'(\w+)'\n<[^\n]*>\n\1\n/);
-  const shown = example?.[1] ?? "";
-  expect(shown).toMatch(/^WORDS_[a-z0-9]{8}$/);
   expect(told).toContain(
-    "Make up the delimiter each time: WORDS_ and eight random letters and digits",
+    "to a file in your own folder, such as asked.txt, with your file-writing tool",
   );
-  expect(told).toContain("check that none is, and make up another if one is");
+  expect(told).toContain("Never write them with the shell");
+  expect(told).toContain("sc merge --when-ready app-12 --asked-file asked.txt");
+  expect(told).not.toContain("<<");
+});
+
+// sc reads the file the lead wrote and sends its words to the daemon exactly, so nothing a shell
+// would act on is run or changed, and an empty file arms nothing. A stand-in daemon keeps what
+// it is asked.
+test("sc merge --asked-file sends the file's words exactly, and refuses an empty file", async () => {
+  const requests: unknown[] = [];
+  const socket = join(home, "daemon.sock");
+  const daemon = createServer((connection) =>
+    connection.on("data", (data) => {
+      requests.push(JSON.parse(data.toString()));
+      connection.end('{"said":"app-12 merges once it is approved and green."}\n');
+    }),
+  );
+  await new Promise<void>((done) => daemon.listen(socket, done));
   const ran = join(home, "ran");
   const words = [
-    `merge "#7" when it's ready`,
-    `  $(touch ${ran}) and \`touch ${ran}\` and $HOME 'too'`,
-    shown,
+    `merge "#7" when it's  ready, 'please'`,
+    `$(touch ${ran}) and \`touch ${ran}\` and $HOME`,
     "HUMAN_WORDS",
+    "WORDS_q7x2k9mf",
     `touch ${ran}`,
   ].join("\n");
-  // The delimiter as the lead makes it up: random, and made up again while a line is it.
-  const lines = words.split("\n");
-  let delimiter = shown;
-  while (lines.includes(delimiter))
-    delimiter = `WORDS_${crypto.randomUUID().replaceAll("-", "").slice(0, 8)}`;
-  const command = String(example?.[0])
-    .replaceAll(shown, delimiter)
-    .replace(/<[^\n]*>/, () => words);
-  // sc stands in as a shell function that keeps what it was given.
-  const out = join(home, "out");
-  const script = `sc() { printf '%s\\n' "$*" > ${out}.args; cat > ${out}.stdin; }\n${command}`;
-  const shell = Bun.spawnSync(["sh", "-c", script], { stderr: "pipe" });
-  expect(shell.stderr.toString()).toBe("");
-  expect(readFileSync(`${out}.args`, "utf8")).toBe("merge --when-ready app-12 --asked -\n");
-  expect(readFileSync(`${out}.stdin`, "utf8")).toBe(`${words}\n`);
-  expect(existsSync(ran)).toBe(false);
-  // With the example's delimiter as it stands, the words would end early and their last line
-  // would run, which is why the lead makes up its own.
-  const fixed = String(example?.[0]).replace(/<[^\n]*>/, () => words);
-  Bun.spawnSync(["sh", "-c", `sc() { cat > /dev/null; }\n${fixed}`], { stderr: "pipe" });
-  expect(existsSync(ran)).toBe(true);
+  const asLead = async (file: string) => {
+    const run = Bun.spawn(
+      [
+        process.execPath,
+        source("main.ts"),
+        "merge",
+        "--when-ready",
+        "app-12",
+        "--asked-file",
+        file,
+      ],
+      {
+        cwd: home,
+        env: { HOME: home, PATH: process.env.PATH ?? "", SKELCREW_SOCKET: socket },
+        stdout: "pipe",
+        stderr: "pipe",
+      },
+    );
+    await run.exited;
+    return {
+      out: await new Response(run.stdout).text(),
+      err: await new Response(run.stderr).text(),
+    };
+  };
+  try {
+    // The file tool may end the file with a line break, which isn't part of the words.
+    writeFileSync(join(home, "asked.txt"), `${words}\n`);
+    const armed = await asLead("asked.txt");
+    expect(armed.err).toBe("");
+    expect(armed.out).toContain("app-12 merges once it is approved and green.");
+    expect(requests).toEqual([
+      { command: "merge when ready", repo: "app", task: "12", asked: words },
+    ]);
+    expect(existsSync(ran)).toBe(false);
+    writeFileSync(join(home, "empty.txt"), " \n\n");
+    expect((await asLead("empty.txt")).err).toContain("empty.txt is empty");
+    expect(requests).toHaveLength(1);
+  } finally {
+    daemon.close();
+  }
 });

@@ -437,24 +437,25 @@ async function prCommand(args: string[], json: boolean): Promise<void> {
 // as app-12, or by its PR's number, such as #7, in the repository of the checkout sc runs in or
 // the one --from names. Arming merges a PR later with nobody watching, so it asks you first at
 // your terminal, naming the PR, and refuses with no terminal, as a script has none. A lead you
-// let arm merges has no terminal either: it gives --asked with your words instead, and the
-// daemon checks that it may, by the socket the call comes in on, and refuses every other agent.
+// let arm merges has no terminal either: it gives --asked-file, a file holding your words,
+// instead, and the daemon checks that it may, by the socket the call comes in on, and refuses
+// every other agent.
 // Cancelling is always safe, so it asks nothing.
 async function mergeCommand(args: string[]): Promise<void> {
   const [, how, named, ...rest] = args;
   const { planMerge, previewMerge } = await import("./client.ts");
   const command =
     how === "--when-ready" ? "merge when ready" : how === "--cancel" ? "merge cancel" : undefined;
-  // --from and --asked, each at most once, in either order. --asked arms, so only with
-  // --when-ready.
+  // --from and --asked-file, each at most once, in either order. --asked-file arms, so only
+  // with --when-ready.
   const options = new Map<string, string>();
   for (let i = 0; i < rest.length; i += 2) {
     const [flag = "", value] = [rest[i], rest[i + 1]];
-    if (!["--from", "--asked"].includes(flag) || !value || options.has(flag)) usage("merge");
+    if (!["--from", "--asked-file"].includes(flag) || !value || options.has(flag)) usage("merge");
     options.set(flag, value);
   }
   const given = options.get("--from");
-  const asked = options.get("--asked");
+  const asked = options.get("--asked-file");
   if (!command || named === undefined) usage("merge");
   if (asked !== undefined && command !== "merge when ready") usage("merge");
   // The thread, by its PR's number or by its task.
@@ -467,15 +468,16 @@ async function mergeCommand(args: string[]): Promise<void> {
     which = { pr: Number(number), ...(from ? { from } : {}) };
   } else if (task && !given) which = { repo: task[0], task: task[1] };
   else usage("merge");
-  // `--asked -` takes your words on stdin, as the lead gives them in a heredoc whose quoted
-  // delimiter keeps the shell from changing them: quotes, $() and backticks stay as you wrote
-  // them. The heredoc's own last line break goes.
+  // Your words come in a file the lead wrote with its own file tool, so they never pass through
+  // a shell, which could run or change them. The file's last line break, which a file tool may
+  // add, goes.
   if (asked !== undefined) {
-    let words = asked;
-    if (asked === "-") {
-      if (process.stdin.isTTY) throw new Error("sc merge read no words on stdin for --asked -");
-      words = (await Bun.stdin.text()).replace(/\n$/, "");
-    }
+    const { readFileSync } = await import("node:fs");
+    const words = readFileSync(asked, "utf8").replace(/\n$/, "");
+    if (!words.trim())
+      throw new Error(
+        `${asked} is empty: write the human's words in it, exactly as they wrote them`,
+      );
     console.log(await planMerge(command, { ...which, asked: words }));
     return;
   }
