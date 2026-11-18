@@ -328,3 +328,42 @@ test("a flow file that isn't valid stops only what reads the round limit, naming
     model: "opus",
   });
 });
+
+test("a flow may name only the role each stage runs today, for both stages", () => {
+  for (const flow of [
+    "build:\n  role: reviewer\n",
+    "build:\n  role: tester\n",
+    "review:\n  role: builder\n  rounds: 2\n",
+    "review:\n  role: critic\n  rounds: 2\n",
+  ]) {
+    agentsFile("flows/default.yaml", flow);
+    commit("flow");
+    inHome(approveCurrent);
+    expect(() => roundsOf()).toThrow(".agents/flows/default.yaml in simon/app");
+  }
+  agentsFile(
+    "flows/default.yaml",
+    "build:\n  role: builder\nreview:\n  role: reviewer\n  rounds: 2\n",
+  );
+  commit("flow");
+  inHome(approveCurrent);
+  expect(roundsOf()).toBe(2);
+});
+
+test("only the round limit that wins is read: a bad one below it stops nothing", () => {
+  // A valid flow wins over a bad max_rounds in skelcrew.yaml.
+  writeFileSync(join(clone, "skelcrew.yaml"), "max_rounds: 0\n");
+  agentsFile("flows/default.yaml", "review:\n  rounds: 2\n");
+  commit("flow");
+  inHome(approveCurrent);
+  expect(roundsOf()).toBe(2);
+  // Your override wins over a bad flow.
+  agentsFile("flows/default.yaml", "review:\n  rounds: many\n");
+  commit("flow");
+  inHome(approveCurrent);
+  writeFileSync(
+    join(home, ".config", "skelcrew", "config.yaml"),
+    "repos: { simon/app: { max_rounds: 7 } }\n",
+  );
+  expect(roundsOf()).toBe(7);
+});

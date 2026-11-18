@@ -187,14 +187,13 @@ export function readSettings<G extends Group>(
   repository?: Repository,
 ): Pick<Settings, G> {
   const wanted = groups.flatMap((group) => keysOf[group]);
+  // Each layer is read from the one that wins first, and a setting a layer above decides isn't
+  // read again below it, so a bad value there can't stop a setting it doesn't decide. A role is
+  // the exception: every layer's say on it merges, as a model goes along only while the role
+  // stays on the harness it was given with.
+  const decidedBy = (layers: File[]) => (k: Key) =>
+    !roleKeys.includes(k) && layers.some((l) => l[k] !== undefined && l[k] !== null);
   const overrides = repository ? readOverrides(wanted, repository) : {};
-  // sc init asks without a repository, for the starter skelcrew.yaml it writes.
-  const shared = repository
-    ? readRepositoryFile(
-        wanted.filter((k) => repositoryKeys.includes(k)),
-        repository,
-      )
-    : {};
   // The repository's .agents/, a layer of its own just over skelcrew.yaml, as its files replace
   // that file's old keys: the role files' harness and model go over lead:, builder: and
   // reviewer:, as a model must follow the harness each layer leaves, and the default flow's
@@ -204,15 +203,21 @@ export function readSettings<G extends Group>(
   for (const name of ["lead", "builder", "reviewer"] as const)
     if (repository && groups.some((group) => group === name))
       agentsFiles[name] = roleFileSettings(name, repository);
-  if (repository && groups.some((group) => group === "rounds"))
+  if (
+    repository &&
+    groups.some((group) => group === "rounds") &&
+    !decidedBy([overrides])("max_rounds")
+  )
     agentsFiles.max_rounds = repositoryRounds(repository);
-  // A setting your override or the repository sets is not read from the rest of your config, so
-  // a bad value there can't stop a repository that decides it. A role is the exception: yours
-  // merges with the repository's, as a model goes along only while the role stays on your
-  // harness.
-  const decided = (k: Key) =>
-    [overrides, agentsFiles, shared].some((l) => l[k] !== undefined && l[k] !== null) &&
-    !roleKeys.includes(k);
+  // sc init asks without a repository, for the starter skelcrew.yaml it writes.
+  const aboveShared = decidedBy([overrides, agentsFiles]);
+  const shared = repository
+    ? readRepositoryFile(
+        wanted.filter((k) => repositoryKeys.includes(k) && !aboveShared(k)),
+        repository,
+      )
+    : {};
+  const decided = decidedBy([overrides, agentsFiles, shared]);
   const fromYours = wanted.filter((k) => yourKeys.includes(k) && !decided(k));
   return mergeSettings([overrides, agentsFiles, shared, readYourFile(fromYours)]);
 }

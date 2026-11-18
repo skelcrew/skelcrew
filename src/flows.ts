@@ -8,12 +8,13 @@ import defaultFlow from "./defaults/flows/default.yaml" with { type: "text" };
 
 // What a flow file may hold: today's stages and their one setting, the round limit. Anything
 // else is refused rather than ignored, so a setting put there by mistake doesn't look as if it
-// counts.
+// counts. Each stage runs today's role, so a flow may name only that one: a builder stage on
+// the reviewer, or a role with no agents behind it, would otherwise read as if it counted.
 const Flow = z.strictObject({
-  build: z.strictObject({ role: z.string().min(1).optional() }).nullish(),
+  build: z.strictObject({ role: z.literal("builder").optional() }).nullish(),
   review: z
     .strictObject({
-      role: z.string().min(1).optional(),
+      role: z.literal("reviewer").optional(),
       rounds: z.number().int().positive().optional(),
     })
     .nullish(),
