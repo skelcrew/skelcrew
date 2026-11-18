@@ -301,6 +301,59 @@ console.log(JSON.stringify({ threads, notes }));`;
   );
 });
 
+// A daemon of the earlier release reads every thread from the database's view, and keeps the
+// queries it prepared. A new screen opening the database makes the view again while that daemon
+// still runs. The daemon must go on seeing its builders' turns that ended, or it loses track of
+// a builder waiting for an answer.
+test("a daemon of the earlier release still sees turns that ended once a new screen opens the database", () => {
+  const code = `import { Database } from "bun:sqlite";
+import { openDb } from ${JSON.stringify(source("db.ts"))};
+import { liveThreads } from ${JSON.stringify(source("flow/thread.ts"))};
+// The earlier release's database: this one's, with the column \`stalled\` where \`turn_ended\`
+// is. Renaming the column renames it in the view too, as that release made it.
+const made = openDb();
+made.run("ALTER TABLE threads RENAME COLUMN turn_ended TO stalled");
+for (const [task, stalled] of [[12, 1], [13, 0]]) {
+  made.run("INSERT INTO threads (owner, repo, task, folder, branch, status, stalled, noting) VALUES ('simon', 'app', ?, ?, ?, 'working', ?, ?)",
+    [task, "app-" + task, "skelcrew/" + task, stalled, "note " + task]);
+  made.run("INSERT INTO tasks (owner, repo, task) VALUES ('simon', 'app', ?)", [task]);
+}
+made.close();
+// The earlier release's daemon runs, and has read its threads once.
+const oldDaemon = new Database(process.argv[1]);
+const read = "SELECT * FROM task_threads ORDER BY rowid";
+oldDaemon.query(read).all();
+// A new screen opens the database. Then app-13's builder ends its turn.
+openDb().close();
+oldDaemon.run("UPDATE threads SET stalled = 1 WHERE folder = 'app-13'");
+const seen = (rows) => rows.map((t) => ({ folder: t.folder, stalled: t.stalled, noting: t.noting }));
+console.log(JSON.stringify({
+  prepared: seen(oldDaemon.query(read).all()),
+  fresh: seen(oldDaemon.prepare(read).all()),
+  now: liveThreads(openDb()).map((t) => ({ folder: t.folder, turn_ended: t.turn_ended })),
+}));`;
+  const data = join(home, ".local", "share", "skelcrew");
+  mkdirSync(data, { recursive: true });
+  const run = Bun.spawnSync([process.execPath, "-e", code, join(data, "skelcrew.db")], {
+    env: { ...process.env, HOME: home },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect(run.stderr.toString()).toBe("");
+  const threads = [
+    { folder: "app-12", stalled: 1, noting: "note 12" },
+    { folder: "app-13", stalled: 1, noting: "note 13" },
+  ];
+  expect(JSON.parse(run.stdout.toString())).toEqual({
+    prepared: threads,
+    fresh: threads,
+    now: [
+      { folder: "app-12", turn_ended: true },
+      { folder: "app-13", turn_ended: true },
+    ],
+  });
+});
+
 // Threads with no issue are named by a code of the machine's, so two machines working on one
 // repository never both have an app-t4 meaning different work.
 test("a machine's code is two letters from its name, so names from two machines differ", async () => {

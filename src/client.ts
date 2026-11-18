@@ -342,10 +342,18 @@ export async function reportTurnEnded(): Promise<void> {
   const clean = status.ok && status.out.trim() === "" && head.ok;
   await request({
     command: "turn ended",
-    // Cut, so a long report can't flood the lead.
-    ...(message ? { message: message.slice(0, 2000) } : {}),
+    ...(message ? { message: shortened(message) } : {}),
     ...(clean ? { head: head.out.trim() } : {}),
   });
+}
+
+// Shortens the builder's last message for the lead, so a long report can't flood it. A question
+// or a decision usually comes last, so the end is kept along with the start, and the lead reads
+// where and how much was cut, to ask the builder for the rest.
+function shortened(message: string): string {
+  if (message.length <= 2000) return message;
+  const cut = message.length - 2000;
+  return `${message.slice(0, 1000)}\n\n[${cut} characters cut]\n\n${message.slice(-1000)}`;
 }
 
 // What Claude Code's StopFailure hook gets on stdin: the kind of error, such as rate_limit, and

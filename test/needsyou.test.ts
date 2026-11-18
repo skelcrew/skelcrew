@@ -444,8 +444,6 @@ describe.skipIf(insideSandbox)("needs you", () => {
   }, 60_000);
 
   // A builder that only answers a message, such as the lead's note about something it already
-  // fixed, has nothing new to submit, and its last submit still waits on its review.
-  // A builder that only answers a message, such as the lead's note about something it already
   // fixed, has nothing new to submit, and its last submit still waits on its review. Its words
   // go to the lead rather than bringing you in.
   test("a turn with no new work, while the last submit is reviewed, goes to the lead and doesn't need you", async () => {
@@ -477,6 +475,21 @@ describe.skipIf(insideSandbox)("needs you", () => {
     await hook("stop", JSON.stringify({ last_assistant_message: said }));
     await until(() => read(join(lead(), "typed")).includes("Should the export use JSON or YAML"));
     expect(read(join(lead(), "typed"))).toContain("Already fixed.");
+  }, 60_000);
+
+  // A long report is shortened for the lead, but a question at its end still reaches it, and
+  // the lead reads that some of it was cut.
+  test("a long last message keeps its end for the lead, and says it was cut", async () => {
+    addApp();
+    await startApp12();
+    submittedAsReviewing();
+    await hook("talk");
+    const said = `I went through every file.\n\n${"Checked. ".repeat(500)}\n\nShould the export use JSON or YAML`;
+    await hook("stop", JSON.stringify({ last_assistant_message: said }));
+    await until(() => read(join(lead(), "typed")).includes("Should the export use JSON or YAML"));
+    const typed = read(join(lead(), "typed"));
+    expect(typed).toContain("I went through every file.");
+    expect(typed).toContain(`[${said.length - 2000} characters cut]`);
   }, 60_000);
 
   // A note that a thread ended waits while the lead is busy. If the thread starts over first,
