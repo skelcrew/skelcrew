@@ -235,6 +235,7 @@ async function recordThread(
       asking: false,
       turn_ended: false,
       submitted: false,
+      told_lead: false,
       erred: false,
       limited: false,
       limit_reset: null,

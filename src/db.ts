@@ -27,7 +27,7 @@ export function nameRepositories(db: Database): void {
 }
 
 // A thread's own columns past the first few: what belongs to its agent. `submitted` is whether
-// the builder ran sc submit in its current turn, and `turn_ended` whether it ended a turn without
+// the builder ran sc submit in its current turn, `told_lead` whether it ran sc tell lead in it, and `turn_ended` whether it ended a turn without
 // one since, which waits on the lead. It is null on a thread an earlier release saved, until the
 // daemon moves its `stalled` over. The rest of the flags say why it needs you.
 // `noting` holds a note for the lead about that, kept until it is typed in, so one the daemon's
@@ -50,6 +50,7 @@ const threadColumns = {
   limit_reset: "INTEGER",
   turn_ended: "INTEGER",
   submitted: "INTEGER NOT NULL DEFAULT 0",
+  told_lead: "INTEGER NOT NULL DEFAULT 0",
   noting: "TEXT",
   started: "INTEGER",
   harness: "TEXT",
