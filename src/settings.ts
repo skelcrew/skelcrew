@@ -257,70 +257,127 @@ function roleOf(name: RoleName, repository: Repository | undefined): Role {
   }
   says.push(sayIn(yours, ["roles", name], yourFile), sayIn(yours, [name], yourFile));
   const top = sayIn(yours, [], yourFile);
-  // Merge with every valid value in place of each bad one. A bad one that leaves the role the
-  // same whatever it would be can't count, so it stops nothing. Otherwise the first bad one that
-  // changes the role is refused.
-  const values = [...says.flatMap((say) => [say.harness, say.model]), top.harness, top.model];
-  const bad = values.filter((v) => "bad" in v);
-  if (bad.length === 0) return mergeRole(says, top, new Map());
-  // Each bad harness could be any harness or none, and each bad model none or one of its own.
-  const choices = (v: (typeof bad)[number]) =>
-    v === top.harness || says.some((say) => say.harness === v)
-      ? [undefined, ...HarnessName.options]
-      : [undefined, `\0${bad.indexOf(v)}`];
-  let combos: Map<object, string | undefined>[] = [new Map()];
-  for (const v of bad)
-    combos = combos.flatMap((combo) => choices(v).map((c) => new Map(combo).set(v, c)));
-  const results = combos.map((combo) => JSON.stringify(mergeRole(says, top, combo)));
-  if (results.every((result) => result === results[0]))
-    return mergeRole(says, top, combos[0] ?? new Map());
-  // The bad value that changes the role, with the others held as they are in some combo.
-  for (const v of bad)
-    for (const combo of combos) {
-      const outcomes = choices(v).map((c) =>
-        JSON.stringify(mergeRole(says, top, new Map(combo).set(v, c))),
-      );
-      if (outcomes.some((o) => o !== outcomes[0]) && "bad" in v) throw v.bad;
-    }
-  throw new Error("Skelcrew couldn't tell which setting stops this role");
+  // A bad value stops the role only when the role would differ with it as some valid value.
+  // The first such one, from the top, is refused. Should none change the role on its own,
+  // though they do together, the first bad one is.
+  const bad = badValues(says, top);
+  const all = outcomes(says, top, new Map());
+  const [only] = all.values();
+  if (all.size === 1 && only) return only;
+  for (const v of bad) {
+    // With v pinned to each of its choices, and the others free, a different set of roles means
+    // v alone changes the role.
+    const pinned = choicesFor(v, says, top, new Map()).map((c) =>
+      [...outcomes(says, top, new Map([[v, c]])).keys()].sort().join("|"),
+    );
+    if (pinned.some((set) => set !== pinned[0]) && "bad" in v) throw v.bad;
+  }
+  const [first] = bad;
+  throw first && "bad" in first ? first.bad : new Error("Skelcrew couldn't read this role");
 }
 
-// Merges what each layer says of a role, `says`, the one that wins first, over `top`, your
-// harness and model, which every role starts from. `chosen` gives a value in place of each bad
-// one. A model belongs to its harness, so a model goes along only while the role stays on the
+// Returns the harnesses and models of the says and of `top` that aren't valid, from the top.
+const badValues = (says: Say[], top: Say): Value<string>[] =>
+  [...says.flatMap((say) => [say.harness, say.model]), top.harness, top.model].filter(
+    (v) => "bad" in v,
+  );
+
+// Returns the values `v` can take: its own when it is valid or `pinned` gives one. A bad
+// harness could be any harness or none, and a bad model none or one of its own, as only
+// whether it is that model matters.
+function choicesFor(
+  v: Value<string>,
+  says: Say[],
+  top: Say,
+  pinned: Map<object, string | undefined>,
+): (string | undefined)[] {
+  if (!("bad" in v)) return [v.value];
+  if (pinned.has(v)) return [pinned.get(v)];
+  const isHarness = v === top.harness || says.some((say) => say.harness === v);
+  return isHarness
+    ? [undefined, ...HarnessName.options]
+    : [undefined, `\0${badValues(says, top).indexOf(v)}`];
+}
+
+// Where a role is as the says are merged from the bottom: its harness, its model should its last
+// harness be yours, which lets a layer's model for every role count, its model should it not,
+// and that layer's model, which a move back onto your harness brings along.
+type Merging = {
+  harness: HarnessName;
+  mine: string | undefined;
+  other: string | undefined;
+  forEveryRole: string | undefined;
+};
+
+// Returns every role the says can give, by its text, with each bad value free to be any of its
+// choices but those `pinned`. With no bad value, there is one. The says are merged from the
+// bottom, and where the role can be so far is kept as a set, each say going over it in turn. A
+// harness has few values and a model matters only by which one it is, so the set stays small,
+// and the work grows with the says, never with every combination of their bad values.
+// A model belongs to its harness, so a model goes along only while the role stays on the
 // harness it was given with: reviewer: { harness: codex } in skelcrew.yaml must never run Codex
 // on your opus. A role moved back onto your harness gets your model again. A layer's model for
 // every role, given without a harness, fits only a role whose last harness is yours, and then
 // goes along though its own layer moves the role. With no model left, the harness picks its
 // default.
-function mergeRole(says: Say[], top: Say, chosen: Map<object, string | undefined>): Role {
-  // A value as read, or the one chosen in place of a bad one.
-  const chosenOr = <T extends string>(v: Value<T>): string | undefined =>
-    "bad" in v ? chosen.get(v) : v.value;
-  const harnessOf = (v: Value<HarnessName>) => HarnessName.optional().parse(chosenOr(v));
-  const yourHarness = harnessOf(top.harness) ?? builtInDefaults().harness;
-  const yourModel = chosenOr(top.model);
-  const last =
-    says.map((say) => harnessOf(say.harness)).find((h) => h !== undefined) ?? yourHarness;
-  let harness = yourHarness;
-  let model = yourModel;
-  let forEveryRole: string | undefined;
-  // From the last say to the first, so each one goes over what is below it.
-  for (const say of [...says].reverse()) {
-    const sayHarness = harnessOf(say.harness);
-    const sayModel = chosenOr(say.model);
-    if (sayHarness !== undefined && sayHarness !== harness) {
-      harness = sayHarness;
-      model = harness === yourHarness ? (forEveryRole ?? yourModel) : undefined;
+function outcomes(
+  says: Say[],
+  top: Say,
+  pinned: Map<object, string | undefined>,
+): Map<string, Role> {
+  const choices = (v: Value<string>) => choicesFor(v, says, top, pinned);
+  const roles = new Map<string, Role>();
+  for (const yours of choices(top.harness))
+    for (const yourModel of choices(top.model)) {
+      const yourHarness = HarnessName.optional().parse(yours) ?? builtInDefaults().harness;
+      let states: Merging[] = [
+        { harness: yourHarness, mine: yourModel, other: yourModel, forEveryRole: undefined },
+      ];
+      // From the last say to the first, so each one goes over what is below it.
+      for (const say of [...says].reverse()) {
+        const next = new Map<string, Merging>();
+        for (const state of states)
+          for (const named of choices(say.harness))
+            for (const model of choices(say.model)) {
+              const after = merged(state, say, HarnessName.optional().parse(named), model, {
+                harness: yourHarness,
+                model: yourModel,
+              });
+              next.set(JSON.stringify(after), after);
+            }
+        states = [...next.values()];
+      }
+      for (const { harness, mine, other } of states) {
+        const model = harness === yourHarness ? mine : other;
+        const role = model === undefined ? { harness } : { harness, model };
+        roles.set(JSON.stringify(role), role);
+      }
     }
-    if (sayModel === undefined) continue;
-    if (!say.everyRole || sayHarness !== undefined) model = sayModel;
-    else if (last === yourHarness) {
-      model = sayModel;
-      forEveryRole = sayModel;
-    }
+  return roles;
+}
+
+// Returns where a role is once a say naming `harness` and `model` goes over `state`. `yours`
+// is your harness and model. A say that moves the role to another harness drops the model below
+// it.
+function merged(
+  state: Merging,
+  say: Say,
+  harness: HarnessName | undefined,
+  model: string | undefined,
+  yours: { harness: HarnessName; model: string | undefined },
+): Merging {
+  let { harness: on, mine, other, forEveryRole } = state;
+  if (harness !== undefined && harness !== on) {
+    on = harness;
+    mine = on === yours.harness ? (forEveryRole ?? yours.model) : undefined;
+    other = on === yours.harness ? yours.model : undefined;
   }
-  return model === undefined ? { harness } : { harness, model };
+  if (model === undefined) return { harness: on, mine, other, forEveryRole };
+  // A layer's model for every role, given without a harness, counts only should the last
+  // harness be yours.
+  if (say.everyRole && harness === undefined)
+    return { harness: on, mine: model, other, forEveryRole: model };
+  return { harness: on, mine: model, other: model, forEveryRole };
 }
 
 // Returns your config.yaml as YAML data, or nothing when you have none.
