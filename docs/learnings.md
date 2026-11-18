@@ -81,8 +81,24 @@ that covers the code you are about to write.
   stored, not the conversation in use. So Simon chose to leave such leads running, with no code
   to restart them. Each gets agent view off at its next start. Upgrading is one step by hand,
   done once for each such lead, before its next start:
-  1. Find the conversation in use: the newest `.jsonl` under the lead's
-     `~/.local/share/skelcrew/claude/<lead>/projects/<folder>/`.
+  1. Find the conversation you want to keep by what is in it, never by which file is newest: a
+     spare Claude Code handed out later is newer, and holds none of your work. This prints, for
+     each of the lead's conversations, its id, the model of its last answer, how many messages
+     it has and the start of the last one typed in:
+
+     ```sh
+     for f in ~/.local/share/skelcrew/claude/<lead>/projects/*/*.jsonl; do bun -e '
+     const lines = (await Bun.file(process.argv[1]).text()).split("\n").filter(Boolean)
+       .map((l) => { try { return JSON.parse(l) } catch { return {} } });
+     const typed = lines.filter((l) => l.type === "user" && typeof l.message?.content === "string");
+     const model = lines.filter((l) => l.type === "assistant").at(-1)?.message?.model ?? "none";
+     console.log(process.argv[1].split("/").at(-1).replace(".jsonl", ""), model,
+       `${typed.length} messages`, JSON.stringify((typed.at(-1)?.message.content ?? "").slice(0, 80)));
+     ' "$f"; done
+     ```
+
+     Pick the one whose last message is the last thing you said to the lead. One on the default
+     model with few messages is a spare.
   2. Set the repository's `lead_session` in `~/.local/share/skelcrew/skelcrew.db` to that file's
      name without `.jsonl`:
      `UPDATE repositories SET lead_session = '<id>' WHERE owner = '<owner>' AND repo = '<repo>'`.
