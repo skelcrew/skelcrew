@@ -498,9 +498,10 @@ async function typeNotes(
 // The saved note being typed into a lead, by its ID, with what cancels its typing.
 const typingNote = new Map<number, AbortController>();
 
-// Drops the notes that a thread ended which still wait for its lead, cancelling one being
-// typed. A thread starting over in the same folder has the same name, and the lead would take
-// the old end for the new thread's and drop it from what it holds open. A note already pasted
+// Drops the notes that a thread ended or failed which still wait for its lead, cancelling one
+// being typed. A thread starting over in the same folder has the same name, and the lead would
+// take the old end for the new thread's and drop it from what it holds open, or ask you to start
+// it again. A note already pasted
 // at the lead's prompt is still sent: typing presses Enter a moment after the paste, and
 // leaving it there would block every later note behind an unsent draft.
 export function dropEndNotes(db: Database, folder: string): void {
@@ -535,7 +536,7 @@ export function typeLeadNotes(db: Database, sessions: string): void {
 
 // Saves a note for the lead of a repository, and has the daemon type it in. Notes already
 // wait while the lead is busy, and stay saved while it isn't running, so a note is never lost.
-// `ended` is the folder of the thread whose end the note reports, if it does. An `urgent` note,
+// `ended` is the folder of the thread whose end or failure the note reports, if it does. An `urgent` note,
 // such as a builder's message, goes ahead of the rest when several wait.
 export function noteForLead(
   db: Database,

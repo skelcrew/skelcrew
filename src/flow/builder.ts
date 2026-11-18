@@ -510,7 +510,9 @@ export function failThread(db: Database, sessions: string, thread: Thread, error
   }
   record(db, thread.folder, { status: "failed" }, why);
   console.log(`${thread.folder} failed: ${why}`);
-  // Every note to the lead is one line, as an error's text may not be.
+  // Every note to the lead is one line, as an error's text may not be. It names the thread's
+  // folder as one that ended, so starting the thread over drops it, should it still wait: the
+  // lead would otherwise ask you to start a thread that already runs again.
   const line = `${threadName(db, thread)} failed: ${why}`.replace(/\s+/g, " ").slice(0, 200);
-  noteForLead(db, sessions, thread, line, null, true);
+  noteForLead(db, sessions, thread, line, thread.folder, true);
 }
