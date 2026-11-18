@@ -96,8 +96,8 @@ WantedBy=default.target
 
 // Installs or updates the daemon service, enabling it and lingering on the first
 // installation. On a Mac it is a launchd agent instead. Checked on every plain sc, but only by
-// comparing files, so a moved bun, harness or checkout reaches the daemon at its next start
-// without a systemctl or launchctl call each time.
+// comparing files, so a moved bun, harness or checkout reaches the daemon without a systemctl
+// or launchctl call each time: on systemd at its next start, and on a Mac at once.
 export function installService(): void {
   const mac = process.platform === "darwin";
   const file = serviceFile();
@@ -125,10 +125,11 @@ export function installService(): void {
   mkdirSync(dirname(file), { recursive: true });
   writeFileSync(file, unit);
   try {
-    // launchd reads the file only when the agent loads, so a running daemon keeps going, and its
-    // next start or restart loads the new file. Only a new agent is loaded now.
+    // launchd keeps the definition it loaded, and would start the daemon again on it after a
+    // crash, so a changed file is loaded at once. That restarts the daemon, and agents keep
+    // running in tmux.
     if (mac) {
-      if (before === null) loadLaunchAgent();
+      loadLaunchAgent();
       return;
     }
     // An installed service only needs systemd to read its file again. It runs the new one

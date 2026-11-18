@@ -159,11 +159,9 @@ test("the sidebar's notice says a newer release is installed until Skelcrew runs
 // says the daemon's log is. A Mac restarts it with launchd, in your login session, which no HOME
 // of the test's can keep apart from your own daemon, so it must never reach the real launchctl.
 const mac = process.platform === "darwin";
-const plist = () => join(home, "Library", "LaunchAgents", "dev.skelcrew.daemon.plist");
-const restartCall = () =>
-  mac
-    ? `launchctl bootout gui/${userInfo().uid}/dev.skelcrew.daemon\nlaunchctl bootstrap gui/${userInfo().uid} ${plist()}\n`
-    : "systemctl --user restart skelcrew\n";
+const restartCall = mac
+  ? `launchctl kickstart -k gui/${userInfo().uid}/dev.skelcrew.daemon\n`
+  : "systemctl --user restart skelcrew\n";
 const daemonLog = () =>
   mac ? join(home, "Library", "Logs", "skelcrew.log") : "journalctl --user -u skelcrew";
 
@@ -175,7 +173,7 @@ const daemonLog = () =>
 async function daemon(before: object, after: object): Promise<void> {
   const managers: [string, string][] = [
     ["systemctl", "--user restart skelcrew"],
-    ["launchctl", `bootstrap gui/${userInfo().uid} ${plist()}`],
+    ["launchctl", `kickstart -k gui/${userInfo().uid}/dev.skelcrew.daemon`],
   ];
   for (const [name, restart] of managers)
     writeScript(
@@ -219,7 +217,7 @@ test("restarts a daemon on an older release before you attach", async () => {
   const done = await beforeAttaching("0.4.3");
   expect(done.err).toBe("");
   expect(done.code).toBe(0);
-  expect(done.calls).toBe(restartCall());
+  expect(done.calls).toBe(restartCall);
   expect(done.out).toContain("0.4.3");
   expect(done.out).toContain("agents keep running");
 });
@@ -251,7 +249,7 @@ test("after git pull, Skelcrew from a checkout restarts a daemon still on the ol
   const done = await beforeAttaching();
   expect(done.err).toBe("");
   expect(done.code).toBe(0);
-  expect(done.calls).toBe(restartCall());
+  expect(done.calls).toBe(restartCall);
   expect(done.out).toContain(`commit ${head()}`);
   expect(done.out).toContain("agents keep running");
 });
