@@ -3,6 +3,7 @@
 import { z } from "zod";
 import { agentRuns } from "./agents/sessions.ts";
 import { ask } from "./client.ts";
+import { tellOldKeys } from "./config.ts";
 import { openDb } from "./db.ts";
 import { leadOf } from "./flow/lead.ts";
 import { findThread } from "./flow/thread.ts";
@@ -88,7 +89,9 @@ async function ensureDaemon(): Promise<void> {
 // Makes sure the daemon and a lead are running, then opens the screen on the lead until you
 // leave with Alt-Q. The lead is for `from`, an owner/repo, or else for the repository you
 // opened last. With `tab`, only a repository whose tab is open will do. Returns false, with no
-// screen opened, when every tab is closed.
+// screen opened, when every tab is closed. Before the screen takes over your terminal, it names
+// once any old keys the opened repository's skelcrew.yaml still uses: only the daemon knows
+// which repository you opened last.
 export async function attachToLead(sessions: string, from?: string, tab = false): Promise<boolean> {
   await ensureDaemon();
   // Asking for the lead brings it back if it ended while the daemon kept running. Starting it
@@ -103,6 +106,7 @@ export async function attachToLead(sessions: string, from?: string, tab = false)
     throw new Error("the daemon answered in a way this Skelcrew doesn't understand");
   if ("error" in lead.data) throw new Error(lead.data.error);
   if ("closed" in lead.data) return false;
+  tellOldKeys(lead.data.repository);
   await openScreen(sessions, lead.data.lead, lead.data.lead, lead.data.repository);
   return true;
 }

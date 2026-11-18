@@ -1064,3 +1064,18 @@ test("sc says once which old keys the repository's skelcrew.yaml uses, what repl
   expect((await skel([], "", checkout)).out).not.toContain("replaces it");
   expect(readFileSync(join(clone("simon/app"), "skelcrew.yaml"), "utf8")).toBe(yours);
 });
+
+test("sc outside a checkout names the old keys of the repository it opens again", async () => {
+  const checkout = onGitHub("simon/app", "WRITE");
+  writeFileSync(join(checkout, "skelcrew.yaml"), "reviewer: { harness: codex }\n");
+  git(checkout, "add", "-A");
+  git(checkout, "commit", "-q", "-m", "settings");
+  git(checkout, "push", "-q", join(home, "github", "simon", "app.git"), "HEAD:main");
+  expect((await skel(["repo", "add"], "", checkout)).err).toBe("");
+  // The daemon answers with the repository you opened last.
+  const run = await skel([]);
+  expect(run.err).toBe("");
+  expect(run.out).toContain(
+    "simon/app's skelcrew.yaml has reviewer:, read as the harness and model in .agents/roles/reviewer.md, which replaces it.",
+  );
+});

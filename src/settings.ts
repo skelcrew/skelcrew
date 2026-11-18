@@ -278,10 +278,10 @@ function roleOf(name: RoleName, run: string, repository: Repository | undefined)
       ...sayIn(entry, [], problem),
       everyRole: true,
     });
-    // A role file's frontmatter is checked whole, as its agents read the same file for their
-    // instructions, so a broken one stops them whatever counts.
-    const file = once(() => roleFileSettings(run, repository));
-    says.push({ harness: () => file()?.harness, model: () => file()?.model });
+    // The role file's frontmatter, whose keys are checked as the file is read, and its harness
+    // and model only where they count. It is the file of the role that runs.
+    const role = `.agents/roles/${run}.md in ${repository.owner}/${repository.repo} isn't valid`;
+    says.push(sayIn(() => repositoryRole(run, repository).frontmatter, [], role));
     const shared = once(() => repositoryData(repository));
     says.push(...line(shared, "the repository's skelcrew.yaml isn't valid"));
   }
@@ -318,12 +318,13 @@ function roleOf(name: RoleName, run: string, repository: Repository | undefined)
     const say = says[from];
     if (say === undefined) return yourModel();
     const harness = say.harness();
-    const model = say.model();
     // A model named counts, unless it is a layer's model for every role, given without a
-    // harness, and the role isn't on your harness.
-    if (model !== undefined && (!say.everyRole || harness !== undefined)) return model;
-    const below = namedFrom(from + 1);
-    if (model !== undefined && (below === undefined || isYourHarness(below))) return model;
+    // harness, and the role isn't on your harness. Then it can't count, so it isn't read.
+    const forAny = say.everyRole === true && harness === undefined;
+    const below = forAny ? namedFrom(from + 1) : undefined;
+    const fits = !forAny || below === undefined || isYourHarness(below);
+    const model = fits ? say.model() : undefined;
+    if (model !== undefined) return model;
     // A say that moves the role to another harness drops the model below it, and the role gets
     // your model again only when it moves onto your harness.
     if (harness !== undefined && !onHarness(from + 1, harness))
@@ -333,17 +334,6 @@ function roleOf(name: RoleName, run: string, repository: Repository | undefined)
   const harness = harnessFrom(0);
   const model = modelFrom(0);
   return model === undefined ? { harness } : { harness, model };
-}
-
-// Returns the harness and model a repository's role file names, or nothing when it names neither
-// or the repository has no file for the role.
-function roleFileSettings(
-  name: string,
-  repository: Repository,
-): { harness?: HarnessName; model?: string } | undefined {
-  const { harness, model } = repositoryRole(name, repository);
-  if (harness === undefined && model === undefined) return undefined;
-  return { ...(harness && { harness }), ...(model && { model }) };
 }
 
 // Returns your config.yaml as YAML data, or nothing when you have none.
