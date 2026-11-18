@@ -1590,6 +1590,67 @@ echo "Not logged in"; exit 1`,
       );
     }, 90_000);
 
+    // The record is posted before the merge, and the thread can change while the forge takes
+    // it. Each change below comes while the fake forge holds the record. Skelcrew's copy then
+    // stops showing the PR green, so only the check made after the record can stop the merge
+    // still under way, which acted on the PR as it was.
+    test("a new review, a stop or sc rm while the record is posted stops the merge", async () => {
+      await approvedApp12();
+      const head = pushed();
+      const green = () => pr({ head, reviews: [skelReview], checks: [approved] });
+      const notGreen = () =>
+        pr({ head, reviews: [skelReview], checks: [{ ...approved, state: "running" }] });
+      const sc = (...words: string[]) =>
+        Bun.spawnSync([process.execPath, main, ...words], { env: env(), stderr: "pipe" });
+      // Arms a new plan, which posts a record of its own, and holds that record.
+      const holdRecord = async () => {
+        rmSync(join(plugin, "held-review"), { force: true });
+        writeFileSync(join(plugin, "hold-review"), "");
+        await arm();
+        green();
+        await until(() => existsSync(join(plugin, "held-review")));
+      };
+      const release = async () => {
+        notGreen();
+        rmSync(join(plugin, "hold-review"));
+        await morePolls();
+        expect(merges()).toEqual([]);
+      };
+
+      // A new review: the plan stays armed and waits for it.
+      await holdRecord();
+      expect(sc("review", "app-12").stderr.toString()).toBe("");
+      await release();
+      expect(thread().merge_plan).toBe("armed");
+      await until(() => thread().reviewing === null && thread().submitting === null, 30_000);
+
+      // A stop: the plan stays armed, for when the thread starts again.
+      sc("merge", "--cancel", "app-12");
+      await holdRecord();
+      expect(sc("stop", "app-12").stderr.toString()).toBe("");
+      await release();
+      expect(thread()).toMatchObject({ status: "stopped", merge_plan: "armed" });
+    }, 120_000);
+
+    test("sc rm while the record is posted stops the merge and drops the plan", async () => {
+      await approvedApp12();
+      writeFileSync(join(plugin, "hold-review"), "");
+      await arm();
+      pr({ head: pushed(), reviews: [skelReview], checks: [approved] });
+      await until(() => existsSync(join(plugin, "held-review")));
+      const removing = Bun.spawn([process.execPath, main, "rm", "app-12"], {
+        env: { ...env(), SKELCREW_SOCKET: leadSocket() },
+        stderr: "pipe",
+      });
+      await until(() => thread().status === "stopped" || thread().status === "done");
+      rmSync(join(plugin, "hold-review"));
+      await removing.exited;
+      await until(() => thread().status === "done");
+      await morePolls();
+      expect(merges()).toEqual([]);
+      expect(thread().merge_plan).toBeNull();
+    }, 90_000);
+
     test("an armed merge waits on a conflict, and once cancelled or its thread removed, never merges", async () => {
       await approvedApp12();
       await arm();
