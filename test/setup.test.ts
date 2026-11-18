@@ -1405,6 +1405,26 @@ test("sc install without a terminal installs nothing, even with a yes piped in, 
 
 // The harness and its login are there, as copied from another machine, and only the service is
 // missing. Bun's own prompts read ahead of piped input, so this keeps the plugin's question first.
+// An older release marked the machine set up at the first run's end, without ever installing the
+// plugins your files name, so plain sc after an upgrade still runs sc install once.
+test("plain sc on a machine set up by an older release installs the plugins your files name", async () => {
+  noGitHubPlugin();
+  fakeGitHub();
+  publishFake("0.1.0");
+  await skel("1\nsk-ant-oat01-good\n");
+  // The older release left only its own mark.
+  const data = join(home, ".local", "share", "skelcrew");
+  rmSync(join(data, "installed"));
+  expect(existsSync(join(data, "set-up"))).toBe(true);
+  lockFake("0.1.0");
+  const run = await atTerminal("y\n");
+  expect(run.err).toBe("");
+  expect(run.out).toContain("Install it? [Y/n]");
+  expect(run.out).toContain("Installed fake 0.1.0.");
+  expect(calls()).toContain("fake setup 0.1.0\n");
+  expect(existsSync(join(data, "installed"))).toBe(true);
+});
+
 test("plain sc on a machine that isn't set up installs your plugins too", async () => {
   noGitHubPlugin();
   fakeGitHub();

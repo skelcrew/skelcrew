@@ -6,7 +6,7 @@ import { codexHome } from "../agents/codex.ts";
 import { HarnessName, harnessNamed } from "../agents/harness.ts";
 import { configFile, yourConfigDocument } from "../config.ts";
 import { openDb } from "../db.ts";
-import { claudeTokenFile, configDir, dataDir, setUpFile } from "../paths.ts";
+import { claudeTokenFile, configDir, dataDir, installedFile, setUpFile } from "../paths.ts";
 import { addPlugin, installYourPlugins } from "../plugins/install.ts";
 import { yourPlugins } from "../plugins/lock.ts";
 import { installedPlugins } from "../plugins/plugin.ts";
@@ -378,7 +378,8 @@ export function firstRun(from?: string): boolean {
 // plugins at the versions your lock pins, each new or changed one after asking. Safe to run
 // again: with nothing to do, it says so. `from` is as for the first run. The machine is marked
 // set up only once your plugins are in, so after a plugin that failed to install, or one you said
-// no to, plain sc runs all of this again. A machine set up before the mark gets it here too.
+// no to, plain sc runs all of this again. A machine set up by an older release gets the marks
+// here too.
 export function install(from?: string): void {
   const finished = installFinished();
   const setUp = firstRun(from);
@@ -391,19 +392,22 @@ export function install(from?: string): void {
     if (!finished) {
       mkdirSync(dataDir(), { recursive: true });
       writeFileSync(setUpFile(), "");
+      writeFileSync(installedFile(), "");
     }
     if (!finished && (setUp || plugins)) console.log("\nSkelcrew is set up.");
-    // A machine set up before the mark takes it without a word, as plain sc runs this there once.
+    // A machine set up by an older release takes the marks without a word, as plain sc runs this
+    // there once.
     else if (finished && !setUp && !plugins)
       console.log("Nothing to install: this machine has everything your files ask for.");
   }
 }
 
 // Reports whether sc install ran to its end here, which plain sc checks to know whether to run it
-// again. The daemon's service doesn't count, unlike for setupDone: plain sc installs it even after
-// a first run where you said no to a plugin your files name.
+// again. Neither the daemon's service nor the first run's own mark counts, unlike for setupDone:
+// plain sc installs the service even after a first run where you said no to a plugin your files
+// name, and an older release wrote the mark without installing your plugins.
 export function installFinished(): boolean {
-  return setupDone() && existsSync(setUpFile());
+  return setupDone() && existsSync(installedFile());
 }
 
 // A step of the first run: `title` names it, and `take` asks what it needs, starting with a line

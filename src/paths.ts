@@ -19,6 +19,10 @@ export const daemonCodeFile = () => join(dataDir(), "daemon-code");
 // Returns the file the first run writes once every step is done, so an interrupted one goes on
 // where it stopped.
 export const setUpFile = () => join(dataDir(), "set-up");
+// Returns the file sc install writes once it ran to its end, your plugins included. It is apart
+// from setUpFile, which releases from before sc install wrote at the first run's end, so a machine
+// upgraded from one still gets sc install once.
+export const installedFile = () => join(dataDir(), "installed");
 // Returns the private agent token file path used by setup and Claude Code sessions.
 export const claudeTokenFile = (home = homedir()) => join(configDir(home), "claude-token");
 
