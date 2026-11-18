@@ -56,6 +56,14 @@ export function ciState(pr: PullRequest): Thread["checks"] {
   return ci.some((c) => c.state === "failed" || c.state === "cancelled") ? "failing" : "pending";
 }
 
+// Returns whether every check on the PR passed, Skelcrew's own included, which it sets once its
+// reviewer approves. With no CI, that check is the only one. A thread's saved CI state leaves
+// Skelcrew's check out, so this is what says an approved PR is ready to merge.
+export function allGreen(pr: PullRequest): boolean {
+  const approved = pr.checks.some((c) => c.name === reviewCheck && c.state === "passed");
+  return approved && pr.checks.every((c) => c.state === "passed");
+}
+
 // Returns what an armed merge when ready still waits on, in words for the thread's row and the
 // lead, such as "an approval", or null once the PR may merge. It merges only at the commit
 // Skelcrew's reviewer approved, `approved`, which must still be the PR's head, with every check
@@ -270,10 +278,8 @@ export function decide(thread: Thread, pr: PullRequest, given: { maxRounds: numb
     const why = `told the builder: ${told.join("; ")}`;
     return { seen, tell, notice, typedIn, failed, conflict, change, why };
   }
-  // Skelcrew's reviewer approves by setting its check, so an approved PR with every check passed,
-  // its own included, is ready. With no CI, that check is the only one.
-  const approved = pr.checks.some((c) => c.name === reviewCheck && c.state === "passed");
-  if (quiet && !thread.needs_you && approved && pr.checks.every((c) => c.state === "passed"))
+  // An approved PR with every check green is ready.
+  if (quiet && !thread.needs_you && allGreen(pr))
     return {
       seen,
       tell,

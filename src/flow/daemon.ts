@@ -13,7 +13,7 @@ import {
   stillRunning,
 } from "../agents/sessions.ts";
 import { repositoryCommands } from "../config.ts";
-import { moveToTasks, openDb, type Repository } from "../db.ts";
+import { finishUpgrade, moveToTasks, openDb, type Repository } from "../db.ts";
 import { setupDone } from "../machine/setup.ts";
 import { keepUpToDate } from "../machine/update.ts";
 import { cloneDir, daemonCodeFile, daemonSocket, reviewSocket, threadSocket } from "../paths.ts";
@@ -49,6 +49,7 @@ import {
   repositoryAt,
 } from "./repo.ts";
 import { allowed, type Caller, DaemonRequest, parseJson } from "./requests.ts";
+import { killReviewers } from "./reviewer.ts";
 import { endRound, goOn, rerunReview, resumeRound, submitRound } from "./round.ts";
 import { doing, watchForStalls } from "./stall.ts";
 import {
@@ -132,6 +133,9 @@ function endWhatItStarted(sockets: string[]): void {
   const deadline = Date.now() + 5000;
   while (stillRunning(started).length > 0 && Date.now() < deadline) Bun.sleepSync(50);
   end(stillRunning(started), "SIGKILL");
+  // A reviewer's sandbox can leave a process that is no longer under the daemon, so the look
+  // above misses it, and that would wait forever.
+  killReviewers();
   process.exit(0);
 }
 
@@ -153,6 +157,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
     throw new Error("the daemon is already running. Run sc to attach to a lead.");
   const db = openDb();
   moveToTasks(db);
+  finishUpgrade(db);
   // The checkout and commit this daemon's code came from, for sc status. Read once at start,
   // since a git pull afterwards doesn't change the code that runs.
   const runningCode = singleFile
@@ -171,6 +176,9 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
     await listen(createServer(answer(caller)), socket);
     sockets.push(socket);
   };
+  // End cleanly on the service's stop or on Ctrl-C, from here on. That comes before any review
+  // is brought back, as a stop without it would leave the review running.
+  for (const signal of ["SIGTERM", "SIGINT"]) process.on(signal, () => endWhatItStarted(sockets));
   // The function that polls one repository at once, for sc start. It is set once polling
   // starts, and sc start waits for it until then. So a builder never starts from a task an
   // earlier daemon saved, which may be out of date.
@@ -595,9 +603,8 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       console.log(`couldn't look at the agents' screens: ${errorText(error)}`);
     }
   }, 2000);
-  // Open your socket, and end cleanly on the service's stop or on Ctrl-C.
+  // Open your socket.
   await open(path, "you");
-  for (const signal of ["SIGTERM", "SIGINT"]) process.on(signal, () => endWhatItStarted(sockets));
   console.log(`Listening on ${path}.`);
   // Bring back the lead of each repository you have opened. One that fails is logged, and the
   // rest still start.
