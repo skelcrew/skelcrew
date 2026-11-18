@@ -400,9 +400,9 @@ export async function messageBuilder(
 // Has the daemon type a builder's message into its repository's lead, naming the thread it
 // comes from and how to answer, and logs it in the thread's log. Returns at once, like any
 // agent command. Only a builder may tell a lead, and only its own repository's: the lead is
-// found from the thread in `from`, so no sender can pick another.
+// found from the thread in `from`, so no sender can pick another. A reviewer sends nothing.
 export function messageLead(db: Database, sessions: string, from: Caller, text: string): void {
-  if (from === "you" || "lead" in from)
+  if (from === "you" || "lead" in from || "review" in from)
     throw new Error("Only a thread's builder can tell its lead.");
   const thread = from;
   const name = threadName(db, thread);

@@ -67,7 +67,7 @@ ${body}`;
   return done.stdout.toString();
 }
 
-test("only a repository's lead may tell its builders, and a builder may tell only its own lead", () => {
+test("only a repository's lead may tell its builders, a builder may tell only its own lead, and a reviewer tells no one", () => {
   const siteLead = leadPlaces("simon", "site").name;
   const seen = run(`
 db.run("INSERT INTO repositories (name, owner, repo) VALUES ('site', 'simon', 'site')");
@@ -87,11 +87,13 @@ const refusal = async (send) => {
 const refused = {
   byBuilder: await refusal(() => messages.messageBuilder(db, tmux, site8, app12, "Stop.")),
   byYou: await refusal(() => messages.messageBuilder(db, tmux, "you", app12, "Stop.")),
+  byReviewer: await refusal(() => messages.messageBuilder(db, tmux, { review: app12 }, app12, "Stop.")),
   byOtherLead: await refusal(() =>
     messages.messageBuilder(db, tmux, { lead: { owner: "simon", repo: "site" } }, app12, "Stop."),
   ),
   leadToLead: await refusal(() => messages.messageLead(db, tmux, appLead, "Hi.")),
   youToLead: await refusal(() => messages.messageLead(db, tmux, "you", "Hi.")),
+  reviewerToLead: await refusal(() => messages.messageLead(db, tmux, { review: app12 }, "Hi.")),
 };
 await messages.messageBuilder(db, tmux, appLead, app12, "Use v2.");
 messages.messageLead(db, tmux, site8, "Done.");
@@ -102,9 +104,11 @@ console.log(JSON.stringify({ refused, kept, typed: fake.received.map(({ to }) =>
     refused: {
       byBuilder: "Only a lead can tell app-12's builder.",
       byYou: "Only a lead can tell app-12's builder.",
+      byReviewer: "Only a lead can tell app-12's builder.",
       byOtherLead: "app-12 belongs to simon/app, so only that repository's lead can tell it.",
       leadToLead: "Only a thread's builder can tell its lead.",
       youToLead: "Only a thread's builder can tell its lead.",
+      reviewerToLead: "Only a thread's builder can tell its lead.",
     },
     kept: { messages: 0, notes: 0 },
     // The lead's message reached app-12's builder, and site-8's words only site's lead.
