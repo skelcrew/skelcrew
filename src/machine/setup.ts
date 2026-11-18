@@ -7,7 +7,7 @@ import { HarnessName, harnessNamed } from "../agents/harness.ts";
 import { configFile, yourConfigDocument } from "../config.ts";
 import { openDb } from "../db.ts";
 import { claudeTokenFile, configDir } from "../paths.ts";
-import { addPlugin, askYes, installYourPlugins } from "../plugins/install.ts";
+import { addPlugin, installYourPlugins } from "../plugins/install.ts";
 import { installedPlugins } from "../plugins/plugin.ts";
 import { errorText } from "../say.ts";
 import { readSettings } from "../settings.ts";
@@ -226,18 +226,24 @@ function gitHubToOffer(remote: string | null): string | null {
   return declined.includes(repository.toLowerCase()) ? null : repository;
 }
 
-// Offers to install the GitHub plugin for a checkout of `repository`. A yes adds it to your
-// plugins without asking again, since you said yes to it by name. A no is saved in config.yaml, so
-// no checkout of the repository asks again, and you can undo it there. With no answer, such as
-// with no terminal, nothing is installed or saved. A failed install is only reported: Skelcrew
+// Offers to install the GitHub plugin for a checkout of `repository`. The offer is the plugin's
+// own question, which shows its version, kind, what it provides and the commands it runs, as for
+// any plugin. A yes adds it to your plugins. A no is saved in config.yaml, so no checkout of the
+// repository asks again, and you can undo it there. A failed install is only reported: Skelcrew
 // works from git alone until you run sc add -g.
 function offerGitHub(repository: string, remote: string): void {
-  console.log("GitHub detected.\n");
-  const answer = askYes(
-    "The GitHub plugin lets Skelcrew work with issues, pull requests\nand CI on your repositories. Install the GitHub plugin? [Y/n]",
+  console.log(
+    "GitHub detected.\n\nThe GitHub plugin lets Skelcrew work with issues, pull requests\nand CI on your repositories.",
   );
-  if (answer === null) return;
-  if (!answer) {
+  // The plugin's setup is handed the remote, so it can set itself up for this repository.
+  let added: boolean;
+  try {
+    added = addPlugin(githubPlugin, remote);
+  } catch (error) {
+    console.log(`Couldn't install the GitHub plugin: ${errorText(error)}`);
+    return;
+  }
+  if (!added) {
     const { declined } = readSettings(["declined"]);
     const config = yourConfigDocument();
     config.set("github_declined", [...declined, repository]);
@@ -246,13 +252,6 @@ function offerGitHub(repository: string, remote: string): void {
     console.log(
       `Skelcrew won't ask again for ${repository}. To install it: sc add -g ${githubPlugin}`,
     );
-    return;
-  }
-  // The plugin's setup is handed the remote, so it can set itself up for this repository.
-  try {
-    addPlugin(githubPlugin, remote, false);
-  } catch (error) {
-    console.log(`Couldn't install the GitHub plugin: ${errorText(error)}`);
   }
 }
 

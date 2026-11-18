@@ -491,7 +491,9 @@ function checkoutWith(name: string, remote?: string): string {
   return folder;
 }
 
-const offer = "Install the GitHub plugin? [Y/n]";
+// The offer is the plugin's own question, showing what it runs.
+const offer =
+  "github 0.1.0 from skelcrew/skelcrew-github is an I/O plugin that provides tracker, forge.";
 
 // Runs plain sc, or the command in `args`, in `cwd` with a terminal as its input, typing `typed`
 // into it. Skelcrew offers and installs a plugin only to an answer at a terminal. The token's
@@ -512,6 +514,7 @@ function atTerminal(typed: string, cwd = home, args: string[] = []) {
 test("offers the GitHub plugin only in a checkout on github.com, on any run", async () => {
   noGitHubPlugin();
   fakeGitHub();
+  publishGitHubPlugin();
   const outside = await skel("1\nsk-ant-oat01-good\n");
   expect(outside.code).toBe(0);
   expect(outside.out).not.toContain("GitHub");
@@ -522,13 +525,15 @@ test("offers the GitHub plugin only in a checkout on github.com, on any run", as
   git(folder, "remote", "set-url", "origin", "git@github.com:simon/app.git");
   const later = await atTerminal("n\n", folder);
   expect(later.out).toStartWith(
-    "GitHub detected.\n\nThe GitHub plugin lets Skelcrew work with issues, pull requests\nand CI on your repositories. Install the GitHub plugin? [Y/n]",
+    `GitHub detected.\n\nThe GitHub plugin lets Skelcrew work with issues, pull requests\nand CI on your repositories.\n${offer}`,
   );
+  expect(later.out).toContain("\nInstall it? [Y/n]");
 });
 
 test("a no holds for the repository, in every checkout of it, and another repository asks once", async () => {
   noGitHubPlugin();
   fakeGitHub();
+  publishGitHubPlugin();
   const app = checkoutWith("app", "git@github.com:simon/app.git");
   const first = await atTerminal("n\n1\nsk-ant-oat01-good\n", app);
   expect(first.code).toBe(0);
@@ -559,6 +564,7 @@ test("a no holds for the repository, in every checkout of it, and another reposi
 test("over --remote, the offer reads the remote sc brought from your laptop", async () => {
   noGitHubPlugin();
   fakeGitHub();
+  publishGitHubPlugin();
   await skel("1\nsk-ant-oat01-good\n");
   const run = await atTerminal("n\n", home, ["--from", "git@github.com:simon/app.git"]);
   expect(run.out).toContain(offer);
@@ -622,17 +628,17 @@ function siteOnGitHub(): string {
   return site;
 }
 
-// Enter takes the offer. You said yes to this plugin by name, so the install asks nothing more.
-// GitHub is then the repository's tracker, so nothing is written into the checkout, and the
-// line saying Skelcrew is set up goes straight on to bringing the repository in.
-test("a yes installs the GitHub plugin with no second question, writes nothing here, and the lead opens", async () => {
+// Enter takes the offer, which is the plugin's one question. GitHub is then the repository's
+// tracker, so nothing is written into the checkout, and the line saying Skelcrew is set up goes
+// straight on to bringing the repository in.
+test("a yes installs the GitHub plugin after one question, writes nothing here, and the lead opens", async () => {
   const site = siteOnGitHub();
   const run = await atTerminal("\n1\nsk-ant-oat01-good\n", site);
   expect(run.err).toBe("");
   expect(run.code).toBe(0);
-  expect(run.out).toContain(
-    "Installing github 0.1.0 from skelcrew/skelcrew-github...\nInstalled github 0.1.0.\n",
-  );
+  expect(run.out).toContain(offer);
+  expect(run.out).toContain("Install it? [Y/n] Installed github 0.1.0.\n");
+  expect(run.out.match(/\[Y\/n\]/g)).toHaveLength(1);
   expect(run.out).not.toContain("[y/N]");
   expect(readFileSync(join(home, "handed"), "utf8")).toBe("https://github.com/simon/site\n");
   expect(run.out).not.toContain("sc init");

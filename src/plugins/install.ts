@@ -221,8 +221,8 @@ function refuseInstalled(db: Database, name: string): void {
 }
 
 // What installing or updating a plugin may be told. `remote` is the remote of the checkout sc ran
-// in, handed to the plugin's setup. `ask` is false when you said yes already, such as to sc's
-// offer of the GitHub plugin by name, or on the laptop whose setup a server takes. `tag` picks the
+// in, handed to the plugin's setup. `ask` is false when you said yes already, on the laptop whose
+// setup a server takes. `tag` picks the
 // version, such as v0.1.0, in place of the newest, and `commit` is the one your lock pins it at.
 type Options = { remote?: string | null; ask?: boolean; tag?: string; commit?: string };
 
@@ -413,11 +413,12 @@ export function removePlugin(name: string): void {
 
 // Adds a personal plugin, for sc add -g: installs it after asking, then names it under plugins:
 // in your config.yaml, beside the version your lock now pins. A folder of yours is only
-// installed, as it has no version to pin. `ask` is false when you said yes to it by name.
-export function addPlugin(given: string, remote = originHere(), ask = true): void {
-  if (!installPlugin(given, { remote, ask })) return;
-  if (given.startsWith(".") || given.startsWith("/")) return;
+// installed, as it has no version to pin. Returns whether it was installed.
+export function addPlugin(given: string, remote = originHere()): boolean {
+  if (!installPlugin(given, { remote })) return false;
+  if (given.startsWith(".") || given.startsWith("/")) return true;
   setYourPlugins([...yourPlugins().filter((source) => source !== given), given]);
+  return true;
 }
 
 // Removes a personal plugin, for sc remove -g: from plugins: in your config.yaml, from your lock

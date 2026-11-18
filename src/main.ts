@@ -286,7 +286,10 @@ async function pluginCommand(args: string[], json: boolean): Promise<void> {
     throw new Error(
       `sc ${command} without -g is for a repository's plugins, which Skelcrew doesn't have yet. sc ${command} -g is for your own`,
     );
-  if (command === "add" && name && more.length === 0) return addPlugin(name);
+  if (command === "add" && name && more.length === 0) {
+    addPlugin(name);
+    return;
+  }
   if (command === "remove" && name && more.length === 0) return removeYourPlugin(name);
   if (command === "update" && more.length === 0) return updatePlugins(name);
   // sc setup sets the plugin up for the checkout you are in, as sc add does.
