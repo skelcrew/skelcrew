@@ -266,3 +266,32 @@ test("roles: naming the harness a role is on already keeps the old line's model"
   );
   expect(read(["builder"]).settings?.builder).toEqual({ harness: "claude", model: "sonnet" });
 });
+
+test("a harness or model under repos: goes over the repository's role lines, as an override", () => {
+  files(
+    "harness: claude\nmodel: opus\nrepos:\n  simon/app: { harness: codex }\n",
+    "builder: { harness: claude, model: sonnet }\n",
+  );
+  expect(read(["builder", "lead"]).settings).toMatchObject({
+    builder: { harness: "codex" },
+    lead: { harness: "codex" },
+  });
+  // A model alone belongs to your harness, so it reaches only the roles left on it.
+  files(
+    "harness: claude\nmodel: opus\nrepos:\n  simon/app: { model: sonnet }\n",
+    "reviewer: { harness: codex }\n",
+  );
+  expect(read(["builder", "reviewer"]).settings).toMatchObject({
+    builder: { harness: "claude", model: "sonnet" },
+    reviewer: { harness: "codex" },
+  });
+  // The override's own role lines still go over its harness.
+  files(
+    "harness: claude\nrepos:\n  simon/app: { harness: codex, roles: { lead: { harness: claude } } }\n",
+    null,
+  );
+  expect(read(["lead", "builder"]).settings).toMatchObject({
+    lead: { harness: "claude" },
+    builder: { harness: "codex" },
+  });
+});

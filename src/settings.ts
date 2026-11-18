@@ -208,7 +208,7 @@ export function readSettings<G extends Group>(
   const decided = (k: Key) =>
     [overrides, shared].some((l) => l[k] !== undefined && l[k] !== null) && !roleKeys.includes(k);
   const fromYours = wanted.filter((k) => yourKeys.includes(k) && !decided(k));
-  return mergeSettings([overrides, roleFiles, shared, readYourFile(fromYours)]);
+  return mergeSettings(overrides, [roleFiles, shared, readYourFile(fromYours)]);
 }
 
 // Returns the harness and model a repository's role file names, or nothing when it names neither
@@ -321,22 +321,39 @@ function check(data: unknown, problem: string): File {
   return read.data;
 }
 
-// Merges the files, the one that wins first, over the built-in defaults: each setting comes from
-// the first that sets it, key by key.
-function mergeSettings(layers: File[]): Settings {
+// Merges your overrides for the repository and the other files, the one that wins first, over
+// the built-in defaults: each setting comes from the first that sets it, key by key.
+function mergeSettings(overrides: File, files: File[]): Settings {
   const defaults = builtInDefaults();
-  // The first value any layer sets for `get`.
-  const first = <T>(get: (layer: File) => T | undefined | null) =>
-    layers.map(get).find((value) => value !== undefined && value !== null);
+  const layers = [overrides, ...files];
+  // The first value `get` finds in `from`, all the layers unless given.
+  const first = <T>(get: (layer: File) => T | undefined | null, from = layers) =>
+    from.map(get).find((value) => value !== undefined && value !== null);
+  // The harness and model every role gets unless something names its own: yours. A model alone
+  // under repos: is yours for that repository, as it belongs to your harness too.
   const top = {
-    harness: first((l) => l.harness) ?? defaults.harness,
-    model: first((l) => l.model),
+    harness: first((l) => l.harness, files) ?? defaults.harness,
+    model:
+      (overrides.harness === undefined ? overrides.model : undefined) ??
+      first((l) => l.model, files),
   };
-  // Each layer's say on one role, merged.
+  // A harness under repos: puts every role on it, with the override's model, over what the
+  // repository's files say of each role, as an override comes first. The override's own role
+  // lines still go over it.
+  const moved =
+    overrides.harness === undefined
+      ? undefined
+      : { harness: overrides.harness, model: overrides.model };
+  // Each layer's say on one role, merged. In each layer, roles: goes over the old lead:,
+  // builder: and reviewer: lines.
   const role = (name: "lead" | "builder" | "reviewer") =>
     mergeRole(
-      // In each layer, roles: goes over the old lead:, builder: and reviewer: lines.
-      layers.flatMap((l) => [l.roles?.[name], l[name]]),
+      [
+        overrides.roles?.[name],
+        overrides[name],
+        moved,
+        ...files.flatMap((l) => [l.roles?.[name], l[name]]),
+      ],
       top,
     );
   return {
