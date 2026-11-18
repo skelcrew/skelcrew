@@ -201,138 +201,134 @@ export function readSettings<G extends Group>(
   return mergeSettings([overrides, agentsFiles, shared, readYourFile(fromYours)], roles);
 }
 
-// A layer's say on one role: the harness and model it names, each read only when asked for, as
-// a lower layer is read only where it can still change the role. `everyRole` marks a layer's own
+// One harness or model a file names for a role: its value, or nothing when the file names none,
+// or, when it isn't valid, what is wrong with it. A bad one stops the role only where it counts.
+type Value<T> = { value: T | undefined } | { bad: Error };
+
+// A layer's say on one role: the harness and model it names. `everyRole` marks a layer's own
 // harness and model for every role, rather than for this one.
-type Say = {
-  harness: () => HarnessName | undefined;
-  model: () => string | undefined;
-  everyRole?: boolean;
-};
+type Say = { harness: Value<HarnessName>; model: Value<string>; everyRole?: boolean };
 
-// Returns the say on a role at `path` in the YAML data `read` gives, such as ["roles",
-// "builder"]. Nothing is read until asked for, and its harness and model are each checked on
-// their own, as they are read, so a bad one that never counts stops nothing. A bad one that is
-// read throws `problem`, saying where.
-function sayIn(read: () => unknown, path: string[], problem: string): Say {
-  const mapping = once(() => {
-    let data = read();
-    for (const [at, key] of path.entries()) {
-      if (data === undefined || data === null) return {};
-      if (!isMapping(data))
-        throw new Error(`${problem}: ${path.slice(0, at).join(".") || "the file"} isn't a mapping`);
-      data = data[key];
-    }
-    if (data === undefined || data === null) return {};
-    if (!isMapping(data))
-      throw new Error(`${problem}: ${path.join(".") || "the file"} isn't a mapping`);
-    return data;
-  });
-  // Returns the field `key` checked with `schema`, or nothing when it isn't there.
-  const field = <T>(key: "harness" | "model", schema: z.ZodType<T>) =>
-    once(() => {
-      const read = schema.optional().safeParse(mapping()[key]);
-      if (!read.success)
-        throw new Error(`${problem}: ${[...path, key].join(".")}: ${z.prettifyError(read.error)}`);
-      return read.data;
-    });
-  return { harness: field("harness", HarnessName), model: field("model", Model) };
-}
-
-// Returns `read` remembering what it gave, so each file is read and checked at most once.
-function once<T>(read: () => T): () => T {
-  let done: { value: T } | undefined;
-  return () => {
-    done ??= { value: read() };
-    return done.value;
+// Returns the say on a role at `path` in the YAML data `data`, such as ["roles", "builder"],
+// with its harness and model each checked on its own, so a bad one is kept to stop the role only
+// where it counts. Throws `problem`, saying where, when a step of the path isn't a mapping, as
+// then nothing in it can be read.
+function sayIn(data: unknown, path: string[], problem: string): Say {
+  let at = data;
+  for (const [step, key] of path.entries()) {
+    if (at === undefined || at === null) break;
+    if (!isMapping(at))
+      throw new Error(`${problem}: ${path.slice(0, step).join(".") || "the file"} isn't a mapping`);
+    at = at[key];
+  }
+  if (at !== undefined && at !== null && !isMapping(at))
+    throw new Error(`${problem}: ${path.join(".") || "the file"} isn't a mapping`);
+  const mapping = isMapping(at) ? at : {};
+  // Returns the field `key` checked with `schema`.
+  const field = <T>(key: "harness" | "model", schema: z.ZodType<T>): Value<T> => {
+    const read = schema.optional().safeParse(mapping[key] ?? undefined);
+    if (read.success) return { value: read.data };
+    const where = [...path, key].join(".");
+    return { bad: new Error(`${problem}: ${where}: ${z.prettifyError(read.error)}`) };
   };
+  return { harness: field("harness", HarnessName), model: field("model", Model) };
 }
 
 // Returns the harness and model one role runs on, for `repository` when there is one. Each layer
 // says something of it, the one that wins first: your override under repos:, the repository's
 // role file, its skelcrew.yaml's line, then your config. In each, roles: goes over the old role
-// line, which goes over the layer's own harness and model for every role. Every role starts
-// from your harness and model, and the layers move it. A model belongs to its harness, so a
-// model goes along only while the role stays on the harness it was given with: reviewer:
-// { harness: codex } in skelcrew.yaml must never run Codex on your opus. A layer's model for
-// every role, given without a harness, fits only a role on your harness. With no model left,
-// the harness picks its default.
-// The layers are read from the top, and a value is read and checked only when it can still
-// change the role, so a bad one an override replaces stops nothing. A value that counts is
-// always checked, and throws, naming its file, when it isn't valid.
+// line, which goes over the layer's own harness and model for every role. Throws, naming the
+// file and where in it, when a harness or model that changes the role isn't valid. One that
+// can't change it, such as one your override replaces, stops nothing.
 // `run` is the role that runs as `name`, which differs for a flow that names one of the
 // repository's own, such as tester for the builder. Its roles: lines and its role file then
 // count, and the old builder: and reviewer: lines, which are the built-in roles', don't.
 function roleOf(name: RoleName, run: string, repository: Repository | undefined): Role {
   const says: Say[] = [];
   // The old line for the role in a file, which counts only for the built-in role it names.
-  const line = (read: () => unknown, problem: string): Say[] =>
-    run === name ? [sayIn(read, [name], problem)] : [];
+  const line = (data: unknown, problem: string): Say[] =>
+    run === name ? [sayIn(data, [name], problem)] : [];
   const yourFile = `${join(configDir(), "config.yaml")} isn't valid`;
-  // In each layer, the say in roles: for the role goes over its old line, which goes over the
-  // layer's harness and model for every role.
+  const yours = yourConfig();
   if (repository) {
-    const entry = once(() => overrideEntry(repository));
+    const entry = overrideEntry(repository);
     const problem = overrideProblem(repository);
     says.push(sayIn(entry, ["roles", run], problem), ...line(entry, problem), {
       ...sayIn(entry, [], problem),
       everyRole: true,
     });
-    // The role file's frontmatter, whose keys are checked as the file is read, and its harness
-    // and model only where they count. It is the file of the role that runs.
+    // The role file's frontmatter, whose keys are checked as the file is read. It is the file of
+    // the role that runs.
     const role = `.agents/roles/${run}.md in ${repository.owner}/${repository.repo} isn't valid`;
-    says.push(sayIn(() => repositoryRole(run, repository).frontmatter, [], role));
-    const shared = once(() => repositoryData(repository));
+    says.push(sayIn(repositoryRole(run, repository).frontmatter, [], role));
+    const shared = repositoryData(repository);
     says.push(...line(shared, "the repository's skelcrew.yaml isn't valid"));
   }
-  says.push(sayIn(yourConfig, ["roles", run], yourFile), ...line(yourConfig, yourFile));
-  // Your own harness, or the built-in one, and your model, which every role starts from.
-  const yours = sayIn(yourConfig, [], yourFile);
-  const yourHarness = once(() => yours.harness() ?? builtInDefaults().harness);
-  const yourModel = yours.model;
-  // Whether your harness is `harness`, without stopping on one that isn't valid, as it is asked
-  // only to tell whether your model goes along, and a bad one of yours is never `harness`.
-  const isYourHarness = (harness: HarnessName) => {
-    try {
-      return yourHarness() === harness;
-    } catch {
-      return false;
+  says.push(sayIn(yours, ["roles", run], yourFile), ...line(yours, yourFile));
+  const top = sayIn(yours, [], yourFile);
+  // Merge with every valid value in place of each bad one. A bad one that leaves the role the
+  // same whatever it would be can't count, so it stops nothing. Otherwise the first bad one that
+  // changes the role is refused.
+  const values = [...says.flatMap((say) => [say.harness, say.model]), top.harness, top.model];
+  const bad = values.filter((v) => "bad" in v);
+  if (bad.length === 0) return mergeRole(says, top, new Map());
+  // Each bad harness could be any harness or none, and each bad model none or one of its own.
+  const choices = (v: (typeof bad)[number]) =>
+    v === top.harness || says.some((say) => say.harness === v)
+      ? [undefined, ...HarnessName.options]
+      : [undefined, `\0${bad.indexOf(v)}`];
+  let combos: Map<object, string | undefined>[] = [new Map()];
+  for (const v of bad)
+    combos = combos.flatMap((combo) => choices(v).map((c) => new Map(combo).set(v, c)));
+  const results = combos.map((combo) => JSON.stringify(mergeRole(says, top, combo)));
+  if (results.every((result) => result === results[0]))
+    return mergeRole(says, top, combos[0] ?? new Map());
+  // The bad value that changes the role, with the others held as they are in some combo.
+  for (const v of bad)
+    for (const combo of combos) {
+      const outcomes = choices(v).map((c) =>
+        JSON.stringify(mergeRole(says, top, new Map(combo).set(v, c))),
+      );
+      if (outcomes.some((o) => o !== outcomes[0]) && "bad" in v) throw v.bad;
     }
-  };
-  // The harness the says from `from` down name first, or nothing when none does.
-  const namedFrom = (from: number) =>
-    says
-      .slice(from)
-      .find((say) => say.harness() !== undefined)
-      ?.harness();
-  // Whether the role is on `harness` from the say at `from` down: the first that names a harness
-  // decides, or else yours.
-  const onHarness = (from: number, harness: HarnessName): boolean => {
-    const named = namedFrom(from);
-    return named === undefined ? isYourHarness(harness) : named === harness;
-  };
-  // The harness from the say at `from` down: the first one named, or else yours.
-  const harnessFrom = (from: number): HarnessName => namedFrom(from) ?? yourHarness();
-  // The model from the say at `from` down, as each say leaves it.
-  const modelFrom = (from: number): string | undefined => {
-    const say = says[from];
-    if (say === undefined) return yourModel();
-    const harness = say.harness();
-    // A model named counts, unless it is a layer's model for every role, given without a
-    // harness, and the role isn't on your harness. Then it can't count, so it isn't read.
-    const forAny = say.everyRole === true && harness === undefined;
-    const below = forAny ? namedFrom(from + 1) : undefined;
-    const fits = !forAny || below === undefined || isYourHarness(below);
-    const model = fits ? say.model() : undefined;
-    if (model !== undefined) return model;
-    // A say that moves the role to another harness drops the model below it, and the role gets
-    // your model again only when it moves onto your harness.
-    if (harness !== undefined && !onHarness(from + 1, harness))
-      return isYourHarness(harness) ? yourModel() : undefined;
-    return modelFrom(from + 1);
-  };
-  const harness = harnessFrom(0);
-  const model = modelFrom(0);
+  throw new Error("Skelcrew couldn't tell which setting stops this role");
+}
+
+// Merges what each layer says of a role, `says`, the one that wins first, over `top`, your
+// harness and model, which every role starts from. `chosen` gives a value in place of each bad
+// one. A model belongs to its harness, so a model goes along only while the role stays on the
+// harness it was given with: reviewer: { harness: codex } in skelcrew.yaml must never run Codex
+// on your opus. A role moved back onto your harness gets your model again. A layer's model for
+// every role, given without a harness, fits only a role whose last harness is yours, and then
+// goes along though its own layer moves the role. With no model left, the harness picks its
+// default.
+function mergeRole(says: Say[], top: Say, chosen: Map<object, string | undefined>): Role {
+  // A value as read, or the one chosen in place of a bad one.
+  const chosenOr = <T extends string>(v: Value<T>): string | undefined =>
+    "bad" in v ? chosen.get(v) : v.value;
+  const harnessOf = (v: Value<HarnessName>) => HarnessName.optional().parse(chosenOr(v));
+  const yourHarness = harnessOf(top.harness) ?? builtInDefaults().harness;
+  const yourModel = chosenOr(top.model);
+  const last =
+    says.map((say) => harnessOf(say.harness)).find((h) => h !== undefined) ?? yourHarness;
+  let harness = yourHarness;
+  let model = yourModel;
+  let forEveryRole: string | undefined;
+  // From the last say to the first, so each one goes over what is below it.
+  for (const say of [...says].reverse()) {
+    const sayHarness = harnessOf(say.harness);
+    const sayModel = chosenOr(say.model);
+    if (sayHarness !== undefined && sayHarness !== harness) {
+      harness = sayHarness;
+      model = harness === yourHarness ? (forEveryRole ?? yourModel) : undefined;
+    }
+    if (sayModel === undefined) continue;
+    if (!say.everyRole || sayHarness !== undefined) model = sayModel;
+    else if (last === yourHarness) {
+      model = sayModel;
+      forEveryRole = sayModel;
+    }
+  }
   return model === undefined ? { harness } : { harness, model };
 }
 
