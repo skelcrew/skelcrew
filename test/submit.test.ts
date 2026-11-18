@@ -1001,13 +1001,10 @@ done`,
     const kept = reviews()[1];
     expect(kept).toMatchObject({ commit: merged, verdict: "approve" });
     expect(String(kept?.body)).toContain("only merges main");
-    // It stays approved, with no round counted. The thread looked so after round 1 already, so
-    // the round's outcome is waited for in the log, which it writes after posting the check.
-    await until(
-      () => read(join(data(), "threads", "app-12.log")).includes("approval kept"),
-      longWait,
-    );
+    // It stays approved, with no round counted.
     expect(thread()).toMatchObject({ status: "waiting", rounds: 0, verdict: "approve" });
+    // The daemon saves a thread before it appends the thread to its log.
+    await until(() => read(join(data(), "threads", "app-12.log")).includes("approval kept"));
   }, 180_000);
 
   test("a submit that only merges main is reviewed when a CI check on it fails", async () => {
