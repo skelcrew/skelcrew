@@ -234,6 +234,158 @@ console.log(JSON.stringify({ kept, third }));`;
   });
 });
 
+// A turn that ended without a submit once needed you, and never sent the lead the builder's
+// last message. After the upgrade it waits on the lead, so the lead must hear of it once. A new
+// screen opens the database first, while the earlier release's daemon still runs and changes its
+// threads, so only the new daemon, once it holds its lock, moves them.
+test("a thread whose turn ended before the upgrade has its lead told once, and no longer needs you", () => {
+  const data = join(home, ".local", "share", "skelcrew");
+  mkdirSync(data, { recursive: true });
+  const old = new Database(join(data, "skelcrew.db"));
+  old.run(
+    "CREATE TABLE repositories (owner TEXT NOT NULL, repo TEXT NOT NULL, name TEXT NOT NULL UNIQUE, PRIMARY KEY (owner, repo))",
+  );
+  old.run("INSERT INTO repositories VALUES ('simon', 'app', 'app')");
+  old.run(`CREATE TABLE threads (owner TEXT NOT NULL, repo TEXT NOT NULL, task INTEGER NOT NULL,
+    folder TEXT NOT NULL UNIQUE, branch TEXT NOT NULL, base TEXT, status TEXT NOT NULL,
+    session TEXT, stalled INTEGER NOT NULL DEFAULT 0, noting TEXT, PRIMARY KEY (owner, repo, task))`);
+  // app-12's lead already heard it needed you. app-13's note still waits. app-14 is done.
+  // app-15's builder works, and app-16's turn ended, until the old daemon changes them.
+  old.run(`INSERT INTO threads VALUES
+    ('simon', 'app', 12, 'app-12', 'skelcrew/12', NULL, 'waiting', NULL, 1, NULL),
+    ('simon', 'app', 13, 'app-13', 'skelcrew/13', NULL, 'working', NULL, 1, 'its builder stopped without submitting'),
+    ('simon', 'app', 14, 'app-14', 'skelcrew/14', NULL, 'done', NULL, 1, NULL),
+    ('simon', 'app', 15, 'app-15', 'skelcrew/15', NULL, 'working', NULL, 0, NULL),
+    ('simon', 'app', 16, 'app-16', 'skelcrew/16', NULL, 'working', NULL, 1, NULL)`);
+  old.close();
+  const code = `import { Database } from "bun:sqlite";
+import { moveTurnEnded, openDb } from ${JSON.stringify(source("db.ts"))};
+import { liveThreads } from ${JSON.stringify(source("flow/thread.ts"))};
+import { needsYou } from ${JSON.stringify(source("flow/status.ts"))};
+// A new screen opens the database.
+openDb().close();
+// The old daemon, still running, sees app-15's builder stop and app-16's get an answer.
+const oldDaemon = new Database(process.argv[1]);
+oldDaemon.run("UPDATE threads SET stalled = 1, noting = 'its builder stopped without submitting' WHERE folder = 'app-15'");
+oldDaemon.run("UPDATE threads SET stalled = 0 WHERE folder = 'app-16'");
+oldDaemon.close();
+// The new daemon starts, twice, as after a restart.
+for (const start of [1, 2]) {
+  const db = openDb();
+  moveTurnEnded(db);
+  db.close();
+}
+const db = openDb();
+const threads = liveThreads(db).map((t) => ({ folder: t.folder, turn_ended: t.turn_ended, noting: t.noting, needsYou: needsYou(t) }));
+const notes = db.query("SELECT owner, repo, text FROM notes ORDER BY id").all();
+console.log(JSON.stringify({ threads, notes }));`;
+  const run = Bun.spawnSync([process.execPath, "-e", code, join(data, "skelcrew.db")], {
+    env: { ...process.env, HOME: home },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect(run.stderr.toString()).toBe("");
+  const { threads, notes } = JSON.parse(run.stdout.toString());
+  expect(threads).toEqual([
+    { folder: "app-12", turn_ended: true, noting: null, needsYou: false },
+    { folder: "app-13", turn_ended: true, noting: null, needsYou: false },
+    { folder: "app-15", turn_ended: true, noting: null, needsYou: false },
+    { folder: "app-16", turn_ended: false, noting: null, needsYou: false },
+  ]);
+  expect(notes).toEqual(
+    ["app-12", "app-13", "app-15"].map((name) => ({
+      owner: "simon",
+      repo: "app",
+      text: `${name}'s builder ended its turn without sc submit before Skelcrew sent such turns to you, so its last message never reached you. Ask it what it waits on with sc tell ${name}, and bring a question to the human.`,
+    })),
+  );
+});
+
+// A daemon of the earlier release reads \`stalled\` from the database's view. A database made by
+// this release has it too, with the same value as \`turn_ended\`.
+test("a new database's view has stalled with the same value as turn_ended", () => {
+  const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
+const db = openDb();
+for (const [task, ended] of [[12, 1], [13, 0]]) {
+  db.run("INSERT INTO threads (owner, repo, task, folder, branch, status, turn_ended) VALUES ('simon', 'app', ?, ?, ?, 'working', ?)",
+    [task, "app-" + task, "skelcrew/" + task, ended]);
+  db.run("INSERT INTO tasks (owner, repo, task) VALUES ('simon', 'app', ?)", [task]);
+}
+console.log(JSON.stringify(db.query("SELECT folder, stalled, turn_ended FROM task_threads ORDER BY rowid").all()));`;
+  const run = Bun.spawnSync([process.execPath, "-e", code], {
+    env: { ...process.env, HOME: home },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect(run.stderr.toString()).toBe("");
+  expect(JSON.parse(run.stdout.toString())).toEqual([
+    { folder: "app-12", stalled: 1, turn_ended: 1 },
+    { folder: "app-13", stalled: 0, turn_ended: 0 },
+  ]);
+});
+
+// A daemon of the earlier release reads every thread from the database's view, and keeps the
+// queries it prepared. A new screen opening the database makes the view again while that daemon
+// still runs. The daemon must go on seeing its builders' turns that ended, or it loses track of
+// a builder waiting for an answer.
+test("a daemon of the earlier release still sees turns that ended once a new screen opens the database", () => {
+  const code = `import { Database } from "bun:sqlite";
+import { openDb } from ${JSON.stringify(source("db.ts"))};
+import { liveThreads } from ${JSON.stringify(source("flow/thread.ts"))};
+// The earlier release's database: this one's, with the column \`stalled\` where \`turn_ended\`
+// is, and a view of each thread's and task's columns, without \`turn_ended\` at its end.
+const made = openDb();
+made.run("ALTER TABLE threads RENAME COLUMN turn_ended TO stalled");
+const names = (table) => made.query("SELECT name FROM pragma_table_info(?)").all(table).map((c) => c.name);
+const own = names("threads");
+const viewed = names("task_threads").filter((c) => c !== "rowid" && c !== "turn_ended");
+made.run("DROP VIEW task_threads");
+made.run(\`CREATE VIEW task_threads AS SELECT th.rowid AS rowid, \${viewed.map((c) => (own.includes(c) ? "th." : "k.") + c).join(", ")}
+  FROM threads th JOIN tasks k ON k.owner = th.owner AND k.repo = th.repo AND k.task = th.task\`);
+for (const [task, stalled] of [[12, 1], [13, 0]]) {
+  made.run("INSERT INTO threads (owner, repo, task, folder, branch, status, stalled, noting) VALUES ('simon', 'app', ?, ?, ?, 'working', ?, ?)",
+    [task, "app-" + task, "skelcrew/" + task, stalled, "note " + task]);
+  made.run("INSERT INTO tasks (owner, repo, task) VALUES ('simon', 'app', ?)", [task]);
+}
+made.close();
+// The earlier release's daemon runs, and has read its threads once.
+const oldDaemon = new Database(process.argv[1]);
+const read = "SELECT * FROM task_threads ORDER BY rowid";
+oldDaemon.query(read).all();
+// A new screen opens the database. Then app-13's builder ends its turn, which the old daemon
+// saves, and app-12's builder submits, which a new sc saves.
+const screen = openDb();
+oldDaemon.run("UPDATE threads SET stalled = 1 WHERE folder = 'app-13'");
+screen.run("UPDATE threads SET turn_ended = 0 WHERE folder = 'app-12'");
+screen.close();
+const seen = (rows) => rows.map((t) => ({ folder: t.folder, stalled: t.stalled, noting: t.noting }));
+console.log(JSON.stringify({
+  prepared: seen(oldDaemon.query(read).all()),
+  fresh: seen(oldDaemon.prepare(read).all()),
+  now: liveThreads(openDb()).map((t) => ({ folder: t.folder, turn_ended: t.turn_ended })),
+}));`;
+  const data = join(home, ".local", "share", "skelcrew");
+  mkdirSync(data, { recursive: true });
+  const run = Bun.spawnSync([process.execPath, "-e", code, join(data, "skelcrew.db")], {
+    env: { ...process.env, HOME: home },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect(run.stderr.toString()).toBe("");
+  const threads = [
+    { folder: "app-12", stalled: 0, noting: "note 12" },
+    { folder: "app-13", stalled: 1, noting: "note 13" },
+  ];
+  expect(JSON.parse(run.stdout.toString())).toEqual({
+    prepared: threads,
+    fresh: threads,
+    now: [
+      { folder: "app-12", turn_ended: false },
+      { folder: "app-13", turn_ended: true },
+    ],
+  });
+});
+
 // Threads with no issue are named by a code of the machine's, so two machines working on one
 // repository never both have an app-t4 meaning different work.
 test("a machine's code is two letters from its name, so names from two machines differ", async () => {

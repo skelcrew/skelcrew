@@ -187,9 +187,9 @@ async function ps(): Promise<Record<string, unknown>> {
   return Array.isArray(rows) ? Object(rows[0]) : {};
 }
 
-// Marks the builder as asking you a question, or with `stalled` as having stopped without
+// Marks the builder as asking you a question, or with `turn_ended` as having stopped without
 // submitting, as its hooks would.
-function setAsking(column: "asking" | "stalled" = "asking"): void {
+function setAsking(column: "asking" | "turn_ended" = "asking"): void {
   const db = new Database(join(data(), "skelcrew.db"));
   db.run("PRAGMA busy_timeout = 5000");
   db.run(`UPDATE threads SET ${column} = 1`);
@@ -267,7 +267,7 @@ describe.skipIf(insideSandbox)("sc tell", () => {
   // what the builder waits on.
   test("a message to a builder that stopped without submitting is typed in", async () => {
     await startApp12();
-    setAsking("stalled");
+    setAsking("turn_ended");
     const told = await skel(["tell", "app-12", "Use JSON."], "lead");
     expect(told.err).toBe("");
     await until(() => typed(builder()).includes("Use JSON."));
