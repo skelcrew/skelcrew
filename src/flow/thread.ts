@@ -167,6 +167,9 @@ export const Thread = z.object({
   merge_id: z.string().nullable(),
   merge_by: z.string().nullable(),
   merge_at: z.number().nullable(),
+  // Your words, exactly, when you asked the lead to arm the plan, or null when you armed it at
+  // your terminal.
+  merge_asked: z.string().nullable(),
   merge_waits: z.string().nullable(),
   merge_noted: z.number().nullable(),
   // The tree of the .agents/ you had approved when the task started, whose roles its agents

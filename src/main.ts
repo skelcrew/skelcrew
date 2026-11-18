@@ -440,16 +440,28 @@ async function prCommand(args: string[], json: boolean): Promise<void> {
 // Arms a merge when ready, or cancels one, for sc merge. The thread is named by its task, such
 // as app-12, or by its PR's number, such as #7, in the repository of the checkout sc runs in or
 // the one --from names. Arming merges a PR later with nobody watching, so it asks you first at
-// your terminal, naming the PR, and refuses with no terminal, as an agent or a script has none.
-// The daemon refuses every agent besides, by the socket the call comes in on. Cancelling is
-// always safe, so it asks nothing.
+// your terminal, naming the PR, and refuses with no terminal, as a script has none. A lead you
+// let arm merges has no terminal either: it gives --asked-file, a file holding your words,
+// instead, and the daemon checks that it may, by the socket the call comes in on, and refuses
+// every other agent.
+// Cancelling is always safe, so it asks nothing.
 async function mergeCommand(args: string[]): Promise<void> {
   const [, how, named, ...rest] = args;
   const { planMerge, previewMerge } = await import("./client.ts");
   const command =
     how === "--when-ready" ? "merge when ready" : how === "--cancel" ? "merge cancel" : undefined;
-  const given = rest[0] === "--from" && rest[1] && rest.length === 2 ? rest[1] : undefined;
-  if (!command || named === undefined || (rest.length > 0 && !given)) usage("merge");
+  // --from and --asked-file, each at most once, in either order. --asked-file arms, so only
+  // with --when-ready.
+  const options = new Map<string, string>();
+  for (let i = 0; i < rest.length; i += 2) {
+    const [flag = "", value] = [rest[i], rest[i + 1]];
+    if (!["--from", "--asked-file"].includes(flag) || !value || options.has(flag)) usage("merge");
+    options.set(flag, value);
+  }
+  const given = options.get("--from");
+  const asked = options.get("--asked-file");
+  if (!command || named === undefined) usage("merge");
+  if (asked !== undefined && command !== "merge when ready") usage("merge");
   // The thread, by its PR's number or by its task.
   const number = named.match(/^#?(\d+)$/)?.[1];
   const task = splitThreadName(named);
@@ -460,6 +472,18 @@ async function mergeCommand(args: string[]): Promise<void> {
     which = { pr: Number(number), ...(from ? { from } : {}) };
   } else if (task && !given) which = { repo: task[0], task: task[1] };
   else usage("merge");
+  // Your words come in a file the lead wrote with its own file tool, so they never pass through
+  // a shell, which could run or change them. They are read unchanged, a last line break included.
+  if (asked !== undefined) {
+    const { readFileSync } = await import("node:fs");
+    const words = readFileSync(asked, "utf8");
+    if (!words.trim())
+      throw new Error(
+        `${asked} is empty: write the human's words in it, exactly as they wrote them`,
+      );
+    console.log(await planMerge(command, { ...which, asked: words }));
+    return;
+  }
   if (command === "merge when ready") {
     if (!process.stdin.isTTY)
       throw new Error("sc merge --when-ready asks you first, so run it at your own terminal");

@@ -1047,7 +1047,9 @@ describe("a repository's .agents/", () => {
 test("sc says once which old role keys your config.yaml uses, what replaces them, and changes nothing", async () => {
   const file = join(home, ".config", "skelcrew", "config.yaml");
   const yours =
-    "harness: claude\nbuilder: { model: sonnet }\nreviewer: { harness: codex }\nroles: { lead: { model: opus } }\n";
+    "harness: claude\nbuilder: { model: sonnet }\nreviewer: { harness: codex }\nroles: { lead: { model: opus } }\n" +
+    // The lead's line holds a setting of its own, which no role replaces.
+    "lead: { may_arm_merges: true }\n";
   writeFileSync(file, yours);
   const first = await skel([]);
   expect(first.out).toContain(

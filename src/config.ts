@@ -74,7 +74,7 @@ export const reviewLimit = (): number => readSettings(["reviews"]).reviews;
 export const checkLimit = (): number => readSettings(["checks"]).checks;
 
 // Says once, for each old key still in use, which new key replaces it. In your config.yaml,
-// lead:, builder: and reviewer: give way to roles:, and max_rounds: to rounds:, at the top and
+// the harness and model under lead:, builder: and reviewer: give way to roles:, and max_rounds: to rounds:, at the top and
 // under each repository in repos:. For the repository named by its owner/repo, lead:, builder:,
 // reviewer: and max_rounds: in its skelcrew.yaml give way to its .agents/. The old keys still
 // work, so nothing breaks, but you should know of the new shape. Skelcrew changes no file
@@ -105,9 +105,12 @@ export function tellOldKeys(repository: string | undefined): void {
     ["reviewer", "roles: { reviewer: … }"],
     ["max_rounds", "rounds:"],
   ];
+  // A role's line is old only for its harness and model. Its other settings stay there, such
+  // as lead: { may_arm_merges: true } and the reviewer's fallback.
+  const isOld = (value: unknown) => !isMapping(value) || "harness" in value || "model" in value;
   for (const [where, settings] of places)
     for (const [old, now] of replaced)
-      if (isMapping(settings) && old in settings)
+      if (isMapping(settings) && old in settings && (old === "max_rounds" || isOld(settings[old])))
         tell(
           `config.yaml${where} ${old}`,
           `Your config.yaml's ${old}:${where} is read as ${now}, which replaces it.`,
@@ -139,3 +142,8 @@ function readYaml(file: string): object {
     return {};
   }
 }
+
+// Returns whether you let the lead arm a merge when ready when you ask it to in the
+// conversation. Only your config.yaml can say so, so a repository's files never grant it. Off
+// unless you turn it on. Throws when your config isn't valid.
+export const leadMayArmMerges = (): boolean => readSettings(["leadArms"]).leadArms;
