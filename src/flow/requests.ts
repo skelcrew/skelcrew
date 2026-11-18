@@ -12,14 +12,14 @@ const Branch = z.string().regex(/^(?!-)(?!.*\.\.)[\w./-]+$/);
 // blanks is refused. A body that passes keeps its spaces as they were.
 const TaskBody = z.string().regex(/\S/);
 
-// A thread's short title for the sidebar, which says nothing when blank, so one is refused.
+// A thread's short title for the list, which says nothing when blank, so one is refused.
 const ShortTitle = z.string().trim().min(1);
 
 // A request's `repo` names a repository the way a command does: by its name in Skelcrew or its
 // owner/name. It keeps that word because clients on other machines send it.
 export const DaemonRequest = z.discriminatedUnion("command", [
   z.object({ command: z.literal("status") }),
-  // `tab` comes from the screen's tabs, and from plain sc away from a checkout with a remote.
+  // `tab` comes from Tab in the list, and from plain sc away from a checkout with a remote.
   // Neither may open a tab you closed.
   z.object({
     command: z.literal("lead"),
@@ -29,15 +29,7 @@ export const DaemonRequest = z.discriminatedUnion("command", [
   z.object({ command: z.literal("repo ls") }),
   z.object({ command: z.literal("ps"), repo: z.string().optional() }),
   z.object({ command: z.literal("task ls"), repo: z.string().optional() }),
-  // A task is named by its ID, or by its PR's number for sc pr show. With a number, `from` is
-  // the remote of the checkout sc ran in, which names the repository when `repo` doesn't.
-  z.object({
-    command: z.literal("task show"),
-    repo: z.string().optional(),
-    from: z.string().optional(),
-    task: TaskId.optional(),
-    pr: z.number().int().positive().optional(),
-  }),
+  z.object({ command: z.literal("task show"), repo: z.string(), task: TaskId }),
   z.object({
     command: z.literal("task create"),
     repo: z.string(),
@@ -136,8 +128,8 @@ export type DaemonRequest = z.infer<typeof DaemonRequest>;
 // is never a request: only you can, in your own terminal. A builder may tell only its
 // repository's lead, never another thread, and may ask for a review of its own thread only. You
 // and a lead may look at a builder's screen and stop its turn, but a builder may not, as it has
-// only its own. You type to a builder yourself in the sidebar, so you have no tell. Merging is
-// yours alone, from the screen: no agent may merge, as merging stays a human's choice.
+// only its own. You type to a builder yourself, attached to it from the list, so you have no tell.
+// Merging is yours alone, from the list: no agent may merge, as merging stays a human's choice.
 export type Caller =
   | "you"
   | { lead: { owner: string; repo: string } }

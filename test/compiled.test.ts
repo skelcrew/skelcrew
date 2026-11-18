@@ -129,51 +129,21 @@ test("a build nobody stamped doesn't pretend to know what it is", () => {
   );
 });
 
-test("the sidebar's header shows the release of the Skelcrew that runs it", async () => {
+test("the list's top line shows the release of the Skelcrew that runs it", () => {
+  // The list, printed once as there is no terminal, for a repository Skelcrew has.
+  const entry = join(home, "list.ts");
+  writeFileSync(
+    entry,
+    `import { runList } from ${JSON.stringify(source("screen/list.ts"))};\nawait runList("skel-compiled-test-${process.pid}", "simon/app");`,
+  );
   const file = join(home, "released", "skel");
-  const main = source("main.ts");
-  compile(main, file, ["--define", 'SKELCREW_BUILD="0.4.2"']);
-  const agents = `skel-compiled-test-${process.pid}`;
-  const tmux = (...args: string[]) =>
-    Bun.spawnSync(["tmux", "-L", `${agents}-screen`, "-f", "/dev/null", ...args], {
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-  // A screen always shows a repository Skelcrew has. With none, it would leave at once.
+  compile(entry, file, ["--define", 'SKELCREW_BUILD="0.4.2"']);
   const db = `import { openDb } from ${JSON.stringify(source("db.ts"))};
 openDb().run("INSERT INTO repositories (name, owner, repo) VALUES ('app', 'simon', 'app')");`;
   Bun.spawnSync([process.execPath, "-e", db], { env: { HOME: home } });
-  try {
-    tmux("new-session", "-d", "-s", "one", "-x", "120", "-y", "30", "sleep 60");
-    const env = `env HOME=${home} XDG_RUNTIME_DIR=${join(home, "run")}`;
-    tmux(
-      "split-window",
-      "-b",
-      "-h",
-      "-t",
-      "=one:",
-      `${env} ${file} sidebar ${agents} one '' simon/app`,
-    );
-    const header = () => tmux("show", "-v", "-t", "=one:", "status-format[0]").stdout.toString();
-    for (let tries = 0; tries < 100 && !header().includes("Skelcrew"); tries++)
-      await Bun.sleep(100);
-    expect(header()).toContain(" v0.4.2");
-  } finally {
-    tmux("kill-server");
-  }
-});
-
-test("the screen's panes run the single file itself, with no checkout to find", () => {
-  const entry = join(home, "panes.ts");
-  const screen = JSON.stringify(source("screen/screen.ts"));
-  writeFileSync(
-    entry,
-    `import { paneCommand } from ${screen};\nconsole.log(JSON.stringify(paneCommand("a", "s", "prs", "", "simon/app")));`,
-  );
-  const file = join(home, "panes", "skel");
-  compile(entry, file);
-  const said = Bun.spawnSync([file]).stdout.toString();
-  expect(JSON.parse(said)).toEqual([file, "list", "a", "s", "prs", "", "simon/app"]);
+  const shown = Bun.spawnSync([file], { env: { HOME: home }, stderr: "pipe" });
+  expect(shown.stderr.toString()).toBe("");
+  expect(shown.stdout.toString().split("\n")[0]).toBe(" Skelcrew v0.4.2 · app");
 });
 
 describe("a release setting up a server", () => {

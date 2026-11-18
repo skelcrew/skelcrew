@@ -425,7 +425,7 @@ export async function startBuilder(db: Database, sessions: string, thread: Threa
     start = { sessionId: session, prompt: body ? `${title}\n\n${body}` : title };
   }
   record(db, thread.folder, { session, harness: harness.name });
-  // Starting the builder starts a stretch of work, which the sidebar times.
+  // Starting the builder starts a stretch of work, which the list times.
   db.run("UPDATE threads SET working_since = ? WHERE folder = ?", [Date.now(), thread.folder]);
   const { argv, env } = await harness.start({
     name: thread.folder,

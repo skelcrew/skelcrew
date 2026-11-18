@@ -131,7 +131,7 @@ const roleKeys: Key[] = ["lead", "builder", "reviewer"];
 // cores, at least one, as a review of a commit CI doesn't run on runs the repository's whole test
 // suite, and many at once fight over the CPU. Checks default to half the cores divided by four,
 // at least one: a test suite usually runs about four processes of its own, so half the cores
-// stay free for the agents and the screen.
+// stay free for the agents and the list.
 function builtInDefaults(): {
   harness: HarnessName;
   max_rounds: number;

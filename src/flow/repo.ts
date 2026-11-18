@@ -380,7 +380,7 @@ export async function bringInFrom(from: string | undefined): Promise<string | un
     console.error(`Skelcrew: ${errorText(error)}`);
   }
   if (repositories(db).length === 0) console.log(noRepositories);
-  // Said each time, not only the first: the line flashes by before the screen opens, and a
+  // Said each time, not only the first: the line flashes by before the list opens, and a
   // remote that names another repository than the one opened should never go unnoticed.
   const update = named && opened ? oldRemoteOf(named, opened) : null;
   if (update)

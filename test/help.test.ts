@@ -3,7 +3,6 @@ import { expect, test } from "bun:test";
 import { chmodSync, cpSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { keyLines } from "../src/screen/keys.ts";
 import { source } from "./harness.ts";
 
 const main = source("main.ts");
@@ -43,10 +42,7 @@ test("the help names every command", () => {
     "ps",
     "ls",
     "show",
-    "issue ls",
-    "issue show",
     "issue create",
-    "pr show",
     "start",
     "stop",
     "rm",
@@ -125,43 +121,13 @@ test("sc --version answers on a server whose Skelcrew differs from the laptop's"
   expect(seen.out).toStartWith("skelcrew ");
 });
 
-// The screen's keys, in words, as the list of keys shows them.
-test("the help lists the screen's keys, anywhere first, then lists, then pages", () => {
+// The list's keys, as its bottom line shows them, with Alt-Q to come back from an agent.
+test("the help lists the list's keys: move, open, merge, the next repository and quit", () => {
   const out = skel(["--help"]).out;
   const keys = out.slice(out.indexOf("\nKEYS\n"), out.indexOf("\nEXAMPLES\n"));
-  const order = ["alt + ↑/↓ ", "alt + shift + ←/→ ", "alt + q ", "enter/→ ", "← "].map((key) =>
-    keys.indexOf(`  ${key}`),
-  );
-  expect(order.every((at) => at > 0)).toBe(true);
-  expect([...order].sort((a, b) => a - b)).toEqual(order);
-  expect(out).not.toContain("ctrl + q");
-  expect(out).not.toContain("⌃Q");
-});
-
-// s and m work on a list and on the page opened from it, so they come after the other keys
-// for lists and before those for pages.
-test("the help lists s to start a thread on an issue and m to merge a PR, after the keys for lists", () => {
-  const out = skel(["--help"]).out;
-  const keys = out.slice(out.indexOf("\nKEYS\n"), out.indexOf("\nEXAMPLES\n"));
-  const order = ["enter/→ ", "s ", "m ", "← "].map((key) => keys.indexOf(`\n  ${key}`));
-  expect(order.every((at) => at > 0)).toBe(true);
-  expect([...order].sort((a, b) => a - b)).toEqual(order);
-  expect(keys).toMatch(/\n {2}s +start a thread on an issue\n/);
-  expect(keys).toMatch(/\n {2}m +merge a ready PR\n/);
-});
-
-// The list of keys runs across the whole screen, above the footer.
-test("across a 120-column terminal, the list of keys fits in three columns and four rows", () => {
-  const lines = keyLines(120);
-  expect(lines).toHaveLength(4);
-  expect(lines[0]?.trim().split(/\s{3,}/)).toHaveLength(3);
-  expect(lines.join("\n")).toContain("m to merge a ready PR");
-});
-
-test("the keys have no Alt-/, as ? on a list or a page shows and hides them", () => {
-  expect(keyLines(200).join("\n")).not.toContain("alt + /");
-  expect(skel(["--help"]).out).not.toContain("alt + /");
-  expect(keyLines(200).join("\n")).toContain("? to show or hide these keys");
+  for (const key of ["↑ ↓", "Enter", "m", "Tab", "q", "Alt-Q"])
+    expect(keys).toMatch(new RegExp(`\n {2}${key} +[A-Z]`));
+  expect(out).not.toContain("sidebar");
 });
 
 test("the help names --version", () => {
@@ -190,18 +156,32 @@ test("sc runs from a checkout whose folder it may read files in but not list, as
 
 // Issues, tasks and threads are different things, so the help keeps them apart: an issue is
 // what you want done, in the tracker, a task is Skelcrew's record of the work on one, and a
-// thread is an agent on a task. The sidebar's list is called ISSUES, so the commands for the
+// thread is an agent on a task. The list's part is called Issues, so the commands for the
 // tracker use the same word.
 test("the help lists the issue commands in a section of their own, and names tasks and threads as such", () => {
   const out = skel(["--help"]).out;
   const issues = out.slice(out.indexOf("\nISSUES\n"), out.indexOf("\nREPOSITORIES\n"));
   expect(out).toContain("\nISSUES\n");
-  for (const command of ["issue ls", "issue show", "issue create"])
-    expect(issues).toContain(`  ${command} `);
+  expect(issues).toContain("  issue create ");
   expect(issues).not.toContain("  start ");
   for (const command of ["stop", "attach", "peek", "interrupt", "tell"])
     expect(out).toContain(`  ${command} <thread>`);
   for (const command of ["show", "rm", "review"]) expect(out).toContain(`  ${command} <task>`);
+});
+
+// sc ls and sc show replaced sc issue ls, sc issue show and sc pr show, which are gone with no
+// short name left.
+test("sc issue ls, sc issue show and sc pr show are no longer commands", () => {
+  for (const words of [
+    ["issue", "ls"],
+    ["issue", "show", "app-12"],
+    ["pr", "show", "31"],
+  ]) {
+    const ran = skel(words);
+    expect(ran.code).not.toBe(0);
+    expect(ran.err).toContain("Skelcrew");
+  }
+  expect(skel(["--help"]).out).not.toContain("issue ls");
 });
 
 // The issue commands replaced the task commands, which are gone with no alias.
@@ -211,7 +191,7 @@ test("sc task is no longer a command", () => {
   expect(ran.err).toContain("that isn't a Skelcrew command");
 });
 
-// The lead names each thread it starts for the sidebar, and you can too.
+// The lead names each task it starts for the list, and you can too.
 test("the help says sc start takes a short title", () => {
   expect(skel(["--help"]).out).toContain('  --short "<words>" ');
 });

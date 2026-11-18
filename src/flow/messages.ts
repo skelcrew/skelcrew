@@ -2,7 +2,7 @@
 // transport. It holds who may tell whom, the <skelcrew> tag around an agent's words, and each
 // agent's queue. A builder's messages are the lead's sc tell and what Skelcrew tells it of its
 // PR's events. They wait in the database until the builder can take them, so none is dropped
-// while it is busy or stopped, or while the daemon restarts, and sc ps and the sidebar can count
+// while it is busy or stopped, or while the daemon restarts, and sc ps can count
 // them. A lead's notes wait there too, until the lead is idle or has started.
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
@@ -56,8 +56,8 @@ const oldest = (db: Database, folder: string) =>
     db.query("SELECT * FROM messages WHERE folder = ? ORDER BY id").get(folder),
   );
 
-// Returns how many messages wait to be typed into the thread's builder, for sc ps and the
-// sidebar: its waiting messages, and a review's changes saved but not yet among them, as when
+// Returns how many messages wait to be typed into the thread's builder, for sc ps: its
+// waiting messages, and a review's changes saved but not yet among them, as when
 // the daemon starts again.
 export function messagesWaiting(db: Database, thread: Thread): number {
   const counted = (sql: string) =>
@@ -68,11 +68,6 @@ export function messagesWaiting(db: Database, thread: Thread): number {
   );
   return count + (thread.telling !== null && reviews === 0 ? 1 : 0);
 }
-
-// Returns how many messages wait for a builder, in words, such as "1 message waiting", or
-// nothing when none does, for sc ps and the sidebar.
-export const waitingText = (count: number) =>
-  count === 0 ? "" : `${count} message${count === 1 ? "" : "s"} waiting`;
 
 // The reason a message waits for a builder whose session isn't there or has ended.
 const notRunning = "its builder isn't running";

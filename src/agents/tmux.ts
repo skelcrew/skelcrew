@@ -1,14 +1,8 @@
-// Running tmux: the commands the sessions module's tmux server takes, and the screen's own tmux
-// server, which shows the agents' sessions beside the sidebar. Only the sessions module runs
-// tmux for agents.
-
-// Returns the screen's tmux server beside the agents': skelcrew-screen beside skelcrew, and a
-// test's own beside the test's.
-export const screenSocket = (agents: string) => `${agents}-screen`;
+// Running tmux: the commands the sessions module's tmux server takes. Only the sessions module
+// runs tmux for agents.
 
 // Returns whether this machine's tmux is the given version or newer, for settings an older
-// one refuses. One bad setting fails the whole command, so the screen or a session wouldn't
-// start. A version that isn't a plain number, such as "next-3.7" or "master", is taken as new.
+// one refuses. One bad setting fails the whole command, so a session wouldn't start. A version that isn't a plain number, such as "next-3.7" or "master", is taken as new.
 export function tmuxIsAtLeast(major: number, minor: number): boolean {
   const said = Bun.spawnSync(["tmux", "-V"], { env: envWithoutTmux(), stderr: "ignore" });
   const version = said.stdout.toString().match(/^tmux (\d+)\.(\d+)/);
@@ -51,31 +45,4 @@ export function mustTmux(socket: string, args: string[], input = ""): string {
   const run = tmux(socket, args, input);
   if (!run.ok) throw new Error(`tmux ${args[0]} failed: ${run.err}`);
   return run.out;
-}
-
-// Runs a command on the screen's own tmux server, beside the agents' server `agents`, and
-// returns its output and whether it succeeded.
-export const screenTmux = (agents: string, args: string[]) => tmux(screenSocket(agents), args);
-
-// Returns the terminal of a pane on the screen's server, by which the agents' server knows the
-// client running in it. Throws when the pane is gone, since the sidebar then has nothing to
-// switch.
-export const paneTty = (agents: string, target: string) =>
-  mustTmux(screenSocket(agents), ["display-message", "-p", "-t", target, "#{pane_tty}"]).trim();
-
-// Returns the width of a pane on the screen's server, or 0 once it is gone.
-export const paneWidth = (agents: string, target: string) =>
-  Number(screenTmux(agents, ["display-message", "-p", "-t", target, "#{pane_width}"]).out.trim());
-
-// Sets the status line of a screen's session, as a tmux format: the header, the tabs and the
-// strip. Each set makes tmux redraw the whole screen, so the sidebar calls this only when the
-// line changed.
-export function showStrip(agents: string, session: string, line: string): void {
-  screenTmux(agents, ["set", "-t", `=${session}:`, "status-format[0]", escapeSemicolon(line)]);
-}
-
-// Replaces what a pane on the screen's server runs with a command. Its terminal is a new one,
-// with a new name.
-export function respawnPane(agents: string, target: string, command: string[]): void {
-  screenTmux(agents, ["respawn-pane", "-k", "-t", target, "--", ...command]);
 }

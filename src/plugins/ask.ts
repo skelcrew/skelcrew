@@ -232,7 +232,7 @@ export async function openPr(
   return opened.number;
 }
 
-// Merges the PR on the forge, for m on the screen, but only while its head is still the commit
+// Merges the PR on the forge, for m in the list, but only while its head is still the commit
 // you saw approved, so a push after you looked is never merged unseen. Returns null once merged,
 // or the forge's reason for refusing, such as a conflict or a rule on the branch.
 export async function mergePr(
@@ -294,7 +294,7 @@ export async function setStatus(
 }
 
 // Returns the end of a failed check's log, as the forge keeps it. `timeout`, in milliseconds,
-// is how long the forge may take, which sc pr show keeps short, as you wait on it.
+// is how long the forge may take, which sc show keeps short, as you wait on it.
 export async function failedLog(
   db: Database,
   repository: Repository,

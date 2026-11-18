@@ -1,13 +1,12 @@
-// Attaching you to a repository's lead or a thread's builder, after making sure the daemon
-// runs on this Skelcrew's code. Plain sc attaches to a lead, and sc attach to a builder.
+// Showing you the list of a repository, or attaching you to a thread's builder, after making
+// sure the daemon runs on this Skelcrew's code. Plain sc shows the list, and sc attach attaches.
 import { z } from "zod";
-import { agentRuns } from "./agents/sessions.ts";
+import { agentRuns, attachSession } from "./agents/sessions.ts";
 import { ask } from "./client.ts";
 import { openDb } from "./db.ts";
-import { leadOf } from "./flow/lead.ts";
 import { findThread } from "./flow/thread.ts";
 import { restartDaemon, startDaemon } from "./machine/service.ts";
-import { openScreen } from "./screen/screen.ts";
+import { runList } from "./screen/list.ts";
 import { checkoutFolder, git, release, singleFile } from "./version.ts";
 
 // The daemon's answer when asked for a lead: the lead's session and its repository's
@@ -85,11 +84,11 @@ async function ensureDaemon(): Promise<void> {
   }
 }
 
-// Makes sure the daemon and a lead are running, then opens the screen on the lead until you
-// leave with Alt-Q. The lead is for `from`, an owner/repo, or else for the repository you
-// opened last. With `tab`, only a repository whose tab is open will do. Returns false, with no
-// screen opened, when every tab is closed.
-export async function attachToLead(sessions: string, from?: string, tab = false): Promise<boolean> {
+// Makes sure the daemon and a lead are running, then shows the list of the lead's repository
+// until you leave it with q. The lead is for `from`, an owner/repo, or else for the repository
+// you opened last. With `tab`, only a repository whose tab is open will do. Returns false, with
+// no list shown, when every tab is closed.
+export async function showList(sessions: string, from?: string, tab = false): Promise<boolean> {
   await ensureDaemon();
   // Asking for the lead brings it back if it ended while the daemon kept running. Starting it
   // takes longer than a status, hence the longer wait.
@@ -103,13 +102,14 @@ export async function attachToLead(sessions: string, from?: string, tab = false)
     throw new Error("the daemon answered in a way this Skelcrew doesn't understand");
   if ("error" in lead.data) throw new Error(lead.data.error);
   if ("closed" in lead.data) return false;
-  await openScreen(sessions, lead.data.lead, lead.data.lead, lead.data.repository);
+  await runList(sessions, lead.data.repository);
+  console.log("Your agents keep running. Run sc to come back.");
   return true;
 }
 
-// Opens the screen with a thread's builder on the right and its repository's lead in the
-// sidebar, and returns when you leave with Alt-Q. Only you can run it, since it takes over
-// your terminal. It checks the builder is running before it starts the daemon.
+// Attaches your terminal full screen to a thread's builder, through its session host, and
+// returns when you leave it with Alt-Q. Only you can run it, since it takes over your terminal.
+// It checks the builder is running before it starts the daemon.
 export async function attachToThread(
   sessions: string,
   repository: string,
@@ -123,14 +123,6 @@ export async function attachToThread(
       `${repository}-${task}'s builder isn't running: the thread is ${thread.status}`,
     );
   await ensureDaemon();
-  // Attaching to a thread opens its repository, as plain sc in a checkout of it would, which
-  // opens its tab again if you closed it by exiting its lead, and starts that lead. It is asked
-  // each time, not only for a tab the database says is closed: a lead you exited a moment ago
-  // reads as open until the daemon's next look, which would then close the tab under the screen
-  // you just opened. The daemon notices the exit first. The builder's screen opens even when
-  // the lead can't start.
-  const fullName = `${thread.owner}/${thread.repo}`;
-  await ask({ command: "lead", from: fullName }, 60_000);
-  const { name } = leadOf(db, thread.owner, thread.repo);
-  await openScreen(sessions, thread.folder, name, fullName);
+  const failed = await attachSession(sessions, thread.folder);
+  if (failed) throw new Error(`couldn't attach to ${repository}-${task}: ${failed}`);
 }

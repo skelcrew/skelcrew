@@ -1,5 +1,5 @@
 // Which Skelcrew this is: the release, or the commit of a build from a checkout, as stamped in
-// when it was built. sc --version and the sidebar's header show it, and --remote compares it.
+// when it was built. sc --version and the list's top line show it, and --remote compares it.
 // Also where this Skelcrew lives on disk. Only this file works that out, so moving a source file
 // can't break a second copy.
 import { join, resolve } from "node:path";

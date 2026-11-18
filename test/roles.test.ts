@@ -27,8 +27,8 @@ const settling =
 const asking =
   "\nUse the setup and test commands named at the end of these instructions, as every builder of the repository uses the same ones. If one you need isn't configured, never make one up: ask the lead which to use with sc tell lead, and wait for its answer. That counts as blocked.\n";
 
-// What the lead was told about issues, threads and PRs before sc ls and sc show, each with what
-// it is told now.
+// What the lead was told about issues, threads and PRs before sc ls and sc show, and about the
+// sidebar before the list, each with what it is told now.
 const leadTasks = [
   [
     "- sc issue ls lists open issues, and sc ps lists threads, with their status, whether they need the human, and each one's PR, CI and review, such as #242, failed and changes r3.",
@@ -36,11 +36,19 @@ const leadTasks = [
   ],
   [
     "- sc pr show app-13, or a PR's number such as sc pr show 242, shows a PR: its state, branch, thread, checks, latest review and description, with the log of each failed check. Use it to see why CI failed or what a review asked for.",
-    "- sc show app-13 shows one piece of work: its issue, threads, PR with its checks and review, and its description as its reviewer gets it, then the PR's latest review and description, with the log of each failed check. Use it to see why CI failed or what a review asked for. sc pr show 242 shows the work on PR 242 the same way.",
+    "- sc show app-13 shows one piece of work: its issue, threads, PR with its checks and review, and its description as its reviewer gets it, then the PR's latest review and description, with the log of each failed check. Use it to see why CI failed or what a review asked for.",
   ],
   [
     "Skelcrew keeps its own copy: sc issue ls and sc issue show app-13 show issues, with the title and body a builder sees, and sc ps and sc pr show show PRs.",
     "Skelcrew keeps its own copy: sc ls and sc show app-13 show issues, threads and their PRs, with the title and description a builder sees.",
+  ],
+  [
+    "The sidebar shows those words in place of its long title.",
+    "The list shows those words in place of its long title.",
+  ],
+  [
+    "They answer a builder's question by picking app-12 in the sidebar beside you.",
+    "They answer a builder's question by leaving you with Alt-Q and pressing Enter on app-12 in the list.",
   ],
   [
     '- sc tell app-13 "<text>" types a message into that thread\'s builder once it is idle,',

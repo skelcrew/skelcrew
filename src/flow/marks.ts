@@ -1,5 +1,5 @@
 // The marks: how a thread's state shows wherever it is listed, as a mark, a colour and a word,
-// and the counts the sidebar's entries and the tabs' badges give. Any list of threads uses them.
+// and the counts the repositories' badges give. Any list of threads uses them.
 import { type Status, statusOf, threadWord } from "./status.ts";
 import type { Thread } from "./thread.ts";
 

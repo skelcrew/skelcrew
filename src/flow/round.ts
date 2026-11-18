@@ -590,7 +590,7 @@ const notHeld = { review_limited: false, review_reset: null };
 // Saves a review's changes as a message for the builder, typed in as soon as it can take them,
 // however long that takes, as every message to a builder is: never while it asks you a
 // question, which they would answer. They stay saved on the thread too until then, so sc ps
-// counts them and the sidebar says changes. A newer round drops them, as they are about an
+// counts them and the list says changes. A newer round drops them, as they are about an
 // older commit. Nothing is saved once the round is cancelled.
 async function queueChanges(
   db: Database,

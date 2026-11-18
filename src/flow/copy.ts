@@ -1,5 +1,5 @@
 // Skelcrew's copy of each repository's open tasks, from its tracker, and open PRs, from its forge,
-// as items. The sidebar, pages, sc issue and a builder's first message read it, so none of
+// as items. The list, sc ls, sc show and a builder's first message read it, so none of
 // them waits on the tracker.
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
@@ -43,7 +43,7 @@ const itemFields = {
 };
 
 // A task or a PR in Skelcrew's words, whichever tracker or forge it came from. A task has the line
-// that closes it when a PR's body holds it. A PR has its head commit, which m on the screen merges
+// that closes it when a PR's body holds it. A PR has its head commit, which m in the list merges
 // only while it is still the head, or null from a forge too old to send it. A cancelled check
 // isn't the builder's to fix.
 export const Item = z.discriminatedUnion("kind", [
@@ -131,7 +131,7 @@ const parseItems = (rows: unknown[]) =>
   rows.map((row) => Item.parse(JSON.parse(z.object({ item: z.string() }).parse(row).item)));
 
 // Returns a task from the copy, open or kept for its thread, for its builder, its reviewer and
-// sc issue show. Throws when the copy doesn't have it.
+// sc show. Throws when the copy doesn't have it.
 export function taskOf(db: Database, owner: string, repo: string, task: string): Task {
   const [found] = parseItems(
     db
@@ -159,7 +159,7 @@ export function prOf(
   return found?.kind === "pr" ? found : null;
 }
 
-// Returns a repository's open tasks, newest first, for sc issue ls and for starting a thread
+// Returns a repository's open tasks, newest first, for sc ls, the list and for starting a thread
 // on each one labeled to start.
 export function openTasks(db: Database, owner: string, repo: string): Task[] {
   // Tasks made at the same moment sort by ID as numbers, as a longer number is the larger one.
@@ -185,13 +185,7 @@ export function openPrs(
   ).flatMap((item) => (item.kind === "pr" ? [item] : []));
 }
 
-// Returns the item a list's row links to, for its page, or null when the copy has none there.
-export function itemAt(db: Database, link: string): Item | null {
-  const rows = db.query("SELECT item FROM items WHERE json_extract(item, '$.link') = ?").all(link);
-  return parseItems(rows)[0] ?? null;
-}
-
-// Returns the task a thread works on, for its builder, its reviewer, its PR and sc issue show:
+// Returns the task a thread works on, for its builder, its reviewer, its PR and sc show:
 // the title and body saved as it started. Later edits to the issue never reach a started task,
 // so the reviewer checks against what the builder was given, and the lead passes on what
 // matters as a message. A row from before Skelcrew saved them falls back on the copy's words.

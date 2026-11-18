@@ -114,13 +114,13 @@ afterEach(() => {
 
 function calls(): string {
   const log = join(home, "calls");
-  // The long tmux line that opens the screen is cut to the agent it opens on. Asking tmux's
-  // version and giving the agents' server its settings, which each opening does, are left out.
+  // Attaching to an agent is cut to the agent it attaches to. Asking tmux's version, giving the
+  // agents' server its settings and the list's looks at the sessions are left out.
   const said = existsSync(log) ? readFileSync(log, "utf8") : "";
   return said
     .replace(/tmux -L skelcrew -f \/dev\/null (source-file -|list-panes -a .*)\n/g, "")
     .replace(/tmux -V\n/g, "")
-    .replace(/tmux -L skelcrew-screen .* sh skelcrew (\S+) \S+ ;.*/g, "screen on $1");
+    .replace(/tmux -L skelcrew -f \/dev\/null attach -t =(\S+)/g, "attach to $1");
 }
 
 const config = () => join(home, ".config", "skelcrew", "config.yaml");
@@ -160,8 +160,10 @@ test("takes every step on the first run, and none on the second", async () => {
   const first = await skel("1\nsk-ant-oat01-good\n");
   expect(first.err).toBe("");
   expect(first.code).toBe(0);
-  // Only Skelcrew's own lines: you run claude setup-token yourself, in another terminal.
-  expect(first.out).toBe(
+  // Only Skelcrew's own lines: you run claude setup-token yourself, in another terminal. Then the
+  // list, printed once as there is no terminal, which the list's own tests check.
+  expect(first.out).toContain(" Skelcrew v");
+  expect(first.out.replace(/ Skelcrew v[\s\S]*stopped\n/, "")).toBe(
     [
       "Setting up Skelcrew...",
       "",
@@ -196,7 +198,7 @@ test("takes every step on the first run, and none on the second", async () => {
   expect(second.out).not.toContain("set up");
   // Once set up, Skelcrew checks no tools, asks nothing and leaves systemd alone, so it
   // starts fast.
-  expect(calls()).toBe("daemon lead\nscreen on lead\n");
+  expect(calls()).toBe("daemon lead\n");
 });
 
 test("installs the daemon as a systemd user service with lingering, once", async () => {
@@ -245,7 +247,7 @@ test("starts the daemon through systemd when it doesn't answer, then attaches to
   writeFileSync(join(home, "calls"), "");
   const run = await skel();
   expect(run.code).toBe(0);
-  expect(calls()).toBe("systemctl --user start skelcrew\ndaemon lead\nscreen on lead\n");
+  expect(calls()).toBe("systemctl --user start skelcrew\ndaemon lead\n");
 });
 
 // The daemon watches the builder you attach to, so attaching to a thread brings it up too.
@@ -265,7 +267,7 @@ openDb().run(${JSON.stringify(threadSql({ task: "12" }))});`;
   expect(err).toBe("");
   expect(await run.exited).toBe(0);
   expect(calls()).toContain("systemctl --user start skelcrew\n");
-  expect(calls()).toContain("screen on app-12\n");
+  expect(calls()).toContain("attach to app-12\n");
 });
 
 test("shows why when the daemon can't start the lead", async () => {
@@ -290,7 +292,7 @@ test("rewrites the service when the PATH it needs moved, without restarting anyt
   const run = await skel("", `${bin}:/opt/bun/bin`);
   expect(run.code).toBe(0);
   expect(readFileSync(unit(), "utf8")).toContain(`Environment="PATH=${bin}:/opt/bun/bin"`);
-  expect(calls()).toBe("systemctl --user daemon-reload\ndaemon lead\nscreen on lead\n");
+  expect(calls()).toBe("systemctl --user daemon-reload\ndaemon lead\n");
 });
 
 test("leaves out PATH folders that won't last, and escapes % for systemd", async () => {
@@ -624,7 +626,7 @@ test("a yes installs the GitHub plugin with no second question, writes nothing h
   expect(run.out).not.toContain("sc init");
   expect(run.out).toContain("Skelcrew is set up.\nCloning simon/site for Skelcrew.\n");
   expect(existsSync(join(site, "skelcrew.yaml"))).toBe(false);
-  expect(calls()).toEndWith("daemon lead\nscreen on lead\n");
+  expect(calls()).toEndWith("daemon lead\n");
 });
 
 test("on a run after setup, a yes installs the plugin and the lead opens, with nothing written here", async () => {
@@ -636,7 +638,7 @@ test("on a run after setup, a yes installs the plugin and the lead opens, with n
   expect(run.out).toContain("Installed github 0.1.0.");
   expect(run.out).not.toContain("sc init");
   expect(existsSync(join(site, "skelcrew.yaml"))).toBe(false);
-  expect(calls()).toEndWith("daemon lead\nscreen on lead\n");
+  expect(calls()).toEndWith("daemon lead\n");
 });
 
 test("names each missing tool with what to install, and runs nothing else", async () => {
@@ -862,6 +864,9 @@ test("at a terminal, Codex signs in on a screen of its own", async () => {
     tmux("send-keys", "-t", "setup", "sk-ant-oat01-good", "Enter");
     await waitFor("Press Enter to start.");
     tmux("send-keys", "-t", "setup", "Enter");
+    // Then the list shows, until q leaves it.
+    await waitFor("q quit");
+    tmux("send-keys", "-t", "setup", "q");
     await waitFor("FINISHED");
     const after = screen();
     expect(after).toContain("Sign in to Codex for reviews. Press Enter to start.");
@@ -926,7 +931,7 @@ test("on a machine with only Codex, Enter picks it, and its one login serves age
   const second = await skel();
   expect(second.code).toBe(0);
   expect(second.out).not.toContain("set up");
-  expect(calls()).toBe("daemon lead\nscreen on lead\n");
+  expect(calls()).toBe("daemon lead\n");
 });
 
 test("picking Codex for agents and reviews where Claude Code is installed too skips Claude's login", async () => {
@@ -961,7 +966,7 @@ test("reviews on your own harness save nothing more, and need no other login", a
   expect(calls()).not.toContain("codex login --device-auth");
   writeFileSync(join(home, "calls"), "");
   await skel();
-  expect(calls()).toBe("daemon lead\nscreen on lead\n");
+  expect(calls()).toBe("daemon lead\n");
 });
 
 test("Codex agents with Claude Code reviews log in to both", async () => {
@@ -1037,7 +1042,7 @@ test("keeps the login shell's folders in the service when Skelcrew runs over ssh
   const run = await skel("", bin, main(), home, { SHELL: "/bin/bash" });
   expect(run.code).toBe(0);
   expect(servicePath()).toContain(nvm);
-  expect(calls()).toBe("daemon lead\nscreen on lead\n");
+  expect(calls()).toBe("daemon lead\n");
 });
 
 // sc remote add runs this on the machine it sets up, and leaves connecting to you.

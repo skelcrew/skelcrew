@@ -61,7 +61,7 @@ export function restoreLimits(db: Database): void {
 const backoffAfter = (tries: number) => backoff[Math.min(tries, backoff.length) - 1] ?? 0;
 
 // Returns a moment as this machine's clock shows it, such as 13:59, with its day before it,
-// such as 17 Nov 13:59, when it isn't today. For the sidebar, the lists and the lead's notes.
+// such as 17 Nov 13:59, when it isn't today. For sc ps and the lead's notes.
 export function clockTime(at: number, now: number): string {
   const when = new Date(at);
   const two = (n: number) => String(n).padStart(2, "0");

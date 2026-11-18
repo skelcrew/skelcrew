@@ -285,19 +285,15 @@ Skelcrew no longer supports Sprites itself. These are for the Sprite machine plu
 - **There is no command that says whether `sprite` is logged in.** `sprite list` fails,
   telling you to run `sprite login`, when it isn't.
 
-## The screen
+## Attaching to an agent
 
 - **A Sprite keeps a terminal alive after the link drops.** `sprite exec --tty` is a session
   that goes on without you, so `sprite exec` can reconnect, and tmux never sees a hangup. A
-  screen left that way stays, attached to nobody, until the Sprite stops or `sprite sessions
+  terminal left attached that way stays, attached to nobody, until the Sprite stops or `sprite sessions
   kill` ends it. It doesn't keep an idle Sprite awake. Nothing inside the Sprite can tell:
   only `sprite api /exec` on the laptop says, as `is_active`.
-- **`destroy-unattached` also ends a session made detached**, as soon as any other client
-  leaves. Make the session attached, in one go.
 - **tmux's default mouse keys take you into copy mode**, where your typing stops reaching the
   agent. Remove them all, then bind what you need.
-- **Without a key of its own, a click reaches only the pane you type to.** `send-keys -M`
-  hands it to the pane under the mouse, and leaves your typing where it was.
 - **A key sent to a pane in copy mode goes to copy mode.** `send-keys Enter` would be taken
   for a copy, and a message typed in would never be sent. `paste-buffer` and `capture-pane`
   don't care. Leave copy mode before typing into a session.
@@ -307,53 +303,16 @@ Skelcrew no longer supports Sprites itself. These are for the Sprite machine plu
 - **tmux's `mode-keys` turns to vi when `$EDITOR` says vi**, and then none of the keys bound
   in the `copy-mode` table apply. Set it.
 - **`unbind -a -T prefix` fails the second time**, as the first removed that table.
-- **tmux shares a resize among panes.** The `window-resized` hook sets the sidebar back;
-  `client-resized` doesn't run for this.
-- **Ghostty ignores saving and restoring the title** (`CSI 22 t`, `CSI 23 t`). There, only
-  your shell's prompt puts the title back, through Ghostty's shell integration.
-- **tmux reads a status line as a format, and runs what it says.** `#(...)` in `status-format`
-  starts a shell command, `#[...]` restyles the line, and `%` goes through strftime. Text from
-  outside, such as an issue's title, needs `#` and `%` doubled, and its control codes removed.
 - **`set -t =name` fails with "no such session".** An option's target takes `=name:`.
-- **Every `set` redraws the whole screen.** About 3.9 KB on a 120 by 40 terminal, so set a
-  status line only when it changed, and all its lines in one run.
 - **Ctrl-Q is XON, and is not eaten.** A tty has `ixon` on until tmux makes it raw, and the key
   reached tmux locally, through `ssh -t` and through `sprite exec --tty`.
 - **`sprite exec` prints the command it runs.** A test that waits for text in the output
   matches that line at once, unless the text it waits for is split up in the command.
-- **tmux drops terminal links on the way to a terminal it doesn't recognise.** A client under
-  `script`, which answers no terminal queries, got no OSC 8 at all until the server set the
-  `hyperlinks` feature. A tmux inside tmux hides this, as the outer one is recognised.
-- **tmux before 3.6 refuses `pane-border-lines spaces`.** It says "unknown value: spaces",
-  and the screen never opens, as one bad setting fails the whole command. Ubuntu 24.04 has
-  tmux 3.4 and Debian 13 has 3.5a. Read `tmux -V` and leave the setting out there.
 - **tmux 3.6 doesn't hold a program's synchronized frames back.** It marks only its own full
-  redraws, so a frame written in two halves arrives in two, attached directly or nested.
-- **Alt-Shift-Up and Alt-Shift-Down get through.** They arrive as `ESC[1;4A` and `ESC[1;4B`
-  through nested tmux and through `sprite exec --tty`, and tmux knows them as `M-S-Up` and
-  `M-S-Down`. Alt-Left and Alt-Right move by word in Claude Code's input, and Alt with a digit
-  types a character on a Mac, so neither is free.
-- **Bun doesn't keep a signal it inherits as ignored.** `trap "" INT; exec bun ...` still dies
-  on Ctrl-C. Until a program makes its terminal raw, Ctrl-C can end it, so a pane that must
-  stay needs `remain-on-exit`. `respawn-pane -k` starts a dead pane again.
-- **`respawn-pane` gives a pane a new terminal.** Anything that holds its `pane_tty` must read
-  it again. It also resets the pane, so the mouse modes a page asked for go with it.
-- **tmux 3.6 can crash when a client leaves under `destroy-unattached`.** The server segfaults
-  if another client, even a one-off command, disconnects at that moment. The session is
-  destroyed while the leaving client still points at it. It needs nothing of Skelcrew's: a plain
-  server with a busy `list-clients` loop crashed within 8 rounds. Every terminal on that
-  server loses its screen, and agents keep running. The sidebar's own commands hit this about
-  once in 500 leavings on a loaded machine, so a screen test can fail with `server exited
-  unexpectedly`. A `detach-client` sent from the sidebar crashed it about one time in six. To
-  leave from the sidebar, have the server run `kill-session` itself, with `run-shell -d -C`:
-  that crashed in none of 32 runs.
-- **tmux takes keys that arrive together for a paste.** Keys less than `assume-paste-time`
-  (1 ms) apart skip key bindings and go to the active pane as text. Three Alt keys in one
-  write reached the sidebar as two, and the third was typed into the agent. Set it to 0.
-- **tmux turns Shift+Enter into Enter**, so the prompt is sent instead of a newline. Both
-  servers need `extended-keys on` and the `extkeys` terminal feature: the screen's asks your
-  terminal for extended keys, and the agents' asks the screen in front of it. Either one alone
-  still delivers Enter. tmux ignores a pane's request made while the option was off, and
+  redraws, so a frame written in two halves arrives in two.
+- **tmux turns Shift+Enter into Enter**, so the prompt is sent instead of a newline. The
+  agents' server needs `extended-keys on` and the `extkeys` terminal feature, so it asks your
+  terminal for extended keys. Either one alone still delivers Enter. tmux ignores a pane's request made while the option was off, and
   hands extended keys only to a program that asked with `CSI > 4;2 m`. Codex reads Shift+Enter
   only in the CSI u form (`ESC[13;2u`), so the agents' server sets `extended-keys-format csi-u`,
   which tmux before 3.5 refuses. Claude Code reads both forms. Terminal.app sends plain Enter
@@ -367,32 +326,12 @@ Skelcrew no longer supports Sprites itself. These are for the Sprite machine plu
   An agent already running can't get a new environment. Writing `CSI > 4;2 m` into its pane's
   terminal (`pane_tty`) asks for it instead: tmux reads it as the agent's own request, and
   Claude Code then reads `ESC[13;2u` as a newline.
-- **The screen's tmux asks your terminal for extended keys only once it knows the terminal.**
+- **tmux asks your terminal for extended keys only once it knows the terminal.**
   It sends `CSI > 4;2 m` after the terminal answers its `CSI > c` and `CSI > q` queries. A test
   pty that answers nothing never gets asked.
-- **A click on a status line reaches no pane.** `MouseDown1Status` fires, and a range drawn
-  with `#[range=user|X]` names what was clicked in `#{mouse_status_range}`. `send-keys -F`
-  doesn't expand that in the text it types, so `run-shell -C` must expand the whole
-  `send-keys` first. A second click soon after the first comes as `DoubleClick1Status`, not
-  `MouseDown1Status`, so bind both.
-- **A terminal opens a link only when no program has the mouse, or with Shift.** Ghostty
-  looks for a link under the pointer only while mouse reporting is off or Shift is held, so
-  Cmd-click on the screen goes to tmux and Shift-Cmd-click opens. WezTerm and kitty skip the
-  program with Shift too. iTerm2 opens on Cmd-click and also hands the click to the program.
-  No escape code asks a terminal to keep link clicks for itself.
 - **tmux keeps a program's OSC 52 copy from your terminal** unless `set-clipboard` is `on`.
   Its default, `external`, lets only tmux itself set your clipboard. A terminal tmux doesn't
   recognise also needs the `clipboard` feature.
-- **A drag through two tmux servers needs every raw mouse event passed on.** The front one
-  must hand on `MouseDrag1Pane`, `MouseDragEnd1Pane`, `SecondClick1Pane` and
-  `TripleClick1Pane` with `send-keys -M`. tmux fires `DoubleClick1Pane` a moment after the
-  second press, so passing that on too gives the inner server a press of its own.
-- **A drag that leaves a pane ends in the other pane.** tmux sends the moves and the release
-  to the pane under the mouse, so the pane where the drag began never gets its release.
-  tmux ends a selection where the last move was, and ignores a place outside its window.
-- **tmux picks a mouse event's binding as the event arrives.** A press, a drag and a release
-  in one read reach the inner server before `copy-mode -M` has run, so the release finds no
-  binding. A test must pace them, as a hand does.
 - **In copy mode, a mouse event with no binding goes to `Any`.** With `Any` bound to leave
   copy mode, a press while scrolled back threw you back to the live agent. Bind the press and
   the release.
@@ -404,15 +343,6 @@ Skelcrew no longer supports Sprites itself. These are for the Sprite machine plu
   `pane-set-clipboard` hook for the agents' own.
 - **Claude Code copies on its own.** Its full-screen drawing selects with the mouse, then copies
   by OSC 52, and also with `pbcopy` on a Mac or `tmux load-buffer` when it finds tmux.
-- **tmux opens no popup larger than the terminal.** `display-popup` with `-h` taller than the
-  terminal says nothing and shows nothing. Its `-w` and `-h` take no formats, so read the
-  client's size first and fit the box to it.
-- **`display-popup` waits for the popup to close.** Run from a program, the command returns
-  only after the popup ends, so a sidebar that waited for it would stop drawing.
-- **A popup swallows a click outside it.** tmux 3.6 hands the popup's program only clicks
-  inside the box. A click elsewhere on the screen does nothing, with or without `-k`.
-- **`capture-pane -e` shows a terminal link with an id tmux made up**, as `ESC]8;id=...;url`.
-  A test that looks for `ESC]8;;url` finds nothing.
 - **Bun's `os.cpus()` reads the times when you first look at them, not when you call it.**
   Keep its result, wait, and read it then, and it holds the times from that moment: the CPU
   figure from two samples read 0%. Seen on Bun 1.3.14 on Linux. Copy the numbers out as you
@@ -454,7 +384,7 @@ Skelcrew no longer supports Sprites itself. These are for the Sprite machine plu
 - **Wait for the last thing, not the first.** The forge gets a review's check before the daemon
   saves the thread, and a note can reach the lead a piece at a time. A test that waits for the
   first and then reads the second can read it too early. Wait for what the test then reads.
-- **Wait for the state a key starts from.** The sidebar can draw another row before the one you
+- **Wait for the state a key starts from.** The list can draw another row before the one you
   opened, and a key pressed then moves from there. A drag let go before tmux is in copy mode
   copies nothing. Wait for the row, or for copy mode, before the next key.
 - **On a loaded CI runner, raise the limit, don't sleep.** A first clone or a builder's start

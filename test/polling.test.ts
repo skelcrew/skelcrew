@@ -1021,7 +1021,7 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
     );
     expect(fakeBuilders()).toEqual([]);
     // Its issue is still open, so the task goes back to stage issue.
-    const listed = Bun.spawnSync([process.execPath, main, "issue", "ls", "app", "--json"], {
+    const listed = Bun.spawnSync([process.execPath, main, "ls", "app", "--json"], {
       env: env(),
     });
     expect(JSON.parse(listed.stdout.toString())).toMatchObject([
@@ -1224,16 +1224,13 @@ echo "Not logged in"; exit 1`,
     answer(plugin, "took", { took: true });
     changes([issue12()]);
     serve();
-    // Runs sc issue ls for app as a tool would, with `more` words such as --all, and returns its
+    // Runs sc ls for app as a tool would, with `more` words such as --all, and returns its
     // rows, or none while the daemon isn't listening yet.
     const listed = (...more: string[]) => {
-      const done = Bun.spawnSync(
-        [process.execPath, main, "issue", "ls", "app", "--json", ...more],
-        {
-          env: env(),
-          stderr: "pipe",
-        },
-      );
+      const done = Bun.spawnSync([process.execPath, main, "ls", "app", "--json", ...more], {
+        env: env(),
+        stderr: "pipe",
+      });
       return done.success ? JSON.parse(done.stdout.toString()) : [];
     };
     await until(() => listed().length === 1);
