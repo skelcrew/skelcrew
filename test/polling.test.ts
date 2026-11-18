@@ -637,6 +637,29 @@ test("a lead running from before flows is told of them once", async () => {
   expect(flowNotes()).toHaveLength(1);
 });
 
+// The flows the human approved are in Skelcrew's clone already, so a lead from before flows is
+// told how to read them even while the remote can't be reached.
+test("a lead running from before flows is told of them while the remote is out of reach", async () => {
+  addApp();
+  changes([]);
+  const remote = join(home, "github", "simon", "app.git");
+  git(home, "clone", "-q", remote, join(data(), "repos", "simon", "app"));
+  renameSync(remote, `${remote}.away`);
+  Bun.spawnSync(["tmux", "-L", socket, "new-session", "-d", "-s", leadName, "sleep 300"]);
+  serve();
+  const noted = () => {
+    const db = new Database(join(data(), "skelcrew.db"), { readonly: true });
+    db.run("PRAGMA busy_timeout = 5000");
+    const saved = db.query("SELECT text FROM notes").all();
+    db.close();
+    const texts = saved.map((row) => String(Object.values(Object(row))[0]));
+    const typedIn = read(join(data(), "claude", leadName, "typed")).split("\n");
+    return [...texts, ...typedIn].some((text) => text.includes("each thread now runs a flow"));
+  };
+  await until(noted);
+  expect(read(daemonLog())).toContain("couldn't update Skelcrew's clone of simon/app");
+});
+
 // git can reach the remote while the tracker or forge is down, and builders must not fall
 // behind for it.
 test("a push straight to main reaches Skelcrew's clone while the forge fails to answer", async () => {

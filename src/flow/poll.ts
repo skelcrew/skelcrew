@@ -400,16 +400,21 @@ async function pollRepository(
     // leaves the clone as it was until the next poll, and holds up nothing else. A repository
     // with no clone yet is left to the daemon's start, sc and a thread's setup, which make
     // it: a remote that can't be cloned would otherwise be tried at every poll.
-    if (existsSync(cloneDir(owner, repo)))
+    if (existsSync(cloneDir(owner, repo))) {
       await refreshClone(db, repository)
-        .then(() => {
-          noteUnapprovedAgents(db, sessions, repository);
-          markApproved(repository);
-          tellLeadOfFlows(db, sessions, repository);
-        })
+        .then(() => noteUnapprovedAgents(db, sessions, repository))
         .catch((error) =>
           console.log(`couldn't update Skelcrew's clone of ${owner}/${repo}: ${errorText(error)}`),
         );
+      // What you approved is in the clone already, so the lead learns how to read it even while
+      // the remote can't be reached, rather than start every thread on default meanwhile.
+      try {
+        markApproved(repository);
+        tellLeadOfFlows(db, sessions, repository);
+      } catch (error) {
+        console.log(`couldn't tell ${owner}/${repo}'s lead of its flows: ${errorText(error)}`);
+      }
+    }
   }
   // With the copy up to date, start labeled tasks, then act on each thread: by its PR with a
   // forge, or by its branch without one, or without a PR.
