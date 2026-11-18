@@ -257,8 +257,10 @@ function pr(given: {
   comments?: { id: string; author: object | null; text: string }[];
   checks?: object[];
   labeled?: boolean;
+  head?: string;
 }): void {
   const pr7 = prItem("7", "Add export", {
+    ...(given.head ? { head: given.head } : {}),
     state: given.state ?? "open",
     conflicts: given.conflicts ?? false,
     base: given.base ?? "main",
@@ -1426,4 +1428,380 @@ echo "Not logged in"; exit 1`,
     expect(copied().rows).toEqual([]);
     expect(read(join(victim, "keep"))).toBe("mine\n");
   }, 60_000);
+
+  // A merge when ready is armed only by you, at your own terminal, after a y.
+  describe("merge when ready", () => {
+    // Your login name, as the system has it: the daemon runs without USER, which Bun's userInfo
+    // reads.
+    const login = () => Bun.spawnSync(["id", "-un"], { stdout: "pipe" }).stdout.toString().trim();
+    const hashed = (name: string) =>
+      new Bun.CryptoHasher("sha256").update(name).digest("hex").slice(0, 16);
+    const runDir = () => join(home, "run", "skelcrew");
+    const leadSocket = () => join(runDir(), "leads", hashed("simon/app"), "skelcrew.sock");
+    const builderSocket = () => join(runDir(), "threads", hashed("app-12"), "skelcrew.sock");
+    const question = "Merge #7 (app-12 Add export) when it's approved and green? [y/N]";
+    const merges = () => asked(plugin).filter((q) => q.ask === "merge pr");
+    const leadTyped = () => read(join(data(), "claude", leadName, "typed"));
+    // The commit Skelcrew pushed and its reviewer approved, as Skelcrew's clone keeps it.
+    const pushed = () =>
+      Bun.spawnSync(
+        [
+          "git",
+          "-C",
+          join(data(), "repos", "simon", "app"),
+          "rev-parse",
+          "refs/skelcrew/threads/app-12",
+        ],
+        { stdout: "pipe" },
+      )
+        .stdout.toString()
+        .trim();
+    const arm = () =>
+      runSkelInTerminal(socket, env(), ["merge", "--when-ready", "app-12"], question, "y");
+
+    test("n arms nothing, y arms it, and no agent or script without a terminal can", async () => {
+      await approvedApp12();
+      const kept = await runSkelInTerminal(
+        socket,
+        env(),
+        ["merge", "--when-ready", "app-12"],
+        question,
+        "n",
+      );
+      expect(kept).toContain("Nothing is armed: app-12 waits for you to merge it.");
+      expect(thread().merge_plan).toBeNull();
+      // Only y arms it: any other answer, even Y or yes, arms nothing.
+      for (const other of ["Y", "yes", "maybe"]) {
+        const said = await runSkelInTerminal(
+          socket,
+          env(),
+          ["merge", "--when-ready", "app-12"],
+          question,
+          other,
+        );
+        expect(said).toContain("Nothing is armed");
+        expect(thread().merge_plan).toBeNull();
+      }
+      // Only the PR and thread you said y to are armed, never one started over meanwhile.
+      const yours = join(home, "run", "skelcrew.sock");
+      const started = Number(thread().started);
+      const changed = {
+        error:
+          "app-12 changed since you said y, so nothing is armed: run sc merge --when-ready app-12 again",
+      };
+      const arming = { command: "merge when ready", repo: "app", task: "12" };
+      expect(await askOn(yours, arming)).toEqual(changed);
+      expect(await askOn(yours, { ...arming, seen: { pr: 8, started } })).toEqual(changed);
+      expect(await askOn(yours, { ...arming, seen: { pr: 7, started: started - 1 } })).toEqual(
+        changed,
+      );
+      expect(thread().merge_plan).toBeNull();
+
+      // Without a terminal nothing asks, so nothing arms.
+      const piped = Bun.spawnSync([process.execPath, main, "merge", "--when-ready", "app-12"], {
+        env: env(),
+        stdin: "pipe",
+        stderr: "pipe",
+      });
+      expect(piped.stderr.toString()).toContain("run it at your own terminal");
+      // The lead's and the builder's sockets don't take it at all.
+      const request = { command: "merge when ready", repo: "app", task: "12" };
+      const unknown = { error: "the daemon doesn't know that request" };
+      expect(await askOn(leadSocket(), request)).toEqual(unknown);
+      expect(await askOn(builderSocket(), request)).toEqual(unknown);
+      expect(thread().merge_plan).toBeNull();
+
+      expect(await arm()).toContain("app-12 merges once it is approved and green.");
+      expect(thread()).toMatchObject({ merge_plan: "armed", merge_by: login() });
+      // sc ps says so.
+      const ps = Bun.spawnSync([process.execPath, main, "ps"], { env: env(), stdout: "pipe" });
+      expect(ps.stdout.toString()).toContain("when ready");
+    }, 60_000);
+
+    test("an armed merge waits on a new push and failing CI, then merges the approved head", async () => {
+      await approvedApp12();
+      await arm();
+      const head = pushed();
+      expect(head).toMatch(/^[0-9a-f]{40}$/);
+      // A push nobody reviewed is never merged, and the lead hears it waits, once a round.
+      pr({ head: "b".repeat(40), reviews: [skelReview], checks: [approved] });
+      await until(() => thread().merge_waits === "a review of its newest commit");
+      await until(() =>
+        leadTyped().includes(
+          "app-12 still waits to merge when ready, on a review of its newest commit.",
+        ),
+      );
+      // Failing CI waits too.
+      pr({ head, reviews: [skelReview], checks: [approved, check(5, "failed")] });
+      await until(() => thread().merge_waits === "its failing checks to be fixed");
+      await morePolls();
+      expect(merges()).toEqual([]);
+      expect(thread().merge_plan).toBe("armed");
+      expect(leadTyped().split("still waits to merge when ready").length - 1).toBe(1);
+
+      // Green at the approved head, it first posts a review on that commit saying who asked.
+      // The forge decides whether it merges cleanly: a refusal keeps it armed, and says why.
+      const records = () =>
+        asked(plugin).filter(
+          (q) => q.ask === "review" && String(q.body).startsWith("Merging when ready"),
+        );
+      // A forge that fails to merge, such as when it is down, keeps the plan armed and says why.
+      answer(plugin, "merge pr", { refused: "Pull Request is not mergeable" });
+      writeFileSync(join(plugin, "fail-merge-pr"), "GitHub is down");
+      pr({ head, reviews: [skelReview], checks: [approved, check(6, "passed")] });
+      await until(
+        () => thread().merge_waits === "the forge, which failed: github failed: GitHub is down",
+      );
+      expect(thread()).toMatchObject({ merge_plan: "armed" });
+      expect(thread().status).not.toBe("done");
+      rmSync(join(plugin, "fail-merge-pr"));
+      await until(
+        () => thread().merge_waits === "the forge, which refused: Pull Request is not mergeable",
+      );
+      await morePolls();
+      expect(thread().merge_plan).toBe("armed");
+      expect(merges().length).toBeGreaterThan(1);
+      expect(merges()[0]).toMatchObject({
+        ask: "merge pr",
+        repository: "simon/app",
+        pr: 7,
+        commit: head,
+      });
+      // The record is posted once for the plan, however often the forge fails or refuses.
+      expect(records()).toHaveLength(1);
+      expect(records()[0]).toMatchObject({ pr: 7, commit: head, verdict: "approve" });
+      expect(String(records()[0]?.body)).toStartWith(
+        `Merging when ready, as asked by ${login()} on `,
+      );
+
+      // Cancelled and armed again, the same commit is a new plan, with a record of its own.
+      const cancel = { command: "merge cancel", repo: "app", task: "12" };
+      await askOn(join(home, "run", "skelcrew.sock"), cancel);
+      expect(thread().merge_plan).toBeNull();
+      await arm();
+      await until(() => records().length === 2);
+      await morePolls();
+      expect(records()).toHaveLength(2);
+
+      // While the forge merges, a cancel is refused, as it could no longer stop the merge.
+      writeFileSync(join(plugin, "hold-merge-pr"), "");
+      answer(plugin, "merge pr", null);
+      await until(() => existsSync(join(plugin, "held-merge-pr")));
+      expect(
+        await askOn(join(home, "run", "skelcrew.sock"), {
+          command: "merge cancel",
+          repo: "app",
+          task: "12",
+        }),
+      ).toEqual({ error: "app-12 is merging on its forge right now, so it can't be cancelled" });
+      rmSync(join(plugin, "hold-merge-pr"));
+      await until(() => thread().status === "done" && !existsSync(clone()));
+      await until(() =>
+        leadTyped().includes("app-12 is done: #7 merged into main when ready, as the human asked"),
+      );
+    }, 90_000);
+
+    // The thread or its checks can change while the forge takes the record. The PR stays green
+    // in Skelcrew's copy in each case below, so only the change itself can stop the merge.
+    test("a failing check, a pending review or a stop while the record is posted stops the merge", async () => {
+      await approvedApp12();
+      const head = pushed();
+      const green = () => pr({ head, reviews: [skelReview], checks: [approved] });
+      const sc = (...words: string[]) =>
+        Bun.spawnSync([process.execPath, main, ...words], { env: env(), stderr: "pipe" });
+      // Arms a new plan, which posts a record of its own, and holds that record.
+      const holdRecord = async () => {
+        rmSync(join(plugin, "held-review"), { force: true });
+        writeFileSync(join(plugin, "hold-review"), "");
+        await arm();
+        green();
+        await until(() => existsSync(join(plugin, "held-review")));
+      };
+
+      // A check that fails on the same commit: the merge acts on the checks the forge reports
+      // after the record, so it waits for the check to be fixed.
+      await holdRecord();
+      pr({ head, reviews: [skelReview], checks: [approved, check(9, "failed")] });
+      rmSync(join(plugin, "hold-review"));
+      await until(() => thread().merge_waits === "its failing checks to be fixed");
+      await morePolls();
+      expect(merges()).toEqual([]);
+      expect(thread().merge_plan).toBe("armed");
+      sc("merge", "--cancel", "app-12");
+
+      // A pending review, with the PR green all along: the plan stays armed and waits for it.
+      // Its record is posted and the forge refuses the merge first, so the plan is ready but
+      // for the review, which is kept pending by holding its post on the PR.
+      sc("merge", "--cancel", "app-12");
+      answer(plugin, "merge pr", { refused: "Not yet" });
+      await arm();
+      green();
+      await until(() => thread().merge_waits === "the forge, which refused: Not yet");
+      writeFileSync(join(plugin, "hold-review"), "");
+      expect(sc("review", "app-12").stderr.toString()).toBe("");
+      await until(() => thread().reviewing !== null);
+      const tried = merges().length;
+      answer(plugin, "merge pr", null);
+      await until(() => thread().merge_waits === "its review");
+      await morePolls();
+      expect(thread().reviewing).not.toBeNull();
+      expect(merges()).toHaveLength(tried);
+      expect(thread().merge_plan).toBe("armed");
+      // Once the review ends, the PR stops being green, so this phase merges nothing after it.
+      pr({ head, reviews: [skelReview], checks: [{ ...approved, state: "running" }] });
+      rmSync(join(plugin, "hold-review"));
+      await until(() => thread().reviewing === null && thread().submitting === null, 30_000);
+      await morePolls();
+      expect(merges()).toHaveLength(tried);
+
+      // A stop, with the PR green: the plan stays armed, for when the thread starts again.
+      sc("merge", "--cancel", "app-12");
+      await holdRecord();
+      expect(sc("stop", "app-12").stderr.toString()).toBe("");
+      rmSync(join(plugin, "hold-review"));
+      await morePolls();
+      expect(merges()).toHaveLength(tried);
+      expect(thread()).toMatchObject({ status: "stopped", merge_plan: "armed" });
+    }, 150_000);
+
+    // A review asked for while the record is posted keeps the plan waiting until it ends, with
+    // the PR green all along. The review is kept pending by holding its pending check, so the
+    // record can go through on its own.
+    test("a review started while the record is posted holds the merge until it ends", async () => {
+      await approvedApp12();
+      const head = pushed();
+      writeFileSync(join(plugin, "hold-review"), "");
+      await arm();
+      pr({ head, reviews: [skelReview], checks: [approved] });
+      await until(() => existsSync(join(plugin, "held-review")));
+      writeFileSync(join(plugin, "hold-status-pending"), "");
+      const sc = Bun.spawnSync([process.execPath, main, "review", "app-12"], {
+        env: env(),
+        stderr: "pipe",
+      });
+      expect(sc.stderr.toString()).toBe("");
+      await until(() => thread().reviewing !== null && existsSync(join(plugin, "held-status")));
+      const reviewedAt = thread().review_at;
+      // The record goes through while the review is still pending: nothing merges.
+      rmSync(join(plugin, "hold-review"));
+      await until(() => thread().merge_waits === "its review");
+      await morePolls();
+      expect(thread().reviewing).not.toBeNull();
+      expect(merges()).toEqual([]);
+      expect(thread().merge_plan).toBe("armed");
+      // Once the review ends, approved, the next poll merges the approved commit.
+      rmSync(join(plugin, "hold-status-pending"));
+      await until(() => merges().length === 1, 30_000);
+      expect(merges()[0]).toMatchObject({ pr: 7, commit: head });
+      expect(thread().review_at).not.toBe(reviewedAt);
+      await until(() => thread().status === "done");
+    }, 120_000);
+
+    // A poll asks the forge, then acts on its answer. A review that ends while the forge
+    // answers makes that answer stale: the new round's checks may not be in it. The merge then
+    // waits for a poll that began after the review.
+    test("a review that ends while the forge answers a poll waits for the next poll", async () => {
+      await approvedApp12();
+      const head = pushed();
+      const green = () => pr({ head, reviews: [skelReview], checks: [approved] });
+      // The record is posted and the forge refuses the merge, so the plan is armed and ready.
+      answer(plugin, "merge pr", { refused: "Not yet" });
+      await arm();
+      green();
+      await until(() => thread().merge_waits === "the forge, which refused: Not yet");
+      const tried = merges().length;
+      // A poll holds on the forge while a review runs and ends.
+      rmSync(join(plugin, "held-changed"), { force: true });
+      writeFileSync(join(plugin, "hold-changed"), "");
+      await until(() => existsSync(join(plugin, "held-changed")));
+      const reviewedAt = thread().review_at;
+      const sc = Bun.spawnSync([process.execPath, main, "review", "app-12"], {
+        env: env(),
+        stderr: "pipe",
+      });
+      expect(sc.stderr.toString()).toBe("");
+      await until(() => thread().reviewing === null && thread().review_at !== reviewedAt, 30_000);
+      // The held poll gets the PR green, as it was before the review. Every later poll gets
+      // its new check still running, which the forge would show for the new round.
+      green();
+      writeFileSync(
+        join(plugin, "changed.once.json"),
+        readFileSync(join(plugin, "changed.json"), "utf8"),
+      );
+      pr({ head, reviews: [skelReview], checks: [{ ...approved, state: "running" }] });
+      answer(plugin, "merge pr", null);
+      rmSync(join(plugin, "hold-changed"));
+      await until(() => !existsSync(join(plugin, "changed.once.json")));
+      await morePolls();
+      expect(merges()).toHaveLength(tried);
+      expect(thread().merge_plan).toBe("armed");
+    }, 120_000);
+
+    // A forge that fails to post the record says so on the plan it was posted for, never on a
+    // plan cancelled meanwhile.
+    test("a record that fails after the plan was cancelled leaves nothing behind", async () => {
+      await approvedApp12();
+      writeFileSync(join(plugin, "hold-review"), "");
+      writeFileSync(join(plugin, "fail-review"), "GitHub is down");
+      await arm();
+      pr({ head: pushed(), reviews: [skelReview], checks: [approved] });
+      await until(() => existsSync(join(plugin, "held-review")));
+      const cancel = { command: "merge cancel", repo: "app", task: "12" };
+      await askOn(join(home, "run", "skelcrew.sock"), cancel);
+      rmSync(join(plugin, "hold-review"));
+      await morePolls();
+      expect(thread()).toMatchObject({ merge_plan: null, merge_waits: null });
+      expect(merges()).toEqual([]);
+      expect(leadTyped()).not.toContain("still waits to merge when ready");
+    }, 90_000);
+
+    test("sc rm while the record is posted stops the merge and drops the plan", async () => {
+      await approvedApp12();
+      writeFileSync(join(plugin, "hold-review"), "");
+      await arm();
+      pr({ head: pushed(), reviews: [skelReview], checks: [approved] });
+      await until(() => existsSync(join(plugin, "held-review")));
+      const removing = Bun.spawn([process.execPath, main, "rm", "app-12"], {
+        env: { ...env(), SKELCREW_SOCKET: leadSocket() },
+        stderr: "pipe",
+      });
+      await until(() => thread().status === "stopped" || thread().status === "done");
+      rmSync(join(plugin, "hold-review"));
+      await removing.exited;
+      await until(() => thread().status === "done");
+      await morePolls();
+      expect(merges()).toEqual([]);
+      expect(thread().merge_plan).toBeNull();
+    }, 90_000);
+
+    test("an armed merge waits on a conflict, and once cancelled or its thread removed, never merges", async () => {
+      await approvedApp12();
+      await arm();
+      // A conflict waits for the builder to fix it in a new round.
+      pr({ head: pushed(), conflicts: true, reviews: [skelReview], checks: [approved] });
+      await until(() => thread().merge_waits === "its conflict with main to be fixed");
+      expect(merges()).toEqual([]);
+      // The lead may cancel without asking, as cancelling is always safe.
+      const cancel = { command: "merge cancel", repo: "app", task: "12" };
+      expect(await askOn(leadSocket(), cancel)).toEqual({
+        said: "app-12 won't merge by itself. It waits for you to merge it.",
+      });
+      expect(thread().merge_plan).toBeNull();
+      pr({ head: pushed(), reviews: [skelReview], checks: [approved] });
+      await morePolls();
+      expect(merges()).toEqual([]);
+
+      // Removing the thread disarms it.
+      await arm();
+      expect(thread().merge_plan).toBe("armed");
+      const removed = Bun.spawnSync([process.execPath, main, "rm", "app-12"], {
+        env: { ...env(), SKELCREW_SOCKET: leadSocket() },
+        stderr: "pipe",
+      });
+      expect(removed.stderr.toString()).toBe("");
+      await until(() => thread().status === "done");
+      expect(thread().merge_plan).toBeNull();
+      expect(merges()).toEqual([]);
+    }, 90_000);
+  });
 });
