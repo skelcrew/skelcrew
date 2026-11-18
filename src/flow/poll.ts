@@ -216,9 +216,11 @@ async function actOnPr(
   // approval is ready to merge only while they all pass.
   const checks = ciState(pr);
   const green = allGreen(pr);
-  const ciChanged = checks !== thread.checks || green !== thread.ci_passed;
+  const seen = thread.ci_seen || checks !== null;
+  const ciChanged =
+    checks !== thread.checks || green !== thread.ci_passed || seen !== thread.ci_seen;
   if (!stale && thread.submitting === null && ciChanged)
-    record(db, folder, { checks, ci_passed: green });
+    record(db, folder, { checks, ci_passed: green, ci_seen: seen });
   // A merge or close ends the thread whatever else is going on. Otherwise new events go to
   // the builder, and with none, only what is seen and what changed is saved.
   if ("end" in decision) {

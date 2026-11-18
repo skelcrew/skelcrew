@@ -19,6 +19,7 @@ import {
   type PullRequest,
   refusedWorkflow,
   reviewCheck,
+  reviewComment,
   whoRunsTheSuite,
 } from "../src/flow/decide.ts";
 import { endedWithoutSubmit, waitsOnSubmit } from "../src/flow/status.ts";
@@ -67,6 +68,8 @@ function thread(change: Partial<Thread> = {}): Thread {
     review_round: null,
     verdict: null,
     review_line: null,
+    reviewed_commit: null,
+    ci_seen: false,
     review_at: null,
     harness: null,
     short: null,
@@ -85,6 +88,7 @@ function thread(change: Partial<Thread> = {}): Thread {
     merge_waits: null,
     merge_noted: null,
     agents: null,
+    review_post: null,
     ...change,
   };
 }
@@ -669,7 +673,7 @@ test("gives the reviewer the end of each failed check's log, which names the fai
   );
 });
 
-const approval = { verdict: "approve" as const, body: "Ready." };
+const approval = { verdict: "approve" as const, body: "Ready.", findings: [] };
 
 test("with a forge, an approved review waits on CI", () => {
   const outcome = afterReview(0, approval, 3, null);
@@ -681,6 +685,31 @@ test("without a forge, an approved review needs you at once, saying where the br
   const ready = "app-t1 is ready on branch skelcrew/t1-fix-login";
   const outcome = afterReview(0, approval, 3, ready);
   expect(outcome).toMatchObject({ needsYou: true, status: "waiting", why: ready });
+});
+
+// The builder gets each finding numbered after the body, so none hides in a paragraph.
+test("changes asked for type the body and each finding into the builder, and count a round", () => {
+  const changes = {
+    verdict: "changes" as const,
+    body: "Ran the export tests.",
+    findings: ["The export has no test.", "The flag is misspelled."],
+  };
+  const outcome = afterReview(1, changes, 3, null);
+  expect(outcome.rounds).toBe(2);
+  expect(outcome.tell).toContain(
+    "Ran the export tests.\n\n1. The export has no test.\n2. The flag is misspelled.",
+  );
+});
+
+// One comment is edited each round, so it says which round and commit it now holds.
+test("Skelcrew's review comment names its round and commit, then the body and findings", () => {
+  const review = { body: "CI pending.", findings: ["The export has no test."] };
+  expect(reviewComment(review, 2, "4f9c2e1aabbccdd")).toBe(
+    "Round 2 · commit 4f9c2e1\n\nCI pending.\n\n1. The export has no test.",
+  );
+  expect(reviewComment({ body: "Ready.", findings: [] }, 1, "abc1234ff")).toBe(
+    "Round 1 · commit abc1234\n\nReady.",
+  );
 });
 
 // Needs no sandbox, so the rule is checked in every test run, even inside a builder's sandbox,

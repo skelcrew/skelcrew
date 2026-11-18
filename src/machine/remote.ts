@@ -262,15 +262,16 @@ function checkHost(host: string): void {
 export async function remote(host: string, args: string[]): Promise<number> {
   checkHost(host);
   // The server can't see the checkout you are in, so its remote goes along as --from where the
-  // command needs it: plain sc, and sc pr show with a PR's number, which names a PR of that
-  // repository. A thread's name already names its repository.
+  // command needs it: plain sc, sc --list, and sc pr show with a PR's number, which names a PR
+  // of that repository. A thread's name already names its repository.
   const words = args.filter((arg) => arg !== "--json");
+  const plain = words.length === 0 || (words[0] === "--list" && words.length === 1);
   const numbered =
     words[0] === "pr" &&
     words[1] === "show" &&
     /^#?\d+$/.test(words[2] ?? "") &&
     words.length === 3;
-  const from = args.length === 0 || numbered ? originHere() : null;
+  const from = plain || numbered ? originHere() : null;
   const machine = serverMachine(host);
   const there = machine.sc(from ? [...args, "--from", from] : args);
   const connect = () => runUpToDate(host, there, machine);

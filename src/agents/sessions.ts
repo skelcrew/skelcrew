@@ -381,6 +381,12 @@ export function listSessions(
 export const readSession = (socket: string, name: string) =>
   mustTmux(socket, ["capture-pane", "-p", "-t", `=${name}:`]);
 
+// Types text into the agent in the named session as if from your keyboard, keys such as Enter
+// included, for keys you typed just before attaching to it.
+export function typeKeys(socket: string, name: string, text: string): void {
+  tmux(socket, ["send-keys", "-t", `=${name}:`, "-l", text]);
+}
+
 // Reports whether someone has scrolled back in the named session, in tmux's copy mode, so
 // Skelcrew can hold a message rather than throw them back to the bottom while they read. Copy
 // mode stays on a pane you left for another session, so its messages wait until you come back
@@ -429,6 +435,41 @@ export function pasteStaged(socket: string, name: string, staged: string): void 
 // read back.
 export function dropStaged(socket: string, staged: string): void {
   tmux(socket, ["delete-buffer", "-b", staged]);
+}
+
+// Returns whether this machine knows the terminal. tmux refuses one it doesn't, such as Ghostty's
+// xterm-ghostty over ssh, so attaching falls back to xterm-256color, which draws Claude Code well
+// enough.
+const knownTerminal = (term: string) =>
+  !Bun.which("infocmp") ||
+  Bun.spawnSync(["infocmp", term], { stdout: "ignore", stderr: "ignore" }).success;
+
+// Attaches your terminal full screen to the named session, and returns once you leave it with
+// Alt-Q or Ctrl-Q, or its agent ends. Gives tmux's error when it couldn't attach, such as to a
+// session that just ended, or null. A session can stay after its agent ends, showing its last
+// screen, and tmux would keep you on it. So while you are attached it looks each half second,
+// and detaches you once the agent no longer runs. The server may have started under an older
+// Skelcrew, so it gets today's settings first. TMUX must go, or tmux refuses to attach from
+// inside tmux.
+export async function attachSession(socket: string, name: string): Promise<string | null> {
+  const env = envWithoutTmux();
+  if (env.TERM && !knownTerminal(env.TERM)) env.TERM = "xterm-256color";
+  applyConfig(socket);
+  const client = Bun.spawn(["tmux", "-L", socket, "-f", "/dev/null", "attach", "-t", `=${name}`], {
+    env,
+    stdio: ["inherit", "inherit", "pipe"],
+  });
+  // Only this attachment's client is detached, found by its process, as you may have the same
+  // agent open in another terminal too.
+  const watch = setInterval(() => {
+    if (agentRuns(socket, name)) return;
+    const clients = tmux(socket, ["list-clients", "-F", "#{client_pid} #{client_tty}"]).out;
+    const mine = clients.split("\n").find((line) => line.startsWith(`${client.pid} `));
+    if (mine) tmux(socket, ["detach-client", "-t", mine.slice(`${client.pid} `.length)]);
+  }, 500);
+  const [code, said] = await Promise.all([client.exited, new Response(client.stderr).text()]);
+  clearInterval(watch);
+  return code === 0 ? null : said.trim() || `tmux attach exited with ${code}`;
 }
 
 // Returns a command that attaches a terminal to the named session, for the screen's right pane.

@@ -31,8 +31,9 @@ const restarted =
 const asking =
   "\nUse the setup and test commands named at the end of these instructions, as every builder of the repository uses the same ones. If one you need isn't configured, never make one up: ask the lead which to use with sc tell lead, and wait for its answer. That counts as blocked.\n";
 
-// What the lead was told about issues, threads and PRs before sc ls and sc show, and before
-// threads with no issue were named by their machine's code, each with what it is told now.
+// What the lead was told about issues, threads and PRs before sc ls and sc show, before threads
+// with no issue were named by their machine's code, and about the sidebar before sc --list, each
+// with what it is told now.
 const leadTasks = [
   ["prints its name, such as app-t1.", "prints its name, such as app-wr1."],
   [
@@ -54,6 +55,14 @@ const leadTasks = [
   [
     '- sc tell app-13 "<text>" types a message into that thread\'s builder once it is idle,',
     '- sc tell app-13 "<text>", or sc tell app-13/builder "<text>", types a message into that thread\'s builder once it is idle,',
+  ],
+  [
+    "The sidebar shows those words in place of its long title.",
+    "The sidebar and sc --list show those words in place of its long title.",
+  ],
+  [
+    "They answer a builder's question by picking app-12 in the sidebar beside you.",
+    "They answer a builder's question by picking app-12 in the sidebar beside you, or, if they opened you from sc --list, by leaving you with Alt-Q and pressing Enter on app-12 in the list.",
   ],
   // A turn that ended without sc submit brought the human in. Its last message now goes to the
   // lead, who brings a question to the human, unless the builder told the lead in that turn. The
@@ -156,7 +165,9 @@ ${tests}
 
 Check that it does what this asks and nothing else, and look for bugs, edge cases it misses, missing tests and failing ones.
 
-Answer "approve" only if it is ready to merge. Otherwise answer "changes", and in the body name each problem, where it is and why it matters, so the builder can fix it.`;
+List each problem in the findings, one per entry: what it is, where it is and why it matters, so the builder can fix it. In the body, say in a few lines what you checked and how, such as which tests ran.
+
+Answer "changes" with at least one finding. When you found no problem, answer "approve" with no findings, whatever CI's state: Skelcrew waits for every check to pass before the PR is ready.`;
 }
 
 // Without CI on the commit, the reviewer runs the tests, as it always did.
