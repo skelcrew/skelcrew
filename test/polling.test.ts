@@ -484,6 +484,22 @@ await refreshClone(db, app);`;
   expect(git(skelcrewClone, "rev-parse", "--short=7", "HEAD").trim()).toBe(first);
 });
 
+// A claim made while there is nothing to start from would keep the label from starting the
+// task once there is.
+test("a labeled task on an empty repository is neither claimed nor started until its first commit", async () => {
+  const work = addApp(true);
+  answer(plugin, "took", { took: true });
+  changes([issue12(true)]);
+  serve();
+  await until(() => copied().rows.length === 1);
+  await morePolls();
+  expect(claims()).toEqual([]);
+  expect(thread()).toEqual({});
+  git(work, "push", "-q", join(home, "github", "simon", "app.git"), "main");
+  await until(() => thread().task === 12);
+  expect(claims()).toEqual([claim12]);
+});
+
 // A remote whose HEAD names a branch that is gone has commits all the same, and the log must
 // say what is wrong rather than take it for an empty repository.
 test("a repository whose default branch is gone still logs why its clone can't update", async () => {

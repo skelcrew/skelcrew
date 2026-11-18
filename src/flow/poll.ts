@@ -21,7 +21,7 @@ import { baseOf, startThread } from "./builder.ts";
 import { type Item, openTasks, prOf, saveItems } from "./copy.ts";
 import { ciState, decide, labeledToStart, type PullRequest } from "./decide.ts";
 import { endThread, removing, tellBuilder, tellingEvents } from "./events.ts";
-import { fetchInto, onRemote } from "./git.ts";
+import { fetchInto, headCommit, onRemote } from "./git.ts";
 import { noteForLead, typeLeadNotes } from "./lead.ts";
 import { forgeKnown, fullNameIs, refreshClone, repositories } from "./repo.ts";
 import { needsYou } from "./status.ts";
@@ -39,7 +39,7 @@ const startLabel = "skelcrew";
 // of its own, such as the branch to start from. A task in `passed`, named the same way, is one
 // this daemon won't start by its label: someone else claimed it, or its claim was this
 // daemon's but the thread failed to start. Kept in memory, so the tracker isn't asked about it
-// on every poll.
+// on every poll. Nothing starts while the repository has no commits yet.
 async function startLabeled(
   db: Database,
   sessions: string,
@@ -60,7 +60,14 @@ async function startLabeled(
     const key = `${fullName}#${task.id}`;
     return task.labels.includes(startLabel) && !starting.has(key) && !passed.has(key);
   });
-  for (const task of labeledToStart(threads, labeled)) {
+  const toStart = labeledToStart(threads, labeled);
+  // A repository with no commits yet has nothing for a thread to start from, and a claim made
+  // now would keep its label from starting it once it has some. Skelcrew's clone, just
+  // refreshed, has no commit then, which costs no call to the remote.
+  const clone = cloneDir(owner, repo);
+  if (toStart.length > 0 && existsSync(clone) && (await headCommit(db, repository, clone)) === "")
+    return;
+  for (const task of toStart) {
     const key = `${fullName}#${task.id}`;
     // A claim that fails, such as on a network error, starts nothing and is tried again on the
     // next poll, so a task is never started without its claim.
