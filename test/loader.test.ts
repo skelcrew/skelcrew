@@ -310,7 +310,7 @@ test("a harness your repos: override names goes over the repository's role lines
 
 test("a harness your repos: override names counts though yours below it isn't valid", () => {
   files(
-    "harness: invalid\nmodel: opus\nrepos: { simon/app: { harness: codex } }\n",
+    "harness: invalid\nrepos: { simon/app: { harness: codex } }\n",
     "builder: { harness: claude }\n",
   );
   const read1 = read(roleGroups);
@@ -322,6 +322,10 @@ test("a harness your repos: override names counts though yours below it isn't va
   // Your model belongs to your harness, so a bad one isn't read either.
   files("harness: claude\nmodel: [1]\nrepos: { simon/app: { harness: codex } }\n", null);
   expect(read(["lead"]).settings?.lead).toEqual({ harness: "codex" });
+  // With a model of yours, your harness decides whether it goes along on Codex, so a bad one
+  // counts, and is refused.
+  files("harness: invalid\nmodel: opus\nrepos: { simon/app: { harness: codex } }\n", null);
+  expect(read(["lead"]).err).toContain("config.yaml isn't valid: harness");
   // Without the override, yours is read and refused.
   files("harness: invalid\n", null);
   expect(read(["lead"]).err).toContain("config.yaml isn't valid");
@@ -441,6 +445,14 @@ test("your override's model for every role fits the role's last harness, whereve
     "builder: { harness: codex }\n",
   );
   expect(read(["builder"]).settings?.builder).toEqual({ harness: "claude", model: "sonnet" });
+  // The override decides both, so a bad harness the repository gives the builder stops nothing.
+  files(
+    "harness: claude\nrepos: { simon/app: { model: sonnet, roles: { builder: { harness: claude } } } }\n",
+    "builder: { harness: invalid }\n",
+  );
+  const decided = read(["builder"]);
+  expect(decided.err).toBe("");
+  expect(decided.settings?.builder).toEqual({ harness: "claude", model: "sonnet" });
   // The override puts the builder on Codex, so its model can't fit, and a bad one stops nothing.
   files(
     "harness: claude\nrepos: { simon/app: { model: [bad], roles: { builder: { harness: codex } } } }\n",
