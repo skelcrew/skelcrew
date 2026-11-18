@@ -1064,3 +1064,18 @@ test("repo trust shows the whole .agents/ when the clone lost the version you ap
     `simon/app: ${git(checkout, "rev-parse", "HEAD:.agents").trim()}\n`,
   );
 });
+
+test("sc says once that rounds: replaces max_rounds: in your config.yaml, here and under repos:", async () => {
+  const file = join(home, ".config", "skelcrew", "config.yaml");
+  const yours = "harness: claude\nmax_rounds: 5\nrepos:\n  simon/app: { max_rounds: 2 }\n";
+  writeFileSync(file, yours);
+  const first = await skel([]);
+  expect(first.out).toContain(
+    "Your config.yaml's max_rounds: is read as rounds:, which replaces it.",
+  );
+  expect(first.out).toContain(
+    "Your config.yaml's max_rounds: under repos: simon/app is read as rounds:, which replaces it.",
+  );
+  expect((await skel([])).out).not.toContain("replaces it");
+  expect(readFileSync(file, "utf8")).toBe(yours);
+});

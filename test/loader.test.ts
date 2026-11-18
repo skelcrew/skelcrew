@@ -306,3 +306,15 @@ test("a model alone under repos: goes over the repository's role models on your 
     reviewer: { harness: "codex", model: "gpt-6" },
   });
 });
+
+test("rounds: in your config replaces max_rounds:, which still works, and under repos: too", () => {
+  files("max_rounds: 5\n", null);
+  expect(read(["rounds"]).settings?.rounds).toBe(5);
+  files("max_rounds: 5\nrounds: 4\n", null);
+  expect(read(["rounds"]).settings?.rounds).toBe(4);
+  files("rounds: 4\nrepos:\n  simon/app: { rounds: 6, max_rounds: 9 }\n", "max_rounds: 2\n");
+  expect(read(["rounds"]).settings?.rounds).toBe(6);
+  expect(read(["rounds"], "other").settings?.rounds).toBe(4);
+  files("rounds: 0\n", null);
+  expect(read(["rounds"]).err).toContain("config.yaml isn't valid");
+});

@@ -73,11 +73,12 @@ export const reviewLimit = (): number => readSettings(["reviews"]).reviews;
 // your config isn't valid.
 export const checkLimit = (): number => readSettings(["checks"]).checks;
 
-// Says once, for each old key your config.yaml still uses for a role, lead:, builder: or
-// reviewer:, which new key replaces it. The old keys still work, so nothing breaks, but you
-// should know your config has a new shape. Skelcrew changes no file of yours itself. What was
-// said is kept in Skelcrew's data folder, so it is said once per key. A config that can't be
-// read says nothing here, as reading the settings says what is wrong with it.
+// Says once, for each old key your config.yaml still uses, which new key replaces it: lead:,
+// builder: and reviewer: give way to roles:, and max_rounds: to rounds:, at the top and under
+// each repository in repos:. The old keys still work, so nothing breaks, but you should know
+// your config has a new shape. Skelcrew changes no file of yours itself. What was said is kept in
+// Skelcrew's data folder, so it is said once per key. A config that can't be read says nothing
+// here, as reading the settings says what is wrong with it.
 export function tellOldKeys(): void {
   const told = join(dataDir(), "told-old-keys");
   const before = existsSync(told) ? readFileSync(told, "utf8").split("\n") : [];
@@ -87,14 +88,29 @@ export function tellOldKeys(): void {
   } catch {
     return;
   }
-  if (typeof data !== "object" || data === null) return;
-  for (const name of ["lead", "builder", "reviewer"]) {
-    const key = `config.yaml ${name}`;
-    if (!(name in data) || before.includes(key)) continue;
-    console.log(
-      `Your config.yaml's ${name}: is read as roles: { ${name}: … }, which replaces it. It keeps working, and Skelcrew changes no file itself.`,
-    );
-    mkdirSync(dataDir(), { recursive: true });
-    appendFileSync(told, `${key}\n`);
-  }
+  const isMapping = (v: unknown): v is Record<string, unknown> =>
+    typeof v === "object" && v !== null && !Array.isArray(v);
+  if (!isMapping(data)) return;
+  // Your general settings, then each repository's overrides, with where each is said to be.
+  const repos = isMapping(data.repos) ? Object.entries(data.repos) : [];
+  const places: [string, unknown][] = [
+    ["", data],
+    ...repos.map(([name, entry]): [string, unknown] => [` under repos: ${name}`, entry]),
+  ];
+  const replaced: [string, string][] = [
+    ["lead", "roles: { lead: … }"],
+    ["builder", "roles: { builder: … }"],
+    ["reviewer", "roles: { reviewer: … }"],
+    ["max_rounds", "rounds:"],
+  ];
+  for (const [where, settings] of places)
+    for (const [old, now] of replaced) {
+      const key = `config.yaml${where} ${old}`;
+      if (!isMapping(settings) || !(old in settings) || before.includes(key)) continue;
+      console.log(
+        `Your config.yaml's ${old}:${where} is read as ${now}, which replaces it. It keeps working, and Skelcrew changes no file itself.`,
+      );
+      mkdirSync(dataDir(), { recursive: true });
+      appendFileSync(told, `${key}\n`);
+    }
 }

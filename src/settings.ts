@@ -34,6 +34,9 @@ const File = z.looseObject({
   // Read as lead:, builder: and reviewer: are, which it goes over key by key.
   roles: z.record(z.string(), RoleSettings).optional(),
   max_rounds: z.number().int().positive().optional(),
+  // Your round limit in the new shape, which replaces max_rounds in your config.yaml. A
+  // repository's skelcrew.yaml keeps max_rounds until its flow file gives rounds.
+  rounds: z.number().int().positive().optional(),
   limits: z
     .looseObject({
       reviews: z.number().int().positive().optional(),
@@ -95,7 +98,7 @@ const keysOf: Record<Group, Key[]> = {
   lead: ["harness", "model", "lead", "roles"],
   builder: ["harness", "model", "builder", "roles"],
   reviewer: ["harness", "model", "reviewer", "roles"],
-  rounds: ["max_rounds"],
+  rounds: ["rounds", "max_rounds"],
   reviews: ["limits"],
   checks: ["limits"],
   setup: ["setup"],
@@ -120,6 +123,7 @@ const yourKeys: Key[] = [
   "builder",
   "reviewer",
   "roles",
+  "rounds",
   "max_rounds",
   "setup",
   "test",
@@ -149,6 +153,7 @@ const overrideKeys: Key[] = [
   "builder",
   "reviewer",
   "roles",
+  "rounds",
   "max_rounds",
   "setup",
   "test",
@@ -362,7 +367,8 @@ function mergeSettings(overrides: File, files: File[]): Settings {
     lead: role("lead"),
     builder: role("builder"),
     reviewer: role("reviewer"),
-    rounds: first((l) => l.max_rounds) ?? defaults.max_rounds,
+    // In each layer, rounds goes over the old max_rounds.
+    rounds: first((l) => l.rounds ?? l.max_rounds) ?? defaults.max_rounds,
     reviews: first((l) => l.limits?.reviews) ?? defaults.reviews,
     checks: first((l) => l.limits?.checks) ?? defaults.checks,
     setup: first((l) => l.setup),
