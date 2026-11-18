@@ -1511,7 +1511,18 @@ echo "Not logged in"; exit 1`,
       expect(leadTyped().split("still waits to merge when ready").length - 1).toBe(1);
 
       // Green at the approved head, it merges that commit, with a comment saying who asked.
+      // While the forge merges, a cancel is refused, as it could no longer stop the merge.
+      writeFileSync(join(plugin, "hold-merge-pr"), "");
       pr({ head, reviews: [skelReview], checks: [approved, check(6, "passed")] });
+      await until(() => existsSync(join(plugin, "held-merge-pr")));
+      expect(
+        await askOn(join(home, "run", "skelcrew.sock"), {
+          command: "merge cancel",
+          repo: "app",
+          task: "12",
+        }),
+      ).toEqual({ error: "app-12 is merging on its forge right now, so it can't be cancelled" });
+      rmSync(join(plugin, "hold-merge-pr"));
       await until(() => merges().length === 1);
       expect(merges()[0]).toMatchObject({
         ask: "merge pr",

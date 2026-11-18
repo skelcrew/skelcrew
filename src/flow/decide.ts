@@ -59,7 +59,7 @@ export function ciState(pr: PullRequest): Thread["checks"] {
 // Returns what an armed merge when ready still waits on, in words for the thread's row and the
 // lead, such as "an approval", or null once the PR may merge. It merges only at the commit
 // Skelcrew's reviewer approved, `approved`, which must still be the PR's head, with every check
-// on it passed, Skelcrew's own included, and the forge saying it merges cleanly. A thread that
+// on it passed, Skelcrew's own there and passed too, and the forge saying it merges cleanly. A thread that
 // failed or stopped keeps its plan, and says so, as starting it again carries the plan on.
 export function mergeWaitsOn(
   thread: Thread,
@@ -77,6 +77,9 @@ export function mergeWaitsOn(
   if (pr.checks.some((c) => c.state === "failed" || c.state === "cancelled"))
     return "its failing checks to be fixed";
   if (pr.checks.some((c) => c.state !== "passed")) return "its checks";
+  // Skelcrew's own check carries the review's verdict, so a PR the forge shows without it yet
+  // waits for it rather than counting as green.
+  if (!pr.checks.some((c) => c.name === reviewCheck)) return "its checks";
   return null;
 }
 

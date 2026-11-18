@@ -63,6 +63,9 @@ export function armMerge(db: Database, thread: Thread): string {
     throw new Error(
       `${name}'s repository has no forge, so Skelcrew can't merge it when ready. Once it is approved, merge its branch ${thread.branch} yourself.`,
     );
+  // You agree to a PR you can see, by its number, so a PR opened later never merges under it.
+  if (thread.pr === null)
+    throw new Error(`${name} has no PR yet: arm a merge when ready once it opens one`);
   if (thread.merge_plan === "armed") return `${name} already merges when it is ready.`;
   const plan = {
     merge_plan: "armed" as const,
@@ -80,10 +83,18 @@ export function armMerge(db: Database, thread: Thread): string {
 export function cancelMerge(db: Database, thread: Thread): string {
   const name = threadName(db, thread);
   if (thread.merge_plan === null) return `${name} had no merge when ready.`;
+  // Once the forge was asked to merge, nothing can take that back, so saying it won't merge
+  // would be untrue.
+  if (merging.has(thread.folder))
+    throw new Error(`${name} is merging on its forge right now, so it can't be cancelled`);
   const none = { merge_plan: null, merge_waits: null, merge_noted: null };
   record(db, thread.folder, none, "its merge when ready was cancelled");
   return `${name} won't merge by itself. It waits for you to merge it.`;
 }
+
+// The threads whose PR the forge is merging now, by folder. A cancel meanwhile is refused, as
+// it could no longer stop the merge.
+const merging = new Set<string>();
 
 // Merges an armed thread's PR once it is ready, from a poll, with the PR as its forge just
 // returned it. It merges at the approved commit, so a push after the approval is never merged,
@@ -109,7 +120,15 @@ export async function mergeIfReady(
     });
     const comment = `Merged when ready, as asked by ${thread.merge_by ?? "you"} on ${asked}.`;
     const repository = repositoryOf(db, thread);
-    const refused = await mergePr(db, repository, { pr: thread.pr, commit: approved, comment });
+    // Marked before the forge is asked, with nothing waited on since the plan was read, so a
+    // cancel either came first and this never merges, or comes after and is refused.
+    merging.add(folder);
+    let refused: string | null;
+    try {
+      refused = await mergePr(db, repository, { pr: thread.pr, commit: approved, comment });
+    } finally {
+      merging.delete(folder);
+    }
     if (refused === null) {
       await endThread(
         db,

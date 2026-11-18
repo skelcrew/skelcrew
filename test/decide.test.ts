@@ -671,6 +671,10 @@ test("a merge when ready waits until the approved head is green and merges clean
   // Skelcrew's own check counts too, as it carries the review's verdict.
   const pending = pr({ ...green, checks: [{ ...approved, state: "running" }] });
   expect(mergeWaitsOn(ready, pending, head)).toBe("its checks");
+  // A PR the forge shows without Skelcrew's check yet isn't green, with CI or without.
+  expect(mergeWaitsOn(ready, pr({ ...green, checks: [] }), head)).toBe("its checks");
+  const ciOnly = pr({ ...green, checks: [run(1, "test", "passed")] });
+  expect(mergeWaitsOn(ready, ciOnly, head)).toBe("its checks");
   // A thread that failed or stopped keeps its plan, and says why it waits.
   expect(mergeWaitsOn({ ...ready, status: "failed" }, green, head)).toBe(
     "its thread, which failed",

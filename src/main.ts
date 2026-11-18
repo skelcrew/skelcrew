@@ -434,11 +434,12 @@ async function mergeCommand(args: string[]): Promise<void> {
       throw new Error("sc merge --when-ready asks you first, so run it at your own terminal");
     // The title comes from the tracker, so its control codes go before it reaches your terminal.
     const { thread, pr, title } = await previewMerge(which);
-    const what = pr === null ? `${thread}'s PR` : `#${pr}`;
+    if (pr === null)
+      throw new Error(`${thread} has no PR yet: arm a merge when ready once it opens one`);
     const { removeControlCodes } = await import("./screen/look.ts");
     const shown = title ? ` ${removeControlCodes(title)}` : "";
     // Bun's prompt answers a bare Enter with null, which is no, as the question says.
-    const answer = prompt(`Merge ${what} (${thread}${shown}) when it's approved and green? [y/N]`);
+    const answer = prompt(`Merge #${pr} (${thread}${shown}) when it's approved and green? [y/N]`);
     if (!["y", "yes"].includes(answer?.trim().toLowerCase() ?? "")) {
       console.log(`Nothing is armed: ${thread} waits for you to merge it.`);
       return;
