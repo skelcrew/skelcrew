@@ -194,11 +194,13 @@ export function readSettings<G extends Group>(
         repository,
       )
     : {};
-  // A role file's harness and model go over the role's line in skelcrew.yaml, key by key. Only
-  // the files of the roles asked for are read, so a broken reviewer file never stops the lead.
+  // The role files' harness and model, a layer of their own just over skelcrew.yaml's lines, as
+  // they go over those lines and a model must follow the harness each layer leaves. Only the
+  // files of the roles asked for are read, so a broken reviewer file never stops the lead.
+  const roleFiles: File = {};
   for (const name of ["lead", "builder", "reviewer"] as const)
     if (repository && groups.some((group) => group === name))
-      shared[name] = overRole(roleFileSettings(name, repository), shared[name]);
+      roleFiles[name] = roleFileSettings(name, repository);
   // A setting your override or the repository sets is not read from the rest of your config, so
   // a bad value there can't stop a repository that decides it. A role is the exception: yours
   // merges with the repository's, as a model goes along only while the role stays on your
@@ -206,7 +208,7 @@ export function readSettings<G extends Group>(
   const decided = (k: Key) =>
     [overrides, shared].some((l) => l[k] !== undefined && l[k] !== null) && !roleKeys.includes(k);
   const fromYours = wanted.filter((k) => yourKeys.includes(k) && !decided(k));
-  return mergeSettings([overrides, shared, readYourFile(fromYours)]);
+  return mergeSettings([overrides, roleFiles, shared, readYourFile(fromYours)]);
 }
 
 // Returns the harness and model a repository's role file names, or nothing when it names neither
@@ -215,30 +217,6 @@ function roleFileSettings(name: RoleName, repository: Repository): RoleSettings 
   const { harness, model } = repositoryRole(name, repository);
   if (harness === undefined && model === undefined) return undefined;
   return { ...(harness && { harness }), ...(model && { model }) };
-}
-
-// Returns a role's settings from one place, `top`, over those from another it goes over,
-// `below`, key by key. A model belongs to its harness, so a `top` that moves the role to another
-// harness without naming a model drops the model below: Codex must never run on opus.
-function overRole(
-  top: RoleSettings | undefined,
-  below: RoleSettings | undefined,
-): RoleSettings | undefined {
-  if (top === undefined || below === undefined) return top ?? below;
-  const merged = { ...below, ...top };
-  const moved = top.harness !== undefined && top.harness !== below.harness;
-  if (!moved || top.model !== undefined) return merged;
-  const { model: _dropped, ...rest } = merged;
-  return rest;
-}
-
-// Returns a file's settings with its roles: lines read as its lead:, builder: and reviewer:
-// lines, each going over the old line key by key, so both shapes work and the new one wins.
-function withRoles(file: File): File {
-  const { roles, ...rest } = file;
-  for (const name of ["lead", "builder", "reviewer"] as const)
-    rest[name] = overRole(roles?.[name], rest[name]);
-  return rest;
 }
 
 // Returns your config.yaml as YAML data, or nothing when you have none.
@@ -252,7 +230,7 @@ function yourConfig(): unknown {
 function readYourFile(keys: Key[]): File {
   if (keys.length === 0) return {};
   const file = join(configDir(), "config.yaml");
-  return withRoles(check(pick(yourConfig(), keys), `${file} isn't valid`));
+  return check(pick(yourConfig(), keys), `${file} isn't valid`);
 }
 
 // Returns your overrides for the repository, from repos: in your config.yaml, holding only the
@@ -272,7 +250,7 @@ function readOverrides(keys: Key[], repository: Repository): File {
     Object.entries(repos.data.repos ?? {}).find(([key]) => key.toLowerCase() === name) ?? [];
   if (entry === undefined || entry === null) return {};
   const problem = `${file} isn't valid under repos: ${repository.owner}/${repository.repo}`;
-  return withRoles(check(pick(entry, wanted), problem));
+  return check(pick(entry, wanted), problem);
 }
 
 // Returns the repository's skelcrew.yaml, holding only `keys`, checked, or nothing when it has
@@ -357,7 +335,8 @@ function mergeSettings(layers: File[]): Settings {
   // Each layer's say on one role, merged.
   const role = (name: "lead" | "builder" | "reviewer") =>
     mergeRole(
-      layers.map((l) => l[name]),
+      // In each layer, roles: goes over the old lead:, builder: and reviewer: lines.
+      layers.flatMap((l) => [l.roles?.[name], l[name]]),
       top,
     );
   return {

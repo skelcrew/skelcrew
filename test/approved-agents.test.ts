@@ -265,3 +265,14 @@ test("a broken role file stops only its own role: the lead still starts", () => 
     ".agents/roles/reviewer.md",
   );
 });
+
+test("a role file naming the harness the role is on already keeps the model skelcrew.yaml gives", () => {
+  agentsFile("roles/builder.md", "---\nharness: claude\n---\nBuild it.\n");
+  writeFileSync(join(clone, "skelcrew.yaml"), "builder: { model: sonnet }\n");
+  commit("roles");
+  inHome(approveCurrent);
+  expect(inHome('return readSettings(["builder"], app).builder;')).toEqual({
+    harness: "claude",
+    model: "sonnet",
+  });
+});

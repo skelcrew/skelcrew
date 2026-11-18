@@ -258,3 +258,11 @@ test("the reviewer's fallback and your reviewer's harness are read from roles: t
     yourReviewer: "codex",
   });
 });
+
+test("roles: naming the harness a role is on already keeps the old line's model", () => {
+  files(
+    "harness: claude\nbuilder: { model: sonnet }\nroles: { builder: { harness: claude } }\n",
+    null,
+  );
+  expect(read(["builder"]).settings?.builder).toEqual({ harness: "claude", model: "sonnet" });
+});
