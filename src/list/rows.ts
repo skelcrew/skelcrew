@@ -166,10 +166,10 @@ function taskRow(
       };
     else if (approved !== copy.head)
       merge = { refused: `${named} has a newer commit than the one approved: wait for its review` };
-    // No checks in the copy is a pass only for a repository with no CI, which its polls saved
-    // as none. Otherwise CI may not have started on the approved commit yet.
+    // No checks in the copy is a pass only for a repository whose polls never found CI. Otherwise
+    // CI may not have started on the approved commit yet, or its checks went missing.
     else if (
-      (ci.length === 0 && thread.checks !== null) ||
+      (ci.length === 0 && (thread.checks !== null || thread.ci_seen)) ||
       !ci.every((check) => check.state === "passed")
     )
       merge = { refused: `${named}'s checks haven't passed on the approved commit yet` };

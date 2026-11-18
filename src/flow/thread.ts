@@ -108,6 +108,11 @@ export const Thread = z.object({
   // needs you for another reason would read as ready to merge before CI ran. False in a row
   // from before Skelcrew kept it, until the next poll.
   ci_passed: z.coerce.boolean(),
+  // Whether a poll ever found CI checks on the PR, besides Skelcrew's own. It never goes back,
+  // unlike its saved checks, which go back to none when the forge's checks vanish, so the list
+  // can tell a repository with no CI from CI that went missing. False in a row from before
+  // Skelcrew kept it, until a poll finds checks.
+  ci_seen: z.coerce.boolean(),
   // The harness of the review waiting or running, which can differ from the latest finished
   // one's once you change your config.
   reviewer: HarnessName.nullable(),

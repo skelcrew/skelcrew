@@ -59,7 +59,7 @@ ${itemSql("app", "pr", 41, "Fix the export header", "2026-11-06T10:00:00Z", { he
 ${threadSql({ task: "7", title: "Login redirect", harness: "claude", started: Date.now() - 300_000 })}
 ${threadSql({ task: "12", title: "Rate limit the API", harness: "codex", asking: 1, needs_you: 1 })}
 ${threadSql({ task: "9", title: "Old work", status: "stopped" })}
-${threadSql({ task: "14", title: "Fix the export header", status: "waiting", needs_you: 1, verdict: "approve", checks: "passing", ci_passed: 1, pr: 41, review_round: 1, reviewed_commit: approved })}
+${threadSql({ task: "14", title: "Fix the export header", status: "waiting", needs_you: 1, verdict: "approve", checks: "passing", ci_passed: 1, ci_seen: 1, pr: 41, review_round: 1, reviewed_commit: approved })}
 ${threadSql({ repo: "site", task: "3", title: "Docs", asking: 1, needs_you: 1 })}`);
 });
 afterEach(() => {
@@ -199,14 +199,21 @@ test("a ready task whose PR moved past the approved commit, or whose checks ther
 });
 
 // The thread can still say CI passed while the forge's copy of the approved head has no checks
-// yet. Only a repository with no CI, whose polls saved none, merges without them.
+// yet, and a poll sets its checks back to none when they vanish. Only a repository whose polls
+// never found CI merges without checks.
 test("a ready task whose approved head has no checks yet can't be merged, unless it has no CI", () => {
   const unchecked = { head: approved, checks: [] };
   sql(itemSql("app", "pr", 41, "Fix the export header", "2026-11-06T10:00:00Z", unchecked));
   expect(rows().find((row) => row.name === "app-14")?.merge).toEqual({
     refused: "app#41's checks haven't passed on the approved commit yet",
   });
+  // CI that polls once found, and whose checks then went missing, isn't a repository with no CI.
   sql("UPDATE tasks SET checks = NULL WHERE task = '14';");
+  expect(rows().find((row) => row.name === "app-14")?.merge).toEqual({
+    refused: "app#41's checks haven't passed on the approved commit yet",
+  });
+  // Polls that never found any CI checks are a repository with no CI.
+  sql("UPDATE tasks SET ci_seen = 0 WHERE task = '14';");
   const merge = rows().find((row) => row.name === "app-14")?.merge;
   expect(merge && "ask" in merge ? merge.ask : "").toBe("Merge app#41 into main? y/n");
 });
@@ -262,13 +269,14 @@ test("each part has its heading, the row you are on has ▸, and every line fits
 
 test("on a narrow terminal every line fits, the row you are on and a question included", () => {
   const asking = { ...frame, bottom: "Merge app#41 into main? y/n, a question longer than this" };
-  for (const width of [10, 20, 30, 45]) {
+  for (const width of [1, 5, 8, 9, 10, 20, 30, 45]) {
     const lines = drawList(rows(), 2, 0, asking, { width, height: 20 }).lines.map((line) =>
       Bun.stripANSI(line),
     );
     for (const line of lines) expect(Bun.stringWidth(line)).toBeLessThanOrEqual(width);
-    expect(lines.filter((line) => line.includes("▸"))).toHaveLength(1);
-    expect(lines.at(-1)).toStartWith(width > 20 ? " Merge app#41" : " Merge");
+    // The row you are on shows its ▸ wherever there is room for it.
+    if (width >= 3) expect(lines.filter((line) => line.includes("▸"))).toHaveLength(1);
+    if (width >= 7) expect(lines.at(-1)).toStartWith(width > 20 ? " Merge app#41" : " Merge");
   }
 });
 

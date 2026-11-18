@@ -46,6 +46,7 @@ const working: Thread = {
   verdict: null,
   review_line: null,
   reviewed_commit: null,
+  ci_seen: false,
   review_at: null,
   harness: null,
   short: null,

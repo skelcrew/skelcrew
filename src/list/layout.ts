@@ -70,8 +70,8 @@ function topLine(frame: Frame, width: number): string {
 // Returns one row as a line. The row you are on has ▸ before its mark and the grey behind it.
 // The name takes `nameWidth` columns, and the title what is left beside the end of the row, which
 // sits at the right edge. On a narrow terminal the title gives way first, then the end of the
-// row and the name are cut, so the line never wraps, which would push the rest down. Only a
-// terminal narrower than the mark and the gaps, 9 columns, is too narrow even for that.
+// row and the name are cut, so the line never wraps, which would push the rest down. On a
+// terminal narrower than the mark and the gaps, 9 columns, the whole row is cut.
 function rowLine(row: Row, here: boolean, nameWidth: number, width: number): string {
   const colour = (c: Colour) => markColours[c];
   const lead = `${here ? " ▸ " : "   "}${tinted(here, colour(row.mark.colour), row.mark.sign)} `;
@@ -84,6 +84,9 @@ function rowLine(row: Row, here: boolean, nameWidth: number, width: number): str
   const room = Math.max(width - 9 - nameRoom - Bun.stringWidth(says), 0);
   const title = filled(fitted(row.title, room), room);
   const line = `${lead}${name}  ${title}  ${tinted(here, colour(row.colour), says)}`;
+  // A terminal narrower than the mark and the gaps gets the row's text cut to fit, without its
+  // colours, as any wider line would wrap.
+  if (Bun.stringWidth(Bun.stripANSI(line)) > width) return fitted(Bun.stripANSI(line), width);
   return here ? shaded(line, width) : line;
 }
 

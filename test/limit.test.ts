@@ -247,6 +247,7 @@ const thread = (change: Partial<Thread>): Thread => ({
   verdict: null,
   review_line: null,
   reviewed_commit: null,
+  ci_seen: false,
   harness: "claude",
   short: null,
   assigned: false,
