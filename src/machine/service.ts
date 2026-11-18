@@ -6,6 +6,7 @@ import { dirname, join } from "node:path";
 import { checkoutFolder, singleFile } from "../version.ts";
 import {
   daemonLog,
+  launchAgentPid,
   loadLaunchAgent,
   plistFile,
   plistText,
@@ -72,7 +73,7 @@ function lastingPath(given: string): string[] {
 }
 
 // Returns the daemon's service definition with a lasting tool PATH and sessions that
-// survive daemon stops. SKELCREW_SERVICE tells sc up it runs as the service, not in a terminal.
+// survive daemon stops.
 function unitText(skel: string, given: string): string {
   // systemd starts services with a bare PATH, which misses bun, your harness and gh where they
   // usually live, so the daemon gets yours.
@@ -85,7 +86,6 @@ Description=Skelcrew daemon
 [Service]
 ExecStart="${unitValue(skel)}" up
 Environment="PATH=${path}"
-Environment="SKELCREW_SERVICE=1"
 Restart=on-failure
 KillMode=process
 
@@ -147,6 +147,21 @@ export function installService(): void {
     else writeFileSync(file, before);
     throw error;
   }
+}
+
+// Returns the process id of the daemon the service runs, or 0 when it runs none or isn't
+// installed. A daemon that answers with another id runs outside the service, such as sc up in
+// a terminal, which the service manager can neither restart nor start a second daemon beside.
+export function servicePid(): number {
+  if (process.platform === "darwin") return launchAgentPid();
+  const show = Bun.spawnSync(
+    ["systemctl", "--user", "show", "-p", "MainPID", "--value", "skelcrew"],
+    {
+      stdout: "pipe",
+      stderr: "pipe",
+    },
+  );
+  return show.success ? Number(show.stdout.toString().trim()) || 0 : 0;
 }
 
 // Starts the daemon's service on this machine, and returns where its log is, for when it

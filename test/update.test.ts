@@ -175,11 +175,16 @@ async function daemon(before: object, after: object): Promise<void> {
     ["systemctl", "--user restart skelcrew"],
     ["launchctl", `kickstart -k gui/${userInfo().uid}/dev.skelcrew.daemon`],
   ];
+  // The service runs the daemon whose process id is 1. Asking so isn't noted with the calls.
+  const asked: Record<string, string> = {
+    systemctl: 'test "$2" = show && echo 1 && exit 0',
+    launchctl: 'test "$1" = print && echo "pid = 1" && exit 0',
+  };
   for (const [name, restart] of managers)
     writeScript(
       home,
       name,
-      `echo "${name} $*" >> "$HOME/calls"\ntest "$*" = "${restart}" && touch "$HOME/restarted"\nexit 0`,
+      `${asked[name]}\necho "${name} $*" >> "$HOME/calls"\ntest "$*" = "${restart}" && touch "$HOME/restarted"\nexit 0`,
     );
   const socket = join(home, "run", "skelcrew.sock");
   // The socket's file comes a moment before it takes connections.
@@ -222,13 +227,14 @@ test("restarts a daemon on an older release before you attach", async () => {
   expect(done.out).toContain("agents keep running");
 });
 
-// The service manager doesn't own a daemon sc up runs in a terminal, so restarting the service
-// would only wait for a daemon that can't start beside it.
-test("asks you to stop a daemon that sc up runs in a terminal on an older release", async () => {
-  await daemon({ release: "0.4.2", terminal: true }, { release: "0.4.3" });
+// The service manager doesn't own a daemon you run in a terminal, such as sc serve from an
+// older release, which says nothing of where it runs. Restarting the service would only wait for
+// a daemon that can't start beside it.
+test("asks you to stop an older daemon that runs outside the service", async () => {
+  await daemon({ release: "0.4.2", pid: 2 }, { release: "0.4.3" });
   const done = await beforeAttaching("0.4.3");
   expect(done.code).toBe(1);
-  expect(done.err).toContain("runs in a terminal, with sc up");
+  expect(done.err).toContain("runs outside its service");
   expect(done.err).toContain("Ctrl-C");
   expect(done.calls).toBe("");
 });

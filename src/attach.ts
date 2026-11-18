@@ -7,7 +7,7 @@ import { ask } from "./client.ts";
 import { openDb } from "./db.ts";
 import { leadOf } from "./flow/lead.ts";
 import { findThread } from "./flow/thread.ts";
-import { installService, restartDaemon, startDaemon } from "./machine/service.ts";
+import { installService, restartDaemon, servicePid, startDaemon } from "./machine/service.ts";
 import { openScreen } from "./screen/screen.ts";
 import { checkoutFolder, git, release, singleFile } from "./version.ts";
 
@@ -20,15 +20,16 @@ const LeadReply = z.union([
 ]);
 
 // What the daemon says it runs: its release, or for a daemon from a checkout, that checkout's
-// folder and the commit it started on, and whether sc up runs it in a terminal. A field an older daemon doesn't report comes back empty.
+// folder and the commit it started on, and its process id. A field an older daemon doesn't
+// report comes back empty.
 const DaemonBuild = z
   .object({
     release: z.string().catch(""),
     folder: z.string().catch(""),
     commit: z.string().catch(""),
-    terminal: z.boolean().catch(false),
+    pid: z.number().catch(0),
   })
-  .catch({ release: "", folder: "", commit: "", terminal: false });
+  .catch({ release: "", folder: "", commit: "", pid: 0 });
 
 // Returns what the daemon runs, or null when no daemon answers.
 async function daemonRuns(): Promise<z.infer<typeof DaemonBuild> | null> {
@@ -49,6 +50,20 @@ function daemonShouldRun(running: z.infer<typeof DaemonBuild>): string | null {
   return commit === "" || running.commit === commit ? null : `commit ${commit}`;
 }
 
+// Reports whether the daemon that answered runs outside its service, such as sc up or an older
+// sc serve in a terminal. Told by its process id, which every daemon reports, so it holds for a
+// daemon of an older release too. One that reports none can't be told, and counts as the service's.
+const outsideService = (running: z.infer<typeof DaemonBuild>) =>
+  running.pid !== 0 && running.pid !== servicePid();
+
+// The error for a daemon outside its service that runs other code than this Skelcrew. Restarting
+// the service can't end it, and a new daemon can't start while it holds the lock, so only you can
+// stop it.
+const stopItFirst = (want: string) =>
+  new Error(
+    `Skelcrew's daemon runs outside its service, such as with sc up in a terminal, on other code than ${want}. Stop it, such as with Ctrl-C, then run sc again. Your agents keep running.`,
+  );
+
 // Restarts the daemon when it runs another release than this Skelcrew, or another commit of this
 // checkout. So a release installed in the background, or a git pull, takes over the next time
 // you run sc. Agents keep running, as only the daemon restarts.
@@ -56,12 +71,7 @@ export async function restartStaleDaemon(): Promise<void> {
   const running = await daemonRuns();
   const want = running && daemonShouldRun(running);
   if (!want) return;
-  // The service manager doesn't own a daemon in a terminal, and the service's own would find
-  // the lock taken, so only you can stop it.
-  if (running.terminal)
-    throw new Error(
-      `Skelcrew's daemon runs in a terminal, with sc up, on other code than ${want}. Stop it with Ctrl-C, then run sc again. Your agents keep running.`,
-    );
+  if (outsideService(running)) throw stopItFirst(want);
   console.log(`Restarting the daemon on ${want}. Your agents keep running.`);
   const log = restartDaemon();
   // Done once a daemon answers that runs what this Skelcrew wants. The old one can still
@@ -79,15 +89,21 @@ export async function restartStaleDaemon(): Promise<void> {
 }
 
 // Runs the daemon as the background service on this Skelcrew's code, and returns once it
-// answers, saying whether the daemon that answers is one sc up runs in a terminal instead. This
-// is sc up --bg, and plain sc and sc attach do it before attaching. The service is installed
-// first, or rewritten when the PATH or Skelcrew it needs moved. A daemon on another release or
-// commit is restarted, and one that doesn't answer is started.
+// answers. This is sc up --bg, and plain sc and sc attach do it before attaching. The service is
+// installed first, or rewritten when the PATH or Skelcrew it needs moved. A daemon on another
+// release or commit is restarted, and one that doesn't answer is started. A daemon outside the
+// service is left running, and true comes back to say so: a service started beside it would
+// fail on the lock, and fail again on each retry until systemd gave up on it.
 export async function upInBackground(): Promise<boolean> {
+  const before = await daemonRuns();
+  if (before && outsideService(before)) {
+    const want = daemonShouldRun(before);
+    if (want) throw stopItFirst(want);
+    return true;
+  }
   installService();
   await restartStaleDaemon();
-  const running = await daemonRuns();
-  if (running) return running.terminal;
+  if (await daemonRuns()) return false;
   const log = startDaemon();
   // The service manager returns before the daemon listens, so wait until it answers.
   const deadline = Date.now() + 10_000;

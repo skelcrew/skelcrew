@@ -129,9 +129,8 @@ function endWhatItStarted(sockets: string[]): void {
 // sockets listening after returning, and removes them when stopped, leaving every agent's
 // session running. `sessions` names where the agents' sessions run. It never asks questions:
 // systemd has nobody to answer. Polls each repository's tracker and forge every `every`
-// milliseconds while a thread is active. `terminal` says sc up started it in your terminal
-// rather than as the service, which its status reports: restarting the service can't replace it.
-export async function serve(sessions: string, every = 30_000, terminal = false): Promise<void> {
+// milliseconds while a thread is active.
+export async function serve(sessions: string, every = 30_000): Promise<void> {
   if (!setupDone()) throw new Error("the first run isn't done on this machine: run sc first");
   // The lock decides which of two daemons started together runs. The socket can't: both
   // could find one left by a daemon that was killed, and each remove the other's new one. It
@@ -263,7 +262,7 @@ export async function serve(sessions: string, every = 30_000, terminal = false):
       case "status": {
         const builder = builderOf(caller);
         const thread = builder ? { thread: threadName(db, builder) } : {};
-        return { running: true, pid: process.pid, release, ...runningCode, terminal, ...thread };
+        return { running: true, pid: process.pid, release, ...runningCode, ...thread };
       }
       case "lead": {
         // A lead you exited this second is closed first, so the daemon's next look can't close

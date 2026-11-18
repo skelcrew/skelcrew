@@ -23,8 +23,7 @@ const escapeXml = (text: string) =>
 // which misses bun, your harness and gh where they usually live, so the daemon gets yours. It is
 // started again only after a crash, since a daemon that says one is already running exits
 // cleanly. AbandonProcessGroup keeps launchd from ending what the daemon leaves running when
-// it stops, which is what keeps agents alive through a restart. SKELCREW_SERVICE tells sc up it
-// runs as the service, not in a terminal.
+// it stops, which is what keeps agents alive through a restart.
 export function plistText(skel: string, path: string, log: string): string {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -41,8 +40,6 @@ export function plistText(skel: string, path: string, log: string): string {
   <dict>
     <key>PATH</key>
     <string>${escapeXml(path)}</string>
-    <key>SKELCREW_SERVICE</key>
-    <string>1</string>
   </dict>
   <key>RunAtLoad</key>
   <true/>
@@ -93,6 +90,13 @@ function kickstart(restart: boolean): void {
     throw new Error(`launchctl couldn't ${doing} Skelcrew's daemon: ${started.said}`);
   }
   loadLaunchAgent();
+}
+
+// Returns the process id of the daemon launchd runs as the agent, or 0 when it runs none.
+// launchctl print has no stable format, so a line such as "pid = 123" is looked for.
+export function launchAgentPid(): number {
+  const printed = launchctl(["print", `${domain()}/${label}`]);
+  return printed.ok ? Number(printed.said.match(/^\s*pid = (\d+)$/m)?.[1] ?? 0) : 0;
 }
 
 // Restarts the daemon, for a Skelcrew newer than the one the daemon runs: a newer release, or a

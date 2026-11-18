@@ -87,10 +87,12 @@ beforeEach(async () => {
   bwrapVersion("0.11.1");
   // Only there to be found: you run claude setup-token yourself.
   fake("claude", "exit 0");
+  // The service runs the fake daemon, whose process id is 1, once started.
   fake(
     "systemctl",
     `case "$*" in
   "--user start skelcrew"|"--user enable --now skelcrew") : > "$HOME/started" ;;
+  "--user show -p MainPID --value skelcrew") test -e "$HOME/started" && echo 1 || echo 0 ;;
 esac`,
   );
   fake("loginctl", "exit 0");
@@ -115,9 +117,12 @@ afterEach(() => {
 function calls(): string {
   const log = join(home, "calls");
   // The long tmux line that opens the screen is cut to the agent it opens on. Asking tmux's
-  // version and giving the agents' server its settings, which each opening does, are left out.
+  // version and giving the agents' server its settings, which each opening does, are left out,
+  // as is asking which daemon the service runs.
   const said = existsSync(log) ? readFileSync(log, "utf8") : "";
   return said
+    .replace(/systemctl --user show -p MainPID --value skelcrew\n/g, "")
+    .replace(/launchctl print .*\n/g, "")
     .replace(/tmux -L skelcrew -f \/dev\/null (source-file -|list-panes -a .*)\n/g, "")
     .replace(/tmux -V\n/g, "")
     .replace(/tmux -L skelcrew-screen .* sh skelcrew (\S+) \S+ ;.*/g, "screen on $1");
@@ -254,6 +259,25 @@ test("sc up --bg installs and starts the service, then returns without attaching
   expect(calls()).toBe("");
 });
 
+// A service started beside a daemon you run in a terminal would fail on its lock, again on each
+// retry, until systemd gave up on it, and then fail to start once you stopped yours.
+test("sc up --bg leaves a daemon outside the service running, and starts no service", async () => {
+  mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
+  writeFileSync(config(), "harness: claude\n");
+  writeFileSync(token(), "sk-ant-oat01-good\n");
+  mkdirSync(join(home, ".local", "share", "skelcrew"), { recursive: true });
+  writeFileSync(join(home, ".local", "share", "skelcrew", "set-up"), "");
+  // The fake daemon answers, but systemd runs no service.
+  writeFileSync(join(home, "started"), "");
+  fake("systemctl", 'test "$2" = show && echo 0; exit 0');
+  const run = await skel("", bin, main(), home, {}, ["up", "--bg"]);
+  expect(run.err).toBe("");
+  expect(run.code).toBe(0);
+  expect(run.out).toContain("outside its service");
+  expect(existsSync(unit())).toBe(false);
+  expect(calls()).toBe("");
+});
+
 // The service has no terminal, so a daemon started before the first run would only fail.
 test("sc up --bg refuses before the first run, and says to run sc", async () => {
   const run = await skel("", bin, main(), home, {}, ["up", "--bg"]);
@@ -365,6 +389,7 @@ function asMac(): void {
     "launchctl",
     `case "$1" in
   bootstrap|kickstart) : > "$HOME/started" ;;
+  print) test -e "$HOME/started" && echo "pid = 1" ;;
 esac`,
   );
   fake("brew", "exit 0");
@@ -456,6 +481,7 @@ test("on a Mac, loads a changed agent file, so launchd restarts the daemon on it
     `case "$1" in
   bootstrap) cp "$3" "$HOME/loaded.plist"; : > "$HOME/started" ;;
   bootout) rm -f "$HOME/loaded.plist" ;;
+  print) test -e "$HOME/loaded.plist" && echo "pid = 1" ;;
 esac`,
   );
   await skelOnMac("1\nsk-ant-oat01-good\n");
