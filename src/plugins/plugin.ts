@@ -16,18 +16,26 @@ const Command = z.array(z.string().min(1)).min(1);
 export const Version = z.string().regex(/^\d+\.\d+\.\d+$/, "must be a version such as 0.1.0");
 
 // What a plugin can provide, by its kind. An I/O plugin is where work comes from and where it
-// goes. A runtime plugin is about where agents run, and so far only provides machine: how to
-// reach a machine that runs Skelcrew.
-const provided = { io: ["tracker", "forge", "chat"], runtime: ["machine"] } as const;
+// goes. A runtime plugin is about where agents run: a host for their sessions, carrying text
+// into them, showing their status, or how to reach a machine that runs Skelcrew.
+const provided = {
+  io: ["tracker", "forge", "chat"],
+  runtime: ["sessions", "transport", "status", "machine"],
+} as const;
 const Provided = z.enum([...provided.io, ...provided.runtime]);
 type Provided = z.infer<typeof Provided>;
 
 // The commands a plugin must have for each thing it provides. Chat needs none yet. Its
-// commands come with the first chat plugin.
+// commands come with the first chat plugin. A host answers every question about its sessions,
+// their transport and their status through one command, `session`, and attaches your terminal
+// with `attach`.
 const commandsFor = {
   tracker: ["call"],
   forge: ["call", "git_credentials"],
   chat: [],
+  sessions: ["session", "attach"],
+  transport: ["session"],
+  status: ["session"],
   machine: ["add", "exec", "push"],
 } as const;
 
@@ -59,6 +67,8 @@ export const Manifest = z
     add: Command.optional(),
     exec: Command.optional(),
     push: Command.optional(),
+    session: Command.optional(),
+    attach: Command.optional(),
   })
   // Old and new shapes are read into one: a kind and what it provides.
   .transform(({ kind, provides, jobs, ...rest }, context) => {
@@ -80,6 +90,15 @@ export const Manifest = z
           code: "custom",
           path: [provides === undefined ? "jobs" : "provides"],
           message: `${one} isn't for a plugin of kind ${plugin}`,
+        });
+    // Transport and status are about a host's own sessions, so a plugin provides them only along
+    // with sessions.
+    for (const one of ["transport", "status"] as const)
+      if (what.includes(one) && !what.includes("sessions"))
+        context.addIssue({
+          code: "custom",
+          path: ["provides"],
+          message: `${one} goes only with sessions`,
         });
     // A plugin that provides something must have each command that needs.
     for (const one of what)
