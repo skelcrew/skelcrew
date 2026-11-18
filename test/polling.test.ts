@@ -1602,7 +1602,7 @@ echo "Not logged in"; exit 1`,
     // it. Each change below comes while the fake forge holds the record. Skelcrew's copy then
     // stops showing the PR green, so only the check made after the record can stop the merge
     // still under way, which acted on the PR as it was.
-    test("a new review, a stop or sc rm while the record is posted stops the merge", async () => {
+    test("a failing check, a new review or a stop while the record is posted stops the merge", async () => {
       await approvedApp12();
       const head = pushed();
       const green = () => pr({ head, reviews: [skelReview], checks: [approved] });
@@ -1624,6 +1624,17 @@ echo "Not logged in"; exit 1`,
         await morePolls();
         expect(merges()).toEqual([]);
       };
+
+      // A check that fails on the same commit: the merge acts on the checks the forge reports
+      // after the record, so it waits for the check to be fixed.
+      await holdRecord();
+      pr({ head, reviews: [skelReview], checks: [approved, check(9, "failed")] });
+      rmSync(join(plugin, "hold-review"));
+      await until(() => thread().merge_waits === "its failing checks to be fixed");
+      await morePolls();
+      expect(merges()).toEqual([]);
+      expect(thread().merge_plan).toBe("armed");
+      sc("merge", "--cancel", "app-12");
 
       // A new review: the plan stays armed and waits for it.
       await holdRecord();

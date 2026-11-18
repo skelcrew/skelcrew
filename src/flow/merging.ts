@@ -114,7 +114,7 @@ const recorded = new Set<string>();
 
 // Merges an armed thread's PR once it is ready, from a poll, with the PR as its forge just
 // returned it. It merges at the approved commit, so a push after the approval is never merged,
-// after a review on the PR saying who asked for it. Whether the PR merges cleanly is the
+// at a poll after the one that posted a review on the PR saying who asked for it. Whether the PR merges cleanly is the
 // forge's to say as it merges: a refusal keeps the plan armed, with the forge's reason as what
 // it waits on. Once merged, it ends the thread, and the lead's one note says it merged when
 // ready. Otherwise it saves what the merge waits on, for the thread's row, and tells the lead
@@ -126,7 +126,7 @@ export async function mergeIfReady(
   pr: PullRequest,
 ): Promise<void> {
   const thread = readThread(db, folder);
-  if (thread.merge_plan !== "armed" || thread.status === "done") return;
+  if (thread.merge_plan !== "armed" || thread.status === "done" || removing.has(folder)) return;
   const name = threadName(db, thread);
   const approved = lastPushed(thread);
   let waits = mergeWaitsOn(thread, pr, approved);
@@ -146,6 +146,10 @@ export async function mergeIfReady(
     // A forge that fails, such as when it is down, leaves the plan armed, says why it waits,
     // and is tried again at the next poll. It never holds up the poll's other threads.
     const failed = (error: unknown) => `the forge, which failed: ${errorText(error)}`;
+    // The record goes first, in a poll of its own. The merge waits for a later poll, so it
+    // acts on the PR and thread as the forge and Skelcrew have them after the record: a check
+    // that failed or started, a cancel, a stop, sc rm or a new review while the record was
+    // posted all show there, and stop the merge.
     if (!recorded.has(key)) {
       const body = `Merging when ready, as asked by ${thread.merge_by ?? "you"} on ${asked}.`;
       try {
@@ -156,23 +160,14 @@ export async function mergeIfReady(
           body,
         });
         recorded.add(key);
+        return;
       } catch (error) {
         waits = failed(error);
       }
     }
-    // The review took a while, and the thread may have changed meanwhile: cancelled, stopped,
-    // removed, started over, or sent for another review. So it is read again and must still be
-    // the same plan, ready at the same approved commit. Then it is marked as merging with
-    // nothing waited on in between, so a change either came first and this never merges, or
-    // comes after and is refused.
-    const now = readThread(db, folder);
-    const samePlan =
-      now.merge_plan === "armed" &&
-      now.started === thread.started &&
-      now.merge_id === thread.merge_id &&
-      !removing.has(folder);
-    if (!samePlan || lastPushed(now) !== approved || mergeWaitsOn(now, pr, approved) !== null)
-      return;
+    // The thread and PR were read at this poll's start, with nothing waited on since, and the
+    // thread is marked as merging before the forge is asked, so a cancel either came first and
+    // this never merges, or comes after and is refused.
     let refused: string | null = null;
     if (waits === null) {
       merging.add(folder);
