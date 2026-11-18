@@ -215,21 +215,15 @@ test("a machine's code is two letters from its name, so names from two machines 
   expect(codeOf("1234")).toBe("xx");
 });
 
-test("a database keeps its code, numbers past branches another machine pushed, and keeps t names", () => {
-  const data = join(home, ".local", "share", "skelcrew");
-  mkdirSync(data, { recursive: true });
-  const old = new Database(join(data, "skelcrew.db"));
-  old.run("CREATE TABLE machine (code TEXT NOT NULL)");
-  old.run("INSERT INTO machine VALUES ('lp')");
-  old.close();
-  // The remote, where another machine with the code lp already pushed lp1 and lp3. A branch of
-  // a longer code that starts with lp, such as lpx9, is no clash.
+// A remote two machines share, with a first commit on main, and two machines with the same code,
+// lp, such as laptop and lapdog. Returns the remote and each machine's home.
+function twoMachines(): { remote: string; homes: string[] } {
   const remote = join(home, "app.git");
   const work = join(home, "work");
   const git = (cwd: string, ...args: string[]) =>
     Bun.spawnSync(["git", "-C", cwd, ...args], { stderr: "pipe" });
   mkdirSync(work);
-  git(home, "init", "-q", "--bare", remote);
+  git(home, "init", "-q", "--bare", "-b", "main", remote);
   git(work, "init", "-q", "-b", "main");
   git(
     work,
@@ -243,33 +237,90 @@ test("a database keeps its code, numbers past branches another machine pushed, a
     "-m",
     "a",
   );
-  for (const branch of ["lp1-fix", "lp3-docs", "lpx9-other"])
-    git(work, "push", "-q", remote, `main:skelcrew/${branch}`);
+  git(work, "push", "-q", remote, "main");
+  const homes = ["laptop", "lapdog"].map((name) => join(home, name));
+  for (const machine of homes) {
+    const data = join(machine, ".local", "share", "skelcrew");
+    mkdirSync(data, { recursive: true });
+    const db = new Database(join(data, "skelcrew.db"));
+    db.run("CREATE TABLE machine (code TEXT NOT NULL)");
+    db.run("INSERT INTO machine VALUES ('lp')");
+    db.close();
+  }
+  return { remote, homes };
+}
+
+// Starts threads with no issue on the machine whose home is given, one after another, after
+// running `before` against its database. Gives back the process, which prints their names.
+function startOn(machine: string, remote: string, titles: string[], before = "") {
   const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
 import { startThread } from ${JSON.stringify(source("flow/builder.ts"))};
-import { findThread, threadName } from ${JSON.stringify(source("flow/thread.ts"))};
+import { threadName } from ${JSON.stringify(source("flow/thread.ts"))};
 const db = openDb();
 db.run("INSERT INTO repositories (name, owner, repo, remote) VALUES ('app', 'simon', 'app', ?)", [${JSON.stringify(remote)}]);
-db.run(${JSON.stringify(threadSql({ task: "t4", status: "done", title: "Old", own: 1 }))});
+${before}
 const names = [];
-for (const title of ["One", "Two"])
+for (const title of ${JSON.stringify(titles)})
   names.push(threadName(db, await startThread(db, { repo: "app", title, body: "b" })));
-const five = findThread(db, "app", "lp5");
-console.log(JSON.stringify({ names, old: findThread(db, "app", "t4").folder,
-  branch: five.branch, own: five.own }));`;
+console.log(JSON.stringify(names));`;
+  return Bun.spawn([process.execPath, "-e", code], {
+    env: { ...process.env, HOME: machine },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+}
+
+// Waits for a process from startOn and returns the names it printed.
+async function namesFrom(run: ReturnType<typeof startOn>): Promise<string[]> {
+  const [out, err] = [await new Response(run.stdout).text(), await new Response(run.stderr).text()];
+  expect(err).toBe("");
+  return JSON.parse(out);
+}
+
+// Two machines with the same code take names from the remote they share, at the same moment.
+test("two machines with the same code starting threads at once never take one name", async () => {
+  const { remote, homes } = twoMachines();
+  const titles = ["One", "Two", "Three"];
+  const runs = homes.map((machine) => startOn(machine, remote, titles));
+  const names = (await Promise.all(runs.map(namesFrom))).flat();
+  expect(names).toHaveLength(6);
+  expect(new Set(names).size).toBe(6);
+  expect(names.every((name) => /^app-lp[1-6]$/.test(name))).toBe(true);
+}, 60_000);
+
+// A claimed name stays claimed after its branch goes, such as once its PR merged, and an issue
+// in Skelcrew's copy of the tracker holds its ID too.
+test("a name stays taken once claimed, and an issue's ID is never given to a thread", async () => {
+  const { remote, homes } = twoMachines();
+  const [laptop = "", lapdog = ""] = homes;
+  expect(await namesFrom(startOn(laptop, remote, ["One"]))).toEqual(["app-lp1"]);
+  const issue = `db.run("INSERT INTO items (owner, repo, kind, id, state, created, item) VALUES ('simon', 'app', 'task', 'lp2', 'open', 'x', '{}')");`;
+  expect(await namesFrom(startOn(lapdog, remote, ["Two"], issue))).toEqual(["app-lp3"]);
+}, 60_000);
+
+test("a database keeps its code, threads with no issue are its own, and t names keep working", async () => {
+  const { remote, homes } = twoMachines();
+  const [laptop = ""] = homes;
+  const old = threadSql({ task: "t4", status: "done", title: "Old", own: 1 });
+  const before = `db.run(${JSON.stringify(old)});`;
+  expect(await namesFrom(startOn(laptop, remote, ["One"], before))).toEqual(["app-lp1"]);
+  const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
+import { findThread } from ${JSON.stringify(source("flow/thread.ts"))};
+const db = openDb();
+const one = findThread(db, "app", "lp1");
+console.log(JSON.stringify({ old: findThread(db, "app", "t4").folder, branch: one.branch, own: one.own }));`;
   const run = Bun.spawnSync([process.execPath, "-e", code], {
-    env: { ...process.env, HOME: home },
+    env: { ...process.env, HOME: laptop },
     stdout: "pipe",
     stderr: "pipe",
   });
   expect(run.stderr.toString()).toBe("");
   expect(JSON.parse(run.stdout.toString())).toEqual({
-    names: ["app-lp4", "app-lp5"],
     old: "app-t4",
-    branch: "skelcrew/lp5-two",
+    branch: "skelcrew/lp1-one",
     own: true,
   });
-});
+}, 60_000);
 
 // A database from before Skelcrew kept which tasks are its own read a t and a number as one.
 test("a database from before marks its t tasks as Skelcrew's own, and its issues as the tracker's", () => {

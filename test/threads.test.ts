@@ -819,21 +819,24 @@ nameRepositories(db);`;
     });
   }, 60_000);
 
-  // Names stay apart across machines: another machine with the same code already pushed the
-  // branch of its first thread, so this one takes the next number.
-  test("sc start on what you said skips a number another machine's branch holds", async () => {
+  // Names stay apart across machines: another machine with the same code already claimed the
+  // name of its first thread on the remote, so this one takes the next number and claims it.
+  test("sc start on what you said skips a name another machine claimed, and claims its own", async () => {
     const work = addApp();
-    git(work, "push", "-q", "origin", `main:skelcrew/${own}1-from-the-laptop`);
+    git(work, "push", "-q", "origin", `main:refs/skelcrew/names/${own}1`);
     serve();
     await untilCloned();
     const run = await skel("start", "app", "Add export", "As JSON");
     expect(run.err).toBe("");
     expect(run.out).toBe(`Started app-${own}2.\n`);
     expect(thread()).toMatchObject({ task: `${own}2`, branch: `skelcrew/${own}2-add-export` });
+    const claims = git(work, "ls-remote", "origin", "refs/skelcrew/names/*");
+    expect(claims).toContain(`refs/skelcrew/names/${own}2`);
   }, 60_000);
 
-  // A tracker's ID can look like a machine's own, such as wr1. Its thread is still the issue's.
-  test("an issue whose ID looks like a machine's own is still started from the tracker", async () => {
+  // A tracker's ID can look like a machine's own, such as wr1. Its thread is still the issue's,
+  // and a thread with no issue never takes its ID.
+  test("an issue whose ID looks like a machine's own keeps its ID and its tracker", async () => {
     addApp();
     known.push(taskItem(`${own}1`, "Add import", { body: "From CSV" }));
     answer(plugin, "changed", { items: known, next: null });
@@ -845,6 +848,9 @@ nameRepositories(db);`;
     expect(thread()).toMatchObject({ task: `${own}1`, title: "Add import", body: "From CSV" });
     const shown = JSON.parse((await skel("show", `app-${own}1`, "--json")).out);
     expect(shown.issue).toMatchObject({ id: `${own}1` });
+    expect((await skel("start", "app", "Add export", "As JSON")).out).toBe(
+      `Started app-${own}2.\n`,
+    );
   }, 60_000);
 
   // The lead names each thread it starts in two or three words, for the sidebar's row.

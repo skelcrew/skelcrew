@@ -24,7 +24,7 @@ import { errorText } from "../say.ts";
 import type { Settings } from "../settings.ts";
 import { taskOf, threadTask } from "./copy.ts";
 import { pastRoundLimit } from "./decide.ts";
-import { fetchBranch, skelcrewBranches } from "./git.ts";
+import { claimedNames, claimName, fetchBranch } from "./git.ts";
 import { findRepository, forgeAuthor, refreshClones } from "./repo.ts";
 import {
   builderHarness,
@@ -86,20 +86,28 @@ export async function startThread(
   let body: string;
   let own: boolean;
   if ("title" in given) {
-    // The next number after those this machine's code already holds, so no two threads share a
-    // name. Another machine can have the same code, such as workbox and workstation, and only
-    // the remote is shared, so its branches count too. Threads not pushed yet are invisible
-    // there, so two such machines starting threads at once can still clash.
+    // The next number after those this machine's code already holds: by its threads, by the
+    // remote's claims, which other machines with the same code see too, and by issues in the
+    // copy of the tracker, whose IDs can look the same. Then claim it on the remote, which only
+    // one machine can, trying the next number while another machine got there first.
     const code = machineCode(db);
-    const pushed = await skelcrewBranches(db, repository, code);
-    // Counted after the only wait, so two starts on this machine can't both take one number.
-    const numbered = db
-      .query("SELECT task FROM threads WHERE owner = ? AND repo = ? AND task GLOB ?")
-      .all(owner, repo, `${code}[0-9]*`)
-      .map((row) => z.object({ task: z.string() }).parse(row).task)
-      .concat(pushed.map((branch) => branch.slice("skelcrew/".length)))
-      .map((name) => Number(name.slice(code.length).match(/^\d+/)?.[0] ?? 0));
-    task = `${code}${Math.max(0, ...numbered) + 1}`;
+    const clone = cloneDir(owner, repo);
+    // Its clone, which the daemon may still be making, is where the claim is pushed from.
+    if (!existsSync(clone)) await refreshClones(db);
+    const claimed = await claimedNames(db, repository, code);
+    const known = (sql: string) =>
+      db
+        .query(sql)
+        .all(owner, repo, `${code}[0-9]*`)
+        .map((row) => z.object({ id: z.string() }).parse(row).id);
+    const numbers = [
+      ...claimed,
+      ...known("SELECT task AS id FROM threads WHERE owner = ? AND repo = ? AND task GLOB ?"),
+      ...known("SELECT id FROM items WHERE owner = ? AND repo = ? AND kind = 'task' AND id GLOB ?"),
+    ].map((id) => Number(id.slice(code.length).match(/^\d+/)?.[0] ?? 0));
+    let number = Math.max(0, ...numbers) + 1;
+    while (!(await claimName(db, repository, clone, `${code}${number}`))) number++;
+    task = `${code}${number}`;
     ({ title, body } = given);
     own = true;
   } else {

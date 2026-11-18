@@ -178,8 +178,8 @@ export function moveToTasks(db: Database): void {
 
 // Returns two lowercase letters from a machine's name, such as wr for workbox or sl for
 // simon-laptop, to name the threads it starts with no issue. Two machines on one repository
-// then mostly name theirs apart, such as app-wr4 and app-sl4, and startThread skips numbers a
-// machine with the same code already pushed. A name of several words gives its first
+// then mostly name theirs apart, such as app-wr4 and app-sl4. Machines with the same code are
+// kept apart by the claim startThread makes on the remote. A name of several words gives its first
 // two initials. One word gives its first letter and the next consonant after it, which reads
 // more like the word than its second letter does. A name with too few letters pads with x.
 export function codeOf(name: string): string {
