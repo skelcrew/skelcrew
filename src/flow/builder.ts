@@ -232,6 +232,7 @@ async function recordThread(
       review_round: null,
       verdict: null,
       review_line: null,
+      reviewed_commit: null,
       review_at: null,
       harness: null,
       short: given.short ?? null,

@@ -505,6 +505,7 @@ async function actOnVerdict(
     review_round: before + 1,
     verdict: verdict.verdict,
     review_line: verdict.body.trim().split("\n")[0]?.slice(0, 200) ?? "",
+    reviewed_commit: sha,
     review_at: Date.now(),
   };
   record(db, folder, change, outcome.why);
@@ -763,8 +764,8 @@ async function ciEnds(
 }
 
 // Returns the commit Skelcrew's reviewer last approved for the thread, or null when none is
-// saved, such as before its first approval. The list merges only at this commit.
-export function lastApproved(thread: Thread): string | null {
+// saved, such as before its first approval.
+function lastApproved(thread: Thread): string | null {
   const skelcrewClone = cloneDir(thread.owner, thread.repo);
   const ref = `refs/skelcrew/approved/${thread.folder}^{commit}`;
   const run = Bun.spawnSync(["git", "-C", skelcrewClone, "rev-parse", "--verify", "--quiet", ref], {

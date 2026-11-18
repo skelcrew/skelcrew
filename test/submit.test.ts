@@ -343,6 +343,8 @@ describe.skipIf(insideSandbox)("sc submit", () => {
       verdict: "approve",
       review_line: "Ready to merge.",
     });
+    // The approved commit is saved with its review, so the list can merge it asking git nothing.
+    expect(lines.at(-1)?.reviewed_commit).toBe(pushed());
     expect(lines.some((line) => line.reviewer === "codex" && line.submitting !== null)).toBe(true);
   });
 

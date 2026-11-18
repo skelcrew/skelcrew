@@ -10,7 +10,7 @@ import { z } from "zod";
 import { type Labels, startSession } from "../src/agents/sessions.ts";
 import { drawList } from "../src/list/layout.ts";
 import type { Row } from "../src/list/rows.ts";
-import { fakePlugin, git, itemSql, read, source, threadSql, until as wait } from "./harness.ts";
+import { fakePlugin, itemSql, read, source, threadSql, until as wait } from "./harness.ts";
 
 // Longer than the waits below, so a test that fails says what it waited for.
 setDefaultTimeout(20_000);
@@ -19,7 +19,7 @@ let agents = "";
 let terminal = "";
 let standIn: Server | null = null;
 // The commit Skelcrew's reviewer approved for app-14, which is its PR's head.
-let approved = "";
+const approved = "9fc11d177dbffac496ad6b3496b3f91775d9057f";
 // What the stand-in daemon was asked, as one line each.
 const asked: string[] = [];
 // A CI check that passed, as the forge's copy of a PR has it.
@@ -51,12 +51,6 @@ beforeEach(() => {
   const clone = join(home, ".local", "share", "skelcrew", "repos", "simon", "app");
   mkdirSync(clone, { recursive: true });
   writeFileSync(join(clone, "skelcrew.yaml"), "tracker: github\n");
-  // Skelcrew's clone keeps the commit its reviewer approved as a ref, as a review does.
-  git(clone, "init", "-q");
-  git(clone, "add", "-A");
-  git(clone, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "approved");
-  approved = git(clone, "rev-parse", "HEAD");
-  git(clone, "update-ref", "refs/skelcrew/approved/app-14", approved);
   sql(`INSERT INTO repositories (name, owner, repo, kept_lead, lead_session, lead_harness, forge)
   VALUES ('app', 'simon', 'app', 1, 's', 'claude', 'github');
 INSERT INTO repositories (name, owner, repo) VALUES ('site', 'simon', 'site');
@@ -65,7 +59,7 @@ ${itemSql("app", "pr", 41, "Fix the export header", "2026-11-06T10:00:00Z", { he
 ${threadSql({ task: "7", title: "Login redirect", harness: "claude", started: Date.now() - 300_000 })}
 ${threadSql({ task: "12", title: "Rate limit the API", harness: "codex", asking: 1, needs_you: 1 })}
 ${threadSql({ task: "9", title: "Old work", status: "stopped" })}
-${threadSql({ task: "14", title: "Fix the export header", status: "waiting", needs_you: 1, verdict: "approve", checks: "passing", ci_passed: 1, pr: 41, review_round: 1 })}
+${threadSql({ task: "14", title: "Fix the export header", status: "waiting", needs_you: 1, verdict: "approve", checks: "passing", ci_passed: 1, pr: 41, review_round: 1, reviewed_commit: approved })}
 ${threadSql({ repo: "site", task: "3", title: "Docs", asking: 1, needs_you: 1 })}`);
 });
 afterEach(() => {
@@ -83,12 +77,17 @@ afterEach(() => {
   rmSync(home, { recursive: true, force: true });
 });
 
-// Returns app's rows as the list reads them, with `running` naming the sessions that run.
-function rows(running: string[] = []): Row[] {
+// Returns app's rows as the list reads them, with `running` naming the sessions that run, and
+// `bin` a folder of programs found before the real ones.
+function rows(running: string[] = [], bin = ""): Row[] {
   const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
 import { listRows } from ${JSON.stringify(source("list/rows.ts"))};
 console.log(JSON.stringify(listRows(openDb(), { owner: "simon", repo: "app" }, ${JSON.stringify(running)}, Date.now())));`;
-  const run = Bun.spawnSync([process.execPath, "-e", code], { env: env(), stderr: "pipe" });
+  const path = bin ? `${bin}:${process.env.PATH ?? ""}` : (process.env.PATH ?? "");
+  const run = Bun.spawnSync([process.execPath, "-e", code], {
+    env: { ...env(), PATH: path },
+    stderr: "pipe",
+  });
   if (!run.success) throw new Error(run.stderr.toString());
   return JSON.parse(run.stdout.toString());
 }
@@ -144,6 +143,37 @@ test("Enter asks to start an issue, and m to merge a ready task at the commit yo
   expect(ready?.link).toBe("https://github.com/simon/app/pull/41");
   // A working task has nothing to merge.
   expect(rows().find((row) => row.name === "app-7")?.merge).toBeNull();
+});
+
+// The list reads only the database, so it opens at once however many tasks are ready, and starts
+// no git. A git that logs each call stands in for the real one.
+test("a list with many tasks ready for review asks git nothing", () => {
+  const more = [20, 21, 22, 23, 24].map(
+    (
+      task,
+    ) => `${threadSql({ task: String(task), status: "waiting", needs_you: 1, verdict: "approve", checks: "passing", ci_passed: 1, pr: task + 100, review_round: 1, reviewed_commit: approved })}
+${itemSql("app", "pr", task + 100, `PR ${task}`, "2026-11-06T10:00:00Z", { head: approved, checks: passed })}`,
+  );
+  sql(more.join("\n"));
+  const bin = join(home, "bin");
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(join(bin, "git"), `#!/bin/sh\necho "$@" >> ${join(home, "git-calls")}\n`, {
+    mode: 0o755,
+  });
+  const ready = rows([], bin).filter((row) => row.part === "ready");
+  expect(ready).toHaveLength(6);
+  expect(ready.every((row) => row.merge !== null && "ask" in row.merge)).toBe(true);
+  expect(read(join(home, "git-calls"))).toBe("");
+});
+
+// An approval from before Skelcrew saved its commit can't say which commit it stands for.
+test("an approval with no saved commit can't be merged here, and says so", () => {
+  sql("UPDATE tasks SET reviewed_commit = NULL WHERE task = '14';");
+  const merge = rows().find((row) => row.name === "app-14")?.merge;
+  expect(merge).toEqual({
+    refused:
+      "app#41's approval has no commit saved: merge it on the forge, or run sc review app-14",
+  });
 });
 
 test("a ready task whose forge sent no head commit can't be merged here, and says why", () => {

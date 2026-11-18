@@ -11,7 +11,6 @@ import { leadOf } from "../flow/lead.ts";
 import { type Badge, badgeOf, type Colour, needsDecision, shownOf } from "../flow/marks.ts";
 import { findRepository } from "../flow/repo.ts";
 import type { DaemonRequest } from "../flow/requests.ts";
-import { lastApproved } from "../flow/round.ts";
 import { taskStage } from "../flow/stage.ts";
 import { Thread } from "../flow/thread.ts";
 import { forgeOf } from "../plugins/ask.ts";
@@ -153,11 +152,17 @@ function taskRow(
   let merge: Action | null = null;
   if (ready && thread.pr !== null && copy !== null) {
     const named = `${repoName}#${thread.pr}`;
-    const approved = lastApproved(thread);
+    // The commit the latest review approved, as the review saved it, so drawing the list asks
+    // git nothing. An approval from before Skelcrew saved it has none, and merges on the forge.
+    const approved = thread.verdict === "approve" ? thread.reviewed_commit : null;
     const ci = copy.checks.filter((check) => check.name !== reviewCheck);
     if (copy.head === null)
       merge = {
         refused: `${named} needs a newer forge plugin to merge here: run sc plugin update`,
+      };
+    else if (approved === null)
+      merge = {
+        refused: `${named}'s approval has no commit saved: merge it on the forge, or run sc review ${name}`,
       };
     else if (approved !== copy.head)
       merge = { refused: `${named} has a newer commit than the one approved: wait for its review` };

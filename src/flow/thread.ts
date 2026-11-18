@@ -117,6 +117,10 @@ export const Thread = z.object({
   review_round: z.number().nullable(),
   verdict: z.enum(["approve", "changes", "failed", "timed out"]).nullable(),
   review_line: z.string().nullable(),
+  // The commit the latest finished review was about, so the list knows which commit an approval
+  // stands for without asking git. Null before the first, and in a row from before Skelcrew kept
+  // it.
+  reviewed_commit: z.string().nullable(),
   // When the latest review was asked for, by sc submit or sc review, or ended, in milliseconds
   // since 1970, for sc ps. Null before the first, and in a row from before Skelcrew kept it.
   review_at: z.number().nullable(),

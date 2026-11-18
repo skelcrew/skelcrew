@@ -90,6 +90,7 @@ export const taskColumns = {
   review_round: "INTEGER",
   verdict: "TEXT",
   review_line: "TEXT",
+  reviewed_commit: "TEXT",
   review_at: "INTEGER",
   review_limited: "INTEGER NOT NULL DEFAULT 0",
   review_reset: "INTEGER",
