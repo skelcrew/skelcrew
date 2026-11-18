@@ -5,7 +5,8 @@
 // own transport, when the test's manifest says it provides one, takes an agent as idle unless
 // its screen shows Claude Code's busy mark, and types a message in one step, noting it in
 // `delivered`. With a file hang-status, the first status it is given hangs, and with a file
-// garble-<question> it answers that question with nothing. With a file lose-start, it starts the
+// garble-<question> it answers that question with nothing, and with fail-<question> it fails it
+// once. With a file lose-start, it starts the
 // next session but fails before saying its ID.
 import {
   appendFileSync,
@@ -145,6 +146,12 @@ const answers: Record<string, () => unknown> = {
 // With a file garble-<question>, it does nothing and answers with nothing at all, as a broken
 // host might.
 if (existsSync(join(dir, `garble-${question.ask}`))) process.exit(0);
+// With a file fail-<question>, it fails that question once, as a host down for a moment would.
+if (existsSync(join(dir, `fail-${question.ask}`))) {
+  rmSync(join(dir, `fail-${question.ask}`));
+  console.error("the host is down for a moment");
+  process.exit(1);
+}
 try {
   const answer = await answers[question.ask]?.();
   console.log(JSON.stringify(answer ?? null));

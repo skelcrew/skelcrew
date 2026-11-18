@@ -234,12 +234,34 @@ export function reportStatus(db: Database, thread: Thread): void {
         console.log(
           `couldn't report ${thread.folder}'s status to ${host.plugin}: ${errorText(error)}`,
         );
+        retryReport(db, thread.folder, key);
       },
     );
   reporting.set(key, sent);
   sent.then(() => {
     if (reporting.get(key) === sent) reporting.delete(key);
   });
+}
+
+// How long to wait before telling a host again a status it failed to hear, in milliseconds.
+const retryAfter = 5000;
+
+// The sessions a report is planned again for, by the same key as reported.
+const retrying = new Set<string>();
+
+// Tells the host the thread's status again a little later, as it is then, after a report it
+// failed to hear: without a later change, the host would go on showing an old one. One retry is
+// planned per session at a time, and each failure plans the next, so a host that comes back hears
+// the status then. A thread that has gone by then needs none.
+function retryReport(db: Database, folder: string, key: string): void {
+  if (retrying.has(key)) return;
+  retrying.add(key);
+  setTimeout(() => {
+    retrying.delete(key);
+    try {
+      reportStatus(db, readThread(db, folder));
+    } catch {}
+  }, retryAfter);
 }
 
 // Forgets what a host last heard from a session, as one starting under the same ID has told it

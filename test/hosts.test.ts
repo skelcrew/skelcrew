@@ -243,7 +243,7 @@ attach: ["true"]
 import { record } from ${JSON.stringify(source("flow/thread.ts"))};
 import { forgetStatus, keepState } from ${JSON.stringify(source("flow/status.ts"))};
 import { builderSession, readThread } from ${JSON.stringify(source("flow/thread.ts"))};
-import { stopThread } from ${JSON.stringify(source("flow/events.ts"))};
+import { endThread, stopThread } from ${JSON.stringify(source("flow/events.ts"))};
 import { hasSession, startSession } from ${JSON.stringify(source("agents/sessions.ts"))};
 import { endEarlierBuilder } from ${JSON.stringify(source("flow/builder.ts"))};
 import { deliverMessages, queueMessage } from ${JSON.stringify(source("flow/messages.ts"))};
@@ -439,3 +439,25 @@ process.exit(0);`,
   const failed = `couldn't type into app-12's builder: fake answered deliver in a way Skelcrew doesn't understand`;
   expect(said).toBe(`${failed}\n1 0\n0 ${JSON.stringify("\x1b[200~hello\x1b[201~\n")}\n`);
 }, 40_000);
+
+test("a status a host failed to hear is told again, so it doesn't stay stale", () => {
+  const settings = join(home, ".config", "skelcrew", "plugins", "fake");
+  mkdirSync(settings, { recursive: true });
+  writeFileSync(join(settings, "fail-status"), "");
+  const said = statusesAfter(`record(db, "app-12", { needs_you: true }, "a review failed");`);
+  expect(said).toEqual([{ id: "fake-app-12", status: "needs you", reason: "needs you" }]);
+}, 30_000);
+
+test("a builder that can't be ended keeps its waiting messages when its thread ends", () => {
+  const said = runWithFakeHost(
+    "sessions",
+    `queueMessage(db, "unused", "app-12", { sender: "lead", text: "hello", said: "hello", typed_in: [] });
+const thread = readThread(db, "app-12");
+console.log(await endThread(db, "unused", thread, "its PR was merged", null).catch((error) => error.message));
+const after = readThread(db, "app-12");
+console.log(after.status, db.query("SELECT COUNT(*) AS n FROM messages").get().n);
+process.exit(0);`,
+    { host: "gone", host_id: "gone-app-12" },
+  );
+  expect(said).toBe("its builder's session host gone isn't installed any more\nworking 1\n");
+});
