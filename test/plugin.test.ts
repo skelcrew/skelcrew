@@ -841,3 +841,17 @@ test("when your files can't be written, sc remove -g leaves the plugin installed
   expect((await skel(["plugins"])).out).toBe("No plugins installed.\n");
   expect(existsSync(settings("fake"))).toBe(false);
 });
+
+// On a machine set up before the lock, the move into one comes first, so it can't name the
+// plugin again after it was taken out.
+test("sc remove -g on a machine with no lock yet takes the plugin out of your config", async () => {
+  publish("skelcrew/skelcrew-fake", "0.1.0");
+  await skel(["add", "-g", "skelcrew/skelcrew-fake"], "y\n");
+  rmSync(yourLockFile());
+  writeFileSync(yourConfig(), "harness: claude\n");
+  const removed = await skel(["remove", "-g", "fake"]);
+  expect(removed.err).toBe("");
+  expect(parse(readFileSync(yourConfig(), "utf8"))).toEqual({ harness: "claude", plugins: [] });
+  expect(readFileSync(yourLockFile(), "utf8")).not.toContain("fake");
+  expect((await skel(["plugins"])).out).toBe("No plugins installed.\n");
+});

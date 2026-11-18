@@ -327,3 +327,17 @@ test("a server already at the laptop's commit gets its pin too", async () => {
   expect(serverFile("skelcrew.lock")).toContain(`commit: ${approved}`);
   expect(serverFile("skelcrew.lock")).not.toContain(older);
 });
+
+// A server set up before the lock moves into one as it takes the setup. A plugin the laptop
+// doesn't have must not come back into the laptop's config through that move.
+test("a server without a lock loses a plugin the laptop doesn't have, from its config too", async () => {
+  setUpLaptop();
+  publish(["0.1.0"], false, "other");
+  expect((await skel(server(), ["plugin", "install", "owner/other"], "\n")).code).toBe(0);
+  rmSync(join(serverConfig(), "skelcrew.lock"));
+  writeFileSync(join(serverConfig(), "config.yaml"), "harness: claude\nmodel: sonnet\n");
+  await remote("ps");
+  expect(serverFile("config.yaml")).toBe("harness: claude\n");
+  expect(await serverSources()).toEqual({});
+  expect(serverFile("skelcrew.lock")).not.toContain("owner/other");
+});

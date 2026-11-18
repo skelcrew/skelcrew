@@ -81,6 +81,12 @@ export async function takeSetup(): Promise<void> {
   } finally {
     rmSync(file, { force: true });
   }
+  // A server set up before the lock gets its move into one now, before the laptop's config
+  // replaces its own. The move adds this server's plugins to plugins:, which would otherwise
+  // bring back into the laptop's config one the laptop removed.
+  const { setLocked, yourLock } = await import("../plugins/lock.ts");
+  const db = openDb();
+  yourLock(db);
   mkdirSync(configDir(), { recursive: true });
   writeFileSync(configFile(), sent.config);
   // Removed first, as a mode is only given to a file as it is made.
@@ -88,8 +94,6 @@ export async function takeSetup(): Promise<void> {
   if (sent.token !== null) writeFileSync(claudeTokenFile(), sent.token, { mode: 0o600 });
   // Loaded only here, as it brings in much of Skelcrew that the check on each command needs none of.
   const { installPlugin, removePlugin, updatePlugin } = await import("../plugins/install.ts");
-  const { setLocked } = await import("../plugins/lock.ts");
-  const db = openDb();
   const wanted = new Map(sent.plugins.map((plugin) => [plugin.name, plugin]));
   for (const plugin of installedPlugins(db)) {
     const keep = wanted.get(plugin.name);
