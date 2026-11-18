@@ -155,6 +155,11 @@ await Bun.sleep(300);
 db.run("UPDATE threads SET state = 'working'");
 queueMessage(db, tmux, "app-12", { sender: "lead", text: "Use v2.", said: "Use v2.", typed_in: [] });
 for (let i = 0; i < 4; i++) await deliverAllWaiting(db, tmux);
+// A line typed after the attempts comes after anything they typed, so once the builder kept it,
+// it kept whatever they typed too.
+Bun.spawnSync(["tmux", "-L", tmux, "send-keys", "-t", "=app-12:", "-l", "attempts over\\r"]);
+for (let i = 0; i < 200 && !got().includes("attempts over"); i++) await Bun.sleep(10);
+if (!got().includes("attempts over")) throw new Error("the builder never kept the line");
 const during = got().includes("Use v2.");
 // The turn's Stop hook ran.
 db.run("UPDATE threads SET state = 'idle'");

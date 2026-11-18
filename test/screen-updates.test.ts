@@ -203,16 +203,26 @@ test("with nothing working, an open screen sends your terminal nothing at all", 
   open("lead");
   await ready("lead");
   await until(() => seen().includes("checks · claude"), "the threads");
-  // Two seconds short of a minute, so a time shown on any row would change during the wait. The
-  // sidebar refreshes at least once before the minute, and still under a minute, such a time
-  // would show the same as before, so this alone writes nothing.
-  const minute = Date.now() + 2000;
-  sql(`UPDATE threads SET started = ${minute - 60_000} WHERE status = 'waiting'`);
+  // The threads started four seconds short of a minute ago, so a time shown on a row would
+  // change during the wait. A refresh writes only what changed, so a quiet one can't be seen:
+  // app-7 needing you shows that the sidebar has read the start time before the minute.
+  const minute = Date.now() + 4000;
+  sql(`UPDATE threads SET started = ${minute - 60_000} WHERE status = 'waiting';
+UPDATE threads SET needs_you = 1 WHERE folder = 'app-7'`);
+  await until(() => seen().includes("1 needs you"), "the sidebar to read the start time");
   const written = await copyOnceSettled();
   expect(Date.now()).toBeLessThan(minute);
-  // The wait ends once the sidebar has refreshed after the minute, with a little to spare.
-  await Bun.sleep(minute + 1200 - Date.now());
+  // Past the minute and two refreshes, nothing was written.
+  await Bun.sleep(minute - Date.now());
+  await twoRefreshes();
   expect(readFileSync(written, "utf8")).toBe("");
+  // app-7 no longer needing you shows that the sidebar has read the threads after the minute,
+  // and app-12's row still shows no time.
+  sql("UPDATE threads SET needs_you = 0 WHERE folder = 'app-7'");
+  await until(() => !seen().includes("needs you"), "the sidebar to read the threads again");
+  const rows = seen().split("\n");
+  const row = rows.findIndex((line) => line.includes("app-12"));
+  expect(rows[row + 1]?.split("│")[0]?.trim()).toBe("checks · claude");
 });
 
 test("a working thread's time moves on by itself, and writes when it does", async () => {
