@@ -472,6 +472,31 @@ test("plain sc refuses inside Skelcrew's sandbox, and brings in nothing", async 
   expect(existsSync(clone("simon/app"))).toBe(false);
 });
 
+// The list and the screen exist side by side until the human picks one. The list runs in sc
+// itself and prints once, alone, when there is no terminal. The list's own tests check the rest.
+test("sc --list shows the list in place of the screen, here or for --from", async () => {
+  const checkout = onGitHub("simon/app", "WRITE");
+  await skel([], "", checkout);
+  for (const args of [["--list"], ["--list", "--from", "simon/app"]]) {
+    writeFileSync(join(home, "calls"), "");
+    const run = await skel(args, "", checkout);
+    expect(run.err).toBe("");
+    expect(run.code).toBe(0);
+    expect(run.out).toStartWith(" Skelcrew v");
+    expect(calls()).toEndWith("daemon lead\n");
+    expect(calls()).not.toContain("screen on");
+  }
+});
+
+test("sc --list refuses inside Skelcrew's sandbox", async () => {
+  const run = await skel(["--list"], "", onGitHub("simon/app", "WRITE"), { SKELCREW_SANDBOX: "1" });
+  expect(run.code).toBe(1);
+  expect(run.err).toBe(
+    "Skelcrew: showing the list is only for your own terminal, not for agents\n",
+  );
+  expect(calls()).toBe("");
+});
+
 test("names two repositories that share a name with their owners", async () => {
   await skel([], "", onGitHub("simon/app", "WRITE"));
   await skel([], "", onGitHub("other/app", "WRITE"));

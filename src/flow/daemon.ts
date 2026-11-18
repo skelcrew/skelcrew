@@ -52,7 +52,14 @@ import {
 } from "./repo.ts";
 import { allowed, type Caller, DaemonRequest, parseJson } from "./requests.ts";
 import { killReviewers } from "./reviewer.ts";
-import { endRound, goOn, rerunReview, resumeRound, submitRound } from "./round.ts";
+import {
+  endRound,
+  goOn,
+  rerunReview,
+  resumeRound,
+  saveApprovedCommits,
+  submitRound,
+} from "./round.ts";
 import { doing, watchForStalls } from "./stall.ts";
 import {
   keepState,
@@ -180,6 +187,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   moveToTasks(db);
   moveTurnEnded(db);
   finishUpgrade(db);
+  saveApprovedCommits(db);
   // The checkout and commit this daemon's code came from, for sc status. Read once at start,
   // since a git pull afterwards doesn't change the code that runs.
   const runningCode = singleFile
@@ -695,5 +703,5 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   // Start polling, which also lets any sc start waiting on it go ahead, and keep Skelcrew itself
   // up to date.
   polling.resolve(pollRepositories(db, sessions, every, setUpAndStart, startingTasks));
-  keepUpToDate();
+  keepUpToDate(db);
 }
