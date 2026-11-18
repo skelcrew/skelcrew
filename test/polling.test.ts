@@ -1467,6 +1467,32 @@ echo "Not logged in"; exit 1`,
       );
       expect(kept).toContain("Nothing is armed: app-12 waits for you to merge it.");
       expect(thread().merge_plan).toBeNull();
+      // Only y arms it: any other answer, even Y or yes, arms nothing.
+      for (const other of ["Y", "yes", "maybe"]) {
+        const said = await runSkelInTerminal(
+          socket,
+          env(),
+          ["merge", "--when-ready", "app-12"],
+          question,
+          other,
+        );
+        expect(said).toContain("Nothing is armed");
+        expect(thread().merge_plan).toBeNull();
+      }
+      // Only the PR and thread you said y to are armed, never one started over meanwhile.
+      const yours = join(home, "run", "skelcrew.sock");
+      const started = Number(thread().started);
+      const changed = {
+        error:
+          "app-12 changed since you said y, so nothing is armed: run sc merge --when-ready app-12 again",
+      };
+      const arming = { command: "merge when ready", repo: "app", task: "12" };
+      expect(await askOn(yours, arming)).toEqual(changed);
+      expect(await askOn(yours, { ...arming, seen: { pr: 8, started } })).toEqual(changed);
+      expect(await askOn(yours, { ...arming, seen: { pr: 7, started: started - 1 } })).toEqual(
+        changed,
+      );
+      expect(thread().merge_plan).toBeNull();
 
       // Without a terminal nothing asks, so nothing arms.
       const piped = Bun.spawnSync([process.execPath, main, "merge", "--when-ready", "app-12"], {

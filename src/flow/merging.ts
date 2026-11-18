@@ -54,10 +54,16 @@ export function threadToMerge(
 }
 
 // Arms a merge when ready on the thread, for sc merge --when-ready, which only you can run, at
-// your terminal, and returns what to say. It saves who armed it and when, for the PR's comment
+// your terminal, and returns what to say. `seen` is what you said y to: the PR's number and
+// when its thread started. Anything else is refused, such as a thread removed and started
+// over while you read the question, with a PR you never saw. It saves who armed it and when, for the PR's comment
 // once it merges. Refuses a repository with no forge, as Skelcrew merges no branch there: you
 // merge it yourself once it is approved.
-export function armMerge(db: Database, thread: Thread): string {
+export function armMerge(
+  db: Database,
+  thread: Thread,
+  seen: { pr: number; started: number | null } | undefined,
+): string {
   const name = threadName(db, thread);
   if (forgeOf(db, repositoryOf(db, thread)) === null)
     throw new Error(
@@ -66,6 +72,10 @@ export function armMerge(db: Database, thread: Thread): string {
   // You agree to a PR you can see, by its number, so a PR opened later never merges under it.
   if (thread.pr === null)
     throw new Error(`${name} has no PR yet: arm a merge when ready once it opens one`);
+  if (!seen || seen.pr !== thread.pr || seen.started !== thread.started)
+    throw new Error(
+      `${name} changed since you said y, so nothing is armed: run sc merge --when-ready ${name} again`,
+    );
   if (thread.merge_plan === "armed") return `${name} already merges when it is ready.`;
   const plan = {
     merge_plan: "armed" as const,

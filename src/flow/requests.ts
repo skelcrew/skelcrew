@@ -104,13 +104,15 @@ export const DaemonRequest = z.discriminatedUnion("command", [
   }),
   // A merge when ready names its thread by its task, or by its PR's number. With a number,
   // `from` is the remote of the checkout sc ran in, which names the repository when `repo`
-  // doesn't.
+  // doesn't. Arming one carries what you said y to, `seen`: the PR's number and when its thread
+  // started, so a thread started over meanwhile, with another PR, is never armed.
   z.object({
     command: z.enum(["merge preview", "merge when ready", "merge cancel"]),
     repo: z.string().optional(),
     from: z.string().optional(),
     task: TaskId.optional(),
     pr: z.number().int().positive().optional(),
+    seen: z.object({ pr: z.number().int().positive(), started: z.number().nullable() }).optional(),
   }),
   z.object({ command: z.literal("tell lead"), text: z.string().min(1) }),
   z.object({ command: z.literal("submit"), summary: z.string().min(1) }),

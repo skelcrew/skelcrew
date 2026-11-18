@@ -382,14 +382,16 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       // What sc merge --when-ready asks you about at your terminal before it arms.
       case "merge preview": {
         const thread = threadToMerge(db, request);
+        // Its whole title, not the short one, so you can tell which PR you agree to.
         return {
           thread: threadName(db, thread),
           pr: thread.pr,
-          title: thread.short ?? thread.title,
+          title: thread.title,
+          started: thread.started,
         };
       }
       case "merge when ready":
-        return { said: armMerge(db, threadToMerge(db, request)) };
+        return { said: armMerge(db, threadToMerge(db, request), request.seen) };
       case "merge cancel":
         return { said: cancelMerge(db, threadToMerge(db, request)) };
       case "tell": {
