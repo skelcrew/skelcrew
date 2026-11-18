@@ -2025,6 +2025,8 @@ exec ${bwrap} "$@"`,
     const leadSocket = () => join(runDir(), "leads", hashed("simon/app"), "skelcrew.sock");
     const builderSocket = () => join(runDir(), "threads", hashed("app-12"), "skelcrew.sock");
     const question = "Merge #7 (app-12 Add export) when it's approved and green? [y/N]";
+    const notLet =
+      "the human hasn't let you arm a merge when ready: ask them to run sc merge --when-ready in their own terminal";
     const merges = () => asked(plugin).filter((q) => q.ask === "merge pr");
     const leadTyped = () => read(join(data(), "claude", leadName, "typed"));
     // The commit Skelcrew pushed and its reviewer approved, as Skelcrew's clone keeps it.
@@ -2100,10 +2102,12 @@ exec ${bwrap} "$@"`,
         stderr: "pipe",
       });
       expect(piped.stderr.toString()).toContain("run it at your own terminal");
-      // The lead's and the builder's sockets don't take it at all.
+      // The builder's socket doesn't take it at all, and the lead's refuses it unless you let it.
       const request = { command: "merge when ready", repo: "app", task: "12" };
       const unknown = { error: "the daemon doesn't know that request" };
-      expect(await askOn(leadSocket(), request)).toEqual(unknown);
+      expect(await askOn(leadSocket(), { ...request, asked: "merge it" })).toEqual({
+        error: notLet,
+      });
       expect(await askOn(builderSocket(), request)).toEqual(unknown);
       expect(thread().merge_plan).toBeNull();
 
@@ -2113,6 +2117,90 @@ exec ${bwrap} "$@"`,
       const ps = Bun.spawnSync([process.execPath, main, "ps"], { env: env(), stdout: "pipe" });
       expect(ps.stdout.toString()).toContain("when ready");
     }, 60_000);
+
+    // You let the lead arm merges in your own config. It then arms one with your words, and
+    // nothing else changes: the merge still waits for the approved head to be green.
+    test("a lead you let arm merges arms one with your words, and builders still can't", async () => {
+      await approvedApp12();
+      // Your words as you wrote them: over lines, with a double space, quotes, what a shell would
+      // run, and lines that were once heredoc delimiters.
+      const ran = join(home, "ran");
+      const words = `merge "#7"\nwhen it's  ready, $(touch ${ran}) \`touch ${ran}\`\nHUMAN_WORDS\nWORDS_q7x2k9mf\ntouch ${ran}`;
+      // The lead writes them to a file with its file tool, and sc merge, as the lead runs it on
+      // its own socket, reads them from there, by the PR's number.
+      const file = join(home, "asked.txt");
+      writeFileSync(file, words);
+      const asLead = () =>
+        Bun.spawnSync(
+          [process.execPath, main, "merge", "--when-ready", "#7", "--asked-file", file],
+          { env: { ...env(), SKELCREW_SOCKET: leadSocket() }, stdout: "pipe", stderr: "pipe" },
+        );
+      // Off by default: the lead is refused, and nothing is armed.
+      expect(asLead().stderr.toString()).toContain(notLet);
+      expect(thread().merge_plan).toBeNull();
+
+      const config = join(home, ".config", "skelcrew", "config.yaml");
+      writeFileSync(config, `${read(config)}lead: { may_arm_merges: true }\n`);
+      // Builders stay refused, the lead must give your words, and --asked-file is never yours.
+      const request = { command: "merge when ready", repo: "app", task: "12", asked: words };
+      expect(await askOn(builderSocket(), request)).toEqual({
+        error: "the daemon doesn't know that request",
+      });
+      const { asked: _, ...unquoted } = request;
+      expect(await askOn(leadSocket(), unquoted)).toEqual({
+        error: "give what the human asked with --asked-file, a file holding their exact words",
+      });
+      expect(await askOn(leadSocket(), { ...request, asked: "  " })).toMatchObject({
+        error: expect.stringContaining("give what the human asked"),
+      });
+      expect(await askOn(join(home, "run", "skelcrew.sock"), request)).toEqual({
+        error: "--asked-file is the lead's: at your terminal, sc merge asks you y/N",
+      });
+      expect(thread().merge_plan).toBeNull();
+
+      // The lead arms it, with no question at a terminal.
+      const armed = asLead();
+      expect(armed.stderr.toString()).toBe("");
+      expect(armed.stdout.toString()).toContain("app-12 merges once it is approved and green.");
+      // The plan keeps your words exactly, as what let it merge.
+      expect(thread()).toMatchObject({
+        merge_plan: "armed",
+        merge_by: `${login()} via the lead`,
+        merge_asked: words,
+      });
+      expect(existsSync(ran)).toBe(false);
+      // The thread's log and the daemon's keep your words exactly, and the lead gets a note
+      // saying what it armed, with them on one line, so you see it in the conversation.
+      const why = `the lead armed a merge when ready on #7, as the human asked: ${JSON.stringify(words)}`;
+      // Each line of the thread's log is JSON, so its quotes are escaped there.
+      expect(read(join(data(), "threads", "app-12.log"))).toContain(`"why":${JSON.stringify(why)}`);
+      await until(() => read(daemonLog()).includes(`app-12: ${why}`));
+      await until(() =>
+        leadTyped().includes(
+          `Armed: #7 (app-12) merges once it is approved and green, as the human asked: "merge "#7" when it's ready, $(touch ${ran}) \`touch ${ran}\` HUMAN_WORDS WORDS_q7x2k9mf touch ${ran}". sc merge --cancel app-12 stops that.`,
+        ),
+      );
+
+      // The plan and your words outlast a restart of the daemon.
+      const first = running.splice(0, 1)[0];
+      first?.kill();
+      await first?.exited;
+      serve();
+      expect(thread()).toMatchObject({ merge_plan: "armed", merge_asked: words });
+
+      // Green at the approved head, it merges, and the PR's record says the lead armed it.
+      const head = pushed();
+      pr({ head, reviews: [skelReview], checks: [approved] });
+      await until(() => thread().status === "done");
+      const record = asked(plugin).find(
+        (q) => q.ask === "review" && String(q.body).startsWith("Merging when ready"),
+      );
+      expect(String(record?.body)).toStartWith(
+        `Merging when ready, as asked by ${login()} via the lead on `,
+      );
+      expect(merges()[0]).toMatchObject({ pr: 7, commit: head });
+      expect(thread().merge_asked).toBe(words);
+    }, 90_000);
 
     test("an armed merge waits on a new push and failing CI, then merges the approved head", async () => {
       await approvedApp12();

@@ -65,3 +65,8 @@ export const reviewLimit = (): number => readSettings(["reviews"]).reviews;
 // Returns how many test suites may run at once through sc check on this machine. Throws when
 // your config isn't valid.
 export const checkLimit = (): number => readSettings(["checks"]).checks;
+
+// Returns whether you let the lead arm a merge when ready when you ask it to in the
+// conversation. Only your config.yaml can say so, so a repository's files never grant it. Off
+// unless you turn it on. Throws when your config isn't valid.
+export const leadMayArmMerges = (): boolean => readSettings(["leadArms"]).leadArms;
