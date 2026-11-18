@@ -39,13 +39,16 @@ const leadFolder = (repo = "app") =>
 
 // Stands in for Claude Code, staying up like the real one until its session ends. It runs in
 // the lead's sandbox, where the home folder is hidden, so it notes its calls in the folder it
-// starts in, the lead's own, one line each, though the lead's instructions span several. Each
-// line ends with whether Claude Code's agent view was off.
+// starts in, the lead's own, one line each. After its arguments come the instructions it read
+// from its instructions file, though they span several lines. Each line ends with whether
+// Claude Code's agent view was off.
 function fakeClaude(body: string): void {
   const view = "agent-view-off=$CLAUDE_CODE_DISABLE_AGENT_VIEW";
+  const told =
+    'told=; prev=; for a in "$@"; do [ "$prev" = --append-system-prompt-file ] && told=$(cat "$a"); prev=$a; done';
   writeFileSync(
     join(home, "bin", "claude"),
-    `#!/bin/sh\necho "claude $* ${view}" | tr '\\n' ' ' >> calls\necho >> calls\n${body}\n`,
+    `#!/bin/sh\n${told}\necho "claude $* told: $told ${view}" | tr '\\n' ' ' >> calls\necho >> calls\n${body}\n`,
     { mode: 0o755 },
   );
 }
@@ -536,7 +539,7 @@ describe.skipIf(insideSandbox)("with a lead per repository", () => {
     serve();
     await until(() => claudeCalls().includes("--resume"));
     for (const line of claudeLines()) {
-      expect(line).toContain("--append-system-prompt You are a lead");
+      expect(line).toContain("told: You are a lead");
       expect(line).toContain("sc issue create");
       // The lead talks to the human, who sees issues and threads, never Skelcrew's word task.
       expect(line).not.toMatch(/\btasks?\b/i);
@@ -544,6 +547,25 @@ describe.skipIf(insideSandbox)("with a lead per repository", () => {
       expect(line).toContain("--model opus");
       expect(line.trimEnd()).toEndWith("agent-view-off=1");
     }
+  });
+
+  // tmux refuses a start command past about 16 KB. The lead's instructions once grew close to
+  // that, and any more would have stopped every lead from starting.
+  test("starts a lead with 64 KB of instructions, which it reads to their end", async () => {
+    setUp();
+    const long = `${"x".repeat(64 * 1024)} the end of the instructions`;
+    writeFileSync(
+      join(home, ".config", "skelcrew", "config.yaml"),
+      `harness: claude\ntest: [${JSON.stringify(long)}]\n`,
+    );
+    addRepository("app");
+    serve();
+    await untilAnswers();
+    await open();
+    await until(() => claudeLines().length > 0);
+    expect(hasLead()).toBe(true);
+    const [line] = claudeLines();
+    expect(line).toContain(`the test command was \`${long}\`.`);
   });
 
   // A lead once filed three issues and started a thread on each from the human's first

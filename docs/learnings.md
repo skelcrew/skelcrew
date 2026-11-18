@@ -46,6 +46,13 @@ that covers the code you are about to write.
   Code creates and deletes, so a throwaway layer over `~/.claude` can't share it either.
   Give each session its own config folder and a token from `claude setup-token`, which
   never renews.
+- **Pass instructions in a file, not on the command line.** tmux refuses a start command
+  past about 16 KB with "command too long", and a lead's instructions grew close to that.
+  Claude Code reads them with `--append-system-prompt-file`. Codex takes developer
+  instructions from a profile, `$CODEX_HOME/<name>.config.toml` chosen with `-p <name>`. An
+  argument won't do either: Linux refuses one past 128 KB. An `AGENTS.md` won't do: Codex
+  gives it less weight than developer instructions. A repository's `.codex/config.toml` beats
+  the profile, but Codex loads it only for a folder trusted in a config file, not with `-c`.
 - **Check a login with `claude auth status --json`.** `.claude.json` exists after any
   launch, logged in or not, so finding it proves nothing.
 - **`AskUserQuestion` waits on a screen nobody watches.** A builder that asks with it
