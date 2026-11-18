@@ -1028,8 +1028,8 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
       checks: [approved],
     });
     changes([issue12(), moved]);
-    await until(() => waiting() === 1);
-    expect(handled(`head:${merged}`)).toBe(true);
+    // The notice is saved to wait for the builder a moment before its commit is saved as handled.
+    await until(() => waiting() === 1 && handled(`head:${merged}`));
     // The busy builder submits without the merge, dropping the waiting notice. Its push is
     // refused, and tells it again.
     submitRound2();

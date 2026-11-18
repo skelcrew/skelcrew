@@ -1750,7 +1750,8 @@ await serve(${JSON.stringify(socket)}, 200);`;
     const started = await skel(["start", "app", "Add export", "As JSON"]);
     expect(started.err).toBe("");
     const log = () => read(join(data(), "threads", "app-t1.log"));
-    await until(() => log().includes("app-t1 is ready on branch skelcrew/t1-add-export"), 30_000);
+    // Behind a whole round: the builder's turn and a review in a sandbox of its own.
+    await until(() => log().includes("app-t1 is ready on branch skelcrew/t1-add-export"), longWait);
     // Someone else pushes to the thread's branch.
     const work = join(home, "work", "app");
     git(work, "fetch", "-q", bare, "skelcrew/t1-add-export");
@@ -1782,7 +1783,8 @@ await serve(${JSON.stringify(socket)}, 200);`;
     const started = await skel(["start", "app", "Add export", "As JSON"]);
     expect(started.err).toBe("");
     const log = () => read(join(data(), "threads", "app-t1.log"));
-    await until(() => log().includes("app-t1 is ready on branch skelcrew/t1-add-export"), 30_000);
+    // Behind a whole round: the builder's turn and a review in a sandbox of its own.
+    await until(() => log().includes("app-t1 is ready on branch skelcrew/t1-add-export"), longWait);
     // The remote goes out of reach, and someone else's push moves the thread's branch there.
     const away = `${bare}.away`;
     renameSync(bare, away);
