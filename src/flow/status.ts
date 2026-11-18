@@ -8,7 +8,7 @@ import { harnessNamed } from "../agents/harness.ts";
 import { agentRuns, readSession } from "../agents/sessions.ts";
 import { forQuestion, type Marks, quietSince } from "../agents/transport.ts";
 import { threadConfig } from "../config.ts";
-import { askHostLater, type Host, hostNamed, pluginHost } from "../plugins/runtime.ts";
+import { askHost, type Host, hostNamed, pluginHost } from "../plugins/runtime.ts";
 import { errorText } from "../say.ts";
 import { pastRoundLimit } from "./decide.ts";
 import { leadOf } from "./lead.ts";
@@ -141,7 +141,8 @@ export function keepState(db: Database, agent: Agent, state: AgentState): void {
 // Claude Code, and an error on Codex, such as an unknown model, which prints it and sits at its
 // prompt. One look isn't enough: right after a message goes in, the mark can take a moment to
 // show. Neither gap flags needs you: after Esc you are looking at the agent anyway. The daemon
-// runs it every two seconds.
+// runs it every two seconds. Each agent is looked at on its own, without waiting: a slow or hung
+// host holds up only its own agents' looks, and one that fails leaves the others' to go on.
 export function noticeIdleScreens(db: Database, sessions: string): void {
   // The working agents: each builder still at work on its thread, on whichever host it runs, and
   // each lead. A builder whose host plugin is gone can't be looked at.
@@ -171,20 +172,40 @@ export function noticeIdleScreens(db: Database, sessions: string): void {
       marks: harnessNamed(harness ?? "claude").marks,
     });
   }
-  // An agent goes idle when the last look found it out of a turn too. The rest are remembered
-  // for the next look, and an agent no longer working is forgotten.
-  const looks = new Map<string, { screen: string; quiet: boolean }>();
+  // An agent no longer working is forgotten. Each other one gets a look, unless the last is
+  // still under way.
+  const keys = new Set(working.map((agent) => agentKey(agent.key)));
+  for (const key of lastLook.keys()) if (!keys.has(key)) lastLook.delete(key);
   for (const agent of working) {
     const key = agentKey(agent.key);
-    if (!agentRuns(agent.host, agent.name)) continue;
-    const screen = readSession(agent.host, agent.name);
-    const before = lastLook.get(key);
-    const quiet = quietSince(before?.screen, screen, agent.marks);
-    if (quiet && before?.quiet) keepState(db, agent.key, "idle");
-    else looks.set(key, { screen, quiet });
+    if (looking.has(key)) continue;
+    looking.add(key);
+    lookAt(db, agent, key)
+      .catch((error) => console.log(`couldn't look at ${agent.name}'s screen: ${errorText(error)}`))
+      .finally(() => looking.delete(key));
   }
-  lastLook.clear();
-  for (const [key, look] of looks) lastLook.set(key, look);
+}
+
+// The agents being looked at now, by the key agentKey gives them.
+const looking = new Set<string>();
+
+// Takes one look at a working agent's screen for noticeIdleScreens. It goes idle when the last
+// look found it out of a turn too. Otherwise this look is remembered for the next. A new state
+// while it looked forgets the last look, and so makes this one count for nothing, as it may
+// show the turn before. An agent that isn't running has nothing to remember.
+async function lookAt(
+  db: Database,
+  agent: { key: Agent; host: Host; name: string; marks: Marks },
+  key: string,
+): Promise<void> {
+  const before = lastLook.get(key);
+  const runs = await agentRuns(agent.host, agent.name);
+  const screen = runs ? await readSession(agent.host, agent.name) : "";
+  if (lastLook.get(key) !== before) return;
+  if (!runs) return void lastLook.delete(key);
+  const quiet = quietSince(before?.screen, screen, agent.marks);
+  if (quiet && before?.quiet) keepState(db, agent.key, "idle");
+  else lastLook.set(key, { screen, quiet });
 }
 
 // The status last reported to a host for each builder, by its host and its ID there, so the host
@@ -226,7 +247,7 @@ export function reportStatus(db: Database, thread: Thread): void {
   // so the next change, or the daemon's next start, says it again.
   const question = { ask: "status", id, ...said };
   const sent = (reporting.get(key) ?? Promise.resolve())
-    .then(() => askHostLater(host, question, z.unknown(), { timeout: statusTimeout }))
+    .then(() => askHost(host, question, z.unknown(), { timeout: statusTimeout }))
     .then(
       () => {},
       (error) => {

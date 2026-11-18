@@ -149,9 +149,9 @@ export async function attachToThread(
 ): Promise<void> {
   const db = openDb();
   const thread = findThread(db, repository, task);
-  const { host, id } = builderSession(db, sessions, thread);
+  const { host, id } = await builderSession(db, sessions, thread);
   // A builder that exited leaves its last screen behind, which would look like it still runs.
-  if (!agentRuns(host, id))
+  if (!(await agentRuns(host, id)))
     throw new Error(
       `${repository}-${task}'s builder isn't running: the thread is ${thread.status}`,
     );

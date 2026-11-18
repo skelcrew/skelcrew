@@ -169,11 +169,11 @@ export const builderHarness = (thread: Thread) => harnessNamed(thread.harness ??
 // A plugin's host gives the ID as it starts the session, and the daemon could stop before saving
 // it. So a thread on a plugin with no ID saved finds its builder by the labels it started with,
 // and saves its ID then, so it is never started a second time.
-export function builderSession(
+export async function builderSession(
   db: Database,
   sessions: string,
   thread: Thread,
-): { host: Host; id: string } {
+): Promise<{ host: Host; id: string }> {
   const host = hostNamed(db, sessions, thread.host ?? "tmux");
   if (host === null) throw new Error(hostGone(thread));
   if (thread.host_id !== null || typeof host === "string")
@@ -182,7 +182,7 @@ export function builderSession(
   // or, once another repository shares that, its owner and name, then its task's ID. Either is
   // matched whole, so task 12 never takes the builder of task other-12.
   const names = [`${thread.repo}-${thread.task}`, `${fullNameOf(thread)}-${thread.task}`];
-  const found = listSessions(host).find(
+  const found = (await listSessions(host)).find(
     ({ labels }) =>
       labels?.role === "builder" &&
       labels.repository === fullNameOf(thread) &&

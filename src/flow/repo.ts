@@ -468,7 +468,7 @@ async function openAgain(db: Database, sessions: string, had: Repository): Promi
     const reply = await ask({ command: "lead", from: `${had.owner}/${had.repo}` }, 60_000);
     if (reply === null) {
       const { name } = leadPlaces(had.owner, had.repo, kept);
-      if (exitedCleanly(sessions, name)) endSession(sessions, name);
+      if (exitedCleanly(sessions, name)) await endSession(sessions, name);
       db.run("UPDATE repositories SET tab_closed = 0 WHERE owner = ? AND repo = ?", [
         had.owner,
         had.repo,

@@ -101,7 +101,8 @@ const start = (on: PluginHost, command: string[]) =>
     labels,
   });
 
-const until = (done: () => boolean) => wait(done, { timeout: 30_000, every: 20 });
+const until = (done: () => boolean | Promise<boolean>) =>
+  wait(done, { timeout: 30_000, every: 20 });
 const read = (file: string) =>
   existsSync(join(home, file)) ? readFileSync(join(home, file), "utf8") : "";
 // The questions the host was asked, by what each asked.
@@ -113,29 +114,33 @@ const asked = () =>
 
 test("a session on the host runs its command, carries its labels and can be read", async () => {
   const on = host();
-  const id = start(on, ["sh", "-c", 'pwd; echo $PATH; [ -n "$HOME" ] || echo no home; sleep 30']);
+  const id = await start(on, [
+    "sh",
+    "-c",
+    'pwd; echo $PATH; [ -n "$HOME" ] || echo no home; sleep 30',
+  ]);
   expect(id).toBe("fake-app-12");
-  await until(() => readSession(on, id).includes("no home"));
-  expect(readSession(on, id)).toBe(`${home}\n${process.env.PATH}\nno home\n`);
-  expect(listSessions(on)).toEqual([{ name: id, running: true, labels }]);
-  expect(hasSession(on, id)).toBe(true);
-  expect(agentRuns(on, id)).toBe(true);
+  await until(async () => (await readSession(on, id)).includes("no home"));
+  expect(await readSession(on, id)).toBe(`${home}\n${process.env.PATH}\nno home\n`);
+  expect(await listSessions(on)).toEqual([{ name: id, running: true, labels }]);
+  expect(await hasSession(on, id)).toBe(true);
+  expect(await agentRuns(on, id)).toBe(true);
 });
 
 test("an agent that ended is no longer running, and its last screen says why", async () => {
   const on = host();
-  const id = start(on, ["sh", "-c", "echo not logged in; exit 1"]);
-  await until(() => !agentRuns(on, id));
-  expect(hasSession(on, id)).toBe(true);
-  expect(failedScreen(on, id)).toBe("not logged in");
+  const id = await start(on, ["sh", "-c", "echo not logged in; exit 1"]);
+  await until(async () => !(await agentRuns(on, id)));
+  expect(await hasSession(on, id)).toBe(true);
+  expect(await failedScreen(on, id)).toBe("not logged in");
 });
 
 test("stopping a session ends its process and the host forgets it", async () => {
   const on = host();
-  const id = start(on, ["sleep", "30"]);
+  const id = await start(on, ["sleep", "30"]);
   const pid = Number(readFileSync(join(settings(), "sessions", id, "pid"), "utf8"));
   await stopSession(on, id);
-  expect(hasSession(on, id)).toBe(false);
+  expect(await hasSession(on, id)).toBe(false);
   expect(stillRunning([pid])).toEqual([]);
   // Stopping one that is gone does nothing.
   await stopSession(on, id);
@@ -143,15 +148,15 @@ test("stopping a session ends its process and the host forgets it", async () => 
 
 test("interrupting a session sends its agent Esc", async () => {
   const on = host();
-  const id = start(on, ["sh", "-c", "echo ready; exec cat > keys.txt"]);
-  await until(() => readSession(on, id).includes("ready"));
-  interruptSession(on, id);
+  const id = await start(on, ["sh", "-c", "echo ready; exec cat > keys.txt"]);
+  await until(async () => (await readSession(on, id)).includes("ready"));
+  await interruptSession(on, id);
   await until(() => read("keys.txt") === "\x1b");
 });
 
 test("with sessions only, the built-in transport types through the host's paste and keys", async () => {
   const on = host();
-  const id = start(on, harness(1));
+  const id = await start(on, harness(1));
   await deliver(on, id, claude.marks, "fix the bug\nthen run the tests", { moment });
   await until(() => read("received.txt").endsWith("\n"));
   expect(read("lost.txt")).toBe("");
@@ -164,8 +169,8 @@ test("with sessions only, the built-in transport types through the host's paste 
 
 test("with sessions only, idle comes from the agent's screen", async () => {
   const on = host();
-  const id = start(on, harness(30));
-  await until(() => readSession(on, id).includes(claude.marks.busy));
+  const id = await start(on, harness(30));
+  await until(async () => (await readSession(on, id)).includes(claude.marks.busy));
   expect(await whyBusy(on, id, claude.marks, { moment })).toContain(claude.marks.busy);
   const typing = deliver(on, id, claude.marks, "hello", { moment, timeout: 500 });
   await expect(typing).rejects.toThrow(claude.marks.busy);
@@ -174,8 +179,8 @@ test("with sessions only, idle comes from the agent's screen", async () => {
 
 test("a host with its own transport says when its agent is idle and delivers itself", async () => {
   const on = host({ transport: true });
-  const id = start(on, harness(1));
-  await until(() => readSession(on, id).includes(claude.marks.busy));
+  const id = await start(on, harness(1));
+  await until(async () => (await readSession(on, id)).includes(claude.marks.busy));
   expect(await idle(on, id, claude.marks, { moment })).toBe(false);
   expect(await deliver(on, id, claude.marks, "hello", { moment })).toBe("typed");
   await until(() => read("received.txt").endsWith("\n"));
@@ -187,8 +192,8 @@ test("a host with its own transport says when its agent is idle and delivers its
 
 test("a message cancelled while the host waits to deliver it is never typed", async () => {
   const on = host({ transport: true });
-  const id = start(on, harness(2));
-  await until(() => readSession(on, id).includes(claude.marks.busy));
+  const id = await start(on, harness(2));
+  await until(async () => (await readSession(on, id)).includes(claude.marks.busy));
   const cancel = new AbortController();
   const typing = deliver(on, id, claude.marks, "stale", { moment, signal: cancel.signal });
   await until(() => asked().includes("deliver"));
@@ -199,10 +204,10 @@ test("a message cancelled while the host waits to deliver it is never typed", as
   expect(read("received.txt")).toBe("\x1b[200~fresh\x1b[201~\n");
 });
 
-test("a host that fails says what failed, naming the plugin", () => {
+test("a host that fails says what failed, naming the plugin", async () => {
   const on = host();
   mkdirSync(join(settings(), "sessions", "fake-app-12"), { recursive: true });
-  expect(() => readSession(on, "fake-app-12")).toThrow(`${name} couldn't read`);
+  await expect(readSession(on, "fake-app-12")).rejects.toThrow(`${name} couldn't read`);
 });
 
 // Runs `code` against Skelcrew's database in a process of its own with the test's home, where a
@@ -244,6 +249,7 @@ import { record } from ${JSON.stringify(source("flow/thread.ts"))};
 import { forgetStatus, keepState } from ${JSON.stringify(source("flow/status.ts"))};
 import { builderSession, readThread } from ${JSON.stringify(source("flow/thread.ts"))};
 import { endThread, stopThread } from ${JSON.stringify(source("flow/events.ts"))};
+import { noticeIdleScreens } from ${JSON.stringify(source("flow/status.ts"))};
 import { hasSession, startSession } from ${JSON.stringify(source("agents/sessions.ts"))};
 import { endEarlierBuilder } from ${JSON.stringify(source("flow/builder.ts"))};
 import { deliverMessages, queueMessage } from ${JSON.stringify(source("flow/messages.ts"))};
@@ -285,9 +291,9 @@ keepState(db, { folder: "app-12" }, "idle");`);
 test("a builder whose ID never got saved is found on its host by its labels", () => {
   const said = runWithFakeHost(
     "sessions",
-    `const host = builderSession(db, "unused", readThread(db, "app-12")).host;
-startSession(host, "app-12", { folder: ${JSON.stringify(home)}, command: ["sleep", "30"], env: {}, labels: { repository: "simon/app", role: "builder", task: "app-12" } });
-console.log(builderSession(db, "unused", readThread(db, "app-12")).id);
+    `const host = (await builderSession(db, "unused", readThread(db, "app-12"))).host;
+await startSession(host, "app-12", { folder: ${JSON.stringify(home)}, command: ["sleep", "30"], env: {}, labels: { repository: "simon/app", role: "builder", task: "app-12" } });
+console.log((await builderSession(db, "unused", readThread(db, "app-12"))).id);
 console.log(readThread(db, "app-12").host_id);`,
     { host: "fake", host_id: null },
   );
@@ -323,9 +329,9 @@ record(db, "app-12", { needs_you: false });`);
 test("recovery never takes the builder of a task whose ID only ends the same", () => {
   const said = runWithFakeHost(
     "sessions",
-    `const host = builderSession(db, "unused", readThread(db, "app-12")).host;
-startSession(host, "app-other-12", { folder: ${JSON.stringify(home)}, command: ["sleep", "30"], env: {}, labels: { repository: "simon/app", role: "builder", task: "app-other-12" } });
-console.log(builderSession(db, "unused", readThread(db, "app-12")).id);
+    `const host = (await builderSession(db, "unused", readThread(db, "app-12"))).host;
+await startSession(host, "app-other-12", { folder: ${JSON.stringify(home)}, command: ["sleep", "30"], env: {}, labels: { repository: "simon/app", role: "builder", task: "app-other-12" } });
+console.log((await builderSession(db, "unused", readThread(db, "app-12"))).id);
 console.log(readThread(db, "app-12").host_id);`,
     { host: "fake", host_id: null },
   );
@@ -334,8 +340,8 @@ console.log(readThread(db, "app-12").host_id);`,
 
 test("a host that answers a delivery with nothing hasn't delivered it", async () => {
   const on = host({ transport: true });
-  const id = start(on, harness());
-  await until(() => readSession(on, id).includes(claude.marks.prompt));
+  const id = await start(on, harness());
+  await until(async () => (await readSession(on, id)).includes(claude.marks.prompt));
   writeFileSync(join(settings(), "garble-deliver"), "");
   const typing = deliver(on, id, claude.marks, "hello", { moment });
   await expect(typing).rejects.toThrow(
@@ -349,12 +355,12 @@ test("a builder whose host started it but lost the answer is ended before the th
   writeFileSync(join(settings, "lose-start"), "");
   const said = runWithFakeHost(
     "sessions",
-    `const host = builderSession(db, "unused", readThread(db, "app-12")).host;
+    `const host = (await builderSession(db, "unused", readThread(db, "app-12"))).host;
 const labels = { repository: "simon/app", role: "builder", task: "app-12" };
-const error = (() => { try { startSession(host, "app-12", { folder: ${JSON.stringify(home)}, command: ["sleep", "30"], env: {}, labels }); } catch (error) { return error.message; } })();
-console.log(error, hasSession(host, "fake-app-12"));
+const error = await (async () => { try { await startSession(host, "app-12", { folder: ${JSON.stringify(home)}, command: ["sleep", "30"], env: {}, labels }); } catch (error) { return error.message; } })();
+console.log(error, await hasSession(host, "fake-app-12"));
 await endEarlierBuilder(db, "unused", readThread(db, "app-12"));
-console.log(hasSession(host, "fake-app-12"), readThread(db, "app-12").host);`,
+console.log(await hasSession(host, "fake-app-12"), readThread(db, "app-12").host);`,
     { host: "fake", host_id: null, status: "failed" },
   );
   expect(said).toBe("fake couldn't start: lost the answer true\nfalse null\n");
@@ -365,14 +371,14 @@ test("a builder whose host fails to end it goes back to working, with its host",
   mkdirSync(settings, { recursive: true });
   const said = runWithFakeHost(
     "sessions",
-    `const host = builderSession(db, "unused", readThread(db, "app-12")).host;
+    `const host = (await builderSession(db, "unused", readThread(db, "app-12"))).host;
 const labels = { repository: "simon/app", role: "builder", task: "app-12" };
-startSession(host, "app-12", { folder: ${JSON.stringify(home)}, command: ["sleep", "30"], env: {}, labels });
+await startSession(host, "app-12", { folder: ${JSON.stringify(home)}, command: ["sleep", "30"], env: {}, labels });
 require("node:fs").writeFileSync(${JSON.stringify(join(home, ".config", "skelcrew", "plugins", "fake", "garble-end"))}, "");
 const error = await stopThread(db, "unused", readThread(db, "app-12")).catch((error) => error.message);
 const after = readThread(db, "app-12");
 console.log(error);
-console.log(after.status, after.host, after.host_id, hasSession(host, "fake-app-12"));`,
+console.log(after.status, after.host, after.host_id, await hasSession(host, "fake-app-12"));`,
     { host: "fake", host_id: "fake-app-12" },
   );
   expect(said).toBe(
@@ -387,9 +393,9 @@ test("a builder on its usage limit is still woken after a stop that failed", () 
   });
   const said = runWithFakeHost(
     "sessions",
-    `const host = builderSession(db, "unused", readThread(db, "app-12")).host;
+    `const host = (await builderSession(db, "unused", readThread(db, "app-12"))).host;
 const labels = { repository: "simon/app", role: "builder", task: "app-12" };
-startSession(host, "app-12", { folder: ${JSON.stringify(home)}, command: [${JSON.stringify(prompt)}], env: { PATH: process.env.PATH }, labels });
+await startSession(host, "app-12", { folder: ${JSON.stringify(home)}, command: [${JSON.stringify(prompt)}], env: { PATH: process.env.PATH }, labels });
 require("node:fs").writeFileSync(${JSON.stringify(join(home, ".config", "skelcrew", "plugins", "fake", "garble-end"))}, "");
 console.log(await stopThread(db, "unused", readThread(db, "app-12")).catch((error) => error.message));
 const received = ${JSON.stringify(join(home, "received.txt"))};
@@ -414,9 +420,9 @@ test("a message a host answers with nothing stays queued, and goes in on the nex
   const said = runWithFakeHost(
     "sessions, transport",
     `const fs = require("node:fs");
-const host = builderSession(db, "unused", readThread(db, "app-12")).host;
+const host = (await builderSession(db, "unused", readThread(db, "app-12"))).host;
 const labels = { repository: "simon/app", role: "builder", task: "app-12" };
-startSession(host, "app-12", { folder: ${JSON.stringify(home)}, command: [${JSON.stringify(prompt)}], env: { PATH: process.env.PATH }, labels });
+await startSession(host, "app-12", { folder: ${JSON.stringify(home)}, command: [${JSON.stringify(prompt)}], env: { PATH: process.env.PATH }, labels });
 const waiting = () => db.query("SELECT COUNT(*) AS n FROM messages").get().n;
 const asked = () => fs.existsSync(${JSON.stringify(join(fake, "asked"))}) ? fs.readFileSync(${JSON.stringify(join(fake, "asked"))}, "utf8") : "";
 const until = async (done) => { const deadline = Date.now() + 15_000; while (!done() && Date.now() < deadline) await Bun.sleep(50); };
@@ -461,3 +467,54 @@ process.exit(0);`,
   );
   expect(said).toBe("its builder's session host gone isn't installed any more\nworking 1\n");
 });
+
+test("a host that never answers holds up neither the daemon nor the agents on another host", () => {
+  const prompt = join(home, "prompt.sh");
+  writeFileSync(prompt, `#!/bin/sh\necho "${claude.marks.prompt}"\ncat > received.txt\n`, {
+    mode: 0o755,
+  });
+  // A host named stuck whose every answer waits until the test lets it go.
+  const stuck = join(home, "plugin-stuck");
+  const held = join(home, "held");
+  mkdirSync(stuck, { recursive: true });
+  writeFileSync(held, "");
+  writeFileSync(
+    join(stuck, "skelcrew-plugin.yaml"),
+    `name: stuck
+version: 0.1.0
+skelcrew: 0.1.0
+about: A host that never answers
+kind: runtime
+provides: [sessions]
+session: [sh, -c, ${JSON.stringify(`while [ -e ${held} ]; do sleep 0.1; done`)}]
+attach: ["true"]
+`,
+  );
+  const said = runWithFakeHost(
+    "sessions",
+    `const fs = require("node:fs");
+db.run("INSERT INTO plugins (name, folder) VALUES ('stuck', ?)", [${JSON.stringify(stuck)}]);
+db.exec(${JSON.stringify(threadSql({ task: "13", host: "stuck", host_id: "stuck-app-13", state: "working" }))});
+const host = (await builderSession(db, "unused", readThread(db, "app-12"))).host;
+const labels = { repository: "simon/app", role: "builder", task: "app-12" };
+await startSession(host, "app-12", { folder: ${JSON.stringify(home)}, command: [${JSON.stringify(prompt)}], env: { PATH: process.env.PATH }, labels });
+// Looks every two seconds, as the daemon does, and notes how long each pass held it up.
+let slowest = 0;
+const deadline = Date.now() + 20_000;
+while (readThread(db, "app-12").state === "working" && Date.now() < deadline) {
+  const started = Date.now();
+  noticeIdleScreens(db, "unused");
+  slowest = Math.max(slowest, Date.now() - started);
+  await Bun.sleep(2000);
+}
+console.log(readThread(db, "app-12").state, readThread(db, "app-13").state, slowest < 500);
+fs.rmSync(${JSON.stringify(held)});
+await Bun.sleep(500);
+process.exit(0);`,
+    { host: "fake", host_id: "fake-app-12", state: "working" },
+  );
+  // Let go at last, the stuck host's look ends with nothing understood, which is only logged.
+  const released =
+    "couldn't look at stuck-app-13's screen: stuck answered list in a way Skelcrew doesn't understand";
+  expect(said).toBe(`idle working true\n${released}\n`);
+}, 40_000);

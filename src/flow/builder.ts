@@ -464,7 +464,12 @@ export async function startBuilder(db: Database, sessions: string, thread: Threa
   // The host is saved before the session starts, so a daemon that stops in between finds the
   // builder there by its labels, rather than starting it again elsewhere.
   record(db, thread.folder, { host: hostName, host_id: null });
-  const id = startSession(host, thread.folder, { folder: clone, command: argv, env, labels });
+  const id = await startSession(host, thread.folder, {
+    folder: clone,
+    command: argv,
+    env,
+    labels,
+  });
   forgetStatus(hostName, id);
   record(db, thread.folder, { host_id: id });
   console.log(`${resume ? "Brought back" : "Started"} the builder of ${thread.folder}.`);
@@ -482,8 +487,8 @@ export async function endEarlierBuilder(
   thread: Thread,
 ): Promise<void> {
   if (thread.host === null) return;
-  const { host, id } = builderSession(db, sessions, thread);
-  if (hasSession(host, id)) await stopSession(host, id);
+  const { host, id } = await builderSession(db, sessions, thread);
+  if (await hasSession(host, id)) await stopSession(host, id);
   record(db, thread.folder, { host: null, host_id: null });
 }
 
@@ -504,9 +509,9 @@ export async function bringBack(db: Database, sessions: string, thread: Thread):
       return;
     }
     // A session whose agent ended is ended too, so the new one can take its name.
-    const { host, id } = builderSession(db, sessions, thread);
-    if (agentRuns(host, id)) return;
-    if (hasSession(host, id)) endSession(host, id);
+    const { host, id } = await builderSession(db, sessions, thread);
+    if (await agentRuns(host, id)) return;
+    if (await hasSession(host, id)) await endSession(host, id);
   }
   await startBuilder(db, sessions, thread);
 }

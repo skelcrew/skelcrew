@@ -76,13 +76,14 @@ cat > received.txt
 // The labels every session in these tests carries.
 const labels: Labels = { repository: "simon/app", role: "builder", task: "app-12" };
 
-function start(name: string, command: string[], env: Record<string, string> = {}) {
+// Starts a session for a test, in the test's home, with the labels above.
+const start = (name: string, command: string[], env: Record<string, string> = {}) =>
   startSession(socket, name, { folder: home, command, env, labels });
-}
 
 // Waits for what a session does in its own time, looking often. A busy machine can take
 // many seconds to start a session, so the limit is generous: it only ends a test that hangs.
-const until = (done: () => boolean) => wait(done, { timeout: 30_000, every: 20 });
+const until = (done: () => boolean | Promise<boolean>) =>
+  wait(done, { timeout: 30_000, every: 20 });
 
 // Waits until a session shows this text. A check of how a harness's screen reads waits for
 // the screen to be drawn first, as a fixed wait can end before a slow start has drawn it.
@@ -97,7 +98,7 @@ const read = (file: string) =>
   existsSync(join(home, file)) ? readFileSync(join(home, file), "utf8") : "";
 
 test("a typed message with several lines arrives whole, as one paste and one Enter", async () => {
-  start("lead", harness());
+  await start("lead", harness());
   await deliver(socket, "lead", claude.marks, "fix the bug\nthen run the tests", { moment });
   // The terminal turns the Enter tmux sends into a newline, so one newline means one Enter.
   await until(() => read("received.txt").endsWith("\n"));
@@ -106,7 +107,7 @@ test("a typed message with several lines arrives whole, as one paste and one Ent
 });
 
 test("a message arrives whole while someone is scrolled back, and the agent reads as idle", async () => {
-  start("lead", harness());
+  await start("lead", harness());
   await showing("lead", claude.marks.prompt);
   Bun.spawnSync(["tmux", "-L", socket, "copy-mode", "-t", "=lead:"]);
   expect(await idle(socket, "lead", claude.marks, { moment })).toBe(true);
@@ -116,7 +117,7 @@ test("a message arrives whole while someone is scrolled back, and the agent read
 });
 
 test("typing waits while the harness is busy, then goes through", async () => {
-  start("lead", harness(1));
+  await start("lead", harness(1));
   await deliver(socket, "lead", claude.marks, "hello", { moment });
   await until(() => read("received.txt").endsWith("\n"));
   expect(read("lost.txt")).toBe("");
@@ -125,7 +126,7 @@ test("typing waits while the harness is busy, then goes through", async () => {
 
 test("typing goes by the busy and ready marks of the harness it types into", async () => {
   const marks = { busy: "esc to stop", prompt: "›" };
-  start("lead", harness(1, marks));
+  await start("lead", harness(1, marks));
   await deliver(socket, "lead", marks, "hello", { moment });
   await until(() => read("received.txt").endsWith("\n"));
   expect(read("lost.txt")).toBe("");
@@ -133,7 +134,7 @@ test("typing goes by the busy and ready marks of the harness it types into", asy
 });
 
 test("typing gives up when the harness stays busy", async () => {
-  start("lead", harness(30));
+  await start("lead", harness(30));
   await showing("lead", claude.marks.busy);
   const typing = deliver(socket, "lead", claude.marks, "hello", { moment, timeout: 500 });
   await expect(typing).rejects.toThrow("esc to interrupt");
@@ -141,7 +142,7 @@ test("typing gives up when the harness stays busy", async () => {
 });
 
 test("a message cancelled while the harness is busy is never typed", async () => {
-  start("lead", harness(1));
+  await start("lead", harness(1));
   const cancel = new AbortController();
   const typing = deliver(socket, "lead", claude.marks, "stale", { moment, signal: cancel.signal });
   await Bun.sleep(300);
@@ -188,7 +189,7 @@ const quoting = [
 ];
 
 test("a message goes in though the agent's own reply quotes the busy mark", async () => {
-  start("lead", screen(quoting));
+  await start("lead", screen(quoting));
   await showing("lead", "accept edits");
   expect(await whyBusy(socket, "lead", claude.marks, { moment })).toBe("");
   expect(await deliver(socket, "lead", claude.marks, "hello", { moment })).toBe("typed");
@@ -229,7 +230,7 @@ const spinning = [
 // so each look here does. A turn can start with nothing typed in, such as when a background
 // task ends, so whatever ended the last turn, only the screen tells.
 test("a spinner redrawn once a second shows the agent busy at every look", async () => {
-  start("lead", screen(spinning));
+  await start("lead", screen(spinning));
   await showing("lead", "accept edits");
   for (let look = 0; look < 3; look++)
     expect(await whyBusy(socket, "lead", claude.marks, { moment })).toBe(
@@ -238,14 +239,14 @@ test("a spinner redrawn once a second shows the agent busy at every look", async
 });
 
 test("typing says so when it gives up because there is no prompt", async () => {
-  start("lead", ["sh", "-c", "echo starting; sleep 30"]);
+  await start("lead", ["sh", "-c", "echo starting; sleep 30"]);
   await showing("lead", "starting");
   const typing = deliver(socket, "lead", claude.marks, "hello", { moment, timeout: 300 });
   await expect(typing).rejects.toThrow("prompt");
 });
 
 test("two messages typed at once both arrive whole, in order, each sent", async () => {
-  start("lead", harness());
+  await start("lead", harness());
   await Promise.all([
     deliver(socket, "lead", claude.marks, "first\nmessage", { moment }),
     deliver(socket, "lead", claude.marks, "second", { moment }),
@@ -295,7 +296,7 @@ const shown = () =>
 for (const [title, marks, draft] of drafts) {
   test(`typing waits while a draft sits at ${title}'s prompt, then goes through`, async () => {
     writeFileSync(join(home, "draft"), draft);
-    start("lead", drafting(marks));
+    await start("lead", drafting(marks));
     await showing("lead", draft);
     const typing = deliver(socket, "lead", marks, "hello", { moment });
     // Long enough for several looks at the screen, each of which must leave the draft alone.
@@ -311,7 +312,7 @@ for (const [title, marks, draft] of drafts) {
 
   test(`typing says a draft at ${title}'s prompt is in the way when it gives up`, async () => {
     writeFileSync(join(home, "draft"), draft);
-    start("lead", drafting(marks));
+    await start("lead", drafting(marks));
     await showing("lead", draft);
     const typing = deliver(socket, "lead", marks, "hello", { moment, timeout: 500 });
     await expect(typing).rejects.toThrow("unsent draft");
@@ -343,7 +344,7 @@ exec "${real}" "$@"
   const path = process.env.PATH;
   process.env.PATH = `${bin}:${path}`;
   try {
-    start("lead", drafting(claude.marks));
+    await start("lead", drafting(claude.marks));
     const typing = deliver(socket, "lead", claude.marks, "hello", { moment });
     await until(() => existsSync(join(home, "draft")));
     await Bun.sleep(moment * 8);
@@ -360,8 +361,8 @@ exec "${real}" "$@"
 
 // A daemon that starts again finds its agents by their labels, and the sidebar shows which run.
 test("a session carries its labels, and the list shows them with whether its agent runs", async () => {
-  start("builder", ["sleep", "30"]);
-  startSession(socket, "lead", {
+  await start("builder", ["sleep", "30"]);
+  await startSession(socket, "lead", {
     folder: home,
     command: ["sh", "-c", "exit 1"],
     env: {},
@@ -369,8 +370,10 @@ test("a session carries its labels, and the list shows them with whether its age
   });
   // A session started by a release before labels.
   Bun.spawnSync(["tmux", "-L", socket, "new-session", "-d", "-s", "old", "sleep", "30"]);
-  await until(() => listSessions(socket).some(({ name, running }) => name === "lead" && !running));
-  const found = listSessions(socket).sort((a, b) => a.name.localeCompare(b.name));
+  await until(async () =>
+    (await listSessions(socket)).some(({ name, running }) => name === "lead" && !running),
+  );
+  const found = (await listSessions(socket)).sort((a, b) => a.name.localeCompare(b.name));
   expect(found).toEqual([
     { name: "builder", running: true, labels },
     { name: "lead", running: false, labels: { repository: "simon/app", role: "lead" } },
@@ -378,19 +381,19 @@ test("a session carries its labels, and the list shows them with whether its age
   ]);
 });
 
-test("the list is empty while nothing runs", () => {
-  expect(listSessions(socket)).toEqual([]);
+test("the list is empty while nothing runs", async () => {
+  expect(await listSessions(socket)).toEqual([]);
 });
 
 test("reading a session gives what its agent shows", async () => {
-  start("builder", ["sh", "-c", "echo hello there; sleep 30"]);
-  await until(() => readSession(socket, "builder").includes("hello there"));
+  await start("builder", ["sh", "-c", "echo hello there; sleep 30"]);
+  await until(async () => (await readSession(socket, "builder")).includes("hello there"));
 });
 
 test("interrupting a session sends its agent Esc", async () => {
-  start("builder", ["sh", "-c", "stty raw -echo; echo ready; exec cat > keys.txt"]);
+  await start("builder", ["sh", "-c", "stty raw -echo; echo ready; exec cat > keys.txt"]);
   await showing("builder", "ready");
-  interruptSession(socket, "builder");
+  await interruptSession(socket, "builder");
   await until(() => read("keys.txt") === "\x1b");
 });
 
@@ -422,7 +425,7 @@ test("nothing outside the sessions module runs tmux for agents", () => {
 });
 
 test("a session runs its command in its folder, with its environment", async () => {
-  start("builder", ["sh", "-c", 'echo "$SKELCREW_THREAD $(pwd)" > seen.txt; sleep 30'], {
+  await start("builder", ["sh", "-c", 'echo "$SKELCREW_THREAD $(pwd)" > seen.txt; sleep 30'], {
     SKELCREW_THREAD: "app-12",
   });
   await until(() => read("seen.txt") !== "");
@@ -431,9 +434,13 @@ test("a session runs its command in its folder, with its environment", async () 
 
 // tmux reads a word ending in ";" as the end of a command.
 test("a first message and an environment value ending in ; arrive as given", async () => {
-  start("builder", ["sh", "-c", 'printf "%s|%s" "$1" "$X" > seen.txt; sleep 30', "sh", "fix it;"], {
-    X: "a;",
-  });
+  await start(
+    "builder",
+    ["sh", "-c", 'printf "%s|%s" "$1" "$X" > seen.txt; sleep 30', "sh", "fix it;"],
+    {
+      X: "a;",
+    },
+  );
   await until(() => read("seen.txt") !== "");
   expect(read("seen.txt")).toBe("fix it;|a;");
 });
@@ -472,7 +479,7 @@ startSession(${JSON.stringify(socket)}, "builder", {
 // its Claude Code never asked for extended keys. Opening the screen must still give it
 // Shift+Enter as a key of its own, without restarting it.
 test("an agent that never asked for extended keys gets Shift+Enter once the settings apply again", async () => {
-  start("new", ["sleep", "30"]);
+  await start("new", ["sleep", "30"]);
   const script = join(home, "old.sh");
   writeFileSync(script, "#!/bin/sh\nstty raw -echo\nexec cat > keys.txt\n", { mode: 0o755 });
   const tmux = ["tmux", "-L", socket, "-f", "/dev/null"];
@@ -498,18 +505,18 @@ test("an agent that never asked for extended keys gets Shift+Enter once the sett
   expect(readFileSync(join(home, "keys.txt"), "utf8")).toBe(`a${shiftEnter}b\r`);
 });
 
-test("a name tmux would change is refused", () => {
-  expect(() => start("app.1", ["sleep", "30"])).toThrow("app.1");
-  expect(() => start("app:1", ["sleep", "30"])).toThrow("app:1");
-  expect(hasSession(socket, "app_1")).toBe(false);
+test("a name tmux would change is refused", async () => {
+  await expect(start("app.1", ["sleep", "30"])).rejects.toThrow("app.1");
+  await expect(start("app:1", ["sleep", "30"])).rejects.toThrow("app:1");
+  expect(await hasSession(socket, "app_1")).toBe(false);
 });
 
 test("ending a session ends its process", async () => {
-  start("builder", ["sh", "-c", "echo $$ > pid.txt; sleep 30"]);
+  await start("builder", ["sh", "-c", "echo $$ > pid.txt; sleep 30"]);
   await until(() => read("pid.txt") !== "");
-  expect(hasSession(socket, "builder")).toBe(true);
-  endSession(socket, "builder");
-  expect(hasSession(socket, "builder")).toBe(false);
+  expect(await hasSession(socket, "builder")).toBe(true);
+  await endSession(socket, "builder");
+  expect(await hasSession(socket, "builder")).toBe(false);
   const pid = Number(read("pid.txt").trim());
   await until(() => !alive(pid));
 });
@@ -517,10 +524,10 @@ test("ending a session ends its process", async () => {
 // Claude Code can outlive its session for a few seconds, still writing in its folder.
 test("stopping a session waits until what it started has exited", async () => {
   const slow = `trap 'sleep 1; echo out > gone.txt; exit' HUP TERM; echo $$ > pid.txt; sleep 30 & wait`;
-  start("builder", ["sh", "-c", slow]);
+  await start("builder", ["sh", "-c", slow]);
   await until(() => read("pid.txt") !== "");
   await stopSession(socket, "builder");
-  expect(hasSession(socket, "builder")).toBe(false);
+  expect(await hasSession(socket, "builder")).toBe(false);
   expect(read("gone.txt")).toBe("out\n");
   expect(alive(Number(read("pid.txt").trim()))).toBe(false);
 });
@@ -530,7 +537,7 @@ test("stopping a session that doesn't run does nothing", async () => {
 });
 
 test("stopping a session kills what won't exit", async () => {
-  start("builder", [
+  await start("builder", [
     "sh",
     "-c",
     "trap '' HUP TERM; echo $$ > pid.txt; for i in $(seq 300); do sleep 0.1; done",
@@ -544,8 +551,8 @@ test("stopping a session kills what won't exit", async () => {
 // run ends, as the run adopts orphans, so asking the system for its ID would still find it.
 const alive = (pid: number) => stillRunning([pid]).length > 0;
 
-test("Alt-Q and Ctrl-Q detach with no prefix, and there is no status bar", () => {
-  start("lead", ["sleep", "30"]);
+test("Alt-Q and Ctrl-Q detach with no prefix, and there is no status bar", async () => {
+  await start("lead", ["sleep", "30"]);
   const tmux = (args: string[]) => Bun.spawnSync(["tmux", "-L", socket, ...args]).stdout.toString();
   expect(tmux(["show-options", "-g", "status"])).toBe("status off\n");
   expect(tmux(["list-keys", "-T", "root", "M-q"])).toContain("detach-client");
@@ -555,28 +562,28 @@ test("Alt-Q and Ctrl-Q detach with no prefix, and there is no status bar", () =>
 
 // Without it, tmux draws Claude Code's redraws in pieces, and over a slow link the prompt
 // visibly flickers.
-test("tmux passes synchronized output through to your terminal", () => {
-  start("lead", ["sleep", "30"]);
+test("tmux passes synchronized output through to your terminal", async () => {
+  await start("lead", ["sleep", "30"]);
   const features = Bun.spawnSync(["tmux", "-L", socket, "show-options", "-s", "terminal-features"]);
   expect(features.stdout.toString()).toContain("*:sync");
 });
 
-test("a session that was never started doesn't exist", () => {
-  expect(hasSession(socket, "nobody")).toBe(false);
+test("a session that was never started doesn't exist", async () => {
+  expect(await hasSession(socket, "nobody")).toBe(false);
 });
 
 test("an agent runs only while its session lives and its command hasn't failed", async () => {
-  expect(agentRuns(socket, "builder")).toBe(false);
-  start("builder", ["sh", "-c", "sleep 30"]);
-  expect(agentRuns(socket, "builder")).toBe(true);
+  expect(await agentRuns(socket, "builder")).toBe(false);
+  await start("builder", ["sh", "-c", "sleep 30"]);
+  expect(await agentRuns(socket, "builder")).toBe(true);
   // The next session starts before this one ends. The tmux server exits once it has no
   // session left, and a command that reaches it while it exits fails.
-  start("failed", ["sh", "-c", "exit 3"]);
-  endSession(socket, "builder");
-  expect(agentRuns(socket, "builder")).toBe(false);
-  await until(() => !agentRuns(socket, "failed"));
+  await start("failed", ["sh", "-c", "exit 3"]);
+  await endSession(socket, "builder");
+  expect(await agentRuns(socket, "builder")).toBe(false);
+  await until(async () => !(await agentRuns(socket, "failed")));
   // A failed command leaves its session behind, showing its last screen.
-  expect(hasSession(socket, "failed")).toBe(true);
+  expect(await hasSession(socket, "failed")).toBe(true);
 });
 
 // A lead's tab closes when its lead exits cleanly, and stays when it fails, so its session must
@@ -590,25 +597,31 @@ test("a session kept on exit tells an agent that exited cleanly from one that fa
       labels,
       keepOnExit: true,
     });
-  keep("clean", 0);
-  keep("crashed", 1);
+  await keep("clean", 0);
+  await keep("crashed", 1);
   expect(exitedCleanly(socket, "clean")).toBe(false);
   writeFileSync(join(home, "clean.done"), "");
   writeFileSync(join(home, "crashed.done"), "");
-  await until(() => !agentRuns(socket, "clean") && !agentRuns(socket, "crashed"));
+  await until(
+    async () => !(await agentRuns(socket, "clean")) && !(await agentRuns(socket, "crashed")),
+  );
   expect(exitedCleanly(socket, "clean")).toBe(true);
   expect(exitedCleanly(socket, "crashed")).toBe(false);
   expect(exitedCleanly(socket, "nobody")).toBe(false);
   // A session not kept on exit goes as its agent exits cleanly, as a builder's does.
-  start("builder", ["sh", "-c", "exit 0"]);
-  await until(() => !hasSession(socket, "builder"));
+  await start("builder", ["sh", "-c", "exit 0"]);
+  await until(async () => !(await hasSession(socket, "builder")));
 });
 
 test("idle means a quiet pane showing the prompt, and not busy", async () => {
-  start("waiting", harness());
-  start("busy", harness(30));
-  start("drawing", ["sh", "-c", 'echo "❯"; for i in $(seq 1500); do date +%N; sleep 0.02; done']);
-  start("other", ["sh", "-c", "echo ready; sleep 30"]);
+  await start("waiting", harness());
+  await start("busy", harness(30));
+  await start("drawing", [
+    "sh",
+    "-c",
+    'echo "❯"; for i in $(seq 1500); do date +%N; sleep 0.02; done',
+  ]);
+  await start("other", ["sh", "-c", "echo ready; sleep 30"]);
   await showing("waiting", claude.marks.prompt);
   await showing("busy", claude.marks.busy);
   await showing("drawing", "❯");

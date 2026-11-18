@@ -111,13 +111,13 @@ function noteMissing(db: Database, sessions: string, thread: Thread, why: string
 export async function whyWaiting(db: Database, sessions: string, thread: Thread): Promise<string> {
   if (thread.status !== "working" && thread.status !== "waiting")
     return `the thread is ${thread.status}`;
-  let session: ReturnType<typeof builderSession>;
+  let session: Awaited<ReturnType<typeof builderSession>>;
   try {
-    session = builderSession(db, sessions, thread);
+    session = await builderSession(db, sessions, thread);
+    if (!(await agentRuns(session.host, session.id))) return notRunning;
   } catch (error) {
     return errorText(error);
   }
-  if (!agentRuns(session.host, session.id)) return notRunning;
   if (thread.asking) return "it is asking the human a question";
   if (thread.state === "working") return `${midTurn} (its harness says a turn runs)`;
   return whyBusy(session.host, session.id, builderHarness(thread).marks);
@@ -242,7 +242,7 @@ async function typeWaiting(db: Database, sessions: string, folder: string, signa
     // The builder looked ready a moment ago, so typing shouldn't wait long. If it does, the
     // message stays saved for the next attempt.
     const { marks } = builderHarness(thread);
-    const { host, id } = builderSession(db, sessions, thread);
+    const { host, id } = await builderSession(db, sessions, thread);
     const waitsFor = { timeout: 10_000, signal, unsent };
     const typed = await deliver(host, id, marks, message.text, waitsFor);
     // Saved, so the draft it left is known for this message's even after a restart.
@@ -327,9 +327,14 @@ export function stopDelivering(db: Database, folder: string, drop: boolean, reas
 // goes on with the turn the limit cut off. It goes around the builder's queue: the wake that
 // calls it has its own rules, and gives up once anything else is typed to the builder. Throws
 // after a minute without typing, or once `signal` aborts.
-export function typeContinue(db: Database, sessions: string, thread: Thread, signal: AbortSignal) {
+export async function typeContinue(
+  db: Database,
+  sessions: string,
+  thread: Thread,
+  signal: AbortSignal,
+) {
   const { marks } = builderHarness(thread);
-  const { host, id } = builderSession(db, sessions, thread);
+  const { host, id } = await builderSession(db, sessions, thread);
   return deliver(host, id, marks, "continue", { timeout: 60_000, signal });
 }
 
@@ -384,8 +389,8 @@ export async function messageBuilder(
     );
   // A thread still setting up has no session yet, and one that failed or is done has none left.
   if (!live) throw new Error(`${name}'s builder isn't running: the thread is ${thread.status}.`);
-  const { host, id } = builderSession(db, sessions, thread);
-  if (!agentRuns(host, id))
+  const { host, id } = await builderSession(db, sessions, thread);
+  if (!(await agentRuns(host, id)))
     throw new Error(`${name}'s builder isn't running: the thread is ${thread.status}.`);
   if (thread.asking)
     throw new Error(
@@ -447,7 +452,7 @@ async function typeNotes(
     const thread = Thread.nullable().parse(row);
     // Stop when nothing is left to say, or nobody is there to hear it. Wait while the lead is busy.
     if (note === null && (thread === null || thread.noting === null)) return;
-    if (!agentRuns(sessions, name)) return;
+    if (!(await agentRuns(sessions, name))) return;
     // A lead that is running has started, so it has a harness.
     const { marks } = harnessNamed(harness ?? "claude");
     if (!(await idle(sessions, name, marks))) continue;

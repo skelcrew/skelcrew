@@ -88,7 +88,7 @@ async function endBuilder(db: Database, sessions: string, folder: string, drop: 
   stopDelivering(db, folder, false);
   endWake(folder);
   endRound(folder);
-  const { host, id } = builderSession(db, sessions, readThread(db, folder));
+  const { host, id } = await builderSession(db, sessions, readThread(db, folder));
   // Claude Code can outlive the end of its session for a few seconds, still writing in the
   // clone.
   await stopSession(host, id);

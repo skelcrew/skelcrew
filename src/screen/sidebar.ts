@@ -6,7 +6,7 @@
 import {
   attachCommand,
   exitedCleanly,
-  listSessions,
+  listTmuxSessions,
   shownSession,
   showSession,
 } from "../agents/sessions.ts";
@@ -98,7 +98,7 @@ export async function runSidebar(
     if (leaving) return;
     // tmux first, then the tabs: the daemon closes a tab before it ends the lead's session, so
     // a lead found gone here with its tab still read as open has crashed.
-    const found = doing("asking tmux for the agents' sessions", () => listSessions(agents));
+    const found = doing("asking tmux for the agents' sessions", () => listTmuxSessions(agents));
     const running = found.flatMap((one) => (one.running ? [one.name] : []));
     const exited = doing("asking tmux whether the lead exited", () =>
       exitedCleanly(agents, open.lead),

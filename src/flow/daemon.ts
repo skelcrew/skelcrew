@@ -291,7 +291,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         // A lead you exited this second is closed first, so the daemon's next look can't close
         // the tab again while the lead starts, and a tab can't bring it back. It comes before
         // the choice of repository, so plain sc doesn't pick the one whose tab just closed.
-        closeExitedLeads(db, sessions);
+        await closeExitedLeads(db, sessions);
         // From outside any repository Skelcrew has, the one you opened last.
         const repository =
           (request.from === undefined ? undefined : repositoryAt(db, request.from)) ??
@@ -364,18 +364,18 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       case "peek": {
         const thread = findThread(db, request.repo, request.task);
         const name = threadName(db, thread);
-        const { host, id } = builderSession(db, sessions, thread);
-        if (!agentRuns(host, id))
+        const { host, id } = await builderSession(db, sessions, thread);
+        if (!(await agentRuns(host, id)))
           throw new Error(`${name}'s builder isn't running: the thread is ${thread.status}`);
-        return { thread: name, screen: readSession(host, id) };
+        return { thread: name, screen: await readSession(host, id) };
       }
       case "interrupt": {
         const thread = findThread(db, request.repo, request.task);
         const name = threadName(db, thread);
-        const { host, id } = builderSession(db, sessions, thread);
-        if (!agentRuns(host, id))
+        const { host, id } = await builderSession(db, sessions, thread);
+        if (!(await agentRuns(host, id)))
           throw new Error(`${name}'s builder isn't running: the thread is ${thread.status}`);
-        interruptSession(host, id);
+        await interruptSession(host, id);
         return { interrupted: name };
       }
       case "rm preview": {
@@ -594,9 +594,14 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   }
   // A lead you exited while the daemon was down closes its tab, before any request could open
   // it, and isn't brought back. From here on, the daemon looks each second for a lead you exit.
-  closeExitedLeads(db, sessions);
+  await closeExitedLeads(db, sessions);
   setInterval(
-    () => doing("closing the tabs of exited leads", () => closeExitedLeads(db, sessions)),
+    () =>
+      doing("closing the tabs of exited leads", () =>
+        closeExitedLeads(db, sessions).catch((error) =>
+          console.log(`couldn't close the tabs of exited leads: ${errorText(error)}`),
+        ),
+      ),
     1000,
   );
   // From here on, the daemon also looks every two seconds for a working agent whose screen

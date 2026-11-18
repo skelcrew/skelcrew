@@ -6,7 +6,7 @@
 // sessions on its own host: its `idle` says whether the agent is idle, and its `deliver` types a
 // message once it is, never on top of a person's draft.
 import { z } from "zod";
-import { askHost, askHostLater, type Host, type PluginHost } from "../plugins/runtime.ts";
+import { askHost, type Host, type PluginHost } from "../plugins/runtime.ts";
 import { dropStaged, pasteStaged, readSession, sendKey, stagePaste } from "./sessions.ts";
 
 // How typing waits, in milliseconds. `moment` is the pause between two looks at the screen,
@@ -99,14 +99,14 @@ export async function whyBusy(
   // A host with its own transport knows itself whether its agent is idle.
   const own = hostTransport(socket);
   if (own) {
-    const said = askHost(own, { ask: "idle", id: name }, z.object({ idle: z.boolean() }));
+    const said = await askHost(own, { ask: "idle", id: name }, z.object({ idle: z.boolean() }));
     return said.idle ? "" : `${midTurn} (its host says so)`;
   }
   // Look twice, a moment apart. A line holding the mark that changed is the live status line.
   const moment = waits.moment ?? 500;
-  const before = readSession(socket, name);
+  const before = await readSession(socket, name);
   await Bun.sleep(moment);
-  const after = readSession(socket, name);
+  const after = await readSession(socket, name);
   if (before !== after) return whyChanged(before, after, marks);
   const why = notReady(after, marks);
   if (why !== "") return why;
@@ -114,7 +114,7 @@ export async function whyBusy(
   // redraw, as the first two looks can fall between two ticks of its timer.
   if (after.includes(marks.busy)) {
     await Bun.sleep(statusLineWatch);
-    const later = readSession(socket, name);
+    const later = await readSession(socket, name);
     if (later !== after) return whyChanged(after, later, marks);
   }
   return "";
@@ -190,7 +190,7 @@ async function typeNow(
       // prompt means a person sent or cleared it, so it is typed afresh, and a draft after that
       // is a person's.
       if (why === draftReason && unsent) {
-        sendKey(socket, name, "Enter");
+        await sendKey(socket, name, "Enter");
         return "typed";
       }
       if (why === "") unsent = false;
@@ -200,7 +200,7 @@ async function typeNow(
         // along with the message. So the text is readied first, then the screen looked at once
         // more right before pasting, and typing waits again if the prompt isn't bare. A moment
         // remains, but only as long as the paste itself.
-        if (notReady(readSession(socket, name), marks) === "") break;
+        if (notReady(await readSession(socket, name), marks) === "") break;
       } else if (Date.now() > deadline) {
         const waited = `${timeout / 1000}s`;
         // A person's draft gets a plain answer, as it isn't the agent being busy.
@@ -213,10 +213,10 @@ async function typeNow(
     }
     // Without the paste marks, Claude Code reads the Enter after a long message as a new line,
     // and the message is never sent. So the Enter goes on its own, a moment after the paste.
-    pasteStaged(socket, name, staged.at(-1) ?? "");
+    await pasteStaged(socket, name, staged.at(-1) ?? "");
     await Bun.sleep(moment);
     if (waits.signal?.aborted && waits.signal.reason === forQuestion) return "left unsent";
-    sendKey(socket, name, "Enter");
+    await sendKey(socket, name, "Enter");
     return "typed";
   } finally {
     for (const readied of staged) dropStaged(socket, readied);
@@ -243,10 +243,12 @@ async function deliverOnHost(
   const timeout = waits.timeout ?? 60_000;
   const question = { ask: "deliver", id, text, timeout: Number.isFinite(timeout) ? timeout : null };
   // The host gets half a minute past its own timeout to say it gave up, then is ended.
-  const limit = Number.isFinite(timeout) ? timeout + 30_000 : undefined;
-  const done = await askHostLater(host, question, z.unknown(), {
-    signal: waits.signal,
-    timeout: limit,
-  });
-  return done === null && waits.signal?.aborted ? "not typed" : "typed";
+  const limit = Number.isFinite(timeout) ? timeout + 30_000 : Infinity;
+  try {
+    await askHost(host, question, z.unknown(), { signal: waits.signal, timeout: limit });
+  } catch (error) {
+    if (waits.signal?.aborted) return "not typed";
+    throw error;
+  }
+  return "typed";
 }

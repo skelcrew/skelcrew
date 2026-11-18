@@ -60,7 +60,6 @@ function checkAnswer<T>(
   done: { out: string; err: string; code: number | null },
   Answer: z.ZodType<T>,
 ): T {
-  if (done.code === null) throw new Error(`${host.plugin} didn't answer ${question.ask} in time`);
   if (done.code !== 0) {
     const last = done.err.trim().split("\n").at(-1) || `it exited with code ${done.code}`;
     throw new Error(`${host.plugin} couldn't ${question.ask}: ${last}`);
@@ -82,38 +81,19 @@ function checkAnswer<T>(
 }
 
 // Asks the host one question about its sessions and returns its answer, checked against
-// `Answer`. It waits for the answer, as each tmux command does, so the flow reads the same on
-// every host. A host that hasn't answered within 30 seconds is killed, so a hung plugin can't
-// hold up the daemon for long.
-export function askHost<T>(
-  host: PluginHost,
-  question: { ask: string; [key: string]: unknown },
-  Answer: z.ZodType<T>,
-): T {
-  const run = Bun.spawnSync(sessionCommand(host).argv, {
-    ...sessionCommand(host),
-    stdin: new Blob([`${JSON.stringify(question)}\n`]),
-    stdout: "pipe",
-    stderr: "pipe",
-    timeout: 30_000,
-  });
-  const done = { out: run.stdout.toString(), err: run.stderr.toString(), code: run.exitCode };
-  return checkAnswer(host, question, done, Answer);
-}
-
-// Asks the host a question whose answer can take a while, such as delivering a message once its
-// agent is idle, without holding up the daemon meanwhile. Returns null when `signal` aborts
-// first: the command is killed then, so it types nothing more. Past `timeout` milliseconds, when
-// given, it is killed too and this throws, so a hung plugin can't hold back what waits after it.
-// It runs in a process group of its own, which is killed whole: a program it started could
-// otherwise hold its output open, and the wait for that output would never end.
-export async function askHostLater<T>(
+// `Answer`, without holding up the daemon meanwhile: a slow or hung host delays only what waits
+// on it. Past `timeout` milliseconds, 30 seconds unless given, the command is killed and this
+// throws, so a hung plugin can't hold back what waits after it. Once `signal` aborts, it is
+// killed too, so it types nothing more, and this throws. It runs in a process group of its own,
+// which is killed whole: a program it started could otherwise hold its output open, and the
+// wait for that output would never end.
+export async function askHost<T>(
   host: PluginHost,
   question: { ask: string; [key: string]: unknown },
   Answer: z.ZodType<T>,
   limits: { signal?: AbortSignal | undefined; timeout?: number | undefined } = {},
-): Promise<T | null> {
-  const { signal, timeout } = limits;
+): Promise<T> {
+  const { signal, timeout = 30_000 } = limits;
   const run = Bun.spawn(sessionCommand(host).argv, {
     ...sessionCommand(host),
     stdin: new Blob([`${JSON.stringify(question)}\n`]),
@@ -127,13 +107,12 @@ export async function askHostLater<T>(
     } catch {}
   };
   let late = false;
-  const timer =
-    timeout === undefined
-      ? undefined
-      : setTimeout(() => {
-          late = true;
-          kill();
-        }, timeout);
+  const timer = Number.isFinite(timeout)
+    ? setTimeout(() => {
+        late = true;
+        kill();
+      }, timeout)
+    : undefined;
   signal?.addEventListener("abort", kill);
   try {
     const [out, err, code] = await Promise.all([
@@ -141,8 +120,10 @@ export async function askHostLater<T>(
       new Response(run.stderr).text(),
       run.exited,
     ]);
-    if (signal?.aborted) return null;
-    if (late)
+    // A command that finished just before it would have been killed still counts.
+    if (signal?.aborted && code !== 0)
+      throw new Error(`${host.plugin} was stopped from ${question.ask}`);
+    if (late && code !== 0)
       throw new Error(
         `${host.plugin} didn't answer ${question.ask} within ${timeout} milliseconds`,
       );
