@@ -579,13 +579,15 @@ type Row = {
   version: string | null;
   kind: string | null;
   provides: string[];
+  jobs: string[];
   from: string;
   change: string | null;
 };
 
 // Prints the plugins your files name and this machine has, for sc plugins: each one's name,
 // version, kind and what it provides, such as "github 0.1.0 io: tracker, forge", and what sc
-// install would change. --json gives the same rows for tools.
+// install would change. --json gives the same rows for tools, and keeps jobs, so a tool written
+// before kinds still reads it.
 export function listPlugins(json: boolean): void {
   const db = openDb();
   const lock = yourLock(db);
@@ -610,6 +612,8 @@ export function listPlugins(json: boolean): void {
       version: manifest.version,
       kind: manifest.kind,
       provides: manifest.provides,
+      // What it provides, under the name tools read before plugins had kinds.
+      jobs: manifest.provides,
       from: plugin.source ?? plugin.folder,
       change: moves ? `sc install moves it to ${to}` : null,
     };
@@ -623,6 +627,7 @@ export function listPlugins(json: boolean): void {
       version: locked?.version ?? null,
       kind: null,
       provides: [],
+      jobs: [],
       from: source,
       change: locked ? "sc install installs it" : "sc install installs its newest version",
     });

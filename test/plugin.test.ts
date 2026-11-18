@@ -192,6 +192,8 @@ Install it? [Y/n]`);
       version: "0.10.0",
       kind: "io",
       provides: ["tracker", "forge"],
+      // Tools written before kinds read jobs, so it stays.
+      jobs: ["tracker", "forge"],
       from: "skelcrew/skelcrew-fake",
       change: null,
     },
