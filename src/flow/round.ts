@@ -922,13 +922,15 @@ export function rerunReview(
   const needs_you = pastRoundLimit(thread, maxRounds);
   // The commit is saved as under review at once, so a second sc review asked before the
   // check is pending again is refused rather than cancelling this one.
-  // A builder that asked for it ends its turn waiting on the review, as after sc submit, not on
-  // you, and no longer waits on you for an earlier turn. A review the lead or you asked for leaves the builder's turn as it was: a builder that
-  // then stops without submitting still needs you.
+  // A builder that asked for it ends its turn waiting on the review, as after sc submit. Any
+  // review ends a turn that ended without a submit, which the thread then shows as queued or
+  // reviewing. A builder that stops after a review the lead or you asked for hasn't submitted
+  // in its turn, so its last message goes to the lead.
   const change = {
     status: "waiting",
     needs_you,
-    ...(byBuilder ? { submitted: true, turn_ended: false } : {}),
+    turn_ended: false,
+    ...(byBuilder ? { submitted: true } : {}),
     telling: null,
     held: null,
     ...notHeld,

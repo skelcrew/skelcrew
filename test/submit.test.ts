@@ -1604,6 +1604,25 @@ describe.skipIf(insideSandbox)("sc review", () => {
     await until(() => finished("success").length === 2, 45_000);
   }, 90_000);
 
+  // A review the lead or you ask for after the builder's turn ended answers that turn, so the
+  // thread shows the review rather than turn ended.
+  test("a review the lead asks for after a turn ended without a submit ends turn ended", async () => {
+    addApp();
+    verdict(1, "approve", "Ready to merge.");
+    verdict(2, "approve", "Still ready.");
+    await startApp12();
+    await until(() => read(join(data(), "threads", "app-12.log")).includes("waits on CI"), 30_000);
+    // The first turn's own end must come before the turn the test plays, or it would end that.
+    await until(() => read(join(builder(), "ended")).trim() === "1", 30_000);
+    const asBuilder = { SKELCREW_SOCKET: builderSocket() };
+    expect((await skel(["question", "answered"], asBuilder)).code).toBe(0);
+    expect((await skel(["turn", "ended"], asBuilder)).code).toBe(0);
+    await until(() => thread().turn_ended === 1);
+    expect((await skel(["review", "app-12"], { SKELCREW_SOCKET: leadSocketPath() })).err).toBe("");
+    expect(thread()).toMatchObject({ turn_ended: 0, submitted: 0 });
+    await until(() => finished("success").length === 2, 45_000);
+  }, 90_000);
+
   test("refuses a thread with nothing submitted yet, and a thread that is done", async () => {
     addApp();
     fakeClaude(false);
