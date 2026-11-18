@@ -336,9 +336,11 @@ function endedBeforeMerges(): void {
   db.close();
 }
 
-// Returns which of the tasks app-12, app-14 and app-16 are marked merged.
+// Returns which of the tasks app-12, app-14 and app-16 are marked merged. The daemon may be
+// writing as it starts, so the read waits for it rather than failing as locked.
 function mergedTasks(): unknown {
   const db = new Database(dbFile(), { readonly: true });
+  db.run("PRAGMA busy_timeout = 5000");
   const rows = db
     .query("SELECT task, merged FROM tasks WHERE task IN (12, 14, 16) ORDER BY task")
     .all();
