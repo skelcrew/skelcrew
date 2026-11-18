@@ -1432,6 +1432,28 @@ test("after a first run whose plugin failed to install, plain sc installs it aga
   expect(calls()).toContain("fake setup 0.1.0\n");
 });
 
+// A plugin you said no to is still named in your files, so the machine isn't set up until it is in.
+test("after a first run where you said no to a plugin, plain sc asks again", async () => {
+  noGitHubPlugin();
+  fakeGitHub();
+  publishFake("0.1.0");
+  mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
+  writeFileSync(config(), "harness: claude\n");
+  writeFileSync(token(), "sk-ant-oat01-good\n");
+  lockFake("0.1.0");
+  const declined = await atTerminal("n\n");
+  expect(declined.out).toContain("Skelcrew didn't install fake.");
+  expect(declined.out).toContain(
+    "Skelcrew isn't set up yet, as your config.yaml names simon/skelcrew-fake, which this machine doesn't have at the version your lock pins. Plain sc asks again.",
+  );
+  expect(declined.out).not.toContain("Skelcrew is set up.");
+  const asked = await atTerminal("y\n");
+  expect(asked.err).toBe("");
+  expect(asked.out).toContain("Install it? [Y/n]");
+  expect(asked.out).toContain("Installed fake 0.1.0.");
+  expect(asked.out).toContain("Skelcrew is set up.");
+});
+
 // On a new machine your files decide which GitHub plugin it gets, so the offer, which would
 // install its newest version, isn't made.
 test("in a GitHub checkout, files that name the GitHub plugin skip the offer, and sc install gets the locked commit", async () => {

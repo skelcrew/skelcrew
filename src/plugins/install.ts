@@ -555,9 +555,10 @@ function matchesLock(plugin: Plugin, locked: Locked): boolean {
 // another version or commit, is shown and asked about. One already at its locked version asks
 // nothing, as you approved it before. It never moves a pin your lock has. A plugin your config
 // names that the lock lacks gets a pin added, as npm install does: at what is installed here, or
-// else at its newest version tag once you say yes. Returns whether there was anything to do.
+// else at its newest version tag once you say yes. Returns whether there was anything to do, and
+// the plugins still missing or at another version than locked, as you said no to them.
 // `remote` is handed to each setup.
-export function installYourPlugins(remote: string | null): boolean {
+export function installYourPlugins(remote: string | null): { changed: boolean; left: string[] } {
   const db = openDb();
   const lock = yourLock(db);
   let changed = false;
@@ -579,7 +580,14 @@ export function installYourPlugins(remote: string | null): boolean {
       else installPlugin(source, pinned);
     }
   }
-  return changed;
+  // Read again, as an install added its pin.
+  const now = yourLock(db);
+  const left = yourPlugins().filter((source) => {
+    const here = installedPlugins(db).find((plugin) => plugin.source === source);
+    const locked = now[source];
+    return !here || (locked !== undefined && !matchesLock(here, locked));
+  });
+  return { changed, left };
 }
 
 // One row of sc plugins: a plugin your files name or this machine has. The version, kind and

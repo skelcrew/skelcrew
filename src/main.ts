@@ -146,9 +146,9 @@ async function leadCommand(from?: string): Promise<void> {
   const { openDb } = await import("./db.ts");
   const { bringInFrom, checkoutTop, repositories } = await import("./flow/repo.ts");
   const { originHere } = await import("./machine/origin.ts");
-  const { firstRun, install, setupDone } = await import("./machine/setup.ts");
-  // A machine that isn't set up gets all of sc install, your plugins included.
-  if (setupDone()) firstRun(from);
+  const { firstRun, install, installFinished } = await import("./machine/setup.ts");
+  // A machine where sc install never ran to its end gets all of it, your plugins included.
+  if (installFinished()) firstRun(from);
   else install(from);
   await upInBackground();
   // In a repository with no remote, sc opens nothing, even with tabs open or no repositories

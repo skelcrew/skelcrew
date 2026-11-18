@@ -377,18 +377,32 @@ export function firstRun(from?: string): boolean {
 // Makes this machine match your files, for sc install: the first run's steps, then your personal
 // plugins at the versions your lock pins, each new or changed one after asking. Safe to run
 // again: with nothing to do, it says so. `from` is as for the first run. The machine is marked
-// set up only once your plugins are in, so after a plugin that failed to install, plain sc runs
-// all of this again.
+// set up only once your plugins are in, so after a plugin that failed to install, or one you said
+// no to, plain sc runs all of this again. A machine set up before the mark gets it here too.
 export function install(from?: string): void {
-  const done = setupDone();
+  const finished = installFinished();
   const setUp = firstRun(from);
-  const plugins = installYourPlugins(from ?? originHere());
-  if (!done) {
-    mkdirSync(dataDir(), { recursive: true });
-    writeFileSync(setUpFile(), "");
-    console.log("\nSkelcrew is set up.");
-  } else if (!setUp && !plugins)
-    console.log("Nothing to install: this machine has everything your files ask for.");
+  const { changed: plugins, left } = installYourPlugins(from ?? originHere());
+  if (!finished && left.length > 0)
+    console.log(
+      `\nSkelcrew isn't set up yet, as your config.yaml names ${left.join(", ")}, which this machine doesn't have at the version your lock pins. Plain sc asks again. To leave it out here and everywhere, run sc remove -g with its name.`,
+    );
+  else {
+    if (!finished) {
+      mkdirSync(dataDir(), { recursive: true });
+      writeFileSync(setUpFile(), "");
+    }
+    if (!finished && (setUp || plugins)) console.log("\nSkelcrew is set up.");
+    else if (!setUp && !plugins)
+      console.log("Nothing to install: this machine has everything your files ask for.");
+  }
+}
+
+// Reports whether sc install ran to its end here, which plain sc checks to know whether to run it
+// again. The daemon's service doesn't count, unlike for setupDone: plain sc installs it even after
+// a first run where you said no to a plugin your files name.
+export function installFinished(): boolean {
+  return setupDone() && existsSync(setUpFile());
 }
 
 // A step of the first run: `title` names it, and `take` asks what it needs, starting with a line
