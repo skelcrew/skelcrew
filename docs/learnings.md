@@ -64,12 +64,15 @@ that covers the code you are about to write.
   messaging is off". The variable is Claude Code's internal name, not a documented one, so
   check it still works after an update.
 - **Turn off Claude Code's agent view** with `CLAUDE_CODE_DISABLE_AGENT_VIEW=1`. Its
-  background service (`claude daemon`) runs in the session's config folder and keeps spare
-  sessions started. After a freeze and restart, the lead came back as one of those spares
-  (`bg claimed-spare … (fleet)` in that folder's `daemon.log`), not as its `--resume`: a new
-  conversation on the default model, without the lead's instructions. In 2.1.325,
-  `claude daemon run` quits when agent view is off, and `--resume` no longer opens a live
-  background session instead.
+  background service (`claude daemon`) runs in the session's config folder. A minute after
+  Skelcrew started a lead, a slash command moved its conversation into that service under an id
+  of its own (`bg spawned <id> (slash)` in the folder's `daemon.log`). Skelcrew's stored id still
+  named the first conversation, so resuming it would have brought back the wrong one. A day
+  later the service swapped the lead for one of its spare sessions (`bg claimed-spare <id>
+  (fleet)`): a new conversation on the default model, without the lead's instructions.
+  Skelcrew's daemon started nothing then. In 2.1.325, `claude daemon run` quits when agent view
+  is off. A lead already running with it on can't be restarted safely: its live conversation
+  isn't the one Skelcrew stored.
 - **Claude Code can outlive SIGTERM for a few seconds.** Wait for it to exit before
   removing the thread's clone or anything else it uses.
 - **`Stop` runs on neither an error nor Esc.** Its hooks reference says `Stop` "does not run if

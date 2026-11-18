@@ -238,17 +238,6 @@ export function hasSession(socket: string, name: string): boolean {
   return tmux(socket, ["has-session", "-t", `=${name}`]).ok;
 }
 
-// Returns the command a session was started with, with the environment it gave the agent, or
-// an empty string when the session is gone. Skelcrew reads it to tell an agent an older
-// release started, with settings it has since changed.
-export const startCommandOf = (socket: string, name: string): string =>
-  tmux(socket, ["display-message", "-p", "-t", `=${name}:`, "#{pane_start_command}"]).out.trim();
-
-// Reports whether a terminal shows the named session, such as the screen showing the lead, so
-// someone may be typing into it.
-export const watched = (socket: string, name: string): boolean =>
-  Number(tmux(socket, ["display-message", "-p", "-t", `=${name}:`, "#{session_attached}"]).out) > 0;
-
 // Returns an ended agent's last screen, left behind by a failed command or a session kept on
 // exit, so Skelcrew can explain why the agent ended. Returns null while the command runs or no
 // dead pane is found.
