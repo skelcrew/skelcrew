@@ -64,15 +64,21 @@ that covers the code you are about to write.
   messaging is off". The variable is Claude Code's internal name, not a documented one, so
   check it still works after an update.
 - **Turn off Claude Code's agent view** with `CLAUDE_CODE_DISABLE_AGENT_VIEW=1`. Its
-  background service (`claude daemon`) runs in the session's config folder. A minute after
-  Skelcrew started a lead, a slash command moved its conversation into that service under an id
-  of its own (`bg spawned <id> (slash)` in the folder's `daemon.log`). Skelcrew's stored id still
-  named the first conversation, so resuming it would have brought back the wrong one. A day
-  later the service swapped the lead for one of its spare sessions (`bg claimed-spare <id>
-  (fleet)`): a new conversation on the default model, without the lead's instructions.
-  Skelcrew's daemon started nothing then. In 2.1.325, `claude daemon run` quits when agent view
-  is off. A lead already running with it on can't be restarted safely: its live conversation
-  isn't the one Skelcrew stored.
+  background service (`claude daemon`) runs in the session's config folder. In November 2026
+  the records showed this:
+  - Skelcrew's journal: it started a lead with `--session-id`, brought it back once with
+    `--resume` on that id, and never started it again, freeze included. That conversation's
+    file stayed in use for two more days, so the process in the lead's session kept running.
+  - The lead's `daemon.log` and conversation files: a minute after that first start, a second
+    conversation began, which the service ran, started by a slash command (`bg spawned <id>
+    (slash)`). The human worked in it, through agent view, under an id Skelcrew never stored.
+  - The day after, as the human started the screen again after a freeze, the service handed
+    out a spare session in its place (`bg claimed-spare <id> (fleet)`). It was a new
+    conversation on Claude Code's default model, without the lead's instructions.
+
+  In 2.1.325, `claude daemon run` quits when agent view is off, so that service never starts.
+  A lead already running with it on can't be restarted safely: Skelcrew would resume the id it
+  stored, not the conversation in use.
 - **Claude Code can outlive SIGTERM for a few seconds.** Wait for it to exit before
   removing the thread's clone or anything else it uses.
 - **`Stop` runs on neither an error nor Esc.** Its hooks reference says `Stop` "does not run if
