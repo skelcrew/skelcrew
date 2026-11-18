@@ -123,7 +123,7 @@ ${itemSql("app", "pr", 32, "Bump deps", "2026-11-05T10:00:00Z", approved)}
 ${itemSql("app", "pr", 33, "Tidy", "2026-11-06T10:00:00Z", { ...passed, author: { login: "bob", bot: false, you: false } })}
 ${itemSql("app", "pr", 34, "Fix logout", "2026-11-07T10:00:00Z")}
 ${itemSql("app", "pr", 35, "Fix signup", "2026-11-08T10:00:00Z")}
-${threadSql({ task: "12", status: "waiting", pr: 31, needs_you: 1, verdict: "approve", review_round: 1 })}
+${threadSql({ task: "12", status: "waiting", pr: 31, needs_you: 1, ci_passed: 1, verdict: "approve", review_round: 1 })}
 ${threadSql({ task: "13", pr: 34, review_round: 1, verdict: "changes" })}
 ${threadSql({ task: "14", status: "failed", pr: 35 })}
 ${itemSql("app", "pr", 36, "Fix export", "2026-11-09T10:00:00Z")}
@@ -249,7 +249,7 @@ ${itemSql("app", "pr", 34, "Fix logout", "2026-11-07T10:00:00Z", { ...head, revi
 ${itemSql("app", "pr", 35, "Fix signup", "2026-11-08T10:00:00Z", { ...passing, ...head })}
 ${itemSql("app", "pr", 36, "Fix export", "2026-11-09T10:00:00Z", head)}
 ${itemSql("app", "pr", 37, "Fix import", "2026-11-10T10:00:00Z", head)}
-${threadSql({ task: "12", status: "waiting", pr: 31, needs_you: 1, verdict: "approve", review_round: 1 })}
+${threadSql({ task: "12", status: "waiting", pr: 31, needs_you: 1, ci_passed: 1, verdict: "approve", review_round: 1 })}
 ${threadSql({ task: "13", status: "waiting", pr: 36, verdict: "approve", review_round: 1 })}
 ${threadSql({ task: "14", pr: 37, review_round: 1, verdict: "changes" })}`;
   const { prs } = after(sql);
@@ -376,7 +376,7 @@ test("the entries count what their lists have, and say what to act on only when 
 ${itemSql("app", "task", 12, "Fix login", "2026-11-04T10:00:00Z")}
 ${itemSql("app", "task", 31, "Add CSV export", "2026-11-05T10:00:00Z")}
 ${itemSql("app", "pr", 34, "Fix login", "2026-11-05T10:00:00Z")}
-${threadSql({ task: "12", status: "waiting", pr: 34, needs_you: 1, verdict: "approve" })}
+${threadSql({ task: "12", status: "waiting", pr: 34, needs_you: 1, ci_passed: 1, verdict: "approve" })}
 ${threadSql({ task: "13", status: "stopped" })}
 ${threadSql({ task: "14", status: "done" })}
 ${threadSql({ task: "15", asking: 1 })}`;

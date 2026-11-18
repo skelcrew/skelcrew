@@ -50,6 +50,7 @@ function thread(change: Partial<Thread> = {}): Thread {
     review_reset: null,
     conflicts: null,
     ci_failed: false,
+    ci_passed: false,
     noting: null,
     title: null,
     body: null,
@@ -210,12 +211,15 @@ test("a failed check waits while a newer round is still being pushed", () => {
 test("approved by Skelcrew's reviewer and every check green: the thread needs you", () => {
   const checks = [approved, run(30, "test", "passed")];
   const decision = acted(thread(), pr({ checks }));
-  expect(decision.change).toEqual({ needs_you: true });
+  expect(decision.change).toEqual({ needs_you: true, ci_passed: true });
   expect(decision.why).toContain("ready to merge");
 });
 
 test("approved with no CI at all: the thread needs you", () => {
-  expect(acted(thread(), pr({ checks: [approved] })).change).toEqual({ needs_you: true });
+  expect(acted(thread(), pr({ checks: [approved] })).change).toEqual({
+    needs_you: true,
+    ci_passed: true,
+  });
 });
 
 test("approved while a check still runs: the thread waits on CI", () => {
@@ -235,7 +239,18 @@ test("green checks don't need you while the builder works or a round is under wa
 });
 
 test("a thread that already needs you isn't marked again", () => {
-  expect(acted(thread({ needs_you: true }), pr({ checks: [approved] })).change).toEqual({});
+  const ready = thread({ needs_you: true, ci_passed: true });
+  expect(acted(ready, pr({ checks: [approved] })).change).toEqual({});
+});
+
+// It may need you for another reason, such as a missing builder, before CI was ever polled.
+// Only the green checks found now make it ready to merge.
+test("a thread that needs you for another reason gets its green checks saved", () => {
+  const needing = thread({ needs_you: true });
+  expect(acted(needing, pr({ checks: [approved] })).change).toEqual({
+    needs_you: true,
+    ci_passed: true,
+  });
 });
 
 test("your comment is typed into the builder, even past the round limit", () => {

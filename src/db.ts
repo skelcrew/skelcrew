@@ -75,6 +75,7 @@ export const taskColumns = {
   checks: "TEXT",
   conflicts: "TEXT",
   ci_failed: "INTEGER NOT NULL DEFAULT 0",
+  ci_passed: "INTEGER NOT NULL DEFAULT 0",
   seen: "TEXT",
   last_review: "INTEGER",
   last_comment: "INTEGER",
@@ -255,6 +256,18 @@ export function finishUpgrade(db: Database): void {
   }).immediate();
 }
 
+// Returns SQL that marks the approvals an earlier release showed as ready to merge as having
+// passed CI, in `table`, where `needing` says the thread needs you. That release took an
+// approval that needs you as green, so an upgrade keeps showing them so, rather than hiding them
+// until the next poll.
+const passedBefore = (table: string, needing: string) =>
+  `UPDATE ${table} SET ci_passed = 1 WHERE verdict = 'approve'
+    AND (checks = 'passing' OR checks IS NULL) AND ${needing}`;
+
+// Returns whether the table has the column.
+const hasColumn = (db: Database, table: string, column: string) =>
+  db.query(`SELECT 1 FROM pragma_table_info('${table}') WHERE name = ?`).get(column) !== null;
+
 // Creates the tables Skelcrew keeps, and adds the columns a database from an earlier release
 // lacks, leaving everything already there as it is.
 function prepareTables(db: Database): void {
@@ -327,9 +340,12 @@ function prepareTables(db: Database): void {
   // The rest of a thread's columns, added as the repositories' are. A database from before
   // tasks keeps the task's columns on its threads too, where moveToTasks reads them, so they are
   // added here for every release's database. Nothing reads them from threads after that.
+  // An approval is filled in only once every column it reads is there.
+  const threadsPassed = !hasColumn(db, "threads", "ci_passed");
   for (const [column, type] of Object.entries({ ...threadColumns, ...taskColumns }))
-    if (!db.query("SELECT 1 FROM pragma_table_info('threads') WHERE name = ?").get(column))
+    if (!hasColumn(db, "threads", column))
       db.run(`ALTER TABLE threads ADD COLUMN ${column} ${type}`);
+  if (threadsPassed) db.run(passedBefore("threads", "needs_you = 1"));
   // A new database starts with tasks. One from an earlier release waits for its daemon to move
   // its threads onto tasks, as only the daemon knows no other daemon still writes to it.
   if (fresh) createTasks(db);
@@ -337,13 +353,23 @@ function prepareTables(db: Database): void {
   db.run("CREATE TABLE IF NOT EXISTS upgrades (step TEXT PRIMARY KEY)");
   // A tasks table made by an earlier release lacks the task's newer columns. Filling them in
   // waits for the new daemon, as finishUpgrade says.
-  if (hasTasks(db))
+  if (hasTasks(db)) {
+    const tasksPassed = !hasColumn(db, "tasks", "ci_passed");
     for (const [column, type] of Object.entries(taskColumns))
-      if (!db.query("SELECT 1 FROM pragma_table_info('tasks') WHERE name = ?").get(column)) {
+      if (!hasColumn(db, "tasks", column)) {
         db.run(`ALTER TABLE tasks ADD COLUMN ${column} ${type}`);
         if (column === "issue_link" || column === "merged" || column === "closes")
           db.run("INSERT OR IGNORE INTO upgrades (step) VALUES ('fill tasks')");
       }
+    if (tasksPassed)
+      db.run(
+        passedBefore(
+          "tasks",
+          `EXISTS (SELECT 1 FROM threads th WHERE th.owner = tasks.owner
+            AND th.repo = tasks.repo AND th.task = tasks.task AND th.needs_you = 1)`,
+        ),
+      );
+  }
   // Skelcrew's copy of each repository's open tasks and PRs, as items, kept as JSON. The columns
   // are what readers pick and sort by. A database from an earlier release also has an
   // open_items table, which nothing reads now. It stays, as a daemon of that release may still

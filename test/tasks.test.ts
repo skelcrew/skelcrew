@@ -195,8 +195,8 @@ console.log(JSON.stringify({ rounds, short, status }));`;
 });
 
 // Leaves the database as the first release with tasks did: moved, with a tasks table without
-// the columns added since: whether the work merged, the link to its issue and the line that
-// closes it.
+// the columns added since: whether the work merged, the link to its issue, the line that
+// closes it and whether CI passed after the approval.
 function earlierTasks(): void {
   oldDatabase();
   run(`import { openDb, moveToTasks } from ${JSON.stringify(source("db.ts"))};
@@ -206,6 +206,7 @@ moveToTasks(openDb());`);
   earlier.run("ALTER TABLE tasks DROP COLUMN merged");
   earlier.run("ALTER TABLE tasks DROP COLUMN issue_link");
   earlier.run("ALTER TABLE tasks DROP COLUMN closes");
+  earlier.run("ALTER TABLE tasks DROP COLUMN ci_passed");
   earlier.close();
 }
 
@@ -222,6 +223,22 @@ console.log(JSON.stringify({ rounds, merged, issue_link, closes }));`;
     merged: false,
     issue_link: null,
     closes: null,
+  });
+});
+
+// The earlier release showed an approval that needs you as ready to merge, without a poll
+// saying CI passed. It still shows so, and nothing else becomes ready.
+test("an approval an earlier release showed as ready to merge stays ready", () => {
+  earlierTasks();
+  const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
+import { readThread } from ${JSON.stringify(source("flow/thread.ts"))};
+import { taskStage } from ${JSON.stringify(source("flow/stage.ts"))};
+const db = openDb();
+const stage = (folder) => [readThread(db, folder).ci_passed, taskStage(readThread(db, folder), true)];
+console.log(JSON.stringify({ approved: stage("app-13"), working: stage("app-15") }));`;
+  expect(JSON.parse(run(code))).toEqual({
+    approved: [true, "ready for review"],
+    working: [false, "working"],
   });
 });
 

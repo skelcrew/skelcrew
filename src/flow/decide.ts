@@ -5,7 +5,7 @@ import type { Review } from "./reviewer.ts";
 import type { Thread } from "./thread.ts";
 
 // How an event changes the thread's status and its needs you flag.
-type Change = Partial<Pick<Thread, "status" | "needs_you">>;
+type Change = Partial<Pick<Thread, "status" | "needs_you" | "ci_passed">>;
 export type PullRequest = Extract<Item, { kind: "pr" }>;
 export type Check = PullRequest["checks"][number];
 type Author = PullRequest["comments"][number]["author"];
@@ -234,9 +234,12 @@ export function decide(thread: Thread, pr: PullRequest, given: { maxRounds: numb
     return { seen, tell, notice, typedIn, failed, conflict, change, why };
   }
   // Skelcrew's reviewer approves by setting its check, so an approved PR with every check passed,
-  // its own included, is ready. With no CI, that check is the only one.
+  // its own included, is ready. With no CI, that check is the only one. A thread that needs you
+  // already, such as for a missing builder, still has its green checks saved, as only they
+  // make it ready to merge.
   const approved = pr.checks.some((c) => c.name === reviewCheck && c.state === "passed");
-  if (quiet && !thread.needs_you && approved && pr.checks.every((c) => c.state === "passed"))
+  const green = approved && pr.checks.every((c) => c.state === "passed");
+  if (quiet && green && (!thread.needs_you || !thread.ci_passed))
     return {
       seen,
       tell,
@@ -244,7 +247,7 @@ export function decide(thread: Thread, pr: PullRequest, given: { maxRounds: numb
       typedIn,
       failed,
       conflict,
-      change: { needs_you: true },
+      change: { needs_you: true, ci_passed: true },
       why: "approved by Skelcrew's reviewer with every check green, so it is ready to merge",
     };
   return { seen, tell, notice, typedIn, failed, conflict, change: {}, why: "" };

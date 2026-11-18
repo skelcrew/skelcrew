@@ -107,6 +107,11 @@ export const Thread = z.object({
   // check passes on a run again and something else, such as its builder missing, makes the
   // thread need you. False in a row from before Skelcrew kept it.
   ci_failed: z.coerce.boolean(),
+  // Whether a poll found every check on the PR passed, Skelcrew's own approval included, since
+  // its last round. Its saved checks can't say so alone: they are also empty while the forge
+  // hasn't been asked yet, so an approval that needs you for another reason would read as ready
+  // to merge before CI ran. False in a row from before Skelcrew kept it, until the next poll.
+  ci_passed: z.coerce.boolean(),
   // The harness of the review waiting or running, which can differ from the latest finished
   // one's once you change your config.
   reviewer: HarnessName.nullable(),

@@ -717,6 +717,7 @@ export function submitRound(db: Database, sessions: string, folder: string, summ
       checks: null,
       conflicts: null,
       ci_failed: false,
+      ci_passed: false,
       reviewer: reviewer.harness,
       review_at: Date.now(),
     },
