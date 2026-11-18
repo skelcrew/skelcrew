@@ -46,6 +46,10 @@ that covers the code you are about to write.
   Code creates and deletes, so a throwaway layer over `~/.claude` can't share it either.
   Give each session its own config folder and a token from `claude setup-token`, which
   never renews.
+- **Pass instructions in a file, not on the command line.** tmux refuses a start command
+  past about 16 KB with "command too long", and a lead's instructions grew close to that.
+  Claude Code reads them with `--append-system-prompt-file`. Codex has no file for developer
+  instructions, so they go in the `AGENTS.md` of the session's own `CODEX_HOME`.
 - **Check a login with `claude auth status --json`.** `.claude.json` exists after any
   launch, logged in or not, so finding it proves nothing.
 - **`AskUserQuestion` waits on a screen nobody watches.** A builder that asks with it

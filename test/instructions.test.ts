@@ -1,7 +1,7 @@
 // The builder's and lead's instructions, as each harness starts them. They never start
 // bubblewrap, so they run inside Skelcrew's sandbox too.
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { HarnessName, harnessNamed } from "../src/agents/harness.ts";
@@ -20,10 +20,41 @@ afterEach(() => {
   rmSync(home, { recursive: true, force: true });
 });
 
+// Returns the instructions a harness's start left for its agent, from the file it points the
+// harness at: Claude Code's --append-system-prompt-file, or the AGENTS.md in Codex's own home.
+function toldIn(started: { argv: string[]; env: Record<string, string> }): string {
+  const { argv, env } = started;
+  const flag = argv.indexOf("--append-system-prompt-file");
+  const file = flag > -1 ? argv[flag + 1] : env.CODEX_HOME && join(env.CODEX_HOME, "AGENTS.md");
+  if (!file) throw new Error("the harness was given no instructions file");
+  return readFileSync(file, "utf8");
+}
+
+// tmux refuses a start command past about 16 KB, so instructions of any size leave the
+// command as long as it was.
+for (const name of HarnessName.options)
+  test(`on ${name}, long instructions reach the agent whole and leave its command short`, async () => {
+    const start = (system: string) =>
+      harnessNamed(name).start({
+        name: "app-12",
+        socket: join(home, "socket"),
+        thread: join(home, "app-12"),
+        system,
+        sessionId: crypto.randomUUID(),
+        prompt: "Add export",
+        env: { HOME: home, PATH: process.env.PATH ?? "" },
+      });
+    const long = `${"Be careful. ".repeat(6000)}The end of the instructions.`;
+    const short = await start("Be careful.");
+    const started = await start(long);
+    expect(toldIn(started)).toBe(long);
+    expect(started.argv.join(" ").length).toBe(short.argv.join(" ").length);
+  });
+
 // The full suite runs once per commit, in CI or the reviewer, so a builder never runs it.
 for (const name of HarnessName.options)
   test(`a builder on ${name} runs only the tests related to its change, with lint and typecheck`, async () => {
-    const { argv } = await harnessNamed(name).start({
+    const started = await harnessNamed(name).start({
       name: "app-12",
       socket: join(home, "socket"),
       thread: join(home, "app-12"),
@@ -32,7 +63,7 @@ for (const name of HarnessName.options)
       prompt: "Add export",
       env: { HOME: home, PATH: process.env.PATH ?? "" },
     });
-    const told = argv.join("\n");
+    const told = toldIn(started);
     expect(told).toContain("Never run the repository's whole test suite");
     expect(told).toContain("CI or the reviewer runs it once for each commit");
     expect(told).toContain(

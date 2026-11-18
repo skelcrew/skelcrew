@@ -67,7 +67,7 @@ const script = (name: string, body: string) => writeScript(home, name, body);
 // it approves, unless the file claude-limit beside it says limit: then it says its usage
 // limit is reached until 3 seconds from when it runs, as Claude Code did. Its
 // arguments are written aside and moved into place, so a test that sees the file never reads
-// them half written.
+// them half written. The instructions it reads from its instructions file go in told.
 function fakeClaude(submits = true): void {
   script(
     "claude",
@@ -83,7 +83,7 @@ case " $* " in *" -p "*)
   exit 0 ;;
 esac
 printf '%s\\n' "$@" > "$CLAUDE_CONFIG_DIR/args.part"; mv "$CLAUDE_CONFIG_DIR/args.part" "$CLAUDE_CONFIG_DIR/args"
-for a; do [ "$prev" = --settings ] && settings=$a; prev=$a; done
+for a; do [ "$prev" = --settings ] && settings=$a; [ "$prev" = --append-system-prompt-file ] && cat "$a" > "$CLAUDE_CONFIG_DIR/told"; prev=$a; done
 hook() {
   bun -e 'for (const group of JSON.parse(process.argv[1]).hooks?.[process.argv[2]] ?? [])
   for (const hook of group.hooks) console.log(hook.command);' "$settings" "$1" |
@@ -655,18 +655,30 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
     await startApp12();
     await until(() => read(join(builder(), "args")) !== "");
     const args = read(join(builder(), "args"));
-    const told = args.split("\n").indexOf("--append-system-prompt");
-    expect(told).toBeGreaterThan(-1);
-    expect(
-      args
-        .split("\n")
-        .slice(told + 1)
-        .join("\n"),
-    ).toContain('sc submit "<summary>"');
-    expect(args).toContain(
+    const told = read(join(builder(), "told"));
+    expect(told).toContain('sc submit "<summary>"');
+    expect(told).toContain(
       "Come back to the human only for new scope, missing access, or a decision that is theirs. Decide everything else yourself.",
     );
+    expect(args).not.toContain("sc submit");
     expect(args.endsWith("Add export\n\nAs JSON\n")).toBe(true);
+  }, 60_000);
+
+  // tmux refuses a start command past about 16 KB, so instructions that long once stopped
+  // agents from starting.
+  test("starts a builder with 64 KB of instructions, which it reads to their end", async () => {
+    const work = addApp();
+    const long = `${"x".repeat(64 * 1024)} the end of the instructions`;
+    writeFileSync(
+      join(work, "skelcrew.yaml"),
+      `tracker: github\ntest: [${JSON.stringify(long)}]\n`,
+    );
+    git(work, "commit", "-qam", "A long test command");
+    git(work, "push", "-q", "origin", "main");
+    fakeClaude(false);
+    await startApp12();
+    await until(() => read(join(builder(), "told")) !== "");
+    expect(read(join(builder(), "told"))).toContain(`runs with \`${long}\`.`);
   }, 60_000);
 
   // max_rounds counts rounds of review and fixes, so with 2 the builder submits 3 times.

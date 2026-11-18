@@ -14,6 +14,7 @@ import {
   renameSync,
   rmSync,
   symlinkSync,
+  writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -323,12 +324,18 @@ async function startCommand(given: {
   // that another session loads. It stays, so codex resume finds the conversation.
   const sessions = join(dataDir(home), "codex-sessions");
   const sessionHome = join(sessions, name);
+  const instructions = join(sessionHome, "AGENTS.md");
   // Skelcrew writes here with your rights, and the agent can change what is in its folder. A
   // link it left would send that write to any file of yours.
-  for (const p of [sessions, sessionHome])
+  for (const p of [sessions, sessionHome, instructions])
     if (lstatSync(p, { throwIfNoEntry: false })?.isSymbolicLink())
       throw new Error(`${p} is a link, so Skelcrew won't write through it`);
   mkdirSync(sessionHome, { recursive: true, mode: 0o700 });
+  // The instructions go in the AGENTS.md of the session's own CODEX_HOME, which Codex reads as
+  // its global instructions. Codex takes developer instructions only on the command line, and
+  // tmux refuses a start command past about 16 KB. A repository's own AGENTS.md adds to this
+  // file, never replaces it.
+  if (system) writeFileSync(instructions, system);
   // Skelcrew's own folder first, so a login the first run just saved there moves to the shared
   // folder before this session links to it.
   shareLogin(home);
@@ -354,7 +361,6 @@ async function startCommand(given: {
   command.push("-c", `projects.${tomlString(cwd)}.trust_level="trusted"`);
   command.push("-c", "check_for_update_on_startup=false", "-c", "tui.disable_paste_burst=true");
   command.push("-c", "features.hooks=true", ...agentHooks);
-  if (system) command.push("-c", `developer_instructions=${tomlString(system)}`);
   if (model) command.push("-m", model);
   if (resume) command.push(resume);
   // After --, so a message that starts with - is never taken for an option.

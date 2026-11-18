@@ -287,7 +287,9 @@ function startCommand(given: {
   const config = join(configs, name);
   // Skelcrew writes here with your rights, and the agent can change what is in its folder. A
   // link it left would send that write to any file of yours.
-  for (const p of [configs, config, join(config, ".claude.json"), join(config, "settings.json")])
+  const instructions = join(config, "instructions.md");
+  const owned = [".claude.json", "settings.json"].map((file) => join(config, file));
+  for (const p of [configs, config, ...owned, instructions])
     if (lstatSync(p, { throwIfNoEntry: false })?.isSymbolicLink())
       throw new Error(`${p} is a link, so Skelcrew won't write through it`);
   // The agent sees its own folder and its config folder, both writable, and nothing else of
@@ -307,6 +309,9 @@ function startCommand(given: {
 
   trustFolder(config, cwd);
   skipBypassWarning(config);
+  // The instructions go in a file of the session's own, not on the command line. tmux refuses
+  // a start command past about 16 KB, and the lead's instructions alone came close.
+  if (system) writeFileSync(instructions, system);
 
   // Bypass mode, since nobody is there to approve each tool, with the hooks that tell Skelcrew
   // what the agent is doing.
@@ -314,7 +319,7 @@ function startCommand(given: {
   command.push("--settings", agentSettings);
   if (resume) command.push("--resume", resume);
   if (sessionId) command.push("--session-id", sessionId);
-  if (system) command.push("--append-system-prompt", system);
+  if (system) command.push("--append-system-prompt-file", instructions);
   if (prompt) command.push(prompt);
 
   // Only the environment the agent needs, plus its own config folder and login.
