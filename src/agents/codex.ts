@@ -243,9 +243,10 @@ const tomlString = (text: string) => JSON.stringify(text);
 
 // Codex's hooks tell Skelcrew what each agent, the lead and builders alike, is doing: a message
 // going in starts a turn, which ends with Stop, or with Interrupt when you press Esc. A builder
-// on Codex asks you a question by ending its turn without sc submit, since Codex has no tool for
-// asking, and Stop tells Skelcrew the turn ended, as Claude Code's does. Whatever is typed into
-// the builder next ends the question, and starts a new turn. Esc flags nothing, as you are
+// on Codex asks a question by ending its turn without sc submit, since Codex has no tool for
+// asking, and Stop tells Skelcrew the turn ended, as Claude Code's does. Its last message goes to
+// the lead, who brings the question to you. Whatever is typed into the builder next starts a new
+// turn. Esc flags nothing, as you are
 // looking at the agent anyway. An error ends a turn with no hook, so Skelcrew reads that from
 // the screen. The commands print nothing, and run with no trust asked for: Codex would
 // otherwise wait for a person to trust each one.
