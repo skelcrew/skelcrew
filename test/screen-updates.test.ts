@@ -246,10 +246,13 @@ test("with nothing working, an open screen sends your terminal nothing at all", 
   await until(() => seen().includes("checks · claude"), "the threads");
   const written = await copyOnceSettled();
   // The threads started three seconds short of a minute ago, so a time shown on a row would change
-  // during the wait. The sidebar must read that before the minute, so a busy machine that
+  // during the wait. The minute is counted from a refresh just seen, so the next two come well
+  // before it. The sidebar must read the start time before the minute, so a busy machine that
   // refreshed only after it tries again with a minute further on.
   let minute = 0;
   for (let tries = 0; tries < 5 && Date.now() >= minute; tries++) {
+    const before = refreshesStarted();
+    await until(() => refreshesStarted() > before, "the sidebar to refresh");
     minute = Date.now() + 3000;
     sql(`UPDATE threads SET started = ${minute - 60_000} WHERE status = 'waiting'`);
     await sidebarRefreshedTwice();
