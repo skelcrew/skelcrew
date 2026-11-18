@@ -265,6 +265,11 @@ const passedBefore = (table: string, needing: string) =>
   `UPDATE ${table} SET ci_passed = 1 WHERE verdict = 'approve'
     AND (checks = 'passing' OR checks IS NULL) AND ${needing}`;
 
+// Returns SQL that marks, in `table`, every task whose saved checks show a poll found CI as
+// having seen CI, for a database from before Skelcrew kept that. Otherwise checks that vanish
+// before the first poll after the upgrade would read as a repository without CI.
+const seenBefore = (table: string) => `UPDATE ${table} SET ci_seen = 1 WHERE checks IS NOT NULL`;
+
 // Returns whether the table has the column.
 const hasColumn = (db: Database, table: string, column: string) =>
   db.query(`SELECT 1 FROM pragma_table_info('${table}') WHERE name = ?`).get(column) !== null;
@@ -343,10 +348,12 @@ function prepareTables(db: Database): void {
   // added here for every release's database. Nothing reads them from threads after that.
   // An approval is filled in only once every column it reads is there.
   const threadsPassed = !hasColumn(db, "threads", "ci_passed");
+  const threadsSeen = !hasColumn(db, "threads", "ci_seen");
   for (const [column, type] of Object.entries({ ...threadColumns, ...taskColumns }))
     if (!hasColumn(db, "threads", column))
       db.run(`ALTER TABLE threads ADD COLUMN ${column} ${type}`);
   if (threadsPassed) db.run(passedBefore("threads", "needs_you = 1"));
+  if (threadsSeen) db.run(seenBefore("threads"));
   // A new database starts with tasks. One from an earlier release waits for its daemon to move
   // its threads onto tasks, as only the daemon knows no other daemon still writes to it.
   if (fresh) createTasks(db);
@@ -356,6 +363,7 @@ function prepareTables(db: Database): void {
   // waits for the new daemon, as finishUpgrade says.
   if (hasTasks(db)) {
     const tasksPassed = !hasColumn(db, "tasks", "ci_passed");
+    const tasksSeen = !hasColumn(db, "tasks", "ci_seen");
     for (const [column, type] of Object.entries(taskColumns))
       if (!hasColumn(db, "tasks", column)) {
         db.run(`ALTER TABLE tasks ADD COLUMN ${column} ${type}`);
@@ -370,6 +378,7 @@ function prepareTables(db: Database): void {
             AND th.repo = tasks.repo AND th.task = tasks.task AND th.needs_you = 1)`,
         ),
       );
+    if (tasksSeen) db.run(seenBefore("tasks"));
   }
   // Skelcrew's copy of each repository's open tasks and PRs, as items, kept as JSON. The columns
   // are what readers pick and sort by. A database from an earlier release also has an

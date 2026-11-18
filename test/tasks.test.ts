@@ -196,7 +196,7 @@ console.log(JSON.stringify({ rounds, short, status }));`;
 
 // Leaves the database as the first release with tasks did: moved, with a tasks table without
 // the columns added since: whether the work merged, the link to its issue, the line that
-// closes it and whether CI passed after the approval.
+// closes it, whether CI passed after the approval and whether polls ever found CI.
 function earlierTasks(): void {
   oldDatabase();
   run(`import { openDb, moveToTasks } from ${JSON.stringify(source("db.ts"))};
@@ -207,6 +207,7 @@ moveToTasks(openDb());`);
   earlier.run("ALTER TABLE tasks DROP COLUMN issue_link");
   earlier.run("ALTER TABLE tasks DROP COLUMN closes");
   earlier.run("ALTER TABLE tasks DROP COLUMN ci_passed");
+  earlier.run("ALTER TABLE tasks DROP COLUMN ci_seen");
   earlier.close();
 }
 
@@ -239,6 +240,26 @@ console.log(JSON.stringify({ approved: stage("app-13"), working: stage("app-15")
   expect(JSON.parse(run(code))).toEqual({
     approved: [true, "ready for review"],
     working: [false, "working"],
+  });
+});
+
+// A poll saves a PR's checks as none once they vanish, and polls remember they once found CI
+// only from the release that keeps that. So the upgrade takes saved checks as CI found: a task
+// whose checks then vanish at the first poll after it never reads as a repository without CI.
+test("an upgrade counts saved checks as CI found, which a poll with the checks gone keeps", () => {
+  earlierTasks();
+  const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
+import { readThread, record } from ${JSON.stringify(source("flow/thread.ts"))};
+const db = openDb();
+const seen = (folder) => readThread(db, folder).ci_seen;
+const before = { approved: seen("app-13"), pending: seen("app-12"), none: seen("app-15") };
+// The first poll finds app-13's checks gone, and saves them as a poll does.
+const thread = readThread(db, "app-13");
+record(db, "app-13", { checks: null, ci_seen: thread.ci_seen || false });
+console.log(JSON.stringify({ before, after: [readThread(db, "app-13").checks, seen("app-13")] }));`;
+  expect(JSON.parse(run(code))).toEqual({
+    before: { approved: true, pending: true, none: false },
+    after: [null, true],
   });
 });
 
