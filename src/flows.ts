@@ -25,18 +25,28 @@ type Flow = z.infer<typeof Flow>;
 // imported as text loosely, so it is checked to be text.
 export const builtInFlowText: string = z.string().parse(defaultFlow);
 
-// Reads a flow file's YAML. Throws, naming the problem, when it isn't valid.
-function readFlow(text: string): Flow {
+// Reads a flow file's YAML. Throws, naming the problem, when it isn't valid. With
+// `withoutRounds`, the review's rounds are left out unread, as your override decides them, so a
+// bad one there can't stop a thread while the rest of the flow is still checked.
+function readFlow(text: string, withoutRounds = false): Flow {
   let data: unknown;
   try {
     data = parse(text);
   } catch (error) {
     throw new Error(`the flow isn't valid YAML: ${error instanceof Error ? error.message : error}`);
   }
+  if (withoutRounds && isMapping(data) && isMapping(data.review)) {
+    const { rounds: _unread, ...review } = data.review;
+    data = { ...data, review };
+  }
   const flow = Flow.safeParse(data ?? {});
   if (!flow.success) throw new Error(`the flow isn't valid: ${z.prettifyError(flow.error)}`);
   return flow.data;
 }
+
+// Returns whether YAML data is a mapping, such as { rounds: 3 }.
+const isMapping = (data: unknown): data is Record<string, unknown> =>
+  typeof data === "object" && data !== null && !Array.isArray(data);
 
 // Returns how many rounds of changes the built-in default flow gives a task before it needs you.
 export function builtInRounds(): number {
@@ -48,18 +58,19 @@ export function builtInRounds(): number {
 // Returns the round limit a repository's own default flow sets, or nothing when it has no flow
 // file or the file names none. The .agents/ tree counts as for a role: a task's own, null for a
 // task on the built-in files, or without one the version you approved. Throws, naming the file,
-// when it isn't valid, rather than run a task on a flow it doesn't describe.
-export function repositoryRounds(place: {
-  owner: string;
-  repo: string;
-  agents?: string | null;
-}): number | undefined {
+// when it isn't valid, rather than run a task on a flow it doesn't describe. With
+// `withoutRounds`, when your override decides the round limit, the file is still checked, as its
+// stages still say which roles run, but its rounds are left out and nothing is returned.
+export function repositoryRounds(
+  place: { owner: string; repo: string; agents?: string | null },
+  withoutRounds = false,
+): number | undefined {
   const tree = place.agents === undefined ? approvedAgents(place) : place.agents;
   const path = "flows/default.yaml";
   const text = tree === null ? null : agentsFile(place, tree, path);
   if (text === null) return undefined;
   try {
-    return readFlow(text).review?.rounds;
+    return readFlow(text, withoutRounds).review?.rounds;
   } catch (error) {
     throw new Error(
       `.agents/${path} in ${place.owner}/${place.repo}: ${error instanceof Error ? error.message : error}`,

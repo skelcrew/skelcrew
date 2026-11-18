@@ -203,12 +203,10 @@ export function readSettings<G extends Group>(
   for (const name of ["lead", "builder", "reviewer"] as const)
     if (repository && groups.some((group) => group === name))
       agentsFiles[name] = roleFileSettings(name, repository);
-  if (
-    repository &&
-    groups.some((group) => group === "rounds") &&
-    !decidedBy([overrides])("max_rounds")
-  )
-    agentsFiles.max_rounds = repositoryRounds(repository);
+  // The flow file is checked even when your override decides the round limit, as its stages
+  // still say which roles run.
+  if (repository && groups.some((group) => group === "rounds"))
+    agentsFiles.max_rounds = repositoryRounds(repository, decidedBy([overrides])("max_rounds"));
   // sc init asks without a repository, for the starter skelcrew.yaml it writes.
   const aboveShared = decidedBy([overrides, agentsFiles]);
   const shared = repository

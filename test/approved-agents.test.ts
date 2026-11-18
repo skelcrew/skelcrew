@@ -366,4 +366,9 @@ test("only the round limit that wins is read: a bad one below it stops nothing",
     "repos: { simon/app: { max_rounds: 7 } }\n",
   );
   expect(roundsOf()).toBe(7);
+  // The rest of the flow still counts, so a stage naming a role it can't run is still refused.
+  agentsFile("flows/default.yaml", "build:\n  role: reviewer\nreview:\n  rounds: 2\n");
+  commit("flow");
+  inHome(approveCurrent);
+  expect(() => roundsOf()).toThrow(".agents/flows/default.yaml in simon/app");
 });
