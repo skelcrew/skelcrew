@@ -84,16 +84,17 @@ export function reviewConfig(repository: Repository): {
   };
 }
 
-// Returns the repository's setup and test commands: each from its skelcrew.yaml, else your
-// config, or missing when neither names it. An empty list named on purpose stays empty. Skelcrew never guesses them: the lead settles them with you once, and every
-// builder and reviewer then uses the same ones.
+// Returns the repository's setup and test commands: each from your override for it under
+// repos:, else its skelcrew.yaml, else your config, or missing when none names it. An empty list
+// named on purpose stays empty. Skelcrew never guesses them: the lead settles them with you
+// once, and every builder and reviewer then uses the same ones.
 export function repositoryCommands(repository: Repository): Pick<Settings, "setup" | "test"> {
   const { setup, test } = readSettings(["setup", "test"], repository);
   return { setup, test };
 }
 
-// Returns the plugin the repository's skelcrew.yaml names as its tracker, or nothing when it
-// names none.
+// Returns the plugin your override for the repository under repos: names as its tracker, else
+// its skelcrew.yaml, or nothing when neither names one.
 export const repositoryTracker = (repository: Repository): string | undefined =>
   readSettings(["tracker"], repository).tracker;
 

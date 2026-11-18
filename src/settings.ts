@@ -147,10 +147,19 @@ const yourKeys: Key[] = [
 ];
 const repositoryKeys: Key[] = ["max_rounds", "setup", "test", "tracker"];
 // What an override under repos: may set, besides the harness and model of its roles, which
-// roleOf reads: what the repository's own files may, but its tracker. What is only yours, such as limits, stays in your
-// general settings, as an override is about one repository and limits are about your machine.
-// The tracker is shared with everyone who works on the repository, so no one changes it alone.
-const overrideKeys: Key[] = ["rounds", "max_rounds", "setup", "test"];
+// roleOf reads: anything about one repository, from its files or yours, as an override is you
+// differing on purpose there. What is about your machine, such as limits and the session host,
+// stays in your general settings. So does letting the lead arm merges, so no setting for one
+// repository can grant it.
+const overrideKeys: Key[] = [
+  "rounds",
+  "max_rounds",
+  "setup",
+  "test",
+  "tracker",
+  "fallback",
+  "review",
+];
 
 // Returns the built-in defaults: Claude Code for every role, the built-in flow's rounds and 30
 // minutes for a review. Setup, test and the tracker have none. Reviews default to a quarter of this machine's
