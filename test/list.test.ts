@@ -42,7 +42,7 @@ openDb().run(${JSON.stringify(statements)});`;
 // app has the fake plugin as its tracker and forge, and its lead is the one Skelcrew kept from
 // before, so its session is named lead. site is a second repository, with a thread that needs
 // you. In app: issue 31 has no thread, app-7 works, app-12 asks a question, app-9 stopped, and
-// app-14 is approved and green on PR 41, ready for review.
+// app-14 is approved on PR 41, whose checks a poll found green, so it is ready for review.
 beforeEach(() => {
   home = realpathSync(mkdtempSync(join(tmpdir(), "skel-list-test-")));
   agents = `skel-test-${process.pid}-${Math.random().toString(36).slice(2)}`;
@@ -65,7 +65,7 @@ ${itemSql("app", "pr", 41, "Fix the export header", "2026-11-06T10:00:00Z", { he
 ${threadSql({ task: "7", title: "Login redirect", harness: "claude", started: Date.now() - 300_000 })}
 ${threadSql({ task: "12", title: "Rate limit the API", harness: "codex", asking: 1, needs_you: 1 })}
 ${threadSql({ task: "9", title: "Old work", status: "stopped" })}
-${threadSql({ task: "14", title: "Fix the export header", status: "waiting", needs_you: 1, verdict: "approve", checks: "passing", pr: 41, review_round: 1 })}
+${threadSql({ task: "14", title: "Fix the export header", status: "waiting", needs_you: 1, verdict: "approve", checks: "passing", ci_passed: 1, pr: 41, review_round: 1 })}
 ${threadSql({ repo: "site", task: "3", title: "Docs", asking: 1, needs_you: 1 })}`);
 });
 afterEach(() => {
