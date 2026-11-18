@@ -71,8 +71,13 @@ const notRunning = "its builder isn't running";
 
 // How long a working or waiting thread's builder may be missing while messages wait for it
 // before the thread needs you, in milliseconds. The daemon brings builders back as it starts,
-// which takes a few seconds, and a message saved meanwhile must not flag it.
-const missingFor = 10_000;
+// which takes a few seconds, and a message saved meanwhile must not flag it. Tests set
+// SKELCREW_MISSING_WAIT_MS shorter, so they don't each wait the whole ten seconds.
+const missingFor = z.coerce
+  .number()
+  .min(0)
+  .catch(10_000)
+  .parse(process.env.SKELCREW_MISSING_WAIT_MS ?? 10_000);
 
 // When each thread's builder was first found missing while messages waited, by its folder.
 const missingSince = new Map<string, number>();
@@ -247,9 +252,11 @@ async function typeWaiting(db: Database, sessions: string, folder: string, signa
 
 // Starts typing the thread's waiting messages into its builder, unless that is under way
 // already, and returns at once. A failure, such as the session ending, is logged, and the
-// messages wait for the next attempt.
-export function deliverMessages(db: Database, sessions: string, folder: string): void {
-  if (delivering.has(folder)) return;
+// messages wait for the next attempt. The promise it gives back settles once the attempt under
+// way ends, so a test can tell when an attempt is over instead of waiting a fixed time.
+export function deliverMessages(db: Database, sessions: string, folder: string): Promise<void> {
+  const under = delivering.get(folder);
+  if (under) return under.ended;
   const cancel = new AbortController();
   const ended = typeWaiting(db, sessions, folder, cancel.signal)
     .catch((error) => console.log(`couldn't type into ${folder}'s builder: ${errorText(error)}`))
@@ -258,15 +265,17 @@ export function deliverMessages(db: Database, sessions: string, folder: string):
     });
   const attempt = { cancel, ended };
   delivering.set(folder, attempt);
+  return ended;
 }
 
 // Starts typing into every builder that has messages waiting. The daemon calls it every few
 // seconds, so a message reaches its builder soon after the builder can take it: after its
-// turn, its question, sc start or the daemon's start.
-export function deliverAllWaiting(db: Database, sessions: string): void {
+// turn, its question, sc start or the daemon's start. The promise it gives back settles once
+// every attempt it started has ended.
+export async function deliverAllWaiting(db: Database, sessions: string): Promise<void> {
   const rows = db.query("SELECT DISTINCT folder FROM messages").all();
-  for (const { folder } of z.array(z.object({ folder: z.string() })).parse(rows))
-    deliverMessages(db, sessions, folder);
+  const folders = z.array(z.object({ folder: z.string() })).parse(rows);
+  await Promise.all(folders.map(({ folder }) => deliverMessages(db, sessions, folder)));
 }
 
 // Drops Skelcrew's waiting messages that tell only of the thread's events, such as a failed
