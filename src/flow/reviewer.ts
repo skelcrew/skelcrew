@@ -82,14 +82,28 @@ export function reviewerPrompt(
   );
 }
 
+// The process groups of the reviewers running now, each named by its reviewer's process ID.
+// The daemon's stop kills them by this list, not by what runs under the daemon: a process the
+// sandbox started can have lost the daemon as an ancestor by then, and still be in its group.
+const reviewerGroups = new Set<number>();
+
+// Kills every reviewer that runs now, with whatever it started, for the daemon's stop. It
+// blocks nothing and waits for nothing, as the daemon exits right after.
+export function killReviewers(): void {
+  for (const group of reviewerGroups)
+    try {
+      process.kill(-group, "SIGKILL");
+    } catch {}
+}
+
 // Starts the reviewer, waits for it to end, and returns what it printed and its exit code.
-// The reviewer leads a process group of its own, which is ended when it ends, so nothing it
+// The reviewer leads a process group of its own, which is killed when it ends, so nothing it
 // started outlives it. On Linux bwrap's own process list mostly does that, but not for the
 // process bwrap is still starting when it is ended: that one never learns bwrap is gone, and
 // waits forever. A Mac has no process lists of their own, so there the group is all there is.
 // A process left in the group would also hold its output open, and the review would wait
 // forever. A review is ended with SIGKILL, as the shell around a Mac sandbox ignores SIGTERM
-// to clean up after it. The daemon's stop ends the group too, as it can't wait for this.
+// to clean up after it.
 async function spawnReviewer(given: {
   argv: string[];
   env: Record<string, string>;
@@ -98,7 +112,7 @@ async function spawnReviewer(given: {
 }): Promise<{ out: string; err: string; code: number }> {
   const { argv, env, input, signal } = given;
   const mac = process.platform === "darwin";
-  // A group of its own, ended once the reviewer ends, with whatever is still in it.
+  // A group of its own, listed until the reviewer has ended and the group is killed.
   const proc = Bun.spawn(argv, {
     env,
     stdin: new Blob([input]),
@@ -108,10 +122,12 @@ async function spawnReviewer(given: {
     killSignal: "SIGKILL",
     detached: true,
   });
+  reviewerGroups.add(proc.pid);
   proc.exited.then(() => {
     try {
       process.kill(-proc.pid, "SIGKILL");
     } catch {}
+    reviewerGroups.delete(proc.pid);
   });
   // A process that left the group can still hold the output open, and a Mac can't find it
   // once its parent is gone. So there the output gets a moment after the reviewer ends, or
