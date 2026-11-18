@@ -249,11 +249,12 @@ async function typeWaiting(db: Database, sessions: string, folder: string, signa
     // message stays saved for the next attempt.
     const { marks } = builderHarness(thread);
     const { host, id } = await builderSession(db, sessions, thread);
-    const waitsFor = { timeout: 10_000, signal, unsent };
+    // Saved once pasted, so the draft it leaves is known for this message's even after a
+    // restart, or when its Enter fails, as a plugin's host can fail it. The next attempt then
+    // presses Enter alone rather than wait forever behind what looks like a person's draft.
+    const pasted = () => db.run("UPDATE messages SET pasted = 1 WHERE id = ?", [message.id]);
+    const waitsFor = { timeout: 10_000, signal, unsent, pasted };
     const typed = await deliver(host, id, marks, message.text, waitsFor);
-    // Saved, so the draft it left is known for this message's even after a restart.
-    if (typed === "left unsent")
-      db.run("UPDATE messages SET pasted = 1 WHERE id = ?", [message.id]);
     if (typed !== "typed") return;
     // Read again, as an identical comment that came while it was typed joined it, and needs
     // marking seen too. Deleted by its id even when this attempt was cancelled while pasting, as

@@ -526,6 +526,58 @@ process.exit(0);`,
   expect(said).toBe(`idle working true\n${released}\n`);
 }, 40_000);
 
+// A host can fail the Enter after the paste went in, which leaves the message at the prompt. It
+// is known as the message's own draft, not a person's, so the next attempt sends it with Enter
+// alone, once, instead of waiting behind it forever.
+test("a message whose Enter the host failed is sent by the next attempt, once", () => {
+  const agent = join(home, "agent.ts");
+  // Shows the prompt, bare or with what was pasted at it, and logs each line sent.
+  writeFileSync(
+    agent,
+    `const fs = require("node:fs");
+let draft = "";
+const show = () => process.stdout.write("\\x1b[2J${claude.marks.prompt}" + (draft ? " " + draft : "") + "\\n");
+show();
+for await (const chunk of Bun.stdin.stream()) {
+  for (const key of new TextDecoder().decode(chunk).replace(/\\x1b\\[20[01]~/g, "")) {
+    if (key === "\\n") {
+      fs.appendFileSync("received.txt", draft + "\\n");
+      draft = "";
+    } else draft += key;
+  }
+  show();
+}
+`,
+  );
+  const fake = join(home, ".config", "skelcrew", "plugins", "fake");
+  const received = join(home, "received.txt");
+  const said = runWithFakeHost(
+    "sessions",
+    `const fs = require("node:fs");
+const host = (await builderSession(db, "unused", readThread(db, "app-12"))).host;
+const labels = { repository: "simon/app", role: "builder", task: "app-12" };
+await startSession(host, "app-12", { folder: ${JSON.stringify(home)}, command: [process.execPath, ${JSON.stringify(agent)}], env: { PATH: process.env.PATH }, labels });
+const typed = () => fs.existsSync(${JSON.stringify(received)}) ? fs.readFileSync(${JSON.stringify(received)}, "utf8") : "";
+const row = () => db.query("SELECT COUNT(*) AS n, MAX(pasted) AS pasted FROM messages").get();
+db.run("INSERT INTO messages (folder, sender, text, said, at, typed_in) VALUES ('app-12', 'lead', 'hello', 'hello', 0, '[]')");
+// The host fails the next keys it is asked to press, which is the message's Enter.
+fs.writeFileSync(${JSON.stringify(join(fake, "fail-keys"))}, "");
+await deliverMessages(db, "unused", "app-12");
+console.log(JSON.stringify(row()), JSON.stringify(typed()));
+await deliverMessages(db, "unused", "app-12");
+console.log(JSON.stringify(row()), JSON.stringify(typed()));
+process.exit(0);`,
+    { host: "fake", host_id: "fake-app-12" },
+  );
+  // The failed Enter is logged, and the message stays, marked as pasted.
+  expect(said).toBe(
+    `couldn't type into app-12's builder: fake couldn't keys: the host is down for a moment
+{"n":1,"pasted":1} ""
+{"n":0,"pasted":null} ${JSON.stringify("hello\n")}
+`,
+  );
+}, 40_000);
+
 test("nothing is typed into a builder while a slow host fails to end it, and its messages wait", () => {
   const prompt = join(home, "prompt.sh");
   writeFileSync(prompt, `#!/bin/sh\necho "${claude.marks.prompt}"\ncat > received.txt\n`, {

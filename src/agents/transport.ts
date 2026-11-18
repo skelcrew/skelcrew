@@ -17,13 +17,16 @@ import { dropStaged, pasteStaged, readSession, sendKey, stagePaste } from "./ses
 // such as a person scrolled back in the lead's chat. It is asked right before the text is
 // readied and again right before the paste, so a reason that comes up while typing waits still
 // counts, and after the paste, before its Enter. It may abort `signal`, such as when the message
-// it would send went stale, which stops typing only until the paste.
+// it would send went stale, which stops typing only until the paste. `pasted` is called once the
+// message is pasted, before its Enter, so the caller can save that the draft at the prompt is
+// the message: an Enter that then fails leaves it there, and the next typing sends it.
 type Waits = {
   moment?: number;
   timeout?: number;
   signal?: AbortSignal;
   unsent?: boolean;
   hold?: () => string;
+  pasted?: () => void;
 };
 
 // What became of a message typed in: sent, left pasted at the prompt unsent for a question, or
@@ -235,6 +238,7 @@ async function typeNow(
     // Without the paste marks, Claude Code reads the Enter after a long message as a new line,
     // and the message is never sent. So the Enter goes on its own, a moment after the paste.
     await pasteStaged(socket, name, staged.at(-1) ?? "");
+    waits.pasted?.();
     await Bun.sleep(moment);
     // Someone who scrolled back since the paste would take the Enter into copy mode, and the
     // message would sit at the prompt unsent. So the Enter waits while the caller holds it. The
