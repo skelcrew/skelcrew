@@ -538,6 +538,7 @@ test("repo ls lists each repository with its tracker and forge, as text and for 
       missing: "linear",
       clone: clone("simon/app"),
       tabClosed: false,
+      agentsWaiting: false,
     },
   ]);
   writeFileSync(join(clone("simon/app"), "skelcrew.yaml"), "tracker: github\n");
@@ -1058,6 +1059,24 @@ describe("a repository's .agents/", () => {
     const run = await skel(["repo", "trust", "app"], "n\n");
     expect(run.out).toContain("New tasks in simon/app keep the version you approved.");
     expect(approved()).toBe(first);
+  });
+
+  // Only you can approve, and the lead may be closed, so the repository's own row says it.
+  test("repo ls says to run repo trust while the default branch has an .agents/ you haven't approved", async () => {
+    const checkout = onGitHub("simon/app", "WRITE");
+    pushRole(checkout, "Build it the team's way.\n");
+    await skel(["repo", "add"], "y\n", checkout);
+    const waiting = async () =>
+      JSON.parse((await skel(["repo", "ls", "--json"])).out)[0].agentsWaiting;
+    expect(await waiting()).toBe(false);
+    expect((await skel(["repo", "ls"])).out).not.toContain("repo trust");
+    // A no keeps the version you approved, and the change still waits for you.
+    pushRole(checkout, "Build it another way.\n");
+    await skel(["repo", "trust", "app"], "n\n");
+    expect(await waiting()).toBe(true);
+    expect((await skel(["repo", "ls"])).out).toContain("run sc repo trust app");
+    await skel(["repo", "trust", "app"], "y\n");
+    expect(await waiting()).toBe(false);
   });
 
   test("repo rm forgets what you approved", async () => {

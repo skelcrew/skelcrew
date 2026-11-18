@@ -134,6 +134,8 @@ openDb().run("UPDATE threads SET ci_passed = 1 WHERE folder = 'app-13'");`);
   // Before the new daemon moves it, sc shows the threads as they are.
   const shownThen = shownBefore();
   turnEndedWaits(shownThen);
+  // That release didn't read .agents/, and neither repository has one, so none waits for you.
+  for (const row of shownThen.repositories) row.agentsWaiting = false;
   const { issues, show, prs, ...saved } = shownThen;
   const before = JSON.parse(run(showAll));
   const { ls, show: shown, ...same } = before;
