@@ -118,11 +118,18 @@ const lastLook = new Map<string, { screen: string; quiet: boolean }>();
 const agentKey = (agent: Agent) =>
   "folder" in agent ? agent.folder : `${agent.owner}/${agent.repo}`;
 
+// How many times each agent's state has been kept, by the key agentKey gives it, so a look at
+// its screen that took a while can tell the state changed meanwhile, earlier look or not.
+const stateChanges = new Map<string, number>();
+
 // Keeps what an agent is doing: a builder's state on its thread, a lead's on its repository.
 // Not logged, as it changes with every turn. A new state forgets the screen check's last look,
-// so a mark gone before the change can't turn the new turn idle.
+// and makes any look under way count for nothing, so a mark gone before the change can't turn
+// the new turn idle.
 export function keepState(db: Database, agent: Agent, state: AgentState): void {
-  lastLook.delete(agentKey(agent));
+  const key = agentKey(agent);
+  lastLook.delete(key);
+  stateChanges.set(key, (stateChanges.get(key) ?? 0) + 1);
   if ("folder" in agent) {
     db.run("UPDATE threads SET state = ? WHERE folder = ?", [state, agent.folder]);
     reportStatus(db, readThread(db, agent.folder));
@@ -191,17 +198,18 @@ const looking = new Set<string>();
 
 // Takes one look at a working agent's screen for noticeIdleScreens. It goes idle when the last
 // look found it out of a turn too. Otherwise this look is remembered for the next. A new state
-// while it looked forgets the last look, and so makes this one count for nothing, as it may
-// show the turn before. An agent that isn't running has nothing to remember.
+// kept while it looked makes this one count for nothing, as it may show the turn before, even
+// with no earlier look to compare. An agent that isn't running has nothing to remember.
 async function lookAt(
   db: Database,
   agent: { key: Agent; host: Host; name: string; marks: Marks },
   key: string,
 ): Promise<void> {
   const before = lastLook.get(key);
+  const changes = stateChanges.get(key);
   const runs = await agentRuns(agent.host, agent.name);
   const screen = runs ? await readSession(agent.host, agent.name) : "";
-  if (lastLook.get(key) !== before) return;
+  if (stateChanges.get(key) !== changes || lastLook.get(key) !== before) return;
   if (!runs) return void lastLook.delete(key);
   const quiet = quietSince(before?.screen, screen, agent.marks);
   if (quiet && before?.quiet) keepState(db, agent.key, "idle");

@@ -119,9 +119,25 @@ export async function stopThread(db: Database, sessions: string, thread: Thread)
   // Its setup would go on to start the builder after the stop.
   if (thread.session === null)
     throw new Error(`${name} is still setting up: stop it once its builder has started`);
+  await stopLiveThread(db, sessions, thread, false, "stopped");
+}
+
+// Ends a working or waiting thread's builder, then marks the thread stopped, with `why`, and
+// takes you off its issue, for sc stop and sc rm. The thread stays live until its builder has
+// ended, and its builder's submits are refused meanwhile. One whose host can't be reached, or
+// won't end it, may still run, so the thread stays as it was: its round and any wake after a
+// usage limit carry on, its messages wait for it, and this throws why. `drop` drops its
+// messages once it has ended, for a thread that is going.
+async function stopLiveThread(
+  db: Database,
+  sessions: string,
+  thread: Thread,
+  drop: boolean,
+  why: string,
+): Promise<void> {
   stopping.add(thread.folder);
   try {
-    await endBuilder(db, sessions, thread.folder, false);
+    await endBuilder(db, sessions, thread.folder, drop);
   } catch (error) {
     resumeRound(db, sessions, thread.folder);
     if (thread.erred && thread.limited) wakeAfterLimit(db, sessions, thread.folder);
@@ -141,7 +157,7 @@ export async function stopThread(db: Database, sessions: string, thread: Thread)
       limited: false,
       limit_reset: null,
     },
-    "stopped",
+    why,
   );
   unassignIssue(db, thread.folder);
 }
@@ -219,31 +235,20 @@ export async function removeThread(
   const live = thread.status === "working" || thread.status === "waiting";
   if (live && thread.session === null)
     throw new Error(`${name} is still setting up: remove it once its builder has started`);
-  if (live)
-    record(
-      db,
-      thread.folder,
-      {
-        status: "stopped",
-        needs_you: false,
-        asking: false,
-        stalled: false,
-        erred: false,
-        limited: false,
-        limit_reset: null,
-      },
-      "removing",
-    );
-  // Asked before anything is waited on, so an sc start meanwhile assigns you after it, as for
-  // sc stop. A forge that fails leaves the thread stopped, which takes you off too.
-  unassignIssue(db, thread.folder);
   // Until it ends, a poll leaves the thread to sc rm, which deletes its branch first.
   removing.add(thread.folder);
   try {
     // A push under way would put back the branch, or open a PR after none was closed, so it is
     // waited for, and the thread read again for the PR it may have opened.
     const pushing = endRound(thread.folder);
-    await endBuilder(db, sessions, thread.folder, true);
+    // A thread still running is stopped as sc stop does: live until its builder has ended, and
+    // as it was when that fails. A forge that fails after leaves the thread stopped, and you
+    // off its issue.
+    if (live) await stopLiveThread(db, sessions, thread, true, "removing");
+    else {
+      await endBuilder(db, sessions, thread.folder, true);
+      unassignIssue(db, thread.folder);
+    }
     await pushing;
     // Close the PR, which deletes its branch on the forge too. With no PR, as a repository with
     // no forge has, delete the branch only if this thread pushed it: Skelcrew keeps a ref of each

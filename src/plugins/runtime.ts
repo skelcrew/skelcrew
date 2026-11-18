@@ -4,7 +4,7 @@
 // one JSON answer on stdout.
 import type { Database } from "bun:sqlite";
 import type { z } from "zod";
-import { commandFor, installedPlugins, readManifest } from "./plugin.ts";
+import { commandFor, installedPlugins, quoteForSh, readManifest } from "./plugin.ts";
 
 // A runtime plugin that hosts sessions: its name, its folder, its session and attach commands,
 // and whether it also provides the transport and the status. The sessions module uses Skelcrew's
@@ -143,4 +143,13 @@ export function attachOnHost(host: PluginHost, id: string): void {
     env: { ...process.env, ...env },
     stdio: ["inherit", "inherit", "inherit"],
   });
+}
+
+// Returns a line for sh that runs the plugin's attach command on a session, in the plugin's folder
+// with its environment, as attachOnHost does, for the screen to run in its right pane.
+export function attachOnHostLine(host: PluginHost, id: string): string {
+  const { argv, env } = commandFor(host.plugin, host.attach);
+  const assignments = Object.entries(env).map(([key, value]) => `${key}=${quoteForSh(value)}`);
+  const words = [...argv, id].map(quoteForSh).join(" ");
+  return `cd ${quoteForSh(host.folder)} && env ${assignments.join(" ")} ${words}`;
 }

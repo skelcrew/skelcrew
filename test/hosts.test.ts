@@ -248,7 +248,7 @@ attach: ["true"]
 import { record } from ${JSON.stringify(source("flow/thread.ts"))};
 import { forgetStatus, keepState } from ${JSON.stringify(source("flow/status.ts"))};
 import { builderSession, readThread } from ${JSON.stringify(source("flow/thread.ts"))};
-import { endThread, stopThread } from ${JSON.stringify(source("flow/events.ts"))};
+import { endThread, removeThread, stopThread } from ${JSON.stringify(source("flow/events.ts"))};
 import { noticeIdleScreens } from ${JSON.stringify(source("flow/status.ts"))};
 import { hasSession, startSession } from ${JSON.stringify(source("agents/sessions.ts"))};
 import { endEarlierBuilder } from ${JSON.stringify(source("flow/builder.ts"))};
@@ -561,3 +561,49 @@ process.exit(0);`,
     `fake couldn't end: the host is down for a moment\n1 ""\n0 ${JSON.stringify("\x1b[200~hello\x1b[201~\n")}\n`,
   );
 }, 40_000);
+
+test("a screen look the host answered late doesn't count once a new turn has started", () => {
+  const prompt = join(home, "prompt.sh");
+  writeFileSync(prompt, `#!/bin/sh\necho "${claude.marks.prompt}"\ncat > received.txt\n`, {
+    mode: 0o755,
+  });
+  const fake = join(home, ".config", "skelcrew", "plugins", "fake");
+  const said = runWithFakeHost(
+    "sessions",
+    `const fs = require("node:fs");
+const host = (await builderSession(db, "unused", readThread(db, "app-12"))).host;
+const labels = { repository: "simon/app", role: "builder", task: "app-12" };
+await startSession(host, "app-12", { folder: ${JSON.stringify(home)}, command: [${JSON.stringify(prompt)}], env: { PATH: process.env.PATH }, labels });
+// The host takes two seconds over each read of the screen.
+fs.writeFileSync(${JSON.stringify(join(fake, "slow-read"))}, "");
+const state = () => readThread(db, "app-12").state;
+// A look starts, and a new turn starts while the host is still reading the screen.
+noticeIdleScreens(db, "unused");
+await Bun.sleep(500);
+keepState(db, { folder: "app-12" }, "working");
+await Bun.sleep(2500);
+// Only a second look of the new turn may make it idle.
+noticeIdleScreens(db, "unused");
+await Bun.sleep(2500);
+const afterOne = state();
+noticeIdleScreens(db, "unused");
+await Bun.sleep(2500);
+console.log(afterOne, state());
+process.exit(0);`,
+    { host: "fake", host_id: "fake-app-12", state: "working" },
+  );
+  expect(said).toBe("working idle\n");
+}, 40_000);
+
+test("a builder sc rm can't end stays working, with its host and its waiting messages", () => {
+  const said = runWithFakeHost(
+    "sessions",
+    `db.run("INSERT INTO messages (folder, sender, text, said, at, typed_in) VALUES ('app-12', 'lead', 'hello', 'hello', 0, '[]')");
+console.log(await removeThread(db, "unused", readThread(db, "app-12"), undefined, true).catch((error) => error.message));
+const after = readThread(db, "app-12");
+console.log(after.status, after.host, db.query("SELECT COUNT(*) AS n FROM messages").get().n);
+process.exit(0);`,
+    { host: "gone", host_id: "gone-app-12" },
+  );
+  expect(said).toBe("its builder's session host gone isn't installed any more\nworking gone 1\n");
+});

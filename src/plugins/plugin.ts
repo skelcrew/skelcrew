@@ -262,8 +262,8 @@ export async function callPlugin<T>(
   return checked.data;
 }
 
-// Quotes a word for sh. git runs a credential helper through sh.
-const quoteForSh = (word: string) => `'${word.replaceAll("'", "'\\''")}'`;
+// Quotes a word for sh. git runs a credential helper through sh, and the screen a host's attach.
+export const quoteForSh = (word: string) => `'${word.replaceAll("'", "'\\''")}'`;
 
 // Returns the git options that make a forge's git_credentials command git's only credential
 // helper, for one git command. The options are passed on each command and never saved. So no
