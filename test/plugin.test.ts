@@ -349,20 +349,42 @@ test("a plugin from a folder is used where it is, and update builds it again", a
   expect(existsSync(join(plugins(), "fake"))).toBe(false);
   expect(JSON.parse((await skel(["plugin", "ls", "--json"])).out)[0].from).toBe(folder);
 
-  // Its commands may have changed, so building it again shows them and asks first.
+  // With the commands you approved, it builds again without asking, even with no terminal.
   fakePlugin(folder, "0.2.0");
+  const unchanged = await skel(["update", "-g", "fake"], "", "", {}, home, false);
+  expect(unchanged.err).toBe("");
+  expect(unchanged.code).toBe(0);
+  expect(unchanged.out).not.toContain("Build it?");
+  expect(unchanged.out).toContain(`Built fake 0.2.0 again from ${folder}.`);
+  expect(JSON.parse(readFileSync(join(folder, "built"), "utf8")).version).toBe("0.2.0");
+
+  // Changed commands are shown and asked about first, which needs a terminal.
+  const manifest = join(folder, "skelcrew-plugin.yaml");
+  fakePlugin(folder, "0.3.0");
+  writeFileSync(
+    manifest,
+    readFileSync(manifest, "utf8").replace(
+      "build: [[bun, build.ts]]",
+      'build: [[bun, build.ts], ["true"]]',
+    ),
+  );
   const unasked = await skel(["plugin", "update", "fake"], "y\n", "", {}, home, false);
   expect(unasked.code).toBe(1);
   expect(unasked.err).toContain(
     "Skelcrew left out fake, as each runs its commands, which needs your yes at a terminal",
   );
-  expect(JSON.parse(readFileSync(join(folder, "built"), "utf8")).version).toBe("0.1.0");
+  expect(JSON.parse(readFileSync(join(folder, "built"), "utf8")).version).toBe("0.2.0");
   const updated = await skel(["plugin", "update", "fake"], "y\n");
   expect(updated.err).toBe("");
-  expect(updated.out).toContain(`fake 0.2.0 from ${folder} is an I/O plugin`);
+  expect(updated.out).toContain(`fake 0.3.0 from ${folder} is an I/O plugin`);
+  expect(updated.out).toContain("  true\n");
   expect(updated.out).toContain("Build it? [Y/n]");
-  expect(updated.out).toContain(`Built fake 0.2.0 again from ${folder}.`);
-  expect(JSON.parse(readFileSync(join(folder, "built"), "utf8")).version).toBe("0.2.0");
+  expect(updated.out).toContain(`Built fake 0.3.0 again from ${folder}.`);
+  expect(JSON.parse(readFileSync(join(folder, "built"), "utf8")).version).toBe("0.3.0");
+  // Once approved, the new commands build again without asking.
+  const again = await skel(["update", "-g", "fake"], "", "", {}, home, false);
+  expect(again.code).toBe(0);
+  expect(again.out).not.toContain("Build it?");
 
   const removed = await skel(["plugin", "rm", "fake"]);
   expect(removed.out).toContain("Removed fake");

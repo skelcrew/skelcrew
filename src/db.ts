@@ -469,6 +469,11 @@ function prepareTables(db: Database): void {
     folder TEXT NOT NULL,
     source TEXT
   )`);
+  // The commands you approved for a plugin from a folder of yours, as JSON, so building it again
+  // asks only when they change. Null for a plugin from GitHub, and for one installed before
+  // Skelcrew kept them, which is asked about once more.
+  if (!db.query("SELECT 1 FROM pragma_table_info('plugins') WHERE name = 'approved'").get())
+    db.run("ALTER TABLE plugins ADD COLUMN approved TEXT");
 }
 
 // Upgrades a database from before each repository had its own lead. The machine's one lead
