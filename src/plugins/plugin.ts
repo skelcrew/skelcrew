@@ -18,7 +18,8 @@ export const Version = z.string().regex(/^\d+\.\d+\.\d+$/, "must be a version su
 // What a plugin can provide, by its kind. An I/O plugin is where work comes from and where it
 // goes. A runtime plugin is about where agents run: the sessions they run in, the transport that
 // types into them, their status, and machine, how to reach a machine that runs Skelcrew. Skelcrew
-// doesn't use a runtime plugin's sessions, transport or status yet, and keeps its built-ins.
+// uses a plugin's transport and status only for the sessions it hosts, so one that provides
+// either without sessions is never used.
 const provided = {
   io: ["tracker", "forge", "chat"],
   runtime: ["sessions", "transport", "status", "machine"],
@@ -261,8 +262,8 @@ export async function callPlugin<T>(
   return checked.data;
 }
 
-// Quotes a word for sh. git runs a credential helper through sh.
-const quoteForSh = (word: string) => `'${word.replaceAll("'", "'\\''")}'`;
+// Quotes a word for sh. git runs a credential helper through sh, and the screen a host's attach.
+export const quoteForSh = (word: string) => `'${word.replaceAll("'", "'\\''")}'`;
 
 // Returns the git options that make a forge's git_credentials command git's only credential
 // helper, for one git command. The options are passed on each command and never saved. So no

@@ -72,6 +72,9 @@ export const reviewLimit = (): number => readSettings(["reviews"]).reviews;
 // Returns how many test suites may run at once through sc check on this machine. Throws when
 // your config isn't valid.
 export const checkLimit = (): number => readSettings(["checks"]).checks;
+// Returns the host new sessions start on: tmux, or the name of a runtime plugin. It is yours
+// alone, as how you watch your agents is, so a repository's skelcrew.yaml can't set it.
+export const sessionHost = (): string => readSettings(["host"]).host;
 
 // Says once, for each old key still in use, which new key replaces it. In your config.yaml,
 // the harness and model under lead:, builder: and reviewer: give way to roles:, and max_rounds: to rounds:, at the top and

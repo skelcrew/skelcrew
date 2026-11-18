@@ -5,10 +5,12 @@ import { appendFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import { HarnessName, harnessNamed } from "../agents/harness.ts";
+import { listSessions } from "../agents/sessions.ts";
 import { taskColumns } from "../db.ts";
 import { threadsDir } from "../paths.ts";
+import { type Host, hostNamed } from "../plugins/runtime.ts";
 import { findRepository } from "./repo.ts";
-import { needsYou } from "./status.ts";
+import { needsYou, reportStatus } from "./status.ts";
 
 // What an agent is doing: working on a turn, idle at its prompt, asking you a question with its
 // harness's question tool, or stopped on an error its harness reported.
@@ -167,6 +169,11 @@ export const Thread = z.object({
   // What the builder is doing, as its harness's hooks and its screen tell. Null until its first
   // hook runs, and in a row from before Skelcrew kept it.
   state: AgentState.nullable(),
+  // The session host its builder runs on, tmux or a runtime plugin by name, which it keeps until
+  // the builder ends: a host you pick later is only for new sessions. Null once you stopped it.
+  host: z.string().nullable(),
+  // The builder's session ID on its host, or null for its folder, which is its name on tmux.
+  host_id: z.string().nullable(),
   // Whether the work ended with its changes merged: its PR merged, or without a forge, its
   // branch reached its base. False while it goes on, and once it ended any other way.
   merged: z.coerce.boolean(),
@@ -206,6 +213,40 @@ export type Thread = z.infer<typeof Thread>;
 
 // Returns the harness the thread's builder runs on, for starting it again and typing into it.
 export const builderHarness = (thread: Thread) => harnessNamed(thread.harness ?? "claude");
+
+// Returns the host the thread's builder session runs on and its ID there, for everything that
+// reaches the builder. A stopped thread has no session, and is looked for on tmux, where nothing
+// of it runs. Throws when its host is a plugin no longer installed, as it can't be reached.
+// A plugin's host gives the ID as it starts the session, and the daemon could stop before saving
+// it. So a thread on a plugin with no ID saved finds its builder by the labels it started with,
+// and saves its ID then, so it is never started a second time.
+export async function builderSession(
+  db: Database,
+  sessions: string,
+  thread: Thread,
+): Promise<{ host: Host; id: string }> {
+  const host = hostNamed(db, sessions, thread.host ?? "tmux");
+  if (host === null) throw new Error(hostGone(thread));
+  if (thread.host_id !== null || typeof host === "string")
+    return { host, id: thread.host_id ?? thread.folder };
+  // The builder's task label is its thread's name when it started: its repository's short name
+  // or, once another repository shares that, its owner and name, then its task's ID. Either is
+  // matched whole, so task 12 never takes the builder of task other-12.
+  const names = [`${thread.repo}-${thread.task}`, `${fullNameOf(thread)}-${thread.task}`];
+  const found = (await listSessions(host)).find(
+    ({ labels }) =>
+      labels?.role === "builder" &&
+      labels.repository === fullNameOf(thread) &&
+      names.includes(labels.task ?? ""),
+  );
+  if (!found) return { host, id: thread.folder };
+  record(db, thread.folder, { host_id: found.name }, "found its builder on its host");
+  return { host, id: found.name };
+}
+
+// Returns why a thread's builder can't be reached when its host plugin is gone.
+export const hostGone = (thread: Thread) =>
+  `its builder's session host ${thread.host} isn't installed any more`;
 
 // Returns whether the thread's review waits in the queue for a place, as limits.reviews already
 // runs. Only a working or waiting thread has a review going on: one stopped, failed or done
@@ -310,6 +351,7 @@ export function record(
   // see exactly what the database holds.
   const thread = readThread(db, folder);
   log(db, thread, why);
+  reportStatus(db, thread);
   return thread;
 }
 

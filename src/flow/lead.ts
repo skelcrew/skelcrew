@@ -130,14 +130,14 @@ export async function startLead(
   // is given that setting now, or exiting it would end its session and never close its tab.
   // One whose harness ended leaves its screen behind, which is logged before its session is
   // ended to make room for the new one.
-  if (hasSession(sessions, lead.name)) {
-    const failed = failedScreen(sessions, lead.name);
+  if (await hasSession(sessions, lead.name)) {
+    const failed = await failedScreen(sessions, lead.name);
     if (failed === null) {
       keepOnExit(sessions, lead.name);
       return;
     }
     console.log(`${owner}/${repo}'s lead had ended:\n${failed}`);
-    endSession(sessions, lead.name);
+    await endSession(sessions, lead.name);
   }
   // The lead's sandbox mounts its clone, and can't mount one that is missing. Adding a
   // repository clones it, so this waits only when that clone failed or has gone since.
@@ -178,7 +178,7 @@ export async function startLead(
   });
   // The session stays when the lead exits, so closeExitedLeads can tell exiting it from a crash.
   const labels: Labels = { repository: `${owner}/${repo}`, role: "lead" };
-  startSession(sessions, lead.name, {
+  await startSession(sessions, lead.name, {
     folder: lead.folder,
     command: argv,
     env,
@@ -203,12 +203,12 @@ export async function startLead(
 // its clone stay, and its conversation is kept for when you open it again. The tab is marked
 // closed before the session ends, so a sidebar that finds the session gone also finds the tab
 // closed, and doesn't bring the lead back.
-export function closeExitedLeads(db: Database, sessions: string): void {
+export async function closeExitedLeads(db: Database, sessions: string): Promise<void> {
   for (const { owner, repo } of openedRepositories(db)) {
     const { name } = leadOf(db, owner, repo);
     if (!exitedCleanly(sessions, name)) continue;
     db.run("UPDATE repositories SET tab_closed = 1 WHERE owner = ? AND repo = ?", [owner, repo]);
-    endSession(sessions, name);
+    await endSession(sessions, name);
     console.log(`${owner}/${repo}'s lead exited, so its tab is closed until you open it again.`);
   }
 }

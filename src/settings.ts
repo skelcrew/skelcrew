@@ -53,6 +53,8 @@ const File = z.looseObject({
   // The repositories, by full name, never offered the GitHub plugin again because you said no
   // in one of their checkouts.
   github_declined: z.array(z.string()).optional(),
+  // The host new sessions start on: tmux, built in, or a runtime plugin by its name.
+  session: z.string().min(1).optional(),
 });
 type File = z.infer<typeof File>;
 type Key = keyof typeof File.shape;
@@ -70,8 +72,9 @@ export type Role = { harness: HarnessName; model?: string };
 // while the reviewer's own waits out its usage limit, and `reviewMinutes` how long a review may
 // run before it is ended. `yourHarness` and `yourReviewer` are the harnesses
 // your config saved, with no default, so the first run can tell what you haven't picked yet, and
-// `declined` the repositories never offered the GitHub plugin again. `leadArms` is whether the
-// lead may arm a merge when ready when you ask it to, off unless you turn it on.
+// `declined` the repositories never offered the GitHub plugin again. `host` is where new
+// sessions start: tmux, or the name of a runtime plugin that provides sessions. `leadArms` is
+// whether the lead may arm a merge when ready when you ask it to, off unless you turn it on.
 export type Settings = {
   lead: Role;
   builder: Role;
@@ -87,6 +90,7 @@ export type Settings = {
   yourHarness: HarnessName | undefined;
   yourReviewer: HarnessName | undefined;
   declined: string[];
+  host: string;
   leadArms: boolean;
 };
 type Group = keyof Settings;
@@ -108,13 +112,14 @@ const keysOf: Record<Group, Key[]> = {
   yourHarness: ["harness"],
   yourReviewer: ["your_reviewer"],
   declined: ["github_declined"],
+  host: ["session"],
   leadArms: ["may_arm_merges"],
 };
 
-// What each file may set. Your harness, model, limits, the reviewer's fallback, a review's time
-// and the repositories you declined the GitHub plugin for fit you, your account and your
-// machine, so a repository can't set them. Letting the lead arm merges grants an agent what is
-// yours, so only you can, never a repository. The tracker belongs to the repository, so your
+// What each file may set. Your harness, model, limits, the reviewer's fallback, a review's time,
+// the repositories you declined the GitHub plugin for and the session host fit you, your account
+// and your machine, so a repository can't set them. Letting the lead arm merges grants an agent
+// what is yours, so only you can, never a repository. The tracker belongs to the repository, so your
 // config doesn't. Setup and test can come from either: yours stand in for a repository you
 // don't want to commit a skelcrew.yaml to.
 const yourKeys: Key[] = [
@@ -129,6 +134,7 @@ const yourKeys: Key[] = [
   "fallback",
   "your_reviewer",
   "github_declined",
+  "session",
   "may_arm_merges",
 ];
 const repositoryKeys: Key[] = ["max_rounds", "setup", "test", "tracker"];
@@ -536,6 +542,7 @@ function mergeSettings(layers: File[], roles: Partial<Record<RoleName, Role>>): 
     yourHarness: layers.at(-1)?.harness,
     yourReviewer: first((l) => l.your_reviewer),
     declined: first((l) => l.github_declined) ?? [],
+    host: first((l) => l.session) ?? "tmux",
     leadArms: first((l) => l.may_arm_merges) ?? false,
   };
 }

@@ -24,6 +24,7 @@ import { checkoutFolder, git, release, singleFile } from "../version.ts";
 import { assignIssue } from "./assign.ts";
 import {
   bringBack,
+  endEarlierBuilder,
   failThread,
   setUpThread,
   startBuilder,
@@ -66,11 +67,20 @@ import {
   questionAnswered,
   questionAsked,
   questionClosed,
+  reportStatuses,
   stateAfter,
   turnEnded,
   turnFailed,
 } from "./status.ts";
-import { findThread, liveThreads, record, type Thread, threadName, threadOn } from "./thread.ts";
+import {
+  builderSession,
+  findThread,
+  liveThreads,
+  record,
+  type Thread,
+  threadName,
+  threadOn,
+} from "./thread.ts";
 
 // Tries to hold the daemon lock and returns whether this process owns it, preventing
 // duplicate daemons. The kernel lets go of it when the process ends, however it ends, so a
@@ -262,9 +272,11 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
     );
   };
   // Sets up a new thread's clone, opens its socket and starts its builder, after sc start
-  // has had its answer. Marks the thread failed, with the reason, when any of it fails.
+  // has had its answer, once any builder a failed start left running has ended. Marks the
+  // thread failed, with the reason, when any of it fails.
   const setUpAndStart = async (thread: Thread) => {
     try {
+      await endEarlierBuilder(db, sessions, thread);
       await setUpThread(db, thread);
       await listenFor(thread);
       await startBuilder(db, sessions, thread);
@@ -312,7 +324,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         // A lead you exited this second is closed first, so the daemon's next look can't close
         // the tab again while the lead starts, and a tab can't bring it back. It comes before
         // the choice of repository, so plain sc doesn't pick the one whose tab just closed.
-        closeExitedLeads(db, sessions);
+        await closeExitedLeads(db, sessions);
         // From outside any repository Skelcrew has, the one you opened last.
         const repository =
           (request.from === undefined ? undefined : repositoryAt(db, request.from)) ??
@@ -385,16 +397,18 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       case "peek": {
         const thread = findThread(db, request.repo, request.task);
         const name = threadName(db, thread);
-        if (!agentRuns(sessions, thread.folder))
+        const { host, id } = await builderSession(db, sessions, thread);
+        if (!(await agentRuns(host, id)))
           throw new Error(`${name}'s builder isn't running: the thread is ${thread.status}`);
-        return { thread: name, screen: readSession(sessions, thread.folder) };
+        return { thread: name, screen: await readSession(host, id) };
       }
       case "interrupt": {
         const thread = findThread(db, request.repo, request.task);
         const name = threadName(db, thread);
-        if (!agentRuns(sessions, thread.folder))
+        const { host, id } = await builderSession(db, sessions, thread);
+        if (!(await agentRuns(host, id)))
           throw new Error(`${name}'s builder isn't running: the thread is ${thread.status}`);
-        interruptSession(sessions, thread.folder);
+        await interruptSession(host, id);
         return { interrupted: name };
       }
       case "rm preview": {
@@ -630,9 +644,14 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   }
   // A lead you exited while the daemon was down closes its tab, before any request could open
   // it, and isn't brought back. From here on, the daemon looks each second for a lead you exit.
-  closeExitedLeads(db, sessions);
+  await closeExitedLeads(db, sessions);
   setInterval(
-    () => doing("closing the tabs of exited leads", () => closeExitedLeads(db, sessions)),
+    () =>
+      doing("closing the tabs of exited leads", () =>
+        closeExitedLeads(db, sessions).catch((error) =>
+          console.log(`couldn't close the tabs of exited leads: ${errorText(error)}`),
+        ),
+      ),
     1000,
   );
   // From here on, the daemon also looks every two seconds for a working agent whose screen
@@ -644,6 +663,8 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       console.log(`couldn't look at the agents' screens: ${errorText(error)}`);
     }
   }, 2000);
+  // A host that shows status hears each builder's as it is now, and each change from here on.
+  reportStatuses(db);
   // Open your socket.
   await open(path, "you");
   console.log(`Listening on ${path}.`);

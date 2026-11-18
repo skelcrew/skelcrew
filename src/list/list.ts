@@ -6,7 +6,9 @@ import { cpus } from "node:os";
 import { attachSession, typeKeys } from "../agents/sessions.ts";
 import { openRepository, startOrMerge } from "../client.ts";
 import { openDb } from "../db.ts";
+import { builderSession, readThread } from "../flow/thread.ts";
 import { updateNotice } from "../machine/update.ts";
+import { attachOnHost, type Host } from "../plugins/runtime.ts";
 import { errorText } from "../say.ts";
 import { cpuBusy, cpuSample, loadText, memoryInUse, readMemory } from "../screen/load.ts";
 import { grey, paint, removeControlCodes } from "../screen/look.ts";
@@ -151,8 +153,10 @@ export async function runList(agents: string, repository: string): Promise<void>
   // Attaches you full screen to an agent's session, and comes back to the list once you leave
   // it, on the same row. The list stops reading keys meanwhile, so every key reaches the agent.
   // Keys you typed after Enter that the list hasn't acted on yet, such as ones that came with
-  // Enter in one read, were meant for the agent, so they are typed into it first.
-  const attach = async (session: string) => {
+  // Enter in one read, were meant for the agent, so they are typed into it first. A builder on a
+  // runtime plugin's host is reached through the host's own attach command, by its ID there.
+  // Typing those keys in first takes tmux, so on such a host they are dropped.
+  const attach = async (session: string, host: Host = agents) => {
     attached = true;
     process.stdin.pause();
     const after =
@@ -161,9 +165,11 @@ export async function runList(agents: string, repository: string): Promise<void>
         .map((key) => key.sent)
         .join("") + partial;
     partial = "";
-    if (after) typeKeys(agents, session, after);
+    if (after && typeof host === "string") typeKeys(host, session, after);
     giveBack();
-    const failed = await attachSession(agents, session);
+    let failed: string | null = null;
+    if (typeof host === "string") failed = await attachSession(host, session);
+    else attachOnHost(host, session);
     takeTerminal();
     process.stdin.resume();
     attached = false;
@@ -206,8 +212,16 @@ export async function runList(agents: string, repository: string): Promise<void>
     }
     // A builder that exited leaves its last screen behind, which would look like it still runs.
     if (row.part === "working" && row.session) {
-      if (row.running) return attach(row.session);
-      return say(`${row.name}'s builder isn't running: sc start ${row.name} brings it back`);
+      if (!row.running)
+        return say(`${row.name}'s builder isn't running: sc start ${row.name} brings it back`);
+      // The builder may run on a runtime plugin's host, which a plugin no longer installed
+      // leaves out of reach.
+      try {
+        const { host, id } = await builderSession(db, agents, readThread(db, row.session));
+        return attach(id, host);
+      } catch (error) {
+        return say(errorText(error));
+      }
     }
     if (row.link === null) {
       const branch = row.branch ? ` on branch ${row.branch}` : "";

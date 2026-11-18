@@ -7,6 +7,9 @@ import { z } from "zod";
 import { harnessNamed } from "../agents/harness.ts";
 import { agentRuns, readSession } from "../agents/sessions.ts";
 import { forQuestion, type Marks, quietSince } from "../agents/transport.ts";
+import { roundLimit } from "../config.ts";
+import { askHost, type Host, hostNamed, pluginHost } from "../plugins/runtime.ts";
+import { errorText } from "../say.ts";
 import { pastRoundLimit } from "./decide.ts";
 import { leadOf } from "./lead.ts";
 import { clockTime, endWake, wakeAfterLimit } from "./limits.ts";
@@ -16,6 +19,7 @@ import { lastPushed } from "./round.ts";
 import {
   type AgentState,
   builderHarness,
+  liveThreads,
   queuedForReview,
   readThread,
   record,
@@ -131,14 +135,22 @@ const lastLook = new Map<string, { screen: string; quiet: boolean }>();
 const agentKey = (agent: Agent) =>
   "folder" in agent ? agent.folder : `${agent.owner}/${agent.repo}`;
 
+// How many times each agent's state has been kept, by the key agentKey gives it, so a look at
+// its screen that took a while can tell the state changed meanwhile, earlier look or not.
+const stateChanges = new Map<string, number>();
+
 // Keeps what an agent is doing: a builder's state on its thread, a lead's on its repository.
 // Not logged, as it changes with every turn. A new state forgets the screen check's last look,
-// so a mark gone before the change can't turn the new turn idle.
+// and makes any look under way count for nothing, so a mark gone before the change can't turn
+// the new turn idle.
 export function keepState(db: Database, agent: Agent, state: AgentState): void {
-  lastLook.delete(agentKey(agent));
-  if ("folder" in agent)
+  const key = agentKey(agent);
+  lastLook.delete(key);
+  stateChanges.set(key, (stateChanges.get(key) ?? 0) + 1);
+  if ("folder" in agent) {
     db.run("UPDATE threads SET state = ? WHERE folder = ?", [state, agent.folder]);
-  else
+    reportStatus(db, readThread(db, agent.folder));
+  } else
     db.run("UPDATE repositories SET lead_state = ? WHERE owner = ? AND repo = ?", [
       state,
       agent.owner,
@@ -153,40 +165,159 @@ export function keepState(db: Database, agent: Agent, state: AgentState): void {
 // Claude Code, and an error on Codex, such as an unknown model, which prints it and sits at its
 // prompt. One look isn't enough: right after a message goes in, the mark can take a moment to
 // show. Neither gap flags needs you: after Esc you are looking at the agent anyway. The daemon
-// runs it every two seconds.
+// runs it every two seconds. Each agent is looked at on its own, without waiting: a slow or hung
+// host holds up only its own agents' looks, and one that fails leaves the others' to go on.
 export function noticeIdleScreens(db: Database, sessions: string): void {
-  // The working agents: each builder still at work on its thread, and each lead.
-  const working: { key: Agent; name: string; marks: Marks }[] = [];
+  // The working agents: each builder still at work on its thread, on whichever host it runs, and
+  // each lead. A builder whose host plugin is gone can't be looked at.
+  const working: { key: Agent; host: Host; name: string; marks: Marks }[] = [];
   const threads = db
     .query(
       "SELECT * FROM task_threads WHERE state = 'working' AND status IN ('working', 'waiting')",
     )
     .all()
     .map((row) => Thread.parse(row));
-  for (const thread of threads)
-    working.push({ key: thread, name: thread.folder, marks: builderHarness(thread).marks });
+  for (const thread of threads) {
+    const host = hostNamed(db, sessions, thread.host ?? "tmux");
+    const name = thread.host_id ?? thread.folder;
+    if (host !== null)
+      working.push({ key: thread, host, name, marks: builderHarness(thread).marks });
+  }
   const leads = db
     .query("SELECT owner, repo FROM repositories WHERE lead_state = 'working'")
     .all()
     .map((row) => LeadKey.parse(row));
   for (const lead of leads) {
     const { name, harness } = leadOf(db, lead.owner, lead.repo);
-    working.push({ key: lead, name, marks: harnessNamed(harness ?? "claude").marks });
+    working.push({
+      key: lead,
+      host: sessions,
+      name,
+      marks: harnessNamed(harness ?? "claude").marks,
+    });
   }
-  // An agent goes idle when the last look found it out of a turn too. The rest are remembered
-  // for the next look, and an agent no longer working is forgotten.
-  const looks = new Map<string, { screen: string; quiet: boolean }>();
+  // An agent no longer working is forgotten. Each other one gets a look, unless the last is
+  // still under way.
+  const keys = new Set(working.map((agent) => agentKey(agent.key)));
+  for (const key of lastLook.keys()) if (!keys.has(key)) lastLook.delete(key);
   for (const agent of working) {
     const key = agentKey(agent.key);
-    if (!agentRuns(sessions, agent.name)) continue;
-    const screen = readSession(sessions, agent.name);
-    const before = lastLook.get(key);
-    const quiet = quietSince(before?.screen, screen, agent.marks);
-    if (quiet && before?.quiet) keepState(db, agent.key, "idle");
-    else looks.set(key, { screen, quiet });
+    if (looking.has(key)) continue;
+    looking.add(key);
+    lookAt(db, agent, key)
+      .catch((error) => console.log(`couldn't look at ${agent.name}'s screen: ${errorText(error)}`))
+      .finally(() => looking.delete(key));
   }
-  lastLook.clear();
-  for (const [key, look] of looks) lastLook.set(key, look);
+}
+
+// The agents being looked at now, by the key agentKey gives them.
+const looking = new Set<string>();
+
+// Takes one look at a working agent's screen for noticeIdleScreens. It goes idle when the last
+// look found it out of a turn too. Otherwise this look is remembered for the next. A new state
+// kept while it looked makes this one count for nothing, as it may show the turn before, even
+// with no earlier look to compare. An agent that isn't running has nothing to remember.
+async function lookAt(
+  db: Database,
+  agent: { key: Agent; host: Host; name: string; marks: Marks },
+  key: string,
+): Promise<void> {
+  const before = lastLook.get(key);
+  const changes = stateChanges.get(key);
+  const runs = await agentRuns(agent.host, agent.name);
+  const screen = runs ? await readSession(agent.host, agent.name) : "";
+  if (stateChanges.get(key) !== changes || lastLook.get(key) !== before) return;
+  if (!runs) return void lastLook.delete(key);
+  const quiet = quietSince(before?.screen, screen, agent.marks);
+  if (quiet && before?.quiet) keepState(db, agent.key, "idle");
+  else lastLook.set(key, { screen, quiet });
+}
+
+// The status last reported to a host for each builder, by its host and its ID there, so the host
+// hears only of changes. A daemon that starts again reports each one afresh.
+const reported = new Map<string, string>();
+
+// How long a host may take to hear a status, in milliseconds. Showing a status is quick, so one
+// that takes longer is hung, and is ended so the reports after it still go.
+const statusTimeout = 5000;
+
+// The reports still being sent to each builder's host, by the same key, so they arrive in the
+// order the changes happened.
+const reporting = new Map<string, Promise<void>>();
+
+// Reports the builder's status to its host, when the host is a plugin that provides status and
+// the status changed since it last heard: working, idle, needs you, ready or error, with the
+// thread's word as the reason, such as question or round limit. Every change to a thread goes
+// through record or keepState, which call this, so the host hears each one, from a hook, the
+// screen check, CI or a review alike. It doesn't wait for the host, so the daemon never does.
+// tmux shows no status, so its builders are left out, and Skelcrew's own list shows theirs.
+export function reportStatus(db: Database, thread: Thread): void {
+  if (thread.host === null || thread.host === "tmux" || thread.host_id === null) return;
+  const host = pluginHost(db, thread.host);
+  if (host === null || !host.status) return;
+  let said: { status: Status; reason: string };
+  try {
+    const maxRounds = roundLimit(thread);
+    said = { status: statusOf(thread, maxRounds), reason: threadWord(thread, maxRounds) };
+  } catch (error) {
+    console.log(`couldn't work out ${thread.folder}'s status: ${errorText(error)}`);
+    return;
+  }
+  const id = thread.host_id;
+  const key = `${host.plugin}/${id}`;
+  const text = `${said.status} ${said.reason}`;
+  if (reported.get(key) === text) return;
+  reported.set(key, text);
+  // After the reports before it, whether or not they got through. One that fails is forgotten,
+  // so the next change, or the daemon's next start, says it again.
+  const question = { ask: "status", id, ...said };
+  const sent = (reporting.get(key) ?? Promise.resolve())
+    .then(() => askHost(host, question, z.unknown(), { timeout: statusTimeout }))
+    .then(
+      () => {},
+      (error) => {
+        if (reported.get(key) === text) reported.delete(key);
+        console.log(
+          `couldn't report ${thread.folder}'s status to ${host.plugin}: ${errorText(error)}`,
+        );
+        retryReport(db, thread.folder, key);
+      },
+    );
+  reporting.set(key, sent);
+  sent.then(() => {
+    if (reporting.get(key) === sent) reporting.delete(key);
+  });
+}
+
+// How long to wait before telling a host again a status it failed to hear, in milliseconds.
+const retryAfter = 5000;
+
+// The sessions a report is planned again for, by the same key as reported.
+const retrying = new Set<string>();
+
+// Tells the host the thread's status again a little later, as it is then, after a report it
+// failed to hear: without a later change, the host would go on showing an old one. One retry is
+// planned per session at a time, and each failure plans the next, so a host that comes back hears
+// the status then. A thread that has gone by then needs none.
+function retryReport(db: Database, folder: string, key: string): void {
+  if (retrying.has(key)) return;
+  retrying.add(key);
+  setTimeout(() => {
+    retrying.delete(key);
+    try {
+      reportStatus(db, readThread(db, folder));
+    } catch {}
+  }, retryAfter);
+}
+
+// Forgets what a host last heard from a session, as one starting under the same ID has told it
+// nothing yet.
+export const forgetStatus = (plugin: string, id: string) => reported.delete(`${plugin}/${id}`);
+
+// Reports every live builder's status to its host, for a daemon that starts, as the host heard
+// nothing from it yet.
+export function reportStatuses(db: Database): void {
+  for (const thread of liveThreads(db)) reportStatus(db, thread);
 }
 
 // Returns the word for what the thread is doing, given the rounds of changes it may have. Its
