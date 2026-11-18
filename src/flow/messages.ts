@@ -80,8 +80,13 @@ const notRunning = "its builder isn't running";
 
 // How long a working or waiting thread's builder may be missing while messages wait for it
 // before the thread needs you, in milliseconds. The daemon brings builders back as it starts,
-// which takes a few seconds, and a message saved meanwhile must not flag it.
-const missingFor = 10_000;
+// which takes a few seconds, and a message saved meanwhile must not flag it. Tests set
+// SKELCREW_MISSING_WAIT_MS shorter, so they don't each wait the whole ten seconds.
+const missingFor = z.coerce
+  .number()
+  .min(0)
+  .catch(10_000)
+  .parse(process.env.SKELCREW_MISSING_WAIT_MS ?? 10_000);
 
 // When each thread's builder was first found missing while messages waited, by its folder.
 const missingSince = new Map<string, number>();
@@ -288,10 +293,14 @@ export async function pauseDelivering<T>(
 }
 
 // Starts typing the thread's waiting messages into its builder, unless that is under way
-// already, or paused while the builder is being ended, and returns at once. A failure, such as the session ending, is logged, and the
-// messages wait for the next attempt.
-export function deliverMessages(db: Database, sessions: string, folder: string): void {
-  if (delivering.has(folder) || (paused.get(folder) ?? 0) > 0) return;
+// already, or paused while the builder is being ended, and returns at once. A failure, such as
+// the session ending, is logged, and the messages wait for the next attempt. The promise it gives
+// back settles once the attempt under way ends, so a test can tell when an attempt is over
+// instead of waiting a fixed time.
+export function deliverMessages(db: Database, sessions: string, folder: string): Promise<void> {
+  const under = delivering.get(folder);
+  if (under) return under.ended;
+  if ((paused.get(folder) ?? 0) > 0) return Promise.resolve();
   const cancel = new AbortController();
   const ended = typeWaiting(db, sessions, folder, cancel.signal)
     .catch((error) => console.log(`couldn't type into ${folder}'s builder: ${errorText(error)}`))
@@ -300,15 +309,17 @@ export function deliverMessages(db: Database, sessions: string, folder: string):
     });
   const attempt = { cancel, ended };
   delivering.set(folder, attempt);
+  return ended;
 }
 
 // Starts typing into every builder that has messages waiting. The daemon calls it every few
 // seconds, so a message reaches its builder soon after the builder can take it: after its
-// turn, its question, sc start or the daemon's start.
-export function deliverAllWaiting(db: Database, sessions: string): void {
+// turn, its question, sc start or the daemon's start. The promise it gives back settles once
+// every attempt it started has ended.
+export async function deliverAllWaiting(db: Database, sessions: string): Promise<void> {
   const rows = db.query("SELECT DISTINCT folder FROM messages").all();
-  for (const { folder } of z.array(z.object({ folder: z.string() })).parse(rows))
-    deliverMessages(db, sessions, folder);
+  const folders = z.array(z.object({ folder: z.string() })).parse(rows);
+  await Promise.all(folders.map(({ folder }) => deliverMessages(db, sessions, folder)));
 }
 
 // Drops Skelcrew's waiting messages that tell only of the thread's events, such as a failed
@@ -318,17 +329,22 @@ export function deliverAllWaiting(db: Database, sessions: string): void {
 // the commit, and one left pasted at the prompt, as it would block the next as a draft. Typing
 // under way is cancelled first, as it may be typing one of them, and starts again with what is
 // left once it has ended. Notices still being prepared learn of the drop by noticeRound.
-export function dropOldEvents(db: Database, sessions: string, folder: string): void {
+// Returns the texts dropped, so what they told can be told again if it still holds.
+export function dropOldEvents(db: Database, sessions: string, folder: string): string[] {
   roundsDropped.set(folder, noticeRound(folder) + 1);
   const ended = delivering.get(folder)?.ended ?? Promise.resolve();
   stopDelivering(db, folder, false);
   const rows = db
     .query("SELECT * FROM messages WHERE folder = ? AND sender IN ('skelcrew', 'review')")
     .all(folder);
+  const dropped: string[] = [];
   for (const message of z.array(Message).parse(rows))
-    if (message.typed_in.length === 0 && !message.pasted)
+    if (message.typed_in.length === 0 && !message.pasted) {
       db.run("DELETE FROM messages WHERE id = ?", [message.id]);
+      dropped.push(message.text);
+    }
   ended.then(() => deliverMessages(db, sessions, folder));
+  return dropped;
 }
 
 // How many times each thread's notices were dropped for a new round, by its folder.

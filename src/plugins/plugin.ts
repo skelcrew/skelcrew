@@ -16,8 +16,10 @@ const Command = z.array(z.string().min(1)).min(1);
 export const Version = z.string().regex(/^\d+\.\d+\.\d+$/, "must be a version such as 0.1.0");
 
 // What a plugin can provide, by its kind. An I/O plugin is where work comes from and where it
-// goes. A runtime plugin is about where agents run: a host for their sessions, carrying text
-// into them, showing their status, or how to reach a machine that runs Skelcrew.
+// goes. A runtime plugin is about where agents run: the sessions they run in, the transport that
+// types into them, their status, and machine, how to reach a machine that runs Skelcrew. Skelcrew
+// uses a plugin's transport and status only for the sessions it hosts, so one that provides
+// either without sessions is never used.
 const provided = {
   io: ["tracker", "forge", "chat"],
   runtime: ["sessions", "transport", "status", "machine"],
@@ -26,9 +28,8 @@ const Provided = z.enum([...provided.io, ...provided.runtime]);
 type Provided = z.infer<typeof Provided>;
 
 // The commands a plugin must have for each thing it provides. Chat needs none yet. Its
-// commands come with the first chat plugin. A host answers every question about its sessions,
-// their transport and their status through one command, `session`, and attaches your terminal
-// with `attach`.
+// commands come with the first chat plugin. Sessions, transport and status are each a set of
+// functions run through one session command, and sessions also attaches your terminal.
 const commandsFor = {
   tracker: ["call"],
   forge: ["call", "git_credentials"],
@@ -47,7 +48,7 @@ const kindOf = (what: Provided) =>
 // so it is only lowercase letters, digits and dashes. It can't be none, because tracker: none in
 // a repository's skelcrew.yaml means no tracker. A plugin says its kind and what it provides.
 // One written before kinds says jobs: instead, which is still read: tracker, forge and chat make
-// it I/O, and machine makes it runtime. Either way it comes back with a kind and provides.
+// it I/O, and machine alone makes it runtime. Either way it comes back with a kind and provides.
 export const Manifest = z
   .object({
     name: z
@@ -59,7 +60,11 @@ export const Manifest = z
     about: z.string().min(1),
     kind: z.enum(["io", "runtime"]).optional(),
     provides: z.array(Provided).min(1).optional(),
-    jobs: z.array(Provided).min(1).optional(),
+    // Only the jobs there were before kinds.
+    jobs: z
+      .array(z.enum(["tracker", "forge", "chat", "machine"]))
+      .min(1)
+      .optional(),
     build: z.array(Command).optional(),
     setup: Command.optional(),
     call: Command.optional(),
@@ -82,24 +87,19 @@ export const Manifest = z
       });
     if (jobs === undefined && (kind === undefined || provides === undefined))
       context.addIssue({ code: "custom", path: ["provides"], message: "needs kind and provides" });
-    // Everything it provides must be of its one kind.
-    const plugin = kind ?? kindOf(what[0] ?? "tracker");
-    for (const one of what)
-      if (kindOf(one) !== plugin)
-        context.addIssue({
-          code: "custom",
-          path: [provides === undefined ? "jobs" : "provides"],
-          message: `${one} isn't for a plugin of kind ${plugin}`,
-        });
-    // Transport and status are about a host's own sessions, so a plugin provides them only along
-    // with sessions.
-    for (const one of ["transport", "status"] as const)
-      if (what.includes(one) && !what.includes("sessions"))
-        context.addIssue({
-          code: "custom",
-          path: ["provides"],
-          message: `${one} goes only with sessions`,
-        });
+    // A plugin is runtime only when everything it does is. jobs: once let a plugin mix machine
+    // with tracker, forge or chat, and one installed that way keeps working as I/O, with
+    // machine still among what it provides.
+    const plugin = kind ?? (what.every((one) => kindOf(one) === "runtime") ? "runtime" : "io");
+    // A manifest that names its kind must provide only things of that kind.
+    if (kind !== undefined)
+      for (const one of what)
+        if (kindOf(one) !== kind)
+          context.addIssue({
+            code: "custom",
+            path: ["provides"],
+            message: `${one} isn't for a plugin of kind ${kind}`,
+          });
     // A plugin that provides something must have each command that needs.
     for (const one of what)
       for (const command of commandsFor[one])

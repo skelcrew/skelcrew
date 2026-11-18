@@ -328,7 +328,7 @@ export function removePlugin(name: string): void {
 
 // Prints the installed plugins, for sc plugin ls: each one's name, version, kind and what it
 // provides, such as "github 0.1.0 io: tracker, forge", or as JSON for tools, with where each
-// one came from.
+// one came from. The JSON keeps jobs, so a tool written before kinds still reads it.
 export function listPlugins(json: boolean): void {
   const rows = installedPlugins(openDb()).map((plugin) => {
     const manifest = existsSync(plugin.folder) ? readManifest(plugin.folder) : null;
@@ -338,6 +338,8 @@ export function listPlugins(json: boolean): void {
       version: manifest.version,
       kind: manifest.kind,
       provides: manifest.provides,
+      // What it provides, under the name tools read before plugins had kinds.
+      jobs: manifest.provides,
       from: plugin.source ?? plugin.folder,
     };
   });

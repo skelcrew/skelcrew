@@ -9,7 +9,7 @@ import { quietly } from "../run.ts";
 import { errorText } from "../say.ts";
 import { unassignIssue } from "./assign.ts";
 import { baseOf, inTurn } from "./builder.ts";
-import type { Check, Decision } from "./decide.ts";
+import { type Check, type Decision, headSeen } from "./decide.ts";
 import { deleteBranch, fetchInto, onRemote } from "./git.ts";
 import { endWake, wakeAfterLimit } from "./limits.ts";
 import {
@@ -217,7 +217,8 @@ async function stopNow(
 // its clone by deleting the folder, never running git in it. `why` goes in the thread's log.
 // `note`, such as "is done: #7 merged into main", goes to its repository's lead after the
 // thread's name, so the lead stops listing it as open. With null, as when the lead removed it,
-// the lead hears nothing. `removal` is true only for sc rm's own end: a thread sc rm is
+// the lead hears nothing. `merged` says whether its changes were merged, which the task keeps,
+// as its stage shows. `removal` is true only for sc rm's own end: a thread sc rm is
 // removing is its to end, even when a poll saw its PR merged or closed first.
 export async function endThread(
   db: Database,
@@ -225,6 +226,7 @@ export async function endThread(
   thread: Thread,
   why: string,
   note: string | null,
+  merged: boolean,
   removal = false,
 ): Promise<void> {
   // A thread ends once, so the lead hears of it once. A poll and sc rm can both end the same
@@ -255,7 +257,7 @@ export async function endThread(
       noteForLead(db, sessions, thread, line, thread.folder);
     }
     // A merge when ready ends with its thread, so nothing armed outlives it.
-    const ended = { status: "done" as const, needs_you: false, merge_plan: null };
+    const ended = { status: "done" as const, needs_you: false, merged, merge_plan: null };
     record(db, thread.folder, ended, `${why}: ended the thread`);
   })();
   // Its clone goes only once the end is saved, so a thread whose end failed keeps it. Nothing
@@ -330,7 +332,7 @@ export async function removeThread(
     const closing = pr === null ? "" : `, closing #${pr}`;
     const note = `ended: you removed it${closing}${reason ? `: ${reason}` : ""}`;
     const why = reason ? `removed: ${reason}` : "removed";
-    await endThread(db, sessions, thread, why, byLead ? null : note, true);
+    await endThread(db, sessions, thread, why, byLead ? null : note, false, true);
   } finally {
     removing.delete(thread.folder);
   }
@@ -356,18 +358,23 @@ export async function tellBuilder(
   const { seen, change, why } = decision;
   // Read before fetching, as a new round may start meanwhile.
   const round = noticeRound(thread.folder);
-  // The conflict is saved first, so an approval stops being ready to merge before any wait. Its
-  // status stays as it is, so while a fetch keeps failing, each poll finds the conflict again
-  // and tries again.
-  const unready = decision.conflict !== null && thread.needs_you && !change.needs_you;
+  // A conflict, or a branch that moved on the forge, is saved first, so an approval stops being
+  // ready to merge before any wait. Its status stays as it is, so while a fetch keeps failing,
+  // each poll finds it again and tries again.
+  const blocked = decision.conflict !== null || decision.moved !== null;
+  const unready = blocked && thread.needs_you && !change.needs_you;
   const conflicts = decision.conflict ?? thread.conflicts;
+  const unreadyWhy =
+    conflicts !== thread.conflicts || decision.moved === null
+      ? `its PR conflicts with ${conflicts}, so it isn't ready to merge`
+      : `its branch moved on the remote to ${decision.moved}, so it isn't ready to merge`;
   const before =
     conflicts !== thread.conflicts || unready
       ? record(
           db,
           thread.folder,
           unready ? { conflicts, needs_you: false } : { conflicts },
-          `its PR conflicts with ${conflicts}, so it isn't ready to merge`,
+          unreadyWhy,
         )
       : thread;
   try {
@@ -382,6 +389,15 @@ export async function tellBuilder(
             (text) =>
               `${text} The forge's ${base} is at ${at}. After git fetch origin, git rev-parse origin/${base} gives the same commit.`,
           );
+    // The builder merges a branch that moved from Skelcrew's clone, its origin, which holds
+    // only what Skelcrew pushed until it fetches the branch.
+    if (decision.moved !== null)
+      await fetchInto(
+        db,
+        repositoryOf(db, thread),
+        cloneDir(thread.owner, thread.repo),
+        thread.branch,
+      );
     const checks = await failedCheckMessages(db, thread, decision.failed);
     // Fetching can take a while, and the thread may have stopped or ended meanwhile, whose
     // events stay unhandled. Or a newer round may have moved it on, such as to approved. Its
@@ -397,7 +413,13 @@ export async function tellBuilder(
     // A round submitted meanwhile is a new commit, so the notices of the older one would send
     // the builder after a problem it may have fixed, even once that round's push is done and
     // its review runs. People's words still hold.
-    const notices = noticeRound(thread.folder) !== round ? [] : [...checks, ...told];
+    const dropped = noticeRound(thread.folder) !== round;
+    const notices = dropped ? [] : [...checks, ...told];
+    // A dropped notice of a branch that moved leaves its commit unhandled. The new round's push
+    // may be refused for it and fail to tell the builder, and a later poll then tells it.
+    const movedTo = decision.moved;
+    const handled =
+      dropped && movedTo !== null ? seen.filter((id) => id !== headSeen(movedTo)) : seen;
     // Saves one message of these texts, unless there are none. The thread's log gets the first
     // line of each.
     const firstLines = (texts: string[]) => texts.map((t) => t.split("\n")[0]).join("; ");
@@ -412,7 +434,7 @@ export async function tellBuilder(
     };
     send(notices, []);
     send(decision.tell, decision.typedIn);
-    record(db, thread.folder, moved ? { seen } : { seen, ...change }, why);
+    record(db, thread.folder, moved ? { seen: handled } : { seen: handled, ...change }, why);
     typeLeadNotes(db, sessions);
   } catch (error) {
     console.log(

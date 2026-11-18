@@ -181,6 +181,8 @@ test("installing from GitHub warns in one line, asks, and on a bare Enter instal
       version: "0.10.0",
       kind: "io",
       provides: ["tracker", "forge"],
+      // Tools written before kinds read jobs, so it stays.
+      jobs: ["tracker", "forge"],
       from: "skelcrew/skelcrew-fake",
     },
   ]);
@@ -263,6 +265,45 @@ test("a manifest written before kinds, with jobs:, still reads as the kind its j
   expect((await skel(["plugin", "ls"])).out).toBe("fake 0.1.0 io: tracker, forge\n");
 });
 
+// jobs: let a plugin mix machine with I/O jobs, so one installed that way must keep working.
+test("a manifest with jobs: that mixes machine with tracker still reads, as I/O", async () => {
+  const folder = join(home, "skelcrew-fake");
+  fakePlugin(folder, "0.1.0", 'add: ["true"]\nexec: ["true"]\npush: ["true"]\n');
+  const manifest = join(folder, "skelcrew-plugin.yaml");
+  writeFileSync(
+    manifest,
+    readFileSync(manifest, "utf8").replace(
+      "kind: io\nprovides: [tracker, forge]",
+      "jobs: [tracker, forge, machine]",
+    ),
+  );
+  expect((await skel(["plugin", "install", "./skelcrew-fake"], "y\n")).code).toBe(0);
+  expect((await skel(["plugin", "ls"])).out).toBe("fake 0.1.0 io: tracker, forge, machine\n");
+});
+
+// The shape of a runtime plugin such as herdr, which phase 5 builds on.
+test("a runtime plugin can provide sessions, transport and status, with their commands", async () => {
+  const folder = join(home, "skelcrew-fake");
+  fakePlugin(folder, "0.1.0", 'session: ["true"]\nattach: ["true"]\n');
+  const manifest = join(folder, "skelcrew-plugin.yaml");
+  const runtime = "kind: runtime\nprovides: [sessions, transport, status]";
+  writeFileSync(
+    manifest,
+    readFileSync(manifest, "utf8").replace("kind: io\nprovides: [tracker, forge]", runtime),
+  );
+  expect((await skel(["plugin", "install", "./skelcrew-fake"], "y\n")).code).toBe(0);
+  expect((await skel(["plugin", "ls"])).out).toBe(
+    "fake 0.1.0 runtime: sessions, transport, status\n",
+  );
+  expect((await skel(["plugin", "rm", "fake"])).code).toBe(0);
+
+  // Sessions need a way to attach your terminal.
+  writeFileSync(manifest, readFileSync(manifest, "utf8").replace('attach: ["true"]\n', ""));
+  const refused = await skel(["plugin", "install", "./skelcrew-fake"], "y\n");
+  expect(refused.code).toBe(1);
+  expect(refused.err).toContain("a sessions plugin needs attach");
+});
+
 test("a manifest whose kind doesn't fit what it provides, or that mixes both shapes, is refused", async () => {
   const folder = join(home, "skelcrew-fake");
   const manifest = join(folder, "skelcrew-plugin.yaml");
@@ -270,8 +311,6 @@ test("a manifest whose kind doesn't fit what it provides, or that mixes both sha
     ["kind: runtime\nprovides: [tracker, forge]", "tracker isn't for a plugin of kind runtime"],
     ["kind: io\nprovides: [tracker]\njobs: [tracker]", "goes with neither kind nor provides"],
     ["provides: [tracker]", "needs kind and provides"],
-    ["kind: runtime\nprovides: [sessions]\nsession: [bun, s.ts]", "a sessions plugin needs attach"],
-    ["kind: runtime\nprovides: [status]\nsession: [bun, s.ts]", "status goes only with sessions"],
   ] as const) {
     fakePlugin(folder, "0.1.0");
     writeFileSync(
@@ -282,23 +321,6 @@ test("a manifest whose kind doesn't fit what it provides, or that mixes both sha
     expect(refused.code).toBe(1);
     expect(refused.err).toContain(said);
   }
-});
-
-test("a runtime plugin can provide sessions, transport and status, and ls says so", async () => {
-  const folder = join(home, "skelcrew-fake");
-  fakePlugin(folder, "0.1.0");
-  const manifest = join(folder, "skelcrew-plugin.yaml");
-  writeFileSync(
-    manifest,
-    readFileSync(manifest, "utf8").replace(
-      "kind: io\nprovides: [tracker, forge]",
-      "kind: runtime\nprovides: [sessions, transport, status]\nsession: [bun, s.ts]\nattach: [bun, a.ts]",
-    ),
-  );
-  expect((await skel(["plugin", "install", "./skelcrew-fake"], "y\n")).code).toBe(0);
-  expect((await skel(["plugin", "ls"])).out).toBe(
-    "fake 0.1.0 runtime: sessions, transport, status\n",
-  );
 });
 
 test("a plugin from a folder is used where it is, and update builds it again", async () => {

@@ -35,6 +35,7 @@ const state: Thread = {
   review_limited: false,
   review_reset: null,
   conflicts: null,
+  ci_passed: false,
   noting: null,
   body: null,
   title: null,
@@ -54,6 +55,9 @@ const state: Thread = {
   state: null,
   host: "tmux",
   host_id: null,
+  merged: false,
+  issue_link: null,
+  closes: null,
   merge_plan: null,
   merge_id: null,
   merge_by: null,
@@ -73,9 +77,14 @@ test("a working builder works, and one waiting on its review or checks idles", (
 
 test("an approval with green checks is ready to merge", () => {
   const approved = { status: "waiting", needs_you: true, verdict: "approve" } as const;
-  expect(status({ ...approved, checks: "passing" })).toBe("ready");
-  expect(status({ ...approved, checks: null })).toBe("ready");
-  expect(status({ ...approved, checks: "failing" })).toBe("needs you");
+  const green = { ...approved, ci_passed: true };
+  expect(status({ ...green, checks: "passing" })).toBe("ready");
+  // A PR with no CI, whose only check is Skelcrew's approval, and a branch without a forge.
+  expect(status({ ...green, checks: null })).toBe("ready");
+  expect(status({ ...approved, checks: null, pr: null })).toBe("ready");
+  expect(status({ ...green, checks: "failing" })).toBe("needs you");
+  // Needing you for another reason, such as a missing builder, before a poll found CI green.
+  expect(status({ ...approved, checks: null })).toBe("needs you");
 });
 
 // An approved PR that conflicts left ready to merge. Something else making the thread need you

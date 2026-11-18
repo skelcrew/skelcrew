@@ -39,6 +39,9 @@ export type Decision =
       // The base branch the PR conflicts with, or null. The builder is told to merge it and
       // fetches it from Skelcrew's clone, so that clone must fetch it first.
       conflict: string | null;
+      // The commit the thread's branch moved to on the forge, without its builder, or null.
+      // The builder fetches it from Skelcrew's clone, so that clone must fetch it first.
+      moved: string | null;
       change: Change;
       why: string;
     };
@@ -54,6 +57,14 @@ export function ciState(pr: PullRequest): Thread["checks"] {
   if (ci.length === 0) return null;
   if (ci.every((c) => c.state === "passed")) return "passing";
   return ci.some((c) => c.state === "failed" || c.state === "cancelled") ? "failing" : "pending";
+}
+
+// Returns whether every check on the PR passed, Skelcrew's own included, which it sets once its
+// reviewer approves. With no CI, that check is the only one. A thread's saved CI state leaves
+// Skelcrew's check out, so this is what says an approved PR is ready to merge.
+export function allGreen(pr: PullRequest): boolean {
+  const approved = pr.checks.some((c) => c.name === reviewCheck && c.state === "passed");
+  return approved && pr.checks.every((c) => c.state === "passed");
 }
 
 // Returns what an armed merge when ready still waits on, in words for the thread's row and the
@@ -169,14 +180,42 @@ function handledBefore(thread: Thread, pr: PullRequest): Set<string> | null {
   ]);
 }
 
+// Returns what tells the builder its branch moved on the remote to `commit`, with commits it
+// hasn't got, such as a PR merged into it. Its next push would be refused, and pushing over them
+// would lose them, so it merges them before anything else.
+export function branchMoved(branch: string, commit: string): string {
+  return `Your branch ${branch} moved on the remote to ${commit}, with commits you don't have, such as a PR merged into it. Before changing anything else, run git fetch origin, merge origin/${branch} into your branch and commit, then go on. A round submitted without them is refused.`;
+}
+
+// Returns the ID among those a thread has seen that says its builder was told its branch moved
+// on the forge to the commit, so it is told once.
+export const headSeen = (commit: string) => `head:${commit}`;
+
+// Returns the IDs seen without the commits whose moved-branch notice is among the `dropped`
+// texts. A new round drops Skelcrew's notices still waiting to be typed in, so those never
+// reached the builder. Forgotten, the next poll or refused push tells them again, unless the
+// round's commit already merged them. A notice the builder got stays told.
+export function forgetMoves(seen: string[] | null, branch: string, dropped: string[]) {
+  if (seen === null) return null;
+  const notTold = (id: string) =>
+    id.startsWith("head:") &&
+    dropped.some((text) => text.includes(branchMoved(branch, id.slice("head:".length))));
+  return seen.filter((id) => !notTold(id));
+}
+
 // Decides what the thread's PR, as its forge returned it, means for the thread: whether it
-// ended, what to type into the builder, and how the thread changes. Events are handled once:
+// ended, what to type into the builder, and how the thread changes. `moved` says the forge's
+// head holds commits Skelcrew never pushed for the thread. Events are handled once:
 // only reviews, comments and check runs whose IDs the thread hasn't seen count. Your comments
 // wake the builder even past the round limit. Those of someone who can push to the repository
 // wake it within the limit. Anyone else's, a bot's included, never do: on a public repository
 // anyone can comment, and what is typed in steers the builder. Skelcrew's own reviews come from
 // its forge's app, a bot.
-export function decide(thread: Thread, pr: PullRequest, given: { maxRounds: number }): Decision {
+export function decide(
+  thread: Thread,
+  pr: PullRequest,
+  given: { maxRounds: number; moved: boolean },
+): Decision {
   // A merged or closed PR ends the thread. The lead hears which, so it stops listing the PR as
   // open.
   if (pr.state === "merged")
@@ -203,6 +242,7 @@ export function decide(thread: Thread, pr: PullRequest, given: { maxRounds: numb
       typedIn: [],
       failed: [],
       conflict: null,
+      moved: null,
       change: {},
       why,
     };
@@ -251,7 +291,14 @@ export function decide(thread: Thread, pr: PullRequest, given: { maxRounds: numb
     notice.push(
       `The PR conflicts with ${conflict}. Run git fetch origin, merge origin/${conflict} into your branch and fix the conflict, then commit and run sc submit "<summary>" again.`,
     );
-  // The IDs the PR no longer shows can never come back, so they are left out.
+  // A branch that moved on the forge is told once for each commit it moved to, remembered
+  // among the IDs seen. It is told while a round is submitting too, as a push refused for it
+  // may have failed to tell the builder, and a failed round stays submitting.
+  const head = pr.head === null ? null : headSeen(pr.head);
+  const moved = given.moved && head !== null && !before.has(head) ? pr.head : null;
+  if (moved !== null) notice.push(branchMoved(thread.branch, moved));
+  // The IDs the PR no longer shows can never come back, so they are left out. The branch's
+  // head is kept while it stays where it was told.
   const seen = shown.filter(
     (id) =>
       before.has(id) ||
@@ -259,6 +306,7 @@ export function decide(thread: Thread, pr: PullRequest, given: { maxRounds: numb
       comments.some((c) => c.id === id) ||
       (finished && runs.includes(id)),
   );
+  if (head !== null && (before.has(head) || moved !== null)) seen.push(head);
   // Anything to tell sets the builder working again.
   if (tell.length > 0 || notice.length > 0 || failed.length > 0) {
     const told = [
@@ -268,12 +316,12 @@ export function decide(thread: Thread, pr: PullRequest, given: { maxRounds: numb
     // Past the round limit the thread still needs you, as the builder's next round would.
     const change: Change = { status: "working", needs_you: past };
     const why = `told the builder: ${told.join("; ")}`;
-    return { seen, tell, notice, typedIn, failed, conflict, change, why };
+    return { seen, tell, notice, typedIn, failed, conflict, moved, change, why };
   }
-  // Skelcrew's reviewer approves by setting its check, so an approved PR with every check passed,
-  // its own included, is ready. With no CI, that check is the only one.
-  const approved = pr.checks.some((c) => c.name === reviewCheck && c.state === "passed");
-  if (quiet && !thread.needs_you && approved && pr.checks.every((c) => c.state === "passed"))
+  // An approved PR with every check green is ready. A branch holding commits Skelcrew never
+  // pushed is never ready, as no review saw them, such as one that ran on the builder's commit
+  // while a PR was merged into its branch.
+  if (quiet && !thread.needs_you && !given.moved && allGreen(pr))
     return {
       seen,
       tell,
@@ -281,10 +329,39 @@ export function decide(thread: Thread, pr: PullRequest, given: { maxRounds: numb
       typedIn,
       failed,
       conflict,
+      moved,
       change: { needs_you: true },
       why: "approved by Skelcrew's reviewer with every check green, so it is ready to merge",
     };
-  return { seen, tell, notice, typedIn, failed, conflict, change: {}, why: "" };
+  return { seen, tell, notice, typedIn, failed, conflict, moved, change: {}, why: "" };
+}
+
+// Decides what a branch at `head` on its remote means for a thread with no PR to poll: one in
+// a repository with no forge, or one whose PR didn't open after its push. `moved` says the head
+// holds commits Skelcrew never pushed for the thread. The builder is told once for each such
+// commit, as decide tells it for a PR, and the thread stops being ready to merge. Returns null
+// when there is nothing to tell. A thread saved before Skelcrew kept the IDs it has seen starts
+// with none: with no PR, it has no history the IDs would hold back.
+export function decideBranch(
+  thread: Thread,
+  head: string,
+  given: { maxRounds: number; moved: boolean },
+): Exclude<Decision, { end: string }> | null {
+  const seen = thread.seen ?? [];
+  if (!given.moved || seen.includes(headSeen(head))) return null;
+  const notice = branchMoved(thread.branch, head);
+  return {
+    seen: [...seen, headSeen(head)],
+    tell: [],
+    notice: [notice],
+    typedIn: [],
+    failed: [],
+    conflict: null,
+    moved: head,
+    // Past the round limit the thread still needs you, as the builder's next round would.
+    change: { status: "working", needs_you: pastRoundLimit(thread, given.maxRounds) },
+    why: `told the builder: ${notice.split(". ")[0]}`,
+  };
 }
 
 // A task labeled to start, by its ID and title.

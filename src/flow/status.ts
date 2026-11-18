@@ -65,6 +65,21 @@ const submitStands = (thread: Thread) =>
     thread.conflicts === null &&
     thread.telling === null);
 
+// Returns whether the thread waits for you to merge it: Skelcrew's reviewer approved its latest
+// round, with no newer one under way, and the latest poll found every check on its PR green,
+// which polling marks by having it need you. A branch without a forge has no PR or checks, so
+// its approval alone makes it ready. A PR that conflicts isn't ready to merge until the
+// builder's next round, even when something else, such as its builder missing, makes the
+// thread need you again.
+export const readyToMerge = (thread: Thread) =>
+  thread.needs_you &&
+  thread.submitting === null &&
+  thread.reviewing === null &&
+  thread.verdict === "approve" &&
+  (thread.checks === "passing" || thread.checks === null) &&
+  (thread.pr === null || thread.ci_passed) &&
+  thread.conflicts === null;
+
 // Returns the thread's status, one of the five words a host can show, from the same fields and
 // in the same order as its word in the sidebar, which then serves as the reason. A thread that
 // failed, or whose harness stopped on an error, is in error. An approval with green checks is
@@ -313,7 +328,7 @@ export function reportStatuses(db: Database): void {
 // clock shows it, such as "limit · 13:59", or only "limit" when the harness didn't say. Anything
 // that needs you comes before a limit, which only waits.
 export function threadWord(thread: Thread, maxRounds: number, now = Date.now()): string {
-  const { status, verdict, checks } = thread;
+  const { status, verdict } = thread;
   // A thread that failed, stopped or is done says just that. Otherwise a question from its builder
   // comes first, then its harness stopping on an error, then why it needs you, then what it is
   // doing.
@@ -326,12 +341,8 @@ export function threadWord(thread: Thread, maxRounds: number, now = Date.now()):
   // that the thread is ready to merge.
   const past = thread.needs_you && pastRoundLimit(thread, maxRounds);
   const failed = underWay || verdict === "failed";
-  // A PR that conflicts isn't ready to merge, even when something else, such as its builder
-  // missing, makes the thread need you again.
-  const green =
-    verdict === "approve" && (checks === "passing" || checks === null) && thread.conflicts === null;
   if (past) return "round limit";
-  if (thread.needs_you && !failed && green) return "approved";
+  if (readyToMerge(thread)) return "approved";
   // Stopping without submitting may be a question written as plain text, or only a reply, so
   // its word doesn't claim a question. The lead's note quotes what the builder last said.
   if (thread.stalled) return "turn ended";

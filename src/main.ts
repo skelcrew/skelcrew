@@ -35,12 +35,12 @@ const agentRefusals: Record<string, string> = {
   "plugin ls": "listing plugins",
 };
 
-// Splits a task's name, such as app-13, or app-t1 for a thread with no tracker, into its
+// Splits a task's name, such as app-13, or app-wr1 for a thread with no tracker, into its
 // repository and task. Gives nothing when the word isn't a task's name. Repository names can
 // hold dashes, so the task is what follows the last one.
 function splitTaskName(word?: string): [string, string] | undefined {
   // The greedy first group takes every dash but the last.
-  const parts = word?.match(/^(.+)-(t?\d+)$/);
+  const parts = word?.match(/^(.+)-([a-z]{0,2}\d+)$/);
   return parts?.[1] && parts[2] ? [parts[1], parts[2]] : undefined;
 }
 
@@ -366,10 +366,11 @@ async function psCommand(args: string[], json: boolean): Promise<void> {
   printThreads(all ? rows : rows.filter((row) => row.status !== "done"), json);
 }
 
-// Prints the tasks, or one repository's, for sc ls and its short name sc issue ls. Tasks whose
-// thread is done pile up forever and would bury the rest, so only --all shows them, unless
-// their issue is still open, as after sc rm, which leaves it to start again. `words` are what
-// follows the command.
+// Prints the tasks, or one repository's, for sc ls and its short name sc issue ls. Merged and
+// closed tasks pile up forever and would bury the rest, so only --all shows them. A task whose
+// work ended without a merge while its issue is open, as after sc rm, is back in stage issue, so
+// it shows, to start again. A merged one stays out even while the tracker hasn't closed its
+// issue yet. `words` are what follows the command.
 async function lsCommand(command: string, words: string[], json: boolean): Promise<void> {
   const { askForTasks } = await import("./client.ts");
   const { printTasks } = await import("./flow/list.ts");
@@ -378,7 +379,7 @@ async function lsCommand(command: string, words: string[], json: boolean): Promi
   const rest = words.filter((word) => word !== "--all");
   if (rest.length > 1) usage(command);
   const tasks = await askForTasks(rest[0]);
-  const shown = all ? tasks : tasks.filter((t) => t.thread?.status !== "done" || t.issue !== null);
+  const shown = all ? tasks : tasks.filter((t) => t.stage !== "merged" && t.stage !== "closed");
   printTasks(shown, json);
 }
 

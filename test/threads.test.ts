@@ -13,10 +13,11 @@ import {
   writeFileSync,
 } from "node:fs";
 import { createConnection } from "node:net";
-import { tmpdir, userInfo } from "node:os";
+import { hostname, tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import type { Subprocess } from "bun";
 import { stillRunning } from "../src/agents/sessions.ts";
+import { codeOf } from "../src/db.ts";
 import {
   answer,
   asked,
@@ -33,6 +34,8 @@ import {
   until,
 } from "./harness.ts";
 
+// This machine's code, which names the threads sc start begins with no issue, such as app-wr1.
+const own = codeOf(hostname());
 const main = source("main.ts");
 let home = "";
 let socket = "";
@@ -397,7 +400,8 @@ exec ${Bun.which("git") ?? "git"} "$@"
 `,
       { mode: 0o755 },
     );
-    const run = serve();
+    // The daemon gives it half a second to end, rather than its usual five.
+    const run = startDaemon(socket, { ...env(), SKELCREW_STOP_WAIT_MS: "500" }, running);
     await until(() => read(join(home, "held")) !== "");
     await stop(run);
     expect(stillRunning([Number(read(join(home, "held")))])).toEqual([]);
@@ -910,10 +914,10 @@ nameRepositories(db);`;
     await untilAnswers();
     const run = await skel("start", "app", "Add export", "As JSON");
     expect(run.err).toBe("");
-    expect(run.out).toBe("Started app-t1.\n");
-    await until(() => read(join(config("app-t1"), "args")) !== "");
-    expect(read(join(config("app-t1"), "args"))).toContain("Add export\n\nAs JSON");
-    expect(thread()).toMatchObject({ task: "t1", title: "Add export", body: "As JSON" });
+    expect(run.out).toBe(`Started app-${own}1.\n`);
+    await until(() => read(join(config(`app-${own}1`), "args")) !== "");
+    expect(read(join(config(`app-${own}1`), "args"))).toContain("Add export\n\nAs JSON");
+    expect(thread()).toMatchObject({ task: `${own}1`, title: "Add export", body: "As JSON" });
     expect(asked(plugin).filter((q) => q.ask === "create task")).toEqual([]);
   }, 60_000);
 
@@ -925,12 +929,42 @@ nameRepositories(db);`;
     const task = '# Add export\n\n\nAs JSON, with "quotes" and $HOME.\nAnd dates.\n';
     const run = await runSkel(["start", "app"], env(), task);
     expect(run.err).toBe("");
-    expect(run.out).toBe("Started app-t1.\n");
+    expect(run.out).toBe(`Started app-${own}1.\n`);
     expect(thread()).toMatchObject({
-      task: "t1",
+      task: `${own}1`,
       title: "Add export",
       body: 'As JSON, with "quotes" and $HOME.\nAnd dates.\n',
     });
+  }, 60_000);
+
+  // Names stay apart across machines: another machine with the same code already claimed the
+  // name of its first thread on the remote, so this one takes the next number and claims it.
+  test("sc start on what you said skips a name another machine claimed, and claims its own", async () => {
+    const work = addApp();
+    git(work, "push", "-q", "origin", `main:refs/skelcrew/names/${own}1`);
+    serve();
+    await untilCloned();
+    const run = await skel("start", "app", "Add export", "As JSON");
+    expect(run.err).toBe("");
+    expect(run.out).toBe(`Started app-${own}2.\n`);
+    expect(thread()).toMatchObject({ task: `${own}2`, branch: `skelcrew/${own}2-add-export` });
+    const claims = git(work, "ls-remote", "origin", "refs/skelcrew/names/*");
+    expect(claims).toContain(`refs/skelcrew/names/${own}2`);
+  }, 60_000);
+
+  // An issue with the shape of Skelcrew's own ID, such as wr1, would share its name with a thread
+  // started with no issue. Skelcrew leaves it out, so the name stays the thread's.
+  test("an issue whose ID has the shape of a machine's own is left out", async () => {
+    addApp();
+    known.push(taskItem(`${own}1`, "Add import", { body: "From CSV" }));
+    answer(plugin, "changed", { items: known, next: null });
+    serve();
+    await untilCloned();
+    const refused = await skel("start", `app-${own}1`);
+    expect(refused.err).toContain(`there is no open issue ${own}1 in app`);
+    const run = await skel("start", "app", "Add export", "As JSON");
+    expect(run.out).toBe(`Started app-${own}1.\n`);
+    expect(thread()).toMatchObject({ task: `${own}1`, title: "Add export" });
   }, 60_000);
 
   // The lead names each thread it starts in two or three words, for the sidebar's row.
@@ -940,15 +974,15 @@ nameRepositories(db);`;
     await untilCloned();
     const named = await skel("start", "app", "Add export", "As JSON", "--short", "JSON export");
     expect(named.err).toBe("");
-    expect(named.out).toBe("Started app-t1.\n");
-    expect(thread()).toMatchObject({ task: "t1", title: "Add export", short: "JSON export" });
+    expect(named.out).toBe(`Started app-${own}1.\n`);
+    expect(thread()).toMatchObject({ task: `${own}1`, title: "Add export", short: "JSON export" });
     const piped = await runSkel(
       ["start", "app", "--short", "Notes"],
       env(),
       "Add notes\n\nAs text",
     );
     expect(piped.err).toBe("");
-    expect(piped.out).toBe("Started app-t2.\n");
+    expect(piped.out).toBe(`Started app-${own}2.\n`);
     const issue = await skel("start", "app-12", "--short", "Export");
     expect(issue.err).toBe("");
     expect(issue.out).toBe("Started app-12.\n");
@@ -957,8 +991,8 @@ nameRepositories(db);`;
     db.close();
     expect(shorts).toEqual([
       { task: 12, short: "Export" },
-      { task: "t1", short: "JSON export" },
-      { task: "t2", short: "Notes" },
+      { task: `${own}1`, short: "JSON export" },
+      { task: `${own}2`, short: "Notes" },
     ]);
     expect((await skel("start", "app-12", "--short", " ")).code).not.toBe(0);
     expect((await skel("start", "app-12", "--short")).code).not.toBe(0);
