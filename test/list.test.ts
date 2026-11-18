@@ -484,6 +484,21 @@ test("Enter on an issue asks first: any key but y starts nothing, and y starts i
   await until(() => asked.includes("start simon/app 31"), "the start");
 });
 
+// A y typed with Enter, before the question showed, must never answer it.
+test("keys that come with Enter on an issue are dropped, so they can't answer its question", async () => {
+  await open();
+  press("Up");
+  await until(() => here().startsWith("▸ ○ app-31"), "the issue's row");
+  type("\ryq");
+  await until(() => seen().includes("Start app-31? y/n"), "the question");
+  await Bun.sleep(300);
+  expect(seen()).toContain("Start app-31? y/n");
+  expect(asked.filter((line) => line.startsWith("start"))).toEqual([]);
+  expect(read(join(home, "left"))).toBe("");
+  type("y");
+  await until(() => asked.includes("start simon/app 31"), "the start");
+});
+
 test("m on a task ready for review asks first, and y merges it at the commit you saw", async () => {
   await open();
   for (const _ of [1, 2, 3]) press("Down");

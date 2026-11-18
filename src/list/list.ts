@@ -58,7 +58,8 @@ export async function runList(agents: string, repository: string): Promise<void>
   let lastFrame = "";
   // Keys your terminal sent that the list hasn't acted on yet, oldest first, and the start of an
   // escape sequence whose end hasn't come yet.
-  const typed: string[] = [];
+  const typed: { sent: string; read: number }[] = [];
+  let reads = 0;
   let partial = "";
   const fixed = process.env.SKELCREW_FIXED_LOAD;
   let load = fixed ? paint(grey, removeControlCodes(fixed)) : "";
@@ -154,7 +155,11 @@ export async function runList(agents: string, repository: string): Promise<void>
   const attach = async (session: string) => {
     attached = true;
     process.stdin.pause();
-    const after = typed.splice(0).join("") + partial;
+    const after =
+      typed
+        .splice(0)
+        .map((key) => key.sent)
+        .join("") + partial;
     partial = "";
     if (after) typeKeys(agents, session, after);
     giveBack();
@@ -273,16 +278,20 @@ export async function runList(agents: string, repository: string): Promise<void>
   takeTerminal();
   refresh();
   // Keys are acted on one after another, as attaching or asking the daemon takes a while and
-  // keys typed meanwhile must not race it. They wait in `typed`, as your terminal sent them, so
-  // attaching can hand those after Enter to the agent.
+  // keys typed meanwhile must not race it. They wait in `typed`, as your terminal sent them, with
+  // the read each came in, so attaching can hand those after Enter to the agent. Whatever Enter
+  // did, the rest of its read was typed before you could see it, such as a y that would answer
+  // the question Enter asks, so the list never acts on it.
   let acting = false;
   const act = async () => {
     if (acting) return;
     acting = true;
     while (true) {
-      const sent = typed.shift();
-      if (sent === undefined) break;
-      await press(keyNames[sent] ?? sent).catch((error) => say(errorText(error)));
+      const key = typed.shift();
+      if (key === undefined) break;
+      const named = keyNames[key.sent] ?? key.sent;
+      await press(named).catch((error) => say(errorText(error)));
+      if (named === "enter") while (typed[0]?.read === key.read) typed.shift();
     }
     acting = false;
   };
@@ -291,7 +300,8 @@ export async function runList(agents: string, repository: string): Promise<void>
   // is kept counts as typed once no more comes for a moment, as terminals and editors do.
   let flush: ReturnType<typeof setTimeout> | undefined;
   const take = (text: string) => {
-    for (const [sent] of text.matchAll(keyPattern)) typed.push(sent);
+    reads += 1;
+    for (const [sent] of text.matchAll(keyPattern)) typed.push({ sent, read: reads });
     void act();
   };
   process.stdin.on("data", (bytes) => {
