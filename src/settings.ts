@@ -217,13 +217,27 @@ export function readSettings<G extends Group>(
         repository,
       )
     : {};
-  // Your model belongs to your harness, so once your override names a harness for the
+  // Your model belongs to your harness, so once your override names another harness for the
   // repository, your model can't count there either, and isn't read.
+  const otherHarness = overrides.harness !== undefined && !yourHarnessIs(overrides.harness);
   const decided = (k: Key) =>
-    decidedBy([overrides, agentsFiles, shared])(k) ||
-    (k === "model" && decidedBy([overrides])("harness"));
+    decidedBy([overrides, agentsFiles, shared])(k) || (k === "model" && otherHarness);
   const fromYours = wanted.filter((k) => yourKeys.includes(k) && !decided(k));
   return mergeSettings([overrides, agentsFiles, shared, readYourFile(fromYours)]);
+}
+
+// Returns whether your config's harness, or the built-in one when it names none, is `harness`.
+// A config whose harness can't be read isn't, and doesn't stop anything here: your override
+// decides the harness, and yours only says whether your model goes along.
+function yourHarnessIs(harness: HarnessName): boolean {
+  let data: unknown;
+  try {
+    data = yourConfig();
+  } catch {
+    return false;
+  }
+  const yours = HarnessName.optional().safeParse(isMapping(data) ? data.harness : undefined);
+  return yours.success && (yours.data ?? builtInDefaults().harness) === harness;
 }
 
 // Returns the harness and model a repository's role file names, or nothing when it names neither

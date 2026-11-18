@@ -319,3 +319,14 @@ test("a harness your repos: override names counts though yours below it isn't va
   files("harness: invalid\n", null);
   expect(read(["lead"]).err).toContain("config.yaml isn't valid");
 });
+
+test("your model goes along when your repos: override names your own harness", () => {
+  files("harness: claude\nmodel: sonnet\nrepos: { simon/app: { harness: claude } }\n", null);
+  expect(read(["builder"]).settings?.builder).toEqual({ harness: "claude", model: "sonnet" });
+  // With no harness of yours, the built-in one counts as yours.
+  files("model: sonnet\nrepos: { simon/app: { harness: claude } }\n", null);
+  expect(read(["builder"]).settings?.builder).toEqual({ harness: "claude", model: "sonnet" });
+  // Onto another harness, it doesn't.
+  files("harness: claude\nmodel: sonnet\nrepos: { simon/app: { harness: codex } }\n", null);
+  expect(read(["builder"]).settings?.builder).toEqual({ harness: "codex" });
+});
