@@ -1,4 +1,4 @@
-// sc serve and the lead it keeps, against a fake Claude Code on a tmux server of the test's own.
+// sc up and the lead it keeps, against a fake Claude Code on a tmux server of the test's own.
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
@@ -82,7 +82,7 @@ function setUp(): void {
   writeFileSync(join(home, ".config", "systemd", "user", "skelcrew.service"), "");
 }
 
-// Runs the daemon as Skelcrew serve would, but on the test's own tmux server.
+// Runs the daemon as sc up would, but on the test's own tmux server.
 function serve(runtime = join(home, "run")): Subprocess<"ignore", "pipe", "pipe"> {
   const script = `import { serve } from ${JSON.stringify(daemon)};
 await serve(${JSON.stringify(socket)});`;
@@ -256,8 +256,35 @@ test("refuses to start before the first run, and says to run sc", async () => {
   expect(hasLead()).toBe(false);
 });
 
-test("sc serve refuses inside Skelcrew's sandbox, where Skelcrew's state is hidden", async () => {
+// Before the first run sc up stops at once, so these reach the daemon without starting one on
+// Skelcrew's own tmux server.
+test("sc up runs the daemon, and sc serve does too after saying sc up replaces it", () => {
+  const env = {
+    HOME: home,
+    XDG_RUNTIME_DIR: join(home, "run"),
+    PATH: `${join(home, "bin")}:${process.env.PATH ?? ""}`,
+  };
+  const up = Bun.spawnSync([process.execPath, main, "up"], { env, stderr: "pipe" });
+  expect(up.exitCode).toBe(1);
+  expect(up.stderr.toString()).toBe(
+    "Skelcrew: the first run isn't done on this machine: run sc first\n",
+  );
+  const serve = Bun.spawnSync([process.execPath, main, "serve"], { env, stderr: "pipe" });
+  expect(serve.exitCode).toBe(1);
+  expect(serve.stderr.toString()).toBe(
+    "sc serve is now sc up, and sc serve will go in a later release.\nSkelcrew: the first run isn't done on this machine: run sc first\n",
+  );
+});
+
+test("sc up and sc serve refuse inside Skelcrew's sandbox, where Skelcrew's state is hidden", async () => {
   setUp();
+  const refused = Bun.spawnSync([process.execPath, main, "up", "--bg"], {
+    env: { HOME: home, XDG_RUNTIME_DIR: join(home, "run"), SKELCREW_SANDBOX: "1" },
+    stderr: "pipe",
+  });
+  expect(refused.stderr.toString()).toBe(
+    "Skelcrew: running the daemon is only for your own terminal, not for agents\n",
+  );
   const run = Bun.spawnSync([process.execPath, main, "serve"], {
     env: {
       HOME: home,

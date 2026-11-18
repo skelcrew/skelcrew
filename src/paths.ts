@@ -16,6 +16,9 @@ export const screenLogFile = () => join(dataDir(), "screen.log");
 // that checkout's folder, on one line. sc --remote reads it there with plain shell, so it must
 // stay at $HOME/.local/share/skelcrew/daemon-code.
 export const daemonCodeFile = () => join(dataDir(), "daemon-code");
+// Returns the file the first run writes once every step is done, so an interrupted one goes on
+// where it stopped.
+export const setUpFile = () => join(dataDir(), "set-up");
 // Returns the private agent token file path used by setup and Claude Code sessions.
 export const claudeTokenFile = (home = homedir()) => join(configDir(home), "claude-token");
 
