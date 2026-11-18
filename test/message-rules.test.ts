@@ -99,7 +99,7 @@ await messages.messageBuilder(db, tmux, appLead, app12, "Use v2.");
 messages.messageLead(db, tmux, site8, "Done.");
 await settle();
 const kept = { messages: db.query("SELECT 1 FROM messages").all().length, notes: db.query("SELECT 1 FROM notes").all().length };
-console.log(JSON.stringify({ refused, kept, typed: fake.received.map(({ to }) => to) }));`);
+console.log(JSON.stringify({ refused, kept, typed: fake.received.map(({ to }) => to).sort() }));`);
   expect(JSON.parse(seen)).toEqual({
     refused: {
       byBuilder: "Only a lead can tell app-12's builder.",
@@ -111,8 +111,9 @@ console.log(JSON.stringify({ refused, kept, typed: fake.received.map(({ to }) =>
       reviewerToLead: "Only a thread's builder can tell its lead.",
     },
     kept: { messages: 0, notes: 0 },
-    // The lead's message reached app-12's builder, and site-8's words only site's lead.
-    typed: ["app-12", siteLead],
+    // The lead's message reached app-12's builder, and site-8's words only site's lead. The two
+    // agents are typed into at once, so the order between them means nothing.
+    typed: ["app-12", siteLead].sort(),
   });
 });
 

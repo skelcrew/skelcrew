@@ -25,7 +25,7 @@ import type { Settings } from "../settings.ts";
 import { ownTask, taskOf, threadTask } from "./copy.ts";
 import { pastRoundLimit } from "./decide.ts";
 import { claimedNames, claimName, fetchBranch } from "./git.ts";
-import { dropEndNotes } from "./messages.ts";
+import { dropEndNotes, noteForLead } from "./messages.ts";
 import { findRepository, forgeAuthor, forgeKnown, refreshClones } from "./repo.ts";
 import {
   builderHarness,
@@ -235,6 +235,7 @@ async function recordThread(
       asking: false,
       turn_ended: false,
       submitted: false,
+      told_lead: false,
       erred: false,
       limited: false,
       limit_reset: null,
@@ -497,10 +498,11 @@ export async function bringBack(db: Database, sessions: string, thread: Thread):
 }
 
 // Marks the thread failed and logs why, in its log and the daemon's, so you can see what
-// stopped it and start it again. A thread that sc stop stopped, or that its PR's merge or
+// stopped it and start it again. The lead hears of it in a note that goes ahead of routine
+// ones, such as "app-12 failed: its setup command failed", as the human should see it soon. A thread that sc stop stopped, or that its PR's merge or
 // close ended, meanwhile stays as it is: its builder ended because of that, such as within
 // the moment Skelcrew watches it start.
-export function failThread(db: Database, thread: Thread, error: unknown): void {
+export function failThread(db: Database, sessions: string, thread: Thread, error: unknown): void {
   // Read the thread afresh, as sc stop or a merge may have changed it while it was starting.
   const why = errorText(error);
   const { status } = readThread(db, thread.folder);
@@ -510,4 +512,9 @@ export function failThread(db: Database, thread: Thread, error: unknown): void {
   }
   record(db, thread.folder, { status: "failed" }, why);
   console.log(`${thread.folder} failed: ${why}`);
+  // Every note to the lead is one line, as an error's text may not be. It names the thread's
+  // folder as one that ended, so starting the thread over drops it, should it still wait: the
+  // lead would otherwise ask you to start a thread that already runs again.
+  const line = `${threadName(db, thread)} failed: ${why}`.replace(/\s+/g, " ").slice(0, 200);
+  noteForLead(db, sessions, thread, line, thread.folder, true);
 }
