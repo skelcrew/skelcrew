@@ -793,3 +793,30 @@ test("sc update -g moves a plugin newer than every tag back to the newest one, a
     commit: tagCommit("skelcrew/skelcrew-fake", "0.1.0"),
   });
 });
+
+// A plugin is never left running with your files saying otherwise.
+test("when your lock can't be written, add and update leave the plugin and your files as they were", async () => {
+  publish("skelcrew/skelcrew-fake", "0.1.0");
+  mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
+  writeFileSync(yourConfig(), "harness: claude\n");
+  writeFileSync(yourLockFile(), "# Mine.\n");
+  chmodSync(yourLockFile(), 0o444);
+  const added = await skel(["add", "-g", "skelcrew/skelcrew-fake"], "y\n");
+  expect(added.code).toBe(1);
+  expect(readFileSync(yourConfig(), "utf8")).toBe("harness: claude\n");
+  expect(readFileSync(yourLockFile(), "utf8")).toBe("# Mine.\n");
+  expect(existsSync(join(plugins(), "fake"))).toBe(false);
+  expect((await skel(["plugins"])).out).toBe("No plugins installed.\n");
+
+  chmodSync(yourLockFile(), 0o644);
+  await skel(["add", "-g", "skelcrew/skelcrew-fake"], "y\n");
+  const pinned = readFileSync(yourLockFile(), "utf8");
+  publish("skelcrew/skelcrew-fake", "0.2.0");
+  chmodSync(yourLockFile(), 0o444);
+  const updated = await skel(["update", "-g", "fake"], "y\n");
+  expect(updated.code).toBe(1);
+  expect(readFileSync(yourLockFile(), "utf8")).toBe(pinned);
+  expect((await skel(["plugins"])).out).toBe("fake 0.1.0 io: tracker, forge\n");
+  expect(existsSync(join(plugins(), "fake", "0.2.0"))).toBe(false);
+  chmodSync(yourLockFile(), 0o644);
+});

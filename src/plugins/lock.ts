@@ -2,7 +2,7 @@
 // ~/.config/skelcrew/skelcrew.lock, beside the list of them under plugins: in your config.yaml.
 // sc install makes the machine match both.
 import type { Database } from "bun:sqlite";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse, parseDocument, stringify } from "yaml";
 import { z } from "zod";
@@ -10,7 +10,7 @@ import { configFile, yourConfigDocument } from "../config.ts";
 import { configDir } from "../paths.ts";
 import { errorText } from "../say.ts";
 import { readSettings } from "../settings.ts";
-import { installedPlugins, readManifest, Version } from "./plugin.ts";
+import { commitOf, installedPlugins, readManifest, Version } from "./plugin.ts";
 
 // Returns the path of your own lock file.
 export const lockFile = () => join(configDir(), "skelcrew.lock");
@@ -26,17 +26,6 @@ export type Locked = z.infer<typeof Locked>;
 // The lock: each plugin by the GitHub repository it comes from, such as skelcrew/skelcrew-github.
 const Lock = z.record(z.string(), Locked);
 type Lock = z.infer<typeof Lock>;
-
-// Returns the commit a plugin's clone is at. A plugin from GitHub is a clone of its version tag,
-// so this is the commit you approved when it was installed.
-export function commitOf(folder: string): string {
-  const run = Bun.spawnSync(["git", "-C", folder, "rev-parse", "HEAD"], {
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  if (!run.success) throw new Error(`${folder} isn't a git clone, so it has no commit to lock`);
-  return run.stdout.toString().trim();
-}
 
 // Writes the lock, with a line on top saying who writes it.
 function writeLock(lock: Lock): void {
@@ -110,6 +99,27 @@ export function setLocked(db: Database, source: string, locked: Locked | null): 
   else document.set(source, locked);
   // With no line width, a long line you wrote, such as a pin on one line, isn't folded.
   writeFileSync(file, document.toString({ lineWidth: 0 }));
+}
+
+// Runs `write`, which changes your config.yaml or your lock. When it fails, both files are put
+// back as they were, so a plugin is never left named in one and missing from the other.
+export function writeBoth(write: () => void): void {
+  const files = [configFile(), lockFile()];
+  const before = files.map((file) => (existsSync(file) ? readFileSync(file, "utf8") : null));
+  try {
+    write();
+  } catch (error) {
+    // A file that can't be put back was most likely the one that couldn't be written, so it
+    // is as it was already.
+    for (const [at, file] of files.entries()) {
+      const text = before[at];
+      try {
+        if (text === null || text === undefined) rmSync(file, { force: true });
+        else writeFileSync(file, text);
+      } catch {}
+    }
+    throw error;
+  }
 }
 
 // Returns your personal plugins, as plugins: in your config.yaml lists them.

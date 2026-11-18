@@ -294,3 +294,17 @@ test("a server whose first run isn't done gets none of your setup without asking
   expect(serverFile("config.yaml")).toBe("harness: claude\nmodel: sonnet\n");
   expect(await serverPlugins()).toBe("No plugins installed.\n");
 });
+
+// The laptop approved one commit. A tag moved since then must not bring other code to the server.
+test("a server gets the exact commit the laptop runs, even after its tag moved", async () => {
+  setUpLaptop();
+  publish(["0.1.0"]);
+  await skel(laptop(), ["plugin", "install", "owner/fake"], "\n");
+  const repository = join(root, "github", "owner", "fake");
+  const approved = git(repository, "rev-parse", "HEAD");
+  git(repository, "commit", "-q", "--allow-empty", "-m", "unapproved");
+  git(repository, "tag", "-f", "v0.1.0");
+  await remote("ps");
+  const folder = join(server(), ".local", "share", "skelcrew", "plugins", "fake", "0.1.0");
+  expect(git(folder, "rev-parse", "HEAD")).toBe(approved);
+});

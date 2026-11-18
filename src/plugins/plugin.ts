@@ -117,6 +117,17 @@ export function readManifest(folder: string): Manifest {
   return manifest.data;
 }
 
+// Returns the commit a plugin's clone is at. A plugin from GitHub is a clone of its version tag,
+// so this is the commit you approved when it was installed.
+export function commitOf(folder: string): string {
+  const run = Bun.spawnSync(["git", "-C", folder, "rev-parse", "HEAD"], {
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  if (!run.success) throw new Error(`${folder} isn't a git clone, so it has no commit to lock`);
+  return run.stdout.toString().trim();
+}
+
 // An installed plugin as the database records it: its name, its folder, and the GitHub repository
 // it came from. The source is null for a plugin installed from a folder of yours, which stays
 // where it is.

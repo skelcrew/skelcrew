@@ -5,16 +5,18 @@ import { join } from "node:path";
 import { z } from "zod";
 import { openDb } from "../db.ts";
 import { claudeTokenFile, configDir, dataDir } from "../paths.ts";
-import { installedPlugins, readManifest } from "../plugins/plugin.ts";
+import { commitOf, installedPlugins, readManifest } from "../plugins/plugin.ts";
 import { errorText } from "../say.ts";
 
 // Your setup as it is copied: config.yaml as written, the agents' token or null, and each
-// plugin installed from a version tag. No plugin's own files are in it: a plugin keeps a
+// plugin installed from a version tag, with the exact commit you approved on the laptop. No plugin's own files are in it: a plugin keeps a
 // sign-in that renews itself among them, and two machines sharing one would cancel each other's.
 const Setup = z.object({
   config: z.string(),
   token: z.string().nullable(),
-  plugins: z.array(z.object({ name: z.string(), source: z.string(), version: z.string() })),
+  plugins: z.array(
+    z.object({ name: z.string(), source: z.string(), version: z.string(), commit: z.string() }),
+  ),
 });
 export type Setup = z.infer<typeof Setup>;
 
@@ -40,7 +42,9 @@ export function setupHere(): Setup | null {
   const plugins = (db ? installedPlugins(db) : []).flatMap(({ name, folder, source }) => {
     if (source === null) return [];
     const { provides, version } = readManifest(folder);
-    return provides.includes("machine") ? [] : [{ name, source, version }];
+    return provides.includes("machine")
+      ? []
+      : [{ name, source, version, commit: commitOf(folder) }];
   });
   return { config: readFileSync(configFile(), "utf8"), token, plugins };
 }
@@ -102,9 +106,12 @@ export async function takeSetup(): Promise<void> {
       console.log(`Skelcrew couldn't ${what}: ${errorText(error)}. Your command still runs.`);
     }
   }
-  for (const { name, source, version } of sent.plugins) {
+  // The server fetches the exact commit the laptop runs, so a tag moved since you approved it
+  // there can't bring other code here unasked.
+  for (const { name, source, version, commit } of sent.plugins) {
     const here = installedPlugins(db).find((plugin) => plugin.name === name);
-    if (!here) installPlugin(source, { remote: sent.remote, ask: false, tag: `v${version}` });
+    const laptops = { remote: sent.remote, ask: false, tag: `v${version}`, commit };
+    if (!here) installPlugin(source, laptops);
     else if (here.source === null)
       throw new Error(
         `${name} here is installed from a folder, so the one on your laptop can't be: sc remove -g ${name} here first`,
@@ -112,7 +119,7 @@ export async function takeSetup(): Promise<void> {
     // One from another repository that couldn't be removed above is never moved to the
     // laptop's version, which would run code from a repository you didn't pick.
     else if (here.source !== source) continue;
-    else if (readManifest(here.folder).version !== version)
-      updatePlugin(db, here, { tag: `v${version}`, remote: sent.remote, ask: false });
+    else if (readManifest(here.folder).version !== version || commitOf(here.folder) !== commit)
+      updatePlugin(db, here, laptops);
   }
 }

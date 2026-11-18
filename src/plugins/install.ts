@@ -19,9 +19,17 @@ import { configDir, dataDir } from "../paths.ts";
 import { removeControlCodes } from "../screen/look.ts";
 import { release } from "../version.ts";
 import { trackerOf } from "./ask.ts";
-import { commitOf, type Locked, setLocked, setYourPlugins, yourLock, yourPlugins } from "./lock.ts";
+import {
+  type Locked,
+  setLocked,
+  setYourPlugins,
+  writeBoth,
+  yourLock,
+  yourPlugins,
+} from "./lock.ts";
 import {
   commandFor,
+  commitOf,
   findPlugin,
   installedPlugins,
   type Manifest,
@@ -259,16 +267,25 @@ function refuseInstalled(db: Database, name: string): void {
 
 // What installing or updating a plugin may be told. `remote` is the remote of the checkout sc ran
 // in, handed to the plugin's setup. `ask` is false when you said yes already, on the laptop whose
-// setup a server takes. `tag` picks the
-// version, such as v0.1.0, in place of the newest, and `commit` is the one your lock pins it at.
-type Options = { remote?: string | null; ask?: boolean; tag?: string; commit?: string };
+// setup a server takes. `tag` picks the version, such as v0.1.0, in place of the newest, and
+// `commit` the exact commit to fetch. `pin` is false when the commit came from your lock, which
+// sc install leaves as it is, and `name` true to add the plugin to plugins: in your config.yaml.
+type Options = {
+  remote?: string | null;
+  ask?: boolean;
+  tag?: string;
+  commit?: string;
+  pin?: boolean;
+  name?: boolean;
+};
 
 // Installs a plugin and returns whether it did. `given` is either owner/repo, installed from that
 // GitHub repository's newest version tag or the one `tag` names, or a path to a folder of yours,
 // used where it is. It shows what the plugin runs and asks first. Then it runs the plugin's build
-// and setup, and pins one from GitHub in your lock, unless `commit` came from the lock already.
+// and setup, and writes your files as `pin` and `name` say, before the plugin counts as
+// installed. A write that fails leaves the files as they were and the plugin not installed.
 export function installPlugin(given: string, options: Options = {}): boolean {
-  const { ask = true, tag, commit } = options;
+  const { ask = true, tag, commit, pin = true, name = false } = options;
   const remote = options.remote === undefined ? originHere() : options.remote;
   const db = openDb();
   const isPath = given.startsWith(".") || given.startsWith("/");
@@ -311,10 +328,14 @@ export function installPlugin(given: string, options: Options = {}): boolean {
     rmSync(dirname(folder), { recursive: true, force: true });
     mkdirSync(dirname(folder), { recursive: true });
     renameSync(staged, folder);
-    // A build or setup that fails takes the plugin's folder with it, so nothing half
-    // installed stays.
+    // A build, setup or write of your files that fails takes the plugin's folder with it, so
+    // nothing half installed stays.
     try {
       buildAndSetUp(manifest, folder, true, remote);
+      writeBoth(() => {
+        if (name) setYourPlugins([...yourPlugins().filter((one) => one !== given), given]);
+        if (pin) setLocked(db, given, lockedAs(manifest, cloned.commit));
+      });
     } catch (error) {
       rmSync(dirname(folder), { recursive: true, force: true });
       throw error;
@@ -324,8 +345,6 @@ export function installPlugin(given: string, options: Options = {}): boolean {
       folder,
       given,
     ]);
-    // A commit pinned already came from your lock, which sc install leaves as it is.
-    if (commit === undefined) setLocked(db, given, lockedAs(manifest, cloned.commit));
     markUnclaimed(db, manifest);
     console.log(`Installed ${manifest.name} ${manifest.version}.`);
     return true;
@@ -345,9 +364,9 @@ const lockedAs = (manifest: Manifest, commit: string): Locked => ({
 // Updates one plugin. One from a folder is built again from it, so your edits count. One from
 // GitHub moves to its newest version tag, or to the one `tag` names at the lock's `commit`, after
 // showing what it runs and asking, as installing does. Its old version's folder goes, and your
-// lock pins the new one, unless `commit` came from the lock already.
+// lock pins the new one, unless `pin` is false.
 export function updatePlugin(db: Database, plugin: Plugin, options: Options = {}): void {
-  const { ask = true, tag: wanted, commit } = options;
+  const { ask = true, tag: wanted, commit, pin = true } = options;
   const remote = options.remote === undefined ? originHere() : options.remote;
   const { name, folder, source } = plugin;
   const current = readManifest(folder);
@@ -398,15 +417,16 @@ export function updatePlugin(db: Database, plugin: Plugin, options: Options = {}
       versionFolder === folder ? `${versionFolder}-${cloned.commit.slice(0, 12)}` : versionFolder;
     rmSync(newFolder, { recursive: true, force: true });
     renameSync(staged, newFolder);
+    // The lock moves before the new version counts as installed. When either fails, the old
+    // version stays, with the lock as it was.
     try {
       buildAndSetUp(manifest, newFolder, true, remote);
+      if (pin) writeBoth(() => setLocked(db, source, lockedAs(manifest, cloned.commit)));
     } catch (error) {
       rmSync(newFolder, { recursive: true, force: true });
       throw error;
     }
     db.run("UPDATE plugins SET folder = ? WHERE name = ?", [newFolder, name]);
-    // A commit pinned already came from your lock, which sc install leaves as it is.
-    if (commit === undefined) setLocked(db, source, lockedAs(manifest, cloned.commit));
     rmSync(folder, { recursive: true, force: true });
     console.log(`Updated ${name} from ${current.version} to ${manifest.version}.`);
   } finally {
@@ -466,14 +486,11 @@ export function removePlugin(name: string): void {
 // this machine only: its path means nothing on another machine, and it has no version to pin, so
 // it stays out of your files and says so. Returns whether it was installed.
 export function addPlugin(given: string, remote = originHere()): boolean {
-  if (!installPlugin(given, { remote })) return false;
-  if (given.startsWith(".") || given.startsWith("/")) {
+  if (!installPlugin(given, { remote, name: true })) return false;
+  if (given.startsWith(".") || given.startsWith("/"))
     console.log(
       "A plugin from a folder is on this machine only, so your config.yaml and lock leave it out.",
     );
-    return true;
-  }
-  setYourPlugins([...yourPlugins().filter((source) => source !== given), given]);
   return true;
 }
 
@@ -532,9 +549,11 @@ export function installYourPlugins(remote: string | null): boolean {
     changed = true;
     // Installing with no pin adds one. One with a pin leaves the lock as it is.
     if (!locked) installPlugin(source, { remote });
-    else if (here)
-      updatePlugin(db, here, { tag: `v${locked.version}`, commit: locked.commit, remote });
-    else installPlugin(source, { tag: `v${locked.version}`, commit: locked.commit, remote });
+    else {
+      const pinned = { tag: `v${locked.version}`, commit: locked.commit, remote, pin: false };
+      if (here) updatePlugin(db, here, pinned);
+      else installPlugin(source, pinned);
+    }
   }
   return changed;
 }
