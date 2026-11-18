@@ -680,6 +680,9 @@ describe.skipIf(insideSandbox)("needs you", () => {
     setColumn("submitted");
     await hook("ask");
     await untilNeedsYou(true);
+    // The lead hears of the question before you answer it. A question answered before its note
+    // goes in is never announced.
+    await until(() => notes() === 1);
     // Your answer starts a new stretch of work, which the sidebar times.
     const asked = workingSince() ?? 0;
     await Bun.sleep(10);
