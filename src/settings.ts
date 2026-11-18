@@ -18,22 +18,14 @@ export type Repository = { owner: string; repo: string; agents?: string | null }
 // A model is plain text, passed to the harness as written: Skelcrew keeps no list of names, and a
 // harness that names models as provider/model knows its own providers.
 const Model = z.string().min(1);
-// A role's own harness and model, either of them optional.
-const RoleSettings = z.looseObject({ harness: HarnessName.optional(), model: Model.optional() });
-type RoleSettings = z.infer<typeof RoleSettings>;
 
-// What the files may hold. Unknown keys pass, so settings this version doesn't know do no harm.
+// What the files may hold, but the roles, which roleOf reads on its own. Unknown keys pass, so
+// settings this version doesn't know do no harm.
 // A bare `tracker:` is YAML's null, which counts as no line at all, so the forge stays the
 // tracker.
 const File = z.looseObject({
   harness: HarnessName.optional(),
   model: Model.optional(),
-  lead: RoleSettings.optional(),
-  builder: RoleSettings.optional(),
-  reviewer: RoleSettings.optional(),
-  // Each role's harness and model in the new shape, as roles: { builder: { model: sonnet } }.
-  // Read as lead:, builder: and reviewer: are, which it goes over key by key.
-  roles: z.record(z.string(), RoleSettings).optional(),
   max_rounds: z.number().int().positive().optional(),
   limits: z
     .looseObject({
@@ -117,10 +109,6 @@ const keysOf: Record<Group, Key[]> = {
 const yourKeys: Key[] = [
   "harness",
   "model",
-  "lead",
-  "builder",
-  "reviewer",
-  "roles",
   "max_rounds",
   "setup",
   "test",
@@ -130,30 +118,12 @@ const yourKeys: Key[] = [
   "your_reviewer",
   "github_declined",
 ];
-const repositoryKeys: Key[] = [
-  "lead",
-  "builder",
-  "reviewer",
-  "max_rounds",
-  "setup",
-  "test",
-  "tracker",
-];
-// What an override under repos: may set: what the repository's own files may, but its tracker,
-// and the harness and model of its roles. What is only yours, such as limits, stays in your
+const repositoryKeys: Key[] = ["max_rounds", "setup", "test", "tracker"];
+// What an override under repos: may set, besides the harness and model of its roles, which
+// roleOf reads: what the repository's own files may, but its tracker. What is only yours, such as limits, stays in your
 // general settings, as an override is about one repository and limits are about your machine.
 // The tracker is shared with everyone who works on the repository, so no one changes it alone.
-const overrideKeys: Key[] = [
-  "harness",
-  "model",
-  "lead",
-  "builder",
-  "reviewer",
-  "roles",
-  "max_rounds",
-  "setup",
-  "test",
-];
+const overrideKeys: Key[] = ["max_rounds", "setup", "test"];
 
 // Returns the built-in defaults: Claude Code for every role, the built-in flow's rounds and 30
 // minutes for a review. Setup, test and the tracker have none. Reviews default to a quarter of this machine's
@@ -190,14 +160,7 @@ export function readSettings<G extends Group>(
   // read again below it, so a bad value there can't stop a setting it doesn't decide.
   const decidedBy = (layers: File[]) => (k: Key) =>
     layers.some((l) => l[k] !== undefined && l[k] !== null);
-  // Your override's harness and model are read with the roles, so only your own harness, for
-  // the first run, is read here.
-  const overrides = repository
-    ? readOverrides(
-        wanted.filter((k) => k !== "harness" && k !== "model"),
-        repository,
-      )
-    : {};
+  const overrides = repository ? readOverrides(wanted, repository) : {};
   // The default flow's rounds go over max_rounds in skelcrew.yaml, which they replace. The flow
   // file is checked even when your override decides the round limit, as its stages still say
   // which roles run.
@@ -231,6 +194,35 @@ type Say = {
   everyRole?: boolean;
 };
 
+// Returns the say on a role at `path` in the YAML data `read` gives, such as ["roles",
+// "builder"]. Nothing is read until asked for, and its harness and model are each checked on
+// their own, as they are read, so a bad one that never counts stops nothing. A bad one that is
+// read throws `problem`, saying where.
+function sayIn(read: () => unknown, path: string[], problem: string): Say {
+  const mapping = once(() => {
+    let data = read();
+    for (const [at, key] of path.entries()) {
+      if (data === undefined || data === null) return {};
+      if (!isMapping(data))
+        throw new Error(`${problem}: ${path.slice(0, at).join(".") || "the file"} isn't a mapping`);
+      data = data[key];
+    }
+    if (data === undefined || data === null) return {};
+    if (!isMapping(data))
+      throw new Error(`${problem}: ${path.join(".") || "the file"} isn't a mapping`);
+    return data;
+  });
+  // Returns the field `key` checked with `schema`, or nothing when it isn't there.
+  const field = <T>(key: "harness" | "model", schema: z.ZodType<T>) =>
+    once(() => {
+      const read = schema.optional().safeParse(mapping()[key]);
+      if (!read.success)
+        throw new Error(`${problem}: ${[...path, key].join(".")}: ${z.prettifyError(read.error)}`);
+      return read.data;
+    });
+  return { harness: field("harness", HarnessName), model: field("model", Model) };
+}
+
 // Returns `read` remembering what it gave, so each file is read and checked at most once.
 function once<T>(read: () => T): () => T {
   let done: { value: T } | undefined;
@@ -254,29 +246,28 @@ function once<T>(read: () => T): () => T {
 // always checked, and throws, naming its file, when it isn't valid.
 function roleOf(name: RoleName, repository: Repository | undefined): Role {
   const says: Say[] = [];
-  // A layer's say in roles: for the role, then its old line, which roles: goes over.
-  const layer = (read: (keys: Key[]) => File) => {
-    const role = once(() => read(["roles", name]));
-    const line = once(() => read([name]));
-    says.push(
-      { harness: () => role().roles?.[name]?.harness, model: () => role().roles?.[name]?.model },
-      { harness: () => line()[name]?.harness, model: () => line()[name]?.model },
-    );
-  };
+  const yourFile = `${join(configDir(), "config.yaml")} isn't valid`;
+  // In each layer, the say in roles: for the role goes over its old line, which goes over the
+  // layer's harness and model for every role.
   if (repository) {
-    layer((keys) => readOverrides(keys, repository));
-    const harness = once(() => readOverrides(["harness"], repository).harness);
-    const model = once(() => readOverrides(["model"], repository).model);
-    says.push({ harness, model, everyRole: true });
+    const entry = once(() => overrideEntry(repository));
+    const problem = overrideProblem(repository);
+    says.push(sayIn(entry, ["roles", name], problem), sayIn(entry, [name], problem), {
+      ...sayIn(entry, [], problem),
+      everyRole: true,
+    });
+    // A role file's frontmatter is checked whole, as its agents read the same file for their
+    // instructions, so a broken one stops them whatever counts.
     const file = once(() => roleFileSettings(name, repository));
     says.push({ harness: () => file()?.harness, model: () => file()?.model });
-    const line = once(() => readRepositoryFile([name], repository)[name]);
-    says.push({ harness: () => line()?.harness, model: () => line()?.model });
+    const shared = once(() => repositoryData(repository));
+    says.push(sayIn(shared, [name], "the repository's skelcrew.yaml isn't valid"));
   }
-  layer(readYourFile);
+  says.push(sayIn(yourConfig, ["roles", name], yourFile), sayIn(yourConfig, [name], yourFile));
   // Your own harness, or the built-in one, and your model, which every role starts from.
-  const yourHarness = once(() => readYourFile(["harness"]).harness ?? builtInDefaults().harness);
-  const yourModel = once(() => readYourFile(["model"]).model);
+  const yours = sayIn(yourConfig, [], yourFile);
+  const yourHarness = once(() => yours.harness() ?? builtInDefaults().harness);
+  const yourModel = yours.model;
   // Whether your harness is `harness`, without stopping on one that isn't valid, as it is asked
   // only to tell whether your model goes along, and a bad one of yours is never `harness`.
   const isYourHarness = (harness: HarnessName) => {
@@ -324,7 +315,10 @@ function roleOf(name: RoleName, repository: Repository | undefined): Role {
 
 // Returns the harness and model a repository's role file names, or nothing when it names neither
 // or the repository has no file for the role.
-function roleFileSettings(name: RoleName, repository: Repository): RoleSettings | undefined {
+function roleFileSettings(
+  name: RoleName,
+  repository: Repository,
+): { harness?: HarnessName; model?: string } | undefined {
   const { harness, model } = repositoryRole(name, repository);
   if (harness === undefined && model === undefined) return undefined;
   return { ...(harness && { harness }), ...(model && { model }) };
@@ -351,6 +345,18 @@ function readYourFile(keys: Key[]): File {
 function readOverrides(keys: Key[], repository: Repository): File {
   const wanted = keys.filter((k) => overrideKeys.includes(k));
   if (wanted.length === 0) return {};
+  const entry = overrideEntry(repository);
+  if (entry === undefined || entry === null) return {};
+  return check(pick(entry, wanted), overrideProblem(repository));
+}
+
+// Returns what is said of a repository's override in what it says is wrong.
+const overrideProblem = (repository: Repository) =>
+  `${join(configDir(), "config.yaml")} isn't valid under repos: ${repository.owner}/${repository.repo}`;
+
+// Returns your override for the repository under repos:, as YAML data, unchecked, or nothing
+// when you have none. Throws when repos: itself isn't a mapping of repositories.
+function overrideEntry(repository: Repository): unknown {
   const file = join(configDir(), "config.yaml");
   const repos = z
     .object({ repos: z.record(z.string(), z.unknown()).nullish() })
@@ -359,9 +365,7 @@ function readOverrides(keys: Key[], repository: Repository): File {
   const name = `${repository.owner}/${repository.repo}`.toLowerCase();
   const [, entry] =
     Object.entries(repos.data.repos ?? {}).find(([key]) => key.toLowerCase() === name) ?? [];
-  if (entry === undefined || entry === null) return {};
-  const problem = `${file} isn't valid under repos: ${repository.owner}/${repository.repo}`;
-  return check(pick(entry, wanted), problem);
+  return entry;
 }
 
 // Returns the repository's skelcrew.yaml, holding only `keys`, checked, or nothing when it has
@@ -369,14 +373,21 @@ function readOverrides(keys: Key[], repository: Repository): File {
 // it is pushed there. A link is refused, since it could point at any file of yours.
 function readRepositoryFile(keys: Key[], repository: Repository): File {
   if (keys.length === 0) return {};
+  return check(
+    pick(repositoryData(repository), keys),
+    "the repository's skelcrew.yaml isn't valid",
+  );
+}
+
+// Returns the repository's skelcrew.yaml as YAML data, unchecked, or nothing when it has none.
+function repositoryData(repository: Repository): unknown {
   const file = join(cloneDir(repository.owner, repository.repo), "skelcrew.yaml");
   // lstat, so a link is seen as one and refused, not followed.
   const stat = lstatSync(file, { throwIfNoEntry: false });
-  if (!stat) return {};
+  if (!stat) return undefined;
   if (!stat.isFile())
     throw new Error("the repository's skelcrew.yaml isn't a plain file, so Skelcrew won't read it");
-  const read = pick(parseYaml(file, "the repository's skelcrew.yaml"), keys);
-  return check(read, "the repository's skelcrew.yaml isn't valid");
+  return parseYaml(file, "the repository's skelcrew.yaml");
 }
 
 // Returns what the YAML file at `path` holds, or throws naming it as `name` when it isn't YAML.
@@ -400,12 +411,6 @@ function pick(data: unknown, keys: Key[]): unknown {
   const picked = Object.fromEntries(
     Object.entries(data).filter(([key]) => !nested.includes(key) && keys.some((k) => k === key)),
   );
-  // Of roles:, only the roles asked for are kept, so a mistake in another role stops only its
-  // own agents. One that isn't a mapping is kept whole, for the check to refuse.
-  if (isMapping(picked.roles))
-    picked.roles = Object.fromEntries(
-      Object.entries(picked.roles).filter(([name]) => keys.some((k) => k === name)),
-    );
   // The new shape's reviewer comes last, so it wins where both shapes say something.
   const roles = "roles" in data ? data.roles : undefined;
   const reviewers = [
