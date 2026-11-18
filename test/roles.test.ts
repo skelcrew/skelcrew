@@ -65,12 +65,22 @@ const threadEnds =
 const tellingTheLead =
   " Tell it only when you are blocked or need a decision. Never tell it just to report progress, such as that you submitted, resubmitted or merged main: Skelcrew already shows that.";
 
+// What the lead's file added once flows became files: it picks each task's flow where the
+// repository has others than default, and tells the human whenever it isn't default.
+const triage =
+  "- Each task runs a flow: the stages it goes through and their settings, such as how many rounds of review it gets. Most repositories have only Skelcrew's built-in flow, default, and then you never name one. When the end of these instructions names other flows, triage each task you start or propose: read the flow files in .agents/flows/ in the clone, pick the one that fits, and add --flow <name> to sc start, such as sc start app-13 --flow <name>. Whenever you pick a flow other than default, tell the human, naming the flow and why, such as \"I'll run this on quick, as it is a one-line fix.\" A task keeps its flow from start to end. A task started from the skelcrew label runs default. If another flow fits it better, switch it before its builder first submits, with sc start app-12 --flow <name>, and tell the human the same way.\n";
+const labelTriage =
+  " Where your repository has other flows, triage it as any task, and switch its flow if another fits better.";
+
 test("the lead and builder files hold the instructions the code gave, but for what was added since", () => {
   // The digests of src/agents/prompts/lead.md and builder.md before they moved.
   let lead = builtInRole("lead").instructions;
   expect(lead).toContain(waiting);
   expect(lead).toContain(settling);
   expect(lead).toContain(threadEnds);
+  expect(lead).toContain(triage);
+  expect(lead).toContain(labelTriage);
+  lead = lead.replace(triage, "").replace(labelTriage, "");
   for (const [before = "", now = ""] of leadTasks) {
     expect(lead).toContain(now);
     lead = lead.replace(now, before);

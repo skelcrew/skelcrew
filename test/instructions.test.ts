@@ -96,26 +96,55 @@ test("a lead is told its repository and each setup and test command, or that non
       setup: ["bun install"],
       test: ["bun run check"],
     },
+    ["default"],
   );
   expect(told).toContain("Before you start the first thread in your repository");
   expect(told).toEndWith(
     "\nYou are the lead of simon/app. Skelcrew's clone of it is at /clones/simon/app.\nWhen this session started, the setup command was `bun install`, and the test command was `bun run check`.\n",
   );
   expect(
-    leadInstructions(builtInRole("lead").instructions, "simon/app", "/c", {
-      setup: undefined,
-      test: ["go test ./..."],
-    }),
+    leadInstructions(
+      builtInRole("lead").instructions,
+      "simon/app",
+      "/c",
+      {
+        setup: undefined,
+        test: ["go test ./..."],
+      },
+      ["default"],
+    ),
   ).toEndWith(
     "\nWhen this session started, no setup command was configured, and the test command was `go test ./...`.\n",
   );
   expect(
-    leadInstructions(builtInRole("lead").instructions, "simon/app", "/c", {
-      setup: undefined,
-      test: undefined,
-    }),
+    leadInstructions(
+      builtInRole("lead").instructions,
+      "simon/app",
+      "/c",
+      {
+        setup: undefined,
+        test: undefined,
+      },
+      ["default"],
+    ),
   ).toEndWith(
     "\nWhen this session started, no setup command was configured, and no test command was configured.\n",
+  );
+});
+
+// Every task runs the default flow unless the repository has other flow files. Then the lead
+// triages, and tells the human whenever it picks another.
+test("a lead triages a task's flow, and is told the flows only when there are others", () => {
+  const role = builtInRole("lead").instructions;
+  expect(role).toContain("sc start app-13 --flow <name>");
+  expect(role).toContain("Whenever you pick a flow other than default, tell the human");
+  expect(role).toContain("A task keeps its flow from start to end.");
+  const commands = { setup: undefined, test: undefined };
+  expect(leadInstructions(role, "simon/app", "/c", commands, ["default"])).toEndWith(
+    "and no test command was configured.\n",
+  );
+  expect(leadInstructions(role, "simon/app", "/c", commands, ["default", "quick"])).toEndWith(
+    "and no test command was configured.\nIts flows, in the .agents/ the human approved, are default, quick.\n",
   );
 });
 
@@ -126,7 +155,9 @@ test("an empty list is told as configured to none, not as missing", () => {
     "\n\nSetup is configured as none, so Skelcrew ran no setup command. Test is configured as none, so the repository has no test suite to run.\n",
   );
   expect(
-    leadInstructions(builtInRole("lead").instructions, "simon/app", "/c", { setup: [], test: [] }),
+    leadInstructions(builtInRole("lead").instructions, "simon/app", "/c", { setup: [], test: [] }, [
+      "default",
+    ]),
   ).toEndWith(
     "\nWhen this session started, setup was configured as none, and test was configured as none.\n",
   );

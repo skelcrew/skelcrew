@@ -16,6 +16,7 @@ import {
 } from "../agents/sessions.ts";
 import { agentRole, repositoryCommands } from "../config.ts";
 import { Repository } from "../db.ts";
+import { repositoryFlows } from "../flows.ts";
 import { cloneDir, leadPlaces } from "../paths.ts";
 import { repositoryRole } from "../roles.ts";
 import { errorText } from "../say.ts";
@@ -71,12 +72,15 @@ export function lastOpened(db: Database): Repository | null {
 // clone is, then the setup and test commands its skelcrew.yaml or your config names, each on its
 // own, or that none is configured. The lead can't read your config from its sandbox, so it is
 // told, and proposes to you only the commands that are missing. They are as of the lead's start:
-// once a thread adds them to skelcrew.yaml, the lead reads them there.
+// once a thread adds them to skelcrew.yaml, the lead reads them there. Last come the flows its
+// tasks can run, as of the lead's start too, only when there are others than `default`, as the
+// lead then picks one for each task.
 export function leadInstructions(
   role: string,
   repository: string,
   clone: string,
   commands: Pick<Settings, "setup" | "test">,
+  flows: string[],
 ): string {
   const { setup, test } = commands;
   const shown = (list: string[]) => `\`${list.join(" && ")}\``;
@@ -93,7 +97,11 @@ export function leadInstructions(
       : test.length === 0
         ? "test was configured as none"
         : `the test command was ${shown(test)}`;
-  return `${role}\nYou are the lead of ${repository}. Skelcrew's clone of it is at ${clone}.\nWhen this session started, ${setupTold}, and ${testTold}.\n`;
+  const flowsTold =
+    flows.length > 1
+      ? `Its flows, in the .agents/ the human approved, are ${flows.join(", ")}.\n`
+      : "";
+  return `${role}\nYou are the lead of ${repository}. Skelcrew's clone of it is at ${clone}.\nWhen this session started, ${setupTold}, and ${testTold}.\n${flowsTold}`;
 }
 
 // Keeps a repository's running lead or starts it, resuming its saved conversation when there
@@ -154,6 +162,7 @@ export async function startLead(
       `${owner}/${repo}`,
       clone,
       repositoryCommands(repository),
+      repositoryFlows(repository),
     ),
     ...(resume ? { resume } : { sessionId: session }),
   });
