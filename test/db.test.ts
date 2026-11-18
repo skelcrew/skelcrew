@@ -323,9 +323,12 @@ made.close();
 const oldDaemon = new Database(process.argv[1]);
 const read = "SELECT * FROM task_threads ORDER BY rowid";
 oldDaemon.query(read).all();
-// A new screen opens the database. Then app-13's builder ends its turn.
-openDb().close();
+// A new screen opens the database. Then app-13's builder ends its turn, which the old daemon
+// saves, and app-12's builder submits, which a new sc saves.
+const screen = openDb();
 oldDaemon.run("UPDATE threads SET stalled = 1 WHERE folder = 'app-13'");
+screen.run("UPDATE threads SET turn_ended = 0 WHERE folder = 'app-12'");
+screen.close();
 const seen = (rows) => rows.map((t) => ({ folder: t.folder, stalled: t.stalled, noting: t.noting }));
 console.log(JSON.stringify({
   prepared: seen(oldDaemon.query(read).all()),
@@ -341,14 +344,14 @@ console.log(JSON.stringify({
   });
   expect(run.stderr.toString()).toBe("");
   const threads = [
-    { folder: "app-12", stalled: 1, noting: "note 12" },
+    { folder: "app-12", stalled: 0, noting: "note 12" },
     { folder: "app-13", stalled: 1, noting: "note 13" },
   ];
   expect(JSON.parse(run.stdout.toString())).toEqual({
     prepared: threads,
     fresh: threads,
     now: [
-      { folder: "app-12", turn_ended: true },
+      { folder: "app-12", turn_ended: false },
       { folder: "app-13", turn_ended: true },
     ],
   });
