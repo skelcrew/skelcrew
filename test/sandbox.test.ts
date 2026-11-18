@@ -40,9 +40,9 @@ afterEach(() => {
 
 const path = () => `${join(home, "bin")}:${process.env.PATH ?? ""}`;
 
-// Runs a program and gives back what it printed and its code. Bun's own warnings, such as
-// "warn: Slow filesystem detected" on a busy machine, are left out of what it printed to
-// stderr, so a test that checks Skelcrew printed nothing there sees only Skelcrew's output.
+// Runs a program and gives back what it printed and its code. Bun warns "Slow filesystem
+// detected" on a busy machine, so that one line of Bun's is left out of what it printed to
+// stderr. Anything else there, warnings included, still shows to a test that checks for nothing.
 async function run(argv: string[], env: Record<string, string | undefined> = process.env) {
   const proc = Bun.spawn(argv, { env, stdout: "pipe", stderr: "pipe" });
   const [out, printed, code] = await Promise.all([
@@ -53,7 +53,7 @@ async function run(argv: string[], env: Record<string, string | undefined> = pro
   // Bun colours the word when stderr is a terminal, so the colour goes before the line is read.
   const err = printed
     .split(/(?<=\n)/)
-    .filter((line) => !Bun.stripANSI(line).startsWith("warn: "))
+    .filter((line) => !Bun.stripANSI(line).startsWith("warn: Slow filesystem detected. "))
     .join("");
   return { out, err, code };
 }
