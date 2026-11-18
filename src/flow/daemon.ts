@@ -51,7 +51,15 @@ import {
   turnEnded,
   turnFailed,
 } from "./status.ts";
-import { findThread, liveThreads, record, type Thread, threadName, threadOn } from "./thread.ts";
+import {
+  findThread,
+  liveThreads,
+  readThread,
+  record,
+  type Thread,
+  threadName,
+  threadOn,
+} from "./thread.ts";
 
 // Tries to hold the daemon lock and returns whether this process owns it, preventing
 // duplicate daemons. The kernel lets go of it when the process ends, however it ends, so a
@@ -234,6 +242,21 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   // in the same clone, then carries on the round its stop cut short, as after a restart.
   // Marks the thread failed, with the reason, when the builder can't start. A short title
   // given with it is saved with it.
+  // Switches a thread at work to another flow, and gives it a short title too when one comes
+  // with it. A task started from a label runs the default flow, and the lead can switch it to
+  // one that fits better, but only until its builder first submits: after that, the review and
+  // its round limit are under way, so the task keeps its flow to the end. Read again here, as
+  // the builder may have submitted since the caller looked.
+  const switchFlow = (at: Thread, flow: string, short?: string) => {
+    const now = readThread(db, at.folder);
+    if (now.pr !== null || now.submitting !== null || now.review_at !== null)
+      throw new Error(
+        `${threadName(db, now)} keeps the flow ${now.flow}, as its builder has submitted already.`,
+      );
+    const repository = findRepository(db, `${now.owner}/${now.repo}`);
+    checkFlow(now, repository.name, flow);
+    record(db, now.folder, { flow, ...(short ? { short } : {}) }, `given the flow ${flow}`);
+  };
   const resume = async (stopped: Thread, short?: string) => {
     const change = { status: statusOnceBack(stopped), ...(short ? { short } : {}) };
     const thread = record(db, stopped.folder, change, "started again");
@@ -416,25 +439,10 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         // poll, as nothing new is read from the tracker.
         const before = threadOn(db, request.repo, request.task);
         const atWork = before !== null && ["working", "waiting"].includes(before.status);
-        // A task started from a label runs the default flow, and the lead can switch it to one
-        // that fits better, until its builder first submits. After that, the review and its
-        // round limit are under way, so the task keeps its flow to the end. A short title given
-        // with it goes on too.
+        // A flow for a thread at work switches it, as switchFlow allows.
         if (before && atWork && request.flow) {
-          const name = threadName(db, before);
-          if (before.pr !== null || before.submitting !== null || before.review_at !== null)
-            throw new Error(
-              `${name} keeps the flow ${before.flow}, as its builder has submitted already.`,
-            );
-          checkFlow(before, findRepository(db, request.repo).name, request.flow);
-          const short = request.short ? { short: request.short } : {};
-          record(
-            db,
-            before.folder,
-            { flow: request.flow, ...short },
-            `given the flow ${request.flow}`,
-          );
-          return { started: `${name} now runs the flow ${request.flow}.` };
+          switchFlow(before, request.flow, request.short);
+          return { started: `${threadName(db, before)} now runs the flow ${request.flow}.` };
         }
         // A short title for a thread already at work, such as one started from GitHub, only
         // names it for the sidebar. Its builder goes on as it was, and nothing else changes.
@@ -477,15 +485,13 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
           if (!existsSync(cloneDir(owner, repo))) await refreshClones(db);
           await (await polling.promise)(`${owner}/${repo}`);
           // A poll already past its labels as this began may have started the thread itself. A
-          // short title and flow given here still go on that thread, so they aren't lost. It has
-          // only just started, so its builder can't have submitted yet.
+          // short title and flow given here still go on that thread, so they aren't lost, as long
+          // as its builder hasn't submitted meanwhile.
           const started = threadOn(db, request.repo, request.task);
           if (!before && started) {
-            if (request.flow) checkFlow(started, repository.name, request.flow);
-            const flow = request.flow ? { flow: request.flow } : {};
-            const short = request.short ? { short: request.short } : {};
-            if (request.flow || request.short)
-              record(db, started.folder, { ...flow, ...short }, "given a short title or flow");
+            if (request.flow) switchFlow(started, request.flow, request.short);
+            else if (request.short)
+              record(db, started.folder, { short: request.short }, "given a short title");
             return { started: `Started ${threadName(db, started)}.` };
           }
           thread = await startThread(db, request);
