@@ -257,6 +257,21 @@ function leadSocket(): string {
   return join(home, "run", "skelcrew", "leads", short, "skelcrew.sock");
 }
 
+// The socket the daemon opens for app-12's builder, which tells it the builder calls.
+function builderSocket(): string {
+  const short = new Bun.CryptoHasher("sha256").update("app-12").digest("hex").slice(0, 16);
+  return join(home, "run", "skelcrew", "threads", short, "skelcrew.sock");
+}
+
+// The note about app-12 not yet typed into the lead, or null when there is none.
+function noting(): unknown {
+  const db = new Database(join(data(), "skelcrew.db"));
+  db.run("PRAGMA busy_timeout = 5000");
+  const row = db.query("SELECT noting FROM task_threads WHERE folder = 'app-12'").get();
+  db.close();
+  return z.object({ noting: z.string().nullable() }).parse(row).noting;
+}
+
 // What app-12's builder is doing, as Skelcrew keeps it.
 function builderState(): unknown {
   const db = new Database(join(data(), "skelcrew.db"));
@@ -363,13 +378,25 @@ describe.skipIf(insideSandbox)("codex", () => {
       daemon.kill();
       await daemon.exited;
     }
-    // The new daemon asks the tracker last as it starts, after it brought back the lead and
-    // set going the builder's return and the lead's notes. A fixed wait could end before that
-    // on a busy machine, and the checks below would pass before a restart could break them.
+    // The new daemon asks the tracker last as it starts. Before that, it has opened app-12's
+    // socket and brought the builder back: one still running is only looked up in tmux, and the
+    // round it resumes has nothing to do, so neither waits on anything.
     const polls = () => asked(plugin).filter((question) => question.ask === "changed").length;
     const before = polls();
     startDaemon(socket, env(), running);
     await until(() => polls() > before);
+    // The lead's notes go in one after another, so the builder's message to the lead comes
+    // after whatever the new daemon typed as it started. Each pass types the saved notes, then
+    // a thread waiting to be announced. Once the lead has the message and app-12 has no note
+    // left to tell, a second note would be there already.
+    const told = await runSkel(["tell", "lead", "Still waiting."], {
+      ...env(),
+      SKELCREW_SANDBOX: "1",
+      SKELCREW_SOCKET: builderSocket(),
+    });
+    expect(told.err).toBe("");
+    await until(() => read(join(lead(), "typed")).includes("Still waiting."));
+    await until(() => noting() === null);
     expect((await app12())?.needsYou).toBe(true);
     expect(notesAbout12()).toBe(1);
   }, 60_000);
