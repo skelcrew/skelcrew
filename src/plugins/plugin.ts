@@ -16,18 +16,26 @@ const Command = z.array(z.string().min(1)).min(1);
 export const Version = z.string().regex(/^\d+\.\d+\.\d+$/, "must be a version such as 0.1.0");
 
 // What a plugin can provide, by its kind. An I/O plugin is where work comes from and where it
-// goes. A runtime plugin is about where agents run, and so far only provides machine: how to
-// reach a machine that runs Skelcrew.
-const provided = { io: ["tracker", "forge", "chat"], runtime: ["machine"] } as const;
+// goes. A runtime plugin is about where agents run: the sessions they run in, the transport that
+// types into them, their status, and machine, how to reach a machine that runs Skelcrew. Skelcrew
+// doesn't use a runtime plugin's sessions, transport or status yet, and keeps its built-ins.
+const provided = {
+  io: ["tracker", "forge", "chat"],
+  runtime: ["sessions", "transport", "status", "machine"],
+} as const;
 const Provided = z.enum([...provided.io, ...provided.runtime]);
 type Provided = z.infer<typeof Provided>;
 
 // The commands a plugin must have for each thing it provides. Chat needs none yet. Its
-// commands come with the first chat plugin.
+// commands come with the first chat plugin. Sessions, transport and status are each a set of
+// functions run through one session command, and sessions also attaches your terminal.
 const commandsFor = {
   tracker: ["call"],
   forge: ["call", "git_credentials"],
   chat: [],
+  sessions: ["session", "attach"],
+  transport: ["session"],
+  status: ["session"],
   machine: ["add", "exec", "push"],
 } as const;
 
@@ -51,7 +59,11 @@ export const Manifest = z
     about: z.string().min(1),
     kind: z.enum(["io", "runtime"]).optional(),
     provides: z.array(Provided).min(1).optional(),
-    jobs: z.array(Provided).min(1).optional(),
+    // Only the jobs there were before kinds.
+    jobs: z
+      .array(z.enum(["tracker", "forge", "chat", "machine"]))
+      .min(1)
+      .optional(),
     build: z.array(Command).optional(),
     setup: Command.optional(),
     call: Command.optional(),
@@ -59,6 +71,8 @@ export const Manifest = z
     add: Command.optional(),
     exec: Command.optional(),
     push: Command.optional(),
+    session: Command.optional(),
+    attach: Command.optional(),
   })
   // Old and new shapes are read into one: a kind and what it provides.
   .transform(({ kind, provides, jobs, ...rest }, context) => {
