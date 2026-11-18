@@ -438,7 +438,7 @@ test("the harness is grey, so the titles stand out", () => {
 
 test("a thread that needs you for anything but an approval has a yellow circle and word", () => {
   for (const status of ["working", "waiting"] as const)
-    for (const word of ["question", "round limit", "turn ended", "review timed out", "needs you"]) {
+    for (const word of ["question", "round limit", "review timed out", "needs you"]) {
       const needing = thread("app-12", { status, state: "needs you", word });
       const screen = draw([lead, needing], "lead", size);
       expect(read(screen).join("\n")).toContain(`  ● 12 app-12\n    ${word} · claude`);
@@ -944,7 +944,7 @@ const state: Thread = {
   last_comment: 0,
   last_check: 0,
   asking: false,
-  stalled: false,
+  turn_ended: false,
   submitted: false,
   erred: false,
   limited: false,
@@ -1002,16 +1002,18 @@ test("a newer submit is reviewing, not queued, until its own review waits", () =
   expect(word({ ...waited, needs_you: true })).toBe("review failed");
 });
 
-// A builder that replied to you or the lead and stopped must not hide what you must do next.
-test("a builder that stopped without submitting doesn't hide an approval or the round limit", () => {
-  const stalled = { ...needing, stalled: true };
-  expect(word({ ...stalled, verdict: "approve", checks: "passing", ci_passed: true })).toBe(
+// A builder that replied to you or the lead and stopped waits on the lead, so it must not hide
+// what you must do next.
+test("a builder that stopped without submitting doesn't hide anything that needs you", () => {
+  const ended = { ...needing, turn_ended: true };
+  expect(word({ ...ended, verdict: "approve", checks: "passing", ci_passed: true })).toBe(
     "approved",
   );
-  expect(word({ ...stalled, verdict: "changes", rounds: 4, held: "fix" })).toBe("round limit");
-  // Any other reason it needs you says less than the builder's stopping.
-  expect(word({ ...stalled, verdict: "approve", checks: "failing" })).toBe("turn ended");
-  expect(word({ ...stalled, verdict: "failed" })).toBe("turn ended");
+  expect(word({ ...ended, verdict: "changes", rounds: 4, held: "fix" })).toBe("round limit");
+  expect(word({ ...ended, verdict: "approve", checks: "failing" })).toBe("needs you");
+  expect(word({ ...ended, verdict: "failed" })).toBe("review failed");
+  // Alone it says so, without claiming a question, as it may only have replied.
+  expect(word({ turn_ended: true })).toBe("turn ended");
 });
 
 test("a builder that took up the changes is working again", () => {
@@ -1020,8 +1022,6 @@ test("a builder that took up the changes is working again", () => {
 
 test("each reason a thread needs you has its own word", () => {
   expect(word({ asking: true })).toBe("question");
-  // A builder that stopped without submitting may only have replied, so it claims no question.
-  expect(word({ stalled: true })).toBe("turn ended");
   expect(word({ erred: true })).toBe("error");
   const green = { ...needing, verdict: "approve", ci_passed: true } as const;
   expect(word({ ...green, checks: "passing" })).toBe("approved");
@@ -1248,7 +1248,7 @@ console.log(JSON.stringify(looks.map((row) => [row?.tokens, row?.step])));`;
       { status: "waiting", reviewing: "abc" },
       { status: "waiting", needs_you: 1, verdict: "approve" },
       { asking: 1 },
-      { stalled: 1 },
+      { turn_ended: 1 },
       { erred: 1 },
       { needs_you: 1, rounds: 4 },
       { status: "stopped" },
@@ -1264,7 +1264,7 @@ console.log(JSON.stringify(looks.map((row) => [row?.tokens, row?.step])));`;
   test("each repository's tab counts what needs you and what is ready apart", () => {
     // site and app each have a red mark among their yellow ones, docs only a yellow one, and web
     // an approved thread, which is ready rather than needing you. Threads working, stopped or
-    // done count for neither.
+    // done count for neither, nor does one whose turn ended, as it waits on the lead.
     const threads = [
       { repo: "site", task: "1", status: "waiting", needs_you: 1 },
       { repo: "site", task: "2", asking: 1 },
@@ -1273,8 +1273,8 @@ console.log(JSON.stringify(looks.map((row) => [row?.tokens, row?.step])));`;
       { repo: "site", task: "5", status: "done", needs_you: 1 },
       { repo: "app", task: "6", status: "stopped" },
       { repo: "app", task: "7", erred: 1 },
-      { repo: "app", task: "8", status: "waiting", stalled: 1 },
-      { repo: "docs", task: "9", status: "waiting", stalled: 1 },
+      { repo: "app", task: "8", status: "waiting", turn_ended: 1 },
+      { repo: "docs", task: "9", asking: 1 },
       { repo: "docs", task: "10" },
       { repo: "web", task: "11", status: "waiting", needs_you: 1, verdict: "approve" },
     ]
@@ -1294,7 +1294,7 @@ console.log(JSON.stringify(repositoryTabs(db, () => 3)));`;
     });
     expect(run.stderr.toString()).toBe("");
     expect(JSON.parse(run.stdout.toString())).toEqual([
-      { name: "app", fullName: "simon/app", needYou: 2, colour: "red", ready: 0 },
+      { name: "app", fullName: "simon/app", needYou: 1, colour: "red", ready: 0 },
       { name: "docs", fullName: "simon/docs", needYou: 1, colour: "yellow", ready: 0 },
       { name: "site", fullName: "simon/site", needYou: 3, colour: "red", ready: 0 },
       { name: "web", fullName: "simon/web", needYou: 0, colour: "yellow", ready: 1 },

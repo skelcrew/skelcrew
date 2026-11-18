@@ -26,7 +26,7 @@ const working: Thread = {
   last_comment: 0,
   last_check: 0,
   asking: false,
-  stalled: false,
+  turn_ended: false,
   submitted: false,
   erred: false,
   limited: false,
