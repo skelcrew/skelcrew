@@ -2,22 +2,19 @@
 // your config.yaml, the agents' Claude Code token, and your plugins at the laptop's versions.
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { parseDocument } from "yaml";
 import { z } from "zod";
 import { openDb } from "../db.ts";
 import { claudeTokenFile, configDir, dataDir } from "../paths.ts";
-import { commitOf, installedPlugins, readManifest } from "../plugins/plugin.ts";
+import { installedPlugins, readManifest } from "../plugins/plugin.ts";
 import { errorText } from "../say.ts";
 
 // Your setup as it is copied: config.yaml as written, the agents' token or null, and each
-// plugin installed from a version tag, with the exact commit you approved on the laptop. No plugin's own files are in it: a plugin keeps a
+// plugin installed from a version tag. No plugin's own files are in it: a plugin keeps a
 // sign-in that renews itself among them, and two machines sharing one would cancel each other's.
 const Setup = z.object({
   config: z.string(),
   token: z.string().nullable(),
-  plugins: z.array(
-    z.object({ name: z.string(), source: z.string(), version: z.string(), commit: z.string() }),
-  ),
+  plugins: z.array(z.object({ name: z.string(), source: z.string(), version: z.string() })),
 });
 export type Setup = z.infer<typeof Setup>;
 
@@ -34,35 +31,18 @@ const sentFile = () => join(configDir(), "laptop-setup.json");
 
 // Returns the setup on this machine, or null when there is none yet: without config.yaml the
 // first run never ran here. A plugin from a folder of yours has no version to match, and a
-// machine plugin belongs on the laptop, so neither is part of it. A machine plugin is left out
-// of plugins: in the config sent too, or sc install there would offer to install it.
+// machine plugin belongs on the laptop, so neither is part of it.
 export function setupHere(): Setup | null {
   if (!existsSync(configFile())) return null;
   const token = existsSync(claudeTokenFile()) ? readFileSync(claudeTokenFile(), "utf8") : null;
   // Opening the database would make one, so a machine without one has no plugins.
   const db = existsSync(join(dataDir(), "skelcrew.db")) ? openDb() : null;
-  const machine: string[] = [];
   const plugins = (db ? installedPlugins(db) : []).flatMap(({ name, folder, source }) => {
     if (source === null) return [];
     const { provides, version } = readManifest(folder);
-    if (!provides.includes("machine")) return [{ name, source, version, commit: commitOf(folder) }];
-    machine.push(source);
-    return [];
+    return provides.includes("machine") ? [] : [{ name, source, version }];
   });
-  return { config: withoutPlugins(readFileSync(configFile(), "utf8"), machine), token, plugins };
-}
-
-// Returns config.yaml's text with these plugins taken out of plugins:, and the key gone once
-// none are left. Text with none of them is returned as it is, so a server's own config, which
-// has no machine plugin, matches the laptop's it was copied from.
-function withoutPlugins(config: string, sources: string[]): string {
-  const document = parseDocument(config);
-  const named = z.array(z.string()).safeParse(document.toJS()?.plugins);
-  if (!named.success || !named.data.some((one) => sources.includes(one))) return config;
-  const kept = named.data.filter((one) => !sources.includes(one));
-  if (kept.length === 0) document.delete("plugins");
-  else document.set("plugins", kept);
-  return document.toString();
+  return { config: readFileSync(configFile(), "utf8"), token, plugins };
 }
 
 // Returns a short fingerprint of a setup. The laptop passes its own with each command, so the
@@ -97,12 +77,6 @@ export async function takeSetup(): Promise<void> {
   } finally {
     rmSync(file, { force: true });
   }
-  // A server set up before the lock gets its move into one now, before the laptop's config
-  // replaces its own. The move adds this server's plugins to plugins:, which would otherwise
-  // bring back into the laptop's config one the laptop removed.
-  const { setLocked, yourLock } = await import("../plugins/lock.ts");
-  const db = openDb();
-  yourLock(db);
   mkdirSync(configDir(), { recursive: true });
   writeFileSync(configFile(), sent.config);
   // Removed first, as a mode is only given to a file as it is made.
@@ -110,6 +84,7 @@ export async function takeSetup(): Promise<void> {
   if (sent.token !== null) writeFileSync(claudeTokenFile(), sent.token, { mode: 0o600 });
   // Loaded only here, as it brings in much of Skelcrew that the check on each command needs none of.
   const { installPlugin, removePlugin, updatePlugin } = await import("../plugins/install.ts");
+  const db = openDb();
   const wanted = new Map(sent.plugins.map((plugin) => [plugin.name, plugin]));
   for (const plugin of installedPlugins(db)) {
     const keep = wanted.get(plugin.name);
@@ -127,11 +102,9 @@ export async function takeSetup(): Promise<void> {
       console.log(`Skelcrew couldn't ${what}: ${errorText(error)}. Your command still runs.`);
     }
   }
-  // The server fetches the exact commit the laptop runs, so a tag moved since you approved it
-  // there can't bring other code here unasked.
-  for (const { name, source, version, commit } of sent.plugins) {
+  for (const { name, source, version } of sent.plugins) {
     const here = installedPlugins(db).find((plugin) => plugin.name === name);
-    const laptops = { remote: sent.remote, ask: false, tag: `v${version}`, commit };
+    const laptops = { remote: sent.remote, ask: false, tag: `v${version}` };
     if (!here) installPlugin(source, laptops);
     else if (here.source === null)
       throw new Error(
@@ -140,14 +113,6 @@ export async function takeSetup(): Promise<void> {
     // One from another repository that couldn't be removed above is never moved to the
     // laptop's version, which would run code from a repository you didn't pick.
     else if (here.source !== source) continue;
-    else if (readManifest(here.folder).version !== version || commitOf(here.folder) !== commit)
-      updatePlugin(db, here, laptops);
-  }
-  // Each plugin that now runs the laptop's commit is pinned at it here too, even one that ran it
-  // already, so a lock here that pins an older commit can't make sc install move it back.
-  for (const { name, source, version, commit } of sent.plugins) {
-    const here = installedPlugins(db).find((plugin) => plugin.name === name);
-    if (here?.source === source && commitOf(here.folder) === commit)
-      setLocked(db, source, { name, version, commit });
+    else if (readManifest(here.folder).version !== version) updatePlugin(db, here, laptops);
   }
 }

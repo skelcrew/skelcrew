@@ -269,16 +269,8 @@ test("a machine plugin stays on the laptop", async () => {
   publish(["0.1.0"], true);
   expect((await skel(laptop(), ["plugin", "install", "owner/fake"], "\n")).code).toBe(0);
   await remote("ps");
-  // The server's config leaves it out, so sc install there doesn't offer to install it.
-  expect(serverFile("config.yaml")).toBe("harness: claude\n");
+  expect(serverFile("config.yaml")).toBe("harness: claude\nplugins:\n  - owner/fake\n");
   expect(await serverSources()).toEqual({});
-  const install = await skel(server(), ["install"]);
-  expect(install.out).toBe("Nothing to install: this machine has everything your files ask for.\n");
-  expect(await serverSources()).toEqual({});
-  // The setup there now matches the laptop's, so the next command sends nothing.
-  writeFileSync(join(root, "calls"), "");
-  await remote("ps");
-  expect(calls()).not.toContain("scp");
 });
 
 test("a laptop with no setup copies nothing", async () => {
@@ -300,51 +292,4 @@ test("a server whose first run isn't done gets none of your setup without asking
   expect(calls()).not.toContain("scp");
   expect(serverFile("config.yaml")).toBe("harness: claude\nmodel: sonnet\n");
   expect(await serverPlugins()).toBe("No plugins installed.\n");
-});
-
-// The laptop approved one commit. A tag moved since then must not bring other code to the server.
-test("a server gets the exact commit the laptop runs, even after its tag moved", async () => {
-  setUpLaptop();
-  publish(["0.1.0"]);
-  await skel(laptop(), ["plugin", "install", "owner/fake"], "\n");
-  const repository = join(root, "github", "owner", "fake");
-  const approved = git(repository, "rev-parse", "HEAD");
-  git(repository, "commit", "-q", "--allow-empty", "-m", "unapproved");
-  git(repository, "tag", "-f", "v0.1.0");
-  await remote("ps");
-  const folder = join(server(), ".local", "share", "skelcrew", "plugins", "fake", "0.1.0");
-  expect(git(folder, "rev-parse", "HEAD")).toBe(approved);
-});
-
-// A lock on the server from before can pin an older commit than the one both machines run.
-test("a server already at the laptop's commit gets its pin too", async () => {
-  setUpLaptop();
-  publish(["0.1.0"]);
-  await skel(laptop(), ["plugin", "install", "owner/fake"], "\n");
-  await remote("ps");
-  const approved = git(join(root, "github", "owner", "fake"), "rev-parse", "HEAD");
-  const older = "deadbeef".repeat(5);
-  writeFileSync(
-    join(serverConfig(), "skelcrew.lock"),
-    `owner/fake: { name: fake, version: 0.1.0, commit: ${older} }\n`,
-  );
-  // A change on the laptop sends the setup again.
-  setUpLaptop("harness: claude\nmodel: opus\nplugins:\n  - owner/fake\n");
-  await remote("ps");
-  expect(serverFile("skelcrew.lock")).toContain(`commit: ${approved}`);
-  expect(serverFile("skelcrew.lock")).not.toContain(older);
-});
-
-// A server set up before the lock moves into one as it takes the setup. A plugin the laptop
-// doesn't have must not come back into the laptop's config through that move.
-test("a server without a lock loses a plugin the laptop doesn't have, from its config too", async () => {
-  setUpLaptop();
-  publish(["0.1.0"], false, "other");
-  expect((await skel(server(), ["plugin", "install", "owner/other"], "\n")).code).toBe(0);
-  rmSync(join(serverConfig(), "skelcrew.lock"));
-  writeFileSync(join(serverConfig(), "config.yaml"), "harness: claude\nmodel: sonnet\n");
-  await remote("ps");
-  expect(serverFile("config.yaml")).toBe("harness: claude\n");
-  expect(await serverSources()).toEqual({});
-  expect(serverFile("skelcrew.lock")).not.toContain("owner/other");
 });
