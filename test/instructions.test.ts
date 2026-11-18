@@ -21,11 +21,13 @@ afterEach(() => {
 });
 
 // Returns the instructions a harness's start left for its agent, from the file it points the
-// harness at: Claude Code's --append-system-prompt-file, or the AGENTS.md in Codex's own home.
+// harness at: Claude Code's --append-system-prompt-file, or the AGENTS.override.md in Codex's
+// own home.
 function toldIn(started: { argv: string[]; env: Record<string, string> }): string {
   const { argv, env } = started;
   const flag = argv.indexOf("--append-system-prompt-file");
-  const file = flag > -1 ? argv[flag + 1] : env.CODEX_HOME && join(env.CODEX_HOME, "AGENTS.md");
+  const file =
+    flag > -1 ? argv[flag + 1] : env.CODEX_HOME && join(env.CODEX_HOME, "AGENTS.override.md");
   if (!file) throw new Error("the harness was given no instructions file");
   return readFileSync(file, "utf8");
 }

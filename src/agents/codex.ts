@@ -324,17 +324,18 @@ async function startCommand(given: {
   // that another session loads. It stays, so codex resume finds the conversation.
   const sessions = join(dataDir(home), "codex-sessions");
   const sessionHome = join(sessions, name);
-  const instructions = join(sessionHome, "AGENTS.md");
+  const instructions = join(sessionHome, "AGENTS.override.md");
   // Skelcrew writes here with your rights, and the agent can change what is in its folder. A
   // link it left would send that write to any file of yours.
   for (const p of [sessions, sessionHome, instructions])
     if (lstatSync(p, { throwIfNoEntry: false })?.isSymbolicLink())
       throw new Error(`${p} is a link, so Skelcrew won't write through it`);
   mkdirSync(sessionHome, { recursive: true, mode: 0o700 });
-  // The instructions go in the AGENTS.md of the session's own CODEX_HOME, which Codex reads as
-  // its global instructions. Codex takes developer instructions only on the command line, and
-  // tmux refuses a start command past about 16 KB. A repository's own AGENTS.md adds to this
-  // file, never replaces it.
+  // The instructions go in the session's own CODEX_HOME, which Codex reads as its global
+  // instructions. Codex takes developer instructions only on the command line, and tmux refuses
+  // a start command past about 16 KB. Codex reads AGENTS.override.md there in place of
+  // AGENTS.md, so one the agent wrote is replaced at each start rather than winning over
+  // Skelcrew's. A repository's own AGENTS.md adds to this file, never replaces it.
   if (system) writeFileSync(instructions, system);
   // Skelcrew's own folder first, so a login the first run just saved there moves to the shared
   // folder before this session links to it.

@@ -49,7 +49,9 @@ that covers the code you are about to write.
 - **Pass instructions in a file, not on the command line.** tmux refuses a start command
   past about 16 KB with "command too long", and a lead's instructions grew close to that.
   Claude Code reads them with `--append-system-prompt-file`. Codex has no file for developer
-  instructions, so they go in the `AGENTS.md` of the session's own `CODEX_HOME`.
+  instructions, so they go in the `AGENTS.override.md` of the session's own `CODEX_HOME`.
+  Codex reads that file in place of `AGENTS.md`, so an override the agent wrote there would
+  otherwise drop Skelcrew's instructions at its next start.
 - **Check a login with `claude auth status --json`.** `.claude.json` exists after any
   launch, logged in or not, so finding it proves nothing.
 - **`AskUserQuestion` waits on a screen nobody watches.** A builder that asks with it

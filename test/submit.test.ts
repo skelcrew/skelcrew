@@ -67,7 +67,8 @@ const script = (name: string, body: string) => writeScript(home, name, body);
 // it approves, unless the file claude-limit beside it says limit: then it says its usage
 // limit is reached until 3 seconds from when it runs, as Claude Code did. Its
 // arguments are written aside and moved into place, so a test that sees the file never reads
-// them half written. The instructions it reads from its instructions file go in told.
+// them half written. The instructions it reads from its instructions file go in told, the same
+// way and before them, so a test that sees its arguments can read told too.
 function fakeClaude(submits = true): void {
   script(
     "claude",
@@ -82,8 +83,9 @@ case " $* " in *" -p "*)
   echo '{"type":"result","structured_output":{"verdict":"approve","body":"Ready to merge."}}'
   exit 0 ;;
 esac
+for a; do [ "$prev" = --settings ] && settings=$a; [ "$prev" = --append-system-prompt-file ] && told=$a; prev=$a; done
+cat "$told" > "$CLAUDE_CONFIG_DIR/told.part"; mv "$CLAUDE_CONFIG_DIR/told.part" "$CLAUDE_CONFIG_DIR/told"
 printf '%s\\n' "$@" > "$CLAUDE_CONFIG_DIR/args.part"; mv "$CLAUDE_CONFIG_DIR/args.part" "$CLAUDE_CONFIG_DIR/args"
-for a; do [ "$prev" = --settings ] && settings=$a; [ "$prev" = --append-system-prompt-file ] && cat "$a" > "$CLAUDE_CONFIG_DIR/told"; prev=$a; done
 hook() {
   bun -e 'for (const group of JSON.parse(process.argv[1]).hooks?.[process.argv[2]] ?? [])
   for (const hook of group.hooks) console.log(hook.command);' "$settings" "$1" |
@@ -677,7 +679,7 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
     git(work, "push", "-q", "origin", "main");
     fakeClaude(false);
     await startApp12();
-    await until(() => read(join(builder(), "told")) !== "");
+    await until(() => read(join(builder(), "args")) !== "");
     expect(read(join(builder(), "told"))).toContain(`runs with \`${long}\`.`);
   }, 60_000);
 
