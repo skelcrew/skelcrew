@@ -1376,6 +1376,32 @@ done`,
     expect(typedMessages()).toBe(0);
   }, 60_000);
 
+  // A builder can go on after a turn that ended without a submit with nothing typed into it,
+  // such as when a background command it started finishes. Its submit then waits on Skelcrew.
+  test("sc submit after a turn ended without one no longer needs you", async () => {
+    addApp();
+    verdict(1, "approve", "Ready to merge.");
+    verdict(2, "approve", "Still ready.");
+    await startApp12();
+    await until(() => read(join(data(), "threads", "app-12.log")).includes("waits on CI"), 30_000);
+    await until(() => read(join(builder(), "ended")).trim() === "1", 30_000);
+    const asBuilder = { SKELCREW_SOCKET: builderSocket() };
+    // A new turn ends with new work and no submit, so the thread needs you.
+    expect((await skel(["question", "answered"], asBuilder)).code).toBe(0);
+    writeFileSync(join(clone(), "change"), "newer\n");
+    git(clone(), "commit", "-qam", "newer");
+    expect((await skel(["turn", "ended"], asBuilder)).code).toBe(0);
+    await until(() => thread().stalled === 1);
+    expect((await skel(["ps", "app", "--json"])).out).toContain('"needsYou":true');
+    // The builder submits without anything typed in first.
+    expect((await skel(["submit", "Newer"], asBuilder)).err).toBe("");
+    expect(thread()).toMatchObject({ stalled: 0, needs_you: 0 });
+    expect((await skel(["ps", "app", "--json"])).out).toContain(
+      '"thread":"app-12","short":null,"title":"Add export","status":"waiting","needsYou":false',
+    );
+    await until(() => finished("success").length === 2, 45_000);
+  }, 90_000);
+
   test("a newer sc submit drops a review still waiting for the builder", async () => {
     addApp();
     verdict(1, "changes", "Stale.");

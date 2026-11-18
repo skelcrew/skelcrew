@@ -705,8 +705,11 @@ export function submitRound(db: Database, sessions: string, folder: string, summ
     {
       status: "waiting",
       needs_you,
-      // A turn that ends after this waits on the review, not on you.
+      // A turn that ends after this waits on the review, not on you. An earlier turn that
+      // ended without a submit no longer does either: the builder can go on with nothing
+      // typed in, such as when a command it left running finishes.
       submitted: true,
+      stalled: false,
       submitting: summary,
       // A review of the older commit that waited for a place no longer does.
       queued: null,
@@ -888,12 +891,12 @@ export function rerunReview(
   // The commit is saved as under review at once, so a second sc review asked before the
   // check is pending again is refused rather than cancelling this one.
   // A builder that asked for it ends its turn waiting on the review, as after sc submit, not on
-  // you. A review the lead or you asked for leaves the builder's turn as it was: a builder that
+  // you, and no longer waits on you for an earlier turn. A review the lead or you asked for leaves the builder's turn as it was: a builder that
   // then stops without submitting still needs you.
   const change = {
     status: "waiting",
     needs_you,
-    ...(byBuilder ? { submitted: true } : {}),
+    ...(byBuilder ? { submitted: true, stalled: false } : {}),
     telling: null,
     held: null,
     ...notHeld,
