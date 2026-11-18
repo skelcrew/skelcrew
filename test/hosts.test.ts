@@ -240,7 +240,8 @@ import { record } from ${JSON.stringify(source("flow/thread.ts"))};
 import { forgetStatus, keepState } from ${JSON.stringify(source("flow/status.ts"))};
 import { builderSession, readThread } from ${JSON.stringify(source("flow/thread.ts"))};
 import { stopThread } from ${JSON.stringify(source("flow/events.ts"))};
-import { startSession } from ${JSON.stringify(source("agents/sessions.ts"))};
+import { hasSession, startSession } from ${JSON.stringify(source("agents/sessions.ts"))};
+import { endEarlierBuilder } from ${JSON.stringify(source("flow/builder.ts"))};
 const db = openDb();
 db.run("INSERT INTO plugins (name, folder) VALUES ('fake', ?)", [${JSON.stringify(folder)}]);
 db.exec(${JSON.stringify(threadSql({ task: "12", session: "s", ...row }))});
@@ -335,4 +336,21 @@ test("a host that answers a delivery with nothing hasn't delivered it", async ()
   await expect(typing).rejects.toThrow(
     `${name} answered deliver in a way Skelcrew doesn't understand`,
   );
+});
+
+test("a builder whose host started it but lost the answer is ended before the thread starts over", () => {
+  const settings = join(home, ".config", "skelcrew", "plugins", "fake");
+  mkdirSync(settings, { recursive: true });
+  writeFileSync(join(settings, "lose-start"), "");
+  const said = runWithFakeHost(
+    "sessions",
+    `const host = builderSession(db, "unused", readThread(db, "app-12")).host;
+const labels = { repository: "simon/app", role: "builder", task: "app-12" };
+const error = (() => { try { startSession(host, "app-12", { folder: ${JSON.stringify(home)}, command: ["sleep", "30"], env: {}, labels }); } catch (error) { return error.message; } })();
+console.log(error, hasSession(host, "fake-app-12"));
+await endEarlierBuilder(db, "unused", readThread(db, "app-12"));
+console.log(hasSession(host, "fake-app-12"), readThread(db, "app-12").host);`,
+    { host: "fake", host_id: null, status: "failed" },
+  );
+  expect(said).toBe("fake couldn't start: lost the answer true\nfalse null\n");
 });

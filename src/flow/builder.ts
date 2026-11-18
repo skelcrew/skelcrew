@@ -13,6 +13,7 @@ import {
   hasSession,
   type Labels,
   startSession,
+  stopSession,
 } from "../agents/sessions.ts";
 import { repositoryCommands, sessionHost, threadConfig } from "../config.ts";
 import { cloneDir, threadSocket } from "../paths.ts";
@@ -235,9 +236,11 @@ async function recordThread(
       changed: null,
       updates: [],
       state: null,
-      // It has no session until its builder starts, on the host your config names then.
-      host: null,
-      host_id: null,
+      // It has no session until its builder starts, on the host your config names then. One
+      // starting over keeps the host the failed thread's builder had, as that builder may still
+      // run there, and is ended before the new one starts.
+      host: before?.host ?? null,
+      host_id: before?.host_id ?? null,
     };
     // A failed or done thread's row gives way to the new one, and messages that waited for its
     // builder go with it, as they were about the old work. Its task starts afresh too, with no
@@ -248,8 +251,8 @@ async function recordThread(
     // same name, and the lead would drop it from what it holds open, so the note goes too.
     dropEndNotes(db, thread.folder);
     db.run(
-      `INSERT INTO threads (owner, repo, task, folder, branch, base, status, session, started, host)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
+      `INSERT INTO threads (owner, repo, task, folder, branch, base, status, session, started, host, host_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         owner,
         repo,
@@ -260,6 +263,8 @@ async function recordThread(
         thread.status,
         null,
         thread.started,
+        thread.host,
+        thread.host_id,
       ],
     );
     db.run(
@@ -408,6 +413,7 @@ export async function startBuilder(db: Database, sessions: string, thread: Threa
     throw new Error(
       `your session host ${hostName} isn't installed as a runtime plugin that provides sessions`,
     );
+
   // Pick the harness: your config's for a first start, the saved one for a builder coming back.
   // A saved conversation the harness can't find starts afresh under a new id.
   const clone = cloneOf(thread);
@@ -457,6 +463,22 @@ export async function startBuilder(db: Database, sessions: string, thread: Threa
   record(db, thread.folder, { host_id: id });
   console.log(`${resume ? "Brought back" : "Started"} the builder of ${thread.folder}.`);
   await checkAgentStarted(host, id, "builder");
+}
+
+// Ends the builder an earlier start of a thread starting over may have left running, before its
+// clone is set up again, so two builders never share the clone. Such as a builder a host started
+// whose answer was lost, so the thread failed without saving its ID: it is found by its labels.
+// The thread then has no host. A host that can't be reached throws and keeps the thread's host,
+// so the next start tries again.
+export async function endEarlierBuilder(
+  db: Database,
+  sessions: string,
+  thread: Thread,
+): Promise<void> {
+  if (thread.host === null) return;
+  const { host, id } = builderSession(db, sessions, thread);
+  if (hasSession(host, id)) await stopSession(host, id);
+  record(db, thread.folder, { host: null, host_id: null });
 }
 
 // Brings back a thread's builder after the daemon restarts, or for sc start after sc stop. A

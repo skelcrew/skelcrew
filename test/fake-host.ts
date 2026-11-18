@@ -5,7 +5,8 @@
 // own transport, when the test's manifest says it provides one, takes an agent as idle unless
 // its screen shows Claude Code's busy mark, and types a message in one step, noting it in
 // `delivered`. With a file hang-status, the first status it is given hangs, and with a file
-// garble-<question> it answers that question with nothing.
+// garble-<question> it answers that question with nothing. With a file lose-start, it starts the
+// next session but fails before saying its ID.
 import {
   appendFileSync,
   existsSync,
@@ -81,6 +82,11 @@ const answers: Record<string, () => unknown> = {
     );
     writeFileSync(join(folder(id), "pid"), String(run.pid));
     run.unref();
+    // With a file lose-start, it starts the session but fails before answering, once.
+    if (existsSync(join(dir, "lose-start"))) {
+      rmSync(join(dir, "lose-start"));
+      throw new Error("lost the answer");
+    }
     return { id };
   },
   read: () => ({ screen: screen(question.id) }),

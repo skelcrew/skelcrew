@@ -22,6 +22,7 @@ import { checkoutFolder, git, release, singleFile } from "../version.ts";
 import { assignIssue } from "./assign.ts";
 import {
   bringBack,
+  endEarlierBuilder,
   failThread,
   setUpThread,
   startBuilder,
@@ -227,9 +228,11 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
     );
   };
   // Sets up a new thread's clone, opens its socket and starts its builder, after sc start
-  // has had its answer. Marks the thread failed, with the reason, when any of it fails.
+  // has had its answer, once any builder a failed start left running has ended. Marks the
+  // thread failed, with the reason, when any of it fails.
   const setUpAndStart = async (thread: Thread) => {
     try {
+      await endEarlierBuilder(db, sessions, thread);
       await setUpThread(db, thread);
       await listenFor(thread);
       await startBuilder(db, sessions, thread);
