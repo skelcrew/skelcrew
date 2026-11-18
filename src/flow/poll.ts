@@ -22,6 +22,7 @@ import { type Item, openTasks, prOf, saveItems } from "./copy.ts";
 import { ciState, decide, decideBranch, labeledToStart, type PullRequest } from "./decide.ts";
 import { endThread, removing, tellBuilder, tellingEvents } from "./events.ts";
 import { fetchInto, onRemote } from "./git.ts";
+import { mergeIfReady } from "./merging.ts";
 import { noteForLead, typeLeadNotes } from "./messages.ts";
 import { forgeKnown, fullNameIs, refreshClone, repositories } from "./repo.ts";
 import { lastPushed } from "./round.ts";
@@ -340,8 +341,18 @@ async function pollRepository(
       // only what changed, and events held back for a thread, such as one stopped, were left
       // out of its `seen`, so its PR is acted on again until they are handed over.
       const pr = before.pr === null ? null : prOf(db, owner, repo, before.pr);
-      if (pr) await actOnPr(db, sessions, before, pr);
-      else if (before.pr === null) await actOnBranchHead(db, sessions, repository, before);
+      if (!pr) {
+        if (before.pr === null) await actOnBranchHead(db, sessions, repository, before);
+        continue;
+      }
+      await actOnPr(db, sessions, before, pr);
+      // Once the PR's events are acted on, an armed merge when ready merges it if it is ready.
+      // A thread sc rm is removing is its to end.
+      // One that fails is logged, so the poll's other threads still get their events.
+      if (!removing.has(before.folder))
+        await mergeIfReady(db, sessions, before, pr).catch((error) =>
+          console.log(`couldn't merge ${before.folder} when ready: ${errorText(error)}`),
+        );
     }
   }
 }
