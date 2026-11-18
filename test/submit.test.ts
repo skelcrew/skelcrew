@@ -14,9 +14,10 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir, userInfo } from "node:os";
+import { hostname, tmpdir, userInfo } from "node:os";
 import { dirname, join } from "node:path";
 import type { Subprocess } from "bun";
+import { codeOf } from "../src/db.ts";
 import { leadPlaces } from "../src/paths.ts";
 import {
   answer,
@@ -36,6 +37,8 @@ import {
   writeScript,
 } from "./harness.ts";
 
+// This machine's code, which names the threads sc start begins with no issue, such as app-wr1.
+const own = codeOf(hostname());
 let home = "";
 let socket = "";
 // The fake plugin's settings folder, where it keeps what it is asked and its answers.
@@ -1691,11 +1694,14 @@ await serve(${JSON.stringify(socket)}, 200);`;
     expect(create.err).toContain("app has no tracker");
     const started = await skel(["start", "app", "Add export", "As JSON"]);
     expect(started.err).toBe("");
-    expect(started.out).toBe("Started app-t1.\n");
-    const log = () => read(join(data(), "threads", "app-t1.log"));
-    await until(() => log().includes("app-t1 is ready on branch skelcrew/t1-add-export"), 30_000);
-    expect(git(bare, "show", "skelcrew/t1-add-export:change")).toBe("1");
-    expect(read(join(data(), "claude", "app-t1", "args"))).toContain("Add export\n\nAs JSON");
+    expect(started.out).toBe(`Started app-${own}1.\n`);
+    const log = () => read(join(data(), "threads", `app-${own}1.log`));
+    await until(
+      () => log().includes(`app-${own}1 is ready on branch skelcrew/${own}1-add-export`),
+      30_000,
+    );
+    expect(git(bare, "show", `skelcrew/${own}1-add-export:change`)).toBe("1");
+    expect(read(join(data(), "claude", `app-${own}1`, "args"))).toContain("Add export\n\nAs JSON");
     const row = () => {
       const db = new Database(join(data(), "skelcrew.db"));
       db.run("PRAGMA busy_timeout = 5000");
@@ -1705,13 +1711,13 @@ await serve(${JSON.stringify(socket)}, 200);`;
         db.close();
       }
     };
-    expect(row()).toEqual({ task: "t1", status: "waiting", needs_you: 1, pr: null });
+    expect(row()).toEqual({ task: `${own}1`, status: "waiting", needs_you: 1, pr: null });
     // No forge, so no PR, check or review was asked for.
     expect(asked(plugin).filter((q) => q.ask !== "claims")).toEqual([]);
     // You merge it yourself, with a squash, and Skelcrew sees the branch has nothing left.
     const work = join(home, "work", "app");
     git(work, "pull", "-q", bare, "main");
-    git(work, "fetch", "-q", bare, "skelcrew/t1-add-export");
+    git(work, "fetch", "-q", bare, `skelcrew/${own}1-add-export`);
     git(work, "merge", "--squash", "-q", "FETCH_HEAD");
     git(work, "commit", "-q", "-m", "Add export");
     git(work, "push", "-q", bare, "main");
@@ -1721,7 +1727,7 @@ await serve(${JSON.stringify(socket)}, 200);`;
     expect(row()).toMatchObject({ status: "done" });
     await until(() =>
       read(join(lead(), "typed")).includes(
-        "app-t1 is done: its branch skelcrew/t1-add-export merged into main",
+        `app-${own}1 is done: its branch skelcrew/${own}1-add-export merged into main`,
       ),
     );
   }, 60_000);
@@ -1824,17 +1830,17 @@ await serve(${JSON.stringify(socket)}, 200);`;
   test("sc rm before the first submit leaves a branch of the same name on the remote", async () => {
     fakeClaude(false);
     const bare = addAppOnGit();
-    git(bare, "branch", "skelcrew/t1-add-export", "main");
+    git(bare, "branch", `skelcrew/${own}1-add-export`, "main");
     serveOutsideCheckout();
     await untilCloned();
     expect((await skel(["start", "app", "Add export", "As JSON"])).err).toBe("");
-    await until(() => read(join(data(), "claude", "app-t1", "args")) !== "");
-    const removed = await skel(["rm", "app-t1"]);
+    await until(() => read(join(data(), "claude", `app-${own}1`, "args")) !== "");
+    const removed = await skel(["rm", `app-${own}1`]);
     expect(removed.err).toBe("");
     // A thread with no issue has nothing that stays open, so the message names none.
-    expect(removed.out).toBe("Removed app-t1. sc start app-t1 starts it over.\n");
-    expect(git(bare, "branch", "--list", "skelcrew/t1-add-export")).not.toBe("");
-    expect(existsSync(join(data(), "threads", "app-t1"))).toBe(false);
+    expect(removed.out).toBe(`Removed app-${own}1. sc start app-${own}1 starts it over.\n`);
+    expect(git(bare, "branch", "--list", `skelcrew/${own}1-add-export`)).not.toBe("");
+    expect(existsSync(join(data(), "threads", `app-${own}1`))).toBe(false);
   }, 60_000);
 
   // Each review runs the repository's tests, so the limit keeps them from slowing each other.
@@ -1880,25 +1886,25 @@ await serve(${JSON.stringify(socket)}, 200);`;
       await start("First");
       await until(() => prompt(1) !== "", 30_000);
       await start("Second");
-      await until(() => queued("app-t2"), 30_000);
+      await until(() => queued(`app-${own}2`), 30_000);
       await start("Third");
-      await until(() => queued("app-t3"), 30_000);
+      await until(() => queued(`app-${own}3`), 30_000);
       // Only the first review runs. sc ps and the sidebar say the others wait.
       expect(reviewsRun()).toBe(1);
       const listed = (await skel(["ps"])).out;
-      expect(listed).toMatch(/app-t2 .*queued for review/);
-      expect(listed).toMatch(/app-t3 .*queued for review/);
+      expect(listed).toMatch(new RegExp(`app-${own}2 .*queued for review`));
+      expect(listed).toMatch(new RegExp(`app-${own}3 .*queued for review`));
       // As each ends, the one that came next starts.
       letGo(1);
       await until(() => prompt(2) !== "", 30_000);
       expect(prompt(2)).toContain("# Second");
-      expect(queued("app-t2")).toBe(false);
-      expect(queued("app-t3")).toBe(true);
+      expect(queued(`app-${own}2`)).toBe(false);
+      expect(queued(`app-${own}3`)).toBe(true);
       letGo(2);
       await until(() => prompt(3) !== "", 30_000);
       expect(prompt(3)).toContain("# Third");
       letGo(3);
-      await until(() => ["app-t1", "app-t2", "app-t3"].every(ready), 30_000);
+      await until(() => [`app-${own}1`, `app-${own}2`, `app-${own}3`].every(ready), 30_000);
     }, 60_000);
 
     test("a thread stopped while its review waits is stopped, and its review never runs", async () => {
@@ -1910,14 +1916,14 @@ await serve(${JSON.stringify(socket)}, 200);`;
       await start("First");
       await until(() => prompt(1) !== "", 30_000);
       await start("Second");
-      await until(() => queued("app-t2"), 30_000);
-      expect((await skel(["stop", "app-t2"])).err).toBe("");
-      expect((await skel(["ps"])).out).toMatch(/app-t2 .* stopped/);
+      await until(() => queued(`app-${own}2`), 30_000);
+      expect((await skel(["stop", `app-${own}2`])).err).toBe("");
+      expect((await skel(["ps"])).out).toMatch(new RegExp(`app-${own}2 .* stopped`));
       letGo(1);
-      await until(() => ready("app-t1"), 30_000);
+      await until(() => ready(`app-${own}1`), 30_000);
       await Bun.sleep(1500);
       expect(reviewsRun()).toBe(1);
-      expect((await skel(["ps"])).out).toMatch(/app-t2 .* stopped/);
+      expect((await skel(["ps"])).out).toMatch(new RegExp(`app-${own}2 .* stopped`));
     }, 60_000);
 
     test("after a restart, the review that was running goes first, and the one that waited waits again", async () => {
@@ -1930,13 +1936,13 @@ await serve(${JSON.stringify(socket)}, 200);`;
       await start("First");
       await until(() => prompt(1) !== "", 30_000);
       await start("Second");
-      await until(() => queued("app-t2"), 30_000);
+      await until(() => queued(`app-${own}2`), 30_000);
       first?.kill();
       await first?.exited;
       // Both reviews are still to do, and the second still waits.
-      expect(row("app-t1").reviewing).not.toBeNull();
-      expect(row("app-t1").queued).toBeNull();
-      expect(queued("app-t2")).toBe(true);
+      expect(row(`app-${own}1`).reviewing).not.toBeNull();
+      expect(row(`app-${own}1`).queued).toBeNull();
+      expect(queued(`app-${own}2`)).toBe(true);
       serveOutsideCheckout();
       // The review that was running starts again first, and the one that waited waits again
       // until it ends.
@@ -1944,13 +1950,13 @@ await serve(${JSON.stringify(socket)}, 200);`;
       expect(prompt(2)).toContain("# First");
       await Bun.sleep(1000);
       expect(reviewsRun()).toBe(2);
-      expect(queued("app-t1")).toBe(false);
-      expect(queued("app-t2")).toBe(true);
+      expect(queued(`app-${own}1`)).toBe(false);
+      expect(queued(`app-${own}2`)).toBe(true);
       letGo(2);
       await until(() => prompt(3) !== "", 30_000);
       expect(prompt(3)).toContain("# Second");
       letGo(3);
-      await until(() => ready("app-t1") && ready("app-t2"), 30_000);
+      await until(() => ready(`app-${own}1`) && ready(`app-${own}2`), 30_000);
     }, 60_000);
 
     // Giving back the first review's place starts the queued one at once, so the limit the
@@ -1968,9 +1974,9 @@ await serve(${JSON.stringify(socket)}, 200);`;
       await start("First");
       await until(() => prompt(1) !== "", 30_000);
       await start("Second");
-      await until(() => queued("app-t2"), 30_000);
+      await until(() => queued(`app-${own}2`), 30_000);
       letGo(1);
-      const second = () => read(join(data(), "threads", "app-t2.log"));
+      const second = () => read(join(data(), "threads", `app-${own}2.log`));
       await until(() => second().includes("usage limit holds the review"), 30_000);
       expect(reviewsRun()).toBe(1);
     }, 60_000);
@@ -2004,11 +2010,11 @@ await serve(${JSON.stringify(socket)}, 200);`;
       };
       await until(() => limits() === 1, 30_000);
       letGo(1);
-      await until(() => ready("app-t1"), 30_000);
+      await until(() => ready(`app-${own}1`), 30_000);
       // The limit holds: a new thread's review never runs Codex.
       expect(limits()).toBe(1);
       await start("Third");
-      const third = () => read(join(data(), "threads", "app-t3.log"));
+      const third = () => read(join(data(), "threads", `app-${own}3.log`));
       await until(() => third().includes("usage limit holds the review"), 30_000);
       expect(reviewsRun()).toBe(2);
     }, 60_000);
@@ -2022,23 +2028,23 @@ await serve(${JSON.stringify(socket)}, 200);`;
     serveOutsideCheckout();
     await untilCloned();
     expect((await skel(["start", "app", "Add export", "As JSON"])).err).toBe("");
-    const log = () => read(join(data(), "threads", "app-t1.log"));
-    const ready = "app-t1 is ready on branch skelcrew/t1-add-export";
+    const log = () => read(join(data(), "threads", `app-${own}1.log`));
+    const ready = `app-${own}1 is ready on branch skelcrew/${own}1-add-export`;
     await until(() => log().includes(ready), 30_000);
-    const onRemote = () => git(bare, "branch", "--list", "skelcrew/t1-add-export") !== "";
+    const onRemote = () => git(bare, "branch", "--list", `skelcrew/${own}1-add-export`) !== "";
     expect(onRemote()).toBe(true);
 
     // With no PR, the question names what goes: the branch and the clone.
     const removed = await runSkelInTerminal(
       socket,
       env(),
-      ["rm", "app-t1", "wrong approach"],
-      "Remove app-t1? This deletes its branch and clone. [y/N]",
+      ["rm", `app-${own}1`, "wrong approach"],
+      `Remove app-${own}1? This deletes its branch and clone. [y/N]`,
       "y",
     );
-    expect(removed).toContain("Removed app-t1.");
+    expect(removed).toContain(`Removed app-${own}1.`);
     expect(onRemote()).toBe(false);
-    expect(existsSync(join(data(), "threads", "app-t1"))).toBe(false);
+    expect(existsSync(join(data(), "threads", `app-${own}1`))).toBe(false);
     expect(log()).toContain("wrong approach");
     expect(asked(plugin).filter((q) => q.ask !== "claims")).toEqual([]);
 
@@ -2048,7 +2054,7 @@ await serve(${JSON.stringify(socket)}, 200);`;
     const refs = () => git(join(data(), "repos", "simon", "app"), "for-each-ref", "refs/skelcrew/");
     expect(refs()).toContain("refs/skelcrew/threads/");
     const before = log().split(ready).length;
-    expect((await skel(["start", "app-t1"])).out).toBe("Started app-t1.\n");
+    expect((await skel(["start", `app-${own}1`])).out).toBe(`Started app-${own}1.\n`);
     await until(() => log().split(ready).length > before, 30_000);
     expect(log()).not.toContain("was deleted");
     expect(onRemote()).toBe(true);
@@ -2065,19 +2071,19 @@ await serve(${JSON.stringify(socket)}, 200);`;
     serveOutsideCheckout();
     await untilCloned();
     expect((await skel(["start", "app", "Add export", "As JSON"])).err).toBe("");
-    const log = () => read(join(data(), "threads", "app-t1.log"));
-    const ready = "app-t1 is ready on branch skelcrew/t1-add-export";
+    const log = () => read(join(data(), "threads", `app-${own}1.log`));
+    const ready = `app-${own}1 is ready on branch skelcrew/${own}1-add-export`;
     await until(() => log().includes(ready), 30_000);
-    expect((await skel(["rm", "app-t1"])).err).toBe("");
+    expect((await skel(["rm", `app-${own}1`])).err).toBe("");
     const realGit = Bun.which("git");
     const clone = join(data(), "repos", "simon", "app");
     const first = join(home, "first-deletion");
     script(
       "git",
-      `case "$*" in *"update-ref -d refs/skelcrew/threads/app-t1"*)
+      `case "$*" in *"update-ref -d refs/skelcrew/threads/app-${own}1"*)
   if ! mkdir "${first}" 2>/dev/null; then
     for i in $(seq 300); do
-      "${realGit}" -C "${clone}" rev-parse --verify --quiet refs/skelcrew/threads/app-t1 >/dev/null && break
+      "${realGit}" -C "${clone}" rev-parse --verify --quiet refs/skelcrew/threads/app-${own}1 >/dev/null && break
       sleep 0.1
     done
   fi ;;
@@ -2085,14 +2091,19 @@ esac
 exec "${realGit}" "$@"`,
     );
     const before = log().split(ready).length;
-    const starts = await Promise.all([skel(["start", "app-t1"]), skel(["start", "app-t1"])]);
-    expect(starts.map((s) => s.out).filter((out) => out === "Started app-t1.\n")).toHaveLength(1);
-    expect(starts.map((s) => s.err).join("")).toContain("app-t1 has a thread already");
+    const starts = await Promise.all([
+      skel(["start", `app-${own}1`]),
+      skel(["start", `app-${own}1`]),
+    ]);
+    expect(starts.map((s) => s.out).filter((out) => out === `Started app-${own}1.\n`)).toHaveLength(
+      1,
+    );
+    expect(starts.map((s) => s.err).join("")).toContain(`app-${own}1 has a thread already`);
     await until(() => log().split(ready).length > before, 30_000);
     // You merge the new thread's branch, and Skelcrew sees it.
     const work = join(home, "work", "app");
     git(work, "pull", "-q", bare, "main");
-    git(work, "fetch", "-q", bare, "skelcrew/t1-add-export");
+    git(work, "fetch", "-q", bare, `skelcrew/${own}1-add-export`);
     git(work, "merge", "--squash", "-q", "FETCH_HEAD");
     git(work, "commit", "-q", "-m", "Add export");
     git(work, "push", "-q", bare, "main");
@@ -2111,8 +2122,11 @@ exec "${realGit}" "$@"`,
     serveOutsideCheckout({ GIT_TRACE: trace });
     await untilCloned();
     expect((await skel(["start", "app", "Add export", "As JSON"])).err).toBe("");
-    const log = () => read(join(data(), "threads", "app-t1.log"));
-    await until(() => log().includes("app-t1 is ready on branch skelcrew/t1-add-export"), 30_000);
+    const log = () => read(join(data(), "threads", `app-${own}1.log`));
+    await until(
+      () => log().includes(`app-${own}1 is ready on branch skelcrew/${own}1-add-export`),
+      30_000,
+    );
     const hook = join(bare, "hooks", "post-receive");
     writeFileSync(
       hook,
@@ -2124,7 +2138,7 @@ exec "${realGit}" "$@"`,
 done`,
     );
     chmodSync(hook, 0o755);
-    const removing = skel(["rm", "app-t1"]);
+    const removing = skel(["rm", `app-${own}1`]);
     await until(() => existsSync(join(home, "deleted")), 30_000);
     // sc rm's own look came before it deleted the branch, so a look from now on is a poll's.
     // Polls of a repository never overlap, so once a second has begun, the first one has
@@ -2134,7 +2148,7 @@ done`,
     writeFileSync(join(home, "go"), "");
     const removed = await removing;
     expect(removed.err).toBe("");
-    expect(removed.out).toContain("Removed app-t1.");
+    expect(removed.out).toContain(`Removed app-${own}1.`);
     expect(log()).not.toContain("was deleted");
     expect(log()).toContain('"why":"removed: ended the thread"');
   }, 60_000);

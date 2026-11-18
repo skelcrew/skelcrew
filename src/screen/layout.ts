@@ -53,7 +53,7 @@ export const titleRoom = (width: number) => Math.max(width - 1 - indent.length -
 export const entryPlace = (entry: Entry) => `:${entry}`;
 
 // Returns one row as its lines, each cut with … to stop at the padding. A thread's first line is
-// a mark, its name without its repository's, such as t5, and its short title, or its title when
+// a mark, its name without its repository's, such as wr5, and its short title, or its title when
 // the lead gave it none. A working thread has two more lines, in two greys so they read apart:
 // what its builder has done, as workLine says, in a light grey, then the step it is on, dim, as
 // it matters least, or in its place how many messages wait for the builder, which tells why one
