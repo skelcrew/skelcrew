@@ -206,13 +206,39 @@ function confirmPlugin(manifest: Manifest, from: string, verb: string): boolean 
   return askYes(`${verb} it? [Y/n]`);
 }
 
-// Returns the error for a plugin's commands that would run with no terminal to answer whether
-// they may, such as `doing` "installing fake". It fails the command, so a script that runs sc
-// install can tell the machine doesn't match your files yet.
+// The error for a plugin's commands that would run with no terminal to answer whether they may.
+// It fails the command, so a script that runs sc install can tell the machine doesn't match your
+// files yet. A class of its own lets sc install and sc update -g go on to the other plugins and
+// name every one left out.
+class Unanswered extends Error {}
+
+// Returns that error for `doing`, such as "installing fake".
 const unanswered = (doing: string) =>
-  new Error(
+  new Unanswered(
     `${doing} runs its commands, which needs your yes at a terminal, so Skelcrew didn't run them`,
   );
+
+// Runs `change` for each plugin, and fails at the end naming each one left out for want of a
+// terminal to say yes at, by the name `nameOf` gives. Any other error stops at once, as for a
+// single plugin.
+function eachAsked<T>(
+  plugins: T[],
+  nameOf: (plugin: T) => string,
+  change: (plugin: T) => void,
+): void {
+  const leftOut: string[] = [];
+  for (const plugin of plugins)
+    try {
+      change(plugin);
+    } catch (error) {
+      if (!(error instanceof Unanswered)) throw error;
+      leftOut.push(nameOf(plugin));
+    }
+  if (leftOut.length > 0)
+    throw new Error(
+      `Skelcrew left out ${leftOut.join(", ")}, as each runs its commands, which needs your yes at a terminal. Run it again at one`,
+    );
+}
 
 // Runs one of a plugin's commands in your terminal, in the plugin's folder, so a setup can ask
 // you things. `remote` is the remote of the checkout sc ran in, handed over as SKELCREW_REMOTE so
@@ -464,8 +490,12 @@ export function updatePlugins(name?: string): void {
   if (name !== undefined && chosen.length + toInstall.length === 0)
     throw new Error(`there is no plugin named ${name}: sc plugins lists them`);
   if (chosen.length + toInstall.length === 0) console.log("No plugins installed.");
-  for (const plugin of chosen) updatePlugin(db, plugin);
-  for (const source of toInstall) installPlugin(source);
+  const plugins = [...chosen, ...toInstall];
+  eachAsked(
+    plugins,
+    (plugin) => (typeof plugin === "string" ? plugin : plugin.name),
+    (plugin) => (typeof plugin === "string" ? installPlugin(plugin) : updatePlugin(db, plugin)),
+  );
 }
 
 // Removes a plugin with its settings and tokens. A plugin from GitHub loses its folders and its
@@ -562,24 +592,28 @@ export function installYourPlugins(remote: string | null): { changed: boolean; l
   const db = openDb();
   const lock = yourLock(db);
   let changed = false;
-  for (const source of yourPlugins()) {
-    const locked = lock[source];
-    const here = installedPlugins(db).find((plugin) => plugin.source === source);
-    // A plugin installed before your lock named it is pinned as it is, with nothing to ask.
-    if (here && !locked) {
-      setLocked(db, source, lockedAs(readManifest(here.folder), commitOf(here.folder)));
-      continue;
-    }
-    if (here && locked && matchesLock(here, locked)) continue;
-    changed = true;
-    // Installing with no pin adds one. One with a pin leaves the lock as it is.
-    if (!locked) installPlugin(source, { remote });
-    else {
-      const pinned = { tag: `v${locked.version}`, commit: locked.commit, remote, pin: false };
-      if (here) updatePlugin(db, here, pinned);
-      else installPlugin(source, pinned);
-    }
-  }
+  eachAsked(
+    yourPlugins(),
+    (source) => source,
+    (source) => {
+      const locked = lock[source];
+      const here = installedPlugins(db).find((plugin) => plugin.source === source);
+      // A plugin installed before your lock named it is pinned as it is, with nothing to ask.
+      if (here && !locked) {
+        setLocked(db, source, lockedAs(readManifest(here.folder), commitOf(here.folder)));
+        return;
+      }
+      if (here && locked && matchesLock(here, locked)) return;
+      changed = true;
+      // Installing with no pin adds one. One with a pin leaves the lock as it is.
+      if (!locked) installPlugin(source, { remote });
+      else {
+        const pinned = { tag: `v${locked.version}`, commit: locked.commit, remote, pin: false };
+        if (here) updatePlugin(db, here, pinned);
+        else installPlugin(source, pinned);
+      }
+    },
+  );
   // Read again, as an install added its pin.
   const now = yourLock(db);
   const left = yourPlugins().filter((source) => {

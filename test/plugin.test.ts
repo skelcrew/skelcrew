@@ -354,7 +354,7 @@ test("a plugin from a folder is used where it is, and update builds it again", a
   const unasked = await skel(["plugin", "update", "fake"], "y\n", "", {}, home, false);
   expect(unasked.code).toBe(1);
   expect(unasked.err).toContain(
-    "building fake again runs its commands, which needs your yes at a terminal, so Skelcrew didn't run them",
+    "Skelcrew left out fake, as each runs its commands, which needs your yes at a terminal",
   );
   expect(JSON.parse(readFileSync(join(folder, "built"), "utf8")).version).toBe("0.1.0");
   const updated = await skel(["plugin", "update", "fake"], "y\n");
@@ -625,7 +625,7 @@ test("sc update -g without a terminal fails, and leaves the plugin and lock as t
   const run = await skel(["update", "-g", "fake"], "y\n", "", {}, home, false);
   expect(run.code).toBe(1);
   expect(run.err).toContain(
-    "updating fake runs its commands, which needs your yes at a terminal, so Skelcrew didn't run them",
+    "Skelcrew left out fake, as each runs its commands, which needs your yes at a terminal",
   );
   expect((await skel(["plugins"])).out).toBe("fake 0.1.0 io: tracker, forge\n");
   expect(parse(readFileSync(yourLockFile(), "utf8"))["skelcrew/skelcrew-fake"].version).toBe(

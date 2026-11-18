@@ -1279,9 +1279,7 @@ test("sc install with no answer to read installs nothing", async () => {
   lockFake("0.1.0");
   const run = await install("");
   expect(run.code).toBe(1);
-  expect(run.err).toContain(
-    "installing fake runs its commands, which needs your yes at a terminal",
-  );
+  expect(run.err).toContain("Skelcrew left out simon/skelcrew-fake, as each runs its commands");
   expect(existsSync(join(home, ".local", "share", "skelcrew", "plugins", "fake"))).toBe(false);
 });
 
@@ -1380,20 +1378,29 @@ test("sc update -g moves an installed plugin to its tag's new commit, after aski
   expect(readFileSync(lock(), "utf8")).toContain(fakeCommit("0.1.0"));
 });
 
-test("sc install without a terminal installs nothing, even with a yes piped in", async () => {
+test("sc install without a terminal installs nothing, even with a yes piped in, and names each plugin left out", async () => {
   noGitHubPlugin();
   fakeGitHub();
   publishFake("0.1.0");
+  publishPlugin("bar", "0.1.0");
   await skel("1\nsk-ant-oat01-good\n");
   lockFake("0.1.0");
+  writeFileSync(
+    config(),
+    readFileSync(config(), "utf8").replace(
+      "plugins: [simon/skelcrew-fake]",
+      "plugins: [simon/skelcrew-fake, simon/skelcrew-bar]",
+    ),
+  );
   const run = await skel("y\n", bin, main(), home, {}, ["install"]);
   expect(run.out).toContain("There is no terminal to answer in");
   // It fails, so a script running it can tell the machine doesn't match your files.
   expect(run.code).toBe(1);
   expect(run.err).toContain(
-    "installing fake runs its commands, which needs your yes at a terminal",
+    "Skelcrew left out simon/skelcrew-fake, simon/skelcrew-bar, as each runs its commands, which needs your yes at a terminal",
   );
   expect(existsSync(join(home, ".local", "share", "skelcrew", "plugins", "fake"))).toBe(false);
+  expect(existsSync(join(home, ".local", "share", "skelcrew", "plugins", "bar"))).toBe(false);
 });
 
 // The harness and its login are there, as copied from another machine, and only the service is
