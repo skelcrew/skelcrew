@@ -13,7 +13,7 @@ import {
 } from "../agents/sessions.ts";
 import { repositoryCommands } from "../config.ts";
 import { finishUpgrade, moveToTasks, openDb, type Repository } from "../db.ts";
-import { checkFlow } from "../flows.ts";
+import { checkFlow, flowRoles } from "../flows.ts";
 import { setupDone } from "../machine/setup.ts";
 import { keepUpToDate } from "../machine/update.ts";
 import { cloneDir, daemonCodeFile, daemonSocket, reviewSocket, threadSocket } from "../paths.ts";
@@ -238,25 +238,32 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       failThread(db, thread, error);
     }
   };
-  // Brings back a stopped thread's builder for sc start, with --resume on its last session
-  // in the same clone, then carries on the round its stop cut short, as after a restart.
-  // Marks the thread failed, with the reason, when the builder can't start. A short title
-  // given with it is saved with it.
   // Switches a thread at work to another flow, and gives it a short title too when one comes
   // with it. A task started from a label runs the default flow, and the lead can switch it to
   // one that fits better, but only until its builder first submits: after that, the review and
   // its round limit are under way, so the task keeps its flow to the end. Read again here, as
-  // the builder may have submitted since the caller looked.
+  // the builder may have submitted since the caller looked. The builder is already running, or
+  // starting, on its flow's build role, with that role's instructions, harness and model, so a
+  // flow that builds with another role is refused: it would run a builder it doesn't describe.
   const switchFlow = (at: Thread, flow: string, short?: string) => {
     const now = readThread(db, at.folder);
+    const name = threadName(db, now);
     if (now.pr !== null || now.submitting !== null || now.review_at !== null)
-      throw new Error(
-        `${threadName(db, now)} keeps the flow ${now.flow}, as its builder has submitted already.`,
-      );
+      throw new Error(`${name} keeps the flow ${now.flow}, as its builder has submitted already.`);
     const repository = findRepository(db, `${now.owner}/${now.repo}`);
     checkFlow(now, repository.name, flow);
+    const building = flowRoles(now).build;
+    const wanted = flowRoles({ ...now, flow }).build;
+    if (wanted !== building)
+      throw new Error(
+        `${name} keeps the flow ${now.flow}: its builder already runs as ${building}, and ${flow} builds as ${wanted}.`,
+      );
     record(db, now.folder, { flow, ...(short ? { short } : {}) }, `given the flow ${flow}`);
   };
+  // Brings back a stopped thread's builder for sc start, with --resume on its last session
+  // in the same clone, then carries on the round its stop cut short, as after a restart.
+  // Marks the thread failed, with the reason, when the builder can't start. A short title
+  // given with it is saved with it.
   const resume = async (stopped: Thread, short?: string) => {
     const change = { status: statusOnceBack(stopped), ...(short ? { short } : {}) };
     const thread = record(db, stopped.folder, change, "started again");

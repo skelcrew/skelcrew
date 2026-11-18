@@ -291,14 +291,15 @@ test("sc start refuses a repository Skelcrew doesn't have, and a task its tracke
 });
 
 // Puts simon/app on the fake GitHub with a flow file of its own, quick, and tells Skelcrew about
-// it.
-function addFlows(): void {
+// it. Returns a checkout to push more from.
+function addFlows(): string {
   const work = addApp();
   mkdirSync(join(work, ".agents", "flows"), { recursive: true });
   writeFileSync(join(work, ".agents", "flows", "quick.yaml"), "review:\n  rounds: 1\n");
   git(work, "add", ".");
   git(work, "commit", "-q", "-m", "flows");
   git(work, "push", "-q", "origin", "main");
+  return work;
 }
 
 // Approves the .agents/ in Skelcrew's clone of simon/app, as sc repo trust would, once it is
@@ -935,7 +936,14 @@ nameRepositories(db);`;
   // A task started from a label runs the default flow, and the lead can switch it to another
   // until its builder first submits.
   test("sc start --flow switches a thread at work until its builder submits", async () => {
-    addFlows();
+    // A third flow, careful, builds with a role of the repository's own.
+    const work = addFlows();
+    mkdirSync(join(work, ".agents", "roles"), { recursive: true });
+    writeFileSync(join(work, ".agents", "flows", "careful.yaml"), "build:\n  role: tester\n");
+    writeFileSync(join(work, ".agents", "roles", "tester.md"), "Write the test first.\n");
+    git(work, "add", ".");
+    git(work, "commit", "-q", "-m", "careful");
+    git(work, "push", "-q", "origin", "main");
     serve();
     await untilCloned();
     await untilApproved();
@@ -946,8 +954,15 @@ nameRepositories(db);`;
     expect(switched.out).toBe("app-12 now runs the flow quick.\n");
     expect(flows()).toEqual([{ task: 12, flow: "quick" }]);
     expect((await skel("start", "app-12", "--flow", "slow")).err).toBe(
-      "Skelcrew: app has no flow slow. Its flows are default, quick.\n",
+      "Skelcrew: app has no flow slow. Its flows are default, careful, quick.\n",
     );
+    // Its builder already runs as builder, so a flow that builds as another role is refused, and
+    // the builder keeps the instructions it started with.
+    expect((await skel("start", "app-12", "--flow", "careful")).err).toBe(
+      "Skelcrew: app-12 keeps the flow quick: its builder already runs as builder, and careful builds as tester.\n",
+    );
+    expect(flows()).toEqual([{ task: 12, flow: "quick" }]);
+    expect(read(join(config("app-12"), "args"))).not.toContain("Write the test first.");
     // Once its builder has submitted, the task keeps its flow to the end.
     const db = new Database(join(data(), "skelcrew.db"));
     db.run("PRAGMA busy_timeout = 5000");
