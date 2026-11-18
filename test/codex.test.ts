@@ -204,15 +204,6 @@ async function app12(): Promise<{ status: string; needsYou: boolean } | undefine
   return JSON.parse(ps.out).find((t: { thread: string }) => t.thread === "app-12");
 }
 
-// Waits until app-12 needs you, or no longer does.
-async function untilNeedsYou(wanted: boolean) {
-  const deadline = Date.now() + 30_000;
-  while ((await app12())?.needsYou !== wanted) {
-    if (Date.now() > deadline) throw new Error(`gave up waiting for needs you to be ${wanted}`);
-    await Bun.sleep(100);
-  }
-}
-
 // The line the fake builder adds to its file ran once it has done each step.
 const ranLine = {
   stop: "Stop",
@@ -266,6 +257,10 @@ async function startApp12() {
 // How many notes about app-12 needing you the lead has been typed.
 const notesAbout12 = () => read(join(lead(), "typed")).split("app-12 needs you").length - 1;
 
+// How many times app-12's builder has told the lead its turn ended without a submit.
+const turnsEndedTold = () =>
+  read(join(lead(), "typed")).split("My turn ended without a submit").length - 1;
+
 // The socket the daemon opens for app's lead, which tells it the lead calls. It is named by a
 // short hash.
 function leadSocket(): string {
@@ -279,15 +274,6 @@ function builderSocket(): string {
   return join(home, "run", "skelcrew", "threads", short, "skelcrew.sock");
 }
 
-// The note about app-12 not yet typed into the lead, or null when there is none.
-function noting(): unknown {
-  const db = new Database(join(data(), "skelcrew.db"));
-  db.run("PRAGMA busy_timeout = 5000");
-  const row = db.query("SELECT noting FROM task_threads WHERE folder = 'app-12'").get();
-  db.close();
-  return z.object({ noting: z.string().nullable() }).parse(row).noting;
-}
-
 // What app-12's builder is doing, as Skelcrew keeps it.
 function builderState(): unknown {
   const db = new Database(join(data(), "skelcrew.db"));
@@ -298,6 +284,24 @@ function builderState(): unknown {
 }
 
 // Changes app-12 in the database, as a round would.
+// Returns whether app-12 shows turn ended: its builder stopped without submitting.
+function turnEnded(): boolean {
+  const db = new Database(join(data(), "skelcrew.db"));
+  db.run("PRAGMA busy_timeout = 5000");
+  const row = db.query("SELECT turn_ended FROM threads WHERE folder = 'app-12'").get();
+  db.close();
+  return z.object({ turn_ended: z.number() }).parse(row).turn_ended === 1;
+}
+
+// Returns how many notes and messages for the leads Skelcrew still keeps, as not yet sent.
+function notesWaiting(): number {
+  const db = new Database(join(data(), "skelcrew.db"));
+  db.run("PRAGMA busy_timeout = 5000");
+  const row = db.query("SELECT COUNT(*) AS count FROM notes").get();
+  db.close();
+  return z.object({ count: z.number() }).parse(row).count;
+}
+
 function setThread(sql: string): void {
   const db = new Database(join(data(), "skelcrew.db"));
   db.run("PRAGMA busy_timeout = 5000");
@@ -332,44 +336,40 @@ describe.skipIf(insideSandbox)("codex", () => {
     expect(hooks(args(lead()))).toEqual(hooks(args()));
   }, 60_000);
 
-  test("a builder that stops without submitting needs you, and the Codex lead hears what it said", async () => {
+  // Codex has no tool for asking, so a builder asks by ending its turn. The lead reads its words
+  // and brings the question to you.
+  test("a builder that stops without submitting shows turn ended, and the Codex lead gets what it said", async () => {
     await startApp12();
     const said = "Should the export keep empty rows?\nI can do either.";
     await act("stop", JSON.stringify({ hook_event_name: "Stop", last_assistant_message: said }));
     expect(read(join(builder(), "hooks"))).toBe("");
-    await untilNeedsYou(true);
-    // The note reaches the lead a piece at a time, so the test waits for all of it.
-    await until(() =>
-      read(join(lead(), "typed")).includes(
-        'app-12 needs you: its builder stopped without submitting, saying "Should the export keep empty rows?"',
-      ),
-    );
-    // Another turn ending while it still waits is no news.
-    await act("stop");
-    await Bun.sleep(1000);
-    expect(notesAbout12()).toBe(1);
-    expect(read(join(lead(), "typed"))).not.toContain("I can do either.");
+    await until(turnEnded);
+    // The message reaches the lead a piece at a time, so the test waits for all of it.
+    await until(() => read(join(lead(), "typed")).includes("I can do either."));
+    expect(read(join(lead(), "typed"))).toContain("My turn ended without a submit, saying:");
+    expect((await app12())?.needsYou).toBe(false);
+    expect(notesAbout12()).toBe(0);
     // What you type to it next ends that.
     await act("talk");
-    await untilNeedsYou(false);
-    // A turn that ends once the builder has submitted in it waits on its review, not on you,
-    // even when the review already set the thread working again.
+    await until(() => !turnEnded());
+    // A turn that ends once the builder has submitted in it waits on its review, even when the
+    // review already set the thread working again.
     setThread("UPDATE threads SET submitted = 1, status = 'working'");
     await act("stop");
     await Bun.sleep(500);
-    expect((await app12())?.needsYou).toBe(false);
-    // A review's changes typed in start a new turn, which needs you if it ends without a submit,
-    // though the thread waits on its review.
+    expect(turnEnded()).toBe(false);
+    // A review's changes typed in start a new turn, which shows turn ended if it ends without a
+    // submit, though the thread waits on its review.
     await act("talk");
     setThread("UPDATE threads SET status = 'waiting'");
     await act("stop");
-    await untilNeedsYou(true);
+    await until(turnEnded);
   }, 60_000);
 
   test("a Codex builder that stopped without submitting can be told, which clears it", async () => {
     await startApp12();
     await act("stop");
-    await untilNeedsYou(true);
+    await until(turnEnded);
     const told = await runSkel(["tell", "app-12", "Keep them."], {
       ...env(),
       SKELCREW_SANDBOX: "1",
@@ -377,19 +377,17 @@ describe.skipIf(insideSandbox)("codex", () => {
     });
     expect(told.err).toBe("");
     await until(() => read(join(builder(), "typed")).includes("Keep them."));
-    await untilNeedsYou(false);
+    await until(() => !turnEnded());
   }, 60_000);
 
-  test("a Codex builder still needs you after the daemon starts again, with no second note", async () => {
+  test("a Codex builder still shows turn ended after the daemon starts again, and the lead hears it once", async () => {
     await startApp12();
     await act("stop");
-    await untilNeedsYou(true);
-    await until(() => notesAbout12() === 1);
-    // The daemon forgets the note only once it has typed all of it. A daemon stopped before
-    // then types it again as it starts, so a note is never lost.
-    await until(() =>
-      read(join(data(), "threads", "app-12.log")).includes("told the lead it needs you"),
-    );
+    await until(turnEnded);
+    await until(() => turnsEndedTold() === 1);
+    // The message shows at the lead's prompt before its Enter, and is kept until it is sent. A
+    // daemon stopped in between types it again when it starts, so the test waits for the send.
+    await until(() => notesWaiting() === 0);
     for (const daemon of running.splice(0)) {
       daemon.kill();
       await daemon.exited;
@@ -402,9 +400,8 @@ describe.skipIf(insideSandbox)("codex", () => {
     startDaemon(socket, env(), running);
     await until(() => polls() > before);
     // The lead's notes go in one after another, so the builder's message to the lead comes
-    // after whatever the new daemon typed as it started. Each pass types the saved notes, then
-    // a thread waiting to be announced. Once the lead has the message and app-12 has no note
-    // left to tell, a second note would be there already.
+    // after any the new daemon typed again as it started. Once the lead has it and no note is
+    // left to send, a second message about the ended turn would be there already.
     const told = await runSkel(["tell", "lead", "Still waiting."], {
       ...env(),
       SKELCREW_SANDBOX: "1",
@@ -412,9 +409,10 @@ describe.skipIf(insideSandbox)("codex", () => {
     });
     expect(told.err).toBe("");
     await until(() => read(join(lead(), "typed")).includes("Still waiting."));
-    await until(() => noting() === null);
-    expect((await app12())?.needsYou).toBe(true);
-    expect(notesAbout12()).toBe(1);
+    await until(() => notesWaiting() === 0);
+    expect(turnEnded()).toBe(true);
+    expect((await app12())?.needsYou).toBe(false);
+    expect(turnsEndedTold()).toBe(1);
   }, 60_000);
 
   test("each of Codex's hooks puts the builder in its state", async () => {
@@ -460,7 +458,7 @@ describe.skipIf(insideSandbox)("codex", () => {
     // Your config moving leads to Claude Code doesn't move the lead already on Codex.
     config("lead: { harness: claude }\nbuilder: { harness: codex }\n");
     await act("stop");
-    await until(() => read(join(lead(), "typed")).includes("app-12 needs you"));
+    await until(() => turnsEndedTold() === 1);
     const name = leadPlaces("simon", "app").name;
     Bun.spawnSync(["tmux", "-L", socket, "kill-session", "-t", `=${name}`]);
     rmSync(join(lead(), "args"));
