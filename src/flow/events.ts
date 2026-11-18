@@ -11,9 +11,14 @@ import { unassignIssue } from "./assign.ts";
 import { baseOf } from "./builder.ts";
 import type { Check, Decision } from "./decide.ts";
 import { deleteBranch, fetchInto, onRemote } from "./git.ts";
-import { noteForLead, typeLeadNotes } from "./lead.ts";
 import { endWake } from "./limits.ts";
-import { noticeRound, queueMessage, stopDelivering } from "./messages.ts";
+import {
+  noteForLead,
+  noticeRound,
+  queueMessage,
+  stopDelivering,
+  typeLeadNotes,
+} from "./messages.ts";
 import { refreshClone } from "./repo.ts";
 import { endRound } from "./round.ts";
 import { cloneOf, readThread, record, repositoryOf, type Thread, threadName } from "./thread.ts";

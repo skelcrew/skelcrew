@@ -24,7 +24,7 @@ import type { Settings } from "../settings.ts";
 import { taskOf, threadTask } from "./copy.ts";
 import { pastRoundLimit } from "./decide.ts";
 import { fetchBranch } from "./git.ts";
-import { dropEndNotes } from "./lead.ts";
+import { dropEndNotes } from "./messages.ts";
 import { findRepository, forgeAuthor, refreshClones } from "./repo.ts";
 import {
   builderHarness,

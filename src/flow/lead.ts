@@ -1,11 +1,10 @@
 // Each repository's lead: your agent session for that repository on this machine, in its own
-// folder, kept alive in a session of its own, and the notes Skelcrew types into it.
+// folder, kept alive in a session of its own.
 import type { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
 import { z } from "zod";
 import { HarnessName, harnessNamed } from "../agents/harness.ts";
 import {
-  agentRuns,
   checkAgentStarted,
   endSession,
   exitedCleanly,
@@ -15,15 +14,13 @@ import {
   type Labels,
   startSession,
 } from "../agents/sessions.ts";
-import { deliver, idle } from "../agents/transport.ts";
 import { agentRoles, repositoryCommands } from "../config.ts";
 import { Repository } from "../db.ts";
 import { cloneDir, leadPlaces } from "../paths.ts";
 import { builtInRole } from "../roles.ts";
 import { errorText } from "../say.ts";
 import type { Settings } from "../settings.ts";
-import { refreshClones, repositories } from "./repo.ts";
-import { readThread, record, Thread, threadName } from "./thread.ts";
+import { refreshClones } from "./repo.ts";
 
 // What Skelcrew's database keeps about a repository's lead, checked as it is read back.
 const LeadRow = z.object({
@@ -31,8 +28,6 @@ const LeadRow = z.object({
   lead_harness: HarnessName.nullable(),
   kept_lead: z.coerce.boolean(),
 });
-// A note waiting to be typed into a lead, or null when none waits.
-const Note = z.object({ id: z.number(), text: z.string() }).nullable();
 
 // Returns a repository's lead: where it lives, as leadPlaces gives it, the session ID of its
 // conversation, and the harness it started on, both null before it first started. A lead that
@@ -187,115 +182,4 @@ export function closeExitedLeads(db: Database, sessions: string): void {
     endSession(sessions, name);
     console.log(`${owner}/${repo}'s lead exited, so its tab is closed until you open it again.`);
   }
-}
-
-// Types each saved note for a repository's lead into it, one at a time, such as "started
-// app-12 from github: Fix the login redirect" or "app-12 needs you: its builder asked a
-// question", and forgets it once typed. It waits as long as the lead is busy, checking again
-// each time whether a note about a thread needing you is still wanted, so a question you
-// answered meanwhile is never announced. A lead that isn't running, or never started, gets
-// nothing: its notes stay saved until it starts.
-async function typeNotes(
-  db: Database,
-  sessions: string,
-  owner: string,
-  repo: string,
-): Promise<void> {
-  const { name, harness } = leadOf(db, owner, repo);
-  const where = "owner = ? AND repo = ?";
-  // Each pass reads the oldest note and the first thread waiting to be announced, so what was
-  // saved while typing is seen too.
-  while (true) {
-    const note = Note.parse(
-      db.query(`SELECT id, text FROM notes WHERE ${where} ORDER BY id`).get(owner, repo),
-    );
-    const row = db
-      .query(`SELECT * FROM task_threads WHERE noting IS NOT NULL AND ${where} ORDER BY rowid`)
-      .get(owner, repo);
-    const thread = Thread.nullable().parse(row);
-    // Stop when nothing is left to say, or nobody is there to hear it. Wait while the lead is busy.
-    if (note === null && (thread === null || thread.noting === null)) return;
-    if (!agentRuns(sessions, name)) return;
-    // A lead that is running has started, so it has a harness.
-    const { marks } = harnessNamed(harness ?? "claude");
-    if (!(await idle(sessions, name, marks))) continue;
-    // Saved notes go first, then a thread that needs you. A note can be dropped while the lead
-    // is busy, such as a thread's end note once the thread starts over, so it is looked for
-    // again before typing, and its typing is cancelled if it goes meanwhile. A note's ID is never
-    // used twice, so a note saved meanwhile is never taken for this one, nor deleted as it.
-    if (note !== null) {
-      if (!db.query("SELECT 1 FROM notes WHERE id = ?").get(note.id)) continue;
-      const cancel = new AbortController();
-      typingNote.set(note.id, cancel);
-      try {
-        await deliver(sessions, name, marks, note.text, { signal: cancel.signal });
-      } finally {
-        typingNote.delete(note.id);
-      }
-      db.run("DELETE FROM notes WHERE id = ?", [note.id]);
-      continue;
-    }
-    if (thread === null || thread.noting === null) return;
-    await deliver(sessions, name, marks, `${threadName(db, thread)} needs you: ${thread.noting}`);
-    // The thread may have stopped needing you and started again while this was typed.
-    if (readThread(db, thread.folder).noting === thread.noting)
-      record(db, thread.folder, { noting: null }, "told the lead it needs you");
-  }
-}
-
-// The saved note being typed into a lead, by its ID, with what cancels its typing.
-const typingNote = new Map<number, AbortController>();
-
-// Drops the notes that a thread ended which still wait for its lead, cancelling one being
-// typed. A thread starting over in the same folder has the same name, and the lead would take
-// the old end for the new thread's and drop it from what it holds open. A note already pasted
-// at the lead's prompt is still sent: typing presses Enter a moment after the paste, and
-// leaving it there would block every later note behind an unsent draft.
-export function dropEndNotes(db: Database, folder: string): void {
-  const ids = z
-    .array(z.object({ id: z.number() }))
-    .parse(db.query("SELECT id FROM notes WHERE ended = ?").all(folder));
-  for (const { id } of ids) typingNote.get(id)?.abort();
-  db.run("DELETE FROM notes WHERE ended = ?", [folder]);
-}
-
-// The note typing under way for each repository's lead, by its owner/name.
-const noteTyping = new Map<string, Promise<void>>();
-
-// Types the saved notes into each repository's lead, and returns at once, so the round or
-// request that saved a note never waits on a lead. Each lead's notes are typed one after
-// another, so a note is never pasted twice, and two notes never share one Enter. A busy lead
-// holds up no other lead. A note that fails to be typed stays saved. The next call tries it
-// again: at the next note, the next time you open a lead with sc, or the daemon's next start.
-export function typeLeadNotes(db: Database, sessions: string): void {
-  for (const { owner, repo } of repositories(db)) {
-    // Chain onto the lead's typing under way, so its notes go in one after another.
-    const key = `${owner}/${repo}`;
-    const before = noteTyping.get(key) ?? Promise.resolve();
-    noteTyping.set(
-      key,
-      before
-        .then(() => typeNotes(db, sessions, owner, repo))
-        .catch((error) => console.log(`couldn't tell ${key}'s lead: ${errorText(error)}`)),
-    );
-  }
-}
-
-// Saves a note for the lead of a repository, and has the daemon type it in. Notes already
-// wait while the lead is busy, and stay saved while it isn't running, so a note is never lost.
-// `ended` is the folder of the thread whose end the note reports, if it does.
-export function noteForLead(
-  db: Database,
-  sessions: string,
-  repository: { owner: string; repo: string },
-  text: string,
-  ended: string | null = null,
-): void {
-  db.run("INSERT INTO notes (owner, repo, text, ended) VALUES (?, ?, ?, ?)", [
-    repository.owner,
-    repository.repo,
-    text,
-    ended,
-  ]);
-  typeLeadNotes(db, sessions);
 }
