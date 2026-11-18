@@ -32,6 +32,7 @@ test("sc --help, -h and help print the help to stdout and succeed", () => {
 test("the help names every command", () => {
   const out = skel(["--help"]).out;
   for (const command of [
+    "--list",
     "--remote",
     "remote add",
     "up",

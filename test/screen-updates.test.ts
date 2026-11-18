@@ -10,6 +10,7 @@ import {
   agents,
   clickRow,
   endTest,
+  fixedLoad,
   home,
   issueUrl,
   leaving,
@@ -46,8 +47,10 @@ afterEach(endTest);
 // opening, at its next refresh, and tmux redraws its border after that. On a busy machine that
 // can come after half a second of quiet. So the screen has settled once the sidebar has
 // refreshed twice from now, and then nothing was written for half a second. The test must call
-// noteRefreshes first.
+// noteRefreshes first. The footer runs on its own and draws first whenever it has started,
+// which a busy machine can put seconds later, so the copy waits for its load to show too.
 async function copyOnceSettled(): Promise<string> {
+  await until(() => (seen().split("\n")[29] ?? "").includes(fixedLoad), "the footer");
   const written = join(home, "written");
   tmux(terminal, "pipe-pane", "-O", "-t", "=one:", `cat >> ${written}`);
   await sidebarRefreshedTwice();
@@ -226,16 +229,21 @@ test("with nothing working, an open screen sends your terminal nothing at all", 
   await ready("lead");
   await until(() => seen().includes("checks · claude"), "the threads");
   const written = await copyOnceSettled();
-  // The threads started three seconds short of a minute ago, so a time shown on a row would change
-  // during the wait. The sidebar must read that before the minute, so a busy machine that
-  // refreshed only after it tries again with a minute further on.
+  // The threads started five seconds short of a minute ago, so a time shown on a row would
+  // change during the wait. The sidebar must read that and draw it before the minute. Each try
+  // starts just after a refresh starts, so the next two come about two seconds on. A busy
+  // machine whose refreshes came later tries again with a minute further on, for up to 30 seconds.
+  const deadline = Date.now() + 30_000;
   let minute = 0;
-  for (let tries = 0; tries < 5 && Date.now() >= minute; tries++) {
-    minute = Date.now() + 3000;
+  while (Date.now() >= minute) {
+    if (Date.now() > deadline)
+      throw new Error("the sidebar never refreshed twice before the minute");
+    const before = refreshesStarted();
+    await until(() => refreshesStarted() > before, "the sidebar to refresh");
+    minute = Date.now() + 5000;
     sql(`UPDATE threads SET started = ${minute - 60_000} WHERE status = 'waiting'`);
     await sidebarRefreshedTwice();
   }
-  expect(Date.now()).toBeLessThan(minute);
   // Past the minute, the sidebar reads the threads again and draws what it read. A time it drew
   // reaches the copy a moment later.
   await Bun.sleep(minute - Date.now());
@@ -245,7 +253,7 @@ test("with nothing working, an open screen sends your terminal nothing at all", 
   const rows = seen().split("\n");
   const row = rows.findIndex((line) => line.includes("app-12"));
   expect(rows[row + 1]?.split("│")[0]?.trim()).toBe("checks · claude");
-}, 60_000);
+}, 90_000);
 
 test("a working thread's time moves on by itself, and writes when it does", async () => {
   sql(`UPDATE threads SET started = ${Date.now() - 58_000} WHERE folder = 'app-12'`);

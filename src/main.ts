@@ -16,6 +16,7 @@ import { versionLine } from "./version.ts";
 // refused because a prompt injection could trick an agent into it.
 const agentRefusals: Record<string, string> = {
   "": "attaching to the lead",
+  "--list": "showing the list",
   up: "running the daemon",
   serve: "running the daemon",
   "repo add": "adding a repository",
@@ -125,10 +126,10 @@ function usage(command?: string): never {
 }
 
 // Sets up Skelcrew if needed and runs the daemon in the background, as sc up --bg does, then
-// opens the screen on a lead. The lead is for the repository you ran sc from, the one --from
-// names, or else the one you opened last. With no repositories there is no lead to open, and
-// bringInFrom has already said so.
-async function leadCommand(from?: string): Promise<void> {
+// opens the screen on a lead, or with `list` shows its repository as a list. The lead is for
+// the repository you ran sc from, the one --from names, or else the one you opened last. With
+// no repositories there is no lead to open, and bringInFrom has already said so.
+async function leadCommand(list: boolean, from?: string): Promise<void> {
   // Loaded only here, so sc --remote on your laptop never loads them.
   const { attachToLead, upInBackground } = await import("./attach.ts");
   const { openDb } = await import("./db.ts");
@@ -156,7 +157,7 @@ async function leadCommand(from?: string): Promise<void> {
   // Outside any repository, sc opens the repository you opened last only while it has a tab.
   // With every tab closed, you closed them on purpose, so it opens none and says what sc needs.
   const away = from === undefined && origin === null;
-  if (await attachToLead("skelcrew", found, away)) return;
+  if (await attachToLead("skelcrew", list, found, away)) return;
   console.error("No git repository found. Run sc inside a git repository to open it.");
   process.exit(1);
 }
@@ -659,7 +660,7 @@ async function tellCommand(args: string[]): Promise<void> {
   const { tellOn, tellTheLead } = await import("./client.ts");
   if (process.env.SKELCREW_SANDBOX !== "1")
     throw new Error(
-      "sc tell is for the lead and builders. To type to a builder, pick it in the sidebar.",
+      "sc tell is for the lead and builders. To type to a builder, pick it in the sidebar, or press Enter on it in sc --list.",
     );
   const task = to === "lead" ? undefined : splitThreadName(to);
   if (to === "lead" && text && rest.length === 0) {
@@ -739,9 +740,12 @@ async function runCommand(args: string[]): Promise<void> {
     if (code === 0) console.log(`${host} is ready. Connect to it with:\n  sc --remote ${host}`);
     process.exit(code);
   }
-  // Plain sc, or sc --from <remote> as sc --remote sends it.
-  if (words.length === 0 || (first === "--from" && second && words.length === 2))
-    return leadCommand(second);
+  // Plain sc, or sc --from <remote> as sc --remote sends it. Either one with --list first shows
+  // the list in place of the screen.
+  const list = first === "--list";
+  const lead = list ? words.slice(1) : words;
+  if (lead.length === 0 || (lead[0] === "--from" && lead[1] && lead.length === 2))
+    return leadCommand(list, lead[1]);
   switch (first) {
     case "first-run":
     case "take-setup":

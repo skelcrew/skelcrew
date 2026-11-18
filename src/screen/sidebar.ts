@@ -123,7 +123,7 @@ export async function runSidebar(
       }
       switchTo(next.fullName);
     }
-    notice = noticeLines(updateNotice(), size().width);
+    notice = noticeLines(updateNotice(db), size().width);
     rows = doing("reading the rows", () => sidebarRows(db, running, roundLimit, Date.now(), open));
     entries = doing("counting the lists", () => entryCounts(db, open));
     // An agent can end and its client move to the lead by itself, so the session shown is asked
@@ -140,7 +140,7 @@ export async function runSidebar(
     if (running.includes(open.lead)) asked = null;
     else if (shown === open.lead && asked !== open.lead && !exited) {
       asked = open.lead;
-      openRepository(`${open.owner}/${open.repo}`);
+      openRepository(`${open.owner}/${open.repo}`, true);
     }
     // The header, the tabs and the strip go to tmux's status line, and only when they changed.
     const width = doing("asking tmux the agent's width", () => paneWidth(agents, rightPane));
@@ -209,7 +209,7 @@ export async function runSidebar(
     open = repositoryAndLead(db, fullName);
     // Not waited on, so the sidebar draws at once. The right pane starts a client on the new
     // lead, and no list shows.
-    openRepository(fullName);
+    openRepository(fullName, true);
     asked = open.lead;
     respawnPane(agents, rightPane, attachCommand(agents, open.lead, open.lead));
     tty = paneTty(agents, rightPane);

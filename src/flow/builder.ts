@@ -274,6 +274,8 @@ async function recordThread(
       review_round: null,
       verdict: null,
       review_line: null,
+      reviewed_commit: null,
+      ci_seen: false,
       review_at: null,
       harness: null,
       short: given.short ?? null,
@@ -295,6 +297,7 @@ async function recordThread(
       merge_noted: null,
       agents,
       flow,
+      review_post: null,
     };
     // A failed or done thread's row gives way to the new one, and messages that waited for its
     // builder go with it, as they were about the old work. Its task starts afresh too, with no

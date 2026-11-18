@@ -46,6 +46,8 @@ const working: Thread = {
   review_round: null,
   verdict: null,
   review_line: null,
+  reviewed_commit: null,
+  ci_seen: false,
   review_at: null,
   harness: null,
   short: null,
@@ -65,6 +67,7 @@ const working: Thread = {
   merge_noted: null,
   agents: null,
   flow: "default",
+  review_post: null,
 };
 const thread = (more: Partial<Thread>) => ({ ...working, ...more });
 

@@ -964,6 +964,8 @@ const state: Thread = {
   review_round: null,
   verdict: null,
   review_line: null,
+  reviewed_commit: null,
+  ci_seen: false,
   review_at: null,
   harness: null,
   short: null,
@@ -983,6 +985,7 @@ const state: Thread = {
   merge_noted: null,
   agents: null,
   flow: "default",
+  review_post: null,
 };
 const word = (more: Partial<Thread>) => threadWord({ ...state, ...more }, 3);
 const needing = { status: "waiting", needs_you: true } satisfies Partial<Thread>;

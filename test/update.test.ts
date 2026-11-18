@@ -1,6 +1,7 @@
 // Updates: a release of Skelcrew installing a newer one in the background, from a fake release
 // server, the sidebar's notice that it waits for a restart, and Skelcrew restarting the daemon on
 // the new release before you attach.
+import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import {
   existsSync,
@@ -30,7 +31,20 @@ const sum = (text: string) => new Bun.CryptoHasher("sha256").update(text).digest
 // A stand-in for a Skelcrew binary that says which release it is.
 const binary = (version: string) => `#!/bin/sh\necho "skelcrew ${version}"\n`;
 const installed = () => join(home, "bin", "sc");
-const marker = () => join(home, ".local", "share", "skelcrew", "installed");
+// The release the daemon noted it installed, from the database, or null with none.
+function marker(): string | null {
+  const file = join(home, ".local", "share", "skelcrew", "skelcrew.db");
+  if (!existsSync(file)) return null;
+  const db = new Database(file);
+  try {
+    const row = db.query("SELECT release FROM installed").get();
+    return row && typeof row === "object" && "release" in row ? String(row.release) : null;
+  } catch {
+    return null;
+  } finally {
+    db.close();
+  }
+}
 
 // Puts a release on the fake server as the latest, as GitHub lays one out.
 function latest(text: string, listed = sum(text)): void {
@@ -92,7 +106,8 @@ async function inProcess(code: string, build?: string, more: Record<string, stri
 // Has Skelcrew look for a newer release and install it over the stand-in Skelcrew.
 const installLatest = () =>
   inProcess(`import { installLatest } from ${JSON.stringify(source("machine/update.ts"))};
-console.log(await installLatest(${JSON.stringify(installed())}, "http://127.0.0.1:${releases.port}"));`);
+import { openDb } from ${JSON.stringify(source("db.ts"))};
+console.log(await installLatest(${JSON.stringify(installed())}, "http://127.0.0.1:${releases.port}", openDb()));`);
 
 test("installs a newer release over Skelcrew, and notes which one", async () => {
   latest(binary("0.4.3"));
@@ -100,7 +115,7 @@ test("installs a newer release over Skelcrew, and notes which one", async () => 
   expect(done.err).toBe("");
   expect(done.out).toBe("0.4.3\n");
   expect(readFileSync(installed(), "utf8")).toBe(binary("0.4.3"));
-  expect(readFileSync(marker(), "utf8")).toBe("0.4.3\n");
+  expect(marker()).toBe("0.4.3");
   // Staged beside Skelcrew and renamed over it, so nothing is left behind.
   expect(readdirSync(join(home, "bin"))).toEqual(["sc"]);
 });
@@ -110,7 +125,7 @@ test("downloads nothing more when Skelcrew already is the latest release", async
   const done = await installLatest();
   expect(done.out).toBe("null\n");
   expect(asked).toEqual(["/latest/download/SHA256SUMS"]);
-  expect(existsSync(marker())).toBe(false);
+  expect(marker()).toBeNull();
 });
 
 test("installs nothing that fails its checksum", async () => {
@@ -128,7 +143,7 @@ test("installs nothing that won't start on this machine", async () => {
   expect(done.code).toBe(1);
   expect(readFileSync(installed(), "utf8")).toBe(binary("0.4.2"));
   expect(readdirSync(join(home, "bin"))).toEqual(["sc"]);
-  expect(existsSync(marker())).toBe(false);
+  expect(marker()).toBeNull();
 });
 
 test("names the address when the release server can't be reached", async () => {
@@ -137,20 +152,22 @@ test("names the address when the release server can't be reached", async () => {
   expect(done.err).toContain(`http://127.0.0.1:${releases.port}/latest/download/SHA256SUMS`);
 });
 
-// What the sidebar's notice says to a Skelcrew of `build`.
+// What the list's notice says to a Skelcrew of `build`, from the database.
 const notice = async (build: string) =>
   (
     await inProcess(
       `import { updateNotice } from ${JSON.stringify(source("machine/update.ts"))};
-console.log(updateNotice());`,
+import { openDb } from ${JSON.stringify(source("db.ts"))};
+console.log(updateNotice(openDb()));`,
       build,
     )
   ).out;
 
-test("the sidebar's notice says a newer release is installed until Skelcrew runs on it", async () => {
+test("the list's notice says a newer release is installed until Skelcrew runs on it", async () => {
   expect(await notice("0.4.2")).toBe("\n");
-  mkdirSync(join(home, ".local", "share", "skelcrew"), { recursive: true });
-  writeFileSync(marker(), "0.4.3\n");
+  const db = new Database(join(home, ".local", "share", "skelcrew", "skelcrew.db"));
+  db.run("INSERT INTO installed (release) VALUES ('0.4.3')");
+  db.close();
   expect(await notice("0.4.2")).toBe("Skelcrew 0.4.3 installed · restart to use it\n");
   expect(await notice("0.4.3")).toBe("\n");
 });

@@ -97,7 +97,7 @@ function fakeCodex(): void {
     "codex",
     `for a; do [ "$prev" = -o ] && out=$a; prev=$a; done
 cat > /dev/null
-echo '{"verdict":"approve","body":"Ready to merge."}' > "$out"`,
+echo '{"verdict":"approve","body":"Ready to merge.","findings":[]}' > "$out"`,
   );
 }
 
@@ -806,7 +806,17 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
     // The checks are saved a moment before the thread needs you, in a write of their own, so
     // wait for the later write.
     await until(() => thread().needs_you === 1);
-    expect(thread()).toMatchObject({ status: "waiting", needs_you: 1, checks: "passing" });
+    expect(thread()).toMatchObject({
+      status: "waiting",
+      needs_you: 1,
+      checks: "passing",
+      ci_seen: 1,
+    });
+    // The CI checks vanish from the forge: the saved checks go back to none, but polls still
+    // remember the PR had CI, so the list never takes it for a repository without any.
+    pr({ reviews: [skelReview], checks: [approved] });
+    await until(() => thread().checks === null);
+    expect(thread()).toMatchObject({ ci_seen: 1 });
   });
 
   test("a failed check reaches the builder once, even after the forge fails and the daemon restarts", async () => {
@@ -2421,12 +2431,14 @@ exec ${bwrap} "$@"`,
 
       // A pending review, with the PR green all along: the plan stays armed and waits for it.
       // Its record is posted and the forge refuses the merge first, so the plan is ready but
-      // for the review, which is kept pending by holding its post on the PR.
+      // for the review, which is kept pending by holding its post on the PR. A review after the
+      // first edits Skelcrew's review there first, so that is held too.
       answer(plugin, "merge pr", { refused: "Not yet" });
       await arm();
       green();
       await until(() => thread().merge_waits === "the forge, which refused: Not yet");
       writeFileSync(join(plugin, "hold-review"), "");
+      writeFileSync(join(plugin, "hold-edit-review"), "");
       expect(sc("review", "app-12").stderr.toString()).toBe("");
       // A poll that began before the review can still be asking the forge to merge. The first
       // poll to wait on the review comes after it, as one poll runs at a time, so only then is
@@ -2441,6 +2453,7 @@ exec ${bwrap} "$@"`,
       // Once the review ends, the PR stops being green, so this phase merges nothing after it.
       pr({ head, reviews: [skelReview], checks: [{ ...approved, state: "running" }] });
       rmSync(join(plugin, "hold-review"));
+      rmSync(join(plugin, "hold-edit-review"));
       await until(() => thread().reviewing === null && thread().submitting === null, 30_000);
       await morePolls();
       expect(merges()).toHaveLength(tried);
