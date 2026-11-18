@@ -38,7 +38,7 @@ function settings(yours: string, shared: string | null): void {
 // Runs code against config.ts in a process of its own, as homedir() keeps the HOME this one
 // started with, and returns what it printed and the error it ended with, if any.
 function run(code: string): { out: string; err: string } {
-  const script = `import { repositoryCommands, reviewLimit, threadConfig } from ${JSON.stringify(source("config.ts"))};
+  const script = `import { checkLimit, repositoryCommands, reviewLimit, threadConfig } from ${JSON.stringify(source("config.ts"))};
 const app = { owner: "simon", repo: "app" };
 ${code}`;
   const done = Bun.spawnSync([process.execPath, "-e", script], {
@@ -162,4 +162,18 @@ test("how many reviews run at once comes from your config only, else a quarter o
   expect(limit()).toBe(quarter);
   settings("harness: claude\nlimits: { reviews: 0 }\n", null);
   expect(run("reviewLimit();").err).toContain("isn't valid");
+});
+
+test("how many checks run at once comes from your config only, else half the cores over four", () => {
+  // Skelcrew's own default, worked out here the same way, as the cores differ by machine.
+  const eighth = Math.max(1, Math.floor(availableParallelism() / 2 / 4));
+  const limit = () => Number(run("console.log(checkLimit());").out);
+  settings("harness: claude\n", null);
+  expect(limit()).toBe(eighth);
+  settings("harness: claude\nlimits: { checks: 3, reviews: 2 }\n", "limits: { checks: 9 }\n");
+  expect(limit()).toBe(3);
+  settings("harness: claude\n", "limits: { checks: 9 }\n");
+  expect(limit()).toBe(eighth);
+  settings("harness: claude\nlimits: { checks: 0 }\n", null);
+  expect(run("checkLimit();").err).toContain("isn't valid");
 });

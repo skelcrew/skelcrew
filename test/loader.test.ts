@@ -45,6 +45,7 @@ const all = [
   "roles",
   "rounds",
   "reviews",
+  "checks",
   "setup",
   "test",
   "tracker",
@@ -55,6 +56,7 @@ const all = [
   "declined",
 ];
 const quarter = Math.max(1, Math.floor(availableParallelism() / 4));
+const eighth = Math.max(1, Math.floor(availableParallelism() / 2 / 4));
 
 test("with no files, every setting is the built-in default", () => {
   files(null, null);
@@ -66,6 +68,7 @@ test("with no files, every setting is the built-in default", () => {
     },
     rounds: 3,
     reviews: quarter,
+    checks: eighth,
     reviewMinutes: 30,
     declined: [],
   });
@@ -81,6 +84,7 @@ test("your config goes over the built-in defaults", () => {
     },
     rounds: 5,
     reviews: 2,
+    checks: eighth,
     reviewMinutes: 30,
     yourHarness: "codex",
     declined: [],
@@ -100,6 +104,7 @@ test("the repository's skelcrew.yaml goes over your config, key by key", () => {
     },
     rounds: 2,
     reviews: quarter,
+    checks: eighth,
     setup: ["make"],
     tracker: "none",
     reviewMinutes: 30,
@@ -130,6 +135,7 @@ test("a file sets only what is its own", () => {
     },
     rounds: 3,
     reviews: quarter,
+    checks: eighth,
     reviewMinutes: 30,
     declined: [],
   });

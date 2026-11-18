@@ -584,7 +584,7 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
     await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), 30_000);
     const prompt = read(join(codexHome(), "sessions", "prompt-1"));
     expect(prompt).toContain(
-      "No CI runs on this commit, so run the repository's whole test suite, with `bun test`.",
+      "No CI runs on this commit, so run the repository's whole test suite with `sc check`, which runs `bun test` once one of this machine's check slots is free. Never run that command directly, as other agents share this machine.",
     );
   }, 60_000);
 

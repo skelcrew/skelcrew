@@ -5,7 +5,7 @@ import type { Database } from "bun:sqlite";
 import { z } from "zod";
 import { type HarnessName, harnessNamed } from "../agents/harness.ts";
 import { repositoryCommands, reviewLimit, threadConfig } from "../config.ts";
-import { cloneDir } from "../paths.ts";
+import { cloneDir, reviewSocket } from "../paths.ts";
 import { failedLog, forgeOf, openPr, postReview, setStatus } from "../plugins/ask.ts";
 import { quietly } from "../run.ts";
 import { errorText } from "../say.ts";
@@ -322,6 +322,7 @@ async function reviewRound(
             // Setting up the thread's clone put the base branch there under origin/.
             base: `origin/${baseOf(thread)}`,
             test: repositoryCommands(thread).test,
+            socket: reviewSocket(thread.folder),
           });
           const { harness } = given;
           if (result.verdict === "limited") {

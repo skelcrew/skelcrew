@@ -382,7 +382,7 @@ export function builderInstructions(commands: Pick<Settings, "setup" | "test">):
       ? "No test command is configured."
       : test.length === 0
         ? "Test is configured as none, so the repository has no test suite to run."
-        : `The repository's whole test suite runs with ${shown(test)}. That is for CI and the reviewer, so don't run it yourself. It shows how the repository runs its tests, lint and typecheck, so run the parts near your change.`;
+        : `The repository's whole test suite runs with ${shown(test)}. That is for CI and the reviewer, so don't run it yourself. If you ever must, run \`sc check\`, which runs it once one of this machine's check slots is free, never the command itself. It shows how the repository runs its tests, lint and typecheck, so run the parts near your change.`;
   return `${instructions}\n\n${setupTold} ${testTold}\n`;
 }
 
