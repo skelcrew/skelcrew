@@ -541,14 +541,48 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
     expect(typed()).toContain("The check test failed");
     expect(asked(plugin)).toContainEqual({ ask: "log", repository: "simon/app", check: "900" });
     await until(() => handled("900"));
-    // The approval waits for the builder's next round, even if the check passes again.
-    expect(thread()).toMatchObject({ status: "working", needs_you: 0, ci_failed: 1 });
+    expect(thread()).toMatchObject({ status: "working", needs_you: 0, ci_passed: 0 });
     const first = running[0];
     first?.kill();
     await first?.exited;
     serve();
     await morePolls();
     expect(typed().split("The check test failed").length - 1).toBe(1);
+  }, 60_000);
+
+  // A check can fail on one run and pass on the next, with no new round. The task follows the
+  // latest run: ready for review, working while the builder hears of the failure, then ready
+  // again once the check passes and the builder has nothing new to submit.
+  test("an approved PR whose check fails, then passes on a run again, is ready for review again", async () => {
+    await approvedApp12();
+    const stage = () => {
+      const done = Bun.spawnSync([process.execPath, main, "ls", "app", "--json"], { env: env() });
+      return done.success ? JSON.parse(done.stdout.toString())[0]?.stage : undefined;
+    };
+    pr({ reviews: [skelReview], checks: [approved, check(900, "passed")] });
+    await until(() => thread().needs_you === 1);
+    expect(thread()).toMatchObject({ status: "waiting", ci_passed: 1 });
+    expect(stage()).toBe("ready for review");
+    // The check runs again and fails: the builder is told, and the task is at work again.
+    pr({ reviews: [skelReview], checks: [approved, check(901, "failed")] });
+    await until(() => typed().includes("The check test failed"));
+    await until(() => handled("901"));
+    expect(thread()).toMatchObject({ status: "working", needs_you: 0, ci_passed: 0 });
+    expect(stage()).toBe("working");
+    // It runs once more and passes, which the next poll saves.
+    pr({ reviews: [skelReview], checks: [approved, check(902, "passed")] });
+    await until(() => thread().ci_passed === 1);
+    // The builder's turn ends at the commit already approved, with nothing new to submit, as
+    // Claude Code's hooks would say. The approval stands, and the next poll finds it green.
+    const short = new Bun.CryptoHasher("sha256").update("app-12").digest("hex").slice(0, 16);
+    const builderSocket = join(home, "run", "skelcrew", "threads", short, "skelcrew.sock");
+    expect(await askOn(builderSocket, { command: "question answered" })).toEqual({ asking: false });
+    const head = git(join(data(), "threads", "app-12"), "rev-parse", "HEAD");
+    const ended = { command: "turn ended", head, message: "It was a flaky run." };
+    expect(await askOn(builderSocket, ended)).toEqual({ asking: false });
+    await until(() => thread().needs_you === 1);
+    expect(thread()).toMatchObject({ status: "waiting", stalled: 0, ci_passed: 1 });
+    expect(stage()).toBe("ready for review");
   }, 60_000);
 
   // An event is handled at once, and its message waits for the builder however long it is busy.

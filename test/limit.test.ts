@@ -236,7 +236,7 @@ const thread = (change: Partial<Thread>): Thread => ({
   review_limited: false,
   review_reset: null,
   conflicts: null,
-  ci_failed: false,
+  ci_passed: false,
   noting: null,
   title: null,
   started: null,

@@ -226,7 +226,7 @@ async function recordThread(
       started: Date.now(),
       checks: null,
       conflicts: null,
-      ci_failed: false,
+      ci_passed: false,
       reviewer: null,
       reviewed_by: null,
       review_round: null,
