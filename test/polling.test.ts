@@ -1821,8 +1821,19 @@ exec ${bwrap} "$@"`,
       )
         .stdout.toString()
         .trim();
-    const arm = () =>
-      runSkelInTerminal(socket, env(), ["merge", "--when-ready", "app-12"], question, "y");
+    // Arms a new plan, and checks sc said so. A plan still armed, such as after a cancel that
+    // was refused, would otherwise carry on as if it were the new one.
+    const arm = async () => {
+      const said = await runSkelInTerminal(
+        socket,
+        env(),
+        ["merge", "--when-ready", "app-12"],
+        question,
+        "y",
+      );
+      expect(said).toContain("app-12 merges once it is approved and green.");
+      return said;
+    };
 
     test("n arms nothing, y arms it, and no agent or script without a terminal can", async () => {
       await approvedApp12();
