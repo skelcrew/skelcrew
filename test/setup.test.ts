@@ -1205,7 +1205,7 @@ test("a locked commit the repository no longer has is refused, and sc update -g 
   lockFake("0.1.0", "deadbeef".repeat(5));
   const refused = await install("y\n");
   expect(refused.code).toBe(1);
-  expect(refused.err).toContain("which your lock pins");
+  expect(refused.err).toContain("which your lock pins, is gone");
   expect(refused.err).toContain("sc update -g moves it to its newest version");
   const updated = await atTerminal("y\n", home, ["update", "-g", "fake"]);
   expect(updated.err).toBe("");
@@ -1283,4 +1283,38 @@ test("in a GitHub checkout, files that name the GitHub plugin skip the offer, an
   const folder = join(home, ".local", "share", "skelcrew", "plugins", "github", "0.1.0");
   expect(git(folder, "rev-parse", "HEAD")).toBe(locked);
   expect(readFileSync(lock(), "utf8")).toContain(locked);
+});
+
+// A forge can refuse to serve a commit by its id. Then the tag counts only while it still points
+// at the commit your lock pins. A git that refuses such fetches stands in for that forge.
+test("when the forge won't serve the locked commit, sc install takes the tag only while it is still at that commit", async () => {
+  noGitHubPlugin();
+  fakeGitHub();
+  publishFake("0.1.0");
+  await skel("1\nsk-ant-oat01-good\n");
+  const real = Bun.which("git") ?? "git";
+  unlinkSync(join(bin, "git"));
+  writeFileSync(
+    join(bin, "git"),
+    `#!/bin/sh\ncase "$*" in *" fetch --quiet --depth 1 "*) echo "fatal: unadvertised object" >&2; exit 128 ;; esac\nexec ${real} "$@"\n`,
+    { mode: 0o755 },
+  );
+  const locked = fakeCommit("0.1.0");
+  lockFake("0.1.0");
+  const run = await install("y\n");
+  expect(run.err).toBe("");
+  expect(run.out).toContain("Installed fake 0.1.0.");
+  const folder = join(home, ".local", "share", "skelcrew", "plugins", "fake", "0.1.0");
+  expect(git(folder, "rev-parse", "HEAD")).toBe(locked);
+  // Once the tag moves, the locked commit can't be reached, which is said, and the lock stays.
+  publishFake("0.1.0");
+  noGitHubPlugin();
+  const lockBefore = readFileSync(lock(), "utf8");
+  const gone = await install("y\n");
+  expect(gone.code).toBe(1);
+  expect(gone.err).toContain(
+    `commit ${locked.slice(0, 12)} of simon/skelcrew-fake, which your lock pins, is gone`,
+  );
+  expect(gone.err).toContain(`v0.1.0 is at ${fakeCommit("0.1.0").slice(0, 12)} now`);
+  expect(readFileSync(lock(), "utf8")).toBe(lockBefore);
 });

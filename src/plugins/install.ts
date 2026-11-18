@@ -94,18 +94,24 @@ function cloneTag(
     // The pinned commit is fetched by itself, so a tag moved since it was locked still installs
     // exactly the code you approved. git can't clone a commit, only a branch or a tag, so the
     // folder starts empty and fetches it.
-    const steps = [
+    const fetched = [
       ["init", "--quiet", staged],
       ["-C", staged, "fetch", "--quiet", "--depth", "1", url, commit],
       ["-C", staged, "checkout", "--quiet", "FETCH_HEAD"],
-    ];
-    for (const step of steps) {
-      const run = git(step);
-      if (run.success) continue;
+    ].every((step) => git(step).success);
+    // A forge can refuse to serve a commit by its id. Then the tag is cloned, which is only
+    // the locked code while the tag still points at that commit.
+    if (!fetched) {
       rmSync(staged, { recursive: true, force: true });
-      throw new Error(
-        `git couldn't fetch commit ${commit.slice(0, 12)} of ${source}, which your lock pins: ${run.stderr.toString().trim()}. sc update -g moves it to its newest version, after showing what it runs`,
-      );
+      const cloned = git(["clone", "--quiet", "--depth", "1", "--branch", tag, url, staged]);
+      const at = cloned.success ? commitOf(staged) : null;
+      if (at !== commit) {
+        rmSync(staged, { recursive: true, force: true });
+        const now = at === null ? `${tag} can't be cloned` : `${tag} is at ${at.slice(0, 12)} now`;
+        throw new Error(
+          `commit ${commit.slice(0, 12)} of ${source}, which your lock pins, is gone: git couldn't fetch it, and ${now}. sc update -g moves it to its newest version, after showing what it runs`,
+        );
+      }
     }
   }
   // A tag or commit that disagrees with its manifest is refused, so the version you were told
@@ -161,9 +167,9 @@ export function askYes(question: string): boolean | null {
 
 // Shows what the plugin is and runs, and asks whether to `verb` it, such as Install. It says the
 // plugin's name, source, version, kind, what it provides and every command its manifest runs, as
-// it runs as you, outside the sandbox. Returns whether you went ahead. Anything but a yes stops
-// it, a typo or no answer included, and nothing of the plugin runs before this.
-function confirmPlugin(manifest: Manifest, from: string, verb: string): boolean {
+// it runs as you, outside the sandbox. Returns true for yes, false for any other answer, and null
+// with no terminal to answer in. Nothing of the plugin runs before this.
+function confirmPlugin(manifest: Manifest, from: string, verb: string): boolean | null {
   const { name, version, kind, provides } = manifest;
   const kindName = kind === "io" ? "an I/O" : "a runtime";
   const { build = [], setup, call, git_credentials, add, exec, push } = manifest;
@@ -173,7 +179,7 @@ function confirmPlugin(manifest: Manifest, from: string, verb: string): boolean 
   console.log(
     `${name} ${version} from ${removeControlCodes(from)} is ${kindName} plugin that provides ${provides.join(", ")}. It runs these as you, outside Skelcrew's sandbox:\n${commands.join("\n")}`,
   );
-  return askYes(`${verb} it? [Y/n]`) === true;
+  return askYes(`${verb} it? [Y/n]`);
 }
 
 // Runs one of a plugin's commands in your terminal, in the plugin's folder, so a setup can ask
@@ -331,7 +337,12 @@ export function updatePlugin(db: Database, plugin: Plugin, options: Options = {}
   // A folder of yours gets only its build again, after showing what it runs now and asking, as
   // its commands may have changed since it was installed. Its setup is for sc setup.
   if (source === null) {
-    if (ask && !confirmPlugin(current, folder, "Build")) {
+    const answer = ask ? confirmPlugin(current, folder, "Build") : true;
+    if (answer === null)
+      throw new Error(
+        `building ${name} again runs its commands, which needs your yes at a terminal, so Skelcrew didn't run them`,
+      );
+    if (!answer) {
       console.log(`Skelcrew didn't build ${name} again.`);
       return;
     }
