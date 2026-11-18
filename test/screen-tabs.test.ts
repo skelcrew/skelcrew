@@ -169,8 +169,9 @@ test("a lead that stops while you look at it is brought back, once", async () =>
     "the daemon to bring the lead back",
   );
   // The stand-in brings nothing back, and the sidebar doesn't ask again each second. The right
-  // side says once that it waits, never tmux's error each second.
-  await Bun.sleep(3000);
+  // side says once that it waits, never tmux's error each second. Two seconds see the sidebar
+  // look twice.
+  await Bun.sleep(2000);
   expect(asked.filter((open) => open === "open simon/app from a tab")).toHaveLength(1);
   expect(right().split("Waiting for the lead to start.")).toHaveLength(2);
   expect(seen()).not.toContain("can't find session");

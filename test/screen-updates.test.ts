@@ -1,7 +1,7 @@
 // Lists and pages that follow Skelcrew's copy as it changes, and what the screen writes to
 // your terminal while nothing changes.
 import { afterEach, beforeEach, expect, setDefaultTimeout, test } from "bun:test";
-import { existsSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { stillRunning } from "../src/agents/sessions.ts";
 import { itemSql, threadSql } from "./harness.ts";
@@ -10,6 +10,7 @@ import {
   agents,
   clickRow,
   endTest,
+  given,
   home,
   issueUrl,
   leaving,
@@ -20,6 +21,7 @@ import {
   openList,
   openOnGitHub,
   press,
+  read,
   ready,
   right,
   screen,
@@ -38,22 +40,83 @@ setDefaultTimeout(20_000);
 beforeEach(startTest);
 afterEach(endTest);
 
-test("a list or page left open writes nothing", async () => {
-  sql("UPDATE threads SET status = 'waiting', changed = 0 WHERE status = 'working'");
-  await openList("Threads");
-  await Bun.sleep(1500);
+// Has tmux copy what the screen writes to your terminal into a file, and gives back the file,
+// empty, once the screen has settled. tmux redraws a pane's border a moment after the pane
+// opens, so the screen has settled once it has written nothing for half a second.
+async function copyOnceSettled(): Promise<string> {
   const written = join(home, "written");
   tmux(terminal, "pipe-pane", "-O", "-t", "=one:", `cat >> ${written}`);
-  await Bun.sleep(3000);
-  expect(existsSync(written) ? readFileSync(written, "utf8") : "").toBe("");
+  await untilQuiet(written);
+  // Emptied rather than removed: tmux's cat keeps writing to the file it opened, and adds to its
+  // end.
+  writeFileSync(written, "");
+  return written;
+}
+
+// Returns once the copy of what the screen writes has grown by nothing for half a second.
+async function untilQuiet(written: string): Promise<void> {
+  const size = () => (existsSync(written) ? statSync(written).size : 0);
+  let last = size();
+  let quietSince = Date.now();
+  // A screen still writing after five seconds never settles, and fails the test.
+  const deadline = Date.now() + 5000;
+  while (Date.now() - quietSince < 500) {
+    if (Date.now() > deadline) throw new Error("the screen kept writing for five seconds");
+    await Bun.sleep(50);
+    if (size() === last) continue;
+    last = size();
+    quietSince = Date.now();
+  }
+}
+
+// Puts a tmux in front of the real one that notes each time the sidebar asks for the agents'
+// panes, as it does first in every refresh. A refresh that changes nothing writes nothing, so
+// this is how a test sees one. It must be set before the screen opens.
+function noteRefreshes(): void {
+  const folder = join(home, "noting");
+  mkdirSync(folder);
+  writeFileSync(
+    join(folder, "tmux"),
+    `#!/bin/sh\ncase "$*" in *"list-panes -a -F #{pane_dead}"*) echo >> ${join(home, "refreshes")} ;; esac\nexec ${Bun.which("tmux") ?? "tmux"} "$@"\n`,
+    { mode: 0o755 },
+  );
+  given.before = `PATH=${folder}:$PATH `;
+}
+
+// How many refreshes the sidebar has started.
+const refreshesStarted = () => read("refreshes").split("\n").length - 1;
+
+// Returns once the sidebar has started two refreshes from now. The first reads Skelcrew's copy
+// as it is now, and the second starts only once the first has drawn what it read.
+async function sidebarRefreshedTwice(): Promise<void> {
+  const before = refreshesStarted();
+  await until(() => refreshesStarted() >= before + 2, "the sidebar to refresh twice");
+}
+
+// Returns once the list and the sidebar have each read Skelcrew's copy again at least once. The
+// list does so each second, but when nothing changed it writes nothing and asks tmux nothing,
+// so nothing shows that it did: two seconds see it do so twice. The sidebar's refreshes in that
+// time show that the screen wasn't held up meanwhile.
+async function twoRefreshes(): Promise<void> {
+  const before = refreshesStarted();
+  await Bun.sleep(2000);
+  await until(() => refreshesStarted() >= before + 2, "the sidebar to refresh twice");
+}
+
+test("a list or page left open writes nothing", async () => {
+  noteRefreshes();
+  sql("UPDATE threads SET status = 'waiting', changed = 0 WHERE status = 'working'");
+  await openList("Threads");
+  const written = await copyOnceSettled();
+  await twoRefreshes();
+  expect(readFileSync(written, "utf8")).toBe("");
   clickRow("Issues");
   await onRight("Not started");
   press("Enter");
   await onRight("line 1 of the description");
-  await Bun.sleep(1500);
-  rmSync(written, { force: true });
-  await Bun.sleep(3000);
-  expect(existsSync(written) ? readFileSync(written, "utf8") : "").toBe("");
+  await copyOnceSettled();
+  await twoRefreshes();
+  expect(readFileSync(written, "utf8")).toBe("");
 });
 
 test("a list follows Skelcrew's copy as it changes", async () => {
@@ -95,13 +158,14 @@ test("a list scrolled with the wheel stays where you put it as it reads the copy
     ),
   );
   sql(many.join("\n"));
+  noteRefreshes();
   await openList("Issues");
   for (let i = 0; i < 4; i++) wheel(65);
   // Four notches reach the list's end, where app-124 is the first issue. The first notch alone
   // already hides app-139, and the last moves fewer lines, so the wait is for the end.
   await until(() => !right().includes("app-125"), "the list to scroll to its end");
   const scrolled = right();
-  await Bun.sleep(2500);
+  await twoRefreshes();
   expect(right()).toBe(scrolled);
 });
 
@@ -175,19 +239,32 @@ test("two terminals can each be on a list of their own", async () => {
 });
 
 test("with nothing working, an open screen sends your terminal nothing at all", async () => {
-  // Close enough to a minute that a time shown on any row would change during the wait.
-  const started = Date.now() - 56_000;
-  sql(`UPDATE threads SET status = 'waiting', started = ${started} WHERE status = 'working'`);
+  noteRefreshes();
+  sql(`UPDATE threads SET status = 'waiting', started = ${Date.now()} WHERE status = 'working'`);
   open("lead");
   await ready("lead");
   await until(() => seen().includes("checks · claude"), "the threads");
-  // tmux redraws its border once as the screen settles.
-  await Bun.sleep(1500);
-  const written = join(home, "written");
-  tmux(terminal, "pipe-pane", "-O", "-t", "=one:", `cat >> ${written}`);
-  await Bun.sleep(4000);
-  expect(existsSync(written) ? readFileSync(written, "utf8") : "").toBe("");
-});
+  const written = await copyOnceSettled();
+  // The threads started three seconds short of a minute ago, so a time shown on a row would change
+  // during the wait. The sidebar must read that before the minute, so a busy machine that
+  // refreshed only after it tries again with a minute further on.
+  let minute = 0;
+  for (let tries = 0; tries < 5 && Date.now() >= minute; tries++) {
+    minute = Date.now() + 3000;
+    sql(`UPDATE threads SET started = ${minute - 60_000} WHERE status = 'waiting'`);
+    await sidebarRefreshedTwice();
+  }
+  expect(Date.now()).toBeLessThan(minute);
+  // Past the minute, the sidebar reads the threads again and draws what it read. A time it drew
+  // reaches the copy a moment later.
+  await Bun.sleep(minute - Date.now());
+  await sidebarRefreshedTwice();
+  await untilQuiet(written);
+  expect(readFileSync(written, "utf8")).toBe("");
+  const rows = seen().split("\n");
+  const row = rows.findIndex((line) => line.includes("app-12"));
+  expect(rows[row + 1]?.split("│")[0]?.trim()).toBe("checks · claude");
+}, 60_000);
 
 test("a working thread's time moves on by itself, and writes when it does", async () => {
   sql(`UPDATE threads SET started = ${Date.now() - 58_000} WHERE folder = 'app-12'`);

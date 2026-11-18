@@ -4,6 +4,7 @@ import { dlopen, FFIType } from "bun:ffi";
 import { existsSync, mkdirSync, openSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server, type Socket } from "node:net";
 import { dirname } from "node:path";
+import { z } from "zod";
 import {
   agentRuns,
   interruptSession,
@@ -98,6 +99,15 @@ function callingThread(caller: Caller): Thread {
   return thread;
 }
 
+// How long the processes the daemon started get to end once it stops, in milliseconds, before
+// they are killed. Tests set SKELCREW_STOP_WAIT_MS shorter, so a process that ignores the stop
+// doesn't cost them five seconds.
+const stopWait = z.coerce
+  .number()
+  .min(0)
+  .catch(5000)
+  .parse(process.env.SKELCREW_STOP_WAIT_MS ?? 5000);
+
 // Ends the daemon on a signal: removes its sockets, ends the processes it started, and exits.
 // The agents' sessions aren't the daemon's processes, so agents keep working while the
 // daemon is down. The processes it started, such as a git clone or a reviewer, are ended and
@@ -109,7 +119,7 @@ function callingThread(caller: Caller): Thread {
 function endWhatItStarted(sockets: string[]): void {
   // Remove the sockets first, so no caller reaches a daemon on its way out.
   for (const socket of sockets) rmSync(socket, { force: true });
-  // Ask everything the daemon started to end, give it five seconds, then kill what is left.
+  // Ask everything the daemon started to end, give it a while, then kill what is left.
   const started = processTree(process.pid).slice(1);
   const end = (pids: number[], signal: NodeJS.Signals) => {
     for (const pid of pids)
@@ -118,7 +128,7 @@ function endWhatItStarted(sockets: string[]): void {
       } catch {}
   };
   end(started, "SIGTERM");
-  const deadline = Date.now() + 5000;
+  const deadline = Date.now() + stopWait;
   while (stillRunning(started).length > 0 && Date.now() < deadline) Bun.sleepSync(50);
   end(stillRunning(started), "SIGKILL");
   process.exit(0);

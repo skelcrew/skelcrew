@@ -758,15 +758,16 @@ describe("with a forge", () => {
   test("sc show still shows the task when the forge hangs on a log", async () => {
     const settings = forgeThreads();
     writeFileSync(join(settings, "hold-log"), "");
-    serve();
+    // The daemon waits two seconds for the log, rather than its usual ten.
+    startDaemon(socket, { ...env(), SKELCREW_LOG_WAIT_MS: "2000" }, running);
     await untilAnswers();
     const started = Date.now();
     const shown = await skel(["show", "app-12"]);
-    expect(Date.now() - started).toBeLessThan(20_000);
+    expect(Date.now() - started).toBeLessThan(10_000);
     expect(shown.err).toBe("");
     expect(shown.out).toStartWith("app-12  Add export\n");
     expect(shown.out).toEndWith(
-      "Log of test, from the forge\n(Skelcrew couldn't read its log: github didn't answer within 10 seconds)\n",
+      "Log of test, from the forge\n(Skelcrew couldn't read its log: github didn't answer within 2 seconds)\n",
     );
   }, 40_000);
 
