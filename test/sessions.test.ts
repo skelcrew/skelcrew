@@ -209,6 +209,49 @@ test("a hold that cancels the typing at its last look, before the paste, leaves 
   expect(read("received.txt")).toBe("");
 });
 
+// Someone can scroll back in the moment between the paste and its Enter. The Enter would go to
+// copy mode instead of the agent, and the message would sit at its prompt unsent, so the Enter
+// waits until they are back at the bottom.
+test("an Enter after the paste waits while the caller holds it, such as someone scrolled back", async () => {
+  start("lead", harness());
+  await showing("lead", claude.marks.prompt);
+  const inMode = () =>
+    Bun.spawnSync([
+      "tmux",
+      "-L",
+      socket,
+      "display-message",
+      "-p",
+      "-t",
+      "=lead:",
+      "#{pane_in_mode}",
+    ])
+      .stdout.toString()
+      .trim() === "1";
+  let looks = 0;
+  const hold = () => {
+    looks++;
+    // The last look before the paste finds nobody scrolled back. Someone scrolls back just
+    // after the paste, before its Enter.
+    if (looks === 2)
+      setTimeout(
+        () => Bun.spawnSync(["tmux", "-L", socket, "copy-mode", "-t", "=lead:"]),
+        moment / 2,
+      );
+    return inMode() ? "someone has scrolled back in it" : "";
+  };
+  const typing = deliver(socket, "lead", claude.marks, "hello", { moment, hold });
+  // The stand-in reads whole lines, so nothing shows in what it received before the Enter.
+  await until(inMode);
+  await Bun.sleep(1000);
+  expect(inMode()).toBe(true);
+  expect(read("received.txt")).toBe("");
+  Bun.spawnSync(["tmux", "-L", socket, "send-keys", "-t", "=lead:", "-X", "cancel"]);
+  expect(await typing).toBe("typed");
+  await until(() => read("received.txt").endsWith("\n"));
+  expect(read("received.txt")).toBe("\x1b[200~hello\x1b[201~\n");
+});
+
 // A stand-in for Claude Code that draws the screen given, laid out as Claude Code's: what the
 // agent said, then its input between two rules, then its footer. It keeps what is typed in.
 // SECONDS in a line is a timer: the screen is then redrawn once a second with it counting, as

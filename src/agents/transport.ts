@@ -11,7 +11,8 @@ import { dropStaged, pasteStaged, readSession, sendKey, stagePaste } from "./ses
 // is it, not a person's. `hold` gives a reason of the caller's to wait, or empty text for none,
 // such as a person scrolled back in the lead's chat. It is asked right before the text is
 // readied and again right before the paste, so a reason that comes up while typing waits still
-// counts. It may abort `signal`, such as when the message it would send went stale.
+// counts, and after the paste, before its Enter. It may abort `signal`, such as when the message
+// it would send went stale, which stops typing only until the paste.
 type Waits = {
   moment?: number;
   timeout?: number;
@@ -224,6 +225,10 @@ async function typeNow(
     // and the message is never sent. So the Enter goes on its own, a moment after the paste.
     pasteStaged(socket, name, staged.at(-1) ?? "");
     await Bun.sleep(moment);
+    // Someone who scrolled back since the paste would take the Enter into copy mode, and the
+    // message would sit at the prompt unsent. So the Enter waits while the caller holds it. The
+    // message is in by now, so a hold that cancels it no longer stops the Enter.
+    while ((waits.hold?.() ?? "") !== "") await Bun.sleep(moment);
     if (waits.signal?.aborted && waits.signal.reason === forQuestion) return "left unsent";
     sendKey(socket, name, "Enter");
     return "typed";
