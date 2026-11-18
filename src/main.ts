@@ -626,7 +626,7 @@ async function tellCommand(args: string[]): Promise<void> {
   const { tellOn, tellTheLead } = await import("./client.ts");
   if (process.env.SKELCREW_SANDBOX !== "1")
     throw new Error(
-      "sc tell is for the lead and builders. To type to a builder, pick it in the sidebar.",
+      "sc tell is for the lead and builders. To type to a builder, pick it in the sidebar, or press Enter on it in sc --list.",
     );
   const task = to === "lead" ? undefined : splitThreadName(to);
   if (to === "lead" && text && rest.length === 0) {
