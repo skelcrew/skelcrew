@@ -820,3 +820,24 @@ test("when your lock can't be written, add and update leave the plugin and your 
   expect(existsSync(join(plugins(), "fake", "0.2.0"))).toBe(false);
   chmodSync(yourLockFile(), 0o644);
 });
+
+test("when your files can't be written, sc remove -g leaves the plugin installed and named", async () => {
+  publish("skelcrew/skelcrew-fake", "0.1.0");
+  await skel(["add", "-g", "skelcrew/skelcrew-fake"], "y\n");
+  const config = readFileSync(yourConfig(), "utf8");
+  const pinned = readFileSync(yourLockFile(), "utf8");
+  for (const file of [yourLockFile(), yourConfig()]) {
+    chmodSync(file, 0o444);
+    const refused = await skel(["remove", "-g", "fake"]);
+    expect(refused.code).toBe(1);
+    chmodSync(file, 0o644);
+    expect(readFileSync(yourConfig(), "utf8")).toBe(config);
+    expect(readFileSync(yourLockFile(), "utf8")).toBe(pinned);
+    expect((await skel(["plugins"])).out).toBe("fake 0.1.0 io: tracker, forge\n");
+    expect(existsSync(settings("fake"))).toBe(true);
+  }
+  const removed = await skel(["remove", "-g", "fake"]);
+  expect(removed.err).toBe("");
+  expect((await skel(["plugins"])).out).toBe("No plugins installed.\n");
+  expect(existsSync(settings("fake"))).toBe(false);
+});

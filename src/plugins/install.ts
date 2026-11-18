@@ -458,10 +458,11 @@ export function updatePlugins(name?: string): void {
 }
 
 // Removes a plugin with its settings and tokens. A plugin from GitHub loses its folders and its
-// line in your lock too, and a folder of yours stays. It refuses while the plugin is the tracker
-// of a repository Skelcrew has, as that repository would lose its tasks, and while it is the forge
-// of one, which would lose its PRs and its login for pushing.
-export function removePlugin(name: string): void {
+// line in your lock too, and with `named` its line under plugins: in your config.yaml. A folder of
+// yours stays. It refuses while the plugin is the tracker of a repository Skelcrew has, as that
+// repository would lose its tasks, and while it is the forge of one, which would lose its PRs and
+// its login for pushing.
+export function removePlugin(name: string, named = false): void {
   const db = openDb();
   const plugin = findPlugin(db, name);
   // The repositories that use it as their tracker, then as their forge.
@@ -473,8 +474,15 @@ export function removePlugin(name: string): void {
       throw new Error(
         `${name} is the ${job} of ${usingIt.map((r) => r.name).join(", ")}, so Skelcrew keeps it`,
       );
+  // Your files change first. A write that fails puts both back and removes nothing, so the
+  // plugin stays installed and named, and a retry starts over.
+  const { source } = plugin;
+  if (source !== null)
+    writeBoth(() => {
+      if (named) setYourPlugins(yourPlugins().filter((one) => one !== source));
+      setLocked(db, source, null);
+    });
   db.run("DELETE FROM plugins WHERE name = ?", [name]);
-  if (plugin.source !== null) setLocked(db, plugin.source, null);
   // The settings folder is the one settingsDir makes.
   rmSync(join(configDir(), "plugins", name), { recursive: true, force: true });
   if (plugin.source !== null) rmSync(join(pluginsDir(), name), { recursive: true, force: true });
@@ -511,11 +519,16 @@ export function removeYourPlugin(given: string): void {
     null;
   if (!installed && source === null)
     throw new Error(`there is no plugin named ${given}: sc plugins lists them`);
-  if (installed) removePlugin(installed.name);
+  if (installed) {
+    removePlugin(installed.name, true);
+    return;
+  }
   if (source === null) return;
-  setYourPlugins(yourPlugins().filter((one) => one !== source));
-  setLocked(db, source, null);
-  if (!installed) console.log(`Removed ${given} from your plugins.`);
+  writeBoth(() => {
+    setYourPlugins(yourPlugins().filter((one) => one !== source));
+    setLocked(db, source, null);
+  });
+  console.log(`Removed ${given} from your plugins.`);
 }
 
 // Returns whether the plugin is installed at exactly the version and commit locked.

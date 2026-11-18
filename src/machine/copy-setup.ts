@@ -88,6 +88,7 @@ export async function takeSetup(): Promise<void> {
   if (sent.token !== null) writeFileSync(claudeTokenFile(), sent.token, { mode: 0o600 });
   // Loaded only here, as it brings in much of Skelcrew that the check on each command needs none of.
   const { installPlugin, removePlugin, updatePlugin } = await import("../plugins/install.ts");
+  const { setLocked } = await import("../plugins/lock.ts");
   const db = openDb();
   const wanted = new Map(sent.plugins.map((plugin) => [plugin.name, plugin]));
   for (const plugin of installedPlugins(db)) {
@@ -121,5 +122,12 @@ export async function takeSetup(): Promise<void> {
     else if (here.source !== source) continue;
     else if (readManifest(here.folder).version !== version || commitOf(here.folder) !== commit)
       updatePlugin(db, here, laptops);
+  }
+  // Each plugin that now runs the laptop's commit is pinned at it here too, even one that ran it
+  // already, so a lock here that pins an older commit can't make sc install move it back.
+  for (const { name, source, version, commit } of sent.plugins) {
+    const here = installedPlugins(db).find((plugin) => plugin.name === name);
+    if (here?.source === source && commitOf(here.folder) === commit)
+      setLocked(db, source, { name, version, commit });
   }
 }

@@ -308,3 +308,22 @@ test("a server gets the exact commit the laptop runs, even after its tag moved",
   const folder = join(server(), ".local", "share", "skelcrew", "plugins", "fake", "0.1.0");
   expect(git(folder, "rev-parse", "HEAD")).toBe(approved);
 });
+
+// A lock on the server from before can pin an older commit than the one both machines run.
+test("a server already at the laptop's commit gets its pin too", async () => {
+  setUpLaptop();
+  publish(["0.1.0"]);
+  await skel(laptop(), ["plugin", "install", "owner/fake"], "\n");
+  await remote("ps");
+  const approved = git(join(root, "github", "owner", "fake"), "rev-parse", "HEAD");
+  const older = "deadbeef".repeat(5);
+  writeFileSync(
+    join(serverConfig(), "skelcrew.lock"),
+    `owner/fake: { name: fake, version: 0.1.0, commit: ${older} }\n`,
+  );
+  // A change on the laptop sends the setup again.
+  setUpLaptop("harness: claude\nmodel: opus\nplugins:\n  - owner/fake\n");
+  await remote("ps");
+  expect(serverFile("skelcrew.lock")).toContain(`commit: ${approved}`);
+  expect(serverFile("skelcrew.lock")).not.toContain(older);
+});
