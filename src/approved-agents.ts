@@ -85,6 +85,10 @@ export function forgetAgents(place: Place): void {
 
 // Returns what the default branch changed in .agents/ since the version you approved, as git
 // shows a change, with every file in full when you approved none. Empty when nothing changed.
+// It must show every byte an agent would read, or you'd approve what you never saw: git shows
+// no lines of a file it takes for binary, such as one holding a NUL or marked so in
+// .gitattributes, so every file is shown as text, and control codes, which could move the
+// cursor over a line or turn text around, are shown as escapes.
 export function agentsChange(place: Place): string {
   // git names the empty tree by hashing nothing as one, whichever hash the clone uses.
   const empty = gitIn(place, ["hash-object", "-t", "tree", "/dev/null"])?.trim() ?? "";
@@ -96,14 +100,28 @@ export function agentsChange(place: Place): string {
     "diff",
     "--no-color",
     "--no-ext-diff",
+    "--no-textconv",
+    "--text",
     "--src-prefix=a/.agents/",
     "--dst-prefix=b/.agents/",
     from,
     to,
   ]);
   if (diff === null) throw new Error("Skelcrew couldn't compare the .agents/ versions");
-  return diff;
+  return visible(diff);
 }
+
+// Returns the text with every control code but newlines and tabs shown as an escape, such as
+// \x1b, and every invisible format code, such as one that turns text around, as one such as
+// \u202e.
+const visible = (text: string) =>
+  text.replace(/[\p{Cc}\p{Cf}]/gu, (c) => {
+    if (c === "\n" || c === "\t") return c;
+    const code = c.charCodeAt(0);
+    return code < 0x100
+      ? `\\x${code.toString(16).padStart(2, "0")}`
+      : `\\u${code.toString(16).padStart(4, "0")}`;
+  });
 
 // File texts read from trees, by clone, tree and path. A tree never changes, so neither does
 // what is read from it, and the screen can ask each second without running git each time.

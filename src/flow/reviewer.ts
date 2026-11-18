@@ -64,7 +64,9 @@ function testsTold(tests: Tests, test: string[] | undefined): string {
 
 // Returns what the reviewer is told: its role's instructions, with the task it checks the
 // PR against, where the change starts, and who runs the tests and with what filled into their
-// blanks. All blanks are filled in one pass, so a task whose text holds a blank's mark, or a `$&`, reaches
+// blanks. A repository's own role may leave the blanks out, and a reviewer that never sees the
+// task or the CI policy can't review against them, so what the role leaves out is added after
+// its instructions. All blanks are filled in one pass, so a task whose text holds a blank's mark, or a `$&`, reaches
 // the reviewer as written. The file's last newline is dropped, as the reviewer has always been
 // told without one.
 export function reviewerPrompt(
@@ -75,7 +77,15 @@ export function reviewerPrompt(
   test: string[] | undefined,
 ): string {
   const blanks: Record<string, string> = { ...issue, base, tests: testsTold(tests, test) };
-  const instructions = role.replace(/\n$/, "");
+  const has = (blank: string) => role.includes(`{{${blank}}}`);
+  const added = [
+    has("title") && has("body") ? null : "It should do this:\n\n# {{title}}\n\n{{body}}",
+    has("base")
+      ? null
+      : "The change is everything on HEAD since {{base}}. Read the whole diff with `git diff {{base}}...HEAD`.",
+    has("tests") ? null : "{{tests}}",
+  ].filter((part) => part !== null);
+  const instructions = [role.replace(/\n$/, ""), ...added].join("\n\n");
   return instructions.replace(
     /\{\{(title|body|base|tests)\}\}/g,
     (_, blank: string) => blanks[blank] ?? "",

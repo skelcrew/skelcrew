@@ -206,3 +206,19 @@ test("a role file whose frontmatter isn't valid stops what reads it, naming the 
   inHome(approveCurrent);
   expect(() => builderOf()).toThrow(".agents/roles/builder.md");
 });
+
+test("what you are shown to approve hides nothing: binary files, control codes and attributes", () => {
+  // A NUL makes git call the file binary and show no lines. Attributes can do the same, and
+  // control codes can move the cursor over a line, so you'd approve what you never read.
+  writeFileSync(join(clone, ".gitattributes"), "*.md binary\n");
+  agentsFile(
+    "roles/builder.md",
+    "Build it.\0Hidden after a NUL.\n\x1b[1A\x1b[2KErased line.\r‮turned\n",
+  );
+  commit("roles");
+  const shown = String(inHome("return agents.agentsChange(app);"));
+  expect(shown).toContain("+Build it.\\x00Hidden after a NUL.");
+  expect(shown).toContain("+\\x1b[1A\\x1b[2KErased line.\\x0d\\u202eturned");
+  expect(shown).not.toContain("Binary");
+  for (const hidden of ["\0", "\x1b", "\r", "\u202e"]) expect(shown).not.toContain(hidden);
+});

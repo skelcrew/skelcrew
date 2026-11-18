@@ -152,3 +152,23 @@ test("a role file's frontmatter holds only harness and model", () => {
   expect(() => readRole("---\nharness: codex\nrounds: 5\n---\nReview it.\n")).toThrow("rounds");
   expect(() => readRole("---\nharness: emacs\n---\nReview it.\n")).toThrow("harness");
 });
+
+test("a reviewer role that leaves out the blanks still gets the task, the base and the tests", () => {
+  const issue = { title: "Fix the flaky test", body: "It fails one run in ten." };
+  const prompt = reviewerPrompt(
+    "Check it the team's way.\n",
+    issue,
+    "origin/main",
+    "run",
+    testedBy,
+  );
+  expect(prompt).toStartWith("Check it the team's way.\n\n");
+  expect(prompt).toContain("# Fix the flaky test\n\nIt fails one run in ten.");
+  expect(prompt).toContain("git diff origin/main...HEAD");
+  expect(prompt).toContain(runs);
+  // A role that places every blank gets nothing added.
+  const placed = "Task {{title}}: {{body}}. Since {{base}}. {{tests}}\n";
+  expect(reviewerPrompt(placed, issue, "origin/main", "run", testedBy)).toBe(
+    `Task Fix the flaky test: It fails one run in ten.. Since origin/main. ${runs}`,
+  );
+});
