@@ -34,7 +34,7 @@ const working: Thread = {
   review_limited: false,
   review_reset: null,
   conflicts: null,
-  ci_failed: false,
+  ci_passed: false,
   noting: null,
   body: null,
   title: null,
@@ -55,6 +55,12 @@ const working: Thread = {
   merged: false,
   issue_link: null,
   closes: null,
+  merge_plan: null,
+  merge_id: null,
+  merge_by: null,
+  merge_at: null,
+  merge_waits: null,
+  merge_noted: null,
   agents: null,
 };
 const thread = (more: Partial<Thread>) => ({ ...working, ...more });
@@ -74,8 +80,12 @@ test("an approval with green checks is ready for review, and only once it waits 
     status: "waiting" as const,
     verdict: "approve" as const,
     checks: "passing" as const,
+    ci_passed: true,
   };
   expect(taskStage(thread({ ...approved, needs_you: true }), true)).toBe("ready for review");
+  // A branch without a forge has no CI to wait on.
+  const branch = { ...approved, checks: null, ci_passed: false, pr: null };
+  expect(taskStage(thread({ ...branch, needs_you: true }), true)).toBe("ready for review");
   expect(taskStage(thread({ ...approved, needs_you: false }), true)).toBe("working");
   expect(taskStage(thread({ ...approved, needs_you: true, checks: "failing" }), true)).toBe(
     "working",
@@ -86,9 +96,15 @@ test("an approval with green checks is ready for review, and only once it waits 
   expect(taskStage(thread({ ...approved, needs_you: true, reviewing: "abc" }), true)).toBe(
     "working",
   );
-  // A failed check the builder was told of needs its next round, though the check passed since.
-  expect(taskStage(thread({ ...approved, needs_you: true, ci_failed: true }), true)).toBe(
-    "working",
+});
+
+// After the review approves, the forge's checks are unknown until the next poll. A thread that
+// needs you meanwhile for another reason, such as a missing builder, hasn't passed CI yet.
+test("an approved PR whose checks no poll has seen yet isn't ready for review", () => {
+  const approved = { status: "waiting" as const, verdict: "approve" as const, needs_you: true };
+  expect(taskStage(thread({ ...approved, checks: null }), true)).toBe("working");
+  expect(taskStage(thread({ ...approved, checks: null, ci_passed: true }), true)).toBe(
+    "ready for review",
   );
 });
 

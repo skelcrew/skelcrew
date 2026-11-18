@@ -112,14 +112,14 @@ console.log(JSON.stringify({ needsYou: thread.needs_you, word: threadWord(thread
 });
 
 // A failed check was told to the builder of an approved PR, and its message waits for a builder
-// that is missing. The check then passes on a run again, but the builder still owes a new round,
-// so the thread needs you and isn't ready to merge, nor its task ready for review.
-test("a missing builder told of a failed check needs you, not ready to merge, once CI passes again", () => {
+// that is missing. While the check fails, the thread needs you but isn't ready to merge, nor its
+// task ready for review.
+test("a missing builder told of a failed check needs you, not ready to merge", () => {
   const seen = run(`
 import { threadWord } from ${JSON.stringify(source("flow/status.ts"))};
 import { taskStage } from ${JSON.stringify(source("flow/stage.ts"))};
 import { readThread } from ${JSON.stringify(source("flow/thread.ts"))};
-db.run("UPDATE tasks SET verdict = 'approve', checks = 'passing', ci_failed = 1, pr = 7");
+db.run("UPDATE tasks SET verdict = 'approve', checks = 'failing', ci_passed = 0, pr = 7");
 queueMessage(db, tmux, "app-12", { sender: "skelcrew", text: "test failed.", said: "test failed", typed_in: [] });
 for (let i = 0; i < 30 && !readThread(db, "app-12").needs_you; i++) {
   deliverAllWaiting(db, tmux);

@@ -131,3 +131,15 @@ test("an empty list is told as configured to none, not as missing", () => {
     "\nWhen this session started, setup was configured as none, and test was configured as none.\n",
   );
 });
+
+// Merging stays the human's choice: the lead can't arm a merge when ready, only point the human
+// to the command, and may cancel one, which is always safe.
+test("a lead tells the human to arm a merge when ready in their own terminal", () => {
+  const told = leadInstructions(builtInRole("lead").instructions, "simon/app", "/c", {
+    setup: undefined,
+    test: undefined,
+  });
+  expect(told).toContain("You can't merge, and you can't arm a merge either.");
+  expect(told).toContain("run sc merge --when-ready app-12 in their own terminal");
+  expect(told).toContain("You may run sc merge --cancel app-12 when the human asks");
+});

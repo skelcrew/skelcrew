@@ -34,7 +34,11 @@ export function nameRepositories(db: Database): void {
 // thread's log, which would otherwise fill with it. `state` is what the builder is doing, from
 // its harness's hooks and its screen. It changes with every turn, so it is kept out of the
 // thread's log too. `role` is what the agent does on its task, and every thread so far is a
-// builder.
+// builder. `merge_plan` is `armed` while you have armed a merge when ready on the thread.
+// `merge_id` is that plan's own ID, new each time it is armed. `merge_by` and `merge_at` say
+// who armed it and when, for the PR's record. `merge_waits` is what an armed merge waits on, as the last poll
+// found, and `merge_noted` the review round the lead last heard it still waits after. They are
+// the thread's, so a thread that starts over begins with none.
 const threadColumns = {
   needs_you: "INTEGER NOT NULL DEFAULT 0",
   asking: "INTEGER NOT NULL DEFAULT 0",
@@ -50,6 +54,12 @@ const threadColumns = {
   working_since: "INTEGER",
   state: "TEXT",
   role: "TEXT NOT NULL DEFAULT 'builder'",
+  merge_plan: "TEXT",
+  merge_id: "TEXT",
+  merge_by: "TEXT",
+  merge_at: "INTEGER",
+  merge_waits: "TEXT",
+  merge_noted: "INTEGER",
 };
 
 // A task's columns past its repository and ID: what belongs to the work rather than the agent
@@ -64,8 +74,9 @@ const threadColumns = {
 // task that is done apart from one that was dropped. `issue_link` is the link to the issue the
 // task came from, saved as it starts, and null for a task with no issue, such as t1. `closes` is
 // the line a PR's body needs to close that issue on merge, saved as it starts too, so its PR
-// closes it though the tracker or Skelcrew's copy of it changed since. `agents` is the git tree
-// of the .agents/ you had approved when the task started, which its agents keep, or null for the
+// closes it though the tracker or Skelcrew's copy of it changed since. It is empty when there is
+// none, and null only in a row from before Skelcrew kept it. `agents` is the git tree of the
+// .agents/ you had approved when the task started, which its agents keep, or null for the
 // built-in roles.
 export const taskColumns = {
   title: "TEXT",
@@ -76,7 +87,7 @@ export const taskColumns = {
   pr: "INTEGER",
   checks: "TEXT",
   conflicts: "TEXT",
-  ci_failed: "INTEGER NOT NULL DEFAULT 0",
+  ci_passed: "INTEGER NOT NULL DEFAULT 0",
   seen: "TEXT",
   last_review: "INTEGER",
   last_comment: "INTEGER",
@@ -103,7 +114,8 @@ export const taskColumns = {
 
 // Marks each done task merged when its thread's log says its work ended by a merge, for tasks
 // that ended before Skelcrew kept it. The log's last line that ended the thread says why: its PR
-// was merged, or without a forge, its branch was merged into its base. Anything else, such as
+// was merged, by you or as a merge when ready, or without a forge, its branch was merged into
+// its base. Anything else, such as
 // sc rm or a PR closed without merging, and a thread whose log is gone, leaves it unmerged.
 function recoverMerges(db: Database): void {
   const done = db
@@ -137,7 +149,7 @@ function recoverMerges(db: Database): void {
       }
     });
     const ended = whys.filter((why) => why.endsWith(": ended the thread")).at(-1) ?? "";
-    if (/^PR #\d+ was merged: |^its branch .* is merged into /.test(ended))
+    if (/^PR #\d+ was merged( when ready)?: |^its branch .* is merged into /.test(ended))
       db.run("UPDATE tasks SET merged = 1 WHERE owner = ? AND repo = ? AND task = ?", [
         owner,
         repo,

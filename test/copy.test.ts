@@ -85,9 +85,20 @@ console.log(JSON.stringify(db.query("SELECT id FROM items ORDER BY id").all()));
   ).toEqual([{ id: "15" }]);
 });
 
+// A task with no issue saves that it has no line to close, rather than nothing saved, so its PR
+// never closes an issue it didn't start on.
+test("a task with no issue saves an empty closing line", () => {
+  const code = `db.run("UPDATE repositories SET opened = 1, remote = 'file:///nowhere', claimed = 1");
+const { startThread } = await import(${JSON.stringify(source("flow/builder.ts"))});
+const { readThread } = await import(${JSON.stringify(source("flow/thread.ts"))});
+const started = await startThread(db, { repo: "app", title: "Tidy", body: "" });
+console.log(JSON.stringify(readThread(db, started.folder).closes));`;
+  expect(run(code)).toBe("");
+});
+
 // A started task's PR closes the issue it started on, by the line saved as it started, though
-// the tracker's copy of the issue changed or left since. A task saved before Skelcrew kept the
-// line takes the copy's.
+// the tracker's copy of the issue changed or left since. One saved with no line closes nothing,
+// though the copy has one now. A task saved before Skelcrew kept the line takes the copy's.
 test("a started task closes its issue by the line it saved, whatever the copy says now", () => {
   const closes =
     () => `const { threadTask } = await import(${JSON.stringify(source("flow/copy.ts"))});
@@ -101,6 +112,10 @@ ${closes()}`),
     run(`saveItems(db, "simon", "app", ${JSON.stringify([task(12, { closes: "Fixes JOTT-12" })])}, ["task"]);
 ${closes()}`),
   ).toBe("Closes #12");
+  expect(
+    run(`db.run("UPDATE tasks SET closes = ''");
+${closes()}`),
+  ).toBe("");
   expect(
     run(`db.run("UPDATE tasks SET closes = NULL");
 ${closes()}`),
