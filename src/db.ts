@@ -74,7 +74,8 @@ const threadColumns = {
 // task that is done apart from one that was dropped. `issue_link` is the link to the issue the
 // task came from, saved as it starts, and null for a task with no issue, such as t1. `closes` is
 // the line a PR's body needs to close that issue on merge, saved as it starts too, so its PR
-// closes it though the tracker or Skelcrew's copy of it changed since.
+// closes it though the tracker or Skelcrew's copy of it changed since. It is empty when there is
+// none, and null only in a row from before Skelcrew kept it.
 export const taskColumns = {
   title: "TEXT",
   body: "TEXT",

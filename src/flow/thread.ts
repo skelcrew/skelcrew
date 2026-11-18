@@ -152,7 +152,8 @@ export const Thread = z.object({
   // issue. A task that started before Skelcrew kept it has the link Skelcrew's copy still had.
   issue_link: z.string().nullable(),
   // The line a PR's body needs to close the task's issue on merge, such as "Closes #12", saved as
-  // the task starts. Null for a task with no issue.
+  // the task starts. Empty for a task with no issue. Null only in a row from before Skelcrew
+  // kept it, which takes the line from Skelcrew's copy of the tracker.
   closes: z.string().nullable(),
   // A merge when ready you armed, so Skelcrew merges the PR once it is approved and green, or
   // null with none, and then nothing merges by itself. Who armed it and when, what it waits on
