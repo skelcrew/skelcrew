@@ -5,7 +5,7 @@ import type { Database } from "bun:sqlite";
 import { userInfo } from "node:os";
 import { forgeOf, mergePr, postReview } from "../plugins/ask.ts";
 import { mergeStuck, mergeWaitsOn, type PullRequest } from "./decide.ts";
-import { endThread } from "./events.ts";
+import { endThread, removing } from "./events.ts";
 import { noteForLead } from "./messages.ts";
 import { findRepository, repositoryAt } from "./repo.ts";
 import { lastPushed } from "./round.ts";
@@ -137,9 +137,10 @@ export async function mergeIfReady(
     const repository = repositoryOf(db, thread);
     // The PR records who asked, with a review on the approved commit, the call every forge
     // answers. It goes before the merge, as a merged PR may take no review, and once for each
-    // commit while the daemon runs, so a merge the forge keeps refusing doesn't post it again
-    // at every poll.
-    const key = `${folder} ${approved}`;
+    // commit of each plan while the daemon runs, so a merge the forge keeps refusing doesn't
+    // post it again at every poll. A plan armed again, or a thread started over, is a new plan,
+    // by when it was armed and when its thread started, so it gets a record of its own.
+    const key = `${folder} ${thread.started} ${thread.merge_at} ${approved}`;
     if (!recorded.has(key)) {
       const body = `Merging when ready, as asked by ${thread.merge_by ?? "you"} on ${asked}.`;
       await postReview(db, repository, {
@@ -150,10 +151,19 @@ export async function mergeIfReady(
       });
       recorded.add(key);
     }
-    // The review took a while, and a cancel meanwhile must stop the merge. Read again, then
-    // marked as merging with nothing waited on in between, so a cancel either came first and
-    // this never merges, or comes after and is refused.
-    if (readThread(db, folder).merge_plan !== "armed") return;
+    // The review took a while, and the thread may have changed meanwhile: cancelled, stopped,
+    // removed, started over, or sent for another review. So it is read again and must still be
+    // the same plan, ready at the same approved commit. Then it is marked as merging with
+    // nothing waited on in between, so a change either came first and this never merges, or
+    // comes after and is refused.
+    const now = readThread(db, folder);
+    const samePlan =
+      now.merge_plan === "armed" &&
+      now.started === thread.started &&
+      now.merge_at === thread.merge_at &&
+      !removing.has(folder);
+    if (!samePlan || lastPushed(now) !== approved || mergeWaitsOn(now, pr, approved) !== null)
+      return;
     merging.add(folder);
     let refused: string | null;
     try {

@@ -1563,6 +1563,15 @@ echo "Not logged in"; exit 1`,
         `Merging when ready, as asked by ${userInfo().username} on `,
       );
 
+      // Cancelled and armed again, the same commit is a new plan, with a record of its own.
+      const cancel = { command: "merge cancel", repo: "app", task: "12" };
+      await askOn(join(home, "run", "skelcrew.sock"), cancel);
+      expect(thread().merge_plan).toBeNull();
+      await arm();
+      await until(() => records().length === 2);
+      await morePolls();
+      expect(records()).toHaveLength(2);
+
       // While the forge merges, a cancel is refused, as it could no longer stop the merge.
       writeFileSync(join(plugin, "hold-merge-pr"), "");
       answer(plugin, "merge pr", null);
