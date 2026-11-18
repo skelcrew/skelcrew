@@ -8,6 +8,7 @@ import { type Item, itemAt, openPrs, openTasks, ownTask } from "../flow/copy.ts"
 import { needsDecision, readyToMerge, type Shown, shownOf } from "../flow/marks.ts";
 import { repositories } from "../flow/repo.ts";
 import type { DaemonRequest } from "../flow/requests.ts";
+import { mergeShown } from "../flow/status.ts";
 import { Thread, threadName } from "../flow/thread.ts";
 import { forgeOf, trackerOf } from "../plugins/ask.ts";
 import { green, grey, markColours, yellow } from "./look.ts";
@@ -213,8 +214,9 @@ export function changedAt(at: number, now: number): string {
 // Returns the open repository's threads that aren't done, as `Needs you`, those that need you
 // or failed, then `Ready to merge`, the approved ones, which wait only for your merge, then
 // `Working`, every other one working or waiting, then `Stopped`. Each ends with
-// its word, harness, its issue and PR if it has them, such as #12 #31, and when it last changed.
-// A stopped thread's agent isn't running, so its row is dim.
+// its word, harness, its issue and PR if it has them, such as #12 #31, when it last changed,
+// and its merge when ready if it has one, such as "merge when ready · waits on its checks". A
+// stopped thread's agent isn't running, so its row is dim.
 function threadGroups(threads: Known[], now: number): Group[] {
   const rows = threads.map((open) => {
     const { thread, word } = open;
@@ -227,6 +229,7 @@ function threadGroups(threads: Known[], now: number): Group[] {
     const issue = ownTask(thread.task) ? "" : `#${thread.task}`;
     const refs = [issue, thread.pr === null ? "" : `#${thread.pr}`].filter(Boolean).join(" ");
     const changed = thread.changed ?? thread.started;
+    const merge = mergeShown(thread);
     const row: ListRow = {
       mark: [open.mark.sign, colourOf(open)],
       name: open.name,
@@ -236,6 +239,8 @@ function threadGroups(threads: Known[], now: number): Group[] {
         [harness, grey],
         [refs, grey],
         [changed === null ? "" : changedAt(changed, now), grey],
+        // Last, so the columns before it line up whether a row has one or not.
+        ...(merge === null ? [] : [[merge, grey] as [string, string]]),
       ],
       link: null,
       session: thread.folder,
