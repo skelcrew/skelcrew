@@ -340,15 +340,19 @@ function noteUnapprovedAgents(db: Database, sessions: string, repository: Reposi
 // Tells a lead that was already running when Skelcrew learned of flows what its instructions
 // now say of them, once, as a running lead keeps the instructions it started with until its
 // session starts again. A lead that starts later gets them in its instructions, which marks it
-// told, so it gets no note.
-function tellLeadOfFlows(db: Database, sessions: string, repository: Repository): void {
+// told, so it gets no note. A repository with no lead running is left untold until one is.
+async function tellLeadOfFlows(
+  db: Database,
+  sessions: string,
+  repository: Repository,
+): Promise<void> {
   const where = "WHERE owner = ? AND repo = ?";
   const row = db
     .query(`SELECT lead_flows FROM repositories ${where}`)
     .get(repository.owner, repository.repo);
   const told = z.object({ lead_flows: z.coerce.boolean() }).nullable().parse(row);
   if (told === null || told.lead_flows) return;
-  if (!hasSession(sessions, leadOf(db, repository.owner, repository.repo).name)) return;
+  if (!(await hasSession(sessions, leadOf(db, repository.owner, repository.repo).name))) return;
   db.run(`UPDATE repositories SET lead_flows = 1 ${where}`, [repository.owner, repository.repo]);
   noteForLead(
     db,
@@ -412,7 +416,7 @@ async function pollRepository(
       // the remote can't be reached, rather than start every thread on default meanwhile.
       try {
         markApproved(repository);
-        tellLeadOfFlows(db, sessions, repository);
+        await tellLeadOfFlows(db, sessions, repository);
       } catch (error) {
         console.log(`couldn't tell ${owner}/${repo}'s lead of its flows: ${errorText(error)}`);
       }

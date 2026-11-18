@@ -637,6 +637,26 @@ test("a lead running from before flows is told of them once", async () => {
   expect(flowNotes()).toHaveLength(1);
 });
 
+// A repository whose lead isn't running is left untold, as a lead that starts later is told of
+// flows in its instructions. Its tab is closed, so the daemon doesn't start its lead.
+test("a repository with no lead running gets no note of flows", async () => {
+  addApp();
+  const closed = new Database(join(data(), "skelcrew.db"));
+  closed.run("UPDATE repositories SET tab_closed = 1");
+  closed.close();
+  changes([]);
+  serve();
+  await until(() => existsSync(join(data(), "repos", "simon", "app", "README")));
+  await morePolls();
+  const db = new Database(join(data(), "skelcrew.db"), { readonly: true });
+  db.run("PRAGMA busy_timeout = 5000");
+  const notes = db.query("SELECT text FROM notes").all();
+  const told = db.query("SELECT lead_flows FROM repositories").get();
+  db.close();
+  expect(JSON.stringify(notes)).not.toContain("each thread now runs a flow");
+  expect(told).toEqual({ lead_flows: 0 });
+});
+
 // The flows the human approved are in Skelcrew's clone already, so a lead from before flows is
 // told how to read them even while the remote can't be reached.
 test("a lead running from before flows is told of them while the remote is out of reach", async () => {
