@@ -883,9 +883,6 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
     expect(await askOn(lead, merge)).toEqual(unknown);
     expect(await askOn(builder, merge)).toEqual(unknown);
     const merges = () => asked(plugin).filter((q) => q.ask === "merge pr");
-    // Your login name, as the system has it: the daemon runs without USER, which Bun's userInfo
-    // reads.
-    const login = () => Bun.spawnSync(["id", "-un"], { stdout: "pipe" }).stdout.toString().trim();
     expect(merges()).toEqual([]);
 
     // The forge says why it won't merge, such as a rule on the branch, and that is the error.
@@ -1434,6 +1431,9 @@ echo "Not logged in"; exit 1`,
 
   // A merge when ready is armed only by you, at your own terminal, after a y.
   describe("merge when ready", () => {
+    // Your login name, as the system has it: the daemon runs without USER, which Bun's userInfo
+    // reads.
+    const login = () => Bun.spawnSync(["id", "-un"], { stdout: "pipe" }).stdout.toString().trim();
     const hashed = (name: string) =>
       new Bun.CryptoHasher("sha256").update(name).digest("hex").slice(0, 16);
     const runDir = () => join(home, "run", "skelcrew");
