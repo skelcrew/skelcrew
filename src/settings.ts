@@ -422,6 +422,12 @@ function pick(data: unknown, keys: Key[]): unknown {
       if (keys.includes("your_reviewer") && "harness" in reviewer)
         picked.your_reviewer = reviewer.harness;
     }
+  // rounds replaces the old max_rounds, so where a file names both, the old one isn't read, and
+  // a bad one there stops nothing.
+  if (picked.rounds !== undefined && picked.rounds !== null) {
+    const { max_rounds: _replaced, ...rest } = picked;
+    return rest;
+  }
   return picked;
 }
 

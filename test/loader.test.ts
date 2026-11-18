@@ -547,3 +547,13 @@ test("rounds: in your config replaces max_rounds:, which still works, and under 
   files("rounds: 0\n", null);
   expect(read(["rounds"]).err).toContain("config.yaml isn't valid");
 });
+
+test("where a file names rounds: and the old max_rounds:, only rounds: is read", () => {
+  files("rounds: 4\nmax_rounds: 0\n", null);
+  expect(read(["rounds"]).settings?.rounds).toBe(4);
+  files("repos: { simon/app: { rounds: 5, max_rounds: many } }\n", null);
+  expect(read(["rounds"]).settings?.rounds).toBe(5);
+  // The new key is the one that counts, so a bad one is refused though the old one is fine.
+  files("rounds: 0\nmax_rounds: 4\n", null);
+  expect(read(["rounds"]).err).toContain("config.yaml isn't valid");
+});
