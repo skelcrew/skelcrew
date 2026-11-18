@@ -179,3 +179,12 @@ test("a role file that opens frontmatter must close it, and a model can't be emp
   // Closing on the file's last line, with no newline after it, is fine.
   expect(readRole("---\nharness: codex\n---")).toEqual({ harness: "codex", instructions: "" });
 });
+
+test("a role file with Windows line endings is read and checked the same", () => {
+  expect(readRole("---\r\nharness: codex\r\n---\r\nReview it.\r\n")).toEqual({
+    harness: "codex",
+    instructions: "Review it.\r\n",
+  });
+  expect(() => readRole("---\r\nharness: codex\r\nReview it.\r\n")).toThrow("never closes");
+  expect(() => readRole('---\r\nmodel: ""\r\n---\r\nReview it.\r\n')).toThrow("model");
+});

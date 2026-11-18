@@ -331,3 +331,15 @@ catch (error) { return { first, again: String(error) }; }`);
   expect(outcome).toMatchObject({ first: "First way.\n" });
   expect(String(Object(outcome).again)).toContain("no longer has the .agents/ version");
 });
+
+test("a role file with Windows line endings that never closes stops only its own role", () => {
+  agentsFile("roles/reviewer.md", "---\r\nharness: codex\r\nReview it.\r\n");
+  agentsFile("roles/lead.md", "---\r\nmodel: sonnet\r\n---\r\nLead it.\r\n");
+  commit("roles");
+  inHome(approveCurrent);
+  expect(inHome('return readSettings(["lead"], app).lead;')).toEqual({
+    harness: "claude",
+    model: "sonnet",
+  });
+  expect(() => inHome('return readSettings(["reviewer"], app);')).toThrow("never closes");
+});

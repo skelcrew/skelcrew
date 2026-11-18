@@ -30,9 +30,10 @@ export type Role = z.infer<typeof Frontmatter> & { instructions: string };
 // its instructions, kept byte for byte. Throws, naming the problem, when the frontmatter isn't
 // valid, or opens and never closes: read as instructions, it would hand the agent its settings
 // as text and run it on a harness and model the file didn't mean.
+// Windows line endings count the same, so a file saved on Windows is checked too.
 export function readRole(text: string): Role {
-  if (!text.startsWith("---\n")) return { instructions: text };
-  const match = /^---\n([\s\S]*?)^---(?:\n|$)/m.exec(text);
+  if (!/^---\r?\n/.test(text)) return { instructions: text };
+  const match = /^---\r?\n([\s\S]*?)^---\r?(?:\n|$)/m.exec(text);
   if (match?.index !== 0)
     throw new Error("the role's frontmatter opens with --- and never closes with another ---");
   const front = Frontmatter.safeParse(parse(match[1] ?? "") ?? {});
