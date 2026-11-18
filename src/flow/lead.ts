@@ -219,9 +219,19 @@ async function typeNotes(
     // A lead that is running has started, so it has a harness.
     const { marks } = harnessNamed(harness ?? "claude");
     if (!(await idle(sessions, name, marks))) continue;
-    // Saved notes go first, then a thread that needs you.
+    // Saved notes go first, then a thread that needs you. A note can be dropped while the lead
+    // is busy, such as a thread's end note once the thread starts over, so it is looked for
+    // again before typing, and its typing is cancelled if it goes meanwhile. A note's ID is never
+    // used twice, so a note saved meanwhile is never taken for this one, nor deleted as it.
     if (note !== null) {
-      await deliver(sessions, name, marks, note.text);
+      if (!db.query("SELECT 1 FROM notes WHERE id = ?").get(note.id)) continue;
+      const cancel = new AbortController();
+      typingNote.set(note.id, cancel);
+      try {
+        await deliver(sessions, name, marks, note.text, { signal: cancel.signal });
+      } finally {
+        typingNote.delete(note.id);
+      }
       db.run("DELETE FROM notes WHERE id = ?", [note.id]);
       continue;
     }
@@ -231,6 +241,22 @@ async function typeNotes(
     if (readThread(db, thread.folder).noting === thread.noting)
       record(db, thread.folder, { noting: null }, "told the lead it needs you");
   }
+}
+
+// The saved note being typed into a lead, by its ID, with what cancels its typing.
+const typingNote = new Map<number, AbortController>();
+
+// Drops the notes that a thread ended which still wait for its lead, cancelling one being
+// typed. A thread starting over in the same folder has the same name, and the lead would take
+// the old end for the new thread's and drop it from what it holds open. A note already pasted
+// at the lead's prompt is still sent: typing presses Enter a moment after the paste, and
+// leaving it there would block every later note behind an unsent draft.
+export function dropEndNotes(db: Database, folder: string): void {
+  const ids = z
+    .array(z.object({ id: z.number() }))
+    .parse(db.query("SELECT id FROM notes WHERE ended = ?").all(folder));
+  for (const { id } of ids) typingNote.get(id)?.abort();
+  db.run("DELETE FROM notes WHERE ended = ?", [folder]);
 }
 
 // The note typing under way for each repository's lead, by its owner/name.
@@ -257,16 +283,19 @@ export function typeLeadNotes(db: Database, sessions: string): void {
 
 // Saves a note for the lead of a repository, and has the daemon type it in. Notes already
 // wait while the lead is busy, and stay saved while it isn't running, so a note is never lost.
+// `ended` is the folder of the thread whose end the note reports, if it does.
 export function noteForLead(
   db: Database,
   sessions: string,
   repository: { owner: string; repo: string },
   text: string,
+  ended: string | null = null,
 ): void {
-  db.run("INSERT INTO notes (owner, repo, text) VALUES (?, ?, ?)", [
+  db.run("INSERT INTO notes (owner, repo, text, ended) VALUES (?, ?, ?, ?)", [
     repository.owner,
     repository.repo,
     text,
+    ended,
   ]);
   typeLeadNotes(db, sessions);
 }
