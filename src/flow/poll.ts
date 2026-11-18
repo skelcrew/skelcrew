@@ -9,7 +9,6 @@ import { hasSession } from "../agents/sessions.ts";
 import { agentsOnDefaultBranch, agentsWaiting, markApproved } from "../approved-agents.ts";
 import { roundLimit } from "../config.ts";
 import type { Repository } from "../db.ts";
-import { repositoryFlows } from "../flows.ts";
 import { cloneDir } from "../paths.ts";
 import {
   askWhatChanged,
@@ -33,7 +32,7 @@ import {
 } from "./decide.ts";
 import { endThread, removing, tellBuilder, tellingEvents } from "./events.ts";
 import { fetchInto, onRemote } from "./git.ts";
-import { flowsTold, leadOf } from "./lead.ts";
+import { approvedFlowsTold, leadOf } from "./lead.ts";
 import { mergeIfReady } from "./merging.ts";
 import { noteForLead, typeLeadNotes } from "./messages.ts";
 import { forgeKnown, fullNameIs, hasNoCommits, refreshClone, repositories } from "./repo.ts";
@@ -336,11 +335,10 @@ function noteUnapprovedAgents(db: Database, sessions: string, repository: Reposi
     );
 }
 
-// Tells a running lead how to pick each thread's flow, once, when the .agents/ you approved has
-// flows other than default and the lead wasn't told at its start: it started before you
-// approved them, or before Skelcrew had flows. A running lead keeps the instructions it started
-// with until its session starts again. A lead that starts with such flows is told in its
-// instructions, which marks it told.
+// Tells a lead that was already running when Skelcrew learned of flows what its instructions
+// now say of them, once, as a running lead keeps the instructions it started with until its
+// session starts again. A lead that starts later gets them in its instructions, which marks it
+// told, so it gets no note.
 function tellLeadOfFlows(db: Database, sessions: string, repository: Repository): void {
   const where = "WHERE owner = ? AND repo = ?";
   const row = db
@@ -348,10 +346,14 @@ function tellLeadOfFlows(db: Database, sessions: string, repository: Repository)
     .get(repository.owner, repository.repo);
   const told = z.object({ lead_flows: z.coerce.boolean() }).nullable().parse(row);
   if (told === null || told.lead_flows) return;
-  if (repositoryFlows(repository).length < 2) return;
   if (!hasSession(sessions, leadOf(db, repository.owner, repository.repo).name)) return;
   db.run(`UPDATE repositories SET lead_flows = 1 ${where}`, [repository.owner, repository.repo]);
-  noteForLead(db, sessions, repository, flowsTold(cloneDir(repository.owner, repository.repo)));
+  noteForLead(
+    db,
+    sessions,
+    repository,
+    `Skelcrew was updated: each thread now runs a flow, default unless sc start --flow <name> names another. ${approvedFlowsTold(cloneDir(repository.owner, repository.repo))} When the approved .agents/ has flows other than default, pick the one that fits each thread you start or propose, read from there, not from .agents/flows/ in the clone, and add --flow <name> to sc start. Whenever you pick one other than default, tell the human, naming the flow and why. A thread keeps its flow from start to end. A thread started from the skelcrew label runs default, and you can switch it with sc start app-12 --flow <name> until its builder first submits, unless the flow builds with another role, which is another agent: then start it over with sc rm app-12 and sc start app-12 --flow <name>.`,
+  );
 }
 
 // Polls one repository. Asks its tracker and its forge what changed since the `next` each

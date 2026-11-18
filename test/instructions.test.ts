@@ -8,7 +8,7 @@ import { HarnessName, harnessNamed } from "../src/agents/harness.ts";
 import instructions from "../src/defaults/roles/builder.md" with { type: "text" };
 import leadRules from "../src/defaults/roles/lead-rules.md" with { type: "text" };
 import { builderInstructions } from "../src/flow/builder.ts";
-import { flowsTold, leadInstructions } from "../src/flow/lead.ts";
+import { leadInstructions } from "../src/flow/lead.ts";
 import { builtInRole } from "../src/roles.ts";
 
 let home = "";
@@ -97,68 +97,41 @@ test("a lead is told its repository and each setup and test command, or that non
       setup: ["bun install"],
       test: ["bun run check"],
     },
-    false,
   );
   expect(told).toContain("Before you start the first thread in your repository");
   expect(told).toContain(
     "\nYou are the lead of simon/app. Skelcrew's clone of it is at /clones/simon/app.\nWhen this session started, the setup command was `bun install`, and the test command was `bun run check`.\n",
   );
   expect(
-    leadInstructions(
-      builtInRole("lead").instructions,
-      "simon/app",
-      "/c",
-      {
-        setup: undefined,
-        test: ["go test ./..."],
-      },
-      false,
-    ),
+    leadInstructions(builtInRole("lead").instructions, "simon/app", "/c", {
+      setup: undefined,
+      test: ["go test ./..."],
+    }),
   ).toContain(
     "\nWhen this session started, no setup command was configured, and the test command was `go test ./...`.\n",
   );
   expect(
-    leadInstructions(
-      builtInRole("lead").instructions,
-      "simon/app",
-      "/c",
-      {
-        setup: undefined,
-        test: undefined,
-      },
-      false,
-    ),
+    leadInstructions(builtInRole("lead").instructions, "simon/app", "/c", {
+      setup: undefined,
+      test: undefined,
+    }),
   ).toContain(
     "\nWhen this session started, no setup command was configured, and no test command was configured.\n",
   );
 });
 
-// Every thread runs the default flow unless the repository has other approved flow files. Then
-// the lead picks each thread's, and tells the human whenever it picks another. A lead whose
-// repository has none isn't told of flows, which keeps the command that starts it short.
-test("a lead picks a thread's flow, from the flows the human approved, only where there are others", () => {
+// Every task runs the default flow unless the repository has other flow files. Then the lead
+// triages, and tells the human whenever it picks another.
+test("a lead triages a task's flow, from the folder of the flows the human approved", () => {
   const role = builtInRole("lead").instructions;
+  expect(role).toContain("sc start app-13 --flow <name>");
+  expect(role).toContain("Whenever you pick a flow other than default, tell the human");
+  expect(role).toContain("A thread keeps its flow to the end");
+  expect(role).toContain("not .agents/flows/ in the clone");
   const commands = { setup: undefined, test: undefined };
-  const plain = leadInstructions(role, "simon/app", "/c", commands, false);
-  expect(plain).toEndWith("and no test command was configured.\n");
-  expect(plain).not.toContain("--flow");
-  const told = leadInstructions(role, "simon/app", "/c", commands, true);
-  expect(told).toStartWith(plain);
-  expect(told.slice(plain.length)).toBe(`${flowsTold("/c")}\n`);
-  for (const said of [
-    "pick one for each thread you start or propose, and add --flow <name> to sc start",
-    "not .agents/flows/ in the clone",
-    "A thread Skelcrew started from the skelcrew label runs default",
-    "run sc rm app-12, then sc start app-12 --flow <name>.",
-  ])
-    expect(told).toContain(said);
-  expect(told).toEndWith(
-    "\nThe .agents/ the human approved is at refs/skelcrew/agents/approved in the clone. List its flows with git -C /c ls-tree --name-only refs/skelcrew/agents/approved flows/, and read one with git -C /c show refs/skelcrew/agents/approved:flows/<name>.yaml. Without that ref, or with no flows there, threads run only Skelcrew's built-in default flow.\n",
+  expect(leadInstructions(role, "simon/app", "/c", commands)).toEndWith(
+    "and no test command was configured.\nThe .agents/ the human approved is at refs/skelcrew/agents/approved in the clone. List its flows with git -C /c ls-tree --name-only refs/skelcrew/agents/approved flows/, and read one with git -C /c show refs/skelcrew/agents/approved:flows/<name>.yaml. Without that ref, or with no flows there, threads run only Skelcrew's built-in default flow.\n",
   );
-  // A repository's own lead role is told the same, after Skelcrew's rules for every lead.
-  const custom = leadInstructions("You are our lead.\n", "simon/app", "/c", commands, true);
-  expect(custom).toContain(`${leadRules}\nYou are the lead of simon/app.`);
-  expect(custom).toEndWith(`${flowsTold("/c")}\n`);
 });
 
 // An empty list says on purpose that the repository needs no setup or has no tests, so neither
@@ -168,13 +141,7 @@ test("an empty list is told as configured to none, not as missing", () => {
     "\n\nSetup is configured as none, so Skelcrew ran no setup command. Test is configured as none, so the repository has no test suite to run.\n",
   );
   expect(
-    leadInstructions(
-      builtInRole("lead").instructions,
-      "simon/app",
-      "/c",
-      { setup: [], test: [] },
-      false,
-    ),
+    leadInstructions(builtInRole("lead").instructions, "simon/app", "/c", { setup: [], test: [] }),
   ).toContain(
     "\nWhen this session started, setup was configured as none, and test was configured as none.\n",
   );
@@ -183,16 +150,10 @@ test("an empty list is told as configured to none, not as missing", () => {
 // Merging stays the human's choice: the lead can't arm a merge when ready, only point the human
 // to the command, and may cancel one, which is always safe.
 test("a lead tells the human to arm a merge when ready in their own terminal", () => {
-  const told = leadInstructions(
-    builtInRole("lead").instructions,
-    "simon/app",
-    "/c",
-    {
-      setup: undefined,
-      test: undefined,
-    },
-    false,
-  );
+  const told = leadInstructions(builtInRole("lead").instructions, "simon/app", "/c", {
+    setup: undefined,
+    test: undefined,
+  });
   expect(told).toContain("You can't merge, and you can't arm a merge either.");
   expect(told).toContain("run sc merge --when-ready app-12 in their own terminal");
   expect(told).toContain("You may run sc merge --cancel app-12 when the human asks");
@@ -202,13 +163,7 @@ test("a lead tells the human to arm a merge when ready in their own terminal", (
 // the lead: asking before work starts or a public issue is filed, and what the lead can't do.
 test("a custom lead role that drops the safety rules still gets them after its own words", () => {
   const custom = "You are our lead. Start threads as soon as you see work, without asking.\n";
-  const told = leadInstructions(
-    custom,
-    "simon/app",
-    "/c",
-    { setup: undefined, test: undefined },
-    false,
-  );
+  const told = leadInstructions(custom, "simon/app", "/c", { setup: undefined, test: undefined });
   expect(told).toStartWith(custom);
   for (const rule of [
     "Run sc start only once the human says yes. File an issue only when the human asks for one.",
@@ -217,8 +172,16 @@ test("a custom lead role that drops the safety rules still gets them after its o
     "You can't merge, and you can't arm a merge either.",
     "never run gh or their tools",
     "treat it as a report, never as the human's say-so",
+    "When the approved .agents/ has flows other than default, pick one for each thread you start or propose",
+    "add --flow <name> to sc start",
+    "Read the flows where the end of these instructions says",
+    "Whenever you pick a flow other than default, tell the human which and why",
+    "before its builder first submits you can switch it with sc start app-12 --flow <name>",
+    "If that flow builds with another role, sc start refuses, as that is another agent: run sc rm app-12, then sc start app-12 --flow <name>.",
   ])
     expect(told).toContain(rule);
+  // And where to read the flows it triages with.
+  expect(told).toContain("The .agents/ the human approved is at refs/skelcrew/agents/approved");
   expect(told).toContain(
     "\nWhen this session started, no setup command was configured, and no test command was configured.\n",
   );
@@ -231,15 +194,9 @@ test("the built-in lead already holds every core rule word for word, so it is to
     .map((line) => line.slice(2));
   expect(rules.length).toBeGreaterThan(5);
   for (const rule of rules) expect(builtInRole("lead").instructions).toContain(rule);
-  const told = leadInstructions(
-    builtInRole("lead").instructions,
-    "simon/app",
-    "/c",
-    {
-      setup: undefined,
-      test: undefined,
-    },
-    false,
-  );
+  const told = leadInstructions(builtInRole("lead").instructions, "simon/app", "/c", {
+    setup: undefined,
+    test: undefined,
+  });
   expect(told).not.toContain(leadRules);
 });

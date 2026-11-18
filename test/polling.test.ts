@@ -614,11 +614,10 @@ test("a push that changes .agents/ tells the lead once that the human must appro
   expect(agentsNotes()).toHaveLength(1);
 });
 
-// A lead that started while the repository had only the default flow was never told how to
-// pick one, and its session keeps the instructions it started with. Once the human approves
-// flows of its own, it is told once.
-test("a running lead is told how to pick flows once the repository has its own", async () => {
-  const work = addApp();
+// A lead already running when Skelcrew learned of flows keeps the instructions it started with,
+// so it is told of them once. Its session stands in for a lead from before the update.
+test("a lead running from before flows is told of them once", async () => {
+  addApp();
   changes([]);
   Bun.spawnSync(["tmux", "-L", socket, "new-session", "-d", "-s", leadName, "sleep 300"]);
   serve();
@@ -630,24 +629,8 @@ test("a running lead is told how to pick flows once the repository has its own",
     db.close();
     const texts = saved.map((row) => String(Object.values(Object(row))[0]));
     const typedIn = read(join(data(), "claude", leadName, "typed")).split("\n");
-    return [...texts, ...typedIn].filter((text) => text.includes("Each thread runs a flow"));
+    return [...texts, ...typedIn].filter((text) => text.includes("each thread now runs a flow"));
   };
-  // With only the default flow, there is nothing to pick.
-  const skelcrewClone = join(data(), "repos", "simon", "app");
-  await until(() => existsSync(join(skelcrewClone, "README")));
-  await morePolls();
-  expect(flowNotes()).toEqual([]);
-  mkdirSync(join(work, ".agents", "flows"), { recursive: true });
-  writeFileSync(join(work, ".agents", "flows", "quick.yaml"), "review:\n  rounds: 1\n");
-  git(work, "add", ".");
-  git(work, "commit", "-q", "-m", "flows");
-  git(work, "push", "-q", join(home, "github", "simon", "app.git"), "main");
-  // A flow the human hasn't approved counts for nothing.
-  await until(() => existsSync(join(skelcrewClone, ".agents")));
-  await morePolls();
-  expect(flowNotes()).toEqual([]);
-  const tree = git(skelcrewClone, "rev-parse", "HEAD:.agents").trim();
-  writeFileSync(join(home, ".config", "skelcrew", "approved-agents.yaml"), `simon/app: ${tree}\n`);
   await until(() => flowNotes().length > 0);
   expect(flowNotes()[0]).toContain("refs/skelcrew/agents/approved");
   await morePolls();

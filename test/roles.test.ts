@@ -90,6 +90,12 @@ const turnEnded =
 const tellingTheLead =
   " Tell it only when you are blocked or need a decision. Never tell it just to report progress, such as that you submitted, resubmitted or merged main: Skelcrew already shows that.";
 
+// What the lead's file added once flows became files: it picks each task's flow where the
+// repository has others than default, and tells the human whenever it isn't default.
+const triage =
+  "- Each thread runs a flow, which sets its stages and its rounds of review. When the approved .agents/ has flows other than default, pick one for each thread you start or propose, and add --flow <name> to sc start, such as sc start app-13 --flow <name>. Read the flows where the end of these instructions says, not .agents/flows/ in the clone, which may hold changes the human hasn't approved. Whenever you pick a flow other than default, tell the human which and why, such as \"I'll run this on quick, as it is a one-line fix.\" A thread keeps its flow to the end, but before its builder first submits you can switch it with sc start app-12 --flow <name>. If that flow builds with another role, sc start refuses, as that is another agent: run sc rm app-12, then sc start app-12 --flow <name>.\n";
+const labelTriage = " Pick its flow as for any thread.";
+
 test("the lead and builder files hold the instructions the code gave, but for what was added since", () => {
   // The digests of src/agents/prompts/lead.md and builder.md before they moved.
   let lead = builtInRole("lead").instructions;
@@ -97,8 +103,10 @@ test("the lead and builder files hold the instructions the code gave, but for wh
   expect(lead).toContain(settling);
   expect(lead).toContain(restarted);
   expect(lead).toContain(threadEnds);
+  expect(lead).toContain(triage);
+  expect(lead).toContain(labelTriage);
   expect(lead).toContain(mergeWhenReady);
-  lead = lead.replace(mergeWhenReady, "");
+  lead = lead.replace(triage, "").replace(labelTriage, "").replace(mergeWhenReady, "");
   for (const [before = "", now = ""] of leadTasks) {
     expect(lead).toContain(now);
     lead = lead.replace(now, before);
