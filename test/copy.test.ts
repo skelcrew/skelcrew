@@ -88,7 +88,15 @@ console.log(JSON.stringify(db.query("SELECT id FROM items ORDER BY id").all()));
 // A task with no issue saves that it has no line to close, rather than nothing saved, so its PR
 // never closes an issue it didn't start on.
 test("a task with no issue saves an empty closing line", () => {
-  const code = `db.run("UPDATE repositories SET opened = 1, remote = 'file:///nowhere', claimed = 1");
+  // A remote of its own, with a commit, where the thread's name is claimed.
+  const remote = join(home, "app.git");
+  const work = join(home, "work");
+  Bun.spawnSync(["git", "init", "-q", "--bare", "-b", "main", remote]);
+  Bun.spawnSync(["git", "init", "-q", "-b", "main", work]);
+  const identity = ["-c", "user.name=t", "-c", "user.email=t@t"];
+  Bun.spawnSync(["git", "-C", work, ...identity, "commit", "-q", "--allow-empty", "-m", "a"]);
+  Bun.spawnSync(["git", "-C", work, "push", "-q", remote, "main"]);
+  const code = `db.run("UPDATE repositories SET opened = 1, remote = ?, claimed = 1", [${JSON.stringify(remote)}]);
 const { startThread } = await import(${JSON.stringify(source("flow/builder.ts"))});
 const { readThread } = await import(${JSON.stringify(source("flow/thread.ts"))});
 const started = await startThread(db, { repo: "app", title: "Tidy", body: "" });

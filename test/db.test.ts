@@ -1,10 +1,10 @@
 // Skelcrew's database, opened over one that lacks the newer columns.
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { source, threadSql } from "./harness.ts";
+import { fakePlugin, source, threadSql } from "./harness.ts";
 
 let home = "";
 beforeEach(() => {
@@ -300,3 +300,255 @@ console.log(JSON.stringify({ threads, notes }));`;
     })),
   );
 });
+
+// Threads with no issue are named by a code of the machine's, so two machines working on one
+// repository never both have an app-t4 meaning different work.
+test("a machine's code is two letters from its name, so names from two machines differ", async () => {
+  const { codeOf } = await import("../src/db.ts");
+  expect(codeOf("workbox")).toBe("wr");
+  expect(codeOf("laptop")).toBe("lp");
+  expect(codeOf("simon-laptop")).toBe("sl");
+  expect(codeOf("Simons-MacBook-Pro.local")).toBe("sm");
+  expect(codeOf("aeo")).toBe("ae");
+  expect(codeOf("x")).toBe("xx");
+  expect(codeOf("1234")).toBe("xx");
+});
+
+// A remote two machines share, with a first commit on main, and two machines with the same code,
+// lp, such as laptop and lapdog. Returns the remote and each machine's home.
+function twoMachines(): { remote: string; homes: string[] } {
+  const remote = join(home, "app.git");
+  const work = join(home, "work");
+  const git = (cwd: string, ...args: string[]) =>
+    Bun.spawnSync(["git", "-C", cwd, ...args], { stderr: "pipe" });
+  mkdirSync(work);
+  git(home, "init", "-q", "--bare", "-b", "main", remote);
+  git(work, "init", "-q", "-b", "main");
+  git(
+    work,
+    "-c",
+    "user.name=t",
+    "-c",
+    "user.email=t@t",
+    "commit",
+    "-q",
+    "--allow-empty",
+    "-m",
+    "a",
+  );
+  git(work, "push", "-q", remote, "main");
+  const homes = ["laptop", "lapdog"].map((name) => join(home, name));
+  for (const machine of homes) {
+    const data = join(machine, ".local", "share", "skelcrew");
+    mkdirSync(data, { recursive: true });
+    const db = new Database(join(data, "skelcrew.db"));
+    db.run("CREATE TABLE machine (code TEXT NOT NULL)");
+    db.run("INSERT INTO machine VALUES ('lp')");
+    db.close();
+  }
+  return { remote, homes };
+}
+
+// Starts threads with no issue on the machine whose home is given, one after another, after
+// running `before` against its database. Gives back the process, which prints their names.
+function startOn(machine: string, remote: string, titles: string[], before = "") {
+  const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
+import { startThread } from ${JSON.stringify(source("flow/builder.ts"))};
+import { threadName } from ${JSON.stringify(source("flow/thread.ts"))};
+const db = openDb();
+db.run("INSERT INTO repositories (name, owner, repo, remote) VALUES ('app', 'simon', 'app', ?)", [${JSON.stringify(remote)}]);
+${before}
+const names = [];
+for (const title of ${JSON.stringify(titles)})
+  names.push(threadName(db, await startThread(db, { repo: "app", title, body: "b" })));
+console.log(JSON.stringify(names));`;
+  return Bun.spawn([process.execPath, "-e", code], {
+    // A git of the machine's own in its bin folder, if a test gives it one, goes first.
+    env: { ...process.env, HOME: machine, PATH: `${join(machine, "bin")}:${process.env.PATH}` },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+}
+
+// Waits for a process from startOn and returns the names it printed.
+async function namesFrom(run: ReturnType<typeof startOn>): Promise<string[]> {
+  const [out, err] = [await new Response(run.stdout).text(), await new Response(run.stderr).text()];
+  expect(err).toBe("");
+  return JSON.parse(out);
+}
+
+// Two machines with the same code take names from the remote they share, at the same moment.
+test("two machines with the same code starting threads at once never take one name", async () => {
+  const { remote, homes } = twoMachines();
+  const titles = ["One", "Two", "Three"];
+  const runs = homes.map((machine) => startOn(machine, remote, titles));
+  const names = (await Promise.all(runs.map(namesFrom))).flat();
+  expect(names).toHaveLength(6);
+  expect(new Set(names).size).toBe(6);
+  expect(names.every((name) => /^app-lp[1-6]$/.test(name))).toBe(true);
+}, 60_000);
+
+// A claimed name stays claimed once its branch is gone, such as once its PR merged.
+test("a name stays taken on another machine once claimed", async () => {
+  const { remote, homes } = twoMachines();
+  const [laptop = "", lapdog = ""] = homes;
+  expect(await namesFrom(startOn(laptop, remote, ["One"]))).toEqual(["app-lp1"]);
+  expect(await namesFrom(startOn(lapdog, remote, ["Two"]))).toEqual(["app-lp2"]);
+}, 60_000);
+
+// Skelcrew asks a repository's forge once, as it refreshes its clone, and the forge can give
+// another URL to clone from, such as https in place of ssh, as its login works there. A
+// repository just added has no clone yet. One added before its forge's plugin was installed has
+// a clone, but no forge yet. Either way the name is claimed at the forge's URL with its login,
+// as a private repository lets nobody in without it.
+test.each([
+  ["just added", false],
+  ["cloned before its forge was known", true],
+])(
+  "the first thread with no issue on a repository %s claims its name with its forge's URL and login",
+  async (_, cloned) => {
+    const { remote, homes } = twoMachines();
+    const [laptop = ""] = homes;
+    if (cloned) {
+      const clone = join(laptop, ".local", "share", "skelcrew", "repos", "simon", "app");
+      Bun.spawnSync(["git", "clone", "-q", remote, clone]);
+    }
+    // The remote is private: git refuses any command on it that doesn't carry the forge's login,
+    // which git gets as a credential helper. A folder remote would need no login otherwise.
+    const bin = join(laptop, "bin");
+    mkdirSync(bin);
+    writeFileSync(
+      join(bin, "git"),
+      `#!/bin/sh
+case "$*" in *${JSON.stringify(remote)}*)
+  case "$*" in *"credential.helper=!"*) ;; *) echo "fatal: Authentication failed" >&2; exit 128 ;; esac ;;
+esac
+exec ${Bun.which("git") ?? "git"} "$@"
+`,
+      { mode: 0o755 },
+    );
+    const before = join(home, "unreachable.git");
+    const forge = fakePlugin(laptop);
+    const answer = {
+      key: "simon/app",
+      name: "app",
+      link: "l",
+      clone: remote,
+      push: true,
+      fork: false,
+    };
+    writeFileSync(join(forge, "claims.json"), JSON.stringify({ [before]: answer }));
+    const run = startOn(laptop, before, ["One"], `db.run("UPDATE repositories SET claimed = 0");`);
+    expect(await namesFrom(run)).toEqual(["app-lp1"]);
+    const claims = Bun.spawnSync(["git", "ls-remote", remote, "refs/skelcrew/names/*"]);
+    expect(claims.stdout.toString()).toContain("refs/skelcrew/names/lp1");
+  },
+  60_000,
+);
+
+// A name claimed on a repository with no commits yet, such as one just created, is a ref of the
+// remote all the same. The repository must still count as empty, so starting a thread there
+// says it has no commits, rather than failing in git's words.
+test("a name claimed on an empty repository leaves it empty", async () => {
+  const { homes } = twoMachines();
+  const [laptop = ""] = homes;
+  const remote = join(home, "empty.git");
+  Bun.spawnSync(["git", "init", "-q", "--bare", "-b", "main", remote]);
+  const check = `import { hasNoCommits } from ${JSON.stringify(source("flow/repo.ts"))};
+import { fetchBranch } from ${JSON.stringify(source("flow/git.ts"))};
+import { cloneDir } from ${JSON.stringify(source("paths.ts"))};
+const [repository] = db.query("SELECT * FROM repositories").all();
+const fetched = await fetchBranch(db, repository, cloneDir("simon", "app"), null).then(() => "fetched", (error) => error.message);
+console.log(JSON.stringify([await hasNoCommits(db, repository), fetched]));`;
+  const run = Bun.spawn(
+    [
+      process.execPath,
+      "-e",
+      `import { openDb } from ${JSON.stringify(source("db.ts"))};
+import { startThread } from ${JSON.stringify(source("flow/builder.ts"))};
+import { threadName } from ${JSON.stringify(source("flow/thread.ts"))};
+const db = openDb();
+db.run("INSERT INTO repositories (name, owner, repo, remote) VALUES ('app', 'simon', 'app', ?)", [${JSON.stringify(remote)}]);
+console.log(threadName(db, await startThread(db, { repo: "app", title: "One", body: "b" })));
+${check}`,
+    ],
+    { env: { ...process.env, HOME: laptop }, stdout: "pipe", stderr: "pipe" },
+  );
+  const [out, err] = [await new Response(run.stdout).text(), await new Response(run.stderr).text()];
+  expect(err).toBe("");
+  // Making the clone logs that the repository is empty first.
+  const [name = "", result = ""] = out.trim().split("\n").slice(-2);
+  expect(name).toBe("app-lp1");
+  expect(JSON.parse(result)).toEqual([
+    true,
+    "simon/app has no commits yet, so a thread has nothing to start from. Push a first commit, then start it again.",
+  ]);
+}, 60_000);
+
+// An issue created after a thread with no issue, with the thread's ID, such as lp1, would share
+// its name. The copy of the tracker leaves it out, so app-lp1 stays the thread's alone.
+test("an issue whose ID has the shape of Skelcrew's own is left out of the copy", async () => {
+  const { remote, homes } = twoMachines();
+  const [laptop = ""] = homes;
+  expect(await namesFrom(startOn(laptop, remote, ["One"]))).toEqual(["app-lp1"]);
+  const issue = (id: string) => ({
+    kind: "task",
+    id,
+    title: `Issue ${id}`,
+    body: "",
+    state: "open",
+    author: null,
+    labels: [],
+    link: `https://example.com/${id}`,
+    created: "2026-11-05T10:00:00Z",
+    updated: "2026-11-05T10:00:00Z",
+    closes: "",
+  });
+  const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
+import { saveItems } from ${JSON.stringify(source("flow/copy.ts"))};
+import { showTask } from ${JSON.stringify(source("flow/list.ts"))};
+const db = openDb();
+saveItems(db, "simon", "app", ${JSON.stringify([issue("lp1"), issue("t4"), issue("t4abc"), issue("12")])}, ["task"]);
+const shown = await showTask(db, { repo: "app", task: "lp1" });
+console.log(JSON.stringify({ ids: db.query("SELECT id FROM items ORDER BY id").all(),
+  title: shown.title, issue: shown.issue }));`;
+  const run = Bun.spawnSync([process.execPath, "-e", code], {
+    env: { ...process.env, HOME: laptop },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect(run.stderr.toString()).toBe("");
+  const lines = run.stdout.toString().trim().split("\n");
+  expect(lines.slice(0, -1)).toEqual([
+    "left out issue lp1 of simon/app: Skelcrew names its own tasks like that",
+    "left out issue t4 of simon/app: Skelcrew names its own tasks like that",
+  ]);
+  expect(JSON.parse(lines.at(-1) ?? "")).toEqual({
+    ids: [{ id: "12" }, { id: "t4abc" }],
+    title: "One",
+    issue: null,
+  });
+}, 60_000);
+
+test("a database keeps its code, and t names keep working", async () => {
+  const { remote, homes } = twoMachines();
+  const [laptop = ""] = homes;
+  const old = threadSql({ task: "t4", status: "done", title: "Old" });
+  const before = `db.run(${JSON.stringify(old)});`;
+  expect(await namesFrom(startOn(laptop, remote, ["One"], before))).toEqual(["app-lp1"]);
+  const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
+import { findThread } from ${JSON.stringify(source("flow/thread.ts"))};
+const db = openDb();
+const one = findThread(db, "app", "lp1");
+console.log(JSON.stringify({ old: findThread(db, "app", "t4").folder, branch: one.branch }));`;
+  const run = Bun.spawnSync([process.execPath, "-e", code], {
+    env: { ...process.env, HOME: laptop },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect(run.stderr.toString()).toBe("");
+  expect(JSON.parse(run.stdout.toString())).toEqual({
+    old: "app-t4",
+    branch: "skelcrew/lp1-one",
+  });
+}, 60_000);

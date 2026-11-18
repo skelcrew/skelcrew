@@ -58,10 +58,15 @@ async function fetchRef(
 }
 
 // Returns whether the repository's remote has no refs at all, as one with no commits yet. A
-// remote that can't be listed isn't taken for empty.
+// remote that can't be listed isn't taken for empty. The names Skelcrew claims for threads with
+// no issue are refs too, made even on an empty remote, but they hold no commit of the
+// repository's, so they don't count.
 export async function remoteEmpty(db: Database, repository: Repository): Promise<boolean> {
   const listed = await git(db, repository, ["ls-remote", repository.remote]).catch(() => null);
-  return listed === "";
+  if (listed === null) return false;
+  return listed
+    .split("\n")
+    .every((line) => line === "" || line.split("\t")[1]?.startsWith(claimRef("")));
 }
 
 // Returns the commit the clone in the folder is on, or nothing for a clone of a repository
@@ -201,6 +206,83 @@ export async function onRemote(
     `refs/heads/${branch}`,
   ]);
   return listed !== "";
+}
+
+// Where a name Skelcrew gave one of its own tasks is claimed on the remote, such as
+// refs/skelcrew/names/wr4. Outside refs/heads, so the forge lists no branch for it.
+const claimRef = (name: string) => `refs/skelcrew/names/${name}`;
+
+// Returns the names of Skelcrew's own tasks with the machine's code that any machine claimed on
+// the remote, such as wr4. Another machine can have the same code, such as workbox and
+// workstation, and only the remote is shared.
+export async function claimedNames(
+  db: Database,
+  repository: Repository,
+  code: string,
+): Promise<string[]> {
+  const listed = await git(db, repository, ["ls-remote", repository.remote, claimRef(`${code}*`)]);
+  // Each line is a commit, a tab and the ref. The pattern also matches a longer code that starts
+  // with this one, such as wrx4 for wr, so the name must go on with digits alone.
+  return listed
+    .split("\n")
+    .map((line) => line.split("\t")[1]?.slice(claimRef("").length) ?? "")
+    .filter((name) => new RegExp(`^${code}\\d+$`).test(name));
+}
+
+// Claims a name for one of Skelcrew's own tasks on the remote, from Skelcrew's clone in the
+// folder, and returns whether this machine got it. False means another machine claimed it first.
+// The claim is never removed, so no machine gives the name to other work later, even once its
+// branch is gone.
+export async function claimName(
+  db: Database,
+  repository: Repository,
+  folder: string,
+  name: string,
+): Promise<boolean> {
+  // A commit of the claim's own, of no files, so it works in any clone, even one with no commit
+  // yet. Were two machines to push the same commit, git would send nothing for the second and
+  // call it a success, so the message holds a random ID.
+  const who = { GIT_AUTHOR_NAME: "Skelcrew", GIT_AUTHOR_EMAIL: "skelcrew@localhost" };
+  const identity = {
+    ...who,
+    GIT_COMMITTER_NAME: who.GIT_AUTHOR_NAME,
+    GIT_COMMITTER_EMAIL: who.GIT_AUTHOR_EMAIL,
+  };
+  const empty = await git(db, repository, [
+    "-C",
+    folder,
+    "hash-object",
+    "-w",
+    "-t",
+    "tree",
+    "/dev/null",
+  ]);
+  const message = `Skelcrew claims ${name}: ${crypto.randomUUID()}`;
+  const commit = await git(db, repository, ["-C", folder, "commit-tree", empty, "-m", message], {
+    ...process.env,
+    ...identity,
+  });
+  // A lease with nothing after the colon lets the push create the ref only where it doesn't
+  // exist yet. The remote checks that as it takes the push, so of two machines claiming one
+  // name at once, only one gets it.
+  try {
+    await git(db, repository, [
+      "-C",
+      folder,
+      "push",
+      "--quiet",
+      `--force-with-lease=${claimRef(name)}:`,
+      repository.remote,
+      `${commit}:${claimRef(name)}`,
+    ]);
+    return true;
+  } catch (error) {
+    // A refusal only means the name is taken when the claim is there. Otherwise the push failed
+    // for another reason, such as the remote being out of reach, which the caller must hear.
+    const listed = await git(db, repository, ["ls-remote", repository.remote, claimRef(name)]);
+    if (listed === "") throw error;
+    return false;
+  }
 }
 
 // Checks that Skelcrew can push to a repository with no forge on your own git login, as it will

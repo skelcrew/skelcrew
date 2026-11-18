@@ -15,17 +15,18 @@ import {
   startSession,
 } from "../agents/sessions.ts";
 import { repositoryCommands, threadConfig } from "../config.ts";
+import { machineCode } from "../db.ts";
 import { cloneDir, threadSocket } from "../paths.ts";
 import { trackerOf } from "../plugins/ask.ts";
 import { builtInRole } from "../roles.ts";
 import { quietly } from "../run.ts";
 import { errorText } from "../say.ts";
 import type { Settings } from "../settings.ts";
-import { taskOf, threadTask } from "./copy.ts";
+import { ownTask, taskOf, threadTask } from "./copy.ts";
 import { pastRoundLimit } from "./decide.ts";
-import { fetchBranch } from "./git.ts";
+import { claimedNames, claimName, fetchBranch } from "./git.ts";
 import { dropEndNotes } from "./messages.ts";
-import { findRepository, forgeAuthor, refreshClones } from "./repo.ts";
+import { findRepository, forgeAuthor, forgeKnown, refreshClones } from "./repo.ts";
 import {
   builderHarness,
   cloneOf,
@@ -62,9 +63,9 @@ export function statusOnceBack(stopped: Thread): "waiting" | "working" {
 
 // Records a new thread and returns it. Its task is either one of the tracker's, with its title
 // and body from Skelcrew's copy, which sc start brings up to date first, or a given title and
-// body. A given one becomes a task of the repository's own, named t1, t2 and on. That works
-// with a tracker too, so you can start work without filing it. Refuses a task the copy doesn't
-// have open. Refuses a task that has a thread already, unless that thread failed or is done,
+// body. A given one becomes a task of the repository's own, named by the machine's code and a
+// number, such as wr1, wr2 and on. That works with a tracker too, so you can start work without
+// filing it. Refuses a task the copy doesn't have open. Refuses a task that has a thread already, unless that thread failed or is done,
 // such as after sc rm: then it starts over in the same folder. It only records the thread,
 // since the lead waits on the answer. Setting up its clone and starting its builder come
 // after, and can take minutes. `given` is a start request, so its `repo` is the repository's
@@ -106,12 +107,28 @@ async function recordThread(
   let issueLink: string | null = null;
   let closes: string | null = null;
   if ("title" in given) {
-    // The highest number of the repository's own tasks, to name the next one.
-    const ownTaskNumbers = db
-      .query("SELECT task FROM threads WHERE owner = ? AND repo = ? AND task GLOB 't[0-9]*'")
-      .all(owner, repo)
-      .map((row) => Number(z.object({ task: z.string() }).parse(row).task.slice(1)));
-    task = `t${Math.max(0, ...ownTaskNumbers) + 1}`;
+    // The next number after those this machine's code already holds: by its threads, and by the
+    // remote's claims, which other machines with the same code see too. Then claim it on the
+    // remote, which only one machine can, trying the next number while another got there first.
+    const code = machineCode(db);
+    const clone = cloneDir(owner, repo);
+    // Its clone, which the daemon may still be making, is where the claim is pushed from. The
+    // refresh also learns the repository's forge the first time, such as one added before its
+    // forge's plugin was installed, which can give it another URL, the one the forge's login
+    // works at. So it is waited for until both are there, and the repository read again after.
+    if (!existsSync(clone) || !forgeKnown(db, repository)) await refreshClones(db);
+    const current = findRepository(db, given.repo);
+    const claimed = await claimedNames(db, current, code);
+    const started = db
+      .query("SELECT task FROM threads WHERE owner = ? AND repo = ? AND task GLOB ?")
+      .all(owner, repo, `${code}[0-9]*`)
+      .map((row) => z.object({ task: z.string() }).parse(row).task);
+    const numbers = [...claimed, ...started].map((id) =>
+      Number(id.slice(code.length).match(/^\d+/)?.[0] ?? 0),
+    );
+    let number = Math.max(0, ...numbers) + 1;
+    while (!(await claimName(db, current, clone, `${code}${number}`))) number++;
+    task = `${code}${number}`;
     ({ title, body } = given);
     // It has no issue to close. Saved as empty rather than null, which only a task from before
     // Skelcrew kept the line has, so a later issue of the same ID is never closed by its PR.
@@ -124,7 +141,7 @@ async function recordThread(
     const had = Thread.nullable().parse(
       db.query(`SELECT * FROM task_threads ${where}`).get(owner, repo, task),
     );
-    if (tracked && !/^t\d+$/.test(task)) {
+    if (tracked && !ownTask(task)) {
       const found = taskOf(db, owner, repo, task);
       if (found.state !== "open") throw new Error(`there is no open issue ${task} in ${name}`);
       ({ title, body } = found);
