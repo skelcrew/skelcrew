@@ -454,7 +454,25 @@ The lead, the builder and the reviewer each run on their own `harness` when `ske
 
 ## State and isolation
 
-**Sessions.** Every agent runs in tmux, on Skelcrew's own tmux server (`tmux -L skelcrew`) with Skelcrew's own config: one session for each repository's lead and one per builder. A reviewer runs once and needs no session. tmux keeps them alive, handles attach and detach, and answers the terminal's queries. Skelcrew never runs its own terminal emulator.
+**Sessions.** Every agent runs in a terminal session of its own: one for each repository's lead and one per builder. A reviewer runs once and needs no session. One module, the sessions module, runs them, and the rest of Skelcrew reaches an agent's session only through it, with plain data in and out. It does these things:
+
+| What | It does |
+| --- | --- |
+| Start | Starts a session running the command Skelcrew gives, in a folder, with its environment and its labels. Optionally keeps the session when its agent exits cleanly, so a lead you exited can be told from one that crashed. |
+| Paste | Pastes text into the session as one bracketed paste. It goes in steps, readying the text, pasting it, then forgetting it, so typing can take its last look at the screen just before the paste. |
+| Keys | Sends one key, Enter or Esc. |
+| Read | Returns what the session shows now. Typing, the status screen check and `sc peek` use it. |
+| Interrupt | Stops the agent's turn, as Esc does. `sc interrupt` uses it. |
+| Attach | Gives the command that attaches a terminal to the session, for the screen's right pane, and switches that terminal to another session. |
+| End | Ends the session, and waits until every process it ran has exited, so its clone can be removed. |
+| List | Lists the sessions with their labels and whether each agent still runs, so a starting daemon finds the agents still running. |
+| Check | Says whether one session exists, whether its agent still runs, whether it exited cleanly, and the last screen of one that ended, so Skelcrew reconnects instead of starting an agent twice and can say why one ended. |
+
+Every session carries labels: its repository (`simon/app`), its role (`lead` or `builder`) and, for a builder, its task (`app-12`). They stay with the session for as long as it lives, so a daemon that starts again knows whose each session is.
+
+The built-in host is tmux, the only one in this version. Its sessions run on Skelcrew's own tmux server (`tmux -L skelcrew`) with Skelcrew's own config, sent with each new session, and keep every trap in `docs/learnings.md`. The labels are tmux user options on the session. tmux keeps the sessions alive, handles attach and detach, and answers the terminal's queries. Skelcrew never runs its own terminal emulator. Only the sessions module runs tmux for agents, and a test fails if anything else does. So another host could later take tmux's place by doing the same things, such as through a plugin job for sessions, without the flow changing.
+
+The screen's own tmux server stays outside the sessions module. It belongs to the screen, not to any agent, so the screen runs it directly, as the next paragraph says.
 
 **The screen.** The sidebar lives in a second tmux server, `tmux -L skelcrew-screen`, one session per open terminal, ended when you leave. Its left pane runs the sidebar, on a server with terminal links and your terminal's clipboard turned on (the `hyperlinks` and `clipboard` terminal features, and `set-clipboard on`), and draws the line at its own right edge, as tmux's border is blank. On tmux before 3.6, which can't make the border blank, the gap between the sidebar and the agent is tmux's thin line instead. tmux has one status line, at the top: the header above the sidebar, then the tabs and the strip above the agent. The footer is the screen's bottom row, under both panes. Its right pane is an ordinary tmux client attached to the agent's session on `tmux -L skelcrew`, and picking a row switches that client to another session. Landing on an entry replaces that client with a small command of Skelcrew's, in the same pane, which shows the list and the pages opened from it. Picking a thread, in the sidebar or in the list of threads, or moving back to one, starts a client again. So a list and its pages live and end with the screen, on your side, outside any sandbox. Agents' sessions stay single-pane and know nothing of the screen: typing into them, reading them and checking them work as if it weren't there, and leaving the screen ends nothing.
 
@@ -476,7 +494,7 @@ A machine that ran Skelcrew with one lead for all its repositories keeps that le
 
 These are the parts that need care. `docs/learnings.md` explains the traps behind each one.
 
-- **Typing into a session.** It works the same on every harness, with the marks its module gives. Wait until the pane is quiet (compare `tmux capture-pane` a moment apart), load the text with `tmux load-buffer`, paste it with `tmux paste-buffer -p` so it arrives as a bracketed paste, then send Enter on its own a moment later.
+- **Typing into a session.** It works the same on every harness, with the marks its module gives, and uses only the sessions module's read, paste and keys. Wait until the screen is quiet (read it a moment apart), ready the text, read once more for a person's draft, paste it as a bracketed paste, then send Enter on its own a moment later. On tmux, reading is `tmux capture-pane`, readying is `tmux load-buffer`, and pasting is `tmux paste-buffer -p`.
 - **The sandbox.** bubblewrap with the agent's folder writable, the rest of the system read-only, and the home folder and credentials hidden. Each Claude Code session gets its own config folder in `~/.local/share/skelcrew/claude/`, where its transcripts stay for `claude --resume`, and logs in with the token from the first run. Nothing renews the token, so your own login is never touched, and your `~/.claude` stays hidden like the rest of the home folder. Its own permission prompts and sandbox are turned off, since Skelcrew's sandbox draws the boundary. Codex gets Skelcrew's `CODEX_HOME` and runs with its own sandbox and approvals turned off too. A Codex lead or builder gets a folder of its own for its conversation, as a Claude Code session does, and shares the login in Skelcrew's `CODEX_HOME`.
 - **Starting Claude Code.** Remove inherited `CLAUDE_CODE_*` variables. Mark the folder as trusted in the session's copy of its settings, or it waits at a question nobody sees. Pass the first message on the command line.
 - **Agent commands.** Every command an agent can run answers quickly: Claude Code moves a shell command to the background after 2 minutes.
