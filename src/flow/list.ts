@@ -71,7 +71,8 @@ function tabClosed(db: Database, r: { owner: string; repo: string }): boolean {
 // and `checks` are null without a PR, and `review` without a forge, where sc ps leaves those
 // columns empty. `checks` is what the PR's CI says, without Skelcrew's own check. `review` is
 // where Skelcrew's reviewer stands: its round, and when it was asked for or ended, as an ISO
-// time. `waiting` is how many messages wait to be typed into its builder.
+// time. `waiting` is how many messages wait to be typed into its builder. `merge` is its merge
+// when ready, with what it waits on, or null with none.
 export const ThreadRow = z.object({
   thread: z.string(),
   short: z.string().nullable(),
@@ -91,6 +92,7 @@ export const ThreadRow = z.object({
     })
     .nullable(),
   waiting: z.number(),
+  merge: z.object({ waits: z.string().nullable() }).nullable().default(null),
 });
 export type ThreadRow = z.infer<typeof ThreadRow>;
 
@@ -155,6 +157,7 @@ function threadRow(db: Database, thread: Thread, forge: boolean): ThreadRow {
     checks: pr === null ? null : ciOf(thread, copy),
     review: forge ? reviewOf(thread) : null,
     waiting: messagesWaiting(db, thread),
+    merge: thread.merge_plan === null ? null : { waits: thread.merge_waits },
   };
 }
 
@@ -492,7 +495,8 @@ function shortName(name: string, room: number): string {
 // its title, takes the rest, so a long one doesn't push the rest out of sight. --json has
 // both whole. The title comes from the tracker and the short title from the lead, so their
 // control codes are removed, which could break a row or reach your terminal. A review shows
-// its round, such as changes r3. WAITING counts the messages waiting for each builder.
+// its round, such as changes r3. WAITING counts the messages waiting for each builder. MERGE
+// says when ready for a thread with a merge when ready armed.
 export function printThreads(threads: ThreadRow[], json: boolean): void {
   if (json) {
     console.log(JSON.stringify(threads));
@@ -506,6 +510,8 @@ export function printThreads(threads: ThreadRow[], json: boolean): void {
   // wait their turn, so the status says which. WAITING shows only while a message waits for
   // some builder, so it takes no room from the others the rest of the time.
   const waiting = threads.some((t) => t.waiting > 0);
+  // MERGE shows only while a thread has a merge when ready.
+  const merging = threads.some((t) => t.merge !== null);
   const rows = threads.map((t) => {
     const review = t.review === null ? "" : t.review.state;
     const round = t.review?.round == null ? "" : ` r${t.review.round}`;
@@ -516,11 +522,20 @@ export function printThreads(threads: ThreadRow[], json: boolean): void {
       `${review}${round}`,
       t.needsYou ? "yes" : "",
       ...(waiting ? [t.waiting === 0 ? "" : `${t.waiting}`] : []),
+      ...(merging ? [t.merge === null ? "" : "when ready"] : []),
     ];
   });
   // The name and title share what those columns, and the two spaces after each column but the
   // last, leave of a row. The title keeps at least room for its heading.
-  const heading = ["STATUS", "PR", "CI", "REVIEW", "NEEDS YOU", ...(waiting ? ["WAITING"] : [])];
+  const heading = [
+    "STATUS",
+    "PR",
+    "CI",
+    "REVIEW",
+    "NEEDS YOU",
+    ...(waiting ? ["WAITING"] : []),
+    ...(merging ? ["MERGE"] : []),
+  ];
   const others = heading.reduce((sum, _, i) => sum + columnWidth([heading, ...rows], i), 0);
   const left = psWidth - others - 2 * (heading.length + 1);
   const room = Math.min(nameRoom.most, Math.max(left - "TITLE".length, nameRoom.least));

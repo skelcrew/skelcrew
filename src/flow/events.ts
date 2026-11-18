@@ -158,12 +158,9 @@ export async function endThread(
       const line = `${threadName(db, thread)} ${note}`.replace(/\s+/g, " ").slice(0, 200);
       noteForLead(db, sessions, thread, line, thread.folder);
     }
-    record(
-      db,
-      thread.folder,
-      { status: "done", needs_you: false, merged },
-      `${why}: ended the thread`,
-    );
+    // A merge when ready ends with its thread, so nothing armed outlives it.
+    const ended = { status: "done" as const, needs_you: false, merged, merge_plan: null };
+    record(db, thread.folder, ended, `${why}: ended the thread`);
   })();
   // Its clone goes only once the end is saved, so a thread whose end failed keeps it. Nothing
   // is waited on since the checks above, so a thread started over in this folder meanwhile

@@ -99,6 +99,7 @@ function usage(command?: string): never {
     "start",
     "stop",
     "rm",
+    "merge",
     "attach",
     "peek",
     "interrupt",
@@ -406,6 +407,52 @@ async function prCommand(args: string[], json: boolean): Promise<void> {
   usage(command);
 }
 
+// Arms a merge when ready, or cancels one, for sc merge. The thread is named by its task, such
+// as app-12, or by its PR's number, such as #7, in the repository of the checkout sc runs in or
+// the one --from names. Arming merges a PR later with nobody watching, so it asks you first at
+// your terminal, naming the PR, and refuses with no terminal, as an agent or a script has none.
+// The daemon refuses every agent besides, by the socket the call comes in on. Cancelling is
+// always safe, so it asks nothing.
+async function mergeCommand(args: string[]): Promise<void> {
+  const [, how, named, ...rest] = args;
+  const { planMerge, previewMerge } = await import("./client.ts");
+  const command =
+    how === "--when-ready" ? "merge when ready" : how === "--cancel" ? "merge cancel" : undefined;
+  const given = rest[0] === "--from" && rest[1] && rest.length === 2 ? rest[1] : undefined;
+  if (!command || named === undefined || (rest.length > 0 && !given)) usage("merge");
+  // The thread, by its PR's number or by its task.
+  const number = named.match(/^#?(\d+)$/)?.[1];
+  const task = splitThreadName(named);
+  let which: { repo?: string; task?: string; pr?: number; from?: string };
+  if (number !== undefined) {
+    const { originHere } = await import("./machine/origin.ts");
+    const from = given ?? originHere() ?? undefined;
+    which = { pr: Number(number), ...(from ? { from } : {}) };
+  } else if (task && !given) which = { repo: task[0], task: task[1] };
+  else usage("merge");
+  if (command === "merge when ready") {
+    if (!process.stdin.isTTY)
+      throw new Error("sc merge --when-ready asks you first, so run it at your own terminal");
+    // The title comes from the tracker, so its control codes go before it reaches your terminal.
+    const { thread, pr, title, started } = await previewMerge(which);
+    if (pr === null)
+      throw new Error(`${thread} has no PR yet: arm a merge when ready once it opens one`);
+    const { removeControlCodes } = await import("./screen/look.ts");
+    const shown = title ? ` ${removeControlCodes(title)}` : "";
+    // Only y arms it. Anything else, a bare Enter, which Bun's prompt gives as null, Y or yes
+    // included, arms nothing.
+    const answer = prompt(`Merge #${pr} (${thread}${shown}) when it's approved and green? [y/N]`);
+    if (answer !== "y") {
+      console.log(`Nothing is armed: ${thread} waits for you to merge it.`);
+      return;
+    }
+    // Armed only if the daemon still has the PR and thread you said y to.
+    console.log(await planMerge(command, { ...which, seen: { pr, started } }));
+    return;
+  }
+  console.log(await planMerge(command, which));
+}
+
 // Runs the repository's whole test suite in this folder once one of the machine's check slots
 // is free, for sc check, and exits with the suite's own exit code. Builders, reviewers and you
 // all go through it, so at most limits.checks suites run at once. The test commands run joined
@@ -674,6 +721,8 @@ async function runCommand(args: string[]): Promise<void> {
       return tellCommand(words);
     case "check":
       return checkCommand(words);
+    case "merge":
+      return mergeCommand(words);
     case "plugin":
       return pluginCommand(words, json);
     default:
