@@ -177,16 +177,21 @@ async function machineCommand(args: string[]): Promise<void> {
     await upInBackground();
     return;
   }
+  // The service sets SKELCREW_SERVICE. Without it, sc up runs in your terminal.
   if (command === "up" && args.length === 1) {
-    await serve("skelcrew");
+    await serve("skelcrew", 30_000, process.env.SKELCREW_SERVICE !== "1");
     return;
   }
   if (command === "up" && args.length === 2 && args[1] === "--bg") {
     // The service has no one to answer the first run's questions, so it would only fail.
     const { setupDone } = await import("./machine/setup.ts");
     if (!setupDone()) throw new Error("the first run isn't done on this machine: run sc first");
-    await upInBackground();
-    console.log("Skelcrew's daemon is running in the background.");
+    const inTerminal = await upInBackground();
+    console.log(
+      inTerminal
+        ? "Skelcrew's daemon already runs in a terminal, with sc up. Stop it with Ctrl-C to run it in the background."
+        : "Skelcrew's daemon is running in the background.",
+    );
     return;
   }
   // A service installed by an older Skelcrew runs sc serve until the next sc rewrites it.

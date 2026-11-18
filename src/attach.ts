@@ -20,14 +20,15 @@ const LeadReply = z.union([
 ]);
 
 // What the daemon says it runs: its release, or for a daemon from a checkout, that checkout's
-// folder and the commit it started on. A field an older daemon doesn't report comes back empty.
+// folder and the commit it started on, and whether sc up runs it in a terminal. A field an older daemon doesn't report comes back empty.
 const DaemonBuild = z
   .object({
     release: z.string().catch(""),
     folder: z.string().catch(""),
     commit: z.string().catch(""),
+    terminal: z.boolean().catch(false),
   })
-  .catch({ release: "", folder: "", commit: "" });
+  .catch({ release: "", folder: "", commit: "", terminal: false });
 
 // Returns what the daemon runs, or null when no daemon answers.
 async function daemonRuns(): Promise<z.infer<typeof DaemonBuild> | null> {
@@ -55,6 +56,12 @@ export async function restartStaleDaemon(): Promise<void> {
   const running = await daemonRuns();
   const want = running && daemonShouldRun(running);
   if (!want) return;
+  // The service manager doesn't own a daemon in a terminal, and the service's own would find
+  // the lock taken, so only you can stop it.
+  if (running.terminal)
+    throw new Error(
+      `Skelcrew's daemon runs in a terminal, with sc up, on other code than ${want}. Stop it with Ctrl-C, then run sc again. Your agents keep running.`,
+    );
   console.log(`Restarting the daemon on ${want}. Your agents keep running.`);
   const log = restartDaemon();
   // Done once a daemon answers that runs what this Skelcrew wants. The old one can still
@@ -72,13 +79,15 @@ export async function restartStaleDaemon(): Promise<void> {
 }
 
 // Runs the daemon as the background service on this Skelcrew's code, and returns once it
-// answers. This is sc up --bg, and plain sc and sc attach do it before attaching. The service is
-// installed first, or rewritten when the PATH or Skelcrew it needs moved. A daemon on another
-// release or commit is restarted, and one that doesn't answer is started.
-export async function upInBackground(): Promise<void> {
+// answers, saying whether the daemon that answers is one sc up runs in a terminal instead. This
+// is sc up --bg, and plain sc and sc attach do it before attaching. The service is installed
+// first, or rewritten when the PATH or Skelcrew it needs moved. A daemon on another release or
+// commit is restarted, and one that doesn't answer is started.
+export async function upInBackground(): Promise<boolean> {
   installService();
   await restartStaleDaemon();
-  if (await daemonRuns()) return;
+  const running = await daemonRuns();
+  if (running) return running.terminal;
   const log = startDaemon();
   // The service manager returns before the daemon listens, so wait until it answers.
   const deadline = Date.now() + 10_000;
@@ -87,6 +96,7 @@ export async function upInBackground(): Promise<void> {
       throw new Error(`Skelcrew's daemon didn't answer within 10 seconds: ${log} shows why`);
     await Bun.sleep(100);
   }
+  return false;
 }
 
 // Makes sure a lead is running, then opens the screen on the lead until you leave with Alt-Q.

@@ -232,9 +232,12 @@ test("installs the service on a machine set up before Skelcrew had one", async (
 });
 
 test("sc up --bg installs and starts the service, then returns without attaching", async () => {
+  // As a first run that finished leaves a machine, with no service yet.
   mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
   writeFileSync(config(), "harness: claude\n");
   writeFileSync(token(), "sk-ant-oat01-good\n");
+  mkdirSync(join(home, ".local", "share", "skelcrew"), { recursive: true });
+  writeFileSync(join(home, ".local", "share", "skelcrew", "set-up"), "");
   const run = await skel("", bin, main(), home, {}, ["up", "--bg"]);
   expect(run.err).toBe("");
   expect(run.code).toBe(0);
@@ -836,6 +839,26 @@ case "$1 $2" in
 esac`,
   );
 }
+
+// Reviews on your own harness save nothing, so only the first run's end shows the question was
+// answered. Here your harness has its login before the question is asked.
+test("asks about reviews again after a first run stopped at that question", async () => {
+  fakeCodex();
+  mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
+  writeFileSync(config(), "harness: claude\n");
+  writeFileSync(token(), "sk-ant-oat01-good\n");
+  const stopped = await skel("");
+  expect(stopped.code).toBe(1);
+  expect(stopped.out).toContain("Choose the coding agent for reviews:");
+  expect(existsSync(unit())).toBe(false);
+
+  const again = await skel("2\n");
+  expect(again.err).toBe("");
+  expect(again.code).toBe(0);
+  expect(again.out).toContain("Choose the coding agent for reviews:");
+  expect(again.out).toContain("Skelcrew is set up.");
+  expect((await skel("")).out).not.toContain("for reviews");
+});
 
 test("logs the reviewer in to Codex with a login of Skelcrew's own", async () => {
   fakeCodex();

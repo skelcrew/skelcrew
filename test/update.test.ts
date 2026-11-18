@@ -222,6 +222,17 @@ test("restarts a daemon on an older release before you attach", async () => {
   expect(done.out).toContain("agents keep running");
 });
 
+// The service manager doesn't own a daemon sc up runs in a terminal, so restarting the service
+// would only wait for a daemon that can't start beside it.
+test("asks you to stop a daemon that sc up runs in a terminal on an older release", async () => {
+  await daemon({ release: "0.4.2", terminal: true }, { release: "0.4.3" });
+  const done = await beforeAttaching("0.4.3");
+  expect(done.code).toBe(1);
+  expect(done.err).toContain("runs in a terminal, with sc up");
+  expect(done.err).toContain("Ctrl-C");
+  expect(done.calls).toBe("");
+});
+
 test("leaves a daemon on this release running", async () => {
   await daemon({ release: "0.4.3" }, { release: "0.4.3" });
   const done = await beforeAttaching("0.4.3");

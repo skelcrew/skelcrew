@@ -72,7 +72,7 @@ function lastingPath(given: string): string[] {
 }
 
 // Returns the daemon's service definition with a lasting tool PATH and sessions that
-// survive daemon stops.
+// survive daemon stops. SKELCREW_SERVICE tells sc up it runs as the service, not in a terminal.
 function unitText(skel: string, given: string): string {
   // systemd starts services with a bare PATH, which misses bun, your harness and gh where they
   // usually live, so the daemon gets yours.
@@ -85,6 +85,7 @@ Description=Skelcrew daemon
 [Service]
 ExecStart="${unitValue(skel)}" up
 Environment="PATH=${path}"
+Environment="SKELCREW_SERVICE=1"
 Restart=on-failure
 KillMode=process
 
