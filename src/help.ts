@@ -58,7 +58,13 @@ const sections: [string, [string, string][]][] = [
     [
       ["remote add <host>", "Set up a server, over ssh"],
       ["--remote <host> [command]", "Run sc on a server, over ssh"],
-      ["serve", "Run the daemon, for systemd or launchd"],
+    ],
+  ],
+  [
+    "THE DAEMON",
+    [
+      ["up", "Run the daemon here, until Ctrl-C"],
+      ["up --bg", "Run it as a systemd or launchd service, and return"],
     ],
   ],
   [
