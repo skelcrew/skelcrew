@@ -55,11 +55,11 @@ const subagent = "01a1c003-ffff-7380-b6d9-c7ec08342361";
 // runs the Interrupt hooks instead. A hook's input is what the test left in its file, or {}. Text
 // typed into the builder goes in its file typed, and runs UserPromptSubmit, as talk does. Both
 // look busy while the file busy is in their CODEX_HOME, with a Working line that counts seconds,
-// as Codex's does. error ends the builder's turn on an error
-// as an unknown model does: Codex prints it and sits at its prompt, with no hook. renew
-// renews the login as Codex does from 0.167: it follows the link to it, writes the renewal beside
-// its target and renames it over it. Its arguments are written aside and moved into place, so a
-// test that sees the file never reads them half written.
+// as Codex's does. error ends the builder's turn on an error as an unknown model does: Codex
+// prints it and sits at its prompt, with no hook. renew renews the login as Codex does from
+// 0.167: it follows the link to it, writes the renewal beside its target and renames it over it.
+// Its arguments are written aside and moved into place, so a test that sees the file never reads
+// them half written. The builder leaves a file named ready once it looks for the test's files.
 function fakeCodex(): void {
   script(
     "codex",
@@ -113,6 +113,7 @@ while IFS= read -r line; do
   case "$line" in *"$end"*) : > talk ;; esac
 done <&3 &
 echo "› Ask Codex to do anything"
+: > ready
 shown=idle
 for i in $(seq 3000); do
   now=idle; test -e busy && now="busy $i"
@@ -212,12 +213,26 @@ async function untilNeedsYou(wanted: boolean) {
   }
 }
 
+// The line the fake builder adds to its file ran once it has done each step.
+const ranLine = {
+  stop: "Stop",
+  talk: "UserPromptSubmit",
+  interrupt: "Interrupt",
+  error: "error",
+  renew: "renewed",
+};
+
 // Has the fake builder do something, as Codex would, with `input` as what its hooks read, and
-// waits until it has.
-async function act(step: "stop" | "talk" | "interrupt" | "error" | "renew", input = "") {
-  const before = read(join(builder(), "ran")).split("\n").length;
+// waits until it has. It waits for this step's own line: text typed into the builder runs
+// UserPromptSubmit too, and that line coming in first must not pass for a Stop.
+async function act(step: keyof typeof ranLine, input = "") {
+  const done = () =>
+    read(join(builder(), "ran"))
+      .split("\n")
+      .filter((line) => line === ranLine[step]).length;
+  const before = done();
   writeFileSync(join(builder(), step), input);
-  await until(() => read(join(builder(), "ran")).split("\n").length > before);
+  await until(() => done() > before);
 }
 
 // The fake builder's arguments, one to a line.
@@ -244,7 +259,8 @@ async function startApp12() {
   await until(() => existsSync(join(data(), "repos", "simon", "app", "README")));
   expect(await askForLead()).toContain(leadPlaces("simon", "app").name);
   expect((await skel(["start", "app-12"])).err).toBe("");
-  await until(() => read(join(builder(), "args")) !== "", 30_000);
+  // Its arguments come first, so only ready says it now takes the test's steps.
+  await until(() => existsSync(join(builder(), "ready")), 30_000);
 }
 
 // How many notes about app-12 needing you the lead has been typed.
