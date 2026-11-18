@@ -27,6 +27,12 @@ const agentRefusals: Record<string, string> = {
   "first-run": "setting up this machine",
   "take-setup": "taking your laptop's setup",
   "remote add": "setting up a machine",
+  install: "setting up this machine",
+  add: "adding a plugin",
+  remove: "removing a plugin",
+  update: "updating a plugin",
+  setup: "setting up a plugin",
+  plugins: "listing plugins",
   "plugin install": "installing a plugin",
   "plugin update": "updating a plugin",
   "plugin setup": "setting up a plugin",
@@ -106,6 +112,12 @@ function usage(command?: string): never {
     "submit",
     "check",
     "tell",
+    "install",
+    "add",
+    "remove",
+    "update",
+    "setup",
+    "plugins",
     "plugin",
   ];
   const first = command ?? "";
@@ -130,8 +142,10 @@ async function leadCommand(from?: string): Promise<void> {
   const { openDb } = await import("./db.ts");
   const { bringInFrom, checkoutTop, repositories } = await import("./flow/repo.ts");
   const { originHere } = await import("./machine/origin.ts");
-  const { firstRun } = await import("./machine/setup.ts");
-  firstRun(from);
+  const { firstRun, install, setupDone } = await import("./machine/setup.ts");
+  // A machine that isn't set up gets all of sc install, your plugins included.
+  if (setupDone()) firstRun(from);
+  else install(from);
   // In a repository with no remote, sc opens nothing, even with tabs open or no repositories
   // yet. Opening another repository there would look as if Skelcrew had ignored where you are.
   const origin = originHere();
@@ -253,26 +267,53 @@ async function repoCommand(args: string[], json: boolean): Promise<void> {
   usage(command);
 }
 
-// Installs, updates, sets up again, removes or lists plugins, for sc plugin. --json changes
-// only what ls prints.
+// Runs sc install, sc add, sc remove, sc update, sc setup and sc plugins. -g marks your personal
+// plugins, the only kind there is so far: a repository's own plugins come with skelcrew.lock, so
+// these refuse without it rather than act on your files instead. --json changes only what sc
+// plugins prints.
 async function pluginCommand(args: string[], json: boolean): Promise<void> {
-  const [command, sub, ...rest] = args;
-  const { installPlugin, listPlugins, removePlugin, setUpPlugin, updatePlugins } = await import(
+  const [command, ...rest] = args;
+  const { addPlugin, listPlugins, removeYourPlugin, setUpPlugin, updatePlugins } = await import(
     "./plugins/install.ts"
   );
-  // Each takes a name or a source as its one word, except update, where it is optional.
-  if (sub === "install" && rest[0] && rest.length === 1) return installPlugin(rest[0]);
-  if (sub === "update" && rest.length <= 1) return updatePlugins(rest[0]);
-  // sc plugin setup sets the plugin up for the checkout you are in, as install does.
-  if (sub === "setup" && rest[0] && rest.length === 1) {
+  const yours = rest[0] === "-g";
+  const [name, ...more] = yours ? rest.slice(1) : rest;
+  if (command === "install" && rest.length === 0) {
+    const { install } = await import("./machine/setup.ts");
+    return install();
+  }
+  if ((command === "add" || command === "remove" || command === "update") && !yours)
+    throw new Error(
+      `sc ${command} without -g is for a repository's plugins, which Skelcrew doesn't have yet. sc ${command} -g is for your own`,
+    );
+  if (command === "add" && name && more.length === 0) return addPlugin(name);
+  if (command === "remove" && name && more.length === 0) return removeYourPlugin(name);
+  if (command === "update" && more.length === 0) return updatePlugins(name);
+  // sc setup sets the plugin up for the checkout you are in, as sc add does.
+  if (command === "setup" && rest[0] && rest.length === 1) {
     const { originHere } = await import("./machine/origin.ts");
     setUpPlugin(rest[0], originHere());
     console.log(`Ran ${rest[0]}'s setup.`);
     return;
   }
-  if (sub === "rm" && rest[0] && rest.length === 1) return removePlugin(rest[0]);
-  if (sub === "ls" && rest.length === 0) return listPlugins(json);
+  if (command === "plugins" && rest.length === 0) return listPlugins(json);
   usage(command);
+}
+
+// Runs sc plugin install, update, setup, rm and ls, the names these commands had before sc add
+// -g, sc update -g, sc setup, sc remove -g and sc plugins, which they stand for.
+async function oldPluginCommand(args: string[], json: boolean): Promise<void> {
+  const [command, sub, ...rest] = args;
+  const now: Record<string, string[]> = {
+    install: ["add", "-g"],
+    update: ["update", "-g"],
+    setup: ["setup"],
+    rm: ["remove", "-g"],
+    ls: ["plugins"],
+  };
+  const words = sub === undefined ? undefined : now[sub];
+  if (!words) return usage(command);
+  return pluginCommand([...words, ...rest], json);
 }
 
 // Runs what agents and their hooks call: a builder submitting its work, and the hooks that
@@ -590,6 +631,7 @@ async function runCommand(args: string[]): Promise<void> {
   if (
     process.env.SKELCREW_REMOTE_NAME &&
     command !== "first-run" &&
+    command !== "install" &&
     command !== "take-setup" &&
     !onScreen &&
     process.env.SKELCREW_SANDBOX !== "1"
@@ -673,8 +715,15 @@ async function runCommand(args: string[]): Promise<void> {
       return tellCommand(words);
     case "check":
       return checkCommand(words);
-    case "plugin":
+    case "install":
+    case "add":
+    case "remove":
+    case "update":
+    case "setup":
+    case "plugins":
       return pluginCommand(words, json);
+    case "plugin":
+      return oldPluginCommand(words, json);
     default:
       usage(first);
   }

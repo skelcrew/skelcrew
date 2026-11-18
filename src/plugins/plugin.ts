@@ -137,7 +137,7 @@ export const installedPlugins = (db: Database): Plugin[] =>
 // Returns the installed plugin of that name, or throws when there is none.
 export function findPlugin(db: Database, name: string): Plugin {
   const found = installedPlugins(db).find((plugin) => plugin.name === name);
-  if (!found) throw new Error(`there is no plugin named ${name}: sc plugin ls lists them`);
+  if (!found) throw new Error(`there is no plugin named ${name}: sc plugins lists them`);
   return found;
 }
 
@@ -176,7 +176,7 @@ export class SetupNeeded extends Error {
     readonly plugin: string,
     reason: string,
   ) {
-    super(`${plugin} failed: ${reason}. Run sc plugin setup ${plugin} to set it up again.`);
+    super(`${plugin} failed: ${reason}. Run sc setup ${plugin} to set it up again.`);
   }
 }
 

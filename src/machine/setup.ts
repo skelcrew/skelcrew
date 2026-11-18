@@ -7,7 +7,7 @@ import { HarnessName, harnessNamed } from "../agents/harness.ts";
 import { configFile, yourConfigDocument } from "../config.ts";
 import { openDb } from "../db.ts";
 import { claudeTokenFile, configDir } from "../paths.ts";
-import { installPlugin } from "../plugins/install.ts";
+import { addPlugin, askYes, installYourPlugins } from "../plugins/install.ts";
 import { installedPlugins } from "../plugins/plugin.ts";
 import { errorText } from "../say.ts";
 import { readSettings } from "../settings.ts";
@@ -226,30 +226,31 @@ function gitHubToOffer(remote: string | null): string | null {
   return declined.includes(repository.toLowerCase()) ? null : repository;
 }
 
-// Offers to install the GitHub plugin for a checkout of `repository`. A yes installs it
-// without asking again, since you said yes to it by name. A no is saved in config.yaml, so no
-// checkout of the repository asks again, and you can undo it there. A failed install is only
-// reported: Skelcrew works from git alone until you run sc plugin install.
+// Offers to install the GitHub plugin for a checkout of `repository`. A yes adds it to your
+// plugins without asking again, since you said yes to it by name. A no is saved in config.yaml, so
+// no checkout of the repository asks again, and you can undo it there. With no answer, such as
+// with no terminal, nothing is installed or saved. A failed install is only reported: Skelcrew
+// works from git alone until you run sc add -g.
 function offerGitHub(repository: string, remote: string): void {
   console.log("GitHub detected.\n");
-  const answer = prompt(
+  const answer = askYes(
     "The GitHub plugin lets Skelcrew work with issues, pull requests\nand CI on your repositories. Install the GitHub plugin? [Y/n]",
   );
-  // Bun's prompt answers a bare Enter with null, which takes the default, yes.
-  if (!["", "y", "yes"].includes(answer?.trim().toLowerCase() ?? "")) {
+  if (answer === null) return;
+  if (!answer) {
     const { declined } = readSettings(["declined"]);
     const config = yourConfigDocument();
     config.set("github_declined", [...declined, repository]);
     mkdirSync(configDir(), { recursive: true });
     writeFileSync(configFile(), config.toString());
     console.log(
-      `Skelcrew won't ask again for ${repository}. To install it: sc plugin install ${githubPlugin}`,
+      `Skelcrew won't ask again for ${repository}. To install it: sc add -g ${githubPlugin}`,
     );
     return;
   }
   // The plugin's setup is handed the remote, so it can set itself up for this repository.
   try {
-    installPlugin(githubPlugin, remote, false);
+    addPlugin(githubPlugin, remote, false);
   } catch (error) {
     console.log(`Couldn't install the GitHub plugin: ${errorText(error)}`);
   }
@@ -323,8 +324,9 @@ export function setupDone(): boolean {
 // Completes unfinished machine setup and keeps the daemon service current before attaching
 // to the lead. In a checkout of a GitHub repository it offers the GitHub plugin, on any run. A yes
 // makes GitHub the repository's tracker too, with nothing written into the checkout. `from` is
-// the remote sc --remote brings from your laptop, since the checkout is there.
-export function firstRun(from?: string): void {
+// the remote sc --remote brings from your laptop, since the checkout is there. Returns whether it
+// had anything to set up or offer.
+export function firstRun(from?: string): boolean {
   const done = setupDone();
   // The tools are found where your login shell finds them, even over ssh, so a codex
   // under nvm isn't taken for missing. Passed to each one, since Bun looks programs up in
@@ -364,6 +366,17 @@ export function firstRun(from?: string): void {
   }
   installService();
   if (!done) console.log("\nSkelcrew is set up.");
+  return !done || github !== null;
+}
+
+// Makes this machine match your files, for sc install: the first run's steps, then your personal
+// plugins at the versions your lock pins, each new or changed one after asking. Safe to run
+// again: with nothing to do, it says so. `from` is as for the first run.
+export function install(from?: string): void {
+  const setUp = firstRun(from);
+  const plugins = installYourPlugins(from ?? originHere());
+  if (!setUp && !plugins)
+    console.log("Nothing to install: this machine has everything your files ask for.");
 }
 
 // A step of the first run: `title` names it, and `take` asks what it needs, starting with a line

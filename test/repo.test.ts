@@ -935,7 +935,7 @@ ${fails ? 'echo "GitHub is unreachable" >&2; exit 1' : 'rm "$SKELCREW_PLUGIN_CON
     const run = await skel([], "\n", checkout);
     expect(run.code).toBe(0);
     expect(run.err).toBe(
-      "Skelcrew: github failed: Skelcrew's GitHub App isn't installed on simon/app. Run sc plugin setup github to set it up again.\n",
+      "Skelcrew: github failed: Skelcrew's GitHub App isn't installed on simon/app. Run sc setup github to set it up again.\n",
     );
     expect(existsSync(join(forge, "setup-remote"))).toBe(false);
     expect(existsSync(clone("simon/app"))).toBe(false);

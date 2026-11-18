@@ -164,7 +164,7 @@ function prGroups(db: Database, open: Open, threads: Known[]): Group[] {
     else if (pr.head === null)
       action = {
         key: "m",
-        refused: `${named} needs a newer forge plugin to merge here: run sc plugin update`,
+        refused: `${named} needs a newer forge plugin to merge here: run sc update -g`,
       };
     else
       action = {

@@ -520,7 +520,7 @@ test("a no holds for the repository, in every checkout of it, and another reposi
   expect(first.code).toBe(0);
   expect(first.out).toContain(offer);
   expect(first.out).toContain(
-    "Skelcrew won't ask again for simon/app. To install it: sc plugin install skelcrew/skelcrew-github",
+    "Skelcrew won't ask again for simon/app. To install it: sc add -g skelcrew/skelcrew-github",
   );
   // The offer comes before the first step.
   expect(first.out.indexOf(offer)).toBeLessThan(first.out.indexOf("Choose the coding agent"));
@@ -1068,4 +1068,126 @@ test("over --remote, a machine that finished its first run attaches as usual", a
   const run = await skel("", bin, main(), home, { SKELCREW_REMOTE_NAME: "simon@workbox" });
   expect(run.err).toBe("");
   expect(run.code).toBe(0);
+});
+
+// Puts a plugin on the fake GitHub as simon/skelcrew-fake, with a commit and a tag for each
+// version. Its setup adds a line to the calls each time it runs.
+function publishFake(...versions: string[]): void {
+  const plugin = join(home, "github", "simon", "skelcrew-fake");
+  mkdirSync(plugin, { recursive: true });
+  for (const version of versions) {
+    writeFileSync(
+      join(plugin, "skelcrew-plugin.yaml"),
+      `name: fake\nversion: ${version}\nskelcrew: 0.1.0\nabout: Fake\nkind: io\nprovides: [tracker]\nsetup: [bun, setup.ts]\ncall: ["true"]\n`,
+    );
+    writeFileSync(
+      join(plugin, "setup.ts"),
+      `import { appendFileSync } from "node:fs";\nappendFileSync(process.env.HOME + "/calls", "fake setup ${version}\\n");\n`,
+    );
+    if (!existsSync(join(plugin, ".git"))) git(plugin, "init", "-q", "-b", "main");
+    git(plugin, "add", ".");
+    // Empty when nothing changed, so publishing a version again moves its tag to a new commit.
+    git(plugin, "commit", "-q", "--allow-empty", "-m", version);
+    git(plugin, "tag", "-f", `v${version}`);
+  }
+}
+
+const lock = () => join(home, ".config", "skelcrew", "skelcrew.lock");
+const install = (typed = "") => skel(typed, bin, main(), home, {}, ["install"]);
+const fakeCommit = (version: string) =>
+  git(join(home, "github", "simon", "skelcrew-fake"), "rev-parse", `v${version}^{commit}`);
+// Writes your config and lock as another machine of yours would have them: the fake plugin at
+// this version and commit.
+function lockFake(version: string, commit = fakeCommit(version)): void {
+  appendFileSync(config(), "plugins: [simon/skelcrew-fake]\n");
+  writeFileSync(
+    lock(),
+    `simon/skelcrew-fake: { name: fake, version: ${version}, commit: ${commit} }\n`,
+  );
+}
+
+test("sc install on a machine with nothing to do says so, and changes nothing", async () => {
+  await skel("1\nsk-ant-oat01-good\n");
+  writeFileSync(join(home, "calls"), "");
+  const run = await install();
+  expect(run.err).toBe("");
+  expect(run.out).toBe("Nothing to install: this machine has everything your files ask for.\n");
+  expect(calls()).toBe("");
+});
+
+test("sc install installs your plugins at the version your lock pins after asking, and asks nothing the second time", async () => {
+  noGitHubPlugin();
+  fakeGitHub();
+  publishFake("0.1.0", "0.2.0");
+  await skel("1\nsk-ant-oat01-good\n");
+  lockFake("0.1.0");
+  writeFileSync(join(home, "calls"), "");
+  const first = await install("y\n");
+  expect(first.err).toBe("");
+  expect(first.out).toContain("fake 0.1.0 from simon/skelcrew-fake is an I/O plugin");
+  expect(first.out).toContain("Installed fake 0.1.0.");
+  expect(calls()).toBe("fake setup 0.1.0\n");
+  const lockBefore = readFileSync(lock(), "utf8");
+  writeFileSync(join(home, "calls"), "");
+  const second = await install();
+  expect(second.out).toBe("Nothing to install: this machine has everything your files ask for.\n");
+  expect(calls()).toBe("");
+  expect(readFileSync(lock(), "utf8")).toBe(lockBefore);
+});
+
+test("sc install with no answer to read installs nothing", async () => {
+  noGitHubPlugin();
+  fakeGitHub();
+  publishFake("0.1.0");
+  await skel("1\nsk-ant-oat01-good\n");
+  lockFake("0.1.0");
+  const run = await install("");
+  expect(run.out).toContain("Skelcrew didn't install fake.");
+  expect(existsSync(join(home, ".local", "share", "skelcrew", "plugins", "fake"))).toBe(false);
+});
+
+test("a changed commit in the lock asks again, and a tag moved since it was locked is refused", async () => {
+  noGitHubPlugin();
+  fakeGitHub();
+  publishFake("0.1.0");
+  await skel("1\nsk-ant-oat01-good\n");
+  lockFake("0.1.0");
+  await install("y\n");
+  // The tag moves to a new commit, which your lock doesn't pin, so nothing changes here.
+  const before = fakeCommit("0.1.0");
+  publishFake("0.1.0");
+  expect((await install()).out).toContain("Nothing to install");
+  // Your lock from another machine pins the new commit, which asks again.
+  writeFileSync(config(), "harness: claude\n");
+  lockFake("0.1.0");
+  writeFileSync(join(home, "calls"), "");
+  const moved = await install("y\n");
+  expect(moved.err).toBe("");
+  expect(moved.out).toContain("Update it? [Y/n]");
+  expect(calls()).toBe("fake setup 0.1.0\n");
+  expect(readFileSync(lock(), "utf8")).toContain(fakeCommit("0.1.0"));
+  // A lock pinning a commit the tag no longer points at installs nothing.
+  noGitHubPlugin();
+  writeFileSync(config(), "harness: claude\n");
+  lockFake("0.1.0", before);
+  const refused = await install("y\n");
+  expect(refused.code).toBe(1);
+  expect(refused.err).toContain("and your lock says");
+  expect(refused.err).toContain("sc update -g fake");
+});
+
+// The harness and its login are there, as copied from another machine, and only the service is
+// missing. Bun's own prompts read ahead of piped input, so this keeps the plugin's question first.
+test("plain sc on a machine that isn't set up installs your plugins too", async () => {
+  noGitHubPlugin();
+  fakeGitHub();
+  publishFake("0.1.0");
+  mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
+  writeFileSync(config(), "harness: claude\n");
+  writeFileSync(token(), "sk-ant-oat01-good\n");
+  lockFake("0.1.0");
+  const run = await skel("y\n");
+  expect(run.err).toBe("");
+  expect(run.out).toContain("Installed fake 0.1.0.");
+  expect(calls()).toContain("fake setup 0.1.0\n");
 });

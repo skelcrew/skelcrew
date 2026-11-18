@@ -104,15 +104,15 @@ export async function takeSetup(): Promise<void> {
   }
   for (const { name, source, version } of sent.plugins) {
     const here = installedPlugins(db).find((plugin) => plugin.name === name);
-    if (!here) installPlugin(source, sent.remote, false, `v${version}`);
+    if (!here) installPlugin(source, { remote: sent.remote, ask: false, tag: `v${version}` });
     else if (here.source === null)
       throw new Error(
-        `${name} here is installed from a folder, so the one on your laptop can't be: sc plugin rm ${name} here first`,
+        `${name} here is installed from a folder, so the one on your laptop can't be: sc remove -g ${name} here first`,
       );
     // One from another repository that couldn't be removed above is never moved to the
     // laptop's version, which would run code from a repository you didn't pick.
     else if (here.source !== source) continue;
     else if (readManifest(here.folder).version !== version)
-      updatePlugin(db, here, `v${version}`, sent.remote);
+      updatePlugin(db, here, { tag: `v${version}`, remote: sent.remote, ask: false });
   }
 }

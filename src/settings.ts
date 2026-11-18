@@ -46,6 +46,9 @@ const File = z.looseObject({
   // The repositories, by full name, never offered the GitHub plugin again because you said no
   // in one of their checkouts.
   github_declined: z.array(z.string()).optional(),
+  // Your personal plugins, by the GitHub repository each comes from, such as
+  // skelcrew/skelcrew-github. Your own skelcrew.lock pins each one's version.
+  plugins: z.array(z.string()).optional(),
 });
 type File = z.infer<typeof File>;
 type Key = keyof typeof File.shape;
@@ -61,7 +64,8 @@ export type Role = { harness: HarnessName; model?: string };
 // while the reviewer's own waits out its usage limit, and `reviewMinutes` how long a review may
 // run before it is ended. `yourHarness` and `yourReviewer` are the harnesses
 // your config saved, with no default, so the first run can tell what you haven't picked yet, and
-// `declined` the repositories never offered the GitHub plugin again.
+// `declined` the repositories never offered the GitHub plugin again, and `plugins` your personal
+// plugins.
 export type Settings = {
   roles: { lead: Role; builder: Role; reviewer: Role };
   rounds: number;
@@ -75,6 +79,7 @@ export type Settings = {
   yourHarness: HarnessName | undefined;
   yourReviewer: HarnessName | undefined;
   declined: string[];
+  plugins: string[];
 };
 type Group = keyof Settings;
 
@@ -93,11 +98,12 @@ const keysOf: Record<Group, Key[]> = {
   yourHarness: ["harness"],
   yourReviewer: ["your_reviewer"],
   declined: ["github_declined"],
+  plugins: ["plugins"],
 };
 
-// What each file may set. Your harness, model, limits, the reviewer's fallback, a review's time
-// and the repositories you declined the GitHub plugin for fit you, your account and your
-// machine, so a repository can't set them. The tracker belongs to the repository, so your
+// What each file may set. Your harness, model, limits, the reviewer's fallback, a review's time,
+// the repositories you declined the GitHub plugin for and your personal plugins fit you, your
+// account and your machine, so a repository can't set them. The tracker belongs to the repository, so your
 // config doesn't. Setup and test can come from either: yours stand in for a repository you
 // don't want to commit a skelcrew.yaml to.
 const yourKeys: Key[] = [
@@ -114,6 +120,7 @@ const yourKeys: Key[] = [
   "fallback",
   "your_reviewer",
   "github_declined",
+  "plugins",
 ];
 const repositoryKeys: Key[] = [
   "lead",
@@ -263,6 +270,7 @@ function mergeSettings(layers: File[]): Settings {
     yourHarness: first((l) => l.harness),
     yourReviewer: first((l) => l.your_reviewer),
     declined: first((l) => l.github_declined) ?? [],
+    plugins: first((l) => l.plugins) ?? [],
   };
 }
 

@@ -44,11 +44,12 @@ const sections: [string, [string, string][]][] = [
   [
     "PLUGINS",
     [
-      ["plugin install <owner/repo> | <path>", "Install a plugin, after asking"],
-      ["plugin update [<name>]", "Move one, or all, to its newest version"],
-      ["plugin setup <name>", "Run its setup again, such as to sign in again"],
-      ["plugin rm <name>", "Remove one, with its settings and tokens"],
-      ["plugin ls", "Plugins installed, with their kind and what they provide"],
+      ["install", "Set up this machine and your plugins, asking before each"],
+      ["add -g <owner/repo> | <path>", "Add a plugin of your own, after asking"],
+      ["update -g [<name>]", "Move one, or all, to its newest version, after asking"],
+      ["setup <name>", "Run its setup again, such as to sign in again"],
+      ["remove -g <name>", "Remove one, with its settings and tokens"],
+      ["plugins", "Your plugins, and what install would change"],
     ],
   ],
   [
