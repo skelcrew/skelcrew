@@ -61,8 +61,10 @@ const threadColumns = {
 // for the sidebar. `assigned` is whether Skelcrew assigned you the task's issue, so it takes you
 // off only then. `updates` holds the lead's messages to the builder, as JSON, since they change
 // the task its reviewer checks against. `review_at` is when the latest review was asked for or
-// ended, for sc ps.
+// ended, for sc ps. `own` is whether the task is Skelcrew's own, started on what you told the
+// lead with no issue in the tracker, as a tracker's ID can look like one of Skelcrew's.
 export const taskColumns = {
+  own: "INTEGER NOT NULL DEFAULT 0",
   title: "TEXT",
   body: "TEXT",
   short: "TEXT",
@@ -176,7 +178,8 @@ export function moveToTasks(db: Database): void {
 
 // Returns two lowercase letters from a machine's name, such as wr for workbox or sl for
 // simon-laptop, to name the threads it starts with no issue. Two machines on one repository
-// then name theirs apart, such as app-wr4 and app-sl4. A name of several words gives its first
+// then mostly name theirs apart, such as app-wr4 and app-sl4, and startThread skips numbers a
+// machine with the same code already pushed. A name of several words gives its first
 // two initials. One word gives its first letter and the next consonant after it, which reads
 // more like the word than its second letter does. A name with too few letters pads with x.
 export function codeOf(name: string): string {
@@ -269,6 +272,13 @@ function prepareTables(db: Database): void {
     session TEXT,
     PRIMARY KEY (owner, repo, task)
   )`);
+  // Before Skelcrew kept which tasks are its own, a t and a number, such as t4, marked them. So a
+  // table gaining the column marks those, once, and they keep their names and meaning.
+  for (const table of hasTasks(db) ? ["threads", "tasks"] : ["threads"])
+    if (!db.query(`SELECT 1 FROM pragma_table_info('${table}') WHERE name = 'own'`).get()) {
+      db.run(`ALTER TABLE ${table} ADD COLUMN own INTEGER NOT NULL DEFAULT 0`);
+      db.run(`UPDATE ${table} SET own = 1 WHERE task GLOB 't[0-9]*'`);
+    }
   // The rest of a thread's columns, added as the repositories' are. A database from before
   // tasks keeps the task's columns on its threads too, where moveToTasks reads them, so they are
   // added here for every release's database. Nothing reads them from threads after that.

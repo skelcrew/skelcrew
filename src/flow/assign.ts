@@ -3,7 +3,7 @@
 import type { Database } from "bun:sqlite";
 import { assignTask, claimTask, trackerOf } from "../plugins/ask.ts";
 import { errorText } from "../say.ts";
-import { ownTask, readThread, record, repositoryOf, type Thread, threadName } from "./thread.ts";
+import { readThread, record, repositoryOf, type Thread, threadName } from "./thread.ts";
 
 // The last claim, assignment or removal asked for each thread, by its folder. Each waits for
 // the one before it, so they reach the tracker in the order asked. Otherwise sc start right
@@ -32,7 +32,7 @@ function inOrder(folder: string, failed: string, work: () => Promise<void>): voi
 export function assignIssue(db: Database, thread: Thread, claim: boolean): void {
   inOrder(thread.folder, `couldn't assign you ${thread.folder}'s issue`, async () => {
     const repository = repositoryOf(db, thread);
-    if (ownTask(thread.task) || trackerOf(db, repository) === null) return;
+    if (thread.own || trackerOf(db, repository) === null) return;
     const name = threadName(db, thread);
     if (claim)
       await claimTask(db, repository, thread.task).catch((error) =>

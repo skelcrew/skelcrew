@@ -8,7 +8,7 @@ import { type Item, itemAt, openPrs, openTasks } from "../flow/copy.ts";
 import { needsDecision, readyToMerge, type Shown, shownOf } from "../flow/marks.ts";
 import { repositories } from "../flow/repo.ts";
 import type { DaemonRequest } from "../flow/requests.ts";
-import { ownTask, Thread, threadName } from "../flow/thread.ts";
+import { Thread, threadName } from "../flow/thread.ts";
 import { forgeOf, trackerOf } from "../plugins/ask.ts";
 import { green, grey, markColours, yellow } from "./look.ts";
 import { type Open, onReviewer } from "./rows.ts";
@@ -224,7 +224,7 @@ function threadGroups(threads: Known[], now: number): Group[] {
     const harness = onReviewer(thread, word)
       ? (thread.reviewer ?? "")
       : (thread.harness ?? "claude");
-    const issue = ownTask(thread.task) ? "" : `#${thread.task}`;
+    const issue = thread.own ? "" : `#${thread.task}`;
     const refs = [issue, thread.pr === null ? "" : `#${thread.pr}`].filter(Boolean).join(" ");
     const changed = thread.changed ?? thread.started;
     const row: ListRow = {

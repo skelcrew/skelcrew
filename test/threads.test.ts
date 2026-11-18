@@ -819,6 +819,34 @@ nameRepositories(db);`;
     });
   }, 60_000);
 
+  // Names stay apart across machines: another machine with the same code already pushed the
+  // branch of its first thread, so this one takes the next number.
+  test("sc start on what you said skips a number another machine's branch holds", async () => {
+    const work = addApp();
+    git(work, "push", "-q", "origin", `main:skelcrew/${own}1-from-the-laptop`);
+    serve();
+    await untilCloned();
+    const run = await skel("start", "app", "Add export", "As JSON");
+    expect(run.err).toBe("");
+    expect(run.out).toBe(`Started app-${own}2.\n`);
+    expect(thread()).toMatchObject({ task: `${own}2`, branch: `skelcrew/${own}2-add-export` });
+  }, 60_000);
+
+  // A tracker's ID can look like a machine's own, such as wr1. Its thread is still the issue's.
+  test("an issue whose ID looks like a machine's own is still started from the tracker", async () => {
+    addApp();
+    known.push(taskItem(`${own}1`, "Add import", { body: "From CSV" }));
+    answer(plugin, "changed", { items: known, next: null });
+    serve();
+    await untilCloned();
+    const run = await skel("start", `app-${own}1`);
+    expect(run.err).toBe("");
+    expect(run.out).toBe(`Started app-${own}1.\n`);
+    expect(thread()).toMatchObject({ task: `${own}1`, title: "Add import", body: "From CSV" });
+    const shown = JSON.parse((await skel("show", `app-${own}1`, "--json")).out);
+    expect(shown.issue).toMatchObject({ id: `${own}1` });
+  }, 60_000);
+
   // The lead names each thread it starts in two or three words, for the sidebar's row.
   test("sc start --short gives a thread its short title, however the task is given", async () => {
     addApp();

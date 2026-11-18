@@ -142,6 +142,28 @@ export async function onRemote(
   return listed !== "";
 }
 
+// Returns the names of the remote's branches for Skelcrew's own tasks with the machine's code,
+// such as skelcrew/wr4-add-export, whatever machine pushed them. Another machine can have the
+// same code, and these are how one sees the names the other took.
+export async function skelcrewBranches(
+  db: Database,
+  repository: Repository,
+  code: string,
+): Promise<string[]> {
+  const listed = await git(db, repository, [
+    "ls-remote",
+    "--heads",
+    repository.remote,
+    `refs/heads/skelcrew/${code}*`,
+  ]);
+  // Each line is a commit, a tab and the ref. The pattern also matches a longer code that starts
+  // with this one, such as wrx4 for wr, so the name must go on with a digit.
+  return listed
+    .split("\n")
+    .map((line) => line.split("\t")[1]?.replace("refs/heads/", "") ?? "")
+    .filter((branch) => new RegExp(`^skelcrew/${code}\\d`).test(branch));
+}
+
 // Checks that Skelcrew can push to a repository with no forge on your own git login, as it will
 // for a thread: a dry run of a new branch from Skelcrew's clone in the folder. The daemon pushes
 // outside your terminal, with no SSH agent, so the check runs without yours. Throws what git

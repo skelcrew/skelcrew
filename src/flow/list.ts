@@ -17,7 +17,7 @@ import { ciSummary, reviewVerdict } from "./page.ts";
 import { findRepository, noRepositories, repositories, repositoryAt } from "./repo.ts";
 import { roundRunning } from "./round.ts";
 import { needsYou } from "./status.ts";
-import { ownTask, queuedForReview, Thread, threadName, threadOn } from "./thread.ts";
+import { queuedForReview, Thread, threadName, threadOn } from "./thread.ts";
 
 // A repository as sc repo ls shows it. `missing` is a tracker its skelcrew.yaml names that
 // isn't installed, so it has none until you install that plugin.
@@ -402,7 +402,7 @@ export async function showTask(
       ? threadTask(db, current ? thread : { ...thread, updates: [] })
       : { title: issue?.title ?? "", body: issue?.body ?? "" };
   // Its issue, unless it is a task of Skelcrew's own, such as wr1.
-  const own = ownTask(task);
+  const own = thread?.own ?? false;
   const row = thread && threadRow(db, thread, forge);
   const pr = row?.pr ?? null;
   return {

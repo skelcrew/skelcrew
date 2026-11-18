@@ -24,14 +24,13 @@ import { errorText } from "../say.ts";
 import type { Settings } from "../settings.ts";
 import { taskOf, threadTask } from "./copy.ts";
 import { pastRoundLimit } from "./decide.ts";
-import { fetchBranch } from "./git.ts";
+import { fetchBranch, skelcrewBranches } from "./git.ts";
 import { findRepository, forgeAuthor, refreshClones } from "./repo.ts";
 import {
   builderHarness,
   cloneOf,
   folderName,
   log,
-  ownTask,
   readThread,
   record,
   repositoryOf,
@@ -85,16 +84,24 @@ export async function startThread(
   let task: string;
   let title: string;
   let body: string;
+  let own: boolean;
   if ("title" in given) {
-    // The highest number of the repository's own tasks this machine started, to name the next
-    // one. Those from before machines had codes, such as t4, keep their names and don't count.
+    // The next number after those this machine's code already holds, so no two threads share a
+    // name. Another machine can have the same code, such as workbox and workstation, and only
+    // the remote is shared, so its branches count too. Threads not pushed yet are invisible
+    // there, so two such machines starting threads at once can still clash.
     const code = machineCode(db);
-    const ownTaskNumbers = db
+    const pushed = await skelcrewBranches(db, repository, code);
+    // Counted after the only wait, so two starts on this machine can't both take one number.
+    const numbered = db
       .query("SELECT task FROM threads WHERE owner = ? AND repo = ? AND task GLOB ?")
       .all(owner, repo, `${code}[0-9]*`)
-      .map((row) => Number(z.object({ task: z.string() }).parse(row).task.slice(code.length)));
-    task = `${code}${Math.max(0, ...ownTaskNumbers) + 1}`;
+      .map((row) => z.object({ task: z.string() }).parse(row).task)
+      .concat(pushed.map((branch) => branch.slice("skelcrew/".length)))
+      .map((name) => Number(name.slice(code.length).match(/^\d+/)?.[0] ?? 0));
+    task = `${code}${Math.max(0, ...numbered) + 1}`;
     ({ title, body } = given);
+    own = true;
   } else {
     // A named task takes its words from Skelcrew's copy of the tracker. One of the repository's
     // own, or one the tracker no longer has, can only start over on the words its failed or
@@ -103,7 +110,8 @@ export async function startThread(
     const had = Thread.nullable().parse(
       db.query(`SELECT * FROM task_threads ${where}`).get(owner, repo, task),
     );
-    if (tracked && !ownTask(task)) {
+    own = had?.own ?? false;
+    if (tracked && !own) {
       const found = taskOf(db, owner, repo, task);
       if (found.state !== "open") throw new Error(`there is no open issue ${task} in ${name}`);
       ({ title, body } = found);
@@ -189,6 +197,7 @@ export async function startThread(
       // A thread that failed still holds its issue, so starting it over keeps that Skelcrew
       // assigned you.
       assigned: before?.assigned ?? false,
+      own,
       changed: null,
       updates: [],
       state: null,
@@ -214,9 +223,9 @@ export async function startThread(
       ],
     );
     db.run(
-      `INSERT OR REPLACE INTO tasks (owner, repo, task, title, body, short, assigned, seen)
-        VALUES (?, ?, ?, ?, ?, ?, ?, '[]')`,
-      [owner, repo, task, title, body, thread.short, thread.assigned],
+      `INSERT OR REPLACE INTO tasks (owner, repo, task, own, title, body, short, assigned, seen)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, '[]')`,
+      [owner, repo, task, own, title, body, thread.short, thread.assigned],
     );
     log(db, thread);
     return thread;

@@ -125,6 +125,9 @@ export const Thread = z.object({
   // Whether Skelcrew assigned you the thread's issue, rather than you being assigned already, so
   // it takes you off only an issue it put you on.
   assigned: z.coerce.boolean(),
+  // Whether the task is Skelcrew's own, started with no issue in the tracker behind it. Its ID
+  // is then its machine's code and a number, such as wr4, or t4 from before machines had codes.
+  own: z.coerce.boolean(),
   // When anything last went in the thread's log, in milliseconds since 1970, for the list of
   // threads. Null in a row from before Skelcrew kept it.
   changed: z.number().nullable(),
@@ -248,11 +251,6 @@ export function record(
   log(db, thread, why);
   return thread;
 }
-
-// Returns whether a task is one of Skelcrew's own, started with no issue in the tracker, rather
-// than the tracker's. Its ID is the code of the machine that started it and a number, such as
-// wr4, or a t and a number for one started before machines had codes, such as t4.
-export const ownTask = (task: string) => /^[a-z]{1,2}\d+$/.test(task);
 
 // Returns the thread's name, such as app-12, for replies. It uses the repository's name
 // now, which can gain its owner since the thread started, or owner/name once Skelcrew no longer

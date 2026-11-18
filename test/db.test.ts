@@ -215,24 +215,48 @@ test("a machine's code is two letters from its name, so names from two machines 
   expect(codeOf("1234")).toBe("xx");
 });
 
-test("a database keeps the code it chose at its first run, and earlier t threads keep their names", () => {
+test("a database keeps its code, numbers past branches another machine pushed, and keeps t names", () => {
   const data = join(home, ".local", "share", "skelcrew");
   mkdirSync(data, { recursive: true });
   const old = new Database(join(data, "skelcrew.db"));
   old.run("CREATE TABLE machine (code TEXT NOT NULL)");
   old.run("INSERT INTO machine VALUES ('lp')");
   old.close();
+  // The remote, where another machine with the code lp already pushed lp1 and lp3. A branch of
+  // a longer code that starts with lp, such as lpx9, is no clash.
+  const remote = join(home, "app.git");
+  const work = join(home, "work");
+  const git = (cwd: string, ...args: string[]) =>
+    Bun.spawnSync(["git", "-C", cwd, ...args], { stderr: "pipe" });
+  mkdirSync(work);
+  git(home, "init", "-q", "--bare", remote);
+  git(work, "init", "-q", "-b", "main");
+  git(
+    work,
+    "-c",
+    "user.name=t",
+    "-c",
+    "user.email=t@t",
+    "commit",
+    "-q",
+    "--allow-empty",
+    "-m",
+    "a",
+  );
+  for (const branch of ["lp1-fix", "lp3-docs", "lpx9-other"])
+    git(work, "push", "-q", remote, `main:skelcrew/${branch}`);
   const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
 import { startThread } from ${JSON.stringify(source("flow/builder.ts"))};
 import { findThread, threadName } from ${JSON.stringify(source("flow/thread.ts"))};
 const db = openDb();
-db.run("INSERT INTO repositories (name, owner, repo, remote) VALUES ('app', 'simon', 'app', 'x')");
-db.run(${JSON.stringify(threadSql({ task: "t4", status: "done", title: "Old" }))});
+db.run("INSERT INTO repositories (name, owner, repo, remote) VALUES ('app', 'simon', 'app', ?)", [${JSON.stringify(remote)}]);
+db.run(${JSON.stringify(threadSql({ task: "t4", status: "done", title: "Old", own: 1 }))});
 const names = [];
 for (const title of ["One", "Two"])
   names.push(threadName(db, await startThread(db, { repo: "app", title, body: "b" })));
+const five = findThread(db, "app", "lp5");
 console.log(JSON.stringify({ names, old: findThread(db, "app", "t4").folder,
-  branch: findThread(db, "app", "lp2").branch }));`;
+  branch: five.branch, own: five.own }));`;
   const run = Bun.spawnSync([process.execPath, "-e", code], {
     env: { ...process.env, HOME: home },
     stdout: "pipe",
@@ -240,8 +264,43 @@ console.log(JSON.stringify({ names, old: findThread(db, "app", "t4").folder,
   });
   expect(run.stderr.toString()).toBe("");
   expect(JSON.parse(run.stdout.toString())).toEqual({
-    names: ["app-lp1", "app-lp2"],
+    names: ["app-lp4", "app-lp5"],
     old: "app-t4",
-    branch: "skelcrew/lp2-two",
+    branch: "skelcrew/lp5-two",
+    own: true,
   });
+});
+
+// A database from before Skelcrew kept which tasks are its own read a t and a number as one.
+test("a database from before marks its t tasks as Skelcrew's own, and its issues as the tracker's", () => {
+  const data = join(home, ".local", "share", "skelcrew");
+  mkdirSync(data, { recursive: true });
+  const old = new Database(join(data, "skelcrew.db"));
+  old.run(`CREATE TABLE threads (owner TEXT NOT NULL, repo TEXT NOT NULL, task INTEGER NOT NULL,
+    folder TEXT NOT NULL UNIQUE, branch TEXT NOT NULL, base TEXT, status TEXT NOT NULL,
+    session TEXT, PRIMARY KEY (owner, repo, task))`);
+  old.run(`CREATE TABLE tasks (owner TEXT NOT NULL, repo TEXT NOT NULL, task INTEGER NOT NULL,
+    title TEXT, PRIMARY KEY (owner, repo, task))`);
+  for (const task of ["t4", "12", "ab12"]) {
+    old.run("INSERT INTO threads VALUES ('simon', 'app', ?, ?, 'b', NULL, 'working', NULL)", [
+      task,
+      `app-${task}`,
+    ]);
+    old.run("INSERT INTO tasks VALUES ('simon', 'app', ?, NULL)", [task]);
+  }
+  old.close();
+  const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
+const db = openDb();
+console.log(JSON.stringify(db.query("SELECT task, own FROM tasks ORDER BY task").all()));`;
+  const run = Bun.spawnSync([process.execPath, "-e", code], {
+    env: { ...process.env, HOME: home },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect(run.stderr.toString()).toBe("");
+  expect(JSON.parse(run.stdout.toString())).toEqual([
+    { task: 12, own: 0 },
+    { task: "ab12", own: 0 },
+    { task: "t4", own: 1 },
+  ]);
 });
