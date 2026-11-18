@@ -1595,36 +1595,33 @@ echo "Not logged in"; exit 1`,
   // stands in for that, for the review only, so the stop always lands in between. Told to end,
   // it starts a process that can't be ended with SIGTERM, and goes. As it starts, it also leaves
   // one that is under the daemon no more, as bwrap's would be had bwrap ended before the stop.
-  // Both end with the daemon. bubblewrap is Linux's sandbox, so a Mac never starts it.
+  // The next daemon brings the review back, and is stopped as soon as its bwrap starts. Each
+  // time, nothing is left running once the daemon has exited. bubblewrap is Linux's sandbox, so
+  // a Mac never starts it.
   test.skipIf(process.platform === "darwin")(
     "a thread with no issue whose daemon stops as its review starts leaves no sandbox running",
     async () => {
       const bwrap = Bun.which("bwrap") ?? "bwrap";
-      const [early, late] = [join(home, "early"), join(home, "late")];
       // A process that can't be ended with SIGTERM, which says its ID in the file it is given.
       script("stuck", 'trap "" TERM; echo $$ > "$1"; exec sleep 300');
+      // Each bwrap of a review writes its own ID, and those of what it leaves, in pids, and
+      // says it started with a file of its own in started.
+      const pids = join(home, "pids");
+      const started = join(home, "started");
+      mkdirSync(pids);
+      mkdirSync(started);
       script(
         "bwrap",
         `case "$*" in *" codex "*)
-  trap 'stuck ${late} & until test -s ${late}; do sleep 0.01; done; exit 1' TERM
-  (stuck ${early} &)
-  until test -s ${early}; do sleep 0.01; done
-  touch ${join(home, "reviewing")}
+  echo $$ > ${pids}/outer-$$
+  trap 'stuck ${pids}/late-$$ & until test -s ${pids}/late-$$; do sleep 0.01; done; exit 1' TERM
+  (stuck ${pids}/early-$$ &)
+  until test -s ${pids}/early-$$; do sleep 0.01; done
+  touch ${started}/$$
   while :; do sleep 0.05; done ;;
 esac
 exec ${bwrap} "$@"`,
       );
-      addApp();
-      const served = serve();
-      await until(() => existsSync(join(data(), "repos", "simon", "app", "README")));
-      const started = Bun.spawnSync(
-        [process.execPath, main, "start", "app", "Add export", "As JSON"],
-        { env: env(), stderr: "pipe" },
-      );
-      expect(started.stderr.toString()).toBe("");
-      await until(() => existsSync(join(home, "reviewing")), 30_000);
-      served.kill();
-      await served.exited;
       // A process that ended but nobody reaped yet shows as Z, and runs nothing. ps works on a
       // Mac too, which has no /proc.
       const runs = (pid: number) => {
@@ -1632,11 +1629,34 @@ exec ${bwrap} "$@"`,
         const state = ps.stdout.toString().trim();
         return state !== "" && !state.startsWith("Z");
       };
-      const left = [early, late].map((file) => Number(read(file)));
-      for (const pid of left) expect(pid).toBeGreaterThan(0);
-      await until(() => left.every((pid) => !runs(pid)));
+      // What every review's bwrap started that still runs. Asked as soon as the daemon has
+      // exited, without a wait, so the daemon's stop must have ended them.
+      const leftRunning = () =>
+        readdirSync(pids)
+          .map((file) => Number(read(join(pids, file))))
+          .filter(runs);
+      addApp();
+      const first = serve();
+      await until(() => existsSync(join(data(), "repos", "simon", "app", "README")));
+      const sc = Bun.spawnSync([process.execPath, main, "start", "app", "Add export", "As JSON"], {
+        env: env(),
+        stderr: "pipe",
+      });
+      expect(sc.stderr.toString()).toBe("");
+      await until(() => readdirSync(started).length === 1, 30_000);
+      first.kill();
+      await first.exited;
+      expect(leftRunning()).toEqual([]);
+      expect(readdirSync(pids).length).toBe(3);
+      // The review the stop cut short comes back with the next daemon.
+      const second = serve();
+      await until(() => readdirSync(started).length === 2, 30_000);
+      second.kill();
+      await second.exited;
+      expect(leftRunning()).toEqual([]);
+      expect(readdirSync(pids).length).toBe(6);
     },
-    60_000,
+    90_000,
   );
 
   // A task's ID names the thread's folder, which setup deletes before it clones, so an ID

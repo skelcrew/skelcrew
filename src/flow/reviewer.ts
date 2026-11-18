@@ -87,13 +87,31 @@ export function reviewerPrompt(
 // sandbox started can have lost the daemon as an ancestor by then, and still be in its group.
 const reviewerGroups = new Set<number>();
 
-// Kills every reviewer that runs now, with whatever it started, for the daemon's stop. It
-// blocks nothing and waits for nothing, as the daemon exits right after.
+// Kills every reviewer that runs now, with whatever it started, for the daemon's stop, and
+// returns once none of them runs. Waiting matters: a next daemon would otherwise run the review
+// again while the last one still writes its files. It blocks, as the daemon exits right after.
+// A process the kernel can't kill at once gets five seconds.
 export function killReviewers(): void {
   for (const group of reviewerGroups)
     try {
       process.kill(-group, "SIGKILL");
     } catch {}
+  // A process that exited but wasn't reaped, Z, runs nothing. Its new parent may never reap it.
+  const running = () => {
+    const ps = Bun.spawnSync(["ps", "-A", "-o", "pgid=", "-o", "stat="], {
+      stdout: "pipe",
+      stderr: "ignore",
+    });
+    return ps.stdout
+      .toString()
+      .split("\n")
+      .some((line) => {
+        const [group, state] = line.trim().split(/\s+/);
+        return reviewerGroups.has(Number(group)) && state !== undefined && !state.startsWith("Z");
+      });
+  };
+  const deadline = Date.now() + 5000;
+  while (reviewerGroups.size > 0 && running() && Date.now() < deadline) Bun.sleepSync(50);
 }
 
 // Starts the reviewer, waits for it to end, and returns what it printed and its exit code.

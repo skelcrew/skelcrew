@@ -175,6 +175,9 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
     await listen(createServer(answer(caller)), socket);
     sockets.push(socket);
   };
+  // End cleanly on the service's stop or on Ctrl-C, from here on. That comes before any review
+  // is brought back, as a stop without it would leave the review running.
+  for (const signal of ["SIGTERM", "SIGINT"]) process.on(signal, () => endWhatItStarted(sockets));
   // The function that polls one repository at once, for sc start. It is set once polling
   // starts, and sc start waits for it until then. So a builder never starts from a task an
   // earlier daemon saved, which may be out of date.
@@ -598,9 +601,8 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       console.log(`couldn't look at the agents' screens: ${errorText(error)}`);
     }
   }, 2000);
-  // Open your socket, and end cleanly on the service's stop or on Ctrl-C.
+  // Open your socket.
   await open(path, "you");
-  for (const signal of ["SIGTERM", "SIGINT"]) process.on(signal, () => endWhatItStarted(sockets));
   console.log(`Listening on ${path}.`);
   // Bring back the lead of each repository you have opened. One that fails is logged, and the
   // rest still start.
