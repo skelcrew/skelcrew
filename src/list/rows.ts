@@ -8,9 +8,11 @@ import { openTasks, prOf, type Task } from "../flow/copy.ts";
 import { reviewCheck } from "../flow/decide.ts";
 import { leadOf } from "../flow/lead.ts";
 import { type Badge, badgeOf, type Colour, needsDecision, shownOf } from "../flow/marks.ts";
+import { messagesWaiting, waitingText } from "../flow/messages.ts";
 import { findRepository } from "../flow/repo.ts";
 import type { DaemonRequest } from "../flow/requests.ts";
 import { taskStage } from "../flow/stage.ts";
+import { mergeShown } from "../flow/status.ts";
 import { Thread } from "../flow/thread.ts";
 import { forgeOf } from "../plugins/ask.ts";
 import { removeControlCodes } from "../screen/look.ts";
@@ -110,7 +112,8 @@ const ciWords = { passing: "CI passed", failing: "CI failed", pending: "CI runni
 // when a thread needs you, why, in its mark's colour. Otherwise its word, harness, round once it
 // has had a review, how long its builder has worked while it works, and its PR. A task ready for
 // review shows its PR, the review's verdict and CI instead, and offers m when it has a PR to
-// merge.
+// merge. Every row then adds its merge when ready with what it waits on, and how many messages
+// wait for its builder, so a merge that stalled or a delivery that is stuck shows.
 function taskRow(
   db: Database,
   open: Open,
@@ -136,11 +139,15 @@ function taskRow(
   const pr = thread.pr === null ? "" : `#${thread.pr}`;
   const copy = thread.pr === null ? null : prOf(db, open.owner, open.repo, thread.pr);
   const ci = thread.checks === null ? "" : ciWords[thread.checks];
-  const says = ready
-    ? [pr, "approved", ci].filter(Boolean)
-    : needsDecision(mark)
-      ? [`needs you: ${word}`, harness]
-      : [word, harness, round, age, pr].filter(Boolean);
+  const says = [
+    ...(ready
+      ? [pr, "approved", ci].filter(Boolean)
+      : needsDecision(mark)
+        ? [`needs you: ${word}`, harness]
+        : [word, harness, round, age, pr].filter(Boolean)),
+    mergeShown(thread) ?? "",
+    waitingText(messagesWaiting(db, thread)),
+  ].filter(Boolean);
   // m merges the PR only at the commit Skelcrew's reviewer approved, and only while it is the
   // head the forge last sent and CI passed there, as the forge's copy of the PR shows. The thread's own verdict and checks can lag
   // behind a push, so they never stand for a newer head. A forge too old to send the head

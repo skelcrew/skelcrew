@@ -56,9 +56,9 @@ const oldest = (db: Database, folder: string) =>
     db.query("SELECT * FROM messages WHERE folder = ? ORDER BY id").get(folder),
   );
 
-// Returns how many messages wait to be typed into the thread's builder, for sc ps and the
-// sidebar: its waiting messages, and a review's changes saved but not yet among them, as when
-// the daemon starts again.
+// Returns how many messages wait to be typed into the thread's builder, for sc ps, the list and
+// the sidebar: its waiting messages, and a review's changes saved but not yet among them, as
+// when the daemon starts again.
 export function messagesWaiting(db: Database, thread: Thread): number {
   const counted = (sql: string) =>
     z.object({ count: z.number() }).parse(db.query(sql).get(thread.folder)).count;
@@ -70,7 +70,7 @@ export function messagesWaiting(db: Database, thread: Thread): number {
 }
 
 // Returns how many messages wait for a builder, in words, such as "1 message waiting", or
-// nothing when none does, for sc ps and the sidebar.
+// nothing when none does, for sc ps, the list and the sidebar.
 export const waitingText = (count: number) =>
   count === 0 ? "" : `${count} message${count === 1 ? "" : "s"} waiting`;
 

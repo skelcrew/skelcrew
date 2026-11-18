@@ -117,6 +117,21 @@ test("an approved task whose builder asks a question stays under Working, to att
   expect(row?.session).toBe("app-14");
 });
 
+test("a row shows its armed merge when ready and what it waits on, and a ready one shows it too", () => {
+  sql(`UPDATE threads SET merge_plan = 'armed', merge_waits = 'its checks' WHERE folder = 'app-7';
+UPDATE threads SET merge_plan = 'armed' WHERE folder = 'app-14';`);
+  const says = (name: string) => rows().find((row) => row.name === name)?.says;
+  expect(says("app-7")).toBe("working · claude · 5m · merge when ready · waits on its checks");
+  expect(says("app-14")).toBe("#41 · approved · CI passed · merge when ready");
+});
+
+test("a row counts the messages waiting for its builder, so a stuck delivery shows", () => {
+  sql(`INSERT INTO messages (folder, sender, text, said, at) VALUES
+  ('app-7', 'lead', 'one', 'one', 0), ('app-7', 'lead', 'two', 'two', 0);`);
+  const row = rows().find((candidate) => candidate.name === "app-7");
+  expect(row?.says).toBe("working · claude · 5m · 2 messages waiting");
+});
+
 test("an issue whose work ended is back under Issues, to start again", () => {
   sql("UPDATE threads SET status = 'done' WHERE folder = 'app-7';");
   sql(itemSql("app", "task", 7, "Login redirect", "2026-11-01T10:00:00Z"));
