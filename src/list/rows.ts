@@ -127,8 +127,11 @@ function taskRow(
   const thread = Thread.parse(saved);
   const name = `${repoName}-${thread.task}`;
   const issueOpen = issues.some((issue) => issue.id === thread.task);
-  const ready = taskStage(thread, issueOpen) === "ready for review";
   const { word, mark } = shownOf(thread, roundLimit(thread), now);
+  // An approved task whose builder needs you for something else, such as a question, stays under
+  // Working, where Enter attaches to the builder, so one Enter still reaches the question. It
+  // shows under Ready for review again once that is answered.
+  const ready = taskStage(thread, issueOpen) === "ready for review" && !needsDecision(mark);
   // A thread with no harness saved started before Skelcrew saved it, when builders ran only on
   // Claude Code.
   const harness = thread.harness ?? "claude";

@@ -105,6 +105,14 @@ test("the lead comes first, then issues, then working tasks with those that need
   ]);
 });
 
+// Enter on a task ready for review opens its PR, so a question there would be out of reach.
+test("an approved task whose builder asks a question stays under Working, to attach to", () => {
+  sql("UPDATE threads SET asking = 1 WHERE folder = 'app-14';");
+  const row = rows().find((candidate) => candidate.name === "app-14");
+  expect(row).toMatchObject({ part: "working", says: "needs you: question · claude", merge: null });
+  expect(row?.session).toBe("app-14");
+});
+
 test("an issue whose work ended is back under Issues, to start again", () => {
   sql("UPDATE threads SET status = 'done' WHERE folder = 'app-7';");
   sql(itemSql("app", "task", 7, "Login redirect", "2026-11-01T10:00:00Z"));
