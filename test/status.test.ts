@@ -84,11 +84,16 @@ test("an approval whose PR conflicts isn't ready to merge, even once the thread 
   expect(status({ ...approved, conflicts: "main" })).toBe("idle");
 });
 
-test("a question, a stall, the round limit or a failed review needs you", () => {
+test("a question, the round limit or a failed review needs you", () => {
   expect(status({ asking: true })).toBe("needs you");
-  expect(status({ stalled: true })).toBe("needs you");
   expect(status({ status: "waiting", needs_you: true, rounds: 4 })).toBe("needs you");
   expect(status({ status: "waiting", needs_you: true, verdict: "failed" })).toBe("needs you");
+});
+
+// Its last message went to the lead, who brings a real question to you.
+test("a builder that stopped without submitting idles, and doesn't need you", () => {
+  expect(status({ stalled: true, state: "idle" })).toBe("idle");
+  expect(status({ status: "waiting", stalled: true, state: "idle" })).toBe("idle");
 });
 
 test("a harness that stopped on an error, or a thread that failed, is in error", () => {
