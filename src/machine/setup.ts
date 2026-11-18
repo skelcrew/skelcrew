@@ -6,7 +6,7 @@ import { codexHome } from "../agents/codex.ts";
 import { HarnessName, harnessNamed } from "../agents/harness.ts";
 import { configFile, yourConfigDocument } from "../config.ts";
 import { openDb } from "../db.ts";
-import { claudeTokenFile, configDir, dataDir, installedFile, setUpFile } from "../paths.ts";
+import { claudeTokenFile, configDir, dataDir, installDoneFile, setUpFile } from "../paths.ts";
 import { addPlugin, askYes, installYourPlugins } from "../plugins/install.ts";
 import { yourPlugins } from "../plugins/lock.ts";
 import { installedPlugins } from "../plugins/plugin.ts";
@@ -396,7 +396,7 @@ export function install(from?: string): void {
     if (!finished) {
       mkdirSync(dataDir(), { recursive: true });
       writeFileSync(setUpFile(), "");
-      writeFileSync(installedFile(), "");
+      writeFileSync(installDoneFile(), "");
     }
     if (!finished && (setUp || plugins)) console.log("\nSkelcrew is set up.");
     // A machine set up by an older release takes the marks without a word, as plain sc runs this
@@ -411,7 +411,7 @@ export function install(from?: string): void {
 // plain sc installs the service even after a first run where you said no to a plugin your files
 // name, and an older release wrote the mark without installing your plugins.
 export function installFinished(): boolean {
-  return setupDone() && existsSync(installedFile());
+  return setupDone() && existsSync(installDoneFile());
 }
 
 // A step of the first run: `title` names it, and `take` asks what it needs, starting with a line

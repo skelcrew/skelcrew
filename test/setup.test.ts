@@ -1432,17 +1432,26 @@ test("plain sc on a machine set up by an older release installs the plugins your
   fakeGitHub();
   publishFake("0.1.0");
   await skel("1\nsk-ant-oat01-good\n");
-  // The older release left only its own mark.
+  // The older release left only its own mark, and a release update its note beside it.
   const data = join(home, ".local", "share", "skelcrew");
-  rmSync(join(data, "installed"));
+  rmSync(join(data, "install-done"));
   expect(existsSync(join(data, "set-up"))).toBe(true);
+  writeFileSync(join(data, "installed"), "0.2.0\n");
   lockFake("0.1.0");
   const run = await atTerminal("y\n");
   expect(run.err).toBe("");
   expect(run.out).toContain("Install it? [Y/n]");
   expect(run.out).toContain("Installed fake 0.1.0.");
   expect(calls()).toContain("fake setup 0.1.0\n");
-  expect(existsSync(join(data, "installed"))).toBe(true);
+  expect(existsSync(join(data, "install-done"))).toBe(true);
+  // The release update's note is left as it was, for the next sc to tell you about.
+  expect(readFileSync(join(data, "installed"), "utf8")).toBe("0.2.0\n");
+  // A daemon starting deletes that note, which leaves sc install done: plain sc asks nothing.
+  rmSync(join(data, "installed"));
+  const later = await atTerminal("");
+  expect(later.err).toBe("");
+  expect(later.out).not.toContain("[Y/n]");
+  expect(later.out).not.toContain("Nothing to install");
 });
 
 test("plain sc on a machine that isn't set up installs your plugins too", async () => {
