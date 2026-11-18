@@ -9,11 +9,12 @@ import { z } from "zod";
 import { HarnessName } from "./agents/harness.ts";
 import { builtInRounds, flowRoles, repositoryRounds } from "./flows.ts";
 import { cloneDir, configDir } from "./paths.ts";
-import { repositoryRole } from "./roles.ts";
+import { type RoleName, repositoryRole } from "./roles.ts";
 
 // A repository Skelcrew works on, by its owner and name. `agents` is the tree of .agents/ whose
 // role files count, as repositoryRole takes it: a task's own, or without it the one you approved.
-// `flow` is the flow whose file gives the round limit: a task's own, or without it `default`.
+// `flow` is the flow whose file gives the round limit and the roles of its stages: a task's own,
+// or without it `default`.
 export type Repository = { owner: string; repo: string; agents?: string | null; flow?: string };
 
 // A model is plain text, passed to the harness as written: Skelcrew keeps no list of names, and a
@@ -91,12 +92,12 @@ export type Settings = {
 };
 type Group = keyof Settings;
 
-// The keys of the files behind each setting. A role's model belongs to its harness, so a role is
-// read together with your harness and model.
+// The keys of the files behind each setting. The roles have none here, as each is read on its
+// own, layer by layer, by roleOf.
 const keysOf: Record<Group, Key[]> = {
-  lead: ["harness", "model", "lead", "roles"],
-  builder: ["harness", "model", "builder", "roles"],
-  reviewer: ["harness", "model", "reviewer", "roles"],
+  lead: [],
+  builder: [],
+  reviewer: [],
   rounds: ["max_rounds"],
   reviews: ["limits"],
   checks: ["limits"],
@@ -155,9 +156,6 @@ const overrideKeys: Key[] = [
   "setup",
   "test",
 ];
-// The keys every layer's say merges on, rather than the first one winning, as a role's model
-// follows the harness each layer leaves it on.
-const roleKeys: Key[] = ["lead", "builder", "reviewer", "roles"];
 
 // Returns the built-in defaults: Claude Code for every role, the built-in flow's rounds and 30
 // minutes for a review. Setup, test and the tracker have none. Reviews default to a quarter of this machine's
@@ -192,46 +190,20 @@ export function readSettings<G extends Group>(
   const wanted = groups.flatMap((group) => keysOf[group]);
   // Each layer is read from the one that wins first, and a setting a layer above decides isn't
   // read again below it, so a bad value there can't stop a setting it doesn't decide.
-  // `builder` and `reviewer` are the roles the task's flow runs in the build and review stages,
-  // which are those two unless the flow names one of the repository's own, such as tester. A
-  // role's settings, in every layer, are then the ones of the role that runs.
-  const runs = { lead: "lead", builder: "builder", reviewer: "reviewer" };
-  if (repository && groups.some((group) => group === "builder" || group === "reviewer")) {
-    const stages = flowRoles(repository);
-    runs.builder = stages.build;
-    runs.reviewer = stages.review;
-  }
-  // The names of the roles asked for, as roles: lines name them.
-  const roleNames = (["lead", "builder", "reviewer"] as const)
-    .filter((name) => groups.some((group) => group === name))
-    .map((name) => runs[name]);
-  const overrides = repository ? readOverrides(wanted, repository, roleNames) : {};
-  // Roles are the exception: every layer's say on them merges, as a model goes along only while
-  // the role stays on the harness it was given with. Only a say in your override naming both a
-  // harness and a model for the role, its own or for every role, decides it whatever is below,
-  // so then nothing below is read for that role. The old lead:, builder: and reviewer: lines
-  // count only for the built-in role they name.
-  const roleDecided = (k: Key) =>
-    (k === "lead" || k === "builder" || k === "reviewer") &&
-    [overrides.roles?.[runs[k]], runs[k] === k ? overrides[k] : undefined, overrides].some(
-      (say) => say?.harness !== undefined && say.model !== undefined,
-    );
   const decidedBy = (layers: File[]) => (k: Key) =>
-    roleDecided(k) ||
-    (!roleKeys.includes(k) && layers.some((l) => l[k] !== undefined && l[k] !== null));
-  // The repository's .agents/, a layer of its own just over skelcrew.yaml, as its files replace
-  // that file's old keys: the role files' harness and model go over lead:, builder: and
-  // reviewer:, as a model must follow the harness each layer leaves, and the rounds of the task's
-  // flow, `default` unless it named another, go over max_rounds. Only the files of the settings
-  // asked for are read, so a broken reviewer file never stops the lead.
+    layers.some((l) => l[k] !== undefined && l[k] !== null);
+  // Your override's harness and model are read with the roles, so only your own harness, for
+  // the first run, is read here.
+  const overrides = repository
+    ? readOverrides(
+        wanted.filter((k) => k !== "harness" && k !== "model"),
+        repository,
+      )
+    : {};
+  // The rounds of the task's flow, `default` unless it named another, go over max_rounds in
+  // skelcrew.yaml, which they replace. The flow file is checked even when your override decides
+  // the round limit, as its stages still say which roles run.
   const agentsFiles: File = {};
-  for (const name of ["lead", "builder", "reviewer"] as const)
-    if (repository && groups.some((group) => group === name) && !roleDecided(name)) {
-      const file = roleFileSettings(runs[name], repository);
-      if (file) agentsFiles.roles = { ...agentsFiles.roles, [runs[name]]: file };
-    }
-  // The flow file is checked even when your override decides the round limit, as its stages
-  // still say which roles run.
   if (repository && groups.some((group) => group === "rounds"))
     agentsFiles.max_rounds = repositoryRounds(repository, decidedBy([overrides])("max_rounds"));
   // sc init asks without a repository, for the starter skelcrew.yaml it writes. The old
@@ -248,37 +220,130 @@ export function readSettings<G extends Group>(
         repository,
       )
     : {};
-  // Every role starts from your harness and model, and the layers above move it. Once your
-  // override names a harness, yours counts only for a role the override puts back on it, so a
-  // harness or model of yours that isn't valid stops nothing there, and counts as none.
-  const decided = (k: Key) =>
-    decidedBy([overrides, agentsFiles, shared])(k) ||
-    (["harness", "model"].includes(k) && overrides.harness !== undefined);
+  const decided = decidedBy([overrides, agentsFiles, shared]);
   const fromYours = wanted.filter((k) => yourKeys.includes(k) && !decided(k));
-  const yours = readYourFile(fromYours, roleNames);
-  if (overrides.harness !== undefined && wanted.includes("harness"))
-    Object.assign(yours, yourHarnessIfValid());
-  return mergeSettings([overrides, agentsFiles, shared, yours], runs);
+  // Only the roles asked for are read, so a mistake in one role's settings stops only its own
+  // agents. `builder` and `reviewer` are the roles the task's flow runs in the build and review
+  // stages, which are those two unless the flow names one of the repository's own, such as
+  // tester, whose settings are then read.
+  const runs = { lead: "lead", builder: "builder", reviewer: "reviewer" };
+  if (repository && groups.some((group) => group === "builder" || group === "reviewer")) {
+    const stages = flowRoles(repository);
+    runs.builder = stages.build;
+    runs.reviewer = stages.review;
+  }
+  const roles: Partial<Record<RoleName, Role>> = {};
+  for (const name of ["lead", "builder", "reviewer"] as const)
+    if (groups.some((group) => group === name)) roles[name] = roleOf(name, runs[name], repository);
+  return mergeSettings([overrides, agentsFiles, shared, readYourFile(fromYours)], roles);
 }
 
-// Returns your config's harness and model, each only when it is valid, and your model only
-// along with a valid harness or none, as a model belongs to its harness. Nothing is thrown, as
-// this is read only where your override names the harness, and a bad one of yours can't stop it.
-function yourHarnessIfValid(): File {
-  let data: unknown;
-  try {
-    data = yourConfig();
-  } catch {
-    return {};
-  }
-  if (!isMapping(data)) return {};
-  const harness = HarnessName.optional().safeParse(data.harness);
-  if (!harness.success) return {};
-  const model = Model.optional().safeParse(data.model);
-  return {
-    ...(harness.data && { harness: harness.data }),
-    ...(model.success && model.data && { model: model.data }),
+// A layer's say on one role: the harness and model it names, each read only when asked for, as
+// a lower layer is read only where it can still change the role. `everyRole` marks a layer's own
+// harness and model for every role, rather than for this one.
+type Say = {
+  harness: () => HarnessName | undefined;
+  model: () => string | undefined;
+  everyRole?: boolean;
+};
+
+// Returns `read` remembering what it gave, so each file is read and checked at most once.
+function once<T>(read: () => T): () => T {
+  let done: { value: T } | undefined;
+  return () => {
+    done ??= { value: read() };
+    return done.value;
   };
+}
+
+// Returns the harness and model one role runs on, for `repository` when there is one. Each layer
+// says something of it, the one that wins first: your override under repos:, the repository's
+// role file, its skelcrew.yaml's line, then your config. In each, roles: goes over the old role
+// line, which goes over the layer's own harness and model for every role. Every role starts
+// from your harness and model, and the layers move it. A model belongs to its harness, so a
+// model goes along only while the role stays on the harness it was given with: reviewer:
+// { harness: codex } in skelcrew.yaml must never run Codex on your opus. A layer's model for
+// every role, given without a harness, fits only a role on your harness. With no model left,
+// the harness picks its default.
+// The layers are read from the top, and a value is read and checked only when it can still
+// change the role, so a bad one an override replaces stops nothing. A value that counts is
+// always checked, and throws, naming its file, when it isn't valid.
+// `run` is the role that runs as `name`, which differs for a flow that names one of the
+// repository's own, such as tester for the builder. Its roles: lines and its role file then
+// count, and the old builder: and reviewer: lines, which are the built-in roles', don't.
+function roleOf(name: RoleName, run: string, repository: Repository | undefined): Role {
+  const says: Say[] = [];
+  const builtIn = run === name;
+  // A layer's say in roles: for the role, then its old line, which roles: goes over.
+  const layer = (read: (keys: Key[], roleNames?: string[]) => File) => {
+    const role = once(() => read(["roles"], [run]));
+    const line = once(() => read([name]));
+    says.push({
+      harness: () => role().roles?.[run]?.harness,
+      model: () => role().roles?.[run]?.model,
+    });
+    if (builtIn)
+      says.push({ harness: () => line()[name]?.harness, model: () => line()[name]?.model });
+  };
+  if (repository) {
+    layer((keys, roleNames) => readOverrides(keys, repository, roleNames));
+    const harness = once(() => readOverrides(["harness"], repository).harness);
+    const model = once(() => readOverrides(["model"], repository).model);
+    says.push({ harness, model, everyRole: true });
+    const file = once(() => roleFileSettings(run, repository));
+    says.push({ harness: () => file()?.harness, model: () => file()?.model });
+    if (builtIn) {
+      const line = once(() => readRepositoryFile([name], repository)[name]);
+      says.push({ harness: () => line()?.harness, model: () => line()?.model });
+    }
+  }
+  layer(readYourFile);
+  // Your own harness, or the built-in one, and your model, which every role starts from.
+  const yourHarness = once(() => readYourFile(["harness"]).harness ?? builtInDefaults().harness);
+  const yourModel = once(() => readYourFile(["model"]).model);
+  // Whether your harness is `harness`, without stopping on one that isn't valid, as it is asked
+  // only to tell whether your model goes along, and a bad one of yours is never `harness`.
+  const isYourHarness = (harness: HarnessName) => {
+    try {
+      return yourHarness() === harness;
+    } catch {
+      return false;
+    }
+  };
+  // The harness the says from `from` down name first, or nothing when none does.
+  const namedFrom = (from: number) =>
+    says
+      .slice(from)
+      .find((say) => say.harness() !== undefined)
+      ?.harness();
+  // Whether the role is on `harness` from the say at `from` down: the first that names a harness
+  // decides, or else yours.
+  const onHarness = (from: number, harness: HarnessName): boolean => {
+    const named = namedFrom(from);
+    return named === undefined ? isYourHarness(harness) : named === harness;
+  };
+  // The harness from the say at `from` down: the first one named, or else yours.
+  const harnessFrom = (from: number): HarnessName => namedFrom(from) ?? yourHarness();
+  // The model from the say at `from` down, as each say leaves it.
+  const modelFrom = (from: number): string | undefined => {
+    const say = says[from];
+    if (say === undefined) return yourModel();
+    const harness = say.harness();
+    const model = say.model();
+    // A model named counts, unless it is a layer's model for every role, given without a
+    // harness, and the role isn't on your harness.
+    if (model !== undefined && (!say.everyRole || harness !== undefined)) return model;
+    const below = namedFrom(from + 1);
+    if (model !== undefined && (below === undefined || isYourHarness(below))) return model;
+    // A say that moves the role to another harness drops the model below it, and the role gets
+    // your model again only when it moves onto your harness.
+    if (harness !== undefined && !onHarness(from + 1, harness))
+      return isYourHarness(harness) ? yourModel() : undefined;
+    return modelFrom(from + 1);
+  };
+  const harness = harnessFrom(0);
+  const model = modelFrom(0);
+  return model === undefined ? { harness } : { harness, model };
 }
 
 // Returns the harness and model a repository's role file names, or nothing when it names neither
@@ -297,7 +362,7 @@ function yourConfig(): unknown {
 
 // Returns your config.yaml, holding only `keys`, checked. A file with none of them isn't read,
 // so a broken one stops only what it could change.
-function readYourFile(keys: Key[], roleNames: string[]): File {
+function readYourFile(keys: Key[], roleNames?: string[]): File {
   if (keys.length === 0) return {};
   const file = join(configDir(), "config.yaml");
   return check(pick(yourConfig(), keys, roleNames), `${file} isn't valid`);
@@ -307,7 +372,7 @@ function readYourFile(keys: Key[], roleNames: string[]): File {
 // `keys` an override may set, checked. A repository is named by its owner/name, in any case, as
 // forges ignore case in names. Only its own entry is checked, so a mistake in another
 // repository's stops only that one.
-function readOverrides(keys: Key[], repository: Repository, roleNames: string[]): File {
+function readOverrides(keys: Key[], repository: Repository, roleNames?: string[]): File {
   const wanted = keys.filter((k) => overrideKeys.includes(k));
   if (wanted.length === 0) return {};
   const file = join(configDir(), "config.yaml");
@@ -334,7 +399,7 @@ function readRepositoryFile(keys: Key[], repository: Repository): File {
   if (!stat) return {};
   if (!stat.isFile())
     throw new Error("the repository's skelcrew.yaml isn't a plain file, so Skelcrew won't read it");
-  const read = pick(parseYaml(file, "the repository's skelcrew.yaml"), keys, []);
+  const read = pick(parseYaml(file, "the repository's skelcrew.yaml"), keys);
   return check(read, "the repository's skelcrew.yaml isn't valid");
 }
 
@@ -350,7 +415,7 @@ function parseYaml(path: string, name: string): unknown {
 
 // Returns the `keys` of what a file held. An empty file, or one that isn't a mapping, gives
 // nothing to keep, and File's check says so for the second.
-function pick(data: unknown, keys: Key[], roleNames: string[]): unknown {
+function pick(data: unknown, keys: Key[], roleNames: string[] = keys): unknown {
   if (data === null || data === undefined) return {};
   if (typeof data !== "object" || Array.isArray(data)) return data;
   // The fallback and your reviewer's harness are written among the reviewer's lines, but read
@@ -359,8 +424,9 @@ function pick(data: unknown, keys: Key[], roleNames: string[]): unknown {
   const picked = Object.fromEntries(
     Object.entries(data).filter(([key]) => !nested.includes(key) && keys.some((k) => k === key)),
   );
-  // Of roles:, only the roles asked for are kept, by `roleNames`, so a mistake in another role
-  // stops only its own agents. One that isn't a mapping is kept whole, for the check to refuse.
+  // Of roles:, only the roles asked for are kept, by `roleNames`, which are `keys` unless a
+  // flow's own role is asked for, so a mistake in another role stops only its own agents. One
+  // that isn't a mapping is kept whole, for the check to refuse.
   if (isMapping(picked.roles))
     picked.roles = Object.fromEntries(
       Object.entries(picked.roles).filter(([name]) => roleNames.includes(name)),
@@ -392,38 +458,18 @@ function check(data: unknown, problem: string): File {
 }
 
 // Merges the files, the one that wins first, over the built-in defaults: each setting comes from
-// the first that sets it, key by key. The last layer is your config. `runs` names the role that
-// runs as each of the lead, builder and reviewer, for a flow that names one of its own.
-function mergeSettings(
-  layers: File[],
-  runs: Record<"lead" | "builder" | "reviewer", string>,
-): Settings {
+// the first that sets it, key by key. The last layer is your config. `roles` are the roles read,
+// and a role not asked for is left at the built-in harness.
+function mergeSettings(layers: File[], roles: Partial<Record<RoleName, Role>>): Settings {
   const defaults = builtInDefaults();
   // The first value any layer sets for `get`.
   const first = <T>(get: (layer: File) => T | undefined | null) =>
     layers.map(get).find((value) => value !== undefined && value !== null);
-  // Your harness and model, which every role starts from before the layers above move it.
-  const yours = layers.at(-1) ?? {};
-  const top = { harness: yours.harness ?? defaults.harness, model: yours.model };
-  // Each layer's say on one role, merged. In each layer, roles: goes over the old lead:,
-  // builder: and reviewer: lines, which go over the layer's own harness and model for every
-  // role. That last one counts as a layer's say on the role, so a harness your override under
-  // repos: names goes over a role line in the repository's skelcrew.yaml, as the override does.
-  // A role of the repository's own has only its roles: lines, never the stage's built-in role's,
-  // so with none it gets your harness and model, as any role does.
-  const role = (stage: "lead" | "builder" | "reviewer") =>
-    mergeRole(
-      layers.flatMap((l) => [
-        { role: l.roles?.[runs[stage]] },
-        ...(runs[stage] === stage ? [{ role: l[stage] }] : []),
-        ...(l === yours ? [] : [{ role: { harness: l.harness, model: l.model }, everyRole: true }]),
-      ]),
-      top,
-    );
+  const unread = { harness: defaults.harness };
   return {
-    lead: role("lead"),
-    builder: role("builder"),
-    reviewer: role("reviewer"),
+    lead: roles.lead ?? unread,
+    builder: roles.builder ?? unread,
+    reviewer: roles.reviewer ?? unread,
     rounds: first((l) => l.max_rounds) ?? defaults.max_rounds,
     reviews: first((l) => l.limits?.reviews) ?? defaults.reviews,
     checks: first((l) => l.limits?.checks) ?? defaults.checks,
@@ -432,34 +478,8 @@ function mergeSettings(
     tracker: first((l) => l.tracker),
     fallback: first((l) => l.fallback),
     reviewMinutes: first((l) => l.review?.timeout_minutes) ?? defaults.reviewMinutes,
-    yourHarness: yours.harness,
+    yourHarness: layers.at(-1)?.harness,
     yourReviewer: first((l) => l.your_reviewer),
     declined: first((l) => l.github_declined) ?? [],
   };
-}
-
-// Returns a role's harness and model from what each layer says of it, the one that wins first,
-// and `top`, the harness and model every role gets unless it names its own. A model name
-// belongs to its harness, so a model goes along only while the role stays on the harness it was
-// given with: reviewer: { harness: codex } in skelcrew.yaml must never run Codex on your opus.
-// With no model left, the harness picks its default. A say marked `everyRole` is a layer's own
-// harness and model for every role, and its model alone fits only a role on the top harness.
-function mergeRole(
-  says: { role: RoleSettings | undefined; everyRole?: boolean }[],
-  top: { harness: HarnessName; model: string | undefined },
-): Role {
-  let harness = top.harness;
-  let model = top.model;
-  // From the last say to the first, so each one goes over what is below it. A say that moves
-  // the role to another harness drops the model below it, and the role gets the top model again
-  // only when it moves back onto the top harness.
-  for (const { role, everyRole } of [...says].reverse()) {
-    if (role?.harness !== undefined && role.harness !== harness) {
-      harness = role.harness;
-      model = harness === top.harness ? top.model : undefined;
-    }
-    const fits = !everyRole || role?.harness !== undefined || harness === top.harness;
-    if (role?.model !== undefined && fits) model = role.model;
-  }
-  return model === undefined ? { harness } : { harness, model };
 }
