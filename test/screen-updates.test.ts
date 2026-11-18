@@ -1,7 +1,7 @@
 // Lists and pages that follow Skelcrew's copy as it changes, and what the screen writes to
 // your terminal while nothing changes.
 import { afterEach, beforeEach, expect, setDefaultTimeout, test } from "bun:test";
-import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { stillRunning } from "../src/agents/sessions.ts";
 import { itemSql, threadSql } from "./harness.ts";
@@ -10,6 +10,7 @@ import {
   agents,
   clickRow,
   endTest,
+  given,
   home,
   issueUrl,
   leaving,
@@ -20,6 +21,7 @@ import {
   openList,
   openOnGitHub,
   press,
+  read,
   ready,
   right,
   screen,
@@ -67,11 +69,42 @@ async function untilQuiet(written: string): Promise<void> {
   }
 }
 
-// The list and the sidebar read Skelcrew's copy again each second, so two seconds see each of
-// them do it at least once.
-const twoRefreshes = () => Bun.sleep(2000);
+// Puts a tmux in front of the real one that notes each time the sidebar asks for the agents'
+// panes, as it does first in every refresh. A refresh that changes nothing writes nothing, so
+// this is how a test sees one. It must be set before the screen opens.
+function noteRefreshes(): void {
+  const folder = join(home, "noting");
+  mkdirSync(folder);
+  writeFileSync(
+    join(folder, "tmux"),
+    `#!/bin/sh\ncase "$*" in *"list-panes -a -F #{pane_dead}"*) echo >> ${join(home, "refreshes")} ;; esac\nexec ${Bun.which("tmux") ?? "tmux"} "$@"\n`,
+    { mode: 0o755 },
+  );
+  given.before = `PATH=${folder}:$PATH `;
+}
+
+// How many refreshes the sidebar has started.
+const refreshesStarted = () => read("refreshes").split("\n").length - 1;
+
+// Returns once the sidebar has started two refreshes from now. The first reads Skelcrew's copy
+// as it is now, and the second starts only once the first has drawn what it read.
+async function sidebarRefreshedTwice(): Promise<void> {
+  const before = refreshesStarted();
+  await until(() => refreshesStarted() >= before + 2, "the sidebar to refresh twice");
+}
+
+// Returns once the list and the sidebar have each read Skelcrew's copy again at least once. The
+// list does so each second, but when nothing changed it writes nothing and asks tmux nothing,
+// so nothing shows that it did: two seconds see it do so twice. The sidebar's refreshes in that
+// time show that the screen wasn't held up meanwhile.
+async function twoRefreshes(): Promise<void> {
+  const before = refreshesStarted();
+  await Bun.sleep(2000);
+  await until(() => refreshesStarted() >= before + 2, "the sidebar to refresh twice");
+}
 
 test("a list or page left open writes nothing", async () => {
+  noteRefreshes();
   sql("UPDATE threads SET status = 'waiting', changed = 0 WHERE status = 'working'");
   await openList("Threads");
   const written = await copyOnceSettled();
@@ -125,6 +158,7 @@ test("a list scrolled with the wheel stays where you put it as it reads the copy
     ),
   );
   sql(many.join("\n"));
+  noteRefreshes();
   await openList("Issues");
   for (let i = 0; i < 4; i++) wheel(65);
   // Four notches reach the list's end, where app-124 is the first issue. The first notch alone
@@ -205,34 +239,32 @@ test("two terminals can each be on a list of their own", async () => {
 });
 
 test("with nothing working, an open screen sends your terminal nothing at all", async () => {
+  noteRefreshes();
   sql(`UPDATE threads SET status = 'waiting', started = ${Date.now()} WHERE status = 'working'`);
   open("lead");
   await ready("lead");
   await until(() => seen().includes("checks · claude"), "the threads");
-  // The threads started four seconds short of a minute ago, so a time shown on a row would
-  // change during the wait. A refresh writes only what changed, so a quiet one can't be seen:
-  // app-7 needing you shows that the sidebar has read the start time before the minute.
-  const minute = Date.now() + 4000;
-  sql(`UPDATE threads SET started = ${minute - 60_000} WHERE status = 'waiting';
-UPDATE threads SET needs_you = 1 WHERE folder = 'app-7'`);
-  await until(() => seen().includes("1 needs you"), "the sidebar to read the start time");
   const written = await copyOnceSettled();
+  // The threads started three seconds short of a minute ago, so a time shown on a row would change
+  // during the wait. The sidebar must read that before the minute, so a busy machine that
+  // refreshed only after it tries again with a minute further on.
+  let minute = 0;
+  for (let tries = 0; tries < 5 && Date.now() >= minute; tries++) {
+    minute = Date.now() + 3000;
+    sql(`UPDATE threads SET started = ${minute - 60_000} WHERE status = 'waiting'`);
+    await sidebarRefreshedTwice();
+  }
   expect(Date.now()).toBeLessThan(minute);
-  // Past the minute and two refreshes, nothing was written.
+  // Past the minute, the sidebar reads the threads again and draws what it read. A time it drew
+  // reaches the copy a moment later.
   await Bun.sleep(minute - Date.now());
-  await twoRefreshes();
-  expect(readFileSync(written, "utf8")).toBe("");
-  // app-7 no longer needing you shows that the sidebar has read the threads after the minute.
-  // That redraw writes app-7's row, and a time drawn by then would be written too.
-  sql("UPDATE threads SET needs_you = 0 WHERE folder = 'app-7'");
-  await until(() => !seen().includes("needs you"), "the sidebar to read the threads again");
+  await sidebarRefreshedTwice();
   await untilQuiet(written);
-  expect(Bun.stripANSI(readFileSync(written, "utf8"))).not.toMatch(/<1m|\b\d+[mhd]\b/);
-  // And app-12's row still shows no time.
+  expect(readFileSync(written, "utf8")).toBe("");
   const rows = seen().split("\n");
   const row = rows.findIndex((line) => line.includes("app-12"));
   expect(rows[row + 1]?.split("│")[0]?.trim()).toBe("checks · claude");
-});
+}, 60_000);
 
 test("a working thread's time moves on by itself, and writes when it does", async () => {
   sql(`UPDATE threads SET started = ${Date.now() - 58_000} WHERE folder = 'app-12'`);
