@@ -95,6 +95,11 @@ console.log(JSON.stringify(listRows(openDb(), { owner: "simon", repo: "app" }, $
 
 test("the lead comes first, then issues, then working tasks with those that need you first, then those ready for review", () => {
   const shown = rows().map((row) => [row.part, row.name, row.title, row.says]);
+  // The approved task first on its own, so a failure says in one line where it went and why.
+  const ready = shown.find(([, name]) => name === "app-14");
+  expect(ready?.join(" | ")).toBe(
+    "ready | app-14 | Fix the export header | #41 · approved · CI passed",
+  );
   expect(shown).toEqual([
     ["lead", "lead", "", "stopped · claude"],
     ["issue", "app-31", "Export as CSV", ""],
