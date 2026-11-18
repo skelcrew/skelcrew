@@ -95,6 +95,26 @@ console.log(JSON.stringify(shown));`;
 const shownBefore = () =>
   JSON.parse(readFileSync(join(saved, "before-tasks.json"), "utf8").replaceAll("$HOME", home));
 
+// Changes what the release before tasks showed of notes-t1, whose builder had ended its turn
+// without a submit, to what Skelcrew shows of such a turn now. It then needed you, in yellow. It
+// now waits on the lead, which got the builder's last message: dim, among the working threads,
+// and counted nowhere.
+function turnEndedWaits(saved: ReturnType<typeof shownBefore>): void {
+  for (const row of [...saved.ps, ...saved.psNotes])
+    if (row.thread === "notes-t1") row.needsYou = false;
+  for (const task of saved.show) if (task.issue === "notes-t1") task.thread.needsYou = false;
+  const notes = saved.screen[1];
+  notes.entries[0].notes = [];
+  const [needing, working] = notes.lists[1];
+  const row = needing.rows[0];
+  row.mark = ["○", "90"];
+  row.ends[0] = ["turn ended", "90"];
+  notes.lists[1] = [{ heading: "Working", rows: [...working.rows, row] }];
+  for (const screen of saved.screen)
+    for (const entry of screen.sidebar) if (entry.name === "notes-t1") entry.state = "idle";
+  saved.tabs[1].needYou = 0;
+}
+
 // Returns the names of the database's tables.
 function tables(file: string): string[] {
   const db = new Database(file, { readonly: true });
@@ -112,7 +132,9 @@ test("after the move, every command and the screen show the same threads under t
   run(`import { openDb } from ${JSON.stringify(source("db.ts"))};
 openDb().run("UPDATE threads SET ci_passed = 1 WHERE folder = 'app-13'");`);
   // Before the new daemon moves it, sc shows the threads as they are.
-  const { issues, show, prs, ...saved } = shownBefore();
+  const shownThen = shownBefore();
+  turnEndedWaits(shownThen);
+  const { issues, show, prs, ...saved } = shownThen;
   const before = JSON.parse(run(showAll));
   const { ls, show: shown, ...same } = before;
   expect(same).toEqual(saved);
