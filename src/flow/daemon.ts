@@ -1,4 +1,4 @@
-// The daemon, run by sc serve: keeps each repository's lead and the threads' builders
+// The daemon, run by sc up: keeps each repository's lead and the threads' builders
 // running, and answers the CLI and the agents on their sockets.
 import { dlopen, FFIType } from "bun:ffi";
 import { existsSync, mkdirSync, openSync, rmSync, writeFileSync } from "node:fs";

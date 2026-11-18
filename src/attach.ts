@@ -1,12 +1,13 @@
-// Attaching you to a repository's lead or a thread's builder, after making sure the daemon
-// runs on this Skelcrew's code. Plain sc attaches to a lead, and sc attach to a builder.
+// Running the daemon in the background, as sc up --bg does, and attaching you to a repository's
+// lead or a thread's builder once it runs this Skelcrew's code. Plain sc attaches to a lead, and
+// sc attach to a builder.
 import { z } from "zod";
 import { agentRuns } from "./agents/sessions.ts";
 import { ask } from "./client.ts";
 import { openDb } from "./db.ts";
 import { leadOf } from "./flow/lead.ts";
 import { findThread } from "./flow/thread.ts";
-import { restartDaemon, startDaemon } from "./machine/service.ts";
+import { installService, restartDaemon, startDaemon } from "./machine/service.ts";
 import { openScreen } from "./screen/screen.ts";
 import { checkoutFolder, git, release, singleFile } from "./version.ts";
 
@@ -70,9 +71,12 @@ export async function restartStaleDaemon(): Promise<void> {
   }
 }
 
-// Makes sure the daemon runs this Skelcrew's code before you attach to an agent. A daemon on
-// another release or commit is restarted, and one that doesn't answer is started.
-async function ensureDaemon(): Promise<void> {
+// Runs the daemon as the background service on this Skelcrew's code, and returns once it
+// answers. This is sc up --bg, and plain sc and sc attach do it before attaching. The service is
+// installed first, or rewritten when the PATH or Skelcrew it needs moved. A daemon on another
+// release or commit is restarted, and one that doesn't answer is started.
+export async function upInBackground(): Promise<void> {
+  installService();
   await restartStaleDaemon();
   if (await daemonRuns()) return;
   const log = startDaemon();
@@ -85,12 +89,11 @@ async function ensureDaemon(): Promise<void> {
   }
 }
 
-// Makes sure the daemon and a lead are running, then opens the screen on the lead until you
-// leave with Alt-Q. The lead is for `from`, an owner/repo, or else for the repository you
-// opened last. With `tab`, only a repository whose tab is open will do. Returns false, with no
-// screen opened, when every tab is closed.
+// Makes sure a lead is running, then opens the screen on the lead until you leave with Alt-Q.
+// The daemon must already run, as plain sc starts it first. The lead is for `from`, an
+// owner/repo, or else for the repository you opened last. With `tab`, only a repository whose
+// tab is open will do. Returns false, with no screen opened, when every tab is closed.
 export async function attachToLead(sessions: string, from?: string, tab = false): Promise<boolean> {
-  await ensureDaemon();
   // Asking for the lead brings it back if it ended while the daemon kept running. Starting it
   // takes longer than a status, hence the longer wait.
   const reply = await ask(
@@ -122,7 +125,7 @@ export async function attachToThread(
     throw new Error(
       `${repository}-${task}'s builder isn't running: the thread is ${thread.status}`,
     );
-  await ensureDaemon();
+  await upInBackground();
   // Attaching to a thread opens its repository, as plain sc in a checkout of it would, which
   // opens its tab again if you closed it by exiting its lead, and starts that lead. It is asked
   // each time, not only for a tab the database says is closed: a lead you exited a moment ago

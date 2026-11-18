@@ -13,7 +13,7 @@ import { errorText } from "../say.ts";
 import { readSettings } from "../settings.ts";
 import { originHere, parseRemote } from "./origin.ts";
 import { promptSecret } from "./secret.ts";
-import { installService, loginPath, serviceFile } from "./service.ts";
+import { loginPath } from "./service.ts";
 
 // The environment a step looks programs up in and runs them with.
 type Env = Record<string, string | undefined>;
@@ -310,18 +310,17 @@ function agentsLoggedIn(harness: HarnessName): boolean {
   return existsSync(join(codexHome(), "auth.json"));
 }
 
-// Reports whether setup finished: your harness choice is saved, the agents have their login,
-// and the daemon's service is installed. Setup installs the service last, so with it every
-// step ran. Plain sc checks this each time it starts, so it looks only at files.
+// Reports whether setup finished: your harness choice is saved, and agents and reviews have
+// their logins. The daemon's service isn't part of it, as sc up runs the daemon without one.
+// Plain sc checks this each time it starts, so it looks only at files.
 export function setupDone(): boolean {
-  const service = existsSync(serviceFile());
   const harness = readSettings(["yourHarness"]).yourHarness;
   if (harness === undefined) return false;
-  return agentsLoggedIn(harness) && service;
+  return agentsLoggedIn(harness) && agentsLoggedIn(savedReviewerHarness() ?? harness);
 }
 
-// Completes unfinished machine setup and keeps the daemon service current before attaching
-// to the lead. In a checkout of a GitHub repository it offers the GitHub plugin, on any run. A yes
+// Completes unfinished machine setup before plain sc starts the daemon and attaches to the
+// lead. In a checkout of a GitHub repository it offers the GitHub plugin, on any run. A yes
 // makes GitHub the repository's tracker too, with nothing written into the checkout. `from` is
 // the remote sc --remote brings from your laptop, since the checkout is there.
 export function firstRun(from?: string): void {
@@ -362,7 +361,6 @@ export function firstRun(from?: string): void {
     if (yours && other && !Bun.which(other.program, { PATH: env.PATH ?? "" }))
       console.log(`\n${other.title} isn't installed, so reviews run on ${yours.title}.`);
   }
-  installService();
   if (!done) console.log("\nSkelcrew is set up.");
 }
 

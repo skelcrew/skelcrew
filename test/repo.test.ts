@@ -66,6 +66,8 @@ beforeEach(async () => {
   forge = fakePlugin(home, "github", ["tracker", "forge"]);
   daemon = createServer((connection) =>
     connection.on("data", (data) => {
+      // Plain sc asks what the daemon runs before anything else, which these tests don't follow.
+      if (JSON.parse(data.toString()).command === "status") return connection.end("{}\n");
       appendFileSync(join(home, "calls"), "daemon lead\n");
       writeFileSync(join(home, "asked"), data.toString());
       connection.end(`${daemonReply}\n`);
