@@ -155,8 +155,9 @@ export async function attachToThread(
     throw new Error(
       `${repository}-${task}'s builder isn't running: the thread is ${thread.status}`,
     );
-  if (typeof host !== "string") return attachOnHost(host, id);
+  // Its hooks and sc reach the daemon wherever it runs, so the daemon runs first on any host.
   await upInBackground();
+  if (typeof host !== "string") return attachOnHost(host, id);
   // Attaching to a thread opens its repository, as plain sc in a checkout of it would, which
   // opens its tab again if you closed it by exiting its lead, and starts that lead. It is asked
   // each time, not only for a tab the database says is closed: a lead you exited a moment ago

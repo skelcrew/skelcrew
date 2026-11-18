@@ -246,6 +246,7 @@ import { builderSession, readThread } from ${JSON.stringify(source("flow/thread.
 import { stopThread } from ${JSON.stringify(source("flow/events.ts"))};
 import { hasSession, startSession } from ${JSON.stringify(source("agents/sessions.ts"))};
 import { endEarlierBuilder } from ${JSON.stringify(source("flow/builder.ts"))};
+import { deliverMessages, queueMessage } from ${JSON.stringify(source("flow/messages.ts"))};
 const db = openDb();
 db.run("INSERT INTO plugins (name, folder) VALUES ('fake', ?)", [${JSON.stringify(folder)}]);
 db.exec(${JSON.stringify(threadSql({ task: "12", session: "s", ...row }))});
@@ -402,4 +403,39 @@ process.exit(0);`,
   expect(said).toBe(
     `fake answered end in a way Skelcrew doesn't understand\n${JSON.stringify("\x1b[200~continue\x1b[201~\n")}\n`,
   );
+}, 40_000);
+
+test("a message a host answers with nothing stays queued, and goes in on the next try", () => {
+  const prompt = join(home, "prompt.sh");
+  writeFileSync(prompt, `#!/bin/sh\necho "${claude.marks.prompt}"\ncat > received.txt\n`, {
+    mode: 0o755,
+  });
+  const fake = join(home, ".config", "skelcrew", "plugins", "fake");
+  const said = runWithFakeHost(
+    "sessions, transport",
+    `const fs = require("node:fs");
+const host = builderSession(db, "unused", readThread(db, "app-12")).host;
+const labels = { repository: "simon/app", role: "builder", task: "app-12" };
+startSession(host, "app-12", { folder: ${JSON.stringify(home)}, command: [${JSON.stringify(prompt)}], env: { PATH: process.env.PATH }, labels });
+const waiting = () => db.query("SELECT COUNT(*) AS n FROM messages").get().n;
+const asked = () => fs.existsSync(${JSON.stringify(join(fake, "asked"))}) ? fs.readFileSync(${JSON.stringify(join(fake, "asked"))}, "utf8") : "";
+const until = async (done) => { const deadline = Date.now() + 15_000; while (!done() && Date.now() < deadline) await Bun.sleep(50); };
+await until(() => asked().includes('"start"'));
+fs.writeFileSync(${JSON.stringify(join(fake, "garble-deliver"))}, "");
+queueMessage(db, "unused", "app-12", { sender: "lead", text: "hello", said: "hello", typed_in: [] });
+await until(() => asked().includes('"deliver"'));
+await Bun.sleep(500);
+console.log(waiting(), fs.existsSync(${JSON.stringify(join(home, "received.txt"))}) ? fs.readFileSync(${JSON.stringify(join(home, "received.txt"))}, "utf8").length : 0);
+fs.rmSync(${JSON.stringify(join(fake, "garble-deliver"))});
+deliverMessages(db, "unused", "app-12");
+await until(() => waiting() === 0);
+const received = ${JSON.stringify(join(home, "received.txt"))};
+await until(() => fs.readFileSync(received, "utf8").endsWith("\\n"));
+console.log(waiting(), JSON.stringify(fs.readFileSync(received, "utf8")));
+process.exit(0);`,
+    { host: "fake", host_id: "fake-app-12" },
+  );
+  // The failed try is logged, and the message waits, with nothing typed in.
+  const failed = `couldn't type into app-12's builder: fake answered deliver in a way Skelcrew doesn't understand`;
+  expect(said).toBe(`${failed}\n1 0\n0 ${JSON.stringify("\x1b[200~hello\x1b[201~\n")}\n`);
 }, 40_000);
