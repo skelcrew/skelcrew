@@ -207,7 +207,6 @@ async function typeNow(
         // remains, but only as long as the paste itself.
         if (notReady(readSession(socket, name), marks) === "" && (waits.hold?.() ?? "") === "")
           break;
-        if (waits.signal?.aborted) return "not typed";
       } else if (Date.now() > deadline) {
         const waited = `${timeout / 1000}s`;
         // A person's draft gets a plain answer, as it isn't the agent being busy.
@@ -218,6 +217,9 @@ async function typeNow(
         throw new Error(`${name} wasn't idle for ${waited} (${why || held}), so nothing was typed`);
       }
     }
+    // The hold's last look may have cancelled the message, such as one that went stale, and
+    // the loop leaves at a bare prompt either way.
+    if (waits.signal?.aborted) return "not typed";
     // Without the paste marks, Claude Code reads the Enter after a long message as a new line,
     // and the message is never sent. So the Enter goes on its own, a moment after the paste.
     pasteStaged(socket, name, staged.at(-1) ?? "");

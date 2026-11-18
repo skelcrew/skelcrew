@@ -188,6 +188,27 @@ test("a hold that cancels the typing leaves the message untyped", async () => {
   expect(read("received.txt")).toBe("");
 });
 
+// The message can go stale between the hold's first look and its last, right before the paste.
+test("a hold that cancels the typing at its last look, before the paste, leaves the message untyped", async () => {
+  start("lead", harness());
+  await showing("lead", claude.marks.prompt);
+  const cancel = new AbortController();
+  let looks = 0;
+  const hold = () => {
+    looks++;
+    if (looks === 2) cancel.abort();
+    return "";
+  };
+  const typed = await deliver(socket, "lead", claude.marks, "stale", {
+    moment,
+    signal: cancel.signal,
+    hold,
+  });
+  expect({ typed, looks }).toEqual({ typed: "not typed", looks: 2 });
+  await Bun.sleep(300);
+  expect(read("received.txt")).toBe("");
+});
+
 // A stand-in for Claude Code that draws the screen given, laid out as Claude Code's: what the
 // agent said, then its input between two rules, then its footer. It keeps what is typed in.
 // SECONDS in a line is a timer: the screen is then redrawn once a second with it counting, as
