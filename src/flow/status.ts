@@ -354,3 +354,11 @@ export function questionAnswered(db: Database, folder: string): void {
   else if (thread.erred) record(db, folder, over, "its builder was typed to after its error");
   else if (thread.submitted) record(db, folder, { submitted: false });
 }
+
+// Returns what a thread's row in the list of threads says of its merge when ready, with what it
+// waits on, or null with none. A thread that failed isn't polled, so it says so itself.
+export function mergeShown(thread: Thread): string | null {
+  if (thread.merge_plan !== "armed") return null;
+  const waits = thread.status === "failed" ? "its thread, which failed" : thread.merge_waits;
+  return waits === null ? "merge when ready" : `merge when ready · waits on ${waits}`;
+}

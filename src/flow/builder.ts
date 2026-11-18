@@ -113,6 +113,9 @@ async function recordThread(
       .map((row) => Number(z.object({ task: z.string() }).parse(row).task.slice(1)));
     task = `t${Math.max(0, ...ownTaskNumbers) + 1}`;
     ({ title, body } = given);
+    // It has no issue to close. Saved as empty rather than null, which only a task from before
+    // Skelcrew kept the line has, so a later issue of the same ID is never closed by its PR.
+    closes = "";
   } else {
     // A named task takes its words from Skelcrew's copy of the tracker. One of the repository's
     // own, or one the tracker no longer has, can only start over on the words its failed or
@@ -246,6 +249,12 @@ async function recordThread(
       merged: false,
       issue_link: issueLink,
       closes,
+      merge_plan: null,
+      merge_id: null,
+      merge_by: null,
+      merge_at: null,
+      merge_waits: null,
+      merge_noted: null,
     };
     // A failed or done thread's row gives way to the new one, and messages that waited for its
     // builder go with it, as they were about the old work. Its task starts afresh too, with no

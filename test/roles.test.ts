@@ -68,6 +68,10 @@ const builderTests =
 const threadEnds =
   'When a thread ends, Skelcrew types a one line note too, such as "app-12 is done: #7 merged into main" or "app-12 ended: #7 closed without merging". It comes from Skelcrew, not the human. Drop the thread from what you hold open: never list it as ready to merge again. When useful, tell the human in one line what it unblocks, such as a thread waiting on its work. A thread you removed with sc rm brings no note.\n\n';
 
+// What the lead's file added for a merge when ready: only the human arms one, at their own
+// terminal, and the lead may cancel one.
+const mergeWhenReady = `You can't merge, and you can't arm a merge either. When the human wants a PR merged once it is ready, tell them to run sc merge --when-ready app-12 in their own terminal: it asks them y/n there, and Skelcrew then merges it as soon as it is approved and green. sc ps shows "when ready" under MERGE for such a thread. You may run sc merge --cancel app-12 when the human asks, as cancelling is always safe. If an armed merge still waits after a review round, such as on a conflict or a failing check, Skelcrew types a one line note, such as "app-12 still waits to merge when ready, on its failing checks to be fixed.". Tell the human only if it needs them.\n\n`;
+
 // What the builder's file added later: it tells the lead only what the lead needs, as Skelcrew
 // already shows its progress.
 const tellingTheLead =
@@ -79,6 +83,8 @@ test("the lead and builder files hold the instructions the code gave, but for wh
   expect(lead).toContain(waiting);
   expect(lead).toContain(settling);
   expect(lead).toContain(threadEnds);
+  expect(lead).toContain(mergeWhenReady);
+  lead = lead.replace(mergeWhenReady, "");
   for (const [before = "", now = ""] of leadTasks) {
     expect(lead).toContain(now);
     lead = lead.replace(now, before);

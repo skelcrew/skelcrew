@@ -205,6 +205,7 @@ const psRow = (change: Partial<ThreadRow>): ThreadRow => ({
   checks: null,
   review: null,
   waiting: 0,
+  merge: null,
   ...change,
 });
 
@@ -225,6 +226,28 @@ test("sc ps says how many messages wait for each builder, and --json counts them
   expect(said[1]).toEndWith("1");
   expect(said[2]).toEndWith("yes");
   expect(JSON.parse(said[3] ?? "")).toEqual(rows);
+});
+
+// MERGE shows only while a thread has a merge when ready, as WAITING does for messages.
+test("sc ps says which threads merge when ready, only while one does", () => {
+  const said: string[] = [];
+  const log = spyOn(console, "log").mockImplementation((line: string) => said.push(line));
+  const rows = [
+    psRow({ thread: "app-9", merge: { waits: "its checks" } }),
+    psRow({ thread: "app-8", merge: { waits: null } }),
+    psRow({ thread: "app-7" }),
+  ];
+  try {
+    printThreads(rows, false);
+    printThreads([psRow({ thread: "app-7" })], false);
+  } finally {
+    log.mockRestore();
+  }
+  expect(said[0]).toEndWith("NEEDS YOU  MERGE");
+  expect(said[1]).toEndWith("when ready");
+  expect(said[2]).toEndWith("when ready");
+  expect(said[3]).toEndWith("working");
+  expect(said[4]).toEndWith("NEEDS YOU");
 });
 
 // sc ps shows a thread with no short title by its title, cut so the whole row, with its PR, CI
@@ -952,6 +975,12 @@ const state: Thread = {
   merged: false,
   issue_link: null,
   closes: null,
+  merge_plan: null,
+  merge_id: null,
+  merge_by: null,
+  merge_at: null,
+  merge_waits: null,
+  merge_noted: null,
 };
 const word = (more: Partial<Thread>) => threadWord({ ...state, ...more }, 3);
 const needing = { status: "waiting", needs_you: true } satisfies Partial<Thread>;
