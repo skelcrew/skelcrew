@@ -21,7 +21,15 @@ import {
 } from "./messages.ts";
 import { refreshClone } from "./repo.ts";
 import { endRound } from "./round.ts";
-import { cloneOf, readThread, record, repositoryOf, type Thread, threadName } from "./thread.ts";
+import {
+  builderSession,
+  cloneOf,
+  readThread,
+  record,
+  repositoryOf,
+  type Thread,
+  threadName,
+} from "./thread.ts";
 
 // Returns a message for each failed check, with the end of its log, for the builder to fix.
 // A check with no ID, such as a commit status, has no log to read. A log that can't be read
@@ -70,14 +78,23 @@ export const removing = new Set<string>();
 // Cancels the round, any typing under way into the thread's builder and any wake after a usage
 // limit, ends its session, and waits for the builder to exit, so nothing types into it or
 // changes the thread afterwards. Messages still waiting for it are dropped once the thread
-// ends, with `drop`, and otherwise kept for when sc start brings the builder back.
+// ends, with `drop`, and otherwise kept for when sc start brings the builder back. The thread
+// then has no host, so sc start brings it back on the host your config names. A builder whose
+// host plugin is gone can't be reached to end it, which is logged.
 async function endBuilder(db: Database, sessions: string, folder: string, drop: boolean) {
   stopDelivering(db, folder, drop);
   endWake(folder);
   endRound(folder);
-  // Claude Code can outlive the end of its session for a few seconds, still writing in the
-  // clone.
-  await stopSession(sessions, folder);
+  const thread = readThread(db, folder);
+  try {
+    const { host, id } = builderSession(db, sessions, thread);
+    // Claude Code can outlive the end of its session for a few seconds, still writing in the
+    // clone.
+    await stopSession(host, id);
+  } catch (error) {
+    console.log(`couldn't end ${folder}'s builder: ${errorText(error)}`);
+  }
+  record(db, folder, { host: null, host_id: null });
 }
 
 // Stops the thread for sc stop: marks it stopped, then ends its builder as a merge would,

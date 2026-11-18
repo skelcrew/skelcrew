@@ -281,7 +281,7 @@ async function continueBuilder(
   const over = { erred: false, limited: false, limit_reset: null };
   record(db, folder, over, "its harness's usage limit reset, so Skelcrew types continue");
   try {
-    await typeContinue(sessions, thread, signal);
+    await typeContinue(db, sessions, thread, signal);
   } catch (error) {
     // A builder that met the limit again, or was typed to, since has a newer state to keep.
     if (signal.aborted || readThread(db, folder).erred) return;

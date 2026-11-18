@@ -16,6 +16,7 @@ import { repositories } from "./repo.ts";
 import type { Caller } from "./requests.ts";
 import {
   builderHarness,
+  builderSession,
   log,
   readThread,
   record,
@@ -106,14 +107,20 @@ function noteMissing(db: Database, sessions: string, thread: Thread, why: string
 // knows to be working, from its harness's hooks, is mid-turn, even right after a message went
 // in, before its status line shows. Otherwise its screen tells, whatever its state says: a
 // turn can start with no hook, such as when a background task ends, and only the screen shows a
-// person's draft.
-export async function whyWaiting(sessions: string, thread: Thread): Promise<string> {
+// person's draft. A builder whose host plugin is gone can't be reached at all.
+export async function whyWaiting(db: Database, sessions: string, thread: Thread): Promise<string> {
   if (thread.status !== "working" && thread.status !== "waiting")
     return `the thread is ${thread.status}`;
-  if (!agentRuns(sessions, thread.folder)) return notRunning;
+  let session: ReturnType<typeof builderSession>;
+  try {
+    session = builderSession(db, sessions, thread);
+  } catch (error) {
+    return errorText(error);
+  }
+  if (!agentRuns(session.host, session.id)) return notRunning;
   if (thread.asking) return "it is asking the human a question";
   if (thread.state === "working") return `${midTurn} (its harness says a turn runs)`;
-  return whyBusy(sessions, thread.folder, builderHarness(thread).marks);
+  return whyBusy(session.host, session.id, builderHarness(thread).marks);
 }
 
 // Saves a message for the thread's builder and has the daemon type it in as soon as the builder
@@ -221,7 +228,7 @@ async function typeWaiting(db: Database, sessions: string, folder: string, signa
     const message = oldest(db, folder);
     if (message === null || signal.aborted) return;
     const thread = readThread(db, folder);
-    const waits = await whyWaiting(sessions, thread);
+    const waits = await whyWaiting(db, sessions, thread);
     if (signal.aborted) return;
     if (thread.status === "working" || thread.status === "waiting")
       noteMissing(db, sessions, thread, waits);
@@ -235,8 +242,9 @@ async function typeWaiting(db: Database, sessions: string, folder: string, signa
     // The builder looked ready a moment ago, so typing shouldn't wait long. If it does, the
     // message stays saved for the next attempt.
     const { marks } = builderHarness(thread);
+    const { host, id } = builderSession(db, sessions, thread);
     const waitsFor = { timeout: 10_000, signal, unsent };
-    const typed = await deliver(sessions, folder, marks, message.text, waitsFor);
+    const typed = await deliver(host, id, marks, message.text, waitsFor);
     // Saved, so the draft it left is known for this message's even after a restart.
     if (typed === "left unsent")
       db.run("UPDATE messages SET pasted = 1 WHERE id = ?", [message.id]);
@@ -319,9 +327,10 @@ export function stopDelivering(db: Database, folder: string, drop: boolean, reas
 // goes on with the turn the limit cut off. It goes around the builder's queue: the wake that
 // calls it has its own rules, and gives up once anything else is typed to the builder. Throws
 // after a minute without typing, or once `signal` aborts.
-export function typeContinue(sessions: string, thread: Thread, signal: AbortSignal) {
+export function typeContinue(db: Database, sessions: string, thread: Thread, signal: AbortSignal) {
   const { marks } = builderHarness(thread);
-  return deliver(sessions, thread.folder, marks, "continue", { timeout: 60_000, signal });
+  const { host, id } = builderSession(db, sessions, thread);
+  return deliver(host, id, marks, "continue", { timeout: 60_000, signal });
 }
 
 // Returns an agent's text with any <skelcrew or </skelcrew> removed, so it can't open or close
@@ -374,7 +383,9 @@ export async function messageBuilder(
       `${name}'s builder isn't running: the thread is stopped. sc start ${name} brings it back.`,
     );
   // A thread still setting up has no session yet, and one that failed or is done has none left.
-  if (!live || !agentRuns(sessions, thread.folder))
+  if (!live) throw new Error(`${name}'s builder isn't running: the thread is ${thread.status}.`);
+  const { host, id } = builderSession(db, sessions, thread);
+  if (!agentRuns(host, id))
     throw new Error(`${name}'s builder isn't running: the thread is ${thread.status}.`);
   if (thread.asking)
     throw new Error(
@@ -383,7 +394,7 @@ export async function messageBuilder(
   // Look before saving it, so the answer says whether it goes in now. Messages are typed in
   // order, so any still waiting go first.
   const ahead = messagesWaiting(db, thread);
-  const why = await whyWaiting(sessions, thread);
+  const why = await whyWaiting(db, sessions, thread);
   const message = wrapMessage("lead", "sc tell lead", text);
   queueMessage(db, sessions, thread.folder, {
     sender: "lead",

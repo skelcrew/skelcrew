@@ -5,8 +5,9 @@ import { agentRuns } from "./agents/sessions.ts";
 import { ask } from "./client.ts";
 import { openDb } from "./db.ts";
 import { leadOf } from "./flow/lead.ts";
-import { findThread } from "./flow/thread.ts";
+import { builderSession, findThread } from "./flow/thread.ts";
 import { restartDaemon, startDaemon } from "./machine/service.ts";
+import { attachOnHost } from "./plugins/runtime.ts";
 import { openScreen } from "./screen/screen.ts";
 import { checkoutFolder, git, release, singleFile } from "./version.ts";
 
@@ -110,7 +111,9 @@ export async function attachToLead(sessions: string, from?: string, tab = false)
 
 // Opens the screen with a thread's builder on the right and its repository's lead in the
 // sidebar, and returns when you leave with Alt-Q. Only you can run it, since it takes over
-// your terminal. It checks the builder is running before it starts the daemon.
+// your terminal. It checks the builder is running before it starts the daemon. A builder on a
+// runtime plugin's host is attached through that host instead, full screen, as the screen shows
+// only tmux's sessions.
 export async function attachToThread(
   sessions: string,
   repository: string,
@@ -118,11 +121,13 @@ export async function attachToThread(
 ): Promise<void> {
   const db = openDb();
   const thread = findThread(db, repository, task);
+  const { host, id } = builderSession(db, sessions, thread);
   // A builder that exited leaves its last screen behind, which would look like it still runs.
-  if (!agentRuns(sessions, thread.folder))
+  if (!agentRuns(host, id))
     throw new Error(
       `${repository}-${task}'s builder isn't running: the thread is ${thread.status}`,
     );
+  if (typeof host !== "string") return attachOnHost(host, id);
   await ensureDaemon();
   // Attaching to a thread opens its repository, as plain sc in a checkout of it would, which
   // opens its tab again if you closed it by exiting its lead, and starts that lead. It is asked

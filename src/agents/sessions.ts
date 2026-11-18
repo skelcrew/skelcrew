@@ -1,9 +1,12 @@
 // The sessions module: runs each agent, a repository's lead or a thread's builder, in a terminal
 // session of its own, lets you attach to it, and finds it again after a restart. Its built-in is
-// tmux, on Skelcrew's own tmux server (`tmux -L skelcrew`; tests pass a socket of their own). What
-// goes in and out is plain data, so the rest of Skelcrew never deals with tmux for its agents.
+// tmux, on Skelcrew's own tmux server (`tmux -L skelcrew`; tests pass a socket of their own). A
+// runtime plugin that provides sessions can host them instead: each function that takes a host
+// asks that plugin when the host is one. What goes in and out is plain data, so the rest of
+// Skelcrew never deals with tmux or a plugin for its agents.
 import { closeSync, constants, openSync, rmSync, writeSync } from "node:fs";
 import { z } from "zod";
+import { askHost, type Host, type PluginHost } from "../plugins/runtime.ts";
 import { sandboxFolders } from "./seatbelt.ts";
 import { envWithoutTmux, mustTmux, tmux, tmuxIsAtLeast } from "./tmux.ts";
 
@@ -140,11 +143,13 @@ function startServer(socket: string): void {
 }
 
 // Starts a named agent session with only its supplied environment, its labels and Skelcrew's
-// terminal settings, starting Skelcrew's tmux server first if it isn't up. With `keepOnExit`,
-// the session stays when its agent exits cleanly too, so Skelcrew can tell a lead you exited
-// from one that crashed: the first closes its tab, the second doesn't.
+// terminal settings, starting Skelcrew's tmux server first if it isn't up, and returns the
+// session's ID on its host. On tmux the ID is the name. A plugin's host gives its own, and is
+// handed the name and labels to show. With `keepOnExit`, the session stays when its agent exits
+// cleanly too, so Skelcrew can tell a lead you exited from one that crashed: the first closes its
+// tab, the second doesn't. Only leads ask for that, and they run on tmux.
 export function startSession(
-  socket: string,
+  host: Host,
   name: string,
   session: {
     folder: string;
@@ -153,7 +158,13 @@ export function startSession(
     labels: Labels;
     keepOnExit?: boolean;
   },
-): void {
+): string {
+  if (typeof host !== "string") {
+    const { folder, command, env, labels } = session;
+    const question = { ask: "start", name, folder, command, env, labels };
+    return askHost(host, question, z.object({ id: z.string().min(1) })).id;
+  }
+  const socket = host;
   startServer(socket);
   // tmux would quietly rename the session, and then never find it under the name asked for.
   if (/[.:]/.test(name)) throw new Error(`a session can't be named ${name}: tmux changes . and :`);
@@ -193,6 +204,7 @@ export function startSession(
   label("role", role);
   if (task) label("task", task);
   if (session.keepOnExit) keepOnExit(socket, name);
+  return name;
 }
 
 // Has a session stay when its agent exits cleanly too, so Skelcrew can read how it ended. The
@@ -231,17 +243,33 @@ export function applyConfig(socket: string): void {
   }
 }
 
+// Returns what a plugin's host says of one of its sessions, or nothing when it has no such
+// session.
+const hosted = (host: PluginHost, id: string) =>
+  listSessions(host).find((session) => session.name === id);
+
 // Reports whether the exact session exists so Skelcrew can reconnect instead of starting it
 // twice.
-export function hasSession(socket: string, name: string): boolean {
+export function hasSession(host: Host, name: string): boolean {
+  if (typeof host !== "string") return hosted(host, name) !== undefined;
   // The = asks for this exact name; without it tmux also accepts a session it starts with.
-  return tmux(socket, ["has-session", "-t", `=${name}`]).ok;
+  return tmux(host, ["has-session", "-t", `=${name}`]).ok;
 }
 
 // Returns an ended agent's last screen, left behind by a failed command or a session kept on
 // exit, so Skelcrew can explain why the agent ended. Returns null while the command runs or no
-// dead pane is found.
-export function failedScreen(socket: string, name: string): string | null {
+// dead pane is found. A plugin's host gives the screen of a session it lists as ended, if it
+// can still read it.
+export function failedScreen(host: Host, name: string): string | null {
+  if (typeof host !== "string") {
+    if (hosted(host, name)?.running !== false) return null;
+    try {
+      return readSession(host, name).trim();
+    } catch {
+      return "";
+    }
+  }
+  const socket = host;
   // A pane still running its command, or no pane at all, has no last screen to give.
   if (tmux(socket, ["display-message", "-p", "-t", `=${name}:`, "#{pane_dead}"]).out.trim() !== "1")
     return null;
@@ -261,25 +289,28 @@ export function exitedCleanly(socket: string, name: string): boolean {
 // Reports whether the agent in the named session is still running, so Skelcrew only types into
 // or attaches to a live one. A session alone doesn't say: an agent that failed leaves its
 // last screen behind in a session that looks alive.
-export const agentRuns = (socket: string, name: string) =>
-  hasSession(socket, name) && failedScreen(socket, name) === null;
+export function agentRuns(host: Host, name: string): boolean {
+  if (typeof host !== "string") return hosted(host, name)?.running === true;
+  return hasSession(host, name) && failedScreen(host, name) === null;
+}
 
 // Ends the named session so Skelcrew can replace an agent that has stopped working.
-export function endSession(socket: string, name: string): void {
-  mustTmux(socket, ["kill-session", "-t", `=${name}`]);
+export function endSession(host: Host, name: string): void {
+  if (typeof host !== "string") askHost(host, { ask: "end", id: name }, z.unknown());
+  else mustTmux(host, ["kill-session", "-t", `=${name}`]);
 }
 
 // Waits a moment after an agent's start, and throws with its last screen when it has ended.
 // One that can't start, such as one whose login is gone, ends within moments, and attaching
 // would only find it gone. A failed session is ended, so Skelcrew can start the agent again.
 // `who` names the agent in the error: the lead or the builder.
-export async function checkAgentStarted(socket: string, name: string, who: string): Promise<void> {
+export async function checkAgentStarted(host: Host, name: string, who: string): Promise<void> {
   await Bun.sleep(1000);
   // A failed agent leaves its session behind with its last screen; one that is simply gone
   // left nothing to show.
-  const failed = failedScreen(socket, name);
-  if (failed !== null) endSession(socket, name);
-  if (failed !== null || !hasSession(socket, name))
+  const failed = failedScreen(host, name);
+  if (failed !== null) endSession(host, name);
+  if (failed !== null || !hasSession(host, name))
     throw new Error(`the ${who} exited as soon as it started:\n${failed ?? ""}`);
 }
 
@@ -327,8 +358,14 @@ export function stillRunning(tree: number[]): number[] {
 // Ends the named session and returns once every process it ran has exited, so what it was
 // using, such as a thread's clone, can be removed. Claude Code can outlive the end of its
 // session for a few seconds, so it gets `timeout` milliseconds before being killed. On a Mac
-// it then removes the sandbox's folders, which a killed agent would leave behind in /tmp.
-export async function stopSession(socket: string, name: string, timeout = 10_000): Promise<void> {
+// it then removes the sandbox's folders, which a killed agent would leave behind in /tmp. A
+// plugin's host waits for its session's processes itself, as only it knows them.
+export async function stopSession(host: Host, name: string, timeout = 10_000): Promise<void> {
+  if (typeof host !== "string") {
+    if (hasSession(host, name)) endSession(host, name);
+    return;
+  }
+  const socket = host;
   // Find the pane's process and the sandbox's folders first, as neither can be found once the
   // session is gone. No pane means no session, so there is nothing to stop. The folders are
   // a JSON list after the process number, or nothing outside a Mac.
@@ -359,10 +396,20 @@ export async function stopSession(socket: string, name: string, timeout = 10_000
 // Lists the sessions on Skelcrew's tmux server, each with its labels and whether its agent is
 // running, so the sidebar shows which agents run and a starting daemon can find them. A builder
 // that exited keeps its session and last screen, which would look like it still runs. A session
-// started by a release before labels has none. Nothing when the server isn't up.
+// started by a release before labels has none. Nothing when the server isn't up. A plugin's host
+// lists its own, each named by its ID there.
 export function listSessions(
-  socket: string,
+  host: Host,
 ): { name: string; running: boolean; labels: Labels | null }[] {
+  if (typeof host !== "string") {
+    const Listed = z.object({ id: z.string(), running: z.boolean(), labels: z.unknown() });
+    const { sessions } = askHost(host, { ask: "list" }, z.object({ sessions: z.array(Listed) }));
+    return sessions.map(({ id, running, labels }) => {
+      const checked = Labels.safeParse(labels);
+      return { name: id, running, labels: checked.success ? checked.data : null };
+    });
+  }
+  const socket = host;
   // One line per pane, its fields apart by tabs, which no name holds: 0 for a pane whose agent
   // runs and 1 for a dead one, the session's name, then its labels, empty where unset.
   const format =
@@ -378,16 +425,23 @@ export function listSessions(
 
 // Returns the screen the agent in the named session shows now, as text, such as to see whether
 // it is ready for a message. Throws when the session is gone.
-export const readSession = (socket: string, name: string) =>
-  mustTmux(socket, ["capture-pane", "-p", "-t", `=${name}:`]);
+export function readSession(host: Host, name: string): string {
+  if (typeof host !== "string")
+    return askHost(host, { ask: "read", id: name }, z.object({ screen: z.string() })).screen;
+  return mustTmux(host, ["capture-pane", "-p", "-t", `=${name}:`]);
+}
 
 // Sends one key to the agent in the named session, such as Enter after a pasted message.
-export function sendKey(socket: string, name: string, key: "Enter" | "Escape"): void {
-  mustTmux(socket, ["send-keys", "-t", `=${name}:`, key]);
+export function sendKey(host: Host, name: string, key: "Enter" | "Escape"): void {
+  if (typeof host !== "string") askHost(host, { ask: "keys", id: name, key }, z.unknown());
+  else mustTmux(host, ["send-keys", "-t", `=${name}:`, key]);
 }
 
 // Stops the agent's turn, as pressing Esc in its session does.
-export const interruptSession = (socket: string, name: string) => sendKey(socket, name, "Escape");
+export function interruptSession(host: Host, name: string): void {
+  if (typeof host !== "string") askHost(host, { ask: "interrupt", id: name }, z.unknown());
+  else sendKey(host, name, "Escape");
+}
 
 // How many paste buffers this process has made, so each gets a name of its own.
 let buffersMade = 0;
@@ -399,8 +453,11 @@ let buffersMade = 0;
 // Readies text for pasteStaged into the named session, and returns the name it is kept under.
 // Someone scrolled back would swallow the Enter that follows a paste, and the message would
 // never be sent. Being scrolled back shows nowhere in the pane's text, so it is left here,
-// whether or not anyone is. That fails when nobody is, which is fine.
-export function stagePaste(socket: string, name: string, text: string): string {
+// whether or not anyone is. That fails when nobody is, which is fine. A plugin's host keeps
+// nothing in between, so the text itself is what pasteStaged gets.
+export function stagePaste(host: Host, name: string, text: string): string {
+  if (typeof host !== "string") return text;
+  const socket = host;
   // A paste buffer of its own, so two daemons or two messages never paste each other's text.
   const staged = `skelcrew-${process.pid}-${buffersMade++}`;
   tmux(socket, ["send-keys", "-X", "-t", `=${name}:`, "cancel"]);
@@ -411,14 +468,16 @@ export function stagePaste(socket: string, name: string, text: string): string {
 // Pastes text stagePaste readied into the named session as one bracketed paste, so the agent
 // reads it as a whole, however long, and newlines in it don't send it. Throws when the session
 // is gone.
-export function pasteStaged(socket: string, name: string, staged: string): void {
-  mustTmux(socket, ["paste-buffer", "-p", "-b", staged, "-t", `=${name}:`]);
+export function pasteStaged(host: Host, name: string, staged: string): void {
+  if (typeof host !== "string")
+    askHost(host, { ask: "paste", id: name, text: staged }, z.unknown());
+  else mustTmux(host, ["paste-buffer", "-p", "-b", staged, "-t", `=${name}:`]);
 }
 
 // Forgets text stagePaste readied, pasted or not, so the server keeps no copy an agent could
-// read back.
-export function dropStaged(socket: string, staged: string): void {
-  tmux(socket, ["delete-buffer", "-b", staged]);
+// read back. A plugin's host kept none.
+export function dropStaged(host: Host, staged: string): void {
+  if (typeof host === "string") tmux(host, ["delete-buffer", "-b", staged]);
 }
 
 // Returns a command that attaches a terminal to the named session, for the screen's right pane.

@@ -1,0 +1,138 @@
+// A session host for tests, run as a runtime plugin's session command. It keeps each session in
+// a folder of its own under its settings folder: the session's labels, its process, what its
+// agent printed, which is its screen, and a pipe its agent reads, which paste and keys write to.
+// It notes each question it is asked in `asked`, and each status it is given in `statuses`. Its
+// own transport, when the test's manifest says it provides one, takes an agent as idle unless
+// its screen shows Claude Code's busy mark, and types a message in one step, noting it in
+// `delivered`.
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { join } from "node:path";
+
+const dir = process.env.SKELCREW_PLUGIN_CONFIG ?? "";
+const question = JSON.parse(await Bun.stdin.text());
+appendFileSync(join(dir, "asked"), `${JSON.stringify(question)}\n`);
+const sessions = join(dir, "sessions");
+const folder = (id: string) => join(sessions, id);
+const busy = "esc to interrupt";
+
+// Whether the session's process group still runs and its command hasn't ended.
+function running(id: string): boolean {
+  if (existsSync(join(folder(id), "exit"))) return false;
+  try {
+    process.kill(-Number(readFileSync(join(folder(id), "pid"), "utf8")), 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// What the session shows: what its agent printed since it last cleared the screen, without
+// escape codes, as a terminal would show it.
+function screen(id: string): string {
+  const printed = readFileSync(join(folder(id), "screen"), "utf8");
+  const shown = printed.split("\x1b[2J").at(-1) ?? "";
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: escape codes are what goes.
+  return shown.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "");
+}
+
+// Writes into the pipe the session's agent reads, only while it runs, as a pipe with nobody
+// reading it would hold the write forever.
+function type(id: string, text: string): void {
+  if (!running(id)) throw new Error(`${id} isn't running`);
+  appendFileSync(join(folder(id), "input"), text);
+}
+
+const answers: Record<string, () => unknown> = {
+  // Runs the command with only the environment given, reading the pipe and printing to the
+  // screen file, in a process group of its own that outlives this call. A shell holds the pipe
+  // open for reading and writing, so each write reaches the agent and none ends its input.
+  start: () => {
+    const id = `fake-${question.name}`;
+    rmSync(folder(id), { recursive: true, force: true });
+    mkdirSync(folder(id), { recursive: true });
+    writeFileSync(join(folder(id), "labels.json"), JSON.stringify(question.labels));
+    writeFileSync(join(folder(id), "screen"), "");
+    Bun.spawnSync(["mkfifo", join(folder(id), "input")]);
+    const env = Object.entries(question.env).map(([key, value]) => `${key}=${value}`);
+    // The session's folder comes in as $0, then the agent's folder and the pipe, then the
+    // environment and the command, which env -i runs with nothing else.
+    const shell = `f="$0"; exec 3<>"$2"; cd "$1"; shift 2; env -i "$@" <&3 > "$f/screen" 2>&1; echo $? > "$f/exit"`;
+    const run = Bun.spawn(
+      [
+        "sh",
+        "-c",
+        shell,
+        folder(id),
+        question.folder,
+        join(folder(id), "input"),
+        ...env,
+        ...question.command,
+      ],
+      { detached: true, stdio: ["ignore", "ignore", "ignore"] },
+    );
+    writeFileSync(join(folder(id), "pid"), String(run.pid));
+    run.unref();
+    return { id };
+  },
+  read: () => ({ screen: screen(question.id) }),
+  paste: () => type(question.id, `\x1b[200~${question.text}\x1b[201~`),
+  keys: () => type(question.id, question.key === "Enter" ? "\n" : "\x1b"),
+  interrupt: () => type(question.id, "\x1b"),
+  // Ends the session's process group and waits until it has gone. One that exited may wait to
+  // be reaped, so only processes that haven't exited count.
+  end: async () => {
+    const pid = Number(readFileSync(join(folder(question.id), "pid"), "utf8"));
+    try {
+      process.kill(-pid, "SIGKILL");
+    } catch {}
+    const left = () =>
+      Bun.spawnSync(["ps", "-A", "-o", "pgid=", "-o", "stat="])
+        .stdout.toString()
+        .split("\n")
+        .some((line) => {
+          const [group, state] = line.trim().split(/\s+/);
+          return Number(group) === pid && !state?.startsWith("Z");
+        });
+    while (left()) await Bun.sleep(50);
+    rmSync(folder(question.id), { recursive: true, force: true });
+  },
+  list: () => ({
+    sessions: (existsSync(sessions) ? readdirSync(sessions) : []).map((id) => ({
+      id,
+      running: running(id),
+      labels: JSON.parse(readFileSync(join(folder(id), "labels.json"), "utf8")),
+    })),
+  }),
+  idle: () => ({ idle: !screen(question.id).includes(busy) }),
+  // Types the message in one step once the agent is idle, or fails past the timeout.
+  deliver: async () => {
+    const deadline = Date.now() + (question.timeout ?? 60_000);
+    while (screen(question.id).includes(busy)) {
+      if (Date.now() > deadline) throw new Error(`${question.id} stayed busy`);
+      await Bun.sleep(50);
+    }
+    type(question.id, `\x1b[200~${question.text}\x1b[201~\n`);
+    appendFileSync(join(dir, "delivered"), `${JSON.stringify(question)}\n`);
+  },
+  status: () =>
+    appendFileSync(
+      join(dir, "statuses"),
+      `${JSON.stringify({ id: question.id, status: question.status, reason: question.reason })}\n`,
+    ),
+};
+
+try {
+  const answer = await answers[question.ask]?.();
+  console.log(JSON.stringify(answer ?? null));
+} catch (error) {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exit(1);
+}

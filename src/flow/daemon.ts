@@ -46,11 +46,20 @@ import {
   questionAnswered,
   questionAsked,
   questionClosed,
+  reportStatuses,
   stateAfter,
   turnEnded,
   turnFailed,
 } from "./status.ts";
-import { findThread, liveThreads, record, type Thread, threadName, threadOn } from "./thread.ts";
+import {
+  builderSession,
+  findThread,
+  liveThreads,
+  record,
+  type Thread,
+  threadName,
+  threadOn,
+} from "./thread.ts";
 
 // Tries to hold the daemon lock and returns whether this process owns it, preventing
 // duplicate daemons. The kernel lets go of it when the process ends, however it ends, so a
@@ -341,16 +350,18 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       case "peek": {
         const thread = findThread(db, request.repo, request.task);
         const name = threadName(db, thread);
-        if (!agentRuns(sessions, thread.folder))
+        const { host, id } = builderSession(db, sessions, thread);
+        if (!agentRuns(host, id))
           throw new Error(`${name}'s builder isn't running: the thread is ${thread.status}`);
-        return { thread: name, screen: readSession(sessions, thread.folder) };
+        return { thread: name, screen: readSession(host, id) };
       }
       case "interrupt": {
         const thread = findThread(db, request.repo, request.task);
         const name = threadName(db, thread);
-        if (!agentRuns(sessions, thread.folder))
+        const { host, id } = builderSession(db, sessions, thread);
+        if (!agentRuns(host, id))
           throw new Error(`${name}'s builder isn't running: the thread is ${thread.status}`);
-        interruptSession(sessions, thread.folder);
+        interruptSession(host, id);
         return { interrupted: name };
       }
       case "rm preview": {
@@ -552,12 +563,14 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   setInterval(() => closeExitedLeads(db, sessions), 1000);
   // From here on, the daemon also looks every two seconds for a working agent whose screen
   // shows it idle, where no hook said so. A session that ends during a look only ends that look.
+  // A host that shows status hears each change at the same pace.
   setInterval(() => {
     try {
       noticeIdleScreens(db, sessions);
     } catch (error) {
       console.log(`couldn't look at the agents' screens: ${errorText(error)}`);
     }
+    reportStatuses(db, sessions);
   }, 2000);
   // Open your socket, and end cleanly on the service's stop or on Ctrl-C.
   await open(path, "you");

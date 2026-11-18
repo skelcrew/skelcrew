@@ -66,6 +66,8 @@ function thread(change: Partial<Thread> = {}): Thread {
     changed: null,
     updates: [],
     state: null,
+    host: "tmux",
+    host_id: null,
     ...change,
   };
 }

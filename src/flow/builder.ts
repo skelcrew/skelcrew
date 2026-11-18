@@ -14,9 +14,10 @@ import {
   type Labels,
   startSession,
 } from "../agents/sessions.ts";
-import { repositoryCommands, threadConfig } from "../config.ts";
+import { repositoryCommands, sessionHost, threadConfig } from "../config.ts";
 import { cloneDir, threadSocket } from "../paths.ts";
 import { trackerOf } from "../plugins/ask.ts";
+import { hostNamed } from "../plugins/runtime.ts";
 import { builtInRole } from "../roles.ts";
 import { quietly } from "../run.ts";
 import { errorText } from "../say.ts";
@@ -24,12 +25,13 @@ import type { Settings } from "../settings.ts";
 import { taskOf, threadTask } from "./copy.ts";
 import { pastRoundLimit } from "./decide.ts";
 import { fetchBranch } from "./git.ts";
-import { dropEndNotes } from "./messages.ts";
+import { dropEndNotes, typeLeadNotes } from "./messages.ts";
 import { findRepository, forgeAuthor, refreshClones } from "./repo.ts";
 import {
   builderHarness,
   cloneOf,
   folderName,
+  hostGone,
   log,
   readThread,
   record,
@@ -231,6 +233,9 @@ async function recordThread(
       changed: null,
       updates: [],
       state: null,
+      // It has no session until its builder starts, on the host your config names then.
+      host: null,
+      host_id: null,
     };
     // A failed or done thread's row gives way to the new one, and messages that waited for its
     // builder go with it, as they were about the old work. Its task starts afresh too, with no
@@ -241,8 +246,8 @@ async function recordThread(
     // same name, and the lead would drop it from what it holds open, so the note goes too.
     dropEndNotes(db, thread.folder);
     db.run(
-      `INSERT INTO threads (owner, repo, task, folder, branch, base, status, session, started)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO threads (owner, repo, task, folder, branch, base, status, session, started, host)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
       [
         owner,
         repo,
@@ -392,8 +397,15 @@ export function builderInstructions(commands: Pick<Settings, "setup" | "test">):
 // when it exits as soon as it starts. A builder's first start picks the harness your config
 // names, and saves it with the thread, which keeps it from then on: a conversation can't move to
 // another harness. The session id is stored before the builder starts, so the builder can be
-// brought back after its session is gone.
+// brought back after its session is gone. It starts on the session host your config names now,
+// which the thread keeps until its builder ends, and throws when that host isn't installed.
 export async function startBuilder(db: Database, sessions: string, thread: Thread): Promise<void> {
+  const hostName = sessionHost();
+  const host = hostNamed(db, sessions, hostName);
+  if (host === null)
+    throw new Error(
+      `your session host ${hostName} isn't installed as a runtime plugin that provides sessions`,
+    );
   // Pick the harness: your config's for a first start, the saved one for a builder coming back.
   // A saved conversation the harness can't find starts afresh under a new id.
   const clone = cloneOf(thread);
@@ -435,21 +447,34 @@ export async function startBuilder(db: Database, sessions: string, thread: Threa
   // start fails the thread with a reason.
   const repository = `${thread.owner}/${thread.repo}`;
   const labels: Labels = { repository, role: "builder", task: threadName(db, thread) };
-  startSession(sessions, thread.folder, { folder: clone, command: argv, env, labels });
+  const id = startSession(host, thread.folder, { folder: clone, command: argv, env, labels });
+  record(db, thread.folder, { host: hostName, host_id: id });
   console.log(`${resume ? "Brought back" : "Started"} the builder of ${thread.folder}.`);
-  await checkAgentStarted(sessions, thread.folder, "builder");
+  await checkAgentStarted(host, id, "builder");
 }
 
 // Brings back a thread's builder after the daemon restarts, or for sc start after sc stop. A
-// builder still running is left alone. One whose session is gone or ended is started again.
-// Throws for a thread with no session: the daemon stopped before its setup finished, and the
-// error says to run sc start again.
+// builder still running is left alone, on whichever host it runs. One whose session is gone or
+// ended is started again, on the host your config names now. Throws for a thread with no
+// session: the daemon stopped before its setup finished, and the error says to run sc start
+// again. A builder whose host plugin is gone may still run there, out of reach, so the thread
+// needs you rather than its builder starting a second time elsewhere.
 export async function bringBack(db: Database, sessions: string, thread: Thread): Promise<void> {
   if (thread.session === null)
     throw new Error("the daemon stopped while setting up the thread: run sc start again");
-  // A session whose agent ended is ended too, so the new one can take its name.
-  if (agentRuns(sessions, thread.folder)) return;
-  if (hasSession(sessions, thread.folder)) endSession(sessions, thread.folder);
+  // A builder you stopped has no host left to look on.
+  if (thread.host !== null) {
+    const host = hostNamed(db, sessions, thread.host);
+    if (host === null) {
+      record(db, thread.folder, { needs_you: true }, hostGone(thread));
+      typeLeadNotes(db, sessions);
+      return;
+    }
+    // A session whose agent ended is ended too, so the new one can take its name.
+    const id = thread.host_id ?? thread.folder;
+    if (agentRuns(host, id)) return;
+    if (hasSession(host, id)) endSession(host, id);
+  }
   await startBuilder(db, sessions, thread);
 }
 

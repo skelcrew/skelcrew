@@ -7,6 +7,9 @@ import { z } from "zod";
 import { harnessNamed } from "../agents/harness.ts";
 import { agentRuns, readSession } from "../agents/sessions.ts";
 import { forQuestion, type Marks, quietSince } from "../agents/transport.ts";
+import { threadConfig } from "../config.ts";
+import { askHost, type Host, hostNamed } from "../plugins/runtime.ts";
+import { errorText } from "../say.ts";
 import { pastRoundLimit } from "./decide.ts";
 import { leadOf } from "./lead.ts";
 import { clockTime, endWake, wakeAfterLimit } from "./limits.ts";
@@ -16,6 +19,7 @@ import { lastPushed } from "./round.ts";
 import {
   type AgentState,
   builderHarness,
+  liveThreads,
   queuedForReview,
   readThread,
   record,
@@ -138,31 +142,41 @@ export function keepState(db: Database, agent: Agent, state: AgentState): void {
 // show. Neither gap flags needs you: after Esc you are looking at the agent anyway. The daemon
 // runs it every two seconds.
 export function noticeIdleScreens(db: Database, sessions: string): void {
-  // The working agents: each builder still at work on its thread, and each lead.
-  const working: { key: Agent; name: string; marks: Marks }[] = [];
+  // The working agents: each builder still at work on its thread, on whichever host it runs, and
+  // each lead. A builder whose host plugin is gone can't be looked at.
+  const working: { key: Agent; host: Host; name: string; marks: Marks }[] = [];
   const threads = db
     .query(
       "SELECT * FROM task_threads WHERE state = 'working' AND status IN ('working', 'waiting')",
     )
     .all()
     .map((row) => Thread.parse(row));
-  for (const thread of threads)
-    working.push({ key: thread, name: thread.folder, marks: builderHarness(thread).marks });
+  for (const thread of threads) {
+    const host = hostNamed(db, sessions, thread.host ?? "tmux");
+    const name = thread.host_id ?? thread.folder;
+    if (host !== null)
+      working.push({ key: thread, host, name, marks: builderHarness(thread).marks });
+  }
   const leads = db
     .query("SELECT owner, repo FROM repositories WHERE lead_state = 'working'")
     .all()
     .map((row) => LeadKey.parse(row));
   for (const lead of leads) {
     const { name, harness } = leadOf(db, lead.owner, lead.repo);
-    working.push({ key: lead, name, marks: harnessNamed(harness ?? "claude").marks });
+    working.push({
+      key: lead,
+      host: sessions,
+      name,
+      marks: harnessNamed(harness ?? "claude").marks,
+    });
   }
   // An agent goes idle when the last look found it out of a turn too. The rest are remembered
   // for the next look, and an agent no longer working is forgotten.
   const looks = new Map<string, { screen: string; quiet: boolean }>();
   for (const agent of working) {
     const key = agentKey(agent.key);
-    if (!agentRuns(sessions, agent.name)) continue;
-    const screen = readSession(sessions, agent.name);
+    if (!agentRuns(agent.host, agent.name)) continue;
+    const screen = readSession(agent.host, agent.name);
     const before = lastLook.get(key);
     const quiet = quietSince(before?.screen, screen, agent.marks);
     if (quiet && before?.quiet) keepState(db, agent.key, "idle");
@@ -170,6 +184,37 @@ export function noticeIdleScreens(db: Database, sessions: string): void {
   }
   lastLook.clear();
   for (const [key, look] of looks) lastLook.set(key, look);
+}
+
+// The status last reported to a host for each builder, by its host and its ID there, so the host
+// hears only of changes. A daemon that starts again reports each one afresh.
+const reported = new Map<string, string>();
+
+// Reports each builder's status to its host, when the host is a plugin that provides status and
+// the status changed since it last heard: working, idle, needs you, ready or error, with the
+// thread's word as the reason, such as question or round limit. The daemon runs it every two
+// seconds, so a change from anywhere reaches the host: a hook, the screen check, CI or a review.
+// tmux shows no status, so its builders are left out, and Skelcrew's own list shows theirs.
+export function reportStatuses(db: Database, sessions: string): void {
+  for (const thread of liveThreads(db)) {
+    const host = hostNamed(db, sessions, thread.host ?? "tmux");
+    if (host === null || typeof host === "string" || !host.status) continue;
+    const id = thread.host_id ?? thread.folder;
+    const key = `${host.plugin}/${id}`;
+    // A host that fails to hear one is asked again at the next look, and the rest still hear.
+    try {
+      const { maxRounds } = threadConfig(thread);
+      const status = statusOf(thread, maxRounds);
+      const reason = threadWord(thread, maxRounds);
+      if (reported.get(key) === `${status} ${reason}`) continue;
+      askHost(host, { ask: "status", id, status, reason }, z.unknown());
+      reported.set(key, `${status} ${reason}`);
+    } catch (error) {
+      console.log(
+        `couldn't report ${thread.folder}'s status to ${host.plugin}: ${errorText(error)}`,
+      );
+    }
+  }
 }
 
 // Returns the word for what the thread is doing, given the rounds of changes it may have. Its

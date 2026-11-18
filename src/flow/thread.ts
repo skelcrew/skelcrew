@@ -7,6 +7,7 @@ import { z } from "zod";
 import { HarnessName, harnessNamed } from "../agents/harness.ts";
 import { taskColumns } from "../db.ts";
 import { threadsDir } from "../paths.ts";
+import { type Host, hostNamed } from "../plugins/runtime.ts";
 import { findRepository } from "./repo.ts";
 import { needsYou } from "./status.ts";
 
@@ -139,11 +140,33 @@ export const Thread = z.object({
   // What the builder is doing, as its harness's hooks and its screen tell. Null until its first
   // hook runs, and in a row from before Skelcrew kept it.
   state: AgentState.nullable(),
+  // The session host its builder runs on, tmux or a runtime plugin by name, which it keeps until
+  // the builder ends: a host you pick later is only for new sessions. Null once you stopped it.
+  host: z.string().nullable(),
+  // The builder's session ID on its host, or null for its folder, which is its name on tmux.
+  host_id: z.string().nullable(),
 });
 export type Thread = z.infer<typeof Thread>;
 
 // Returns the harness the thread's builder runs on, for starting it again and typing into it.
 export const builderHarness = (thread: Thread) => harnessNamed(thread.harness ?? "claude");
+
+// Returns the host the thread's builder session runs on and its ID there, for everything that
+// reaches the builder. A stopped thread has no session, and is looked for on tmux, where nothing
+// of it runs. Throws when its host is a plugin no longer installed, as it can't be reached.
+export function builderSession(
+  db: Database,
+  sessions: string,
+  thread: Thread,
+): { host: Host; id: string } {
+  const host = hostNamed(db, sessions, thread.host ?? "tmux");
+  if (host === null) throw new Error(hostGone(thread));
+  return { host, id: thread.host_id ?? thread.folder };
+}
+
+// Returns why a thread's builder can't be reached when its host plugin is gone.
+export const hostGone = (thread: Thread) =>
+  `its builder's session host ${thread.host} isn't installed any more`;
 
 // Returns whether the thread's review waits in the queue for a place, as limits.reviews already
 // runs. Only a working or waiting thread has a review going on: one stopped, failed or done

@@ -1,7 +1,12 @@
-// The transport module, built in: gets text into an agent and says when the agent is idle. It
+// The transport module: gets text into an agent and says when the agent is idle. The built-in
 // works on any host's sessions, as it uses only the sessions module's paste, keys and read. It
 // tells idle from the screen: the harness's status line isn't live and a bare prompt shows,
-// which also shows a person's unsent draft. It delivers one message at a time per session, as a paste then Enter.
+// which also shows a person's unsent draft. It delivers one message at a time per session, as a
+// paste then Enter. A runtime plugin that provides the transport is asked instead, for the
+// sessions on its own host: its `idle` says whether the agent is idle, and its `deliver` types a
+// message once it is, never on top of a person's draft.
+import { z } from "zod";
+import { askHost, askHostLater, type Host, type PluginHost } from "../plugins/runtime.ts";
 import { dropStaged, pasteStaged, readSession, sendKey, stagePaste } from "./sessions.ts";
 
 // How typing waits, in milliseconds. `moment` is the pause between two looks at the screen,
@@ -86,11 +91,17 @@ export function quietSince(before: string | undefined, after: string, marks: Mar
 // Esc or not. No hook stands in for this: a turn can start with nothing typed in, such as when
 // a background task ends, and Esc runs none.
 export async function whyBusy(
-  socket: string,
+  socket: Host,
   name: string,
   marks: Marks,
   waits: Waits = {},
 ): Promise<string> {
+  // A host with its own transport knows itself whether its agent is idle.
+  const own = hostTransport(socket);
+  if (own) {
+    const said = askHost(own, { ask: "idle", id: name }, z.object({ idle: z.boolean() }));
+    return said.idle ? "" : `${midTurn} (its host says so)`;
+  }
   // Look twice, a moment apart. A line holding the mark that changed is the live status line.
   const moment = waits.moment ?? 500;
   const before = readSession(socket, name);
@@ -112,7 +123,7 @@ export async function whyBusy(
 // Reports whether the agent is idle: its screen is quiet and shows a bare prompt, by its
 // harness's marks. Skelcrew checks it before typing a lead's notes, so it never interrupts work.
 export async function idle(
-  socket: string,
+  socket: Host,
   name: string,
   marks: Marks,
   waits: Waits = {},
@@ -128,15 +139,9 @@ const typingQueues = new Map<string, Promise<void>>();
 // what became of the message, and rejects if the agent stays busy too long. Messages to one
 // session wait their turn, so two pastes cannot arrive before either message's Enter. `marks`
 // are the harness's in the session.
-export function deliver(
-  socket: string,
-  name: string,
-  marks: Marks,
-  text: string,
-  waits: Waits = {},
-) {
+export function deliver(socket: Host, name: string, marks: Marks, text: string, waits: Waits = {}) {
   // This message's typing starts once the one queued before it for the same session settles.
-  const key = `${socket}/${name}`;
+  const key = `${typeof socket === "string" ? socket : socket.plugin}/${name}`;
   const earlier = typingQueues.get(key) ?? Promise.resolve();
   const turn = earlier.then(() => typeNow(socket, name, marks, text, waits));
   // The next message waits for this one whether or not it got through.
@@ -160,12 +165,14 @@ export function deliver(
 // a question, which the Enter would answer. Then it leaves the message at the prompt and returns
 // "left unsent", and the next typing of it, told so by `unsent`, presses Enter alone.
 async function typeNow(
-  socket: string,
+  socket: Host,
   name: string,
   marks: Marks,
   text: string,
   waits: Waits,
 ): Promise<Typed> {
+  const own = hostTransport(socket);
+  if (own) return deliverOnHost(own, name, text, waits);
   const moment = waits.moment ?? 500;
   const timeout = waits.timeout ?? 60_000;
   const deadline = Date.now() + timeout;
@@ -214,4 +221,27 @@ async function typeNow(
   } finally {
     for (const readied of staged) dropStaged(socket, readied);
   }
+}
+
+// Returns the session's host when it is a plugin that provides the transport, so it is asked to
+// carry text itself, or nothing when the built-in carries it.
+const hostTransport = (host: Host): PluginHost | undefined =>
+  typeof host !== "string" && host.transport ? host : undefined;
+
+// Has a host with its own transport type the message once its agent is idle, and returns
+// "typed", or "not typed" once the signal aborts first. The host waits for a person's draft
+// itself, and gives up after the timeout, which throws its reason. Its command is killed on the
+// abort, so it types nothing after: a host such as herdr types in one step, so nothing is left
+// pasted unsent for a question.
+async function deliverOnHost(
+  host: PluginHost,
+  id: string,
+  text: string,
+  waits: Waits,
+): Promise<Typed> {
+  if (waits.signal?.aborted) return "not typed";
+  const timeout = waits.timeout ?? 60_000;
+  const question = { ask: "deliver", id, text, timeout: Number.isFinite(timeout) ? timeout : null };
+  const done = await askHostLater(host, question, z.unknown(), waits.signal);
+  return done === null && waits.signal?.aborted ? "not typed" : "typed";
 }

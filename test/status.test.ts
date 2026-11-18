@@ -52,6 +52,8 @@ const state: Thread = {
   changed: null,
   updates: [],
   state: null,
+  host: "tmux",
+  host_id: null,
 };
 const status = (more: Partial<Thread>) => statusOf({ ...state, ...more }, 3);
 
