@@ -516,9 +516,10 @@ function matchesLock(plugin: Plugin, locked: Locked): boolean {
 // Makes this machine match your personal files, for sc install: installs each plugin under
 // plugins: in your config.yaml at the version and commit your lock pins. A plugin new here, or at
 // another version or commit, is shown and asked about. One already at its locked version asks
-// nothing, as you approved it before. It never writes your lock: a plugin your config names that
-// the lock doesn't is only named, with the sc update -g that pins it. Returns whether there was
-// anything to do or say. `remote` is handed to each setup.
+// nothing, as you approved it before. It never moves a pin your lock has. A plugin your config
+// names that the lock lacks gets a pin added, as npm install does: at what is installed here, or
+// else at its newest version tag once you say yes. Returns whether there was anything to do.
+// `remote` is handed to each setup.
 export function installYourPlugins(remote: string | null): boolean {
   const db = openDb();
   const lock = yourLock(db);
@@ -526,18 +527,18 @@ export function installYourPlugins(remote: string | null): boolean {
   for (const source of yourPlugins()) {
     const locked = lock[source];
     const here = installedPlugins(db).find((plugin) => plugin.source === source);
-    if (!locked) {
-      console.log(
-        `${source} isn't in your lock, so sc install leaves it. sc update -g ${source} pins it, after showing what it runs.`,
-      );
-      changed = true;
+    // A plugin installed before your lock named it is pinned as it is, with nothing to ask.
+    if (here && !locked) {
+      setLocked(db, source, lockedAs(readManifest(here.folder), commitOf(here.folder)));
       continue;
     }
-    if (here && matchesLock(here, locked)) continue;
+    if (here && locked && matchesLock(here, locked)) continue;
     changed = true;
-    const pinned = { tag: `v${locked.version}`, commit: locked.commit };
-    if (here) updatePlugin(db, here, { ...pinned, remote });
-    else installPlugin(source, { ...pinned, remote });
+    // Installing with no pin adds one. One with a pin leaves the lock as it is.
+    if (!locked) installPlugin(source, { remote });
+    else if (here)
+      updatePlugin(db, here, { tag: `v${locked.version}`, commit: locked.commit, remote });
+    else installPlugin(source, { tag: `v${locked.version}`, commit: locked.commit, remote });
   }
   return changed;
 }
@@ -595,7 +596,7 @@ export function listPlugins(json: boolean): void {
       kind: null,
       provides: [],
       from: source,
-      change: locked ? "sc install installs it" : `sc update -g ${source} pins and installs it`,
+      change: locked ? "sc install installs it" : "sc install installs its newest version",
     });
   }
   // Plain text gives only what you read. JSON adds where each came from, for tools.

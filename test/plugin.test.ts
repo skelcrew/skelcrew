@@ -635,7 +635,7 @@ test("sc plugins says what sc install would change", async () => {
   expect((await skel(["plugins"])).out).toBe(
     [
       "fake 0.2.0 io: tracker, forge. sc install moves it to 0.1.0.",
-      "skelcrew/skelcrew-new from skelcrew/skelcrew-new isn't installed. sc update -g skelcrew/skelcrew-new pins and installs it.",
+      "skelcrew/skelcrew-new from skelcrew/skelcrew-new isn't installed. sc install installs its newest version.",
       "",
     ].join("\n"),
   );
@@ -715,6 +715,13 @@ test("the move into a lock adds this machine's plugins to the ones your config n
   expect(Object.keys(parse(readFileSync(yourLockFile(), "utf8")))).toEqual([
     "skelcrew/skelcrew-fake",
   ]);
+  // A plugin your config names already isn't named twice.
+  rmSync(yourLockFile());
+  writeFileSync(yourConfig(), "plugins: [skelcrew/skelcrew-fake, skelcrew/skelcrew-new]\n");
+  await skel(["plugins"]);
+  expect(readFileSync(yourConfig(), "utf8")).toBe(
+    "plugins: [skelcrew/skelcrew-fake, skelcrew/skelcrew-new]\n",
+  );
 });
 
 // A plugin whose folder can't be read stays in your config, so your setup still carries it.

@@ -1093,16 +1093,21 @@ test("over --remote, a machine that finished its first run attaches as usual", a
 // Puts a plugin on the fake GitHub as simon/skelcrew-fake, with a commit and a tag for each
 // version. Its setup adds a line to the calls each time it runs.
 function publishFake(...versions: string[]): void {
-  const plugin = join(home, "github", "simon", "skelcrew-fake");
+  publishPlugin("fake", ...versions);
+}
+
+// Puts a plugin of this name on the fake GitHub as simon/skelcrew-<name>, as publishFake does.
+function publishPlugin(name: string, ...versions: string[]): void {
+  const plugin = join(home, "github", "simon", `skelcrew-${name}`);
   mkdirSync(plugin, { recursive: true });
   for (const version of versions) {
     writeFileSync(
       join(plugin, "skelcrew-plugin.yaml"),
-      `name: fake\nversion: ${version}\nskelcrew: 0.1.0\nabout: Fake\nkind: io\nprovides: [tracker]\nsetup: [bun, setup.ts]\ncall: ["true"]\n`,
+      `name: ${name}\nversion: ${version}\nskelcrew: 0.1.0\nabout: Fake\nkind: io\nprovides: [tracker]\nsetup: [bun, setup.ts]\ncall: ["true"]\n`,
     );
     writeFileSync(
       join(plugin, "setup.ts"),
-      `import { appendFileSync } from "node:fs";\nappendFileSync(process.env.HOME + "/calls", "fake setup ${version}\\n");\n`,
+      `import { appendFileSync } from "node:fs";\nappendFileSync(process.env.HOME + "/calls", "${name} setup ${version}\\n");\n`,
     );
     if (!existsSync(join(plugin, ".git"))) git(plugin, "init", "-q", "-b", "main");
     git(plugin, "add", ".");
@@ -1348,23 +1353,37 @@ test("when the forge won't serve the locked commit, sc install takes the tag onl
   expect(readFileSync(lock(), "utf8")).toBe(lockBefore);
 });
 
-// Only sc update -g moves your lock, so sc install only names a plugin the lock is missing.
-test("sc install leaves a plugin your lock lacks to sc update -g, and the lock as it is", async () => {
+// sc install never moves a pin your lock has, and adds one for a plugin your config names that
+// the lock lacks, as npm install does.
+test("sc install leaves every pin as it is and adds a pin for a plugin your lock lacks", async () => {
   noGitHubPlugin();
   fakeGitHub();
   publishFake("0.1.0");
+  publishPlugin("other", "0.1.0", "0.2.0");
   await skel("1\nsk-ant-oat01-good\n");
-  appendFileSync(config(), "plugins: [simon/skelcrew-fake]\n");
-  writeFileSync(lock(), "# From my laptop, before simon/skelcrew-fake.\n");
-  const run = await install("y\n");
-  expect(run.err).toBe("");
-  expect(run.out).toBe(
-    "simon/skelcrew-fake isn't in your lock, so sc install leaves it. sc update -g simon/skelcrew-fake pins it, after showing what it runs.\n",
+  lockFake("0.1.0");
+  writeFileSync(
+    config(),
+    "harness: claude\nplugins: [simon/skelcrew-fake, simon/skelcrew-other]\n",
   );
-  expect(readFileSync(lock(), "utf8")).toBe("# From my laptop, before simon/skelcrew-fake.\n");
-  expect(existsSync(join(home, ".local", "share", "skelcrew", "plugins", "fake"))).toBe(false);
-  const updated = await atTerminal("y\n", home, ["update", "-g", "simon/skelcrew-fake"]);
-  expect(updated.out).toContain("Installed fake 0.1.0.");
-  expect(readFileSync(lock(), "utf8")).toContain(fakeCommit("0.1.0"));
+  const pinned = readFileSync(lock(), "utf8");
+  writeFileSync(join(home, "calls"), "");
+  const run = await install("y\ny\n");
+  expect(run.err).toBe("");
+  expect(run.out).toContain("Installed fake 0.1.0.");
+  expect(run.out).toContain("Installed other 0.2.0.");
+  expect(calls()).toBe("fake setup 0.1.0\nother setup 0.2.0\n");
+  // The existing pin and its comment are as they were, and the new pin follows them.
+  const now = readFileSync(lock(), "utf8");
+  expect(now).toStartWith(pinned);
+  const other = git(
+    join(home, "github", "simon", "skelcrew-other"),
+    "rev-parse",
+    "v0.2.0^{commit}",
+  );
+  expect(parse(now)).toEqual({
+    "simon/skelcrew-fake": { name: "fake", version: "0.1.0", commit: fakeCommit("0.1.0") },
+    "simon/skelcrew-other": { name: "other", version: "0.2.0", commit: other },
+  });
   expect((await install()).out).toContain("Nothing to install");
 });

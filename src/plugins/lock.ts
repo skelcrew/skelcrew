@@ -4,7 +4,7 @@
 import type { Database } from "bun:sqlite";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { parse, stringify } from "yaml";
+import { parse, parseDocument, stringify } from "yaml";
 import { z } from "zod";
 import { configFile, yourConfigDocument } from "../config.ts";
 import { configDir } from "../paths.ts";
@@ -95,12 +95,19 @@ export function yourLock(db: Database): Lock {
 
 // Pins one plugin in your lock at what is installed now, or with null takes it out. Every
 // install, update and removal of a plugin from GitHub calls it, so the lock always says what
-// this machine runs.
+// this machine runs. The file is changed in place, so every other pin, and any comment, stays
+// as it was.
 export function setLocked(db: Database, source: string, locked: Locked | null): void {
-  const lock = yourLock(db);
-  if (locked === null) delete lock[source];
-  else lock[source] = locked;
-  writeLock(lock);
+  // Checked first, and written for the first time on a machine set up before the lock. A
+  // machine with no plugin from GitHub yet has no lock, and gets one with its line on top.
+  yourLock(db);
+  const file = lockFile();
+  if (!existsSync(file)) writeLock({});
+  const document = parseDocument(readFileSync(file, "utf8"));
+  if (locked === null) document.delete(source);
+  else document.set(source, locked);
+  // With no line width, a long line you wrote, such as a pin on one line, isn't folded.
+  writeFileSync(file, document.toString({ lineWidth: 0 }));
 }
 
 // Returns your personal plugins, as plugins: in your config.yaml lists them.
