@@ -22,10 +22,11 @@ import { errorText } from "../say.ts";
 import { assignIssue, unassignIssue } from "./assign.ts";
 import { baseOf, startThread } from "./builder.ts";
 import { type Item, openTasks, prOf, saveItems } from "./copy.ts";
-import { ciState, decide, labeledToStart, type PullRequest } from "./decide.ts";
+import { allGreen, ciState, decide, labeledToStart, type PullRequest } from "./decide.ts";
 import { endThread, removing, tellBuilder, tellingEvents } from "./events.ts";
 import { fetchInto, onRemote } from "./git.ts";
 import { approvedFlowsTold, leadOf } from "./lead.ts";
+import { mergeIfReady } from "./merging.ts";
 import { noteForLead, typeLeadNotes } from "./messages.ts";
 import { forgeKnown, fullNameIs, refreshClone, repositories } from "./repo.ts";
 import { needsYou } from "./status.ts";
@@ -133,9 +134,14 @@ async function actOnPr(
     thread.rounds !== before.rounds;
   // Saved ahead of what the decision does, so a thread never needs you for an approval while
   // its saved checks still say otherwise. A commit on its way has no checks to speak of yet.
+  // Whether every check is green, Skelcrew's own included, is saved on each poll too, even while
+  // an earlier event is still being told: a check run again can fail, pass or vanish, and an
+  // approval is ready to merge only while they all pass.
   const checks = ciState(pr);
-  if (!stale && thread.submitting === null && checks !== thread.checks)
-    record(db, folder, { checks });
+  const green = allGreen(pr);
+  const ciChanged = checks !== thread.checks || green !== thread.ci_passed;
+  if (!stale && thread.submitting === null && ciChanged)
+    record(db, folder, { checks, ci_passed: green });
   // A merge or close ends the thread whatever else is going on. Otherwise new events go to
   // the builder, and with none, only what is seen and what changed is saved.
   if ("end" in decision) {
@@ -330,7 +336,15 @@ async function pollRepository(
       // only what changed, and events held back for a thread, such as one stopped, were left
       // out of its `seen`, so its PR is acted on again until they are handed over.
       const pr = before.pr === null ? null : prOf(db, owner, repo, before.pr);
-      if (pr) await actOnPr(db, sessions, before, pr);
+      if (!pr) continue;
+      await actOnPr(db, sessions, before, pr);
+      // Once the PR's events are acted on, an armed merge when ready merges it if it is ready.
+      // A thread sc rm is removing is its to end.
+      // One that fails is logged, so the poll's other threads still get their events.
+      if (!removing.has(before.folder))
+        await mergeIfReady(db, sessions, before, pr).catch((error) =>
+          console.log(`couldn't merge ${before.folder} when ready: ${errorText(error)}`),
+        );
     }
   }
 }

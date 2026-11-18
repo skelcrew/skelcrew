@@ -105,6 +105,18 @@ export const DaemonRequest = z.discriminatedUnion("command", [
     pr: z.number().int().positive(),
     commit: z.string().regex(/^[0-9a-f]{40,64}$/),
   }),
+  // A merge when ready names its thread by its task, or by its PR's number. With a number,
+  // `from` is the remote of the checkout sc ran in, which names the repository when `repo`
+  // doesn't. Arming one carries what you said y to, `seen`: the PR's number and when its thread
+  // started, so a thread started over meanwhile, with another PR, is never armed.
+  z.object({
+    command: z.enum(["merge preview", "merge when ready", "merge cancel"]),
+    repo: z.string().optional(),
+    from: z.string().optional(),
+    task: TaskId.optional(),
+    pr: z.number().int().positive().optional(),
+    seen: z.object({ pr: z.number().int().positive(), started: z.number().nullable() }).optional(),
+  }),
   z.object({ command: z.literal("tell lead"), text: z.string().min(1) }),
   z.object({ command: z.literal("submit"), summary: z.string().min(1) }),
   // `from` is the remote of the checkout you ran sc check in, which names the repository whose
@@ -140,7 +152,8 @@ export type DaemonRequest = z.infer<typeof DaemonRequest>;
 // repository's lead, never another thread, and may ask for a review of its own thread only. You
 // and a lead may look at a builder's screen and stop its turn, but a builder may not, as it has
 // only its own. You type to a builder yourself in the sidebar, so you have no tell. Merging is
-// yours alone, from the screen: no agent may merge, as merging stays a human's choice.
+// yours alone: no agent may merge or arm a merge when ready, as merging stays a human's choice.
+// The lead may cancel one, which is always safe.
 export type Caller =
   | "you"
   | { lead: { owner: string; repo: string } }
@@ -165,6 +178,9 @@ export const allowed = {
     "rm preview",
     "rm",
     "merge",
+    "merge preview",
+    "merge when ready",
+    "merge cancel",
     "check",
   ],
   lead: [
@@ -182,6 +198,7 @@ export const allowed = {
     "interrupt",
     "rm preview",
     "rm",
+    "merge cancel",
     "tell",
     "question asked",
     "question answered",

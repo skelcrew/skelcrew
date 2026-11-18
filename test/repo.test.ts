@@ -1079,3 +1079,38 @@ test("sc outside a checkout names the old keys of the repository it opens again"
     "simon/app's skelcrew.yaml has reviewer:, read as the harness and model in .agents/roles/reviewer.md, which replaces it.",
   );
 });
+
+test("repo trust shows the whole .agents/ when the clone lost the version you approved", async () => {
+  const checkout = onGitHub("simon/app", "WRITE");
+  mkdirSync(join(checkout, ".agents", "roles"), { recursive: true });
+  writeFileSync(join(checkout, ".agents", "roles", "builder.md"), "First way.\n");
+  git(checkout, "add", "-A");
+  git(checkout, "commit", "-q", "-m", "roles");
+  git(checkout, "push", "-q", join(home, "github", "simon", "app.git"), "HEAD:main");
+  await skel(["repo", "add"], "y\n", checkout);
+  // The approval names a version no clone has, as after the clone was made again.
+  const approvals = join(home, ".config", "skelcrew", "approved-agents.yaml");
+  writeFileSync(approvals, `simon/app: ${"a".repeat(40)}\n`);
+  const run = await skel(["repo", "trust", "simon/app"], "y\n");
+  expect(run.err).toBe("");
+  expect(run.out).toContain("no longer has the version you approved");
+  expect(run.out).toContain("+First way.");
+  expect(readFileSync(approvals, "utf8")).toBe(
+    `simon/app: ${git(checkout, "rev-parse", "HEAD:.agents").trim()}\n`,
+  );
+});
+
+test("sc says once that rounds: replaces max_rounds: in your config.yaml, here and under repos:", async () => {
+  const file = join(home, ".config", "skelcrew", "config.yaml");
+  const yours = "harness: claude\nmax_rounds: 5\nrepos:\n  simon/app: { max_rounds: 2 }\n";
+  writeFileSync(file, yours);
+  const first = await skel([]);
+  expect(first.out).toContain(
+    "Your config.yaml's max_rounds: is read as rounds:, which replaces it.",
+  );
+  expect(first.out).toContain(
+    "Your config.yaml's max_rounds: under repos: simon/app is read as rounds:, which replaces it.",
+  );
+  expect((await skel([])).out).not.toContain("replaces it");
+  expect(readFileSync(file, "utf8")).toBe(yours);
+});

@@ -17,8 +17,9 @@ import {
 import { approvedRef, markApproved } from "../approved-agents.ts";
 import { agentRole, repositoryCommands } from "../config.ts";
 import { Repository } from "../db.ts";
+import leadRules from "../defaults/roles/lead-rules.md" with { type: "text" };
 import { cloneDir, leadPlaces } from "../paths.ts";
-import { repositoryRole } from "../roles.ts";
+import { builtInRole, repositoryRole } from "../roles.ts";
 import { errorText } from "../say.ts";
 import type { Settings } from "../settings.ts";
 import { refreshClones } from "./repo.ts";
@@ -68,8 +69,8 @@ export function lastOpened(db: Database): Repository | null {
   return Repository.nullable().parse(row);
 }
 
-// Returns the lead's instructions: its role's, from `role`, the repository it leads and where its
-// clone is, then the setup and test commands its skelcrew.yaml or your config names, each on its
+// Returns the lead's instructions: its role's, from `role`, then Skelcrew's rules for every lead
+// when the role is a repository's own, the repository it leads and where its clone is, then the setup and test commands its skelcrew.yaml or your config names, each on its
 // own, or that none is configured. The lead can't read your config from its sandbox, so it is
 // told, and proposes to you only the commands that are missing. They are as of the lead's start:
 // once a thread adds them to skelcrew.yaml, the lead reads them there. Last comes where the lead
@@ -95,7 +96,14 @@ export function leadInstructions(
       : test.length === 0
         ? "test was configured as none"
         : `the test command was ${shown(test)}`;
-  return `${role}\nYou are the lead of ${repository}. Skelcrew's clone of it is at ${clone}.\nWhen this session started, ${setupTold}, and ${testTold}.\n${approvedFlowsTold(clone)}\n`;
+  // A repository's own lead role replaces the lead's instructions, never what keeps you in
+  // charge: asking before work starts or a public issue is filed, and what the lead can't do.
+  // So those rules follow any role but the built-in one, which holds each of them already.
+  const ruled =
+    role === builtInRole("lead").instructions
+      ? role
+      : `${role.replace(/\n*$/, "\n\n")}${leadRules}`;
+  return `${ruled}\nYou are the lead of ${repository}. Skelcrew's clone of it is at ${clone}.\nWhen this session started, ${setupTold}, and ${testTold}.\n${approvedFlowsTold(clone)}\n`;
 }
 
 // Returns where the lead reads the flows you approved, given its clone: the ref at the .agents/

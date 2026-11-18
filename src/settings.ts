@@ -29,6 +29,10 @@ const File = z.looseObject({
   harness: HarnessName.optional(),
   model: Model.optional(),
   max_rounds: z.number().int().positive().optional(),
+  // Your round limit in the new shape, which replaces max_rounds in your config.yaml, at the top
+  // and under repos:. A repository's skelcrew.yaml keeps max_rounds until its flow file gives
+  // rounds.
+  rounds: z.number().int().positive().optional(),
   limits: z
     .looseObject({
       reviews: z.number().int().positive().optional(),
@@ -90,7 +94,7 @@ const keysOf: Record<Group, Key[]> = {
   lead: [],
   builder: [],
   reviewer: [],
-  rounds: ["max_rounds"],
+  rounds: ["rounds", "max_rounds"],
   reviews: ["limits"],
   checks: ["limits"],
   setup: ["setup"],
@@ -111,6 +115,7 @@ const keysOf: Record<Group, Key[]> = {
 const yourKeys: Key[] = [
   "harness",
   "model",
+  "rounds",
   "max_rounds",
   "setup",
   "test",
@@ -125,7 +130,7 @@ const repositoryKeys: Key[] = ["max_rounds", "setup", "test", "tracker"];
 // roleOf reads: what the repository's own files may, but its tracker. What is only yours, such as limits, stays in your
 // general settings, as an override is about one repository and limits are about your machine.
 // The tracker is shared with everyone who works on the repository, so no one changes it alone.
-const overrideKeys: Key[] = ["max_rounds", "setup", "test"];
+const overrideKeys: Key[] = ["rounds", "max_rounds", "setup", "test"];
 
 // Returns the built-in defaults: Claude Code for every role, the built-in flow's rounds and 30
 // minutes for a review. Setup, test and the tracker have none. Reviews default to a quarter of this machine's
@@ -160,8 +165,11 @@ export function readSettings<G extends Group>(
   const wanted = groups.flatMap((group) => keysOf[group]);
   // Each layer is read from the one that wins first, and a setting a layer above decides isn't
   // read again below it, so a bad value there can't stop a setting it doesn't decide.
+  // rounds and the old max_rounds are one setting, so either one decides both.
+  const sameSetting = (k: Key): Key[] =>
+    k === "rounds" || k === "max_rounds" ? ["rounds", "max_rounds"] : [k];
   const decidedBy = (layers: File[]) => (k: Key) =>
-    layers.some((l) => l[k] !== undefined && l[k] !== null);
+    layers.some((l) => sameSetting(k).some((key) => l[key] !== undefined && l[key] !== null));
   const overrides = repository ? readOverrides(wanted, repository) : {};
   // The rounds of the task's flow, `default` unless it named another, go over max_rounds in
   // skelcrew.yaml, which they replace. The flow file is checked even when your override decides
@@ -210,23 +218,29 @@ type Value<T> = { value: T | undefined } | { bad: Error };
 type Say = { harness: Value<HarnessName>; model: Value<string>; everyRole?: boolean };
 
 // Returns the say on a role at `path` in the YAML data `data`, such as ["roles", "builder"],
-// with its harness and model each checked on its own, so a bad one is kept to stop the role only
-// where it counts. Throws `problem`, saying where, when a step of the path isn't a mapping, as
-// then nothing in it can be read.
+// with its harness and model each checked on its own. A bad one is kept, to stop the role only
+// where it counts, and so is a step of the path that isn't a mapping, such as builder: bad,
+// which leaves both its harness and its model bad. `problem` names the file in what is wrong.
 function sayIn(data: unknown, path: string[], problem: string): Say {
+  // A path that can't be followed is said as the first step that isn't a mapping.
+  const broken = (step: number) => {
+    const bad = new Error(
+      `${problem}: ${path.slice(0, step).join(".") || "the file"} isn't a mapping`,
+    );
+    return { harness: { bad }, model: { bad } };
+  };
   let at = data;
   for (const [step, key] of path.entries()) {
     if (at === undefined || at === null) break;
-    if (!isMapping(at))
-      throw new Error(`${problem}: ${path.slice(0, step).join(".") || "the file"} isn't a mapping`);
+    if (!isMapping(at)) return broken(step);
     at = at[key];
   }
-  if (at !== undefined && at !== null && !isMapping(at))
-    throw new Error(`${problem}: ${path.join(".") || "the file"} isn't a mapping`);
+  if (at !== undefined && at !== null && !isMapping(at)) return broken(path.length);
   const mapping = isMapping(at) ? at : {};
-  // Returns the field `key` checked with `schema`.
+  // Returns the field `key` checked with `schema`. A bare `model:` is YAML's null, which is a
+  // value that isn't valid, not a missing one, so it never quietly gives the default.
   const field = <T>(key: "harness" | "model", schema: z.ZodType<T>): Value<T> => {
-    const read = schema.optional().safeParse(mapping[key] ?? undefined);
+    const read = schema.optional().safeParse(mapping[key]);
     if (read.success) return { value: read.data };
     const where = [...path, key].join(".");
     return { bad: new Error(`${problem}: ${where}: ${z.prettifyError(read.error)}`) };
@@ -458,7 +472,8 @@ function mergeSettings(layers: File[], roles: Partial<Record<RoleName, Role>>): 
     lead: roles.lead ?? unread,
     builder: roles.builder ?? unread,
     reviewer: roles.reviewer ?? unread,
-    rounds: first((l) => l.max_rounds) ?? defaults.max_rounds,
+    // In each layer, rounds goes over the old max_rounds.
+    rounds: first((l) => l.rounds ?? l.max_rounds) ?? defaults.max_rounds,
     reviews: first((l) => l.limits?.reviews) ?? defaults.reviews,
     checks: first((l) => l.limits?.checks) ?? defaults.checks,
     setup: first((l) => l.setup),

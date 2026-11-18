@@ -107,6 +107,10 @@ test("after the move, every command and the screen show the same threads under t
   oldDatabase();
   // The saved database's app has GitHub as its forge, which shows its PRs.
   fakePlugin(home);
+  // The first poll after the upgrade finds every check on app-13's approved PR green, as the
+  // earlier release took them to be. Until a poll says so, it waits, as tested below.
+  run(`import { openDb } from ${JSON.stringify(source("db.ts"))};
+openDb().run("UPDATE threads SET ci_passed = 1 WHERE folder = 'app-13'");`);
   // Before the new daemon moves it, sc shows the threads as they are.
   const { issues, show, prs, ...saved } = shownBefore();
   const before = JSON.parse(run(showAll));
@@ -195,8 +199,8 @@ console.log(JSON.stringify({ rounds, short, status }));`;
 });
 
 // Leaves the database as the first release with tasks did: moved, with a tasks table without
-// the columns added since: whether the work merged, the link to its issue and the line that
-// closes it.
+// the columns added since: whether the work merged, the link to its issue, the line that
+// closes it and whether CI passed after the approval.
 function earlierTasks(): void {
   oldDatabase();
   run(`import { openDb, moveToTasks } from ${JSON.stringify(source("db.ts"))};
@@ -206,6 +210,7 @@ moveToTasks(openDb());`);
   earlier.run("ALTER TABLE tasks DROP COLUMN merged");
   earlier.run("ALTER TABLE tasks DROP COLUMN issue_link");
   earlier.run("ALTER TABLE tasks DROP COLUMN closes");
+  earlier.run("ALTER TABLE tasks DROP COLUMN ci_passed");
   earlier.close();
 }
 
@@ -225,9 +230,25 @@ console.log(JSON.stringify({ rounds, merged, issue_link, closes }));`;
   });
 });
 
-// Writes the logs of two threads whose work ended before Skelcrew kept whether it merged:
-// app-16's PR merged, and app-14 was removed after an earlier start of it had merged nothing.
-// Marks app-14 done, as sc rm leaves it.
+// The earlier release showed an approval that needs you as ready to merge, without a poll
+// saying every check passed. It waits for a poll to say so, as its saved checks can be stale.
+test("an approval an earlier release showed as ready to merge waits for a poll", () => {
+  earlierTasks();
+  const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
+import { readThread } from ${JSON.stringify(source("flow/thread.ts"))};
+import { taskStage } from ${JSON.stringify(source("flow/stage.ts"))};
+const db = openDb();
+const stage = (folder) => [readThread(db, folder).ci_passed, taskStage(readThread(db, folder), true)];
+console.log(JSON.stringify({ approved: stage("app-13"), working: stage("app-15") }));`;
+  expect(JSON.parse(run(code))).toEqual({
+    approved: [false, "working"],
+    working: [false, "working"],
+  });
+});
+
+// Writes the logs of three threads whose work ended before Skelcrew kept whether it merged:
+// app-16's PR merged, app-12's merged as a merge when ready, and app-14 was removed after an
+// earlier start of it had merged nothing. Marks app-12 and app-14 done, as they were left.
 function endedBeforeMerges(): void {
   const logs = join(data(), "threads");
   mkdirSync(logs, { recursive: true });
@@ -237,19 +258,23 @@ function endedBeforeMerges(): void {
     `${line("started")}${line("PR #42 was merged: ended the thread")}`,
   );
   writeFileSync(
+    join(logs, "app-12.log"),
+    `${line("started")}${line("PR #7 was merged when ready: ended the thread")}`,
+  );
+  writeFileSync(
     join(logs, "app-14.log"),
     `${line("PR #30 was merged: ended the thread")}${line("started")}{"cut sh\n${line("removed: started over: ended the thread")}`,
   );
   const db = new Database(dbFile());
-  db.run("UPDATE threads SET status = 'done' WHERE folder = 'app-14'");
+  db.run("UPDATE threads SET status = 'done' WHERE folder IN ('app-12', 'app-14')");
   db.close();
 }
 
-// Returns which of the tasks app-14 and app-16 are marked merged.
+// Returns which of the tasks app-12, app-14 and app-16 are marked merged.
 function mergedTasks(): unknown {
   const db = new Database(dbFile(), { readonly: true });
   const rows = db
-    .query("SELECT task, merged FROM tasks WHERE task IN (14, 16) ORDER BY task")
+    .query("SELECT task, merged FROM tasks WHERE task IN (12, 14, 16) ORDER BY task")
     .all();
   db.close();
   return rows;
@@ -261,6 +286,7 @@ test("the move marks tasks merged whose thread's log says their PR merged", () =
   run(`import { openDb, moveToTasks } from ${JSON.stringify(source("db.ts"))};
 moveToTasks(openDb());`);
   expect(mergedTasks()).toEqual([
+    { task: 12, merged: 1 },
     { task: 14, merged: 0 },
     { task: 16, merged: 1 },
   ]);
@@ -277,6 +303,7 @@ openDb();`);
   serve();
   await until(() => existsSync(join(home, "run", "skelcrew.sock")), { timeout: 30_000 });
   expect(mergedTasks()).toEqual([
+    { task: 12, merged: 1 },
     { task: 14, merged: 0 },
     { task: 16, merged: 1 },
   ]);

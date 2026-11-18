@@ -462,3 +462,88 @@ test("your override's model for every role fits the role's last harness, whereve
   expect(moved.err).toBe("");
   expect(moved.settings?.builder).toEqual({ harness: "codex" });
 });
+
+test("a role line that isn't a mapping stops its role only where it could count", () => {
+  files(
+    "harness: claude\nrepos: { simon/app: { roles: { builder: { harness: codex, model: gpt } } } }\n",
+    "builder: bad\n",
+  );
+  const replaced = read(["builder"]);
+  expect(replaced.err).toBe("");
+  expect(replaced.settings?.builder).toEqual({ harness: "codex", model: "gpt" });
+  // Without the override, it decides the builder, so it is refused.
+  files("harness: claude\n", "builder: bad\n");
+  expect(read(["builder"]).err).toContain("skelcrew.yaml isn't valid: builder isn't a mapping");
+});
+
+test("a harness or model left empty isn't valid, and is refused where it counts", () => {
+  files("harness: claude\nbuilder: { harness: null }\n", null);
+  expect(read(["builder"]).err).toContain("builder.harness");
+  files("harness: claude\nbuilder: { model: null }\n", "builder: { model: }\n");
+  expect(read(["builder"]).err).toContain("skelcrew.yaml isn't valid: builder.model");
+  files("harness: null\n", null);
+  expect(read(["lead"]).err).toContain("config.yaml isn't valid: harness");
+  // An empty one in your override counts over everything below it, so it is refused.
+  files("harness: claude\nrepos: { simon/app: { roles: { builder: { model: null } } } }\n", null);
+  expect(read(["builder"]).err).toContain("under repos: simon/app: roles.builder.model");
+  // Your override replaces both, so empty ones below it stop nothing.
+  files(
+    "harness: claude\nmodel: null\nrepos: { simon/app: { roles: { builder: { harness: codex, model: gpt } } } }\n",
+    "builder: { harness: null, model: null }\n",
+  );
+  const replaced = read(["builder"]);
+  expect(replaced.err).toBe("");
+  expect(replaced.settings?.builder).toEqual({ harness: "codex", model: "gpt" });
+});
+
+test("a harness or model under repos: goes over the repository's role lines, as an override", () => {
+  files(
+    "harness: claude\nmodel: opus\nrepos:\n  simon/app: { harness: codex }\n",
+    "builder: { harness: claude, model: sonnet }\n",
+  );
+  expect(read(["builder", "lead"]).settings).toMatchObject({
+    builder: { harness: "codex" },
+    lead: { harness: "codex" },
+  });
+  // A model alone belongs to your harness, so it reaches only the roles left on it.
+  files(
+    "harness: claude\nmodel: opus\nrepos:\n  simon/app: { model: sonnet }\n",
+    "reviewer: { harness: codex }\n",
+  );
+  expect(read(["builder", "reviewer"]).settings).toMatchObject({
+    builder: { harness: "claude", model: "sonnet" },
+    reviewer: { harness: "codex" },
+  });
+  // The override's own role lines still go over its harness.
+  files(
+    "harness: claude\nrepos:\n  simon/app: { harness: codex, roles: { lead: { harness: claude } } }\n",
+    null,
+  );
+  expect(read(["lead", "builder"]).settings).toMatchObject({
+    lead: { harness: "claude" },
+    builder: { harness: "codex" },
+  });
+});
+
+test("a model alone under repos: goes over the repository's role models on your harness", () => {
+  files(
+    "harness: claude\nrepos:\n  simon/app: { model: sonnet }\n",
+    "builder: { model: opus }\nreviewer: { harness: codex, model: gpt-6 }\n",
+  );
+  expect(read(["builder", "reviewer"]).settings).toMatchObject({
+    builder: { harness: "claude", model: "sonnet" },
+    reviewer: { harness: "codex", model: "gpt-6" },
+  });
+});
+
+test("rounds: in your config replaces max_rounds:, which still works, and under repos: too", () => {
+  files("max_rounds: 5\n", null);
+  expect(read(["rounds"]).settings?.rounds).toBe(5);
+  files("max_rounds: 5\nrounds: 4\n", null);
+  expect(read(["rounds"]).settings?.rounds).toBe(4);
+  files("rounds: 4\nrepos:\n  simon/app: { rounds: 6, max_rounds: 9 }\n", "max_rounds: 2\n");
+  expect(read(["rounds"]).settings?.rounds).toBe(6);
+  expect(read(["rounds"], "other").settings?.rounds).toBe(4);
+  files("rounds: 0\n", null);
+  expect(read(["rounds"]).err).toContain("config.yaml isn't valid");
+});

@@ -557,7 +557,7 @@ export async function trustRepo(given: string): Promise<void> {
   // A name Skelcrew knows needs no forge to find it again. Anything else must be an
   // owner/name or URL a forge or remote can answer for.
   const db = openDb();
-  const known = repositories(db).find((r) => r.name === given);
+  const known = repositories(db).find((r) => r.name === given || fullNameIs(r, given));
   if (!known && !given.includes("/"))
     throw new Error(`there is no repository named ${given}. Name a new one as owner/repo`);
   const details = known

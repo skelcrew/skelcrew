@@ -196,8 +196,8 @@ export function itemAt(db: Database, link: string): Item | null {
 // so the reviewer checks against what the builder was given, and the lead passes on what
 // matters as a message. A row from before Skelcrew saved them falls back on the copy's words.
 // The line that closes its issue is the one saved as it started too, so its PR closes the issue
-// though the tracker or the copy changed since. A row from before Skelcrew saved it takes the
-// copy's, and a task with no issue has none. The lead's messages to the builder follow
+// though the tracker or the copy changed since, and an empty one closes nothing, whatever the
+// copy says now. A row from before Skelcrew saved it takes the copy's. The lead's messages to the builder follow
 // the body, oldest first, as changes to the task: a reviewer that didn't see them would ask the
 // builder to undo what you agreed.
 export function threadTask(

@@ -158,12 +158,9 @@ export async function endThread(
       const line = `${threadName(db, thread)} ${note}`.replace(/\s+/g, " ").slice(0, 200);
       noteForLead(db, sessions, thread, line, thread.folder);
     }
-    record(
-      db,
-      thread.folder,
-      { status: "done", needs_you: false, merged },
-      `${why}: ended the thread`,
-    );
+    // A merge when ready ends with its thread, so nothing armed outlives it.
+    const ended = { status: "done" as const, needs_you: false, merged, merge_plan: null };
+    record(db, thread.folder, ended, `${why}: ended the thread`);
   })();
   // Its clone goes only once the end is saved, so a thread whose end failed keeps it. Nothing
   // is waited on since the checks above, so a thread started over in this folder meanwhile
@@ -330,9 +327,7 @@ export async function tellBuilder(
     };
     send(notices, []);
     send(decision.tell, decision.typedIn);
-    // A failed check told needs a new round, which an approval waits for, whatever else moved.
-    const failed = notices.length > 0 && checks.length > 0 ? { ci_failed: true } : {};
-    record(db, thread.folder, moved ? { seen, ...failed } : { seen, ...change, ...failed }, why);
+    record(db, thread.folder, moved ? { seen } : { seen, ...change }, why);
     typeLeadNotes(db, sessions);
   } catch (error) {
     console.log(

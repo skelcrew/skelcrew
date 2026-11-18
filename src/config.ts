@@ -105,13 +105,13 @@ export const reviewLimit = (): number => readSettings(["reviews"]).reviews;
 // your config isn't valid.
 export const checkLimit = (): number => readSettings(["checks"]).checks;
 
-// Says once, for each old key still in use, which new one replaces it: lead:, builder: and
-// reviewer: in your config.yaml, replaced by roles:, and, for the repository named by its
-// owner/repo, lead:, builder:, reviewer: and max_rounds in its skelcrew.yaml, replaced by its
-// .agents/. The old keys still work, so nothing breaks, but you should know of the new shape.
-// Skelcrew changes no file itself. What was said is kept in Skelcrew's data folder, so it is
-// said once per key. A file that can't be read says nothing here, as reading the settings says
-// what is wrong with it.
+// Says once, for each old key still in use, which new key replaces it. In your config.yaml,
+// lead:, builder: and reviewer: give way to roles:, and max_rounds: to rounds:, at the top and
+// under each repository in repos:. For the repository named by its owner/repo, lead:, builder:,
+// reviewer: and max_rounds: in its skelcrew.yaml give way to its .agents/. The old keys still
+// work, so nothing breaks, but you should know of the new shape. Skelcrew changes no file
+// itself. What was said is kept in Skelcrew's data folder, so it is said once per key. A file
+// that can't be read says nothing here, as reading the settings says what is wrong with it.
 export function tellOldKeys(repository: string | undefined): void {
   const told = join(dataDir(), "told-old-keys");
   const before = existsSync(told) ? readFileSync(told, "utf8").split("\n") : [];
@@ -122,20 +122,35 @@ export function tellOldKeys(repository: string | undefined): void {
     mkdirSync(dataDir(), { recursive: true });
     appendFileSync(told, `${key}\n`);
   };
-  const roles = ["lead", "builder", "reviewer"];
+  const isMapping = (v: unknown): v is Record<string, unknown> =>
+    typeof v === "object" && v !== null && !Array.isArray(v);
+  // Your general settings, then each repository's overrides, with where each is said to be.
   const yours = readYaml(configFile());
-  for (const name of roles.filter((name) => name in yours))
-    tell(
-      `config.yaml ${name}`,
-      `Your config.yaml's ${name}: is read as roles: { ${name}: … }, which replaces it.`,
-    );
+  const repos = isMapping(yours) && isMapping(yours.repos) ? Object.entries(yours.repos) : [];
+  const places: [string, unknown][] = [
+    ["", yours],
+    ...repos.map(([name, entry]): [string, unknown] => [` under repos: ${name}`, entry]),
+  ];
+  const replaced: [string, string][] = [
+    ["lead", "roles: { lead: … }"],
+    ["builder", "roles: { builder: … }"],
+    ["reviewer", "roles: { reviewer: … }"],
+    ["max_rounds", "rounds:"],
+  ];
+  for (const [where, settings] of places)
+    for (const [old, now] of replaced)
+      if (isMapping(settings) && old in settings)
+        tell(
+          `config.yaml${where} ${old}`,
+          `Your config.yaml's ${old}:${where} is read as ${now}, which replaces it.`,
+        );
   if (repository === undefined) return;
   // Read from Skelcrew's clone, as the settings are, and never through a link.
   const [owner = "", repo = ""] = repository.split("/");
   const file = join(cloneDir(owner, repo), "skelcrew.yaml");
   const shared = lstatSync(file, { throwIfNoEntry: false })?.isFile() ? readYaml(file) : {};
   const named = `${repository}'s skelcrew.yaml has`;
-  for (const name of roles.filter((name) => name in shared))
+  for (const name of ["lead", "builder", "reviewer"].filter((name) => name in shared))
     tell(
       `${repository} skelcrew.yaml ${name}`,
       `${named} ${name}:, read as the harness and model in .agents/roles/${name}.md, which replaces it.`,

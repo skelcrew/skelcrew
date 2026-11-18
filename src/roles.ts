@@ -26,10 +26,15 @@ export type Role = { frontmatter: z.infer<typeof Frontmatter>; instructions: str
 
 // Reads a role file: the frontmatter between two `---` lines, if it has one, and the rest as
 // its instructions, kept byte for byte. Throws, naming the problem, when the frontmatter isn't
-// YAML or names anything but a harness and a model.
+// YAML, names anything but a harness and a model, or opens and never closes: read as
+// instructions, it would hand the agent its settings as text and run it on a harness and model
+// the file didn't mean.
+// Windows line endings count the same, so a file saved on Windows is checked too.
 export function readRole(text: string): Role {
-  const match = /^---\n([\s\S]*?)^---\n/m.exec(text);
-  if (match?.index !== 0) return { frontmatter: {}, instructions: text };
+  if (!/^---\r?\n/.test(text)) return { frontmatter: {}, instructions: text };
+  const match = /^---\r?\n([\s\S]*?)^---\r?(?:\n|$)/m.exec(text);
+  if (match?.index !== 0)
+    throw new Error("the role's frontmatter opens with --- and never closes with another ---");
   const front = Frontmatter.safeParse(parse(match[1] ?? "") ?? {});
   if (!front.success)
     throw new Error(`the role's frontmatter isn't valid: ${z.prettifyError(front.error)}`);

@@ -145,25 +145,22 @@ const visible = (text: string) =>
       : `\\u${code.toString(16).padStart(4, "0")}`;
   });
 
-// File texts read from trees, by clone, tree and path. A tree never changes, so neither does
-// what is read from it, and the screen can ask each second without running git each time.
-const read = new Map<string, string | null>();
-
 // Returns the text of a file in a tree of .agents/, such as roles/builder.md, or null when the
-// tree has no such plain file. A link is never read, as it could point at any file of yours. A
-// tree the clone has lost, such as after the clone was made again, has no files, so its tasks
-// fall back on the built-in roles rather than stop.
+// tree has no such plain file. A link is never read, as it could point at any file of yours.
+// Throws when the clone has lost the tree, such as after the clone was made again from a history
+// without it: falling back on the built-in roles would run a task on instructions other than the
+// ones it started with, or the lead on ones you didn't approve. Its agents stop until the clone
+// has the tree again, or you approve another version with sc repo trust.
 export function agentsFile(place: Place, tree: string, path: string): string | null {
-  const key = `${place.owner}/${place.repo}:${tree}:${path}`;
-  if (read.has(key)) return read.get(key) ?? null;
-  // ls-tree gives the entry's mode, which tells a plain file from a link. A tree it can't read
-  // isn't remembered, as the clone may get it back.
+  // Read from git each time, never kept, so a version the clone has lost since stops its agents
+  // at once. ls-tree gives the entry's mode, which tells a plain file from a link.
   const listed = gitIn(place, ["ls-tree", tree, path]);
-  if (listed === null) return null;
+  if (listed === null)
+    throw new Error(
+      `Skelcrew's clone of ${place.owner}/${place.repo} no longer has the .agents/ version ${tree.slice(0, 7)}, so its agents won't start on other instructions. Run sc repo trust ${place.repo} to approve the version it has now.`,
+    );
   const entry = /^(100644|100755) blob ([0-9a-f]+)\t/.exec(listed);
-  const text = entry?.[2] ? gitIn(place, ["cat-file", "blob", entry[2]]) : null;
-  read.set(key, text);
-  return text;
+  return entry?.[2] ? gitIn(place, ["cat-file", "blob", entry[2]]) : null;
 }
 
 // Returns the names of the plain files directly in a folder of a tree of .agents/, such as
@@ -190,11 +187,15 @@ export function askAboutAgents(place: Place, name: string): void {
     if (current !== null) console.log(`${fullName}'s .agents/ is the version you approved.`);
     return;
   }
+  // A version the clone lost can't be compared with, so the whole of .agents/ is shown.
+  const lost = before !== null && gitIn(place, ["cat-file", "-e", `${before}^{tree}`]) === null;
   const what =
     before === null
       ? `${fullName} has its own .agents/, which steers its agents. This is what it holds:`
-      : `${fullName}'s .agents/ changed since you approved it:`;
-  console.log(`${what}\n\n${agentsChange(place, before, current)}`);
+      : lost
+        ? `Skelcrew's clone of ${fullName} no longer has the version you approved, so its agents are stopped. This is what its .agents/ holds now:`
+        : `${fullName}'s .agents/ changed since you approved it:`;
+  console.log(`${what}\n\n${agentsChange(place, lost ? null : before, current)}`);
   const answer = prompt(`Approve ${fullName}'s .agents/? [y/N]`)?.trim().toLowerCase();
   if (answer === undefined) return;
   if (["y", "yes"].includes(answer)) {
@@ -202,8 +203,9 @@ export function askAboutAgents(place: Place, name: string): void {
     console.log(`Approved ${fullName}'s .agents/.`);
     return;
   }
-  // A no is saved as what you approved before, so it is remembered as an answer.
-  approveAgents(place, before);
+  // A no is saved as what you approved before, so it is remembered as an answer. A lost version
+  // stays as it was saved, as the clone has nothing left to keep.
+  if (!lost) approveAgents(place, before);
   const kept =
     before === null
       ? `Tasks in ${fullName} run on the built-in roles.`
