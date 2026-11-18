@@ -315,20 +315,17 @@ export async function reportQuestion(state: "asked" | "answered" | "closed"): Pr
   await request({ command: `question ${state}` });
 }
 
-// Tells the daemon, for an agent's Stop hook, that it ended its turn, so it shows idle, and a
-// builder's thread needs you if the builder stopped without submitting. The hook's input on stdin
-// can hold the builder's last message, whose first line goes in the lead's note, so you see what
-// it waits on. Input that isn't the hook's is left out, and a terminal isn't read, as it would
-// wait for you. The agent's own socket says which agent. When nothing in the clone the hook runs
-// in is uncommitted, it also sends the commit checked out and the whole last message: a builder
-// that only answered a message while its last submit is reviewed doesn't need you, and its
-// message goes to the lead instead.
+// Tells the daemon, for an agent's Stop hook, that it ended its turn, so it shows idle. The
+// hook's input on stdin can hold the builder's last message, which goes to the lead when the
+// builder stopped without submitting. Input that isn't the hook's is left out, and a terminal
+// isn't read, as it would wait for you. The agent's own socket says which agent. When nothing in
+// the clone the hook runs in is uncommitted, it also sends the commit checked out: a builder that
+// only answered a message while its last submit is reviewed waits on that submit.
 export async function reportTurnEnded(): Promise<void> {
   const Input = z.object({ last_assistant_message: z.string().nullish() });
   const text = process.stdin.isTTY ? "" : await Bun.stdin.text();
   const input = Input.safeParse(parseJson(text));
-  const message = input.success ? (input.data.last_assistant_message ?? "") : "";
-  const said = message.trim().split("\n")[0]?.trim();
+  const message = input.success ? (input.data.last_assistant_message ?? "").trim() : "";
   // The hook runs in the builder's own clone, inside its sandbox. Untracked files count as work
   // left over, whatever the clone's settings say about showing them. A folder git can't read
   // sends no commit, so the turn counts as new work. git status would take the clone's
@@ -345,10 +342,18 @@ export async function reportTurnEnded(): Promise<void> {
   const clean = status.ok && status.out.trim() === "" && head.ok;
   await request({
     command: "turn ended",
-    ...(said ? { said } : {}),
-    // Cut, so a long report can't flood the lead.
-    ...(clean ? { head: head.out.trim(), message: message.trim().slice(0, 2000) } : {}),
+    ...(message ? { message: shortened(message) } : {}),
+    ...(clean ? { head: head.out.trim() } : {}),
   });
+}
+
+// Shortens the builder's last message for the lead, so a long report can't flood it. A question
+// or a decision usually comes last, so the end is kept along with the start, and the lead reads
+// where and how much was cut, to ask the builder for the rest.
+function shortened(message: string): string {
+  if (message.length <= 2000) return message;
+  const cut = message.length - 2000;
+  return `${message.slice(0, 1000)}\n\n[${cut} characters cut]\n\n${message.slice(-1000)}`;
 }
 
 // What Claude Code's StopFailure hook gets on stdin: the kind of error, such as rate_limit, and
