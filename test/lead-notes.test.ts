@@ -9,10 +9,8 @@ import { join } from "node:path";
 import { source, threadSql } from "./harness.ts";
 
 let home = "";
-// The test's tmux servers: the agents', and one whose terminal watches the lead, as the screen's
-// right pane does.
+// The test's own tmux server.
 const socket = `skel-lead-notes-test-${process.pid}`;
-const view = `${socket}-view`;
 beforeEach(() => {
   home = realpathSync(mkdtempSync(join(tmpdir(), "skel-lead-notes-test-")));
   // The stand-in lead shows a person's unsent draft at its prompt while the file draft is in
@@ -38,18 +36,15 @@ done
 });
 afterEach(() => {
   const folder = join(process.env.TMUX_TMPDIR ?? "/tmp", `tmux-${userInfo().uid}`);
-  for (const server of [view, socket]) {
-    Bun.spawnSync(["tmux", "-L", server, "kill-server"], { stderr: "pipe" });
-    rmSync(join(folder, server), { force: true });
-  }
+  Bun.spawnSync(["tmux", "-L", socket, "kill-server"], { stderr: "pipe" });
+  rmSync(join(folder, socket), { force: true });
   rmSync(home, { recursive: true, force: true });
 });
 
 // Runs the code with the database open as `db`, simon/app and its thread app-12 in it, and
-// returns what it prints. `lead()` starts the stand-in lead, `watch()` has a terminal watch it,
-// `tmuxLead(...)` runs tmux on the lead's pane, and `received()` is what was typed into it. It
-// takes a process of its own with HOME set, as homedir() keeps the HOME this process started
-// with.
+// returns what it prints. `lead()` starts the stand-in lead, `tmuxLead(...)` runs tmux on the
+// lead's pane, and `received()` is what was typed into it. It takes a process of its own with
+// HOME set, as homedir() keeps the HOME this process started with.
 function run(body: string): string {
   const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
 import { leadOf } from ${JSON.stringify(source("flow/lead.ts"))};
@@ -76,11 +71,6 @@ async function until(done) {
 async function lead() {
   Bun.spawnSync(["tmux", "-L", tmux, "new-session", "-d", "-s", name, "-c", home, home + "/lead.sh"]);
   await until(() => tmuxLead("capture-pane", "-p").includes("❯"));
-}
-async function watch() {
-  const attach = "env -u TMUX tmux -L " + tmux + " attach -t =" + name;
-  Bun.spawnSync(["tmux", "-L", ${JSON.stringify(view)}, "new-session", "-d", "-x", "100", "-y", "30", attach]);
-  await until(() => tmuxLead("display-message", "-p", "#{session_attached}").trim() === "1");
 }
 ${body}`;
   const done = Bun.spawnSync([process.execPath, "-e", code], {
@@ -119,7 +109,6 @@ test("messages for a lead the human has scrolled back in wait, then go in togeth
   const seen = JSON.parse(
     run(`
 await lead();
-await watch();
 tmuxLead("copy-mode");
 noteForLead(db, tmux, app, "started app-13 from github: Add import");
 messageLead(db, tmux, readThread(db, "app-12"), "First part done.");
@@ -143,15 +132,21 @@ console.log(JSON.stringify({ during, after: received(), noting: readThread(db, "
 });
 
 // Copy mode stays on a pane nobody watches, such as a lead you left for a builder from there.
-// Its messages aren't held until you come back.
-test("messages for a lead left scrolled back, that nobody watches, go in", () => {
-  const typed = run(`
+// Its messages still wait until you are back at the bottom, so you find the chat where you
+// left it.
+test("messages for a lead left scrolled back wait though nobody watches it", () => {
+  const seen = JSON.parse(
+    run(`
 await lead();
 tmuxLead("copy-mode");
 noteForLead(db, tmux, app, "started app-13 from github: Add import");
+await Bun.sleep(3000);
+const during = { received: received(), scrolled: tmuxLead("display-message", "-p", "#{pane_in_mode}").trim() };
+tmuxLead("send-keys", "-X", "cancel");
 await until(() => received().includes("Add import"));
-console.log(received());`);
-  expect(typed).toContain("started app-13 from github: Add import");
+console.log(JSON.stringify({ during }));`),
+  );
+  expect(seen.during).toEqual({ received: "", scrolled: "1" });
 });
 
 test("a person's unsent draft at the lead's prompt holds its messages", () => {
@@ -176,7 +171,6 @@ test("scrolling back while the lead's messages wait on a draft holds them, and a
   const seen = JSON.parse(
     run(`
 await lead();
-await watch();
 Bun.write(home + "/draft", "");
 await until(() => tmuxLead("capture-pane", "-p").includes("half a thought"));
 record(db, "app-12", { asking: true }, "its builder asked a question");
@@ -204,7 +198,6 @@ test("a thread that fails while the human has scrolled back in the lead is told 
   const seen = JSON.parse(
     lastLine(`
 await lead();
-await watch();
 tmuxLead("copy-mode");
 noteForLead(db, tmux, app, "started app-13 from github: Add import");
 failThread(db, tmux, readThread(db, "app-12"), new Error("its setup command failed"));

@@ -430,8 +430,8 @@ export function messageLead(db: Database, sessions: string, from: Caller, text: 
 // Types the saved notes for a repository's lead into it, such as "started app-12 from github:
 // Fix the login redirect" or "app-12 needs you: its builder asked a question", and forgets each
 // once typed. The lead's chat is the human's too, so typing waits while the lead is busy, while
-// a person's unsent draft is at its prompt, and while the human watching it has scrolled back,
-// as the paste would throw them back to the bottom. Everything that waited then goes in as one
+// a person's unsent draft is at its prompt, and while the human has scrolled back in it, as the
+// paste would throw them back to the bottom. Everything that waited then goes in as one
 // message, its notes a blank line apart, so the chat jumps once. Threads needing you come first,
 // then urgent notes such as a builder's message, then the rest, as the human must see those
 // soonest. A lead that isn't running, or never started, gets nothing: its notes stay saved until

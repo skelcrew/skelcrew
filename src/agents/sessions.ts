@@ -381,14 +381,14 @@ export function listSessions(
 export const readSession = (socket: string, name: string) =>
   mustTmux(socket, ["capture-pane", "-p", "-t", `=${name}:`]);
 
-// Reports whether a person watching the named session has scrolled back in it, in tmux's copy
-// mode, so Skelcrew can hold a message rather than throw them back to the bottom while they
-// read. A session nobody watches doesn't count: copy mode stays on a pane you left for another
-// session, and would otherwise hold its messages until you come back.
+// Reports whether someone has scrolled back in the named session, in tmux's copy mode, so
+// Skelcrew can hold a message rather than throw them back to the bottom while they read. Copy
+// mode stays on a pane you left for another session, so its messages wait until you come back
+// and leave it, and you find the chat where you left it.
 export function scrolledBack(socket: string, name: string): boolean {
-  const shown = ["display-message", "-p", "-t", `=${name}:`, "#{pane_in_mode} #{session_attached}"];
-  const [inMode, watching] = tmux(socket, shown).out.trim().split(" ");
-  return inMode === "1" && Number(watching) > 0;
+  return (
+    tmux(socket, ["display-message", "-p", "-t", `=${name}:`, "#{pane_in_mode}"]).out.trim() === "1"
+  );
 }
 
 // Sends one key to the agent in the named session, such as Enter after a pasted message.
