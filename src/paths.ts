@@ -75,6 +75,10 @@ export function leadPlaces(owner: string, repo: string, kept = false) {
 // so the folder is named by a short hash of the thread's folder.
 export const threadSocket = (folder: string) =>
   join(runtimeDir(), "skelcrew", "threads", shortHash(folder), "skelcrew.sock");
+// Returns the socket a thread's reviewer reaches the daemon on, alone in its folder like the
+// thread's own. It is apart from the builder's, as a reviewer may only run sc check.
+export const reviewSocket = (folder: string) =>
+  join(runtimeDir(), "skelcrew", "reviews", shortHash(folder), "skelcrew.sock");
 // Returns the folder for the sockets through which the ssh and scp commands for a server share
 // one connection. A Mac refuses a socket path over 104 bytes, and its runtime and temporary
 // folders are long, so it is in /tmp, with your user number so it is yours alone.

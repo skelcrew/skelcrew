@@ -1,8 +1,8 @@
 // Runs a fresh adversarial reviewer in the sandbox for each thread's PR, on the harness your
 // config names for reviews.
-import { mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { z } from "zod";
 import { type HarnessName, harnessNamed } from "../agents/harness.ts";
 import { filterEnv, sandboxArgs, throwawayMounts } from "../agents/sandbox.ts";
@@ -38,8 +38,9 @@ const schema = JSON.stringify({
 // or no one, on a change to docs and Markdown alone.
 export type Tests = { ci: string } | "run" | "docs only";
 
-// Returns what the reviewer does when it has to run the whole test suite: `run` it with the
-// commands under test: in the repository's skelcrew.yaml or your config. With none named, or
+// Returns what the reviewer does when it has to run the whole test suite: `run` it through sc
+// check, which runs the commands under test: in the repository's skelcrew.yaml or your config,
+// once one of the machine's check slots is free. With none named, or
 // with test configured as none, it reviews without running tests and says why. Skelcrew never
 // guesses a test command, as a wrong guess would pass for a real result.
 function runSuite(run: string, test: string[] | undefined): string {
@@ -47,7 +48,7 @@ function runSuite(run: string, test: string[] | undefined): string {
     return "no test command is configured, so don't run the tests. Review the code, and say in the body that you didn't run them, as none is configured.";
   if (test.length === 0)
     return "don't run the tests: the repository is configured with none. Review the code, and say in the body that you didn't run them, as it has none.";
-  return `${run}, with \`${test.join(" && ")}\`.`;
+  return `${run} with \`sc check\`, which runs \`${test.join(" && ")}\` once one of this machine's check slots is free. Never run that command directly, as other agents share this machine.`;
 }
 
 // Returns what the reviewer is told about the tests. The whole test suite runs once per commit,
@@ -214,7 +215,8 @@ function readVerdict(
 // reads CI's result rather than running the whole test suite. It is asked again every 15
 // seconds while the review runs, as CI usually finishes during it. `docsOnly` says the change
 // touches only docs and Markdown, so the reviewer runs no tests, and `ci` isn't asked. `test`
-// is the repository's test command, for when the reviewer has to run the suite.
+// is the repository's test command, for when the reviewer has to run the suite, which it does
+// through sc check on `socket`, the thread's reviewer socket.
 async function reviewNow(given: {
   clone: string;
   issue: { title: string; body: string };
@@ -228,6 +230,7 @@ async function reviewNow(given: {
   env?: Record<string, string | undefined>;
   ci?: { has: () => boolean; read: () => Promise<string> } | undefined;
   docsOnly?: boolean;
+  socket?: string;
 }): Promise<Review | Limited> {
   const { clone, issue, base, model, harness, limit = 30 * 60_000, env = process.env } = given;
   // Fail at once, with a reason you can act on, when the review was cancelled before its turn
@@ -307,14 +310,41 @@ async function reviewNow(given: {
     // The builder can go on changing its clone after it submits, so the reviewer sees the
     // submitted commit, with what the builder changed since put aside. Ignored files, such
     // as installed packages, stay for the tests. git runs in the sandbox, as the clone's
-    // .git is the builder's to plant settings in.
-    const checkout = 'git checkout -q -f --detach "$0" && git clean -q -fd && exec "$@"';
+    // .git is the builder's to plant settings in. The builder runs git whenever it likes, and
+    // a command of its holds index.lock or HEAD.lock in its .git, which the view shows. A
+    // checkout needs both, so the review never takes them. It reads the commit into an index
+    // in the review's folder, started from a copy of the builder's so unchanged files aren't
+    // rewritten, and puts that index in the view's .git. Then it points HEAD at the commit
+    // by writing it. Plain copies and writes need no lock. They copy with cat, as the
+    // repository's tests stand in for cp. git replaces the builder's index
+    // whole, so the copy is never half written, and without one git starts from an empty
+    // index. The other index is named only for these steps: the reviewer's own git, in this
+    // clone or any other, uses each one's own index. The builder's locks then go from the
+    // view, as no git in the sandbox holds them, and a lock left there would stop the
+    // reviewer's own git. A Mac's copy keeps them for good otherwise. The builder's own stay.
+    // Every other step must work, or the reviewer never starts.
+    const index = join(folder, "index");
+    const checkout = [
+      'index="$(git rev-parse --git-dir)/index"',
+      '{ ! test -e "$index" || cat "$index" > "$1"; }',
+      'GIT_INDEX_FILE="$1" git read-tree --reset -u "$0"',
+      'GIT_INDEX_FILE="$1" git clean -q -fd',
+      'cat "$1" > "$index"',
+      'printf "%s\\n" "$0" > "$(git rev-parse --git-path HEAD)"',
+      'rm -f "$(git rev-parse --git-path index.lock)" "$(git rev-parse --git-path HEAD.lock)"',
+      "shift",
+      'exec "$@"',
+    ].join(" && ");
+    // The sandbox shows the socket's folder, so it is left out while the daemon hasn't made it,
+    // such as when a test runs a review alone. sc check then says the daemon didn't answer.
+    const socket = given.socket && existsSync(dirname(given.socket)) ? given.socket : undefined;
     argv = sandboxArgs({
       home,
       path,
+      ...(socket ? { socket } : {}),
       mounts: [...mounts, ...launch.mounts],
       cwd: at,
-      command: ["sh", "-c", checkout, given.commit, ...launch.command],
+      command: ["sh", "-c", checkout, given.commit, index, ...launch.command],
       programs: launch.command.slice(0, 1),
     });
     // CI's result is there before the reviewer starts, and kept current while it runs. The

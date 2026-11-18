@@ -12,6 +12,8 @@ In the summary, put code, file names, commands and HTML in backticks, as GitHub 
 
 When your work fixes a security hole, your summary and commit messages say what changed, never how the hole could be used.
 
+Before you compare your branch with its base branch or merge it, such as main, run git fetch origin first. Your origin is Skelcrew's copy of the repository, which it keeps current with the forge, but your origin/ branches move only when you fetch. Without that, you could report that your branch already has main when it doesn't.
+
 If the reviewer asks for changes, Skelcrew types the review into this session: fix what it asks, commit, and run sc submit again.
 
 If the human asks for another review of your last submitted commit, run sc review with your thread's name, such as sc review app-12.

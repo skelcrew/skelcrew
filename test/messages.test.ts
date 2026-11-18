@@ -1,7 +1,8 @@
 // A builder's waiting messages, kept in the database: the lead hears of every message of its own
 // that waits too long, and each review or comment a message carries is kept to be marked seen.
 // The builder isn't running, as the tmux socket has no server, so every message waits, unless a
-// test starts a stand-in builder on that socket.
+// test starts a stand-in builder on that socket. test/message-rules.test.ts checks each rule against a
+// fake transport instead.
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir, userInfo } from "node:os";
