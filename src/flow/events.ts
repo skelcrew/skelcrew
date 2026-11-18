@@ -38,16 +38,19 @@ async function failedCheckMessages(
   );
 }
 
-// Brings the base branch up to date in Skelcrew's clone of the repository. The builder's clone
-// has Skelcrew's clone as origin, so its next fetch gets the latest base. Each poll keeps the
-// default branch current, but the builder is told of the conflict before the next one, and
-// any other base is fetched only here.
-async function refreshBase(db: Database, thread: Thread, base: string): Promise<void> {
+// Brings the base branch up to date in Skelcrew's clone of the repository, and returns the
+// commit it is on, as the forge has it. The builder's clone has Skelcrew's clone as origin, so
+// its next fetch gets the latest base. Each poll keeps the default branch current, but the
+// builder is told of the conflict before the next one, and any other base is fetched only here.
+async function refreshBase(db: Database, thread: Thread, base: string): Promise<string> {
   const repository = repositoryOf(db, thread);
+  const clone = cloneDir(thread.owner, thread.repo);
   // Refreshing brings the default branch up to date. Any other base is fetched on its own.
   await refreshClone(db, repository);
-  if (base !== baseOf({ ...thread, base: null }))
-    await fetchInto(db, repository, cloneDir(thread.owner, thread.repo), base);
+  if (base !== baseOf({ ...thread, base: null })) await fetchInto(db, repository, clone, base);
+  const read = await quietly(["git", "-C", clone, "rev-parse", "--verify", `refs/heads/${base}`]);
+  if (!read.ok) throw new Error(`git rev-parse ${base} failed: ${read.err.trim()}`);
+  return read.out.trim();
 }
 
 // The threads whose events are being made into a message for the builder, by folder. A poll
@@ -274,7 +277,17 @@ export async function tellBuilder(
         )
       : thread;
   try {
-    if (decision.conflict !== null) await refreshBase(db, thread, decision.conflict);
+    // The conflict notice names the commit the forge's base is on. A builder that checks its
+    // own origin/ unfetched would otherwise say its branch already has the base.
+    const base = decision.conflict;
+    const at = base === null ? null : await refreshBase(db, thread, base);
+    const told =
+      at === null
+        ? decision.notice
+        : decision.notice.map(
+            (text) =>
+              `${text} The forge's ${base} is at ${at}. After git fetch origin, git rev-parse origin/${base} gives the same commit.`,
+          );
     const checks = await failedCheckMessages(db, thread, decision.failed);
     // Fetching can take a while, and the thread may have stopped or ended meanwhile, whose
     // events stay unhandled. Or a newer round may have moved it on, such as to approved. Its
@@ -290,7 +303,7 @@ export async function tellBuilder(
     // A round submitted meanwhile is a new commit, so the notices of the older one would send
     // the builder after a problem it may have fixed, even once that round's push is done and
     // its review runs. People's words still hold.
-    const notices = noticeRound(thread.folder) !== round ? [] : [...checks, ...decision.notice];
+    const notices = noticeRound(thread.folder) !== round ? [] : [...checks, ...told];
     // Saves one message of these texts, unless there are none. The thread's log gets the first
     // line of each.
     const firstLines = (texts: string[]) => texts.map((t) => t.split("\n")[0]).join("; ");

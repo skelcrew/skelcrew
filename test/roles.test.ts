@@ -11,6 +11,10 @@ const sha256 = (text: string) => new Bun.CryptoHasher("sha256").update(text).dig
 const workflows =
   "\nNever change files under .github/: Skelcrew can't push a change to its workflows, and the push is refused. If the work needs a change there, leave it out, and say in your sc submit summary, which becomes the PR, what a person should change there instead.\n";
 
+// What the builder's file added later: it fetches before it compares with main, as Skelcrew
+// never moves the builder's own origin/ branches.
+const fetching = `\nBefore you compare your branch with its base branch or merge it, such as main, run git fetch origin first. Your origin is Skelcrew's copy of the repository, which it keeps current with the forge, but your origin/ branches move only when you fetch. Without that, you could report that your branch already has main when it doesn't.\n`;
+
 // What the lead's file added after its instructions moved there: why a message to a builder
 // waits, and what to do when it waits long.
 const waiting =
@@ -79,8 +83,10 @@ test("the lead and builder files hold the instructions the code gave, but for wh
   expect(builder).toContain(builderTests);
   expect(builder).toContain(asking);
   expect(builder).toContain(tellingTheLead);
+  expect(builder).toContain(fetching);
   const before = builder
     .replace(workflows, "")
+    .replace(fetching, "")
     .replace(asking, "")
     .replace(builderTests, builderTestsBefore)
     .replace(tellingTheLead, "");
