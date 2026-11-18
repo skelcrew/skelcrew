@@ -63,10 +63,10 @@ function newestTag(source: string): string {
   return `v${newest}`;
 }
 
-// Clones a GitHub repository at a version tag into a temporary folder beside the installed
-// plugins. Returns that folder, its manifest and its commit, once the manifest's version matches
-// the tag, and the commit matches `commit` when the lock names one. The caller moves the folder
-// into place only after you agree, so a clone stopped halfway never looks like a plugin.
+// Fetches a GitHub repository into a temporary folder beside the installed plugins: at `commit`
+// when your lock pins one, or else at the version tag. Returns that folder, its manifest and its
+// commit, once the manifest's version matches the tag. The caller moves the folder into place
+// only after you agree, so a fetch stopped halfway never looks like a plugin.
 function cloneTag(
   source: string,
   tag: string,
@@ -77,31 +77,46 @@ function cloneTag(
   const staged = join(pluginsDir(), `.cloning-${process.pid}`);
   mkdirSync(pluginsDir(), { recursive: true });
   rmSync(staged, { recursive: true, force: true });
-  const cloned = Bun.spawnSync(
-    ["git", "-c", "advice.detachedHead=false", "clone", "--quiet", "--depth", "1"].concat([
-      "--branch",
-      tag,
-      `https://github.com/${source}`,
-      staged,
-    ]),
-    { stdout: "pipe", stderr: "pipe", env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } },
-  );
-  if (!cloned.success)
-    throw new Error(`git couldn't clone ${source} at ${tag}: ${cloned.stderr.toString().trim()}`);
-  // A tag that disagrees with its manifest is refused, so the version you were told is the
-  // one that runs. So is a tag moved since it was locked, as the lock pins the exact code.
+  const url = `https://github.com/${source}`;
+  // With no terminal prompt, a repository that doesn't exist fails at once, where git would
+  // otherwise ask for a login.
+  const git = (args: string[]) =>
+    Bun.spawnSync(["git", "-c", "advice.detachedHead=false", ...args], {
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+    });
+  if (commit === undefined) {
+    const cloned = git(["clone", "--quiet", "--depth", "1", "--branch", tag, url, staged]);
+    if (!cloned.success)
+      throw new Error(`git couldn't clone ${source} at ${tag}: ${cloned.stderr.toString().trim()}`);
+  } else {
+    // The pinned commit is fetched by itself, so a tag moved since it was locked still installs
+    // exactly the code you approved. git can't clone a commit, only a branch or a tag, so the
+    // folder starts empty and fetches it.
+    const steps = [
+      ["init", "--quiet", staged],
+      ["-C", staged, "fetch", "--quiet", "--depth", "1", url, commit],
+      ["-C", staged, "checkout", "--quiet", "FETCH_HEAD"],
+    ];
+    for (const step of steps) {
+      const run = git(step);
+      if (run.success) continue;
+      rmSync(staged, { recursive: true, force: true });
+      throw new Error(
+        `git couldn't fetch commit ${commit.slice(0, 12)} of ${source}, which your lock pins: ${run.stderr.toString().trim()}. sc update -g moves it to its newest version, after showing what it runs`,
+      );
+    }
+  }
+  // A tag or commit that disagrees with its manifest is refused, so the version you were told
+  // is the one that runs.
   try {
     const manifest = readManifest(staged);
     if (`v${manifest.version}` !== tag)
       throw new Error(
         `${source} isn't installable: its tag ${tag} says ${tag.slice(1)}, and its skelcrew-plugin.yaml ${manifest.version}`,
       );
-    const cloned = commitOf(staged);
-    if (commit !== undefined && cloned !== commit)
-      throw new Error(
-        `${source}'s tag ${tag} is at commit ${cloned.slice(0, 12)} now, and your lock says ${commit.slice(0, 12)}. Run sc update -g ${manifest.name} to move to it, after seeing what it runs`,
-      );
-    return { staged, manifest, commit: cloned };
+    return { staged, manifest, commit: commitOf(staged) };
   } catch (error) {
     rmSync(staged, { recursive: true, force: true });
     throw error;
@@ -313,8 +328,13 @@ export function updatePlugin(db: Database, plugin: Plugin, options: Options = {}
   const remote = options.remote === undefined ? originHere() : options.remote;
   const { name, folder, source } = plugin;
   const current = readManifest(folder);
-  // A folder of yours gets only its build again. Its setup is for sc setup.
+  // A folder of yours gets only its build again, after showing what it runs now and asking, as
+  // its commands may have changed since it was installed. Its setup is for sc setup.
   if (source === null) {
+    if (ask && !confirmPlugin(current, folder, "Build")) {
+      console.log(`Skelcrew didn't build ${name} again.`);
+      return;
+    }
     buildAndSetUp(current, folder, false, originHere());
     console.log(`Built ${name} ${current.version} again from ${folder}.`);
     return;

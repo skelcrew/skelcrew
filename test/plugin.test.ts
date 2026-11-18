@@ -319,9 +319,15 @@ test("a plugin from a folder is used where it is, and update builds it again", a
   expect(existsSync(join(plugins(), "fake"))).toBe(false);
   expect(JSON.parse((await skel(["plugin", "ls", "--json"])).out)[0].from).toBe(folder);
 
+  // Its commands may have changed, so building it again shows them and asks first.
   fakePlugin(folder, "0.2.0");
-  const updated = await skel(["plugin", "update", "fake"]);
+  const unasked = await skel(["plugin", "update", "fake"], "y\n", "", {}, home, false);
+  expect(unasked.out).toContain("Skelcrew didn't build fake again.");
+  expect(JSON.parse(readFileSync(join(folder, "built"), "utf8")).version).toBe("0.1.0");
+  const updated = await skel(["plugin", "update", "fake"], "y\n");
   expect(updated.err).toBe("");
+  expect(updated.out).toContain(`fake 0.2.0 from ${folder} is an I/O plugin`);
+  expect(updated.out).toContain("Build it? [Y/n]");
   expect(updated.out).toContain(`Built fake 0.2.0 again from ${folder}.`);
   expect(JSON.parse(readFileSync(join(folder, "built"), "utf8")).version).toBe("0.2.0");
 

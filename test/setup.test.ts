@@ -1166,7 +1166,7 @@ test("sc install with no answer to read installs nothing", async () => {
   expect(existsSync(join(home, ".local", "share", "skelcrew", "plugins", "fake"))).toBe(false);
 });
 
-test("a changed commit in the lock asks again, and a tag moved since it was locked is refused", async () => {
+test("sc install installs the commit your lock pins, even after its tag moved, and a changed commit asks again", async () => {
   noGitHubPlugin();
   fakeGitHub();
   publishFake("0.1.0");
@@ -1177,6 +1177,15 @@ test("a changed commit in the lock asks again, and a tag moved since it was lock
   const before = fakeCommit("0.1.0");
   publishFake("0.1.0");
   expect((await install()).out).toContain("Nothing to install");
+  // A machine with nothing installed gets exactly the commit locked, not where the tag is now.
+  noGitHubPlugin();
+  writeFileSync(join(home, "calls"), "");
+  const fresh = await install("y\n");
+  expect(fresh.err).toBe("");
+  expect(fresh.out).toContain("Installed fake 0.1.0.");
+  expect(calls()).toBe("fake setup 0.1.0\n");
+  const folder = join(home, ".local", "share", "skelcrew", "plugins", "fake", "0.1.0");
+  expect(git(folder, "rev-parse", "HEAD")).toBe(before);
   // Your lock from another machine pins the new commit, which asks again.
   writeFileSync(config(), "harness: claude\n");
   lockFake("0.1.0");
@@ -1186,19 +1195,20 @@ test("a changed commit in the lock asks again, and a tag moved since it was lock
   expect(moved.out).toContain("Update it? [Y/n]");
   expect(calls()).toBe("fake setup 0.1.0\n");
   expect(readFileSync(lock(), "utf8")).toContain(fakeCommit("0.1.0"));
-  // A lock pinning a commit the tag no longer points at installs nothing.
+});
+
+test("a locked commit the repository no longer has is refused, and sc update -g moves past it", async () => {
   noGitHubPlugin();
-  writeFileSync(config(), "harness: claude\n");
-  lockFake("0.1.0", before);
+  fakeGitHub();
+  publishFake("0.1.0");
+  await skel("1\nsk-ant-oat01-good\n");
+  lockFake("0.1.0", "deadbeef".repeat(5));
   const refused = await install("y\n");
   expect(refused.code).toBe(1);
-  expect(refused.err).toContain("and your lock says");
-  expect(refused.err).toContain("sc update -g fake");
-  // The command the error names installs the tag where it is now, after asking, and moves the
-  // lock to it, so sc install is satisfied.
+  expect(refused.err).toContain("which your lock pins");
+  expect(refused.err).toContain("sc update -g moves it to its newest version");
   const updated = await atTerminal("y\n", home, ["update", "-g", "fake"]);
   expect(updated.err).toBe("");
-  expect(updated.out).toContain("Install it? [Y/n]");
   expect(updated.out).toContain("Installed fake 0.1.0.");
   expect(readFileSync(lock(), "utf8")).toContain(fakeCommit("0.1.0"));
   expect((await install()).out).toContain("Nothing to install");
