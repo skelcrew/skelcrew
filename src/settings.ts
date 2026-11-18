@@ -256,10 +256,10 @@ function roleOf(name: RoleName, repository: Repository | undefined): Role {
       ...sayIn(entry, [], problem),
       everyRole: true,
     });
-    // A role file's frontmatter is checked whole, as its agents read the same file for their
-    // instructions, so a broken one stops them whatever counts.
-    const file = once(() => roleFileSettings(name, repository));
-    says.push({ harness: () => file()?.harness, model: () => file()?.model });
+    // The role file's frontmatter, whose keys are checked as the file is read, and its harness
+    // and model only where they count.
+    const role = `.agents/roles/${name}.md in ${repository.owner}/${repository.repo} isn't valid`;
+    says.push(sayIn(() => repositoryRole(name, repository).frontmatter, [], role));
     const shared = once(() => repositoryData(repository));
     says.push(sayIn(shared, [name], "the repository's skelcrew.yaml isn't valid"));
   }
@@ -312,17 +312,6 @@ function roleOf(name: RoleName, repository: Repository | undefined): Role {
   const harness = harnessFrom(0);
   const model = modelFrom(0);
   return model === undefined ? { harness } : { harness, model };
-}
-
-// Returns the harness and model a repository's role file names, or nothing when it names neither
-// or the repository has no file for the role.
-function roleFileSettings(
-  name: RoleName,
-  repository: Repository,
-): { harness?: HarnessName; model?: string } | undefined {
-  const { harness, model } = repositoryRole(name, repository);
-  if (harness === undefined && model === undefined) return undefined;
-  return { ...(harness && { harness }), ...(model && { model }) };
 }
 
 // Returns your config.yaml as YAML data, or nothing when you have none.

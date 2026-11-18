@@ -372,3 +372,27 @@ test("only the round limit that wins is read: a bad one below it stops nothing",
   inHome(approveCurrent);
   expect(() => roundsOf()).toThrow(".agents/flows/default.yaml in simon/app");
 });
+
+test("a role file's harness and model are checked only where they count", () => {
+  agentsFile("roles/builder.md", "---\nharness: codex\nmodel: [bad]\n---\nBuild it.\n");
+  agentsFile("roles/reviewer.md", "---\nharness: emacs\n---\nReview it.\n");
+  commit("roles");
+  inHome(approveCurrent);
+  // A bad one that counts stops its role, naming the file and where in it.
+  expect(() => inHome('return readSettings(["builder"], app);')).toThrow(
+    ".agents/roles/builder.md in simon/app isn't valid: model",
+  );
+  expect(() => inHome('return readSettings(["reviewer"], app);')).toThrow(
+    ".agents/roles/reviewer.md in simon/app isn't valid: harness",
+  );
+  // Your override replaces the bad model, so what starting the builder reads, its instructions
+  // and its settings, comes through.
+  writeFileSync(
+    join(home, ".config", "skelcrew", "config.yaml"),
+    "harness: claude\nmodel: opus\nrepos: { simon/app: { roles: { builder: { model: gpt-6 } } } }\n",
+  );
+  expect(builderOf()).toEqual({
+    role: { harness: "codex", model: "gpt-6" },
+    told: "Build it.\n",
+  });
+});

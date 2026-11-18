@@ -95,9 +95,7 @@ test("the lead and builder files hold the instructions the code gave, but for wh
 
 test("the built-in roles name no harness or model, so yours count, as before", () => {
   for (const name of ["lead", "builder", "reviewer"] as const) {
-    const role = builtInRole(name);
-    expect(role.harness).toBeUndefined();
-    expect(role.model).toBeUndefined();
+    expect(builtInRole(name).frontmatter).toEqual({});
   }
 });
 
@@ -144,13 +142,17 @@ test("a task's own text reaches the reviewer as written, even when it looks like
 
 test("a role file's frontmatter gives its harness and model, and the rest is its instructions", () => {
   const role = readRole("---\nharness: codex\nmodel: gpt-6.1-sol\n---\nReview it.\n");
-  expect(role).toEqual({ harness: "codex", model: "gpt-6.1-sol", instructions: "Review it.\n" });
-  expect(readRole("Build it.\n")).toEqual({ instructions: "Build it.\n" });
+  expect(role).toEqual({
+    frontmatter: { harness: "codex", model: "gpt-6.1-sol" },
+    instructions: "Review it.\n",
+  });
+  expect(readRole("Build it.\n")).toEqual({ frontmatter: {}, instructions: "Build it.\n" });
 });
 
+// Its harness and model are checked by the settings, only where they count.
 test("a role file's frontmatter holds only harness and model", () => {
   expect(() => readRole("---\nharness: codex\nrounds: 5\n---\nReview it.\n")).toThrow("rounds");
-  expect(() => readRole("---\nharness: emacs\n---\nReview it.\n")).toThrow("harness");
+  expect(readRole("---\nharness: emacs\n---\nReview it.\n").instructions).toBe("Review it.\n");
 });
 
 test("a reviewer role that leaves out the blanks still gets the task, the base and the tests", () => {
