@@ -321,7 +321,12 @@ function safeText(text: string): string {
 
 // How long sc show waits on the forge for a failed check's log, in milliseconds. sc gives up on
 // the daemon after a minute, so a forge that hangs must not keep the task itself from showing.
-const logDeadline = 10_000;
+// Tests set SKELCREW_LOG_WAIT_MS shorter, so a forge that hangs doesn't cost them ten seconds.
+const logDeadline = z.coerce
+  .number()
+  .min(0)
+  .catch(10_000)
+  .parse(process.env.SKELCREW_LOG_WAIT_MS ?? 10_000);
 
 // Returns a PR as its page shows it, from Skelcrew's copy, or null when the copy doesn't have
 // it. It asks the forge only for the logs of failed checks. A log that can't be read, or that

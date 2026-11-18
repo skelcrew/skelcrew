@@ -73,11 +73,11 @@ const env = () => ({
 });
 
 // Runs code that uses Skelcrew's modules in a process of its own with the test's home, as Skelcrew
-// stamped with `build` would run it, and returns what it printed.
-async function inProcess(code: string, build?: string) {
+// stamped with `build` would run it, and returns what it printed. `more` adds to its environment.
+async function inProcess(code: string, build?: string, more: Record<string, string> = {}) {
   const define = build === undefined ? [] : ["--define", `SKELCREW_BUILD=${JSON.stringify(build)}`];
   const run = Bun.spawn([process.execPath, ...define, "-e", code], {
-    env: env(),
+    env: { ...env(), ...more },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -206,12 +206,13 @@ await Bun.write(${JSON.stringify(ready)}, "");`;
 
 // Has Skelcrew, stamped with `build`, or run from this checkout without one, make sure the daemon
 // runs what it does, as it does before you attach, and returns what it printed and what the
-// service manager was asked.
-async function beforeAttaching(build?: string) {
+// service manager was asked. `more` adds to its environment.
+async function beforeAttaching(build?: string, more: Record<string, string> = {}) {
   const done = await inProcess(
     `import { restartStaleDaemon } from ${JSON.stringify(source("attach.ts"))};
 await restartStaleDaemon();`,
     build,
+    more,
   );
   const calls = existsSync(join(home, "calls")) ? readFileSync(join(home, "calls"), "utf8") : "";
   return { ...done, calls };
@@ -281,8 +282,10 @@ test("a checkout leaves alone a daemon that runs a release", async () => {
 
 test("says where to look when the daemon doesn't come back on the new release", async () => {
   await daemon({ release: "0.4.2" }, { release: "0.4.2" });
-  const done = await beforeAttaching("0.4.3");
+  // Skelcrew waits two seconds for it, rather than its usual ten.
+  const done = await beforeAttaching("0.4.3", { SKELCREW_RESTART_WAIT_MS: "2000" });
   expect(done.code).toBe(1);
+  expect(done.err).toContain("within 2 seconds");
   expect(done.err).toContain(daemonLog());
 }, 60_000);
 
