@@ -1,6 +1,8 @@
 // The flows: the stages a task goes through and their settings. Skelcrew ships one, `default`,
 // in src/defaults/flows/, and a repository can have its own in .agents/flows/, which counts once
 // you approved it.
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { parse } from "yaml";
 import { z } from "zod";
 import { agentsFile, agentsFolder, approvedAgents } from "./approved-agents.ts";
@@ -91,20 +93,26 @@ export function repositoryFlows(place: {
   return ["default", ...named.sort()];
 }
 
-// Returns each flow a repository's tasks can run, as repositoryFlows names them, with its file's
-// text: the built-in one for `default` when the repository has no file for it. The lead triages
-// with these, from the .agents/ you approved, since the clone it can read may hold flow files
-// you haven't approved yet.
-export function flowTexts(place: {
-  owner: string;
-  repo: string;
-  agents?: string | null;
-}): { name: string; text: string }[] {
-  const tree = place.agents === undefined ? approvedAgents(place) : place.agents;
-  return repositoryFlows(place).map((name) => {
-    const text = tree === null ? null : agentsFile(place, tree, `flows/${name}.yaml`);
-    return { name, text: text ?? builtInFlowText };
-  });
+// Writes each flow a repository's tasks can run, from the .agents/ you approved, into `folder`,
+// one file each, such as default.yaml, and removes any other file there. `default` gets the
+// built-in file when the repository has none of its own. The lead triages with these, since the
+// clone it can read may hold flow files you haven't approved yet, and a running lead's
+// instructions can't follow a new approval. A file that already says the same is left alone.
+export function writeFlowFiles(place: { owner: string; repo: string }, folder: string): void {
+  const tree = approvedAgents(place);
+  const wanted = new Map(
+    repositoryFlows(place).map((name) => {
+      const text = tree === null ? null : agentsFile(place, tree, `flows/${name}.yaml`);
+      return [`${name}.yaml`, text ?? builtInFlowText];
+    }),
+  );
+  mkdirSync(folder, { recursive: true });
+  for (const file of readdirSync(folder))
+    if (!wanted.has(file)) rmSync(join(folder, file), { recursive: true, force: true });
+  for (const [file, text] of wanted) {
+    const path = join(folder, file);
+    if (!existsSync(path) || readFileSync(path, "utf8") !== text) writeFileSync(path, text);
+  }
 }
 
 // Throws unless the repository's tasks can run `flow`, saying which flows they can, for sc start.

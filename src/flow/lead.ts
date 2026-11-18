@@ -2,6 +2,7 @@
 // folder, kept alive in a session of its own.
 import type { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { z } from "zod";
 import { HarnessName, harnessNamed } from "../agents/harness.ts";
 import {
@@ -16,7 +17,7 @@ import {
 } from "../agents/sessions.ts";
 import { agentRole, repositoryCommands } from "../config.ts";
 import { Repository } from "../db.ts";
-import { flowTexts } from "../flows.ts";
+import { writeFlowFiles } from "../flows.ts";
 import { cloneDir, leadPlaces } from "../paths.ts";
 import { repositoryRole } from "../roles.ts";
 import { errorText } from "../say.ts";
@@ -72,16 +73,14 @@ export function lastOpened(db: Database): Repository | null {
 // clone is, then the setup and test commands its skelcrew.yaml or your config names, each on its
 // own, or that none is configured. The lead can't read your config from its sandbox, so it is
 // told, and proposes to you only the commands that are missing. They are as of the lead's start:
-// once a thread adds them to skelcrew.yaml, the lead reads them there. Last come the flows its
-// tasks can run, each with its file, from the .agents/ you approved, as of the lead's start
-// too. They come only when there are others than `default`, as the lead then picks one for each
-// task, and it must pick by what will run, not by what its clone holds.
+// once a thread adds them to skelcrew.yaml, the lead reads them there. Last comes the folder of
+// the flows you approved, which Skelcrew keeps current, so the lead triages by what tasks run.
 export function leadInstructions(
   role: string,
   repository: string,
   clone: string,
   commands: Pick<Settings, "setup" | "test">,
-  flows: { name: string; text: string }[],
+  flows: string,
 ): string {
   const { setup, test } = commands;
   const shown = (list: string[]) => `\`${list.join(" && ")}\``;
@@ -98,12 +97,19 @@ export function leadInstructions(
       : test.length === 0
         ? "test was configured as none"
         : `the test command was ${shown(test)}`;
-  const flowFiles = flows.map(({ name, text }) => `\n${name}:\n${text.replace(/\n?$/, "\n")}`);
-  const flowsTold =
-    flows.length > 1
-      ? `Its flows, from the .agents/ the human approved, are ${flows.map((f) => f.name).join(", ")}. Their files:\n${flowFiles.join("")}`
-      : "";
-  return `${role}\nYou are the lead of ${repository}. Skelcrew's clone of it is at ${clone}.\nWhen this session started, ${setupTold}, and ${testTold}.\n${flowsTold}`;
+  return `${role}\nYou are the lead of ${repository}. Skelcrew's clone of it is at ${clone}.\nWhen this session started, ${setupTold}, and ${testTold}.\nThe flows the human approved are in ${flows}, one file each, such as default.yaml.\n`;
+}
+
+// Returns the folder of the flows you approved for a repository, inside its lead's own folder,
+// which the lead can read from its sandbox.
+const flowsFolder = (lead: { folder: string }) => join(lead.folder, "approved-flows");
+
+// Brings the lead's copy of the flows you approved up to date, for each poll, as you can approve
+// a new .agents/ while the lead runs. A lead that never started has no folder yet, and gets its
+// copy as it starts.
+export function keepLeadFlows(db: Database, repository: { owner: string; repo: string }): void {
+  const lead = leadOf(db, repository.owner, repository.repo);
+  if (existsSync(lead.folder)) writeFlowFiles(repository, flowsFolder(lead));
 }
 
 // Keeps a repository's running lead or starts it, resuming its saved conversation when there
@@ -148,6 +154,8 @@ export async function startLead(
     "UPDATE repositories SET lead_session = ?, lead_harness = ? WHERE owner = ? AND repo = ?",
     [session, harness.name, owner, repo],
   );
+  // The flows you approved, where the lead reads them as it triages.
+  writeFlowFiles(repository, flowsFolder(lead));
   const { argv, env } = await harness.start({
     name: lead.name,
     socket: lead.socket,
@@ -164,7 +172,7 @@ export async function startLead(
       `${owner}/${repo}`,
       clone,
       repositoryCommands(repository),
-      flowTexts(repository),
+      flowsFolder(lead),
     ),
     ...(resume ? { resume } : { sessionId: session }),
   });

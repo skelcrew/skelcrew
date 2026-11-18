@@ -24,6 +24,7 @@ import { type Item, openTasks, prOf, saveItems } from "./copy.ts";
 import { ciState, decide, labeledToStart, type PullRequest } from "./decide.ts";
 import { endThread, removing, tellBuilder, tellingEvents } from "./events.ts";
 import { fetchInto, onRemote } from "./git.ts";
+import { keepLeadFlows } from "./lead.ts";
 import { noteForLead, typeLeadNotes } from "./messages.ts";
 import { forgeKnown, fullNameIs, refreshClone, repositories } from "./repo.ts";
 import { needsYou } from "./status.ts";
@@ -286,7 +287,10 @@ async function pollRepository(
     // it: a remote that can't be cloned would otherwise be tried at every poll.
     if (existsSync(cloneDir(owner, repo)))
       await refreshClone(db, repository)
-        .then(() => noteUnapprovedAgents(db, sessions, repository))
+        .then(() => {
+          noteUnapprovedAgents(db, sessions, repository);
+          keepLeadFlows(db, repository);
+        })
         .catch((error) =>
           console.log(`couldn't update Skelcrew's clone of ${owner}/${repo}: ${errorText(error)}`),
         );

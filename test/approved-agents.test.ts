@@ -5,6 +5,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -473,18 +474,58 @@ test("a flow naming a role with no file is refused, naming the role", () => {
   ).toThrow("it names the role critic");
 });
 
-test("the lead reads each flow as approved, not as the clone holds it now", () => {
+test("the lead's copy of the flows is the approved one, and follows each new approval", () => {
+  const folder = join(home, "approved-flows");
+  const write = () =>
+    inHome(
+      `const { writeFlowFiles } = await import(${JSON.stringify(source("flows.ts"))}); writeFlowFiles(app, ${JSON.stringify(folder)}); return null;`,
+    );
+  const files = () =>
+    Object.fromEntries(
+      readdirSync(folder)
+        .sort()
+        .map((file) => [file, readFileSync(join(folder, file), "utf8")]),
+    );
+  const builtIn = readFileSync(source("defaults/flows/default.yaml"), "utf8");
+  write();
+  expect(files()).toEqual({ "default.yaml": builtIn });
   agentsFile("flows/quick.yaml", "review:\n  rounds: 1\n");
   commit("flows");
   inHome(approveCurrent);
+  write();
+  expect(files()).toEqual({ "default.yaml": builtIn, "quick.yaml": "review:\n  rounds: 1\n" });
+  // A change you haven't approved stays out.
   agentsFile("flows/quick.yaml", "review:\n  rounds: 9\n");
   commit("unapproved");
-  const texts = inHome(
-    `const { flowTexts, builtInFlowText } = await import(${JSON.stringify(source("flows.ts"))}); return [flowTexts(app), builtInFlowText];`,
+  write();
+  expect(files()).toEqual({ "default.yaml": builtIn, "quick.yaml": "review:\n  rounds: 1\n" });
+  // A flow gone from the approved .agents/ goes from the lead's copy.
+  rmSync(join(clone, ".agents", "flows", "quick.yaml"));
+  agentsFile("flows/careful.yaml", "review:\n  rounds: 5\n");
+  commit("careful");
+  inHome(approveCurrent);
+  write();
+  expect(files()).toEqual({ "careful.yaml": "review:\n  rounds: 5\n", "default.yaml": builtIn });
+});
+
+test("sc start's check of a flow's round limit refuses a bad one, unless your override decides it", () => {
+  agentsFile("flows/quick.yaml", "review:\n  rounds: 0\n");
+  commit("flow");
+  inHome(approveCurrent);
+  const check = () =>
+    inHome(
+      `const { checkFlowRounds } = await import(${JSON.stringify(source("settings.ts"))}); checkFlowRounds({ ...app, flow: "quick" }); return null;`,
+    );
+  expect(() => check()).toThrow(".agents/flows/quick.yaml in simon/app");
+  writeFileSync(
+    join(home, ".config", "skelcrew", "config.yaml"),
+    "repos: { simon/app: { max_rounds: 7 } }\n",
   );
-  const [flows, builtIn] = Array.isArray(texts) ? texts : [];
-  expect(flows).toEqual([
-    { name: "default", text: builtIn },
-    { name: "quick", text: "review:\n  rounds: 1\n" },
-  ]);
+  expect(check()).toBeNull();
+  // A bad max_rounds outside the flow file isn't the flow's, and fails the thread later instead.
+  writeFileSync(join(home, ".config", "skelcrew", "config.yaml"), "max_rounds: 0\n");
+  agentsFile("flows/quick.yaml", "build:\n  role: builder\n");
+  commit("flow");
+  inHome(approveCurrent);
+  expect(check()).toBeNull();
 });
