@@ -372,3 +372,49 @@ test("only the round limit that wins is read: a bad one below it stops nothing",
   inHome(approveCurrent);
   expect(() => roundsOf()).toThrow(".agents/flows/default.yaml in simon/app");
 });
+
+test("a task on another flow reads that flow's rounds, and a flow the tree lacks stops it", () => {
+  agentsFile("flows/default.yaml", "review:\n  rounds: 2\n");
+  agentsFile("flows/quick.yaml", "# For one-line fixes.\nreview:\n  rounds: 1\n");
+  commit("flows");
+  inHome(approveCurrent);
+  expect(roundsOf()).toBe(2);
+  expect(roundsOf('{ ...app, flow: "default" }')).toBe(2);
+  expect(roundsOf('{ ...app, flow: "quick" }')).toBe(1);
+  expect(() => roundsOf('{ ...app, flow: "slow" }')).toThrow(
+    "simon/app has no flow slow in its .agents/flows/",
+  );
+  // A task on the built-in files has only the built-in default flow.
+  expect(() => roundsOf('{ ...app, agents: null, flow: "quick" }')).toThrow(
+    "simon/app has no flow quick",
+  );
+});
+
+const flowsOf = (where = "app") =>
+  inHome(
+    `const { repositoryFlows } = await import(${JSON.stringify(source("flows.ts"))}); return repositoryFlows(${where});`,
+  );
+
+test("a repository's flows are default and each flow file of the .agents/ you approved", () => {
+  expect(flowsOf()).toEqual(["default"]);
+  agentsFile("flows/quick.yaml", "review:\n  rounds: 1\n");
+  agentsFile("flows/careful.yaml", "review:\n  rounds: 5\n");
+  agentsFile("flows/notes.txt", "not a flow\n");
+  agentsFile("flows/deeper/inside.yaml", "review:\n  rounds: 5\n");
+  commit("flows");
+  // A flow file you haven't approved isn't one of its flows yet.
+  expect(flowsOf()).toEqual(["default"]);
+  inHome(approveCurrent);
+  expect(flowsOf()).toEqual(["default", "careful", "quick"]);
+  expect(flowsOf("{ ...app, agents: null }")).toEqual(["default"]);
+});
+
+test("a flow file that is a link isn't a flow", () => {
+  writeFileSync(join(home, "outside.yaml"), "review:\n  rounds: 1\n");
+  mkdirSync(join(clone, ".agents", "flows"), { recursive: true });
+  symlinkSync(join(home, "outside.yaml"), join(clone, ".agents", "flows", "quick.yaml"));
+  agentsFile("roles/builder.md", "Build it.\n");
+  commit("link");
+  inHome(approveCurrent);
+  expect(flowsOf()).toEqual(["default"]);
+});

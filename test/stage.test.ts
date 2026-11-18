@@ -56,6 +56,7 @@ const working: Thread = {
   issue_link: null,
   closes: null,
   agents: null,
+  flow: "default",
 };
 const thread = (more: Partial<Thread>) => ({ ...working, ...more });
 

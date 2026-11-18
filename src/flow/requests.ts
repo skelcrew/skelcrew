@@ -1,6 +1,7 @@
 // The requests the daemon takes on its sockets, and who may make which. The daemon and the
 // commands that ask it both go by these.
 import { z } from "zod";
+import { FlowName } from "../flows.ts";
 import { TaskId } from "./copy.ts";
 import type { Thread } from "./thread.ts";
 
@@ -50,6 +51,7 @@ export const DaemonRequest = z.discriminatedUnion("command", [
     task: TaskId,
     from: Branch.optional(),
     short: ShortTitle.optional(),
+    flow: FlowName.optional(),
   }),
   z.object({
     command: z.literal("start new"),
@@ -57,6 +59,7 @@ export const DaemonRequest = z.discriminatedUnion("command", [
     title: z.string().min(1),
     body: TaskBody,
     short: ShortTitle.optional(),
+    flow: FlowName.optional(),
   }),
   z.object({
     command: z.literal("review"),

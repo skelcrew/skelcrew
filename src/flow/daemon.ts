@@ -13,6 +13,7 @@ import {
 } from "../agents/sessions.ts";
 import { repositoryCommands } from "../config.ts";
 import { finishUpgrade, moveToTasks, openDb, type Repository } from "../db.ts";
+import { checkFlow } from "../flows.ts";
 import { setupDone } from "../machine/setup.ts";
 import { keepUpToDate } from "../machine/update.ts";
 import { cloneDir, daemonCodeFile, daemonSocket, reviewSocket, threadSocket } from "../paths.ts";
@@ -414,12 +415,39 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         // A thread the task already has is brought back or let past its round limit, with no
         // poll, as nothing new is read from the tracker.
         const before = threadOn(db, request.repo, request.task);
+        const atWork = before !== null && ["working", "waiting"].includes(before.status);
+        // A task started from a label runs the default flow, and the lead can switch it to one
+        // that fits better, until its builder first submits. After that, the review and its
+        // round limit are under way, so the task keeps its flow to the end. A short title given
+        // with it goes on too.
+        if (before && atWork && request.flow) {
+          const name = threadName(db, before);
+          if (before.pr !== null || before.submitting !== null || before.review_at !== null)
+            throw new Error(
+              `${name} keeps the flow ${before.flow}, as its builder has submitted already.`,
+            );
+          checkFlow(before, findRepository(db, request.repo).name, request.flow);
+          const short = request.short ? { short: request.short } : {};
+          record(
+            db,
+            before.folder,
+            { flow: request.flow, ...short },
+            `given the flow ${request.flow}`,
+          );
+          return { started: `${name} now runs the flow ${request.flow}.` };
+        }
         // A short title for a thread already at work, such as one started from GitHub, only
         // names it for the sidebar. Its builder goes on as it was, and nothing else changes.
-        if (before && request.short && ["working", "waiting"].includes(before.status)) {
+        if (before && request.short && atWork) {
           record(db, before.folder, { short: request.short }, "given a short title");
           return { started: `Gave ${threadName(db, before)} the short title "${request.short}".` };
         }
+        // A stopped thread comes back on the flow it had, so another named here is refused
+        // rather than left unread.
+        if (before?.status === "stopped" && request.flow && request.flow !== before.flow)
+          throw new Error(
+            `${threadName(db, before)} keeps the flow ${before.flow} it started with.`,
+          );
         const choice = startChoice(before);
         if (before && choice === "bring back") {
           const name = threadName(db, before);
@@ -449,11 +477,15 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
           if (!existsSync(cloneDir(owner, repo))) await refreshClones(db);
           await (await polling.promise)(`${owner}/${repo}`);
           // A poll already past its labels as this began may have started the thread itself. A
-          // short title given here still goes on that thread, so it isn't lost.
+          // short title and flow given here still go on that thread, so they aren't lost. It has
+          // only just started, so its builder can't have submitted yet.
           const started = threadOn(db, request.repo, request.task);
           if (!before && started) {
-            if (request.short)
-              record(db, started.folder, { short: request.short }, "given a short title");
+            if (request.flow) checkFlow(started, repository.name, request.flow);
+            const flow = request.flow ? { flow: request.flow } : {};
+            const short = request.short ? { short: request.short } : {};
+            if (request.flow || request.short)
+              record(db, started.folder, { ...flow, ...short }, "given a short title or flow");
             return { started: `Started ${threadName(db, started)}.` };
           }
           thread = await startThread(db, request);

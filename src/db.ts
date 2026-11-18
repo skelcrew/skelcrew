@@ -66,7 +66,8 @@ const threadColumns = {
 // the line a PR's body needs to close that issue on merge, saved as it starts too, so its PR
 // closes it though the tracker or Skelcrew's copy of it changed since. `agents` is the git tree
 // of the .agents/ you had approved when the task started, which its agents keep, or null for the
-// built-in roles.
+// built-in roles. `flow` is the flow the task runs from start to end, `default` unless it was
+// started with another.
 export const taskColumns = {
   title: "TEXT",
   body: "TEXT",
@@ -99,6 +100,7 @@ export const taskColumns = {
   issue_link: "TEXT",
   closes: "TEXT",
   agents: "TEXT",
+  flow: "TEXT NOT NULL DEFAULT 'default'",
 };
 
 // Marks each done task merged when its thread's log says its work ended by a merge, for tasks

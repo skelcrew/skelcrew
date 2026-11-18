@@ -57,6 +57,7 @@ const state: Thread = {
   issue_link: null,
   closes: null,
   agents: null,
+  flow: "default",
 };
 const status = (more: Partial<Thread>) => statusOf({ ...state, ...more }, 3);
 

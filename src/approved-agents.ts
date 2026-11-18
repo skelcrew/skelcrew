@@ -146,6 +146,16 @@ export function agentsFile(place: Place, tree: string, path: string): string | n
   return text;
 }
 
+// Returns the names of the plain files directly in a folder of a tree of .agents/, such as
+// flows, or none when it has no such folder. Links are left out, as agentsFile never reads them.
+export function agentsFolder(place: Place, tree: string, folder: string): string[] {
+  const listed = gitIn(place, ["ls-tree", "-z", tree, `${folder}/`]) ?? "";
+  return listed.split("\0").flatMap((line) => {
+    const entry = /^(?:100644|100755) blob [0-9a-f]+\t(.+)$/.exec(line);
+    return entry?.[1] ? [entry[1].slice(folder.length + 1)] : [];
+  });
+}
+
 // Shows what the repository's .agents/ on its default branch holds, or what changed in it since
 // the version you approved, and asks whether to approve it. A yes approves it. A no keeps what
 // you approved, or the built-in roles, and is saved, so plain sc doesn't ask again. With no

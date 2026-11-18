@@ -1288,6 +1288,8 @@ echo "Not logged in"; exit 1`,
     await until(() => thread().task === 12);
     expect(listed()).toMatchObject([{ task: "app-12", issue: "#12", stage: "working" }]);
     expect(thread().issue_link).toBe("https://github.com/simon/app/issues/12");
+    // A task from a label runs the default flow, unless the lead switches it.
+    expect(thread().flow).toBe("default");
     await until(() => thread().assigned === 1);
     expect(claims()).toEqual([claim12]);
     expect(assigns()).toEqual([assignOn]);

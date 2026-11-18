@@ -290,6 +290,63 @@ test("sc start refuses a repository Skelcrew doesn't have, and a task its tracke
   expect(existsSync(join(data(), "threads", "app-99"))).toBe(false);
 });
 
+// Puts simon/app on the fake GitHub with a flow file of its own, quick, and tells Skelcrew about
+// it.
+function addFlows(): void {
+  const work = addApp();
+  mkdirSync(join(work, ".agents", "flows"), { recursive: true });
+  writeFileSync(join(work, ".agents", "flows", "quick.yaml"), "review:\n  rounds: 1\n");
+  git(work, "add", ".");
+  git(work, "commit", "-q", "-m", "flows");
+  git(work, "push", "-q", "origin", "main");
+}
+
+// Approves the .agents/ in Skelcrew's clone of simon/app, as sc repo trust would, once it is
+// there.
+async function untilApproved(): Promise<void> {
+  const skelClone = join(data(), "repos", "simon", "app");
+  await until(() => existsSync(join(skelClone, ".agents")));
+  const tree = git(skelClone, "rev-parse", "HEAD:.agents");
+  writeFileSync(join(home, ".config", "skelcrew", "approved-agents.yaml"), `simon/app: ${tree}\n`);
+}
+
+// Returns each task's flow, as Skelcrew's database keeps it.
+function flows(): unknown[] {
+  const db = new Database(join(data(), "skelcrew.db"));
+  db.run("PRAGMA busy_timeout = 5000");
+  try {
+    return db.query("SELECT task, flow FROM tasks ORDER BY task").all();
+  } finally {
+    db.close();
+  }
+}
+
+// In a repository with flow files of its own, the lead picks a task's flow as it starts it. Only
+// a flow file of the .agents/ you approved counts.
+test("sc start --flow runs a task on a flow file of the repository, and refuses one it lacks", async () => {
+  addFlows();
+  serve();
+  await untilCloned();
+  const before = await skel("start", "app", "Fix typo", "In the README", "--flow", "quick");
+  expect(before.err).toBe("Skelcrew: app has no flow quick. Its flows are default.\n");
+  await untilApproved();
+  const quick = await skel("start", "app", "Fix typo", "In the README", "--flow", "quick");
+  expect(quick.err).toBe("");
+  expect(quick.out).toBe("Started app-t1.\n");
+  expect(flows()).toEqual([{ task: "t1", flow: "quick" }]);
+  const missing = await skel("start", "app-12", "--flow", "slow");
+  expect(missing.err).toBe("Skelcrew: app has no flow slow. Its flows are default, quick.\n");
+  // A flow's name can't reach outside .agents/flows/.
+  expect((await skel("start", "app-12", "--flow", "../x")).code).not.toBe(0);
+  expect((await skel("start", "app-12", "--flow")).code).not.toBe(0);
+  // Without --flow, a task runs default.
+  expect((await skel("start", "app", "Add notes", "As text")).out).toBe("Started app-t2.\n");
+  expect(flows()).toEqual([
+    { task: "t1", flow: "quick" },
+    { task: "t2", flow: "default" },
+  ]);
+});
+
 // Bringing a repository in by naming it is gone: you add one in your own terminal.
 test("a repository Skelcrew doesn't have, named by its owner/name, is no repository", async () => {
   onGitHub({}, "site");
@@ -873,6 +930,37 @@ nameRepositories(db);`;
     expect(hasSession("app-12")).toBe(true);
     // Without --short, starting it again is still refused.
     expect((await skel("start", "app-12")).err).toBe("Skelcrew: app-12 has a thread already\n");
+  }, 60_000);
+
+  // A task started from a label runs the default flow, and the lead can switch it to another
+  // until its builder first submits.
+  test("sc start --flow switches a thread at work until its builder submits", async () => {
+    addFlows();
+    serve();
+    await untilCloned();
+    await untilApproved();
+    expect((await skel("start", "app-12")).out).toBe("Started app-12.\n");
+    expect(flows()).toEqual([{ task: 12, flow: "default" }]);
+    const switched = await skel("start", "app-12", "--flow", "quick");
+    expect(switched.err).toBe("");
+    expect(switched.out).toBe("app-12 now runs the flow quick.\n");
+    expect(flows()).toEqual([{ task: 12, flow: "quick" }]);
+    expect((await skel("start", "app-12", "--flow", "slow")).err).toBe(
+      "Skelcrew: app has no flow slow. Its flows are default, quick.\n",
+    );
+    // Once its builder has submitted, the task keeps its flow to the end.
+    const db = new Database(join(data(), "skelcrew.db"));
+    db.run("PRAGMA busy_timeout = 5000");
+    db.run("UPDATE tasks SET review_at = 1 WHERE task = 12");
+    db.close();
+    expect((await skel("start", "app-12", "--flow", "default")).err).toBe(
+      "Skelcrew: app-12 keeps the flow quick, as its builder has submitted already.\n",
+    );
+    // A stopped thread comes back on its flow too.
+    expect((await skel("stop", "app-12")).code).toBe(0);
+    expect((await skel("start", "app-12", "--flow", "default")).err).toBe(
+      "Skelcrew: app-12 keeps the flow quick it started with.\n",
+    );
   }, 60_000);
 
   // Programs often live under the home folder, which the sandbox hides, as npm does under nvm.

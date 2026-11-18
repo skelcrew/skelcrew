@@ -13,7 +13,8 @@ import { type RoleName, repositoryRole } from "./roles.ts";
 
 // A repository Skelcrew works on, by its owner and name. `agents` is the tree of .agents/ whose
 // role files count, as repositoryRole takes it: a task's own, or without it the one you approved.
-export type Repository = { owner: string; repo: string; agents?: string | null };
+// `flow` is the flow whose file gives the round limit: a task's own, or without it `default`.
+export type Repository = { owner: string; repo: string; agents?: string | null; flow?: string };
 
 // A model is plain text, passed to the harness as written: Skelcrew keeps no list of names, and a
 // harness that names models as provider/model knows its own providers.
@@ -199,9 +200,9 @@ export function readSettings<G extends Group>(
   const overrides = repository ? readOverrides(wanted, repository) : {};
   // The repository's .agents/, a layer of its own just over skelcrew.yaml, as its files replace
   // that file's old keys: the role files' harness and model go over lead:, builder: and
-  // reviewer:, as a model must follow the harness each layer leaves, and the default flow's
-  // rounds go over max_rounds. Only the files of the settings asked for are read, so a broken
-  // reviewer file never stops the lead.
+  // reviewer:, as a model must follow the harness each layer leaves, and the rounds of the task's
+  // flow, `default` unless it named another, go over max_rounds. Only the files of the settings
+  // asked for are read, so a broken reviewer file never stops the lead.
   const agentsFiles: File = {};
   for (const name of ["lead", "builder", "reviewer"] as const)
     if (repository && groups.some((group) => group === name))

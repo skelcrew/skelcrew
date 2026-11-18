@@ -3,7 +3,7 @@
 // you approved it.
 import { parse } from "yaml";
 import { z } from "zod";
-import { agentsFile, approvedAgents } from "./approved-agents.ts";
+import { agentsFile, agentsFolder, approvedAgents } from "./approved-agents.ts";
 import defaultFlow from "./defaults/flows/default.yaml" with { type: "text" };
 
 // What a flow file may hold: today's stages and their one setting, the round limit. Anything
@@ -20,6 +20,12 @@ const Flow = z.strictObject({
     .nullish(),
 });
 type Flow = z.infer<typeof Flow>;
+
+// A flow's name, which names its file in .agents/flows/, so it can't hold a slash or start with a
+// dot and reach another file.
+export const FlowName = z
+  .string()
+  .regex(/^[a-z0-9][a-z0-9_-]*$/i, "a flow's name is letters, digits, - and _");
 
 // The built-in default flow's file, byte for byte, which sc init writes out. Bun types a file
 // imported as text loosely, so it is checked to be text.
@@ -55,19 +61,53 @@ export function builtInRounds(): number {
   return rounds;
 }
 
-// Returns the round limit a repository's own default flow sets, or nothing when it has no flow
-// file or the file names none. The .agents/ tree counts as for a role: a task's own, null for a
-// task on the built-in files, or without one the version you approved. Throws, naming the file,
-// when it isn't valid, rather than run a task on a flow it doesn't describe. With
-// `withoutRounds`, when your override decides the round limit, the file is still checked, as its
-// stages still say which roles run, but its rounds are left out and nothing is returned.
-export function repositoryRounds(
+// Returns the flows a repository's tasks can run: `default`, which always exists, then each
+// flow file of its .agents/ tree, by name. The tree counts as for a role: a task's own, null for
+// the built-in files, or without one the version you approved.
+export function repositoryFlows(place: {
+  owner: string;
+  repo: string;
+  agents?: string | null;
+}): string[] {
+  const tree = place.agents === undefined ? approvedAgents(place) : place.agents;
+  const files = tree === null ? [] : agentsFolder(place, tree, "flows");
+  const named = files.flatMap((file) => {
+    const name = file.endsWith(".yaml") ? file.slice(0, -".yaml".length) : "";
+    return FlowName.safeParse(name).success && name !== "default" ? [name] : [];
+  });
+  return ["default", ...named.sort()];
+}
+
+// Throws unless the repository's tasks can run `flow`, saying which flows they can, for sc start.
+// `name` is the repository's name in Skelcrew, and the tree counts as for repositoryFlows.
+export function checkFlow(
   place: { owner: string; repo: string; agents?: string | null },
+  name: string,
+  flow: string,
+): void {
+  const flows = repositoryFlows(place);
+  if (!flows.includes(flow))
+    throw new Error(`${name} has no flow ${flow}. Its flows are ${flows.join(", ")}.`);
+}
+
+// Returns the round limit a repository's own flow sets, or nothing when the flow is `default`
+// with no file of its own, or the file names none. The flow is the task's, `default` when none
+// is given. The .agents/ tree counts as for a role: a task's own, null for a task on the
+// built-in files, or without one the version you approved. Throws, naming the file, when it
+// isn't valid, or when a flow other than `default` has no file there, rather than run a task on
+// a flow it doesn't describe. With `withoutRounds`, when your override decides the round limit,
+// the file is still checked, as its stages still say which roles run, but its rounds are left
+// out and nothing is returned.
+export function repositoryRounds(
+  place: { owner: string; repo: string; agents?: string | null; flow?: string },
   withoutRounds = false,
 ): number | undefined {
   const tree = place.agents === undefined ? approvedAgents(place) : place.agents;
-  const path = "flows/default.yaml";
+  const flow = place.flow ?? "default";
+  const path = `flows/${flow}.yaml`;
   const text = tree === null ? null : agentsFile(place, tree, path);
+  if (text === null && flow !== "default")
+    throw new Error(`${place.owner}/${place.repo} has no flow ${flow} in its .agents/flows/`);
   if (text === null) return undefined;
   try {
     return readFlow(text, withoutRounds).review?.rounds;

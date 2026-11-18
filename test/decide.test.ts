@@ -71,6 +71,7 @@ function thread(change: Partial<Thread> = {}): Thread {
     issue_link: null,
     closes: null,
     agents: null,
+    flow: "default",
     ...change,
   };
 }

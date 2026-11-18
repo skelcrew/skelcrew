@@ -157,6 +157,8 @@ export const Thread = z.object({
   // keep to the end, though you approve another meanwhile. Null for the built-in roles, as
   // every task had before Skelcrew read .agents/.
   agents: z.string().nullable(),
+  // The flow the task runs, from start to end: `default`, or a flow file of its .agents/.
+  flow: z.string(),
 });
 export type Thread = z.infer<typeof Thread>;
 
