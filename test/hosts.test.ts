@@ -702,18 +702,19 @@ console.log(back, thread.status, thread.host_id, starts.length);`,
 }, 40_000);
 
 // A plugin whose manifest went missing can't hear a status, but every change to a thread reports
-// one, the daemon's start included, so it is logged rather than thrown.
+// one, the daemon's start included, so it is logged once rather than thrown.
 test("a change to a thread on a plugin whose manifest is gone is still saved", () => {
   const manifest = join(home, "plugin-fake", "skelcrew-plugin.yaml");
   const said = runWithFakeHost(
     "sessions, status",
     `require("node:fs").rmSync(${JSON.stringify(manifest)});
 record(db, "app-12", { needs_you: true }, "a review failed");
+record(db, "app-12", { needs_you: false });
 console.log(readThread(db, "app-12").needs_you);`,
     { host: "fake", host_id: "fake-app-12" },
   );
-  expect(said).toStartWith("couldn't work out app-12's status: ");
-  expect(said).toEndWith("\ntrue\n");
+  expect(said).toStartWith("the runtime plugin fake can't be used: ");
+  expect(said.split("\n").slice(1)).toEqual(["false", ""]);
 });
 
 test("nothing is typed into a builder while a slow host fails to end it, and its messages wait", () => {

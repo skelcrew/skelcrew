@@ -8,7 +8,7 @@ import { harnessNamed } from "../agents/harness.ts";
 import { agentRuns, readSession } from "../agents/sessions.ts";
 import { forQuestion, type Marks, quietSince } from "../agents/transport.ts";
 import { threadConfig } from "../config.ts";
-import { askHost, type Host, hostNamed, type PluginHost, pluginHost } from "../plugins/runtime.ts";
+import { askHost, type Host, hostNamed, pluginHost } from "../plugins/runtime.ts";
 import { errorText } from "../say.ts";
 import { pastRoundLimit } from "./decide.ts";
 import { leadOf } from "./lead.ts";
@@ -251,15 +251,12 @@ const reporting = new Map<string, Promise<void>>();
 // through record or keepState, which call this, so the host hears each one, from a hook, the
 // screen check, CI or a review alike. It doesn't wait for the host, so the daemon never does.
 // tmux shows no status, so its builders are left out, and Skelcrew's own list shows theirs.
-// A plugin whose manifest can't be read is logged and skipped, never thrown: this runs on every
-// change to a thread and as the daemon starts, which one broken plugin must not stop.
 export function reportStatus(db: Database, thread: Thread): void {
   if (thread.host === null || thread.host === "tmux" || thread.host_id === null) return;
-  let host: PluginHost | null;
+  const host = pluginHost(db, thread.host);
+  if (host === null || !host.status) return;
   let said: { status: Status; reason: string };
   try {
-    host = pluginHost(db, thread.host);
-    if (host === null || !host.status) return;
     const { maxRounds } = threadConfig(thread);
     said = { status: statusOf(thread, maxRounds), reason: threadWord(thread, maxRounds) };
   } catch (error) {

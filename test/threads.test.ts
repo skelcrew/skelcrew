@@ -16,6 +16,7 @@ import { createConnection } from "node:net";
 import { hostname, tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import type { Subprocess } from "bun";
+import { z } from "zod";
 import { stillRunning } from "../src/agents/sessions.ts";
 import { codeOf } from "../src/db.ts";
 import {
@@ -704,6 +705,40 @@ c.on("data", (d) => process.stdout.write(d));`;
     expect(String(thread().noting)).toContain("session host fake isn't installed any more");
     expect(thread().host).toBe("fake");
     expect(hasSession("app-12")).toBe(false);
+  }, 60_000);
+
+  // One broken plugin must never keep the daemon from starting: every other thread comes back.
+  test("a plugin whose folder went leaves the daemon starting, its threads needing you, and tmux's builders running", async () => {
+    addApp();
+    issue(13, "Add export", "To CSV");
+    const first = serve();
+    await untilCloned();
+    await skel("start", "app-12");
+    await until(() => hasSession("app-12"));
+    await stop(first);
+    // app-13's builder ran on a plugin whose folder has gone since.
+    const db = new Database(join(data(), "skelcrew.db"));
+    db.run("PRAGMA busy_timeout = 5000");
+    db.run("INSERT INTO plugins (name, folder) VALUES ('broken', ?)", [join(home, "gone")]);
+    db.exec(threadSql({ task: "13", session: "s", host: "broken", host_id: "broken-app-13" }));
+    db.close();
+    serve();
+    await untilAnswers();
+    // Reads one thread's row by its folder.
+    const row = (folder: string) => {
+      const db = new Database(join(data(), "skelcrew.db"));
+      db.run("PRAGMA busy_timeout = 5000");
+      try {
+        return z
+          .object({ status: z.string(), host: z.string().nullable(), needs_you: z.number() })
+          .parse(db.query("SELECT * FROM task_threads WHERE folder = ?").get(folder));
+      } finally {
+        db.close();
+      }
+    };
+    await until(() => row("app-13").needs_you === 1);
+    expect(row("app-12")).toEqual({ status: "working", host: "tmux", needs_you: 0 });
+    expect(hasSession("app-12")).toBe(true);
   }, 60_000);
 
   test("brings back a builder whose session is gone with --resume, where it was, after its repository is renamed", async () => {

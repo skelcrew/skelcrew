@@ -4,7 +4,8 @@
 // one JSON answer on stdout.
 import type { Database } from "bun:sqlite";
 import type { z } from "zod";
-import { commandFor, installedPlugins, quoteForSh, readManifest } from "./plugin.ts";
+import { errorText } from "../say.ts";
+import { commandFor, installedPlugins, type Manifest, quoteForSh, readManifest } from "./plugin.ts";
 
 // A runtime plugin that hosts sessions: its name, its folder, its session and attach commands,
 // and whether it also provides the transport and the status. The sessions module uses Skelcrew's
@@ -28,11 +29,22 @@ export const hostNamed = (db: Database, sessions: string, name: string): Host | 
   name === "tmux" ? sessions : pluginHost(db, name);
 
 // Returns the installed runtime plugin of that name as a host, or null when none that provides
-// sessions is installed.
+// sessions is installed. A plugin whose manifest can't be read, such as one whose folder went,
+// counts as none, and is logged once: this is asked on every change to a thread and as the
+// daemon starts, which one broken plugin must never stop. Its threads then need you, as for a
+// plugin removed, and every other thread carries on.
 export function pluginHost(db: Database, name: string): PluginHost | null {
   const plugin = installedPlugins(db).find((installed) => installed.name === name);
   if (!plugin) return null;
-  const manifest = readManifest(plugin.folder);
+  let manifest: Manifest;
+  try {
+    manifest = readManifest(plugin.folder);
+  } catch (error) {
+    const said = `the runtime plugin ${name} can't be used: ${errorText(error)}`;
+    if (!unreadable.has(said)) console.log(said);
+    unreadable.add(said);
+    return null;
+  }
   const { session, attach } = manifest;
   if (!manifest.provides.includes("sessions") || !session || !attach) return null;
   return {
@@ -44,6 +56,9 @@ export function pluginHost(db: Database, name: string): PluginHost | null {
     status: manifest.provides.includes("status"),
   };
 }
+
+// What was logged of plugins whose manifest can't be read, so each is said once.
+const unreadable = new Set<string>();
 
 // Returns the program, environment and folder that run the host's session command, with the
 // plugin's environment added to Skelcrew's own.
