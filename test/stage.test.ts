@@ -55,6 +55,7 @@ const working: Thread = {
   merged: false,
   issue_link: null,
   closes: null,
+  agents: null,
 };
 const thread = (more: Partial<Thread>) => ({ ...working, ...more });
 

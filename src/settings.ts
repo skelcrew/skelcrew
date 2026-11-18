@@ -1,5 +1,5 @@
-// Reads every setting, from the repository's skelcrew.yaml in Skelcrew's clone, your
-// config.yaml and the built-in defaults. Each setting comes from the first of them that sets it.
+// Reads every setting, from the repository's files in Skelcrew's clone, your config.yaml and the
+// built-in defaults. Each setting comes from the first of them that sets it.
 import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { join } from "node:path";
@@ -7,9 +7,11 @@ import { parse } from "yaml";
 import { z } from "zod";
 import { HarnessName } from "./agents/harness.ts";
 import { cloneDir, configDir } from "./paths.ts";
+import { type RoleName, repositoryRole } from "./roles.ts";
 
-// A repository Skelcrew works on, by its owner and name.
-export type Repository = { owner: string; repo: string };
+// A repository Skelcrew works on, by its owner and name. `agents` is the tree of .agents/ whose
+// role files count, as repositoryRole takes it: a task's own, or without it the one you approved.
+export type Repository = { owner: string; repo: string; agents?: string | null };
 
 // A model is plain text, passed to the harness as written: Skelcrew keeps no list of names, and a
 // harness that names models as provider/model knows its own providers.
@@ -164,6 +166,13 @@ export function readSettings<G extends Group>(
         repository,
       )
     : {};
+  // A role file's harness and model go over the role's line in skelcrew.yaml, which counts only
+  // while the role's file names neither.
+  if (repository && groups.includes("roles" as G))
+    for (const name of ["lead", "builder", "reviewer"] as const) {
+      const role = roleFileSettings(name, repository);
+      if (role) shared[name] = role;
+    }
   // A setting the repository sets is not read from your config, so a bad value there can't
   // stop a repository that decides it. A role is the exception: yours merges with the
   // repository's, as a model goes along only while the role stays on your harness.
@@ -171,6 +180,14 @@ export function readSettings<G extends Group>(
     shared[k] !== undefined && shared[k] !== null && !roleKeys.includes(k);
   const fromYours = wanted.filter((k) => yourKeys.includes(k) && !decided(k));
   return mergeSettings([shared, readYourFile(fromYours)]);
+}
+
+// Returns the harness and model a repository's role file names, or nothing when it names neither
+// or the repository has no file for the role.
+function roleFileSettings(name: RoleName, repository: Repository): File[RoleName] {
+  const { harness, model } = repositoryRole(name, repository);
+  if (harness === undefined && model === undefined) return undefined;
+  return { ...(harness && { harness }), ...(model && { model }) };
 }
 
 // Returns your config.yaml, holding only `keys`, checked. A file with none of them isn't read,

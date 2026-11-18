@@ -128,18 +128,18 @@ const testedBy = ["bun test"];
 
 test("the reviewer is told exactly what its code told it, and who runs the tests", () => {
   const issue = { title: "Fix the flaky test", body: "It fails one run in ten." };
-  expect(reviewerPrompt(issue, "origin/main", "run", testedBy)).toBe(
-    before(issue, "origin/main", runs),
-  );
+  expect(
+    reviewerPrompt(builtInRole("reviewer").instructions, issue, "origin/main", "run", testedBy),
+  ).toBe(before(issue, "origin/main", runs));
 });
 
 test("a task's own text reaches the reviewer as written, even when it looks like a blank", () => {
   // A title or body that holds the blanks' marks, or what a replacement treats as special,
   // must not be filled in again.
   const issue = { title: "Rename {{base}} to $& and $1", body: "Mention {{title}} and {{body}}." };
-  expect(reviewerPrompt(issue, "origin/$&", "run", testedBy)).toBe(
-    before(issue, "origin/$&", runs),
-  );
+  expect(
+    reviewerPrompt(builtInRole("reviewer").instructions, issue, "origin/$&", "run", testedBy),
+  ).toBe(before(issue, "origin/$&", runs));
 });
 
 test("a role file's frontmatter gives its harness and model, and the rest is its instructions", () => {

@@ -14,10 +14,11 @@ import {
   type Labels,
   startSession,
 } from "../agents/sessions.ts";
+import { approvedAgents } from "../approved-agents.ts";
 import { repositoryCommands, threadConfig } from "../config.ts";
 import { cloneDir, threadSocket } from "../paths.ts";
 import { trackerOf } from "../plugins/ask.ts";
-import { builtInRole } from "../roles.ts";
+import { repositoryRole } from "../roles.ts";
 import { quietly } from "../run.ts";
 import { errorText } from "../say.ts";
 import type { Settings } from "../settings.ts";
@@ -244,6 +245,7 @@ async function recordThread(
       merged: false,
       issue_link: issueLink,
       closes,
+      agents: approvedAgents({ owner, repo }),
     };
     // A failed or done thread's row gives way to the new one, and messages that waited for its
     // builder go with it, as they were about the old work. Its task starts afresh too, with no
@@ -270,9 +272,20 @@ async function recordThread(
     );
     db.run(
       `INSERT OR REPLACE INTO tasks
-        (owner, repo, task, title, body, short, assigned, seen, issue_link, closes)
-        VALUES (?, ?, ?, ?, ?, ?, ?, '[]', ?, ?)`,
-      [owner, repo, task, title, body, thread.short, thread.assigned, issueLink, closes],
+        (owner, repo, task, title, body, short, assigned, seen, issue_link, closes, agents)
+        VALUES (?, ?, ?, ?, ?, ?, ?, '[]', ?, ?, ?)`,
+      [
+        owner,
+        repo,
+        task,
+        title,
+        body,
+        thread.short,
+        thread.assigned,
+        issueLink,
+        closes,
+        thread.agents,
+      ],
     );
     log(db, thread);
     return thread;
@@ -374,13 +387,16 @@ export async function setUpThread(db: Database, thread: Thread): Promise<void> {
   }
 }
 
-// Returns the builder's instructions: its built-in ones, then the setup and test commands the
+// Returns the builder's instructions: its role's, from `role`, then the setup and test commands the
 // repository's skelcrew.yaml or your config names, each on its own, or that none is configured.
 // The builder can't read your config from its sandbox, so it is told. A builder told one it
 // needs isn't configured asks the lead rather than guess, as a guessed command is often wrong
 // and nobody would see it was a guess.
-export function builderInstructions(commands: Pick<Settings, "setup" | "test">): string {
-  const instructions = builtInRole("builder").instructions.replace(/\n$/, "");
+export function builderInstructions(
+  role: string,
+  commands: Pick<Settings, "setup" | "test">,
+): string {
+  const instructions = role.replace(/\n$/, "");
   const { setup, test } = commands;
   const shown = (list: string[]) => `\`${list.join(" && ")}\``;
   // A missing command is one the builder may need to ask about. An empty list says on purpose
@@ -442,7 +458,11 @@ export async function startBuilder(db: Database, sessions: string, thread: Threa
     // task in its own words, and the builder still has it after a long conversation is
     // compacted. It asks the builder to ask you only when it must: its question waits on a
     // screen nobody watches.
-    system: builderInstructions(repositoryCommands(thread)),
+    // The builder role's instructions come from the .agents/ the task started with.
+    system: builderInstructions(
+      repositoryRole("builder", thread).instructions,
+      repositoryCommands(thread),
+    ),
     ...start,
   });
   // Start it in a session of its own, then watch a moment for it to exit at once, so a broken

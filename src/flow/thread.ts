@@ -153,6 +153,10 @@ export const Thread = z.object({
   // The line a PR's body needs to close the task's issue on merge, such as "Closes #12", saved as
   // the task starts. Null for a task with no issue.
   closes: z.string().nullable(),
+  // The tree of the .agents/ you had approved when the task started, whose roles its agents
+  // keep to the end, though you approve another meanwhile. Null for the built-in roles, as
+  // every task had before Skelcrew read .agents/.
+  agents: z.string().nullable(),
 });
 export type Thread = z.infer<typeof Thread>;
 

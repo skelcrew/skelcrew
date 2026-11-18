@@ -1,8 +1,10 @@
 // The roles: what the lead, builders and reviewers are told, and which harness and model they
-// run on. Each is a Markdown file, and Skelcrew ships its own in src/defaults/roles/.
+// run on. Each is a Markdown file. Skelcrew ships its own in src/defaults/roles/, and a
+// repository can have its own in .agents/roles/, which count once you approved them.
 import { parse } from "yaml";
 import { z } from "zod";
 import { HarnessName } from "./agents/harness.ts";
+import { agentsFile, approvedAgents } from "./approved-agents.ts";
 // Bun builds these files into Skelcrew. Each reaches its agent whole, so every line costs
 // context: keep them short, and promise only what is built. Without the lead's, told "fix the
 // flaky test", the lead would try to edit its read-only clone rather than start a thread. The
@@ -36,6 +38,31 @@ export function readRole(text: string): Role {
 }
 
 // Returns one of the roles Skelcrew ships, read from its built-in file.
-export function builtInRole(name: "lead" | "builder" | "reviewer"): Role {
+export function builtInRole(name: RoleName): Role {
   return readRole({ lead, builder, reviewer }[name]);
+}
+
+// The roles every repository has.
+export type RoleName = "lead" | "builder" | "reviewer";
+
+// Returns a role as a repository's agents get it: from its file in the .agents/ tree `agents`
+// names, or with none there, the built-in one. A task passes the tree it started with, or null
+// when it started on the built-in roles. Without one, the version of .agents/ you approved
+// counts, as for the lead and a task starting now. Throws, naming the file, when its frontmatter
+// isn't valid, rather than run an agent on a role it doesn't describe.
+export function repositoryRole(
+  name: RoleName,
+  place: { owner: string; repo: string; agents?: string | null },
+): Role {
+  const tree = place.agents === undefined ? approvedAgents(place) : place.agents;
+  const path = `roles/${name}.md`;
+  const text = tree === null ? null : agentsFile(place, tree, path);
+  if (text === null) return builtInRole(name);
+  try {
+    return readRole(text);
+  } catch (error) {
+    throw new Error(
+      `.agents/${path} in ${place.owner}/${place.repo}: ${error instanceof Error ? error.message : error}`,
+    );
+  }
 }

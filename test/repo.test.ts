@@ -941,3 +941,89 @@ ${fails ? 'echo "GitHub is unreachable" >&2; exit 1' : 'rm "$SKELCREW_PLUGIN_CON
     expect(existsSync(clone("simon/app"))).toBe(false);
   });
 });
+
+describe("a repository's .agents/", () => {
+  const approvals = () => join(home, ".config", "skelcrew", "approved-agents.yaml");
+  // Returns what you approved for simon/app: a tree, none, or nothing when you never answered.
+  const approved = (): string | undefined =>
+    existsSync(approvals()) ? parse(readFileSync(approvals(), "utf8"))?.["simon/app"] : undefined;
+  // Pushes a builder role to the fake GitHub from your checkout, and returns its .agents/ tree.
+  function pushRole(checkout: string, text: string): string {
+    mkdirSync(join(checkout, ".agents", "roles"), { recursive: true });
+    writeFileSync(join(checkout, ".agents", "roles", "builder.md"), text);
+    git(checkout, "add", "-A");
+    git(checkout, "commit", "-q", "-m", "roles");
+    git(checkout, "push", "-q", join(home, "github", "simon", "app.git"), "HEAD:main");
+    return git(checkout, "rev-parse", "HEAD:.agents").trim();
+  }
+
+  test("is shown and asked about as the repository comes in, even one you can push to", async () => {
+    const checkout = onGitHub("simon/app", "WRITE");
+    const tree = pushRole(checkout, "Build it the team's way.\n");
+    const run = await skel(["repo", "add"], "y\n", checkout);
+    expect(run.err).toBe("");
+    expect(run.out).toContain("+Build it the team's way.");
+    expect(run.out).toContain(".agents/roles/builder.md");
+    expect(run.out).toContain("Approve simon/app's .agents/?");
+    expect(run.out).toContain("Added simon/app, as app.");
+    expect(approved()).toBe(tree);
+  });
+
+  test("a no still adds the repository, on the built-in roles, and sc doesn't ask again", async () => {
+    const checkout = onGitHub("simon/app", "WRITE");
+    pushRole(checkout, "Build it the team's way.\n");
+    const run = await skel(["repo", "add"], "n\n", checkout);
+    expect(run.out).toContain("sc repo trust app");
+    expect(run.out).toContain("Added simon/app, as app.");
+    expect(approved()).toBe("none");
+    expect((await skel([], "", checkout)).out).not.toContain("Approve");
+  });
+
+  test("without an answer, nothing is saved, and the next sc there asks again", async () => {
+    const checkout = onGitHub("simon/app", "WRITE");
+    pushRole(checkout, "Build it the team's way.\n");
+    await skel(["repo", "add"], "", checkout);
+    expect(approved()).toBeUndefined();
+    const again = await skel([], "y\n", checkout);
+    expect(again.out).toContain("Approve simon/app's .agents/?");
+    expect(approved()).toBe(git(checkout, "rev-parse", "HEAD:.agents").trim());
+  });
+
+  test("a repository with none asks nothing", async () => {
+    const run = await skel(["repo", "add"], "", onGitHub("simon/app", "WRITE"));
+    expect(run.out).not.toContain(".agents");
+    expect(approved()).toBeUndefined();
+  });
+
+  test("repo trust shows what changed and asks, and a yes approves the new version", async () => {
+    const checkout = onGitHub("simon/app", "WRITE");
+    pushRole(checkout, "Build it the team's way.\n");
+    await skel(["repo", "add"], "y\n", checkout);
+    const tree = pushRole(checkout, "Build it another way.\n");
+    const run = await skel(["repo", "trust", "app"], "y\n");
+    expect(run.err).toBe("");
+    expect(run.out).toContain("-Build it the team's way.\n+Build it another way.");
+    expect(run.out).toContain("Approve simon/app's .agents/?");
+    expect(approved()).toBe(tree);
+    const same = await skel(["repo", "trust", "app"]);
+    expect(same.out).toContain("simon/app's .agents/ is the version you approved.");
+  });
+
+  test("repo trust with a no keeps the version you approved", async () => {
+    const checkout = onGitHub("simon/app", "WRITE");
+    const first = pushRole(checkout, "Build it the team's way.\n");
+    await skel(["repo", "add"], "y\n", checkout);
+    pushRole(checkout, "Build it another way.\n");
+    const run = await skel(["repo", "trust", "app"], "n\n");
+    expect(run.out).toContain("New tasks in simon/app keep the version you approved.");
+    expect(approved()).toBe(first);
+  });
+
+  test("repo rm forgets what you approved", async () => {
+    const checkout = onGitHub("simon/app", "WRITE");
+    pushRole(checkout, "Build it the team's way.\n");
+    await skel(["repo", "add"], "y\n", checkout);
+    await skel(["repo", "rm", "app"]);
+    expect(approved()).toBeUndefined();
+  });
+});

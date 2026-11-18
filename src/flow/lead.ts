@@ -17,7 +17,7 @@ import {
 import { agentRoles, repositoryCommands } from "../config.ts";
 import { Repository } from "../db.ts";
 import { cloneDir, leadPlaces } from "../paths.ts";
-import { builtInRole } from "../roles.ts";
+import { repositoryRole } from "../roles.ts";
 import { errorText } from "../say.ts";
 import type { Settings } from "../settings.ts";
 import { refreshClones } from "./repo.ts";
@@ -67,12 +67,13 @@ export function lastOpened(db: Database): Repository | null {
   return Repository.nullable().parse(row);
 }
 
-// Returns the lead's instructions: its built-in ones, the repository it leads and where its
+// Returns the lead's instructions: its role's, from `role`, the repository it leads and where its
 // clone is, then the setup and test commands its skelcrew.yaml or your config names, each on its
 // own, or that none is configured. The lead can't read your config from its sandbox, so it is
 // told, and proposes to you only the commands that are missing. They are as of the lead's start:
 // once a thread adds them to skelcrew.yaml, the lead reads them there.
 export function leadInstructions(
+  role: string,
   repository: string,
   clone: string,
   commands: Pick<Settings, "setup" | "test">,
@@ -92,7 +93,7 @@ export function leadInstructions(
       : test.length === 0
         ? "test was configured as none"
         : `the test command was ${shown(test)}`;
-  return `${builtInRole("lead").instructions}\nYou are the lead of ${repository}. Skelcrew's clone of it is at ${clone}.\nWhen this session started, ${setupTold}, and ${testTold}.\n`;
+  return `${role}\nYou are the lead of ${repository}. Skelcrew's clone of it is at ${clone}.\nWhen this session started, ${setupTold}, and ${testTold}.\n`;
 }
 
 // Keeps a repository's running lead or starts it, resuming its saved conversation when there
@@ -145,9 +146,15 @@ export async function startLead(
     model: role.harness === harness.name ? role.model : undefined,
     folder: lead.folder,
     origin: clone,
-    // By its owner/name, which every command takes and which never changes, while its
-    // name in Skelcrew can gain its owner.
-    system: leadInstructions(`${owner}/${repo}`, clone, repositoryCommands(repository)),
+    // The lead's role comes from the .agents/ you approved, as it is when the lead starts. The
+    // repository is named by its owner/name, which every command takes and which never
+    // changes, while its name in Skelcrew can gain its owner.
+    system: leadInstructions(
+      repositoryRole("lead", repository).instructions,
+      `${owner}/${repo}`,
+      clone,
+      repositoryCommands(repository),
+    ),
     ...(resume ? { resume } : { sessionId: session }),
   });
   // The session stays when the lead exits, so closeExitedLeads can tell exiting it from a crash.

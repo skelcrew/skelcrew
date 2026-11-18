@@ -64,7 +64,9 @@ const threadColumns = {
 // task that is done apart from one that was dropped. `issue_link` is the link to the issue the
 // task came from, saved as it starts, and null for a task with no issue, such as t1. `closes` is
 // the line a PR's body needs to close that issue on merge, saved as it starts too, so its PR
-// closes it though the tracker or Skelcrew's copy of it changed since.
+// closes it though the tracker or Skelcrew's copy of it changed since. `agents` is the git tree
+// of the .agents/ you had approved when the task started, which its agents keep, or null for the
+// built-in roles.
 export const taskColumns = {
   title: "TEXT",
   body: "TEXT",
@@ -96,6 +98,7 @@ export const taskColumns = {
   merged: "INTEGER NOT NULL DEFAULT 0",
   issue_link: "TEXT",
   closes: "TEXT",
+  agents: "TEXT",
 };
 
 // Marks each done task merged when its thread's log says its work ended by a merge, for tasks
@@ -280,7 +283,9 @@ function prepareTables(db: Database): void {
   // checkout's remote that uses an old name of the repository, once its forge has said so.
   // `tab_closed` marks a repository whose lead you exited, so its tab stays hidden and the
   // daemon doesn't bring its lead back until you open it again. `lead_state` is what its lead
-  // is doing, as a thread's `state` says for its builder.
+  // is doing, as a thread's `state` says for its builder. `agents_noted` is the tree of an
+  // .agents/ you haven't approved that the lead was told of, or `none` for one removed, so it is
+  // told once.
   const repositoryColumns = {
     open_issues: "INTEGER NOT NULL DEFAULT 0",
     open_prs: "INTEGER NOT NULL DEFAULT 0",
@@ -294,6 +299,7 @@ function prepareTables(db: Database): void {
     old_remote: "TEXT",
     tab_closed: "INTEGER NOT NULL DEFAULT 0",
     lead_state: "TEXT",
+    agents_noted: "TEXT",
   };
   // SQLite has no ADD COLUMN IF NOT EXISTS, so each column is looked up first.
   for (const [column, type] of Object.entries(repositoryColumns))

@@ -7,6 +7,7 @@ import { type HarnessName, harnessNamed } from "../agents/harness.ts";
 import { repositoryCommands, reviewLimit, threadConfig } from "../config.ts";
 import { cloneDir, reviewSocket } from "../paths.ts";
 import { failedLog, forgeOf, openPr, postReview, setStatus } from "../plugins/ask.ts";
+import { repositoryRole } from "../roles.ts";
 import { quietly } from "../run.ts";
 import { errorText } from "../say.ts";
 import { baseOf } from "./builder.ts";
@@ -392,6 +393,8 @@ async function reviewRound(
   };
   const plan = {
     given: {
+      // The reviewer's instructions come from the .agents/ the task started with.
+      instructions: repositoryRole("reviewer", thread).instructions,
       commit: sha,
       signal,
       limit: reviewMinutes * 60_000,

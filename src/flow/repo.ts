@@ -16,6 +16,7 @@ import { stringify } from "yaml";
 import { z } from "zod";
 import { refuseCredentials } from "../agents/sandbox.ts";
 import { endSession, exitedCleanly, stopSession } from "../agents/sessions.ts";
+import { agentsAnswered, askAboutAgents, forgetAgents } from "../approved-agents.ts";
 import { agentRoles } from "../config.ts";
 import { nameRepositories, openDb, Repository } from "../db.ts";
 import { originHere, parseRemote } from "../machine/origin.ts";
@@ -298,7 +299,9 @@ function mayCloneWithoutAsking({ owner, repo, claimed }: RepositoryDetails): boo
 
 // Checks trust, asking you when needed, refreshes the repository clone and records it. A repository
 // with no forge takes Skelcrew's pushes on your own git login, so Skelcrew checks that it can push
-// first. Runs only in your own terminal, where a yes can't come from an injected instruction.
+// first. A new repository whose default branch has an .agents/ shows it and asks, even one you can
+// push to, as being able to push isn't having read what others wrote there. Runs only in your own
+// terminal, where a yes can't come from an injected instruction.
 async function bringIn(db: Database, details: RepositoryDetails): Promise<void> {
   const { owner, repo, remote, claimed } = details;
   const fullName = `${owner}/${repo}`;
@@ -347,6 +350,8 @@ async function bringIn(db: Database, details: RepositoryDetails): Promise<void> 
     [owner, repo, fullName, repository.forge, remote, authorOf(claimed)],
   );
   nameRepositories(db);
+  const added = repositories(db).find((r) => r.owner === owner && r.repo === repo);
+  askAboutAgents(repository, added?.name ?? fullName);
 }
 
 // Brings in the repository you ran sc from, so its lead can open. `from` is a checkout's
@@ -363,6 +368,9 @@ export async function bringInFrom(from: string | undefined): Promise<string | un
   // Bring in the repository only when Skelcrew doesn't have it, and report a failure rather
   // than throw, so sc still attaches.
   try {
+    // A repository Skelcrew had before it read .agents/, or whose .agents/ you left unanswered,
+    // asks about it here, once.
+    if (opened && !agentsAnswered(opened)) askAboutAgents(opened, opened.name);
     if (named && !opened) {
       const details = await identifyRepository(db, named);
       await bringIn(db, details);
@@ -542,7 +550,8 @@ export async function initRepo(sessions: string): Promise<void> {
 }
 
 // Records your trust from outside the sandbox and brings in the repository: one Skelcrew has,
-// by its name, or a new one at a remote URL.
+// by its name, or a new one at a remote URL. For one Skelcrew has, it also approves its .agents/,
+// once it showed you what changed and you said yes.
 export async function trustRepo(given: string): Promise<void> {
   // A name Skelcrew knows needs no forge to find it again. Anything else must be an
   // owner/name or URL a forge or remote can answer for.
@@ -555,10 +564,13 @@ export async function trustRepo(given: string): Promise<void> {
     : await identifyRepository(db, given);
   trust(`${details.owner}/${details.repo}`);
   await bringIn(db, details);
+  // A repository new to Skelcrew was asked about as it came in. One it had shows what its
+  // default branch changed in .agents/ since you approved it, and asks.
+  if (known) askAboutAgents(known, known.name);
 }
 
 // Removes a repository for sc repo rm. Ends its lead, which runs in `sessions`, then deletes
-// Skelcrew's clone, its row and your trust in it, and names the other repositories again.
+// Skelcrew's clone, its row, your trust in it and the .agents/ you approved, and names the other repositories again.
 // Refuses while the repository has live threads, naming them. The lead is ended because, left running, it would
 // go on with no repository behind it, and the daemon would never bring it back or end it.
 export async function removeRepo(name: string, sessions: string): Promise<void> {
@@ -597,6 +609,7 @@ export async function removeRepo(name: string, sessions: string): Promise<void> 
   // as one that shared a name with this one can drop its owner.
   rmSync(cloneDir(found.owner, found.repo), { recursive: true, force: true });
   db.run("DELETE FROM repositories WHERE owner = ? AND repo = ?", [found.owner, found.repo]);
+  forgetAgents(found);
   nameRepositories(db);
   const trusted = trustLines().filter((line) => line !== "" && line !== fullName);
   if (existsSync(trustFile()))
