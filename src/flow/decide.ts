@@ -5,7 +5,7 @@ import type { Review } from "./reviewer.ts";
 import type { Thread } from "./thread.ts";
 
 // How an event changes the thread's status and its needs you flag.
-type Change = Partial<Pick<Thread, "status" | "needs_you" | "ci_passed">>;
+type Change = Partial<Pick<Thread, "status" | "needs_you">>;
 export type PullRequest = Extract<Item, { kind: "pr" }>;
 export type Check = PullRequest["checks"][number];
 type Author = PullRequest["comments"][number]["author"];
@@ -54,6 +54,14 @@ export function ciState(pr: PullRequest): Thread["checks"] {
   if (ci.length === 0) return null;
   if (ci.every((c) => c.state === "passed")) return "passing";
   return ci.some((c) => c.state === "failed" || c.state === "cancelled") ? "failing" : "pending";
+}
+
+// Returns whether every check on the PR passed, Skelcrew's own included, which it sets once its
+// reviewer approves. With no CI, that check is the only one. A thread's saved CI state leaves
+// Skelcrew's check out, so this is what says an approved PR is ready to merge.
+export function allGreen(pr: PullRequest): boolean {
+  const approved = pr.checks.some((c) => c.name === reviewCheck && c.state === "passed");
+  return approved && pr.checks.every((c) => c.state === "passed");
 }
 
 // Returns whether a change of these files touches only docs and Markdown: each is under docs/
@@ -222,14 +230,6 @@ export function decide(thread: Thread, pr: PullRequest, given: { maxRounds: numb
       comments.some((c) => c.id === id) ||
       (finished && runs.includes(id)),
   );
-  // Skelcrew's reviewer approves by setting its check, so an approved PR with every check passed,
-  // its own included, is green. With no CI, that check is the only one. Whether it is green is
-  // saved again on every poll, as a check can be run again, fail or vanish after it passed.
-  // While a newer round is being pushed, the checks are the older commit's, so they say nothing.
-  const approved = pr.checks.some((c) => c.name === reviewCheck && c.state === "passed");
-  const green = approved && pr.checks.every((c) => c.state === "passed");
-  const passed: Change =
-    thread.submitting === null && green !== thread.ci_passed ? { ci_passed: green } : {};
   // Anything to tell sets the builder working again.
   if (tell.length > 0 || notice.length > 0 || failed.length > 0) {
     const told = [
@@ -237,13 +237,12 @@ export function decide(thread: Thread, pr: PullRequest, given: { maxRounds: numb
       ...[...tell, ...notice].map((t) => t.split("\n")[0]),
     ];
     // Past the round limit the thread still needs you, as the builder's next round would.
-    const change: Change = { status: "working", needs_you: past, ...passed };
+    const change: Change = { status: "working", needs_you: past };
     const why = `told the builder: ${told.join("; ")}`;
     return { seen, tell, notice, typedIn, failed, conflict, change, why };
   }
-  // A green approval is ready to merge. A thread that needs you already, such as for a missing
-  // builder, still has its green checks saved, as only they make it ready.
-  if (quiet && green && (!thread.needs_you || !thread.ci_passed))
+  // An approved PR with every check green is ready.
+  if (quiet && !thread.needs_you && allGreen(pr))
     return {
       seen,
       tell,
@@ -251,12 +250,10 @@ export function decide(thread: Thread, pr: PullRequest, given: { maxRounds: numb
       typedIn,
       failed,
       conflict,
-      change: { needs_you: true, ci_passed: true },
+      change: { needs_you: true },
       why: "approved by Skelcrew's reviewer with every check green, so it is ready to merge",
     };
-  const why =
-    passed.ci_passed === false ? "not every check is green, so it isn't ready to merge" : "";
-  return { seen, tell, notice, typedIn, failed, conflict, change: passed, why };
+  return { seen, tell, notice, typedIn, failed, conflict, change: {}, why: "" };
 }
 
 // A task labeled to start, by its ID and title.

@@ -4,6 +4,7 @@
 import { expect, test } from "bun:test";
 import {
   afterReview,
+  allGreen,
   type Check,
   ciResult,
   ciState,
@@ -15,7 +16,6 @@ import {
   reviewCheck,
   whoRunsTheSuite,
 } from "../src/flow/decide.ts";
-import { taskStage } from "../src/flow/stage.ts";
 import { endedTurnAsks } from "../src/flow/status.ts";
 import type { Thread } from "../src/flow/thread.ts";
 
@@ -50,7 +50,6 @@ function thread(change: Partial<Thread> = {}): Thread {
     review_limited: false,
     review_reset: null,
     conflicts: null,
-    ci_failed: false,
     ci_passed: false,
     noting: null,
     title: null,
@@ -212,15 +211,12 @@ test("a failed check waits while a newer round is still being pushed", () => {
 test("approved by Skelcrew's reviewer and every check green: the thread needs you", () => {
   const checks = [approved, run(30, "test", "passed")];
   const decision = acted(thread(), pr({ checks }));
-  expect(decision.change).toEqual({ needs_you: true, ci_passed: true });
+  expect(decision.change).toEqual({ needs_you: true });
   expect(decision.why).toContain("ready to merge");
 });
 
 test("approved with no CI at all: the thread needs you", () => {
-  expect(acted(thread(), pr({ checks: [approved] })).change).toEqual({
-    needs_you: true,
-    ci_passed: true,
-  });
+  expect(acted(thread(), pr({ checks: [approved] })).change).toEqual({ needs_you: true });
 });
 
 test("approved while a check still runs: the thread waits on CI", () => {
@@ -232,58 +228,15 @@ test("green checks without Skelcrew's approval don't need you", () => {
   expect(acted(thread(), pr({ checks: [run(30, "test", "passed")] })).change).toEqual({});
 });
 
-// The green checks are still saved, except while a newer round is pushed, as the forge then
-// shows the older commit's.
 test("green checks don't need you while the builder works or a round is under way", () => {
   const checks = [approved];
-  const green = { ci_passed: true };
-  expect(acted(thread({ status: "working" }), pr({ checks })).change).toEqual(green);
-  expect(acted(thread({ reviewing: "abc" }), pr({ checks })).change).toEqual(green);
+  expect(acted(thread({ status: "working" }), pr({ checks })).change).toEqual({});
+  expect(acted(thread({ reviewing: "abc" }), pr({ checks })).change).toEqual({});
   expect(acted(thread({ submitting: "Round 2" }), pr({ checks })).change).toEqual({});
 });
 
-// A check can be run again, fail, or vanish, such as Skelcrew's own when its status is reset,
-// after a poll found them all green. Each poll says again whether they are.
-test("green checks saved by one poll are taken back by a later one that finds any not green", () => {
-  const ready = thread({ needs_you: true, ci_passed: true, verdict: "approve" });
-  const green = [approved, run(30, "test", "passed")];
-  expect(acted(ready, pr({ checks: green })).change).toEqual({});
-  expect(taskStage(ready, true)).toBe("ready for review");
-  const notGreen = [
-    [approved, run(30, "test", "running")],
-    [approved, run(30, "test", "failed")],
-    [{ ...approved, state: "running" as const }, run(30, "test", "passed")],
-    [{ ...approved, state: "failed" as const }, run(30, "test", "passed")],
-    [run(30, "test", "passed")],
-  ];
-  for (const checks of notGreen) {
-    const decision = acted(ready, pr({ checks }));
-    expect(decision.change).toMatchObject({ ci_passed: false });
-    // The thread it leaves is no longer ready for review.
-    const after = thread({ ...ready, ...decision.change });
-    expect(taskStage(after, true)).toBe("working");
-    // Green again saves it so. A failed check set the builder working, and only a thread
-    // that waits on you is ready for review.
-    const again = acted(after, pr({ checks: green })).change;
-    expect(again).toMatchObject({ ci_passed: true });
-    const stage = after.status === "waiting" ? "ready for review" : "working";
-    expect(taskStage(thread({ ...after, ...again }), true)).toBe(stage);
-  }
-});
-
 test("a thread that already needs you isn't marked again", () => {
-  const ready = thread({ needs_you: true, ci_passed: true });
-  expect(acted(ready, pr({ checks: [approved] })).change).toEqual({});
-});
-
-// It may need you for another reason, such as a missing builder, before CI was ever polled.
-// Only the green checks found now make it ready to merge.
-test("a thread that needs you for another reason gets its green checks saved", () => {
-  const needing = thread({ needs_you: true });
-  expect(acted(needing, pr({ checks: [approved] })).change).toEqual({
-    needs_you: true,
-    ci_passed: true,
-  });
+  expect(acted(thread({ needs_you: true }), pr({ checks: [approved] })).change).toEqual({});
 });
 
 test("your comment is typed into the builder, even past the round limit", () => {
@@ -432,8 +385,7 @@ test("a merge conflict is told once: the builder works on it until it submits", 
 
 test("an approved PR with a conflict doesn't need you yet", () => {
   const decision = acted(thread(), pr({ conflicts: true, checks: [approved] }));
-  // Its checks are green, saved as such, but the conflict keeps it from being ready.
-  expect(decision.change).toEqual({ status: "working", needs_you: false, ci_passed: true });
+  expect(decision.change).toEqual({ status: "working", needs_you: false });
 });
 
 test("a thread never polled before starts after the PR's history, acting on none of it", () => {
@@ -488,6 +440,18 @@ test("a PR's CI reads as passing, failing or still running, and Skelcrew's own c
   expect(ciState(pr({ checks: [changes, passed] }))).toBe("passing");
   expect(ciState(pr({ checks: [passed, going] }))).toBe("pending");
   expect(ciState(pr({ checks: [failed, going] }))).toBe("failing");
+});
+
+// Unlike the saved CI state, Skelcrew's own check counts: it is the approval.
+test("a PR is all green only while every check passed, Skelcrew's own included", () => {
+  const passed = run(30, "test", "passed");
+  expect(allGreen(pr({ checks: [approved, passed] }))).toBe(true);
+  expect(allGreen(pr({ checks: [approved] }))).toBe(true);
+  expect(allGreen(pr({ checks: [approved, run(30, "test", "running")] }))).toBe(false);
+  expect(allGreen(pr({ checks: [approved, run(30, "test", "failed")] }))).toBe(false);
+  expect(allGreen(pr({ checks: [{ ...approved, state: "running" }, passed] }))).toBe(false);
+  expect(allGreen(pr({ checks: [{ ...approved, state: "failed" }, passed] }))).toBe(false);
+  expect(allGreen(pr({ checks: [passed] }))).toBe(false);
 });
 
 // Who runs the suite on commit abc, the head of PR 7, with these open PRs in the repository.

@@ -59,13 +59,12 @@ const submitStands = (thread: Thread) =>
   (thread.verdict === "approve" &&
     thread.checks !== "failing" &&
     thread.conflicts === null &&
-    !thread.ci_failed &&
     thread.telling === null);
 
 // Returns whether the thread waits for you to merge it: Skelcrew's reviewer approved its latest
-// round, with no newer one under way, and the latest poll found every check on its PR green. A
-// branch without a forge has no PR or checks, so its approval alone makes it ready. A PR that
-// conflicts, or whose failed check the builder was told of, isn't ready to merge until the
+// round, with no newer one under way, and the latest poll found every check on its PR green,
+// which polling marks by having it need you. A branch without a forge has no PR or checks, so
+// its approval alone makes it ready. A PR that conflicts isn't ready to merge until the
 // builder's next round, even when something else, such as its builder missing, makes the
 // thread need you again.
 export const readyToMerge = (thread: Thread) =>
@@ -75,8 +74,7 @@ export const readyToMerge = (thread: Thread) =>
   thread.verdict === "approve" &&
   (thread.checks === "passing" || thread.checks === null) &&
   (thread.pr === null || thread.ci_passed) &&
-  thread.conflicts === null &&
-  !thread.ci_failed;
+  thread.conflicts === null;
 
 // Returns the thread's status, one of the five words a host can show, from the same fields and
 // in the same order as its word in the sidebar, which then serves as the reason. A thread that
