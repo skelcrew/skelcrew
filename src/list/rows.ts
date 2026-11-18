@@ -6,10 +6,12 @@ import type { Database } from "bun:sqlite";
 import { z } from "zod";
 import { threadConfig } from "../config.ts";
 import { openTasks, prOf, type Task } from "../flow/copy.ts";
+import { reviewCheck } from "../flow/decide.ts";
 import { leadOf } from "../flow/lead.ts";
 import { type Badge, badgeOf, type Colour, needsDecision, shownOf } from "../flow/marks.ts";
 import { findRepository } from "../flow/repo.ts";
 import type { DaemonRequest } from "../flow/requests.ts";
+import { lastApproved } from "../flow/round.ts";
 import { taskStage } from "../flow/stage.ts";
 import { Thread } from "../flow/thread.ts";
 import { forgeOf } from "../plugins/ask.ts";
@@ -141,24 +143,34 @@ function taskRow(
     : needsDecision(mark)
       ? [`needs you: ${word}`, harness]
       : [word, harness, round, age, pr].filter(Boolean);
-  // m merges the PR at the head commit the forge last sent, which is the one approved and green.
-  // A forge too old to send the head commit can't merge either, as it lacks the call too.
+  // m merges the PR only at the commit Skelcrew's reviewer approved, and only while it is the
+  // head the forge last sent and CI passed there. The thread's own verdict and checks can lag
+  // behind a push, so they never stand for a newer head. A forge too old to send the head
+  // commit can't merge either, as it lacks the call too.
   let merge: Action | null = null;
   if (ready && thread.pr !== null && copy !== null) {
     const named = `${repoName}#${thread.pr}`;
-    merge =
-      copy.head === null
-        ? { refused: `${named} needs a newer forge plugin to merge here: run sc plugin update` }
-        : {
-            ask: `Merge ${named} into ${copy.base}? y/n`,
-            working: `Merging ${named}…`,
-            request: {
-              command: "merge",
-              repo: `${open.owner}/${open.repo}`,
-              pr: thread.pr,
-              commit: copy.head,
-            },
-          };
+    const approved = lastApproved(thread);
+    const ci = copy.checks.filter((check) => check.name !== reviewCheck);
+    if (copy.head === null)
+      merge = {
+        refused: `${named} needs a newer forge plugin to merge here: run sc plugin update`,
+      };
+    else if (approved !== copy.head)
+      merge = { refused: `${named} has a newer commit than the one approved: wait for its review` };
+    else if (!ci.every((check) => check.state === "passed"))
+      merge = { refused: `${named}'s checks haven't passed on the approved commit yet` };
+    else
+      merge = {
+        ask: `Merge ${named} into ${copy.base}? y/n`,
+        working: `Merging ${named}…`,
+        request: {
+          command: "merge",
+          repo: `${open.owner}/${open.repo}`,
+          pr: thread.pr,
+          commit: approved,
+        },
+      };
   }
   const runs = running.includes(thread.folder);
   return {

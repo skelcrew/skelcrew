@@ -430,8 +430,11 @@ const knownTerminal = (term: string) =>
 
 // Attaches your terminal full screen to the named session, and returns once you leave it with
 // Alt-Q or Ctrl-Q, or its agent ends. Gives tmux's error when it couldn't attach, such as to a
-// session that just ended, or null. The server may have started under an older Skelcrew, so it
-// gets today's settings first. TMUX must go, or tmux refuses to attach from inside tmux.
+// session that just ended, or null. A session can stay after its agent ends, showing its last
+// screen, and tmux would keep you on it. So while you are attached it looks each half second,
+// and detaches you once the agent no longer runs. The server may have started under an older
+// Skelcrew, so it gets today's settings first. TMUX must go, or tmux refuses to attach from
+// inside tmux.
 export async function attachSession(socket: string, name: string): Promise<string | null> {
   const env = envWithoutTmux();
   if (env.TERM && !knownTerminal(env.TERM)) env.TERM = "xterm-256color";
@@ -440,7 +443,11 @@ export async function attachSession(socket: string, name: string): Promise<strin
     env,
     stdio: ["inherit", "inherit", "pipe"],
   });
+  const watch = setInterval(() => {
+    if (!agentRuns(socket, name)) tmux(socket, ["detach-client", "-s", `=${name}`]);
+  }, 500);
   const [code, said] = await Promise.all([client.exited, new Response(client.stderr).text()]);
+  clearInterval(watch);
   return code === 0 ? null : said.trim() || `tmux attach exited with ${code}`;
 }
 

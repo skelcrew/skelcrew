@@ -10,7 +10,7 @@ import { z } from "zod";
 import { type Labels, startSession } from "../src/agents/sessions.ts";
 import { drawList } from "../src/list/layout.ts";
 import type { Row } from "../src/list/rows.ts";
-import { fakePlugin, itemSql, read, source, threadSql, until as wait } from "./harness.ts";
+import { fakePlugin, git, itemSql, read, source, threadSql, until as wait } from "./harness.ts";
 
 // Longer than the waits below, so a test that fails says what it waited for.
 setDefaultTimeout(20_000);
@@ -18,6 +18,8 @@ let home = "";
 let agents = "";
 let terminal = "";
 let standIn: Server | null = null;
+// The commit Skelcrew's reviewer approved for app-14, which is its PR's head.
+let approved = "";
 // What the stand-in daemon was asked, as one line each.
 const asked: string[] = [];
 
@@ -44,11 +46,17 @@ beforeEach(() => {
   const clone = join(home, ".local", "share", "skelcrew", "repos", "simon", "app");
   mkdirSync(clone, { recursive: true });
   writeFileSync(join(clone, "skelcrew.yaml"), "tracker: github\n");
+  // Skelcrew's clone keeps the commit its reviewer approved as a ref, as a review does.
+  git(clone, "init", "-q");
+  git(clone, "add", "-A");
+  git(clone, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "approved");
+  approved = git(clone, "rev-parse", "HEAD");
+  git(clone, "update-ref", "refs/skelcrew/approved/app-14", approved);
   sql(`INSERT INTO repositories (name, owner, repo, kept_lead, lead_session, lead_harness, forge)
   VALUES ('app', 'simon', 'app', 1, 's', 'claude', 'github');
 INSERT INTO repositories (name, owner, repo) VALUES ('site', 'simon', 'site');
 ${itemSql("app", "task", 31, "Export as CSV", "2026-11-05T10:00:00Z")}
-${itemSql("app", "pr", 41, "Fix the export header", "2026-11-06T10:00:00Z", { head: "abc123" })}
+${itemSql("app", "pr", 41, "Fix the export header", "2026-11-06T10:00:00Z", { head: approved })}
 ${threadSql({ task: "7", title: "Login redirect", harness: "claude", started: Date.now() - 300_000 })}
 ${threadSql({ task: "12", title: "Rate limit the API", harness: "codex", asking: 1, needs_you: 1 })}
 ${threadSql({ task: "9", title: "Old work", status: "stopped" })}
@@ -111,7 +119,7 @@ test("Enter asks to start an issue, and m to merge a ready task at the commit yo
   expect(ready?.merge).toEqual({
     ask: "Merge app#41 into main? y/n",
     working: "Merging app#41…",
-    request: { command: "merge", repo: "simon/app", pr: 41, commit: "abc123" },
+    request: { command: "merge", repo: "simon/app", pr: 41, commit: approved },
   });
   expect(ready?.link).toBe("https://github.com/simon/app/pull/41");
   // A working task has nothing to merge.
@@ -122,6 +130,21 @@ test("a ready task whose forge sent no head commit can't be merged here, and say
   sql(itemSql("app", "pr", 41, "Fix the export header", "2026-11-06T10:00:00Z"));
   expect(rows().find((row) => row.name === "app-14")?.merge).toEqual({
     refused: "app#41 needs a newer forge plugin to merge here: run sc plugin update",
+  });
+});
+
+// The thread's verdict and checks can still describe the approved commit after a push moved the
+// PR, so the list goes by the approved commit and the checks on the head.
+test("a ready task whose PR moved past the approved commit, or whose checks there failed, can't be merged", () => {
+  const moved = { head: "f00d", checks: [{ name: "test", id: "1", state: "passed" }] };
+  sql(itemSql("app", "pr", 41, "Fix the export header", "2026-11-06T10:00:00Z", moved));
+  expect(rows().find((row) => row.name === "app-14")?.merge).toEqual({
+    refused: "app#41 has a newer commit than the one approved: wait for its review",
+  });
+  const failed = { head: approved, checks: [{ name: "test", id: "1", state: "failed" }] };
+  sql(itemSql("app", "pr", 41, "Fix the export header", "2026-11-06T10:00:00Z", failed));
+  expect(rows().find((row) => row.name === "app-14")?.merge).toEqual({
+    refused: "app#41's checks haven't passed on the approved commit yet",
   });
 });
 
@@ -201,7 +224,8 @@ function daemon(): void {
   standIn.listen(join(home, "run", "skelcrew.sock"));
 }
 
-// Starts an agent that says its name and logs each line you type into it.
+// Starts an agent that says its name and logs each line you type into it. It fails when told bye,
+// which leaves its session behind with its last screen.
 function agent(name: string, labels: Labels): void {
   const script = join(home, `${name}.sh`);
   writeFileSync(
@@ -209,7 +233,10 @@ function agent(name: string, labels: Labels): void {
     `#!/bin/sh
 cd ${JSON.stringify(home)}
 echo "I am ${name}"
-while test -d ${JSON.stringify(home)}; do read -r line && echo "$line" >> ${name}.typed; done
+while test -d ${JSON.stringify(home)}; do
+  read -r line && echo "$line" >> ${name}.typed
+  test "$line" = bye && exit 3
+done
 `,
     { mode: 0o755 },
   );
@@ -287,6 +314,20 @@ test("Enter attaches to the builder, every key reaches it, and Alt-Q comes back 
   expect(read(join(home, "left"))).toBe("");
 });
 
+test("an agent that ends while you are attached brings you back to the list, on its row", async () => {
+  await open();
+  press("Down");
+  press("Down");
+  await until(() => here().startsWith("▸ ○ app-7"), "app-7's row");
+  press("Enter");
+  await until(() => seen().includes("I am app-7"), "app-7's agent");
+  type("bye");
+  press("Enter");
+  await until(() => seen().includes("q quit"), "the list again");
+  expect(here()).toStartWith("▸ ○ app-7");
+  expect(read(join(home, "left"))).toBe("");
+});
+
 test("Enter on the lead attaches to it", async () => {
   await open();
   for (const _ of [1, 2, 3]) press("Up");
@@ -331,7 +372,7 @@ test("m on a task ready for review asks first, and y merges it at the commit you
   type("m");
   await until(() => seen().includes("Merge app#41 into main? y/n"), "the question");
   type("y");
-  await until(() => asked.includes("merge simon/app 41 abc123"), "the merge");
+  await until(() => asked.includes(`merge simon/app 41 ${approved}`), "the merge");
 });
 
 test("Tab moves to the next repository and has the daemon open it, without reopening a closed tab", async () => {
