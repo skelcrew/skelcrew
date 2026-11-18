@@ -61,7 +61,7 @@ const script = (name: string, body: string) => writeScript(home, name, body);
 // Stands in for Claude Code. As the builder, it commits a round and runs sc submit, then
 // waits at a ❯ prompt, keeping what is typed into it. Told to merge a branch, for a conflict or
 // its own branch that moved, it fetches origin and merges it, as Claude Code would, keeping
-// what git said. While the file
+// what git said, unless the file no-merge is in its config folder. While the file
 // busy is in its config folder, it looks busy, as Claude Code does mid-turn.
 function fakeClaude(): void {
   script(
@@ -77,6 +77,7 @@ stty -echo
 echo "❯"
 while IFS= read -r line; do
   printf '%s\\n' "$line" >> "$CLAUDE_CONFIG_DIR/typed"
+  test -e "$CLAUDE_CONFIG_DIR/no-merge" && continue
   case "$line" in *"merge origin/"*)
     { touch "$(git remote get-url origin)/written" && echo "origin is writable"
       base=$(printf '%s' "$line" | sed -n 's|.*merge origin/\\([^ ]*\\) into.*|\\1|p')
@@ -813,6 +814,29 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
     // Told once, however many polls see the same commit.
     await morePolls();
     expect(typed().split(`moved on the remote to ${merged}`).length - 1).toBe(1);
+  }, 60_000);
+
+  // A builder that got the notice and submits without the merge was already told. Its push is
+  // refused, and neither the refusal nor later polls tell it the same commit again.
+  test("a branch-moved notice the builder got isn't told again when it submits without the merge", async () => {
+    mkdirSync(builder(), { recursive: true });
+    writeFileSync(join(builder(), "no-merge"), "");
+    const work = await approvedApp12();
+    const merged = moveBranch(work);
+    const moved = prItem("7", "Add export", {
+      head: merged,
+      reviews: [skelReview],
+      checks: [approved],
+    });
+    changes([issue12(), moved]);
+    await until(() => typed().includes(`moved on the remote to ${merged}`));
+    await until(() => waiting() === 0);
+    submitRound2();
+    await until(() => read(join(data(), "threads", "app-12.log")).includes("the round failed"));
+    await morePolls();
+    expect(waiting()).toBe(0);
+    expect(typed().split(`moved on the remote to ${merged}`).length - 1).toBe(1);
+    expect(handled(`head:${merged}`)).toBe(true);
   }, 60_000);
 
   // The builder can submit before a poll sees the branch move. git refuses the push, as it is

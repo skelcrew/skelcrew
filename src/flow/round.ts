@@ -714,9 +714,9 @@ function pushAndReview(
 // way, and returns at once: a shell command can't block long, so pushing and the review go on
 // in the background. The submit is saved first, so a stop of the daemon can't lose it. A
 // review still waiting to be typed in, or held past the round limit, is dropped, as it is
-// about an older commit, and so are Skelcrew's waiting messages of the PR's events. Which moved
-// branch commits were told is forgotten with them, so the builder hears of one again if its new
-// round doesn't merge it. Throws when your config or the repository's skelcrew.yaml isn't valid,
+// about an older commit, and so are Skelcrew's waiting messages of the PR's events. A moved branch
+// commit whose notice is dropped is no longer told, so the builder hears of it again if its new
+// round doesn't merge it. One whose notice the builder got stays told. Throws when your config or the repository's skelcrew.yaml isn't valid,
 // so the builder hears why, and for a thread sc stop is ending, whose builder may submit while
 // it exits.
 export function submitRound(db: Database, sessions: string, folder: string, summary: string): void {
@@ -743,13 +743,16 @@ export function submitRound(db: Database, sessions: string, folder: string, summ
       // What CI said, and the conflict found, were about the commit before this one.
       checks: null,
       conflicts: null,
-      seen: forgetMoves(thread.seen),
       reviewer: reviewer.harness,
       review_at: Date.now(),
     },
     `submitted: ${summary}`,
   );
-  dropOldEvents(db, sessions, folder);
+  // A moved branch's notice dropped here never reached the builder, so its commit is forgotten.
+  const dropped = dropOldEvents(db, sessions, folder);
+  const { seen } = readThread(db, folder);
+  const kept = forgetMoves(seen, thread.branch, dropped);
+  if (JSON.stringify(kept) !== JSON.stringify(seen)) record(db, folder, { seen: kept });
   // The older round is cancelled, but its push still runs first, so the branch ends on this
   // round's commit.
   const before = latestRounds.get(folder);

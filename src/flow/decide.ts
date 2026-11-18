@@ -146,12 +146,17 @@ export function branchMoved(branch: string, commit: string): string {
 // on the forge to the commit, so it is told once.
 export const headSeen = (commit: string) => `head:${commit}`;
 
-// Returns the IDs seen without the commits the builder was told its branch moved to. A new round
-// drops Skelcrew's notices still waiting to be typed in, so one about a moved branch may never
-// have reached the builder. Forgotten, the next poll or refused push tells it again, unless the
-// round's commit already merged it.
-export const forgetMoves = (seen: string[] | null) =>
-  seen === null ? null : seen.filter((id) => !id.startsWith("head:"));
+// Returns the IDs seen without the commits whose moved-branch notice is among the `dropped`
+// texts. A new round drops Skelcrew's notices still waiting to be typed in, so those never
+// reached the builder. Forgotten, the next poll or refused push tells them again, unless the
+// round's commit already merged them. A notice the builder got stays told.
+export function forgetMoves(seen: string[] | null, branch: string, dropped: string[]) {
+  if (seen === null) return null;
+  const notTold = (id: string) =>
+    id.startsWith("head:") &&
+    dropped.some((text) => text.includes(branchMoved(branch, id.slice("head:".length))));
+  return seen.filter((id) => !notTold(id));
+}
 
 // Decides what the thread's PR, as its forge returned it, means for the thread: whether it
 // ended, what to type into the builder, and how the thread changes. `moved` says the forge's

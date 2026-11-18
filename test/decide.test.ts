@@ -4,11 +4,13 @@
 import { expect, test } from "bun:test";
 import {
   afterReview,
+  branchMoved,
   type Check,
   ciResult,
   ciState,
   decide,
   decideBranch,
+  forgetMoves,
   labeledToStart,
   onlyDocs,
   type PullRequest,
@@ -435,6 +437,17 @@ test("a branch with no PR that moved is told for a thread saved before seen IDs 
   const decision = decideBranch(older, "f00d", { ...given, moved: true });
   expect(decision).toMatchObject({ moved: "f00d", seen: ["head:f00d"] });
   expect(decision?.notice).toEqual([expect.stringContaining("moved on the remote to f00d")]);
+});
+
+// A submit drops Skelcrew's notices still waiting. A moved branch's notice it dropped never
+// reached the builder, so its commit is told again. One the builder got stays told.
+test("a submit forgets only the moved commits whose notices it dropped", () => {
+  const branch = "skelcrew/12-add-export";
+  const seen = ["51", "head:aaa", "head:bbb"];
+  const dropped = [`app-12's push was refused. ${branchMoved(branch, "bbb")}`, "Other."];
+  expect(forgetMoves(seen, branch, dropped)).toEqual(["51", "head:aaa"]);
+  expect(forgetMoves(seen, branch, [])).toEqual(seen);
+  expect(forgetMoves(null, branch, dropped)).toBeNull();
 });
 
 // A round whose push failed stays submitting. Its push may have failed before it could tell the
