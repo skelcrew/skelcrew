@@ -87,20 +87,33 @@ export const removing = new Set<string>();
 async function endBuilder(db: Database, sessions: string, folder: string, drop: boolean) {
   // At once: the round and any wake stop, and nothing more is typed into it, even while an
   // earlier end still runs.
+  // A wake typing "continue" is waited for too, and the limit it cleared put back if the end
+  // fails, as the builder then still sits at it.
   const { erred, limited } = readThread(db, folder);
-  endWake(folder);
+  const waking = endWake(folder);
   endRound(folder);
   try {
-    await endInTurn(db, sessions, folder, drop);
+    await endInTurn(db, sessions, folder, drop, waking);
   } catch (error) {
     resumeRound(db, sessions, folder);
-    if (erred && limited) wakeAfterLimit(db, sessions, folder);
+    const cut = await waking;
+    if (cut !== null) {
+      const back = { erred: true, limited: true, limit_reset: cut.reset };
+      record(db, folder, back, "its builder couldn't be ended, so it still waits out its limit");
+    }
+    if ((erred && limited) || cut !== null) wakeAfterLimit(db, sessions, folder);
     throw error;
   }
 }
 
-// Ends the builder's session for endBuilder, once its turn comes.
-function endInTurn(db: Database, sessions: string, folder: string, drop: boolean) {
+// Ends the builder's session for endBuilder, once its turn comes and the wake's typing is over.
+function endInTurn(
+  db: Database,
+  sessions: string,
+  folder: string,
+  drop: boolean,
+  waking: Promise<unknown>,
+) {
   // It takes its turn with the builder's other starts and ends, so a slow end never finishes
   // after a later one, nor misses a builder still starting. Nothing is typed into it while its
   // host ends it, and its messages are dropped only once it has ended: one that can't be ended
@@ -108,6 +121,7 @@ function endInTurn(db: Database, sessions: string, folder: string, drop: boolean
   return inTurn(folder, (earlier) =>
     pauseDelivering(db, folder, async () => {
       await earlier;
+      await waking;
       const { host, id } = await builderSession(db, sessions, readThread(db, folder));
       // The session as the thread now holds it, with an ID found by its labels saved.
       const ended = readThread(db, folder);

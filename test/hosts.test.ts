@@ -250,6 +250,7 @@ import { forgetStatus, keepState } from ${JSON.stringify(source("flow/status.ts"
 import { builderSession, readThread } from ${JSON.stringify(source("flow/thread.ts"))};
 import { endThread, removeThread, stopThread } from ${JSON.stringify(source("flow/events.ts"))};
 import { noticeIdleScreens } from ${JSON.stringify(source("flow/status.ts"))};
+import { wakeAfterLimit } from ${JSON.stringify(source("flow/limits.ts"))};
 import { hasSession, startSession } from ${JSON.stringify(source("agents/sessions.ts"))};
 import { endEarlierBuilder, startOnHost } from ${JSON.stringify(source("flow/builder.ts"))};
 import { deliverMessages, queueMessage } from ${JSON.stringify(source("flow/messages.ts"))};
@@ -748,3 +749,57 @@ process.exit(0);`,
   );
   expect(said).toBe("stopped\nstopped null null false\n");
 });
+
+test("a stop while a wake types continue waits for its Enter before the host ends the builder", () => {
+  const prompt = join(home, "prompt.sh");
+  writeFileSync(prompt, `#!/bin/sh\necho "${claude.marks.prompt}"\ncat > received.txt\n`, {
+    mode: 0o755,
+  });
+  const fake = join(home, ".config", "skelcrew", "plugins", "fake");
+  const said = runWithFakeHost(
+    "sessions",
+    `const fs = require("node:fs");
+const host = (await builderSession(db, "unused", readThread(db, "app-12"))).host;
+const labels = { repository: "simon/app", role: "builder", task: "app-12" };
+await startSession(host, "app-12", { folder: ${JSON.stringify(home)}, command: [${JSON.stringify(prompt)}], env: { PATH: process.env.PATH }, labels });
+const asked = () => fs.readFileSync(${JSON.stringify(join(fake, "asked"))}, "utf8").trim().split("\\n").map((line) => JSON.parse(line).ask);
+// The limit reset long ago, so the wake types continue at once, and the stop comes as it pastes.
+wakeAfterLimit(db, "unused", "app-12");
+const deadline = Date.now() + 15_000;
+while (!asked().includes("paste") && Date.now() < deadline) await Bun.sleep(5);
+await stopThread(db, "unused", readThread(db, "app-12"));
+console.log(asked().filter((ask) => ask === "paste" || ask === "keys" || ask === "end").join(" "));
+process.exit(0);`,
+    { host: "fake", host_id: "fake-app-12", erred: 1, limited: 1, limit_reset: 1 },
+  );
+  expect(said).toBe("paste keys end\n");
+}, 40_000);
+
+test("a wake a failed stop cut short leaves the builder at its usage limit, as it was", () => {
+  // A builder busy for a while, so the wake waits to type continue when the stop comes.
+  const busy = join(home, "busy.sh");
+  writeFileSync(busy, `#!/bin/sh\necho "Thinking (${claude.marks.busy})"\nexec sleep 30\n`, {
+    mode: 0o755,
+  });
+  const fake = join(home, ".config", "skelcrew", "plugins", "fake");
+  const said = runWithFakeHost(
+    "sessions",
+    `const fs = require("node:fs");
+const host = (await builderSession(db, "unused", readThread(db, "app-12"))).host;
+const labels = { repository: "simon/app", role: "builder", task: "app-12" };
+await startSession(host, "app-12", { folder: ${JSON.stringify(home)}, command: [${JSON.stringify(busy)}], env: { PATH: process.env.PATH }, labels });
+wakeAfterLimit(db, "unused", "app-12");
+// The wake has cleared the limit and waits for the builder to be idle.
+const deadline = Date.now() + 15_000;
+while (readThread(db, "app-12").limited && Date.now() < deadline) await Bun.sleep(20);
+fs.writeFileSync(${JSON.stringify(join(fake, "garble-end"))}, "");
+console.log(await stopThread(db, "unused", readThread(db, "app-12")).catch((error) => error.message));
+const after = readThread(db, "app-12");
+console.log(after.status, after.erred, after.limited, after.limit_reset);
+process.exit(0);`,
+    { host: "fake", host_id: "fake-app-12", erred: 1, limited: 1, limit_reset: 1 },
+  );
+  expect(said).toBe(
+    "fake answered end in a way Skelcrew doesn't understand\nworking true true 1\n",
+  );
+}, 40_000);
