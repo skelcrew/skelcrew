@@ -313,3 +313,21 @@ test("a task whose .agents/ version the clone lost stops, rather than run on oth
     told: builtInRole("builder").instructions,
   });
 });
+
+test("a version lost after its roles were read once still stops the agents that need it", () => {
+  agentsFile("roles/builder.md", "First way.\n");
+  commit("roles");
+  inHome(approveCurrent);
+  // Read, then the clone made again without the version, then read again, in one process.
+  const remake = [
+    `rm -rf ${JSON.stringify(clone)}`,
+    `mkdir -p ${JSON.stringify(clone)}`,
+    `git -C ${JSON.stringify(clone)} init -q -b main`,
+  ].join(" && ");
+  const outcome = inHome(`const first = repositoryRole("builder", app).instructions;
+Bun.spawnSync(["sh", "-c", ${JSON.stringify(remake)}]);
+try { repositoryRole("builder", app); return { first, again: "read" }; }
+catch (error) { return { first, again: String(error) }; }`);
+  expect(outcome).toMatchObject({ first: "First way.\n" });
+  expect(String(Object(outcome).again)).toContain("no longer has the .agents/ version");
+});
