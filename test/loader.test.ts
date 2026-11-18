@@ -462,3 +462,16 @@ test("your override's model for every role fits the role's last harness, whereve
   expect(moved.err).toBe("");
   expect(moved.settings?.builder).toEqual({ harness: "codex" });
 });
+
+test("a role line that isn't a mapping stops its role only where it could count", () => {
+  files(
+    "harness: claude\nrepos: { simon/app: { roles: { builder: { harness: codex, model: gpt } } } }\n",
+    "builder: bad\n",
+  );
+  const replaced = read(["builder"]);
+  expect(replaced.err).toBe("");
+  expect(replaced.settings?.builder).toEqual({ harness: "codex", model: "gpt" });
+  // Without the override, it decides the builder, so it is refused.
+  files("harness: claude\n", "builder: bad\n");
+  expect(read(["builder"]).err).toContain("skelcrew.yaml isn't valid: builder isn't a mapping");
+});

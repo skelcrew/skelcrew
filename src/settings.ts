@@ -194,19 +194,24 @@ type Value<T> = { value: T | undefined } | { bad: Error };
 type Say = { harness: Value<HarnessName>; model: Value<string>; everyRole?: boolean };
 
 // Returns the say on a role at `path` in the YAML data `data`, such as ["roles", "builder"],
-// with its harness and model each checked on its own, so a bad one is kept to stop the role only
-// where it counts. Throws `problem`, saying where, when a step of the path isn't a mapping, as
-// then nothing in it can be read.
+// with its harness and model each checked on its own. A bad one is kept, to stop the role only
+// where it counts, and so is a step of the path that isn't a mapping, such as builder: bad,
+// which leaves both its harness and its model bad. `problem` names the file in what is wrong.
 function sayIn(data: unknown, path: string[], problem: string): Say {
+  // A path that can't be followed is said as the first step that isn't a mapping.
+  const broken = (step: number) => {
+    const bad = new Error(
+      `${problem}: ${path.slice(0, step).join(".") || "the file"} isn't a mapping`,
+    );
+    return { harness: { bad }, model: { bad } };
+  };
   let at = data;
   for (const [step, key] of path.entries()) {
     if (at === undefined || at === null) break;
-    if (!isMapping(at))
-      throw new Error(`${problem}: ${path.slice(0, step).join(".") || "the file"} isn't a mapping`);
+    if (!isMapping(at)) return broken(step);
     at = at[key];
   }
-  if (at !== undefined && at !== null && !isMapping(at))
-    throw new Error(`${problem}: ${path.join(".") || "the file"} isn't a mapping`);
+  if (at !== undefined && at !== null && !isMapping(at)) return broken(path.length);
   const mapping = isMapping(at) ? at : {};
   // Returns the field `key` checked with `schema`.
   const field = <T>(key: "harness" | "model", schema: z.ZodType<T>): Value<T> => {
