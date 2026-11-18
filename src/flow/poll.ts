@@ -19,7 +19,14 @@ import { errorText } from "../say.ts";
 import { assignIssue, unassignIssue } from "./assign.ts";
 import { baseOf, startThread } from "./builder.ts";
 import { type Item, openTasks, prOf, saveItems } from "./copy.ts";
-import { ciState, decide, decideBranch, labeledToStart, type PullRequest } from "./decide.ts";
+import {
+  allGreen,
+  ciState,
+  decide,
+  decideBranch,
+  labeledToStart,
+  type PullRequest,
+} from "./decide.ts";
 import { endThread, removing, tellBuilder, tellingEvents } from "./events.ts";
 import { fetchInto, onRemote } from "./git.ts";
 import { mergeIfReady } from "./merging.ts";
@@ -202,9 +209,14 @@ async function actOnPr(
     thread.rounds !== before.rounds;
   // Saved ahead of what the decision does, so a thread never needs you for an approval while
   // its saved checks still say otherwise. A commit on its way has no checks to speak of yet.
+  // Whether every check is green, Skelcrew's own included, is saved on each poll too, even while
+  // an earlier event is still being told: a check run again can fail, pass or vanish, and an
+  // approval is ready to merge only while they all pass.
   const checks = ciState(pr);
-  if (!stale && thread.submitting === null && checks !== thread.checks)
-    record(db, folder, { checks });
+  const green = allGreen(pr);
+  const ciChanged = checks !== thread.checks || green !== thread.ci_passed;
+  if (!stale && thread.submitting === null && ciChanged)
+    record(db, folder, { checks, ci_passed: green });
   // A merge or close ends the thread whatever else is going on. Otherwise new events go to
   // the builder, and with none, only what is seen and what changed is saved.
   if ("end" in decision) {
@@ -214,7 +226,7 @@ async function actOnPr(
     // A merge leaves you assigned, as the closed issue's record of who did it. Asked before
     // the thread ends, so an sc start that starts it over once it is done assigns you after.
     if (pr.state === "closed") unassignIssue(db, folder);
-    await endThread(db, sessions, thread, decision.end, decision.note);
+    await endThread(db, sessions, thread, decision.end, decision.note, pr.state === "merged");
   }
   // Left unhandled, so a stopped thread's events reach its builder once it starts again.
   else if (thread.status === "stopped" || tellingEvents.has(folder) || stale) return;
@@ -263,6 +275,7 @@ async function actOnBranch(db: Database, sessions: string, repository: Repositor
         thread,
         `its branch ${thread.branch} was deleted`,
         `ended: its branch ${thread.branch} was deleted`,
+        false,
       );
     return;
   }
@@ -281,6 +294,7 @@ async function actOnBranch(db: Database, sessions: string, repository: Repositor
       thread,
       `its branch ${thread.branch} is merged into ${base}`,
       `is done: its branch ${thread.branch} merged into ${base}`,
+      true,
     );
   // A branch still open may have moved on the remote without its builder, such as by someone
   // else's push, which the builder must merge.

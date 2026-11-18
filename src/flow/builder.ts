@@ -101,6 +101,10 @@ async function recordThread(
   let task: string;
   let title: string;
   let body: string;
+  // The link to the issue the task comes from, and the line that closes it, which only a task
+  // from the tracker has.
+  let issueLink: string | null = null;
+  let closes: string | null = null;
   if ("title" in given) {
     // The highest number of the repository's own tasks, to name the next one.
     const ownTaskNumbers = db
@@ -109,6 +113,9 @@ async function recordThread(
       .map((row) => Number(z.object({ task: z.string() }).parse(row).task.slice(1)));
     task = `t${Math.max(0, ...ownTaskNumbers) + 1}`;
     ({ title, body } = given);
+    // It has no issue to close. Saved as empty rather than null, which only a task from before
+    // Skelcrew kept the line has, so a later issue of the same ID is never closed by its PR.
+    closes = "";
   } else {
     // A named task takes its words from Skelcrew's copy of the tracker. One of the repository's
     // own, or one the tracker no longer has, can only start over on the words its failed or
@@ -121,9 +128,14 @@ async function recordThread(
       const found = taskOf(db, owner, repo, task);
       if (found.state !== "open") throw new Error(`there is no open issue ${task} in ${name}`);
       ({ title, body } = found);
+      issueLink = found.link;
+      closes = found.closes;
     } else if (had?.title) {
       title = had.title;
       body = had.body ?? "";
+      // A task from an issue still came from it, though the repository's tracker is gone now.
+      issueLink = had.issue_link;
+      closes = had.closes;
     } else
       throw new Error(
         tracked
@@ -217,6 +229,7 @@ async function recordThread(
       started: Date.now(),
       checks: null,
       conflicts: null,
+      ci_passed: false,
       reviewer: null,
       reviewed_by: null,
       review_round: null,
@@ -231,6 +244,9 @@ async function recordThread(
       changed: null,
       updates: [],
       state: null,
+      merged: false,
+      issue_link: issueLink,
+      closes,
       merge_plan: null,
       merge_id: null,
       merge_by: null,
@@ -262,9 +278,10 @@ async function recordThread(
       ],
     );
     db.run(
-      `INSERT OR REPLACE INTO tasks (owner, repo, task, title, body, short, assigned, seen)
-        VALUES (?, ?, ?, ?, ?, ?, ?, '[]')`,
-      [owner, repo, task, title, body, thread.short, thread.assigned],
+      `INSERT OR REPLACE INTO tasks
+        (owner, repo, task, title, body, short, assigned, seen, issue_link, closes)
+        VALUES (?, ?, ?, ?, ?, ?, ?, '[]', ?, ?)`,
+      [owner, repo, task, title, body, thread.short, thread.assigned, issueLink, closes],
     );
     log(db, thread);
     return thread;
@@ -410,8 +427,8 @@ export async function startBuilder(db: Database, sessions: string, thread: Threa
   const session = resume ?? crypto.randomUUID();
   let start: { resume: string } | { sessionId: string; prompt: string } = { resume: session };
   if (!resume) {
-    // The same task its reviewer gets: Skelcrew's copy, brought up to date just before a first
-    // start, with the lead's messages after it. A builder starting afresh on a thread the lead
+    // The same task its reviewer gets: the words saved as it started, from Skelcrew's copy
+    // brought up to date just before, with the lead's messages after it. A builder starting afresh on a thread the lead
     // already steered would otherwise be judged by changes it was never told.
     const { title, body } = threadTask(db, thread);
     start = { sessionId: session, prompt: body ? `${title}\n\n${body}` : title };
