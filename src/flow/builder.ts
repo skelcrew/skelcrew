@@ -575,7 +575,10 @@ export async function endEarlierBuilder(
 // ended is started again, on the host your config names now. Throws for a thread with no
 // session: the daemon stopped before its setup finished, and the error says to run sc start
 // again. A builder whose host plugin is gone may still run there, out of reach, so the thread
-// needs you rather than its builder starting a second time elsewhere.
+// needs you rather than its builder starting a second time elsewhere. A plugin's host that
+// can't be reached for now, such as one restarting with the machine, is asked again every few
+// seconds for as long as the thread stays as it was: its builder may well still run there, and
+// the thread stays live meanwhile, with its round and messages waiting for it.
 export async function bringBack(db: Database, sessions: string, thread: Thread): Promise<void> {
   if (thread.session === null)
     throw new Error("the daemon stopped while setting up the thread: run sc start again");
@@ -586,13 +589,33 @@ export async function bringBack(db: Database, sessions: string, thread: Thread):
       typeLeadNotes(db, sessions);
       return;
     }
-    // A session whose agent ended is ended too, so the new one can take its name.
-    const { host, id } = await builderSession(db, sessions, thread);
-    if (await agentRuns(host, id)) return;
-    if (await hasSession(host, id)) await endSession(host, id);
+    let told = false;
+    while (true) {
+      try {
+        // A session whose agent ended is ended too, so the new one can take its name.
+        const { host, id } = await builderSession(db, sessions, thread);
+        if (await agentRuns(host, id)) return;
+        if (await hasSession(host, id)) await endSession(host, id);
+        break;
+      } catch (error) {
+        // tmux failing isn't a host that will come back, and a thread stopped or ended
+        // meanwhile isn't this one's to bring back.
+        const now = readThread(db, thread.folder);
+        const live = now.status === "working" || now.status === "waiting";
+        const same = now.started === thread.started && live;
+        if (thread.host === "tmux" || !same) throw error;
+        // Its log says so once, not on every try.
+        if (!told) log(db, now, `couldn't reach ${thread.host}, trying again: ${errorText(error)}`);
+        told = true;
+        await Bun.sleep(hostRetry);
+      }
+    }
   }
   await startBuilder(db, sessions, thread);
 }
+
+// How long bringBack waits before asking a plugin's host again, in milliseconds.
+const hostRetry = 5000;
 
 // Marks the thread failed and logs why, in its log and the daemon's, so you can see what
 // stopped it and start it again. The lead hears of it in a note that goes ahead of routine

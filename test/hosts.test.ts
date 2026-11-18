@@ -252,7 +252,7 @@ import { endThread, removeThread, stopThread } from ${JSON.stringify(source("flo
 import { noticeIdleScreens } from ${JSON.stringify(source("flow/status.ts"))};
 import { wakeAfterLimit } from ${JSON.stringify(source("flow/limits.ts"))};
 import { hasSession, startSession } from ${JSON.stringify(source("agents/sessions.ts"))};
-import { endEarlierBuilder, startOnHost } from ${JSON.stringify(source("flow/builder.ts"))};
+import { bringBack, endEarlierBuilder, startOnHost } from ${JSON.stringify(source("flow/builder.ts"))};
 import { deliverMessages, dropOldEvents, queueMessage } from ${JSON.stringify(source("flow/messages.ts"))};
 const db = openDb();
 db.run("INSERT INTO plugins (name, folder) VALUES ('fake', ?)", [${JSON.stringify(folder)}]);
@@ -655,6 +655,50 @@ couldn't type into app-12's builder: fake couldn't keys: the host is down for a 
 ${JSON.stringify("old\nnew\n")} []
 `,
   );
+}, 40_000);
+
+// A merge can end the thread while a stop waits its turn to end the builder. The stop then says
+// the thread is done, rather than mark it stopped as if sc start could bring its work back.
+test("a stop that waits on a merge's end of the builder leaves the thread done", () => {
+  const fake = join(home, ".config", "skelcrew", "plugins", "fake");
+  const said = runWithFakeHost(
+    "sessions",
+    `const fs = require("node:fs");
+const host = (await builderSession(db, "unused", readThread(db, "app-12"))).host;
+const labels = { repository: "simon/app", role: "builder", task: "app-12" };
+await startSession(host, "app-12", { folder: ${JSON.stringify(home)}, command: ["sleep", "30"], env: {}, labels });
+// The host takes two seconds to end the builder, so the stop comes while the merge's end runs.
+fs.writeFileSync(${JSON.stringify(join(fake, "slow-end"))}, "");
+const merge = endThread(db, "unused", readThread(db, "app-12"), "its PR was merged", null, true);
+await Bun.sleep(500);
+const stop = stopThread(db, "unused", readThread(db, "app-12")).then(() => "stopped", (error) => error.message);
+await merge;
+console.log(await stop);
+console.log(readThread(db, "app-12").status);`,
+    { host: "fake", host_id: "fake-app-12" },
+  );
+  expect(said).toBe("simon/app-12 is done already\ndone\n");
+}, 40_000);
+
+// A host that can't be reached as the daemon starts may still run the builder, so the daemon asks
+// it again rather than fail the thread or start a second builder.
+test("a builder whose host fails as the daemon starts is found once the host answers", () => {
+  const fake = join(home, ".config", "skelcrew", "plugins", "fake");
+  const said = runWithFakeHost(
+    "sessions",
+    `const fs = require("node:fs");
+const host = (await builderSession(db, "unused", readThread(db, "app-12"))).host;
+const labels = { repository: "simon/app", role: "builder", task: "app-12" };
+await startSession(host, "app-12", { folder: ${JSON.stringify(home)}, command: ["sleep", "30"], env: {}, labels });
+// The host fails the next list it is asked for, once.
+fs.writeFileSync(${JSON.stringify(join(fake, "fail-list"))}, "");
+const back = await bringBack(db, "unused", readThread(db, "app-12")).then(() => "back", (error) => error.message);
+const thread = readThread(db, "app-12");
+const starts = fs.readFileSync(${JSON.stringify(join(fake, "asked"))}, "utf8").split("\\n").filter((line) => line.includes('"ask":"start"'));
+console.log(back, thread.status, thread.host_id, starts.length);`,
+    { host: "fake", host_id: "fake-app-12" },
+  );
+  expect(said).toBe("back working fake-app-12 1\n");
 }, 40_000);
 
 test("nothing is typed into a builder while a slow host fails to end it, and its messages wait", () => {

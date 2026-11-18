@@ -186,7 +186,10 @@ function stopLiveThread(
 }
 
 // Ends the builder and marks the thread stopped, for stopLiveThread. The thread is marked only if
-// no builder has started on it since: one whose end cleared its session and found no other.
+// no builder has started on it since: one whose end cleared its session and found no other. A
+// merge or close can end the thread while this waits its turn to end the builder, and remove
+// its clone. Marked stopped then, it would look like work sc start could bring back, so the
+// stop says the thread is done instead.
 async function stopNow(
   db: Database,
   sessions: string,
@@ -195,7 +198,9 @@ async function stopNow(
   why: string,
 ): Promise<void> {
   await endBuilder(db, sessions, thread.folder, drop);
-  if (readThread(db, thread.folder).host_id !== null) return;
+  const now = readThread(db, thread.folder);
+  if (now.status === "done") throw new Error(`${threadName(db, thread)} is done already`);
+  if (now.started !== thread.started || now.host_id !== null) return;
   record(
     db,
     thread.folder,
