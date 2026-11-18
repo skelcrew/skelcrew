@@ -701,6 +701,21 @@ console.log(back, thread.status, thread.host_id, starts.length);`,
   expect(said).toBe("back working fake-app-12 1\n");
 }, 40_000);
 
+// A plugin whose manifest went missing can't hear a status, but every change to a thread reports
+// one, the daemon's start included, so it is logged rather than thrown.
+test("a change to a thread on a plugin whose manifest is gone is still saved", () => {
+  const manifest = join(home, "plugin-fake", "skelcrew-plugin.yaml");
+  const said = runWithFakeHost(
+    "sessions, status",
+    `require("node:fs").rmSync(${JSON.stringify(manifest)});
+record(db, "app-12", { needs_you: true }, "a review failed");
+console.log(readThread(db, "app-12").needs_you);`,
+    { host: "fake", host_id: "fake-app-12" },
+  );
+  expect(said).toStartWith("couldn't work out app-12's status: ");
+  expect(said).toEndWith("\ntrue\n");
+});
+
 test("nothing is typed into a builder while a slow host fails to end it, and its messages wait", () => {
   const prompt = join(home, "prompt.sh");
   writeFileSync(prompt, `#!/bin/sh\necho "${claude.marks.prompt}"\ncat > received.txt\n`, {
@@ -734,7 +749,8 @@ fs.rmSync(${JSON.stringify(join(fake, "slow-end"))});
 // Once the end failed, typing goes on as before.
 deliverMessages(db, "unused", "app-12");
 const deadline = Date.now() + 15_000;
-while (!typed().endsWith("\\n") && Date.now() < deadline) await Bun.sleep(100);
+// The message is deleted once the host has answered its Enter, a moment after the agent got it.
+while ((!typed().endsWith("\\n") || waiting() !== 0) && Date.now() < deadline) await Bun.sleep(100);
 console.log(waiting(), JSON.stringify(typed()));
 process.exit(0);`,
     { host: "fake", host_id: "fake-app-12" },
