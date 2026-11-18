@@ -257,7 +257,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
     const wanted = flowRoles({ ...now, flow }).build;
     if (wanted !== building)
       throw new Error(
-        `${name} keeps the flow ${now.flow}: its builder already runs as ${building}, and ${flow} builds as ${wanted}.`,
+        `${name} keeps the flow ${now.flow}: its builder already runs as ${building}, and ${flow} builds as ${wanted}. To run ${flow}, start it over: sc rm ${name}, then sc start ${name} --flow ${flow}.`,
       );
     record(db, now.folder, { flow, ...(short ? { short } : {}) }, `given the flow ${flow}`);
   };

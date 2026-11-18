@@ -972,7 +972,7 @@ nameRepositories(db);`;
     // Its builder already runs as builder, so a flow that builds as another role is refused, and
     // the builder keeps the instructions it started with.
     expect((await skel("start", "app-12", "--flow", "careful")).err).toBe(
-      "Skelcrew: app-12 keeps the flow quick: its builder already runs as builder, and careful builds as tester.\n",
+      "Skelcrew: app-12 keeps the flow quick: its builder already runs as builder, and careful builds as tester. To run careful, start it over: sc rm app-12, then sc start app-12 --flow careful.\n",
     );
     expect(flows()).toEqual([{ task: 12, flow: "quick" }]);
     expect(read(join(config("app-12"), "args"))).not.toContain("Write the test first.");
