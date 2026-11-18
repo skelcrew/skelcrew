@@ -13,7 +13,8 @@ import { filled, fitted, removeControlCodes } from "../screen/look.ts";
 import { type Item, openTasks, prOf, threadTask } from "./copy.ts";
 import { reviewCheck } from "./decide.ts";
 import { messagesWaiting } from "./messages.ts";
-import { findRepository, noRepositories, repositories } from "./repo.ts";
+import { ciSummary, reviewVerdict } from "./page.ts";
+import { findRepository, noRepositories, repositories, repositoryAt } from "./repo.ts";
 import { roundRunning } from "./round.ts";
 import { Stage, taskStage } from "./stage.ts";
 import { needsYou } from "./status.ts";
@@ -93,26 +94,6 @@ export const ThreadRow = z.object({
 });
 export type ThreadRow = z.infer<typeof ThreadRow>;
 
-// Returns what a PR's CI says, from Skelcrew's copy, for sc ps and sc show. Skelcrew's own check
-// isn't CI, and one failure is enough to say so while the rest still run.
-function ciSummary(pr: Extract<Item, { kind: "pr" }>): "none" | "passed" | "failed" | "running" {
-  const ci = pr.checks.filter((check) => check.name !== reviewCheck);
-  if (ci.length === 0) return "none";
-  if (ci.every((check) => check.state === "passed")) return "passed";
-  // Anything neither passed nor running, such as failed or cancelled, counts as failed.
-  const failed = ci.some((check) => !["passed", "running"].includes(check.state));
-  return failed ? "failed" : "running";
-}
-
-// Returns what a review's verdict is in words, for sc show. A forge such as GitHub won't let
-// Skelcrew approve its own PR, so Skelcrew's verdict is a comment whose first line says it, such
-// as "**Approved**". For those, that line is the verdict.
-function reviewVerdict(review: Extract<Item, { kind: "pr" }>["reviews"][number]): string {
-  const [first = ""] = review.text.split("\n");
-  const said = review.verdict === "commented" ? first.replaceAll("*", "").trim() : "";
-  return said || review.verdict;
-}
-
 // What CI says in sc ps, from the word Skelcrew saved as it last polled the PR.
 const ciWords = { passing: "passed", failing: "failed", pending: "running" } as const;
 
@@ -125,7 +106,7 @@ function ciOf(
   copy: Extract<Item, { kind: "pr" }> | null,
 ): NonNullable<ThreadRow["checks"]> {
   const live = thread.status === "working" || thread.status === "waiting";
-  if (!live && copy) return ciSummary(copy);
+  if (!live && copy) return ciSummary(copy)[0];
   return thread.checks === null ? "none" : ciWords[thread.checks];
 }
 
@@ -284,8 +265,8 @@ export function listTasks(db: Database, repository?: string): TaskRow[] {
   return [...worked.map((w) => w.task), ...waiting.map((w) => w.task)];
 }
 
-// One PR as sc show shows it, from Skelcrew's copy, with its latest review's
-// text. `ci` is what its CI says as a whole, and `checks` each CI check, with
+// One PR as sc show shows it, from Skelcrew's copy: what its page on the screen shows, with its
+// latest review's text. `ci` is what its CI says as a whole, and `checks` each CI check, with
 // the end of its log for a failed one, as the forge gives it, or null. Everything here that
 // came from the forge has its control codes removed.
 export const PrPage = z.object({
@@ -365,7 +346,7 @@ async function prPageOf(db: Database, repository: Repository, number: number) {
     state: pr.state,
     branch: removeControlCodes(pr.branch),
     base: removeControlCodes(pr.base),
-    ci: ciSummary(pr),
+    ci: ciSummary(pr)[0],
     checks,
     review: latest
       ? {
@@ -379,19 +360,45 @@ async function prPageOf(db: Database, repository: Repository, number: number) {
   });
 }
 
-// Returns one task for sc show, named by its repository and task. A task with a thread still at work, or stopped, is shown as its reviewer gets it, with the
+// Returns one task for sc show, named by its task, or by its PR's number for sc pr show. It is
+// in the repository `repo` names, or else in the one whose remote is `from`, the checkout sc ran
+// in. A task with a thread still at work, or stopped, is shown as its reviewer gets it, with the
 // lead's messages to the builder after the description, so the lead sees what the builder is
 // judged by. A thread that is done or failed starts over fresh, without them, so they aren't
 // shown then. It reads Skelcrew's database and copy, and asks the forge only for the logs of
 // failed checks. Throws when there is no such task.
 export async function showTask(
   db: Database,
-  which: { repo: string; task: string },
+  which: {
+    repo?: string | undefined;
+    from?: string | undefined;
+    task?: string | undefined;
+    pr?: number | undefined;
+  },
 ): Promise<TaskView> {
-  const repository = findRepository(db, which.repo);
+  // Find the repository, then the task, from its PR when a number names it.
+  const repository =
+    which.repo !== undefined
+      ? findRepository(db, which.repo)
+      : which.from !== undefined
+        ? repositoryAt(db, which.from)
+        : undefined;
+  if (!repository)
+    throw new Error(
+      "name the PR's task, such as app-12, or run sc pr show in a checkout of its repository",
+    );
   const { owner, repo, name } = repository;
   const forge = forgeOf(db, repository) !== null;
-  const { task } = which;
+  let task = which.task;
+  if (which.pr !== undefined) {
+    if (!forge) throw new Error(`${name} has no forge, so there are no PRs`);
+    const row = db
+      .query("SELECT task FROM task_threads WHERE owner = ? AND repo = ? AND pr = ?")
+      .get(owner, repo, which.pr);
+    task = z.object({ task: z.coerce.string() }).nullable().parse(row)?.task;
+    if (task === undefined) throw new Error(`Skelcrew has no task with PR #${which.pr} in ${name}`);
+  }
+  if (task === undefined) throw new Error("sc show needs a task, such as app-12");
   // The task's description: as its reviewer gets it while its thread is current. A failed thread
   // still holds its task until it starts over, so it shows the words it started with, though
   // without the lead's messages, which starting over leaves behind. A done thread shows its open

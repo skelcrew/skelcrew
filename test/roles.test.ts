@@ -36,7 +36,7 @@ const leadTasks = [
   ],
   [
     "- sc pr show app-13, or a PR's number such as sc pr show 242, shows a PR: its state, branch, thread, checks, latest review and description, with the log of each failed check. Use it to see why CI failed or what a review asked for.",
-    "- sc show app-13 shows one piece of work: its issue, threads, PR with its checks and review, and its description as its reviewer gets it, then the PR's latest review and description, with the log of each failed check. Use it to see why CI failed or what a review asked for.",
+    "- sc show app-13 shows one piece of work: its issue, threads, PR with its checks and review, and its description as its reviewer gets it, then the PR's latest review and description, with the log of each failed check. Use it to see why CI failed or what a review asked for. sc pr show 242 shows the work on PR 242 the same way.",
   ],
   [
     "Skelcrew keeps its own copy: sc issue ls and sc issue show app-13 show issues, with the title and body a builder sees, and sc ps and sc pr show show PRs.",

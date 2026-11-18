@@ -1,6 +1,5 @@
-// The machine's load, at the right end of the list's bottom line: how busy its cores are and how
-// much memory is in use. It is the machine the list runs on, which with sc --remote is where the
-// agents run.
+// The machine's load, at the right end of the footer: how busy its cores are and how much memory
+// is in use. It is the machine the screen runs on, which with sc --remote is where the agents run.
 import { readFileSync } from "node:fs";
 import { type CpuInfo, freemem, totalmem } from "node:os";
 import { z } from "zod";
@@ -88,7 +87,7 @@ export function memoryInUse(text: string | null): { used: number; total: number 
   return { used: totalmem() - freemem(), total: totalmem() };
 }
 
-// Returns the load as the list shows it, such as `cpu 63%  mem 9.1/32G`. `cpu` is the busy
+// Returns the load as the footer shows it, such as `cpu 63%  mem 9.1/32G`. `cpu` is the busy
 // share from 0 to 1, and memory is in bytes. Each figure is dim, yellow from 80% and red from
 // 95%, on its own, so a busy machine catches your eye without a look at the numbers.
 export function loadText(cpu: number, used: number, total: number): string {

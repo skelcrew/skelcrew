@@ -1,6 +1,6 @@
 // The status module: knows whether each agent works, idles, asks you or hit an error, and
 // whether each thread needs you or is ready. It learns this from the hooks the agent's harness
-// runs, and from the agent's screen where no hook fires, and gives the word the list and sc ps
+// runs, and from the agent's screen where no hook fires, and gives the word the sidebar and sc ps
 // show for a thread. A lead's hooks only keep its state: nothing a lead does flags needs you.
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
@@ -77,7 +77,7 @@ export const readyToMerge = (thread: Thread) =>
   !thread.ci_failed;
 
 // Returns the thread's status, one of the five words a host can show, from the same fields and
-// in the same order as its word in the list, which then serves as the reason. A thread that
+// in the same order as its word in the sidebar, which then serves as the reason. A thread that
 // failed, or whose harness stopped on an error, is in error. An approval with green checks is
 // ready to merge. Anything else that needs you comes next. A builder waiting out its usage limit
 // idles, as it is woken once the limit resets, and so does one that isn't running. Otherwise
@@ -318,7 +318,7 @@ export function turnFailed(
 // AskUserQuestion returned your answer, from Claude Code's PostToolUse hook, and the builder
 // goes on in the same turn, so a submit earlier in it still counts.
 export function questionClosed(db: Database, folder: string): void {
-  // Your answer starts a new stretch of work all the same, which the list times, as anything
+  // Your answer starts a new stretch of work all the same, which the sidebar times, as anything
   // typed into the builder does.
   db.run("UPDATE threads SET working_since = ? WHERE folder = ?", [Date.now(), folder]);
   if (readThread(db, folder).asking)
@@ -330,7 +330,7 @@ export function questionClosed(db: Database, folder: string): void {
 // builder was waiting on you for.
 export function questionAnswered(db: Database, folder: string): void {
   const thread = readThread(db, folder);
-  // The new stretch of work is timed by the list. Not logged, as only the list shows it.
+  // The new stretch of work is timed by the sidebar. Not logged, as only the sidebar shows it.
   db.run("UPDATE threads SET working_since = ? WHERE folder = ?", [Date.now(), folder]);
   // Run before every message typed into the builder, so only a question or an error that
   // was open is logged. Typing to a builder that stopped on an error means you fixed it,

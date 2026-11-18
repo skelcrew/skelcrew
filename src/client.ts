@@ -70,10 +70,15 @@ export async function askForTasks(repository?: string): Promise<TaskRow[]> {
   return checkReply(z.object({ tasks: z.array(TaskRow) }), reply).tasks;
 }
 
-// Asks the daemon for one task, for sc show, named by its repository and task. The daemon answers
-// from Skelcrew's copy, and asks the forge for the logs of failed checks, as only it holds the
-// forge's login.
-export async function askForTask(which: { repo: string; task: string }): Promise<TaskView> {
+// Asks the daemon for one task, for sc show, named by its task or by its PR's number. The daemon
+// answers from Skelcrew's copy, and asks the forge for the logs of failed checks, as only it
+// holds the forge's login.
+export async function askForTask(which: {
+  repo?: string;
+  from?: string;
+  task?: string;
+  pr?: number;
+}): Promise<TaskView> {
   const reply = await request({ command: "task show", ...which });
   return checkReply(z.object({ task: TaskView }), reply).task;
 }
@@ -89,7 +94,7 @@ export async function createTask(repository: string, title: string, body: string
 // Has the daemon start a thread on a task, for sc start, and returns what it did, in a
 // sentence: started a new thread, brought back a stopped one's builder, or let one past the
 // round limit go on. The daemon answers once the thread is recorded; its setup and builder
-// come after. `short` is the thread's short title for the list, which on a thread already
+// come after. `short` is the thread's short title for the sidebar, which on a thread already
 // at work is all that changes.
 export async function startOn(
   repository: string,
@@ -109,7 +114,7 @@ export async function startOn(
 
 // Has the daemon start a thread on a title and body, for sc start in a repository with no
 // tracker, and returns what it did, in a sentence naming the thread, such as app-t1. `short` is
-// its short title for the list.
+// its short title for the sidebar.
 export async function startNew(
   repository: string,
   title: string,
@@ -126,8 +131,8 @@ export async function startNew(
   return checkReply(z.object({ started: z.string() }), reply).started;
 }
 
-// Has the daemon start a thread on an issue or merge a PR, for Enter on an issue or m on a
-// task ready for review in the list, whose rows hold the request ready. Throws the daemon's error, such as the forge's
+// Has the daemon start a thread on an issue or merge a PR, for s or m on the screen's lists
+// and pages, which hold the request ready. Throws the daemon's error, such as the forge's
 // reason for refusing a merge. Only your own socket takes a merge, so no agent can merge.
 export async function startOrMerge(asked: DaemonRequest): Promise<void> {
   await request(asked);

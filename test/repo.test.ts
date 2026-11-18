@@ -28,6 +28,10 @@ let forge = "";
 const hint = "Skelcrew has no repositories yet. Run sc in a checkout of one.";
 // What Skelcrew says once you leave the screen.
 const left = "Your agents keep running. Run sc to come back.\n";
+// Returns what sc printed without the list, which it prints once as there is no terminal, and
+// which the list's own tests check.
+const withoutList = (out: string) =>
+  out.replace(/^ Skelcrew v[\s\S]*?\n(?=Your agents keep running)/m, "");
 const clone = (full: string) => join(home, ".local", "share", "skelcrew", "repos", full);
 const trustFile = () => join(home, ".config", "skelcrew", "trusted");
 
@@ -157,9 +161,9 @@ async function skel(args: string[], typed = "", cwd = home, more: Record<string,
   return { out, err, code };
 }
 
-// Returns what Skelcrew ran, with the long tmux line that opens the screen cut to the agent it
-// opens on, and without asking tmux's version or giving the agents' server its settings, which
-// each opening does. The fake daemon names
+// Returns what Skelcrew ran, with the long tmux line that opens sc attach's screen cut to the
+// agent it opens on, and without asking tmux's version, giving the agents' server its settings
+// or the list's looks at the sessions. The fake daemon names
 // the lead's session app-lead.
 const calls = () =>
   existsSync(join(home, "calls"))
@@ -168,7 +172,9 @@ const calls = () =>
         .replace(/tmux -V\n/g, "")
         .replace(/tmux -L skelcrew-screen .* sh skelcrew (\S+) \S+ ;.*/g, "screen on $1")
     : "";
-const attached = () => calls().endsWith("daemon lead\nscreen on app-lead\n");
+// Whether sc asked the daemon for the lead and showed the list last, which runs in sc itself and
+// only looks at the sessions.
+const attached = () => calls().endsWith("daemon lead\n");
 
 // Returns each repository sc repo ls --json lists, as its name, owner/name and forge.
 async function listed(): Promise<string[][]> {
@@ -255,11 +261,11 @@ test("asks its forge nothing and fetches nothing for a repository Skelcrew has",
     writeFileSync(join(home, "calls"), "");
     const again = await skel([], "", checkout);
     expect(again.err).toBe("");
-    expect(again.out).toBe(left);
+    expect(withoutList(again.out)).toBe(left);
     expect(attached()).toBe(true);
   }
   writeFileSync(join(home, "calls"), "");
-  expect((await skel(["--from", "simon/app"])).out).toBe(left);
+  expect(withoutList((await skel(["--from", "simon/app"])).out)).toBe(left);
   expect(claimsAsked()).toEqual(["https://github.com/simon/app"]);
   expect(existsSync(join(clone("simon/app"), "NEWS"))).toBe(false);
 });
@@ -288,7 +294,7 @@ test("outside a repository, says how to bring one in, and attaches to nothing, w
   expect(claimsAsked()).toEqual([]);
   expect(calls()).not.toContain("daemon lead");
   await skel([], "", onGitHub("simon/app", "WRITE"));
-  expect((await skel([])).out).toBe(left);
+  expect(withoutList((await skel([])).out)).toBe(left);
 });
 
 test("--from brings in the repository it names, wherever Skelcrew runs", async () => {
@@ -464,7 +470,7 @@ test("plain sc refuses inside Skelcrew's sandbox, and brings in nothing", async 
   const run = await skel([], "", checkout, { SKELCREW_SANDBOX: "1" });
   expect(run.code).toBe(1);
   expect(run.err).toBe(
-    "Skelcrew: attaching to the lead is only for your own terminal, not for agents\n",
+    "Skelcrew: showing the list is only for your own terminal, not for agents\n",
   );
   expect(calls()).toBe("");
   expect(existsSync(clone("simon/app"))).toBe(false);
@@ -829,7 +835,8 @@ ${fails ? 'echo "GitHub is unreachable" >&2; exit 1' : 'rm "$SKELCREW_PLUGIN_CON
   }
 
   // Runs sc with `args` in the checkout at a real terminal, in tmux on a socket of its own,
-  // presses `key` once the setup asks for Enter, and returns the screen once sc has ended. The
+  // presses `key` once the setup asks for Enter, leaves the list with q, and returns the screen
+  // once sc has ended. The
   // pane stays after sc ends, so the screen also says how it ended, such as by a signal.
   async function atTerminal(checkout: string, args: string[] = [], key = "Enter"): Promise<string> {
     const real = Bun.which("tmux") ?? "tmux";
@@ -874,7 +881,11 @@ ${fails ? 'echo "GitHub is unreachable" >&2; exit 1' : 'rm "$SKELCREW_PLUGIN_CON
       );
       await waitFor("Press Enter.");
       tmux("send-keys", "-t", "sc", key);
-      for (let tries = 0; tries < 100 && !ended(); tries++) await Bun.sleep(100);
+      // Once in, sc shows the list, until q leaves it.
+      for (let tries = 0; tries < 100 && !ended(); tries++) {
+        if (screen().includes("q quit")) tmux("send-keys", "-t", "sc", "q");
+        await Bun.sleep(100);
+      }
       expect(ended()).toBe(true);
       return screen();
     } finally {

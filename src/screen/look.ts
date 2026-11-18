@@ -1,8 +1,9 @@
-// The look: what the list and the commands share to draw text, which is the colours, and making
-// text from outside safe and fit to show.
+// The look: what the sidebar, the strip and a page share to draw text, which is the colours, the
+// padding, and making text from outside safe and fit to show.
 import type { Colour } from "../flow/marks.ts";
 
-// The colours of marks and words. 256-colour numbers, as they reach your terminal through ssh and mean the same whatever your theme. A theme's own green can be olive,
+// The colours of marks and words. 256-colour numbers, as they reach your terminal through both
+// tmux servers and ssh, and mean the same whatever your theme. A theme's own green can be olive,
 // close to the yellow of needs you. They are the same on the row you are looking at, so a mark
 // never changes colour as you move onto it.
 export const [green, yellow, red] = ["38;5;120", "38;5;221", "38;5;210"];
@@ -14,6 +15,11 @@ export const bright = "1";
 export const grey = "90";
 // The colour each kind of mark is drawn in.
 export const markColours: Record<Colour, string> = { green, yellow, red, bright, dim: grey };
+// A light grey, for text that matters more than dim text but less than a title. It is a fixed
+// one, as a theme has no grey between its dim one and its text. It is lighter still on the row
+// you are looking at, so it stays apart from dim text there.
+export const lightGrey = "38;5;250";
+export const lightGreyOnShade = "38;5;253";
 // Returns text in a colour or style. It ends just that style, not all of them, so a grey
 // background behind the text goes on after it.
 export const paint = (code: string, text: string) => `\x1b[${code}m${text}\x1b[22;39m`;
@@ -23,6 +29,10 @@ export const paint = (code: string, text: string) => `\x1b[${code}m${text}\x1b[2
 export const shade = "48;5;238";
 export const white = "1;38;5;231";
 export const greyOnShade = "38;5;250";
+// The line at the sidebar's edge, a shade quieter than dim text, as it only parts two things.
+export const edge = "38;5;237";
+// The padding on each side, in columns, which also starts every heading and mark.
+export const pad = "  ";
 
 // Returns text from outside, such as an issue's title, safe to show: its control codes would
 // otherwise reach your terminal, or break the line.

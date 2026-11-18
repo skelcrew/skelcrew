@@ -357,7 +357,7 @@ export async function stopSession(socket: string, name: string, timeout = 10_000
 }
 
 // Lists the sessions on Skelcrew's tmux server, each with its labels and whether its agent is
-// running, so the list shows which agents run and a starting daemon can find them. A builder
+// running, so the sidebar shows which agents run and a starting daemon can find them. A builder
 // that exited keeps its session and last screen, which would look like it still runs. A session
 // started by a release before labels has none. Nothing when the server isn't up.
 export function listSessions(
@@ -442,4 +442,33 @@ export async function attachSession(socket: string, name: string): Promise<strin
   });
   const [code, said] = await Promise.all([client.exited, new Response(client.stderr).text()]);
   return code === 0 ? null : said.trim() || `tmux attach exited with ${code}`;
+}
+
+// Returns a command that attaches a terminal to the named session, for the screen's right pane.
+// When the session ends, or you leave it with its own keys, the terminal comes back on `then`,
+// the lead's session, trying again while the lead restarts. While there is no session to attach
+// to, such as for a lead starting or a repository just removed, it says so in one line, not
+// tmux's error each second. TMUX must go, or tmux refuses to attach from inside tmux.
+export function attachCommand(socket: string, name: string, then: string): string[] {
+  const client = `tmux -L "$1" -f /dev/null attach -t`;
+  const wait = `[ -n "$said" ] || { echo; echo 'Waiting for the lead to start.'; said=1; }`;
+  const script = `unset TMUX; ${client} "=$2" 2>/dev/null || ${wait}; while sleep 1; do ${client} "=$3" 2>/dev/null && said= || { ${wait}; }; done`;
+  return ["sh", "-c", script, "sh", socket, name, then];
+}
+
+// Returns the session shown in the terminal at `tty`, which attachCommand attached, or null while
+// it shows none, such as the moment between an agent ending and the terminal coming back on the
+// lead. The screen's sidebar asks, as an agent can end and its terminal move to the lead alone.
+export function shownSession(socket: string, tty: string): string | null {
+  // Each line is a client's terminal and its session; the session is what follows the
+  // terminal and a space.
+  const clients = tmux(socket, ["list-clients", "-F", "#{client_tty} #{session_name}"]).out;
+  const line = clients.split("\n").find((client) => client.startsWith(`${tty} `));
+  return line ? line.slice(tty.length + 1) : null;
+}
+
+// Switches the terminal at `tty`, which attachCommand attached, to another session. Quietly does
+// nothing if that session ended this moment: the sidebar shows what is left at its next look.
+export function showSession(socket: string, tty: string, name: string): void {
+  tmux(socket, ["switch-client", "-c", tty, "-t", `=${name}`]);
 }

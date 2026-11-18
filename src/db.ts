@@ -30,7 +30,7 @@ export function nameRepositories(db: Database): void {
 // `noting` holds a note for the lead about that, kept until it is typed in, so one the daemon's
 // stop cut short carries on when it starts again. `changed` is when anything last went in the
 // thread's log. `working_since` is when the builder's current stretch of work began, for the
-// list. It changes with every message typed into the builder, so it is kept out of the
+// sidebar. It changes with every message typed into the builder, so it is kept out of the
 // thread's log, which would otherwise fill with it. `state` is what the builder is doing, from
 // its harness's hooks and its screen. It changes with every turn, so it is kept out of the
 // thread's log too. `role` is what the agent does on its task, and every thread so far is a
@@ -55,9 +55,9 @@ const threadColumns = {
 // A task's columns past its repository and ID: what belongs to the work rather than the agent
 // on it. `submitting`, `reviewing` and `telling` hold the round under way, so one the daemon's
 // stop cut short carries on when it starts again. `queued` is when the review in `reviewing`
-// joined the queue of reviews, while it waits there for a place, so sc ps can say so and
+// joined the queue of reviews, while it waits there for a place, so the sidebar can say so and
 // a restart puts it back in the same order. `short` is the short title the lead gave the task
-// for the list. `assigned` is whether Skelcrew assigned you the task's issue, so it takes you
+// for the sidebar. `assigned` is whether Skelcrew assigned you the task's issue, so it takes you
 // off only then. `updates` holds the lead's messages to the builder, as JSON, since they change
 // the task its reviewer checks against. `review_at` is when the latest review was asked for or
 // ended, for sc ps. `merged` is whether the work ended with its changes merged, which tells a
@@ -165,7 +165,7 @@ export function openDb(): Database {
   // The daemon and Skelcrew run in your terminal can use the file at once. Without a wait, a
   // write that meets another one fails with "database is locked" at once.
   db.run("PRAGMA busy_timeout = 5000");
-  // One process prepares the tables at a time. On a first run the daemon and the list open
+  // One process prepares the tables at a time. On a first run the daemon and the screen open
   // a new file together. Both would see a column missing, and the slower one would stop with
   // "duplicate column name" adding it.
   db.transaction(() => {
@@ -266,7 +266,8 @@ function prepareTables(db: Database): void {
   )`);
   // Creating a table leaves one that exists as it is, so the columns past the first few are
   // added here, to new databases and to ones from an earlier release alike. `open_issues` and
-  // `open_prs` count the tasks and PRs open in Skelcrew's copy.
+  // `open_prs` count the tasks and PRs open in Skelcrew's copy, as the sidebar counts those it
+  // doesn't show.
   // `lead_session` is the session ID of the repository's lead, kept so it comes back with its
   // conversation. `opened` is when you last opened the repository, in milliseconds since 1970,
   // and null until you first do: its lead starts then, and from then on the daemon brings it

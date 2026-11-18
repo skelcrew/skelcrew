@@ -395,6 +395,7 @@ test("interrupting a session sends its agent Esc", async () => {
 });
 
 // Only the sessions module runs tmux for agents, so another session host can take its place.
+// The screen keeps a tmux server of its own, which it may run directly.
 test("nothing outside the sessions module runs tmux for agents", () => {
   const src = join(import.meta.dir, "..", "src");
   const module = ["agents/sessions.ts", "agents/tmux.ts"];
@@ -412,9 +413,10 @@ test("nothing outside the sessions module runs tmux for agents", () => {
       if (resolved === runner && /\*|\b(tmux|mustTmux)\b/.test(names))
         found.push(`${file} imports the tmux runner`);
     }
-    // Nor is tmux started directly, on a server named with -L.
+    // tmux started directly, on a server named with -L, may only be the screen's own.
     for (const line of text.split("\n"))
-      if (/tmux"?,?\s+"?-L/.test(line)) found.push(`${file}: ${line.trim()}`);
+      if (/tmux"?,?\s+"?-L/.test(line) && !line.includes("screenSocket("))
+        found.push(`${file}: ${line.trim()}`);
   }
   expect(found).toEqual([]);
 });
@@ -467,7 +469,7 @@ startSession(${JSON.stringify(socket)}, "builder", {
 });
 
 // A lead or builder started before its session kept TERM_PROGRAM runs on after an upgrade, and
-// its Claude Code never asked for extended keys. Attaching to it must still give it
+// its Claude Code never asked for extended keys. Opening the screen must still give it
 // Shift+Enter as a key of its own, without restarting it.
 test("an agent that never asked for extended keys gets Shift+Enter once the settings apply again", async () => {
   start("new", ["sleep", "30"]);

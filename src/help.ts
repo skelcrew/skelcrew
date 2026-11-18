@@ -1,5 +1,7 @@
 // Skelcrew's help page: what sc --help shows, laid out in sections with skelcrew.dev's amber for
 // the headings, so it reads as help and not as an error.
+import { keys } from "./screen/keys.ts";
+
 // The help page's sections, each a heading and its rows of a command and what it does.
 const sections: [string, [string, string][]][] = [
   [
@@ -14,7 +16,7 @@ const sections: [string, [string, string][]][] = [
       ["start <repo> < <file>", "The same, with the title on stdin's first line"],
       ["stop <thread>", "End the builder, keeping its clone and PR"],
       ['rm <task> ["<reason>"]', "Close its PR, delete its branch and clone"],
-      ["attach <thread>", "Open that builder, full screen"],
+      ["attach <thread>", "Open that builder, with the sidebar"],
       ["peek <thread>", "What that builder shows now, without attaching"],
       ["interrupt <thread>", "Stop that builder's turn, as Esc does"],
       ["review <task>", "Run the task's last review again"],
@@ -22,8 +24,13 @@ const sections: [string, [string, string][]][] = [
   ],
   [
     "ISSUES",
-    [['issue create <repo> "<title>" "<body>"', "Create an issue in the repository's tracker"]],
+    [
+      ["issue ls [<repo>]", "The same as ls"],
+      ["issue show <issue>", "The same as show"],
+      ['issue create <repo> "<title>" "<body>"', "Create an issue in the repository's tracker"],
+    ],
   ],
+  ["PULL REQUESTS", [["pr show <number> | <task>", "The PR's task, as show shows it"]]],
   [
     "REPOSITORIES",
     [
@@ -66,23 +73,13 @@ const sections: [string, [string, string][]][] = [
     [
       ["--json", "Output for tools"],
       ["--all", "Done threads too, on ps, and ended tasks, on ls"],
-      ['--short "<words>"', "A task's short title for the list, on start"],
+      ['--short "<words>"', "A thread's short title for the sidebar, on start"],
       ["--from <remote>", "The repository you're in"],
       ["--version", "Which release of Skelcrew this is"],
     ],
   ],
-  // The list's keys, as its bottom line shows them.
-  [
-    "KEYS",
-    [
-      ["↑ ↓", "Move one row"],
-      ["Enter", "Attach to an agent, start an issue, or open a PR"],
-      ["m", "Merge a task ready for review, after asking"],
-      ["Tab", "The next repository"],
-      ["q", "Leave the list; your agents keep running"],
-      ["Alt-Q", "Leave an agent, back to the list"],
-    ],
-  ],
+  // The screen's keys, in words, from the same place as its list of keys.
+  ["KEYS", keys],
 ];
 
 // Lines to copy, in the order a new user would run them.

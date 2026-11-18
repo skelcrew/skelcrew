@@ -8,10 +8,10 @@ import { openRepository, startOrMerge } from "../client.ts";
 import { openDb } from "../db.ts";
 import { updateNotice } from "../machine/update.ts";
 import { errorText } from "../say.ts";
+import { cpuBusy, cpuSample, loadText, memoryInUse, readMemory } from "../screen/load.ts";
+import { grey, paint, removeControlCodes } from "../screen/look.ts";
 import { version } from "../version.ts";
 import { drawList, type Frame, keysFor } from "./layout.ts";
-import { cpuBusy, cpuSample, loadText, memoryInUse, readMemory } from "./load.ts";
-import { grey, paint, removeControlCodes } from "./look.ts";
 import { hasForge, listRows, type Open, type Question, type Row, repositoryTabs } from "./rows.ts";
 
 // The command that opens a link in your browser.

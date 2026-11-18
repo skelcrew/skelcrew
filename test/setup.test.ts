@@ -114,13 +114,14 @@ afterEach(() => {
 
 function calls(): string {
   const log = join(home, "calls");
-  // Attaching to an agent is cut to the agent it attaches to. Asking tmux's version, giving the
-  // agents' server its settings and the list's looks at the sessions are left out.
+  // The long tmux line that opens sc attach's screen is cut to the agent it opens on. Asking
+  // tmux's version, giving the agents' server its settings and the list's looks at the sessions
+  // are left out.
   const said = existsSync(log) ? readFileSync(log, "utf8") : "";
   return said
     .replace(/tmux -L skelcrew -f \/dev\/null (source-file -|list-panes -a .*)\n/g, "")
     .replace(/tmux -V\n/g, "")
-    .replace(/tmux -L skelcrew -f \/dev\/null attach -t =(\S+)/g, "attach to $1");
+    .replace(/tmux -L skelcrew-screen .* sh skelcrew (\S+) \S+ ;.*/g, "screen on $1");
 }
 
 const config = () => join(home, ".config", "skelcrew", "config.yaml");
@@ -267,7 +268,7 @@ openDb().run(${JSON.stringify(threadSql({ task: "12" }))});`;
   expect(err).toBe("");
   expect(await run.exited).toBe(0);
   expect(calls()).toContain("systemctl --user start skelcrew\n");
-  expect(calls()).toContain("attach to app-12\n");
+  expect(calls()).toContain("screen on app-12\n");
 });
 
 test("shows why when the daemon can't start the lead", async () => {

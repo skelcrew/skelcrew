@@ -260,9 +260,16 @@ function checkHost(host: string): void {
 // the host up when it has no Skelcrew, or its first run hasn't finished.
 export async function remote(host: string, args: string[]): Promise<number> {
   checkHost(host);
-  // The server can't see the checkout you are in, so plain sc passes its remote along as --from.
-  // Every other command names its repository or task itself.
-  const from = args.length === 0 ? originHere() : null;
+  // The server can't see the checkout you are in, so its remote goes along as --from where the
+  // command needs it: plain sc, and sc pr show with a PR's number, which names a PR of that
+  // repository. A thread's name already names its repository.
+  const words = args.filter((arg) => arg !== "--json");
+  const numbered =
+    words[0] === "pr" &&
+    words[1] === "show" &&
+    /^#?\d+$/.test(words[2] ?? "") &&
+    words.length === 3;
+  const from = args.length === 0 || numbered ? originHere() : null;
   const machine = serverMachine(host);
   const there = machine.sc(from ? [...args, "--from", from] : args);
   const connect = () => runUpToDate(host, there, machine);

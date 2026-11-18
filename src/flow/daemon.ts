@@ -197,7 +197,8 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   };
   // Returns the request limited to the calling lead's own repository. A request about another
   // repository is refused, and the error tells the lead to ask you to open that one. sc ps and
-  // sc ls with no repository mean every repository, which for a lead is its own. Your requests and a
+  // sc ls with no repository mean every repository, which for a lead is its own, and sc pr show
+  // with a PR number means the lead's own repository, wherever it ran. Your requests and a
   // builder's are returned unchanged.
   const limitToOwnRepository = (request: DaemonRequest, caller: Caller): DaemonRequest => {
     const leadRepository = leadOfCaller(caller);
@@ -207,6 +208,10 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
     const own = `${leadRepository.owner}/${leadRepository.repo}`;
     if ((request.command === "ps" || request.command === "task ls") && !request.repo)
       return { ...request, repo: own };
+    if (request.command === "task show" && !request.repo) {
+      const { from, ...rest } = request;
+      return { ...rest, repo: own };
+    }
     if (!("repo" in request) || !request.repo || fullNameIs(findRepository(db, request.repo), own))
       return request;
     throw new Error(
@@ -366,8 +371,8 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         const { owner, repo } = repository;
         const refused = await mergePr(db, repository, { pr: request.pr, commit: request.commit });
         if (refused !== null) throw new Error(refused);
-        // The merge ends the PR's thread and takes its task off the list once a poll sees
-        // it. Polled now, so that happens before the list stops saying it is merging. A
+        // The merge ends the PR's thread and takes the PR off the screen's list once a poll
+        // sees it. Polled now, so that happens before the screen stops saying it is merging. A
         // poll that fails changes nothing about the merge, which is done.
         await (await polling.promise)(`${owner}/${repo}`).catch((error) =>
           console.log(errorText(error)),
@@ -410,7 +415,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         // poll, as nothing new is read from the tracker.
         const before = threadOn(db, request.repo, request.task);
         // A short title for a thread already at work, such as one started from GitHub, only
-        // names it for the list. Its builder goes on as it was, and nothing else changes.
+        // names it for the sidebar. Its builder goes on as it was, and nothing else changes.
         if (before && request.short && ["working", "waiting"].includes(before.status)) {
           record(db, before.folder, { short: request.short }, "given a short title");
           return { started: `Gave ${threadName(db, before)} the short title "${request.short}".` };

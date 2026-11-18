@@ -78,7 +78,7 @@ export function sandboxArgs(given: {
     programs: namedPrograms = [command[0]],
   } = given;
   // Builders and reviewers running test suites at once can load a shared machine past its
-  // CPUs. Started under nice, all they run yields to the list, the leads and the daemon.
+  // CPUs. Started under nice, all they run yields to the screen, the leads and the daemon.
   // Every process started inside keeps nice's priority. nice replaces itself with the
   // command, so the process tmux or the reviewer ends is still the sandbox's own.
   const niced = given.normalPriority ? [] : ["nice", "-n", "10"];

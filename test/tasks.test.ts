@@ -56,11 +56,12 @@ function run(code: string, ...args: string[]): string {
   return done.stdout.toString();
 }
 
-// Code that prints what each command and the list show of the saved database's threads: sc repo
-// ls, sc ps, sc ls and sc show, and each repository's rows in the list, and its tabs.
+// Code that prints what each command and the screen show of the saved database's threads: sc
+// repo ls, sc ps, sc ls and sc show, the sidebar, the lists and the tabs.
 const showAll = `import { openDb, moveToTasks } from ${JSON.stringify(source("db.ts"))};
 const list = await import(${JSON.stringify(source("flow/list.ts"))});
-const { listRows, repositoryTabs } = await import(${JSON.stringify(source("screen/rows.ts"))});
+const { listGroups, entryCounts } = await import(${JSON.stringify(source("screen/lists.ts"))});
+const { sidebarRows, repositoryTabs } = await import(${JSON.stringify(source("screen/rows.ts"))});
 const db = openDb();
 if (process.argv.includes("move")) moveToTasks(db);
 const now = Date.UTC(2026, 10, 10, 12, 0, 0);
@@ -76,10 +77,15 @@ const shown = {
       return list.showTask(db, { repo, task }).catch(String);
     }),
   ),
-  list: ["app", "notes"].map((repo) => {
-    const open = { owner: "simon", repo };
-    return { rows: listRows(db, open, [], now), tabs: repositoryTabs(db, open) };
+  screen: ["app", "notes"].map((repo) => {
+    const open = { owner: "simon", repo, lead: "lead-" + repo };
+    return {
+      sidebar: sidebarRows(db, [], () => 5, now, open),
+      lists: ["issues", "threads", "prs"].map((e) => listGroups(db, open, e, now)),
+      entries: entryCounts(db, open),
+    };
   }),
+  tabs: repositoryTabs(db, () => 5),
 };
 console.log(JSON.stringify(shown));`;
 
@@ -97,19 +103,15 @@ function tables(file: string): string[] {
   return rows.map((row) => String(Object.values(row ?? {})[0]));
 }
 
-test("after the move, every command and the list show the same threads under the same names", () => {
+test("after the move, every command and the screen show the same threads under the same names", () => {
   oldDatabase();
   // The saved database's app has GitHub as its forge, which shows its PRs.
   fakePlugin(home);
   // Before the new daemon moves it, sc shows the threads as they are.
-  // The release before showed a sidebar, lists and tabs, which the list replaced, so only what
-  // the commands show is compared with it. The list is compared before and after the move.
-  const { issues, show, prs, screen, tabs, ...saved } = shownBefore();
-  expect([screen, tabs]).not.toContain(undefined);
+  const { issues, show, prs, ...saved } = shownBefore();
   const before = JSON.parse(run(showAll));
-  const { ls, show: shown, list, ...same } = before;
+  const { ls, show: shown, ...same } = before;
   expect(same).toEqual(saved);
-  expect(list).toHaveLength(2);
   expect(tables(dbFile())).not.toContain("tasks");
   // After the move, it shows them just the same.
   expect(JSON.parse(run(showAll, "move"))).toEqual(before);
@@ -398,6 +400,6 @@ test("a thread's rounds, PR, review and updates written just before the move sho
   });
   db.close();
   // The lead's update still reaches the task as its reviewer gets it.
-  const shown = await runSkel(["show", "app-15", "--json"], env());
+  const shown = await runSkel(["issue", "show", "app-15", "--json"], env());
   expect(JSON.parse(shown.out).body).toContain("Use the system's theme.");
 }, 60_000);

@@ -169,11 +169,11 @@ export async function startLead(
 
 // Closes the tab of each repository whose lead you exited, such as with /exit, and ends its
 // session. A lead that crashed exits with another code and keeps its tab. The daemon looks at
-// its start and every second, so a lead that exited while no list was open, or while the
+// its start and every second, so a lead that exited while no screen was open, or while the
 // daemon was down, has its tab closed too. Only the lead ends: the repository, its threads and
 // its clone stay, and its conversation is kept for when you open it again. The tab is marked
-// closed before the session ends, so a list that finds the session gone also finds the tab
-// closed.
+// closed before the session ends, so a sidebar that finds the session gone also finds the tab
+// closed, and doesn't bring the lead back.
 export function closeExitedLeads(db: Database, sessions: string): void {
   for (const { owner, repo } of openedRepositories(db)) {
     const { name } = leadOf(db, owner, repo);

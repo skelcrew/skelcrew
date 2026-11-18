@@ -1,5 +1,5 @@
 // Updates: a release of Skelcrew installs the latest release over itself in the background, and the
-// list says so until Skelcrew runs on it. A build from a checkout never does: git pull updates
+// sidebar says so until Skelcrew runs on it. A build from a checkout never does: git pull updates
 // it.
 import { chmodSync, mkdirSync, readFileSync, renameSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -9,7 +9,7 @@ import { quietly } from "../run.ts";
 import { errorText } from "../say.ts";
 import { isRelease, release, releases, singleFile } from "../version.ts";
 
-// Where the daemon notes the release it installed, for the list's notice. It holds the
+// Where the daemon notes the release it installed, for the sidebar's notice. It holds the
 // release followed by a line end.
 const installedFile = () => join(dataDir(), "installed");
 
@@ -81,7 +81,7 @@ export async function installLatest(file: string, base: string): Promise<string 
         `the latest release won't start here, so it wasn't installed: ${started.said}`,
       );
     renameSync(staged, file);
-    // Noted only once it is in place, so the list never offers a restart into a release
+    // Noted only once it is in place, so the sidebar never offers a restart into a release
     // that isn't there.
     mkdirSync(dataDir(), { recursive: true });
     await Bun.write(installedFile(), `${version}\n`);
@@ -111,8 +111,8 @@ export function keepUpToDate(): void {
   setInterval(look, 60 * 60 * 1000);
 }
 
-// Returns the list's notice of a release installed in the background, or nothing when Skelcrew
-// already runs on it. Read each time the list looks, as the daemon can install one at any
+// Returns the sidebar's notice of a release installed in the background, or nothing when Skelcrew
+// already runs on it. Read each time the sidebar looks, as the daemon can install one at any
 // moment.
 export function updateNotice(): string {
   let text = "";

@@ -86,12 +86,12 @@ export const Thread = z.object({
   review_reset: z.number().nullable(),
   // Why the thread started needing you, until a note saying so is typed into the lead.
   noting: z.string().nullable(),
-  // The task's title and body when the thread started, for the list, which looks each second
+  // The task's title and body when the thread started, for the strip, which looks each second
   // and so can't ask the tracker, and for a task that has left Skelcrew's copy. With no task in
   // the tracker, they are the task itself. An old row can hold null.
   title: z.string().nullable(),
   body: z.string().nullable(),
-  // When the thread started, in milliseconds since 1970, for its running time in the list.
+  // When the thread started, in milliseconds since 1970, for its running time in the sidebar.
   // An old row can hold null.
   started: z.number().nullable(),
   // What the PR's CI says, without Skelcrew's own check, as last polled. Null with no CI, or
@@ -123,19 +123,19 @@ export const Thread = z.object({
   // can't move to another harness. Null before then, and in a row from before Skelcrew saved it,
   // when every builder ran on Claude Code.
   harness: HarnessName.nullable(),
-  // Two or three words the lead gave the thread, such as "Login redirect", which its row in the
-  // list shows in place of its title. Only for that row: the builder never sees it. Null until
+  // Two or three words the lead gave the thread, such as "Login redirect", which the sidebar's
+  // row shows in place of its title. Only for that row: the builder never sees it. Null until
   // the lead gives one, and in a row from before Skelcrew kept them.
   short: z.string().nullable(),
   // Whether Skelcrew assigned you the thread's issue, rather than you being assigned already, so
   // it takes you off only an issue it put you on.
   assigned: z.coerce.boolean(),
-  // When anything last went in the thread's log, in milliseconds since 1970. Null in a row from
-  // before Skelcrew kept it.
+  // When anything last went in the thread's log, in milliseconds since 1970, for the list of
+  // threads. Null in a row from before Skelcrew kept it.
   changed: z.number().nullable(),
   // The lead's messages to the builder, oldest first, with when each was typed in. They change
   // the task after the thread started, such as a new design you agreed to, so the reviewer and
-  // sc show get them with the task. Only the lead's count: a builder must never change
+  // sc issue show get them with the task. Only the lead's count: a builder must never change
   // what it is reviewed against. A row from before Skelcrew kept them holds null, read as none.
   updates: z
     .string()

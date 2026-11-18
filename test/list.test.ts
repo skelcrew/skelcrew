@@ -8,8 +8,8 @@ import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import { type Labels, startSession } from "../src/agents/sessions.ts";
-import { drawList } from "../src/screen/layout.ts";
-import type { Row } from "../src/screen/rows.ts";
+import { drawList } from "../src/list/layout.ts";
+import type { Row } from "../src/list/rows.ts";
 import { fakePlugin, itemSql, read, source, threadSql, until as wait } from "./harness.ts";
 
 // Longer than the waits below, so a test that fails says what it waited for.
@@ -71,7 +71,7 @@ afterEach(() => {
 // Returns app's rows as the list reads them, with `running` naming the sessions that run.
 function rows(running: string[] = []): Row[] {
   const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
-import { listRows } from ${JSON.stringify(source("screen/rows.ts"))};
+import { listRows } from ${JSON.stringify(source("list/rows.ts"))};
 console.log(JSON.stringify(listRows(openDb(), { owner: "simon", repo: "app" }, ${JSON.stringify(running)}, Date.now())));`;
   const run = Bun.spawnSync([process.execPath, "-e", code], { env: env(), stderr: "pipe" });
   if (!run.success) throw new Error(run.stderr.toString());
@@ -248,7 +248,7 @@ async function open(): Promise<void> {
   const script = join(home, "open.ts");
   writeFileSync(
     script,
-    `import { runList } from ${JSON.stringify(source("screen/list.ts"))};
+    `import { runList } from ${JSON.stringify(source("list/list.ts"))};
 await runList(${JSON.stringify(agents)}, "simon/app");
 await Bun.write(${JSON.stringify(join(home, "left"))}, "left");
 process.exit(0);`,
