@@ -393,7 +393,8 @@ export function install(from?: string): void {
       writeFileSync(setUpFile(), "");
     }
     if (!finished && (setUp || plugins)) console.log("\nSkelcrew is set up.");
-    else if (!setUp && !plugins)
+    // A machine set up before the mark takes it without a word, as plain sc runs this there once.
+    else if (finished && !setUp && !plugins)
       console.log("Nothing to install: this machine has everything your files ask for.");
   }
 }
