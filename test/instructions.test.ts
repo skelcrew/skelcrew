@@ -1,9 +1,10 @@
 // The builder's and lead's instructions, as each harness starts them. They never start
 // bubblewrap, so they run inside Skelcrew's sandbox too.
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { z } from "zod";
 import { HarnessName, harnessNamed } from "../src/agents/harness.ts";
 import instructions from "../src/defaults/roles/builder.md" with { type: "text" };
 import { builderInstructions } from "../src/flow/builder.ts";
@@ -20,10 +21,44 @@ afterEach(() => {
   rmSync(home, { recursive: true, force: true });
 });
 
+// Returns the instructions a harness's start left for its agent, from the file it points the
+// harness at: Claude Code's --append-system-prompt-file, or the profile Codex is started with.
+function toldIn(started: { argv: string[]; env: Record<string, string> }): string {
+  const { argv, env } = started;
+  const flag = argv.indexOf("--append-system-prompt-file");
+  if (flag > -1) return readFileSync(argv[flag + 1] ?? "", "utf8");
+  const profile = argv[argv.indexOf("-p") + 1];
+  if (!profile || !env.CODEX_HOME) throw new Error("the harness was given no instructions file");
+  const setting = readFileSync(join(env.CODEX_HOME, `${profile}.config.toml`), "utf8");
+  return z.object({ developer_instructions: z.string() }).parse(Bun.TOML.parse(setting))
+    .developer_instructions;
+}
+
+// tmux refuses a start command past about 16 KB, and Linux an argument past 128 KB, so
+// instructions of any size leave the command as long as it was.
+for (const name of HarnessName.options)
+  test(`on ${name}, long instructions reach the agent whole and leave its command short`, async () => {
+    const start = (system: string) =>
+      harnessNamed(name).start({
+        name: "app-12",
+        socket: join(home, "socket"),
+        thread: join(home, "app-12"),
+        system,
+        sessionId: crypto.randomUUID(),
+        prompt: "Add export",
+        env: { HOME: home, PATH: process.env.PATH ?? "" },
+      });
+    const long = `${"Be careful. ".repeat(20_000)}The end of the instructions.`;
+    const short = await start("Be careful.");
+    const started = await start(long);
+    expect(toldIn(started)).toBe(long);
+    expect(started.argv.join(" ").length).toBe(short.argv.join(" ").length);
+  });
+
 // The full suite runs once per commit, in CI or the reviewer, so a builder never runs it.
 for (const name of HarnessName.options)
   test(`a builder on ${name} runs only the tests related to its change, with lint and typecheck`, async () => {
-    const { argv } = await harnessNamed(name).start({
+    const started = await harnessNamed(name).start({
       name: "app-12",
       socket: join(home, "socket"),
       thread: join(home, "app-12"),
@@ -32,7 +67,7 @@ for (const name of HarnessName.options)
       prompt: "Add export",
       env: { HOME: home, PATH: process.env.PATH ?? "" },
     });
-    const told = argv.join("\n");
+    const told = toldIn(started);
     expect(told).toContain("Never run the repository's whole test suite");
     expect(told).toContain("CI or the reviewer runs it once for each commit");
     expect(told).toContain(

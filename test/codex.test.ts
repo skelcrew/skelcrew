@@ -80,7 +80,11 @@ function fakeCodex(): void {
   echo '{"models":[{"slug":"gpt-6.1-sol"},{"slug":"gpt-6-luna"}]}'; exit 0
 fi
 cd "$CODEX_HOME"
-# Its arguments last, as tests wait for them before reading the others.
+# Its arguments last, as tests wait for them before reading the others. The profile -p names,
+# which holds its developer instructions, goes in told, moved into place like its arguments.
+: > told.part
+for a; do [ "$prev" = -p ] && cat "$a.config.toml" > told.part; prev=$a; done
+mv told.part told
 env > env; echo "$OLDPWD" > pwd; printf '%s\\n' "$@" > args.part; mv args.part args
 if [ "$1" != resume ]; then
   mkdir -p sessions/2026/11/09
@@ -321,6 +325,20 @@ function setThread(sql: string): void {
 
 // bubblewrap can't start inside Skelcrew's own sandbox, so only there agents can't start.
 describe.skipIf(insideSandbox)("codex", () => {
+  // tmux refuses a start command past about 16 KB, so instructions that long once stopped
+  // agents from starting.
+  // Linux refuses a single argument past 128 KB, so these are longer than that.
+  test("a lead and a builder on Codex start with 200 KB of instructions, and each reads them to their end", async () => {
+    const long = `${"x".repeat(200 * 1024)} the end of the instructions`;
+    config(
+      `lead: { harness: codex }\nbuilder: { harness: codex, model: gpt-6.1-sol }\ntest: [${JSON.stringify(long)}]\n`,
+    );
+    await startApp12();
+    expect(read(join(builder(), "told"))).toContain(`runs with \`${long}\`.`);
+    await until(() => read(join(lead(), "args")) !== "");
+    expect(read(join(lead(), "told"))).toContain(`the test command was \`${long}\`.`);
+  });
+
   test("a builder starts on Codex in a folder of its own, with the task after -- and Skelcrew's settings", async () => {
     await startApp12();
     const given = args();
