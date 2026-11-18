@@ -14,7 +14,7 @@ import {
   stillRunning,
 } from "../agents/sessions.ts";
 import { repositoryCommands } from "../config.ts";
-import { finishUpgrade, moveToTasks, openDb, type Repository } from "../db.ts";
+import { finishUpgrade, moveToTasks, moveTurnEnded, openDb, type Repository } from "../db.ts";
 import { setupDone } from "../machine/setup.ts";
 import { keepUpToDate } from "../machine/update.ts";
 import { cloneDir, daemonCodeFile, daemonSocket, reviewSocket, threadSocket } from "../paths.ts";
@@ -159,14 +159,16 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   if (!setupDone()) throw new Error("the first run isn't done on this machine: run sc first");
   // The lock decides which of two daemons started together runs. The socket can't: both
   // could find one left by a daemon that was killed, and each remove the other's new one. It
-  // comes before the database, whose threads move onto tasks only while no other daemon, such as
-  // one of an earlier release, can still write to them.
+  // comes before the database, whose threads move onto tasks, and their turns that ended onto
+  // turn_ended, only while no other daemon, such as one of an earlier release, can still write
+  // to them.
   const path = daemonSocket();
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   if (!lock(`${path}.lock`))
     throw new Error("the daemon is already running. Run sc to attach to a lead.");
   const db = openDb();
   moveToTasks(db);
+  moveTurnEnded(db);
   finishUpgrade(db);
   // The checkout and commit this daemon's code came from, for sc status. Read once at start,
   // since a git pull afterwards doesn't change the code that runs.
@@ -440,9 +442,8 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         questionAsked(db, sessions, callingThread(caller).folder);
         return { asking: true };
       case "turn ended":
-        return {
-          asking: turnEnded(db, sessions, callingThread(caller).folder, request),
-        };
+        turnEnded(db, sessions, callingThread(caller).folder, request);
+        return { asking: false };
       case "turn failed":
         turnFailed(db, sessions, callingThread(caller), request.error, request.message);
         return { erred: true };

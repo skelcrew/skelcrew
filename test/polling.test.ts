@@ -799,7 +799,7 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
     const ended = { command: "turn ended", head, message: "It was a flaky run." };
     expect(await askOn(builderSocket, ended)).toEqual({ asking: false });
     await until(() => thread().needs_you === 1);
-    expect(thread()).toMatchObject({ status: "waiting", stalled: 0, ci_passed: 1 });
+    expect(thread()).toMatchObject({ status: "waiting", turn_ended: 0, ci_passed: 1 });
     expect(stage()).toBe("ready for review");
   }, 60_000);
 
@@ -836,7 +836,7 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
     const head = git(join(data(), "threads", "app-12"), "rev-parse", "HEAD");
     const ended = { command: "turn ended", head, message: "Thanks, glad it helps." };
     expect(await askOn(builder, ended)).toEqual({ asking: false });
-    expect(thread()).toMatchObject({ status: "waiting", stalled: 0 });
+    expect(thread()).toMatchObject({ status: "waiting", turn_ended: 0 });
     await until(() => read(join(data(), "claude", leadName, "typed")).includes("glad it helps"));
     pr({
       reviews: [skelReview],
@@ -844,7 +844,7 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
       checks: [approved],
     });
     await until(() => thread().needs_you === 1);
-    expect(thread()).toMatchObject({ status: "waiting", stalled: 0 });
+    expect(thread()).toMatchObject({ status: "waiting", turn_ended: 0 });
   }, 60_000);
 
   // GitHub can't merge a PR that conflicts, so the human must not be told it is ready.
@@ -946,7 +946,7 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
     // It is no longer ready to merge, as the builder hasn't got what is on its branch.
     expect(thread()).toMatchObject({ status: "working", needs_you: 0 });
     // The fake builder merged it from its origin, as it was told.
-    await until(() => existsSync(join(clone(), "STACKED")));
+    await untilMerged();
     submitRound2();
     await until(() => thread().submitting === null);
     expect(read(join(data(), "threads", "app-12.log"))).not.toContain("the round failed");
@@ -1099,7 +1099,7 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
     expect(onForge(merged)).toBe(true);
     expect(read(join(data(), "threads", "app-12.log"))).toContain("the round failed");
     // Merged, the next round keeps the merged PR's commit.
-    await until(() => existsSync(join(clone(), "STACKED")));
+    await untilMerged();
     expect(asAgent("builder", ["submit", "Round 3"], clone())).toBe("");
     await until(() => thread().submitting === null);
     expect(onForge(merged)).toBe(true);
@@ -1131,6 +1131,15 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
     git(clone(), "add", "-A");
     git(clone(), "commit", "-qm", "round 2");
     expect(asAgent("builder", ["submit", "Round 2"], clone())).toBe("");
+  }
+
+  // Waits until the fake builder's merge of its moved branch is committed. Its merged files show
+  // in the clone before git moves HEAD, and a commit made meanwhile would find HEAD locked.
+  async function untilMerged(): Promise<void> {
+    const merged = () =>
+      Bun.spawnSync(["git", "-C", clone(), "cat-file", "-e", "HEAD:STACKED"]).success &&
+      !existsSync(join(clone(), ".git", "index.lock"));
+    await until(merged);
   }
 
   // A new round is a new commit, so a conflict told of the old one no longer holds. The lead's
