@@ -217,27 +217,37 @@ export function readSettings<G extends Group>(
         repository,
       )
     : {};
-  // Your model belongs to your harness, so once your override names another harness for the
-  // repository, your model can't count there either, and isn't read.
-  const otherHarness = overrides.harness !== undefined && !yourHarnessIs(overrides.harness);
+  // Every role starts from your harness and model, and the layers above move it. Once your
+  // override names a harness, yours counts only for a role the override puts back on it, so a
+  // harness or model of yours that isn't valid stops nothing there, and counts as none.
   const decided = (k: Key) =>
-    decidedBy([overrides, agentsFiles, shared])(k) || (k === "model" && otherHarness);
+    decidedBy([overrides, agentsFiles, shared])(k) ||
+    (["harness", "model"].includes(k) && overrides.harness !== undefined);
   const fromYours = wanted.filter((k) => yourKeys.includes(k) && !decided(k));
-  return mergeSettings([overrides, agentsFiles, shared, readYourFile(fromYours)]);
+  const yours = readYourFile(fromYours);
+  if (overrides.harness !== undefined && wanted.includes("harness"))
+    Object.assign(yours, yourHarnessIfValid());
+  return mergeSettings([overrides, agentsFiles, shared, yours]);
 }
 
-// Returns whether your config's harness, or the built-in one when it names none, is `harness`.
-// A config whose harness can't be read isn't, and doesn't stop anything here: your override
-// decides the harness, and yours only says whether your model goes along.
-function yourHarnessIs(harness: HarnessName): boolean {
+// Returns your config's harness and model, each only when it is valid, and your model only
+// along with a valid harness or none, as a model belongs to its harness. Nothing is thrown, as
+// this is read only where your override names the harness, and a bad one of yours can't stop it.
+function yourHarnessIfValid(): File {
   let data: unknown;
   try {
     data = yourConfig();
   } catch {
-    return false;
+    return {};
   }
-  const yours = HarnessName.optional().safeParse(isMapping(data) ? data.harness : undefined);
-  return yours.success && (yours.data ?? builtInDefaults().harness) === harness;
+  if (!isMapping(data)) return {};
+  const harness = HarnessName.optional().safeParse(data.harness);
+  if (!harness.success) return {};
+  const model = Model.optional().safeParse(data.model);
+  return {
+    ...(harness.data && { harness: harness.data }),
+    ...(model.success && model.data && { model: model.data }),
+  };
 }
 
 // Returns the harness and model a repository's role file names, or nothing when it names neither
@@ -357,13 +367,9 @@ function mergeSettings(layers: File[]): Settings {
   // The first value any layer sets for `get`.
   const first = <T>(get: (layer: File) => T | undefined | null) =>
     layers.map(get).find((value) => value !== undefined && value !== null);
-  // The harness and model every role gets unless a layer names its own: your override's for the
-  // repository when it names them, or else yours.
+  // Your harness and model, which every role starts from before the layers above move it.
   const yours = layers.at(-1) ?? {};
-  const top = {
-    harness: first((l) => l.harness) ?? defaults.harness,
-    model: first((l) => l.model),
-  };
+  const top = { harness: yours.harness ?? defaults.harness, model: yours.model };
   // Each layer's say on one role, merged. In each layer, roles: goes over the old lead:,
   // builder: and reviewer: lines, which go over the layer's own harness and model for every
   // role. That last one counts as a layer's say on the role, so a harness your override under

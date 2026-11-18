@@ -330,3 +330,21 @@ test("your model goes along when your repos: override names your own harness", (
   files("harness: claude\nmodel: sonnet\nrepos: { simon/app: { harness: codex } }\n", null);
   expect(read(["builder"]).settings?.builder).toEqual({ harness: "codex" });
 });
+
+test("a role your repos: override puts back on your harness gets your model again", () => {
+  files(
+    "harness: claude\nmodel: opus\nrepos: { simon/app: { harness: codex, roles: { builder: { harness: claude } } } }\n",
+    null,
+  );
+  const settings = read(["builder", "lead"]).settings;
+  expect([settings?.builder, settings?.lead]).toEqual([
+    { harness: "claude", model: "opus" },
+    { harness: "codex" },
+  ]);
+  // A model of yours that isn't valid counts as none there, and stops nothing.
+  files(
+    "harness: claude\nmodel: [1]\nrepos: { simon/app: { harness: codex, roles: { builder: { harness: claude } } } }\n",
+    null,
+  );
+  expect(read(["builder"]).settings?.builder).toEqual({ harness: "claude" });
+});
