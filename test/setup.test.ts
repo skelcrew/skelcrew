@@ -204,7 +204,7 @@ test("installs the daemon as a systemd user service with lingering, once", async
   expect(first.code).toBe(0);
   const skelBin = join(checkout, "bin", "sc");
   const written = readFileSync(unit(), "utf8");
-  expect(written).toContain(`ExecStart="${skelBin}" serve`);
+  expect(written).toContain(`ExecStart="${skelBin}" up`);
   expect(written).toContain("Restart=on-failure");
   // systemd would otherwise end the tmux server, and every agent, with the daemon.
   expect(written).toContain("KillMode=process");
@@ -229,6 +229,49 @@ test("installs the service on a machine set up before Skelcrew had one", async (
   expect(existsSync(unit())).toBe(true);
   expect(calls()).toContain("systemctl --user enable --now skelcrew");
   expect(run.out).not.toContain("Sign in to Claude");
+});
+
+test("sc up --bg installs the service, starts the daemon and returns, with no lead opened", async () => {
+  mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
+  writeFileSync(config(), "harness: claude\n");
+  writeFileSync(token(), "sk-ant-oat01-good\n");
+  const first = await skel("", bin, main(), home, {}, ["up", "--bg"]);
+  expect(first.err).toBe("");
+  expect(first.code).toBe(0);
+  expect(readFileSync(unit(), "utf8")).toContain(" up\n");
+  expect(calls()).toBe(
+    "systemctl --user daemon-reload\nsystemctl --user enable --now skelcrew\nloginctl enable-linger\n",
+  );
+  expect(first.out).toContain("Skelcrew runs in the background.");
+
+  // Once installed, it only starts a daemon that doesn't answer.
+  rmSync(join(home, "started"));
+  writeFileSync(join(home, "calls"), "");
+  const again = await skel("", bin, main(), home, {}, ["up", "--bg"]);
+  expect(again.code).toBe(0);
+  expect(calls()).toBe("systemctl --user start skelcrew\n");
+  writeFileSync(join(home, "calls"), "");
+  expect((await skel("", bin, main(), home, {}, ["up", "--bg"])).code).toBe(0);
+  expect(calls()).toBe("");
+});
+
+test("sc up --bg refuses on a machine that isn't set up, and installs nothing", async () => {
+  const run = await skel("", bin, main(), home, {}, ["up", "--bg"]);
+  expect(run.code).toBe(1);
+  expect(run.err).toContain("run sc");
+  expect(existsSync(unit())).toBe(false);
+  expect(calls()).toBe("");
+});
+
+// A machine set up before sc up has a service that runs sc serve, which must keep working
+// until plain sc rewrites it.
+test("plain sc moves a service that runs sc serve onto sc up", async () => {
+  await skel("1\nsk-ant-oat01-good\n");
+  writeFileSync(unit(), readFileSync(unit(), "utf8").replace('" up\n', '" serve\n'));
+  writeFileSync(join(home, "calls"), "");
+  expect((await skel()).code).toBe(0);
+  expect(readFileSync(unit(), "utf8")).toContain('" up\n');
+  expect(calls()).toBe("systemctl --user daemon-reload\ndaemon lead\nscreen on lead\n");
 });
 
 test("installs no service when systemctl fails, so the next sc tries again", async () => {
@@ -351,7 +394,7 @@ test("on a Mac, installs the daemon as a launchd agent, with no systemd", async 
   const text = readFileSync(plist(), "utf8");
   expect(text).toContain("<string>dev.skelcrew.daemon</string>");
   expect(text).toContain(
-    `<string>${join(checkout, "bin", "sc")}</string>\n    <string>serve</string>`,
+    `<string>${join(checkout, "bin", "sc")}</string>\n    <string>up</string>`,
   );
   expect(text).toContain("<key>AbandonProcessGroup</key>\n  <true/>");
   expect(text).toContain(`<string>${join(home, "Library", "Logs", "skelcrew.log")}</string>`);
@@ -362,6 +405,8 @@ test("says nothing about a laptop sleeping, on a Mac or on Linux", async () => {
   const onLinux = await skel("1\nsk-ant-oat01-good\n");
   expect(onLinux.out).toContain("Skelcrew is set up.\n");
   expect(onLinux.out).not.toContain("sleeps");
+  // The Mac's is a first run too.
+  rmSync(join(home, ".config"), { recursive: true });
   asMac();
   const onMac = await skelOnMac("1\nsk-ant-oat01-good\n");
   expect(onMac.out).toContain("Skelcrew is set up.\n");

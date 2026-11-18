@@ -13,7 +13,7 @@ import { errorText } from "../say.ts";
 import { readSettings } from "../settings.ts";
 import { originHere, parseRemote } from "./origin.ts";
 import { promptSecret } from "./secret.ts";
-import { installService, loginPath, serviceFile } from "./service.ts";
+import { installService, loginPath } from "./service.ts";
 
 // The environment a step looks programs up in and runs them with.
 type Env = Record<string, string | undefined>;
@@ -310,14 +310,13 @@ function agentsLoggedIn(harness: HarnessName): boolean {
   return existsSync(join(codexHome(), "auth.json"));
 }
 
-// Reports whether setup finished: your harness choice is saved, the agents have their login,
-// and the daemon's service is installed. Setup installs the service last, so with it every
-// step ran. Plain sc checks this each time it starts, so it looks only at files.
+// Reports whether setup finished: your harness choice is saved, and agents and reviews have
+// their logins. The daemon's service isn't part of it, as you can run the daemon yourself with
+// sc up. Plain sc checks this each time it starts, so it looks only at files.
 export function setupDone(): boolean {
-  const service = existsSync(serviceFile());
   const harness = readSettings(["yourHarness"]).yourHarness;
   if (harness === undefined) return false;
-  return agentsLoggedIn(harness) && service;
+  return agentsLoggedIn(harness) && agentsLoggedIn(savedReviewerHarness() ?? harness);
 }
 
 // Completes unfinished machine setup and keeps the daemon service current before attaching

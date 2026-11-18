@@ -83,7 +83,7 @@ function unitText(skel: string, given: string): string {
 Description=Skelcrew daemon
 
 [Service]
-ExecStart="${unitValue(skel)}" serve
+ExecStart="${unitValue(skel)}" up
 Environment="PATH=${path}"
 Restart=on-failure
 KillMode=process

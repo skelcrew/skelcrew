@@ -14,7 +14,7 @@ export function pluginsWithJob(db: Database, job: "tracker" | "forge"): string[]
   return installedPlugins(db)
     .filter((plugin) => {
       try {
-        return readManifest(plugin.folder).jobs.includes(job);
+        return readManifest(plugin.folder).provides.includes(job);
       } catch {
         return false;
       }

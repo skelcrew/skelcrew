@@ -210,10 +210,10 @@ A repository can say how to set up and test it, and which harness and model each
 
 ## The daemon
 
-One daemon per machine, run by the systemd user service the first run installed. `sc serve` runs it in the foreground; the folder it is started in makes no difference.
+One daemon per machine, run by the systemd user service the first run installed, or on a Mac its launchd agent. `sc up` runs it in the foreground, in your terminal, logging as it goes, until Ctrl-C stops it. `sc up --bg` installs the service, or brings its file up to date, starts the daemon there if none answers, and returns. The folder either is run in makes no difference. The service runs `sc up`. One installed by an earlier release runs `sc serve`, which still works and is left out of the help, until the next plain `sc` rewrites the service's file. The daemon reads the new file at its next start.
 
-1. If a daemon is already running, `sc serve` says so and exits, pointing you to `sc`.
-2. If the first run isn't done, it exits and tells you to run `sc`. It never asks questions, since systemd has no one to answer them.
+1. If a daemon is already running, `sc up` says so and exits, pointing you to `sc`.
+2. If the first run isn't done, it exits and tells you to run `sc`, and so does `sc up --bg`, before it installs anything. The first run is done once your harness is chosen and agents and reviews have their logins. The daemon never asks questions, since systemd has no one to answer them.
 3. It opens the database, starts Skelcrew's tmux server, and reconnects to the lead of each repository you have opened, and every live thread. A session that is gone is brought back on its harness, with its conversation.
 4. It opens its socket at `$XDG_RUNTIME_DIR/skelcrew.sock` for the CLI, and one socket per agent, mounted into that agent's sandbox, so Skelcrew knows which thread is calling.
 5. It asks each repository's tracker and forge what changed, and logs to stdout, which systemd sends to the journal.
@@ -289,16 +289,16 @@ Without a forge, only the reviews and the end of the branch happen, as the flow 
 
 A plugin connects Skelcrew to one outside tool. It lives in a git repository of its own, with a `skelcrew-plugin.yaml` at its root, and you install it with `sc plugin install`. GitHub is a plugin, `skelcrew/skelcrew-github`, which `sc` offers in a checkout of a GitHub repository. Skelcrew's flow holds nothing of it: it knows what a plugin does, never which plugin does it.
 
-**What a plugin does.** A plugin does one or more of four jobs. Each job has its own commands, and is used at its own time:
+**What a plugin does.** A plugin is one of two kinds, and says in its manifest what it provides of that kind. An I/O plugin is where work comes from and where it goes, and provides one or more of tracker, forge and chat. A runtime plugin is about where agents run, and provides machine. Each has its own commands, and is used at its own time:
 
-| Job | What it is | Commands | Used by |
+| Provides | What it is | Commands | Used by |
 | --- | --- | --- | --- |
 | Tracker | Where tasks come from, such as GitHub issues or Linear. It says what changed in a repository's tasks, and creates one. | `call` | The daemon |
 | Forge | Where code goes, such as GitHub or GitLab. It claims repositories, lends git its login to push, opens PRs, posts reviews, sets the `skelcrew/check` check, and says what changed in a repository's PRs. | `call`, `git_credentials` | The daemon |
 | Chat | Where you hear that a thread needs you, and talk to a lead, such as Slack, once Skelcrew has teams. | None in this version | |
 | Machine | Where Skelcrew runs, such as a Sprite. It creates a machine, runs commands on it and copies files to it. | `add`, `exec`, `push` | `sc remote add` and `sc --remote`, on your laptop |
 
-A plugin can do several: GitHub is a tracker and a forge. No chat plugin comes in this version, so chat has no commands yet: they come with the first chat plugin. A job grows only when a plugin needs it. Harnesses are never plugins: each stays built into Skelcrew, one module per harness, because that module draws the sandbox boundary around its agents.
+A plugin can provide several of its kind: GitHub is a tracker and a forge. No chat plugin comes in this version, so chat has no commands yet: they come with the first chat plugin. What a plugin can provide grows only when a plugin needs it. Harnesses are never plugins: each stays built into Skelcrew, one module per harness, because that module draws the sandbox boundary around its agents.
 
 **A repository's tracker and forge.** Each repository has at most one forge and one tracker, and works with neither, as the flow says. Its forge is found on its own: the plugin that claims its remote, if one does. Its tracker is its forge, when the forge can be a tracker, as GitHub can, so a repository on GitHub plans in its issues with nothing to set up. Its committed `skelcrew.yaml` can name another, such as `tracker: linear`, so a repository on GitHub can plan in Linear. Or it can say `tracker: none`, so the repository works from git alone, and its threads are named like `app-t1`. It is a word, since a bare `tracker:` reads in YAML as no line at all, which would give the forge. Which team or project holds the repository's tasks stays in the tracker's own settings, as its setup asks, such as Linear's team for each repository. When `skelcrew.yaml` names a tracker that isn't installed, the repository has no tracker, and `sc repo ls` says which plugin to install. It doesn't fall back to its forge, since its tasks are planned elsewhere. A thread keeps the task it started on when the repository's tracker changes. Skelcrew never installs anything because of `skelcrew.yaml`.
 
@@ -309,16 +309,17 @@ name: github
 version: 0.1.0          # the same as the tag it is installed from, v0.1.0
 skelcrew: 0.5.0            # the oldest Skelcrew release it works with
 about: Tasks from GitHub issues, and PRs on GitHub, as Skelcrew's GitHub App
-jobs: [tracker, forge]
+kind: io                # or runtime
+provides: [tracker, forge]
 build: [[bun, install, --production]]
 setup: [bun, setup.ts]
 call: [bun, call.ts]
 git_credentials: [bun, credentials.ts]
 ```
 
-Each command is a list of words, run in the plugin's folder and never through a shell. `build` and `setup` are optional, and each job needs the commands the table gives it. `build` runs once, at install. `setup` runs in your terminal, at install, and asks for whatever the plugin needs, such as a token. A command whose first word is `bun` runs on the Bun inside Skelcrew, so a plugin written for Bun needs nothing else installed. Anything else it needs, you install yourself, as its README says.
+Each command is a list of words, run in the plugin's folder and never through a shell. `build` and `setup` are optional, and each thing a plugin provides needs the commands the table gives it. Everything in `provides` must be of the plugin's `kind`. A manifest written before kinds has `jobs:` in place of `kind` and `provides`, such as `jobs: [tracker, forge]`, and is still read: tracker, forge and chat make it I/O, and machine makes it runtime. A manifest with both shapes is refused. `build` runs once, at install. `setup` runs in your terminal, at install, and asks for whatever the plugin needs, such as a token. A command whose first word is `bun` runs on the Bun inside Skelcrew, so a plugin written for Bun needs nothing else installed. Anything else it needs, you install yourself, as its README says.
 
-**Installing.** `sc plugin install <owner/repo>` clones the repository's newest version tag from GitHub into `~/.local/share/skelcrew/plugins/<name>/<version>/`. It refuses a plugin that needs a newer Skelcrew, and one named `none`, which `tracker: none` keeps for no tracker. It says in one line that the plugin runs as you, outside Skelcrew's sandbox, and asks before going on, with yes as the default: `[Y/n]`. Then it runs `build` and `setup`. `sc plugin update [<name>]` moves one plugin, or all, to its newest tag the same way. `sc plugin setup <name>` runs an installed plugin's `setup` again in your terminal, as install does, such as to sign in again when its sign-in has lapsed, without fetching or building it again. `sc plugin rm <name>` removes its folders, with its settings and tokens. It refuses for the tracker or forge of a repository Skelcrew has. `sc plugin ls` lists what is installed, with each plugin's version and jobs, such as `github 0.1.0 tracker, forge`.
+**Installing.** `sc plugin install <owner/repo>` clones the repository's newest version tag from GitHub into `~/.local/share/skelcrew/plugins/<name>/<version>/`. It refuses a plugin that needs a newer Skelcrew, and one named `none`, which `tracker: none` keeps for no tracker. It says in one line that the plugin runs as you, outside Skelcrew's sandbox, and asks before going on, with yes as the default: `[Y/n]`. Then it runs `build` and `setup`. `sc plugin update [<name>]` moves one plugin, or all, to its newest tag the same way. `sc plugin setup <name>` runs an installed plugin's `setup` again in your terminal, as install does, such as to sign in again when its sign-in has lapsed, without fetching or building it again. `sc plugin rm <name>` removes its folders, with its settings and tokens. It refuses for the tracker or forge of a repository Skelcrew has. `sc plugin ls` lists what is installed, with each plugin's version, kind and what it provides, such as `github 0.1.0 io: tracker, forge`.
 
 For a plugin you are writing, `sc plugin install <path>`, such as `./skelcrew-linear`, uses that folder where it is, with no tag, and warns and asks as any install does. `sc plugin update <name>` then runs its `build` again, so your edits count. `sc plugin rm <name>` removes its settings and tokens, and never your folder. A plugin belongs to the machine the daemon runs on, so for a server you run `sc --remote simon@workbox plugin install skelcrew/skelcrew-github`. A machine plugin is the one exception: it belongs on your laptop, where you run `sc remote add` and `sc --remote`.
 
@@ -386,7 +387,8 @@ For you, and for the lead:
 | `sc init` | Run in a checkout: writes a starter `skelcrew.yaml` there, which you commit and push, and adds the repository. Only you can run it. |
 | `sc --remote <host> [command]` | Runs any `sc` command on the server, over `ssh -t`. Keeps Skelcrew there up to date with your checkout, after asking. On a machine that isn't set up, asks whether to set it up first. |
 | `sc remote add <host>` | Sets up a server. Runs the first run there and prints the `sc --remote` command that connects. Run it on your laptop. |
-| `sc serve` | Runs the daemon in the foreground, for systemd or launchd. One per machine. |
+| `sc up` | Runs the daemon in the foreground, with its log, until Ctrl-C. One per machine. Agents keep running when it stops. |
+| `sc up --bg` | Runs the daemon as the background service, under systemd or launchd, and returns. |
 | `sc repo add [<path> \| <owner/repo>]` | Adds a repository: the checkout at the path, the one named, or the checkout you are in. Asks whether you trust it when it needs to. Only you can run it. |
 | `sc repo ls` | Lists the repositories Skelcrew works on, with their short names, trackers and forges, and a tracker `skelcrew.yaml` names that isn't installed. `--json` for tools. |
 | `sc repo rm <name>` | Removes Skelcrew's clone of a repository. It refuses while the repository has live threads, and names them. Only you can run it: the lead never needs to, and asks you instead. |
@@ -395,7 +397,7 @@ For you, and for the lead:
 | `sc plugin update [<name>]` | Moves a plugin, or all of them, to its newest tag. One from a folder is built again from it. Only you can run it. |
 | `sc plugin setup <name>` | Runs an installed plugin's setup again, such as to sign in again. Only you can run it. |
 | `sc plugin rm <name>` | Removes a plugin, with its settings and tokens. A folder you installed from stays. Only you can run it. |
-| `sc plugin ls` | Lists the plugins installed, with their versions and jobs: tracker, forge, chat or machine. Only you can run it. |
+| `sc plugin ls` | Lists the plugins installed, with their versions, their kind, `io` or `runtime`, and what each provides: tracker, forge, chat or machine. Only you can run it. |
 | `sc ls [<repo>] [--all]` | Tasks, from Skelcrew's database and its copy of the tracker: each task with a thread, newest first, then each open issue with none, newest first. Each row has the task's name, its short title or its title, and what is happening on it, such as `waiting · #31 · CI failed · changes r3`. A task whose thread is done shows only with `--all`, unless its issue is still open, as after `sc rm`. `--json` for tools, with each task's open `issue`, its thread's `status`, `needsYou` and `queued`, and its `pr`, `checks` and `review` as `sc ps` gives them. |
 | `sc show <task>` | One task: its title, issue with its link, threads with their status, PR with its state and branch, CI and each check, where Skelcrew's review stands and the PR's link. Then its description, which is all its builder sees, the PR's latest review with its text, the PR's description, and the end of each failed check's log, as the forge plugin's `log` gives it, labelled as from the forge. A task with a thread that isn't done or failed is shown as its reviewer gets it, with the lead's messages to the builder after the description. A task whose issue closed is shown from what its thread saved. It reads Skelcrew's copy, and text from the tracker or forge has its control characters removed. The lead reads tasks and PRs here, never through the tracker's or forge's API, which it has no login for. `--json` for tools. |
 | `sc issue ls [<repo>]` | The same as `sc ls`, as a short name. |

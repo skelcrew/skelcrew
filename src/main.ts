@@ -16,6 +16,7 @@ import { versionLine } from "./version.ts";
 // refused because a prompt injection could trick an agent into it.
 const agentRefusals: Record<string, string> = {
   "": "attaching to the lead",
+  up: "running the daemon",
   serve: "running the daemon",
   "repo add": "adding a repository",
   "repo rm": "removing a repository",
@@ -88,7 +89,7 @@ function bodyFor(command: string, body: string): string {
 function usage(command?: string): never {
   // The commands that have words after them, so a mistake there is in the arguments.
   const known = [
-    "serve",
+    "up",
     "init",
     "repo",
     "ps",
@@ -153,7 +154,7 @@ async function leadCommand(from?: string): Promise<void> {
 }
 
 // Runs sc first-run, which sets up this machine, sc take-setup, which takes the setup your laptop
-// sent, or sc serve, which runs the daemon.
+// sent, or sc up, which runs the daemon: in your terminal, or with --bg as the service.
 async function machineCommand(args: string[]): Promise<void> {
   const [command] = args;
   // Run by sc --remote and sc remote add from your laptop, not by people, so usage leaves it out.
@@ -163,14 +164,27 @@ async function machineCommand(args: string[]): Promise<void> {
     return;
   }
   const { serve } = await import("./flow/daemon.ts");
-  const { firstRun } = await import("./machine/setup.ts");
+  const { firstRun, setupDone } = await import("./machine/setup.ts");
   // Run by sc remote add on the machine it sets up, not by people, so usage leaves it out.
   if (command === "first-run" && args.length === 1) {
     firstRun();
     return;
   }
-  if (command === "serve" && args.length === 1) {
+  // sc serve is what services installed by an older Skelcrew run, until plain sc rewrites them,
+  // so it stays, left out of usage.
+  if ((command === "up" || command === "serve") && args.length === 1) {
     await serve("skelcrew");
+    return;
+  }
+  // The service is installed, or brought up to date, then started if no daemon answers. Agents
+  // keep running either way, as they live in their sessions.
+  if (command === "up" && args[1] === "--bg" && args.length === 2) {
+    if (!setupDone()) throw new Error("this machine isn't set up yet: run sc first");
+    const { installService } = await import("./machine/service.ts");
+    const { ensureDaemon } = await import("./attach.ts");
+    installService();
+    await ensureDaemon();
+    console.log("Skelcrew runs in the background. Run sc to open the lead.");
     return;
   }
   usage(command);
@@ -637,6 +651,7 @@ async function runCommand(args: string[]): Promise<void> {
   switch (first) {
     case "first-run":
     case "take-setup":
+    case "up":
     case "serve":
       return machineCommand(words);
     case "sidebar":

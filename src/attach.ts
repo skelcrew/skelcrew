@@ -71,8 +71,9 @@ export async function restartStaleDaemon(): Promise<void> {
 }
 
 // Makes sure the daemon runs this Skelcrew's code before you attach to an agent. A daemon on
-// another release or commit is restarted, and one that doesn't answer is started.
-async function ensureDaemon(): Promise<void> {
+// another release or commit is restarted, and one that doesn't answer is started. sc up --bg
+// uses it too, to leave the daemon running.
+export async function ensureDaemon(): Promise<void> {
   await restartStaleDaemon();
   if (await daemonRuns()) return;
   const log = startDaemon();
