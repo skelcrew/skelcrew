@@ -5,7 +5,7 @@ import type { Database } from "bun:sqlite";
 import { z } from "zod";
 import { type HarnessName, harnessNamed } from "../agents/harness.ts";
 import { repositoryCommands, reviewLimit, threadConfig } from "../config.ts";
-import { cloneDir } from "../paths.ts";
+import { cloneDir, reviewSocket } from "../paths.ts";
 import { failedLog, forgeOf, openPr, postReview, setStatus } from "../plugins/ask.ts";
 import { quietly } from "../run.ts";
 import { errorText } from "../say.ts";
@@ -21,9 +21,8 @@ import {
   whoRunsTheSuite,
 } from "./decide.ts";
 import { fetchInto, pushCommit } from "./git.ts";
-import { noteForLead, typeLeadNotes } from "./lead.ts";
 import { endLimit, limitOn, reachLimit, tellOfLimit, waitUntil } from "./limits.ts";
-import { dropOldEvents, queueMessage } from "./messages.ts";
+import { dropOldEvents, noteForLead, queueMessage, typeLeadNotes } from "./messages.ts";
 import { Queue } from "./queue.ts";
 import { type Limited, type Review, review } from "./reviewer.ts";
 import { cloneOf, readThread, record, repositoryOf, type Thread, threadName } from "./thread.ts";
@@ -87,12 +86,12 @@ async function push(
       });
     throw new Error(refused);
   }
-  // The base branch, current, in a ref of the thread's own, for the review to see which files
-  // the change touches. Skelcrew's clone holds only the default branch otherwise. The poll
-  // fetches the same ref. A base the forge won't give fails no push: the review then can't
-  // tell the change is docs only, and the tests run.
+  // The PR's base branch, current, in a ref of the thread's own, for the review to see which
+  // files the change touches. Skelcrew's clone holds only the default branch otherwise. The
+  // review fetches it again when its turn comes. A base the forge won't give fails no push: the
+  // review then can't tell the change is docs only, and the tests run.
   const bases = `refs/skelcrew/bases/${thread.folder}`;
-  await fetchInto(db, repository, skelcrewClone, baseOf(thread), bases).catch(() => {});
+  await fetchInto(db, repository, skelcrewClone, prBase(db, thread), bases).catch(() => {});
   if (forgeOf(db, repository) === null) {
     record(db, folder, {}, `pushed ${sha} to ${thread.branch}`);
     return sha;
@@ -122,6 +121,16 @@ const checkWait = z.coerce
   .min(0)
   .catch(40_000)
   .parse(process.env.SKELCREW_CHECK_WAIT_MS ?? 40_000);
+
+// How long a review waits for CI's first check on its commit, when CI shows on another PR or
+// the commit has workflows. A forge shows a check within seconds of a push, and Skelcrew's copy
+// has it by the next poll, 30 seconds later. Tests of a review that waits it out set
+// SKELCREW_CI_WAIT_MS, so they don't pay two minutes each.
+const ciWait = z.coerce
+  .number()
+  .min(0)
+  .catch(2 * 60_000)
+  .parse(process.env.SKELCREW_CI_WAIT_MS ?? 2 * 60_000);
 
 // The repositories, as owner/repo, where a review waited the whole time for a first check and
 // no PR showed one: they have no CI that runs on PRs, such as a workflow that runs only on a
@@ -214,24 +223,24 @@ async function reviewRound(
   const setsUpCi = listed.success && listed.stdout.toString().trim() !== "";
   // A change to docs and Markdown alone is tested by no one, as CI skips it and no code
   // changed, so its review waits for no CI. The files are those changed since the base branch,
-  // which the push fetched into the thread's own ref in Skelcrew's clone. Without rename
-  // detection, a file moved from code into docs shows both names, so the code it removes
-  // counts. Names end in a NUL, as git otherwise quotes one with letters outside ASCII, such
-  // as résumé.md. A base or diff Skelcrew can't read, as in a clone not set up yet, lists
-  // none, and the tests run.
-  const diff = ["git", "-C", skelcrewClone, "diff", "--name-only", "-z"];
-  const changed = Bun.spawnSync([...diff, "--no-renames", `${bases}...${sha}`], {
-    stdout: "pipe",
-    stderr: "ignore",
-  });
-  const docsOnly =
-    changed.success && onlyDocs(changed.stdout.toString().split("\0").filter(Boolean));
+  // which the push fetched into the thread's own ref in Skelcrew's clone. The review asks
+  // again once it fetched the base anew, as the PR may have moved to another base meanwhile.
+  const docsOnly = changesOnlyDocs(skelcrewClone, bases, sha);
   const repositoryName = `${thread.owner}/${thread.repo}`;
   const suite = (waited: number) => {
     const prs = openPrs(db, thread.owner, thread.repo);
     const own = pr === null ? null : prOf(db, thread.owner, thread.repo, pr);
     const inVain = waitedInVain.has(repositoryName);
-    const given = { own, commit: sha, prs, setsUpCi, waitedInVain: inVain, waited, checkWait };
+    const given = {
+      own,
+      commit: sha,
+      prs,
+      setsUpCi,
+      waitedInVain: inVain,
+      waited,
+      checkWait,
+      ciWait,
+    };
     return whoRunsTheSuite(given);
   };
   if (pr !== null && !docsOnly && suite(0) === "wait") {
@@ -253,7 +262,10 @@ async function reviewRound(
     const prs = openPrs(db, thread.owner, thread.repo);
     const noCi = { own: null, commit: sha, prs, setsUpCi: false, waitedInVain: true };
 
-    if (who === "reviewer" && whoRunsTheSuite({ ...noCi, waited: 0, checkWait }) === "reviewer")
+    if (
+      who === "reviewer" &&
+      whoRunsTheSuite({ ...noCi, waited: 0, checkWait, ciWait }) === "reviewer"
+    )
       waitedInVain.add(repositoryName);
   }
   // A builder whose PR fell behind or conflicts with the base branch merges it and submits
@@ -270,11 +282,27 @@ async function reviewRound(
   const merged = approved !== null && onlyMergedBase(skelcrewClone, approved, sha, bases);
   if (approved !== null && merged && pr !== null && suite(Number.POSITIVE_INFINITY) === "ci") {
     const waiting = { reviewing: sha, submitting: null, reviewer, queued: null };
-    record(db, folder, waiting, `only merged ${baseOf(thread)}: waiting for CI to pass on ${sha}`);
+    record(
+      db,
+      folder,
+      waiting,
+      `only merged ${prBase(db, thread)}: waiting for CI to pass on ${sha}`,
+    );
     const ci = await ciEnds(db, thread, pr, sha, AbortSignal.any([signal, checkFailed.signal]));
     if (signal.aborted) return;
-    if (ci === "passing") {
-      const body = `Approval kept: this commit only merges ${baseOf(thread)} into ${approved}, which Skelcrew's reviewer approved, and changes nothing else in the PR. Every CI check on it passed.`;
+    // The PR may have moved to another base while CI ran, against which the commit can do more
+    // than merge it. So the approval is kept only if it still only merges the PR's base as the
+    // forge has it now. A base that can't be fetched gets a review, which says why it failed.
+    const base = prBase(db, thread);
+    const still =
+      ci === "passing" &&
+      (await fetchInto(db, repository, skelcrewClone, base, bases).then(
+        () => onlyMergedBase(skelcrewClone, approved, sha, bases),
+        () => false,
+      ));
+    if (signal.aborted) return;
+    if (still) {
+      const body = `Approval kept: this commit only merges ${base} into ${approved}, which Skelcrew's reviewer approved, and changes nothing else in the PR. Every CI check on it passed.`;
       const verdict: Review = { verdict: "approve", body };
       const kept = { verdict, by: thread.reviewed_by ?? reviewer, kept: approved };
       await pending;
@@ -282,6 +310,8 @@ async function reviewRound(
       return;
     }
     if (ci === "failing") record(db, folder, {}, `CI failed on ${sha}, so it is reviewed`);
+    else if (ci === "passing")
+      record(db, folder, {}, `${sha} does more than merge ${base}, so it is reviewed`);
   }
   // A review that has to wait is saved as queued, with when it joined, so the thread says so,
   // and a restart puts it back in the same place. One that starts at once is saved as
@@ -314,14 +344,36 @@ async function reviewRound(
           await pending;
           if (queued) record(db, folder, { queued: null }, `reviewing ${sha}`);
           queued = false;
+          // The diff starts where the commit meets the PR's base as the forge has it now,
+          // fetched into Skelcrew's clone. Never the builder's origin/, which moves only when
+          // the builder fetches: a builder that merged a newer main would show main's commits
+          // as its own. That commit is in the commit's history, so the reviewer's copy of the
+          // clone has it. A review with no current base to read fails and says why, rather
+          // than judging a diff that may hold someone else's commits.
+          const base = prBase(db, thread);
+          const fetched = await fetchInto(db, repository, skelcrewClone, base, bases).then(
+            () => null,
+            (error) => errorText(error),
+          );
+          const from = fetched === null ? whereItMeets(skelcrewClone, bases, sha) : null;
+          if (from === null)
+            return {
+              verdict: "failed" as const,
+              body: `Skelcrew couldn't read where ${sha.slice(0, 7)} meets ${base} as the forge has it, so it can't tell the PR's change apart: ${fetched ?? "they share no commit"}`,
+            };
+          // A PR moved to another base while the review waited can now change code, so a
+          // change that was docs alone is asked again, against the base just fetched. One that
+          // now changes code runs the tests, as there is then no CI result to read.
+          const docsOnly = given.docsOnly === true && changesOnlyDocs(skelcrewClone, bases, sha);
           const started = Date.now();
           const result = await review({
             ...given,
+            docsOnly,
             clone: cloneOf(thread),
             issue: threadTask(db, thread),
-            // Setting up the thread's clone put the base branch there under origin/.
-            base: `origin/${baseOf(thread)}`,
+            base: from,
             test: repositoryCommands(thread).test,
+            socket: reviewSocket(thread.folder),
           });
           const { harness } = given;
           if (result.verdict === "limited") {
@@ -401,13 +453,13 @@ async function actOnVerdict(
   const before = thread.rounds;
   const ready = hasForge ? null : `${threadName(db, thread)} is ready on branch ${thread.branch}`;
   const decided = afterReview(before, verdict, maxRounds, ready);
-  const keptWhy = `approval kept: only merged ${baseOf(thread)} into ${kept}`;
+  const keptWhy = `approval kept: only merged ${prBase(db, thread)} into ${kept}`;
   const outcome =
     kept === null
       ? decided
       : {
           ...decided,
-          description: `approval kept: only merged ${baseOf(thread)}`,
+          description: `approval kept: only merged ${prBase(db, thread)}`,
           why: ready === null ? `${keptWhy}, so it waits on CI` : `${keptWhy}; ${ready}`,
         };
   if ((verdict.verdict === "approve" || verdict.verdict === "changes") && pr !== null)
@@ -716,6 +768,38 @@ function lastApproved(thread: Thread): string | null {
   const skelcrewClone = cloneDir(thread.owner, thread.repo);
   const ref = `refs/skelcrew/approved/${thread.folder}^{commit}`;
   const run = Bun.spawnSync(["git", "-C", skelcrewClone, "rev-parse", "--verify", "--quiet", ref], {
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  return run.success ? run.stdout.toString().trim() : null;
+}
+
+// Returns the branch the thread's PR goes into, as the forge last said, since someone can
+// change it on the forge. Before the PR is open, or with no forge, the branch the thread
+// started from.
+function prBase(db: Database, thread: Thread): string {
+  const pr = thread.pr === null ? null : prOf(db, thread.owner, thread.repo, thread.pr);
+  return pr?.base ?? baseOf(thread);
+}
+
+// Returns whether the commit, in the clone, changes only docs and Markdown since it met the
+// base, so no one runs the tests. Without rename detection, a file moved from code into docs
+// shows both names, so the code it removes counts. Names end in a NUL, as git otherwise quotes
+// one with letters outside ASCII, such as résumé.md. A base or diff git can't read, as in a
+// clone not set up yet, gives false, and the tests run.
+export function changesOnlyDocs(clone: string, base: string, sha: string): boolean {
+  const changed = Bun.spawnSync(
+    ["git", "-C", clone, "diff", "--name-only", "-z", "--no-renames", `${base}...${sha}`],
+    { stdout: "pipe", stderr: "ignore" },
+  );
+  return changed.success && onlyDocs(changed.stdout.toString().split("\0").filter(Boolean));
+}
+
+// Returns the commit where the commit meets the base, in the clone, which is where the PR's own
+// change starts, as the forge shows it. Returns null when git can't read either, such as a
+// base the clone never fetched.
+export function whereItMeets(clone: string, base: string, sha: string): string | null {
+  const run = Bun.spawnSync(["git", "-C", clone, "merge-base", base, sha], {
     stdout: "pipe",
     stderr: "pipe",
   });

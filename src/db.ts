@@ -360,12 +360,34 @@ function prepareTables(db: Database): void {
   )`);
   // Notes for a repository's lead that aren't about a thread needing you, such as a thread
   // started from a tracker, kept until they are typed in, since the lead may not be running.
-  db.run("CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, text TEXT NOT NULL)");
+  // A note's ID is never used twice, which AUTOINCREMENT makes so: without it, SQLite gives a
+  // new note the ID of the last one deleted. Typing a note deletes it by its ID once it is in,
+  // and a note dropped while it was typed, such as a thread's end once the thread starts over,
+  // must not hand its ID to a note saved meanwhile, which would then be deleted unheard.
+  db.run(
+    "CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY AUTOINCREMENT, text TEXT NOT NULL)",
+  );
   // A note names its repository, and one from before each repository had its own lead names
-  // none until adoptOldLead gives it one.
-  for (const column of ["owner", "repo"])
+  // none until adoptOldLead gives it one. A note that a thread ended names that thread's
+  // folder in `ended`, so a thread starting over there can drop it before the lead hears it.
+  for (const column of ["owner", "repo", "ended"])
     if (!db.query("SELECT 1 FROM pragma_table_info('notes') WHERE name = ?").get(column))
       db.run(`ALTER TABLE notes ADD COLUMN ${column} TEXT`);
+  // A database from an earlier release made the table without AUTOINCREMENT, which SQLite can't
+  // add to a table, so the notes move to a new one, keeping their IDs.
+  const notesTable = z
+    .object({ sql: z.string() })
+    .parse(db.query("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'notes'").get());
+  if (!notesTable.sql.includes("AUTOINCREMENT")) {
+    db.run(
+      "CREATE TABLE notes_new (id INTEGER PRIMARY KEY AUTOINCREMENT, text TEXT NOT NULL, owner TEXT, repo TEXT, ended TEXT)",
+    );
+    db.run(
+      "INSERT INTO notes_new (id, text, owner, repo, ended) SELECT id, text, owner, repo, ended FROM notes",
+    );
+    db.run("DROP TABLE notes");
+    db.run("ALTER TABLE notes_new RENAME TO notes");
+  }
   // A lead table means a database from before each repository had its own lead.
   if (db.query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'lead'").get())
     adoptOldLead(db);

@@ -8,12 +8,11 @@ import { harnessNamed } from "../agents/harness.ts";
 import { agentRuns, readSession } from "../agents/sessions.ts";
 import { forQuestion, type Marks, quietSince } from "../agents/transport.ts";
 import { pastRoundLimit } from "./decide.ts";
-import { leadOf, typeLeadNotes } from "./lead.ts";
+import { leadOf } from "./lead.ts";
 import { clockTime, endWake, wakeAfterLimit } from "./limits.ts";
-import { stopDelivering } from "./messages.ts";
+import { messageLead, stopDelivering, typeLeadNotes, untagged } from "./messages.ts";
 import type { DaemonRequest } from "./requests.ts";
 import { lastPushed } from "./round.ts";
-import { messageLead, untagged } from "./tell.ts";
 import {
   type AgentState,
   builderHarness,

@@ -18,10 +18,10 @@ export const reviewCheck = "skelcrew/check";
 // you, whatever its builder or reviewer does, until you let it go on.
 export const pastRoundLimit = (thread: Thread, maxRounds: number) => thread.rounds > maxRounds;
 
-// What decide says to do with a thread: end it, with the reason, or tell its builder what is
-// new and change the thread.
+// What decide says to do with a thread: end it, with the reason for its log and the note for
+// its lead, or tell its builder what is new and change the thread.
 export type Decision =
-  | { end: string }
+  | { end: string; note: string }
   | {
       // The IDs of the reviews, comments and check runs handled once this decision is carried
       // out, among those the PR shows.
@@ -63,16 +63,11 @@ export function onlyDocs(files: string[]): boolean {
   return files.length > 0 && files.every((f) => f.startsWith("docs/") || f.endsWith(".md"));
 }
 
-// How long a review waits for CI's first check on its commit, when CI shows on another PR or
-// the commit has workflows. A forge shows a check within seconds of a push, and Skelcrew's copy
-// has it by the next poll, 30 seconds later.
-const ciWait = 2 * 60_000;
-
 // Returns who runs the whole test suite on `commit`, the head of `own`, the thread's PR, so it
 // runs once: CI, once a CI check shows on this commit, as only that proves CI runs on it. A
 // workflow can skip one PR while it runs on others, such as with a branch or paths filter.
 // Until then the review waits, while a check may still come, for `waited` milliseconds so far:
-// up to ciWait when CI shows on another of the repository's `prs` or the commit `setsUpCi`, as
+// up to `ciWait` when CI shows on another of the repository's `prs` or the commit `setsUpCi`, as
 // on a first PR, and up to `checkWait` otherwise, as CI outside GitHub has no workflows to read.
 // A review here that already `waitedInVain`, with no CI anywhere, as with a workflow that runs
 // only on a release or no CI at all, means no PR or commit of the repository waits for one
@@ -85,8 +80,9 @@ export function whoRunsTheSuite(given: {
   waitedInVain: boolean;
   waited: number;
   checkWait: number;
+  ciWait: number;
 }): "ci" | "reviewer" | "wait" {
-  const { own, commit, prs, setsUpCi, waitedInVain, waited, checkWait } = given;
+  const { own, commit, prs, setsUpCi, waitedInVain, waited, checkWait, ciWait } = given;
   if (own?.head === commit && ciOf(own).length > 0) return "ci";
   if (prs.some((pr) => ciOf(pr).length > 0)) return waited < ciWait ? "wait" : "reviewer";
   if (waitedInVain) return "reviewer";
@@ -144,9 +140,18 @@ function handledBefore(thread: Thread, pr: PullRequest): Set<string> | null {
 // anyone can comment, and what is typed in steers the builder. Skelcrew's own reviews come from
 // its forge's app, a bot.
 export function decide(thread: Thread, pr: PullRequest, given: { maxRounds: number }): Decision {
-  // A merged or closed PR ends the thread.
-  if (pr.state === "merged") return { end: `PR #${thread.pr} was merged` };
-  if (pr.state === "closed") return { end: `PR #${thread.pr} was closed without merging` };
+  // A merged or closed PR ends the thread. The lead hears which, so it stops listing the PR as
+  // open.
+  if (pr.state === "merged")
+    return {
+      end: `PR #${thread.pr} was merged`,
+      note: `is done: #${thread.pr} merged into ${pr.base}`,
+    };
+  if (pr.state === "closed")
+    return {
+      end: `PR #${thread.pr} was closed without merging`,
+      note: `ended: #${thread.pr} closed without merging`,
+    };
   // A thread with nothing to go on takes in everything the PR shows as handled, so its whole
   // history isn't typed into the builder at once.
   const runs = pr.checks.flatMap((check) => (check.id === null ? [] : [check.id]));

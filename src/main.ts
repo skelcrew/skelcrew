@@ -104,6 +104,7 @@ function usage(command?: string): never {
     "interrupt",
     "review",
     "submit",
+    "check",
     "tell",
     "plugin",
   ];
@@ -405,6 +406,45 @@ async function prCommand(args: string[], json: boolean): Promise<void> {
   usage(command);
 }
 
+// Runs the repository's whole test suite in this folder once one of the machine's check slots
+// is free, for sc check, and exits with the suite's own exit code. Builders, reviewers and you
+// all go through it, so at most limits.checks suites run at once. The test commands run joined
+// with `&&` in one shell, so a `cd` or an `export` in one still holds for the next.
+async function checkCommand(args: string[]): Promise<void> {
+  if (args.length !== 1) usage(args[0]);
+  const { takeCheckSlot } = await import("./client.ts");
+  const { originHere } = await import("./machine/origin.ts");
+  // An agent's socket names its repository, and only your checkout's remote names yours.
+  const from = process.env.SKELCREW_SOCKET ? undefined : (originHere() ?? undefined);
+  const slot = await takeCheckSlot({
+    queued: (place) =>
+      console.log(
+        `Waiting for a check slot: number ${place} in line. The tests start once one is free.`,
+      ),
+    from,
+  });
+  if (slot.test.length === 0) {
+    console.log("This repository is configured with no tests, so there is nothing to run.");
+    return;
+  }
+  // The suite's process group never outlives sc check, so a check that is stopped, by Ctrl-C or
+  // a killed agent, never leaves a suite running on that nobody waits for. A process that
+  // detaches itself into a group of its own is outside the check, as only Linux could follow it. The suite runs in a process group of
+  // its own, and a watcher in it reads a pipe, descriptor 4, whose other end only sc check
+  // holds. However sc check ends, even killed outright, the pipe closes and the watcher ends the
+  // whole group. The shell closes its own copy once the watcher
+  // has it, so the suite keeps your input, and only the watcher reads the pipe.
+  const watched = `(cat <&4 >/dev/null; kill -KILL 0) & exec 4<&-; ${slot.test.join(" && ")}`;
+  // The shell gets the connection too, as its descriptor 3, so the daemon frees the slot only
+  // once the last process of the suite has ended, not when sc check does.
+  const run = Bun.spawn(["sh", "-c", watched], {
+    stdio: ["inherit", "inherit", "inherit", slot.fd ?? "ignore", "pipe"],
+    detached: true,
+  });
+  // A daemon that restarts meanwhile forgets the slot, and the suite finishes on its own.
+  process.exit(await run.exited);
+}
+
 // Starts, stops, removes, re-reviews, peeks at, interrupts or attaches to the thread on a task
 // such as app-13. sc start also takes a repository, a title and a body, to start a thread with
 // no tracker.
@@ -632,6 +672,8 @@ async function runCommand(args: string[]): Promise<void> {
       return threadCommand(words);
     case "tell":
       return tellCommand(words);
+    case "check":
+      return checkCommand(words);
     case "plugin":
       return pluginCommand(words, json);
     default:
