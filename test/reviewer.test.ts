@@ -267,15 +267,37 @@ describe.skipIf(insideSandbox)("reviewer", () => {
     expect(kept("login")).toBe("renewed\n");
   });
 
-  // A review that only waited on CI once asked for changes it couldn't name. With no finding
-  // there is nothing to fix, so the diff is clean and the PR waits on its checks instead.
-  test("changes with no findings are an approval", async () => {
-    fakeCodex('{"verdict":"changes","body":"CI pending. I found no code problems.","findings":[]}');
-    expect(await start()).toEqual({
-      verdict: "approve",
-      body: "CI pending. I found no code problems.",
-      findings: [],
+  // An empty "changes requested" gives the builder nothing to fix, and an approval with
+  // findings passes over a problem. Skelcrew can't tell which half of such an answer is right,
+  // so the review fails, posts nothing and counts no round.
+  for (const [what, answer, why] of [
+    [
+      "changes with no findings",
+      '{"verdict":"changes","body":"CI pending. I found no code problems.","findings":[]}',
+      "it asked for changes but named no finding",
+    ],
+    [
+      "an approval with findings",
+      '{"verdict":"approve","body":"Fine.","findings":["The retry has no test."]}',
+      "it approved but named findings",
+    ],
+    [
+      "a blank finding",
+      '{"verdict":"changes","body":"See below.","findings":["  "]}',
+      "a finding is blank",
+    ],
+  ]) {
+    test(`fails a review whose verdict and findings disagree: ${what}`, async () => {
+      fakeCodex(answer ?? "");
+      const done = await start();
+      expect(done.verdict).toBe("failed");
+      expect(done.body).toContain(why ?? "");
     });
+  }
+
+  test("the reviewer's answer must hold its findings", async () => {
+    fakeCodex(approve);
+    await start();
     const schema = JSON.parse(kept("schema"));
     expect(schema.required).toContain("findings");
     expect(schema.properties.findings).toEqual({ type: "array", items: { type: "string" } });

@@ -489,8 +489,12 @@ async function actOnVerdict(
           description: `approval kept: only merged ${prBase(db, thread)}`,
           why: ready === null ? `${keptWhy}, so it waits on CI` : `${keptWhy}; ${ready}`,
         };
-  if ((verdict.verdict === "approve" || verdict.verdict === "changes") && pr !== null)
-    await postOrEdit(db, folder, pr, sha, { ...verdict, round: before + 1 });
+  // The whole review goes in the thread's log first, as the PR keeps only the latest one.
+  if (verdict.verdict === "approve" || verdict.verdict === "changes") {
+    const said = reviewComment(verdict, before + 1, sha);
+    record(db, folder, {}, `the review said (${verdict.verdict}): ${said}`);
+    if (pr !== null) await postOrEdit(db, folder, pr, sha, { ...verdict, round: before + 1 });
+  }
   // A newer round may be reviewing the same commit, and its check must stay pending.
   if (signal.aborted) return;
   if (hasForge)
@@ -544,7 +548,9 @@ async function actOnVerdict(
 // When the forge can't edit it, it posts a new one only if the verdict or findings changed, so a
 // round that found the same again adds nothing. The rounds one by one stay in the thread's log.
 // What it posted is saved on the thread at once, so a later round edits it though this one is
-// cancelled.
+// cancelled. Two rounds of a thread never post at once: a round's review starts only once the
+// round before has ended, posting included, so the later round always reads what the earlier
+// one saved, and its verdict is the one left on the PR.
 async function postOrEdit(
   db: Database,
   folder: string,

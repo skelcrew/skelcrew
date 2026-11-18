@@ -23,12 +23,22 @@ export type Review =
 export type Limited = { verdict: "limited"; body: string; reset: number | null };
 
 // The answer a reviewer must give, checked as any outside input is. A failed verdict is never
-// the reviewer's to give: only Skelcrew says a review failed.
-const Verdict = z.strictObject({
-  verdict: z.enum(["approve", "changes"]),
-  body: z.string(),
-  findings: z.array(z.string()),
-});
+// the reviewer's to give: only Skelcrew says a review failed. Changes name at least one problem
+// and an approval names none, so an empty "changes requested" never reaches the PR or costs a
+// round, and an approval never passes over a problem it found. An answer that breaks this, or
+// names a blank problem, fails, and you look at it, as Skelcrew can't tell which half is right.
+const Verdict = z
+  .strictObject({
+    verdict: z.enum(["approve", "changes"]),
+    body: z.string(),
+    findings: z.array(z.string().trim().min(1, "a finding is blank")),
+  })
+  .refine((answer) => answer.verdict === "approve" || answer.findings.length > 0, {
+    message: "it asked for changes but named no finding",
+  })
+  .refine((answer) => answer.verdict === "changes" || answer.findings.length === 0, {
+    message: "it approved but named findings",
+  });
 
 // The JSON schema of the reviewer's answer, which every harness holds the model to. OpenAI's
 // strict mode needs every property required and no others allowed.
@@ -248,11 +258,6 @@ function readVerdict(
       verdict: "failed",
       body: `the reviewer answered outside the shape: ${z.prettifyError(verdict.error)}`,
     };
-  // Changes asked for with no problem named would leave the builder nothing to fix and count a
-  // round for nothing, such as a review that only waited on CI. A diff with no findings is clean,
-  // so it is approved, and readiness still waits on every check.
-  if (verdict.data.verdict === "changes" && verdict.data.findings.length === 0)
-    return { ...verdict.data, verdict: "approve" };
   return verdict.data;
 }
 

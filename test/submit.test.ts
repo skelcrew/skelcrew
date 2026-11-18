@@ -479,11 +479,10 @@ describe.skipIf(insideSandbox)("sc submit", () => {
     expect(read(join(data(), "threads", "app-12.log"))).toContain("Round 1");
   }, 60_000);
 
-  // A review that only waited on CI once asked for changes it couldn't name. Ready still waits
-  // on every check, so a clean diff is approved while CI runs, and costs no round.
-  test("changes with no findings, such as a clean diff while CI runs, are an approval and count no round", async () => {
+  // Ready waits on every check, so CI still running is no reason to ask for changes.
+  test("a clean diff while CI runs is approved and counts no round", async () => {
     addApp();
-    verdict(1, "changes", "CI pending. I found no code problems.", []);
+    verdict(1, "approve", "CI pending. I found no code problems.");
     await startApp12();
     await until(() => finished("success").length === 1, 30_000);
     await until(() => read(join(data(), "threads", "app-12.log")).includes("waits on CI"));
@@ -491,6 +490,20 @@ describe.skipIf(insideSandbox)("sc submit", () => {
       { commit: pushed(), verdict: "approve", body: "CI pending. I found no code problems." },
     ]);
     expect(thread()).toMatchObject({ rounds: 0, verdict: "approve", needs_you: 0 });
+    expect(typedMessages()).toBe(0);
+  }, 60_000);
+
+  // A review that only waited on CI once asked for changes it couldn't name. That answer is
+  // now refused: nothing reaches the PR, and no round counts.
+  test("changes with no findings post nothing, count no round, and need you", async () => {
+    addApp();
+    verdict(1, "changes", "CI pending. I found no code problems.", []);
+    await startApp12();
+    await until(() => finished("failure").length === 1, 30_000);
+    expect(finished("failure")[0]?.description).toBe("review failed");
+    await until(() => thread().needs_you === 1);
+    expect(reviews()).toEqual([]);
+    expect(thread()).toMatchObject({ rounds: 0 });
     expect(typedMessages()).toBe(0);
   }, 60_000);
 
@@ -513,6 +526,11 @@ describe.skipIf(insideSandbox)("sc submit", () => {
       },
     ]);
     expect(read(join(data(), "threads", "app-12.log"))).toContain("edited its review 1001");
+    // The PR now shows only round 2, and the log keeps round 1 whole.
+    expect(read(join(data(), "threads", "app-12.log"))).toContain(
+      "the review said (changes): Round 1 · commit",
+    );
+    expect(read(join(data(), "threads", "app-12.log"))).toContain("1. The export has no test.");
   }, 60_000);
 
   // A forge that can't edit gets a new review only when what it says changed, so a round that
