@@ -642,7 +642,8 @@ c.on("data", (d) => process.stdout.write(d));`;
     serve();
     await untilCloned();
     expect((await skel("start", "app-12")).err).toBe("");
-    await until(() => thread().host === "fake");
+    // The host is saved as the builder starts, and its session's ID once the host gave it.
+    await until(() => thread().host_id === "fake-app-12");
     expect(thread().host_id).toBe("fake-app-12");
     expect(hasSession("app-12")).toBe(false);
     expect(existsSync(join(host, "sessions", "fake-app-12"))).toBe(true);
@@ -693,7 +694,7 @@ c.on("data", (d) => process.stdout.write(d));`;
     const first = serve();
     await untilCloned();
     await skel("start", "app-12");
-    await until(() => thread().host === "fake");
+    await until(() => thread().host_id === "fake-app-12");
     await stop(first);
     const db = new Database(join(data(), "skelcrew.db"));
     db.run("DELETE FROM plugins WHERE name = 'fake'");
