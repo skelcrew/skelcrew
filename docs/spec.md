@@ -8,7 +8,7 @@ Skelcrew is a crew of coding agents, always on, in parallel and isolated, from i
 
 You run `sc` in a checkout and talk to that repository's lead: a Claude Code or Codex session on your server that knows the repository. The lead writes tasks and starts threads. Each thread works in one repository, as a builder agent in its own branch, clone and sandbox. It opens a PR, a fresh reviewer, on another model if you choose one, reviews it adversarially, and they go back and forth until it is ready. CI failures and your PR comments wake the builder again. You merge.
 
-A repository can give its own role instructions as files in `.agents/roles/`, and its round limit in `.agents/flows/default.yaml`, which count once you approve them. There are no phases, and no flow but today's build and review. We trust capable agents and add an adversarial review.
+A repository can give its own role instructions as files in `.agents/roles/`, which count once you approve them. There are no phases or flows as files. We trust capable agents and add an adversarial review.
 
 The repository starts with three documents: this spec, `AGENTS.md` for how to write code here, and `docs/learnings.md` for the traps to avoid. The code starts empty. Keep it small, plain and tested.
 
@@ -198,7 +198,7 @@ Everything must work over a plain `ssh -t`: no local display, no browser on the 
 
 Before cloning, Skelcrew decides whether to trust the repository. It trusts it on its own when its forge says your login can push to it, unless it is a fork: agents will run its setup and test commands, and read its AGENTS.md and settings as instructions, and you already vouch for what is in it. For any other repository, one with no forge included, Skelcrew asks you whether you trust it as you add it, and `sc repo trust <name>` trusts one without the question. Only you can do either, in your own terminal, since a yes passed on by the lead could come from an injected instruction. The answer is remembered in \~/.config/skelcrew/, never in the repository, so a clone can't bring its own yes.
 
-**A repository's `.agents/`.** The lead, builders and reviewers each follow a role: its instructions, and the harness and model it runs on. Skelcrew ships `lead`, `builder` and `reviewer` built in. A repository can replace any of them with a Markdown file of the role's name in `.agents/roles/` on its default branch, such as `.agents/roles/builder.md`. A role file's frontmatter may name only its `harness` and `model`, and the rest is its instructions, which replace the built-in ones whole. A role file that names a harness or model goes over that role's line in `skelcrew.yaml`. Skelcrew reads role files from its own clone through git, so a link is never followed. A reviewer role can place the task, the base branch and who runs the tests with `{{title}}`, `{{body}}`, `{{base}}` and `{{tests}}`, as the built-in one does. Whatever it leaves out, Skelcrew adds after its instructions, so every reviewer checks the change against the task and follows the rule for tests. The flow a task goes through, build, review, CI and ready, is Skelcrew's `default` flow, shipped as a file. A repository's own `.agents/flows/default.yaml` may set only each stage's `role` and the review's `rounds`, which goes over `max_rounds` in `skelcrew.yaml`. Its roles are today's builder and reviewer.
+**A repository's `.agents/`.** The lead, builders and reviewers each follow a role: its instructions, and the harness and model it runs on. Skelcrew ships `lead`, `builder` and `reviewer` built in. A repository can replace any of them with a Markdown file of the role's name in `.agents/roles/` on its default branch, such as `.agents/roles/builder.md`. A role file's frontmatter may name only its `harness` and `model`, and the rest is its instructions, which replace the built-in ones whole. A role file that names a harness or model goes over that role's line in `skelcrew.yaml`. Skelcrew reads role files from its own clone through git, so a link is never followed. A reviewer role can place the task, the base branch and who runs the tests with `{{title}}`, `{{body}}`, `{{base}}` and `{{tests}}`, as the built-in one does. Whatever it leaves out, Skelcrew adds after its instructions, so every reviewer checks the change against the task and follows the rule for tests.
 
 A repository's `.agents/` decides what agents are told, so it counts only once you approved it, the first time and after each change. Adding a repository whose default branch has an `.agents/`, with `sc`, `sc init` or `sc repo add`, shows what it holds and asks. Every file is shown as text, and control codes as escapes, so nothing an agent would read is hidden from you, even when Skelcrew trusts the repository because you can push to it: being able to push is not having read what others wrote there. A yes approves it. A no still adds the repository, whose tasks then run on the built-in roles. A repository Skelcrew already has asks the same way at the first `sc` there. When the default branch later brings an `.agents/` other than the one you approved, new tasks keep starting on the approved version, and the lead is told once to ask you to run `sc repo trust <name>`, which shows what changed and asks. A task keeps the `.agents/` it started with to its end, though you approve another meanwhile. A task that started before Skelcrew read `.agents/` keeps the built-in roles. What you approved is remembered in \~/.config/skelcrew/, never in the repository, and Skelcrew's clone keeps a ref to each approved version, so a force push can't take it away from tasks that started on it. Only you approve, in your own terminal, as a yes passed on by the lead could come from an injected instruction.
 
@@ -430,15 +430,17 @@ For the builder inside a thread:
 
 Agents talk to the daemon over a socket mounted into their sandbox, which also tells Skelcrew which thread they belong to. The lead and the agents never call GitHub themselves.
 
-Settings come in two layers, and both are optional. What everyone who works on a repository shares lives in its committed files: its `skelcrew.yaml` holds its tracker, when it isn't its forge, setup and test, and its `.agents/` holds the harness and model of each role, in the role's file, and the round limit, in the `default` flow. Skelcrew reads them from its own clone, so a change counts once it is pushed to the default branch.
+Settings come in two layers, and both are optional. What everyone who works on a repository shares lives in its committed `skelcrew.yaml`: its tracker, when it isn't its forge, setup, test, the harness and model for the lead, builder and reviewer, and the round limit. Skelcrew reads it from its own clone, so a change counts once it is pushed to the default branch.
 
 ```yaml
 # Shared with everyone who works on this repository. Never put a secret here.
 setup: [bun install]
 test: [bun test]
+lead:     { model: opus }
+builder:  { model: opus }
+reviewer: { harness: codex }
+max_rounds: 3
 ```
-
-A `skelcrew.yaml` in today's older shape keeps working. Its `lead:`, `builder:` and `reviewer:`, such as `reviewer: { harness: codex }`, are read as each role's harness and model, and its `max_rounds` as the `default` flow's `rounds`. Where `.agents/` says something too, `.agents/` wins, key by key. Plain `sc` in a checkout says once for each old key the repository's `skelcrew.yaml` uses which file replaces it, and changes no file itself.
 
 What is yours stays in `~/.config/skelcrew/`: every login and token, which machine runs Skelcrew, plugins and their settings, and your own defaults in `config.yaml`, used wherever `skelcrew.yaml` says nothing. A secret never goes in a repository. A repository's `skelcrew.yaml` names no plugin but its tracker.
 
