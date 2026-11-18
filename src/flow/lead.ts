@@ -18,6 +18,7 @@ import { approvedRef, markApproved } from "../approved-agents.ts";
 import { agentRole, repositoryCommands } from "../config.ts";
 import { Repository } from "../db.ts";
 import leadRules from "../defaults/roles/lead-rules.md" with { type: "text" };
+import { quoted } from "../machine/remote.ts";
 import { cloneDir, leadPlaces } from "../paths.ts";
 import { builtInRole, repositoryRole } from "../roles.ts";
 import { errorText } from "../say.ts";
@@ -107,9 +108,13 @@ export function leadInstructions(
 }
 
 // Returns where the lead reads the flows you approved, given its clone: the ref at the .agents/
-// you approved, which a git command lists and shows from its read-only clone.
-export const approvedFlowsTold = (clone: string) =>
-  `The .agents/ the human approved is at ${approvedRef} in the clone. List its flows with git -C ${clone} ls-tree --name-only ${approvedRef} flows/, and read one with git -C ${clone} show ${approvedRef}:flows/<name>.yaml. Without that ref, or with no flows there, threads run only Skelcrew's built-in default flow.`;
+// you approved, which a git command lists and shows from its read-only clone. The clone's path
+// is under your home folder, whose name can hold a space or a quote, so it is quoted for the
+// shell the lead runs the commands in.
+export function approvedFlowsTold(clone: string): string {
+  const at = quoted(clone);
+  return `The .agents/ the human approved is at ${approvedRef} in the clone. List its flows with git -C ${at} ls-tree --name-only ${approvedRef} flows/, and read one with git -C ${at} show ${approvedRef}:flows/<name>.yaml. Without that ref, or with no flows there, threads run only Skelcrew's built-in default flow.`;
+}
 
 // Keeps a repository's running lead or starts it, resuming its saved conversation when there
 // is one. A lead's first start picks the harness your config names for leads, and the lead

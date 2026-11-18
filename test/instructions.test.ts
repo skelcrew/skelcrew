@@ -169,6 +169,30 @@ test("a lead triages a task's flow, from the folder of the flows the human appro
   );
 });
 
+// The clone is under the human's home folder, whose path can hold a space, a quote or a $. The
+// lead runs the commands it is told in a shell, so they must still list and read the flows.
+test("a lead's commands for the approved flows work from a clone whose path the shell would split", () => {
+  const clone = join(home, "Jo's files $HOME", "app");
+  mkdirSync(join(clone, ".agents", "flows"), { recursive: true });
+  writeFileSync(join(clone, ".agents", "flows", "quick.yaml"), "review:\n  rounds: 1\n");
+  const git = (...args: string[]) => Bun.spawnSync(["git", "-C", clone, ...args]);
+  git("init", "-q");
+  git("add", ".");
+  git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "flows");
+  const tree = git("rev-parse", "HEAD:.agents").stdout.toString().trim();
+  git("update-ref", "refs/skelcrew/agents/approved", tree);
+  const told = leadInstructions("You lead.\n", "simon/app", clone, {
+    setup: undefined,
+    test: undefined,
+  });
+  const [, list = "", show = ""] =
+    /List its flows with (git .*? flows\/), and read one with (git .*?\.yaml)\./.exec(told) ?? [];
+  const run = (command: string) =>
+    Bun.spawnSync(["sh", "-c", command], { cwd: home }).stdout.toString();
+  expect(run(list)).toBe("flows/quick.yaml\n");
+  expect(run(show.replace("<name>", "quick"))).toBe("review:\n  rounds: 1\n");
+});
+
 // An empty list says on purpose that the repository needs no setup or has no tests, so neither
 // the lead nor a builder takes it for a command that is missing.
 test("an empty list is told as configured to none, not as missing", () => {
