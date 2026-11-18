@@ -45,9 +45,9 @@ export const checkThenSc = [
   `b=\${SKELCREW_LAPTOP_BUILD%-dirty}`,
   "case $b in *.*.*) b=v$b;; esac",
   // e is the sc the daemon's service starts, as its unit names it with each % doubled, or else
-  // the sc on the PATH. The unit runs sc up, or sc serve when an older Skelcrew wrote it. The daemon is what must run new code, and the sc you run can be another
+  // the sc on the PATH. The daemon is what must run new code, and the sc you run can be another
   // install, such as a copy in ~/.local/bin beside a service that runs a checkout.
-  String.raw`e=$(sed -n 's/%%/%/g; s/^ExecStart="\(.*\)" serve$/\1/p; s/^ExecStart="\(.*\)" up$/\1/p' "$HOME/.config/systemd/user/skelcrew.service" 2>/dev/null); [ -n "$e" ] || e=$(command -v sc)`,
+  String.raw`e=$(sed -n 's/%%/%/g; s/^ExecStart="\(.*\)" serve$/\1/p' "$HOME/.config/systemd/user/skelcrew.service" 2>/dev/null); [ -n "$e" ] || e=$(command -v sc)`,
   // d is the checkout that sc runs from, or empty when it runs from none. It is the folder
   // above the sc, which is often a link to its bin/sc. A copy has no src/main.ts there, and
   // needs no warning, as Skelcrew there checks its own build.
@@ -387,11 +387,10 @@ function serverMachine(host: string): Machine {
     shell,
     push,
     sc: (words) => onServer(host, shared, words),
-    // The unit names the Skelcrew the daemon runs, with each % doubled for systemd. It runs sc
-    // up, or sc serve when an older Skelcrew wrote it.
+    // The unit names the Skelcrew the daemon runs, with each % doubled for systemd.
     daemonSkel: async () => {
       const unit = ".config/systemd/user/skelcrew.service";
-      const sed = `sed -n 's/%%/%/g; s/^ExecStart="\\(.*\\)" serve$/\\1/p; s/^ExecStart="\\(.*\\)" up$/\\1/p' ${unit}`;
+      const sed = `sed -n 's/%%/%/g; s/^ExecStart="\\(.*\\)" serve$/\\1/p' ${unit}`;
       const read = await quietly(shell(sed));
       return read.ok && read.said !== "" ? read.said : null;
     },

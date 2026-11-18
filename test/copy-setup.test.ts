@@ -111,8 +111,9 @@ function setUpServer(): void {
   writeFileSync(join(units, "skelcrew.service"), "");
 }
 
-// Undoes the server's first run, as if it stopped partway: before the agents' login.
-const firstRunUnfinished = () => rmSync(join(serverConfig(), "claude-token"), { force: true });
+// Undoes the server's first run, as if it stopped partway: everything but the daemon's service.
+const firstRunUnfinished = () =>
+  rmSync(join(server(), ".config", "systemd"), { recursive: true, force: true });
 
 // Runs sc on a machine with this home, with what you type, and returns what it said.
 async function skel(home: string, args: string[], typed = "") {

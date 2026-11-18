@@ -210,10 +210,10 @@ A repository can say how to set up and test it, and which harness and model each
 
 ## The daemon
 
-One daemon per machine, run by the systemd user service the first run installed, or on a Mac its launchd agent. `sc up` runs it in the foreground, in your terminal, logging as it goes, until Ctrl-C stops it. `sc up --bg` installs the service, or brings its file up to date, starts the daemon there if none answers, and returns. The folder either is run in makes no difference. The service runs `sc up`. One installed by an earlier release runs `sc serve`, which still works and is left out of the help, until the next plain `sc` rewrites the service's file. The daemon reads the new file at its next start.
+One daemon per machine, run by the systemd user service the first run installed. `sc serve` runs it in the foreground; the folder it is started in makes no difference.
 
-1. If a daemon is already running, `sc up` says so and exits, pointing you to `sc`.
-2. If the first run isn't done, it exits and tells you to run `sc`, and so does `sc up --bg`, before it installs anything. The first run is done once your harness is chosen and agents and reviews have their logins. The daemon never asks questions, since systemd has no one to answer them.
+1. If a daemon is already running, `sc serve` says so and exits, pointing you to `sc`.
+2. If the first run isn't done, it exits and tells you to run `sc`. It never asks questions, since systemd has no one to answer them.
 3. It opens the database, starts Skelcrew's tmux server, and reconnects to the lead of each repository you have opened, and every live thread. A session that is gone is brought back on its harness, with its conversation.
 4. It opens its socket at `$XDG_RUNTIME_DIR/skelcrew.sock` for the CLI, and one socket per agent, mounted into that agent's sandbox, so Skelcrew knows which thread is calling.
 5. It asks each repository's tracker and forge what changed, and logs to stdout, which systemd sends to the journal.
@@ -387,8 +387,7 @@ For you, and for the lead:
 | `sc init` | Run in a checkout: writes a starter `skelcrew.yaml` there, which you commit and push, and adds the repository. Only you can run it. |
 | `sc --remote <host> [command]` | Runs any `sc` command on the server, over `ssh -t`. Keeps Skelcrew there up to date with your checkout, after asking. On a machine that isn't set up, asks whether to set it up first. |
 | `sc remote add <host>` | Sets up a server. Runs the first run there and prints the `sc --remote` command that connects. Run it on your laptop. |
-| `sc up` | Runs the daemon in the foreground, with its log, until Ctrl-C. One per machine. Agents keep running when it stops. |
-| `sc up --bg` | Runs the daemon as the background service, under systemd or launchd, and returns. |
+| `sc serve` | Runs the daemon in the foreground, for systemd or launchd. One per machine. |
 | `sc repo add [<path> \| <owner/repo>]` | Adds a repository: the checkout at the path, the one named, or the checkout you are in. Asks whether you trust it when it needs to. Only you can run it. |
 | `sc repo ls` | Lists the repositories Skelcrew works on, with their short names, trackers and forges, and a tracker `skelcrew.yaml` names that isn't installed. `--json` for tools. |
 | `sc repo rm <name>` | Removes Skelcrew's clone of a repository. It refuses while the repository has live threads, and names them. Only you can run it: the lead never needs to, and asks you instead. |

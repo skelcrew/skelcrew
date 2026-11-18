@@ -1,4 +1,4 @@
-// sc up and the lead it keeps, against a fake Claude Code on a tmux server of the test's own.
+// sc serve and the lead it keeps, against a fake Claude Code on a tmux server of the test's own.
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
@@ -80,7 +80,7 @@ function setUp(): void {
   writeFileSync(join(home, ".config", "systemd", "user", "skelcrew.service"), "");
 }
 
-// Runs the daemon as sc up would, but on the test's own tmux server.
+// Runs the daemon as Skelcrew serve would, but on the test's own tmux server.
 function serve(runtime = join(home, "run")): Subprocess<"ignore", "pipe", "pipe"> {
   const script = `import { serve } from ${JSON.stringify(daemon)};
 await serve(${JSON.stringify(socket)});`;
@@ -254,24 +254,21 @@ test("refuses to start before the first run, and says to run sc", async () => {
   expect(hasLead()).toBe(false);
 });
 
-// sc serve stays for the services an older Skelcrew installed, which still run it.
-test("sc up and sc serve refuse inside Skelcrew's sandbox, where Skelcrew's state is hidden", async () => {
+test("sc serve refuses inside Skelcrew's sandbox, where Skelcrew's state is hidden", async () => {
   setUp();
-  for (const words of [["up"], ["up", "--bg"], ["serve"]]) {
-    const run = Bun.spawnSync([process.execPath, main, ...words], {
-      env: {
-        HOME: home,
-        XDG_RUNTIME_DIR: join(home, "run"),
-        PATH: `${join(home, "bin")}:${process.env.PATH ?? ""}`,
-        SKELCREW_SANDBOX: "1",
-      },
-      stderr: "pipe",
-    });
-    expect(run.exitCode).toBe(1);
-    expect(run.stderr.toString()).toBe(
-      "Skelcrew: running the daemon is only for your own terminal, not for agents\n",
-    );
-  }
+  const run = Bun.spawnSync([process.execPath, main, "serve"], {
+    env: {
+      HOME: home,
+      XDG_RUNTIME_DIR: join(home, "run"),
+      PATH: `${join(home, "bin")}:${process.env.PATH ?? ""}`,
+      SKELCREW_SANDBOX: "1",
+    },
+    stderr: "pipe",
+  });
+  expect(run.exitCode).toBe(1);
+  expect(run.stderr.toString()).toBe(
+    "Skelcrew: running the daemon is only for your own terminal, not for agents\n",
+  );
   expect(existsSync(join(home, "run", "skelcrew.sock"))).toBe(false);
 });
 

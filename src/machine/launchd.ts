@@ -34,7 +34,7 @@ export function plistText(skel: string, path: string, log: string): string {
   <key>ProgramArguments</key>
   <array>
     <string>${escapeXml(skel)}</string>
-    <string>up</string>
+    <string>serve</string>
   </array>
   <key>EnvironmentVariables</key>
   <dict>
