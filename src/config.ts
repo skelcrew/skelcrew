@@ -74,8 +74,7 @@ export const reviewLimit = (): number => readSettings(["reviews"]).reviews;
 export const checkLimit = (): number => readSettings(["checks"]).checks;
 
 // Says once, for each old key still in use, which new one replaces it: lead:, builder: and
-// reviewer: in your config.yaml, replaced by roles:, its max_rounds, now your default for the
-// flow's rounds, and, for the repository named by its
+// reviewer: in your config.yaml, replaced by roles:, and, for the repository named by its
 // owner/repo, lead:, builder:, reviewer: and max_rounds in its skelcrew.yaml, replaced by its
 // .agents/. The old keys still work, so nothing breaks, but you should know of the new shape.
 // Skelcrew changes no file itself. What was said is kept in Skelcrew's data folder, so it is
@@ -97,11 +96,6 @@ export function tellOldKeys(repository: string | undefined): void {
     tell(
       `config.yaml ${name}`,
       `Your config.yaml's ${name}: is read as roles: { ${name}: … }, which replaces it.`,
-    );
-  if ("max_rounds" in yours)
-    tell(
-      "config.yaml max_rounds",
-      "Your config.yaml's max_rounds: is read as your default for rounds:, which a repository now sets in .agents/flows/default.yaml.",
     );
   if (repository === undefined) return;
   // Read from Skelcrew's clone, as the settings are, and never through a link.

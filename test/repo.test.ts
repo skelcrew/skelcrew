@@ -1028,10 +1028,10 @@ describe("a repository's .agents/", () => {
   });
 });
 
-test("sc says once which old keys your config.yaml uses, what replaces them, and changes nothing", async () => {
+test("sc says once which old role keys your config.yaml uses, what replaces them, and changes nothing", async () => {
   const file = join(home, ".config", "skelcrew", "config.yaml");
   const yours =
-    "harness: claude\nbuilder: { model: sonnet }\nreviewer: { harness: codex }\nroles: { lead: { model: opus } }\nmax_rounds: 5\n";
+    "harness: claude\nbuilder: { model: sonnet }\nreviewer: { harness: codex }\nroles: { lead: { model: opus } }\n";
   writeFileSync(file, yours);
   const first = await skel([]);
   expect(first.out).toContain(
@@ -1040,13 +1040,8 @@ test("sc says once which old keys your config.yaml uses, what replaces them, and
   expect(first.out).toContain(
     "Your config.yaml's reviewer: is read as roles: { reviewer: … }, which replaces it.",
   );
-  expect(first.out).toContain(
-    "Your config.yaml's max_rounds: is read as your default for rounds:, which a repository now sets in .agents/flows/default.yaml.",
-  );
   expect(first.out).not.toContain("lead:");
-  const again = (await skel([])).out;
-  expect(again).not.toContain("replaces it");
-  expect(again).not.toContain("max_rounds");
+  expect((await skel([])).out).not.toContain("replaces it");
   expect(readFileSync(file, "utf8")).toBe(yours);
 });
 
