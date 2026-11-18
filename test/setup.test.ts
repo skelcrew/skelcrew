@@ -1118,11 +1118,12 @@ const fakeCommit = (version: string) =>
   git(join(home, "github", "simon", "skelcrew-fake"), "rev-parse", `v${version}^{commit}`);
 // Writes your config and lock as another machine of yours would have them: the fake plugin at
 // this version and commit.
+// The lock has a comment and a layout of its own, so a test can see sc install leave it as it is.
 function lockFake(version: string, commit = fakeCommit(version)): void {
   appendFileSync(config(), "plugins: [simon/skelcrew-fake]\n");
   writeFileSync(
     lock(),
-    `simon/skelcrew-fake: { name: fake, version: ${version}, commit: ${commit} }\n`,
+    `# From my laptop.\nsimon/skelcrew-fake: { name: fake, version: ${version}, commit: ${commit} }\n`,
   );
 }
 
@@ -1177,24 +1178,52 @@ test("sc install installs the commit your lock pins, even after its tag moved, a
   const before = fakeCommit("0.1.0");
   publishFake("0.1.0");
   expect((await install()).out).toContain("Nothing to install");
-  // A machine with nothing installed gets exactly the commit locked, not where the tag is now.
+  // A machine with nothing installed gets exactly the commit locked, not where the tag is now,
+  // and the lock stays as it was.
   noGitHubPlugin();
   writeFileSync(join(home, "calls"), "");
+  const lockBefore = readFileSync(lock(), "utf8");
   const fresh = await install("y\n");
+  expect(readFileSync(lock(), "utf8")).toBe(lockBefore);
   expect(fresh.err).toBe("");
   expect(fresh.out).toContain("Installed fake 0.1.0.");
   expect(calls()).toBe("fake setup 0.1.0\n");
   const folder = join(home, ".local", "share", "skelcrew", "plugins", "fake", "0.1.0");
   expect(git(folder, "rev-parse", "HEAD")).toBe(before);
-  // Your lock from another machine pins the new commit, which asks again.
+  // Your lock from another machine pins the new commit, which asks again, and moves the plugin
+  // with the lock left as it was.
   writeFileSync(config(), "harness: claude\n");
   lockFake("0.1.0");
+  const newLock = readFileSync(lock(), "utf8");
   writeFileSync(join(home, "calls"), "");
   const moved = await install("y\n");
   expect(moved.err).toBe("");
   expect(moved.out).toContain("Update it? [Y/n]");
   expect(calls()).toBe("fake setup 0.1.0\n");
-  expect(readFileSync(lock(), "utf8")).toContain(fakeCommit("0.1.0"));
+  expect(readFileSync(lock(), "utf8")).toBe(newLock);
+  expect(newLock).toContain(fakeCommit("0.1.0"));
+});
+
+// No network or no login says nothing of the commit, so the error keeps git's words and
+// doesn't suggest moving the lock.
+test("a repository sc install can't reach keeps git's error and the lock", async () => {
+  noGitHubPlugin();
+  fakeGitHub();
+  publishFake("0.1.0");
+  await skel("1\nsk-ant-oat01-good\n");
+  lockFake("0.1.0");
+  const lockBefore = readFileSync(lock(), "utf8");
+  const locked = fakeCommit("0.1.0");
+  renameSync(join(home, "github", "simon"), join(home, "github", "away"));
+  const run = await install("y\n");
+  expect(run.code).toBe(1);
+  expect(run.err).toContain(
+    `git couldn't reach commit ${locked.slice(0, 12)} of simon/skelcrew-fake, which your lock pins:`,
+  );
+  expect(run.err).toContain("Nor its tag v0.1.0:");
+  expect(run.err).toContain("does not appear to be a git repository");
+  expect(run.err).not.toContain("sc update -g");
+  expect(readFileSync(lock(), "utf8")).toBe(lockBefore);
 });
 
 test("a locked commit the repository no longer has is refused, and sc update -g moves past it", async () => {
@@ -1205,7 +1234,7 @@ test("a locked commit the repository no longer has is refused, and sc update -g 
   lockFake("0.1.0", "deadbeef".repeat(5));
   const refused = await install("y\n");
   expect(refused.code).toBe(1);
-  expect(refused.err).toContain("which your lock pins, is gone");
+  expect(refused.err).toContain("simon/skelcrew-fake no longer serves commit deadbeefdead");
   expect(refused.err).toContain("sc update -g moves it to its newest version");
   const updated = await atTerminal("y\n", home, ["update", "-g", "fake"]);
   expect(updated.err).toBe("");
@@ -1313,8 +1342,8 @@ test("when the forge won't serve the locked commit, sc install takes the tag onl
   const gone = await install("y\n");
   expect(gone.code).toBe(1);
   expect(gone.err).toContain(
-    `commit ${locked.slice(0, 12)} of simon/skelcrew-fake, which your lock pins, is gone`,
+    `simon/skelcrew-fake no longer serves commit ${locked.slice(0, 12)}, which your lock pins: git couldn't fetch it (fatal: unadvertised object)`,
   );
-  expect(gone.err).toContain(`v0.1.0 is at ${fakeCommit("0.1.0").slice(0, 12)} now`);
+  expect(gone.err).toContain(`its tag v0.1.0 is at ${fakeCommit("0.1.0").slice(0, 12)} now`);
   expect(readFileSync(lock(), "utf8")).toBe(lockBefore);
 });

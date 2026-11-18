@@ -94,22 +94,38 @@ function cloneTag(
     // The pinned commit is fetched by itself, so a tag moved since it was locked still installs
     // exactly the code you approved. git can't clone a commit, only a branch or a tag, so the
     // folder starts empty and fetches it.
-    const fetched = [
-      ["init", "--quiet", staged],
-      ["-C", staged, "fetch", "--quiet", "--depth", "1", url, commit],
-      ["-C", staged, "checkout", "--quiet", "FETCH_HEAD"],
-    ].every((step) => git(step).success);
-    // A forge can refuse to serve a commit by its id. Then the tag is cloned, which is only
-    // the locked code while the tag still points at that commit.
-    if (!fetched) {
+    const said = (run: { stderr: Buffer }) => run.stderr.toString().trim();
+    // Whatever fails here is the machine's own git, not the forge.
+    const local = (run: { stderr: Buffer }) => {
+      rmSync(staged, { recursive: true, force: true });
+      return new Error(`git failed in ${staged}: ${said(run)}`);
+    };
+    const made = git(["init", "--quiet", staged]);
+    if (!made.success) throw local(made);
+    const fetched = git(["-C", staged, "fetch", "--quiet", "--depth", "1", url, commit]);
+    if (fetched.success) {
+      const checkedOut = git(["-C", staged, "checkout", "--quiet", "FETCH_HEAD"]);
+      if (!checkedOut.success) throw local(checkedOut);
+    } else {
+      // A forge can refuse to serve a commit by its id. Then the tag is cloned, which is only
+      // the locked code while the tag still points at that commit.
       rmSync(staged, { recursive: true, force: true });
       const cloned = git(["clone", "--quiet", "--depth", "1", "--branch", tag, url, staged]);
-      const at = cloned.success ? commitOf(staged) : null;
+      // With the tag out of reach too, the repository can't be reached, such as with no
+      // network or no login, which says nothing of whether the commit is still there.
+      if (!cloned.success) {
+        rmSync(staged, { recursive: true, force: true });
+        throw new Error(
+          `git couldn't reach commit ${commit.slice(0, 12)} of ${source}, which your lock pins: ${said(fetched)}. Nor its tag ${tag}: ${said(cloned)}`,
+        );
+      }
+      // The repository answered, refused the commit and moved the tag, so it doesn't serve that
+      // commit any more. Only sc update -g can move your lock past it.
+      const at = commitOf(staged);
       if (at !== commit) {
         rmSync(staged, { recursive: true, force: true });
-        const now = at === null ? `${tag} can't be cloned` : `${tag} is at ${at.slice(0, 12)} now`;
         throw new Error(
-          `commit ${commit.slice(0, 12)} of ${source}, which your lock pins, is gone: git couldn't fetch it, and ${now}. sc update -g moves it to its newest version, after showing what it runs`,
+          `${source} no longer serves commit ${commit.slice(0, 12)}, which your lock pins: git couldn't fetch it (${said(fetched)}), and its tag ${tag} is at ${at.slice(0, 12)} now. sc update -g moves it to its newest version, after showing what it runs`,
         );
       }
     }
@@ -250,7 +266,7 @@ type Options = { remote?: string | null; ask?: boolean; tag?: string; commit?: s
 // Installs a plugin and returns whether it did. `given` is either owner/repo, installed from that
 // GitHub repository's newest version tag or the one `tag` names, or a path to a folder of yours,
 // used where it is. It shows what the plugin runs and asks first. Then it runs the plugin's build
-// and setup, and pins one from GitHub in your lock.
+// and setup, and pins one from GitHub in your lock, unless `commit` came from the lock already.
 export function installPlugin(given: string, options: Options = {}): boolean {
   const { ask = true, tag, commit } = options;
   const remote = options.remote === undefined ? originHere() : options.remote;
@@ -308,7 +324,8 @@ export function installPlugin(given: string, options: Options = {}): boolean {
       folder,
       given,
     ]);
-    setLocked(db, given, lockedAs(manifest, cloned.commit));
+    // A commit pinned already came from your lock, which sc install leaves as it is.
+    if (commit === undefined) setLocked(db, given, lockedAs(manifest, cloned.commit));
     markUnclaimed(db, manifest);
     console.log(`Installed ${manifest.name} ${manifest.version}.`);
     return true;
@@ -328,7 +345,7 @@ const lockedAs = (manifest: Manifest, commit: string): Locked => ({
 // Updates one plugin. One from a folder is built again from it, so your edits count. One from
 // GitHub moves to its newest version tag, or to the one `tag` names at the lock's `commit`, after
 // showing what it runs and asking, as installing does. Its old version's folder goes, and your
-// lock pins the new one.
+// lock pins the new one, unless `commit` came from the lock already.
 export function updatePlugin(db: Database, plugin: Plugin, options: Options = {}): void {
   const { ask = true, tag: wanted, commit } = options;
   const remote = options.remote === undefined ? originHere() : options.remote;
@@ -392,7 +409,8 @@ export function updatePlugin(db: Database, plugin: Plugin, options: Options = {}
       throw error;
     }
     db.run("UPDATE plugins SET folder = ? WHERE name = ?", [newFolder, name]);
-    setLocked(db, source, lockedAs(manifest, cloned.commit));
+    // A commit pinned already came from your lock, which sc install leaves as it is.
+    if (commit === undefined) setLocked(db, source, lockedAs(manifest, cloned.commit));
     rmSync(folder, { recursive: true, force: true });
     console.log(`Updated ${name} from ${current.version} to ${manifest.version}.`);
   } finally {
