@@ -539,6 +539,24 @@ test("a y that comes with m in one read can't answer the merge question", async 
   await until(() => asked.includes(`merge simon/app 41 ${approved}`), "the merge");
 });
 
+// The forge only checks that the head is still the commit asked for, so the list must check the
+// rest again when you answer.
+test("a merge whose checks failed while its question was open merges nothing, and says why", async () => {
+  await open();
+  for (const _ of [1, 2, 3]) press("Down");
+  await until(() => here().startsWith("▸ ● app-14"), "the ready row");
+  type("m");
+  await until(() => seen().includes("Merge app#41 into main? y/n"), "the question");
+  const failed = { head: approved, checks: [{ name: "test", id: "1", state: "failed" }] };
+  sql(itemSql("app", "pr", 41, "Fix the export header", "2026-11-06T10:00:00Z", failed));
+  type("y");
+  await until(
+    () => seen().includes("app#41's checks haven't passed on the approved commit yet"),
+    "why it didn't merge",
+  );
+  expect(asked.filter((line) => line.startsWith("merge"))).toEqual([]);
+});
+
 test("m on a task ready for review asks first, and y merges it at the commit you saw", async () => {
   await open();
   for (const _ of [1, 2, 3]) press("Down");

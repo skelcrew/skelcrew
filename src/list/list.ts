@@ -53,7 +53,8 @@ export async function runList(agents: string, repository: string): Promise<void>
   let here = -1;
   let top = 0;
   let said: string | null = null;
-  let asking: Question | null = null;
+  // The open question, with the row it is about and whether it is a merge or a start.
+  let asking: { question: Question; row: string; merge: boolean } | null = null;
   let working = false;
   let attached = false;
   let lastFrame = "";
@@ -86,7 +87,7 @@ export async function runList(agents: string, repository: string): Promise<void>
     // What the bottom line says can come from outside, such as a forge's reason for refusing a
     // merge, so its control codes never reach your terminal.
     const bottom = (tabs: number) =>
-      removeControlCodes(said ?? asking?.ask ?? keysFor(rows[here], tabs));
+      removeControlCodes(said ?? asking?.question.ask ?? keysFor(rows[here], tabs));
     const size = { width: process.stdout.columns || 80, height: process.stdout.rows || 24 };
     const drawn = drawList(rows, here, top, frameWith(bottom, load), size);
     top = drawn.top;
@@ -203,7 +204,7 @@ export async function runList(agents: string, repository: string): Promise<void>
       return attach(row.session);
     }
     if (row.part === "issue" && row.start) {
-      asking = row.start;
+      asking = { question: row.start, row: row.name, merge: false };
       return draw();
     }
     // A builder that exited leaves its last screen behind, which would look like it still runs.
@@ -254,9 +255,20 @@ export async function runList(agents: string, repository: string): Promise<void>
     if (asking) {
       const action = asking;
       asking = null;
-      if (key === "y") await goAhead(action);
-      else draw();
-      return;
+      if (key !== "y") return draw();
+      // The task can change while the question is open: CI can fail, the approval can go, or
+      // the issue can start elsewhere. So its row is read again, and only goes ahead while it
+      // still offers the very same request. Otherwise the line says why, when the row does.
+      refresh();
+      const row = rows.find((candidate) => candidate.name === action.row);
+      const offer = action.merge ? row?.merge : row?.start;
+      if (offer && "ask" in offer && Bun.deepEquals(offer.request, action.question.request))
+        return goAhead(offer);
+      return say(
+        offer && "refused" in offer
+          ? offer.refused
+          : `${action.row} changed while you were asked, so nothing was done`,
+      );
     }
     said = null;
     const row = rows[here];
@@ -269,7 +281,7 @@ export async function runList(agents: string, repository: string): Promise<void>
     if (key === "enter" && row) return openRow(row);
     if (key === "m" && row?.merge) {
       if ("refused" in row.merge) return say(row.merge.refused);
-      asking = row.merge;
+      asking = { question: row.merge, row: row.name, merge: true };
       return draw();
     }
     if (key === "m" && row?.part === "ready") return say(`${row.name} has no PR to merge here`);
