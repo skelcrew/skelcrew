@@ -38,7 +38,7 @@ function settings(yours: string, shared: string | null): void {
 // Runs code against config.ts in a process of its own, as homedir() keeps the HOME this one
 // started with, and returns what it printed and the error it ended with, if any.
 function run(code: string): { out: string; err: string } {
-  const script = `import { agentRole, checkLimit, leadMayArmMerges, repositoryCommands, reviewConfig, reviewLimit, roundLimit } from ${JSON.stringify(source("config.ts"))};
+  const script = `import { agentRole, checkLimit, leadMayArmMerges, repositoryCommands, reviewConfig, reviewLimit, roundLimit, sessionHost } from ${JSON.stringify(source("config.ts"))};
 const app = { owner: "simon", repo: "app" };
 ${code}`;
   const done = Bun.spawnSync([process.execPath, "-e", script], {
@@ -188,6 +188,16 @@ test("a skelcrew.yaml that isn't valid, or isn't a plain file, says so rather th
   writeFileSync(join(home, "secret"), "setup: [cat secret]\n");
   symlinkSync(join(home, "secret"), join(clone(), "skelcrew.yaml"));
   expect(run("repositoryCommands(app);").err).toContain("isn't a plain file");
+});
+
+test("the session host comes from your config only, else tmux", () => {
+  const host = () => run("console.log(sessionHost());").out;
+  settings("harness: claude\n", null);
+  expect(host()).toBe("tmux\n");
+  settings("harness: claude\nsession: herdr\n", "session: rex\n");
+  expect(host()).toBe("herdr\n");
+  settings("harness: claude\n", "session: rex\n");
+  expect(host()).toBe("tmux\n");
 });
 
 test("how many reviews run at once comes from your config only, else a quarter of the cores", () => {

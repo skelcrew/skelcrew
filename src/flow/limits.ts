@@ -193,9 +193,11 @@ function runAt(at: number, run: () => void): () => void {
 }
 
 // The wake planned for each builder that stopped on its harness's usage limit, by its thread's
-// folder, which cancels both the wait and the typing of "continue", and how many waits in a row
-// had no reset time, so the wait grows, with when it was last woken.
-const wakes = new Map<string, () => void>();
+// folder: what cancels both the wait and the typing of "continue", and once it types, what
+// settles when that typing is over, with the limit it cleared if "continue" didn't go in. Also
+// how many waits in a row had no reset time, so the wait grows, with when it was last woken.
+type Wake = { cancel: () => void; typing: Promise<CutShort> | null };
+const wakes = new Map<string, Wake>();
 const builderTries = new Map<string, Wakes>();
 
 // What a builder's wakes so far were: how many waits in a row had no reset time to go by, when
@@ -224,12 +226,21 @@ export function wakeTime(
   return { at: now + backoffAfter(tries), wakes: { tries, woken, reset } };
 }
 
+// A wake cut short as it typed "continue", with the reset time of the limit it cleared, or null
+// when "continue" went in, or nothing was being typed.
+export type CutShort = { reset: number | null } | null;
+
 // Cancels the wake planned for the thread's builder, for when the error it was planned for ends:
 // you typed to the builder, it stopped, or it met another error. Typing still waiting for the
-// builder to be idle is cancelled too, so a stale "continue" never lands.
-export function endWake(folder: string): void {
-  wakes.get(folder)?.();
+// builder to be idle is cancelled too, so a stale "continue" never lands. Returns what settles
+// once that typing is over, saying whether it was cut short before "continue" went in, as the
+// builder then still sits at its limit: an end of the builder waits for it, and puts the limit
+// back if the builder can't be ended after all.
+export function endWake(folder: string): Promise<CutShort> {
+  const wake = wakes.get(folder);
+  wake?.cancel();
   wakes.delete(folder);
+  return wake?.typing ?? Promise.resolve(null);
 }
 
 // Plans to type "continue" into the thread's builder once its harness's usage limit resets, or,
@@ -241,25 +252,28 @@ export function wakeAfterLimit(db: Database, sessions: string, folder: string): 
   const { at, wakes: next } = wakeTime(reset, Date.now(), builderTries.get(folder));
   if (next === undefined) builderTries.delete(folder);
   else builderTries.set(folder, next);
-  // One wake per builder: a newer limit replaces the one planned.
+  // One wake per builder: a newer limit replaces the one planned. It is kept before its wait
+  // starts, as a reset already past wakes it at once.
   endWake(folder);
   const typing = new AbortController();
+  const wake: Wake = { cancel: () => typing.abort(), typing: null };
+  wakes.set(folder, wake);
   const cancelWait = runAt(at, () => {
     const tried = builderTries.get(folder);
     if (tried !== undefined) builderTries.set(folder, { ...tried, woken: Date.now() });
-    continueBuilder(db, sessions, folder, typing.signal)
-      .catch((error) =>
-        console.log(`couldn't wake ${folder}'s builder after its usage limit: ${errorText(error)}`),
-      )
+    wake.typing = continueBuilder(db, sessions, folder, typing.signal)
+      .catch((error) => {
+        console.log(`couldn't wake ${folder}'s builder after its usage limit: ${errorText(error)}`);
+        return null;
+      })
       .finally(() => {
-        if (wakes.get(folder) === cancel) wakes.delete(folder);
+        if (wakes.get(folder) === wake) wakes.delete(folder);
       });
   });
-  const cancel = () => {
+  wake.cancel = () => {
     cancelWait();
     typing.abort();
   };
-  wakes.set(folder, cancel);
 }
 
 // Types "continue" into a builder still idle on its harness's usage limit, whether the thread
@@ -268,26 +282,30 @@ export function wakeAfterLimit(db: Database, sessions: string, folder: string): 
 // idle, and anything else typed to it meanwhile ends the wake, so "continue" never lands on
 // top of it. A builder that couldn't be told is idle on its error with nobody to wake it, so
 // the thread then needs you. Nothing happens once `signal` aborts, as the error it was for has
-// ended.
+// ended. Returns the limit it cleared when "continue" didn't go in as `signal` aborted.
 async function continueBuilder(
   db: Database,
   sessions: string,
   folder: string,
   signal: AbortSignal,
-): Promise<void> {
+): Promise<CutShort> {
   const thread = readThread(db, folder);
   const live = thread.status === "working" || thread.status === "waiting";
-  if (!live || !thread.erred || !thread.limited) return;
+  if (!live || !thread.erred || !thread.limited) return null;
   const over = { erred: false, limited: false, limit_reset: null };
   record(db, folder, over, "its harness's usage limit reset, so Skelcrew types continue");
+  const cut = { reset: thread.limit_reset };
   try {
-    await typeContinue(sessions, thread, signal);
+    const typed = await typeContinue(db, sessions, thread, signal);
+    return typed === "typed" ? null : cut;
   } catch (error) {
     // A builder that met the limit again, or was typed to, since has a newer state to keep.
-    if (signal.aborted || readThread(db, folder).erred) return;
+    if (signal.aborted) return cut;
+    if (readThread(db, folder).erred) return null;
     const reason = errorText(error);
     const why = `its harness's usage limit reset, but Skelcrew couldn't type continue: ${reason}`;
     record(db, folder, { erred: true }, why);
     typeLeadNotes(db, sessions);
+    return null;
   }
 }

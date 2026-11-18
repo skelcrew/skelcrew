@@ -55,6 +55,7 @@ const all = [
   "yourHarness",
   "yourReviewer",
   "declined",
+  "host",
   "leadArms",
 ];
 const quarter = Math.max(1, Math.floor(availableParallelism() / 4));
@@ -71,12 +72,16 @@ test("with no files, every setting is the built-in default", () => {
     checks: eighth,
     reviewMinutes: 30,
     declined: [],
+    host: "tmux",
     leadArms: false,
   });
 });
 
 test("your config goes over the built-in defaults", () => {
-  files("harness: codex\nmodel: gpt-6\nmax_rounds: 5\nlimits: { reviews: 2 }\n", null);
+  files(
+    "harness: codex\nmodel: gpt-6\nmax_rounds: 5\nlimits: { reviews: 2 }\nsession: herdr\n",
+    null,
+  );
   expect(read(all).settings).toEqual({
     lead: { harness: "codex", model: "gpt-6" },
     builder: { harness: "codex", model: "gpt-6" },
@@ -87,6 +92,7 @@ test("your config goes over the built-in defaults", () => {
     reviewMinutes: 30,
     yourHarness: "codex",
     declined: [],
+    host: "herdr",
     leadArms: false,
   });
 });
@@ -108,6 +114,7 @@ test("the repository's skelcrew.yaml goes over your config, key by key", () => {
     reviewMinutes: 30,
     yourHarness: "claude",
     declined: [],
+    host: "tmux",
     leadArms: false,
   });
 });
@@ -128,7 +135,7 @@ test("a file sets only what is its own", () => {
   // arm merges, so the repository's line for that counts for nothing too.
   files(
     "tracker: linear\n",
-    "harness: codex\nmodel: gpt-6\nlimits: { reviews: 9 }\nlead: { may_arm_merges: true }\n",
+    "harness: codex\nmodel: gpt-6\nlimits: { reviews: 9 }\nsession: rex\nlead: { may_arm_merges: true }\n",
   );
   expect(read(all).settings).toEqual({
     lead: { harness: "claude" },
@@ -139,6 +146,7 @@ test("a file sets only what is its own", () => {
     checks: eighth,
     reviewMinutes: 30,
     declined: [],
+    host: "tmux",
     leadArms: false,
   });
 });

@@ -7,9 +7,10 @@ import { ask } from "./client.ts";
 import { tellOldKeys } from "./config.ts";
 import { openDb } from "./db.ts";
 import { leadOf } from "./flow/lead.ts";
-import { findThread } from "./flow/thread.ts";
+import { builderSession, findThread } from "./flow/thread.ts";
 import { runList } from "./list/list.ts";
 import { installService, restartDaemon, servicePid, startDaemon } from "./machine/service.ts";
+import { attachOnHost } from "./plugins/runtime.ts";
 import { openScreen } from "./screen/screen.ts";
 import { checkoutFolder, git, release, singleFile } from "./version.ts";
 
@@ -159,7 +160,9 @@ export async function attachToLead(
 
 // Opens the screen with a thread's builder on the right and its repository's lead in the
 // sidebar, and returns when you leave with Alt-Q. Only you can run it, since it takes over
-// your terminal. It checks the builder is running before it starts the daemon.
+// your terminal. It checks the builder is running before it starts the daemon. A builder on a
+// runtime plugin's host is attached through that host instead, full screen, as the screen shows
+// only tmux's sessions.
 export async function attachToThread(
   sessions: string,
   repository: string,
@@ -167,12 +170,15 @@ export async function attachToThread(
 ): Promise<void> {
   const db = openDb();
   const thread = findThread(db, repository, task);
+  const { host, id } = await builderSession(db, sessions, thread);
   // A builder that exited leaves its last screen behind, which would look like it still runs.
-  if (!agentRuns(sessions, thread.folder))
+  if (!(await agentRuns(host, id)))
     throw new Error(
       `${repository}-${task}'s builder isn't running: the thread is ${thread.status}`,
     );
+  // Its hooks and sc reach the daemon wherever it runs, so the daemon runs first on any host.
   await upInBackground();
+  if (typeof host !== "string") return attachOnHost(host, id);
   // Attaching to a thread opens its repository, as plain sc in a checkout of it would, which
   // opens its tab again if you closed it by exiting its lead, and starts that lead. It is asked
   // each time, not only for a tab the database says is closed: a lead you exited a moment ago

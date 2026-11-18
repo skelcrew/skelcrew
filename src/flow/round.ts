@@ -26,6 +26,7 @@ import {
   reviewComment,
   whoRunsTheSuite,
 } from "./decide.ts";
+import { stopping } from "./events.ts";
 import { fetchInto, pushCommit } from "./git.ts";
 import { endLimit, limitOn, reachLimit, tellOfLimit, waitUntil } from "./limits.ts";
 import { dropOldEvents, noteForLead, queueMessage, typeLeadNotes } from "./messages.ts";
@@ -774,7 +775,7 @@ function pushAndReview(
 export function submitRound(db: Database, sessions: string, folder: string, summary: string): void {
   const thread = readThread(db, folder);
   const { maxRounds, reviewer } = reviewConfig(thread);
-  if (thread.status === "stopped")
+  if (thread.status === "stopped" || stopping.has(folder))
     throw new Error("this thread was stopped, so Skelcrew won't push it");
   // Past the round limit the thread still needs you, whatever the builder does.
   const needs_you = pastRoundLimit(thread, maxRounds);
@@ -805,10 +806,16 @@ export function submitRound(db: Database, sessions: string, folder: string, summ
     `submitted: ${summary}`,
   );
   // A moved branch's notice dropped here never reached the builder, so its commit is forgotten.
-  const dropped = dropOldEvents(db, sessions, folder);
-  const { seen } = readThread(db, folder);
-  const kept = forgetMoves(seen, thread.branch, dropped);
-  if (JSON.stringify(kept) !== JSON.stringify(seen)) record(db, folder, { seen: kept });
+  // A notice being typed as the round started is dropped only once its typing ends, if it never
+  // got in, so its commit is forgotten then.
+  const forget = (dropped: string[]) => {
+    const { seen } = readThread(db, folder);
+    const kept = forgetMoves(seen, thread.branch, dropped);
+    if (JSON.stringify(kept) !== JSON.stringify(seen)) record(db, folder, { seen: kept });
+  };
+  const { dropped, later } = dropOldEvents(db, sessions, folder);
+  forget(dropped);
+  later.then(forget);
   // The older round is cancelled, but its push still runs first, so the branch ends on this
   // round's commit.
   const before = latestRounds.get(folder);

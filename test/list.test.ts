@@ -629,6 +629,28 @@ test("Enter on the lead attaches to it", async () => {
   await until(() => here().startsWith("▸ ◆ lead"), "the list on the lead's row");
 });
 
+// A builder on a runtime plugin's host isn't in tmux, so Enter runs the host's own attach on its
+// ID there, and leaving that comes back to the list on the same row.
+test("Enter on a builder on a plugin's host attaches to it through that host", async () => {
+  const plugin = join(home, "plugin-fake");
+  mkdirSync(plugin, { recursive: true });
+  writeFileSync(join(plugin, "attach.sh"), 'echo "I am $1 on fake"; read -r line\n');
+  writeFileSync(
+    join(plugin, "skelcrew-plugin.yaml"),
+    "name: fake\nversion: 0.1.0\nskelcrew: 0.1.0\nabout: A host\nkind: runtime\nprovides: [sessions]\nsession: [sh, session.sh]\nattach: [sh, attach.sh]\n",
+  );
+  sql(`INSERT INTO plugins (name, folder) VALUES ('fake', '${plugin}');
+UPDATE threads SET host = 'fake', host_id = 'fake-app-12' WHERE folder = 'app-12'`);
+  await open();
+  await until(() => here().startsWith("▸ ● app-12"), "app-12's row");
+  press("Enter");
+  await until(() => seen().includes("I am fake-app-12 on fake"), "the host's attach");
+  press("Enter");
+  await until(() => seen().includes("q quit"), "the list again");
+  expect(here()).toStartWith("▸ ● app-12");
+  expect(read(join(home, "left"))).toBe("");
+});
+
 test("Enter on a builder that isn't running says so, and attaches to nothing", async () => {
   await open();
   press("Down");

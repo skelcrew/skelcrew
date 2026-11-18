@@ -3,11 +3,20 @@
 // for GitHub.
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { createConnection } from "node:net";
 import { hostname, tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import type { Subprocess } from "bun";
+import { z } from "zod";
 import { stillRunning } from "../src/agents/sessions.ts";
 import { codeOf } from "../src/db.ts";
 import {
@@ -96,6 +105,12 @@ afterEach(async () => {
     await serve.exited;
   }
   Bun.spawnSync(["tmux", "-L", socket, "kill-server"], { stderr: "pipe" });
+  // The fake session host's sessions end with the test too.
+  const hosted = join(home, ".config", "skelcrew", "plugins", "fake", "sessions");
+  for (const id of existsSync(hosted) ? readdirSync(hosted) : [])
+    try {
+      process.kill(-Number(read(join(hosted, id, "pid"))), "SIGKILL");
+    } catch {}
   const folder = join(process.env.TMUX_TMPDIR ?? "/tmp", `tmux-${userInfo().uid}`);
   rmSync(join(folder, socket), { force: true });
   rmSync(home, { recursive: true, force: true });
@@ -200,6 +215,39 @@ const hasSession = (name: string) =>
     .success;
 
 const clone = () => join(data(), "threads", "app-12");
+
+// Installs the fake session host as a runtime plugin named fake, providing `provides`, and
+// returns its settings folder, where it keeps its sessions and notes what it is asked.
+function fakeHost(provides: string): string {
+  const folder = join(home, "plugin-fake");
+  mkdirSync(folder, { recursive: true });
+  writeFileSync(
+    join(folder, "skelcrew-plugin.yaml"),
+    `name: fake
+version: 0.1.0
+skelcrew: 0.1.0
+about: A session host for tests
+kind: runtime
+provides: [${provides}]
+session: [bun, ${JSON.stringify(join(import.meta.dir, "fake-host.ts"))}]
+attach: ["true"]
+`,
+  );
+  const db = new Database(join(data(), "skelcrew.db"));
+  db.run("PRAGMA busy_timeout = 5000");
+  db.run("INSERT INTO plugins (name, folder) VALUES ('fake', ?)", [folder]);
+  db.close();
+  const settings = join(home, ".config", "skelcrew", "plugins", "fake");
+  mkdirSync(settings, { recursive: true });
+  return settings;
+}
+
+// Has your config name `host` as the session host from now on.
+const useHost = (host: string) =>
+  writeFileSync(
+    join(home, ".config", "skelcrew", "config.yaml"),
+    `harness: claude\nsession: ${host}\n`,
+  );
 
 test("sc issue create creates a task in the repository's tracker and prints its name", async () => {
   addApp();
@@ -670,6 +718,111 @@ c.on("data", (d) => process.stdout.write(d));`;
     expect(read(join(config("app-12"), "pwd"))).toBe(`${clone()}\n`);
     expect(hasSession("app-12")).toBe(true);
     expect(thread().status).toBe("working");
+  }, 60_000);
+
+  test("a builder starts on the session host your config names, which hears its status", async () => {
+    addApp();
+    const host = fakeHost("sessions, transport, status");
+    useHost("fake");
+    serve();
+    await untilCloned();
+    expect((await skel("start", "app-12")).err).toBe("");
+    // The host is saved as the builder starts, and its session's ID once the host gave it.
+    await until(() => thread().host_id === "fake-app-12");
+    expect(thread().host_id).toBe("fake-app-12");
+    expect(hasSession("app-12")).toBe(false);
+    expect(existsSync(join(host, "sessions", "fake-app-12"))).toBe(true);
+    // The builder runs in its sandbox on the host, as on tmux.
+    await until(() => read(join(config("app-12"), "pwd")) !== "");
+    expect(read(join(config("app-12"), "pwd"))).toBe(`${clone()}\n`);
+    expect((await skel("peek", "app-12")).code).toBe(0);
+    await until(() => read(join(host, "statuses")) !== "");
+    expect(JSON.parse(read(join(host, "statuses")).split("\n")[0] ?? "")).toEqual({
+      id: "fake-app-12",
+      status: "working",
+      reason: "working",
+    });
+    // Stopping ends it on the host, and the thread no longer has one.
+    expect((await skel("stop", "app-12")).err).toBe("");
+    expect(existsSync(join(host, "sessions", "fake-app-12"))).toBe(false);
+    expect(thread().host).toBe(null);
+  }, 60_000);
+
+  test("a builder started on tmux stays there after the host changes, until it starts again", async () => {
+    addApp();
+    const first = serve();
+    await untilCloned();
+    await skel("start", "app-12");
+    await until(() => hasSession("app-12"));
+    expect(thread().host).toBe("tmux");
+    const host = fakeHost("sessions");
+    useHost("fake");
+    // A daemon that starts again finds the builder still running on tmux.
+    await stop(first);
+    serve();
+    await untilAnswers();
+    await Bun.sleep(2000);
+    expect(hasSession("app-12")).toBe(true);
+    expect(thread().host).toBe("tmux");
+    expect(read(join(host, "asked"))).not.toContain('"start"');
+    // Once stopped and started, it comes back on the host your config names now.
+    await skel("stop", "app-12");
+    await skel("start", "app-12");
+    await until(() => thread().host === "fake");
+    expect(hasSession("app-12")).toBe(false);
+  }, 60_000);
+
+  test("a builder whose host plugin is gone needs you once the daemon starts, rather than moving", async () => {
+    addApp();
+    fakeHost("sessions");
+    useHost("fake");
+    const first = serve();
+    await untilCloned();
+    await skel("start", "app-12");
+    await until(() => thread().host_id === "fake-app-12");
+    await stop(first);
+    const db = new Database(join(data(), "skelcrew.db"));
+    db.run("DELETE FROM plugins WHERE name = 'fake'");
+    db.close();
+    serve();
+    await until(() => thread().needs_you === 1);
+    expect(String(thread().noting)).toContain("session host fake isn't installed any more");
+    expect(thread().host).toBe("fake");
+    expect(hasSession("app-12")).toBe(false);
+  }, 60_000);
+
+  // One broken plugin must never keep the daemon from starting: every other thread comes back.
+  test("a plugin whose folder went leaves the daemon starting, its threads needing you, and tmux's builders running", async () => {
+    addApp();
+    issue(13, "Add export", "To CSV");
+    const first = serve();
+    await untilCloned();
+    await skel("start", "app-12");
+    await until(() => hasSession("app-12"));
+    await stop(first);
+    // app-13's builder ran on a plugin whose folder has gone since.
+    const db = new Database(join(data(), "skelcrew.db"));
+    db.run("PRAGMA busy_timeout = 5000");
+    db.run("INSERT INTO plugins (name, folder) VALUES ('broken', ?)", [join(home, "gone")]);
+    db.exec(threadSql({ task: "13", session: "s", host: "broken", host_id: "broken-app-13" }));
+    db.close();
+    serve();
+    await untilAnswers();
+    // Reads one thread's row by its folder.
+    const row = (folder: string) => {
+      const db = new Database(join(data(), "skelcrew.db"));
+      db.run("PRAGMA busy_timeout = 5000");
+      try {
+        return z
+          .object({ status: z.string(), host: z.string().nullable(), needs_you: z.number() })
+          .parse(db.query("SELECT * FROM task_threads WHERE folder = ?").get(folder));
+      } finally {
+        db.close();
+      }
+    };
+    await until(() => row("app-13").needs_you === 1);
+    expect(row("app-12")).toEqual({ status: "working", host: "tmux", needs_you: 0 });
+    expect(hasSession("app-12")).toBe(true);
   }, 60_000);
 
   test("brings back a builder whose session is gone with --resume, where it was, after its repository is renamed", async () => {
