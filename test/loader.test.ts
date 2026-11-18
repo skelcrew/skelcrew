@@ -388,3 +388,16 @@ test("your model that would be used is checked, though your override names the h
   files("harness: claude\nmodel: [1]\nrepos: { simon/app: { harness: codex } }\n", null);
   expect(read(["builder"]).settings?.builder).toEqual({ harness: "codex" });
 });
+
+test("a lower role's model your override replaces isn't checked, while the harness it gives is", () => {
+  files(
+    "harness: claude\nrepos: { simon/app: { roles: { builder: { model: gpt } } } }\n",
+    "builder: { harness: codex, model: [bad] }\n",
+  );
+  const settings = read(["builder"]);
+  expect(settings.err).toBe("");
+  expect(settings.settings?.builder).toEqual({ harness: "codex", model: "gpt" });
+  // Without the override, the bad model counts, and is refused, saying where.
+  files("harness: claude\n", "builder: { harness: codex, model: [bad] }\n");
+  expect(read(["builder"]).err).toContain("skelcrew.yaml isn't valid: builder.model");
+});
