@@ -50,6 +50,15 @@ function daemonShouldRun(running: z.infer<typeof DaemonBuild>): string | null {
   return commit === "" || running.commit === commit ? null : `commit ${commit}`;
 }
 
+// How long a restarted daemon may take to answer on what this Skelcrew wants, in milliseconds.
+// Tests set SKELCREW_RESTART_WAIT_MS shorter, so a daemon that never comes back doesn't cost
+// them ten seconds.
+const restartWait = z.coerce
+  .number()
+  .min(0)
+  .catch(10_000)
+  .parse(process.env.SKELCREW_RESTART_WAIT_MS ?? 10_000);
+
 // Reports whether the daemon that answered runs outside its service, such as sc up or an older
 // sc serve in a terminal. Told by its process id, which every daemon reports, so it holds for a
 // daemon of an older release too. One that reports none can't be told, and counts as the service's.
@@ -76,13 +85,13 @@ export async function restartStaleDaemon(): Promise<void> {
   const log = restartDaemon();
   // Done once a daemon answers that runs what this Skelcrew wants. The old one can still
   // answer for a moment while it stops.
-  const deadline = Date.now() + 10_000;
+  const deadline = Date.now() + restartWait;
   while (true) {
     const now = await daemonRuns();
     if (now && !daemonShouldRun(now)) return;
     if (Date.now() > deadline)
       throw new Error(
-        `Skelcrew's daemon didn't come back on ${want} within 10 seconds: ${log} shows why`,
+        `Skelcrew's daemon didn't come back on ${want} within ${restartWait / 1000} seconds: ${log} shows why`,
       );
     await Bun.sleep(100);
   }

@@ -1,0 +1,359 @@
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { createServer, type Server, type Socket } from "node:net";
+import { tmpdir, userInfo } from "node:os";
+import { join } from "node:path";
+import { z } from "zod";
+import { type Labels, startSession } from "../src/agents/sessions.ts";
+import { sidebarWidth } from "../src/screen/screen.ts";
+import { fakePlugin, itemSql, source, threadSql, until as wait } from "./harness.ts";
+
+const dbFile = source("db.ts");
+
+export const screenFile = source("screen/screen.ts");
+export const pathNow = process.env.PATH ?? "";
+export const sidebar = sidebarWidth;
+export const leaving = "Your agents keep running. Run sc to come back.";
+// The labels the sessions these tests start carry, as the lead of the repository they add.
+export const labels: Labels = { repository: "simon/app", role: "lead" };
+export let home = "";
+let standIn: Server | null = null;
+export let agents = "";
+export let screen = "";
+export let terminal = "";
+
+// The sockets are the test's own too, as a sidebar tells whatever daemon it finds that it opened.
+export const env = () => ({ ...process.env, HOME: home, XDG_RUNTIME_DIR: join(home, "run") });
+// Runs tmux on one of the test's servers, never on Skelcrew's own.
+export function tmux(socket: string, ...args: string[]) {
+  const run = Bun.spawnSync(["tmux", "-L", socket, "-f", "/dev/null", ...args], {
+    env: { ...env(), TMUX: "" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  return { ok: run.success, out: run.stdout.toString() };
+}
+
+// Says what it waited for and shows the window it watched, if it gives up.
+export const until = (done: () => boolean, what: string, window = "one") =>
+  wait(done, { every: 30, what: () => `${what}:\n${seen(window)}` });
+
+// What an agent's script logged in a file of the test's folder, or nothing before it has.
+export const read = (file: string) => {
+  const path = join(home, file);
+  return existsSync(path) ? readFileSync(path, "utf8") : "";
+};
+
+// What you see in the first terminal, or a second one.
+export const seen = (window = "one") =>
+  tmux(terminal, "capture-pane", "-p", "-t", `=${window}:`).out;
+// The top row as you see it: Skelcrew above the sidebar, then the tabs and the strip above the
+// agent.
+export const tabRow = () => (seen().split("\n")[0] ?? "").trimEnd();
+// The row you are looking at, as the name line with the grey background shows it, below the
+// status line, where the open tab has the same grey, and left of the sidebar's edge, as the
+// row you are on in a list on the right has it too. Empty until the sidebar has drawn one.
+export function selected(window = "one"): string {
+  const colours = tmux(terminal, "capture-pane", "-p", "-e", "-t", `=${window}:`).out;
+  const line = colours
+    .split("\n")
+    .slice(1)
+    .find((text) => (text.split(/[│┤]/)[0] ?? "").includes("48;5;238"));
+  return Bun.stripANSI(line ?? "")
+    .slice(0, sidebar - 1)
+    .trim();
+}
+export const screenSessions = () =>
+  tmux(screen, "list-sessions", "-F", "#{session_name}").out.trim().split("\n").filter(Boolean);
+
+// Starts an agent that sets a title of its own, as Claude Code does, says its name, and logs
+// what you type and the size of its window. It first runs `before`, such as printing a long
+// history.
+export function agent(name: string, before = ""): void {
+  const script = join(home, `${name}.sh`);
+  writeFileSync(
+    script,
+    `#!/bin/sh
+cd ${JSON.stringify(home)}
+trap 'stty size > ${name}.size' WINCH
+stty size > ${name}.size
+${before}
+printf '\\033]0;title of ${name}\\007'
+echo "I am ${name}"
+# A resize cuts read short, which must not end the agent.
+while test -d ${JSON.stringify(home)}; do read -r line && echo "$line" >> ${name}.typed; done
+`,
+    { mode: 0o755 },
+  );
+  startSession(agents, name, { folder: home, command: [script], env: { PATH: pathNow }, labels });
+}
+
+// The load the footer shows in these tests, in place of the machine's, which changes on its own.
+export const fixedLoad = "cpu 12%  mem 3.4/16G";
+// What a test can change for itself, set back before each test. `before` goes ahead of Skelcrew
+// in a terminal's command, such as a PATH that changes what it finds. `extendedKeys` says whether
+// the terminals send Shift+Enter and other modified keys as keys of their own when asked, as
+// Ghostty, kitty and WezTerm do. Terminal.app never does. `mergeAnswer` and `holding` are how the
+// stand-in daemon answers, below.
+export const given: {
+  before: string;
+  extendedKeys: boolean;
+  mergeAnswer: object;
+  holding: boolean;
+} = { before: "", extendedKeys: false, mergeAnswer: {}, holding: false };
+
+// Opens the screen on an agent in a terminal of its own, whose title until then is "my shell",
+// and which logs how Skelcrew exited. `where` is the name a laptop's sc --remote passes along.
+export function open(
+  session: string,
+  window = "one",
+  term = "xterm-256color",
+  width = "120",
+  where = "",
+): void {
+  const script = join(home, `open-${window}.ts`);
+  writeFileSync(
+    script,
+    `import { openScreen } from ${JSON.stringify(screenFile)};
+await openScreen(${JSON.stringify(agents)}, ${JSON.stringify(session)}, "lead", "simon/app");
+await Bun.write(${JSON.stringify(join(home, `left-${window}`))}, "left");`,
+  );
+  const named = `${where ? `SKELCREW_REMOTE_NAME=${where} ` : ""}${given.before}`;
+  const title = `printf '\\033]2;my shell\\007'`;
+  // The footer shows a fixed load, so a quiet screen writes nothing at all. `before` comes after
+  // it, so a test can set it empty to see the machine's own.
+  const load = `SKELCREW_FIXED_LOAD='${fixedLoad}' `;
+  const command = `${title}; ${load}${named}TERM=${term} ${process.execPath} ${script}; sleep 300`;
+  const start = ["new-session", "-d", "-s", window, "-x", width, "-y", "30", command];
+  // The terminal must already send extended keys when the screen asks for them, as tmux ignores
+  // a request it got while they were off.
+  const extended = given.extendedKeys ? [";", "set", "-s", "extended-keys", "on"] : [];
+  tmux(terminal, ...start, ...extended);
+}
+
+// Presses keys in a terminal. Text goes as it would from a real one, including escape codes.
+export const type = (text: string, window = "one") =>
+  tmux(terminal, "send-keys", "-t", `=${window}:`, "-l", text);
+export const press = (key: string, window = "one") =>
+  tmux(terminal, "send-keys", "-t", `=${window}:`, key);
+// A press and release of the left button at a place on screen, counted from 1.
+export const click = (x: number, y: number) => type(`\x1b[<0;${x};${y}M\x1b[<0;${x};${y}m`);
+
+export function sql(statements: string): void {
+  const script = `import { openDb } from ${JSON.stringify(dbFile)};
+openDb().run(${JSON.stringify(statements)});`;
+  const run = Bun.spawnSync([process.execPath, "-e", script], { env: env(), stderr: "pipe" });
+  if (!run.success) throw new Error(run.stderr.toString());
+}
+
+// Gives a test a home of its own and its own tmux servers, with app's lead and two threads
+// running. Every screen test file runs it before each test.
+export function startTest(): void {
+  home = realpathSync(mkdtempSync(join(tmpdir(), "skel-screen-test-")));
+  given.before = "";
+  given.extendedKeys = false;
+  given.mergeAnswer = { merged: "Merged app#35." };
+  agents = `skel-test-${process.pid}-${Math.random().toString(36).slice(2)}`;
+  screen = `${agents}-screen`;
+  terminal = `${agents}-terminal`;
+  // app's lead is the one Skelcrew kept from before, as its session is named lead. It has started,
+  // so its row names its harness.
+  // The fake plugin is app's tracker and forge, so its sidebar has ISSUES and PRS.
+  fakePlugin(home);
+  const clone = join(home, ".local", "share", "skelcrew", "repos", "simon", "app");
+  mkdirSync(clone, { recursive: true });
+  writeFileSync(join(clone, "skelcrew.yaml"), "tracker: github\n");
+  sql(`INSERT INTO repositories (name, owner, repo, kept_lead, lead_session, forge)
+  VALUES ('app', 'simon', 'app', 1, 's', 'github');
+${threadSql({ task: "3", status: "done" })}
+${threadSql({ task: "7" })}
+${threadSql({ task: "12" })}`);
+  agent("lead");
+  agent("app-7");
+  agent("app-12");
+}
+
+// Ends what a test started: the stand-in daemon, the tmux servers and the test's home. Every
+// screen test file runs it after each test.
+export function endTest(): void {
+  standIn?.close();
+  standIn = null;
+  asked.length = 0;
+  acted.length = 0;
+  release();
+  for (const socket of [terminal, screen, agents]) {
+    tmux(socket, "kill-server");
+    // tmux leaves the socket file behind after kill-server.
+    const folder = join(process.env.TMUX_TMPDIR ?? "/tmp", `tmux-${userInfo().uid}`);
+    rmSync(join(folder, socket), { force: true });
+  }
+  rmSync(home, { recursive: true, force: true });
+}
+
+// Moves from the lead to the first thread that runs, past the entries, or to the one after it.
+export const toFirstThread = () => {
+  press("M-S-Down");
+  press("M-S-Down");
+};
+export const toSecondThread = () => {
+  toFirstThread();
+  press("M-Down");
+};
+
+// Waits until the screen shows the agent you opened it on, and the sidebar marks its row. The
+// sidebar marks the row of the session it last saw on the right, and can still be on the lead's
+// while a thread already shows, so a key pressed then moves from the lead. A thread's row can
+// show its title, so this tells only the lead's row from a thread's.
+export const ready = (name: string, window = "one") =>
+  until(
+    () => {
+      const row = selected(window);
+      return (
+        seen(window).includes(`I am ${name}`) &&
+        row !== "" &&
+        (name === "lead") === row.endsWith(" lead")
+      );
+    },
+    "the screen",
+    window,
+  );
+
+// The wheel, as a terminal sends it, turned up or down over the agent.
+export const wheel = (button: 64 | 65) => type(`\x1b[<${button};60;5M`);
+
+export const scrolledBack = () => tmux(agents, "list-panes", "-a", "-F", "#{pane_in_mode}").out;
+
+// The bottom row as you see it, across the whole screen, without the load at its right end. A
+// screen fewer than 30 rows high names its own last row.
+export const footer = (row = 29) =>
+  (seen().split("\n")[row] ?? "").replace(/ +cpu \d+% {2}mem [\d.]+\/\d+G *$/, "").trimEnd();
+
+// What the footer says under a list or page: the keys you need most and ? keys, then s or m on a
+// row that can be started or merged.
+export const listKeys = "  ⌥↑↓ move  ⌥Q quit  ? keys";
+export const startKeys = `${listKeys}  s start`;
+
+// Puts two open issues and a PR in Skelcrew's copy, as a poll would, with what their pages say.
+export const openOnGitHub = () =>
+  sql(`${itemSql("app", "task", 31, "Add CSV export", "2026-11-05T10:00:00Z", {
+    author: { login: "ana", bot: false, you: false },
+    labels: ["skelcrew"],
+    body: Array.from({ length: 80 }, (_, i) => `line ${i + 1} of the description`).join("\n"),
+  })}
+${itemSql("app", "task", 12, "Fix login", "2026-11-04T10:00:00Z", { author: { login: "ana", bot: false, you: false } })}
+${itemSql("app", "pr", 34, "Bump deps", "2026-11-05T10:00:00Z", {
+  body: "All of them.",
+  branch: "skelcrew/12",
+  checks: [{ name: "test", id: "1", state: "passed" }],
+  reviews: [
+    {
+      id: "1",
+      text: "**Approved.**\n\nFine.",
+      author: { login: "codex", bot: false, you: false },
+      verdict: "commented",
+      lines: [],
+    },
+  ],
+})}
+UPDATE repositories SET open_issues = 2, open_prs = 1;`);
+
+// Stands in for the daemon on the test's own socket: it logs each repository asked to open,
+// saying when a tab asked, which must never open a tab you closed, and answers with nothing to
+// say.
+// It also logs each thread started and PR merged, in `acted`, answering a merge with
+// `given.mergeAnswer`. While `given.holding`, those wait for `release`, so a test sees what the screen says
+// meanwhile.
+export const asked: string[] = [];
+export const acted: string[] = [];
+const waiting: (() => void)[] = [];
+export const release = () => {
+  given.holding = false;
+  for (const reply of waiting.splice(0)) reply();
+};
+export function daemon(): void {
+  const answer = (connection: Socket) =>
+    connection.on("data", (data) => {
+      const { command, from, tab, repo, task, pr, commit } = z
+        .object({
+          command: z.string(),
+          from: z.string().default(""),
+          tab: z.boolean().default(false),
+          repo: z.string().default(""),
+          task: z.string().default(""),
+          pr: z.number().default(0),
+          commit: z.string().default(""),
+        })
+        .parse(JSON.parse(data.toString()));
+      if (command === "lead") asked.push(`open ${from}${tab ? " from a tab" : ""}`);
+      if (command !== "start" && command !== "merge") {
+        connection.end("{}\n");
+        return;
+      }
+      acted.push(command === "start" ? `start ${repo} ${task}` : `merge ${repo} ${pr} ${commit}`);
+      const said = command === "start" ? { started: `Started app-${task}.` } : given.mergeAnswer;
+      const reply = () => connection.end(`${JSON.stringify(said)}\n`);
+      if (given.holding) waiting.push(reply);
+      else reply();
+    });
+  mkdirSync(join(home, "run"), { recursive: true, mode: 0o700 });
+  standIn = createServer(answer).listen(join(home, "run", "skelcrew.sock"));
+}
+
+export const issueUrl = "https://github.com/simon/app/issues/31";
+
+// Clicks a row of the sidebar, found by what it says.
+export function clickRow(text: string): void {
+  const y = seen()
+    .split("\n")
+    .findIndex((line) => line.slice(0, sidebar).includes(text));
+  click(6, y + 1);
+}
+// What the right side shows, without the sidebar.
+export const right = () =>
+  seen()
+    .split("\n")
+    .map((line) => line.slice(sidebar + 1))
+    .join("\n");
+// Clicks a row of the list on the right, found by what it says.
+export function clickListRow(text: string): void {
+  const y = right()
+    .split("\n")
+    .findIndex((line) => line.includes(text));
+  click(sidebar + 8, y + 1);
+}
+// Waits for text on the right.
+export const onRight = (text: string) =>
+  until(() => right().includes(text), `the right side to say ${text}`);
+// Opens the screen on the lead with issues and PRs open, and lands on an entry's list.
+export async function openList(entry: "Issues" | "Threads" | "PRs", width = "120"): Promise<void> {
+  openOnGitHub();
+  open("lead", "one", "xterm-256color", width);
+  await ready("lead");
+  await until(() => /Issues +\d/.test(seen()), "the entries");
+  clickRow(entry === "Threads" ? "    Threads" : entry);
+  await onRight("↑↓ move");
+}
+// Opens the issue's page, from its list. The list's pane draws the page, then the sidebar, told
+// by that pane, names it in the strip a moment later, so this waits for both. Otherwise what a
+// test reads first could change on its own while it looks.
+export async function openIssue(width = "120"): Promise<void> {
+  await openList("Issues", width);
+  press("Enter");
+  await onRight("line 1 of the description");
+  await until(() => right().split("\n")[0]?.includes("app-31") ?? false, "the strip");
+}
+// How many of the processes under the screen's tmux server run a list.
+export const listsRunning = () => {
+  const panes = tmux(screen, "list-panes", "-a", "-F", "#{pane_pid}").out.trim().split("\n");
+  return panes.filter((pid) => {
+    const about = Bun.spawnSync(["ps", "-o", "args=", "-p", pid], { stdout: "pipe" });
+    return about.stdout.toString().includes(" list ");
+  }).length;
+};

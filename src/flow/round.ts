@@ -14,8 +14,11 @@ import { baseOf } from "./builder.ts";
 import { openPrs, prOf, threadTask } from "./copy.ts";
 import {
   afterReview,
+  branchMoved,
   ciResult,
   ciState,
+  forgetMoves,
+  headSeen,
   onlyDocs,
   pastRoundLimit,
   refusedWorkflow,
@@ -43,8 +46,8 @@ async function git(folder: string, ...args: string[]): Promise<string> {
 // is none yet, with the line that closes its task at the end of its body. Returns the commit.
 // git never runs inside the thread's clone: the builder controls everything there, .git
 // included, and a planted setting would run with your rights. A push refused for changing a
-// workflow file throws saying so, and types that into the builder, unless a newer round
-// cancels it first.
+// workflow file, or because the branch moved on the forge without the builder, throws saying
+// so, and types that into the builder, unless a newer round cancels it first.
 async function push(
   db: Database,
   sessions: string,
@@ -72,17 +75,39 @@ async function push(
   try {
     await pushCommit(db, repository, skelcrewClone, sha, thread.branch);
   } catch (error) {
-    // A push refused for changing a workflow file fails the round with words a person can act
-    // on, and the builder hears them too, so it can undo the change and submit again. It waits
-    // as every message to the builder does, as it has likely not ended its turn yet, and a newer
-    // submit drops it as stale.
-    const refused = refusedWorkflow(threadName(db, thread), errorText(error));
+    // A push refused for changing a workflow file, or for a branch that moved on the forge,
+    // such as by a PR merged into it, fails the round with words a person can act on. The
+    // builder hears them too, so it can fix it and submit again. It waits as every message to
+    // the builder does, as it has likely not ended its turn yet, and a newer submit drops it
+    // as stale.
+    const said = errorText(error);
+    const name = threadName(db, thread);
+    let refused = refusedWorkflow(name, said);
+    let why = "its push was refused for changing a workflow file";
+    // git refuses a push that would drop commits the branch has on the forge, as it is never
+    // forced. The branch is fetched into Skelcrew's clone, the builder's origin, to merge. A
+    // poll that told the builder of the same commit already said it all. One this tells is
+    // saved as seen, so a poll doesn't tell it again. A thread with a PR that never took in its
+    // history has seen nothing, and saving one ID would make the rest look new. One with no PR
+    // has no history to hold back.
+    let told = false;
+    if (refused === null && /\[rejected\].*\((non-fast-forward|fetch first)\)/.test(said)) {
+      await fetchInto(db, repository, skelcrewClone, thread.branch);
+      const at = await git(skelcrewClone, "rev-parse", `refs/heads/${thread.branch}`);
+      refused = `${name}'s push was refused. ${branchMoved(thread.branch, at)}`;
+      why = "its push was refused, as its branch moved on the remote";
+      const now = readThread(db, folder);
+      const seen = now.seen ?? (now.pr === null ? [] : null);
+      told = seen?.includes(headSeen(at)) ?? false;
+      if (seen !== null && !told && !signal.aborted)
+        record(db, folder, { seen: [...seen, headSeen(at)] });
+    }
     if (refused === null) throw error;
-    if (!signal.aborted)
+    if (!signal.aborted && !told)
       queueMessage(db, sessions, folder, {
         sender: "skelcrew",
         text: refused,
-        said: "its push was refused for changing a workflow file",
+        said: why,
         typed_in: [],
       });
     throw new Error(refused);
@@ -692,7 +717,9 @@ function pushAndReview(
 // way, and returns at once: a shell command can't block long, so pushing and the review go on
 // in the background. The submit is saved first, so a stop of the daemon can't lose it. A
 // review still waiting to be typed in, or held past the round limit, is dropped, as it is
-// about an older commit, and so are Skelcrew's waiting messages of the PR's events. Throws when your config or the repository's skelcrew.yaml isn't valid,
+// about an older commit, and so are Skelcrew's waiting messages of the PR's events. A moved branch
+// commit whose notice is dropped is no longer told, so the builder hears of it again if its new
+// round doesn't merge it. One whose notice the builder got stays told. Throws when your config or the repository's skelcrew.yaml isn't valid,
 // so the builder hears why, and for a thread sc stop is ending, whose builder may submit while
 // it exits.
 export function submitRound(db: Database, sessions: string, folder: string, summary: string): void {
@@ -725,7 +752,11 @@ export function submitRound(db: Database, sessions: string, folder: string, summ
     },
     `submitted: ${summary}`,
   );
-  dropOldEvents(db, sessions, folder);
+  // A moved branch's notice dropped here never reached the builder, so its commit is forgotten.
+  const dropped = dropOldEvents(db, sessions, folder);
+  const { seen } = readThread(db, folder);
+  const kept = forgetMoves(seen, thread.branch, dropped);
+  if (JSON.stringify(kept) !== JSON.stringify(seen)) record(db, folder, { seen: kept });
   // The older round is cancelled, but its push still runs first, so the branch ends on this
   // round's commit.
   const before = latestRounds.get(folder);
