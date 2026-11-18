@@ -486,12 +486,31 @@ await refreshClone(db, app);`;
 
 // A claim made while there is nothing to start from would keep the label from starting the
 // task once there is.
-test("a labeled task on an empty repository is neither claimed nor started until its first commit", async () => {
+test("a labeled task on an empty repository is neither claimed nor started until its first commit, even before it is cloned", async () => {
   const work = addApp(true);
   answer(plugin, "took", { took: true });
   changes([issue12(true)]);
+  // Hold the clone the daemon makes as it starts, so polls run before it is there, as they
+  // can on a slow remote.
+  script(
+    "git",
+    `case "$*" in *"clone --quiet https://github.com/"*)
+  touch "$HOME/held"
+  while [ ! -e "$HOME/go" ] && [ -d "$HOME" ]; do sleep 0.05; done ;;
+esac
+exec ${Bun.which("git") ?? "git"} "$@"`,
+  );
+  // With no lead open, which would wait for the clone as it starts, polling starts at once.
+  const db = new Database(join(data(), "skelcrew.db"));
+  db.run("UPDATE repositories SET opened = NULL");
+  db.close();
   serve();
+  await until(() => existsSync(join(home, "held")));
   await until(() => copied().rows.length === 1);
+  await morePolls();
+  expect(claims()).toEqual([]);
+  writeFileSync(join(home, "go"), "");
+  await until(() => read(daemonLog()).includes("simon/app has no commits yet"));
   await morePolls();
   expect(claims()).toEqual([]);
   expect(thread()).toEqual({});

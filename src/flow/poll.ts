@@ -39,7 +39,7 @@ const startLabel = "skelcrew";
 // of its own, such as the branch to start from. A task in `passed`, named the same way, is one
 // this daemon won't start by its label: someone else claimed it, or its claim was this
 // daemon's but the thread failed to start. Kept in memory, so the tracker isn't asked about it
-// on every poll. Nothing starts while the repository has no commits yet.
+// on every poll. Nothing starts until Skelcrew's clone has a commit.
 async function startLabeled(
   db: Database,
   sessions: string,
@@ -63,9 +63,13 @@ async function startLabeled(
   const toStart = labeledToStart(threads, labeled);
   // A repository with no commits yet has nothing for a thread to start from, and a claim made
   // now would keep its label from starting it once it has some. Skelcrew's clone, just
-  // refreshed, has no commit then, which costs no call to the remote.
+  // refreshed, has no commit then, which costs no call to the remote. Until the clone is
+  // made, as while the daemon starts, nothing tells, so labeled tasks wait for it.
   const clone = cloneDir(owner, repo);
-  if (toStart.length > 0 && existsSync(clone) && (await headCommit(db, repository, clone)) === "")
+  if (
+    toStart.length > 0 &&
+    (!existsSync(clone) || (await headCommit(db, repository, clone)) === "")
+  )
     return;
   for (const task of toStart) {
     const key = `${fullName}#${task.id}`;
