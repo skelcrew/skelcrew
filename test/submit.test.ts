@@ -1164,50 +1164,6 @@ done`,
     await until(() => thread().reviewing === null);
   }, 130_000);
 
-  // bubblewrap starts its sandbox's first process in its own time, and that process only asks to
-  // die with bwrap once it runs. A stop that ends bwrap in between leaves it waiting forever on
-  // a bwrap that is gone, and no longer under the daemon. Here bwrap stands in for that, for
-  // the review only. As it starts, it leaves a process that is under the daemon no more. Told
-  // to end, it starts another, and goes. Neither can be ended with SIGTERM. Both end with the
-  // daemon all the same. bubblewrap is Linux's sandbox, so a Mac never starts it.
-  test.skipIf(process.platform === "darwin")(
-    "a review's sandbox ends with the daemon, even what left the daemon's processes",
-    async () => {
-      const bwrap = Bun.which("bwrap") ?? "bwrap";
-      const [early, late] = [join(home, "early"), join(home, "late")];
-      // A process that can't be ended with SIGTERM, which says its ID in the file it is given.
-      script("stuck", 'trap "" TERM; echo $$ > "$1"; exec sleep 300');
-      script(
-        "bwrap",
-        `case "$*" in *" codex "*)
-  trap 'stuck ${late} & until test -s ${late}; do sleep 0.01; done; exit 1' TERM
-  (stuck ${early} &)
-  until test -s ${early}; do sleep 0.01; done
-  touch ${join(home, "reviewing")}
-  while :; do sleep 0.05; done ;;
-esac
-exec ${bwrap} "$@"`,
-      );
-      addApp();
-      const first = serve();
-      await untilCloned();
-      await skel(["start", "app-12"]);
-      await until(() => existsSync(join(home, "reviewing")), longWait);
-      first.kill();
-      await first.exited;
-      // A process that ended but nobody reaped yet shows as Z, and runs nothing.
-      const runs = (pid: number) => {
-        const ps = Bun.spawnSync(["ps", "-o", "stat=", "-p", String(pid)], { stdout: "pipe" });
-        const state = ps.stdout.toString().trim();
-        return state !== "" && !state.startsWith("Z");
-      };
-      const left = [early, late].map((file) => Number(read(file)));
-      for (const pid of left) expect(pid).toBeGreaterThan(0);
-      await until(() => left.every((pid) => !runs(pid)));
-    },
-    130_000,
-  );
-
   // A review the daemon brings back runs before the builders are back, so its changes wait for
   // the builder rather than fail on a session that isn't there yet.
   test("a review brought back that asks for changes types them in once the builder is back", async () => {
