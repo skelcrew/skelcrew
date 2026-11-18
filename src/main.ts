@@ -194,10 +194,11 @@ async function machineCommand(args: string[]): Promise<void> {
     );
     return;
   }
-  // A service installed by an older Skelcrew runs sc serve until the next sc rewrites it.
+  // A service installed by an older Skelcrew runs sc serve until the next sc rewrites it. That
+  // service doesn't set SKELCREW_SERVICE, but gives no terminal, so a serve with one is yours.
   if (command === "serve" && args.length === 1) {
     console.error("sc serve is now sc up, and sc serve will go in a later release.");
-    await serve("skelcrew");
+    await serve("skelcrew", 30_000, process.stdin.isTTY === true);
     return;
   }
   usage(command);

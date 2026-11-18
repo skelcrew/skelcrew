@@ -327,6 +327,51 @@ await serve(${JSON.stringify(socket)});`;
   expect(await ask({ command: "status" })).toMatchObject({ running: true, release: "0.4.2" });
 });
 
+// Runs `sc <command>` as you or a service would, with a terminal or without, and gives back
+// whether the daemon says it runs in a terminal. sc runs its daemon on Skelcrew's tmux server,
+// so TMUX_TMPDIR moves that server into the test's folder, never reaching yours.
+async function startedInTerminal(
+  command: string,
+  terminal: boolean,
+  more: Record<string, string> = {},
+): Promise<unknown> {
+  const env = {
+    HOME: home,
+    XDG_RUNTIME_DIR: join(home, "run"),
+    PATH: `${join(home, "bin")}:${process.env.PATH ?? ""}`,
+    TMUX_TMPDIR: join(home, "tmux"),
+    ...more,
+  };
+  mkdirSync(env.TMUX_TMPDIR, { recursive: true });
+  const run = Bun.spawn([process.execPath, main, command], {
+    env,
+    ...(terminal
+      ? { terminal: { cols: 80, rows: 24 } }
+      : { stdin: "ignore", stdout: "ignore", stderr: "ignore" }),
+  });
+  try {
+    await until(() => existsSync(cliSocket()));
+    await untilAnswers();
+    const reply = await ask({ command: "status" });
+    return reply && typeof reply === "object" && "terminal" in reply ? reply.terminal : undefined;
+  } finally {
+    run.kill();
+    await run.exited;
+    Bun.spawnSync(["tmux", "-L", "skelcrew", "kill-server"], { env, stderr: "pipe" });
+  }
+}
+
+// Restarting the service can't replace a daemon you run in a terminal, so sc must know which
+// one it finds, including sc serve typed by hand after an upgrade.
+test("says whether it runs in a terminal, for sc up and sc serve alike", async () => {
+  setUp();
+  expect(await startedInTerminal("up", true)).toBe(true);
+  expect(await startedInTerminal("up", false, { SKELCREW_SERVICE: "1" })).toBe(false);
+  expect(await startedInTerminal("serve", true)).toBe(true);
+  // A service an older Skelcrew installed runs sc serve with no terminal and no SKELCREW_SERVICE.
+  expect(await startedInTerminal("serve", false)).toBe(false);
+}, 120_000);
+
 test("says which checkout and commit it started from, so Skelcrew can restart it after git pull", async () => {
   setUp();
   serve();

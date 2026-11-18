@@ -418,7 +418,7 @@ test("on a Mac, starts the daemon through launchd when it doesn't answer", async
   writeFileSync(join(home, "calls"), "");
   const run = await skelOnMac();
   expect(run.err).toBe("");
-  expect(calls()).toContain(`launchctl kickstart gui/${uid}/dev.skelcrew.daemon\n`);
+  expect(calls()).toContain(`launchctl bootstrap gui/${uid} ${plist()}\n`);
 });
 
 // launchd can lose the agent while its file stays, so Skelcrew thinks the daemon installed.
@@ -445,12 +445,26 @@ esac`,
   expect(calls()).toContain(`launchctl bootstrap gui/${uid} ${plist()}\n`);
 });
 
-test("on a Mac, reloads the agent when the PATH it needs moved", async () => {
+// launchd reads the agent's file only when it loads it, so a daemon on this Skelcrew's code keeps
+// running on the old one, such as one that runs sc serve, until its next start.
+test("on a Mac, rewrites the agent's file without restarting a running daemon", async () => {
   asMac();
   await skelOnMac("1\nsk-ant-oat01-good\n");
+  writeFileSync(
+    plist(),
+    readFileSync(plist(), "utf8").replace("<string>up</string>", "<string>serve</string>"),
+  );
+  writeFileSync(join(home, "calls"), "");
+  const run = await skelOnMac("", `${bin}:/usr/bin`);
+  expect(run.err).toBe("");
+  expect(readFileSync(plist(), "utf8")).toContain("<string>up</string>");
+  expect(readFileSync(plist(), "utf8")).toContain(`<string>${bin}:/usr/bin</string>`);
+  expect(calls()).not.toContain("launchctl");
+
+  // The next start loads the new file.
+  rmSync(join(home, "started"));
   writeFileSync(join(home, "calls"), "");
   await skelOnMac("", `${bin}:/usr/bin`);
-  expect(readFileSync(plist(), "utf8")).toContain(`<string>${bin}:/usr/bin</string>`);
   expect(calls()).toContain(`launchctl bootout gui/${uid}/dev.skelcrew.daemon\n`);
   expect(calls()).toContain(`launchctl bootstrap gui/${uid} ${plist()}\n`);
 });
