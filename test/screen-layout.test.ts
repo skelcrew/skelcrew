@@ -15,6 +15,7 @@ import {
   given,
   home,
   listKeys,
+  noteRefreshes,
   onRight,
   open,
   openIssue,
@@ -29,6 +30,7 @@ import {
   seen,
   selected,
   sidebar,
+  sidebarRefreshedTwice,
   sql,
   startKeys,
   startTest,
@@ -146,11 +148,20 @@ test("the sidebar is whole after the terminal goes narrower than it and straight
 });
 
 test("a terminal a few lines high still shows the agent, and Ctrl-Q still leaves", async () => {
+  noteRefreshes();
   open("lead");
   await ready("lead");
   for (const height of ["4", "3", "2", "1"]) {
     tmux(terminal, "resize-window", "-t", "=one:", "-x", "120", "-y", height);
-    await Bun.sleep(200);
+    // The screen learns the terminal's new height a moment later, through the client in it.
+    // Its window never goes under three lines, so below four lines its panes see no change.
+    // The sidebar refreshing twice from then on shows the screen still at work at this height:
+    // the first may have started before.
+    await until(
+      () => tmux(screen, "list-clients", "-F", "#{client_height}").out.trim() === height,
+      `the screen to be ${height} lines high`,
+    );
+    await sidebarRefreshedTwice();
     expect(screenSessions()).toHaveLength(1);
   }
   tmux(terminal, "resize-window", "-t", "=one:", "-x", "120", "-y", "30");
