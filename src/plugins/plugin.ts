@@ -39,7 +39,7 @@ const kindOf = (what: Provided) =>
 // so it is only lowercase letters, digits and dashes. It can't be none, because tracker: none in
 // a repository's skelcrew.yaml means no tracker. A plugin says its kind and what it provides.
 // One written before kinds says jobs: instead, which is still read: tracker, forge and chat make
-// it I/O, and machine makes it runtime. Either way it comes back with a kind and provides.
+// it I/O, and machine alone makes it runtime. Either way it comes back with a kind and provides.
 export const Manifest = z
   .object({
     name: z
@@ -72,15 +72,19 @@ export const Manifest = z
       });
     if (jobs === undefined && (kind === undefined || provides === undefined))
       context.addIssue({ code: "custom", path: ["provides"], message: "needs kind and provides" });
-    // Everything it provides must be of its one kind.
-    const plugin = kind ?? kindOf(what[0] ?? "tracker");
-    for (const one of what)
-      if (kindOf(one) !== plugin)
-        context.addIssue({
-          code: "custom",
-          path: [provides === undefined ? "jobs" : "provides"],
-          message: `${one} isn't for a plugin of kind ${plugin}`,
-        });
+    // A plugin is runtime only when everything it does is. jobs: once let a plugin mix machine
+    // with tracker, forge or chat, and one installed that way keeps working as I/O, with
+    // machine still among what it provides.
+    const plugin = kind ?? (what.every((one) => kindOf(one) === "runtime") ? "runtime" : "io");
+    // A manifest that names its kind must provide only things of that kind.
+    if (kind !== undefined)
+      for (const one of what)
+        if (kindOf(one) !== kind)
+          context.addIssue({
+            code: "custom",
+            path: ["provides"],
+            message: `${one} isn't for a plugin of kind ${kind}`,
+          });
     // A plugin that provides something must have each command that needs.
     for (const one of what)
       for (const command of commandsFor[one])

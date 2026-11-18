@@ -263,6 +263,22 @@ test("a manifest written before kinds, with jobs:, still reads as the kind its j
   expect((await skel(["plugin", "ls"])).out).toBe("fake 0.1.0 io: tracker, forge\n");
 });
 
+// jobs: let a plugin mix machine with I/O jobs, so one installed that way must keep working.
+test("a manifest with jobs: that mixes machine with tracker still reads, as I/O", async () => {
+  const folder = join(home, "skelcrew-fake");
+  fakePlugin(folder, "0.1.0", 'add: ["true"]\nexec: ["true"]\npush: ["true"]\n');
+  const manifest = join(folder, "skelcrew-plugin.yaml");
+  writeFileSync(
+    manifest,
+    readFileSync(manifest, "utf8").replace(
+      "kind: io\nprovides: [tracker, forge]",
+      "jobs: [tracker, forge, machine]",
+    ),
+  );
+  expect((await skel(["plugin", "install", "./skelcrew-fake"], "y\n")).code).toBe(0);
+  expect((await skel(["plugin", "ls"])).out).toBe("fake 0.1.0 io: tracker, forge, machine\n");
+});
+
 test("a manifest whose kind doesn't fit what it provides, or that mixes both shapes, is refused", async () => {
   const folder = join(home, "skelcrew-fake");
   const manifest = join(folder, "skelcrew-plugin.yaml");
