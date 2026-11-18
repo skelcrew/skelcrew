@@ -202,15 +202,6 @@ async function app12(): Promise<{ status: string; needsYou: boolean } | undefine
   return JSON.parse(ps.out).find((t: { thread: string }) => t.thread === "app-12");
 }
 
-// Waits until app-12 needs you, or no longer does.
-async function untilNeedsYou(wanted: boolean) {
-  const deadline = Date.now() + 30_000;
-  while ((await app12())?.needsYou !== wanted) {
-    if (Date.now() > deadline) throw new Error(`gave up waiting for needs you to be ${wanted}`);
-    await Bun.sleep(100);
-  }
-}
-
 // Has the fake builder do something, as Codex would, with `input` as what its hooks read, and
 // waits until it has.
 async function act(step: "stop" | "talk" | "interrupt" | "error" | "renew", input = "") {
@@ -248,6 +239,10 @@ async function startApp12() {
 
 // How many notes about app-12 needing you the lead has been typed.
 const notesAbout12 = () => read(join(lead(), "typed")).split("app-12 needs you").length - 1;
+
+// How many times app-12's builder has told the lead its turn ended without a submit.
+const turnsEndedTold = () =>
+  read(join(lead(), "typed")).split("My turn ended without a submit").length - 1;
 
 // The socket the daemon opens for app's lead, which tells it the lead calls. It is named by a
 // short hash.
@@ -353,11 +348,11 @@ describe.skipIf(insideSandbox)("codex", () => {
     await until(() => !turnEnded());
   }, 60_000);
 
-  test("a Codex builder still needs you after the daemon starts again, with no second note", async () => {
+  test("a Codex builder still shows turn ended after the daemon starts again, and the lead hears it once", async () => {
     await startApp12();
     await act("stop");
-    await untilNeedsYou(true);
-    await until(() => notesAbout12() === 1);
+    await until(turnEnded);
+    await until(() => turnsEndedTold() === 1);
     for (const daemon of running.splice(0)) {
       daemon.kill();
       await daemon.exited;
@@ -365,8 +360,9 @@ describe.skipIf(insideSandbox)("codex", () => {
     startDaemon(socket, env(), running);
     await until(() => existsSync(join(home, "run", "skelcrew.sock")));
     await Bun.sleep(1500);
-    expect((await app12())?.needsYou).toBe(true);
-    expect(notesAbout12()).toBe(1);
+    expect(turnEnded()).toBe(true);
+    expect((await app12())?.needsYou).toBe(false);
+    expect(turnsEndedTold()).toBe(1);
   }, 60_000);
 
   test("each of Codex's hooks puts the builder in its state", async () => {
@@ -412,7 +408,7 @@ describe.skipIf(insideSandbox)("codex", () => {
     // Your config moving leads to Claude Code doesn't move the lead already on Codex.
     config("lead: { harness: claude }\nbuilder: { harness: codex }\n");
     await act("stop");
-    await until(() => read(join(lead(), "typed")).includes("app-12 needs you"));
+    await until(() => turnsEndedTold() === 1);
     const name = leadPlaces("simon", "app").name;
     Bun.spawnSync(["tmux", "-L", socket, "kill-session", "-t", `=${name}`]);
     rmSync(join(lead(), "args"));
