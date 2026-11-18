@@ -142,10 +142,11 @@ async function actOnMovedBranch(
   if (decision !== null) tellBuilder(db, sessions, thread, decision);
 }
 
-// Acts on the branch of a thread with a forge but no PR: its push went through, and opening
-// its PR failed. The branch is on the forge, where it can move, but no PR shows its head, so
-// the branch is fetched to see whether it moved. A branch the forge won't give is left be.
-async function actOnBranchWithoutPr(
+// Fetches the branch of a thread with no PR to show its head, and tells the builder if it moved
+// on the remote. That is a thread with a forge whose push went through but whose PR failed to
+// open, or one with no forge whose submit is still pending, such as after a failed push. A
+// branch the remote won't give, as before the first push, is left be.
+async function actOnBranchHead(
   db: Database,
   sessions: string,
   repository: Repository,
@@ -226,14 +227,15 @@ async function actOnPr(
 // into its base would change nothing, which a merge, a squash and a rebase all leave, or when
 // it is gone from the remote. Only a branch Skelcrew has pushed counts, as before that it isn't on
 // the remote at all. A branch still open that moved on the remote without its builder is told
-// to the builder.
+// to the builder, even while a submit is pending.
 async function actOnBranch(db: Database, sessions: string, repository: Repository, thread: Thread) {
   const skelcrewClone = cloneDir(thread.owner, thread.repo);
   const ref = (kind: string) => `refs/skelcrew/${kind}/${thread.folder}`;
   const git = (...args: string[]) => quietly(["git", "-C", skelcrewClone, ...args]);
   // A push under way has saved its local ref before the remote has the branch, and a failed
-  // one keeps its submit, so only a thread with nothing being pushed counts.
-  if (thread.submitting !== null) return;
+  // one keeps its submit, so only a thread with nothing being pushed can end. Its branch can
+  // still have moved, which a push that failed may never have told the builder.
+  if (thread.submitting !== null) return actOnBranchHead(db, sessions, repository, thread);
   if (!(await git("rev-parse", "--verify", "--quiet", ref("threads"))).ok) return;
   // Asking git takes a while, and sc rm may meanwhile have deleted the branch and ended the
   // thread, or the thread started over. Only the thread as it was is ended. A thread sc rm is
@@ -339,7 +341,7 @@ async function pollRepository(
       // out of its `seen`, so its PR is acted on again until they are handed over.
       const pr = before.pr === null ? null : prOf(db, owner, repo, before.pr);
       if (pr) await actOnPr(db, sessions, before, pr);
-      else if (before.pr === null) await actOnBranchWithoutPr(db, sessions, repository, before);
+      else if (before.pr === null) await actOnBranchHead(db, sessions, repository, before);
     }
   }
 }

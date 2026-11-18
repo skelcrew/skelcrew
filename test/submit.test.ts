@@ -10,6 +10,7 @@ import {
   mkdirSync,
   mkdtempSync,
   realpathSync,
+  renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -1744,6 +1745,53 @@ await serve(${JSON.stringify(socket)}, 200);`;
     expect(log()).toContain(
       `its branch moved on the remote to ${moved}, so it isn't ready to merge`,
     );
+  }, 60_000);
+
+  // A push that fails, such as while the remote can't be reached, leaves its submit pending.
+  // The branch may have moved meanwhile, and the builder still learns of it once the remote is
+  // back.
+  test("a thread with no forge whose push failed is told once its remote is back that its branch moved", async () => {
+    const bare = addAppOnGit();
+    verdict(1, "approve", "Ready to merge.");
+    const code = `import { serve } from ${JSON.stringify(source("flow/daemon.ts"))};
+await serve(${JSON.stringify(socket)}, 200);`;
+    running.push(
+      Bun.spawn([process.execPath, "-e", code], { env: env(), stdout: "ignore", stderr: "ignore" }),
+    );
+    await untilCloned();
+    const started = await skel(["start", "app", "Add export", "As JSON"]);
+    expect(started.err).toBe("");
+    const log = () => read(join(data(), "threads", "app-t1.log"));
+    await until(() => log().includes("app-t1 is ready on branch skelcrew/t1-add-export"), 30_000);
+    // The remote goes out of reach, and someone else's push moves the thread's branch there.
+    const away = `${bare}.away`;
+    renameSync(bare, away);
+    const work = join(home, "work", "app");
+    git(work, "fetch", "-q", away, "skelcrew/t1-add-export");
+    git(work, "checkout", "-q", "-B", "other", "FETCH_HEAD");
+    writeFileSync(join(work, "OTHER"), "other\n");
+    git(work, "add", ".");
+    git(work, "commit", "-q", "-m", "Someone else's change");
+    git(work, "push", "-q", away, "HEAD:refs/heads/skelcrew/t1-add-export");
+    const moved = git(work, "rev-parse", "HEAD");
+    // The builder submits a round, whose push fails.
+    const clone = join(data(), "threads", "app-t1");
+    writeFileSync(join(clone, "change"), "2\n");
+    git(clone, "add", "-A");
+    git(clone, "commit", "-qm", "round 2");
+    const short = new Bun.CryptoHasher("sha256").update("app-t1").digest("hex").slice(0, 16);
+    const t1Socket = join(home, "run", "skelcrew", "threads", short, "skelcrew.sock");
+    const submitted = await skel(["submit", "Round 2"], {
+      SKELCREW_SANDBOX: "1",
+      SKELCREW_SOCKET: t1Socket,
+    });
+    expect(submitted.err).toBe("");
+    await until(() => log().includes("the round failed"), 30_000);
+    const typed = () => read(join(data(), "claude", "app-t1", "typed"));
+    expect(typed()).not.toContain("moved on the remote");
+    // Back in reach, a poll sees the branch moved, though the submit is still pending.
+    renameSync(away, bare);
+    await until(() => typed().includes(`moved on the remote to ${moved}`), 30_000);
   }, 60_000);
 
   // Runs the daemon from a folder that isn't a git checkout, as the service does, polling every
