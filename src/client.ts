@@ -190,6 +190,64 @@ export async function submitForReview(summary: string): Promise<string> {
   return checkReply(z.object({ submitted: z.string() }), reply).submitted;
 }
 
+// Waits for one of the machine's check slots, for sc check, and returns the repository's test
+// commands and the connection's file descriptor, when Bun gives it. The daemon keeps the slot
+// while the connection stays open: in this process, and in any process the descriptor is handed
+// to. `queued` is told the caller's place in
+// line when it has to wait. `from` is the remote of the checkout you ran it in; an agent's own
+// socket names its repository instead. Throws with the daemon's error, such as when no test
+// command is configured, or when nothing answers.
+export function takeCheckSlot(given: {
+  queued: (place: number) => void;
+  from?: string | undefined;
+}): Promise<{ test: string[]; fd: number | undefined }> {
+  const { queued, from } = given;
+  const Line = z.union([
+    z.object({ queued: z.number() }),
+    z.object({ test: z.array(z.string()) }),
+    z.object({ error: z.string() }),
+  ]);
+  return new Promise((done, fail) => {
+    const connection = createConnection(cliSocket());
+    let said = "";
+    let answered = false;
+    const request = { command: "check", ...(from ? { from } : {}) };
+    connection.on("connect", () => connection.write(`${JSON.stringify(request)}\n`));
+    // Each line is one answer: a place in line, then the commands once a slot is free.
+    connection.on("data", (data) => {
+      said += data.toString();
+      let end = said.indexOf("\n");
+      while (end !== -1) {
+        const line = Line.safeParse(parseJson(said.slice(0, end)));
+        said = said.slice(end + 1);
+        end = said.indexOf("\n");
+        if (!line.success) {
+          answered = true;
+          connection.destroy();
+          fail(new Error("the daemon answered in a way this Skelcrew doesn't understand"));
+        } else if ("queued" in line.data) queued(line.data.queued);
+        else if ("error" in line.data) {
+          answered = true;
+          fail(new Error(line.data.error));
+        } else {
+          answered = true;
+          // Node's socket keeps its descriptor on a field it doesn't publish, so it is read
+          // and checked here, and a Bun without it gives none.
+          const handle: unknown = Reflect.get(connection, "_handle");
+          const read = z.object({ fd: z.number().int().nonnegative() }).safeParse(handle);
+          const fd = read.success ? read.data.fd : undefined;
+          done({ test: line.data.test, fd });
+        }
+      }
+    });
+    connection.on("error", () => {});
+    // A daemon that stops while the caller waits leaves it nothing to wait for.
+    connection.on("close", () => {
+      if (!answered) fail(new Error("the daemon didn't answer: run sc to start it"));
+    });
+  });
+}
+
 // Has the daemon type the lead's message into a thread's builder, for sc tell, and returns the
 // line to print: whether it goes in now, or why it waits. The daemon answers at once, and types
 // it in once the builder can take it.
