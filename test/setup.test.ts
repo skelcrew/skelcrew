@@ -87,10 +87,12 @@ beforeEach(async () => {
   bwrapVersion("0.11.1");
   // Only there to be found: you run claude setup-token yourself.
   fake("claude", "exit 0");
+  // The service runs the fake daemon, whose process id is 1, once started.
   fake(
     "systemctl",
     `case "$*" in
   "--user start skelcrew"|"--user enable --now skelcrew") : > "$HOME/started" ;;
+  "--user show -p MainPID --value skelcrew") test -e "$HOME/started" && echo 1 || echo 0 ;;
 esac`,
   );
   fake("loginctl", "exit 0");
@@ -115,9 +117,12 @@ afterEach(() => {
 function calls(): string {
   const log = join(home, "calls");
   // The long tmux line that opens the screen is cut to the agent it opens on. Asking tmux's
-  // version and giving the agents' server its settings, which each opening does, are left out.
+  // version and giving the agents' server its settings, which each opening does, are left out,
+  // as is asking which daemon the service runs.
   const said = existsSync(log) ? readFileSync(log, "utf8") : "";
   return said
+    .replace(/systemctl --user show -p MainPID --value skelcrew\n/g, "")
+    .replace(/launchctl print .*\n/g, "")
     .replace(/tmux -L skelcrew -f \/dev\/null (source-file -|list-panes -a .*)\n/g, "")
     .replace(/tmux -V\n/g, "")
     .replace(/tmux -L skelcrew-screen .* sh skelcrew (\S+) \S+ ;.*/g, "screen on $1");
@@ -176,9 +181,9 @@ test("takes every step on the first run, and none on the second", async () => {
       "Then paste the token here.",
       "Token: ",
       "Codex isn't installed, so reviews run on Claude Code.",
-      "Keeping Skelcrew running after you log out or restart.",
       "",
       "Skelcrew is set up.",
+      "Keeping Skelcrew running after you log out or restart.",
       "Your agents keep running. Run sc to come back.",
       "",
     ].join("\n"),
@@ -204,7 +209,7 @@ test("installs the daemon as a systemd user service with lingering, once", async
   expect(first.code).toBe(0);
   const skelBin = join(checkout, "bin", "sc");
   const written = readFileSync(unit(), "utf8");
-  expect(written).toContain(`ExecStart="${skelBin}" serve`);
+  expect(written).toContain(`ExecStart="${skelBin}" up\n`);
   expect(written).toContain("Restart=on-failure");
   // systemd would otherwise end the tmux server, and every agent, with the daemon.
   expect(written).toContain("KillMode=process");
@@ -229,6 +234,56 @@ test("installs the service on a machine set up before Skelcrew had one", async (
   expect(existsSync(unit())).toBe(true);
   expect(calls()).toContain("systemctl --user enable --now skelcrew");
   expect(run.out).not.toContain("Sign in to Claude");
+});
+
+test("sc up --bg installs and starts the service, then returns without attaching", async () => {
+  // As a first run that finished leaves a machine, with no service yet.
+  mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
+  writeFileSync(config(), "harness: claude\n");
+  writeFileSync(token(), "sk-ant-oat01-good\n");
+  mkdirSync(join(home, ".local", "share", "skelcrew"), { recursive: true });
+  writeFileSync(join(home, ".local", "share", "skelcrew", "set-up"), "");
+  const run = await skel("", bin, main(), home, {}, ["up", "--bg"]);
+  expect(run.err).toBe("");
+  expect(run.code).toBe(0);
+  expect(run.out).toContain("running in the background");
+  expect(readFileSync(unit(), "utf8")).toContain(" up\n");
+  expect(calls()).toBe(
+    "systemctl --user daemon-reload\nsystemctl --user enable --now skelcrew\nloginctl enable-linger\n",
+  );
+
+  // With the daemon running, a second sc up --bg changes nothing.
+  writeFileSync(join(home, "calls"), "");
+  const again = await skel("", bin, main(), home, {}, ["up", "--bg"]);
+  expect(again.code).toBe(0);
+  expect(calls()).toBe("");
+});
+
+// A service started beside a daemon you run in a terminal would fail on its lock, again on each
+// retry, until systemd gave up on it, and then fail to start once you stopped yours.
+test("sc up --bg leaves a daemon outside the service running, and starts no service", async () => {
+  mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
+  writeFileSync(config(), "harness: claude\n");
+  writeFileSync(token(), "sk-ant-oat01-good\n");
+  mkdirSync(join(home, ".local", "share", "skelcrew"), { recursive: true });
+  writeFileSync(join(home, ".local", "share", "skelcrew", "set-up"), "");
+  // The fake daemon answers, but systemd runs no service.
+  writeFileSync(join(home, "started"), "");
+  fake("systemctl", 'test "$2" = show && echo 0; exit 0');
+  const run = await skel("", bin, main(), home, {}, ["up", "--bg"]);
+  expect(run.err).toBe("");
+  expect(run.code).toBe(0);
+  expect(run.out).toContain("outside its service");
+  expect(existsSync(unit())).toBe(false);
+  expect(calls()).toBe("");
+});
+
+// The service has no terminal, so a daemon started before the first run would only fail.
+test("sc up --bg refuses before the first run, and says to run sc", async () => {
+  const run = await skel("", bin, main(), home, {}, ["up", "--bg"]);
+  expect(run.code).toBe(1);
+  expect(run.err).toContain("run sc");
+  expect(existsSync(unit())).toBe(false);
 });
 
 test("installs no service when systemctl fails, so the next sc tries again", async () => {
@@ -334,6 +389,7 @@ function asMac(): void {
     "launchctl",
     `case "$1" in
   bootstrap|kickstart) : > "$HOME/started" ;;
+  print) test -e "$HOME/started" && echo "pid = 1" ;;
 esac`,
   );
   fake("brew", "exit 0");
@@ -351,7 +407,7 @@ test("on a Mac, installs the daemon as a launchd agent, with no systemd", async 
   const text = readFileSync(plist(), "utf8");
   expect(text).toContain("<string>dev.skelcrew.daemon</string>");
   expect(text).toContain(
-    `<string>${join(checkout, "bin", "sc")}</string>\n    <string>serve</string>`,
+    `<string>${join(checkout, "bin", "sc")}</string>\n    <string>up</string>`,
   );
   expect(text).toContain("<key>AbandonProcessGroup</key>\n  <true/>");
   expect(text).toContain(`<string>${join(home, "Library", "Logs", "skelcrew.log")}</string>`);
@@ -362,6 +418,9 @@ test("says nothing about a laptop sleeping, on a Mac or on Linux", async () => {
   const onLinux = await skel("1\nsk-ant-oat01-good\n");
   expect(onLinux.out).toContain("Skelcrew is set up.\n");
   expect(onLinux.out).not.toContain("sleeps");
+  // The Mac's first run starts afresh, as setup doesn't depend on the daemon's service.
+  rmSync(config());
+  rmSync(token());
   asMac();
   const onMac = await skelOnMac("1\nsk-ant-oat01-good\n");
   expect(onMac.out).toContain("Skelcrew is set up.\n");
@@ -411,14 +470,43 @@ esac`,
   expect(calls()).toContain(`launchctl bootstrap gui/${uid} ${plist()}\n`);
 });
 
-test("on a Mac, reloads the agent when the PATH it needs moved", async () => {
+// launchd restarts a daemon that crashed on the definition it loaded, not on the file. So once
+// the file changes, such as from an older Skelcrew's sc serve to sc up, launchd must hold the new
+// one, even while the daemon on this Skelcrew's code keeps answering.
+test("on a Mac, loads a changed agent file, so launchd restarts the daemon on it", async () => {
   asMac();
+  // Like launchd, it keeps a copy of the file it loaded, which is what it restarts after a crash.
+  fake(
+    "launchctl",
+    `case "$1" in
+  bootstrap) cp "$3" "$HOME/loaded.plist"; : > "$HOME/started" ;;
+  bootout) rm -f "$HOME/loaded.plist" ;;
+  print) test -e "$HOME/loaded.plist" && echo "pid = 1" ;;
+esac`,
+  );
   await skelOnMac("1\nsk-ant-oat01-good\n");
+  const older = readFileSync(plist(), "utf8").replace(
+    "<string>up</string>",
+    "<string>serve</string>",
+  );
+  writeFileSync(plist(), older);
+  writeFileSync(join(home, "loaded.plist"), older);
   writeFileSync(join(home, "calls"), "");
-  await skelOnMac("", `${bin}:/usr/bin`);
-  expect(readFileSync(plist(), "utf8")).toContain(`<string>${bin}:/usr/bin</string>`);
-  expect(calls()).toContain(`launchctl bootout gui/${uid}/dev.skelcrew.daemon\n`);
-  expect(calls()).toContain(`launchctl bootstrap gui/${uid} ${plist()}\n`);
+  const run = await skelOnMac("", `${bin}:/usr/bin`);
+  expect(run.err).toBe("");
+  const loaded = readFileSync(join(home, "loaded.plist"), "utf8");
+  expect(loaded).toBe(readFileSync(plist(), "utf8"));
+  expect(loaded).toContain("<string>up</string>");
+  expect(loaded).toContain(`<string>${bin}:/usr/bin</string>`);
+  expect(calls()).toContain(
+    `launchctl bootout gui/${uid}/dev.skelcrew.daemon\nlaunchctl bootstrap gui/${uid} ${plist()}\n`,
+  );
+
+  // An unchanged file is left as launchd loaded it.
+  writeFileSync(join(home, "calls"), "");
+  expect((await skelOnMac("", `${bin}:/usr/bin`)).code).toBe(0);
+  expect(calls()).not.toContain("bootout");
+  expect(calls()).not.toContain("bootstrap");
 });
 
 test("on a Mac, escapes a PATH for the agent's definition", async () => {
@@ -642,7 +730,9 @@ test("a yes installs the GitHub plugin after one question, writes nothing here, 
   expect(run.out).not.toContain("[y/N]");
   expect(readFileSync(join(home, "handed"), "utf8")).toBe("https://github.com/simon/site\n");
   expect(run.out).not.toContain("sc init");
-  expect(run.out).toContain("Skelcrew is set up.\nCloning simon/site for Skelcrew.\n");
+  expect(run.out).toContain(
+    "Skelcrew is set up.\nKeeping Skelcrew running after you log out or restart.\nCloning simon/site for Skelcrew.\n",
+  );
   expect(existsSync(join(site, "skelcrew.yaml"))).toBe(false);
   expect(calls()).toEndWith("daemon lead\nscreen on lead\n");
 });
@@ -823,6 +913,26 @@ case "$1 $2" in
 esac`,
   );
 }
+
+// Reviews on your own harness save nothing, so only the first run's end shows the question was
+// answered. Here your harness has its login before the question is asked.
+test("asks about reviews again after a first run stopped at that question", async () => {
+  fakeCodex();
+  mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
+  writeFileSync(config(), "harness: claude\n");
+  writeFileSync(token(), "sk-ant-oat01-good\n");
+  const stopped = await skel("");
+  expect(stopped.code).toBe(1);
+  expect(stopped.out).toContain("Choose the coding agent for reviews:");
+  expect(existsSync(unit())).toBe(false);
+
+  const again = await skel("2\n");
+  expect(again.err).toBe("");
+  expect(again.code).toBe(0);
+  expect(again.out).toContain("Choose the coding agent for reviews:");
+  expect(again.out).toContain("Skelcrew is set up.");
+  expect((await skel("")).out).not.toContain("for reviews");
+});
 
 test("logs the reviewer in to Codex with a login of Skelcrew's own", async () => {
   fakeCodex();

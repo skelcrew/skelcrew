@@ -16,6 +16,7 @@ import { versionLine } from "./version.ts";
 // refused because a prompt injection could trick an agent into it.
 const agentRefusals: Record<string, string> = {
   "": "attaching to the lead",
+  up: "running the daemon",
   serve: "running the daemon",
   "repo add": "adding a repository",
   "repo rm": "removing a repository",
@@ -40,12 +41,12 @@ const agentRefusals: Record<string, string> = {
   "plugin ls": "listing plugins",
 };
 
-// Splits a task's name, such as app-13, or app-t1 for a thread with no tracker, into its
+// Splits a task's name, such as app-13, or app-wr1 for a thread with no tracker, into its
 // repository and task. Gives nothing when the word isn't a task's name. Repository names can
 // hold dashes, so the task is what follows the last one.
 function splitTaskName(word?: string): [string, string] | undefined {
   // The greedy first group takes every dash but the last.
-  const parts = word?.match(/^(.+)-(t?\d+)$/);
+  const parts = word?.match(/^(.+)-([a-z]{0,2}\d+)$/);
   return parts?.[1] && parts[2] ? [parts[1], parts[2]] : undefined;
 }
 
@@ -94,6 +95,7 @@ function bodyFor(command: string, body: string): string {
 function usage(command?: string): never {
   // The commands that have words after them, so a mistake there is in the arguments.
   const known = [
+    "up",
     "serve",
     "init",
     "repo",
@@ -105,6 +107,7 @@ function usage(command?: string): never {
     "start",
     "stop",
     "rm",
+    "merge",
     "attach",
     "peek",
     "interrupt",
@@ -133,12 +136,13 @@ function usage(command?: string): never {
   process.exit(1);
 }
 
-// Sets up Skelcrew if needed, then opens the screen on a lead. The lead is for the repository
-// you ran sc from, the one --from names, or else the one you opened last. With no repositories
-// there is no lead to open, and bringInFrom has already said so.
+// Sets up Skelcrew if needed and runs the daemon in the background, as sc up --bg does, then
+// opens the screen on a lead. The lead is for the repository you ran sc from, the one --from
+// names, or else the one you opened last. With no repositories there is no lead to open, and
+// bringInFrom has already said so.
 async function leadCommand(from?: string): Promise<void> {
   // Loaded only here, so sc --remote on your laptop never loads them.
-  const { attachToLead } = await import("./attach.ts");
+  const { attachToLead, upInBackground } = await import("./attach.ts");
   const { openDb } = await import("./db.ts");
   const { bringInFrom, checkoutTop, repositories } = await import("./flow/repo.ts");
   const { originHere } = await import("./machine/origin.ts");
@@ -146,6 +150,7 @@ async function leadCommand(from?: string): Promise<void> {
   // A machine that isn't set up gets all of sc install, your plugins included.
   if (setupDone()) firstRun(from);
   else install(from);
+  await upInBackground();
   // In a repository with no remote, sc opens nothing, even with tabs open or no repositories
   // yet. Opening another repository there would look as if Skelcrew had ignored where you are.
   const origin = originHere();
@@ -167,7 +172,8 @@ async function leadCommand(from?: string): Promise<void> {
 }
 
 // Runs sc first-run, which sets up this machine, sc take-setup, which takes the setup your laptop
-// sent, or sc serve, which runs the daemon.
+// sent, or sc up, which runs the daemon: in the foreground, or with --bg as the background
+// service. sc serve is the older name of sc up, kept for services installed before sc up.
 async function machineCommand(args: string[]): Promise<void> {
   const [command] = args;
   // Run by sc --remote and sc remote add from your laptop, not by people, so usage leaves it out.
@@ -178,12 +184,33 @@ async function machineCommand(args: string[]): Promise<void> {
   }
   const { serve } = await import("./flow/daemon.ts");
   const { firstRun } = await import("./machine/setup.ts");
-  // Run by sc remote add on the machine it sets up, not by people, so usage leaves it out.
+  const { upInBackground } = await import("./attach.ts");
+  // Run by sc remote add on the machine it sets up, not by people, so usage leaves it out. The
+  // daemon starts there too, so sc --remote finds it running.
   if (command === "first-run" && args.length === 1) {
     firstRun();
+    await upInBackground();
     return;
   }
+  if (command === "up" && args.length === 1) {
+    await serve("skelcrew");
+    return;
+  }
+  if (command === "up" && args.length === 2 && args[1] === "--bg") {
+    // The service has no one to answer the first run's questions, so it would only fail.
+    const { setupDone } = await import("./machine/setup.ts");
+    if (!setupDone()) throw new Error("the first run isn't done on this machine: run sc first");
+    const outside = await upInBackground();
+    console.log(
+      outside
+        ? "Skelcrew's daemon already runs outside its service, such as with sc up in a terminal. Stop it to run it in the background."
+        : "Skelcrew's daemon is running in the background.",
+    );
+    return;
+  }
+  // A service installed by an older Skelcrew runs sc serve until the next sc rewrites it.
   if (command === "serve" && args.length === 1) {
+    console.error("sc serve is now sc up, and sc serve will go in a later release.");
     await serve("skelcrew");
     return;
   }
@@ -383,10 +410,11 @@ async function psCommand(args: string[], json: boolean): Promise<void> {
   printThreads(all ? rows : rows.filter((row) => row.status !== "done"), json);
 }
 
-// Prints the tasks, or one repository's, for sc ls and its short name sc issue ls. Tasks whose
-// thread is done pile up forever and would bury the rest, so only --all shows them, unless
-// their issue is still open, as after sc rm, which leaves it to start again. `words` are what
-// follows the command.
+// Prints the tasks, or one repository's, for sc ls and its short name sc issue ls. Merged and
+// closed tasks pile up forever and would bury the rest, so only --all shows them. A task whose
+// work ended without a merge while its issue is open, as after sc rm, is back in stage issue, so
+// it shows, to start again. A merged one stays out even while the tracker hasn't closed its
+// issue yet. `words` are what follows the command.
 async function lsCommand(command: string, words: string[], json: boolean): Promise<void> {
   const { askForTasks } = await import("./client.ts");
   const { printTasks } = await import("./flow/list.ts");
@@ -395,7 +423,7 @@ async function lsCommand(command: string, words: string[], json: boolean): Promi
   const rest = words.filter((word) => word !== "--all");
   if (rest.length > 1) usage(command);
   const tasks = await askForTasks(rest[0]);
-  const shown = all ? tasks : tasks.filter((t) => t.thread?.status !== "done" || t.issue !== null);
+  const shown = all ? tasks : tasks.filter((t) => t.stage !== "merged" && t.stage !== "closed");
   printTasks(shown, json);
 }
 
@@ -447,6 +475,52 @@ async function prCommand(args: string[], json: boolean): Promise<void> {
     return;
   }
   usage(command);
+}
+
+// Arms a merge when ready, or cancels one, for sc merge. The thread is named by its task, such
+// as app-12, or by its PR's number, such as #7, in the repository of the checkout sc runs in or
+// the one --from names. Arming merges a PR later with nobody watching, so it asks you first at
+// your terminal, naming the PR, and refuses with no terminal, as an agent or a script has none.
+// The daemon refuses every agent besides, by the socket the call comes in on. Cancelling is
+// always safe, so it asks nothing.
+async function mergeCommand(args: string[]): Promise<void> {
+  const [, how, named, ...rest] = args;
+  const { planMerge, previewMerge } = await import("./client.ts");
+  const command =
+    how === "--when-ready" ? "merge when ready" : how === "--cancel" ? "merge cancel" : undefined;
+  const given = rest[0] === "--from" && rest[1] && rest.length === 2 ? rest[1] : undefined;
+  if (!command || named === undefined || (rest.length > 0 && !given)) usage("merge");
+  // The thread, by its PR's number or by its task.
+  const number = named.match(/^#?(\d+)$/)?.[1];
+  const task = splitThreadName(named);
+  let which: { repo?: string; task?: string; pr?: number; from?: string };
+  if (number !== undefined) {
+    const { originHere } = await import("./machine/origin.ts");
+    const from = given ?? originHere() ?? undefined;
+    which = { pr: Number(number), ...(from ? { from } : {}) };
+  } else if (task && !given) which = { repo: task[0], task: task[1] };
+  else usage("merge");
+  if (command === "merge when ready") {
+    if (!process.stdin.isTTY)
+      throw new Error("sc merge --when-ready asks you first, so run it at your own terminal");
+    // The title comes from the tracker, so its control codes go before it reaches your terminal.
+    const { thread, pr, title, started } = await previewMerge(which);
+    if (pr === null)
+      throw new Error(`${thread} has no PR yet: arm a merge when ready once it opens one`);
+    const { removeControlCodes } = await import("./screen/look.ts");
+    const shown = title ? ` ${removeControlCodes(title)}` : "";
+    // Only y arms it. Anything else, a bare Enter, which Bun's prompt gives as null, Y or yes
+    // included, arms nothing.
+    const answer = prompt(`Merge #${pr} (${thread}${shown}) when it's approved and green? [y/N]`);
+    if (answer !== "y") {
+      console.log(`Nothing is armed: ${thread} waits for you to merge it.`);
+      return;
+    }
+    // Armed only if the daemon still has the PR and thread you said y to.
+    console.log(await planMerge(command, { ...which, seen: { pr, started } }));
+    return;
+  }
+  console.log(await planMerge(command, which));
 }
 
 // Runs the repository's whole test suite in this folder once one of the machine's check slots
@@ -682,6 +756,7 @@ async function runCommand(args: string[]): Promise<void> {
   switch (first) {
     case "first-run":
     case "take-setup":
+    case "up":
     case "serve":
       return machineCommand(words);
     case "sidebar":
@@ -718,6 +793,8 @@ async function runCommand(args: string[]): Promise<void> {
       return tellCommand(words);
     case "check":
       return checkCommand(words);
+    case "merge":
+      return mergeCommand(words);
     case "install":
     case "add":
     case "remove":
