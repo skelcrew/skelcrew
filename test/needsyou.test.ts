@@ -472,6 +472,25 @@ describe.skipIf(insideSandbox)("needs you", () => {
     expect(read(join(lead(), "typed"))).toContain("Already fixed.");
   }, 60_000);
 
+  // A note that a thread ended waits while the lead is busy. If the thread starts over first,
+  // the lead would take that note for the new thread of the same name, and drop it.
+  test("a thread that starts over while the lead is busy drops the note that its old self ended", async () => {
+    addApp();
+    await startApp12();
+    writeFileSync(join(lead(), "busy"), "");
+    expect((await skel(["rm", "app-12"])).err).toBe("");
+    rmSync(join(builder(), "args"));
+    expect((await skel(["start", "app-12"])).err).toBe("");
+    await until(() => read(join(builder(), "args")) !== "", 30_000);
+    // Notes reach the lead oldest first, so once the new builder's message is in, the old
+    // thread's end note would be too.
+    rmSync(join(lead(), "busy"));
+    const asBuilder = { SKELCREW_SANDBOX: "1", SKELCREW_SOCKET: builderSocket() };
+    expect((await skel(["tell", "lead", "Starting again."], asBuilder)).code).toBe(0);
+    await until(() => read(join(lead(), "typed")).includes("Starting again."));
+    expect(read(join(lead(), "typed"))).not.toContain("app-12 ended");
+  }, 60_000);
+
   test("a turn that leaves work it didn't submit needs you, even while the last submit is reviewed", async () => {
     addApp();
     await startApp12();
