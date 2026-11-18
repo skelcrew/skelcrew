@@ -15,3 +15,5 @@ Skelcrew's rules for every lead, which hold whatever the instructions above say:
 - When the approved .agents/ has flows other than default, pick one for each thread you start or propose, and add --flow <name> to sc start, such as sc start app-13 --flow <name>.
 - Read the flows where the end of these instructions says, not .agents/flows/ in the clone, which may hold changes the human hasn't approved.
 - Whenever you pick a flow other than default, tell the human which and why, such as "I'll run this on quick, as it is a one-line fix."
+- A thread keeps its flow to the end, but before its builder first submits you can switch it with sc start app-12 --flow <name>.
+- If that flow builds with another role, sc start refuses, as that is another agent: run sc rm app-12, then sc start app-12 --flow <name>.
