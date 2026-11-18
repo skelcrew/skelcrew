@@ -73,11 +73,13 @@ export const headCommit = (db: Database, repository: Repository, folder: string)
 // code and builders, whose origin it is, fetch the default branch as the remote has it.
 // Returns the commit the clone was on and the one it is on now, so a move can be logged. Both
 // are empty while the repository has no commits, which leaves the clone as it is, and the
-// first is empty for a clone made before its first commit.
+// first is empty for a clone made before its first commit. `wasEmpty` says the remote had no
+// commits at the last update, which a clone that had some before keeps no sign of.
 export async function updateClone(
   db: Database,
   repository: Repository,
   folder: string,
+  wasEmpty = false,
 ): Promise<{ before: string; after: string }> {
   // Fetching HEAD follows the default branch even after it is renamed.
   if (!(await fetchRef(db, repository, folder, "HEAD"))) return { before: "", after: "" };
@@ -93,10 +95,10 @@ export async function updateClone(
     (both) => both.split("\n"),
     async () => ["", await git(db, repository, ["-C", folder, "rev-parse", "FETCH_HEAD"])],
   );
-  // A clone of an empty repository is on the branch the remote's HEAD named then, which the
-  // first push can make another, and threads take the clone's branch as their PR's base. So
-  // the clone first moves to the default branch the remote names now.
-  if (before === "") {
+  // A clone of an empty repository is on the branch it was on before, which the first push
+  // can make another, and threads take the clone's branch as their PR's base. So the clone
+  // first moves to the default branch the remote names now.
+  if (before === "" || wasEmpty) {
     const said = await git(db, repository, ["ls-remote", "--symref", repository.remote, "HEAD"]);
     const branch = said.match(/^ref: (refs\/heads\/\S+)\tHEAD$/m)?.[1];
     if (branch) await git(db, repository, ["-C", folder, "symbolic-ref", "HEAD", branch]);
@@ -123,21 +125,8 @@ export async function fetchBranch(
 }
 
 // What Skelcrew says when a thread is started on a repository with no commits yet.
-const noCommits = (repository: Repository) =>
+export const noCommits = (repository: Repository) =>
   `${repository.owner}/${repository.repo} has no commits yet, so a thread has nothing to start from. Push a first commit, then start it again.`;
-
-// Throws, saying so plainly, when the repository has no commits yet, so sc start answers with
-// the reason rather than starting a thread whose setup can only fail. Skelcrew's clone in the
-// folder, kept current by the poll, has a commit for any other repository, which costs no
-// call to the remote.
-export async function refuseEmpty(
-  db: Database,
-  repository: Repository,
-  folder: string,
-): Promise<void> {
-  if ((await headCommit(db, repository, folder)) !== "") return;
-  if (await remoteEmpty(db, repository)) throw new Error(noCommits(repository));
-}
 
 // Brings a branch of the repository into Skelcrew's clone in the folder, as a ref of its own.
 // Without `ref`, as the branch itself, so a builder whose clone has Skelcrew's as origin can fetch

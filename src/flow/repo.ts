@@ -137,8 +137,19 @@ export function refreshClone(db: Database, repository: Repository, adding = fals
 }
 
 // The repositories, by owner/name, whose remote had no commits at their last refresh, so the
-// log says so once rather than at every poll.
-const emptySeen = new Set<string>();
+// log says so once rather than at every poll, and no thread starts on them. A remote emptied
+// after Skelcrew cloned it leaves the clone with its old commits, so only this tells.
+const empty = new Set<string>();
+
+// Returns whether the repository has no commits yet, so no thread can start from it: as its
+// last refresh found it, or for a clone with no commit, as its remote says now. A clone made
+// from a remote whose HEAD names a missing branch has no commit either, but isn't empty.
+export async function hasNoCommits(db: Database, repository: Repository): Promise<boolean> {
+  const { owner, repo } = repository;
+  if (empty.has(`${owner}/${repo}`)) return true;
+  if ((await headCommit(db, repository, cloneDir(owner, repo))) !== "") return false;
+  return remoteEmpty(db, repository);
+}
 
 // Creates Skelcrew's clone of the repository, or brings the one it has up to date, logging
 // when its default branch moves. The lead reads the clone, so a clone whose config holds a
@@ -149,17 +160,18 @@ async function createOrUpdate(db: Database, repository: Repository): Promise<voi
   // update could have brought a credential in.
   const clone = cloneDir(owner, repo);
   if (existsSync(clone)) {
-    const { before, after } = await updateClone(db, repository, clone);
+    const fullName = `${owner}/${repo}`;
+    const wasEmpty = empty.has(fullName);
+    const { before, after } = await updateClone(db, repository, clone, wasEmpty);
     deleteIfCredentials(clone);
     // An empty repository is logged once, rather than at every poll, until its first commit.
-    const fullName = `${owner}/${repo}`;
     if (after === "") {
-      if (!emptySeen.has(fullName)) console.log(`${fullName} has no commits yet`);
-      emptySeen.add(fullName);
+      if (!wasEmpty) console.log(`${fullName} has no commits yet`);
+      empty.add(fullName);
       return;
     }
-    emptySeen.delete(fullName);
-    if (before === "")
+    empty.delete(fullName);
+    if (before === "" || wasEmpty)
       console.log(`Skelcrew's clone of ${fullName} has its first commit, ${after.slice(0, 7)}`);
     else if (before !== after)
       console.log(
@@ -181,7 +193,7 @@ async function createOrUpdate(db: Database, repository: Repository): Promise<voi
   // the remote is asked too.
   if ((await headCommit(db, repository, clone)) === "" && (await remoteEmpty(db, repository))) {
     console.log(`${owner}/${repo} has no commits yet`);
-    emptySeen.add(`${owner}/${repo}`);
+    empty.add(`${owner}/${repo}`);
   }
 }
 

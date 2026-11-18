@@ -519,6 +519,48 @@ exec ${Bun.which("git") ?? "git"} "$@"`,
   expect(claims()).toEqual([claim12]);
 });
 
+// Every branch can be deleted from a repository Skelcrew has already cloned, and its clone
+// keeps the old commits. The repository is empty all the same.
+test("a repository emptied after Skelcrew cloned it starts no thread until its next first commit", async () => {
+  const work = addApp();
+  answer(plugin, "took", { took: true });
+  changes([]);
+  serve();
+  const skelcrewClone = join(data(), "repos", "simon", "app");
+  await until(() => existsSync(join(skelcrewClone, "README")));
+  const bare = join(home, "github", "simon", "app.git");
+  git(bare, "update-ref", "-d", "refs/heads/main");
+  await until(() => read(daemonLog()).includes("simon/app has no commits yet"));
+  // sc start says so, and a task labeled now is neither claimed nor started.
+  const started = Bun.spawnSync([process.execPath, main, "start", "app-12"], {
+    env: env(),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect(started.stderr.toString()).toBe(
+    "Skelcrew: simon/app has no commits yet, so a thread has nothing to start from. Push a first commit, then start it again.\n",
+  );
+  changes([issue12(true)]);
+  await until(() => copied().rows.length === 1);
+  await morePolls();
+  expect(claims()).toEqual([]);
+  expect(thread()).toEqual({});
+  // The next first commit goes to develop, which becomes the default, and is logged as a
+  // first commit. The labeled task then starts.
+  writeFileSync(join(work, "again"), "1\n");
+  git(work, "add", ".");
+  git(work, "commit", "-q", "-m", "again");
+  git(work, "push", "-q", bare, "main:develop");
+  git(bare, "symbolic-ref", "HEAD", "refs/heads/develop");
+  const first = git(work, "rev-parse", "HEAD").trim();
+  await until(() => read(daemonLog()).includes(`has its first commit, ${first.slice(0, 7)}`));
+  expect(read(daemonLog())).not.toContain("moved its default branch");
+  expect(git(skelcrewClone, "symbolic-ref", "--short", "HEAD").trim()).toBe("develop");
+  expect(git(skelcrewClone, "rev-parse", "HEAD").trim()).toBe(first);
+  await until(() => thread().task === 12);
+  expect(claims()).toEqual([claim12]);
+});
+
 // A remote whose HEAD names a branch that is gone has commits all the same, and the log must
 // say what is wrong rather than take it for an empty repository.
 test("a repository whose default branch is gone still logs why its clone can't update", async () => {

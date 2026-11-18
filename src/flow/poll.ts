@@ -21,9 +21,9 @@ import { baseOf, startThread } from "./builder.ts";
 import { type Item, openTasks, prOf, saveItems } from "./copy.ts";
 import { ciState, decide, labeledToStart, type PullRequest } from "./decide.ts";
 import { endThread, removing, tellBuilder, tellingEvents } from "./events.ts";
-import { fetchInto, headCommit, onRemote } from "./git.ts";
+import { fetchInto, onRemote } from "./git.ts";
 import { noteForLead, typeLeadNotes } from "./lead.ts";
-import { forgeKnown, fullNameIs, refreshClone, repositories } from "./repo.ts";
+import { forgeKnown, fullNameIs, hasNoCommits, refreshClone, repositories } from "./repo.ts";
 import { needsYou } from "./status.ts";
 import { readThread, record, Thread, threadName } from "./thread.ts";
 
@@ -62,13 +62,11 @@ async function startLabeled(
   });
   const toStart = labeledToStart(threads, labeled);
   // A repository with no commits yet has nothing for a thread to start from, and a claim made
-  // now would keep its label from starting it once it has some. Skelcrew's clone, just
-  // refreshed, has no commit then, which costs no call to the remote. Until the clone is
-  // made, as while the daemon starts, nothing tells, so labeled tasks wait for it.
-  const clone = cloneDir(owner, repo);
+  // now would keep its label from starting it once it has some. Until Skelcrew's clone is made,
+  // as while the daemon starts, nothing tells, so labeled tasks wait for it.
   if (
     toStart.length > 0 &&
-    (!existsSync(clone) || (await headCommit(db, repository, clone)) === "")
+    (!existsSync(cloneDir(owner, repo)) || (await hasNoCommits(db, repository)))
   )
     return;
   for (const task of toStart) {
