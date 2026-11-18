@@ -350,11 +350,12 @@ exec ${Bun.which("git") ?? "git"} "$@"
 `,
       { mode: 0o755 },
     );
-    const run = serve();
+    // The daemon gives it half a second to end, rather than its usual five.
+    const run = startDaemon(socket, { ...env(), SKELCREW_STOP_WAIT_MS: "500" }, running);
     await until(() => read(join(home, "held")) !== "");
     await stop(run);
     expect(stillRunning([Number(read(join(home, "held")))])).toEqual([]);
-  }, 60_000);
+  });
 });
 
 test("sc issue create and sc start say when the daemon isn't running", async () => {
