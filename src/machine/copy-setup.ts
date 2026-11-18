@@ -39,8 +39,8 @@ export function setupHere(): Setup | null {
   const db = existsSync(join(dataDir(), "skelcrew.db")) ? openDb() : null;
   const plugins = (db ? installedPlugins(db) : []).flatMap(({ name, folder, source }) => {
     if (source === null) return [];
-    const { jobs, version } = readManifest(folder);
-    return jobs.includes("machine") ? [] : [{ name, source, version }];
+    const { provides, version } = readManifest(folder);
+    return provides.includes("machine") ? [] : [{ name, source, version }];
   });
   return { config: readFileSync(configFile(), "utf8"), token, plugins };
 }
@@ -88,7 +88,8 @@ export async function takeSetup(): Promise<void> {
   const wanted = new Map(sent.plugins.map((plugin) => [plugin.name, plugin]));
   for (const plugin of installedPlugins(db)) {
     const keep = wanted.get(plugin.name);
-    if (plugin.source === null || readManifest(plugin.folder).jobs.includes("machine")) continue;
+    if (plugin.source === null || readManifest(plugin.folder).provides.includes("machine"))
+      continue;
     if (keep?.source === plugin.source) continue;
     // A plugin that is a repository's tracker or forge here refuses to go, which is only said:
     // the command you ran still runs.

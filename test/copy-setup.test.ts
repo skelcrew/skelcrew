@@ -161,7 +161,7 @@ test("the first sc --remote copies your config, token and plugins, and runs each
   expect(serverFile("config.yaml")).toBe("harness: claude\n");
   expect(serverFile("claude-token")).toBe("sk-ant-oat01-laptop\n");
   expect(statSync(join(serverConfig(), "claude-token")).mode & 0o777).toBe(0o600);
-  expect(await serverPlugins()).toBe("fake 0.1.0 tracker\n");
+  expect(await serverPlugins()).toBe("fake 0.1.0 io: tracker\n");
   // The plugin signed in on the server by itself, and the laptop's sign-in stayed home.
   expect(serverFile("plugins/fake/signed-in")).toBe(`${server()}\n`);
   // What was sent over is gone once it is taken.
@@ -174,11 +174,11 @@ test("a plugin goes there at the laptop's version, not its newest", async () => 
   await skel(laptop(), ["plugin", "install", "owner/fake"], "\n");
   publish(["0.2.0"]);
   await remote("ps");
-  expect(await serverPlugins()).toBe("fake 0.1.0 tracker\n");
+  expect(await serverPlugins()).toBe("fake 0.1.0 io: tracker\n");
   // The laptop moving to a new version moves the server too.
   await skel(laptop(), ["plugin", "update", "fake"], "\n");
   await remote("ps");
-  expect(await serverPlugins()).toBe("fake 0.2.0 tracker\n");
+  expect(await serverPlugins()).toBe("fake 0.2.0 io: tracker\n");
 });
 
 test("nothing is copied again until the laptop's setup changes, and a plugin's setup runs there once", async () => {
@@ -253,7 +253,7 @@ openDb().run("INSERT INTO repositories (owner, repo, name, forge) VALUES ('simon
   );
   expect(run.out).toContain("Your command still runs.");
   expect(await serverSources()).toEqual({ fake: "owner/other" });
-  expect(await serverPlugins()).toBe("fake 0.2.0 tracker\n");
+  expect(await serverPlugins()).toBe("fake 0.2.0 io: tracker\n");
 });
 
 test("a machine plugin stays on the laptop", async () => {

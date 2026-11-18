@@ -15,18 +15,39 @@ const Command = z.array(z.string().min(1)).min(1);
 // and the oldest Skelcrew it runs on. The plugin's git tag is its version with a v in front.
 export const Version = z.string().regex(/^\d+\.\d+\.\d+$/, "must be a version such as 0.1.0");
 
-// The commands a plugin must have for each job it says it does. Chat needs none yet. Its
-// commands come with the first chat plugin.
-const commandsForJob = {
+// What a plugin can provide, by its kind. An I/O plugin is where work comes from and where it
+// goes. A runtime plugin is about where agents run: the sessions they run in, the transport that
+// types into them, their status, and machine, how to reach a machine that runs Skelcrew. Skelcrew
+// doesn't use a runtime plugin's sessions, transport or status yet, and keeps its built-ins.
+const provided = {
+  io: ["tracker", "forge", "chat"],
+  runtime: ["sessions", "transport", "status", "machine"],
+} as const;
+const Provided = z.enum([...provided.io, ...provided.runtime]);
+type Provided = z.infer<typeof Provided>;
+
+// The commands a plugin must have for each thing it provides. Chat needs none yet. Its
+// commands come with the first chat plugin. Sessions, transport and status are each a set of
+// functions run through one session command, and sessions also attaches your terminal.
+const commandsFor = {
   tracker: ["call"],
   forge: ["call", "git_credentials"],
   chat: [],
+  sessions: ["session", "attach"],
+  transport: ["session"],
+  status: ["session"],
   machine: ["add", "exec", "push"],
 } as const;
 
+// Returns the kind of plugin that provides `what`.
+const kindOf = (what: Provided) =>
+  provided.runtime.some((runtime) => runtime === what) ? "runtime" : "io";
+
 // What a plugin's skelcrew-plugin.yaml says. Its name becomes a folder and an environment value,
 // so it is only lowercase letters, digits and dashes. It can't be none, because tracker: none in
-// a repository's skelcrew.yaml means no tracker.
+// a repository's skelcrew.yaml means no tracker. A plugin says its kind and what it provides.
+// One written before kinds says jobs: instead, which is still read: tracker, forge and chat make
+// it I/O, and machine alone makes it runtime. Either way it comes back with a kind and provides.
 export const Manifest = z
   .object({
     name: z
@@ -36,7 +57,13 @@ export const Manifest = z
     version: Version,
     skelcrew: Version,
     about: z.string().min(1),
-    jobs: z.array(z.enum(["tracker", "forge", "chat", "machine"])).min(1),
+    kind: z.enum(["io", "runtime"]).optional(),
+    provides: z.array(Provided).min(1).optional(),
+    // Only the jobs there were before kinds.
+    jobs: z
+      .array(z.enum(["tracker", "forge", "chat", "machine"]))
+      .min(1)
+      .optional(),
     build: z.array(Command).optional(),
     setup: Command.optional(),
     call: Command.optional(),
@@ -44,17 +71,44 @@ export const Manifest = z
     add: Command.optional(),
     exec: Command.optional(),
     push: Command.optional(),
+    session: Command.optional(),
+    attach: Command.optional(),
   })
-  // A plugin that names a job must have each command that job needs.
-  .superRefine((manifest, context) => {
-    for (const job of manifest.jobs)
-      for (const command of commandsForJob[job])
-        if (manifest[command] === undefined)
+  // Old and new shapes are read into one: a kind and what it provides.
+  .transform(({ kind, provides, jobs, ...rest }, context) => {
+    const what = provides ?? jobs ?? [];
+    // A manifest gives either kind and provides, or only jobs.
+    if (jobs !== undefined && (kind !== undefined || provides !== undefined))
+      context.addIssue({
+        code: "custom",
+        path: ["jobs"],
+        message: "goes with neither kind nor provides",
+      });
+    if (jobs === undefined && (kind === undefined || provides === undefined))
+      context.addIssue({ code: "custom", path: ["provides"], message: "needs kind and provides" });
+    // A plugin is runtime only when everything it does is. jobs: once let a plugin mix machine
+    // with tracker, forge or chat, and one installed that way keeps working as I/O, with
+    // machine still among what it provides.
+    const plugin = kind ?? (what.every((one) => kindOf(one) === "runtime") ? "runtime" : "io");
+    // A manifest that names its kind must provide only things of that kind.
+    if (kind !== undefined)
+      for (const one of what)
+        if (kindOf(one) !== kind)
+          context.addIssue({
+            code: "custom",
+            path: ["provides"],
+            message: `${one} isn't for a plugin of kind ${kind}`,
+          });
+    // A plugin that provides something must have each command that needs.
+    for (const one of what)
+      for (const command of commandsFor[one])
+        if (rest[command] === undefined)
           context.addIssue({
             code: "custom",
             path: [command],
-            message: `a ${job} plugin needs ${command}`,
+            message: `a ${one} plugin needs ${command}`,
           });
+    return { ...rest, kind: plugin, provides: what };
   });
 export type Manifest = z.infer<typeof Manifest>;
 

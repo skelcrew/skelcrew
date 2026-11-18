@@ -161,7 +161,7 @@ export function setUpPlugin(name: string, remote: string | null): void {
 // When the plugin is a forge, marks each repository with no forge as not yet claimed. Skelcrew
 // then asks the forges again, so a repository added before this forge can gain it.
 function markUnclaimed(db: Database, manifest: Manifest): void {
-  if (manifest.jobs.includes("forge"))
+  if (manifest.provides.includes("forge"))
     db.run("UPDATE repositories SET claimed = 0 WHERE forge IS NULL");
 }
 
@@ -326,8 +326,9 @@ export function removePlugin(name: string): void {
   console.log(`Removed ${name}, with its settings and tokens.`);
 }
 
-// Prints the installed plugins, for sc plugin ls: each one's name, version and jobs, such
-// as "github 0.1.0 tracker, forge", or as JSON for tools, with where each one came from.
+// Prints the installed plugins, for sc plugin ls: each one's name, version, kind and what it
+// provides, such as "github 0.1.0 io: tracker, forge", or as JSON for tools, with where each
+// one came from. The JSON keeps jobs, so a tool written before kinds still reads it.
 export function listPlugins(json: boolean): void {
   const rows = installedPlugins(openDb()).map((plugin) => {
     const manifest = existsSync(plugin.folder) ? readManifest(plugin.folder) : null;
@@ -335,12 +336,17 @@ export function listPlugins(json: boolean): void {
     return {
       name: plugin.name,
       version: manifest.version,
-      jobs: manifest.jobs,
+      kind: manifest.kind,
+      provides: manifest.provides,
+      // What it provides, under the name tools read before plugins had kinds.
+      jobs: manifest.provides,
       from: plugin.source ?? plugin.folder,
     };
   });
   // Plain text gives only what you read. JSON adds where each came from, for tools.
   if (json) console.log(JSON.stringify(rows));
   else if (rows.length === 0) console.log("No plugins installed.");
-  else for (const row of rows) console.log(`${row.name} ${row.version} ${row.jobs.join(", ")}`);
+  else
+    for (const row of rows)
+      console.log(`${row.name} ${row.version} ${row.kind}: ${row.provides.join(", ")}`);
 }
