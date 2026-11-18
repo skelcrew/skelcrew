@@ -49,7 +49,7 @@ function withThread(body: string): unknown {
 import { openDb } from ${JSON.stringify(source("db.ts"))};
 import { startThread } from ${JSON.stringify(source("flow/builder.ts"))};
 import { endThread, removing } from ${JSON.stringify(source("flow/events.ts"))};
-import { noteForLead } from ${JSON.stringify(source("flow/lead.ts"))};
+import { noteForLead } from ${JSON.stringify(source("flow/messages.ts"))};
 import { cloneOf, readThread, record } from ${JSON.stringify(source("flow/thread.ts"))};
 const db = openDb();
 db.run("INSERT INTO repositories (name, owner, repo, opened, remote, claimed) VALUES ('app', 'simon', 'app', 1, 'file:///nowhere', 1)");
