@@ -2111,7 +2111,8 @@ exec ${bwrap} "$@"`,
     // nothing else changes: the merge still waits for the approved head to be green.
     test("a lead you let arm merges arms one with your words, and builders still can't", async () => {
       await approvedApp12();
-      const words = "merge #7 when it's ready";
+      // Your words as you wrote them, over two lines and with a double space.
+      const words = "merge #7\nwhen it's  ready";
       // sc merge as the lead runs it, on its own socket.
       const asLead = (...more: string[]) =>
         Bun.spawnSync([process.execPath, main, "merge", "--when-ready", "#7", ...more], {
@@ -2149,13 +2150,14 @@ exec ${bwrap} "$@"`,
       expect(thread()).toMatchObject({ merge_plan: "armed", merge_by: `${login()} via the lead` });
       // The thread's log and the daemon's keep your words, and the lead gets a note saying what
       // it armed, so you see it in the conversation.
-      const why = `the lead armed a merge when ready on #7, as the human asked: "${words}"`;
+      // The log keeps them exactly, and the note puts them on one line.
+      const why = `the lead armed a merge when ready on #7, as the human asked: ${JSON.stringify(words)}`;
       // Each line of the thread's log is JSON, so its quotes are escaped there.
       expect(read(join(data(), "threads", "app-12.log"))).toContain(`"why":${JSON.stringify(why)}`);
       await until(() => read(daemonLog()).includes(`app-12: ${why}`));
       await until(() =>
         leadTyped().includes(
-          `Armed: #7 (app-12) merges once it is approved and green, as the human asked: "${words}". sc merge --cancel app-12 stops that.`,
+          `Armed: #7 (app-12) merges once it is approved and green, as the human asked: "merge #7 when it's ready". sc merge --cancel app-12 stops that.`,
         ),
       );
 

@@ -78,8 +78,7 @@ export function armMerge(
       `${name} changed since you said y, so nothing is armed: run sc merge --when-ready ${name} again`,
     );
   if (thread.merge_plan === "armed") return `${name} already merges when it is ready.`;
-  // Your words go on one line, for the log and the lead's note.
-  const asked = "asked" in how ? how.asked.replace(/\s+/g, " ").trim() : null;
+  const asked = "asked" in how ? how.asked : null;
   const plan = {
     merge_plan: "armed" as const,
     merge_id: crypto.randomUUID(),
@@ -88,18 +87,21 @@ export function armMerge(
     merge_waits: null,
     merge_noted: null,
   };
+  // The log keeps your words exactly, line breaks and spaces included. Written as JSON, they
+  // still fit on one line of the daemon's log.
   const why =
     asked === null
       ? "you armed a merge when ready"
-      : `the lead armed a merge when ready on #${thread.pr}, as the human asked: "${asked}"`;
+      : `the lead armed a merge when ready on #${thread.pr}, as the human asked: ${JSON.stringify(asked)}`;
   record(db, thread.folder, plan, why);
   console.log(`${name}: ${why}`);
+  // The note is typed into the lead as one line, so your words go on one line there.
   if (asked !== null)
     noteForLead(
       db,
       sessions,
       thread,
-      `Armed: #${thread.pr} (${name}) merges once it is approved and green, as the human asked: "${asked}". sc merge --cancel ${name} stops that.`,
+      `Armed: #${thread.pr} (${name}) merges once it is approved and green, as the human asked: "${asked.replace(/\s+/g, " ").trim()}". sc merge --cancel ${name} stops that.`,
     );
   return `${name} merges once it is approved and green. sc merge --cancel ${name} stops that.`;
 }
