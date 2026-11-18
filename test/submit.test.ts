@@ -1164,6 +1164,34 @@ done`,
     await until(() => thread().reviewing === null);
   }, 130_000);
 
+  // bubblewrap starts its sandbox's first process in its own time, and that process only asks to
+  // die with bwrap once it runs. A stop that ends bwrap in between leaves it waiting forever on
+  // a bwrap that is gone. Here bwrap stands in for that: told to end, it starts a process that
+  // won't be ended, and goes. The review's own process ends with the daemon all the same.
+  test("a review's sandbox ends with the daemon, even what it started as the daemon stopped", async () => {
+    const bwrap = Bun.which("bwrap") ?? "bwrap";
+    const left = join(home, "left");
+    script(
+      "bwrap",
+      `case "$*" in *" codex "*)
+  trap 'sh -c "trap \\"\\" TERM; echo \\$\\$ > ${left}; exec sleep 300" & until test -s ${left}; do sleep 0.01; done; exit 1' TERM
+  touch ${join(home, "reviewing")}
+  while :; do sleep 0.05; done ;;
+esac
+exec ${bwrap} "$@"`,
+    );
+    addApp();
+    const first = serve();
+    await untilCloned();
+    await skel(["start", "app-12"]);
+    await until(() => existsSync(join(home, "reviewing")), longWait);
+    first.kill();
+    await first.exited;
+    const pid = Number(read(left));
+    expect(pid).toBeGreaterThan(0);
+    await until(() => !existsSync(`/proc/${pid}`) || read(`/proc/${pid}/stat`).includes(") Z "));
+  }, 130_000);
+
   // A review the daemon brings back runs before the builders are back, so its changes wait for
   // the builder rather than fail on a session that isn't there yet.
   test("a review brought back that asks for changes types them in once the builder is back", async () => {

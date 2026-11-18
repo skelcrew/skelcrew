@@ -132,6 +132,14 @@ function endWhatItStarted(sockets: string[]): void {
   const deadline = Date.now() + 5000;
   while (stillRunning(started).length > 0 && Date.now() < deadline) Bun.sleepSync(50);
   end(stillRunning(started), "SIGKILL");
+  // A reviewer or a plugin's call leads a process group of its own. Its sandbox may have
+  // started a process after the look above. That process has lost the daemon as an ancestor,
+  // and would wait forever, but it is still in the group. A process that leads no group has no
+  // group of its own ID, so nothing else is reached.
+  for (const pid of started)
+    try {
+      process.kill(-pid, "SIGKILL");
+    } catch {}
   process.exit(0);
 }
 
