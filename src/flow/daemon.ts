@@ -1,5 +1,6 @@
-// The daemon, run by sc serve: keeps each repository's lead and the threads' builders
+// The daemon, run by sc up: keeps each repository's lead and the threads' builders
 // running, and answers the CLI and the agents on their sockets.
+
 import { dlopen, FFIType } from "bun:ffi";
 import { existsSync, mkdirSync, openSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server, type Socket } from "node:net";
@@ -32,15 +33,24 @@ import {
 import { holdCheckSlot } from "./checks.ts";
 import { ownTask, saveItems } from "./copy.ts";
 import { removeThread, stopThread } from "./events.ts";
+import { noCommits } from "./git.ts";
 import { closeExitedLeads, lastOpened, leadOf, openedRepositories, startLead } from "./lead.ts";
 import { restoreLimits, wakeAfterLimit } from "./limits.ts";
 import { listRepositories, listTasks, listThreads, showTask } from "./list.ts";
 import { armMerge, cancelMerge, refuseWithoutForge, threadToMerge } from "./merging.ts";
 import { deliverAllWaiting, messageBuilder, messageLead, typeLeadNotes } from "./messages.ts";
 import { pollRepositories } from "./poll.ts";
-import { findRepository, fullNameIs, noRepositories, refreshClones, repositoryAt } from "./repo.ts";
+import {
+  findRepository,
+  fullNameIs,
+  hasNoCommits,
+  noRepositories,
+  refreshClones,
+  repositoryAt,
+} from "./repo.ts";
 import { allowed, type Caller, DaemonRequest, parseJson } from "./requests.ts";
 import { endRound, goOn, rerunReview, resumeRound, submitRound } from "./round.ts";
+import { doing, watchForStalls } from "./stall.ts";
 import {
   keepState,
   noticeIdleScreens,
@@ -473,6 +483,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
               record(db, started.folder, { short: request.short }, "given a short title");
             return { started: `Started ${threadName(db, started)}.` };
           }
+          if (await hasNoCommits(db, repository)) throw new Error(noCommits(repository));
           thread = await startThread(db, request);
         } finally {
           startingTasks.delete(key);
@@ -484,6 +495,8 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         return { started: `Started ${threadName(db, thread)}.` };
       }
       case "start new": {
+        const repository = findRepository(db, request.repo);
+        if (await hasNoCommits(db, repository)) throw new Error(noCommits(repository));
         const thread = await startThread(db, request);
         setUpAndStart(thread);
         return { started: `Started ${threadName(db, thread)}.` };
@@ -547,6 +560,8 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   // would overwrite a limit a review met meanwhile and forget when it was met, so a review
   // that started before it could end it by finishing.
   restoreLimits(db);
+  // A freeze leaves nothing else in the log, so the daemon logs its own stalls.
+  watchForStalls("The daemon");
   // Taken before any request comes in, so a thread started meanwhile, still setting up,
   // isn't taken for one whose setup the daemon's stop cut short.
   const before = liveThreads(db);
@@ -567,12 +582,15 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   // A lead you exited while the daemon was down closes its tab, before any request could open
   // it, and isn't brought back. From here on, the daemon looks each second for a lead you exit.
   closeExitedLeads(db, sessions);
-  setInterval(() => closeExitedLeads(db, sessions), 1000);
+  setInterval(
+    () => doing("closing the tabs of exited leads", () => closeExitedLeads(db, sessions)),
+    1000,
+  );
   // From here on, the daemon also looks every two seconds for a working agent whose screen
   // shows it idle, where no hook said so. A session that ends during a look only ends that look.
   setInterval(() => {
     try {
-      noticeIdleScreens(db, sessions);
+      doing("looking at the agents' screens", () => noticeIdleScreens(db, sessions));
     } catch (error) {
       console.log(`couldn't look at the agents' screens: ${errorText(error)}`);
     }

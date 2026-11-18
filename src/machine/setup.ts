@@ -6,14 +6,14 @@ import { codexHome } from "../agents/codex.ts";
 import { HarnessName, harnessNamed } from "../agents/harness.ts";
 import { configFile, yourConfigDocument } from "../config.ts";
 import { openDb } from "../db.ts";
-import { claudeTokenFile, configDir } from "../paths.ts";
+import { claudeTokenFile, configDir, dataDir, setUpFile } from "../paths.ts";
 import { installPlugin } from "../plugins/install.ts";
 import { installedPlugins } from "../plugins/plugin.ts";
 import { errorText } from "../say.ts";
 import { readSettings } from "../settings.ts";
 import { originHere, parseRemote } from "./origin.ts";
 import { promptSecret } from "./secret.ts";
-import { installService, loginPath, serviceFile } from "./service.ts";
+import { loginPath, serviceFile } from "./service.ts";
 
 // The environment a step looks programs up in and runs them with.
 type Env = Record<string, string | undefined>;
@@ -311,17 +311,19 @@ function agentsLoggedIn(harness: HarnessName): boolean {
 }
 
 // Reports whether setup finished: your harness choice is saved, the agents have their login,
-// and the daemon's service is installed. Setup installs the service last, so with it every
-// step ran. Plain sc checks this each time it starts, so it looks only at files.
+// and every step ran, which the first run marks at its end. A step can save nothing, such as
+// picking your own harness for reviews, so without the mark an interrupted first run would skip
+// it. A machine set up by an older Skelcrew has the daemon's service in place of the mark, as
+// that first run installed the service last. Plain sc checks this each time it starts, so it
+// looks only at files.
 export function setupDone(): boolean {
-  const service = existsSync(serviceFile());
   const harness = readSettings(["yourHarness"]).yourHarness;
   if (harness === undefined) return false;
-  return agentsLoggedIn(harness) && service;
+  return agentsLoggedIn(harness) && (existsSync(setUpFile()) || existsSync(serviceFile()));
 }
 
-// Completes unfinished machine setup and keeps the daemon service current before attaching
-// to the lead. In a checkout of a GitHub repository it offers the GitHub plugin, on any run. A yes
+// Completes unfinished machine setup before plain sc starts the daemon and attaches to the
+// lead. In a checkout of a GitHub repository it offers the GitHub plugin, on any run. A yes
 // makes GitHub the repository's tracker too, with nothing written into the checkout. `from` is
 // the remote sc --remote brings from your laptop, since the checkout is there.
 export function firstRun(from?: string): void {
@@ -362,8 +364,10 @@ export function firstRun(from?: string): void {
     if (yours && other && !Bun.which(other.program, { PATH: env.PATH ?? "" }))
       console.log(`\n${other.title} isn't installed, so reviews run on ${yours.title}.`);
   }
-  installService();
-  if (!done) console.log("\nSkelcrew is set up.");
+  if (done) return;
+  mkdirSync(dataDir(), { recursive: true });
+  writeFileSync(setUpFile(), "");
+  console.log("\nSkelcrew is set up.");
 }
 
 // A step of the first run: `title` names it, and `take` asks what it needs, starting with a line
