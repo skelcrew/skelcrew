@@ -35,7 +35,7 @@ import { removeThread, stopThread } from "./events.ts";
 import { closeExitedLeads, lastOpened, leadOf, openedRepositories, startLead } from "./lead.ts";
 import { restoreLimits, wakeAfterLimit } from "./limits.ts";
 import { listRepositories, listTasks, listThreads, showTask } from "./list.ts";
-import { armMerge, cancelMerge, threadToMerge } from "./merging.ts";
+import { armMerge, cancelMerge, refuseWithoutForge, threadToMerge } from "./merging.ts";
 import { deliverAllWaiting, messageBuilder, messageLead, typeLeadNotes } from "./messages.ts";
 import { pollRepositories } from "./poll.ts";
 import { findRepository, fullNameIs, noRepositories, refreshClones, repositoryAt } from "./repo.ts";
@@ -382,6 +382,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       // What sc merge --when-ready asks you about at your terminal before it arms.
       case "merge preview": {
         const thread = threadToMerge(db, request);
+        refuseWithoutForge(db, thread);
         // Its whole title, not the short one, so you can tell which PR you agree to.
         return {
           thread: threadName(db, thread),

@@ -66,10 +66,7 @@ export function armMerge(
   seen: { pr: number; started: number | null } | undefined,
 ): string {
   const name = threadName(db, thread);
-  if (forgeOf(db, repositoryOf(db, thread)) === null)
-    throw new Error(
-      `${name}'s repository has no forge, so Skelcrew can't merge it when ready. Once it is approved, merge its branch ${thread.branch} yourself.`,
-    );
+  refuseWithoutForge(db, thread);
   // You agree to a PR you can see, by its number, so a PR opened later never merges under it.
   if (thread.pr === null)
     throw new Error(`${name} has no PR yet: arm a merge when ready once it opens one`);
@@ -88,6 +85,16 @@ export function armMerge(
   };
   record(db, thread.folder, plan, "you armed a merge when ready");
   return `${name} merges once it is approved and green. sc merge --cancel ${name} stops that.`;
+}
+
+// Refuses a merge when ready in a repository with no forge, as Skelcrew merges no branch
+// there, and says what you can do instead. Checked before you are asked anything, as no PR
+// will ever open there.
+export function refuseWithoutForge(db: Database, thread: Thread): void {
+  if (forgeOf(db, repositoryOf(db, thread)) === null)
+    throw new Error(
+      `${threadName(db, thread)}'s repository has no forge, so Skelcrew can't merge it when ready. Once it is approved, merge its branch ${thread.branch} yourself.`,
+    );
 }
 
 // Drops the thread's merge when ready, and returns what to say. Cancelling is always safe, so
@@ -204,11 +211,22 @@ export async function mergeIfReady(
     }
     if (refused !== null) waits = `the forge, which refused: ${refused}`;
   }
+  // The forge's answer took a while, and meanwhile the plan may have been cancelled, the thread
+  // removed, or started over in the same folder. What it waits on is saved only for the same
+  // plan, on the thread as it is now.
+  const now = readThread(db, folder);
+  const samePlan =
+    now.merge_plan === "armed" &&
+    now.merge_id === thread.merge_id &&
+    now.started === thread.started &&
+    now.status !== "done" &&
+    !removing.has(folder);
+  if (!samePlan) return;
   // What it waits on changes only now and then, so the log isn't filled with every poll.
-  if (waits !== thread.merge_waits)
+  if (waits !== now.merge_waits)
     record(db, folder, { merge_waits: waits }, `its merge when ready waits on ${waits}`);
-  if (mergeStuck(thread, waits)) {
-    record(db, folder, { merge_noted: thread.review_round });
-    noteForLead(db, sessions, thread, `${name} still waits to merge when ready, on ${waits}.`);
+  if (mergeStuck(now, waits)) {
+    record(db, folder, { merge_noted: now.review_round });
+    noteForLead(db, sessions, now, `${name} still waits to merge when ready, on ${waits}.`);
   }
 }

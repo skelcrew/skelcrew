@@ -1701,6 +1701,24 @@ echo "Not logged in"; exit 1`,
       expect(thread().merge_plan).toBe("armed");
     }, 120_000);
 
+    // A forge that fails to post the record says so on the plan it was posted for, never on a
+    // plan cancelled meanwhile.
+    test("a record that fails after the plan was cancelled leaves nothing behind", async () => {
+      await approvedApp12();
+      writeFileSync(join(plugin, "hold-review"), "");
+      writeFileSync(join(plugin, "fail-review"), "GitHub is down");
+      await arm();
+      pr({ head: pushed(), reviews: [skelReview], checks: [approved] });
+      await until(() => existsSync(join(plugin, "held-review")));
+      const cancel = { command: "merge cancel", repo: "app", task: "12" };
+      await askOn(join(home, "run", "skelcrew.sock"), cancel);
+      rmSync(join(plugin, "hold-review"));
+      await morePolls();
+      expect(thread()).toMatchObject({ merge_plan: null, merge_waits: null });
+      expect(merges()).toEqual([]);
+      expect(leadTyped()).not.toContain("still waits to merge when ready");
+    }, 90_000);
+
     test("sc rm while the record is posted stops the merge and drops the plan", async () => {
       await approvedApp12();
       writeFileSync(join(plugin, "hold-review"), "");

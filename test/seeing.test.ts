@@ -16,6 +16,7 @@ import {
   itemSql,
   read,
   runSkel,
+  runSkelInTerminal,
   source,
   startDaemon,
   threadSql,
@@ -279,6 +280,27 @@ function issues(repo: string, list: { number: number; title: string; createdAt: 
   for (const { number, title, createdAt } of list)
     sql(itemSql(repo, "task", number, title, createdAt));
 }
+
+// Without a forge no PR ever opens, so sc merge --when-ready says so before it asks anything,
+// and what to do instead.
+describe("sc merge", () => {
+  test("without a forge, --when-ready refuses and says to merge the branch yourself", async () => {
+    threads();
+    serve();
+    await untilAnswers();
+    const said = await runSkelInTerminal(
+      socket,
+      env(),
+      ["merge", "--when-ready", "app-12"],
+      "yourself.",
+      "n",
+    );
+    expect(said).toContain(
+      "app-12's repository has no forge, so Skelcrew can't merge it when ready. Once it is approved, merge its branch skelcrew/12 yourself.",
+    );
+    expect(said).not.toContain("[y/N]");
+  });
+});
 
 describe("sc ls", () => {
   beforeEach(() => {
