@@ -709,7 +709,7 @@ export function submitRound(db: Database, sessions: string, folder: string, summ
       // ended without a submit no longer does either: the builder can go on with nothing
       // typed in, such as when a command it left running finishes.
       submitted: true,
-      stalled: false,
+      turn_ended: false,
       submitting: summary,
       // A review of the older commit that waited for a place no longer does.
       queued: null,
@@ -896,7 +896,7 @@ export function rerunReview(
   const change = {
     status: "waiting",
     needs_you,
-    ...(byBuilder ? { submitted: true, stalled: false } : {}),
+    ...(byBuilder ? { submitted: true, turn_ended: false } : {}),
     telling: null,
     held: null,
     ...notHeld,

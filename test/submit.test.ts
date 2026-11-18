@@ -421,7 +421,7 @@ describe.skipIf(insideSandbox)("sc submit", () => {
       needs_you: 0,
       rounds: 1,
       pr: 7,
-      stalled: 0,
+      turn_ended: 0,
     });
     expect(read(join(builder(), "hooks"))).toBe("");
     expect(read(join(data(), "threads", "app-12.log"))).not.toContain("without submitting");
@@ -1391,10 +1391,10 @@ done`,
     writeFileSync(join(clone(), "change"), "newer\n");
     git(clone(), "commit", "-qam", "newer");
     expect((await skel(["turn", "ended"], asBuilder)).code).toBe(0);
-    await until(() => thread().stalled === 1);
+    await until(() => thread().turn_ended === 1);
     // The builder submits without anything typed in first.
     expect((await skel(["submit", "Newer"], asBuilder)).err).toBe("");
-    expect(thread()).toMatchObject({ stalled: 0, needs_you: 0 });
+    expect(thread()).toMatchObject({ turn_ended: 0, needs_you: 0 });
     await until(() => finished("success").length === 2, 45_000);
   }, 90_000);
 
@@ -1568,7 +1568,7 @@ describe.skipIf(insideSandbox)("sc review", () => {
     expect((await skel(["review", "app-12"], asBuilder)).err).toBe("");
     expect((await skel(["turn", "ended"], asBuilder)).code).toBe(0);
     await until(() => finished("success").length === 2, 45_000);
-    expect(thread().stalled).toBe(0);
+    expect(thread().turn_ended).toBe(0);
     expect(read(join(data(), "threads", "app-12.log"))).not.toContain("without submitting");
   }, 90_000);
 
@@ -1586,7 +1586,7 @@ describe.skipIf(insideSandbox)("sc review", () => {
     expect((await skel(["question", "answered"], asBuilder)).code).toBe(0);
     expect((await skel(["review", "app-12"], { SKELCREW_SOCKET: leadSocketPath() })).err).toBe("");
     expect((await skel(["turn", "ended"], asBuilder)).code).toBe(0);
-    await until(() => thread().stalled === 1);
+    await until(() => thread().turn_ended === 1);
     await until(() => finished("success").length === 2, 45_000);
   }, 90_000);
 

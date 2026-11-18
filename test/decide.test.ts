@@ -43,7 +43,7 @@ function thread(change: Partial<Thread> = {}): Thread {
     last_comment: null,
     last_check: null,
     asking: false,
-    stalled: false,
+    turn_ended: false,
     submitted: false,
     erred: false,
     limited: false,
@@ -585,7 +585,7 @@ test("a builder's turn that ends without a submit counts as one, and no other do
     [{ status: "working" }, true],
     [{ status: "waiting" }, true],
     // An earlier turn that ended the same way doesn't hide this one's message.
-    [{ status: "working", stalled: true }, true],
+    [{ status: "working", turn_ended: true }, true],
     // It submitted in this turn, or asked for a review again, so the turn waits on the review.
     [{ status: "working", submitted: true }, false],
     [{ status: "waiting", submitted: true }, false],

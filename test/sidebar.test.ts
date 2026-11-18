@@ -944,7 +944,7 @@ const state: Thread = {
   last_comment: 0,
   last_check: 0,
   asking: false,
-  stalled: false,
+  turn_ended: false,
   submitted: false,
   erred: false,
   limited: false,
@@ -999,13 +999,13 @@ test("a newer submit is reviewing, not queued, until its own review waits", () =
 // A builder that replied to you or the lead and stopped waits on the lead, so it must not hide
 // what you must do next.
 test("a builder that stopped without submitting doesn't hide anything that needs you", () => {
-  const stalled = { ...needing, stalled: true };
-  expect(word({ ...stalled, verdict: "approve", checks: "passing" })).toBe("approved");
-  expect(word({ ...stalled, verdict: "changes", rounds: 4, held: "fix" })).toBe("round limit");
-  expect(word({ ...stalled, verdict: "approve", checks: "failing" })).toBe("needs you");
-  expect(word({ ...stalled, verdict: "failed" })).toBe("review failed");
+  const ended = { ...needing, turn_ended: true };
+  expect(word({ ...ended, verdict: "approve", checks: "passing" })).toBe("approved");
+  expect(word({ ...ended, verdict: "changes", rounds: 4, held: "fix" })).toBe("round limit");
+  expect(word({ ...ended, verdict: "approve", checks: "failing" })).toBe("needs you");
+  expect(word({ ...ended, verdict: "failed" })).toBe("review failed");
   // Alone it says so, without claiming a question, as it may only have replied.
-  expect(word({ stalled: true })).toBe("turn ended");
+  expect(word({ turn_ended: true })).toBe("turn ended");
 });
 
 test("a builder that took up the changes is working again", () => {
@@ -1237,7 +1237,7 @@ console.log(JSON.stringify(looks.map((row) => [row?.tokens, row?.step])));`;
       { status: "waiting", reviewing: "abc" },
       { status: "waiting", needs_you: 1, verdict: "approve" },
       { asking: 1 },
-      { stalled: 1 },
+      { turn_ended: 1 },
       { erred: 1 },
       { needs_you: 1, rounds: 4 },
       { status: "stopped" },
@@ -1262,7 +1262,7 @@ console.log(JSON.stringify(looks.map((row) => [row?.tokens, row?.step])));`;
       { repo: "site", task: "5", status: "done", needs_you: 1 },
       { repo: "app", task: "6", status: "stopped" },
       { repo: "app", task: "7", erred: 1 },
-      { repo: "app", task: "8", status: "waiting", stalled: 1 },
+      { repo: "app", task: "8", status: "waiting", turn_ended: 1 },
       { repo: "docs", task: "9", asking: 1 },
       { repo: "docs", task: "10" },
       { repo: "web", task: "11", status: "waiting", needs_you: 1, verdict: "approve" },

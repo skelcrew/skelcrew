@@ -270,9 +270,9 @@ function builderState(): unknown {
 function turnEnded(): boolean {
   const db = new Database(join(data(), "skelcrew.db"));
   db.run("PRAGMA busy_timeout = 5000");
-  const row = db.query("SELECT stalled FROM threads WHERE folder = 'app-12'").get();
+  const row = db.query("SELECT turn_ended FROM threads WHERE folder = 'app-12'").get();
   db.close();
-  return z.object({ stalled: z.number() }).parse(row).stalled === 1;
+  return z.object({ turn_ended: z.number() }).parse(row).turn_ended === 1;
 }
 
 function setThread(sql: string): void {

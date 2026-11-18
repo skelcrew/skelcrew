@@ -233,3 +233,51 @@ console.log(JSON.stringify({ kept, third }));`;
     third: 3,
   });
 });
+
+// A turn that ended without a submit once needed you, and never sent the lead the builder's
+// last message. After the upgrade it waits on the lead, so the lead must hear of it once.
+test("a thread whose turn ended before the upgrade has its lead told once, and no longer needs you", () => {
+  const data = join(home, ".local", "share", "skelcrew");
+  mkdirSync(data, { recursive: true });
+  const old = new Database(join(data, "skelcrew.db"));
+  old.run(
+    "CREATE TABLE repositories (owner TEXT NOT NULL, repo TEXT NOT NULL, name TEXT NOT NULL UNIQUE, PRIMARY KEY (owner, repo))",
+  );
+  old.run("INSERT INTO repositories VALUES ('simon', 'app', 'app')");
+  old.run(`CREATE TABLE threads (owner TEXT NOT NULL, repo TEXT NOT NULL, task INTEGER NOT NULL,
+    folder TEXT NOT NULL UNIQUE, branch TEXT NOT NULL, base TEXT, status TEXT NOT NULL,
+    session TEXT, stalled INTEGER NOT NULL DEFAULT 0, noting TEXT, PRIMARY KEY (owner, repo, task))`);
+  // app-12's lead already heard it needed you. app-13's note still waits. app-14 is done.
+  old.run(`INSERT INTO threads VALUES
+    ('simon', 'app', 12, 'app-12', 'skelcrew/12', NULL, 'waiting', NULL, 1, NULL),
+    ('simon', 'app', 13, 'app-13', 'skelcrew/13', NULL, 'working', NULL, 1, 'its builder stopped without submitting'),
+    ('simon', 'app', 14, 'app-14', 'skelcrew/14', NULL, 'done', NULL, 1, NULL)`);
+  old.close();
+  const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
+import { liveThreads } from ${JSON.stringify(source("flow/thread.ts"))};
+import { needsYou } from ${JSON.stringify(source("flow/status.ts"))};
+openDb().close();
+const db = openDb();
+const threads = liveThreads(db).map((t) => ({ folder: t.folder, turn_ended: t.turn_ended, noting: t.noting, needsYou: needsYou(t) }));
+const notes = db.query("SELECT owner, repo, text FROM notes ORDER BY id").all();
+console.log(JSON.stringify({ threads, notes }));`;
+  const run = Bun.spawnSync([process.execPath, "-e", code], {
+    env: { ...process.env, HOME: home },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect(run.stderr.toString()).toBe("");
+  const { threads, notes } = JSON.parse(run.stdout.toString());
+  expect(threads).toEqual([
+    { folder: "app-12", turn_ended: true, noting: null, needsYou: false },
+    { folder: "app-13", turn_ended: true, noting: null, needsYou: false },
+  ]);
+  // Opening the database again, as every sc and the daemon do, tells the lead nothing more.
+  expect(notes).toEqual(
+    ["app-12", "app-13"].map((name) => ({
+      owner: "simon",
+      repo: "app",
+      text: `${name}'s builder ended its turn without sc submit before Skelcrew sent such turns to you, so its last message never reached you. Ask it what it waits on with sc tell ${name}, and bring a question to the human.`,
+    })),
+  );
+});

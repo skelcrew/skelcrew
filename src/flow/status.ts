@@ -207,7 +207,7 @@ export function threadWord(thread: Thread, maxRounds: number, now = Date.now()):
   if (thread.needs_you) return failed ? "review failed" : "needs you";
   // Not needing you: a builder that stopped without submitting waits on the lead, who got its
   // last message. Its word doesn't claim a question, as it may be only a reply.
-  if (thread.stalled) return "turn ended";
+  if (thread.turn_ended) return "turn ended";
   // Not needing you: a builder or a review waiting out a usage limit says until when.
   const limitWord = (reset: number | null) =>
     reset === null ? "limit" : `limit · ${clockTime(reset, now)}`;
@@ -258,8 +258,8 @@ export function turnEnded(
       record(db, folder, { status: "waiting" }, "its builder only replied, so it waits on CI");
     return;
   }
-  if (!thread.stalled)
-    record(db, folder, { stalled: true }, "its builder stopped without submitting");
+  if (!thread.turn_ended)
+    record(db, folder, { turn_ended: true }, "its builder stopped without submitting");
 }
 
 // The builder's turn ended on an error, from Claude Code's StopFailure hook, with the kind of
@@ -315,7 +315,7 @@ export function questionAnswered(db: Database, folder: string): void {
   // Each message starts a new turn, with no submit in it yet.
   const over = {
     asking: false,
-    stalled: false,
+    turn_ended: false,
     erred: false,
     submitted: false,
     limited: false,
@@ -327,7 +327,7 @@ export function questionAnswered(db: Database, folder: string): void {
   endWake(folder);
   if (thread.asking) record(db, folder, over, "its builder's question is over");
   else if (thread.erred) record(db, folder, over, "its builder was typed to after its error");
-  else if (thread.submitted || thread.stalled) record(db, folder, over);
+  else if (thread.submitted || thread.turn_ended) record(db, folder, over);
 }
 
 // Returns what a thread's row in the list of threads says of its merge when ready, with what it

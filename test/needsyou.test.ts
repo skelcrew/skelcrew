@@ -410,17 +410,17 @@ describe.skipIf(insideSandbox)("needs you", () => {
     expect(typed).toContain('<skelcrew from="app-12" reply="sc tell app-12">');
     expect(typed).toContain(`My turn ended without a submit, saying:\n\n${said}`);
     expect(typed).not.toContain("needs you");
-    expect(thread().stalled).toBe(1);
+    expect(thread().turn_ended).toBe(1);
     expect(await needsYou()).toBe(false);
     // You answer it in the sidebar, which ends turn ended.
     await hook("talk");
-    await until(() => thread().stalled === 0);
+    await until(() => thread().turn_ended === 0);
     // The turn your answer started ends without a submit too. A harness that gives no last
     // message still has the lead told.
     await hook("stop");
     await until(() => notes() === 2);
     expect(read(join(lead(), "typed"))).toContain("My turn ended without a submit.");
-    expect(thread().stalled).toBe(1);
+    expect(thread().turn_ended).toBe(1);
     expect(await needsYou()).toBe(false);
   }, 60_000);
 
@@ -451,7 +451,7 @@ describe.skipIf(insideSandbox)("needs you", () => {
       '<skelcrew from="app-12" reply="sc tell app-12">',
     );
     expect(await needsYou()).toBe(false);
-    expect(thread().stalled).toBe(0);
+    expect(thread().turn_ended).toBe(0);
     expect(read(join(lead(), "typed"))).not.toContain("needs you");
   }, 60_000);
 
@@ -495,7 +495,7 @@ describe.skipIf(insideSandbox)("needs you", () => {
     submittedAsReviewing();
     writeFileSync(join(data(), "threads", "app-12", "export.ts"), "export {};\n");
     await hook("stop", JSON.stringify({ last_assistant_message: "Started on the export." }));
-    await until(() => thread().stalled === 1);
+    await until(() => thread().turn_ended === 1);
     await until(() => read(join(lead(), "typed")).includes("Started on the export."));
     expect(await needsYou()).toBe(false);
   }, 60_000);
@@ -509,7 +509,7 @@ describe.skipIf(insideSandbox)("needs you", () => {
     git(clone, "config", "status.showUntrackedFiles", "no");
     writeFileSync(join(clone, "export.ts"), "export {};\n");
     await hook("stop", JSON.stringify({ last_assistant_message: "Started on the export." }));
-    await until(() => thread().stalled === 1);
+    await until(() => thread().turn_ended === 1);
   }, 60_000);
 
   test("a turn that ends on an error needs you for the error alone", async () => {
@@ -622,12 +622,12 @@ describe.skipIf(insideSandbox)("needs you", () => {
     addApp();
     await startApp12();
     await hook("stop");
-    await until(() => thread().stalled === 1);
+    await until(() => thread().turn_ended === 1);
     const lead = { SKELCREW_SANDBOX: "1", SKELCREW_SOCKET: leadSocket() };
     const told = await skel(["tell", "app-12", "Use JSON."], lead);
     expect(told.err).toBe("");
     await until(() => read(join(builder(), "typed")).includes("Use JSON."));
-    await until(() => thread().stalled === 0);
+    await until(() => thread().turn_ended === 0);
   }, 60_000);
 
   // The builder can ask you a question after Skelcrew found it idle and before the paste. The
@@ -718,7 +718,7 @@ describe.skipIf(insideSandbox)("needs you", () => {
     // A builder whose turn ended before the daemon started again still shows so, and the lead
     // isn't told twice.
     await hook("stop");
-    await until(() => thread().stalled === 1);
+    await until(() => thread().turn_ended === 1);
     await until(() => notes() === 1);
     for (const daemon of running.splice(0)) {
       daemon.kill();
@@ -726,7 +726,7 @@ describe.skipIf(insideSandbox)("needs you", () => {
     }
     serve();
     await Bun.sleep(1500);
-    expect(thread().stalled).toBe(1);
+    expect(thread().turn_ended).toBe(1);
     expect(await needsYou()).toBe(false);
     expect(notes()).toBe(1);
   }, 90_000);

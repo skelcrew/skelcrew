@@ -26,7 +26,8 @@ export function nameRepositories(db: Database): void {
 }
 
 // A thread's own columns past the first few: what belongs to its agent. `submitted` is whether
-// the builder ran sc submit in its current turn, and the rest of the flags say why it needs you.
+// the builder ran sc submit in its current turn, and `turn_ended` whether it ended a turn without
+// one since, which waits on the lead. The rest of the flags say why it needs you.
 // `noting` holds a note for the lead about that, kept until it is typed in, so one the daemon's
 // stop cut short carries on when it starts again. `changed` is when anything last went in the
 // thread's log. `working_since` is when the builder's current stretch of work began, for the
@@ -45,7 +46,7 @@ const threadColumns = {
   erred: "INTEGER NOT NULL DEFAULT 0",
   limited: "INTEGER NOT NULL DEFAULT 0",
   limit_reset: "INTEGER",
-  stalled: "INTEGER NOT NULL DEFAULT 0",
+  turn_ended: "INTEGER NOT NULL DEFAULT 0",
   submitted: "INTEGER NOT NULL DEFAULT 0",
   noting: "TEXT",
   started: "INTEGER",
@@ -255,9 +256,13 @@ function prepareTables(db: Database): void {
   // The rest of a thread's columns, added as the repositories' are. A database from before
   // tasks keeps the task's columns on its threads too, where moveToTasks reads them, so they are
   // added here for every release's database. Nothing reads them from threads after that.
+  // A database from a release where a turn that ended without a submit needed you has
+  // `stalled` and no `turn_ended`. Checked before the columns are added, so it is seen once.
+  const hasColumn = (column: string) =>
+    db.query("SELECT 1 FROM pragma_table_info('threads') WHERE name = ?").get(column) !== null;
+  const stalledBefore = hasColumn("stalled") && !hasColumn("turn_ended");
   for (const [column, type] of Object.entries({ ...threadColumns, ...taskColumns }))
-    if (!db.query("SELECT 1 FROM pragma_table_info('threads') WHERE name = ?").get(column))
-      db.run(`ALTER TABLE threads ADD COLUMN ${column} ${type}`);
+    if (!hasColumn(column)) db.run(`ALTER TABLE threads ADD COLUMN ${column} ${type}`);
   // A new database starts with tasks. One from an earlier release waits for its daemon to move
   // its threads onto tasks, as only the daemon knows no other daemon still writes to it.
   if (fresh) createTasks(db);
@@ -346,6 +351,23 @@ function prepareTables(db: Database): void {
     folder TEXT NOT NULL,
     source TEXT
   )`);
+  if (stalledBefore) moveStalled(db);
+}
+
+// Upgrades the threads whose builder stopped without submitting while that needed you. Such a
+// turn now waits on the lead, which reads the builder's last message. These turns never sent
+// the lead one, so it gets a note to ask the builder instead, whether or not it already heard
+// that the thread needed you. A note it hasn't heard yet would say the thread needs you, which
+// is no longer so, so it goes. Runs once, as the thread then has `turn_ended`.
+function moveStalled(db: Database): void {
+  db.run("UPDATE threads SET turn_ended = stalled");
+  db.run(`INSERT INTO notes (owner, repo, text)
+    SELECT th.owner, th.repo, r.name || '-' || th.task || '''s builder ended its turn without sc submit before Skelcrew sent such turns to you, so its last message never reached you. Ask it what it waits on with sc tell ' || r.name || '-' || th.task || ', and bring a question to the human.'
+    FROM threads th JOIN repositories r ON r.owner = th.owner AND r.repo = th.repo
+    WHERE th.turn_ended = 1 AND th.status IN ('working', 'waiting') ORDER BY th.rowid`);
+  // Only a thread that no longer needs you loses its note. One that still does keeps it.
+  db.run(`UPDATE threads SET noting = NULL WHERE turn_ended = 1 AND needs_you = 0
+    AND asking = 0 AND (erred = 0 OR limited = 1)`);
 }
 
 // Upgrades a database from before each repository had its own lead. The machine's one lead

@@ -204,7 +204,7 @@ async function recordThread(
       last_comment: null,
       last_check: null,
       asking: false,
-      stalled: false,
+      turn_ended: false,
       submitted: false,
       erred: false,
       limited: false,

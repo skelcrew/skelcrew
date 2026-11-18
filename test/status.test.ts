@@ -27,7 +27,7 @@ const state: Thread = {
   last_comment: 0,
   last_check: 0,
   asking: false,
-  stalled: false,
+  turn_ended: false,
   submitted: false,
   erred: false,
   limited: false,
@@ -92,8 +92,8 @@ test("a question, the round limit or a failed review needs you", () => {
 
 // Its last message went to the lead, who brings a real question to you.
 test("a builder that stopped without submitting idles, and doesn't need you", () => {
-  expect(status({ stalled: true, state: "idle" })).toBe("idle");
-  expect(status({ status: "waiting", stalled: true, state: "idle" })).toBe("idle");
+  expect(status({ turn_ended: true, state: "idle" })).toBe("idle");
+  expect(status({ status: "waiting", turn_ended: true, state: "idle" })).toBe("idle");
 });
 
 test("a harness that stopped on an error, or a thread that failed, is in error", () => {

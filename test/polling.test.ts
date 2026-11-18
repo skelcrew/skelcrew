@@ -762,7 +762,7 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
     const head = git(join(data(), "threads", "app-12"), "rev-parse", "HEAD");
     const ended = { command: "turn ended", head, message: "Thanks, glad it helps." };
     expect(await askOn(builder, ended)).toEqual({ asking: false });
-    expect(thread()).toMatchObject({ status: "waiting", stalled: 0 });
+    expect(thread()).toMatchObject({ status: "waiting", turn_ended: 0 });
     await until(() => read(join(data(), "claude", leadName, "typed")).includes("glad it helps"));
     pr({
       reviews: [skelReview],
@@ -770,7 +770,7 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
       checks: [approved],
     });
     await until(() => thread().needs_you === 1);
-    expect(thread()).toMatchObject({ status: "waiting", stalled: 0 });
+    expect(thread()).toMatchObject({ status: "waiting", turn_ended: 0 });
   }, 60_000);
 
   // GitHub can't merge a PR that conflicts, so the human must not be told it is ready.
