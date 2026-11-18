@@ -261,9 +261,12 @@ export function decide(
     return { seen, tell, notice, typedIn, failed, conflict, moved, change, why };
   }
   // Skelcrew's reviewer approves by setting its check, so an approved PR with every check passed,
-  // its own included, is ready. With no CI, that check is the only one.
+  // its own included, is ready. With no CI, that check is the only one. A branch holding
+  // commits Skelcrew never pushed is never ready, as no review saw them, such as one that ran
+  // on the builder's commit while a PR was merged into its branch.
   const approved = pr.checks.some((c) => c.name === reviewCheck && c.state === "passed");
-  if (quiet && !thread.needs_you && approved && pr.checks.every((c) => c.state === "passed"))
+  const allPassed = pr.checks.every((c) => c.state === "passed");
+  if (quiet && !thread.needs_you && !given.moved && approved && allPassed)
     return {
       seen,
       tell,

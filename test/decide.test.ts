@@ -400,6 +400,17 @@ test("a branch that moved on the forge tells the builder to merge it, once", () 
   expect(again).toMatchObject({ notice: [], moved: null, seen: decision.seen });
 });
 
+// A review of the builder's previous commit can approve after the branch moved and the builder
+// was told. No review saw the new commits, so the PR isn't ready until the builder pushes them.
+test("a branch that moved is never ready to merge, even once told", () => {
+  const moved = pr({ head: "f00d", checks: [approved] });
+  const told = thread({ seen: ["head:f00d"] });
+  const decision = decide(told, moved, { ...given, moved: true });
+  expect(decision).toMatchObject({ notice: [], moved: null, change: {} });
+  // The same PR, at a commit Skelcrew pushed, is ready.
+  expect(acted(told, moved).change).toEqual({ needs_you: true });
+});
+
 // A push under way carries the builder's commit, and is refused if the branch moved, which
 // tells the builder then.
 test("a branch that moved while a round is being pushed isn't told by the poll", () => {

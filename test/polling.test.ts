@@ -10,6 +10,7 @@ import {
   readdirSync,
   readFileSync,
   realpathSync,
+  renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -703,6 +704,36 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
     // Told once, however many polls see the same commit.
     await morePolls();
     expect(typed().split(`moved on the forge to ${merged}`).length - 1).toBe(1);
+  }, 60_000);
+
+  // The builder must fetch the moved branch from Skelcrew's clone, so it is told only once that
+  // clone has it. A fetch that fails must not leave the old approval advertised as ready.
+  test("a branch that moved on the forge leaves ready to merge even while Skelcrew can't fetch it", async () => {
+    const work = await approvedApp12();
+    pr({ reviews: [skelReview], checks: [approved] });
+    await until(() => thread().needs_you === 1);
+    const merged = moveBranch(work);
+    // The forge's git is out of reach, while the forge still answers polls.
+    const bare = join(home, "github", "simon", "app.git");
+    renameSync(bare, `${bare}.away`);
+    const moved = prItem("7", "Add export", {
+      head: merged,
+      reviews: [skelReview],
+      checks: [approved],
+    });
+    changes([issue12(), moved]);
+    await until(() => thread().needs_you === 0);
+    expect(read(join(data(), "threads", "app-12.log"))).toContain(
+      `its branch moved on the forge to ${merged}, so it isn't ready to merge`,
+    );
+    // Each poll fails to fetch, and the thread never goes back to ready.
+    await morePolls();
+    expect(thread().needs_you).toBe(0);
+    expect(typed()).not.toContain("moved on the forge");
+    // Once git can reach the forge, the builder is told.
+    renameSync(`${bare}.away`, bare);
+    await until(() => typed().includes(`moved on the forge to ${merged}`));
+    expect(thread()).toMatchObject({ status: "working", needs_you: 0 });
   }, 60_000);
 
   // The builder can submit before a poll sees the branch move. git refuses the push, as it is
