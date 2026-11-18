@@ -191,6 +191,8 @@ export function readSettings<G extends Group>(
 type Say = {
   harness: () => HarnessName | undefined;
   model: () => string | undefined;
+  // Whether it names a model at all, without checking it.
+  namesModel: () => boolean;
   everyRole?: boolean;
 };
 
@@ -220,7 +222,8 @@ function sayIn(read: () => unknown, path: string[], problem: string): Say {
         throw new Error(`${problem}: ${[...path, key].join(".")}: ${z.prettifyError(read.error)}`);
       return read.data;
     });
-  return { harness: field("harness", HarnessName), model: field("model", Model) };
+  const namesModel = () => mapping().model !== undefined && mapping().model !== null;
+  return { harness: field("harness", HarnessName), model: field("model", Model), namesModel };
 }
 
 // Returns `read` remembering what it gave, so each file is read and checked at most once.
@@ -304,8 +307,10 @@ function roleOf(name: RoleName, repository: Repository | undefined): Role {
     const model = fits ? say.model() : undefined;
     if (model !== undefined) return model;
     // A say that moves the role to another harness drops the model below it, and the role gets
-    // your model again only when it moves onto your harness.
-    if (harness !== undefined && !onHarness(from + 1, harness))
+    // your model again only when it moves onto your harness. When nothing below names a model,
+    // that is the model whichever harness the role was on below, so the harness below isn't read.
+    const modelBelow = says.slice(from + 1).some((below) => below.namesModel());
+    if (harness !== undefined && (!modelBelow || !onHarness(from + 1, harness)))
       return isYourHarness(harness) ? yourModel() : undefined;
     return modelFrom(from + 1);
   };

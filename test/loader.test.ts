@@ -144,9 +144,16 @@ test("only the settings asked for are checked, and a bad one names its file", ()
 test("a setting skelcrew.yaml sets isn't read from your config, so a bad one there stops nothing", () => {
   files("harness: claude\nmax_rounds: 0\nsetup: 5\n", "max_rounds: 2\n");
   expect(read(["rounds"]).settings?.rounds).toBe(2);
-  // A role is merged with yours, so yours is still read and checked.
-  files("harness: claude\nreviewer: { harness: nope }\n", "reviewer: { harness: codex }\n");
+  // A role is merged with yours, so yours is still read and checked where it can count: a
+  // model of yours goes along if your line puts the role on the repository's harness.
+  files(
+    "harness: claude\nreviewer: { harness: nope, model: x }\n",
+    "reviewer: { harness: codex }\n",
+  );
   expect(read(roleGroups).err).toContain("config.yaml isn't valid");
+  // With no model in your line, its harness can't count, so it stops nothing.
+  files("harness: claude\nreviewer: { harness: nope }\n", "reviewer: { harness: codex }\n");
+  expect(read(["reviewer"]).settings?.reviewer).toEqual({ harness: "codex" });
 });
 
 test("the reviewer's fallback and a review's time come from your config alone, else the defaults", () => {
@@ -362,13 +369,26 @@ test("a role your repos: override decides whole isn't read below it, so a bad on
     { harness: "codex", model: "gpt" },
     { harness: "codex", model: "gpt" },
   ]);
-  // An override naming only a harness leaves the repository's model on that harness counting,
-  // so the repository's line is still read.
+  // An override naming only a harness replaces the repository's harness. With no model in the
+  // repository's line, nothing below can count, so its bad harness stops nothing.
   files(
     "harness: claude\nrepos: { simon/app: { harness: codex } }\n",
     "builder: { harness: invalid }\n",
   );
-  expect(read(["builder"]).err).toContain("skelcrew.yaml isn't valid");
+  const bare = read(["builder"]);
+  expect(bare.err).toBe("");
+  expect(bare.settings?.builder).toEqual({ harness: "codex" });
+  // A model there counts if the line is on that harness, so its harness is still read.
+  files(
+    "harness: claude\nrepos: { simon/app: { harness: codex } }\n",
+    "builder: { harness: invalid, model: gpt }\n",
+  );
+  expect(read(["builder"]).err).toContain("skelcrew.yaml isn't valid: builder.harness");
+  files(
+    "harness: claude\nrepos: { simon/app: { harness: codex } }\n",
+    "builder: { harness: codex, model: gpt }\n",
+  );
+  expect(read(["builder"]).settings?.builder).toEqual({ harness: "codex", model: "gpt" });
 });
 
 test("an override that decides a role from several of its own lines reads nothing below it", () => {
