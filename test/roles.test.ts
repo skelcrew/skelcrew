@@ -11,6 +11,10 @@ const sha256 = (text: string) => new Bun.CryptoHasher("sha256").update(text).dig
 const workflows =
   "\nNever change files under .github/: Skelcrew can't push a change to its workflows, and the push is refused. If the work needs a change there, leave it out, and say in your sc submit summary, which becomes the PR, what a person should change there instead.\n";
 
+// What the builder's file added later: it fetches before it compares with main, as Skelcrew
+// never moves the builder's own origin/ branches.
+const fetching = `\nBefore you compare your branch with its base branch or merge it, such as main, run git fetch origin first. Your origin is Skelcrew's copy of the repository, which it keeps current with the forge, but your origin/ branches move only when you fetch. Without that, you could report that your branch already has main when it doesn't.\n`;
+
 // What the lead's file added after its instructions moved there: why a message to a builder
 // waits, and what to do when it waits long.
 const waiting =
@@ -51,6 +55,11 @@ const builderTestsBefore =
 const builderTests =
   "Never run the repository's whole test suite: CI or the reviewer runs it once for each commit, and other agents share this machine, so whole suites running at once slow everyone down. While you work, run only the tests near your change. Before each sc submit, run the tests related to your change: the test files you touched and the tests of the code you changed. Run the repository's lint and typecheck too, if it has them.";
 
+// What the lead's file added after its instructions moved there: the note Skelcrew types in
+// when a thread ends.
+const threadEnds =
+  'When a thread ends, Skelcrew types a one line note too, such as "app-12 is done: #7 merged into main" or "app-12 ended: #7 closed without merging". It comes from Skelcrew, not the human. Drop the thread from what you hold open: never list it as ready to merge again. When useful, tell the human in one line what it unblocks, such as a thread waiting on its work. A thread you removed with sc rm brings no note.\n\n';
+
 // What the builder's file added later: it tells the lead only what the lead needs, as Skelcrew
 // already shows its progress.
 const tellingTheLead =
@@ -61,11 +70,12 @@ test("the lead and builder files hold the instructions the code gave, but for wh
   let lead = builtInRole("lead").instructions;
   expect(lead).toContain(waiting);
   expect(lead).toContain(settling);
+  expect(lead).toContain(threadEnds);
   for (const [before = "", now = ""] of leadTasks) {
     expect(lead).toContain(now);
     lead = lead.replace(now, before);
   }
-  expect(sha256(lead.replace(waiting, "").replace(settling, ""))).toBe(
+  expect(sha256(lead.replace(waiting, "").replace(settling, "").replace(threadEnds, ""))).toBe(
     "4a964d29382eddbab5268fa24921ee599fa1bde9bd1eb51341f5bee1cb577837",
   );
   const builder = builtInRole("builder").instructions;
@@ -73,8 +83,10 @@ test("the lead and builder files hold the instructions the code gave, but for wh
   expect(builder).toContain(builderTests);
   expect(builder).toContain(asking);
   expect(builder).toContain(tellingTheLead);
+  expect(builder).toContain(fetching);
   const before = builder
     .replace(workflows, "")
+    .replace(fetching, "")
     .replace(asking, "")
     .replace(builderTests, builderTestsBefore)
     .replace(tellingTheLead, "");
@@ -111,7 +123,7 @@ Answer "approve" only if it is ready to merge. Otherwise answer "changes", and i
 
 // Without CI on the commit, the reviewer runs the tests, as it always did.
 const runs =
-  "No CI runs on this commit, so run the repository's whole test suite, with `bun test`.";
+  "No CI runs on this commit, so run the repository's whole test suite with `sc check`, which runs `bun test` once one of this machine's check slots is free. Never run that command directly, as other agents share this machine.";
 const testedBy = ["bun test"];
 
 test("the reviewer is told exactly what its code told it, and who runs the tests", () => {

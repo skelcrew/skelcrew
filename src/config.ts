@@ -62,3 +62,6 @@ export const repositoryTracker = (repository: Repository): string | undefined =>
 
 // Returns how many reviews may run at once on this machine. Throws when your config isn't valid.
 export const reviewLimit = (): number => readSettings(["reviews"]).reviews;
+// Returns how many test suites may run at once through sc check on this machine. Throws when
+// your config isn't valid.
+export const checkLimit = (): number => readSettings(["checks"]).checks;

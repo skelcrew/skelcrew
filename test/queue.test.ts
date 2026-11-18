@@ -49,6 +49,24 @@ test("says whether new work would have to wait", async () => {
   expect(queue.full(1)).toBe(false);
 });
 
+test("says how much work waits for a place", async () => {
+  const queue = new Queue();
+  const started: string[] = [];
+  const signal = new AbortController().signal;
+  const all = ["a", "b", "c"].map((name, order) => ({ ...held(started, name), order }));
+  expect(queue.inLine()).toBe(0);
+  const results = all.map(({ work, order }) => queue.run({ limit: 1, order, signal }, work));
+  await settle();
+  expect(queue.inLine()).toBe(2);
+  all[0]?.end();
+  await results[0];
+  await settle();
+  expect(queue.inLine()).toBe(1);
+  for (const { end } of all) end();
+  await Promise.all(results);
+  expect(queue.inLine()).toBe(0);
+});
+
 test("waiting work starts by its order, not by when it joined", async () => {
   const queue = new Queue();
   const started: string[] = [];

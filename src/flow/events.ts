@@ -11,7 +11,7 @@ import { unassignIssue } from "./assign.ts";
 import { baseOf } from "./builder.ts";
 import type { Check, Decision } from "./decide.ts";
 import { deleteBranch, fetchInto, onRemote } from "./git.ts";
-import { typeLeadNotes } from "./lead.ts";
+import { noteForLead, typeLeadNotes } from "./lead.ts";
 import { endWake } from "./limits.ts";
 import { noticeRound, queueMessage, stopDelivering } from "./messages.ts";
 import { refreshClone } from "./repo.ts";
@@ -38,24 +38,28 @@ async function failedCheckMessages(
   );
 }
 
-// Brings the base branch up to date in Skelcrew's clone of the repository. The builder's clone
-// has Skelcrew's clone as origin, so its next fetch gets the latest base. Each poll keeps the
-// default branch current, but the builder is told of the conflict before the next one, and
-// any other base is fetched only here.
-async function refreshBase(db: Database, thread: Thread, base: string): Promise<void> {
+// Brings the base branch up to date in Skelcrew's clone of the repository, and returns the
+// commit it is on, as the forge has it. The builder's clone has Skelcrew's clone as origin, so
+// its next fetch gets the latest base. Each poll keeps the default branch current, but the
+// builder is told of the conflict before the next one, and any other base is fetched only here.
+async function refreshBase(db: Database, thread: Thread, base: string): Promise<string> {
   const repository = repositoryOf(db, thread);
+  const clone = cloneDir(thread.owner, thread.repo);
   // Refreshing brings the default branch up to date. Any other base is fetched on its own.
   await refreshClone(db, repository);
-  if (base !== baseOf({ ...thread, base: null }))
-    await fetchInto(db, repository, cloneDir(thread.owner, thread.repo), base);
+  if (base !== baseOf({ ...thread, base: null })) await fetchInto(db, repository, clone, base);
+  const read = await quietly(["git", "-C", clone, "rev-parse", "--verify", `refs/heads/${base}`]);
+  if (!read.ok) throw new Error(`git rev-parse ${base} failed: ${read.err.trim()}`);
+  return read.out.trim();
 }
 
 // The threads whose events are being made into a message for the builder, by folder. A poll
 // leaves such a thread alone, so its events are never told twice.
 export const tellingEvents = new Set<string>();
 
-// The threads sc rm is removing, by folder. Without a forge, sc rm deletes the branch before it
-// ends the thread, and a poll in between would end it as one whose branch someone deleted.
+// The threads sc rm is removing, by folder. Only sc rm ends them. Without a forge, sc rm deletes
+// the branch before it ends the thread, and a poll in between would end it as one whose branch
+// someone deleted. With one, a poll would tell the lead the PR sc rm closed was closed.
 export const removing = new Set<string>();
 
 // Cancels the round, any typing under way into the thread's builder and any wake after a usage
@@ -107,35 +111,58 @@ export async function stopThread(db: Database, sessions: string, thread: Thread)
 }
 
 // Ends the thread once its PR is merged or closed, or for sc rm: ends its builder, and removes
-// its clone by deleting the folder, never running git in it.
+// its clone by deleting the folder, never running git in it. `why` goes in the thread's log.
+// `note`, such as "is done: #7 merged into main", goes to its repository's lead after the
+// thread's name, so the lead stops listing it as open. With null, as when the lead removed it,
+// the lead hears nothing. `removal` is true only for sc rm's own end: a thread sc rm is
+// removing is its to end, even when a poll saw its PR merged or closed first.
 export async function endThread(
   db: Database,
   sessions: string,
   thread: Thread,
   why: string,
+  note: string | null,
+  removal = false,
 ): Promise<void> {
+  // A thread ends once, so the lead hears of it once. A poll and sc rm can both end the same
+  // thread, and the thread can even start over while a slow end waits. So this end goes on only
+  // while the thread is still the one it was asked to end, by when it started, and not done
+  // yet. And while sc rm is removing it, only sc rm's own end goes on: the lead hears what sc rm
+  // says, or nothing when the lead ran it. It is checked before anything is stopped or deleted,
+  // and again after waiting for the builder, with nothing waited on from there to removing the
+  // thread's clone.
+  const ours = () => {
+    const now = readThread(db, thread.folder);
+    if (now.started !== thread.started || now.status === "done") return false;
+    return removal || !removing.has(thread.folder);
+  };
+  if (!ours()) return;
   await endBuilder(db, sessions, thread.folder, true);
+  if (!ours()) return;
+  // The thread is marked done and its note saved in one transaction. A daemon that stops
+  // between the two, or a note that fails to save, would otherwise leave a done thread, which no
+  // poll looks at again, and a lead that never hears of it. The note is saved first: marking
+  // the thread done also writes its log, which a failed transaction can't take back, so a note
+  // that fails to save leaves no end in the log either. The note is typed only after: typing
+  // starts on a promise, once this has returned. Every note to the lead is one line, as a reason
+  // given to sc rm may not be.
+  db.transaction(() => {
+    if (note !== null) {
+      const line = `${threadName(db, thread)} ${note}`.replace(/\s+/g, " ").slice(0, 200);
+      noteForLead(db, sessions, thread, line, thread.folder);
+    }
+    record(db, thread.folder, { status: "done", needs_you: false }, `${why}: ended the thread`);
+  })();
+  // Its clone goes only once the end is saved, so a thread whose end failed keeps it. Nothing
+  // is waited on since the checks above, so a thread started over in this folder meanwhile
+  // can't lose its clone.
   rmSync(cloneOf(thread), { recursive: true, force: true });
-  // Skelcrew's clone keeps refs of the branch it pushed, named by the thread's folder. A thread
-  // started over in that folder would be taken for one that pushed already, and without a forge
-  // ended at once, as its branch isn't on the remote. Its last approval goes too, so it never
-  // holds for the new thread's work.
-  const skelcrewClone = cloneDir(thread.owner, thread.repo);
-  for (const kind of ["threads", "bases", "remote", "approved"])
-    await quietly([
-      "git",
-      "-C",
-      skelcrewClone,
-      "update-ref",
-      "-d",
-      `refs/skelcrew/${kind}/${thread.folder}`,
-    ]);
-  record(db, thread.folder, { status: "done", needs_you: false }, `${why}: ended the thread`);
 }
 
 // Removes the thread for sc rm: ends its builder, closes its PR with the reason as a comment,
 // deletes its branch on the forge, removes its clone, takes you off its issue if Skelcrew
-// assigned you, and marks it done. Its task stays open,
+// assigned you, and marks it done. The lead hears of it, unless `byLead`: it ran sc rm, so it
+// knows already. Its task stays open,
 // so sc start can start the thread over on it. Without a PR, the branch is deleted with git,
 // but only if Skelcrew pushed it for this thread. A running thread is marked stopped first, so
 // a builder that submits while it exits is refused. If the forge fails, the thread stays
@@ -146,6 +173,7 @@ export async function removeThread(
   sessions: string,
   thread: Thread,
   reason: string | undefined,
+  byLead: boolean,
 ): Promise<void> {
   // Refuse what can't be removed, then stop a thread still running.
   const name = threadName(db, thread);
@@ -205,7 +233,10 @@ export async function removeThread(
       });
     else if ((await threadPushedBranch()) && (await onRemote(db, repository, branch)))
       await deleteBranch(db, repository, skelcrewClone, branch);
-    await endThread(db, sessions, thread, reason ? `removed: ${reason}` : "removed");
+    const closing = pr === null ? "" : `, closing #${pr}`;
+    const note = `ended: you removed it${closing}${reason ? `: ${reason}` : ""}`;
+    const why = reason ? `removed: ${reason}` : "removed";
+    await endThread(db, sessions, thread, why, byLead ? null : note, true);
   } finally {
     removing.delete(thread.folder);
   }
@@ -246,7 +277,17 @@ export async function tellBuilder(
         )
       : thread;
   try {
-    if (decision.conflict !== null) await refreshBase(db, thread, decision.conflict);
+    // The conflict notice names the commit the forge's base is on. A builder that checks its
+    // own origin/ unfetched would otherwise say its branch already has the base.
+    const base = decision.conflict;
+    const at = base === null ? null : await refreshBase(db, thread, base);
+    const told =
+      at === null
+        ? decision.notice
+        : decision.notice.map(
+            (text) =>
+              `${text} The forge's ${base} is at ${at}. After git fetch origin, git rev-parse origin/${base} gives the same commit.`,
+          );
     const checks = await failedCheckMessages(db, thread, decision.failed);
     // Fetching can take a while, and the thread may have stopped or ended meanwhile, whose
     // events stay unhandled. Or a newer round may have moved it on, such as to approved. Its
@@ -262,7 +303,7 @@ export async function tellBuilder(
     // A round submitted meanwhile is a new commit, so the notices of the older one would send
     // the builder after a problem it may have fixed, even once that round's push is done and
     // its review runs. People's words still hold.
-    const notices = noticeRound(thread.folder) !== round ? [] : [...checks, ...decision.notice];
+    const notices = noticeRound(thread.folder) !== round ? [] : [...checks, ...told];
     // Saves one message of these texts, unless there are none. The thread's log gets the first
     // line of each.
     const firstLines = (texts: string[]) => texts.map((t) => t.split("\n")[0]).join("; ");

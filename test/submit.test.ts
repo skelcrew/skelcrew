@@ -270,6 +270,17 @@ const reviews = () =>
   asked(plugin)
     .filter((q) => q.ask === "review")
     .map(({ commit, verdict, body }) => ({ commit, verdict, body }));
+// PR 7 as Skelcrew's copy of the forge holds it, or nothing yet.
+function copiedPr(): string {
+  const db = new Database(join(data(), "skelcrew.db"));
+  db.run("PRAGMA busy_timeout = 5000");
+  try {
+    const row = db.query("SELECT item FROM items WHERE kind = 'pr' AND id = '7'").get();
+    return row && typeof row === "object" && "item" in row ? String(row.item) : "";
+  } finally {
+    db.close();
+  }
+}
 // The PR Skelcrew opened, as it asked the forge, or nothing.
 const opened = () => asked(plugin).find((q) => q.ask === "open pr");
 const typedMessages = () => read(join(builder(), "typed")).split("\x1b[201~").length - 1;
@@ -373,7 +384,9 @@ describe.skipIf(insideSandbox)("sc submit", () => {
 
     const prompt = read(join(codexHome(), "sessions", "prompt-1"));
     expect(prompt).toContain("Add export");
-    expect(prompt).toContain("git diff origin/main...HEAD");
+    // The diff starts where the branch meets main as GitHub has it, which here is main's tip.
+    const main = git(join(github(), "simon", "app.git"), "rev-parse", "main");
+    expect(prompt).toContain(`git diff ${main}...HEAD`);
     expect(read(join(codexHome(), "sessions", "branches-1"))).toContain("origin/main");
 
     // Approved, it waits on CI: polling GitHub marks it needs you once every check is green.
@@ -584,7 +597,7 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
     await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), 30_000);
     const prompt = read(join(codexHome(), "sessions", "prompt-1"));
     expect(prompt).toContain(
-      "No CI runs on this commit, so run the repository's whole test suite, with `bun test`.",
+      "No CI runs on this commit, so run the repository's whole test suite with `sc check`, which runs `bun test` once one of this machine's check slots is free. Never run that command directly, as other agents share this machine.",
     );
   }, 60_000);
 
@@ -960,6 +973,119 @@ done`,
     expect(reviews()[1]).toEqual({ commit: merged, verdict: "approve", body: "Tests pass." });
   }, 180_000);
 
+  // The builder merged main as GitHub has it, but its own origin/main is still where the thread
+  // started. Diffed against that, main's new commits would read as the PR's.
+  test("a merge of main is reviewed against main as the forge has it, not the builder's older copy", async () => {
+    const work = addApp();
+    verdict(1, "approve", "Ready to merge.");
+    verdict(2, "approve", "Tests pass.");
+    await approveThenMerge(work, { ci: false });
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-2")), 60_000);
+    const main = git(work, "rev-parse", "HEAD");
+    expect(read(join(codexHome(), "sessions", "main-2")).trim()).not.toBe(main);
+    expect(read(join(codexHome(), "sessions", "prompt-2"))).toContain(`git diff ${main}...HEAD`);
+  }, 180_000);
+
+  // The change was docs alone against main, but next lacks main's code, so against next it
+  // changes code, and its tests must run.
+  test("a PR retargeted while its review waits is tested as its new diff needs", async () => {
+    const work = addApp();
+    git(work, "push", "-q", "origin", "main:next");
+    writeFileSync(join(work, "app.ts"), "export const app = 1;\n");
+    git(work, "add", ".");
+    git(work, "commit", "-qm", "code on main");
+    git(work, "push", "-q", "origin", "main");
+    mkdirSync(builder(), { recursive: true });
+    writeFileSync(join(builder(), "docs-only"), "");
+    writeFileSync(join(plugin, "hold-status-pending"), "");
+    verdict(1, "approve", "Ready to merge.");
+    servePolling();
+    await untilCloned();
+    expect((await skel(["start", "app-12"])).err).toBe("");
+    await until(() => existsSync(join(plugin, "held-status")), 60_000);
+    answer(plugin, "changed", {
+      items: [
+        taskItem("12", "Add export", { body: "As JSON" }),
+        prItem("7", "Add export", {
+          branch: "skelcrew/12-add-export",
+          head: pushed(),
+          base: "next",
+        }),
+      ],
+      next: null,
+    });
+    await until(() => copiedPr().includes('"base":"next"'), 60_000);
+    rmSync(join(plugin, "hold-status-pending"));
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), 60_000);
+    const prompt = read(join(codexHome(), "sessions", "prompt-1"));
+    expect(prompt).not.toContain("only touches docs");
+    expect(prompt).toContain("run the repository's whole test suite");
+  }, 180_000);
+
+  // Someone can change the branch a PR goes into on the forge. Diffed against the base the
+  // thread started from, the reviewer would judge commits that aren't the PR's.
+  test("a PR retargeted on the forge is reviewed against its new base", async () => {
+    const work = addApp();
+    git(work, "push", "-q", "origin", "main:next");
+    const next = git(work, "rev-parse", "HEAD");
+    verdict(1, "approve", "Ready to merge.");
+    verdict(2, "approve", "Fine.");
+    servePolling();
+    await untilCloned();
+    expect((await skel(["start", "app-12"])).err).toBe("");
+    await until(() => finished("success").length === 1, 60_000);
+    await untilReviewSaved();
+    answer(plugin, "changed", {
+      items: [
+        taskItem("12", "Add export", { body: "As JSON" }),
+        prItem("7", "Add export", {
+          branch: "skelcrew/12-add-export",
+          head: pushed(),
+          base: "next",
+        }),
+      ],
+      next: null,
+    });
+    await until(() => copiedPr().includes('"base":"next"'), 60_000);
+    // main moves and the branch takes it in, so main and next now meet the branch apart.
+    mergeMain(work);
+    expect((await skel(["submit", "Merged main"], { SKELCREW_SOCKET: builderSocket() })).err).toBe(
+      "",
+    );
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-2")), 60_000);
+    expect(read(join(codexHome(), "sessions", "prompt-2"))).toContain(`git diff ${next}...HEAD`);
+  }, 180_000);
+
+  // Against next, which lacks main's new commit, the merge brings in more than its base.
+  test("a PR retargeted while its merge waits for CI is reviewed, not kept approved", async () => {
+    const work = addApp();
+    git(work, "push", "-q", "origin", "main:next");
+    verdict(1, "approve", "Ready to merge.");
+    verdict(2, "approve", "Reviewed against next.");
+    const { merged } = await approveThenMerge(work);
+    await until(() => read(join(data(), "threads", "app-12.log")).includes("waiting for CI"));
+    const retargeted = (state: string) =>
+      answer(plugin, "changed", {
+        items: [
+          taskItem("12", "Add export", { body: "As JSON" }),
+          prItem("7", "Add export", {
+            branch: "skelcrew/12-add-export",
+            head: merged,
+            base: "next",
+            checks: [ciCheck(state)],
+          }),
+        ],
+        next: null,
+      });
+    retargeted("running");
+    await until(() => copiedPr().includes('"base":"next"'), 60_000);
+    retargeted("passed");
+    await until(() => reviews().length === 2, 60_000);
+    expect(read(join(codexHome(), "sessions", "count")).trim()).toBe("2");
+    expect(reviews()[1]).toMatchObject({ commit: merged, body: "Reviewed against next." });
+    expect(statuses().some((s) => s.description.startsWith("approval kept"))).toBe(false);
+  }, 180_000);
+
   test("a merge whose wait for CI a restart cut short still keeps the approval", async () => {
     const work = addApp();
     verdict(1, "approve", "Ready to merge.");
@@ -1295,7 +1421,8 @@ done`,
     expect((await skel(["start", "app-12", "--from", "next"])).err).toBe("");
     await until(() => finished("success").length === 1, 30_000);
     expect(opened()?.base).toBe("next");
-    expect(read(join(codexHome(), "sessions", "prompt-1"))).toContain("origin/next...HEAD");
+    const next = git(work, "rev-parse", "next");
+    expect(read(join(codexHome(), "sessions", "prompt-1"))).toContain(`git diff ${next}...HEAD`);
     expect(read(join(codexHome(), "sessions", "branches-1"))).toContain("origin/next");
   }, 60_000);
 
@@ -1548,6 +1675,11 @@ await serve(${JSON.stringify(socket)}, 200);`;
     // log, which comes last.
     await until(() => log().includes("is merged into main"), 30_000);
     expect(row()).toMatchObject({ status: "done" });
+    await until(() =>
+      read(join(lead(), "typed")).includes(
+        "app-t1 is done: its branch skelcrew/t1-add-export merged into main",
+      ),
+    );
   }, 60_000);
 
   // Runs the daemon from a folder that isn't a git checkout, as the service does, polling every
@@ -1788,14 +1920,62 @@ await serve(${JSON.stringify(socket)}, 200);`;
     expect(log()).toContain("wrong approach");
     expect(asked(plugin).filter((q) => q.ask !== "claims")).toEqual([]);
 
-    // Started over, it isn't taken for a thread whose branch was deleted, and gets as far as
-    // the first did.
+    // Skelcrew's clone still has the refs of the first thread's push, as after a daemon that
+    // stopped part way through an end. Started over, it isn't taken for a thread whose branch
+    // was deleted, and gets as far as the first did.
+    const refs = () => git(join(data(), "repos", "simon", "app"), "for-each-ref", "refs/skelcrew/");
+    expect(refs()).toContain("refs/skelcrew/threads/");
     const before = log().split(ready).length;
     expect((await skel(["start", "app-t1"])).out).toBe("Started app-t1.\n");
     await until(() => log().split(ready).length > before, 30_000);
     expect(log()).not.toContain("was deleted");
     expect(onRemote()).toBe(true);
   }, 60_000);
+
+  // Starting a done thread over deletes the old thread's refs first. Two starts at once must
+  // not let the second delete the refs of the thread the first started: without its push ref,
+  // a poll never sees its branch merged. The stand-in for git holds every later deletion of a
+  // push ref until the new thread has pushed, as a slow deletion would.
+  test("two starts over at once start one thread, whose merge still ends it", async () => {
+    const bare = addAppOnGit();
+    verdict(1, "approve", "Ready to merge.");
+    verdict(2, "approve", "Ready again.");
+    serveOutsideCheckout();
+    await untilCloned();
+    expect((await skel(["start", "app", "Add export", "As JSON"])).err).toBe("");
+    const log = () => read(join(data(), "threads", "app-t1.log"));
+    const ready = "app-t1 is ready on branch skelcrew/t1-add-export";
+    await until(() => log().includes(ready), 30_000);
+    expect((await skel(["rm", "app-t1"])).err).toBe("");
+    const realGit = Bun.which("git");
+    const clone = join(data(), "repos", "simon", "app");
+    const first = join(home, "first-deletion");
+    script(
+      "git",
+      `case "$*" in *"update-ref -d refs/skelcrew/threads/app-t1"*)
+  if ! mkdir "${first}" 2>/dev/null; then
+    for i in $(seq 300); do
+      "${realGit}" -C "${clone}" rev-parse --verify --quiet refs/skelcrew/threads/app-t1 >/dev/null && break
+      sleep 0.1
+    done
+  fi ;;
+esac
+exec "${realGit}" "$@"`,
+    );
+    const before = log().split(ready).length;
+    const starts = await Promise.all([skel(["start", "app-t1"]), skel(["start", "app-t1"])]);
+    expect(starts.map((s) => s.out).filter((out) => out === "Started app-t1.\n")).toHaveLength(1);
+    expect(starts.map((s) => s.err).join("")).toContain("app-t1 has a thread already");
+    await until(() => log().split(ready).length > before, 30_000);
+    // You merge the new thread's branch, and Skelcrew sees it.
+    const work = join(home, "work", "app");
+    git(work, "pull", "-q", bare, "main");
+    git(work, "fetch", "-q", bare, "skelcrew/t1-add-export");
+    git(work, "merge", "--squash", "-q", "FETCH_HEAD");
+    git(work, "commit", "-q", "-m", "Add export");
+    git(work, "push", "-q", bare, "main");
+    await until(() => log().includes("is merged into main"), 30_000);
+  }, 90_000);
 
   // sc rm deletes the branch before it ends the thread. A poll in between must not take the
   // thread for one whose branch someone else deleted. The fake remote holds the deletion open

@@ -27,7 +27,12 @@ const File = z.looseObject({
   builder: RoleSettings.optional(),
   reviewer: RoleSettings.optional(),
   max_rounds: z.number().int().positive().optional(),
-  limits: z.looseObject({ reviews: z.number().int().positive().optional() }).optional(),
+  limits: z
+    .looseObject({
+      reviews: z.number().int().positive().optional(),
+      checks: z.number().int().positive().optional(),
+    })
+    .optional(),
   setup: z.array(z.string()).optional(),
   test: z.array(z.string()).optional(),
   tracker: z.string().nullish(),
@@ -50,7 +55,7 @@ export type Role = { harness: HarnessName; model?: string };
 
 // Every setting, once the files and the defaults are merged. `rounds` is how many rounds of
 // changes a thread gets before it needs you, `reviews` how many reviews run at once on this
-// machine, and `setup` and `test` the commands that set up a thread's clone and run its whole
+// machine, `checks` how many test suites run at once through sc check, and `setup` and `test` the commands that set up a thread's clone and run its whole
 // test suite. Each is missing when no file names it, and an empty list when a file says on purpose
 // that the repository needs none. `fallback` is the harness reviews run on
 // while the reviewer's own waits out its usage limit, and `reviewMinutes` how long a review may
@@ -61,6 +66,7 @@ export type Settings = {
   roles: { lead: Role; builder: Role; reviewer: Role };
   rounds: number;
   reviews: number;
+  checks: number;
   setup: string[] | undefined;
   test: string[] | undefined;
   tracker: string | undefined;
@@ -78,6 +84,7 @@ const keysOf: Record<Group, Key[]> = {
   roles: ["harness", "model", "lead", "builder", "reviewer"],
   rounds: ["max_rounds"],
   reviews: ["limits"],
+  checks: ["limits"],
   setup: ["setup"],
   test: ["test"],
   tracker: ["tracker"],
@@ -122,17 +129,21 @@ const roleKeys: Key[] = ["lead", "builder", "reviewer"];
 // Returns the built-in defaults: Claude Code for every role, three rounds and 30 minutes for a
 // // review. Setup, test and the tracker have none. Reviews default to a quarter of this machine's
 // cores, at least one, as a review of a commit CI doesn't run on runs the repository's whole test
-// suite, and many at once fight over the CPU.
+// suite, and many at once fight over the CPU. Checks default to half the cores divided by four,
+// at least one: a test suite usually runs about four processes of its own, so half the cores
+// stay free for the agents and the screen.
 function builtInDefaults(): {
   harness: HarnessName;
   max_rounds: number;
   reviews: number;
+  checks: number;
   reviewMinutes: number;
 } {
   return {
     harness: "claude",
     max_rounds: 3,
     reviews: Math.max(1, Math.floor(availableParallelism() / 4)),
+    checks: Math.max(1, Math.floor(availableParallelism() / 2 / 4)),
     reviewMinutes: 30,
   };
 }
@@ -243,6 +254,7 @@ function mergeSettings(layers: File[]): Settings {
     roles: { lead: role("lead"), builder: role("builder"), reviewer: role("reviewer") },
     rounds: first((l) => l.max_rounds) ?? defaults.max_rounds,
     reviews: first((l) => l.limits?.reviews) ?? defaults.reviews,
+    checks: first((l) => l.limits?.checks) ?? defaults.checks,
     setup: first((l) => l.setup),
     test: first((l) => l.test),
     tracker: first((l) => l.tracker),
