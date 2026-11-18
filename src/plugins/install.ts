@@ -208,6 +208,12 @@ function approvalOf(manifest: Manifest): string {
   return JSON.stringify({ build, setup, call, git_credentials, add, exec, push, session, attach });
 }
 
+// Returns one word of a command as a shell would need it typed: as it is when it holds only
+// plain characters, and in single quotes otherwise. Shown so, ["sh", "a b"] reads sh 'a b' and
+// can't be taken for ["sh", "a", "b"], which runs differently.
+const shellWord = (word: string) =>
+  /^[\w./:=@%+,-]+$/.test(word) ? word : `'${word.replaceAll("'", "'\\''")}'`;
+
 // Shows what the plugin is and runs, and asks whether to `verb` it, such as Install. It says the
 // plugin's name, source, version, kind, what it provides and every command its manifest runs, as
 // it runs as you, outside the sandbox. Returns true for yes, false for any other answer, and null
@@ -215,7 +221,9 @@ function approvalOf(manifest: Manifest): string {
 function confirmPlugin(manifest: Manifest, from: string, verb: string): boolean | null {
   const { name, version, kind, provides } = manifest;
   const kindName = kind === "io" ? "an I/O" : "a runtime";
-  const commands = commandsOf(manifest).map((words) => `  ${removeControlCodes(words.join(" "))}`);
+  const commands = commandsOf(manifest).map(
+    (words) => `  ${removeControlCodes(words.map(shellWord).join(" "))}`,
+  );
   console.log(
     `${name} ${version} from ${removeControlCodes(from)} is ${kindName} plugin that provides ${provides.join(", ")}. It runs these as you, outside Skelcrew's sandbox:\n${commands.join("\n")}`,
   );

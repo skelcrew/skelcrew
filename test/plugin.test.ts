@@ -407,6 +407,10 @@ test("a plugin from a folder is used where it is, and update builds it again", a
   const regrouped = await skel(["update", "-g", "fake"], "", "", {}, home, false);
   expect(regrouped.code).toBe(1);
   expect(regrouped.err).toContain("Skelcrew left out fake");
+  // The question shows where each word ends, so you can see what changed.
+  const shown = await skel(["update", "-g", "fake"], "n\n");
+  expect(shown.out).toContain("\n  'bun build.ts'\n  true\n  sh setup.sh\n");
+  expect(shown.out).toContain("Skelcrew didn't build fake again.");
 
   const removed = await skel(["plugin", "rm", "fake"]);
   expect(removed.out).toContain("Removed fake");
