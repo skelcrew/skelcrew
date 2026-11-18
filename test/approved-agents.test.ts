@@ -216,9 +216,37 @@ test("what you are shown to approve hides nothing: binary files, control codes a
     "Build it.\0Hidden after a NUL.\n\x1b[1A\x1b[2KErased line.\r‮turned\n",
   );
   commit("roles");
-  const shown = String(inHome("return agents.agentsChange(app);"));
+  const shown = String(
+    inHome("return agents.agentsChange(app, null, agents.agentsOnDefaultBranch(app));"),
+  );
   expect(shown).toContain("+Build it.\\x00Hidden after a NUL.");
   expect(shown).toContain("+\\x1b[1A\\x1b[2KErased line.\\x0d\\u202eturned");
   expect(shown).not.toContain("Binary");
   for (const hidden of ["\0", "\x1b", "\r", "\u202e"]) expect(shown).not.toContain(hidden);
+});
+
+test("a role file goes over skelcrew.yaml's line key by key, and a new harness drops its model", () => {
+  agentsFile("roles/builder.md", "---\nmodel: gpt-6-mini\n---\nBuild it.\n");
+  agentsFile("roles/reviewer.md", "---\nharness: claude\n---\nReview it.\n");
+  writeFileSync(
+    join(clone, "skelcrew.yaml"),
+    "builder: { harness: codex, model: gpt-6 }\nreviewer: { harness: codex, model: gpt-6 }\n",
+  );
+  commit("roles");
+  inHome(approveCurrent);
+  expect(inHome('return readSettings(["roles"], app).roles;')).toMatchObject({
+    builder: { harness: "codex", model: "gpt-6-mini" },
+    reviewer: { harness: "claude", model: "opus" },
+  });
+});
+
+test("the change shown is between the versions given, whatever the default branch has since", () => {
+  agentsFile("roles/builder.md", "First way.\n");
+  commit("roles");
+  const first = git("rev-parse", "HEAD:.agents");
+  agentsFile("roles/builder.md", "Second way.\n");
+  commit("change roles");
+  const shown = String(inHome(`return agents.agentsChange(app, null, ${JSON.stringify(first)});`));
+  expect(shown).toContain("+First way.");
+  expect(shown).not.toContain("Second way.");
 });

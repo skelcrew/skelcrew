@@ -1,5 +1,6 @@
-// Reads every setting, from the repository's files in Skelcrew's clone, your config.yaml and the
-// built-in defaults. Each setting comes from the first of them that sets it.
+// Reads every setting, from your overrides for the repository under repos: in your config.yaml,
+// the repository's files in Skelcrew's clone, the rest of your config.yaml and the built-in
+// defaults. Each setting comes from the first of them that sets it.
 import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { join } from "node:path";
@@ -18,6 +19,7 @@ export type Repository = { owner: string; repo: string; agents?: string | null }
 const Model = z.string().min(1);
 // A role's own harness and model, either of them optional.
 const RoleSettings = z.looseObject({ harness: HarnessName.optional(), model: Model.optional() });
+type RoleSettings = z.infer<typeof RoleSettings>;
 
 // What the files may hold. Unknown keys pass, so settings this version doesn't know do no harm.
 // A bare `tracker:` is YAML's null, which counts as no line at all, so the forge stays the
@@ -28,6 +30,9 @@ const File = z.looseObject({
   lead: RoleSettings.optional(),
   builder: RoleSettings.optional(),
   reviewer: RoleSettings.optional(),
+  // Each role's harness and model in the new shape, as roles: { builder: { model: sonnet } }.
+  // Read as lead:, builder: and reviewer: are, which it goes over key by key.
+  roles: z.record(z.string(), RoleSettings).optional(),
   max_rounds: z.number().int().positive().optional(),
   limits: z
     .looseObject({
@@ -83,7 +88,7 @@ type Group = keyof Settings;
 // The keys of the files behind each setting. A role's model belongs to its harness, so the
 // roles are read together with your harness and model.
 const keysOf: Record<Group, Key[]> = {
-  roles: ["harness", "model", "lead", "builder", "reviewer"],
+  roles: ["harness", "model", "lead", "builder", "reviewer", "roles"],
   rounds: ["max_rounds"],
   reviews: ["limits"],
   checks: ["limits"],
@@ -108,6 +113,7 @@ const yourKeys: Key[] = [
   "lead",
   "builder",
   "reviewer",
+  "roles",
   "max_rounds",
   "setup",
   "test",
@@ -126,7 +132,22 @@ const repositoryKeys: Key[] = [
   "test",
   "tracker",
 ];
-const roleKeys: Key[] = ["lead", "builder", "reviewer"];
+// What an override under repos: may set: what the repository's own files may, but its tracker,
+// and the harness and model of its roles. What is only yours, such as limits, stays in your
+// general settings, as an override is about one repository and limits are about your machine.
+// The tracker is shared with everyone who works on the repository, so no one changes it alone.
+const overrideKeys: Key[] = [
+  "harness",
+  "model",
+  "lead",
+  "builder",
+  "reviewer",
+  "roles",
+  "max_rounds",
+  "setup",
+  "test",
+];
+const roleKeys: Key[] = ["lead", "builder", "reviewer", "roles"];
 
 // Returns the built-in defaults: Claude Code for every role, three rounds and 30 minutes for a
 // // review. Setup, test and the tracker have none. Reviews default to a quarter of this machine's
@@ -159,6 +180,7 @@ export function readSettings<G extends Group>(
   repository?: Repository,
 ): Pick<Settings, G> {
   const wanted = groups.flatMap((group) => keysOf[group]);
+  const overrides = repository ? readOverrides(wanted, repository) : {};
   // sc init asks without a repository, for the starter skelcrew.yaml it writes.
   const shared = repository
     ? readRepositoryFile(
@@ -166,36 +188,84 @@ export function readSettings<G extends Group>(
         repository,
       )
     : {};
-  // A role file's harness and model go over the role's line in skelcrew.yaml, which counts only
-  // while the role's file names neither.
+  // A role file's harness and model go over the role's line in skelcrew.yaml, key by key.
   if (repository && groups.includes("roles" as G))
-    for (const name of ["lead", "builder", "reviewer"] as const) {
-      const role = roleFileSettings(name, repository);
-      if (role) shared[name] = role;
-    }
-  // A setting the repository sets is not read from your config, so a bad value there can't
-  // stop a repository that decides it. A role is the exception: yours merges with the
-  // repository's, as a model goes along only while the role stays on your harness.
+    for (const name of ["lead", "builder", "reviewer"] as const)
+      shared[name] = overRole(roleFileSettings(name, repository), shared[name]);
+  // A setting your override or the repository sets is not read from the rest of your config, so
+  // a bad value there can't stop a repository that decides it. A role is the exception: yours
+  // merges with the repository's, as a model goes along only while the role stays on your
+  // harness.
   const decided = (k: Key) =>
-    shared[k] !== undefined && shared[k] !== null && !roleKeys.includes(k);
+    [overrides, shared].some((l) => l[k] !== undefined && l[k] !== null) && !roleKeys.includes(k);
   const fromYours = wanted.filter((k) => yourKeys.includes(k) && !decided(k));
-  return mergeSettings([shared, readYourFile(fromYours)]);
+  return mergeSettings([overrides, shared, readYourFile(fromYours)]);
 }
 
 // Returns the harness and model a repository's role file names, or nothing when it names neither
 // or the repository has no file for the role.
-function roleFileSettings(name: RoleName, repository: Repository): File[RoleName] {
+function roleFileSettings(name: RoleName, repository: Repository): RoleSettings | undefined {
   const { harness, model } = repositoryRole(name, repository);
   if (harness === undefined && model === undefined) return undefined;
   return { ...(harness && { harness }), ...(model && { model }) };
 }
 
+// Returns a role's settings from one place, `top`, over those from another it goes over,
+// `below`, key by key. A model belongs to its harness, so a `top` that moves the role to another
+// harness without naming a model drops the model below: Codex must never run on opus.
+function overRole(
+  top: RoleSettings | undefined,
+  below: RoleSettings | undefined,
+): RoleSettings | undefined {
+  if (top === undefined || below === undefined) return top ?? below;
+  const merged = { ...below, ...top };
+  const moved = top.harness !== undefined && top.harness !== below.harness;
+  if (!moved || top.model !== undefined) return merged;
+  const { model: _dropped, ...rest } = merged;
+  return rest;
+}
+
+// Returns a file's settings with its roles: lines read as its lead:, builder: and reviewer:
+// lines, each going over the old line key by key, so both shapes work and the new one wins.
+function withRoles(file: File): File {
+  const { roles, ...rest } = file;
+  for (const name of ["lead", "builder", "reviewer"] as const)
+    rest[name] = overRole(roles?.[name], rest[name]);
+  return rest;
+}
+
+// Returns your config.yaml as YAML data, or nothing when you have none.
+function yourConfig(): unknown {
+  const file = join(configDir(), "config.yaml");
+  return existsSync(file) ? parseYaml(file, file) : undefined;
+}
+
 // Returns your config.yaml, holding only `keys`, checked. A file with none of them isn't read,
 // so a broken one stops only what it could change.
 function readYourFile(keys: Key[]): File {
+  if (keys.length === 0) return {};
   const file = join(configDir(), "config.yaml");
-  if (keys.length === 0 || !existsSync(file)) return {};
-  return check(pick(parseYaml(file, file), keys), `${file} isn't valid`);
+  return withRoles(check(pick(yourConfig(), keys), `${file} isn't valid`));
+}
+
+// Returns your overrides for the repository, from repos: in your config.yaml, holding only the
+// `keys` an override may set, checked. A repository is named by its owner/name, in any case, as
+// forges ignore case in names. Only its own entry is checked, so a mistake in another
+// repository's stops only that one.
+function readOverrides(keys: Key[], repository: Repository): File {
+  const wanted = keys.filter((k) => overrideKeys.includes(k));
+  if (wanted.length === 0) return {};
+  const file = join(configDir(), "config.yaml");
+  const repos = z
+    .object({ repos: z.record(z.string(), z.unknown()).nullish() })
+    .safeParse(yourConfig() ?? {});
+  if (!repos.success) throw new Error(`${file} isn't valid: ${z.prettifyError(repos.error)}`);
+  const name = `${repository.owner}/${repository.repo}`.toLowerCase();
+  const [, entry] =
+    Object.entries(repos.data.repos ?? {}).find(([key]) => key.toLowerCase() === name) ?? [];
+  if (entry === undefined || entry === null) return {};
+  const problem = `${file} isn't valid under repos: ${repository.owner}/${repository.repo}`;
+  return withRoles(check(pick(entry, wanted), problem));
 }
 
 // Returns the repository's skelcrew.yaml, holding only `keys`, checked, or nothing when it has
@@ -234,12 +304,18 @@ function pick(data: unknown, keys: Key[]): unknown {
   const picked = Object.fromEntries(
     Object.entries(data).filter(([key]) => !nested.includes(key) && keys.some((k) => k === key)),
   );
-  const reviewer = "reviewer" in data ? data.reviewer : undefined;
-  if (typeof reviewer === "object" && reviewer !== null) {
-    if (keys.includes("fallback") && "fallback" in reviewer) picked.fallback = reviewer.fallback;
-    if (keys.includes("your_reviewer") && "harness" in reviewer)
-      picked.your_reviewer = reviewer.harness;
-  }
+  // The new shape's reviewer comes last, so it wins where both shapes say something.
+  const roles = "roles" in data ? data.roles : undefined;
+  const reviewers = [
+    "reviewer" in data ? data.reviewer : undefined,
+    typeof roles === "object" && roles !== null && "reviewer" in roles ? roles.reviewer : undefined,
+  ];
+  for (const reviewer of reviewers)
+    if (typeof reviewer === "object" && reviewer !== null) {
+      if (keys.includes("fallback") && "fallback" in reviewer) picked.fallback = reviewer.fallback;
+      if (keys.includes("your_reviewer") && "harness" in reviewer)
+        picked.your_reviewer = reviewer.harness;
+    }
   return picked;
 }
 

@@ -29,9 +29,9 @@ function files(yours: string | null, shared: string | null): void {
 
 // Reads the settings in `groups` for app in a process of its own, as homedir() keeps the HOME
 // this one started with. Returns them, or the error the read ended with.
-function read(groups: string[]): { settings?: Record<string, unknown>; err: string } {
+function read(groups: string[], repo = "app"): { settings?: Record<string, unknown>; err: string } {
   const script = `import { readSettings } from ${JSON.stringify(source("settings.ts"))};
-console.log(JSON.stringify(readSettings(${JSON.stringify(groups)}, { owner: "simon", repo: "app" })));`;
+console.log(JSON.stringify(readSettings(${JSON.stringify(groups)}, { owner: "simon", repo: ${JSON.stringify(repo)} })));`;
   const done = Bun.spawnSync([process.execPath, "-e", script], {
     env: { HOME: home, PATH: process.env.PATH ?? "" },
     stdout: "pipe",
@@ -192,4 +192,54 @@ test("what your config saved reads apart from the defaults", () => {
     yourReviewer: "claude",
     declined: ["simon/app"],
   });
+});
+
+test("roles: in your config is read as lead:, builder: and reviewer: were, and wins key by key", () => {
+  files(
+    "harness: claude\nmodel: opus\nbuilder: { harness: claude, model: sonnet }\nroles:\n  builder: { model: haiku }\n  reviewer: { harness: codex }\n",
+    null,
+  );
+  expect(read(["roles"]).settings?.roles).toEqual({
+    lead: { harness: "claude", model: "opus" },
+    builder: { harness: "claude", model: "haiku" },
+    reviewer: { harness: "codex" },
+  });
+  // A role put on another harness in the new shape drops the old shape's model.
+  files(
+    "builder: { harness: claude, model: opus }\nroles: { builder: { harness: codex } }\n",
+    null,
+  );
+  expect(read(["roles"]).settings?.roles).toMatchObject({ builder: { harness: "codex" } });
+  files("roles: { builder: { harness: emacs } }\n", null);
+  expect(read(["roles"]).err).toContain("config.yaml isn't valid");
+});
+
+test("repos: overrides go over the repository's files, for the repository they name only", () => {
+  files(
+    "harness: claude\nrepos:\n  simon/app:\n    setup: [make app]\n    max_rounds: 7\n    roles: { builder: { model: sonnet } }\n  simon/other:\n    setup: [make other]\n",
+    "setup: [make]\nmax_rounds: 2\nbuilder: { model: haiku }\n",
+  );
+  expect(read(["roles", "rounds", "setup"]).settings).toMatchObject({
+    roles: { builder: { harness: "claude", model: "sonnet" }, lead: { harness: "claude" } },
+    rounds: 7,
+    setup: ["make app"],
+  });
+  expect(read(["rounds", "setup"], "other").settings).toMatchObject({
+    rounds: 3,
+    setup: ["make other"],
+  });
+  expect(read(["setup"], "third").settings?.setup).toBeUndefined();
+});
+
+test("repos: can't set what is only yours, and a bad entry stops only its own repository", () => {
+  files(
+    "repos:\n  simon/app: { limits: { reviews: 9 }, harness: codex }\n  simon/other: { max_rounds: 0 }\n",
+    null,
+  );
+  expect(read(["reviews", "rounds", "roles"]).settings).toMatchObject({
+    reviews: quarter,
+    rounds: 3,
+    roles: { lead: { harness: "codex" } },
+  });
+  expect(read(["rounds"], "other").err).toContain("isn't valid");
 });

@@ -83,18 +83,20 @@ export function forgetAgents(place: Place): void {
   writeApprovals(rest);
 }
 
-// Returns what the default branch changed in .agents/ since the version you approved, as git
-// shows a change, with every file in full when you approved none. Empty when nothing changed.
+// Returns what changed in .agents/ from the tree `from` to the tree `to`, as git shows a change,
+// each null for no .agents/, so every file shows in full from none. Empty when nothing changed.
+// The trees are given, not read again, so what you approve is exactly what you were shown, though
+// the daemon moves the clone's default branch meanwhile.
 // It must show every byte an agent would read, or you'd approve what you never saw: git shows
 // no lines of a file it takes for binary, such as one holding a NUL or marked so in
 // .gitattributes, so every file is shown as text, and control codes, which could move the
 // cursor over a line or turn text around, are shown as escapes.
-export function agentsChange(place: Place): string {
+export function agentsChange(place: Place, before: string | null, after: string | null): string {
+  if (before === after) return "";
   // git names the empty tree by hashing nothing as one, whichever hash the clone uses.
   const empty = gitIn(place, ["hash-object", "-t", "tree", "/dev/null"])?.trim() ?? "";
-  const from = approvedAgents(place) ?? empty;
-  const to = agentsOnDefaultBranch(place) ?? empty;
-  if (from === to) return "";
+  const from = before ?? empty;
+  const to = after ?? empty;
   // Paths are shown as under .agents/, where you know them from.
   const diff = gitIn(place, [
     "diff",
@@ -162,7 +164,7 @@ export function askAboutAgents(place: Place, name: string): void {
     before === null
       ? `${fullName} has its own .agents/, which steers its agents. This is what it holds:`
       : `${fullName}'s .agents/ changed since you approved it:`;
-  console.log(`${what}\n\n${agentsChange(place)}`);
+  console.log(`${what}\n\n${agentsChange(place, before, current)}`);
   const answer = prompt(`Approve ${fullName}'s .agents/? [y/N]`)?.trim().toLowerCase();
   if (answer === undefined) return;
   if (["y", "yes"].includes(answer)) {
