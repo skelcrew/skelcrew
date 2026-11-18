@@ -231,6 +231,15 @@ function leadState(): unknown {
   return z.object({ lead_state: z.string().nullable() }).parse(row).lead_state;
 }
 
+// Returns how many notes and messages for the leads Skelcrew still keeps, as not yet sent.
+function notesWaiting(): number {
+  const db = new Database(join(data(), "skelcrew.db"));
+  db.run("PRAGMA busy_timeout = 5000");
+  const row = db.query("SELECT COUNT(*) AS count FROM notes").get();
+  db.close();
+  return z.object({ count: z.number() }).parse(row).count;
+}
+
 // Sets one of app-12's flags, as a review, or with submitted as sc submit, would.
 function setColumn(column: "needs_you" | "submitted"): void {
   const db = new Database(join(data(), "skelcrew.db"));
@@ -720,6 +729,9 @@ describe.skipIf(insideSandbox)("needs you", () => {
     await hook("stop");
     await until(() => thread().turn_ended === 1);
     await until(() => notes() === 1);
+    // The message shows at the lead's prompt before its Enter, and is kept until it is sent. A
+    // daemon stopped in between types it again when it starts, so the test waits for the send.
+    await until(() => notesWaiting() === 0);
     for (const daemon of running.splice(0)) {
       daemon.kill();
       await daemon.exited;

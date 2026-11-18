@@ -270,6 +270,15 @@ function turnEnded(): boolean {
   return z.object({ turn_ended: z.number() }).parse(row).turn_ended === 1;
 }
 
+// Returns how many notes and messages for the leads Skelcrew still keeps, as not yet sent.
+function notesWaiting(): number {
+  const db = new Database(join(data(), "skelcrew.db"));
+  db.run("PRAGMA busy_timeout = 5000");
+  const row = db.query("SELECT COUNT(*) AS count FROM notes").get();
+  db.close();
+  return z.object({ count: z.number() }).parse(row).count;
+}
+
 function setThread(sql: string): void {
   const db = new Database(join(data(), "skelcrew.db"));
   db.run("PRAGMA busy_timeout = 5000");
@@ -353,6 +362,9 @@ describe.skipIf(insideSandbox)("codex", () => {
     await act("stop");
     await until(turnEnded);
     await until(() => turnsEndedTold() === 1);
+    // The message shows at the lead's prompt before its Enter, and is kept until it is sent. A
+    // daemon stopped in between types it again when it starts, so the test waits for the send.
+    await until(() => notesWaiting() === 0);
     for (const daemon of running.splice(0)) {
       daemon.kill();
       await daemon.exited;
