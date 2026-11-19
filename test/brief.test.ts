@@ -211,7 +211,10 @@ const webSession = () => leadPlaces("simon", "web").name;
 const hasWebLead = () =>
   Bun.spawnSync(["tmux", "-L", socket, "has-session", "-t", `=${webSession()}`]).success;
 
-// Has web's lead exit cleanly, as /exit does, and waits until its ended session shows it.
+// Has web's lead exit cleanly, as /exit does, and waits until its ended session shows it, or
+// until the daemon has seen the clean exit and closed the tab. The daemon ends that session
+// within a second, so on a busy CI runner the test can miss the ended session altogether.
+// Only a clean exit closes the tab, and each test opens it before this.
 async function exitWebLead(): Promise<void> {
   writeFileSync(join(webLead(), "exit-now"), "");
   const pane = [
@@ -221,11 +224,16 @@ async function exitWebLead(): Promise<void> {
     `=${webSession()}:`,
     "#{pane_dead} #{pane_dead_status}",
   ];
+  const tabClosed = () => {
+    const row = webRow();
+    return typeof row === "object" && row !== null && "tab_closed" in row && row.tab_closed === 1;
+  };
   await until(
     () =>
       Bun.spawnSync(["tmux", "-L", socket, ...pane])
         .stdout.toString()
-        .trim() === "1 0",
+        .trim() === "1 0" ||
+      (!hasWebLead() && tabClosed()),
   );
 }
 
