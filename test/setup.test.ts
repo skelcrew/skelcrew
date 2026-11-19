@@ -1815,6 +1815,11 @@ test("sc install leaves a plugin your lock and a repository pin at different com
   expect(fresh.out).toContain(said);
   expect(fresh.out).not.toContain("Install it?");
   expect(existsSync(fakeFolder())).toBe(false);
+  // Your plugin is missing, so the machine isn't set up, and plain sc tries again.
+  expect(fresh.out).toContain(
+    "Skelcrew isn't set up yet, as your config.yaml names simon/skelcrew-fake",
+  );
+  expect(existsSync(join(home, ".local", "share", "skelcrew", "install-done"))).toBe(false);
   // Installed at the repository's pin, your lock doesn't move it either.
   repositoryLocksFake(clone, "0.1.0", yours);
   await install("y\n");
@@ -1893,4 +1898,34 @@ test("sc install refuses a repository that names a runtime plugin installed as y
     "fake is a runtime plugin, which is always yours and never a repository's",
   );
   expect(run.out).not.toContain("Nothing to install");
+});
+
+// The kind that counts is the pinned version's, which may differ from the one installed.
+test("sc install moves a runtime plugin that isn't yours to a pinned version that is I/O", async () => {
+  noGitHubPlugin();
+  fakeGitHub();
+  const plugin = join(home, "github", "simon", "skelcrew-fake");
+  publishFake("0.1.0");
+  const io = readFileSync(join(plugin, "skelcrew-plugin.yaml"), "utf8");
+  writeFileSync(
+    join(plugin, "skelcrew-plugin.yaml"),
+    'name: fake\nversion: 0.1.0\nskelcrew: 0.1.0\nabout: Fake\nkind: runtime\nprovides: [sessions]\nsetup: [bun, setup.ts]\nsession: ["true"]\nattach: ["true"]\n',
+  );
+  git(plugin, "commit", "-q", "-am", "runtime");
+  git(plugin, "tag", "-f", "v0.1.0");
+  await skel("1\nsk-ant-oat01-good\n");
+  lockFake("0.1.0");
+  await install("y\n");
+  // No longer yours, it is installed here and named by no file of yours.
+  writeFileSync(config(), "harness: claude\n");
+  writeFileSync(lock(), "");
+  writeFileSync(join(plugin, "skelcrew-plugin.yaml"), io.replace("0.1.0", "0.2.0"));
+  git(plugin, "commit", "-q", "-am", "0.2.0");
+  git(plugin, "tag", "v0.2.0");
+  const app = checkoutWith("app", "git@example.com:simon/app.git");
+  repositoryLocksFake(app, "0.2.0");
+  const run = await atTerminal("y\n", app, ["install"]);
+  expect(run.err).toBe("");
+  expect(run.out).toContain("Update it? [Y/n]");
+  expect(run.out).toContain("Updated fake from 0.1.0 to 0.2.0.");
 });

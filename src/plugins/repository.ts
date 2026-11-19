@@ -233,13 +233,14 @@ export function installRepositoryPlugins(needs: Need[]): { changed: boolean; mis
         return;
       }
       const here = installedPlugins(db).find((plugin) => plugin.source === source);
-      // One installed as yours may be a runtime plugin, which a repository can't name, or
-      // another plugin than the lock names.
-      if (here) {
+      // One installed as yours at this very pin may be a runtime plugin, which a repository
+      // can't name, or another plugin than the lock names. One at another pin is checked as the
+      // pinned version is fetched, as that version may differ.
+      if (here && matchesLock(here, locked)) {
         refuseRuntime(readManifest(here.folder), true);
         refuseOtherName(readManifest(here.folder), locked.name);
+        return;
       }
-      if (here && matchesLock(here, locked)) return;
       changed = true;
       const pinned = {
         called: locked.name,

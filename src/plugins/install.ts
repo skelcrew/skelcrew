@@ -655,7 +655,7 @@ export function matchesLock(plugin: Plugin, locked: Locked): boolean {
 // the plugins still missing or at another version than locked, as you said no to them.
 // `remote` is handed to each setup. `conflicting` are the plugins a repository pins at another
 // commit than your lock: each is left as it is, neither installed nor moved, and the repository's
-// install says why.
+// install says why. One of them that isn't here at your pin is among those still missing.
 export function installYourPlugins(
   remote: string | null,
   conflicting: string[] = [],
@@ -688,7 +688,9 @@ export function installYourPlugins(
   );
   // Read again, as an install added its pin.
   const now = yourLock(db);
-  const left = mine.filter((source) => {
+  // One left as it is for a repository's pin still counts when it isn't here at yours, so the
+  // machine isn't set up while it is missing.
+  const left = yourPlugins().filter((source) => {
     const here = installedPlugins(db).find((plugin) => plugin.source === source);
     const locked = now[source];
     return !here || (locked !== undefined && !matchesLock(here, locked));
