@@ -238,7 +238,8 @@ ${threadSql({ task: "13", status: "stopped" })}`;
 });
 
 // The commit is the PR's head as the forge last sent it, which it merges only while it is still
-// the head. A forge too old to send one can't be asked to merge.
+// the head. A forge too old to send one can't be asked to merge. Merging approves no change to
+// .agents/, so the question says when a poll found one at that head, on a PR with no thread too.
 test("m on a PR ready to merge asks to merge it into its base, and elsewhere says what it waits on", () => {
   const head = { head: "c".repeat(40) };
   const sql = `${repository}
@@ -251,7 +252,9 @@ ${itemSql("app", "pr", 36, "Fix export", "2026-11-09T10:00:00Z", head)}
 ${itemSql("app", "pr", 37, "Fix import", "2026-11-10T10:00:00Z", head)}
 ${threadSql({ task: "12", status: "waiting", pr: 31, needs_you: 1, ci_passed: 1, verdict: "approve", review_round: 1 })}
 ${threadSql({ task: "13", status: "waiting", pr: 36, verdict: "approve", review_round: 1 })}
-${threadSql({ task: "14", pr: 37, review_round: 1, verdict: "changes" })}`;
+${threadSql({ task: "14", pr: 37, review_round: 1, verdict: "changes" })}
+INSERT INTO pr_agents (owner, repo, pr, head, changed) VALUES
+  ('simon', 'app', '32', '${"c".repeat(40)}', 1), ('simon', 'app', '31', '${"c".repeat(40)}', 0);`;
   const { prs } = after(sql);
   expect(prs.map((group) => group.rows.map((row) => row.name))).toEqual([
     ["app#33", "app#32", "app#31"],
@@ -261,7 +264,7 @@ ${threadSql({ task: "14", pr: 37, review_round: 1, verdict: "changes" })}`;
     { key: "m", refused: "app#33 needs a newer forge plugin to merge here: run sc update -g" },
     {
       key: "m",
-      ask: "Merge app#32 into next? y/n",
+      ask: "Merge app#32 into next? It changes .agents/ (roles, flows or skills): new tasks wait for sc repo trust. y/n",
       working: "Merging app#32…",
       request: { command: "merge", repo: "simon/app", pr: 32, commit: "c".repeat(40) },
     },

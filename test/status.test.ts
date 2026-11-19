@@ -71,8 +71,6 @@ const state: Thread = {
   agents: null,
   flow: "default",
   review_post: null,
-  agents_checked: null,
-  agents_changed: false,
 };
 const status = (more: Partial<Thread>) => statusOf({ ...state, ...more }, 3);
 

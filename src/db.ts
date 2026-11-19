@@ -91,9 +91,7 @@ const threadColumns = {
 // on the PR, as JSON: the PR, the review's ID and what it last said, so each round edits it.
 // `agents` is the git tree of the .agents/ you had approved when the task started, which its
 // agents keep, or null for the built-in roles. `flow` is the flow the task runs from start to end,
-// `default` unless it was started with another. `agents_checked` is the PR's head commit a poll
-// last looked at, and `agents_changed` whether that commit's changes touch .agents/, so the
-// merge confirms say so while reading only the database.
+// `default` unless it was started with another.
 export const taskColumns = {
   title: "TEXT",
   body: "TEXT",
@@ -130,8 +128,6 @@ export const taskColumns = {
   closes: "TEXT",
   agents: "TEXT",
   flow: "TEXT NOT NULL DEFAULT 'default'",
-  agents_checked: "TEXT",
-  agents_changed: "INTEGER NOT NULL DEFAULT 0",
 };
 
 // Marks each done task merged when its thread's log says its work ended by a merge, for tasks
@@ -513,6 +509,17 @@ function prepareTables(db: Database): void {
     noted INTEGER NOT NULL DEFAULT 0,
     typed_in TEXT NOT NULL DEFAULT '[]',
     pasted INTEGER NOT NULL DEFAULT 0
+  )`);
+  // For each open PR in Skelcrew's copy, the head commit a poll last looked at and whether the
+  // PR's changes there touch .agents/, so the merge confirms say so while reading only the
+  // database. Each poll looks again, as a retargeted PR or a moved base can change that.
+  db.run(`CREATE TABLE IF NOT EXISTS pr_agents (
+    owner TEXT NOT NULL,
+    repo TEXT NOT NULL,
+    pr TEXT NOT NULL,
+    head TEXT NOT NULL,
+    changed INTEGER NOT NULL,
+    PRIMARY KEY (owner, repo, pr)
   )`);
   // The reviews Skelcrew posted with your gh login, before its forge posted them as its own app.
   db.run("DROP TABLE IF EXISTS posted");

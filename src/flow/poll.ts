@@ -21,7 +21,7 @@ import { quietly } from "../run.ts";
 import { errorText } from "../say.ts";
 import { assignIssue, unassignIssue } from "./assign.ts";
 import { baseOf, startThread } from "./builder.ts";
-import { type Item, openTasks, prOf, saveItems } from "./copy.ts";
+import { type Item, openPrs, openTasks, prOf, saveItems } from "./copy.ts";
 import {
   allGreen,
   ciState,
@@ -251,37 +251,61 @@ async function actOnPr(
   }
 }
 
-// Saves whether the PR's changes touch .agents/, once for each new head commit, so the merge
-// confirms can say so while reading only the database. A merge approves no change there, as an
-// agent wrote it. The thread's branch, which is the PR's, and its base are fetched into
-// Skelcrew's clone, as the head may be someone else's push. A fetch or diff that fails saves
-// nothing, so the next poll tries again.
-async function saveAgentsChanged(
-  db: Database,
-  repository: Repository,
-  thread: Thread,
-  pr: PullRequest,
-): Promise<void> {
-  if (pr.head === null || pr.head === thread.agents_checked) return;
-  const skelcrewClone = cloneDir(thread.owner, thread.repo);
-  const ref = (kind: string) => `refs/skelcrew/${kind}/${thread.folder}`;
-  await fetchInto(db, repository, skelcrewClone, pr.base, ref("bases"));
-  await fetchInto(db, repository, skelcrewClone, thread.branch, ref("remote"));
-  // Three dots compare the head with where it left its base, so changes the base made since
-  // don't count as the PR's.
-  const changed = await quietly([
-    "git",
-    "-C",
-    skelcrewClone,
-    "diff",
-    "--name-only",
-    `${ref("bases")}...${pr.head}`,
-    "--",
-    ".agents",
-  ]);
-  if (!changed.ok) throw new Error(`git diff failed: ${changed.err.trim()}`);
-  record(db, thread.folder, { agents_checked: pr.head, agents_changed: changed.out.trim() !== "" });
+// Saves, for each open PR in Skelcrew's copy, whether its changes touch .agents/ at its head, so
+// the merge confirms can say so while reading only the database. Merging approves no change
+// there. It looks again at every poll, from where the head left its base now, as retargeting
+// the PR or moving its base can change that with the same head. That is git in Skelcrew's clone
+// alone, unless the base isn't the default branch or the head isn't in the clone yet, such as
+// someone else's push: those are fetched. A PR it can't check, such as one from a fork, loses
+// what was saved for it, so its confirm says it isn't checked, and is logged once per head.
+async function saveAgentsChanges(db: Database, repository: Repository): Promise<void> {
+  const { owner, repo } = repository;
+  const skelcrewClone = cloneDir(owner, repo);
+  const git = (...args: string[]) => quietly(["git", "-C", skelcrewClone, ...args]);
+  const prs = openPrs(db, owner, repo);
+  // PRs that left the copy need nothing saved.
+  const open = prs.map((pr) => pr.id);
+  db.run(
+    `DELETE FROM pr_agents WHERE owner = ? AND repo = ?
+      AND pr NOT IN (SELECT value FROM json_each(?))`,
+    [owner, repo, JSON.stringify(open)],
+  );
+  // The clone is on the default branch, kept current by this poll, so it needs no fetch.
+  const onDefault = (await git("symbolic-ref", "--short", "HEAD")).out.trim();
+  for (const pr of prs) {
+    if (pr.head === null) continue;
+    const forget = () =>
+      db.run("DELETE FROM pr_agents WHERE owner = ? AND repo = ? AND pr = ?", [owner, repo, pr.id]);
+    try {
+      let base = "HEAD";
+      if (pr.base !== onDefault) {
+        base = `refs/skelcrew/pr-bases/${pr.id}`;
+        await fetchInto(db, repository, skelcrewClone, pr.base, base);
+      }
+      if (!(await git("cat-file", "-e", `${pr.head}^{commit}`)).ok)
+        await fetchInto(db, repository, skelcrewClone, pr.branch, `refs/skelcrew/prs/${pr.id}`);
+      // The PR's own changes are those since the head left its base, which is what a merge brings.
+      const from = await git("merge-base", base, pr.head);
+      if (!from.ok) throw new Error(`git merge-base failed: ${from.err.trim()}`);
+      const files = await git("diff", "--name-only", from.out.trim(), pr.head, "--", ".agents");
+      if (!files.ok) throw new Error(`git diff failed: ${files.err.trim()}`);
+      db.run(
+        "INSERT OR REPLACE INTO pr_agents (owner, repo, pr, head, changed) VALUES (?, ?, ?, ?, ?)",
+        [owner, repo, pr.id, pr.head, files.out.trim() === "" ? 0 : 1],
+      );
+    } catch (error) {
+      forget();
+      const which = `${owner}/${repo}#${pr.id} at ${pr.head}`;
+      if (uncheckable.has(which)) continue;
+      uncheckable.add(which);
+      console.log(`couldn't tell whether ${which} changes .agents/: ${errorText(error)}`);
+    }
+  }
 }
+
+// The PRs, each at a head, that saveAgentsChanges couldn't check and logged, so a PR from a fork
+// isn't logged at every poll.
+const uncheckable = new Set<string>();
 
 // Ends a thread of a repository with no forge once its branch is done with: when merging it
 // into its base would change nothing, which a merge, a squash and a rebase all leave, or when
@@ -454,6 +478,10 @@ async function pollRepository(
       }
     }
   }
+  // With the copy and the clone up to date, find which open PRs change .agents/, for the merge
+  // confirms. A repository with no clone yet has nothing to look in.
+  if (forgeOf(db, repository) !== null && existsSync(cloneDir(owner, repo)))
+    await saveAgentsChanges(db, repository);
   // With the copy up to date, start labeled tasks, then act on each thread: by its PR with a
   // forge, or by its branch without one, or without a PR.
   if (trackerOf(db, repository) !== null)
@@ -470,9 +498,6 @@ async function pollRepository(
         if (before.pr === null) await actOnBranchHead(db, sessions, repository, before);
         continue;
       }
-      await saveAgentsChanged(db, repository, before, pr).catch((error) =>
-        console.log(`couldn't tell whether ${before.folder} changes .agents/: ${errorText(error)}`),
-      );
       await actOnPr(db, sessions, before, pr);
       // Once the PR's events are acted on, an armed merge when ready merges it if it is ready.
       // A thread sc rm is removing is its to end.

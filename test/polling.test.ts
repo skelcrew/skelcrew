@@ -354,6 +354,27 @@ function copiedPr(): string {
   return row ? JSON.stringify(row) : "";
 }
 
+// What the latest poll saved about whether a PR changes .agents/: the head it looked at and
+// whether the PR's changes there touch .agents/, or nothing.
+function prAgents(id: string): { head: string; changed: number } | null {
+  const db = new Database(join(data(), "skelcrew.db"), { readonly: true });
+  db.run("PRAGMA busy_timeout = 5000");
+  try {
+    const row = db.query("SELECT head, changed FROM pr_agents WHERE pr = ?").get(id);
+    return row && typeof row === "object" && "head" in row && "changed" in row
+      ? { head: String(row.head), changed: Number(row.changed) }
+      : null;
+  } finally {
+    db.close();
+  }
+}
+
+// Returns the commit a checkout is on.
+const headOf = (work: string) =>
+  Bun.spawnSync(["git", "-C", work, "rev-parse", "HEAD"], { stdout: "pipe" })
+    .stdout.toString()
+    .trim();
+
 test("the first poll brings everything open into Skelcrew's copy, and later ones what changed", async () => {
   addApp();
   changes([issue12(), taskItem("13", "Fix login"), prItem("34", "Bump deps")]);
@@ -616,6 +637,41 @@ test("a push that changes .agents/ tells the lead once that the human must appro
 
 // A lead already running when Skelcrew learned of flows keeps the instructions it started with,
 // so it is told of them once. Its session stands in for a lead from before the update.
+// The merge confirms say when a PR changes .agents/, which merging doesn't approve. The PR's
+// changes are those since its head left its base, so a PR whose head stays put can change
+// .agents/ or not as it is retargeted or its base moves. A PR with no thread counts too.
+test("each poll finds whether an open PR changes .agents/, again as its base changes", async () => {
+  const work = addApp();
+  const remote = join(home, "github", "simon", "app.git");
+  // `roles` adds a role, and `fix`, on top of it, changes nothing in .agents/.
+  git(work, "checkout", "-q", "-b", "roles");
+  mkdirSync(join(work, ".agents", "roles"), { recursive: true });
+  writeFileSync(join(work, ".agents", "roles", "builder.md"), "Build it my way.\n");
+  git(work, "add", ".");
+  git(work, "commit", "-q", "-m", "roles");
+  git(work, "checkout", "-q", "-b", "fix");
+  writeFileSync(join(work, "fix.txt"), "fixed\n");
+  git(work, "add", ".");
+  git(work, "commit", "-q", "-m", "fix");
+  const head = headOf(work);
+  git(work, "push", "-q", remote, "roles", "fix");
+  const fix = (base: string) => prItem("8", "Fix", { head, branch: "fix", base });
+  changes([fix("roles")]);
+  serve();
+  await until(() => prAgents("8") !== null);
+  expect(prAgents("8")).toEqual({ head, changed: 0 });
+  // Retargeted at main, the role comes with it.
+  changes([fix("main")]);
+  await until(() => prAgents("8")?.changed === 1);
+  // Once main has the role, the PR's own changes leave .agents/ alone again.
+  git(work, "push", "-q", remote, "roles:main");
+  await until(() => prAgents("8")?.changed === 0);
+  expect(prAgents("8")).toEqual({ head, changed: 0 });
+  // A PR that closed leaves nothing saved behind.
+  changes([{ ...fix("main"), state: "closed" }]);
+  await until(() => prAgents("8") === null);
+});
+
 test("a lead running from before flows is told of them once", async () => {
   addApp();
   changes([]);
@@ -2185,12 +2241,12 @@ exec ${bwrap} "$@"`,
     };
 
     // Merging approves no change to .agents/, so the question says when the PR's head makes one,
-    // as a poll found it in Skelcrew's clone. Someone else's push to the branch counts too.
+    // as a poll found it. Someone else's push to the branch, which Skelcrew's clone lacks, counts too.
     test("the question says when the PR changes .agents/, and not when it doesn't", async () => {
       const work = await approvedApp12();
       const head = pushed();
       pr({ head, reviews: [skelReview], checks: [approved] });
-      await until(() => thread().agents_checked === head);
+      await until(() => prAgents("7")?.head === head);
       const plain = await runSkelInTerminal(
         socket,
         env(),
@@ -2208,12 +2264,18 @@ exec ${bwrap} "$@"`,
       git(work, "add", ".");
       git(work, "commit", "-q", "-m", "roles");
       git(work, "push", "-q", join(home, "github", "simon", "app.git"), branch);
-      const moved = Bun.spawnSync(["git", "-C", work, "rev-parse", "HEAD"], { stdout: "pipe" })
-        .stdout.toString()
-        .trim();
-      pr({ head: moved, reviews: [skelReview], checks: [approved] });
-      await until(() => thread().agents_checked === moved);
-      expect(thread().agents_changed).toBe(1);
+      const moved = headOf(work);
+      changes([
+        issue12(),
+        prItem("7", "Add export", {
+          head: moved,
+          branch,
+          reviews: [skelReview],
+          checks: [approved],
+        }),
+      ]);
+      await until(() => prAgents("7")?.head === moved);
+      expect(prAgents("7")).toEqual({ head: moved, changed: 1 });
       const warned = await runSkelInTerminal(
         socket,
         env(),

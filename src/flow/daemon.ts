@@ -474,7 +474,10 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         // says of .agents/ is about the PR's head as Skelcrew's copy has it, the commit you see.
         const pr = thread.pr === null ? null : prOf(db, thread.owner, thread.repo, thread.pr);
         return {
-          agents: thread.pr === null ? "" : agentsSaid(thread, pr?.head ?? null),
+          agents:
+            thread.pr === null
+              ? ""
+              : agentsSaid(db, thread.owner, thread.repo, thread.pr, pr?.head ?? null),
           thread: threadName(db, thread),
           pr: thread.pr,
           title: thread.title,

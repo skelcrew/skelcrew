@@ -6,6 +6,7 @@ import { z } from "zod";
 import { roundLimit as roundLimitOf } from "../config.ts";
 import { type Item, itemAt, openPrs, openTasks, ownTask } from "../flow/copy.ts";
 import { needsDecision, readyToMerge, type Shown, shownOf } from "../flow/marks.ts";
+import { agentsSaid } from "../flow/merging.ts";
 import { repositories } from "../flow/repo.ts";
 import type { DaemonRequest } from "../flow/requests.ts";
 import { mergeShown } from "../flow/status.ts";
@@ -170,7 +171,13 @@ function prGroups(db: Database, open: Open, threads: Known[]): Group[] {
     else
       action = {
         key: "m",
-        ask: `Merge ${named} into ${pr.base}? y/n`,
+        ask: [
+          `Merge ${named} into ${pr.base}?`,
+          agentsSaid(db, open.owner, open.repo, pr.id, pr.head),
+          "y/n",
+        ]
+          .filter(Boolean)
+          .join(" "),
         working: `Merging ${named}…`,
         request: {
           command: "merge",

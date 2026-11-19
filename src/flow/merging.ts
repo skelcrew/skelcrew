@@ -2,6 +2,7 @@
 // merges, so Skelcrew merges a thread's PR by itself as soon as it is approved and green. Arming
 // it, cancelling it, and the merge itself. Without an armed plan nothing merges by itself.
 import type { Database } from "bun:sqlite";
+import { z } from "zod";
 import { forgeOf, mergePr, postReview } from "../plugins/ask.ts";
 import { errorText } from "../say.ts";
 import { mergeStuck, mergeWaitsOn, type PullRequest } from "./decide.ts";
@@ -53,14 +54,28 @@ export function threadToMerge(
   return thread;
 }
 
-// Returns what a merge confirm adds about .agents/ for the thread's PR at `commit`, or nothing
-// when that commit leaves .agents/ alone. Merging approves no change there, as an agent wrote it,
-// so you hear it before you say y. It reads what a poll saved, never git, as the list asks each
-// second. A commit no poll has looked at yet says so, rather than pass for one with no change.
-export function agentsSaid(thread: Thread, commit: string | null): string {
-  if (commit === null || thread.agents_checked !== commit)
+// Returns what a merge confirm adds about .agents/ for a PR at `commit`, or nothing when that
+// commit leaves .agents/ alone. Merging approves no change there, as an agent may have written
+// it, so you hear it before you say y. It reads what a poll saved, never git, as the lists draw
+// each second. A commit no poll has looked at says so, rather than pass for one with no change.
+export function agentsSaid(
+  db: Database,
+  owner: string,
+  repo: string,
+  pr: number | string,
+  commit: string | null,
+): string {
+  const saved = z
+    .object({ head: z.string(), changed: z.coerce.boolean() })
+    .nullable()
+    .parse(
+      db
+        .query("SELECT head, changed FROM pr_agents WHERE owner = ? AND repo = ? AND pr = ?")
+        .get(owner, repo, String(pr)),
+    );
+  if (commit === null || saved?.head !== commit)
     return "Skelcrew hasn't checked yet whether it changes .agents/.";
-  return thread.agents_changed
+  return saved.changed
     ? "It changes .agents/ (roles, flows or skills): new tasks wait for sc repo trust."
     : "";
 }

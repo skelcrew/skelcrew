@@ -181,7 +181,7 @@ function taskRow(
       merge = {
         ask: [
           `Merge ${named} into ${removeControlCodes(copy.base)}?`,
-          agentsSaid(thread, approved),
+          agentsSaid(db, open.owner, open.repo, thread.pr, approved),
           "y/n",
         ]
           .filter(Boolean)
