@@ -104,6 +104,12 @@ cd "$HOME/server" && HOME="$HOME/server" PATH="$bin:/usr/bin:/bin" exec sh -c "$
     `#!/bin/sh\necho "systemctl $*" >> "${join(home, "calls")}"\n`,
     { mode: 0o755 },
   );
+  // flock on the server only says it took the lock, so the tests run where flock isn't, as on a Mac.
+  writeFileSync(
+    join(home, "serverbin", "flock"),
+    `#!/bin/sh\necho "flock $1" >> "${join(home, "calls")}"\nshift\nexec "$@"\n`,
+    { mode: 0o755 },
+  );
   // The server is x64, whatever CPU this machine has, unless a test says otherwise.
   writeFileSync(join(home, "serverbin", "uname"), "#!/bin/sh\necho x86_64\n", { mode: 0o755 });
   fake(
@@ -304,6 +310,17 @@ test("in a terminal, --remote sets up a server that isn't, then runs the command
   expect(wrote).toContain("simon@workbox isn't set up. Set it up now? [Y/n]");
   expect(code).toBe(3);
   expect(calls()).toBe(`${onServer(" ps")}\n${onServer(" install")}\n${onServer(" ps")}\n`);
+});
+
+// sc install there fails while a plugin you said no to is missing, and then the command you
+// asked for doesn't run on a server that isn't set up.
+test("in a terminal, --remote runs nothing more when setting up the server fails", async () => {
+  installed(laptop.commit);
+  writeFileSync(join(home, "server", "not-set-up"), "");
+  writeFileSync(join(home, "server", "install-fails"), "");
+  const { code } = await skelInTerminal(["--remote", "simon@workbox", "ps"], ["y"]);
+  expect(code).toBe(1);
+  expect(calls()).toBe(`${onServer(" ps")}\n${onServer(" install")}\n`);
 });
 
 // Your files hold logins and name plugins to install there, which is setting the server up, so
@@ -1006,10 +1023,16 @@ test("install sends your config.yaml, lock and Claude sign-in, readable only by 
   const lines = calls().trim().split("\n");
   const names = ["config.yaml", "skelcrew.lock", "claude-token"];
   // The files go through a folder of this transfer's own, which is gone once they are in place.
-  const staging = lines[0]?.match(/mkdir (\.config\/skelcrew\/sending-[\w-]+)$/)?.[1] ?? "";
-  expect(lines[0]).toBe(`${ssh} umask 077 && mkdir -p .config/skelcrew && mkdir ${staging}`);
-  const moved = names.map((name) => `mv -f ${staging}/${name} .config/skelcrew/${name}`);
-  expect(lines.at(-2)).toBe(`${ssh} ${moved.join(" && ")} && rmdir ${staging}`);
+  const sending = lines[0]?.match(/mkdir \.config\/skelcrew\/(sending-[\w-]+)$/)?.[1] ?? "";
+  expect(lines[0]).toBe(
+    `${ssh} umask 077 && mkdir -p .config/skelcrew && mkdir .config/skelcrew/${sending}`,
+  );
+  // One command puts them all in place, holding a lock and ignoring a dropped connection.
+  const moved = names.map((name) => `mv -f ${sending}/${name} ${name}`).join(" && ");
+  expect(lines.at(-3)).toBe(
+    `${ssh} cd .config/skelcrew && trap '' HUP && flock .install sh -c '${moved} && rmdir ${sending}'`,
+  );
+  expect(lines.at(-2)).toBe("flock .install");
   expect(lines.at(-1)).toMatch(/ sh install$/);
   const there = join(home, "server", ".config", "skelcrew");
   expect(readFileSync(join(there, "config.yaml"), "utf8")).toBe("# mine\nharness: codex\n");

@@ -1542,6 +1542,8 @@ test("on a machine already set up, a declined plugin your files name makes plain
   const declined = await install("n\n");
   expect(declined.out).toContain("Skelcrew didn't install fake.");
   expect(declined.out).toContain("Skelcrew isn't set up yet");
+  // A plugin left out fails sc install, so sc --remote doesn't go on to the command you asked for.
+  expect(declined.code).toBe(1);
   const asked = await atTerminal("y\n");
   expect(asked.err).toBe("");
   expect(asked.out).toContain("Install it? [Y/n]");

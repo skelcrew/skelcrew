@@ -290,7 +290,10 @@ async function pluginCommand(args: string[], json: boolean): Promise<void> {
   const from = rest[0] === "--from" && rest[1] && rest.length === 2 ? rest[1] : undefined;
   if (command === "install" && (rest.length === 0 || from)) {
     const { install } = await import("./machine/setup.ts");
-    return install(from);
+    // A plugin left out fails the command, so a script, or sc --remote on your laptop, can tell
+    // the machine isn't set up yet.
+    if (!install(from)) process.exitCode = 1;
+    return;
   }
   if ((command === "add" || command === "remove" || command === "update") && !yours)
     throw new Error(

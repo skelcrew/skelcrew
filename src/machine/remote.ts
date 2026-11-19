@@ -320,9 +320,8 @@ export async function installServer(host: string, asked = false): Promise<number
 
 // Makes the server's ~/.config/skelcrew hold your config.yaml, your lock and the agents' Claude
 // Code token as the laptop has them, removing one the laptop doesn't have. Each goes first to a
-// folder of this transfer's own there, made readable only by you before it is filled, so two
-// installs at once never mix their files. Once all are there they are moved into place
-// together, so a copy that breaks off changes nothing.
+// folder of this transfer's own there, made readable only by you before it is filled, so a copy
+// that breaks off changes nothing. Once all are there, one command puts them in place.
 async function sendYourFiles(where: string, machine: Machine): Promise<void> {
   // Loaded only here, as it brings in much of Skelcrew that other commands need none of.
   const { yourFiles } = await import("./your-files.ts");
@@ -331,7 +330,8 @@ async function sendYourFiles(where: string, machine: Machine): Promise<void> {
   const sent = files.flatMap(({ name, text }) => (text === null ? [] : [{ name, text }]));
   const gone = files.flatMap(({ name, text }) => (text === null ? [name] : []));
   // mkdir fails on a folder already there, so the folder is this transfer's alone.
-  const staging = `.config/skelcrew/sending-${crypto.randomUUID()}`;
+  const sending = `sending-${crypto.randomUUID()}`;
+  const staging = `.config/skelcrew/${sending}`;
   const place = `umask 077 && mkdir -p .config/skelcrew && mkdir ${staging}`;
   if ((await runInTerminal(machine.shell(place))) !== 0)
     throw new Error(`couldn't make a place for your files on ${where}, so none were sent`);
@@ -353,12 +353,17 @@ async function sendYourFiles(where: string, machine: Machine): Promise<void> {
   } finally {
     rmSync(folder, { recursive: true, force: true });
   }
+  // The moves hold a lock, so two installs at once, even from two laptops, each put their whole
+  // set in place, one after the other, and never a mix. They ignore a hangup, so a connection
+  // that drops partway doesn't stop them between two files. flock lets go of the lock when it
+  // ends, so a crash leaves nothing that blocks the next install.
   const steps = [
-    ...sent.map(({ name }) => `mv -f ${staging}/${name} .config/skelcrew/${name}`),
-    ...gone.map((name) => `rm -f .config/skelcrew/${name}`),
-    `rmdir ${staging}`,
+    ...sent.map(({ name }) => `mv -f ${sending}/${name} ${name}`),
+    ...gone.map((name) => `rm -f ${name}`),
+    `rmdir ${sending}`,
   ];
-  if ((await runInTerminal(machine.shell(steps.join(" && ")))) !== 0)
+  const publish = `cd .config/skelcrew && trap '' HUP && flock .install sh -c '${steps.join(" && ")}'`;
+  if ((await runInTerminal(machine.shell(publish))) !== 0)
     throw new Error(`couldn't put your files in place on ${where}`);
 }
 
