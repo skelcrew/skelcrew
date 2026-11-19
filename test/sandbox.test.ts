@@ -667,6 +667,16 @@ claude.start({ name: "app-12", socket: "x", model: "opus", ...${JSON.stringify(l
     expect(options((await codex.start(builder)).argv)).not.toContain(mounted);
   });
 
+  test("a lead won't start while another repository's clone holds a credential", async () => {
+    repository();
+    const web = repository("web");
+    git(web, "remote", "add", "origin", "https://x:ghp_secret@github.com/simon/web");
+    saveToken();
+    const theLead = { ...lead(), name: "lead", socket: socketPath, env: outside() };
+    expect(() => claude.start(theLead)).toThrow("holds a credential");
+    await expect(codex.start(theLead)).rejects.toThrow("holds a credential");
+  });
+
   test("says to run sc first when there is no token", () => {
     repository();
     expect(() =>

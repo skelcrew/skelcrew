@@ -22,7 +22,15 @@ import { z } from "zod";
 import { dataDir } from "../paths.ts";
 import { editing, type Progress, stepText, toolWords } from "./progress.ts";
 import { resetTime } from "./reset.ts";
-import { filterEnv, refuseCredentials, ro, rw, sandboxArgs, throwawayMounts } from "./sandbox.ts";
+import {
+  everyRepository,
+  filterEnv,
+  refuseCredentials,
+  ro,
+  rw,
+  sandboxArgs,
+  throwawayMounts,
+} from "./sandbox.ts";
 
 // Returns Skelcrew's own CODEX_HOME, where the first run's codex login goes and reviews run: a
 // login of Skelcrew's own, apart from yours in ~/.codex, so a renewal on either side never breaks
@@ -355,7 +363,7 @@ async function startCommand(given: {
     mounts.push(...ro(origin));
   }
   // Every repository's clone, read-only, for a lead, as for Claude Code.
-  if (repositories) mounts.push(...ro(repositories));
+  if (repositories) mounts.push(...everyRepository(repositories));
 
   // --no-daemon belongs to codex itself: without it Codex may start a background server that
   // outlives the session.

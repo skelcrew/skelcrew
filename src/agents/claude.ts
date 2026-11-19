@@ -18,7 +18,7 @@ import { z } from "zod";
 import { claudeTokenFile, dataDir } from "../paths.ts";
 import { editing, type Progress, stepText, toolWords } from "./progress.ts";
 import { resetTime } from "./reset.ts";
-import { filterEnv, refuseCredentials, ro, rw, sandboxArgs } from "./sandbox.ts";
+import { everyRepository, filterEnv, refuseCredentials, ro, rw, sandboxArgs } from "./sandbox.ts";
 
 const { O_NONBLOCK, O_NOFOLLOW, O_RDONLY } = constants;
 
@@ -312,9 +312,9 @@ function startCommand(given: {
   }
   // A lead also reads every repository Skelcrew has, read-only, to understand them and review
   // their leads' work. The folder that holds the clones is mounted whole, so one added later
-  // shows up in a running lead. The daemon checks each clone for credentials as it comes in
-  // and at every refresh, and deletes one that holds any.
-  if (repositories) mounts.push(...ro(repositories));
+  // shows up in a running lead. A clone added later was checked for credentials before it
+  // moved into the folder.
+  if (repositories) mounts.push(...everyRepository(repositories));
 
   trustFolder(config, cwd);
   skipBypassWarning(config);
