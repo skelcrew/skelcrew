@@ -563,6 +563,47 @@ test("repo ls says to run sc install while a repository's files name a plugin th
   );
   expect(await waiting()).toBe(true);
   expect((await skel(["repo", "ls"])).out).toContain("run sc install");
+  // Installed at its pin, it is all the repository needs.
+  const db = new Database(join(home, ".local", "share", "skelcrew", "skelcrew.db"));
+  const plugin = join(home, "fake-plugin");
+  mkdirSync(plugin);
+  writeFileSync(
+    join(plugin, "skelcrew-plugin.yaml"),
+    'name: fake\nversion: 0.1.0\nskelcrew: 0.1.0\nabout: Fake\nkind: io\nprovides: [tracker]\ncall: ["true"]\n',
+  );
+  git(plugin, "init", "-q", "-b", "main");
+  git(plugin, "add", ".");
+  git(plugin, "commit", "-q", "-m", "0.1.0");
+  const commit = git(plugin, "rev-parse", "HEAD").trim();
+  writeFileSync(
+    join(clone("simon/app"), "skelcrew.lock"),
+    `simon/skelcrew-fake: { name: fake, version: 0.1.0, commit: ${commit} }\n`,
+  );
+  db.run("INSERT INTO plugins (name, folder, source) VALUES ('fake', ?, 'simon/skelcrew-fake')", [
+    plugin,
+  ]);
+  expect(await waiting()).toBe(false);
+  // A runtime plugin, or one by another name than the lock gives, is refused by sc install, so
+  // it still needs you.
+  writeFileSync(
+    join(plugin, "skelcrew-plugin.yaml"),
+    'name: fake\nversion: 0.1.0\nskelcrew: 0.1.0\nabout: Fake\nkind: runtime\nprovides: [sessions]\nsession: ["true"]\nattach: ["true"]\n',
+  );
+  git(plugin, "commit", "-q", "-am", "runtime");
+  const runtime = git(plugin, "rev-parse", "HEAD").trim();
+  writeFileSync(
+    join(clone("simon/app"), "skelcrew.lock"),
+    `simon/skelcrew-fake: { name: fake, version: 0.1.0, commit: ${runtime} }\n`,
+  );
+  expect(await waiting()).toBe(true);
+  // Back at the I/O commit, a lock that names another plugin isn't met either.
+  git(plugin, "checkout", "-q", commit);
+  writeFileSync(
+    join(clone("simon/app"), "skelcrew.lock"),
+    `simon/skelcrew-fake: { name: other, version: 0.1.0, commit: ${commit} }\n`,
+  );
+  expect(await waiting()).toBe(true);
+  db.close();
   // Files that can't be read need you too, and sc install says what is wrong with them.
   writeFileSync(join(clone("simon/app"), "skelcrew.yaml"), "plugins: [./plugin]\n");
   expect(await waiting()).toBe(true);

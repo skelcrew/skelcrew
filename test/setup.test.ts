@@ -1874,7 +1874,7 @@ test("sc install refuses a repository that names a plugin by a path", async () =
   );
   const run = await atTerminal("y\n", app, ["install"]);
   expect(run.code).toBe(1);
-  expect(run.err).toContain("must be owner/repo, such as skelcrew/skelcrew-github");
+  expect(run.out).toContain("must be owner/repo, such as skelcrew/skelcrew-github");
   expect(run.out).not.toContain("Install it?");
 });
 
@@ -1975,7 +1975,27 @@ openDb().run("INSERT INTO repositories (name, owner, repo) VALUES ('site', 'simo
   expect(run.out).toContain("simon/skelcrew-fake is pinned at");
   expect(run.out).not.toContain("Install it?");
   expect(existsSync(fakeFolder())).toBe(false);
-  expect(run.err).toContain("Skelcrew isn't set up yet, as it can't read the plugins of site:");
-  expect(run.err).toContain("must be owner/repo");
+  expect(run.out).toContain("Skelcrew isn't set up yet, as it can't read the plugins of site:");
+  expect(run.out).toContain("must be owner/repo");
+  expect(run.err).toContain("some repositories' plugins can't be read, as said above");
   expect(existsSync(join(home, ".local", "share", "skelcrew", "install-done"))).toBe(false);
+});
+
+// A failure in another repository's install, such as for want of a terminal, can't hide it.
+test("sc install names a repository it can't read even when another one's plugin fails", async () => {
+  noGitHubPlugin();
+  fakeGitHub();
+  publishFake("0.1.0");
+  await skel("1\nsk-ant-oat01-good\n");
+  const repos = join(home, ".local", "share", "skelcrew", "repos", "simon");
+  repositoryLocksFake(join(repos, "app"), "0.1.0");
+  const code = `import { openDb } from ${JSON.stringify(join(checkout, "src", "db.ts"))};
+openDb().run("INSERT INTO repositories (name, owner, repo) VALUES ('site', 'simon', 'site')");`;
+  Bun.spawnSync([process.execPath, "-e", code], { env: { HOME: home } });
+  mkdirSync(join(repos, "site"), { recursive: true });
+  writeFileSync(join(repos, "site", "skelcrew.yaml"), "plugins: [./plugin]\n");
+  const run = await skel("y\n", bin, main(), home, {}, ["install"]);
+  expect(run.code).toBe(1);
+  expect(run.err).toContain("Skelcrew left out simon/skelcrew-fake");
+  expect(run.out).toContain("Skelcrew isn't set up yet, as it can't read the plugins of site:");
 });

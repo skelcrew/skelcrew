@@ -438,11 +438,14 @@ export function install(from?: string, plain = false): void {
     writeFileSync(setUpFile(), "");
     writeFileSync(installDoneFile(), "");
   }
+  // Said before the other repositories' plugins install, so one of them failing can't hide it.
+  if (unreadable.length > 0)
+    console.log(
+      `\nSkelcrew isn't set up yet, as it can't read the plugins of ${unreadable.join("; ")}. Plain sc asks again.`,
+    );
   const repositories = installRepositoryPlugins(needs);
   if (unreadable.length > 0)
-    throw new Error(
-      `Skelcrew isn't set up yet, as it can't read the plugins of ${unreadable.join("; ")}. Plain sc asks again`,
-    );
+    throw new Error("some repositories' plugins can't be read, as said above");
   if (left.length > 0) return;
   if (!finished && (setUp || plugins || repositories.changed)) console.log("\nSkelcrew is set up.");
   // Plain sc on a machine set up by an older release takes the marks without a word.

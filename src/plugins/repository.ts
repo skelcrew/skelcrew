@@ -294,7 +294,8 @@ export function checkoutNames(source: string): boolean {
 
 // Reports whether the repository Skelcrew keeps in `folder` needs you to run sc install: its files
 // name a plugin this machine lacks at the version and commit its skelcrew.lock pins, one with no
-// pin, or can't be read, which sc install then says. The engine can't install anything itself, as
+// pin, one sc install refuses, such as a runtime plugin, or can't be read, which sc install then
+// says. The engine can't install anything itself, as
 // only a yes at your terminal can, so the repository's row in sc repo ls says to.
 export function needsInstall(folder: string): boolean {
   try {
@@ -303,7 +304,10 @@ export function needsInstall(folder: string): boolean {
     return plugins.some((source) => {
       const locked = lock[source];
       const here = installedPlugins(db).find((plugin) => plugin.source === source);
-      return !locked || !here || !matchesLock(here, locked);
+      if (!locked || !here || !matchesLock(here, locked)) return true;
+      // Installed as yours at the pin, it still doesn't count when sc install would refuse it.
+      const manifest = readManifest(here.folder);
+      return manifest.kind === "runtime" || manifest.name !== locked.name;
     });
   } catch {
     return true;
