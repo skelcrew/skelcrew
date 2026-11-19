@@ -105,22 +105,25 @@ test("s on an issue's page starts a thread on that issue", async () => {
   await says(startKeys);
 });
 
-// A PR approved with its checks passing, which the forge last sent at a head commit.
+// A PR approved with its checks passing, which the forge last sent at a head commit. A poll
+// found its changes there leave .agents/ alone.
 const readyPr = (id = 35, created = "2026-11-06T10:00:00Z") =>
   sql(
-    itemSql("app", "pr", id, `Add export ${id}`, created, {
-      head: "c".repeat(40),
-      checks: [{ name: "test", id: "1", state: "passed" }],
-      reviews: [
-        {
-          id: "1",
-          text: "Fine.",
-          author: { login: "ana", bot: false, you: false },
-          verdict: "approved",
-          lines: [],
-        },
-      ],
-    }),
+    `INSERT OR REPLACE INTO pr_agents (owner, repo, pr, head, base, changed)
+      VALUES ('simon', 'app', '${id}', '${"c".repeat(40)}', 'main', 0);
+${itemSql("app", "pr", id, `Add export ${id}`, created, {
+  head: "c".repeat(40),
+  checks: [{ name: "test", id: "1", state: "passed" }],
+  reviews: [
+    {
+      id: "1",
+      text: "Fine.",
+      author: { login: "ana", bot: false, you: false },
+      verdict: "approved",
+      lines: [],
+    },
+  ],
+})}`,
   );
 
 // The forge's reason comes from outside, so it is shown as written: never read as tmux's

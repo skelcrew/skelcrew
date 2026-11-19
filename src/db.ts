@@ -589,6 +589,18 @@ function prepareTables(db: Database): void {
     typed_in TEXT NOT NULL DEFAULT '[]',
     pasted INTEGER NOT NULL DEFAULT 0
   )`);
+  // For each open PR in Skelcrew's copy, the head commit and base branch a poll last looked at
+  // and whether the PR's changes there touch .agents/, so the merge confirms say so while reading
+  // only the database. Each poll looks again, as a retargeted PR or a moved base can change that.
+  db.run(`CREATE TABLE IF NOT EXISTS pr_agents (
+    owner TEXT NOT NULL,
+    repo TEXT NOT NULL,
+    pr TEXT NOT NULL,
+    head TEXT NOT NULL,
+    base TEXT NOT NULL,
+    changed INTEGER NOT NULL,
+    PRIMARY KEY (owner, repo, pr)
+  )`);
   // The reviews Skelcrew posted with your gh login, before its forge posted them as its own app.
   db.run("DROP TABLE IF EXISTS posted");
   // Each harness's usage limit holding reviews: until when, the reset time it gave, the tries
