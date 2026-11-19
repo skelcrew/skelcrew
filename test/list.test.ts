@@ -568,16 +568,21 @@ test("an agent that ends detaches only the list's own client", async () => {
   expect(clients()).toBe("app-7");
 });
 
-// Over ssh an arrow's escape sequence can arrive in two reads.
-test("an arrow whose escape sequence comes in two pieces still moves", async () => {
+// Over ssh an arrow's escape sequence can arrive in two reads, even split right after its Esc,
+// which alone would leave the list. The pause between the pieces makes the list read the first
+// on its own, yet is shorter than the wait that tells a lone Esc from an arrow.
+test("an arrow whose escape sequence comes in two pieces still moves, and never leaves", async () => {
   await open();
   type("\x1b[");
+  await Bun.sleep(40);
   type("B");
   await until(() => here().startsWith("▸ ○ app-9"), "the row below");
+  type("\x1b");
+  await Bun.sleep(40);
+  type("[A");
+  await until(() => here().startsWith("▸ ● app-12"), "the row above");
   await Bun.sleep(300);
   expect(read(join(home, "left"))).toBe("");
-  type("\x1b[A");
-  await until(() => here().startsWith("▸ ● app-12"), "the row above");
 });
 
 test("Esc leaves the list", async () => {
