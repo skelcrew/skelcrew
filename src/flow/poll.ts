@@ -32,7 +32,7 @@ import {
 } from "./decide.ts";
 import { endThread, removing, tellBuilder, tellingEvents } from "./events.ts";
 import { fetchCommit, fetchInto, onRemote } from "./git.ts";
-import { approvedFlowsTold, leadOf } from "./lead.ts";
+import { approvedFlowsTold, leadSession } from "./lead.ts";
 import { finishSkippedMerge, mergeIfReady } from "./merging.ts";
 import { briefsNote, noteForLead, skelcrewNoteForLead, typeLeadNotes } from "./messages.ts";
 import { forgeKnown, fullNameIs, hasNoCommits, refreshClone, repositories } from "./repo.ts";
@@ -425,7 +425,8 @@ async function tellRunningLead(
     .get(repository.owner, repository.repo);
   const known = z.object({ told: z.coerce.boolean() }).nullable().parse(row);
   if (known === null || known.told) return;
-  if (!(await hasSession(sessions, leadOf(db, repository.owner, repository.repo).name))) return;
+  const lead = await leadSession(db, sessions, repository.owner, repository.repo);
+  if (lead === null || !(await hasSession(lead.host, lead.id))) return;
   db.run(`UPDATE repositories SET ${told} = 1 ${where}`, [repository.owner, repository.repo]);
   skelcrewNoteForLead(db, sessions, repository, text);
 }
