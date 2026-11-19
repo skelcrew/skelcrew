@@ -32,7 +32,7 @@ import {
 } from "./decide.ts";
 import { endThread, removing, tellBuilder, tellingEvents } from "./events.ts";
 import { fetchInto, onRemote } from "./git.ts";
-import { approvedFlowsTold, leadOf } from "./lead.ts";
+import { approvedFlowsTold, leadSession } from "./lead.ts";
 import { mergeIfReady } from "./merging.ts";
 import { noteForLead, typeLeadNotes } from "./messages.ts";
 import { forgeKnown, fullNameIs, hasNoCommits, refreshClone, repositories } from "./repo.ts";
@@ -352,7 +352,8 @@ async function tellLeadOfFlows(
     .get(repository.owner, repository.repo);
   const told = z.object({ lead_flows: z.coerce.boolean() }).nullable().parse(row);
   if (told === null || told.lead_flows) return;
-  if (!(await hasSession(sessions, leadOf(db, repository.owner, repository.repo).name))) return;
+  const lead = await leadSession(db, sessions, repository.owner, repository.repo);
+  if (lead === null || !(await hasSession(lead.host, lead.id))) return;
   db.run(`UPDATE repositories SET lead_flows = 1 ${where}`, [repository.owner, repository.repo]);
   noteForLead(
     db,

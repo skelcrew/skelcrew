@@ -301,6 +301,35 @@ console.log(readThread(db, "app-12").host_id);`,
   expect(said).toBe("fake-app-12\nfake-app-12\n");
 });
 
+test("a lead whose ID never got saved is found on its host by its labels", () => {
+  const said = runWithFakeHost(
+    "sessions",
+    `const { leadSession } = await import(${JSON.stringify(source("flow/lead.ts"))});
+db.run("INSERT INTO repositories (name, owner, repo, remote, lead_host) VALUES ('app', 'simon', 'app', '', 'fake')");
+const { host } = await leadSession(db, "unused", "simon", "app");
+await startSession(host, "lead-app", { folder: ${JSON.stringify(home)}, command: ["sleep", "30"], env: {}, labels: { repository: "simon/app", role: "lead" } });
+console.log((await leadSession(db, "unused", "simon", "app")).id);
+console.log(db.query("SELECT lead_host_id FROM repositories WHERE repo = 'app'").get().lead_host_id);`,
+    {},
+  );
+  expect(said).toBe("fake-lead-app\nfake-lead-app\n");
+});
+
+test("a lead on a plugin no longer installed is out of reach, and isn't started elsewhere", () => {
+  const said = runWithFakeHost(
+    "sessions",
+    `const { leadSession, startLead } = await import(${JSON.stringify(source("flow/lead.ts"))});
+db.run("INSERT INTO repositories (name, owner, repo, remote, lead_host, lead_host_id) VALUES ('app', 'simon', 'app', '', 'gone', 'gone-1')");
+console.log(await leadSession(db, "unused", "simon", "app"));
+const repository = { name: "app", owner: "simon", repo: "app", forge: null, remote: "" };
+console.log(await startLead(db, "unused", repository).catch((error) => error.message));`,
+    {},
+  );
+  expect(said).toBe(
+    "null\nsimon/app's lead ran on gone, which isn't installed now: install it again to reach the lead\n",
+  );
+});
+
 test("a builder that can't be ended keeps its host, and stopping it again tries again", () => {
   const said = runWithFakeHost(
     "sessions",

@@ -169,7 +169,7 @@ export function keepState(db: Database, agent: Agent, state: AgentState): void {
 // host holds up only its own agents' looks, and one that fails leaves the others' to go on.
 export function noticeIdleScreens(db: Database, sessions: string): void {
   // The working agents: each builder still at work on its thread, on whichever host it runs, and
-  // each lead. A builder whose host plugin is gone can't be looked at.
+  // each lead, on whichever host it runs. An agent whose host plugin is gone can't be looked at.
   const working: { key: Agent; host: Host; name: string; marks: Marks }[] = [];
   const threads = db
     .query(
@@ -188,13 +188,15 @@ export function noticeIdleScreens(db: Database, sessions: string): void {
     .all()
     .map((row) => LeadKey.parse(row));
   for (const lead of leads) {
-    const { name, harness } = leadOf(db, lead.owner, lead.repo);
-    working.push({
-      key: lead,
-      host: sessions,
-      name,
-      marks: harnessNamed(harness ?? "claude").marks,
-    });
+    const { name, harness, host, hostId } = leadOf(db, lead.owner, lead.repo);
+    const on = hostNamed(db, sessions, host);
+    if (on !== null)
+      working.push({
+        key: lead,
+        host: on,
+        name: hostId ?? name,
+        marks: harnessNamed(harness ?? "claude").marks,
+      });
   }
   // An agent no longer working is forgotten. Each other one gets a look, unless the last is
   // still under way.

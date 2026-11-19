@@ -5,6 +5,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -70,6 +71,12 @@ afterEach(async () => {
     serve.kill();
     await serve.exited;
   }
+  // Each session the fake host started ends with the test, by its process group.
+  const hosted = join(fakeHostSettings(), "sessions");
+  for (const id of existsSync(hosted) ? readdirSync(hosted) : [])
+    try {
+      process.kill(-Number(readFileSync(join(hosted, id, "pid"), "utf8")), "SIGKILL");
+    } catch {}
   Bun.spawnSync(["tmux", "-L", socket, "kill-server"], { stderr: "pipe" });
   // tmux leaves the socket file behind after kill-server.
   const folder = join(process.env.TMUX_TMPDIR ?? "/tmp", `tmux-${userInfo().uid}`);
@@ -178,6 +185,53 @@ function storedSession(repo = "app"): string {
   );
   return row && typeof row === "object" && "lead_session" in row ? String(row.lead_session) : "";
 }
+
+// Where the fake session host keeps its sessions and notes what it was asked.
+const fakeHostSettings = () => join(home, ".config", "skelcrew", "plugins", "fake");
+
+// Installs the fake session host as the runtime plugin fake, providing sessions. Your config
+// names it as the session host once the test says so.
+function installFakeHost(): void {
+  const folder = join(home, "plugin-fake");
+  mkdirSync(folder, { recursive: true });
+  writeFileSync(
+    join(folder, "skelcrew-plugin.yaml"),
+    `name: fake
+version: 0.1.0
+skelcrew: 0.1.0
+about: A session host for tests
+kind: runtime
+provides: [sessions]
+session: [bun, ${JSON.stringify(join(import.meta.dir, "fake-host.ts"))}]
+attach: ["true"]
+`,
+  );
+  onDb((db) => db.run("INSERT INTO plugins (name, folder) VALUES ('fake', ?)", [folder]));
+}
+
+// The start questions the fake host was asked, each as it was asked.
+const fakeHostStarts = () => {
+  const asked = join(fakeHostSettings(), "asked");
+  if (!existsSync(asked)) return [];
+  return readFileSync(asked, "utf8")
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line))
+    .filter((question) => question.ask === "start");
+};
+
+// The session host the repository's lead is saved on, and its session's ID there.
+const leadHost = (repo = "app") =>
+  onDb((db) =>
+    db.query("SELECT lead_host, lead_host_id FROM repositories WHERE repo = ?").get(repo),
+  );
+
+// Names the session host for new sessions in your config.
+const useSessionHost = (host: string) =>
+  writeFileSync(
+    join(home, ".config", "skelcrew", "config.yaml"),
+    `harness: claude\nsession: ${host}\n`,
+  );
 
 // Marks a repository as one you opened before, whose lead the daemon brings back as it starts.
 const openedBefore = (repo = "app") =>
@@ -1013,6 +1067,51 @@ describe.skipIf(insideSandbox)("with a lead per repository", () => {
     await Bun.sleep(1000);
     expect(both.filter((run) => run.exitCode === null)).toHaveLength(1);
     expect(claudeLines()).toHaveLength(1);
+  });
+
+  test("starts the lead on your session host, labelled as the lead", async () => {
+    setUp();
+    addRepository("app");
+    serve();
+    await untilAnswers();
+    installFakeHost();
+    useSessionHost("fake");
+    expect(await open()).toEqual({ lead: leadName(), repository: "simon/app" });
+    const starts = fakeHostStarts();
+    expect(starts).toHaveLength(1);
+    expect(starts[0].labels).toEqual({ repository: "simon/app", role: "lead" });
+    expect(leadHost()).toEqual({ lead_host: "fake", lead_host_id: `fake-${leadName()}` });
+    expect(hasLead()).toBe(false);
+    expect(claudeCalls()).toBe(`--session-id ${storedSession()}\n`);
+    // Opening it again finds it running there, and starts no other.
+    await open();
+    expect(fakeHostStarts()).toHaveLength(1);
+  });
+
+  test("a lead keeps running on tmux after the session host changes, and moves on its next start", async () => {
+    setUp();
+    addRepository("app");
+    const first = serve();
+    await untilAnswers();
+    await open();
+    const id = storedSession();
+    saveTranscript(id);
+    installFakeHost();
+    useSessionHost("fake");
+    // A restarted daemon finds the lead still on tmux, and leaves it there.
+    await stop(first);
+    serve();
+    await untilAnswers();
+    await open();
+    expect(hasLead()).toBe(true);
+    expect(fakeHostStarts()).toHaveLength(0);
+    expect(leadHost()).toEqual({ lead_host: "tmux", lead_host_id: leadName() });
+    // Once it ends, it comes back on the host your config names now, with its conversation.
+    endLead();
+    await open();
+    expect(fakeHostStarts()).toHaveLength(1);
+    expect(leadHost()).toEqual({ lead_host: "fake", lead_host_id: `fake-${leadName()}` });
+    expect(claudeCalls()).toBe(`--session-id ${id}\n--resume ${id}\n`);
   });
 
   test("leaves a lead that is still running alone", async () => {

@@ -6,6 +6,7 @@ import { cpus } from "node:os";
 import { attachSession, typeKeys } from "../agents/sessions.ts";
 import { openRepository, startOrMerge } from "../client.ts";
 import { openDb } from "../db.ts";
+import { leadSession } from "../flow/lead.ts";
 import { builderSession, readThread } from "../flow/thread.ts";
 import { updateNotice } from "../machine/update.ts";
 import { attachOnHost, type Host } from "../plugins/runtime.ts";
@@ -154,7 +155,7 @@ export async function runList(agents: string, repository: string): Promise<void>
   // Attaches you full screen to an agent's session, and comes back to the list once you leave
   // it, on the same row. The list stops reading keys meanwhile, so every key reaches the agent.
   // Keys you typed after Enter that the list hasn't acted on yet, such as ones that came with
-  // Enter in one read, were meant for the agent, so they are typed into it first. A builder on a
+  // Enter in one read, were meant for the agent, so they are typed into it first. An agent on a
   // runtime plugin's host is reached through the host's own attach command, by its ID there.
   // Typing those keys in first takes tmux, so on such a host they are dropped.
   const attach = async (session: string, host: Host = agents) => {
@@ -205,7 +206,10 @@ export async function runList(agents: string, repository: string): Promise<void>
       const failed = await openRepository(`${open.owner}/${open.repo}`, false);
       said = null;
       if (failed) return say(`The lead didn't start: ${failed}`);
-      return attach(row.session);
+      // The lead is reached on the host it runs on, which the daemon saved as it started it.
+      const lead = await leadSession(db, agents, open.owner, open.repo);
+      if (lead === null) return say("The lead's session host isn't installed.");
+      return attach(lead.id, lead.host);
     }
     if (row.part === "issue" && row.start) {
       asking = { question: row.start, row: row.name, merge: false };

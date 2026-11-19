@@ -32,6 +32,7 @@ import { cloneDir, configDir, dataDir, leadPlaces } from "../paths.ts";
 import { askWhichForge, type Claimed } from "../plugins/ask.ts";
 import { setUpPlugin } from "../plugins/install.ts";
 import { SetupNeeded } from "../plugins/plugin.ts";
+import { hostNamed } from "../plugins/runtime.ts";
 import { builtInRole } from "../roles.ts";
 import { errorText } from "../say.ts";
 import { checkPush, cloneRepository, headCommit, remoteEmpty, updateClone } from "./git.ts";
@@ -468,17 +469,23 @@ function oldRemoteOf(
 // tab. One never opened stays as it is, as only sc or its tab starts a lead the first time.
 async function openAgain(db: Database, sessions: string, had: Repository): Promise<void> {
   const row = db
-    .query("SELECT tab_closed, opened, kept_lead FROM repositories WHERE owner = ? AND repo = ?")
+    .query(
+      "SELECT tab_closed, opened, kept_lead, lead_host, lead_host_id FROM repositories WHERE owner = ? AND repo = ?",
+    )
     .get(had.owner, had.repo);
   const {
     tab_closed: closed,
     opened,
     kept_lead: kept,
+    lead_host: leadHost,
+    lead_host_id: leadId,
   } = z
     .object({
       tab_closed: z.coerce.boolean(),
       opened: z.number().nullable(),
       kept_lead: z.coerce.boolean(),
+      lead_host: z.string().nullable(),
+      lead_host_id: z.string().nullable(),
     })
     .parse(row);
   if (closed || opened !== null) {
@@ -486,9 +493,11 @@ async function openAgain(db: Database, sessions: string, had: Repository): Promi
     // imports this file, and a loop of imports leaves one of them unset as the other loads.
     const { ask } = await import("../client.ts");
     const reply = await ask({ command: "lead", from: `${had.owner}/${had.repo}` }, 60_000);
+    // Only a lead on tmux keeps its session after you exit it.
     if (reply === null) {
-      const { name } = leadPlaces(had.owner, had.repo, kept);
-      if (exitedCleanly(sessions, name)) await endSession(sessions, name);
+      const id = leadId ?? leadPlaces(had.owner, had.repo, kept).name;
+      if ((leadHost ?? "tmux") === "tmux" && exitedCleanly(sessions, id))
+        await endSession(sessions, id);
       db.run("UPDATE repositories SET tab_closed = 0 WHERE owner = ? AND repo = ?", [
         had.owner,
         had.repo,
@@ -683,16 +692,22 @@ export async function removeRepo(name: string, sessions: string): Promise<void> 
     .map((row) => `${name}-${z.object({ task: z.coerce.string() }).parse(row).task}`);
   if (live.length > 0)
     throw new Error(`${name} has live threads: ${live.join(", ")}. Stop them first.`);
-  // Find the lead's session name. The lead this machine had before each repository got its
-  // own keeps its old name.
+  // Find the lead's session: its host, and its ID there. On tmux that is its name, and the lead
+  // this machine had before each repository got its own keeps its old name.
   const fullName = `${found.owner}/${found.repo}`;
-  const keptLead = z
-    .object({ kept_lead: z.coerce.boolean() })
+  const lead = z
+    .object({
+      kept_lead: z.coerce.boolean(),
+      lead_host: z.string().nullable(),
+      lead_host_id: z.string().nullable(),
+    })
     .parse(
       db
-        .query("SELECT kept_lead FROM repositories WHERE owner = ? AND repo = ?")
+        .query(
+          "SELECT kept_lead, lead_host, lead_host_id FROM repositories WHERE owner = ? AND repo = ?",
+        )
         .get(found.owner, found.repo),
-    ).kept_lead;
+    );
   // Its tab closes first, so an open screen moves on at once. A screen that found the lead
   // gone while its tab was still there would take it for a crash and ask for it back.
   db.run("UPDATE repositories SET tab_closed = 1 WHERE owner = ? AND repo = ?", [
@@ -700,7 +715,14 @@ export async function removeRepo(name: string, sessions: string): Promise<void> 
     found.repo,
   ]);
   // Ended as a thread's builder is, and waited for, as the lead reads the clone removed next.
-  await stopSession(sessions, leadPlaces(found.owner, found.repo, keptLead).name);
+  // A lead on a plugin no longer installed is out of reach, and is left where it runs.
+  const host = hostNamed(db, sessions, lead.lead_host ?? "tmux");
+  const id = lead.lead_host_id ?? leadPlaces(found.owner, found.repo, lead.kept_lead).name;
+  if (host === null)
+    console.log(
+      `${fullName}'s lead ran on ${lead.lead_host}, which isn't installed, so it is left`,
+    );
+  else await stopSession(host, id);
   // Remove the clone, the row and your trust in it. The other repositories are named again,
   // as one that shared a name with this one can drop its owner.
   rmSync(cloneDir(found.owner, found.repo), { recursive: true, force: true });

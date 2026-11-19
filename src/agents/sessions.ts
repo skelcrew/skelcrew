@@ -147,7 +147,8 @@ function startServer(socket: string): void {
 // session's ID on its host. On tmux the ID is the name. A plugin's host gives its own, and is
 // handed the name and labels to show. With `keepOnExit`, the session stays when its agent exits
 // cleanly too, so Skelcrew can tell a lead you exited from one that crashed: the first closes its
-// tab, the second doesn't. Only leads ask for that, and they run on tmux.
+// tab, the second doesn't. Only leads ask for that, and only tmux keeps it: a plugin's host isn't
+// asked to.
 export async function startSession(
   host: Host,
   name: string,
