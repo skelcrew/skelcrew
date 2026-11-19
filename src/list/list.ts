@@ -30,7 +30,8 @@ import {
 const openCommand = process.platform === "darwin" ? "open" : "xdg-open";
 
 // The keys the list reads, as your terminal sends them. Arrows come in either of the two forms a
-// terminal may use, and Ctrl-C leaves as q does, since the terminal is raw.
+// terminal may use, and Ctrl-C leaves as q does, since the terminal is raw. Esc leaves too, but
+// first closes a question that is open.
 const keyNames: Record<string, string> = {
   "\x1b[A": "up",
   "\x1bOA": "up",
@@ -291,16 +292,17 @@ export async function runList(agents: string, repository: string): Promise<void>
     refresh();
   };
 
-  // Acts on one key. A question takes only y and n, and anything else is a no. A line that says
-  // something goes at the next key, which then does what it does. Nothing acts while the daemon
-  // is at work on an answer.
+  // Acts on one key. A question takes only y and n, and anything else is a no, Esc included. A
+  // line that says something goes at the next key, which then does what it does. Nothing acts
+  // while the daemon is at work on an answer.
   // Leaves the list, once the list is ready to leave. `left` says it has.
   let leave: () => void = () => {};
   let left = false;
   const press = async (key: string) => {
     if (working || left) return;
-    // q and Ctrl-C leave from anywhere, an open question included, which then does nothing.
-    if (key === "q") return leave();
+    // q and Ctrl-C leave from anywhere, an open question included, which then does nothing. Esc
+    // leaves only with no question open, so a stray Esc while you answer is a no and stays.
+    if (key === "q" || (key === "escape" && !asking)) return leave();
     if (asking) {
       const action = asking;
       asking = null;

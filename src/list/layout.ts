@@ -48,7 +48,7 @@ const stageNames: Record<ListStage, string> = {
 export function keysFor(row: Row | undefined, tabs: number): string {
   const merge = row?.merge && "ask" in row.merge ? ["m merge"] : [];
   const tab = tabs > 1 ? ["⇥ repository"] : [];
-  return ["↑↓ move", "⏎ open", "1-6 stages", ...merge, ...tab, "q quit"].join("  ");
+  return ["↑↓ move", "⏎ open", "1-6 stages", ...merge, ...tab, "q/esc quit"].join("  ");
 }
 
 // Returns a stage's heading as a line: the number key that opens and closes it, dim, then its
