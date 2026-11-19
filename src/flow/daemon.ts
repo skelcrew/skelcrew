@@ -814,11 +814,13 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   // Open your socket.
   await open(path, "you");
   console.log(`Listening on ${path}.`);
-  // Bring back the lead of each repository you have opened, each on its own, so a host that
-  // hangs holds up no other. One that fails is logged, and the rest still start. One that fails
+  // Bring back the lead of each repository you have opened, side by side, so a host that hangs
+  // holds up no other lead. One that fails is logged, and the rest still start. One that fails
   // while notes wait for it, such as a brief, is tried again every minute, so the notes go in
-  // once whatever stopped it clears.
-  for (const repository of openedRepositories(db)) void bringBackLead(repository, null);
+  // once whatever stopped it clears. The builders and polling wait for them, as before leads
+  // could run on other hosts, so a lead's start and the first poll never overlap. Requests are
+  // answered meanwhile, as the socket is open.
+  await Promise.all(openedRepositories(db).map((repository) => bringBackLead(repository, null)));
   // A lead keeps its clone current as it starts, and a repository with no lead needs it too.
   refreshClones(db).catch((error) => console.log(errorText(error)));
   // Bring back each thread's builder, without waiting on it, and carry on the round it was in.
