@@ -212,9 +212,11 @@ export function cancelMerge(db: Database, thread: Thread): string {
   const name = threadName(db, thread);
   if (thread.merge_plan === null) return `${name} had no merge armed.`;
   // Once the forge was asked to merge, nothing can take that back, so saying it won't merge
-  // would be untrue.
+  // would be untrue. A PR the forge merged by itself, which a poll is finishing, is the same.
   if (merging.has(thread.folder))
     throw new Error(`${name} is merging on its forge right now, so it can't be cancelled`);
+  if (thread.pr !== null && prOf(db, thread.owner, thread.repo, thread.pr)?.state === "merged")
+    throw new Error(`${name}'s PR has merged already, so it can't be cancelled`);
   const none = { merge_plan: null, merge_waits: null, merge_noted: null, merge_pinned: null };
   record(db, thread.folder, none, "its armed merge was cancelled");
   return `${name} won't merge by itself. It waits for you to merge it.`;
@@ -320,7 +322,9 @@ export async function mergeIfReady(
     }
     // The thread and PR were read at this poll's start, with nothing waited on since, and the
     // thread is marked as merging before the forge is asked, so a cancel either came first and
-    // this never merges, or comes after and is refused.
+    // this never merges, or comes after and is refused. A merged PR stays marked until its thread
+    // has ended, as editing its record and filing its findings take a while, and a cancel then
+    // would say it won't merge after it did.
     let refused: string | null = null;
     if (waits === null) {
       merging.add(folder);
@@ -328,22 +332,25 @@ export async function mergeIfReady(
         refused = await mergePr(db, repository, { pr: thread.pr, commit });
       } catch (error) {
         waits = failed(error);
+      }
+      if (waits !== null || refused !== null) merging.delete(folder);
+    }
+    if (waits === null && refused === null) {
+      try {
+        const note =
+          (await finishSkippedMerge(db, readThread(db, folder), pr)) ??
+          `is done: #${thread.pr} merged into ${pr.base} when ready, as the human asked`;
+        await endThread(
+          db,
+          sessions,
+          thread,
+          `PR #${thread.pr} was merged ${pinned === null ? "when ready" : "without approval"}`,
+          note,
+          true,
+        );
       } finally {
         merging.delete(folder);
       }
-    }
-    if (waits === null && refused === null) {
-      const note =
-        (await finishSkippedMerge(db, readThread(db, folder), pr)) ??
-        `is done: #${thread.pr} merged into ${pr.base} when ready, as the human asked`;
-      await endThread(
-        db,
-        sessions,
-        thread,
-        `PR #${thread.pr} was merged ${pinned === null ? "when ready" : "without approval"}`,
-        note,
-        true,
-      );
       return;
     }
     if (refused !== null) waits = `the forge, which refused: ${refused}`;
@@ -410,8 +417,8 @@ function recordBody(thread: Thread, commit: string, verb: "Merging" | "Merged"):
 // lead's note, or null when the thread had no such plan. It edits the PR's record to say it
 // merged, and files what the review still asked for. Both the merge itself and a poll that
 // finds the PR merged call it, so a daemon that stopped between the forge's merge and these
-// steps still does them. The thread is read as it is now, so a review that ended during the
-// merge counts.
+// steps still does them. The thread is read as it is now, and again before filing, so a review
+// that ended during the merge or the edit counts.
 export async function finishSkippedMerge(
   db: Database,
   thread: Thread,
@@ -431,7 +438,9 @@ export async function finishSkippedMerge(
     }).catch((error) =>
       console.log(`${thread.folder}: couldn't edit its merge record: ${errorText(error)}`),
     );
-  const filed = await fileFollowUps(db, thread);
+  // Read again, as a review may have ended while the forge took the edit: its findings are the
+  // ones still asked for.
+  const filed = await fileFollowUps(db, readThread(db, thread.folder));
   return `is done: #${thread.pr} merged into ${pr.base} without Skelcrew's approval, as the human asked.${filed}`;
 }
 

@@ -3130,6 +3130,46 @@ echo '{"verdict":"approve","body":"Ready.","findings":[]}' > "$out"`,
       expect(asked(plugin).filter((q) => q.ask === "create task")).toHaveLength(0);
     }, 120_000);
 
+    // Editing the record and filing the findings come after the forge merged, and take a while.
+    // A cancel meanwhile is refused, as the PR merged, and a review that ended meanwhile is the
+    // one whose findings are filed.
+    test("a merge without approval refuses a cancel while it finishes, and files the latest findings", async () => {
+      const head = await changesApp12();
+      const yes = await runSkelInTerminal(
+        socket,
+        env(),
+        ["merge", "--skip-review", "app-12"],
+        skipQuestion,
+        "y",
+      );
+      expect(yes).toContain(skipSaid);
+      writeFileSync(join(plugin, "hold-edit-review"), "");
+      answer(plugin, "create task", taskItem("13", "Follow-ups from #7's review"));
+      pr({ head, reviews: [skelReview], checks: [check(5, "passed")] });
+      await until(() => existsSync(join(plugin, "held-edit-review")), 30_000);
+      expect(merges()).toHaveLength(1);
+      const cancel = { command: "merge cancel", repo: "app", task: "12" };
+      expect(await askOn(join(home, "run", "skelcrew.sock"), cancel)).toEqual({
+        error: "app-12 is merging on its forge right now, so it can't be cancelled",
+      });
+      // A review that ended while the forge took the edit, asking for something else.
+      const db = new Database(join(data(), "skelcrew.db"));
+      db.run("PRAGMA busy_timeout = 5000");
+      try {
+        db.run(
+          `UPDATE tasks SET review_post = json_set(review_post, '$.findings', json('["Only this"]'))`,
+        );
+      } finally {
+        db.close();
+      }
+      rmSync(join(plugin, "hold-edit-review"));
+      await until(() => thread().status === "done", 30_000);
+      const filed = asked(plugin).filter((q) => q.ask === "create task");
+      expect(filed).toHaveLength(1);
+      expect(String(filed[0]?.body)).toContain("1. Only this");
+      expect(String(filed[0]?.body)).not.toContain("Handle an empty file");
+    }, 90_000);
+
     // The forge can merge the PR before Skelcrew finishes, such as when the daemon stopped right
     // after asking it. The poll that finds it merged still edits the record and files the issue.
     test("a merge without approval the forge finished first still gets its record, and finds an issue already filed", async () => {
