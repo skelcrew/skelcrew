@@ -113,6 +113,12 @@ export const Manifest = z
   });
 export type Manifest = z.infer<typeof Manifest>;
 
+// Reports whether a plugin only reaches machines, a runtime plugin that provides machine alone.
+// Such a plugin is used where you run --remote, never on the server, so its files leave it out
+// there, and a server keeps whichever it has.
+export const reachesOnlyMachines = ({ kind, provides }: Manifest) =>
+  kind === "runtime" && provides.every((one) => one === "machine");
+
 // Returns the manifest in a plugin's folder, or throws saying what is wrong with it. The
 // folder is the plugin's, so a link, which could point Skelcrew at any file of yours, is refused.
 export function readManifest(folder: string): Manifest {

@@ -187,7 +187,7 @@ describe("a release setting up a server", () => {
   const sum = (text: string) => new Bun.CryptoHasher("sha256").update(text).digest("hex");
   // ssh to a server that has no Skelcrew until scp brings one.
   const newServer =
-    'case "$*" in *first-run*) test -f "$HOME/copied" || exit 127;; *uname*) cat "$HOME/cpu"; echo "** WARNING: this ssh is old" >&2;; esac';
+    'case "$*" in *" sh install"*) test -f "$HOME/copied" || exit 127;; *uname*) cat "$HOME/cpu"; echo "** WARNING: this ssh is old" >&2;; esac';
 
   // Stands in for a new server: it has no Skelcrew until scp brings one.
   beforeAll(() => {
@@ -207,7 +207,11 @@ describe("a release setting up a server", () => {
       `SKELCREW_RELEASES="http://127.0.0.1:${server.port}"`,
     ]);
     fake("ssh", newServer);
-    fake("scp", 'for word; do test -f "$word" && cp "$word" "$HOME/copied"; done; exit 0');
+    // Only Skelcrew itself counts as copied, not your files sent before it.
+    fake(
+      "scp",
+      'case "$*" in *sc.new) for word; do test -f "$word" && cp "$word" "$HOME/copied"; done;; esac; exit 0',
+    );
   });
   afterAll(() => {
     server.stop(true);
@@ -225,15 +229,15 @@ describe("a release setting up a server", () => {
   });
 
   test("copies over the Linux binary of its own release", async () => {
-    const done = await run(["remote", "add", "simon@workbox"], released);
+    const done = await run(["--remote", "simon@workbox", "install"], released, "y\n");
     expect(done.err).toBe("");
     expect(done.code).toBe(0);
     expect(readFileSync(join(home, "copied"), "utf8")).toBe(linux);
-    expect(done.out).toContain("sc --remote simon@workbox");
+    expect(done.out).toContain("simon@workbox has no Skelcrew. Put yours there? [Y/n]");
   });
 
   test("a single file that is no release says it can't build a copy", async () => {
-    const done = await run(["remote", "add", "simon@workbox"]);
+    const done = await run(["--remote", "simon@workbox", "install"], skel, "y\n");
     expect(done.code).toBe(1);
     expect(done.err).toContain("can't build one");
     expect(existsSync(join(home, "copied"))).toBe(false);
@@ -244,14 +248,14 @@ describe("a release setting up a server", () => {
     files.set("/download/v0.4.2/skelcrew-linux-arm64", arm);
     files.set("/download/v0.4.2/SHA256SUMS", `${sum(arm)}  skelcrew-linux-arm64\n`);
     writeFileSync(join(home, "cpu"), "aarch64\n");
-    const done = await run(["remote", "add", "simon@workbox"], released);
+    const done = await run(["--remote", "simon@workbox", "install"], released, "y\n");
     expect(done.err).toBe("");
     expect(readFileSync(join(home, "copied"), "utf8")).toBe(arm);
   });
 
   test("says so when the server has a CPU Skelcrew isn't built for", async () => {
     writeFileSync(join(home, "cpu"), "riscv64\n");
-    const done = await run(["remote", "add", "simon@workbox"], released);
+    const done = await run(["--remote", "simon@workbox", "install"], released, "y\n");
     expect(done.code).toBe(1);
     expect(done.err).toContain("riscv64");
     expect(existsSync(join(home, "copied"))).toBe(false);
@@ -259,7 +263,7 @@ describe("a release setting up a server", () => {
 
   test("copies nothing that fails its checksum", async () => {
     files.set("/download/v0.4.2/skelcrew-linux-x64", "tampered");
-    const done = await run(["remote", "add", "simon@workbox"], released);
+    const done = await run(["--remote", "simon@workbox", "install"], released, "y\n");
     expect(done.code).toBe(1);
     expect(done.err).toContain("checksum");
     expect(existsSync(join(home, "copied"))).toBe(false);
@@ -294,7 +298,7 @@ exit 0`,
 
   test("names the address when the download fails", async () => {
     files.delete("/download/v0.4.2/skelcrew-linux-x64");
-    const done = await run(["remote", "add", "simon@workbox"], released);
+    const done = await run(["--remote", "simon@workbox", "install"], released, "y\n");
     expect(done.code).toBe(1);
     expect(done.err).toContain(
       `http://127.0.0.1:${server.port}/download/v0.4.2/skelcrew-linux-x64`,
