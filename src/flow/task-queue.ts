@@ -123,14 +123,17 @@ export function backToQueue(db: Database): void {
 // claimed the issue meanwhile. So when the tracker says the issue is taken, the task leaves
 // the queue, back to its issue, and the lead hears it can sc start it if no other machine works
 // on it. Throws when the tracker fails, and the claim stays owed, to be asked again. Asked once
-// at a time per thread: a second call gets the ask under way.
+// at a time per start of the thread: a second call gets the ask under way. A task sc rm removed
+// and started again makes a claim of its own, as the answer to the first one was for the task
+// removed.
 export function claimQueued(
   db: Database,
   sessions: string,
   thread: Thread,
   retry: boolean,
 ): Promise<void> {
-  const under = claiming.get(thread.folder);
+  const key = claimKey(thread);
+  const under = claiming.get(key);
   if (under) return under;
   const { owner, repo, task } = thread;
   const where = "WHERE owner = ? AND repo = ? AND task = ?";
@@ -140,10 +143,12 @@ export function claimQueued(
     .then((took) => {
       // sc rm may have taken it out of the queue while the tracker answered.
       const now = readThread(db, thread.folder);
-      const taken = retry && !took && now.status === "queued" && now.started === thread.started;
+      const same = now.started === thread.started;
+      const taken = retry && !took && now.status === "queued" && same;
       const name = threadName(db, thread);
       db.transaction(() => {
-        db.run(`DELETE FROM claims ${where}`, [owner, repo, task]);
+        // A claim saved since belongs to the task started again, which still owes it.
+        if (same) db.run(`DELETE FROM claims ${where}`, [owner, repo, task]);
         if (!taken) return;
         record(
           db,
@@ -160,13 +165,23 @@ export function claimQueued(
       })();
       if (taken) unassignIssue(db, thread.folder);
     })
-    .finally(() => claiming.delete(thread.folder));
-  claiming.set(thread.folder, ask);
+    .finally(() => claiming.delete(key));
+  claiming.set(key, ask);
   return ask;
 }
 
-// The claims being asked for, by the folder of the queued thread that owes each.
+// The claims being asked for, by the start of the queued thread that owes each, from claimKey.
 const claiming = new Map<string, Promise<void>>();
+
+// Names one start of a thread, by its folder and when it started, as a thread sc rm removed and
+// started again keeps its folder.
+const claimKey = (thread: Thread) => `${thread.folder}@${thread.started}`;
+
+// Returns whether the claim this start of the thread owes is being asked for now, so a claim
+// whose answer is still coming isn't taken for one the engine's stop cut short.
+export function claimUnderWay(thread: Thread): boolean {
+  return claiming.has(claimKey(thread));
+}
 
 // Asks again for each claim a queued task still owes, such as one whose ask failed or that a
 // restart of the engine cut short, without waiting. A claim that fails again is logged, and

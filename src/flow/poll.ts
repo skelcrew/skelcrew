@@ -38,6 +38,7 @@ import { noteForLead, typeLeadNotes } from "./messages.ts";
 import { forgeKnown, fullNameIs, hasNoCommits, refreshClone, repositories } from "./repo.ts";
 import { lastPushed } from "./round.ts";
 import { needsYou } from "./status.ts";
+import { claimUnderWay } from "./task-queue.ts";
 import { readThread, record, Thread, threadName } from "./thread.ts";
 
 // The label that starts a thread on a task, added in its tracker by someone who may.
@@ -86,30 +87,38 @@ async function startLabeled(
     (!existsSync(cloneDir(owner, repo)) || (await hasNoCommits(db, repository)))
   )
     return;
-  // A claim saved for a task that has a thread now was granted, and the engine stopped before it
-  // was forgotten. One for a queued task is the claim it still owes, which the queue makes.
+  // A claim saved for a task that has a thread at work now was granted, and the engine stopped
+  // before it was forgotten. One for a queued task is the claim it still owes, which the queue
+  // makes. One for a task sc rm removed, as done, is left to the step below.
   db.run(
     `DELETE FROM claims WHERE owner = ? AND repo = ? AND EXISTS (SELECT 1 FROM threads t
       WHERE t.owner = claims.owner AND t.repo = claims.repo AND CAST(t.task AS TEXT) = claims.task
-        AND t.status != 'queued')`,
+        AND t.status NOT IN ('queued', 'done'))`,
     [owner, repo],
   );
   const claimWhere = "WHERE owner = ? AND repo = ? AND task = ?";
   const forget = (id: string) => db.run(`DELETE FROM claims ${claimWhere}`, [owner, repo, id]);
-  // A claim saved for a task with no thread that its label no longer asks to start, such as one
-  // whose label was removed or whose issue was closed, was cut short by the engine's stop. It may
-  // be this machine's, so the lead hears of it, and Skelcrew doesn't ask the tracker again, as
-  // that would claim an issue nobody asks for now. The claim is forgotten as the note is saved.
+  // A claim saved for a task nothing asks to start now was cut short by the engine's stop: one
+  // with no thread whose label was removed or whose issue was closed since, or one for a task
+  // sc rm removed while it was asked. It may be this machine's, so the lead hears of it, and
+  // Skelcrew doesn't ask the tracker again, as that would claim an issue nobody asks for now. The
+  // claim is forgotten as the note is saved. A removed task's claim whose answer is still coming
+  // is left to it.
   const asked = new Set(toStart.map((task) => task.id));
   const stranded = db
-    .query(`SELECT task FROM claims c WHERE owner = ? AND repo = ? AND NOT EXISTS (SELECT 1
-      FROM threads t WHERE t.owner = c.owner AND t.repo = c.repo AND CAST(t.task AS TEXT) = c.task)`)
+    .query(`SELECT c.task AS id, t.folder FROM claims c LEFT JOIN task_threads t ON t.owner = c.owner
+        AND t.repo = c.repo AND CAST(t.task AS TEXT) = c.task
+      WHERE c.owner = ? AND c.repo = ? AND (t.folder IS NULL OR t.status = 'done')`)
     .all(owner, repo)
-    .map((row) => z.object({ task: z.string() }).parse(row).task)
-    .filter((id) => !asked.has(id) && !starting.has(`${fullName}#${id}`));
+    .map((row) => z.object({ id: z.string(), folder: z.string().nullable() }).parse(row))
+    .filter(({ id, folder }) => {
+      if (asked.has(id) || starting.has(`${fullName}#${id}`)) return false;
+      return folder === null || !claimUnderWay(readThread(db, folder));
+    })
+    .map(({ id }) => id);
   for (const id of stranded) {
     const name = `${repository.name}-${id}`;
-    const note = `${name}'s claim was cut short, and its issue no longer asks Skelcrew to start it, so Skelcrew can't tell if this machine holds it. To start it, sc start ${name}.`;
+    const note = `${name}'s claim was cut short, and nothing asks Skelcrew to start it now, so Skelcrew can't tell if this machine holds it. To start it, sc start ${name}.`;
     console.log(note);
     db.transaction(() => {
       forget(id);

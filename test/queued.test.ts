@@ -477,3 +477,43 @@ openDb().run("INSERT INTO claims (owner, repo, task) VALUES ('simon', 'app', '12
   // Nothing claims the issue now that nobody asks for it.
   expect(asked(plugin).filter((q) => q.ask === "took")).toHaveLength(0);
 }, 60_000);
+
+test("a task removed and started again while its claim was asked makes a claim of its own", async () => {
+  addApp();
+  await serveApp();
+  const hold = join(plugin, "hold-took");
+  writeFileSync(hold, "");
+  const claims = () => asked(plugin).filter((q) => q.ask === "took").length;
+  const first = sc("start", "app-12");
+  await until(() => claims() === 1);
+  await sc("rm", "app-12");
+  // The answer to the first claim was for the task sc rm removed, so the new start asks anew.
+  const again = sc("start", "app-12");
+  await until(() => claims() === 2);
+  rmSync(hold);
+  await first;
+  expect(await again).toContain("app-12 is queued");
+  await sc("rm", "app-11");
+  await until(() => statuses()["app-12"] === "failed");
+  expect(leftQueue("app-12")).toHaveLength(1);
+}, 60_000);
+
+test("a claim the engine's stop cut short after sc rm is told to the lead, not forgotten", async () => {
+  addApp();
+  await serveApp();
+  const hold = join(plugin, "hold-took");
+  writeFileSync(hold, "");
+  const first = sc("start", "app-12");
+  await until(() => asked(plugin).some((q) => q.ask === "took"));
+  await sc("rm", "app-12");
+  // The engine stops before the tracker answers, which may have granted the claim.
+  await stopDaemon();
+  await first.catch(() => "");
+  expect(claimsSaved()).toBe(1);
+  rmSync(hold);
+  await serveApp();
+  await until(() => leadHears().includes("app-12's claim was cut short"));
+  expect(leadHears()).toContain("sc start app-12");
+  expect(claimsSaved()).toBe(0);
+  expect(statuses()["app-12"]).toBe("done");
+}, 60_000);
