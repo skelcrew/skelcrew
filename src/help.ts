@@ -8,7 +8,7 @@ const sections: [string, [string, string][]][] = [
     "COMMANDS",
     [
       ["(no command)", "Open this repository's lead, with the sidebar"],
-      ["--list", "This repository's list: its lead, issues and tasks"],
+      ["--list", "This repository's list. ctrl+q comes back to it from an agent"],
       ["ls [<repo>]", "Tasks, with each one's stage, status, PR, CI and review"],
       ["show <task>", "A task: stage, description, threads, PR, checks, review"],
       ["ps [<repo>]", "Threads: status, PR, CI, review, needs you"],
@@ -78,6 +78,7 @@ const sections: [string, [string, string][]][] = [
       ["check", "Run the repository's tests once a check slot is free"],
       ['tell lead "<text>"', "Type a message into its repository's lead, as a builder"],
       ['tell <thread> "<text>"', "Type a message into its builder, as the lead"],
+      ['tell lead <repo> "<text>"', "Type a brief into another repository's lead, as a lead"],
     ],
   ],
   [

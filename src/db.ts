@@ -418,6 +418,7 @@ function prepareTables(db: Database): void {
   // .agents/ you haven't approved that the lead was told of, or `none` for one removed, so it is
   // told once. `lead_flows` is whether the lead knows of flows, from the instructions it started
   // with or a note, so a lead already running when Skelcrew learned of them is told once.
+  // `lead_briefs` is the same for briefing another repository's lead.
   const repositoryColumns = {
     open_issues: "INTEGER NOT NULL DEFAULT 0",
     open_prs: "INTEGER NOT NULL DEFAULT 0",
@@ -433,6 +434,7 @@ function prepareTables(db: Database): void {
     lead_state: "TEXT",
     agents_noted: "TEXT",
     lead_flows: "INTEGER NOT NULL DEFAULT 0",
+    lead_briefs: "INTEGER NOT NULL DEFAULT 0",
   };
   // SQLite has no ADD COLUMN IF NOT EXISTS, so each column is looked up first.
   for (const [column, type] of Object.entries(repositoryColumns))
@@ -540,6 +542,30 @@ function prepareTables(db: Database): void {
   // ahead of Skelcrew's routine notes when several wait for the lead.
   if (!db.query("SELECT 1 FROM pragma_table_info('notes') WHERE name = 'urgent'").get())
     db.run("ALTER TABLE notes ADD COLUMN urgent INTEGER NOT NULL DEFAULT 0");
+  // `wrapped` marks a builder's message or a brief, which Skelcrew wraps in its own tags, apart
+  // from notes whose tags, from outside text, are escaped as they are typed in. A builder's
+  // message saved before is told by its exact shape: Skelcrew's opening tag on its first line and
+  // its closing tag on its last. No other note starts so, as each starts with a thread's name or
+  // Skelcrew's words, and a plugin's note is on one line. The older Skelcrew removed only exact
+  // skelcrew tags from inside, so the body can still hold a brief's <asked> or <brief>, or a
+  // closing tag with a space, such as </skelcrew >. So its body is escaped as outside text is,
+  // with the < that starts any such tag written &lt;, and the wrapper is kept as it was.
+  if (!db.query("SELECT 1 FROM pragma_table_info('notes') WHERE name = 'wrapped'").get()) {
+    db.run("ALTER TABLE notes ADD COLUMN wrapped INTEGER NOT NULL DEFAULT 0");
+    const saved = z.array(z.object({ id: z.number(), text: z.string() }));
+    for (const { id, text } of saved.parse(db.query("SELECT id, text FROM notes").all())) {
+      const shape = text.match(
+        /^(<skelcrew from="[^"<>]+" reply="sc tell [^"<>]+">)\n([\s\S]*)\n<\/skelcrew>$/,
+      );
+      const [, wrapper, inside] = shape ?? [];
+      if (wrapper === undefined || inside === undefined) continue;
+      const body = inside.replace(/<(?=\s*\/?\s*(?:skelcrew|asked|brief))/gi, "&lt;");
+      db.run("UPDATE notes SET wrapped = 1, text = ? WHERE id = ?", [
+        `${wrapper}\n${body}\n</skelcrew>`,
+        id,
+      ]);
+    }
+  }
   // A lead table means a database from before each repository had its own lead.
   if (db.query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'lead'").get())
     adoptOldLead(db);

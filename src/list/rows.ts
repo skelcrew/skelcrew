@@ -36,11 +36,13 @@ type Action = Question | { refused: string };
 // sign and the colour that says what kind of state it is in, `says` is its short word, in
 // `colour`, and `step` what its builder is doing, such as `Editing rows.ts`. Then dim its PR,
 // such as `#41`, its CI, such as `CI passed`, and when it last changed, such as `14:31`. Each is
-// empty where it has none. `needsYou` is whether it waits on you for something other
-// than a merge. `session` is the agent's session, which Enter attaches to, and `running` whether
-// its agent runs. `start` is what Enter does on an issue, and `merge` what m does on a task
-// ready for review. `link` is its PR's, which Enter opens, and `branch` the branch a task that is
-// ready without a forge waits on. Each is null where it doesn't apply.
+// empty where it has none. `needsYou` is whether it waits on you for something other than a
+// merge. `session` is the agent's session, which Enter attaches to, `running` whether its agent
+// runs, and `tmux` whether Enter attaches to it on tmux, where Ctrl-Q comes back, rather than on
+// a runtime plugin's host, which has a key of its own. `start` is what Enter does on an issue,
+// and `merge` what m does on a task ready for review. `link` is its PR's, which Enter opens, and
+// `branch` the branch a task that is ready without a forge waits on. Each is null where it
+// doesn't apply.
 export type Row = {
   part: "lead" | ListStage;
   name: string;
@@ -55,6 +57,7 @@ export type Row = {
   needsYou: boolean;
   session: string | null;
   running: boolean;
+  tmux: boolean;
   start: Question | null;
   merge: Action | null;
   link: string | null;
@@ -109,6 +112,7 @@ function leadRow(db: Database, open: Open): Row {
     needsYou: asking,
     session: lead.name,
     running: runs,
+    tmux: true,
     start: null,
     merge: null,
     link: null,
@@ -207,6 +211,8 @@ function taskRow(
     needsYou,
     session: ended ? null : thread.folder,
     running: runs,
+    // Enter attaches to the builder of a task at work, or of a ready one that needs you.
+    tmux: !ended && !ready && (thread.host ?? "tmux") === "tmux",
     start: null,
     merge,
     // The saved link stands in only for this attempt's PR: a task started over has none until
@@ -271,6 +277,7 @@ export function listRows(db: Database, open: Open, now: number): Row[] {
         needsYou: false,
         session: null,
         running: false,
+        tmux: false,
         start: {
           ask: `Start ${name}? y/n`,
           working: `Starting ${name}…`,
