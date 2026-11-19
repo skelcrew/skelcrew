@@ -227,3 +227,35 @@ test("a review on Codex turns off each of the branch's skills", () => {
     v: off.map((path) => ({ path, enabled: false })),
   });
 });
+
+// A builder's checkout holds the default branch's .agents/skills/, which you may not have
+// approved, and Codex loads what it finds there on its own.
+test("a builder on Codex turns off each skill in its checkout, through links too", () => {
+  const thread = join(home, "app-12");
+  mkdirSync(join(thread, ".agents", "skills", "draft"), { recursive: true });
+  writeFileSync(join(thread, ".agents", "skills", "draft", "SKILL.md"), "Not approved.\n");
+  mkdirSync(join(thread, "shared", "linked"), { recursive: true });
+  writeFileSync(join(thread, "shared", "linked", "SKILL.md"), "Linked.\n");
+  symlinkSync(join(thread, "shared", "linked"), join(thread, ".agents", "skills", "linked"));
+  // A link out of the checkout is never walked, as the sandbox doesn't show it.
+  symlinkSync(home, join(thread, ".agents", "skills", "out"));
+  const argv = z.array(z.string()).parse(
+    inHome(`return (await harnessNamed("codex").start({
+      name: "app-12", socket: ${JSON.stringify(join(home, "socket"))},
+      thread: ${JSON.stringify(thread)}, prompt: "Add export", env,
+    })).argv;`),
+  );
+  const setting = argv.find((arg) => arg.startsWith("skills.config=")) ?? "";
+  const off = z
+    .object({ v: z.array(z.object({ path: z.string(), enabled: z.literal(false) })) })
+    .parse(Bun.TOML.parse(setting.replace("skills.config=", "v = ")))
+    .v.map((entry) => entry.path)
+    .sort();
+  expect(off).toEqual(
+    [
+      join(thread, ".agents", "skills", "draft", "SKILL.md"),
+      join(thread, ".agents", "skills", "linked", "SKILL.md"),
+      join(thread, "shared", "linked", "SKILL.md"),
+    ].sort(),
+  );
+});

@@ -398,9 +398,10 @@ async function reviewNow(given: {
     // Every other step must work, or the reviewer never starts.
     // Last, a link in the branch's .agents/skills/ goes from the view, or a link at .agents or
     // .agents/skills: Codex follows one to skills it loads on its own, and a builder must not
-    // steer its own reviewer. Its plain skills stay, so the checkout is the commit, and the
-    // harness is told to leave them unloaded. A removed link shows as deleted, which only a
-    // branch that links its skills ever sees.
+    // steer its own reviewer. So do files there the commit doesn't have, which the clean above
+    // keeps when ignored: the builder could leave a skill that way. The commit's own skills
+    // stay, so the checkout is the commit, and the harness is told to leave them unloaded. A
+    // removed link shows as deleted, which only a branch that links its skills ever sees.
     const index = join(folder, "index");
     const checkout = [
       'index="$(git rev-parse --git-dir)/index"',
@@ -410,7 +411,7 @@ async function reviewNow(given: {
       'cat "$1" > "$index"',
       'printf "%s\\n" "$0" > "$(git rev-parse --git-path HEAD)"',
       'rm -f "$(git rev-parse --git-path index.lock)" "$(git rev-parse --git-path HEAD.lock)"',
-      "{ if test -L .agents; then rm -f .agents; elif test -L .agents/skills; then rm -f .agents/skills; elif test -d .agents/skills; then find .agents/skills -type l -exec rm -f {} +; fi; }",
+      "{ if test -L .agents; then rm -f .agents; elif test -L .agents/skills; then rm -f .agents/skills; elif test -d .agents/skills; then find .agents/skills -type l -exec rm -f {} + && git clean -q -fdx -- .agents/skills; fi; }",
       "shift",
       'exec "$@"',
     ].join(" && ");

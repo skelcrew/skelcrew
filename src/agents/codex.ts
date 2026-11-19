@@ -20,7 +20,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import { dataDir } from "../paths.ts";
-import { copySkills, type SkillsFrom } from "../skills.ts";
+import { checkoutSkills, copySkills, type SkillsFrom } from "../skills.ts";
 import { editing, type Progress, stepText, toolWords } from "./progress.ts";
 import { resetTime } from "./reset.ts";
 import { filterEnv, refuseCredentials, ro, rw, sandboxArgs, throwawayMounts } from "./sandbox.ts";
@@ -242,6 +242,17 @@ function callStep(
 // Returns a TOML value for a -c setting. JSON's strings are TOML's too.
 const tomlString = (text: string) => JSON.stringify(text);
 
+// Returns the -c setting that turns off each SKILL.md in `files`, which Codex would otherwise
+// load from the checkout on its own, or nothing with none. Skills you approved come from the
+// session's own folder, or are listed in the prompt, and are never among them.
+const skillsOff = (files: string[]): string[] =>
+  files.length === 0
+    ? []
+    : [
+        "-c",
+        `skills.config=[${files.map((f) => `{path=${tomlString(f)},enabled=false}`).join(",")}]`,
+      ];
+
 // Codex's hooks tell Skelcrew what each agent, the lead and builders alike, is doing: a message
 // going in starts a turn, which ends with Stop, or with Interrupt when you press Esc. A builder
 // on Codex asks a question by ending its turn without sc submit, since Codex has no tool for
@@ -365,6 +376,9 @@ async function startCommand(given: {
   command.push("-c", `projects.${tomlString(cwd)}.trust_level="trusted"`);
   command.push("-c", "check_for_update_on_startup=false", "-c", "tui.disable_paste_burst=true");
   command.push("-c", "features.hooks=true", ...agentHooks);
+  // A builder's checkout has the default branch's .agents/skills/, which you may not have
+  // approved, so Codex leaves each skill there unloaded.
+  if (thread) command.push(...skillsOff(checkoutSkills(thread)));
   // Codex layers $CODEX_HOME/skelcrew.config.toml over its config when asked for that profile.
   // A repository's own .codex/config.toml could win over it, but Codex loads that only for a
   // folder trusted in a config file, not by the -c above.
@@ -422,8 +436,7 @@ async function reviewCommand(given: {
   const command = ["codex", "--no-daemon", "exec", "--dangerously-bypass-approvals-and-sandbox"];
   // With none named, Codex runs on its own default.
   if (model) command.push("-m", model);
-  const off = (given.branchSkills ?? []).map((file) => `{path=${tomlString(file)},enabled=false}`);
-  if (off.length > 0) command.push("-c", `skills.config=[${off.join(",")}]`);
+  command.push(...skillsOff(given.branchSkills ?? []));
   command.push("--output-schema", join(folder, "schema.json"), "-o", join(folder, "answer.json"));
   command.push("-");
   const skills = given.skills ? copySkills(given.skills, join(folder, "skills")) : [];

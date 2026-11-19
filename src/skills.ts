@@ -1,7 +1,16 @@
 // A repository's skills: the folders of .agents/skills/ you approved, copied into a folder of one
 // session's own as it starts, or listed in its instructions for a harness that reads no folder.
-import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import {
+  chmodSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { dirname, join, sep } from "node:path";
 import { parse } from "yaml";
 import { z } from "zod";
 import { cloneDir } from "./paths.ts";
@@ -102,4 +111,37 @@ export function branchSkills(clone: string, commit: string): string[] {
       const path = /^(?:100644|100755) blob [0-9a-f]+\t(.+\/SKILL\.md)$/.exec(line)?.[1];
       return path ? [path] : [];
     });
+}
+
+// Returns every SKILL.md in the .agents/skills/ of the checkout at `root`, as it is on disk now,
+// for a Codex builder to leave unloaded: Codex loads the skills it finds there on its own, and
+// those are the default branch's or the builder's, not the ones you approved. Links are followed,
+// as Codex follows them, and each file is given both as found and as its real path, since either
+// could be how Codex names it. Only folders inside the checkout are walked, as the sandbox shows
+// nothing else.
+export function checkoutSkills(root: string): string[] {
+  const top = realpathSync(root);
+  const found = new Set<string>();
+  const seen = new Set<string>();
+  const walk = (dir: string) => {
+    let real: string;
+    try {
+      real = realpathSync(dir);
+    } catch {
+      return;
+    }
+    if ((real !== top && !real.startsWith(top + sep)) || seen.has(real)) return;
+    seen.add(real);
+    for (const name of readdirSync(dir)) {
+      const path = join(dir, name);
+      const stat = statSync(path, { throwIfNoEntry: false });
+      if (stat?.isDirectory()) walk(path);
+      else if (stat?.isFile() && name === "SKILL.md") {
+        found.add(path);
+        found.add(realpathSync(path));
+      }
+    }
+  };
+  walk(join(root, ".agents", "skills"));
+  return [...found];
 }
