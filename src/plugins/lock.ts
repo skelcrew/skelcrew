@@ -4,7 +4,7 @@
 import type { Database } from "bun:sqlite";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { parse, parseDocument, stringify } from "yaml";
+import { isMap, parse, parseDocument, stringify } from "yaml";
 import { z } from "zod";
 import { configFile, yourConfigDocument } from "../config.ts";
 import { configDir } from "../paths.ts";
@@ -25,36 +25,44 @@ const Locked = z.object({
 export type Locked = z.infer<typeof Locked>;
 // The lock: each plugin by the GitHub repository it comes from, such as skelcrew/skelcrew-github.
 const Lock = z.record(z.string(), Locked);
-type Lock = z.infer<typeof Lock>;
+export type Lock = z.infer<typeof Lock>;
 
-// Writes the lock, with a line on top saying who writes it.
-function writeLock(lock: Lock): void {
-  mkdirSync(configDir(), { recursive: true });
+// Returns the text of a lock file, sorted, with a line on top saying who writes it.
+export function lockText(lock: Lock): string {
   const sorted = Object.fromEntries(Object.entries(lock).sort(([a], [b]) => a.localeCompare(b)));
   const body = Object.keys(sorted).length > 0 ? stringify(sorted) : "";
-  writeFileSync(
-    lockFile(),
-    `# Your personal plugins at their exact versions, written by Skelcrew. sc install installs them.\n${body}`,
-  );
+  return `# Your personal plugins at their exact versions, written by Skelcrew. sc install installs them.\n${body}`;
+}
+
+// Writes the lock.
+function writeLock(lock: Lock): void {
+  mkdirSync(configDir(), { recursive: true });
+  writeFileSync(lockFile(), lockText(lock));
+}
+
+// Returns your lock file, checked, or null when this machine has none yet. Unlike yourLock, it
+// never writes one, so sc --remote can compare the laptop's lock with a server's for free.
+export function readLock(): Lock | null {
+  const file = lockFile();
+  if (!existsSync(file)) return null;
+  let parsed: unknown;
+  try {
+    parsed = parse(readFileSync(file, "utf8"));
+  } catch (error) {
+    throw new Error(`${file} isn't valid YAML: ${String(error)}`);
+  }
+  // A lock with only its first line is empty, which YAML reads as null.
+  const lock = Lock.safeParse(parsed ?? {});
+  if (!lock.success) throw new Error(`${file} isn't valid: ${z.prettifyError(lock.error)}`);
+  return lock.data;
 }
 
 // Returns your lock, checked. A machine set up before the lock existed has none yet: its plugins
 // from GitHub are written into a new lock as they are, and added to plugins: in your config.yaml.
 // So the move reinstalls nothing and asks nothing again.
 export function yourLock(db: Database): Lock {
-  const file = lockFile();
-  if (existsSync(file)) {
-    let parsed: unknown;
-    try {
-      parsed = parse(readFileSync(file, "utf8"));
-    } catch (error) {
-      throw new Error(`${file} isn't valid YAML: ${String(error)}`);
-    }
-    // A lock with only its first line is empty, which YAML reads as null.
-    const lock = Lock.safeParse(parsed ?? {});
-    if (!lock.success) throw new Error(`${file} isn't valid: ${z.prettifyError(lock.error)}`);
-    return lock.data;
-  }
+  const found = readLock();
+  if (found) return found;
   // A plugin from a folder of yours has no version to pin, so only those from GitHub count.
   const lock: Lock = {};
   const sources: string[] = [];
@@ -95,6 +103,12 @@ export function setLocked(db: Database, source: string, locked: Locked | null): 
   const file = lockFile();
   if (!existsSync(file)) writeLock({});
   const document = parseDocument(readFileSync(file, "utf8"));
+  // A lock that pins nothing, such as one with only its first line, has no map to change, so it
+  // is written afresh.
+  if (!isMap(document.contents)) {
+    writeLock(locked === null ? {} : { [source]: locked });
+    return;
+  }
   if (locked === null) document.delete(source);
   else document.set(source, locked);
   // With no line width, a long line you wrote, such as a pin on one line, isn't folded.

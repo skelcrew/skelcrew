@@ -12,6 +12,9 @@ export const configDir = (home = homedir()) => join(home, ".config", "skelcrew")
 export const dataDir = (home = homedir()) => join(home, ".local", "share", "skelcrew");
 // Returns the file the screen's sidebar logs its stalls in, as its own output is your terminal.
 export const screenLogFile = () => join(dataDir(), "screen.log");
+// Returns the file where a value Skelcrew can't read back from its database is logged, as the
+// screen, which reads it too, has your terminal for its output.
+export const dbLogFile = () => join(dataDir(), "db.log");
 // Returns the file where a daemon run from a checkout writes the full commit it started from and
 // that checkout's folder, on one line. sc --remote reads it there with plain shell, so it must
 // stay at $HOME/.local/share/skelcrew/daemon-code.

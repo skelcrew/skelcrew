@@ -3,6 +3,7 @@
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
 import { HarnessName, harnessNamed } from "../agents/harness.ts";
+import { savedJson } from "../db.ts";
 import { errorText } from "../say.ts";
 import { noteForLead, typeContinue, typeLeadNotes } from "./messages.ts";
 import { readThread, record } from "./thread.ts";
@@ -26,13 +27,14 @@ type Limit = {
 // so a restart neither runs a limited harness early nor tells the leads again.
 const limits = new Map<HarnessName, Limit>();
 
-// A limit as the database keeps it, checked as it is read back. `told` is a JSON list.
+// A limit as the database keeps it, checked as it is read back. `told` is a JSON list, and one
+// Skelcrew can't read counts as no lead told, so the leads hear of the limit again.
 const LimitRow = z.object({
   harness: HarnessName,
   until: z.number(),
   reset: z.number().nullable(),
   tries: z.number(),
-  told: z.string().transform((saved) => z.array(z.string()).parse(JSON.parse(saved))),
+  told: savedJson("limits.told", z.array(z.string()), []),
 });
 
 // Saves the harness's limit as it now is in the daemon, or removes it once it has none.

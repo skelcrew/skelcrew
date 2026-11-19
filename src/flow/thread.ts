@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import { HarnessName, harnessNamed } from "../agents/harness.ts";
 import { listSessions } from "../agents/sessions.ts";
-import { taskColumns } from "../db.ts";
+import { savedJson, taskColumns } from "../db.ts";
 import { threadsDir } from "../paths.ts";
 import { type Host, hostNamed } from "../plugins/runtime.ts";
 import { findRepository } from "./repo.ts";
@@ -67,10 +67,8 @@ export const Thread = z.object({
   // each event is handled once, across restarts too. A new thread starts with none. A row from
   // before Skelcrew kept them has the last ID of each kind handled instead, or, older still, null
   // for those too: the PR's first poll then starts after its history rather than replaying it.
-  seen: z
-    .string()
-    .nullable()
-    .transform((saved) => (saved === null ? null : z.array(z.string()).parse(JSON.parse(saved)))),
+  // A value Skelcrew can't read counts as null too, so a bad one never replays the PR's events.
+  seen: savedJson("tasks.seen", z.array(z.string()).nullable(), null),
   last_review: z.number().nullable(),
   last_comment: z.number().nullable(),
   last_check: z.number().nullable(),
@@ -162,10 +160,7 @@ export const Thread = z.object({
   // the task after the thread started, such as a new design you agreed to, so the reviewer and
   // sc issue show get them with the task. Only the lead's count: a builder must never change
   // what it is reviewed against. A row from before Skelcrew kept them holds null, read as none.
-  updates: z
-    .string()
-    .nullable()
-    .transform((saved) => TaskUpdate.array().parse(saved === null ? [] : JSON.parse(saved))),
+  updates: savedJson("tasks.updates", TaskUpdate.array(), []),
   // What the builder is doing, as its harness's hooks and its screen tell. Null until its first
   // hook runs, and in a row from before Skelcrew kept it.
   state: AgentState.nullable(),
@@ -205,11 +200,9 @@ export const Thread = z.object({
   // The flow the task runs, from start to end: `default`, or a flow file of its .agents/.
   flow: z.string(),
   // Skelcrew's review on the task's PR, or null before its first. It names its PR, so a PR
-  // opened again after sc rm gets a review of its own.
-  review_post: z
-    .string()
-    .nullable()
-    .transform((saved) => (saved === null ? null : ReviewPost.parse(JSON.parse(saved)))),
+  // opened again after sc rm gets a review of its own. One Skelcrew can't read counts as none,
+  // and the next review is posted anew.
+  review_post: savedJson("tasks.review_post", ReviewPost.nullable(), null),
 });
 export type Thread = z.infer<typeof Thread>;
 
