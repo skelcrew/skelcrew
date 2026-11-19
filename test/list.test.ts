@@ -692,6 +692,35 @@ test("an edge too wide for the terminal says its counts in fewer letters", () =>
   const lines = drawn(13, 16, 41, open).map((line) => line.trimEnd());
   expect(lines[5]).toBe(" ↑ +10  Back 1  Build 9·1!  Rev 1");
   expect(lines[13]).toBe(" ↓ Ready 1   Done 0");
+  // Narrower still, each stage goes by its number key, and how many rows are hidden stays.
+  const narrow = drawn(13, 16, 25, open).map((line) => line.trimEnd());
+  expect(narrow[5]).toBe(" ↑ +10 1:1 2:9·1! 3:1");
+});
+
+// A heading pinned at an edge is clicked as the heading itself, by the columns it was drawn at.
+test("a click on a heading pinned at an edge reaches its stage, by its columns", () => {
+  sql(fourStagesSql());
+  const all = rows();
+  const opened = new Set<ListStage>(["backlog", "building", "reviewing", "checks"]);
+  const shown = all.filter((row) => row.part === "lead" || opened.has(row.part));
+  const headings = stageHeadings(all, opened);
+  const expected: [number, string[]][] = [
+    [80, ["Backlog 1", "Building 9 · 1 needs you", "Reviewing 1"]],
+    [41, ["Back 1", "Build 9·1!", "Rev 1"]],
+    [25, ["1:1", "2:9·1!", "3:1"]],
+  ];
+  for (const [width, names] of expected) {
+    const size = { width, height: 16 };
+    const { lines, targets } = drawList(shown, headings, 13, 0, frame, size);
+    const edge = lines.findIndex((line) => Bun.stripANSI(line).startsWith(" ↑"));
+    const target = targets[edge];
+    if (!target || !("pinned" in target)) throw new Error(`no pinned headings at ${width}`);
+    expect(target.pinned.map((span) => span.stage)).toEqual(["backlog", "building", "reviewing"]);
+    // Each span covers what is drawn for its stage, counted from 1.
+    const text = Bun.stripANSI(lines[edge] ?? "");
+    const drawnAt = target.pinned.map((span) => text.slice(span.from - 1, span.to));
+    expect(drawnAt).toEqual(names);
+  }
 });
 
 // A click reaches what was drawn where it lands, so the list hit-tests from its own layout.
@@ -1575,6 +1604,21 @@ test("a click that attaches types no mouse report into the agent", async () => {
   type("hello");
   press("Enter");
   await until(() => read(join(home, "app-7.typed")) === "hello\n", "only what was typed");
+});
+
+test("a click on a heading pinned at the bottom edge opens its stage", async () => {
+  const more = Array.from({ length: 12 }, (_, i) =>
+    threadSql({ task: String(50 + i), title: `Task ${50 + i}`, changed: now - (10 + i) * 60_000 }),
+  );
+  sql(more.join("\n"));
+  await open();
+  const edge = () =>
+    seen()
+      .split("\n")
+      .find((line) => line.startsWith(" ↓")) ?? "";
+  await until(() => edge().includes("Ready 1"), "Ready pinned at the bottom edge");
+  type(`\x1b[<0;${edge().indexOf("Ready") + 2};${lineOf(" ↓")}M`);
+  await until(() => here().startsWith("▸ ● app-14"), "Ready open, on its task");
 });
 
 test("a click on the lead's row opens the lead at once", async () => {

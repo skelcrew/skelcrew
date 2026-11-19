@@ -197,7 +197,10 @@ function tallLines(row: Row, here: boolean, nameWidth: number, width: number): s
 
 // What a click on a line of the list reaches: a row, by its place in the rows, which is the
 // lead's or a task's, a stage's heading, or nothing, such as on a blank line or an edge.
-export type Target = { row: number } | { stage: ListStage } | null;
+// On an edge line, a click reaches the heading pinned at its column: `pinned` has each one's
+// columns, counted from 1 as your terminal counts a click.
+export type Pinned = { from: number; to: number; stage: ListStage };
+export type Target = { row: number } | { stage: ListStage } | { pinned: Pinned[] } | null;
 
 // One line of the stages' part of the list: its text, the stage it is in, by its place among the
 // headings, the row it belongs to, by its place in the rows, or null for a heading or a blank
@@ -219,16 +222,18 @@ const shortNames: Record<ListStage, string> = {
 // they are all in one, then each heading hidden there, short: its name, its count and how many
 // need you, in yellow, such as `↓ 5 more in Building   Checks 2 · 1 needs you`. So every count
 // stays in sight however the list scrolls. Too wide for the terminal, it is said in fewer
-// letters, as `↓ +5  Chk 2·1!`, then with each stage by its number key, as `↓ 4:2·1!`, so the
-// counts still fit. Only a terminal too narrow even for that cuts it, without its colours.
+// letters, as `↓ +5  Chk 2·1!`, then with each stage by its number key, as `↓ +5 4:2·1!`, so the
+// counts still fit. Only a terminal too narrow even for that cuts it, without its colours. Gives
+// the line as a line of the body, whose target has the columns of each pinned heading still in
+// sight, so a click on one opens or closes its stage as a click on the heading itself does.
 function edgeLine(
   arrow: string,
   hidden: BodyLine[],
   rows: Row[],
   headings: Heading[],
   width: number,
-): string {
-  if (hidden.length === 0) return "";
+): BodyLine {
+  if (hidden.length === 0) return { text: "", stage: -1, row: null, target: null };
   // A row counts as hidden when any of its lines is.
   const hiddenRows = [...new Set(hidden.flatMap((line) => (line.row === null ? [] : [line.row])))];
   const stages = new Set(hiddenRows.map((i) => rows[i]?.part));
@@ -245,8 +250,7 @@ function edgeLine(
   const said = (words: "full" | "short" | "keys") => {
     const count = hiddenRows.length;
     const brief = words !== "full";
-    const more =
-      count === 0 || words === "keys" ? [] : [brief ? `+${count}` : `${count} more${where}`];
+    const more = count === 0 ? [] : [brief ? `+${count}` : `${count} more${where}`];
     const parts = pinned.map((heading) => {
       const needing = heading.needYou === 1 ? "1 needs you" : `${heading.needYou} need you`;
       const note = brief ? `·${heading.needYou}!` : ` · ${needing}`;
@@ -255,7 +259,7 @@ function edgeLine(
         words === "keys"
           ? `${key}:${heading.count}`
           : `${(brief ? shortNames : stageNames)[heading.stage]} ${heading.count}`;
-      return { named: name, note: heading.needYou ? note : "" };
+      return { stage: heading.stage, named: name, note: heading.needYou ? note : "" };
     });
     const gap = { full: "   ", short: "  ", keys: " " }[words];
     const plain = ` ${arrow} ${[...more, ...parts.map(({ named, note }) => `${named}${note}`)].join(gap)}`;
@@ -263,11 +267,25 @@ function edgeLine(
       ({ named, note }) => `${paint(grey, named)}${note && paint(yellow, note)}`,
     );
     const items = [...more.map((text) => paint(grey, text)), ...coloured];
-    return { plain, line: ` ${paint(grey, arrow)} ${items.join(gap)}` };
+    // Each pinned heading's columns: after the arrow, then each item and the gap after it.
+    let column = Bun.stringWidth(` ${arrow} `) + 1;
+    for (const text of more) column += Bun.stringWidth(text) + gap.length;
+    const spans = parts.map(({ stage, named, note }) => {
+      const size = Bun.stringWidth(`${named}${note}`);
+      const span = { from: column, to: column + size - 1, stage };
+      column += size + gap.length;
+      return span;
+    });
+    return { plain, line: ` ${paint(grey, arrow)} ${items.join(gap)}`, spans };
   };
   const forms = [said("full"), said("short"), said("keys")];
   const fits = forms.find((form) => Bun.stringWidth(form.plain) <= width);
-  return fits ? fits.line : paint(grey, fitted(forms[2]?.plain ?? "", width));
+  const form = fits ?? forms[2];
+  if (!form) return { text: "", stage: -1, row: null, target: null };
+  // A line cut to fit keeps only the headings whose whole name shows before its …
+  const text = fits ? form.line : paint(grey, fitted(form.plain, width));
+  const spans = fits ? form.spans : form.spans.filter((span) => span.to < width);
+  return { text, stage: -1, row: null, target: { pinned: spans } };
 }
 
 // Returns the list as lines that fill the terminal, on the row at `here`. The top line comes
@@ -282,8 +300,9 @@ function edgeLine(
 // its heading into view with it, so opening a stage shows the heading over its rows. A terminal
 // too short for those edge lines keeps only the row you are on, or its first line when even it
 // doesn't fit. Gives the lines, what a click on each reaches, so a click hits what it was drawn
-// over, and the scroll they were drawn at, which the next draw starts from. Nothing is drawn in the terminal's last column: a terminal waits there to wrap, and
-// clearing the rest of the line from that state erases the last character drawn.
+// over, and the scroll they were drawn at, which the next draw starts from. Nothing is drawn in
+// the terminal's last column: a terminal waits there to wrap, and clearing the rest of the line
+// from that state erases the last character drawn.
 export function drawList(
   rows: Row[],
   headings: Heading[],
@@ -361,7 +380,7 @@ export function drawList(
     const cut = body[start];
     const atRowEnd = cut && cut.row !== null && body[start - 1]?.row === cut.row;
     if (atRowEnd && (first === undefined || start < first)) start += 1;
-    // Returns a line of the body that a click reaches nothing on: an edge line or a blank one.
+    // Returns a blank line of the body, which a click reaches nothing on.
     const edge = (text: string) => ({ text, stage: -1, row: null, target: null });
     // The view never ends on a heading whose rows are all below it, which would look closed. It
     // goes past the bottom edge instead, which pins it there, and a blank line takes its place.
@@ -372,9 +391,9 @@ export function drawList(
     const visible = [...body.slice(start, end), ...(end < start + view ? [edge("")] : [])];
     shown = edges
       ? [
-          edge(edgeLine("↑", body.slice(0, start), rows, headings, width)),
+          edgeLine("↑", body.slice(0, start), rows, headings, width),
           ...visible,
-          edge(edgeLine("↓", body.slice(end), rows, headings, width)),
+          edgeLine("↓", body.slice(end), rows, headings, width),
         ]
       : visible;
   }

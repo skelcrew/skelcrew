@@ -391,11 +391,11 @@ export async function runList(agents: string, repository: string): Promise<void>
   };
 
   // Acts on the mouse, by what was drawn where it was pressed. The left button on a repository's
-  // tab opens that repository, and on a stage's heading opens or closes the stage. On a task's
-  // row it moves you there, and on the row you are on already it opens it, as Enter does, so a
-  // double click opens a row too. The lead's row opens the lead at once. The wheel moves you a
-  // row up or down, which scrolls the list, as the row you are on always stays in view. A
-  // release, another button, or a click on nothing does nothing.
+  // tab opens that repository, and on a stage's heading, or its name pinned at an edge, opens or
+  // closes the stage. On a task's row it moves you there, and on the row you are on already it
+  // opens it, as Enter does, so a double click opens a row too. The lead's row opens the lead at
+  // once. The wheel moves you a row up or down, which scrolls the list, as the row you are on
+  // always stays in view. Another button, or a click on nothing, does nothing.
   const click = (sent: string) => {
     const [, button, column, line] = clickPattern.exec(sent) ?? [];
     if (button === "64") return move(-1);
@@ -413,6 +413,11 @@ export async function runList(agents: string, repository: string): Promise<void>
     const target = targets[Number(line) - 1] ?? null;
     if (target === null) return draw();
     if ("stage" in target) return toggleStage(target.stage);
+    if ("pinned" in target) {
+      const at = Number(column);
+      const pinned = target.pinned.find((span) => span.from <= at && at <= span.to);
+      return pinned ? toggleStage(pinned.stage) : draw();
+    }
     const row = rows[target.row];
     if (!row) return draw();
     if (target.row === here || row.part === "lead") {
