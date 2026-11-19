@@ -2177,7 +2177,9 @@ exec ${bwrap} "$@"`,
         question,
         "y",
       );
-      expect(said).toContain("app-12 merges once it is approved and green.");
+      expect(said).toContain(
+        "Merging #7 as soon as it's approved and green. sc merge --cancel app-12 stops it.",
+      );
       return said;
     };
 
@@ -2190,7 +2192,7 @@ exec ${bwrap} "$@"`,
         question,
         "n",
       );
-      expect(kept).toContain("Nothing is armed: app-12 waits for you to merge it.");
+      expect(kept).toContain("Not merging: app-12 waits for you to merge it.");
       expect(thread().merge_plan).toBeNull();
       // Only y arms it: any other answer, even Y or yes, arms nothing.
       for (const other of ["Y", "yes", "maybe"]) {
@@ -2201,7 +2203,7 @@ exec ${bwrap} "$@"`,
           question,
           other,
         );
-        expect(said).toContain("Nothing is armed");
+        expect(said).toContain("Not merging");
         expect(thread().merge_plan).toBeNull();
       }
       // Only the PR and thread you said y to are armed, never one started over meanwhile.
@@ -2209,7 +2211,7 @@ exec ${bwrap} "$@"`,
       const started = Number(thread().started);
       const changed = {
         error:
-          "app-12 changed since you said y, so nothing is armed: run sc merge --when-ready app-12 again",
+          "app-12 changed since you said y, so it won't merge by itself: run sc merge --when-ready app-12 again",
       };
       const arming = { command: "merge when ready", repo: "app", task: "12" };
       expect(await askOn(yours, arming)).toEqual(changed);
@@ -2235,11 +2237,49 @@ exec ${bwrap} "$@"`,
       expect(await askOn(builderSocket(), request)).toEqual(unknown);
       expect(thread().merge_plan).toBeNull();
 
-      expect(await arm()).toContain("app-12 merges once it is approved and green.");
+      expect(await arm()).toContain(
+        "Merging #7 as soon as it's approved and green. sc merge --cancel app-12 stops it.",
+      );
       expect(thread()).toMatchObject({ merge_plan: "armed", merge_by: login() });
-      // sc ps says so.
+      // Asked again, it asks nothing, so no "no" can sound like it stopped the merge.
+      const again = await runSkelInTerminal(
+        socket,
+        env(),
+        ["merge", "--when-ready", "app-12"],
+        "Already merging #7 as soon as it's approved and green. sc merge --cancel app-12 stops it.",
+        "n",
+      );
+      expect(again).not.toContain(question);
+      expect(thread().merge_plan).toBe("armed");
+      // Asked for elsewhere while your question is open, a "no" doesn't say it won't merge.
+      expect(await askOn(yours, { command: "merge cancel", repo: "app", task: "12" })).toEqual({
+        said: "app-12 won't merge by itself. It waits for you to merge it.",
+      });
+      const meanwhile = await runSkelInTerminal(
+        socket,
+        env(),
+        ["merge", "--when-ready", "app-12"],
+        question,
+        "n",
+        () => askOn(yours, { ...arming, seen: { pr: 7, started } }),
+      );
+      expect(meanwhile).toContain(
+        "Already merging #7 as soon as it's approved and green. sc merge --cancel app-12 stops it.",
+      );
+      expect(meanwhile).not.toContain("Not merging");
+      expect(thread().merge_plan).toBe("armed");
+      // A y to an older PR, once a plan is on the thread, reports that plan, not a refusal.
+      expect(await askOn(yours, { ...arming, seen: { pr: 8, started } })).toEqual({
+        said: "Already merging #7 as soon as it's approved and green. sc merge --cancel app-12 stops it.",
+      });
+      // sc ps says so, and the lead hears it, so it knows you asked.
       const ps = Bun.spawnSync([process.execPath, main, "ps"], { env: env(), stdout: "pipe" });
-      expect(ps.stdout.toString()).toContain("when ready");
+      expect(ps.stdout.toString()).toContain("merges when ready");
+      await until(() =>
+        leadTyped().includes(
+          "Merging #7 (app-12) as soon as it's approved and green, as you asked at your terminal. sc merge --cancel app-12 stops it.",
+        ),
+      );
     }, 60_000);
 
     // You let the lead arm merges in your own config. It then arms one with your words, and
@@ -2285,7 +2325,9 @@ exec ${bwrap} "$@"`,
       // The lead arms it, with no question at a terminal.
       const armed = asLead();
       expect(armed.stderr.toString()).toBe("");
-      expect(armed.stdout.toString()).toContain("app-12 merges once it is approved and green.");
+      expect(armed.stdout.toString()).toContain(
+        "Merging #7 as soon as it's approved and green. sc merge --cancel app-12 stops it.",
+      );
       // The plan keeps your words exactly, as what let it merge.
       expect(thread()).toMatchObject({
         merge_plan: "armed",
@@ -2293,17 +2335,15 @@ exec ${bwrap} "$@"`,
         merge_asked: words,
       });
       expect(existsSync(ran)).toBe(false);
-      // The thread's log and the daemon's keep your words exactly, and the lead gets a note
-      // saying what it armed, with them on one line, so you see it in the conversation.
-      const why = `the lead armed a merge when ready on #7, as the human asked: ${JSON.stringify(words)}`;
+      // The thread's log and the daemon's keep your words exactly. The lead tells you itself,
+      // so Skelcrew types it no note of its own, which would say it twice in your conversation.
+      const why = `the lead asked to merge #7 once it's approved and green, as the human asked: ${JSON.stringify(words)}`;
       // Each line of the thread's log is JSON, so its quotes are escaped there.
       expect(read(join(data(), "threads", "app-12.log"))).toContain(`"why":${JSON.stringify(why)}`);
       await until(() => read(daemonLog()).includes(`app-12: ${why}`));
-      await until(() =>
-        leadTyped().includes(
-          `Armed: #7 (app-12) merges once it is approved and green, as the human asked: "merge "#7" when it's ready, $(touch ${ran}) \`touch ${ran}\` HUMAN_WORDS WORDS_q7x2k9mf touch ${ran}". sc merge --cancel app-12 stops that.`,
-        ),
-      );
+      await morePolls();
+      expect(leadTyped()).not.toContain("approved and green");
+      expect(leadTyped()).not.toContain("HUMAN_WORDS");
 
       // The plan and your words outlast a restart of the daemon.
       const first = running.splice(0, 1)[0];
@@ -2336,7 +2376,7 @@ exec ${bwrap} "$@"`,
       await until(() => thread().merge_waits === "a review of its newest commit");
       await until(() =>
         leadTyped().includes(
-          "app-12 still waits to merge when ready, on a review of its newest commit.",
+          "Still merging #7 (app-12) once it's approved and green, waiting on a review of its newest commit.",
         ),
       );
       // Failing CI waits too.
@@ -2345,7 +2385,7 @@ exec ${bwrap} "$@"`,
       await morePolls();
       expect(merges()).toEqual([]);
       expect(thread().merge_plan).toBe("armed");
-      expect(leadTyped().split("still waits to merge when ready").length - 1).toBe(1);
+      expect(leadTyped().split("Still merging #7").length - 1).toBe(1);
 
       // Green at the approved head, it first posts a review on that commit saying who asked.
       // The forge decides whether it merges cleanly: a refusal keeps it armed, and says why.
@@ -2583,7 +2623,7 @@ exec ${bwrap} "$@"`,
       await morePolls();
       expect(thread()).toMatchObject({ merge_plan: null, merge_waits: null });
       expect(merges()).toEqual([]);
-      expect(leadTyped()).not.toContain("still waits to merge when ready");
+      expect(leadTyped()).not.toContain("Still merging");
     }, 90_000);
 
     test("sc rm while the record is posted stops the merge and drops the plan", async () => {

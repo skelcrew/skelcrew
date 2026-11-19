@@ -518,7 +518,7 @@ function shortName(name: string, room: number): string {
 // both whole. The title comes from the tracker and the short title from the lead, so their
 // control codes are removed, which could break a row or reach your terminal. A review shows
 // its round, such as changes r3. WAITING counts the messages waiting for each builder. MERGE
-// says when ready for a thread with a merge when ready armed.
+// says merges when ready for a thread Skelcrew will merge once it is approved and green.
 export function printThreads(threads: ThreadRow[], json: boolean): void {
   if (json) {
     console.log(JSON.stringify(threads));
@@ -544,7 +544,7 @@ export function printThreads(threads: ThreadRow[], json: boolean): void {
       `${review}${round}`,
       t.needsYou ? "yes" : "",
       ...(waiting ? [t.waiting === 0 ? "" : `${t.waiting}`] : []),
-      ...(merging ? [t.merge === null ? "" : "when ready"] : []),
+      ...(merging ? [t.merge === null ? "" : "merges when ready"] : []),
     ];
   });
   // The name and title share what those columns, and the two spaces after each column but the

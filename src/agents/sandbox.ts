@@ -231,6 +231,18 @@ export function refuseCredentials(repository: string): void {
   }
 }
 
+// Returns the read-only mount of the folder that holds every repository's clone, for a lead,
+// after checking each clone in it for credentials. The daemon checks a clone as it comes in and
+// at each refresh, but a lead can start before that refresh, or after one that failed, so a
+// credential could still sit in a clone the lead would read. Throws then, as for the lead's own
+// clone: a Mac's sandbox can't hide one folder inside a mounted one.
+export function everyRepository(folder: string): string[] {
+  for (const owner of readdirSync(folder))
+    for (const repo of readdirSync(join(folder, owner)))
+      refuseCredentials(join(folder, owner, repo));
+  return ro(folder);
+}
+
 // Only what a shell needs gets in. Tokens and keys in your environment stay out, and so do
 // CLAUDE_CODE_* variables inherited from a Claude Code session, which make the agent
 // misbehave, for example by writing no transcript.
