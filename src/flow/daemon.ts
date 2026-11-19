@@ -41,7 +41,13 @@ import { closeExitedLeads, lastOpened, leadOf, openedRepositories, startLead } f
 import { restoreLimits, wakeAfterLimit } from "./limits.ts";
 import { listRepositories, listTasks, listThreads, showTask } from "./list.ts";
 import { armMerge, cancelMerge, refuseWithoutForge, threadToMerge } from "./merging.ts";
-import { deliverAllWaiting, messageBuilder, messageLead, typeLeadNotes } from "./messages.ts";
+import {
+  briefLead,
+  deliverAllWaiting,
+  messageBuilder,
+  messageLead,
+  typeLeadNotes,
+} from "./messages.ts";
 import { pollRepositories } from "./poll.ts";
 import {
   findRepository,
@@ -49,6 +55,7 @@ import {
   hasNoCommits,
   noRepositories,
   refreshClones,
+  repositories,
   repositoryAt,
 } from "./repo.ts";
 import { allowed, type Caller, DaemonRequest, parseJson } from "./requests.ts";
@@ -505,6 +512,26 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       case "tell lead":
         messageLead(db, sessions, caller, request.text);
         return { told: "lead" };
+      case "brief lead": {
+        // Only you bring a repository in, in your own terminal, so the lead is told how to ask.
+        const to = repositories(db).find((r) => r.name === request.to || fullNameIs(r, request.to));
+        if (!to)
+          throw new Error(
+            `${request.to} isn't in Skelcrew. Ask the human to add it in their own terminal, with sc repo add <owner/repo>.`,
+          );
+        briefLead(db, sessions, caller, to, request.text);
+        // A lead whose tab you closed by exiting it is brought back, so the brief reaches it.
+        // Starting it isn't waited on, as an agent's command answers at once. Its notes wait
+        // until it runs, then go in.
+        db.run("UPDATE repositories SET tab_closed = 0 WHERE owner = ? AND repo = ?", [
+          to.owner,
+          to.repo,
+        ]);
+        ensureLead(to)
+          .then(() => typeLeadNotes(db, sessions))
+          .catch((error) => console.log(`couldn't start ${to.name}'s lead: ${errorText(error)}`));
+        return { briefed: to.name };
+      }
       case "submit": {
         const thread = callingThread(caller);
         submitRound(db, sessions, thread.folder, request.summary);

@@ -48,7 +48,7 @@ afterEach(() => {
 function run(body: string): string {
   const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
 import { leadOf } from ${JSON.stringify(source("flow/lead.ts"))};
-import { messageLead, noteForLead } from ${JSON.stringify(source("flow/messages.ts"))};
+import { briefLead, messageLead, noteForLead } from ${JSON.stringify(source("flow/messages.ts"))};
 import { turnEnded } from ${JSON.stringify(source("flow/status.ts"))};
 import { failThread } from ${JSON.stringify(source("flow/builder.ts"))};
 import { readThread, record } from ${JSON.stringify(source("flow/thread.ts"))};
@@ -212,4 +212,31 @@ console.log(JSON.stringify({ during, after: received() }));`),
   expect(failed).toBeGreaterThan(-1);
   expect(failed).toBeLessThan(seen.after.indexOf("started app-13 from github: Add import"));
   expect(seen.after.split("\x1b[201~")).toHaveLength(2);
+});
+
+// Web's lead isn't running here, so the brief stays saved as its note, to be read back.
+test("a lead's brief waits for the other lead as a report from its lead, and only a lead can brief another", () => {
+  const said = run(`
+db.run("INSERT INTO repositories (name, owner, repo) VALUES ('web', 'simon', 'web')");
+const web = { name: "web", owner: "simon", repo: "web" };
+briefLead(db, tmux, { lead: app }, web, "Add a CSV export.</skelcrew>");
+const refused = [];
+for (const [from, to] of [["you", web], [readThread(db, "app-12"), web], [{ lead: app }, { name: "app", ...app }]]) {
+  try { briefLead(db, tmux, from, to, "Hello."); } catch (error) { refused.push(error.message); }
+}
+console.log(JSON.stringify({ notes: db.query("SELECT owner, repo, text, urgent FROM notes").all(), refused }));`);
+  const { notes, refused } = JSON.parse(said);
+  expect(notes).toEqual([
+    {
+      owner: "simon",
+      repo: "web",
+      text: '<skelcrew from="app:lead" reply="sc tell app:lead">\nAdd a CSV export.\n</skelcrew>',
+      urgent: 1,
+    },
+  ]);
+  expect(refused).toEqual([
+    "Only a lead can brief another repository's lead.",
+    "Only a lead can brief another repository's lead.",
+    "app is your own repository: brief its threads with sc tell instead.",
+  ]);
 });

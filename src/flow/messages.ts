@@ -510,6 +510,27 @@ export function messageLead(db: Database, sessions: string, from: Caller, text: 
   record(db, thread.folder, { told_lead: true }, `its builder told the lead: ${text}`);
 }
 
+// Saves a lead's brief for another repository's lead, to be typed in once that lead can take
+// it, as an urgent note. It is wrapped as from the sending lead, such as skelcrew:lead, with the
+// command that answers it, so the other lead takes it for another agent's report, never for the
+// human's say-so. Only a lead may brief, and never its own repository, which it plans itself.
+export function briefLead(
+  db: Database,
+  sessions: string,
+  from: Caller,
+  to: { name: string; owner: string; repo: string },
+  text: string,
+): void {
+  if (from === "you" || !("lead" in from))
+    throw new Error("Only a lead can brief another repository's lead.");
+  const { owner, repo } = from.lead;
+  if (owner === to.owner && repo === to.repo)
+    throw new Error(`${to.name} is your own repository: brief its threads with sc tell instead.`);
+  const sender = repositories(db).find((r) => r.owner === owner && r.repo === repo);
+  const name = `${sender?.name ?? `${owner}/${repo}`}:lead`;
+  noteForLead(db, sessions, to, wrapMessage(name, `sc tell ${name}`, text), null, true);
+}
+
 // Types the saved notes for a repository's lead into it, such as "started app-12 from github:
 // Fix the login redirect" or "app-12 needs you: its builder asked a question", and forgets each
 // once typed. The lead's chat is the human's too, so typing waits while the lead is busy, while
