@@ -213,7 +213,7 @@ export function readSettings<G extends Group>(
   const agentsFiles: File = {};
   if (repository && groups.some((group) => group === "rounds"))
     agentsFiles.max_rounds = repositoryRounds(repository, decidedBy([overrides])("max_rounds"));
-  // sc init asks without a repository, for the starter skelcrew.yaml it writes. The old
+  // sc init asks without a repository, for the role files it writes. The old
   // max_rounds in skelcrew.yaml is the default flow's rounds only until the repository has a
   // flow file, of any flow. From then on no flow takes it, though its file names no rounds: it
   // gets yours or the built-in round limit, and a bad max_rounds, left unread, doesn't stop it.

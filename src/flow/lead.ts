@@ -14,7 +14,7 @@ import {
   type Labels,
   startSession,
 } from "../agents/sessions.ts";
-import { approvedRef, markApproved } from "../approved-agents.ts";
+import { approvedAgents, approvedRef, markApproved } from "../approved-agents.ts";
 import { agentRole, leadMayArmMerges, repositoryCommands } from "../config.ts";
 import { Repository } from "../db.ts";
 import leadRules from "../defaults/roles/lead-rules.md" with { type: "text" };
@@ -176,9 +176,12 @@ export async function startLead(
     [session, harness.name, owner, repo],
   );
   // The lead reads the flows you approved at their ref, and starts with today's instructions, so
-  // it needs no note of them.
+  // it needs no note of them, nor of briefing another lead.
   markApproved(repository);
-  db.run("UPDATE repositories SET lead_flows = 1 WHERE owner = ? AND repo = ?", [owner, repo]);
+  db.run("UPDATE repositories SET lead_flows = 1, lead_briefs = 1 WHERE owner = ? AND repo = ?", [
+    owner,
+    repo,
+  ]);
   const { argv, env } = await harness.start({
     name: lead.name,
     socket: lead.socket,
@@ -198,6 +201,8 @@ export async function startLead(
       repositoryCommands(repository),
       leadMayArmMerges(),
     ),
+    // Its skills come from the .agents/ you approved, as its role does.
+    skills: { owner, repo, agents: approvedAgents(repository) },
     ...(resume ? { resume } : { sessionId: session }),
   });
   // The session stays when the lead exits, so closeExitedLeads can tell exiting it from a crash.

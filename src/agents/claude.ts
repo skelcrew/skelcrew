@@ -16,6 +16,7 @@ import {
 import { basename, join } from "node:path";
 import { z } from "zod";
 import { claudeTokenFile, dataDir } from "../paths.ts";
+import { copySkills, type SkillsFrom } from "../skills.ts";
 import { editing, type Progress, stepText, toolWords } from "./progress.ts";
 import { resetTime } from "./reset.ts";
 import { everyRepository, filterEnv, refuseCredentials, ro, rw, sandboxArgs } from "./sandbox.ts";
@@ -244,7 +245,8 @@ function skipBypassWarning(config: string): void {
 // clone, works there; a lead works in its own `folder`. Each sees nothing else but `origin`,
 // Skelcrew's clone of its repository, read-only, and a lead also `repositories`, the folder of
 // every repository's clone, read-only. Each session keeps its own transcripts. It logs in with
-// Skelcrew's agent token, while your other credentials stay hidden.
+// Skelcrew's agent token, while your other credentials stay hidden. The repository's skills, from
+// the .agents/ `skills` names, go into the config folder's skills/, where Claude Code finds them.
 function startCommand(given: {
   name: string;
   socket: string;
@@ -257,6 +259,7 @@ function startCommand(given: {
   system?: string;
   resume?: string;
   sessionId?: string;
+  skills?: SkillsFrom;
   env?: Record<string, string | undefined>;
 }): { argv: string[]; env: Record<string, string> } {
   const {
@@ -271,6 +274,7 @@ function startCommand(given: {
     system,
     resume,
     sessionId,
+    skills,
     env = process.env,
   } = given;
   // Refuse what would start the wrong agent or write outside Skelcrew's folders.
@@ -318,6 +322,7 @@ function startCommand(given: {
 
   trustFolder(config, cwd);
   skipBypassWarning(config);
+  if (skills) copySkills(skills, join(config, "skills"), home);
   // The instructions go in a file of the session's own, not on the command line. tmux refuses
   // a start command past about 16 KB, and the lead's instructions alone came close.
   if (system) writeFileSync(instructions, system);
@@ -368,14 +373,17 @@ function startCommand(given: {
 
 // Returns Claude Code's review command and a config folder of the review's own, so a review
 // leaves no transcript behind. The command reads the review's prompt on stdin and holds the
-// answer to `schema`.
+// answer to `schema`. The repository's skills go into that folder's skills/, where Claude Code
+// finds them, so none are left for the prompt to list. Claude Code never loads skills from
+// .agents/, so the branch's own reach it only as files to review.
 function reviewCommand(given: {
   home: string;
   folder: string;
   model?: string | undefined;
   schema: string;
+  skills?: SkillsFrom;
 }) {
-  const { home, folder, model = defaultModel, schema } = given;
+  const { home, folder, model = defaultModel, schema, skills } = given;
   const token = claudeToken(home);
   // One turn in print mode, answering as JSON held to the schema, saving no conversation.
   const command = ["claude", "-p", "--model", model, "--output-format", "json"];
@@ -385,8 +393,9 @@ function reviewCommand(given: {
   const config = join(folder, "claude");
   mkdirSync(config);
   skipBypassWarning(config);
+  if (skills) copySkills(skills, join(config, "skills"), home);
   const env = { CLAUDE_CONFIG_DIR: config, CLAUDE_CODE_OAUTH_TOKEN: token };
-  return { command, mounts: [], env };
+  return { command, mounts: [], env, skills: [] };
 }
 
 // Returns the reviewer's answer from what Claude Code printed, for the reviewer to check

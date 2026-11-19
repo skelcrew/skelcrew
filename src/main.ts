@@ -275,9 +275,9 @@ async function repoCommand(args: string[], json: boolean): Promise<void> {
 }
 
 // Runs sc install, sc add, sc remove, sc update, sc setup and sc plugins. -g marks your personal
-// plugins, the only kind there is so far: a repository's own plugins come with skelcrew.lock, so
-// these refuse without it rather than act on your files instead. --json changes only what sc
-// plugins prints.
+// plugins. sc add without it adds a plugin to the repository you are in. sc remove and sc update
+// without it would change a repository's plugins, which they can't yet, so they refuse rather
+// than act on your files instead. --json changes only what sc plugins prints.
 async function pluginCommand(args: string[], json: boolean): Promise<void> {
   const [command, ...rest] = args;
   const { addPlugin, listPlugins, removeYourPlugin, setUpPlugin, updatePlugins } = await import(
@@ -307,15 +307,23 @@ async function pluginCommand(args: string[], json: boolean): Promise<void> {
     if (!install(options.get("--from"))) process.exitCode = 1;
     return;
   }
-  if ((command === "add" || command === "remove" || command === "update") && !yours)
+  if (command === "add" && name && more.length === 0 && !yours) {
+    const { addRepositoryPlugin } = await import("./plugins/repository.ts");
+    addRepositoryPlugin(name);
+    return;
+  }
+  if ((command === "remove" || command === "update") && !yours)
     throw new Error(
-      `sc ${command} without -g is for a repository's plugins, which Skelcrew doesn't have yet. sc ${command} -g is for your own`,
+      `sc ${command} without -g is for a repository's plugins, which Skelcrew can't ${command} yet. sc ${command} -g is for your own`,
     );
   if (command === "add" && name && more.length === 0) {
     addPlugin(name);
     return;
   }
-  if (command === "remove" && name && more.length === 0) return removeYourPlugin(name);
+  if (command === "remove" && name && more.length === 0) {
+    const { repositoryNeeds } = await import("./plugins/repository.ts");
+    return removeYourPlugin(name, repositoryNeeds(true));
+  }
   if (command === "update" && more.length === 0) return updatePlugins(name);
   // sc setup sets the plugin up for the checkout you are in, as sc add does.
   if (command === "setup" && rest[0] && rest.length === 1) {
@@ -324,7 +332,13 @@ async function pluginCommand(args: string[], json: boolean): Promise<void> {
     console.log(`Ran ${rest[0]}'s setup.`);
     return;
   }
-  if (command === "plugins" && rest.length === 0) return listPlugins(json);
+  if (command === "plugins" && rest.length === 0) {
+    const { repositoryNeeds } = await import("./plugins/repository.ts");
+    // What any repository names stays, so sc plugins doesn't say sc install removes it.
+    const anywhere: string[] = [];
+    const needed = repositoryNeeds(true, anywhere).map((need) => need.source);
+    return listPlugins(json, repositoryNeeds(), anywhere.length > 0 ? null : needed);
+  }
   usage(command);
 }
 
@@ -395,9 +409,11 @@ async function agentCommand(args: string[]): Promise<void> {
   usage(command);
 }
 
-// Prints the threads, or one repository's, for sc ps.
+// Prints the threads, or one repository's, for sc ps. Below them goes a line for each repository
+// that needs you to run sc install, as its tasks can't start until then. --json gives the threads
+// alone, as tools read them.
 async function psCommand(args: string[], json: boolean): Promise<void> {
-  const { askForThreads } = await import("./client.ts");
+  const { askForRepositories, askForThreads } = await import("./client.ts");
   const { printThreads } = await import("./flow/list.ts");
   // Done threads pile up forever and would bury the live ones, so only --all shows them.
   const all = args.includes("--all");
@@ -406,6 +422,14 @@ async function psCommand(args: string[], json: boolean): Promise<void> {
   if (rest.length > 2) usage("ps");
   const rows = await askForThreads(rest[1]);
   printThreads(all ? rows : rows.filter((row) => row.status !== "done"), json);
+  if (json) return;
+  const waiting = (await askForRepositories()).filter(
+    (r) => r.installWaiting && (rest[1] === undefined || [r.name, r.repository].includes(rest[1])),
+  );
+  for (const r of waiting)
+    console.log(
+      `${r.name} needs you: its plugins aren't all installed here, so its tasks wait. Run sc install.`,
+    );
 }
 
 // Prints the tasks, or one repository's, for sc ls and its short name sc issue ls. Merged and
@@ -713,16 +737,47 @@ async function threadCommand(args: string[]): Promise<void> {
   usage(command);
 }
 
-// Types a message from the lead into a builder, or from a builder into the lead. The daemon
-// decides who may tell whom, from the socket the call comes in on. In your terminal it only
-// says how to type to a builder yourself.
+// Types a message from the lead into a builder, from a builder into the lead, or from a lead
+// into another repository's lead, as sc tell lead <repo> "<text>". A brief can be long, so with
+// - as its text it comes on stdin instead, which needs no shell quoting. A builder's sc tell lead
+// "<text>" has one word after lead, so only a second word makes a brief, and a builder's message
+// never waits on stdin. --asked-file gives the human's words with a brief, in a file the lead
+// wrote, as sc merge --when-ready takes them. The daemon decides who may tell whom, from the
+// socket the call comes in on. In your terminal it only says how to type to a builder yourself.
 async function tellCommand(args: string[]): Promise<void> {
-  const [command, to, text, ...rest] = args;
-  const { tellOn, tellTheLead } = await import("./client.ts");
+  const command = args[0];
+  const { briefOtherLead, tellOn, tellTheLead } = await import("./client.ts");
   if (process.env.SKELCREW_SANDBOX !== "1")
     throw new Error(
       "sc tell is for the lead and builders. To type to a builder, pick it in the sidebar, or press Enter on it in sc --list.",
     );
+  // --asked-file, at most once and anywhere, then the words left.
+  const flag = args.indexOf("--asked-file");
+  const askedFile = flag < 0 ? undefined : args[flag + 1];
+  if (flag >= 0 && (askedFile === undefined || args.lastIndexOf("--asked-file") !== flag))
+    usage(command);
+  const [, to, text, ...rest] = flag < 0 ? args : args.toSpliced(flag, 2);
+  const words = rest[0];
+  if (to === "lead" && text !== undefined && words !== undefined && rest.length === 1) {
+    const brief = words === "-" ? await Bun.stdin.text() : words;
+    if (!brief.trim())
+      throw new Error(`sc tell lead ${text} needs the brief, as words or on stdin`);
+    // The human's words come in a file the lead wrote with its own file tool, so they never
+    // pass through a shell, which could run or change them. They are read unchanged.
+    let asked: string | undefined;
+    if (askedFile !== undefined) {
+      const { readFileSync } = await import("node:fs");
+      asked = readFileSync(askedFile, "utf8");
+      if (!asked.trim())
+        throw new Error(
+          `${askedFile} is empty: write the human's words in it, exactly as they wrote them`,
+        );
+    }
+    const name = await briefOtherLead(text, brief, asked);
+    console.log(`Telling ${name}'s lead. Skelcrew types it in once that lead is idle.`);
+    return;
+  }
+  if (askedFile !== undefined) usage(command);
   const task = to === "lead" ? undefined : splitThreadName(to);
   if (to === "lead" && text && rest.length === 0) {
     await tellTheLead(text);
