@@ -121,8 +121,8 @@ test("a row shows its armed merge when ready and what it waits on, and a ready o
   sql(`UPDATE threads SET merge_plan = 'armed', merge_waits = 'its checks' WHERE folder = 'app-7';
 UPDATE threads SET merge_plan = 'armed' WHERE folder = 'app-14';`);
   const says = (name: string) => rows().find((row) => row.name === name)?.says;
-  expect(says("app-7")).toBe("working · claude · 5m · merge when ready · waits on its checks");
-  expect(says("app-14")).toBe("#41 · approved · CI passed · merge when ready");
+  expect(says("app-7")).toBe("working · claude · 5m · merges when ready · waiting on its checks");
+  expect(says("app-14")).toBe("#41 · approved · CI passed · merges when ready");
 });
 
 test("a row counts the messages waiting for its builder, so a stuck delivery shows", () => {

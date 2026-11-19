@@ -165,7 +165,7 @@ function prGroups(db: Database, open: Open, threads: Known[]): Group[] {
     else if (pr.head === null)
       action = {
         key: "m",
-        refused: `${named} needs a newer forge plugin to merge here: run sc plugin update`,
+        refused: `${named} needs a newer forge plugin to merge here: run sc update -g`,
       };
     else
       action = {
@@ -215,7 +215,7 @@ export function changedAt(at: number, now: number): string {
 // or failed, then `Ready to merge`, the approved ones, which wait only for your merge, then
 // `Working`, every other one working or waiting, then `Stopped`. Each ends with
 // its word, harness, its issue and PR if it has them, such as #12 #31, when it last changed,
-// and its merge when ready if it has one, such as "merge when ready · waits on its checks". A
+// and its merge when ready if it has one, such as "merges when ready · waiting on its checks". A
 // stopped thread's agent isn't running, so its row is dim.
 function threadGroups(threads: Known[], now: number): Group[] {
   const rows = threads.map((open) => {

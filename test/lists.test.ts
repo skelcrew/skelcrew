@@ -258,7 +258,7 @@ ${threadSql({ task: "14", pr: 37, review_round: 1, verdict: "changes" })}`;
     ["app#37", "app#36", "app#35", "app#34"],
   ]);
   expect(actions(prs)).toEqual([
-    { key: "m", refused: "app#33 needs a newer forge plugin to merge here: run sc plugin update" },
+    { key: "m", refused: "app#33 needs a newer forge plugin to merge here: run sc update -g" },
     {
       key: "m",
       ask: "Merge app#32 into next? y/n",
@@ -353,9 +353,9 @@ ${threadSql({ task: "13", status: "failed", merge_plan: "armed", merge_waits: "i
 ${threadSql({ task: "14", status: "waiting", merge_plan: "armed" })}`;
   const rows = after(sql).threads.flatMap((group) => group.rows);
   expect(rows.map((row) => [row.name, row.ends.at(-1)?.[0]])).toEqual([
-    ["app-13", "merge when ready · waits on its thread, which failed"],
-    ["app-14", "merge when ready"],
-    ["app-12", "merge when ready · waits on its checks"],
+    ["app-13", "merges when ready · waiting on its thread, which failed"],
+    ["app-14", "merges when ready"],
+    ["app-12", "merges when ready · waiting on its checks"],
   ]);
 });
 

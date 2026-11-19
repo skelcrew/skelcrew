@@ -355,6 +355,7 @@ console.log(JSON.stringify(claude.start({ name: "lead", ...${JSON.stringify(lead
         agentSettings,
         "--resume",
         "abc-123",
+        "--",
         "Fix the bug",
         "CLAUDE_CODE_DISABLE_AGENT_VIEW=1",
         "CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false",
@@ -460,6 +461,25 @@ describe("starting Claude Code", () => {
     symlinkSync(join(home, "elsewhere"), config);
     expect(start).toThrow("link");
     expect(readdirSync(join(home, "elsewhere"))).toEqual([]);
+  });
+
+  // Claude Code reads a first message that starts with dashes, such as a task titled
+  // "--from", as an option it doesn't know, and exits before the builder does anything.
+  test("passes the first message after --, so it is never read as an option", () => {
+    repository();
+    saveToken();
+    const prompt = "--from\n\nskelcrew/298-the-list";
+    const { argv } = claude.start({
+      ...lead(),
+      name: "app-t3",
+      socket: socketPath,
+      model: "opus",
+      prompt,
+      sessionId: "6f1c2a8e-3b4d-4e5f-8a9b-0c1d2e3f4a5b",
+      env: outside(),
+    });
+    expect(argv.slice(-2)).toEqual(["--", prompt]);
+    expect(argv.filter((a) => a === prompt)).toHaveLength(1);
   });
 
   // Claude Code ignores this setting when it comes only from --settings, and then runs in
