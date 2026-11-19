@@ -391,6 +391,10 @@ async function reviewNow(given: {
     // view, as no git in the sandbox holds them, and a lock left there would stop the
     // reviewer's own git. A Mac's copy keeps them for good otherwise. The builder's own stay.
     // Every other step must work, or the reviewer never starts.
+    // Last, the branch's .agents/skills/ goes from the view, as Codex loads the skills it finds
+    // there on its own, and a builder must not steer its own reviewer. The reviewer gets the
+    // approved skills instead, and still reads the branch's through git, in the diff. An
+    // .agents that is a link goes whole, as it could lead to skills elsewhere in the view.
     const index = join(folder, "index");
     const checkout = [
       'index="$(git rev-parse --git-dir)/index"',
@@ -400,6 +404,7 @@ async function reviewNow(given: {
       'cat "$1" > "$index"',
       'printf "%s\\n" "$0" > "$(git rev-parse --git-path HEAD)"',
       'rm -f "$(git rev-parse --git-path index.lock)" "$(git rev-parse --git-path HEAD.lock)"',
+      "{ if test -L .agents; then rm -f .agents; else rm -rf .agents/skills; fi; }",
       "shift",
       'exec "$@"',
     ].join(" && ");
