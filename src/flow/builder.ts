@@ -541,6 +541,8 @@ export async function startBuilder(db: Database, sessions: string, thread: Threa
       repositoryRole(flowRoles(thread).build, thread).instructions,
       repositoryCommands(thread),
     ),
+    // Its skills come from the same .agents/ as its role.
+    skills: thread,
     ...start,
   });
   await startOnHost(db, thread, { host, name: hostName }, { folder: clone, command: argv, env });

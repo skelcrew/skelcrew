@@ -191,7 +191,7 @@ A skill is a folder with a `SKILL.md`, in the format Claude Code reads: a name a
 Skills come from Skelcrew's clone of the repository, at the `.agents/` you approved, and are copied in as a session starts. They go only into a folder that belongs to one session, never one that sessions share, so an agent that edits its copy changes only its own session.
 
 - **Claude Code.** Into the `skills/` folder of the session's own config folder, in `~/.local/share/skelcrew/claude/`. Every Claude Code session has one, reviews included.
-- **Codex.** A Codex lead or builder has a `CODEX_HOME` of its own, and its skills go into `skills/` there. Reviews share Skelcrew's `CODEX_HOME`, whose `skills/` stays read-only and empty, since anything there would steer every later review in every repository. So a Codex review gets them the third way, with paths into the thread's clone.
+- **Codex.** A Codex lead or builder has a `CODEX_HOME` of its own, and its skills go into `skills/` there. Reviews share Skelcrew's `CODEX_HOME`, whose `skills/` stays read-only and empty, since anything there would steer every later review in every repository. So a Codex review gets them the third way: they are copied into the review's own folder, and its instructions list those paths. Never the clone's `.agents/skills/`, which is the builder's branch, as a builder must not steer its own reviewer.
 - **Any other harness**, or one with no folder of one session's own: Skelcrew adds one line per skill to the role's instructions, with its name, description and the path of its `SKILL.md`, so the agent reads it when it needs it.
 
 Skills a repository keeps in `.claude/skills/` already reach Claude Code from the clone, and Skelcrew leaves them alone.
