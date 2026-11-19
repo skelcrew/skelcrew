@@ -291,7 +291,10 @@ function viewThreads(db: Database): void {
     ]),
     ["turn_ended", `${turnEnded} AS turn_ended`],
   ]);
-  // The view the database has keeps its order, and the columns it lacks follow.
+  // The view the database has keeps its order, and the columns it lacks follow. That holds for
+  // a view an earlier release made in another order too. Putting an older order back would
+  // fix no screen: one that cached the older order stopped at its first bad value, as a throw
+  // ends the sidebar. It would break every screen and daemon started since, which read this one.
   const had = db
     .query("SELECT name FROM pragma_table_info('task_threads')")
     .all()
