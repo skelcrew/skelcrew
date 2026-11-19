@@ -176,20 +176,29 @@ test("the help names --version", () => {
 test("sc runs from a checkout whose folder it may read files in but not list, as in a Mac's sandbox", () => {
   // A copy of the checkout's parts sc runs from, as the sandbox shows them to an agent.
   const checkout = mkdtempSync(join(tmpdir(), "skelcrew-unlisted-"));
+  const cache = mkdtempSync(join(tmpdir(), "skelcrew-bun-cache-"));
   try {
     cpSync(source(), join(checkout, "src"), { recursive: true });
     cpSync(join(source(), "..", "package.json"), join(checkout, "package.json"));
     symlinkSync(join(source(), "..", "node_modules"), join(checkout, "node_modules"));
     // Its files can be opened by name, but the folder can't be listed.
     chmodSync(checkout, 0o311);
+    // With no home, Bun keeps its cache in node_modules/.cache and, on a slow disk such as a CI
+    // runner's, warns about it on stderr. A cache folder of its own keeps that warning out, so
+    // stderr shows only what sc itself says.
     const run = Bun.spawnSync([process.execPath, join(checkout, "src", "main.ts"), "--version"], {
-      env: { PATH: process.env.PATH ?? "", HOME: "/nonexistent" },
+      env: {
+        PATH: process.env.PATH ?? "",
+        HOME: "/nonexistent",
+        BUN_INSTALL_CACHE_DIR: join(cache, "bun"),
+      },
     });
     expect(run.stderr.toString()).toBe("");
     expect(run.stdout.toString()).toStartWith("skelcrew ");
   } finally {
     chmodSync(checkout, 0o755);
     rmSync(checkout, { recursive: true, force: true });
+    rmSync(cache, { recursive: true, force: true });
   }
 });
 

@@ -499,21 +499,28 @@ async function prCommand(args: string[], json: boolean): Promise<void> {
   usage(command);
 }
 
-// Arms a merge when ready, or cancels one, for sc merge. The thread is named by its task, such
-// as app-12, or by its PR's number, such as #7, in the repository of the checkout sc runs in or
-// the one --from names. Arming merges a PR later with nobody watching, so it asks you first at
-// your terminal, naming the PR, and refuses with no terminal, as a script has none. A lead you
-// let arm merges has no terminal either: it gives --asked-file, a file holding your words,
-// instead, and the daemon checks that it may, by the socket the call comes in on, and refuses
-// every other agent.
-// Cancelling is always safe, so it asks nothing.
+// Arms a merge when ready or without Skelcrew's approval, or cancels one, for sc merge. The thread
+// is named by its task, such as app-12, or by its PR's number, such as #7, in the repository of the
+// checkout sc runs in or the one --from names. Arming merges a PR later with nobody watching, so it
+// asks you first at your terminal, naming the PR, and when skipping the review what it still asks
+// for. It refuses with no terminal, as a script has none. A lead you let arm merges has no terminal
+// either: it gives --asked-file, a file holding your words, instead, and the daemon checks that it
+// may, by the socket the call comes in on, and refuses every other agent. Cancelling is always
+// safe, so it asks nothing.
 async function mergeCommand(args: string[]): Promise<void> {
   const [, how, named, ...rest] = args;
   const { planMerge, previewMerge } = await import("./client.ts");
+  const commands = {
+    "--when-ready": "merge when ready",
+    "--skip-review": "merge skip review",
+    "--cancel": "merge cancel",
+  } as const;
   const command =
-    how === "--when-ready" ? "merge when ready" : how === "--cancel" ? "merge cancel" : undefined;
-  // --from and --asked-file, each at most once, in either order. --asked-file arms, so only
-  // with --when-ready.
+    how === "--when-ready" || how === "--skip-review" || how === "--cancel"
+      ? commands[how]
+      : undefined;
+  // --from and --asked-file, each at most once, in either order. --asked-file arms, so not
+  // with --cancel.
   const options = new Map<string, string>();
   for (let i = 0; i < rest.length; i += 2) {
     const [flag = "", value] = [rest[i], rest[i + 1]];
@@ -523,7 +530,7 @@ async function mergeCommand(args: string[]): Promise<void> {
   const given = options.get("--from");
   const asked = options.get("--asked-file");
   if (!command || named === undefined) usage("merge");
-  if (asked !== undefined && command !== "merge when ready") usage("merge");
+  if (asked !== undefined && command === "merge cancel") usage("merge");
   // The thread, by its PR's number or by its task.
   const number = named.match(/^#?(\d+)$/)?.[1];
   const task = splitThreadName(named);
@@ -546,39 +553,43 @@ async function mergeCommand(args: string[]): Promise<void> {
     console.log(await planMerge(command, { ...which, asked: words }));
     return;
   }
-  if (command === "merge when ready") {
+  if (command !== "merge cancel") {
     if (!process.stdin.isTTY)
-      throw new Error("sc merge --when-ready asks you first, so run it at your own terminal");
-    // The title comes from the tracker, so its control codes go before it reaches your terminal.
-    const { thread, pr, title, started, merging } = await previewMerge(which);
+      throw new Error(`sc merge ${how} asks you first, so run it at your own terminal`);
+    const skip = command === "merge skip review";
+    const { thread, pr, title, started, merging, head, asks, agents } = await previewMerge(which);
     if (pr === null) throw new Error(`${thread} has no PR yet: ask again once it opens one`);
     // Asking again about a merge already on its way could only mislead: a "no" would leave it
     // merging while sounding like it stopped. So it says so, and how to stop it.
-    const already = (number: number | null, name: string) =>
-      `Already merging #${number} as soon as it's approved and green. sc merge --cancel ${name} stops it.`;
-    if (merging) {
-      console.log(already(pr, thread));
+    if (merging !== null) {
+      console.log(merging);
       return;
     }
+    if (skip && head === null)
+      throw new Error(`Skelcrew hasn't seen #${pr}'s newest commit yet: ask again shortly`);
+    // The title and findings come from the tracker and the reviewer, so their control codes go
+    // before they reach your terminal.
     const { removeControlCodes } = await import("./screen/look.ts");
     const shown = title ? ` ${removeControlCodes(title)}` : "";
-    // Only y arms it. Anything else, a bare Enter, which Bun's prompt gives as null, Y or yes
-    // included, arms nothing.
-    const answer = prompt(`Merge #${pr} (${thread}${shown}) when it's approved and green? [y/N]`);
+    const question = skip
+      ? `Merge #${pr} (${thread}${shown}) without Skelcrew's approval? CI must still pass. ${removeControlCodes(asks)}`
+      : `Merge #${pr} (${thread}${shown}) when it's approved and green?`;
+    // A PR that changes .agents/ says so, as the merge approves nothing there. Only y arms it.
+    // Anything else, a bare Enter, which Bun's prompt gives as null, Y or yes included, arms
+    // nothing.
+    const answer = prompt([question, agents, "[y/N]"].filter(Boolean).join(" "));
     // Another terminal or the lead may have asked for the merge while you read the question,
     // so the daemon is asked again before saying it won't merge. The thread may also have been
     // started over meanwhile, with another PR, so the answer names the one it has now.
     if (answer !== "y") {
       const now = await previewMerge(which);
-      console.log(
-        now.merging
-          ? already(now.pr, now.thread)
-          : `Not merging: ${now.thread} waits for you to merge it.`,
-      );
+      console.log(now.merging ?? `Not merging: ${now.thread} waits for you to merge it.`);
       return;
     }
-    // Armed only if the daemon still has the PR and thread you said y to.
-    console.log(await planMerge(command, { ...which, seen: { pr, started } }));
+    // Armed only if the daemon still has the PR, thread and, when skipping the review, head you
+    // said y to.
+    const seen = { pr, started, ...(skip && head !== null ? { head } : {}) };
+    console.log(await planMerge(command, { ...which, seen }));
     return;
   }
   console.log(await planMerge(command, which));
