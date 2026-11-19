@@ -2333,7 +2333,7 @@ exec ${bwrap} "$@"`,
       expect(existsSync(ran)).toBe(false);
       // The thread's log and the daemon's keep your words exactly. The lead tells you itself,
       // so Skelcrew types it no note of its own, which would say it twice in your conversation.
-      const why = `the lead armed a merge when ready on #7, as the human asked: ${JSON.stringify(words)}`;
+      const why = `the lead asked to merge #7 once it's approved and green, as the human asked: ${JSON.stringify(words)}`;
       // Each line of the thread's log is JSON, so its quotes are escaped there.
       expect(read(join(data(), "threads", "app-12.log"))).toContain(`"why":${JSON.stringify(why)}`);
       await until(() => read(daemonLog()).includes(`app-12: ${why}`));

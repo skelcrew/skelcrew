@@ -93,8 +93,8 @@ export function armMerge(
   // still fit on one line of the daemon's log.
   const why =
     asked === null
-      ? "you armed a merge when ready"
-      : `the lead armed a merge when ready on #${thread.pr}, as the human asked: ${JSON.stringify(asked)}`;
+      ? `you asked to merge #${thread.pr} once it's approved and green`
+      : `the lead asked to merge #${thread.pr} once it's approved and green, as the human asked: ${JSON.stringify(asked)}`;
   record(db, thread.folder, plan, why);
   console.log(`${name}: ${why}`);
   // The lead can't see your terminal, so it hears of a merge you asked for there. One it asked
