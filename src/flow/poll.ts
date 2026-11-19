@@ -470,11 +470,15 @@ async function pollRepository(
         ...(jobs.includes("forge") ? ["pr" as const] : []),
       ];
       const items = answer.items.filter((item) => kinds.includes(item.kind));
-      saveItems(db, owner, repo, items, next === null ? kinds : []);
       // The repository keeps that CI ran on one of its PRs, as that PR may close before a merge
-      // asks, and a merge must wait for CI's checks wherever CI has run.
-      if (items.some((item) => item.kind === "pr" && ciState(item) !== null))
-        db.run("UPDATE repositories SET ci_seen = 1 WHERE owner = ? AND repo = ?", [owner, repo]);
+      // asks, and a merge must wait for CI's checks wherever CI has run. It is saved with the
+      // copy, in one transaction, so a daemon that stops between the two never keeps the PR
+      // without the repository's mark, which the next poll could drop with the closed PR.
+      db.transaction(() => {
+        saveItems(db, owner, repo, items, next === null ? kinds : []);
+        if (items.some((item) => item.kind === "pr" && ciState(item) !== null))
+          db.run("UPDATE repositories SET ci_seen = 1 WHERE owner = ? AND repo = ?", [owner, repo]);
+      })();
       nexts.set(plugin, answer.next);
     }
   } finally {
