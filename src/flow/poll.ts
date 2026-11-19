@@ -21,7 +21,7 @@ import { quietly } from "../run.ts";
 import { errorText } from "../say.ts";
 import { assignIssue, unassignIssue } from "./assign.ts";
 import { baseOf, startThread } from "./builder.ts";
-import { type Item, openTasks, prOf, saveItems } from "./copy.ts";
+import { type Item, openPrs, openTasks, prOf, saveItems } from "./copy.ts";
 import {
   allGreen,
   ciState,
@@ -31,7 +31,7 @@ import {
   type PullRequest,
 } from "./decide.ts";
 import { endThread, removing, tellBuilder, tellingEvents } from "./events.ts";
-import { fetchInto, onRemote } from "./git.ts";
+import { fetchCommit, fetchInto, onRemote } from "./git.ts";
 import { approvedFlowsTold, leadOf } from "./lead.ts";
 import { mergeIfReady } from "./merging.ts";
 import { briefsNote, noteForLead, skelcrewNoteForLead, typeLeadNotes } from "./messages.ts";
@@ -251,6 +251,71 @@ async function actOnPr(
   }
 }
 
+// Saves, for each open PR in Skelcrew's copy, whether its changes touch .agents/ at its head, so
+// the merge confirms can say so while reading only the database. Merging approves no change
+// there. It looks again at every poll, from where the head left its base now, as retargeting
+// the PR or moving its base can change that with the same head. That is git in Skelcrew's clone
+// alone, unless the base isn't the default branch, or this poll couldn't bring the default
+// branch up to date (`refreshed`), or the head isn't in the clone yet, such as someone else's
+// push or a PR from a fork: those are fetched, the head by its commit, as a fork's branch isn't
+// on the repository's remote. A PR it can't check, such as while the remote is out of reach,
+// loses what was saved for it, so its confirm says it isn't checked, and is logged once per
+// head.
+async function saveAgentsChanges(
+  db: Database,
+  repository: Repository,
+  refreshed: boolean,
+): Promise<void> {
+  const { owner, repo } = repository;
+  const skelcrewClone = cloneDir(owner, repo);
+  const git = (...args: string[]) => quietly(["git", "-C", skelcrewClone, ...args]);
+  const prs = openPrs(db, owner, repo);
+  // PRs that left the copy need nothing saved.
+  const open = prs.map((pr) => pr.id);
+  db.run(
+    `DELETE FROM pr_agents WHERE owner = ? AND repo = ?
+      AND pr NOT IN (SELECT value FROM json_each(?))`,
+    [owner, repo, JSON.stringify(open)],
+  );
+  // The clone is on the default branch, which this poll brought up to date unless it failed. A
+  // stale one could hide a change to .agents/ the PR now brings, so it is fetched then.
+  const onDefault = (await git("symbolic-ref", "--short", "HEAD")).out.trim();
+  for (const pr of prs) {
+    if (pr.head === null) continue;
+    const forget = () =>
+      db.run("DELETE FROM pr_agents WHERE owner = ? AND repo = ? AND pr = ?", [owner, repo, pr.id]);
+    try {
+      let base = "HEAD";
+      if (!refreshed || pr.base !== onDefault) {
+        base = `refs/skelcrew/pr-bases/${pr.id}`;
+        await fetchInto(db, repository, skelcrewClone, pr.base, base);
+      }
+      if (!(await git("cat-file", "-e", `${pr.head}^{commit}`)).ok)
+        await fetchCommit(db, repository, skelcrewClone, pr.head, `refs/skelcrew/prs/${pr.id}`);
+      // The PR's own changes are those since the head left its base, which is what a merge brings.
+      const from = await git("merge-base", base, pr.head);
+      if (!from.ok) throw new Error(`git merge-base failed: ${from.err.trim()}`);
+      const files = await git("diff", "--name-only", from.out.trim(), pr.head, "--", ".agents");
+      if (!files.ok) throw new Error(`git diff failed: ${files.err.trim()}`);
+      db.run(
+        `INSERT OR REPLACE INTO pr_agents (owner, repo, pr, head, base, changed)
+          VALUES (?, ?, ?, ?, ?, ?)`,
+        [owner, repo, pr.id, pr.head, pr.base, files.out.trim() === "" ? 0 : 1],
+      );
+    } catch (error) {
+      forget();
+      const which = `${owner}/${repo}#${pr.id} at ${pr.head}`;
+      if (uncheckable.has(which)) continue;
+      uncheckable.add(which);
+      console.log(`couldn't tell whether ${which} changes .agents/: ${errorText(error)}`);
+    }
+  }
+}
+
+// The PRs, each at a head, that saveAgentsChanges couldn't check and logged, so a PR from a fork
+// isn't logged at every poll.
+const uncheckable = new Set<string>();
+
 // Ends a thread of a repository with no forge once its branch is done with: when merging it
 // into its base would change nothing, which a merge, a squash and a rebase all leave, or when
 // it is gone from the remote. Only a branch Skelcrew has pushed counts, as before that it isn't on
@@ -382,6 +447,8 @@ async function pollRepository(
   passed: Set<string>,
 ): Promise<void> {
   const { owner, repo } = repository;
+  // Whether Skelcrew's clone's default branch is up to date with the remote as of this poll.
+  let refreshed = false;
   // Ask each plugin in turn, telling a forge which PRs Skelcrew watches: those of this
   // repository's threads. A plugin's answer only updates the kinds its jobs cover. A first
   // poll, with no `next`, replaces those kinds in the copy outright, so what closed while the
@@ -411,7 +478,10 @@ async function pollRepository(
     // it: a remote that can't be cloned would otherwise be tried at every poll.
     if (existsSync(cloneDir(owner, repo))) {
       await refreshClone(db, repository)
-        .then(() => noteUnapprovedAgents(db, sessions, repository))
+        .then(() => {
+          refreshed = true;
+          noteUnapprovedAgents(db, sessions, repository);
+        })
         .catch((error) =>
           console.log(`couldn't update Skelcrew's clone of ${owner}/${repo}: ${errorText(error)}`),
         );
@@ -428,6 +498,10 @@ async function pollRepository(
       );
     }
   }
+  // With the copy and the clone up to date, find which open PRs change .agents/, for the merge
+  // confirms. A repository with no clone yet has nothing to look in.
+  if (forgeOf(db, repository) !== null && existsSync(cloneDir(owner, repo)))
+    await saveAgentsChanges(db, repository, refreshed);
   // With the copy up to date, start labeled tasks, then act on each thread: by its PR with a
   // forge, or by its branch without one, or without a PR.
   if (trackerOf(db, repository) !== null)
