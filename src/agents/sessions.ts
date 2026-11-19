@@ -437,9 +437,10 @@ export function listTmuxSessions(
 }
 
 // Gives a session on a plugin's host a new title, such as when the lead gives its thread a short
-// title, so the host's own apps show the new title in place of the one its labels gave.
+// title, so the host's own apps show the new title in place of the one its labels gave. Its
+// answer isn't read, so a host that renames and prints nothing has done it.
 export async function renameSession(host: PluginHost, id: string, title: string): Promise<void> {
-  await askHost(host, { ask: "rename", id, title }, z.unknown());
+  await askHost(host, { ask: "rename", id, title }, z.unknown(), { unread: true });
 }
 
 // Returns the screen the agent in the named session shows now, as text, such as to see whether

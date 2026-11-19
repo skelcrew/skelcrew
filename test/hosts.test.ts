@@ -1083,3 +1083,22 @@ process.exit(0);`,
   // The second waited for the first to finish, so the host ends on the latest title.
   expect(said).toBe("1\nfirst second\n");
 }, 40_000);
+
+test("a rename the host does but answers with nothing counts as done", () => {
+  const fake = join(home, ".config", "skelcrew", "plugins", "fake");
+  const said = runWithFakeHost(
+    "sessions",
+    `const fs = require("node:fs");
+fs.mkdirSync(${JSON.stringify(fake)}, { recursive: true });
+fs.writeFileSync(${JSON.stringify(join(fake, "garble-rename"))}, "");
+record(db, "app-12", { short: "login redirect" });
+await Bun.sleep(1000);
+process.exit(0);`,
+    { host: "fake", host_id: "fake-app-12", title: "Fix the login redirect" },
+  );
+  const renames = readFileSync(join(fake, "asked"), "utf8")
+    .split("\n")
+    .filter((line) => line.includes('"rename"'));
+  expect(renames.length).toBe(1);
+  expect(said).not.toContain("couldn't rename");
+}, 40_000);
