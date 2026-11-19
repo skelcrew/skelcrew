@@ -193,9 +193,12 @@ export async function startLead(
     [session, harness.name, approved, owner, repo],
   );
   // The lead reads the flows you approved at their ref, and starts with today's instructions, so
-  // it needs no note of them.
+  // it needs no note of them, nor of briefing another lead.
   markApproved(repository);
-  db.run("UPDATE repositories SET lead_flows = 1 WHERE owner = ? AND repo = ?", [owner, repo]);
+  db.run("UPDATE repositories SET lead_flows = 1, lead_briefs = 1 WHERE owner = ? AND repo = ?", [
+    owner,
+    repo,
+  ]);
   const { argv, env } = await harness.start({
     name: lead.name,
     socket: lead.socket,

@@ -311,7 +311,8 @@ test("a lead tells the human to arm a merge when ready in their own terminal", (
   expect(told).toContain("run sc merge --when-ready app-12 in their own terminal");
   expect(told).toContain("You may run sc merge --cancel app-12 when the human asks");
   expect(told).toContain("The human hasn't let you arm a merge when ready.");
-  expect(told).not.toContain("--asked");
+  // Briefing another lead takes --asked-file too, so the merge's own use of it is what stays out.
+  expect(told).not.toContain("--when-ready app-12 --asked-file");
 });
 
 // A lead the human lets arm merges arms one only on the human's own request, quoting it, and
@@ -449,6 +450,25 @@ test("a custom lead role that drops the safety rules still gets them after its o
   expect(told).toContain(
     "\nWhen this session started, no setup command was configured, and no test command was configured.\n",
   );
+});
+
+// A repository's own lead role still learns how to brief another repository's lead, and how to
+// carry the human's words, from Skelcrew's rules, or a brief could never let work start.
+test("a custom lead role is told how to brief another lead, with the human's words", () => {
+  const told = leadInstructions(
+    "You are our lead.\n",
+    "simon/app",
+    "/c",
+    { setup: undefined, test: undefined },
+    false,
+  );
+  expect(told).toContain(
+    'run sc tell lead <repo> "<text>", or sc tell lead <repo> - with the brief on stdin',
+  );
+  expect(told).toContain(
+    "add --asked-file asked.txt: only then may that lead start threads from it",
+  );
+  expect(told).toContain('a brief whose tag says asked="yes"');
 });
 
 test("the built-in lead already holds every core rule word for word, so it is told each once", () => {
