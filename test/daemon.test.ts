@@ -719,9 +719,9 @@ describe.skipIf(insideSandbox)("with a lead per repository", () => {
     expect(hasLead()).toBe(true);
   });
 
-  // The daemon's start would otherwise bring the lead back on the built-in roles, and the lead
-  // would keep them after you approved its own.
-  test("a daemon that starts leaves the lead of an .agents/ you never answered for to sc", async () => {
+  // A daemon that starts brings back the lead before sc can ask you, on the built-in roles. A
+  // lead reads its instructions only as it starts, so it starts again once you approve.
+  test("a lead that started before you approved .agents/ starts again on it, with its conversation", async () => {
     setUp();
     const clone = addRepository("app");
     const work = join(home, "work", "app");
@@ -733,12 +733,15 @@ describe.skipIf(insideSandbox)("with a lead per repository", () => {
     openedBefore();
     serve();
     await untilAnswers();
-    await until(() => existsSync(join(clone, ".agents")));
+    await until(() => claudeLines().length > 0);
+    expect(claudeLines()[0]).not.toContain("Lead it the team's way.");
+    const id = storedSession();
+    saveTranscript(id);
     expect(await ask({ command: "lead" })).toEqual({
       agents: { owner: "simon", repo: "app", name: "app" },
     });
-    // You approve as sc asks, and the lead starts once, on the role you approved.
-    const tree = Bun.spawnSync(["git", "-C", work, "rev-parse", "HEAD:.agents"]).stdout;
+    // You approve as sc asks.
+    const tree = Bun.spawnSync(["git", "-C", clone, "rev-parse", "HEAD:.agents"]).stdout;
     writeFileSync(
       join(home, ".config", "skelcrew", "approved-agents.yaml"),
       `simon/app: ${tree.toString().trim()}\n`,
@@ -747,9 +750,12 @@ describe.skipIf(insideSandbox)("with a lead per repository", () => {
       lead: leadName(),
       repository: "simon/app",
     });
-    await until(() => claudeLines().length > 0);
-    expect(claudeLines()).toHaveLength(1);
-    expect(claudeLines()[0]).toContain("Lead it the team's way.");
+    await until(() => claudeLines().length > 1);
+    expect(claudeCalls()).toBe(`--session-id ${id}\n--resume ${id}\n`);
+    expect(claudeLines()[1]).toContain("Lead it the team's way.");
+    // Running on what you approved, it is kept.
+    await ask({ command: "lead", asked: "simon/app" });
+    expect(claudeLines()).toHaveLength(2);
   });
 
   test("with no repositories, there is no lead to open", async () => {

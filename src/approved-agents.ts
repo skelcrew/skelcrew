@@ -63,8 +63,7 @@ export const agentsAnswered = (place: Place): boolean =>
   readApprovals()[`${place.owner}/${place.repo}`] !== undefined;
 
 // Returns whether the repository's default branch has an .agents/ you never answered for, so
-// its lead waits for sc to ask you before it starts: started first, it would run on the
-// built-in roles even after a yes.
+// plain sc asks you about it before it opens the repository's lead.
 export const agentsUnanswered = (place: Place): boolean =>
   !agentsAnswered(place) && agentsOnDefaultBranch(place) !== null;
 

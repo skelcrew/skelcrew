@@ -231,8 +231,8 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   let leadStarts: Promise<void> = Promise.resolve();
   // Opens a repository's lead's own socket, so the daemon knows which lead calls on it, then
   // keeps the lead running or starts it. One at a time, so two requests at once can't start
-  // two sessions. With `hold`, a lead whose .agents/ you never answered for isn't started.
-  const ensureLead = (repository: Repository, hold = false) => {
+  // two sessions.
+  const ensureLead = (repository: Repository) => {
     leadStarts = leadStarts
       .catch(() => {})
       .then(async () => {
@@ -242,7 +242,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
           listening.add(socket);
           await open(socket, { lead: { owner, repo } });
         }
-        await startLead(db, sessions, repository, hold);
+        await startLead(db, sessions, repository);
       });
     return leadStarts;
   };
@@ -727,9 +727,9 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   await open(path, "you");
   console.log(`Listening on ${path}.`);
   // Bring back the lead of each repository you have opened. One that fails is logged, and the
-  // rest still start. One whose .agents/ you never answered for waits for sc to ask you.
+  // rest still start.
   for (const repository of openedRepositories(db))
-    await ensureLead(repository, true).catch((error) => console.log(errorText(error)));
+    await ensureLead(repository).catch((error) => console.log(errorText(error)));
   // A lead keeps its clone current as it starts, and a repository with no lead needs it too.
   refreshClones(db).catch((error) => console.log(errorText(error)));
   // Notes the daemon's stop kept from the leads.

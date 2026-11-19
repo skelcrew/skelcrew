@@ -14,7 +14,7 @@ import {
   type Labels,
   startSession,
 } from "../agents/sessions.ts";
-import { agentsUnanswered, approvedRef, markApproved } from "../approved-agents.ts";
+import { approvedAgents, approvedRef, markApproved } from "../approved-agents.ts";
 import { agentRole, leadMayArmMerges, repositoryCommands } from "../config.ts";
 import { Repository } from "../db.ts";
 import leadRules from "../defaults/roles/lead-rules.md" with { type: "text" };
@@ -30,22 +30,29 @@ const LeadRow = z.object({
   lead_session: z.string().nullable(),
   lead_harness: HarnessName.nullable(),
   kept_lead: z.coerce.boolean(),
+  lead_agents: z.string().nullable(),
 });
 
 // Returns a repository's lead: where it lives, as leadPlaces gives it, the session ID of its
-// conversation, and the harness it started on, both null before it first started. A lead that
+// conversation, the harness it started on, both null before it first started, and the approved
+// .agents/ it started on, as the database keeps it. A lead that
 // started before Skelcrew saved its harness ran on Claude Code, the only one then. Throws when
 // Skelcrew doesn't have the repository.
 export function leadOf(db: Database, owner: string, repo: string) {
   const row = db
     .query(
-      "SELECT lead_session, lead_harness, kept_lead FROM repositories WHERE owner = ? AND repo = ?",
+      "SELECT lead_session, lead_harness, kept_lead, lead_agents FROM repositories WHERE owner = ? AND repo = ?",
     )
     .get(owner, repo);
   if (!row) throw new Error(`Skelcrew doesn't have ${owner}/${repo}`);
-  const { lead_session, lead_harness, kept_lead } = LeadRow.parse(row);
+  const { lead_session, lead_harness, kept_lead, lead_agents } = LeadRow.parse(row);
   const harness = lead_harness ?? (lead_session === null ? null : "claude");
-  return { ...leadPlaces(owner, repo, kept_lead), session: lead_session, harness };
+  return {
+    ...leadPlaces(owner, repo, kept_lead),
+    session: lead_session,
+    harness,
+    agents: lead_agents,
+  };
 }
 
 // Returns the repositories you have opened and whose tabs are open, whose leads the daemon
@@ -137,28 +144,35 @@ export function approvedFlowsTold(clone: string): string {
 // is one. A lead's first start picks the harness your config names for leads, and the lead
 // keeps it from then on, as a conversation can't move to another harness. The session id and
 // harness are stored before the lead starts, so the lead can be brought back after its session
-// is gone. Codex picks its own id, and its module finds the conversation it saved. With `hold`,
-// a lead not running whose .agents/ you never answered for isn't started, as only sc can ask
-// you, and a lead started first would keep the built-in roles after you approve.
+// is gone. Codex picks its own id, and its module finds the conversation it saved. A lead
+// running on another .agents/ than the one you approved now starts again on it, keeping its
+// conversation, as a lead reads its instructions only as it starts.
 export async function startLead(
   db: Database,
   sessions: string,
   repository: Repository,
-  hold = false,
 ): Promise<void> {
   const { owner, repo } = repository;
   const lead = leadOf(db, owner, repo);
   // A lead still running is kept. One started by a release before leads stayed on a clean exit
   // is given that setting now, or exiting it would end its session and never close its tab.
   // One whose harness ended leaves its screen behind, which is logged before its session is
-  // ended to make room for the new one.
+  // ended to make room for the new one. One that started on another .agents/ than you approved
+  // now, such as the built-in roles before you said yes, ends too and starts again on it. A
+  // lead whose start Skelcrew didn't keep is left as it is.
+  const approved = approvedAgents(repository) ?? "none";
   if (await hasSession(sessions, lead.name)) {
     const failed = await failedScreen(sessions, lead.name);
-    if (failed === null) {
+    const older = lead.agents !== null && lead.agents !== approved;
+    if (failed === null && !older) {
       keepOnExit(sessions, lead.name);
       return;
     }
-    console.log(`${owner}/${repo}'s lead had ended:\n${failed}`);
+    console.log(
+      failed === null
+        ? `${owner}/${repo}'s lead starts again on the .agents/ you approved.`
+        : `${owner}/${repo}'s lead had ended:\n${failed}`,
+    );
     await endSession(sessions, lead.name);
   }
   // The lead's sandbox mounts its clone, and can't mount one that is missing. Adding a
@@ -167,11 +181,6 @@ export async function startLead(
   if (!existsSync(clone)) await refreshClones(db);
   if (!existsSync(clone))
     throw new Error(`Skelcrew couldn't clone ${owner}/${repo}, so its lead can't start yet`);
-  // Looked at once the clone is there, as its .agents/ is read from it.
-  if (hold && agentsUnanswered(repository)) {
-    console.log(`${owner}/${repo}'s lead waits for sc to ask you about its .agents/.`);
-    return;
-  }
   // Pick the harness and the conversation to bring back, if the harness still has it, and save
   // both before starting.
   const role = agentRole("lead", repository);
@@ -180,8 +189,8 @@ export async function startLead(
   const resume = stored === null ? null : harness.saved(lead.name, lead.folder, stored);
   const session = resume ?? crypto.randomUUID();
   db.run(
-    "UPDATE repositories SET lead_session = ?, lead_harness = ? WHERE owner = ? AND repo = ?",
-    [session, harness.name, owner, repo],
+    "UPDATE repositories SET lead_session = ?, lead_harness = ?, lead_agents = ? WHERE owner = ? AND repo = ?",
+    [session, harness.name, approved, owner, repo],
   );
   // The lead reads the flows you approved at their ref, and starts with today's instructions, so
   // it needs no note of them.
