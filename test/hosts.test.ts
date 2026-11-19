@@ -1030,3 +1030,51 @@ await Bun.sleep(1000);`,
   // Only the change of title renames it, not every change to the thread.
   expect(renames).toEqual([{ ask: "rename", id: "fake-app-12", title: "login redirect" }]);
 }, 40_000);
+
+test("a short title given while the host starts the builder still reaches the host", () => {
+  const fake = join(home, ".config", "skelcrew", "plugins", "fake");
+  runWithFakeHost(
+    "sessions",
+    `const fs = require("node:fs");
+const host = (await builderSession(db, "unused", readThread(db, "app-12"))).host;
+// The host takes two seconds to start the builder, and the short title comes meanwhile.
+fs.writeFileSync(${JSON.stringify(join(fake, "slow-start"))}, "");
+const starting = startOnHost(db, readThread(db, "app-12"), { host, name: "fake" }, { folder: ${JSON.stringify(home)}, command: ["sleep", "30"], env: {} });
+await Bun.sleep(500);
+record(db, "app-12", { short: "login redirect" }, "given a short title");
+await starting;
+await Bun.sleep(1500);
+process.exit(0);`,
+    { host: "fake", host_id: null, title: "Fix the login redirect" },
+  );
+  const renames = readFileSync(join(fake, "asked"), "utf8")
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line))
+    .filter((question) => question.ask === "rename");
+  expect(renames).toEqual([{ ask: "rename", id: "fake-app-12", title: "login redirect" }]);
+}, 40_000);
+
+test("renames reach the host one at a time, and the last says the latest title", () => {
+  const fake = join(home, ".config", "skelcrew", "plugins", "fake");
+  const said = runWithFakeHost(
+    "sessions",
+    `const fs = require("node:fs");
+const asked = () => fs.readFileSync(${JSON.stringify(join(fake, "asked"))}, "utf8").trim().split("\\n").map((line) => JSON.parse(line)).filter((q) => q.ask === "rename");
+// The host holds every rename until the file goes.
+fs.mkdirSync(${JSON.stringify(fake)}, { recursive: true });
+fs.writeFileSync(${JSON.stringify(join(fake, "hold-rename"))}, "1");
+record(db, "app-12", { short: "first" });
+await Bun.sleep(300);
+record(db, "app-12", { short: "second" });
+await Bun.sleep(1000);
+console.log(asked().length);
+fs.rmSync(${JSON.stringify(join(fake, "hold-rename"))});
+await Bun.sleep(1500);
+console.log(asked().map((q) => q.title).join(" "));
+process.exit(0);`,
+    { host: "fake", host_id: "fake-app-12", title: "Fix the login redirect" },
+  );
+  // The second waited for the first to finish, so the host ends on the latest title.
+  expect(said).toBe("1\nfirst second\n");
+}, 40_000);

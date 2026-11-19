@@ -42,6 +42,7 @@ import {
   log,
   readThread,
   record,
+  renameOnHost,
   repositoryOf,
   Thread,
   threadName,
@@ -593,6 +594,10 @@ export function startOnHost(
     const id = await startSession(on.host, thread.folder, { ...session, labels });
     forgetStatus(on.name, id);
     record(db, thread.folder, { host_id: id });
+    // A short title given while the host started the session found no ID to rename, so the
+    // session's labels may name it by the old title.
+    const latest = readThread(db, thread.folder);
+    if ((latest.short || latest.title) !== title) renameOnHost(db, thread.folder);
     await checkAgentStarted(on.host, id, "builder");
   });
 }

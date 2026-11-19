@@ -348,23 +348,38 @@ export function record(
   const thread = readThread(db, folder);
   log(db, thread, why);
   reportStatus(db, thread);
-  if (thread.short !== before.short) renameOnHost(db, thread);
+  if (thread.short !== before.short) renameOnHost(db, folder);
   return thread;
 }
 
-// Tells the builder's host the thread's new title, when the host is a plugin, so its own apps
-// stop showing the old one. A builder on tmux needs nothing, as Skelcrew's list reads the title
-// from here. It doesn't wait for the host, and a host that fails, such as an older plugin that
-// doesn't know the question, only costs the new name, so it is logged.
-function renameOnHost(db: Database, thread: Thread): void {
-  if (thread.host === null || thread.host === "tmux" || thread.host_id === null) return;
-  const host = pluginHost(db, thread.host);
-  const title = thread.short || thread.title;
-  if (host === null || !title) return;
-  renameSession(host, thread.host_id, title).catch((error) =>
-    console.log(`couldn't rename ${thread.folder} on ${host.plugin}: ${errorText(error)}`),
-  );
+// Tells the builder's host the thread's title, when the host is a plugin, so its own apps stop
+// showing an old one. A builder on tmux needs nothing, as Skelcrew's list reads the title from
+// here. It doesn't wait for the host, and a host that fails, such as an older plugin that
+// doesn't know the question, only costs the new name, so it is logged. Each rename waits for
+// the one before on the same session and sends the title as it is then, so two quick changes
+// can't reach the host out of order and leave it on the older title.
+export function renameOnHost(db: Database, folder: string): void {
+  const previous = renaming.get(folder) ?? Promise.resolve();
+  const sent = previous.then(async () => {
+    const thread = readThread(db, folder);
+    if (thread.host === null || thread.host === "tmux" || thread.host_id === null) return;
+    const host = pluginHost(db, thread.host);
+    const title = thread.short || thread.title;
+    if (host === null || !title) return;
+    await renameSession(host, thread.host_id, title).catch((error) =>
+      console.log(`couldn't rename ${folder} on ${host.plugin}: ${errorText(error)}`),
+    );
+  });
+  // A thread gone by then, which readThread throws for, has nothing to rename.
+  const settled = sent.catch(() => {});
+  renaming.set(folder, settled);
+  settled.then(() => {
+    if (renaming.get(folder) === settled) renaming.delete(folder);
+  });
 }
+
+// The renames under way of each thread's builder, by its folder, each settling once it is over.
+const renaming = new Map<string, Promise<void>>();
 
 // Returns the thread's name, such as app-12, for replies. It uses the repository's name
 // now, which can gain its owner since the thread started, or owner/name once Skelcrew no longer
