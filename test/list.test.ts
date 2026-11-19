@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import { type Labels, startSession } from "../src/agents/sessions.ts";
 import type { ListStage } from "../src/flow/stage.ts";
-import { drawList, keysFor } from "../src/list/layout.ts";
+import { drawList, keysFor, tabAt } from "../src/list/layout.ts";
 import { type Row, stageHeadings } from "../src/list/rows.ts";
 import { fakePlugin, itemSql, read, source, threadSql, until as wait } from "./harness.ts";
 
@@ -559,6 +559,22 @@ test("another repository's badge counts what needs you in yellow and what is rea
   expect(top).toContain("\x1b[38;5;221m•2");
 });
 
+// The open repository's tab tells which one the list shows, so it keeps its place when others
+// don't fit.
+test("the open repository's tab shows when other tabs don't fit", () => {
+  const tabs = ["alpha", "beta", "gamma", "app"].map((name) => ({
+    name,
+    fullName: `simon/${name}`,
+    needYou: 0,
+    colour: "yellow" as const,
+    ready: 0,
+  }));
+  const [top = ""] = drawnWith(0, { ...frame, tabs }, { width: 40, height: 20 });
+  expect(Bun.stripANSI(top)).toBe(" Skelcrew v0.6.0   alpha    app ");
+  expect(top).toContain("\x1b[48;5;238m \x1b[1;38;5;231mapp");
+  expect(tabAt({ ...frame, tabs }, 40, 30)).toBe("simon/app");
+});
+
 test("a list taller than the terminal scrolls only its tasks, keeping the lead and every heading", () => {
   const more = Array.from({ length: 10 }, (_, i) =>
     threadSql({ task: String(50 + i), title: `Task ${50 + i}`, changed: now - (10 + i) * 60_000 }),
@@ -928,6 +944,19 @@ test("Enter on a lead that can't start says why, and attaches to nothing", async
     () => seen().includes("The lead didn't start: Claude Code's login for agents is gone"),
     "why the lead didn't start",
   );
+});
+
+// A task that ended before Skelcrew saved PR links has none once its PR leaves the forge's copy.
+test("Enter on a done task with a PR but no saved link names its PR", async () => {
+  sql(`UPDATE threads SET status = 'done' WHERE folder = 'app-14';
+UPDATE tasks SET merged = 1 WHERE task = '14';
+DELETE FROM items WHERE kind = 'pr';`);
+  await open();
+  type("6");
+  for (const _ of [1, 2, 3]) press("Down");
+  await until(() => here().startsWith("▸ ○ app-14"), "the done row");
+  press("Enter");
+  await until(() => seen().includes("app-14's PR #41 has no link saved"), "what Enter says");
 });
 
 test("Enter on the lead attaches to it", async () => {

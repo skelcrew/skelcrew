@@ -82,8 +82,8 @@ const otherTab = "48;5;236";
 // version and where it runs, dim, then every repository's tab, in order, left to right. The open
 // one is white on a lighter grey. Each other one has a yellow dot and how many of its threads
 // need you, or red when one went wrong, then a green dot and how many wait for you to merge. They
-// are counted apart, so a finished task is never told twice. A tab that doesn't fit is left out,
-// along with those after it.
+// are counted apart, so a finished task is never told twice. Another repository's tab that
+// doesn't fit beside the open one's is left out.
 function topParts(frame: Frame, width: number): { line: string; spans: TabSpan[] } {
   const place = frame.where ? ` on ${frame.where}` : "";
   const plain = ` Skelcrew v${frame.version}${place}`;
@@ -91,15 +91,23 @@ function topParts(frame: Frame, width: number): { line: string; spans: TabSpan[]
   let line = ` ${paint(bright, "Skelcrew")} ${paint(grey, `v${frame.version}${place}`)}`;
   let used = Bun.stringWidth(plain);
   const spans: TabSpan[] = [];
-  // Each tab has a space either side inside its background, and one between it and the next.
-  for (const tab of frame.tabs) {
+  // Each tab's text, with a space either side inside its background.
+  const laid = frame.tabs.map((tab) => {
     const open = tab.name === frame.name;
     const colour = tab.colour === "red" ? markColours.red : yellow;
     const needing = !open && tab.needYou ? [{ code: colour, badge: `•${tab.needYou}` }] : [];
     const ready = tab.ready && !open ? [{ code: markColours.green, badge: `•${tab.ready}` }] : [];
     const badges = [...needing, ...ready];
     const text = ` ${[tab.name, ...badges.map(({ badge }) => badge)].join(" ")} `;
-    const size = Bun.stringWidth(text);
+    return { tab, open, badges, size: Bun.stringWidth(text) };
+  });
+  // The open repository's tab always keeps its room, so you can always tell which one shows.
+  // Other tabs that don't fit beside it are left out. Each tab has a space between it and the
+  // next.
+  let kept = laid.find(({ open }) => open)?.size ?? 0;
+  for (const { tab, open, badges, size } of laid) {
+    if (open) kept = 0;
+    else if (used + 2 + size + (kept ? 2 + kept : 0) > width) continue;
     if (used + 2 + size > width) break;
     const back = open ? openTab : otherTab;
     const name = open ? `\x1b[${white}m${tab.name}\x1b[22;39m` : paint(lightGrey, tab.name);

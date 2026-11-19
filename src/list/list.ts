@@ -263,7 +263,14 @@ export async function runList(agents: string, repository: string): Promise<void>
         return say(errorText(error));
       }
     }
-    if (row.link === null && row.part === "done") return say(`${row.name} has no PR to open`);
+    // A task that ended before Skelcrew saved PR links, and whose PR has left the forge's copy,
+    // still had a PR: the line names it, as there is no link left to open.
+    if (row.link === null && row.part === "done")
+      return say(
+        row.pr
+          ? `${row.name}'s PR ${row.pr} has no link saved, as it ended before Skelcrew kept them: open it on the forge`
+          : `${row.name} has no PR to open`,
+      );
     if (row.link === null) {
       const branch = row.branch ? ` on branch ${row.branch}` : "";
       return say(
