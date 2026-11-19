@@ -209,7 +209,9 @@ function taskRow(
     running: runs,
     start: null,
     merge,
-    link: copy?.link ?? SavedLink.parse(saved).pr_link,
+    // The saved link stands in only for this attempt's PR: a task started over has none until
+    // it opens one, and must never open the previous attempt's.
+    link: copy?.link ?? (thread.pr === null ? null : SavedLink.parse(saved).pr_link),
     branch: thread.branch,
   };
 }

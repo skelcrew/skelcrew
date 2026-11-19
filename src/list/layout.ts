@@ -250,10 +250,12 @@ export function drawList(
   // Too many to fit: the blank lines go, and the tasks scroll in the room the headings leave,
   // just enough to keep the row you are on in view, from where they were last drawn.
   if (body.length > room) {
+    // On the lead, no task must show, so a short terminal keeps every heading.
+    const onTask = tasks.includes(here);
     const at = Math.max(tasks.indexOf(here), 0);
     from = Math.min(top, at);
     while (from < at && span(from, at + 1) > room) from += 1;
-    to = from + 1;
+    to = onTask ? from + 1 : from;
     while (to < tasks.length && span(from, to + 1) <= room) to += 1;
     // The room left below the last task is filled with those above it.
     while (from > 0 && span(from - 1, to) <= room) from -= 1;

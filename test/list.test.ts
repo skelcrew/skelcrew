@@ -156,6 +156,15 @@ console.log(prOf(db, "simon", "app", 41) === null ? "dropped" : "kept");`;
   });
 });
 
+// Starting a task over clears its PR, and the link saved for the earlier attempt's must not
+// stand in for the new attempt's, which has none yet.
+test("a task with no PR this attempt opens no saved link from an earlier one", () => {
+  sql(
+    `UPDATE tasks SET pr = NULL, pr_link = 'https://github.com/simon/app/pull/1' WHERE task = '14';`,
+  );
+  expect(rows().find((row) => row.name === "app-14")?.link).toBeNull();
+});
+
 // A task that changed lately is what you are likely to look for, whenever it started.
 test("within a stage the task that changed last comes first, after those that need you", () => {
   sql(`UPDATE threads SET changed = ${now - 30_000} WHERE folder = 'app-7';`);
@@ -579,6 +588,15 @@ test("a list taller than the terminal scrolls only its tasks, keeping the lead a
     "14:41",
   ]);
   expect(lines.some((line) => line.includes("app-12"))).toBe(false);
+});
+
+test("on the lead, a terminal with room for the headings but not a task keeps every heading", () => {
+  // Thirteen lines leave six for the stages: every heading, and no room for a three-line task.
+  const lines = drawn(0, 13, 80, ["building"]);
+  expect(lines.filter((line) => /^ \d [A-Z]/.test(line))).toHaveLength(6);
+  expect(lines.filter((line) => line.includes("▸"))).toEqual([
+    expect.stringMatching(/^ ▸ ○ lead /),
+  ]);
 });
 
 test("a terminal too short for every heading still shows the row you are on", () => {
