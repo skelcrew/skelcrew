@@ -9,6 +9,7 @@ import type { Repository } from "../db.ts";
 import { colorful } from "../help.ts";
 import { cloneDir } from "../paths.ts";
 import { failedLog, forgeOf, trackerOf } from "../plugins/ask.ts";
+import { needsInstall } from "../plugins/repository.ts";
 import { errorText } from "../say.ts";
 import { filled, fitted, removeControlCodes } from "../screen/look.ts";
 import { type Item, openTasks, ownTask, prOf, threadTask } from "./copy.ts";
@@ -24,6 +25,8 @@ import { queuedForReview, Thread, threadName, threadOn } from "./thread.ts";
 // A repository as sc repo ls shows it. `missing` is a tracker its skelcrew.yaml names that
 // isn't installed, so it has none until you install that plugin. `agentsWaiting` says its
 // default branch has an .agents/ you haven't approved, so it needs you to run sc repo trust.
+// `installWaiting` says its files name a plugin this machine lacks at its pin, so it needs you to
+// run sc install.
 export const RepositoryRow = z.object({
   name: z.string(),
   repository: z.string(),
@@ -33,6 +36,7 @@ export const RepositoryRow = z.object({
   clone: z.string(),
   tabClosed: z.boolean(),
   agentsWaiting: z.boolean(),
+  installWaiting: z.boolean(),
 });
 export type RepositoryRow = z.infer<typeof RepositoryRow>;
 
@@ -58,6 +62,7 @@ export function listRepositories(db: Database): RepositoryRow[] {
       clone: cloneDir(r.owner, r.repo),
       tabClosed: tabClosed(db, r),
       agentsWaiting: agentsWaiting(r),
+      installWaiting: needsInstall(cloneDir(r.owner, r.repo)),
     };
   });
 }
@@ -469,12 +474,13 @@ const columnWidth = (rows: string[][], i: number) =>
 // Returns the note at the end of a repository's row in sc repo ls, if any, as one cell: a dim
 // one for a tab you closed, and a yellow one saying what to run while the default branch has an
 // .agents/ you haven't approved, as new tasks keep the version you approved and the lead may be
-// closed.
+// closed, or while its files name a plugin this machine lacks, which only you can install.
 function notesOf(r: RepositoryRow): string[] {
   const paint = (code: string, text: string) => (colorful() ? `\x1b[${code}m${text}\x1b[0m` : text);
   const notes = [
     ...(r.tabClosed ? [paint("2", "tab closed")] : []),
     ...(r.agentsWaiting ? [paint("33", `run sc repo trust ${r.name}`)] : []),
+    ...(r.installWaiting ? [paint("33", "run sc install")] : []),
   ];
   return notes.length === 0 ? [] : [notes.join(" · ")];
 }

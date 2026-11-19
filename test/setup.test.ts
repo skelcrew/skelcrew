@@ -1954,3 +1954,28 @@ test("a pin sc install adds for a plugin of yours is checked against the reposit
   expect(git(folder, "rev-parse", "HEAD")).toBe(fakeCommit("0.2.0"));
   expect(existsSync(join(home, ".local", "share", "skelcrew", "install-done"))).toBe(false);
 });
+
+// A broken file in one repository can't hide another repository's pin that disagrees with yours.
+test("sc install reads each repository on its own, and stays unfinished while one can't be read", async () => {
+  noGitHubPlugin();
+  fakeGitHub();
+  publishFake("0.1.0");
+  await skel("1\nsk-ant-oat01-good\n");
+  lockFake("0.1.0");
+  publishFake("0.1.0");
+  const repos = join(home, ".local", "share", "skelcrew", "repos", "simon");
+  repositoryLocksFake(join(repos, "app"), "0.1.0");
+  const code = `import { openDb } from ${JSON.stringify(join(checkout, "src", "db.ts"))};
+openDb().run("INSERT INTO repositories (name, owner, repo) VALUES ('site', 'simon', 'site')");`;
+  Bun.spawnSync([process.execPath, "-e", code], { env: { HOME: home } });
+  mkdirSync(join(repos, "site"), { recursive: true });
+  writeFileSync(join(repos, "site", "skelcrew.yaml"), "plugins: [./plugin]\n");
+  const run = await install("y\n");
+  expect(run.code).toBe(1);
+  expect(run.out).toContain("simon/skelcrew-fake is pinned at");
+  expect(run.out).not.toContain("Install it?");
+  expect(existsSync(fakeFolder())).toBe(false);
+  expect(run.err).toContain("Skelcrew isn't set up yet, as it can't read the plugins of site:");
+  expect(run.err).toContain("must be owner/repo");
+  expect(existsSync(join(home, ".local", "share", "skelcrew", "install-done"))).toBe(false);
+});

@@ -9,6 +9,7 @@ import { openDb } from "../db.ts";
 import { checkoutTop, repositories } from "../flow/repo.ts";
 import { originHere } from "../machine/origin.ts";
 import { cloneDir } from "../paths.ts";
+import { errorText } from "../say.ts";
 import {
   eachAsked,
   installPlugin,
@@ -164,8 +165,10 @@ const pinText = (locked: Locked) => `${locked.version} at commit ${locked.commit
 // Skelcrew's clone of its default branch. `everywhere` adds every repository Skelcrew has to the
 // checkout's, for sc remove -g, which must keep a plugin any of them needs. Each one's pin is
 // compared with your lock's and the other repositories', so a disagreement is said rather than
-// settled by whichever is read last.
-export function repositoryNeeds(everywhere = false): Need[] {
+// settled by whichever is read last. A repository whose files can't be read throws, unless
+// `unreadable` is given: then what is wrong goes there, and the other repositories still count,
+// so one broken file can't hide another repository's pins.
+export function repositoryNeeds(everywhere = false, unreadable?: string[]): Need[] {
   const db = openDb();
   const top = checkoutTop();
   const clones = repositories(db).map((r) => ({
@@ -178,8 +181,14 @@ export function repositoryNeeds(everywhere = false): Need[] {
     ...(top === null || everywhere ? clones : []),
   ];
   const needs = places.flatMap(({ folder, where, remote }) => {
-    const { plugins, lock } = repositoryPlugins(folder);
-    return plugins.map((source) => ({ source, where, locked: lock[source], remote }));
+    try {
+      const { plugins, lock } = repositoryPlugins(folder);
+      return plugins.map((source) => ({ source, where, locked: lock[source], remote }));
+    } catch (error) {
+      if (unreadable === undefined) throw error;
+      unreadable.push(`${where}: ${errorText(error)}`);
+      return [];
+    }
   });
   // Every pin of each source, yours first, each with who pins it.
   const yours = yourLock(db);
@@ -280,5 +289,23 @@ export function checkoutNames(source: string): boolean {
     return repositoryPlugins(top).plugins.includes(source);
   } catch {
     return false;
+  }
+}
+
+// Reports whether the repository Skelcrew keeps in `folder` needs you to run sc install: its files
+// name a plugin this machine lacks at the version and commit its skelcrew.lock pins, one with no
+// pin, or can't be read, which sc install then says. The engine can't install anything itself, as
+// only a yes at your terminal can, so the repository's row in sc repo ls says to.
+export function needsInstall(folder: string): boolean {
+  try {
+    const db = openDb();
+    const { plugins, lock } = repositoryPlugins(folder);
+    return plugins.some((source) => {
+      const locked = lock[source];
+      const here = installedPlugins(db).find((plugin) => plugin.source === source);
+      return !locked || !here || !matchesLock(here, locked);
+    });
+  } catch {
+    return true;
   }
 }

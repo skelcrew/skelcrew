@@ -390,7 +390,9 @@ export function firstRun(from?: string): boolean {
 // it says so. `from` is as for the first run. The machine is marked set up only once your plugins
 // are in, and loses the mark while one is missing, so after a plugin that failed to install, or
 // one you said no to, plain sc runs all of this again. A repository's plugin never takes the mark,
-// as it is the repository's, not yours. A machine set up by an older release gets the marks here
+// as it is the repository's, not yours. But a plugin of yours whose pins disagree with a
+// repository's does, and so does a repository whose files can't be read, as they may pin one of
+// yours at another commit. A machine set up by an older release gets the marks here
 // too. `plain` is set when plain sc runs this, which says nothing when there was nothing to do.
 export function install(from?: string, plain = false): void {
   const finished = installFinished();
@@ -399,26 +401,19 @@ export function install(from?: string, plain = false): void {
   rmSync(installDoneFile(), { force: true });
   const setUp = firstRun(from);
   // What repositories need is read first, so a plugin your lock and a repository pin at different
-  // commits is left as it is on both sides. A repository whose files can't be read stops only its
-  // own part, after your plugins, as it isn't yours.
-  const readNeeds = (): { needs: Need[]; unreadable: unknown } => {
-    try {
-      return { needs: repositoryNeeds(), unreadable: null };
-    } catch (error) {
-      return { needs: [], unreadable: error };
-    }
-  };
+  // commits is left as it is on both sides. Each repository is read on its own, so one whose files
+  // can't be read hides nothing of the others.
   const conflictsIn = (needs: Need[]) =>
     needs.filter((need) => need.conflict !== null).map((need) => need.source);
-  const before = readNeeds();
   const { changed: plugins, left: notHere } = installYourPlugins(
     from ?? originHere(),
-    conflictsIn(before.needs),
+    conflictsIn(repositoryNeeds(false, [])),
   );
   // Read again, as installing a plugin of yours with no pin yet pins it, and that new pin may
   // disagree with a repository's. Such a plugin is left out of the repositories' part, and keeps
   // the machine unfinished as any disagreement does.
-  const { needs, unreadable } = readNeeds();
+  const unreadable: string[] = [];
+  const needs = repositoryNeeds(false, unreadable);
   const conflicting = conflictsIn(needs);
   const left = [
     ...new Set([...notHere, ...yourPlugins().filter((source) => conflicting.includes(source))]),
@@ -436,13 +431,18 @@ export function install(from?: string, plain = false): void {
     console.log(
       `\nSkelcrew isn't set up yet, as your lock and a repository pin ${disagreeing.join(", ")} at different commits. Plain sc asks again. Pin the same version in each.`,
     );
-  if (left.length === 0) {
+  // A repository whose files can't be read may pin a plugin of yours at another commit, which
+  // can't be known, so the machine isn't set up until they can be read.
+  if (left.length === 0 && unreadable.length === 0) {
     mkdirSync(dataDir(), { recursive: true });
     writeFileSync(setUpFile(), "");
     writeFileSync(installDoneFile(), "");
   }
-  if (unreadable !== null) throw unreadable;
   const repositories = installRepositoryPlugins(needs);
+  if (unreadable.length > 0)
+    throw new Error(
+      `Skelcrew isn't set up yet, as it can't read the plugins of ${unreadable.join("; ")}. Plain sc asks again`,
+    );
   if (left.length > 0) return;
   if (!finished && (setUp || plugins || repositories.changed)) console.log("\nSkelcrew is set up.");
   // Plain sc on a machine set up by an older release takes the marks without a word.

@@ -539,6 +539,7 @@ test("repo ls lists each repository with its tracker and forge, as text and for 
       clone: clone("simon/app"),
       tabClosed: false,
       agentsWaiting: false,
+      installWaiting: false,
     },
   ]);
   writeFileSync(join(clone("simon/app"), "skelcrew.yaml"), "tracker: github\n");
@@ -547,6 +548,24 @@ test("repo ls lists each repository with its tracker and forge, as text and for 
   );
   writeFileSync(join(clone("simon/app"), "skelcrew.yaml"), "tracker: linear\n");
   expect((await skel(["repo", "ls"])).out).toContain("linear, not installed");
+});
+
+// The engine can't install a plugin, as only a yes at your terminal can, so the row says to.
+test("repo ls says to run sc install while a repository's files name a plugin this machine lacks", async () => {
+  await skel([], "", onGitHub("simon/app", "WRITE"));
+  const waiting = async () =>
+    JSON.parse((await skel(["repo", "ls", "--json"])).out)[0].installWaiting;
+  expect(await waiting()).toBe(false);
+  writeFileSync(join(clone("simon/app"), "skelcrew.yaml"), "plugins: [simon/skelcrew-fake]\n");
+  writeFileSync(
+    join(clone("simon/app"), "skelcrew.lock"),
+    `simon/skelcrew-fake: { name: fake, version: 0.1.0, commit: ${"a".repeat(40)} }\n`,
+  );
+  expect(await waiting()).toBe(true);
+  expect((await skel(["repo", "ls"])).out).toContain("run sc install");
+  // Files that can't be read need you too, and sc install says what is wrong with them.
+  writeFileSync(join(clone("simon/app"), "skelcrew.yaml"), "plugins: [./plugin]\n");
+  expect(await waiting()).toBe(true);
 });
 
 test("repo trust clones a repository you can't push to, named by its GitHub name", async () => {
