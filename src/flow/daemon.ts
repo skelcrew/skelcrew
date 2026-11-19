@@ -157,6 +157,15 @@ const leadRetry = z.coerce
   .catch(60_000)
   .parse(process.env.SKELCREW_LEAD_RETRY_MS ?? 60_000);
 
+// How often the daemon looks for a lead you exited, to close its tab, in milliseconds. Tests of
+// a brief to a lead just exited set SKELCREW_EXIT_LOOK_MS longer, so the look can't close the
+// tab before the test has seen the exit and sent its brief.
+const exitLook = z.coerce
+  .number()
+  .min(0)
+  .catch(1000)
+  .parse(process.env.SKELCREW_EXIT_LOOK_MS ?? 1000);
+
 // Ends the daemon on a signal: removes its sockets, ends the processes it started, and exits.
 // The agents' sessions aren't the daemon's processes, so agents keep working while the
 // daemon is down. The processes it started, such as a git clone or a reviewer, are ended and
@@ -794,7 +803,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
           console.log(`couldn't close the tabs of exited leads: ${errorText(error)}`),
         ),
       ),
-    1000,
+    exitLook,
   );
   // From here on, the daemon also looks every two seconds for a working agent whose screen
   // shows it idle, where no hook said so. A session that ends during a look only ends that look.

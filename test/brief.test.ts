@@ -211,7 +211,15 @@ const webSession = () => leadPlaces("simon", "web").name;
 const hasWebLead = () =>
   Bun.spawnSync(["tmux", "-L", socket, "has-session", "-t", `=${webSession()}`]).success;
 
-// Has web's lead exit cleanly, as /exit does, and waits until its ended session shows it.
+// Keeps the daemon's look for exited leads from coming during a test, so a lead the test exits
+// leaves its ended session until a brief comes for it. Without this, the look could end that
+// session before a busy test saw it, and a brief would find the tab already closed, which isn't
+// the case these tests cover.
+const noExitLook = { SKELCREW_EXIT_LOOK_MS: "600000" };
+
+// Has web's lead exit cleanly, as /exit does, and waits until its ended session shows it. The
+// daemon's look for exited leads would end that session within a second, so a test that exits
+// a lead starts its daemon with noExitLook.
 async function exitWebLead(): Promise<void> {
   writeFileSync(join(webLead(), "exit-now"), "");
   const pane = [
@@ -340,7 +348,7 @@ describe.skipIf(insideSandbox)("briefs between leads", () => {
   // the sender once and is tried again until it starts. A try that was waiting when you exited
   // the lead again, closing its tab, doesn't start it.
   test("a brief brings back a lead you exited, or keeps trying while it can't start", async () => {
-    await startTwoLeads({ SKELCREW_LEAD_RETRY_MS: "1000" });
+    await startTwoLeads({ SKELCREW_LEAD_RETRY_MS: "1000", ...noExitLook });
     await exitWebLead();
     expect((await skel(["tell", "lead", "simon/web", "Rename the button."], "lead")).err).toBe("");
     await until(() => typed(webLead()).includes("Rename the button."), 30_000);
@@ -383,7 +391,7 @@ describe.skipIf(insideSandbox)("briefs between leads", () => {
   test("a brief starts a lead that never ran, and reaches it across a restart", async () => {
     addApp();
     addApp("web");
-    serve();
+    serve(noExitLook);
     await until(() => existsSync(join(data(), "repos", "simon", "web", "README")));
     expect(await open("app")).toContain(leadPlaces("simon", "app").name);
     expect((await skel(["tell", "lead", "web", "Add a CSV export."], "lead")).err).toBe("");
@@ -408,7 +416,7 @@ describe.skipIf(insideSandbox)("briefs between leads", () => {
     expect(db.query(saved).get()).toEqual({ n: 1 });
     db.close();
     expect(typed(webLead())).not.toContain("Rename the button.");
-    serve({ SKELCREW_LEAD_RETRY_MS: "1000" });
+    serve({ SKELCREW_LEAD_RETRY_MS: "1000", ...noExitLook });
     await Bun.sleep(2000);
     expect(hasWebLead()).toBe(false);
     webReachable(true);
