@@ -208,6 +208,10 @@ test("Done shows the tasks that ended today, or the last ten when fewer ended to
   sql(ended(300, 9, 4));
   expect(done()).toHaveLength(12);
   expect(done().every((row) => /^\d\d:\d\d$/.test(row.when))).toBe(true);
+  // Each takes one line: its mark, name and title, then when it ended, lined up.
+  const lines = drawn(0, 40, 80, ["done"]).map((line) => line.trimEnd());
+  expect(lines).toContain("   ○ app-100  Ended 100  14:00");
+  expect(lines).toContain("   ○ app-308  Ended 308  03:00");
 });
 
 // A row stays short enough to read across: a merge when ready or messages waiting are for sc show.
@@ -363,6 +367,21 @@ await runList("skel-test-${process.pid}-none", "simon/app");`;
   expect(printed()).toContain("Skelcrew 9.9.9 installed · restart to use it");
 });
 
+// Printed, the list is whole: a task at work takes three lines, and none may scroll out of sight.
+test("the list printed without a terminal has every task, however many are at work", () => {
+  const more = Array.from({ length: 30 }, (_, i) =>
+    threadSql({ task: String(50 + i), title: `Task ${50 + i}`, changed: now - i * 60_000 }),
+  );
+  sql(more.join("\n"));
+  const code = `import { runList } from ${JSON.stringify(source("list/list.ts"))};
+await runList("skel-test-${process.pid}-none", "simon/app");`;
+  const run = Bun.spawnSync([process.execPath, "-e", code], { env: env(), stderr: "pipe" });
+  const printed = run.stdout.toString();
+  for (let task = 50; task < 80; task += 1) expect(printed).toContain(`app-${task}  Task ${task}`);
+  expect(printed).toContain("app-14  Fix the export header");
+  expect(printed).toContain("app-31  Export as CSV");
+});
+
 // The list reads no settings file, so it knows a thread is past its round limit from the changes
 // the review held back for you.
 test("a task past its round limit says so, from the changes its review held", () => {
@@ -455,11 +474,10 @@ test("every stage has its heading with its counts, only open ones show rows, and
 
 test("an open stage shows its rows, and its heading is bright while a closed one is dim", () => {
   const lines = drawn(1, 24, 80, ["backlog", "ready"]);
-  // A task in Backlog or Done takes one line, in columns: mark, name, its word and PR where it
-  // has them, when it changed, then its title.
+  // A task in Backlog or Done takes one line, in columns: mark, name, title, when it changed.
   expect(lines.slice(5, 16).map((line) => line.trimEnd())).toEqual([
     " 1 Backlog   1",
-    " ▸ ○ app-31  5 Nov  Export as CSV",
+    " ▸ ○ app-31  Export as CSV  5 Nov",
     "",
     " 2 Building  3 · 1 needs you",
     " 3 Reviewing 0",

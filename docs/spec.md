@@ -766,7 +766,7 @@ Each task is in exactly one stage, decided from its state alone. Needs you is ne
 
 Each stage's heading has the number key that opens and closes it, its name, how many tasks it has, lined up with the other headings' counts, and how many of them need you, such as `Building 4 · 2 need you`. Every heading always shows, so a closed stage still says what waits in it. Only Building is open when the list starts. The stages you open or close stay so until you leave the list, whichever repository you move to.
 
-A task in Building, Reviewing, Checks or Ready takes three lines, as in the sidebar, so what it does sits under its title. The first has its mark, its name and its short title, or its title cut with `…` to fit. The second has its word in its colour, then dim the step its builder is on, such as `Editing rows.ts`. The third has, dim, its PR, its CI, such as `CI passed`, and when it last changed, such as `14:31` today or `12 Nov` before. A task in Backlog or Done takes one line, in columns from the left, as `sc ps` does: its mark, its name, its word and PR where it has them, when it last changed, then its title, filling what is left. Each column is as wide as the widest value showing, so the rows line up. The row you are on is highlighted on all its lines. Details such as a merge when ready or messages waiting are for `sc show`. When a thread needs you, its mark is yellow and its word says why, such as `question`. An ended task's word is `merged` or `closed`. Its word says what is happening:
+A task in Building, Reviewing, Checks or Ready takes three lines, as in the sidebar, so what it does sits under its title. The first has its mark, its name and its short title, or its title cut with `…` to fit. The second has its word in its colour, then dim the step its builder is on, such as `Editing rows.ts`. The third has, dim, its PR, its CI, such as `CI passed`, and when it last changed, such as `14:31` today or `12 Nov` before. A task in Backlog or Done takes one line, in columns from the left: its mark, its name, its title, then when it last changed. Each column is as wide as the widest value showing, so the rows line up. The row you are on is highlighted on all its lines. Details such as a merge when ready or messages waiting are for `sc show`. When a thread needs you, its mark is yellow and its word says why, such as `question`. Its word says what is happening:
 
 | Word | Means |
 | --- | --- |
@@ -784,7 +784,6 @@ A task in Building, Reviewing, Checks or Ready takes three lines, as in the side
 | `round limit` | Review hit its round limit |
 | `review failed`, `review timed out` | The review couldn't run, or ran past its time limit twice |
 | `failed`, `stopped` | As the thread's status says |
-| `merged`, `closed` | The task ended |
 
 The marks: a filled `●` needs you or is ready, a hollow `○` doesn't. Green is ready, yellow wants you, red is wrong (the thread failed, its harness errored or its review failed), bright is working and dim waits. The word always says what is happening, so nothing is told by colour alone. Text from the tracker has its control codes removed before it reaches your terminal.
 

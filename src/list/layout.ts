@@ -119,9 +119,9 @@ export function tabAt(frame: Frame, width: number, column: number): string | nul
   return spans.find((span) => span.from <= column && column <= span.to)?.fullName ?? null;
 }
 
-// The width of each column of a one-line row: the name, the word, the PR and when it changed,
-// each as wide as the widest that shows, so they line up from one row to the next.
-type Columns = { name: number; says: number; pr: number; when: number };
+// The width of each column of a one-line row: the name, the title and when it changed, each as
+// wide as the widest that shows, so they line up from one row to the next.
+type Columns = { name: number; title: number; when: number };
 
 // Returns whether a row takes more than one line: the lead's, and a task's in Building,
 // Reviewing, Checks or Ready, which the sidebar shows the same way. Backlog and Done take one.
@@ -135,33 +135,23 @@ const marked = (lines: string[], here: boolean, width: number) =>
 const markStart = (row: Row, here: boolean) =>
   `${here ? " ▸ " : "   "}${tinted(here, markColours[row.mark.colour], row.mark.sign)}`;
 
-// Returns a row in Backlog or Done as one line, in columns from the left, as sc ps does: its
-// mark, then its name, word, PR and when it changed, each padded to its column, then its title,
-// which takes what is left and is cut at its end. A column no row has, such as the PR in
-// Backlog, takes no room. A row whose columns alone are too wide is cut to fit, without its
-// colours, as a longer line would wrap.
+// Returns a row in Backlog or Done as one line, in columns from the left: its mark, its name,
+// its title, cut with … when it doesn't fit, then when it changed, dim. The title's column is as
+// wide as the widest title, or what is left, so the times line up. A row whose name and time
+// alone are too wide is cut to fit, without its colours, as a longer line would wrap.
 function shortLine(row: Row, here: boolean, columns: Columns, width: number): string {
-  const cells: [string, number, string][] = [
-    [row.name, columns.name, here ? bright : ""],
-    [row.says, columns.says, markColours[row.colour]],
-    [row.pr, columns.pr, grey],
-    [row.when, columns.when, grey],
-  ];
-  const kept = cells.filter(([, size]) => size > 0);
-  const plainCells = kept.map(([text, size]) => ` ${filled(text, size)} `).join("");
-  const room = width - 4 - Bun.stringWidth(plainCells) - 1;
-  const title = room > 0 ? fitted(row.title, room) : "";
-  const plain = `${here ? " ▸ " : "   "}${row.mark.sign}${plainCells} ${title}`;
-  if (Bun.stringWidth(plain) > width) return fitted(plain.trimEnd(), width);
+  const start = `${here ? " ▸ " : "   "}${row.mark.sign} `;
+  const name = filled(row.name, columns.name);
+  const time = columns.when > 0 ? `  ${filled(row.when, columns.when)}` : "";
+  const room = width - Bun.stringWidth(start) - columns.name - 2 - Bun.stringWidth(time);
+  const title = room > 0 ? filled(fitted(row.title, room), Math.min(columns.title, room)) : "";
+  const plain = `${start}${name}  ${title}${time}`;
+  if (room <= 0) return fitted(plain.trimEnd(), width);
   // A name is plain text, white on the row you are on, as the theme's own text can be dark on
   // the grey there.
-  const painted = kept
-    .map(([text, size, code]) => {
-      const cell = filled(text, size);
-      return ` ${code ? tinted(here, code, cell) : cell} `;
-    })
-    .join("");
-  return `${markStart(row, here)}${painted} ${here ? tinted(here, bright, title) : title}`;
+  const shownName = here ? tinted(here, bright, name) : name;
+  const shownTitle = here ? tinted(here, bright, title) : title;
+  return `${markStart(row, here)} ${shownName}  ${shownTitle}${time && tinted(here, grey, time)}`;
 }
 
 // Returns the lead's row, or a task's in Building, Reviewing, Checks or Ready, as its lines, as
@@ -219,8 +209,7 @@ export function drawList(
     Math.max(...among.map((row) => Bun.stringWidth(of(row))), 0);
   const columns = {
     name: widest((row) => row.name, rows),
-    says: widest((row) => row.says),
-    pr: widest((row) => row.pr),
+    title: widest((row) => row.title),
     when: widest((row) => row.when),
   };
   // Returns the lines of the row at `i` in `rows`.
