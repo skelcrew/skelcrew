@@ -19,7 +19,7 @@ import { ciSummary, reviewVerdict } from "./page.ts";
 import { findRepository, noRepositories, repositories, repositoryAt } from "./repo.ts";
 import { roundRunning } from "./round.ts";
 import { Stage, taskStage } from "./stage.ts";
-import { needsYou } from "./status.ts";
+import { mergeShown, needsYou } from "./status.ts";
 import { queuedForReview, Thread, threadName, threadOn } from "./thread.ts";
 
 // A repository as sc repo ls shows it. `missing` is a tracker its skelcrew.yaml names that
@@ -312,7 +312,8 @@ export type PrPage = z.infer<typeof PrPage>;
 // one in Skelcrew's copy for a task not started, or null for a task with no issue, such as app-wr1. `threads` names each of its threads with its role, such
 // as app-12/builder. `pr` is its PR's number, as sc ps gives it, and `review` where Skelcrew's
 // review stands, with a forge or without one. `prPage` is its PR from Skelcrew's copy, or null once the copy no longer has
-// it, as after a merge.
+// it, as after a merge. `merge` is its armed merge with what it waits on, such as `merges without
+// approval · waiting on its checks`, or null with none, as the list's rows leave that out.
 export const TaskView = z.object({
   task: z.string(),
   stage: Stage,
@@ -325,6 +326,7 @@ export const TaskView = z.object({
   pr: z.number().nullable(),
   review: ThreadRow.shape.review,
   prPage: PrPage.nullable(),
+  merge: z.string().nullable(),
 });
 export type TaskView = z.infer<typeof TaskView>;
 
@@ -452,6 +454,7 @@ export async function showTask(
     // Reviews run without a forge too, so their state shows here even then.
     review: thread && reviewOf(thread),
     prPage: pr === null ? null : await prPageOf(db, repository, pr),
+    merge: thread ? mergeShown(thread) : null,
   };
 }
 
@@ -672,6 +675,7 @@ export function printTask(task: TaskView, json: boolean): void {
     ...(review && review.state !== "none"
       ? [["Review", review.round === null ? review.state : `${review.state} r${review.round}`]]
       : []),
+    ...(task.merge === null ? [] : [["Merge", task.merge]]),
     ...(prPage ? [["Link", prPage.link]] : []),
   ];
   console.log(`${task.task}  ${task.title}`);

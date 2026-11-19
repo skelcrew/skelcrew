@@ -96,6 +96,16 @@ console.log(JSON.stringify(listRows(openDb(), { owner: "simon", repo: "app" }, $
   return JSON.parse(run.stdout.toString());
 }
 
+// Returns what sc show prints of one of app's tasks.
+function shown(task: string): string {
+  const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
+import { printTask, showTask } from ${JSON.stringify(source("flow/list.ts"))};
+printTask(await showTask(openDb(), { repo: "app", task: ${JSON.stringify(task)} }), false);`;
+  const run = Bun.spawnSync([process.execPath, "-e", code], { env: env(), stderr: "pipe" });
+  if (!run.success) throw new Error(run.stderr.toString());
+  return run.stdout.toString();
+}
+
 // Returns one column of a thread's row, as the database keeps it.
 function threadField(folder: string, column: string): unknown {
   const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
@@ -379,10 +389,19 @@ ${itemSql("app", "pr", 42, "Login redirect", "2026-11-06T10:00:00Z", { head, che
   expect(running && "ask" in running ? running.ask : "").toBe(
     "Merge app#42 without Skelcrew's approval? CI must still pass. Its review is still running y/n",
   );
-  // Once armed, it isn't offered again.
-  sql("UPDATE threads SET merge_plan = 'armed', merge_pinned = 'x' WHERE folder = 'app-7';");
+  // Once armed, it isn't offered again: m says what the merge waits on, and sc show says so too,
+  // as the row itself stays short.
+  sql(
+    "UPDATE threads SET merge_plan = 'armed', merge_pinned = 'x', merge_waits = 'its checks' WHERE folder = 'app-7';",
+  );
   expect(merge()).toEqual({
-    refused: "app-7 merges without Skelcrew's approval already: sc merge --cancel app-7 stops it",
+    refused:
+      "app-7 merges without Skelcrew's approval, waiting on its checks: sc merge --cancel app-7 stops it",
+  });
+  expect(shown("7")).toContain("\nMerge   merges without approval · waiting on its checks\n");
+  sql("UPDATE threads SET merge_waits = NULL WHERE folder = 'app-7';");
+  expect(merge()).toEqual({
+    refused: "app-7 merges without Skelcrew's approval: sc merge --cancel app-7 stops it",
   });
   // A task that ended, in Done, is never offered it, whatever its last review said.
   sql(

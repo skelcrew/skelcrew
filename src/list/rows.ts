@@ -203,9 +203,13 @@ function taskRow(
   const disputed = thread.verdict === "changes" || thread.reviewing !== null;
   if (!ready && !ended && disputed && thread.pr !== null && copy !== null) {
     const named = `${repoName}#${thread.pr}`;
+    // The row leaves an armed merge out to stay short, so m says it and what it waits on. A
+    // thread that failed isn't polled, so it says so itself.
     if (thread.merge_plan !== null) {
       const armed = thread.merge_pinned === null ? "when ready" : "without Skelcrew's approval";
-      merge = { refused: `${name} merges ${armed} already: sc merge --cancel ${name} stops it` };
+      const waits = thread.status === "failed" ? "its thread, which failed" : thread.merge_waits;
+      const waiting = waits === null ? "" : `, waiting on ${waits}`;
+      merge = { refused: `${name} merges ${armed}${waiting}: sc merge --cancel ${name} stops it` };
     } else if (copy.head === null)
       merge = {
         refused: `${named} needs a newer forge plugin to merge here: run sc plugin update`,
