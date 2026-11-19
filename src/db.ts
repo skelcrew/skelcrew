@@ -540,20 +540,27 @@ function prepareTables(db: Database): void {
   if (!db.query("SELECT 1 FROM pragma_table_info('notes') WHERE name = 'urgent'").get())
     db.run("ALTER TABLE notes ADD COLUMN urgent INTEGER NOT NULL DEFAULT 0");
   // `wrapped` marks a builder's message or a brief, which Skelcrew wraps in its own tags, apart
-  // from notes whose tags, from outside text, are removed as they are typed in. A builder's
-  // message saved before is told by its exact shape: Skelcrew's opening tag on its first line,
-  // its closing tag on its last, and no tag between, as the older Skelcrew removed them from
-  // inside. No other note starts so, as each starts with a thread's name or Skelcrew's words.
+  // from notes whose tags, from outside text, are escaped as they are typed in. A builder's
+  // message saved before is told by its exact shape: Skelcrew's opening tag on its first line and
+  // its closing tag on its last. No other note starts so, as each starts with a thread's name or
+  // Skelcrew's words, and a plugin's note is on one line. The older Skelcrew removed only exact
+  // skelcrew tags from inside, so the body can still hold a brief's <asked> or <brief>, or a
+  // closing tag with a space, such as </skelcrew >. So its body is escaped as outside text is,
+  // with the < that starts any such tag written &lt;, and the wrapper is kept as it was.
   if (!db.query("SELECT 1 FROM pragma_table_info('notes') WHERE name = 'wrapped'").get()) {
     db.run("ALTER TABLE notes ADD COLUMN wrapped INTEGER NOT NULL DEFAULT 0");
     const saved = z.array(z.object({ id: z.number(), text: z.string() }));
     for (const { id, text } of saved.parse(db.query("SELECT id, text FROM notes").all())) {
       const shape = text.match(
-        /^<skelcrew from="[^"<>]+" reply="sc tell [^"<>]+">\n([\s\S]*)\n<\/skelcrew>$/,
+        /^(<skelcrew from="[^"<>]+" reply="sc tell [^"<>]+">)\n([\s\S]*)\n<\/skelcrew>$/,
       );
-      const inside = shape?.[1];
-      if (inside !== undefined && !/<\s*\/?\s*(?:skelcrew|asked|brief)/i.test(inside))
-        db.run("UPDATE notes SET wrapped = 1 WHERE id = ?", [id]);
+      const [, wrapper, inside] = shape ?? [];
+      if (wrapper === undefined || inside === undefined) continue;
+      const body = inside.replace(/<(?=\s*\/?\s*(?:skelcrew|asked|brief))/gi, "&lt;");
+      db.run("UPDATE notes SET wrapped = 1, text = ? WHERE id = ?", [
+        `${wrapper}\n${body}\n</skelcrew>`,
+        id,
+      ]);
     }
   }
   // A lead table means a database from before each repository had its own lead.
