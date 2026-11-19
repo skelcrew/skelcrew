@@ -522,11 +522,23 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
             `${request.to} isn't in Skelcrew. Ask the human to add it in their own terminal, with sc repo add <owner/repo>.`,
           );
         // The lead is brought back if you closed its tab by exiting it, or started if it never
-        // ran, as opening the repository does, so the brief reaches it. Saving the brief and
-        // opening the tab are one change, so a daemon that stops right after still brings the
-        // lead back at its start, and types the brief in. A repository never opened gets its
-        // first time, or its lead would have no tab. One opened before keeps its time, so plain
-        // sc still opens the one you opened last.
+        // ran, as opening the repository does, so the brief reaches it. A lead you exited this
+        // second leaves its ended session behind, which would be kept, and a look for exited
+        // leads would close its tab again with the brief waiting. So that session goes first,
+        // with its tab closed, as such a look would leave it. Then saving the brief and opening
+        // the tab are one change. Nothing waits between the steps, and a daemon stopped after
+        // any of them finds things as one of its own looks would: the lead closed with no brief,
+        // or open with its brief, which its start brings back and types in. A repository never
+        // opened gets its first time, or its lead would have no tab. One opened before keeps its
+        // time, so plain sc still opens the one you opened last.
+        const { name } = leadOf(db, to.owner, to.repo);
+        if (exitedCleanly(sessions, name)) {
+          db.run("UPDATE repositories SET tab_closed = 1 WHERE owner = ? AND repo = ?", [
+            to.owner,
+            to.repo,
+          ]);
+          mustTmux(sessions, ["kill-session", "-t", `=${name}`]);
+        }
         db.transaction(() => {
           briefLead(db, sessions, caller, to, request.text, request.asked);
           db.run(
@@ -534,12 +546,8 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
             [Date.now(), to.owner, to.repo],
           );
         })();
-        // A lead you exited this second leaves its ended session behind, which would be kept,
-        // and the daemon's next look would close its tab again with the brief still waiting. So
-        // it is ended now, before anything else runs, as tmux answers at once. Starting the lead
-        // isn't waited on, as an agent's command answers at once. Its notes go in once it runs.
-        const { name } = leadOf(db, to.owner, to.repo);
-        if (exitedCleanly(sessions, name)) mustTmux(sessions, ["kill-session", "-t", `=${name}`]);
+        // Starting the lead isn't waited on, as an agent's command answers at once. Its notes go
+        // in once it runs.
         ensureLead(to)
           .then(() => typeLeadNotes(db, sessions))
           .catch((error) => console.log(`couldn't start ${to.name}'s lead: ${errorText(error)}`));

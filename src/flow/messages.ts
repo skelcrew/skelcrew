@@ -515,11 +515,11 @@ export function messageLead(db: Database, sessions: string, from: Caller, text: 
 // command that answers it, so the other lead takes it for another agent's report, never for the
 // human's say-so. `asked` is the human's own words, which the sending lead gave with
 // --asked-file. Only then may the other lead start work on it, for exactly what those words
-// ask, so they go in unchanged, with the tag saying asked="yes", which only Skelcrew can write.
-// Words holding a <skelcrew tag would end Skelcrew's own early or pass for another, so in them
-// each & is written &amp; and each < &lt;, and the heading says so: the other lead reads back
-// exactly what the human wrote. Only a lead may brief, and never its own repository, which it
-// plans itself.
+// ask, with the tag saying asked="yes", which only Skelcrew can write. The words and the brief
+// both go in unchanged. One holding a <skelcrew tag would end Skelcrew's own early or pass for
+// another, so in it each & is written &amp; and each < &lt;, and its heading says so: the other
+// lead reads back exactly what was written. Only a lead may brief, and never its own
+// repository, which it plans itself.
 export function briefLead(
   db: Database,
   sessions: string,
@@ -535,18 +535,21 @@ export function briefLead(
     throw new Error(`${to.name} is your own repository: brief its threads with sc tell instead.`);
   const sender = repositories(db).find((r) => r.owner === owner && r.repo === repo);
   const name = sender?.name ?? `${owner}/${repo}`;
-  const tag = `<skelcrew from="${name}:lead" reply="sc tell lead ${name}"`;
+  // Returns text under its heading, unchanged, or escaped when it holds a tag. A brief with no
+  // tag and none of the human's words needs no heading, as it is all there is.
+  const part = (heading: string, said: string) => {
+    if (untagged(said) === said) return heading ? `${heading}:\n${said}` : said;
+    const escaped = said.replaceAll("&", "&amp;").replaceAll("<", "&lt;");
+    const how = "with each < written as &lt; and each & as &amp;, as it holds a skelcrew tag";
+    return `${heading || "The brief"}, ${how}:\n${escaped}`;
+  };
   // The human's words come first, apart from the brief. They are everything between their
-  // heading's line and the blank line before "The brief:", a last line break included.
-  let body = untagged(text);
-  if (asked !== undefined) {
-    const plain = untagged(asked) === asked;
-    const words = plain ? asked : asked.replaceAll("&", "&amp;").replaceAll("<", "&lt;");
-    const how = plain
-      ? ""
-      : ", with each < written as &lt; and each & as &amp;, as they hold a skelcrew tag";
-    body = `The human's words, exactly as ${name}'s lead was given them${how}:\n${words}\n\nThe brief:\n${body}`;
-  }
+  // heading's line and the blank line before the brief's heading, a last line break included.
+  const body =
+    asked === undefined
+      ? part("", text)
+      : `${part(`The human's words, exactly as ${name}'s lead was given them`, asked)}\n\n${part("The brief", text)}`;
+  const tag = `<skelcrew from="${name}:lead" reply="sc tell lead ${name}"`;
   const message = `${tag}${asked === undefined ? "" : ' asked="yes"'}>\n${body}\n</skelcrew>`;
   noteForLead(db, sessions, to, message, null, true);
 }
