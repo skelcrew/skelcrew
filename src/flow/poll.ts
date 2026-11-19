@@ -113,16 +113,23 @@ async function startLabeled(
       return null;
     });
     if (claimed === null) continue;
-    if (!claimed) forget(task.id);
+    const name = `${repository.name}-${task.id}`;
+    // The claim is forgotten in the same transaction as the note is saved, so a stop between the
+    // two can't leave the claim forgotten and the lead never told.
+    const forgetAndTell = (note: string) =>
+      db.transaction(() => {
+        forget(task.id);
+        noteForLead(db, sessions, { owner, repo }, note.replace(/\s+/g, " ").slice(0, 200));
+      })();
     if (!claimed && unsure) {
-      const name = `${repository.name}-${task.id}`;
       const note = `${name}'s claim was cut short, so Skelcrew can't tell if this machine holds it. If no other machine works on it, sc start ${name}.`;
       console.log(note);
-      noteForLead(db, sessions, { owner, repo }, note);
+      forgetAndTell(note);
       passed.add(key);
       continue;
     }
     if (!claimed) {
+      forget(task.id);
       // Claimed by another machine, or by this one before a restart, when its thread failed
       // to start.
       console.log(
@@ -138,17 +145,21 @@ async function startLabeled(
       continue;
     }
     // The claim is this daemon's now, so a thread that fails to start isn't started by a
-    // later poll either: on another machine, or after a restart, its claim reads as taken.
+    // later poll either: on another machine, or after a restart, its claim reads as taken. So
+    // the lead hears why, and can start it with sc start once that is fixed.
     const thread = await startThread(db, { repo: fullName, task: task.id }, true).catch((error) => {
       console.log(
         `couldn't start ${task.id} in ${fullName}, and its label won't start it again; sc start does: ${errorText(error)}`,
       );
+      forgetAndTell(
+        `couldn't start ${name} from its label; once fixed, sc start ${name}: ${errorText(error)}`,
+      );
       passed.add(key);
       return null;
     });
-    // The claim's outcome is known now: the task is recorded, or won't be started by its label.
-    forget(task.id);
     if (thread === null) continue;
+    // The claim's outcome is known now: the task is recorded.
+    forget(task.id);
     // Claimed already, so only assigned.
     assignIssue(db, thread, false);
     // The lead hears first, then the builder starts, or for a task over the repository's

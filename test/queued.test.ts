@@ -373,3 +373,18 @@ openDb().exec(${JSON.stringify(rows)});`;
   expect(leftQueue("app-12")).toHaveLength(1);
   expect(leftQueue("app-13")[0] ?? 0).toBeGreaterThanOrEqual(endedAt("app-12"));
 }, 60_000);
+
+test("a labelled issue that can't start after its claim is told to the lead, not dropped", async () => {
+  addApp(["12"]);
+  answer(plugin, "took", { took: true });
+  // A round limit that isn't valid refuses the start once the claim is made.
+  writeFileSync(
+    join(home, ".config", "skelcrew", "config.yaml"),
+    "harness: claude\nmax_rounds: 0\n",
+  );
+  await serveApp();
+  await until(() =>
+    leadHears().includes("couldn't start app-12 from its label; once fixed, sc start app-12"),
+  );
+  expect(statuses()["app-12"]).toBeUndefined();
+}, 60_000);
