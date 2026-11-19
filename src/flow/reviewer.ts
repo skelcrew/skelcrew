@@ -281,7 +281,9 @@ function readVerdict(
 // touches only docs and Markdown, so the reviewer runs no tests, and `ci` isn't asked. `test`
 // is the repository's test command, for when the reviewer has to run the suite, which it does
 // through sc check on `socket`, the thread's reviewer socket. `skills` names the .agents/ whose
-// skills the reviewer gets, the one the task started with.
+// skills the reviewer gets, the one the task started with. `branchSkills` are the SKILL.md files
+// the commit itself has under .agents/skills/, relative to the checkout, which the reviewer
+// must not load.
 async function reviewNow(given: {
   instructions: string;
   clone: string;
@@ -298,6 +300,7 @@ async function reviewNow(given: {
   docsOnly?: boolean;
   socket?: string;
   skills?: SkillsFrom;
+  branchSkills?: string[];
 }): Promise<Review | Limited> {
   const { clone, issue, base, model, harness, limit = 30 * 60_000, env = process.env } = given;
   // Fail at once, with a reason you can act on, when the review was cancelled before its turn
@@ -360,6 +363,10 @@ async function reviewNow(given: {
     // The harness gets the answer's shape from a file, and says how to start the reviewer
     // and what it needs from outside the sandbox.
     await Bun.write(join(folder, "schema.json"), schema);
+    // Tests and builds write in the clone, so it is seen as a throwaway folder too.
+    const copy = join(folder, "clone");
+    const { mounts, at } = await throwawayMounts({ source: clone, copy, signal });
+    mounts.push("--bind", folder, folder);
     const { keys } = harnessNamed(harness);
     const launch = await harnessNamed(harness).review({
       home,
@@ -368,13 +375,11 @@ async function reviewNow(given: {
       schema,
       signal,
       ...(given.skills ? { skills: given.skills } : {}),
+      // Where the branch's own skills show in the view, for a harness that finds them there.
+      branchSkills: (given.branchSkills ?? []).map((file) => join(at, file)),
     });
     // Only what a shell and the tests need gets in, with the harness's own keys added.
     const sandboxEnv = { ...launch.env, ...filterEnv(env, keys) };
-    // Tests and builds write in the clone, so it is seen as a throwaway folder too.
-    const copy = join(folder, "clone");
-    const { mounts, at } = await throwawayMounts({ source: clone, copy, signal });
-    mounts.push("--bind", folder, folder);
     // The builder can go on changing its clone after it submits, so the reviewer sees the
     // submitted commit, with what the builder changed since put aside. Ignored files, such
     // as installed packages, stay for the tests. git runs in the sandbox, as the clone's
@@ -391,10 +396,11 @@ async function reviewNow(given: {
     // view, as no git in the sandbox holds them, and a lock left there would stop the
     // reviewer's own git. A Mac's copy keeps them for good otherwise. The builder's own stay.
     // Every other step must work, or the reviewer never starts.
-    // Last, the branch's .agents/skills/ goes from the view, as Codex loads the skills it finds
-    // there on its own, and a builder must not steer its own reviewer. The reviewer gets the
-    // approved skills instead, and still reads the branch's through git, in the diff. An
-    // .agents that is a link goes whole, as it could lead to skills elsewhere in the view.
+    // Last, a link in the branch's .agents/skills/ goes from the view, or a link at .agents or
+    // .agents/skills: Codex follows one to skills it loads on its own, and a builder must not
+    // steer its own reviewer. Its plain skills stay, so the checkout is the commit, and the
+    // harness is told to leave them unloaded. A removed link shows as deleted, which only a
+    // branch that links its skills ever sees.
     const index = join(folder, "index");
     const checkout = [
       'index="$(git rev-parse --git-dir)/index"',
@@ -404,7 +410,7 @@ async function reviewNow(given: {
       'cat "$1" > "$index"',
       'printf "%s\\n" "$0" > "$(git rev-parse --git-path HEAD)"',
       'rm -f "$(git rev-parse --git-path index.lock)" "$(git rev-parse --git-path HEAD.lock)"',
-      "{ if test -L .agents; then rm -f .agents; else rm -rf .agents/skills; fi; }",
+      "{ if test -L .agents; then rm -f .agents; elif test -L .agents/skills; then rm -f .agents/skills; elif test -d .agents/skills; then find .agents/skills -type l -exec rm -f {} +; fi; }",
       "shift",
       'exec "$@"',
     ].join(" && ");

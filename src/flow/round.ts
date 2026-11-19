@@ -11,6 +11,7 @@ import { editReview, failedLog, forgeOf, openPr, postReview, setStatus } from ".
 import { repositoryRole } from "../roles.ts";
 import { quietly } from "../run.ts";
 import { errorText } from "../say.ts";
+import { branchSkills } from "../skills.ts";
 import { baseOf } from "./builder.ts";
 import { openPrs, prOf, threadTask } from "./copy.ts";
 import {
@@ -394,6 +395,14 @@ async function reviewRound(
           // change that was docs alone is asked again, against the base just fetched. One that
           // now changes code runs the tests, as there is then no CI result to read.
           const docsOnly = given.docsOnly === true && changesOnlyDocs(skelcrewClone, bases, sha);
+          // The branch's own skills, which the reviewer must not load. A commit whose skills
+          // can't be read fails its review rather than run with them.
+          let skillsOff: string[];
+          try {
+            skillsOff = branchSkills(skelcrewClone, sha);
+          } catch (error) {
+            return { verdict: "failed" as const, body: errorText(error) };
+          }
           const started = Date.now();
           const result = await review({
             ...given,
@@ -403,6 +412,7 @@ async function reviewRound(
             base: from,
             test: repositoryCommands(thread).test,
             socket: reviewSocket(thread.folder),
+            branchSkills: skillsOff,
           });
           const { harness } = given;
           if (result.verdict === "limited") {

@@ -389,12 +389,16 @@ async function startCommand(given: {
 // it, and only its sessions and the login folder reach the real ones. Its skills/ stays empty,
 // as a copy there would steer every later review, so the repository's skills go into the
 // review's own folder and are returned for the prompt to list.
+// Codex loads by itself the skills in .agents/skills/ of the checkout it reviews, which are the
+// builder's. Each of `branchSkills`, those SKILL.md files, is turned off, so only the approved
+// ones listed in the prompt reach the reviewer.
 async function reviewCommand(given: {
   home: string;
   folder: string;
   model?: string | undefined;
   signal: AbortSignal;
   skills?: SkillsFrom;
+  branchSkills?: string[];
 }) {
   const { home, folder, model, signal } = given;
   // Skelcrew's own CODEX_HOME, with its login shared out and a sessions folder to keep.
@@ -418,6 +422,8 @@ async function reviewCommand(given: {
   const command = ["codex", "--no-daemon", "exec", "--dangerously-bypass-approvals-and-sandbox"];
   // With none named, Codex runs on its own default.
   if (model) command.push("-m", model);
+  const off = (given.branchSkills ?? []).map((file) => `{path=${tomlString(file)},enabled=false}`);
+  if (off.length > 0) command.push("-c", `skills.config=[${off.join(",")}]`);
   command.push("--output-schema", join(folder, "schema.json"), "-o", join(folder, "answer.json"));
   command.push("-");
   const skills = given.skills ? copySkills(given.skills, join(folder, "skills")) : [];

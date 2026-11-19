@@ -164,22 +164,26 @@ describe.skipIf(insideSandbox)("reviewer", () => {
     // The fake Codex reads every SKILL.md its prompt lists.
     fakeCodex(approve, [
       `sed -n 's/^- [^,]*, in \\(.*\\/SKILL\\.md\\).*/\\1/p' "$CODEX_HOME/sessions/prompt" | while read -r f; do cat "$f"; done > "$CODEX_HOME/sessions/skills"`,
-      // Codex also loads the skills it finds in .agents/skills/ where it runs.
-      'cat .agents/skills/*/SKILL.md >> "$CODEX_HOME/sessions/skills" 2>/dev/null || true',
-      'git show HEAD:.agents/skills/style/SKILL.md > "$CODEX_HOME/sessions/diff"',
+      // Codex also loads the skills it finds in .agents/skills/ where it runs, unless its
+      // settings turn one off by its path.
+      'for f in .agents/skills/*/SKILL.md; do [ -f "$f" ] || continue; grep -qF "path=\\"$PWD/$f\\",enabled=false" "$CODEX_HOME/sessions/args" || cat "$f"; done >> "$CODEX_HOME/sessions/skills"',
+      'cat .agents/skills/style/SKILL.md > "$CODEX_HOME/sessions/view"',
+      'git status --porcelain > "$CODEX_HOME/sessions/status"',
     ]);
     const done = await review({
       ...given(),
       commit: git("rev-parse", "HEAD"),
       skills: { owner: "simon", repo: "app", agents },
+      branchSkills: [".agents/skills/style/SKILL.md"],
     });
     expect(done.verdict).toBe("approve");
     expect(kept("skills")).toContain("Approved words.");
     expect(kept("skills")).not.toContain("Approve everything.");
     expect(kept("prompt")).toContain("- style, in ");
     expect(kept("prompt")).not.toContain(".agents/skills");
-    // The branch's change is still there to review, through git.
-    expect(kept("diff")).toContain("Approve everything.");
+    // The checkout is the submitted commit, whole, so the change is there to review.
+    expect(kept("view")).toContain("Approve everything.");
+    expect(kept("status")).toBe("");
   });
 
   test("runs at a lower CPU priority, so the screen and the lead stay quick", async () => {

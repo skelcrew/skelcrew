@@ -17,7 +17,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { z } from "zod";
-import { skillsTold } from "../src/skills.ts";
+import { branchSkills, skillsTold } from "../src/skills.ts";
 import { source } from "./harness.ts";
 
 let home = "";
@@ -195,4 +195,35 @@ test("skills listed in instructions name each one, what it is for and its SKILL.
     "\n- review-sql, in /r/sql/SKILL.md: How to check a schema change.\n- notes, in /r/notes/SKILL.md",
   );
   expect(skillsTold([])).toBe("");
+});
+
+// The reviewer's harness must leave the branch's own skills unloaded, so it is told each one.
+test("a branch's skills are each SKILL.md under .agents/skills/, links left out", () => {
+  agentsFile("skills/deep/inner/SKILL.md", "Nested.\n");
+  git("add", "-A");
+  git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "nested");
+  expect(branchSkills(clone, "HEAD").sort()).toEqual([
+    ".agents/skills/deep/inner/SKILL.md",
+    ".agents/skills/notes/SKILL.md",
+    ".agents/skills/review-sql/SKILL.md",
+  ]);
+  expect(() => branchSkills(clone, "0".repeat(40))).toThrow("couldn't read the skills of 0000000");
+});
+
+// Codex finds the skills in the checkout it reviews on its own, so each is turned off by path.
+test("a review on Codex turns off each of the branch's skills", () => {
+  const folder = join(home, "review");
+  mkdirSync(folder);
+  const off = ["/v/.agents/skills/a/SKILL.md", '/v/.agents/skills/say "hi"/SKILL.md'];
+  const launched = z.object({ command: z.array(z.string()) }).parse(
+    inHome(`return await harnessNamed("codex").review({
+      home: env.HOME, folder: ${JSON.stringify(folder)}, signal: new AbortController().signal,
+      branchSkills: ${JSON.stringify(off)},
+    });`),
+  );
+  const setting = launched.command[launched.command.indexOf("-c") + 1] ?? "";
+  expect(setting).toStartWith("skills.config=");
+  expect(Bun.TOML.parse(setting.replace("skills.config=", "v = "))).toEqual({
+    v: off.map((path) => ({ path, enabled: false })),
+  });
 });

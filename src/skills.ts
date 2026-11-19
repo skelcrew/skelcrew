@@ -80,3 +80,26 @@ export function skillsTold(skills: Skill[]): string {
   );
   return `The repository gives you skills: knowledge you load when you need it. When one fits your work, read its SKILL.md, and any files it points to beside it.\n${lines.join("\n")}`;
 }
+
+// Returns the SKILL.md files the commit has under .agents/skills/, at any depth, as paths from
+// the top of the repository, for the reviewer's harness to leave unloaded. Read from Skelcrew's
+// clone, which has every submitted commit, never the builder's, whose git settings are its own.
+// Links are left out: the review's view drops them. Throws when git can't read the commit, so the
+// review fails rather than run with the branch's skills.
+export function branchSkills(clone: string, commit: string): string[] {
+  const run = Bun.spawnSync(
+    ["git", "-C", clone, "ls-tree", "-r", "-z", commit, "--", ".agents/skills/"],
+    { stdout: "pipe", stderr: "pipe" },
+  );
+  if (!run.success)
+    throw new Error(
+      `Skelcrew couldn't read the skills of ${commit.slice(0, 7)}: ${run.stderr.toString().trim()}`,
+    );
+  return run.stdout
+    .toString()
+    .split("\0")
+    .flatMap((line) => {
+      const path = /^(?:100644|100755) blob [0-9a-f]+\t(.+\/SKILL\.md)$/.exec(line)?.[1];
+      return path ? [path] : [];
+    });
+}

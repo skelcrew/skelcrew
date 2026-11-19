@@ -365,13 +365,15 @@ function startCommand(given: {
 // Returns Claude Code's review command and a config folder of the review's own, so a review
 // leaves no transcript behind. The command reads the review's prompt on stdin and holds the
 // answer to `schema`. The repository's skills go into that folder's skills/, where Claude Code
-// finds them, so none are left for the prompt to list.
+// finds them, so none are left for the prompt to list. Claude Code never loads skills from
+// .agents/, so the branch's own need nothing.
 function reviewCommand(given: {
   home: string;
   folder: string;
   model?: string | undefined;
   schema: string;
   skills?: SkillsFrom;
+  branchSkills?: string[];
 }) {
   const { home, folder, model = defaultModel, schema, skills } = given;
   const token = claudeToken(home);
