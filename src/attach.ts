@@ -3,11 +3,11 @@
 // lead, sc --list shows the lead's repository as a list, and sc attach opens a builder.
 import { z } from "zod";
 import { agentRuns } from "./agents/sessions.ts";
-import { agentsAnswered, askAboutAgents } from "./approved-agents.ts";
+import { askAboutAgents } from "./approved-agents.ts";
 import { ask } from "./client.ts";
 import { tellOldKeys } from "./config.ts";
 import { openDb } from "./db.ts";
-import { lastOpened, leadOf } from "./flow/lead.ts";
+import { leadOf } from "./flow/lead.ts";
 import { builderSession, findThread } from "./flow/thread.ts";
 import { runList } from "./list/list.ts";
 import { installService, restartDaemon, servicePid, startDaemon } from "./machine/service.ts";
@@ -20,6 +20,7 @@ import { checkoutFolder, git, release, singleFile } from "./version.ts";
 const LeadReply = z.union([
   z.object({ lead: z.string(), repository: z.string() }),
   z.object({ closed: z.literal(true) }),
+  z.object({ agents: z.object({ owner: z.string(), repo: z.string(), name: z.string() }) }),
   z.object({ error: z.string() }),
 ]);
 
@@ -134,42 +135,45 @@ export async function upInBackground(): Promise<boolean> {
 // first. The lead is for `from`, an owner/repo, or else for the repository you opened last.
 // With `tab`, only a repository whose tab is open will do. Returns false, showing nothing, when
 // every tab is closed. Before it shows either, it names once any old keys the opened
-// repository's skelcrew.yaml still uses: the daemon has the last word on which repository you
-// opened last. Without `from`, it first asks about that repository's .agents/ if you never
-// answered for it.
+// repository's skelcrew.yaml still uses, and before its lead starts, asks about an .agents/ you
+// never answered for: only the daemon knows which repository you opened last.
 export async function attachToLead(
   sessions: string,
   list: boolean,
   from?: string,
   tab = false,
 ): Promise<boolean> {
-  // The daemon starts a stopped lead before it answers, on the roles you approved by then, so
-  // the question comes before the request. The repository is picked here as the daemon picks it.
-  // A tab that is closed won't open, so it asks nothing. With `from`, sc already asked as it
-  // brought the repository in.
-  const db = openDb();
-  const next = from ? null : lastOpened(db);
-  const closed =
-    next &&
-    db
-      .query("SELECT 1 FROM repositories WHERE owner = ? AND repo = ? AND tab_closed = 1")
-      .get(next.owner, next.repo);
-  if (next && !(tab && closed) && !agentsAnswered(next)) askAboutAgents(next, next.name);
   // Asking for the lead brings it back if it ended while the daemon kept running. Starting it
-  // takes longer than a status, hence the longer wait.
-  const reply = await ask(
-    { command: "lead", ...(from ? { from } : {}), ...(tab ? { tab } : {}) },
-    15_000,
-  );
-  if (reply === null) throw new Error("the daemon didn't answer: run sc to start it");
-  const lead = LeadReply.safeParse(reply);
-  if (!lead.success)
-    throw new Error("the daemon answered in a way this Skelcrew doesn't understand");
-  if ("error" in lead.data) throw new Error(lead.data.error);
-  if ("closed" in lead.data) return false;
-  tellOldKeys(lead.data.repository);
-  if (list) await runList(sessions, lead.data.repository);
-  else await openScreen(sessions, lead.data.lead, lead.data.lead, lead.data.repository);
+  // takes longer than a status, hence the longer wait. The daemon may first hand back the
+  // repository it would open, for you to answer about its .agents/ before its lead starts. sc
+  // then asks again, and the daemon may pick another repository by then, which is asked about
+  // the same way.
+  let asked: string | undefined;
+  let lead: z.infer<typeof LeadReply>;
+  while (true) {
+    const reply = await ask(
+      {
+        command: "lead",
+        ...(from ? { from } : {}),
+        ...(tab ? { tab } : {}),
+        ...(asked ? { asked } : {}),
+      },
+      15_000,
+    );
+    if (reply === null) throw new Error("the daemon didn't answer: run sc to start it");
+    const parsed = LeadReply.safeParse(reply);
+    if (!parsed.success)
+      throw new Error("the daemon answered in a way this Skelcrew doesn't understand");
+    lead = parsed.data;
+    if (!("agents" in lead)) break;
+    askAboutAgents(lead.agents, lead.agents.name);
+    asked = `${lead.agents.owner}/${lead.agents.repo}`;
+  }
+  if ("error" in lead) throw new Error(lead.error);
+  if ("closed" in lead) return false;
+  tellOldKeys(lead.repository);
+  if (list) await runList(sessions, lead.repository);
+  else await openScreen(sessions, lead.lead, lead.lead, lead.repository);
   return true;
 }
 

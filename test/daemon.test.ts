@@ -694,6 +694,31 @@ describe.skipIf(insideSandbox)("with a lead per repository", () => {
     });
   });
 
+  // Only you can approve .agents/, and a lead started first would run on the built-in roles.
+  test("outside a repository, hands back an .agents/ you never answered for before starting its lead", async () => {
+    setUp();
+    const clone = addRepository("app");
+    const work = join(home, "work", "app");
+    mkdirSync(join(work, ".agents", "roles"), { recursive: true });
+    writeFileSync(join(work, ".agents", "roles", "builder.md"), "Build it the team's way.\n");
+    git(work, "add", "-A");
+    git(work, "commit", "-q", "-m", "roles");
+    git(work, "push", "-q", "origin", "HEAD:main");
+    serve();
+    await untilAnswers();
+    await until(() => existsSync(join(clone, ".agents")));
+    expect(await ask({ command: "lead" })).toEqual({
+      agents: { owner: "simon", repo: "app", name: "app" },
+    });
+    expect(hasLead()).toBe(false);
+    // Once sc asked, the lead opens whatever you answered, as sc repo trust can approve it later.
+    expect(await ask({ command: "lead", asked: "simon/app" })).toEqual({
+      lead: leadName(),
+      repository: "simon/app",
+    });
+    expect(hasLead()).toBe(true);
+  });
+
   test("with no repositories, there is no lead to open", async () => {
     setUp();
     serve();

@@ -33,6 +33,9 @@ const trustFile = () => join(home, ".config", "skelcrew", "trusted");
 
 // What the fake daemon answers when asked for a lead.
 let daemonReply = "";
+// Repositories the fake daemon hands back for plain sc to ask about their .agents/, in turn,
+// before it answers with the lead.
+let handBack: object[] = [];
 
 function fake(name: string, body: string): void {
   writeFileSync(
@@ -44,6 +47,7 @@ function fake(name: string, body: string): void {
 
 beforeEach(async () => {
   daemonReply = '{"lead":"app-lead","repository":"simon/app"}';
+  handBack = [];
   for (const remote of Object.keys(claimed)) delete claimed[remote];
   home = realpathSync(mkdtempSync(join(tmpdir(), "skel-repo-test-")));
   mkdirSync(join(home, "bin"));
@@ -70,6 +74,8 @@ beforeEach(async () => {
       if (JSON.parse(data.toString()).command === "status") return connection.end("{}\n");
       appendFileSync(join(home, "calls"), "daemon lead\n");
       writeFileSync(join(home, "asked"), data.toString());
+      const next = handBack.shift();
+      if (next) return connection.end(`${JSON.stringify({ agents: next })}\n`);
       // A real daemon starts a stopped lead here, on the .agents/ approved by now.
       const approvals = join(home, ".config", "skelcrew", "approved-agents.yaml");
       if (existsSync(approvals))
@@ -1042,15 +1048,21 @@ describe("a repository's .agents/", () => {
     pushRole(checkout, "Build it the team's way.\n");
     await skel(["repo", "add"], "", checkout);
     expect(approved()).toBeUndefined();
-    // The daemon answers with the repository you opened last, and starts its lead if it stopped.
+    // The daemon hands back the repository you opened last, and starts its lead once sc asked.
+    handBack = [{ owner: "simon", repo: "app", name: "app" }];
     const run = await skel([], "y\n");
     expect(run.err).toBe("");
     expect(run.out).toContain("+Build it the team's way.");
     expect(run.out).toContain("Approve simon/app's .agents/?");
     const tree = git(checkout, "rev-parse", "HEAD:.agents").trim();
     expect(approved()).toBe(tree);
-    // The lead starts on what you approved, so the question came before the daemon was asked.
+    // The lead starts on what you approved, and the daemon is told sc asked.
     expect(readFileSync(join(home, "approved-at-lead"), "utf8")).toContain(tree);
+    expect(JSON.parse(readFileSync(join(home, "asked"), "utf8"))).toEqual({
+      command: "lead",
+      tab: true,
+      asked: "simon/app",
+    });
     expect((await skel([], "")).out).not.toContain("Approve");
   });
 

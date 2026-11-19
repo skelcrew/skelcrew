@@ -21,11 +21,13 @@ const ShortTitle = z.string().trim().min(1);
 export const DaemonRequest = z.discriminatedUnion("command", [
   z.object({ command: z.literal("status") }),
   // `tab` comes from the screen's tabs, and from plain sc away from a checkout with a remote.
-  // Neither may open a tab you closed.
+  // Neither may open a tab you closed. `asked` is the owner/repo whose .agents/ plain sc just
+  // asked you about, so its lead may start whatever you answered.
   z.object({
     command: z.literal("lead"),
     from: z.string().optional(),
     tab: z.literal(true).optional(),
+    asked: z.string().optional(),
   }),
   z.object({ command: z.literal("repo ls") }),
   z.object({ command: z.literal("ps"), repo: z.string().optional() }),
