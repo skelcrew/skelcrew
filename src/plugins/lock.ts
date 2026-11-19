@@ -42,8 +42,11 @@ function writeLock(lock: Lock): void {
 
 // Returns your lock file, checked, or null when this machine has none yet. Unlike yourLock, it
 // never writes one, so sc --remote can compare the laptop's lock with a server's for free.
-export function readLock(): Lock | null {
-  const file = lockFile();
+export const readLock = (): Lock | null => readLockAt(lockFile());
+
+// Returns the lock in `file`, checked: yours, or a repository's skelcrew.lock. Returns null when
+// the file isn't there.
+export function readLockAt(file: string): Lock | null {
   if (!existsSync(file)) return null;
   let parsed: unknown;
   try {
@@ -97,11 +100,8 @@ export function yourLock(db: Database): Lock {
 // this machine runs. The file is changed in place, so every other pin, and any comment, stays
 // as it was.
 export function setLocked(db: Database, source: string, locked: Locked | null): void {
-  // Checked first, and written for the first time on a machine set up before the lock. A
-  // machine with no plugin from GitHub yet has no lock, and gets one with its line on top.
-  yourLock(db);
+  settleYourLock(db);
   const file = lockFile();
-  if (!existsSync(file)) writeLock({});
   const document = parseDocument(readFileSync(file, "utf8"));
   // A lock that pins nothing, such as one with only its first line, has no map to change, so it
   // is written afresh.
@@ -115,10 +115,19 @@ export function setLocked(db: Database, source: string, locked: Locked | null): 
   writeFileSync(file, document.toString({ lineWidth: 0 }));
 }
 
-// Runs `write`, which changes your config.yaml or your lock. When it fails, both files are put
-// back as they were, so a plugin is never left named in one and missing from the other.
-export function writeBoth(write: () => void): void {
-  const files = [configFile(), lockFile()];
+// Makes sure your lock is there: checked, and written for the first time on a machine set up
+// before the lock. A machine with no plugin from GitHub yet gets one with only its line on top.
+// Once the file is there, the move into it is done. So a repository's plugin installed after
+// this is never taken for one of yours set up before the lock.
+export function settleYourLock(db: Database): void {
+  yourLock(db);
+  if (!existsSync(lockFile())) writeLock({});
+}
+
+// Runs `write`, which changes `files`: by default your config.yaml and your lock, or a
+// repository's skelcrew.yaml and skelcrew.lock. When it fails, each file is put back as it was,
+// so a plugin is never left named in one and missing from the other.
+export function writeBoth(write: () => void, files = [configFile(), lockFile()]): void {
   const before = files.map((file) => (existsSync(file) ? readFileSync(file, "utf8") : null));
   try {
     write();

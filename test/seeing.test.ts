@@ -1273,6 +1273,7 @@ exec sleep 300
         clone: `${data()}/repos/simon/app`,
         tabClosed: false,
         agentsWaiting: false,
+        installWaiting: false,
       },
     ]);
     expect(attach).toBe(

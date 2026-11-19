@@ -47,7 +47,8 @@ const sections: [string, [string, string][]][] = [
   [
     "PLUGINS",
     [
-      ["install", "Set up this machine and your plugins, asking before each"],
+      ["install", "Set up this machine and the plugins your files name, asking"],
+      ["add <owner/repo>", "Add a plugin to this repository, after asking"],
       ["add -g <owner/repo> | <path>", "Add a plugin of your own, after asking"],
       ["update -g [<name>]", "Move one, or all, to its newest version, after asking"],
       ["setup <name>", "Run its setup again, such as to sign in again"],
