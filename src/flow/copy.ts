@@ -3,7 +3,7 @@
 // them waits on the tracker.
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
-import { readJson } from "../db.ts";
+import { hasTasks, readJson } from "../db.ts";
 
 // Who wrote an item, review or comment. `you` is whether it is you, as signed in to the
 // tracker or forge. `push` is whether they can push to the repository, or null where the
@@ -119,6 +119,19 @@ export function saveItems(
         [owner, repo, item.kind, item.id, item.state, item.created, JSON.stringify(item)],
       );
     }
+    // Each task keeps its PR's link, as the copy forgets a closed PR once its thread is done, and
+    // the list still opens the PR of a task that ended. Written only when it changed, as this
+    // runs at every poll. A database whose threads haven't moved onto tasks yet keeps the task's
+    // columns on its threads.
+    const table = hasTasks(db) ? "tasks" : "threads";
+    const link = `(SELECT json_extract(i.item, '$.link') FROM items i
+      WHERE i.owner = ${table}.owner AND i.repo = ${table}.repo AND i.kind = 'pr'
+        AND i.id = CAST(${table}.pr AS TEXT) AND json_valid(i.item))`;
+    db.run(
+      `UPDATE ${table} SET pr_link = ${link}
+        WHERE owner = ? AND repo = ? AND ${link} IS NOT NULL AND pr_link IS NOT ${link}`,
+      [owner, repo],
+    );
     // Forget the items that are no longer open, unless a thread still working, waiting or
     // stopped points to one by its task or PR.
     db.run(

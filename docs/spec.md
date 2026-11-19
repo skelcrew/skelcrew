@@ -73,7 +73,7 @@ A task is Skelcrew's own record of a piece of work, from the first words to the 
 | `merged` | The PR merged, or without a forge, the branch's changes reached the default branch. |
 | `closed` | The work ended without a merge, by `sc rm` or a PR closed without merging, and there is no open issue behind it. Or its issue closed while it was still in stage `issue`. |
 
-`merged` is the end. `closed` is the end unless you start the task again with `sc start`, which moves it back to `working`. The list shows neither, and `sc ls --all` shows both.
+`merged` is the end. `closed` is the end unless you start the task again with `sc start`, which moves it back to `working`. The list shows the latest of both under Done, and `sc ls --all` shows them all.
 
 When the work on a task ends without a merge and its issue is still open, the task goes back to stage `issue`, not to `closed`. After `sc rm app-12`, issue #12 shows as not started again. It is the same task, with the same name. Its threads, its closed PR and the lead's updates stay in its log, and `sc show app-12` lists them as an earlier attempt. `sc start app-12` starts it again from the issue's title and body as they are then, in a fresh clone on a fresh branch, with no updates carried over. A task with no issue, such as `app-t3`, goes to `closed`, and `sc start app-t3` starts it again from its own title and description.
 
@@ -461,7 +461,7 @@ You can say once that a PR should merge when it is ready, and leave. `sc merge -
 
 Once armed, each poll checks the PR. The engine merges it by itself, as `m` does, at the commit Skelcrew's reviewer approved, once that commit is still the PR's head, it passed the wait for checks that ready needs, every check on it passed, Skelcrew's own included, and Skelcrew's copy shows no conflict. Just before it first asks the forge to merge an approved commit, Skelcrew posts a review saying "Merging when ready, as asked by simon on 18 November 2026.", with your login name on the machine and the day you armed it, once per armed plan and commit. The record's body carries a fixed marker, a hidden HTML comment with the plan's own ID and the commit: `<!-- skelcrew:merge-when-ready plan=3f2a commit=4f9c2e1 -->`. Skelcrew keeps on the task that it posted it. Before it posts one, it also looks in its copy of the PR for a review whose body holds that marker, whoever the forge says wrote it, and counts one there as posted, saving that on the task. So an engine that stopped after the forge took the review but before saving it finds it at the next poll, and a restart never posts it twice. The merge itself waits for a later poll, so it goes by the PR as the forge reports it after the record: a check that failed or started meanwhile, a cancel, a stop, `sc rm` or a new review all stop it. The lead's note then says `app-12 is done: #7 merged into main when ready, as the human asked`.
 
-Until then the plan stays armed, through restarts of the engine, as it is kept on the task, and `sc ps` and the list show `merges when ready` with what it waits on, such as `merges when ready · waiting on its failing checks to be fixed`. A push after the approval waits for its own approval, and a push Skelcrew never reviewed is never merged. A conflict, a failing check, a thread that failed or stopped, or a forge that refuses or fails all keep it armed. When it still waits after a round on something someone must act on, not just a review or checks still running, the lead gets one note for that round, such as `Still merging #7 (app-12) once it's approved and green, waiting on its conflict with main to be fixed.` `sc merge --cancel` asks nothing, as cancelling is always safe. While the forge is merging, it refuses and says so. `sc rm`, and any end of the task, disarms it. Without a forge `sc merge --when-ready` refuses and says to merge the branch yourself.
+Until then the plan stays armed, through restarts of the engine, as it is kept on the task, and `sc ps` shows `merges when ready` with what it waits on, such as `merges when ready · waiting on its failing checks to be fixed`. A push after the approval waits for its own approval, and a push Skelcrew never reviewed is never merged. A conflict, a failing check, a thread that failed or stopped, or a forge that refuses or fails all keep it armed. When it still waits after a round on something someone must act on, not just a review or checks still running, the lead gets one note for that round, such as `Still merging #7 (app-12) once it's approved and green, waiting on its conflict with main to be fixed.` `sc merge --cancel` asks nothing, as cancelling is always safe. While the forge is merging, it refuses and says so. `sc rm`, and any end of the task, disarms it. Without a forge `sc merge --when-ready` refuses and says to merge the branch yourself.
 
 ### Without an issue, without a forge
 
@@ -674,7 +674,7 @@ Every message Skelcrew types into an agent goes through this module, on whicheve
 
 - **Who may send what to whom.** The lead may tell any thread of its own repository. A builder may tell only its repository's lead, since its socket says which task it is. Skelcrew itself sends event messages to a builder: a review's changes, a failed check, a person's comment, a merge conflict. It sends notes to the lead: a thread that needs you, a task started from a label, a task's end. A reviewer sends nothing. A lead may brief another repository's lead in Skelcrew, but never its own repository's, with `sc tell lead <repo>`. A builder can't. The brief goes in as a note to that lead, so it shows in both leads' chats, and a lead whose tab you closed by exiting it is brought back first. A lead that can't start yet, such as while its clone is missing, is tried again every minute while the brief waits, and the sending lead is told why, once. A lead already running when its Skelcrew learned of briefs is told these rules once, in a note, as it keeps the instructions it started with. A repository not in Skelcrew is refused, with the `sc repo add` that adds it. When you asked for the work the brief hands over, the sending lead gives your words exactly, with `--asked-file`, as for a merge when ready. They go in an `<asked>` element of their own, before the brief's `<brief>` element, each holding its text exactly, and the outer tag says `asked="yes"`, which only Skelcrew can write. Text that holds a `skelcrew`, `asked` or `brief` tag in any form, such as `</asked >`, which would close or fake a tag, or a control character, such as the end of a bracketed paste, which would end the paste and act as typing, has each `<` written as `&lt;`, each `&` as `&amp;` and each control character but a line break or tab as its code, such as `&#x1b;`, rather than anything removed. Its element says `escaped="yes"`, so the receiving lead reads back exactly what was written. Only such a brief lets the receiving lead start threads from it, and only for exactly what your words ask, never for more the brief proposes. Without it, the receiving lead reports the brief to you and asks. Anything else is refused.
 - **The wrapping.** Every message from an agent is wrapped in a tag that says who it is from and the command to answer with: `<skelcrew from="lead" reply="sc tell lead">` into a builder, `<skelcrew from="app-12" reply="sc tell app-12">` into the lead, or `<skelcrew from="app:lead" reply="sc tell lead app">` into another repository's lead, then the text on its own lines, then `</skelcrew>`. Skelcrew removes any skelcrew tag from the text, and a brief's `<asked>` and `<brief>` tags, with spaces or in any case, such as `</skelcrew >`, so a message can't end its tag early, and an agent's message never passes for yours or for your words in a brief. Every other note typed into a lead can quote outside text, such as an issue's title, which must never pass for an agent's message or a brief, and the lead still sees all of it: there the `<` that starts any of these tags is written as `&lt;`. Skelcrew does so as each note is typed in, so a note saved before an upgrade is no exception. Only notes Skelcrew writes itself, with no outside text, keep tags they name, such as a note telling a lead how to read a brief. A lead's brief is escaped instead, as **Who may send what to whom** says. Each control character but a line break or tab, in any message from an agent and in every note typed into a lead, is written as its code, such as `&#x1b;`, so nothing can end the paste early and type the rest as if you had.
-- **Order.** Each agent has one queue, first in, first out, kept in the database, so a stop or a restart of the engine loses nothing and reorders nothing. `sc ps` and the list count what waits.
+- **Order.** Each agent has one queue, first in, first out, kept in the database, so a stop or a restart of the engine loses nothing and reorders nothing. `sc ps` counts what waits.
 - **Waiting until idle.** A message waits until the transport says the agent is idle. A message to a thread that isn't running, or that is asking you a question, is refused, not kept, since typing would answer the question for you. A builder that stopped without submitting can be told, and the message clears its `turn ended`. A note to a lead that hasn't started waits until it starts. A working or waiting builder that isn't running while messages wait for it needs you after a few seconds, as nothing else would bring it back.
 - **The lead's chat.** The lead's chat is yours too, so its notes and messages wait while you read or type there. Nothing goes into the lead while you have scrolled back in it, as a paste would throw you back to the bottom, nor while you have unsent text at its prompt. A lead you left scrolled back, such as for a builder, waits until you come back to it and leave the scroll. Once the lead can take them, everything that waited goes in as one message, a blank line apart, so the chat moves once. A thread that needs you, such as for a builder's question, comes first, then a thread that failed and the builders' messages, then Skelcrew's other notes. What would be said is looked at again right before the paste, so a question you answered meanwhile isn't announced, and a note that came meanwhile goes in with the rest.
 - **No acknowledgements.** A builder answers the lead only with a result, a question or a disagreement, never just to confirm a message, such as "noted, nothing to do". A message that needs nothing from it gets no reply.
@@ -729,34 +729,45 @@ Two ways to see a repository exist side by side, until you choose which one stay
 `sc --list` shows a list: a picker, not a layout. You pick a row, and Skelcrew either attaches you full screen to an agent or does what the row offers. Detaching, with Ctrl-\, brings you back to the list, on the same row. While you are attached on tmux, the terminal's title names the agent and the key back, such as `app-24 · ctrl+\ back`, and the title you had comes back with you. Nothing else of Skelcrew's shows over the agent. On a row Enter attaches on tmux, the bottom line says so before you go, as `⏎ open · ctrl+\ back`. A runtime plugin's host has its own key to come back, and its rows say only `⏎ open`. There is no sidebar, no split, and no tmux server of the screen's own.
 
 ```
- Skelcrew v0.6.0 · app                                        site •1  docs
+ Skelcrew v0.6.0  [ app ]  [ docs ]  [ site •1 ]
 
- ◆ lead            idle · claude
-                   asks: start a task on #31 "Export as CSV"?          y/n
+   ● lead    claude
+     asks you
+     asks: start a task on #31 "Export as CSV"?        y/n
 
- Issues
-   ○ app-31        Export as CSV
-   ○ app-29        Dark mode for the settings page
+ 1 Backlog   2
+ 2 Building  3 · 1 needs you
+ ▸ ● app-t3  Rate limit the API
+     question
+     #43 · CI running · 14:02
+   ○ app-24  Login redirect
+     working · Editing rows.ts
+     #40 · CI passed · 14:31
 
- Working
-   ● app-24        Login redirect          working · claude · round 2 · 12m
-   ● app-t3        Rate limit the API      needs you: question · codex
-   ○ app-27        Faster search           checks · #44
+ 3 Reviewing 1
+ 4 Checks    0
+ 5 Ready     1
+ 6 Done      4
 
- Ready for review
- ▸ ● app-22        Fix the export header   #41 · approved · CI passed
-
- ↑↓ move  ⏎ open  m merge  y/n answer  ⇥ repository  q quit   cpu 63%  mem 9/32G
+ ↑↓ move  ⏎ open  1-6 stages  y/n answer  ⇥ repository  q quit   cpu 63%  mem 9/32G
 ```
 
-The list is one repository's, picked as **Opening a repository** says. The top line has Skelcrew's version, with the host you gave `--remote` after it on a server, and names the other repositories, each with a yellow count when something there needs you. Tab moves to the next one. Its parts are:
+The list is one repository's, picked as **Opening a repository** says. The top line has Skelcrew's version, with the host you gave `--remote` after it on a server, then a tab for each repository, together on the left. The open one is highlighted. Each other one has a yellow count when something there needs you. Tab moves to the next one, and a click on a tab opens it.
 
-- **The lead**, first. Its row says what it is doing. Requests from the lead that wait for your yes, such as starting a task or adding a repository, show under it, one per line, newest first.
-- **Issues**: tasks in stage `issue`. Shown when the repository has a tracker.
-- **Working**: tasks with agents on them. The row says what is happening, with the harness, the round once there has been a review, and how long the builder has worked in its current stretch, such as `12m`. When a thread needs you, the row says why, in yellow. A task with more than one live thread shows each under it, as `app-24/builder`.
-- **Ready for review**: Skelcrew's reviewer approved and CI is green. Each waits for you.
+The repository's lead comes first, under the top line, always shown. Its row looks like a task's, so it reads as a row you open: its mark, `lead` and its harness, then under them what it is doing. Requests from the lead that wait for your yes, such as starting a task or adding a repository, show under it, one per line, newest first. Then come the repository's tasks, never its threads on their own, in six stages, in this order:
 
-A task's row uses its short title, or its title cut with `…` to fit. Its word says what is happening:
+- **Backlog**: not started yet. The tracker's open issues Skelcrew knows of that no thread works on, and tasks queued for a builder under `limits.threads`.
+- **Building**: a builder is working on it, including after the reviewer asked for changes. A thread that failed or stopped is here too, as its builder is what must start again.
+- **Reviewing**: a review is running, or queued for a place under `limits.reviews` or for its harness's usage limit. A review that failed or timed out is here too.
+- **Checks**: Skelcrew's reviewer approved, and the task waits on CI for that commit.
+- **Ready**: approved and green, ready for you to merge, which includes a merge when ready about to merge it.
+- **Done**: merged or closed. Those that ended today, or the last 10 when fewer ended today.
+
+Each task is in exactly one stage, decided from its state alone. Needs you is never a stage: a task that needs you stays in the stage of its work, and its row is marked, whatever its stage. Within a stage, those that need you come first, and each of the two has the task that changed last first. Backlog has the newest issue first.
+
+Each stage's heading has the number key that opens and closes it, its name, how many tasks it has, lined up with the other headings' counts, and how many of them need you, such as `Building 4 · 2 need you`. Every heading always shows, so a closed stage still says what waits in it. Only Building is open when the list starts. The stages you open or close stay so until you leave the list, whichever repository you move to.
+
+A task in Building, Reviewing, Checks or Ready takes three lines, as in the sidebar, so what it does sits under its title. The first has its mark, its name and its short title, or its title cut with `…` to fit. The second has its word in its colour, then dim the step its builder is on, such as `Editing rows.ts`. The third has, dim, its PR, its CI, such as `CI passed`, and when it last changed, such as `14:31` today or `12 Nov` before. A task in Backlog or Done takes one line, in columns from the left: its mark, its name, its title, then when it last changed. Each column is as wide as the widest value showing, so the rows line up. The row you are on is highlighted on all its lines. Details such as a merge when ready or messages waiting are for `sc show`. When a thread needs you, its mark is yellow and its word says why, such as `question`. Its word says what is happening:
 
 | Word | Means |
 | --- | --- |
@@ -767,27 +778,28 @@ A task's row uses its short title, or its title cut with `…` to fit. Its word 
 | `checks` | Waiting on CI |
 | `changes` | The reviewer asked for changes, and the builder hasn't picked them up yet |
 | `limit · 13:59` | The builder or the review waits for its harness's usage limit to reset |
-| `merges when ready` | Skelcrew merges it once it is approved and green, with what it waits on |
-| `approved` | Ready for review |
-| `needs you: question` | The builder asked with its harness's question tool |
+| `approved` | Ready to merge |
+| `question` | The builder asked with its harness's question tool |
 | `turn ended` | The builder ended its turn without submitting, and its last message went to the lead |
-| `needs you: error` | The builder's harness stopped on an error |
-| `needs you: round limit` | Review hit its round limit |
-| `needs you: review failed`, `review timed out` | The review couldn't run, or ran past its time limit twice |
+| `error` | The builder's harness stopped on an error |
+| `round limit` | Review hit its round limit |
+| `review failed`, `review timed out` | The review couldn't run, or ran past its time limit twice |
 | `failed`, `stopped` | As the thread's status says |
 
-While messages wait for a builder, the row says how many, such as `1 message waiting`. The marks: a filled `●` needs you or is ready, a hollow `○` doesn't. Green is ready, yellow wants you, red is wrong (the thread failed, its harness errored or its review failed), bright is working and dim waits. The word always says what is happening, so nothing is told by colour alone. Text from the tracker has its control codes removed before it reaches your terminal.
+The marks: a filled `●` needs you or is ready, a hollow `○` doesn't. Green is ready, yellow wants you, red is wrong (the thread failed, its harness errored or its review failed), bright is working and dim waits. The word always says what is happening, so nothing is told by colour alone. Text from the tracker has its control codes removed before it reaches your terminal.
 
 | Key | On | What it does |
 | --- | --- | --- |
 | ↑ ↓ | Anywhere | Move one row |
+| `1` to `6` | Anywhere | Open or close Backlog, Building, Reviewing, Checks, Ready or Done |
 | Enter | The lead | Attaches full screen to the lead |
-| Enter | Issues | Asks `Start app-31? y/n` in the bottom line, then starts the task, as `sc start` does |
-| Enter | Working | Attaches full screen to the task's active thread, through its session host. Detaching returns to the list, on the same row |
-| Enter | Ready for review | Opens the PR in your browser, or copies its link, as OSC 52, when Skelcrew runs on a server. Without a forge the bottom line shows the approved branch, such as `app-t3 is ready on branch skelcrew/t3-fix-login` |
-| `m` | Ready for review | Asks `Merge app#41 into main? y/n`, then merges it on the forge. Not offered without a forge, where the line says so. If the forge refuses, the line says why |
+| Enter | Backlog | Asks `Start app-31? y/n` in the bottom line, then starts the task, as `sc start` does |
+| Enter | Building, Reviewing, Checks | Attaches full screen to the task's builder, through its session host. Detaching returns to the list, on the same row |
+| Enter | Ready, Done | Opens the PR in your browser, or copies its link, as OSC 52, when Skelcrew runs on a server. Without a forge the bottom line shows the approved branch, such as `app-t3 is ready on branch skelcrew/t3-fix-login`. A ready task whose builder needs you attaches to the builder instead, so one Enter reaches what it waits on |
+| `m` | Ready | Asks `Merge app#41 into main? y/n`, then merges it on the forge. Not offered without a forge, where the line says so, nor while its builder needs you. If the forge refuses, the line says why |
 | `y` `n` | A request from the lead | Answers it |
 | Tab | Anywhere | The next repository |
+| Click | A repository's tab | Opens that repository |
 | `q` | Anywhere | Leaves the list. Everything keeps running. Skelcrew prints `Your agents keep running. Run sc --list to come back.` |
 | Ctrl-\ | Anywhere | Nothing: it comes back from an agent, so pressing it once too often never leaves the list |
 
