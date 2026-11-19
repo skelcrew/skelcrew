@@ -168,9 +168,10 @@ describe.skipIf(insideSandbox)("reviewer", () => {
     git("commit", "-qm", "steer the reviewer");
     mkdirSync(join(clone, ".agents", "skills", "ghost"));
     writeFileSync(join(clone, ".agents", "skills", "ghost", "SKILL.md"), "Ghost words.\n");
-    // The fake Codex reads every SKILL.md its prompt lists.
+    // The fake Codex reads every SKILL.md its prompt lists. The list ends the prompt, with no
+    // line break after its last line, which read still takes.
     fakeCodex(approve, [
-      `sed -n 's/^- [^,]*, in \\(.*\\/SKILL\\.md\\).*/\\1/p' "$CODEX_HOME/sessions/prompt" | while read -r f; do cat "$f"; done > "$CODEX_HOME/sessions/skills"`,
+      `sed -n 's/^- [^,]*, in \\(.*\\/SKILL\\.md\\).*/\\1/p' "$CODEX_HOME/sessions/prompt" | while read -r f || [ -n "$f" ]; do cat "$f"; done > "$CODEX_HOME/sessions/skills"`,
       // Codex also loads the skills it finds in .agents/skills/ where it runs, unless its
       // settings turn one off by its path.
       'for f in .agents/skills/*/SKILL.md; do [ -f "$f" ] || continue; grep -qF "path=\\"$PWD/$f\\",enabled=false" "$CODEX_HOME/sessions/args" || cat "$f"; done >> "$CODEX_HOME/sessions/skills"',
