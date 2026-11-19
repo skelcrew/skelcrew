@@ -32,9 +32,19 @@ let laptop = { folder: "", main: "", commit: "" };
 // Skelcrew does when the laptop's build differs. Without one, it is a Skelcrew from before builds
 // carried their commit. On a server that sc install hasn't set up, it runs nothing but sc
 // install, which sets it up, and says so before checking its build, as a copied Skelcrew does.
+// Its sc install puts the files sent with --files in place, as Skelcrew's does.
 const serverSkel = (built?: string) => `#!/bin/sh
 test "$1" != install && test -f not-set-up && exit 97
-${built === undefined ? "" : `test -n "$SKELCREW_LAPTOP_BUILD" && test "$SKELCREW_LAPTOP_BUILD" != "${built}" && { echo "Skelcrew on $SKELCREW_REMOTE_NAME is from ${built}"; exit 98; }\n`}test "$1" = install && { echo "sc install on the server"; cp .config/skelcrew/config.yaml installed-from 2>/dev/null; rm -f not-set-up; test ! -f install-fails; exit; }
+${built === undefined ? "" : `test -n "$SKELCREW_LAPTOP_BUILD" && test "$SKELCREW_LAPTOP_BUILD" != "${built}" && { echo "Skelcrew on $SKELCREW_REMOTE_NAME is from ${built}"; exit 98; }\n`}test "$1" = install && {
+  f=; prev=; for w; do test "$prev" = --files && f=$w; prev=$w; done
+  if test -n "$f"; then
+    for n in config.yaml skelcrew.lock claude-token; do
+      if test -f ".config/skelcrew/$f/$n"; then mv ".config/skelcrew/$f/$n" ".config/skelcrew/$n"; else rm -f ".config/skelcrew/$n"; fi
+    done
+    rmdir ".config/skelcrew/$f"
+  fi
+  echo "sc install on the server"; cp .config/skelcrew/config.yaml installed-from 2>/dev/null; rm -f not-set-up; test ! -f install-fails; exit
+}
 echo "Skelcrew on the server got $# arguments"
 for word in "$@"; do echo "[$word]"; done
 exit 3
@@ -1044,13 +1054,10 @@ test("install sends your config.yaml, lock and Claude sign-in, readable only by 
   expect(lines[0]).toBe(
     `${ssh} umask 077 && mkdir -p .config/skelcrew && mkdir .config/skelcrew/${sending}`,
   );
-  // sc install runs holding a lock, and puts your files in place first, ignoring a hangup.
-  const copied = names.map((name) => `cp -f ${sending}/${name} ${name}`).join(" && ");
-  const put = `command -v sc >/dev/null || exit 127; (trap '' HUP && cd .config/skelcrew && ${copied}) && exec "$@"`;
-  const lock = `flock .config/skelcrew/.install sh -c ${quoted(put)} put sh -c `;
-  expect(lines.at(-3)).toContain(` SKELCREW_LAPTOP_LOCK=`);
-  expect(lines.at(-3)).toContain(lock);
-  expect(lines.at(-3)).toMatch(/ sh install$/);
+  // sc install runs holding a lock, and is told where your files are, to put them in place.
+  expect(lines.at(-3)).toContain(" SKELCREW_LAPTOP_LOCK=");
+  expect(lines.at(-3)).toContain(" flock .config/skelcrew/.install sh -c ");
+  expect(lines.at(-3)).toMatch(new RegExp(` sh install --files ${sending}$`));
   expect(lines.at(-2)).toBe("flock .config/skelcrew/.install");
   // The folder sent through goes once the install is over.
   expect(lines.at(-1)).toBe(`${ssh} rm -rf .config/skelcrew/${sending}`);
@@ -1228,6 +1235,83 @@ test("install from a laptop set up before the lock pins its plugins as they are 
   expect(readFileSync(join(there, "skelcrew.lock"), "utf8")).toContain(
     `simon/skelcrew-fake:\n  name: fake\n  version: 0.3.0\n  commit: ${commit}\n`,
   );
+});
+
+// Makes the server run this checkout's real Skelcrew, set up with Codex, with the plugin fake
+// from simon/skelcrew-fake installed, named in its config and pinned in its lock, as sc remote
+// add left a server whose laptop had it.
+function realServerWithFake(): void {
+  const server = join(home, "server");
+  mkdirSync(join(server, ".local", "bin"), { recursive: true });
+  writeFileSync(
+    join(server, ".local", "bin", "sc"),
+    `#!/bin/sh\nexec ${process.execPath} ${laptop.main} "$@"\n`,
+    { mode: 0o755 },
+  );
+  const config = join(server, ".config", "skelcrew");
+  const data = join(server, ".local", "share", "skelcrew");
+  for (const folder of [config, join(data, "codex")]) mkdirSync(folder, { recursive: true });
+  writeFileSync(join(data, "codex", "auth.json"), "login\n");
+  writeFileSync(join(data, "set-up"), "");
+  writeFileSync(join(config, "config.yaml"), "harness: codex\nplugins: [simon/skelcrew-fake]\n");
+  const fake = join(data, "plugins", "fake", "0.1.0");
+  mkdirSync(fake, { recursive: true });
+  writeFileSync(
+    join(fake, "skelcrew-plugin.yaml"),
+    "name: fake\nversion: 0.1.0\nskelcrew: 0.1.0\nabout: Tracks.\nkind: io\nprovides: [tracker]\ncall: [./call]\n",
+  );
+  const git = (...args: string[]) =>
+    Bun.spawnSync(["git", "-C", fake, "-c", "user.name=t", "-c", "user.email=t", ...args], {
+      stdout: "pipe",
+    });
+  git("init", "-q");
+  git("add", ".");
+  git("commit", "-q", "-m", "fake");
+  const commit = git("rev-parse", "HEAD").stdout.toString().trim();
+  writeFileSync(
+    join(config, "skelcrew.lock"),
+    `simon/skelcrew-fake:\n  name: fake\n  version: 0.1.0\n  commit: ${commit}\n`,
+  );
+  const db = new Database(join(data, "skelcrew.db"));
+  db.run("CREATE TABLE plugins (name TEXT PRIMARY KEY, folder TEXT NOT NULL, source TEXT)");
+  db.run("INSERT INTO plugins VALUES ('fake', ?, 'simon/skelcrew-fake')", [fake]);
+  db.close();
+}
+
+// Your files say which plugins your machines run, as npm's lock does, so one you removed on the
+// laptop goes from the server too.
+test("install removes from the server a plugin you removed on your laptop", async () => {
+  realServerWithFake();
+  mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
+  writeFileSync(join(home, ".config", "skelcrew", "config.yaml"), "harness: codex\nplugins: []\n");
+  const run = await skel(["--remote", "simon@workbox", "install"]);
+  expect(run.err).toBe("");
+  expect(run.out).toContain("Removed fake, with its settings and tokens.");
+  expect(run.code).toBe(0);
+  const server = join(home, "server");
+  expect(existsSync(join(server, ".local", "share", "skelcrew", "plugins", "fake"))).toBe(false);
+  const db = new Database(join(server, ".local", "share", "skelcrew", "skelcrew.db"));
+  expect(db.query("SELECT name FROM plugins").all()).toEqual([]);
+  db.close();
+  expect(readFileSync(join(server, ".config", "skelcrew", "config.yaml"), "utf8")).toBe(
+    "harness: codex\nplugins: []\n",
+  );
+  // The folder the files were sent through is gone.
+  expect(readdirSync(join(server, ".config", "skelcrew")).sort()).toEqual([
+    "config.yaml",
+    "skelcrew.lock",
+  ]);
+});
+
+// --files names a folder the laptop made, so a path that leads elsewhere moves nothing.
+test("sc install refuses --files that isn't a folder of sent files", () => {
+  for (const folder of ["../../elsewhere", "/tmp/x", "sending-a/../.."]) {
+    const run = Bun.spawnSync([process.execPath, laptop.main, "install", "--files", folder], {
+      env: { PATH: "/usr/bin:/bin", HOME: home },
+    });
+    expect(run.exitCode).toBe(1);
+    expect(run.stderr.toString()).toBe(`Skelcrew: ${folder} isn't a folder of sent files\n`);
+  }
 });
 
 // Runs main.ts as the Skelcrew on a set-up server would run it, for a laptop that passes the

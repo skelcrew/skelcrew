@@ -1,11 +1,11 @@
 // Your personal files as sc --remote <host> install sends them to a server: config.yaml, your
 // own lock and the agents' Claude Code token. Also the check that tells a server its lock
 // differs from the laptop's.
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, renameSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { configFile, yourConfigDocument } from "../config.ts";
 import { openDb } from "../db.ts";
-import { claudeTokenFile, dataDir } from "../paths.ts";
+import { claudeTokenFile, configDir, dataDir } from "../paths.ts";
 import { type Lock, lockText, readLock, yourLock, yourPlugins } from "../plugins/lock.ts";
 import { installedPlugins, reachesOnlyMachines, readManifest } from "../plugins/plugin.ts";
 
@@ -100,4 +100,28 @@ export function yourFiles(): { name: string; text: string | null }[] {
     { name: "skelcrew.lock", text: lockText(lock) },
     { name: "claude-token", text: token },
   ];
+}
+
+// Puts your files, sent by sc --remote <host> install to `folder` in ~/.config/skelcrew, in
+// place, for sc install there. It runs only once Skelcrew there has passed its checks, so a no
+// to any question before, such as to updating Skelcrew there, leaves your old files as they
+// were. A file of yours the laptop didn't send, which can only be the token, is removed, so an
+// old sign-in never stays in use. Each file moves in one rename, and a hangup is ignored until
+// all have moved, so a connection that drops partway never leaves a mix of old and new files.
+export function putSentFiles(folder: string): void {
+  // The folder is a name the laptop made, never a path that leads elsewhere.
+  if (!/^sending-[\w-]+$/.test(folder)) throw new Error(`${folder} isn't a folder of sent files`);
+  const from = join(configDir(), folder);
+  const ignore = () => {};
+  process.on("SIGHUP", ignore);
+  try {
+    for (const name of ["config.yaml", "skelcrew.lock", "claude-token"]) {
+      const sent = join(from, name);
+      if (existsSync(sent)) renameSync(sent, join(configDir(), name));
+      else rmSync(join(configDir(), name), { force: true });
+    }
+  } finally {
+    process.off("SIGHUP", ignore);
+  }
+  rmSync(from, { recursive: true, force: true });
 }

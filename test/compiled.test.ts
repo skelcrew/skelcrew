@@ -187,7 +187,7 @@ describe("a release setting up a server", () => {
   const sum = (text: string) => new Bun.CryptoHasher("sha256").update(text).digest("hex");
   // ssh to a server that has no Skelcrew until scp brings one.
   const newServer =
-    'case "$*" in *" sh install") test -f "$HOME/copied" || exit 127;; *uname*) cat "$HOME/cpu"; echo "** WARNING: this ssh is old" >&2;; esac';
+    'case "$*" in *" sh install"*) test -f "$HOME/copied" || exit 127;; *uname*) cat "$HOME/cpu"; echo "** WARNING: this ssh is old" >&2;; esac';
 
   // Stands in for a new server: it has no Skelcrew until scp brings one.
   beforeAll(() => {

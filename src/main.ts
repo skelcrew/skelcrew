@@ -285,14 +285,26 @@ async function pluginCommand(args: string[], json: boolean): Promise<void> {
   );
   const yours = rest[0] === "-g";
   const [name, ...more] = yours ? rest.slice(1) : rest;
-  // --from is the checkout sc --remote <host> install ran in on your laptop, handed to each
-  // plugin's setup as on the laptop, such as for the GitHub plugin to pick that repository.
-  const from = rest[0] === "--from" && rest[1] && rest.length === 2 ? rest[1] : undefined;
-  if (command === "install" && (rest.length === 0 || from)) {
+  if (command === "install") {
+    // sc --remote <host> install passes these, not people, so usage leaves them out. --from is
+    // the checkout it ran in on your laptop, handed to each plugin's setup as on the laptop,
+    // such as for the GitHub plugin to pick that repository. --files is the folder your
+    // personal files were sent to, put in place before anything else.
+    const options = new Map<string, string>();
+    for (let at = 0; at < rest.length; at += 2) {
+      const [flag = "", value] = rest.slice(at, at + 2);
+      if (!["--from", "--files"].includes(flag) || !value || options.has(flag)) usage(command);
+      else options.set(flag, value);
+    }
+    const files = options.get("--files");
+    if (files) {
+      const { putSentFiles } = await import("./machine/your-files.ts");
+      putSentFiles(files);
+    }
     const { install } = await import("./machine/setup.ts");
     // A plugin left out fails the command, so a script, or sc --remote on your laptop, can tell
     // the machine isn't set up yet.
-    if (!install(from)) process.exitCode = 1;
+    if (!install(options.get("--from"))) process.exitCode = 1;
     return;
   }
   if ((command === "add" || command === "remove" || command === "update") && !yours)

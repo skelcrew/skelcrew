@@ -304,23 +304,32 @@ export async function installServer(host: string, asked = false): Promise<number
   try {
     return await installThere(host, machine, sending, asked);
   } finally {
-    // The files sent stay until here, as each run of sc install there puts them in place again.
-    if (sending) await quietly(machine.shell(`rm -rf .config/skelcrew/${sending.folder}`));
+    // sc install there removes the folder once it puts your files in place. It is still there
+    // when sc install never started, such as after a no, and goes here.
+    if (sending) await quietly(machine.shell(`rm -rf .config/skelcrew/${sending}`));
   }
 }
 
 // Runs sc install on the server, after putting Skelcrew there when it has none, and returns the
-// exit code. `sending` holds the command that puts your files in place first, or null when you
-// have none to send.
+// exit code. `sending` is the folder your files were sent to, which sc install puts in place
+// first, or null when you have none to send. Every question here comes before sc install starts,
+// so a no to any of them leaves the server's files as they were.
 async function installThere(
   host: string,
   machine: Machine,
-  sending: Sending | null,
+  sending: string | null,
   asked: boolean,
 ): Promise<number> {
   const from = originHere();
-  const words = from ? ["install", "--from", from] : ["install"];
-  const there = machine.sc(words, sending?.before ?? []);
+  const words = [
+    "install",
+    ...(from ? ["--from", from] : []),
+    ...(sending ? ["--files", sending] : []),
+  ];
+  // sc install there runs holding a lock, so two installs at once, even from two laptops, each
+  // put their own files in place and install from them, one after the other. flock lets go of
+  // the lock when it ends, so a crash leaves nothing that blocks the next install.
+  const there = machine.sc(words, sending ? ["flock", ".config/skelcrew/.install"] : []);
   const code = await runUpToDate(host, there, machine);
   // 127 is the machine's shell finding no Skelcrew to run.
   if (code !== 127) return code;
@@ -340,21 +349,18 @@ async function installThere(
   return runUpToDate(host, there, machine, null);
 }
 
-// Your files, sent to a folder on the server: the folder's name in ~/.config/skelcrew, and the
-// command to run sc install through, which puts them in place first.
-type Sending = { folder: string; before: string[] };
-
 // Sends your config.yaml, your lock and the agents' Claude Code token to a folder of this
 // install's own in the server's ~/.config/skelcrew, made readable only by you before it is
-// filled. Returns how sc install there puts them in place, or null when the laptop has no setup
-// to send.
-async function sendYourFiles(where: string, machine: Machine): Promise<Sending | null> {
+// filled. Nothing is replaced yet: sc install there puts them in place once every question
+// before it is answered. Returns the folder's name in ~/.config/skelcrew, or null when the laptop
+// has no setup to send.
+async function sendYourFiles(where: string, machine: Machine): Promise<string | null> {
   // Loaded only here, as it brings in much of Skelcrew that other commands need none of.
   const { yourFiles } = await import("./your-files.ts");
   const files = yourFiles();
   if (files.length === 0) return null;
+  // A file left out, which can only be the token, is removed there as the files go in place.
   const sent = files.flatMap(({ name, text }) => (text === null ? [] : [{ name, text }]));
-  const gone = files.flatMap(({ name, text }) => (text === null ? [name] : []));
   // mkdir fails on a folder already there, so the folder is this install's alone.
   const sending = `sending-${crypto.randomUUID()}`;
   const staging = `.config/skelcrew/${sending}`;
@@ -379,21 +385,7 @@ async function sendYourFiles(where: string, machine: Machine): Promise<Sending |
   } finally {
     rmSync(folder, { recursive: true, force: true });
   }
-  // sc install there runs holding a lock, and puts your files in place just before it starts.
-  // A server with no sc keeps its files, so a no to putting Skelcrew there changes nothing, and
-  // its shell's 127 tells the laptop so, as it does for any command.
-  // So two installs at once, even from two laptops, each install from their own files, one after
-  // the other. The files are copied, not moved, so a run that stops before installing, such as
-  // for an update of Skelcrew there, leaves them for the next. Copying ignores a hangup, so a
-  // connection that drops partway never leaves a mix of old and new files. flock lets go of the
-  // lock when it ends, so a crash leaves nothing that blocks the next install.
-  const steps = [
-    ...sent.map(({ name }) => `cp -f ${sending}/${name} ${name}`),
-    ...gone.map((name) => `rm -f ${name}`),
-  ];
-  const put = `command -v sc >/dev/null || exit 127; (trap '' HUP && cd .config/skelcrew && ${steps.join(" && ")}) && exec "$@"`;
-  const before = ["flock", ".config/skelcrew/.install", "sh", "-c", put, "put"];
-  return { folder: sending, before };
+  return sending;
 }
 
 // Runs sc on a server through `there`, and returns its exit code. `there` takes the
