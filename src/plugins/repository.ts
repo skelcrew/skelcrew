@@ -29,8 +29,13 @@ import {
 import { commitOf, installedPlugins, readManifest } from "./plugin.ts";
 
 // What Skelcrew reads of a repository's skelcrew.yaml here: only plugins:, by the GitHub
-// repository each comes from. The rest is the loader's, in settings.ts.
-const Shared = z.looseObject({ plugins: z.array(z.string().min(1)).optional() });
+// repository each comes from, such as skelcrew/skelcrew-github. The rest is the loader's, in
+// settings.ts. A path, such as ./plugin, is refused: a folder plugin has no pin, so a
+// repository's files could otherwise pick code of their own to run as you.
+const Source = z
+  .string()
+  .regex(/^\w[\w.-]*\/[\w.-]+$/, "must be owner/repo, such as skelcrew/skelcrew-github");
+const Shared = z.looseObject({ plugins: z.array(Source).optional() });
 
 // Throws when `file` is there but isn't a plain file. A repository's files are someone else's
 // writing, and a link in them could point Skelcrew at any file of yours.
@@ -214,6 +219,8 @@ export function installRepositoryPlugins(): { changed: boolean; missing: boolean
         return;
       }
       const here = installedPlugins(db).find((plugin) => plugin.source === source);
+      // One installed as yours may be a runtime plugin, which a repository can't name.
+      if (here) refuseRuntime(readManifest(here.folder), true);
       if (here && matchesLock(here, locked)) return;
       changed = true;
       const pinned = {

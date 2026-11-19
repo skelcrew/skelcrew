@@ -1818,3 +1818,45 @@ test("sc install leaves a plugin your lock and a repository pin at different com
   expect(again.out).not.toContain("Nothing to install");
   expect(git(fakeFolder(), "rev-parse", "HEAD")).toBe(yours);
 });
+
+// A folder plugin has no pin, so a repository naming a path could pick code of its own to run.
+test("sc install refuses a repository that names a plugin by a path", async () => {
+  await skel("1\nsk-ant-oat01-good\n");
+  const app = checkoutWith("app", "git@example.com:simon/app.git");
+  mkdirSync(join(app, "plugin"));
+  writeFileSync(join(app, "skelcrew.yaml"), "plugins: [./plugin]\n");
+  writeFileSync(
+    join(app, "skelcrew.lock"),
+    `./plugin: { name: fake, version: 0.1.0, commit: ${"a".repeat(40)} }\n`,
+  );
+  const run = await atTerminal("y\n", app, ["install"]);
+  expect(run.code).toBe(1);
+  expect(run.err).toContain("must be owner/repo, such as skelcrew/skelcrew-github");
+  expect(run.out).not.toContain("Install it?");
+});
+
+// A runtime plugin is always yours, even when one of yours is what the repository pins.
+test("sc install refuses a repository that names a runtime plugin installed as yours", async () => {
+  noGitHubPlugin();
+  fakeGitHub();
+  publishFake("0.1.0");
+  const plugin = join(home, "github", "simon", "skelcrew-fake");
+  writeFileSync(
+    join(plugin, "skelcrew-plugin.yaml"),
+    'name: fake\nversion: 0.1.0\nskelcrew: 0.1.0\nabout: Fake\nkind: runtime\nprovides: [sessions]\nsetup: [bun, setup.ts]\nsession: ["true"]\nattach: ["true"]\n',
+  );
+  git(plugin, "commit", "-q", "-am", "runtime");
+  git(plugin, "tag", "-f", "v0.1.0");
+  await skel("1\nsk-ant-oat01-good\n");
+  lockFake("0.1.0");
+  await install("y\n");
+  expect(existsSync(fakeFolder())).toBe(true);
+  const app = checkoutWith("app", "git@example.com:simon/app.git");
+  repositoryLocksFake(app, "0.1.0");
+  const run = await atTerminal("", app, ["install"]);
+  expect(run.code).toBe(1);
+  expect(run.err).toContain(
+    "fake is a runtime plugin, which is always yours and never a repository's",
+  );
+  expect(run.out).not.toContain("Nothing to install");
+});
