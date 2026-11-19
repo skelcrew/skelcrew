@@ -2148,7 +2148,8 @@ exec ${bwrap} "$@"`,
     const runDir = () => join(home, "run", "skelcrew");
     const leadSocket = () => join(runDir(), "leads", hashed("simon/app"), "skelcrew.sock");
     const builderSocket = () => join(runDir(), "threads", hashed("app-12"), "skelcrew.sock");
-    const question = "Merge #7 (app-12 Add export) when it's approved and green? [y/N]";
+    // Where the question starts: what it says of .agents/ follows, as a poll last saw the PR.
+    const question = "Merge #7 (app-12 Add export) when it's approved and green?";
     const notLet =
       "the human hasn't let you arm a merge when ready: ask them to run sc merge --when-ready in their own terminal";
     const merges = () => asked(plugin).filter((q) => q.ask === "merge pr");
@@ -2182,6 +2183,46 @@ exec ${bwrap} "$@"`,
       );
       return said;
     };
+
+    // Merging approves no change to .agents/, so the question says when the PR's head makes one,
+    // as a poll found it in Skelcrew's clone. Someone else's push to the branch counts too.
+    test("the question says when the PR changes .agents/, and not when it doesn't", async () => {
+      const work = await approvedApp12();
+      const head = pushed();
+      pr({ head, reviews: [skelReview], checks: [approved] });
+      await until(() => thread().agents_checked === head);
+      const plain = await runSkelInTerminal(
+        socket,
+        env(),
+        ["merge", "--when-ready", "app-12"],
+        `${question} [y/N]`,
+        "n",
+      );
+      expect(plain).not.toContain(".agents/");
+      // A push to the PR's branch that adds a role.
+      const branch = String(thread().branch);
+      git(work, "fetch", "-q", join(home, "github", "simon", "app.git"), `${branch}:${branch}`);
+      git(work, "checkout", "-q", branch);
+      mkdirSync(join(work, ".agents", "roles"), { recursive: true });
+      writeFileSync(join(work, ".agents", "roles", "builder.md"), "Build it my way.\n");
+      git(work, "add", ".");
+      git(work, "commit", "-q", "-m", "roles");
+      git(work, "push", "-q", join(home, "github", "simon", "app.git"), branch);
+      const moved = Bun.spawnSync(["git", "-C", work, "rev-parse", "HEAD"], { stdout: "pipe" })
+        .stdout.toString()
+        .trim();
+      pr({ head: moved, reviews: [skelReview], checks: [approved] });
+      await until(() => thread().agents_checked === moved);
+      expect(thread().agents_changed).toBe(1);
+      const warned = await runSkelInTerminal(
+        socket,
+        env(),
+        ["merge", "--when-ready", "app-12"],
+        `${question} It changes .agents/ (roles, flows or skills): new tasks wait for sc repo trust. [y/N]`,
+        "n",
+      );
+      expect(warned).toContain("Not merging: app-12 waits for you to merge it.");
+    });
 
     test("n arms nothing, y arms it, and no agent or script without a terminal can", async () => {
       await approvedApp12();

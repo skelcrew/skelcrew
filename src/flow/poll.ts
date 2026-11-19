@@ -251,6 +251,38 @@ async function actOnPr(
   }
 }
 
+// Saves whether the PR's changes touch .agents/, once for each new head commit, so the merge
+// confirms can say so while reading only the database. A merge approves no change there, as an
+// agent wrote it. The thread's branch, which is the PR's, and its base are fetched into
+// Skelcrew's clone, as the head may be someone else's push. A fetch or diff that fails saves
+// nothing, so the next poll tries again.
+async function saveAgentsChanged(
+  db: Database,
+  repository: Repository,
+  thread: Thread,
+  pr: PullRequest,
+): Promise<void> {
+  if (pr.head === null || pr.head === thread.agents_checked) return;
+  const skelcrewClone = cloneDir(thread.owner, thread.repo);
+  const ref = (kind: string) => `refs/skelcrew/${kind}/${thread.folder}`;
+  await fetchInto(db, repository, skelcrewClone, pr.base, ref("bases"));
+  await fetchInto(db, repository, skelcrewClone, thread.branch, ref("remote"));
+  // Three dots compare the head with where it left its base, so changes the base made since
+  // don't count as the PR's.
+  const changed = await quietly([
+    "git",
+    "-C",
+    skelcrewClone,
+    "diff",
+    "--name-only",
+    `${ref("bases")}...${pr.head}`,
+    "--",
+    ".agents",
+  ]);
+  if (!changed.ok) throw new Error(`git diff failed: ${changed.err.trim()}`);
+  record(db, thread.folder, { agents_checked: pr.head, agents_changed: changed.out.trim() !== "" });
+}
+
 // Ends a thread of a repository with no forge once its branch is done with: when merging it
 // into its base would change nothing, which a merge, a squash and a rebase all leave, or when
 // it is gone from the remote. Only a branch Skelcrew has pushed counts, as before that it isn't on
@@ -438,6 +470,9 @@ async function pollRepository(
         if (before.pr === null) await actOnBranchHead(db, sessions, repository, before);
         continue;
       }
+      await saveAgentsChanged(db, repository, before, pr).catch((error) =>
+        console.log(`couldn't tell whether ${before.folder} changes .agents/: ${errorText(error)}`),
+      );
       await actOnPr(db, sessions, before, pr);
       // Once the PR's events are acted on, an armed merge when ready merges it if it is ready.
       // A thread sc rm is removing is its to end.

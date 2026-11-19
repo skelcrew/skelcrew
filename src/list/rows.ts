@@ -8,6 +8,7 @@ import { openTasks, prOf, type Task } from "../flow/copy.ts";
 import { reviewCheck } from "../flow/decide.ts";
 import { leadOf } from "../flow/lead.ts";
 import { type Badge, badgeOf, type Colour, needsDecision, shownOf } from "../flow/marks.ts";
+import { agentsSaid } from "../flow/merging.ts";
 import { messagesWaiting, waitingText } from "../flow/messages.ts";
 import { findRepository } from "../flow/repo.ts";
 import type { DaemonRequest } from "../flow/requests.ts";
@@ -178,7 +179,13 @@ function taskRow(
       merge = { refused: `${named}'s checks haven't passed on the approved commit yet` };
     else
       merge = {
-        ask: `Merge ${named} into ${removeControlCodes(copy.base)}? y/n`,
+        ask: [
+          `Merge ${named} into ${removeControlCodes(copy.base)}?`,
+          agentsSaid(thread, approved),
+          "y/n",
+        ]
+          .filter(Boolean)
+          .join(" "),
         working: `Merging ${named}…`,
         request: {
           command: "merge",

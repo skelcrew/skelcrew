@@ -92,6 +92,8 @@ function thread(change: Partial<Thread> = {}): Thread {
     agents: null,
     flow: "default",
     review_post: null,
+    agents_checked: null,
+    agents_changed: false,
     ...change,
   };
 }

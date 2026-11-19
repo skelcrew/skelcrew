@@ -59,7 +59,7 @@ ${itemSql("app", "pr", 41, "Fix the export header", "2026-11-06T10:00:00Z", { he
 ${threadSql({ task: "7", title: "Login redirect", harness: "claude", started: Date.now() - 300_000 })}
 ${threadSql({ task: "12", title: "Rate limit the API", harness: "codex", asking: 1, needs_you: 1 })}
 ${threadSql({ task: "9", title: "Old work", status: "stopped" })}
-${threadSql({ task: "14", title: "Fix the export header", status: "waiting", needs_you: 1, verdict: "approve", checks: "passing", ci_passed: 1, ci_seen: 1, pr: 41, review_round: 1, reviewed_commit: approved })}
+${threadSql({ task: "14", title: "Fix the export header", status: "waiting", needs_you: 1, verdict: "approve", checks: "passing", ci_passed: 1, ci_seen: 1, pr: 41, review_round: 1, reviewed_commit: approved, agents_checked: approved })}
 ${threadSql({ repo: "site", task: "3", title: "Docs", asking: 1, needs_you: 1 })}`);
 });
 afterEach(() => {
@@ -158,6 +158,23 @@ test("Enter asks to start an issue, and m to merge a ready task at the commit yo
   expect(ready?.link).toBe("https://github.com/simon/app/pull/41");
   // A working task has nothing to merge.
   expect(rows().find((row) => row.name === "app-7")?.merge).toBeNull();
+});
+
+// Merging approves no change to .agents/, so the question says when the approved commit makes one,
+// from what a poll saved. A commit no poll has looked at yet doesn't pass for one with no change.
+test("m's question says when the PR changes .agents/, or that Skelcrew hasn't checked yet", () => {
+  const ask = () => {
+    const merge = rows().find((row) => row.name === "app-14")?.merge;
+    return merge && "ask" in merge ? merge.ask : "";
+  };
+  sql("UPDATE tasks SET agents_changed = 1 WHERE task = '14';");
+  expect(ask()).toBe(
+    "Merge app#41 into main? It changes .agents/ (roles, flows or skills): new tasks wait for sc repo trust. y/n",
+  );
+  sql("UPDATE tasks SET agents_checked = 'f00d' WHERE task = '14';");
+  expect(ask()).toBe(
+    "Merge app#41 into main? Skelcrew hasn't checked yet whether it changes .agents/. y/n",
+  );
 });
 
 // The list reads only the database, so it opens at once however many tasks are ready, and starts

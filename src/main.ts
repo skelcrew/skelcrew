@@ -534,7 +534,7 @@ async function mergeCommand(args: string[]): Promise<void> {
     if (!process.stdin.isTTY)
       throw new Error("sc merge --when-ready asks you first, so run it at your own terminal");
     // The title comes from the tracker, so its control codes go before it reaches your terminal.
-    const { thread, pr, title, started, merging } = await previewMerge(which);
+    const { thread, pr, title, started, merging, agents } = await previewMerge(which);
     if (pr === null) throw new Error(`${thread} has no PR yet: ask again once it opens one`);
     // Asking again about a merge already on its way could only mislead: a "no" would leave it
     // merging while sounding like it stopped. So it says so, and how to stop it.
@@ -548,7 +548,9 @@ async function mergeCommand(args: string[]): Promise<void> {
     const shown = title ? ` ${removeControlCodes(title)}` : "";
     // Only y arms it. Anything else, a bare Enter, which Bun's prompt gives as null, Y or yes
     // included, arms nothing.
-    const answer = prompt(`Merge #${pr} (${thread}${shown}) when it's approved and green? [y/N]`);
+    // A PR that changes .agents/ says so, as the merge approves nothing there.
+    const question = `Merge #${pr} (${thread}${shown}) when it's approved and green?`;
+    const answer = prompt([question, agents, "[y/N]"].filter(Boolean).join(" "));
     // Another terminal or the lead may have asked for the merge while you read the question,
     // so the daemon is asked again before saying it won't merge. The thread may also have been
     // started over meanwhile, with another PR, so the answer names the one it has now.

@@ -91,7 +91,9 @@ const threadColumns = {
 // on the PR, as JSON: the PR, the review's ID and what it last said, so each round edits it.
 // `agents` is the git tree of the .agents/ you had approved when the task started, which its
 // agents keep, or null for the built-in roles. `flow` is the flow the task runs from start to end,
-// `default` unless it was started with another.
+// `default` unless it was started with another. `agents_checked` is the PR's head commit a poll
+// last looked at, and `agents_changed` whether that commit's changes touch .agents/, so the
+// merge confirms say so while reading only the database.
 export const taskColumns = {
   title: "TEXT",
   body: "TEXT",
@@ -128,6 +130,8 @@ export const taskColumns = {
   closes: "TEXT",
   agents: "TEXT",
   flow: "TEXT NOT NULL DEFAULT 'default'",
+  agents_checked: "TEXT",
+  agents_changed: "INTEGER NOT NULL DEFAULT 0",
 };
 
 // Marks each done task merged when its thread's log says its work ended by a merge, for tasks

@@ -204,6 +204,11 @@ export const Thread = z.object({
   agents: z.string().nullable(),
   // The flow the task runs, from start to end: `default`, or a flow file of its .agents/.
   flow: z.string(),
+  // The PR's head commit a poll last looked at, and whether its changes touch .agents/, which a
+  // merge doesn't approve, so both merge confirms say so. Null before a poll looked, and when
+  // Skelcrew's clone couldn't get the commit.
+  agents_checked: z.string().nullable(),
+  agents_changed: z.coerce.boolean(),
   // Skelcrew's review on the task's PR, or null before its first. It names its PR, so a PR
   // opened again after sc rm gets a review of its own.
   review_post: z

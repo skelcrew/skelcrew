@@ -53,6 +53,18 @@ export function threadToMerge(
   return thread;
 }
 
+// Returns what a merge confirm adds about .agents/ for the thread's PR at `commit`, or nothing
+// when that commit leaves .agents/ alone. Merging approves no change there, as an agent wrote it,
+// so you hear it before you say y. It reads what a poll saved, never git, as the list asks each
+// second. A commit no poll has looked at yet says so, rather than pass for one with no change.
+export function agentsSaid(thread: Thread, commit: string | null): string {
+  if (commit === null || thread.agents_checked !== commit)
+    return "Skelcrew hasn't checked yet whether it changes .agents/.";
+  return thread.agents_changed
+    ? "It changes .agents/ (roles, flows or skills): new tasks wait for sc repo trust."
+    : "";
+}
+
 // Arms a merge when ready on the thread, for sc merge --when-ready, and returns what to say. At
 // your terminal, `seen` is what you said y to: the PR's number and when its thread started.
 // Anything else is refused, such as a thread removed and started over while you read the

@@ -34,13 +34,13 @@ import {
   statusOnceBack,
 } from "./builder.ts";
 import { holdCheckSlot } from "./checks.ts";
-import { ownTask, saveItems } from "./copy.ts";
+import { ownTask, prOf, saveItems } from "./copy.ts";
 import { removeThread, stopThread } from "./events.ts";
 import { noCommits } from "./git.ts";
 import { closeExitedLeads, lastOpened, leadOf, openedRepositories, startLead } from "./lead.ts";
 import { restoreLimits, wakeAfterLimit } from "./limits.ts";
 import { listRepositories, listTasks, listThreads, showTask } from "./list.ts";
-import { armMerge, cancelMerge, refuseWithoutForge, threadToMerge } from "./merging.ts";
+import { agentsSaid, armMerge, cancelMerge, refuseWithoutForge, threadToMerge } from "./merging.ts";
 import { deliverAllWaiting, messageBuilder, messageLead, typeLeadNotes } from "./messages.ts";
 import { pollRepositories } from "./poll.ts";
 import {
@@ -470,8 +470,11 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       case "merge preview": {
         const thread = threadToMerge(db, request);
         refuseWithoutForge(db, thread);
-        // Its whole title, not the short one, so you can tell which PR you agree to.
+        // Its whole title, not the short one, so you can tell which PR you agree to. What it
+        // says of .agents/ is about the PR's head as Skelcrew's copy has it, the commit you see.
+        const pr = thread.pr === null ? null : prOf(db, thread.owner, thread.repo, thread.pr);
         return {
+          agents: thread.pr === null ? "" : agentsSaid(thread, pr?.head ?? null),
           thread: threadName(db, thread),
           pr: thread.pr,
           title: thread.title,
