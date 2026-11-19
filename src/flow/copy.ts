@@ -3,6 +3,7 @@
 // them waits on the tracker.
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
+import { readJson } from "../db.ts";
 
 // Who wrote an item, review or comment. `you` is whether it is you, as signed in to the
 // tracker or forge. `push` is whether they can push to the repository, or null where the
@@ -141,9 +142,12 @@ export function saveItems(
 }
 
 // Returns the items that the query's rows hold, checked, as what was saved could come from an
-// older Skelcrew.
+// older Skelcrew. An item it can't read is left out until the next poll saves it again.
 const parseItems = (rows: unknown[]) =>
-  rows.map((row) => Item.parse(JSON.parse(z.object({ item: z.string() }).parse(row).item)));
+  rows.flatMap(
+    (row) =>
+      readJson("items.item", z.object({ item: z.string() }).parse(row).item, Item, null) ?? [],
+  );
 
 // Returns a task from the copy, open or kept for its thread, for its builder, its reviewer and
 // sc issue show. Throws when the copy doesn't have it.

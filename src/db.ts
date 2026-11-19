@@ -1,10 +1,10 @@
 // Skelcrew's state on this machine: one SQLite file.
 import { Database } from "bun:sqlite";
-import { mkdirSync, readFileSync, rmSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { hostname } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
-import { dataDir, threadsDir } from "./paths.ts";
+import { dataDir, dbLogFile, threadsDir } from "./paths.ts";
 
 // `name` is the repository's name in Skelcrew. `owner` and `repo` are its name on its forge, or
 // without a forge its remote's path. `forge` is the plugin that claims its remote, or null
@@ -17,6 +17,36 @@ export const Repository = z.object({
   remote: z.string(),
 });
 export type Repository = z.infer<typeof Repository>;
+
+// The bad values already logged, so a reader that looks each second logs each one once.
+const loggedValues = new Set<string>();
+
+// Returns the JSON a column saved, checked against `shape`, or `empty` when it can't be read, such
+// as a value an older release saved in another shape. `column` names its table and column, such
+// as tasks.seen, for the line logged then. A bad value must never stop the sidebar, the lists or
+// the daemon, so it reads as empty and goes to the log, once, rather than to your screen.
+export function readJson<T>(column: string, saved: string, shape: z.ZodType<T>, empty: T): T {
+  try {
+    const read = shape.safeParse(JSON.parse(saved));
+    if (read.success) return read.data;
+  } catch {}
+  const line = `${column} holds ${JSON.stringify(saved)}, which Skelcrew can't read, so it reads as empty.`;
+  if (loggedValues.has(line)) return empty;
+  loggedValues.add(line);
+  // A log that can't be written, such as on a full disk, must not stop the reader either.
+  try {
+    appendFileSync(dbLogFile(), `${new Date().toISOString()} ${line}\n`);
+  } catch {}
+  return empty;
+}
+
+// Returns a check for a column that holds JSON or null, which reads both as `shape`, and a
+// value it can't read as `empty`, as readJson does. Null reads as `empty` too.
+export const savedJson = <T>(column: string, shape: z.ZodType<T>, empty: T) =>
+  z
+    .string()
+    .nullable()
+    .transform((saved) => (saved === null ? empty : readJson(column, saved, shape, empty)));
 
 // Updates repository names, adding the owner only when repositories share a name.
 // Names are unique in the end, and no row ever takes a name another row still holds.
