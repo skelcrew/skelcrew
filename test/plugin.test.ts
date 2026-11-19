@@ -1144,3 +1144,51 @@ test("sc add without -g removes the plugin it installed when the repository's fi
   expect(existsSync(settings("fake"))).toBe(false);
   expect((await skel(["plugins"])).out).toBe("No plugins installed.\n");
 });
+
+// You approved the version installed for the repository, so making it yours asks nothing.
+test("sc add -g makes a plugin installed for a repository yours, at its version, asking nothing", async () => {
+  publish("skelcrew/skelcrew-fake", "0.1.0");
+  const app = appCheckout();
+  await skel(["add", "skelcrew/skelcrew-fake"], "y\n", "", {}, app);
+  publish("skelcrew/skelcrew-fake", "0.2.0");
+  const run = await skel(["add", "-g", "skelcrew/skelcrew-fake"], "", "", {}, home, false);
+  expect(run.err).toBe("");
+  expect(run.out).toBe("Added fake 0.1.0 to your plugins, at the version installed here.\n");
+  expect(parse(readFileSync(yourConfig(), "utf8")).plugins).toEqual(["skelcrew/skelcrew-fake"]);
+  expect(parse(readFileSync(yourLockFile(), "utf8"))["skelcrew/skelcrew-fake"]).toEqual({
+    name: "fake",
+    version: "0.1.0",
+    commit: tagCommit("skelcrew/skelcrew-fake", "0.1.0"),
+  });
+  // Yours already, it points to sc update -g as before.
+  const again = await skel(["add", "-g", "skelcrew/skelcrew-fake"], "", "", {}, home, false);
+  expect(again.err).toContain("run sc update -g fake");
+});
+
+// A repository still needs it, so it keeps its folder, settings and tokens, such as its login.
+test("sc remove -g keeps a plugin a repository still names installed, with its settings", async () => {
+  publish("skelcrew/skelcrew-fake", "0.1.0");
+  await skel(["add", "-g", "skelcrew/skelcrew-fake"], "y\n");
+  const app = appCheckout();
+  await skel(["add", "skelcrew/skelcrew-fake"], "", "", {}, app, false);
+  // From a checkout of another repository, the one that names it is still found by its clone.
+  const db = new Database(join(home, ".local", "share", "skelcrew", "skelcrew.db"));
+  db.run("INSERT INTO repositories (owner, repo, name) VALUES ('simon', 'app', 'app')");
+  db.close();
+  const clone = join(home, ".local", "share", "skelcrew", "repos", "simon", "app");
+  mkdirSync(clone, { recursive: true });
+  for (const file of ["skelcrew.yaml", "skelcrew.lock"])
+    writeFileSync(join(clone, file), readFileSync(join(app, file), "utf8"));
+  const other = join(home, "other");
+  mkdirSync(other);
+  git(other, "init", "-q", "-b", "main");
+  const run = await skel(["remove", "-g", "fake"], "", "", {}, other, false);
+  expect(run.err).toBe("");
+  expect(run.out).toBe(
+    "Removed fake from your plugins. It stays installed, as app's skelcrew.yaml names it.\n",
+  );
+  expect(parse(readFileSync(yourConfig(), "utf8")).plugins).toEqual([]);
+  expect(readFileSync(yourLockFile(), "utf8")).not.toContain("fake");
+  expect(existsSync(join(plugins(), "fake", "0.1.0"))).toBe(true);
+  expect(existsSync(join(settings("fake"), "token"))).toBe(true);
+});

@@ -161,19 +161,22 @@ const pinText = (locked: Locked) => `${locked.version} at commit ${locked.commit
 
 // Returns the plugins repositories need, for sc install and sc plugins: in a checkout, those its
 // files name, as you see them there. Outside one, those of every repository Skelcrew has, from
-// Skelcrew's clone of its default branch. Each one's pin is compared with your lock's and the
-// other repositories', so a disagreement is said rather than settled by whichever is read last.
-export function repositoryNeeds(): Need[] {
+// Skelcrew's clone of its default branch. `everywhere` adds every repository Skelcrew has to the
+// checkout's, for sc remove -g, which must keep a plugin any of them needs. Each one's pin is
+// compared with your lock's and the other repositories', so a disagreement is said rather than
+// settled by whichever is read last.
+export function repositoryNeeds(everywhere = false): Need[] {
   const db = openDb();
   const top = checkoutTop();
-  const places =
-    top !== null
-      ? [{ folder: top, where: "This checkout", remote: originHere(top) }]
-      : repositories(db).map((r) => ({
-          folder: cloneDir(r.owner, r.repo),
-          where: r.name,
-          remote: r.remote,
-        }));
+  const clones = repositories(db).map((r) => ({
+    folder: cloneDir(r.owner, r.repo),
+    where: r.name,
+    remote: r.remote,
+  }));
+  const places = [
+    ...(top !== null ? [{ folder: top, where: "This checkout", remote: originHere(top) }] : []),
+    ...(top === null || everywhere ? clones : []),
+  ];
   const needs = places.flatMap(({ folder, where, remote }) => {
     const { plugins, lock } = repositoryPlugins(folder);
     return plugins.map((source) => ({ source, where, locked: lock[source], remote }));

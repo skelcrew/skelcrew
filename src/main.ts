@@ -328,7 +328,10 @@ async function pluginCommand(args: string[], json: boolean): Promise<void> {
     addPlugin(name);
     return;
   }
-  if (command === "remove" && name && more.length === 0) return removeYourPlugin(name);
+  if (command === "remove" && name && more.length === 0) {
+    const { repositoryNeeds } = await import("./plugins/repository.ts");
+    return removeYourPlugin(name, repositoryNeeds(true));
+  }
   if (command === "update" && more.length === 0) return updatePlugins(name);
   // sc setup sets the plugin up for the checkout you are in, as sc add does.
   if (command === "setup" && rest[0] && rest.length === 1) {

@@ -593,8 +593,23 @@ export function removePlugin(name: string, named = false): void {
 // Adds a personal plugin, for sc add -g: installs it after asking, then names it under plugins:
 // in your config.yaml, beside the version your lock now pins. A folder of yours is installed on
 // this machine only: its path means nothing on another machine, and it has no version to pin, so
-// it stays out of your files and says so. Returns whether it was installed.
+// it stays out of your files and says so. A plugin a repository had installed here becomes yours at
+// the version installed, asking nothing, as you approved that exact version before. Returns
+// whether it was installed.
 export function addPlugin(given: string, remote = originHere()): boolean {
+  const db = openDb();
+  const here = installedPlugins(db).find((plugin) => plugin.source === given);
+  if (here && !yourPlugins().includes(given)) {
+    const manifest = readManifest(here.folder);
+    writeBoth(() => {
+      setYourPlugins([...yourPlugins(), given]);
+      setLocked(db, given, lockedAs(manifest, commitOf(here.folder)));
+    });
+    console.log(
+      `Added ${manifest.name} ${manifest.version} to your plugins, at the version installed here.`,
+    );
+    return true;
+  }
   if (!installPlugin(given, { remote, name: true })) return false;
   if (given.startsWith(".") || given.startsWith("/"))
     console.log(
@@ -604,10 +619,12 @@ export function addPlugin(given: string, remote = originHere()): boolean {
 }
 
 // Removes a personal plugin, for sc remove -g: from plugins: in your config.yaml, from your lock
-// and from this machine, with its settings and tokens. `given` is its name or its owner/repo. It
-// refuses while the plugin is the tracker or forge of a repository Skelcrew has, and for a plugin
-// only a repository names, and then changes nothing.
-export function removeYourPlugin(given: string): void {
+// and from this machine, with its settings and tokens. `given` is its name or its owner/repo. A
+// plugin a repository still needs, as `needs` from repositoryNeeds says, leaves your files only,
+// and stays installed with its settings and tokens, such as its login. It refuses while the plugin
+// is the tracker or forge of a repository Skelcrew has, and for a plugin only a repository names,
+// and then changes nothing.
+export function removeYourPlugin(given: string, needs: Need[]): void {
   const db = openDb();
   const lock = yourLock(db);
   const named = yourPlugins();
@@ -626,7 +643,8 @@ export function removeYourPlugin(given: string): void {
     null;
   if (!installed && source === null)
     throw new Error(`there is no plugin named ${given}: sc plugins lists them`);
-  if (installed) {
+  const needed = needs.find((need) => need.source === source);
+  if (installed && !needed) {
     removePlugin(installed.name, true);
     return;
   }
@@ -635,7 +653,11 @@ export function removeYourPlugin(given: string): void {
     setYourPlugins(yourPlugins().filter((one) => one !== source));
     setLocked(db, source, null);
   });
-  console.log(`Removed ${given} from your plugins.`);
+  console.log(
+    installed && needed
+      ? `Removed ${given} from your plugins. It stays installed, as ${needed.where}'s skelcrew.yaml names it.`
+      : `Removed ${given} from your plugins.`,
+  );
 }
 
 // Returns whether the plugin is installed at exactly the version and commit locked.
