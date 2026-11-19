@@ -321,6 +321,7 @@ async function recordThread(
       merge_pinned: null,
       merge_record: null,
       merge_record_id: null,
+      merge_followup: null,
       agents,
       flow,
       review_post: null,

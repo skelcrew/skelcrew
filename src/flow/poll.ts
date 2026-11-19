@@ -33,7 +33,7 @@ import {
 import { endThread, removing, tellBuilder, tellingEvents } from "./events.ts";
 import { fetchInto, onRemote } from "./git.ts";
 import { approvedFlowsTold, leadOf } from "./lead.ts";
-import { mergeIfReady } from "./merging.ts";
+import { finishSkippedMerge, mergeIfReady } from "./merging.ts";
 import { noteForLead, typeLeadNotes } from "./messages.ts";
 import { forgeKnown, fullNameIs, hasNoCommits, refreshClone, repositories } from "./repo.ts";
 import { lastPushed } from "./round.ts";
@@ -232,7 +232,11 @@ async function actOnPr(
     // A merge leaves you assigned, as the closed issue's record of who did it. Asked before
     // the thread ends, so an sc start that starts it over once it is done assigns you after.
     if (pr.state === "closed") unassignIssue(db, folder);
-    await endThread(db, sessions, thread, decision.end, decision.note, pr.state === "merged");
+    // A merge without approval the forge did before the daemon could finish it, such as across
+    // a restart, still gets its record edited and its findings filed, with its own note.
+    const skipped = pr.state === "merged" ? await finishSkippedMerge(db, thread, pr) : null;
+    const note = skipped ?? decision.note;
+    await endThread(db, sessions, thread, decision.end, note, pr.state === "merged");
   }
   // Left unhandled, so a stopped thread's events reach its builder once it starts again.
   else if (thread.status === "stopped" || tellingEvents.has(folder) || stale) return;

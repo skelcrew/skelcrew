@@ -2865,5 +2865,60 @@ echo '{"verdict":"changes","body":"Not yet.","findings":["Handle an empty file",
       expect(String(filed[0]?.body)).toContain("1. Handle an empty file\n2. Test the error");
       expect(String(filed[0]?.body)).toContain("#7");
     }, 90_000);
+
+    // The forge can merge the PR before Skelcrew finishes, such as when the daemon stopped right
+    // after asking it. The poll that finds it merged still edits the record and files the issue.
+    test("a merge without approval the forge finished first still gets its record and follow-up issue", async () => {
+      const head = await changesApp12();
+      const yes = await runSkelInTerminal(
+        socket,
+        env(),
+        ["merge", "--skip-review", "app-12"],
+        skipQuestion,
+        "y",
+      );
+      expect(yes).toContain(skipSaid);
+      answer(plugin, "merge pr", { refused: "Pull Request is not mergeable" });
+      pr({ head, reviews: [skelReview], checks: [check(5, "passed")] });
+      await until(
+        () => thread().merge_waits === "the forge, which refused: Pull Request is not mergeable",
+      );
+      answer(plugin, "create task", taskItem("13", "Follow-ups from #7's review"));
+      pr({ state: "merged", head, reviews: [skelReview], checks: [check(5, "passed")] });
+      await until(() => thread().status === "done");
+      await until(() =>
+        leadTyped().includes(
+          "app-12 is done: #7 merged into main without Skelcrew's approval, as the human asked. Its open findings are in #13.",
+        ),
+      );
+      await morePolls();
+      const edits = asked(plugin).filter((q) => q.ask === "edit review");
+      expect(edits).toHaveLength(1);
+      expect(String(edits[0]?.body)).toStartWith(
+        "Merged without Skelcrew's approval, as asked by ",
+      );
+      expect(asked(plugin).filter((q) => q.ask === "create task")).toHaveLength(1);
+      expect(thread().merge_followup).toBe("13");
+    }, 90_000);
+
+    // Only a review that asks for changes, or still runs, can be skipped.
+    test("a merge without approval is refused on a PR that is approved", async () => {
+      await approvedApp12();
+      const head = pushed();
+      pr({ head, reviews: [skelReview], checks: [approved] });
+      await morePolls();
+      const started = Number(thread().started);
+      const request = {
+        command: "merge skip review",
+        repo: "app",
+        task: "12",
+        seen: { pr: 7, started, head },
+      };
+      expect(await askOn(join(home, "run", "skelcrew.sock"), request)).toEqual({
+        error:
+          "app-12 is approved already: merge it with m in the list, or sc merge --when-ready app-12",
+      });
+      expect(thread().merge_plan).toBeNull();
+    }, 60_000);
   });
 });

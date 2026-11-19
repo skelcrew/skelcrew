@@ -76,7 +76,8 @@ export function nameRepositories(db: Database): void {
 // `merge_pinned` is the PR's head when you asked to merge it without Skelcrew's approval, and
 // null for a merge when ready: only that commit merges, so a push after you asked cancels it.
 // `merge_record` is the plan and commit whose record Skelcrew posted on the PR, and
-// `merge_record_id` that review's ID, so a restart never posts it twice.
+// `merge_record_id` that review's ID, so a restart never posts it twice. `merge_followup` is the
+// issue a merge without approval filed its review's open findings in, so it files one only.
 // They are
 // the thread's, so a thread that starts over begins with none. `host` is the session host its
 // builder runs on, tmux or a runtime plugin, and `host_id` the session's ID there, which on tmux
@@ -110,6 +111,7 @@ const threadColumns = {
   merge_pinned: "TEXT",
   merge_record: "TEXT",
   merge_record_id: "TEXT",
+  merge_followup: "TEXT",
 };
 
 // A task's columns past its repository and ID: what belongs to the work rather than the agent

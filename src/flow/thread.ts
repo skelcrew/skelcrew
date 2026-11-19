@@ -202,6 +202,9 @@ export const Thread = z.object({
   // restarts too. Null before the first.
   merge_record: z.string().nullable(),
   merge_record_id: z.string().nullable(),
+  // The issue a merge without approval filed what its review still asked for in, once filed, so
+  // a poll after a restart never files a second one.
+  merge_followup: z.string().nullable(),
   // The tree of the .agents/ you had approved when the task started, whose roles its agents
   // keep to the end, though you approve another meanwhile. Null for the built-in roles, as
   // every task had before Skelcrew read .agents/.

@@ -111,10 +111,13 @@ export function armMerge(
     );
   if (skip && !head)
     throw new Error(`Skelcrew hasn't seen #${thread.pr}'s newest commit yet: ask again shortly`);
-  // An approval of that very commit needs no merge without it.
-  if (skip && thread.verdict === "approve" && thread.reviewed_commit === head)
+  // Only a review that asks for changes, or still runs, can be skipped. An approved PR merges
+  // as usual, and one never reviewed waits for its review.
+  if (skip && thread.verdict !== "changes" && thread.reviewing === null)
     throw new Error(
-      `${name} is approved already: merge it with m in the list, or sc merge --when-ready ${name}`,
+      thread.verdict === "approve"
+        ? `${name} is approved already: merge it with m in the list, or sc merge --when-ready ${name}`
+        : `${name} has no review asking for changes or under way, so there is nothing to skip: wait for its review`,
     );
   const asked = "asked" in how ? how.asked : null;
   const plan = {
@@ -236,11 +239,6 @@ export async function mergeIfReady(
   const commit = pinned ?? lastPushed(thread);
   let waits = pinned === null ? mergeWaitsOn(thread, pr, commit) : skipReviewWaitsOn(thread, pr);
   if (waits === null && commit !== null && thread.pr !== null) {
-    const asked = new Date(thread.merge_at ?? Date.now()).toLocaleDateString("en-GB", {
-      day: "numeric",
-      month: "long",
-      year: "numeric",
-    });
     const repository = repositoryOf(db, thread);
     // The PR records who asked, with a review on the commit it merges, the call every forge
     // answers. It goes before the merge, as a merged PR may take no review, and once for each
@@ -249,11 +247,9 @@ export async function mergeIfReady(
     // it gets a record of its own. Skipping the review it keeps the reviewer's verdict, as
     // Skelcrew's reviewer never approved that commit.
     const key = `${thread.merge_id} ${commit}`;
-    const by = thread.merge_by ?? "you";
-    // A hidden marker in the record names its plan and commit. A record the forge took just
-    // before the daemon stopped, with nothing saved yet, is found by it in the PR's reviews.
-    const kind = pinned === null ? "merge-when-ready" : "merge-skip-review";
-    const marker = `<!-- skelcrew:${kind} plan=${thread.merge_id} commit=${commit} -->`;
+    // A record the forge took just before the daemon stopped, with nothing saved yet, is found
+    // by its marker in the PR's reviews.
+    const marker = recordMarker(thread, commit);
     // A forge that fails, such as when it is down, leaves the plan armed, says why it waits,
     // and is tried again at the next poll. It never holds up the poll's other threads.
     const failed = (error: unknown) => `the forge, which failed: ${errorText(error)}`;
@@ -269,16 +265,12 @@ export async function mergeIfReady(
       }
       // It says "Merging", as the merge may still never happen: a check can fail, or the plan
       // be cancelled. Once merged without approval, it is edited to say so.
-      const said =
-        pinned === null
-          ? `Merging when ready, as asked by ${by} on ${asked}.`
-          : `Merging without Skelcrew's approval, as asked by ${by} on ${asked}.`;
       try {
         const id = await postReview(db, repository, {
           pr: thread.pr,
           commit,
           verdict: pinned === null ? "approve" : "changes",
-          body: `${said}\n\n${marker}`,
+          body: recordBody(thread, commit, "Merging"),
         });
         record(db, folder, { merge_record: key, merge_record_id: id });
         return;
@@ -301,32 +293,15 @@ export async function mergeIfReady(
       }
     }
     if (waits === null && refused === null) {
-      // The record now says it merged. A forge that can't edit it leaves "Merging", which the
-      // merge made true.
-      const recordId = thread.merge_record_id;
-      if (pinned !== null && recordId !== null) {
-        const body = `Merged without Skelcrew's approval, as asked by ${by} on ${asked}.\n\n${marker}`;
-        await editReview(db, repository, {
-          pr: thread.pr,
-          id: recordId,
-          verdict: "changes",
-          body,
-        }).catch((error) =>
-          console.log(`${name}: couldn't edit its merge record: ${errorText(error)}`),
-        );
-      }
-      // A review can end while the forge merges, with findings of its own, so the latest one is
-      // read again for the follow-up issue.
-      const how =
-        pinned === null
-          ? "when ready, as the human asked"
-          : `without Skelcrew's approval, as the human asked.${await fileFollowUps(db, readThread(db, folder))}`;
+      const note =
+        (await finishSkippedMerge(db, readThread(db, folder), pr)) ??
+        `is done: #${thread.pr} merged into ${pr.base} when ready, as the human asked`;
       await endThread(
         db,
         sessions,
         thread,
         `PR #${thread.pr} was merged ${pinned === null ? "when ready" : "without approval"}`,
-        `is done: #${thread.pr} merged into ${pr.base} ${how}`,
+        note,
         true,
       );
       return;
@@ -359,12 +334,61 @@ export async function mergeIfReady(
   }
 }
 
+// Returns the hidden marker in a merge's record on the PR, naming its plan and commit, so the
+// record is found again after a restart. Its kind tells the two merges apart.
+function recordMarker(thread: Thread, commit: string): string {
+  const kind = thread.merge_pinned === null ? "merge-when-ready" : "merge-skip-review";
+  return `<!-- skelcrew:${kind} plan=${thread.merge_id} commit=${commit} -->`;
+}
+
+// Returns the body of a merge's record on the PR, saying who asked and on which day, then its
+// marker. `verb` is "Merging" before the forge merged, and "Merged" once a merge without
+// approval did, as the record is then edited to say so.
+function recordBody(thread: Thread, commit: string, verb: "Merging" | "Merged"): string {
+  const day = new Date(thread.merge_at ?? Date.now()).toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  });
+  const how = thread.merge_pinned === null ? "when ready" : "without Skelcrew's approval";
+  return `${verb} ${how}, as asked by ${thread.merge_by ?? "you"} on ${day}.\n\n${recordMarker(thread, commit)}`;
+}
+
+// Finishes a merge without approval once its PR merged at the pinned commit, and returns the
+// lead's note, or null when the thread had no such plan. It edits the PR's record to say it
+// merged, and files what the review still asked for. Both the merge itself and a poll that
+// finds the PR merged call it, so a daemon that stopped between the forge's merge and these
+// steps still does them. The thread is read as it is now, so a review that ended during the
+// merge counts.
+export async function finishSkippedMerge(
+  db: Database,
+  thread: Thread,
+  pr: PullRequest,
+): Promise<string | null> {
+  const pinned = thread.merge_pinned;
+  if (thread.merge_plan !== "armed" || pinned === null || thread.pr === null) return null;
+  if (pr.head !== null && pr.head !== pinned) return null;
+  // A forge that can't edit the record leaves "Merging", which the merge made true.
+  if (thread.merge_record === `${thread.merge_id} ${pinned}` && thread.merge_record_id !== null)
+    await editReview(db, repositoryOf(db, thread), {
+      pr: thread.pr,
+      id: thread.merge_record_id,
+      verdict: "changes",
+      body: recordBody(thread, pinned, "Merged"),
+    }).catch((error) =>
+      console.log(`${thread.folder}: couldn't edit its merge record: ${errorText(error)}`),
+    );
+  const filed = await fileFollowUps(db, thread);
+  return `is done: #${thread.pr} merged into ${pr.base} without Skelcrew's approval, as the human asked.${filed}`;
+}
+
 // Files what Skelcrew's latest review still asked for, once its PR merged without its approval, as
 // one issue that links back to the PR, so the findings aren't lost with the thread. Returns what
 // the lead's note adds about it, such as " Its open findings are in #13.", or nothing with no
-// findings. It runs once, as the thread ends right after. An issue that can't be filed, such as
+// findings. It files once: the issue's ID is saved on the thread, and given again after that. An issue that can't be filed, such as
 // with no tracker or a tracker that fails, is said in the note instead, so you can file it.
 async function fileFollowUps(db: Database, thread: Thread): Promise<string> {
+  if (thread.merge_followup !== null) return ` Its open findings are in #${thread.merge_followup}.`;
   const findings = openFindings(thread);
   if (findings.length === 0) return "";
   const repository = repositoryOf(db, thread);
@@ -376,7 +400,7 @@ async function fileFollowUps(db: Database, thread: Thread): Promise<string> {
     record(
       db,
       thread.folder,
-      {},
+      { merge_followup: issue.id },
       `filed the open findings of #${thread.pr}'s review as #${issue.id}`,
     );
     return ` Its open findings are in #${issue.id}.`;
