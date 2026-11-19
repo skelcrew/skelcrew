@@ -6,9 +6,11 @@ import { z } from "zod";
 import { threadLimit } from "../config.ts";
 import { claimTask } from "../plugins/ask.ts";
 import { errorText } from "../say.ts";
+import { unassignIssue } from "./assign.ts";
 import { statusOnceBack } from "./builder.ts";
+import { noteForLead } from "./messages.ts";
 import { findRepository } from "./repo.ts";
-import { record, repositoryOf, Thread, threadName } from "./thread.ts";
+import { readThread, record, repositoryOf, Thread, threadName } from "./thread.ts";
 
 // Returns how many of the repository's builders run, its threads at work or waiting, those still
 // setting up included, and how many of its tasks wait in the queue.
@@ -105,10 +107,19 @@ export function backToQueue(db: Database): void {
 }
 
 // Makes the claim the queued thread's task still owes, if it owes one, and forgets it once the
-// tracker took it, whatever its answer: sc start claims without looking at the answer, as you
-// decided to start the task. Throws when the tracker fails, and the claim stays owed, to be
-// asked again. Asked once at a time per thread: a second call gets the ask under way.
-export function claimQueued(db: Database, thread: Thread): Promise<void> {
+// tracker answered. sc start's own ask, as you wait, takes the task whatever the answer, as
+// the spec's sc start claims without looking: you decided to start it. A later ask, with
+// `retry`, runs with nobody there to decide: the first ask failed, and another machine may have
+// claimed the issue meanwhile. So when the tracker says the issue is taken, the task leaves
+// the queue, back to its issue, and the lead hears it can sc start it if no other machine works
+// on it. Throws when the tracker fails, and the claim stays owed, to be asked again. Asked once
+// at a time per thread: a second call gets the ask under way.
+export function claimQueued(
+  db: Database,
+  sessions: string,
+  thread: Thread,
+  retry: boolean,
+): Promise<void> {
   const under = claiming.get(thread.folder);
   if (under) return under;
   const { owner, repo, task } = thread;
@@ -116,8 +127,28 @@ export function claimQueued(db: Database, thread: Thread): Promise<void> {
   if (db.query(`SELECT 1 FROM claims ${where}`).get(owner, repo, task) === null)
     return Promise.resolve();
   const ask = claimTask(db, repositoryOf(db, thread), task)
-    .then(() => {
-      db.run(`DELETE FROM claims ${where}`, [owner, repo, task]);
+    .then((took) => {
+      // sc rm may have taken it out of the queue while the tracker answered.
+      const now = readThread(db, thread.folder);
+      const taken = retry && !took && now.status === "queued" && now.started === thread.started;
+      const name = threadName(db, thread);
+      db.transaction(() => {
+        db.run(`DELETE FROM claims ${where}`, [owner, repo, task]);
+        if (!taken) return;
+        record(
+          db,
+          thread.folder,
+          { status: "done" },
+          "its issue was claimed elsewhere while it waited for its claim",
+        );
+        noteForLead(
+          db,
+          sessions,
+          thread,
+          `${name} left the queue: its issue was claimed while Skelcrew couldn't reach the tracker. If no other machine works on it, sc start ${name}.`,
+        );
+      })();
+      if (taken) unassignIssue(db, thread.folder);
     })
     .finally(() => claiming.delete(thread.folder));
   claiming.set(thread.folder, ask);
@@ -130,14 +161,14 @@ const claiming = new Map<string, Promise<void>>();
 // Asks again for each claim a queued task still owes, such as one whose ask failed or that a
 // restart of the engine cut short, without waiting. A claim that fails again is logged, and
 // asked for once more the next time.
-export function claimOwed(db: Database): void {
+export function claimOwed(db: Database, sessions: string): void {
   const owing = db
     .query(`SELECT * FROM task_threads t WHERE status = 'queued' AND EXISTS (SELECT 1 FROM claims c
         WHERE c.owner = t.owner AND c.repo = t.repo AND c.task = CAST(t.task AS TEXT))`)
     .all()
     .map((row) => Thread.parse(row));
   for (const thread of owing)
-    claimQueued(db, thread).catch((error) =>
+    claimQueued(db, sessions, thread, true).catch((error) =>
       console.log(
         `couldn't claim ${threadName(db, thread)}'s issue, trying again: ${errorText(error)}`,
       ),

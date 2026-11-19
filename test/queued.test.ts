@@ -388,3 +388,24 @@ test("a labelled issue that can't start after its claim is told to the lead, not
   );
   expect(statuses()["app-12"]).toBeUndefined();
 }, 60_000);
+
+test("a queued task whose issue another machine claimed while its claim failed leaves the queue, and the lead hears", async () => {
+  addApp();
+  await serveApp();
+  const failing = join(plugin, "fail-took");
+  writeFileSync(failing, "network is down");
+  expect(await sc("start", "app-12")).toContain("couldn't claim its issue yet");
+  // Meanwhile another machine claims it, and the tracker comes back.
+  answer(plugin, "took", { took: false });
+  rmSync(failing);
+  await until(() => statuses()["app-12"] === "done");
+  expect(leadHears()).toContain("app-12 left the queue: its issue was claimed");
+  // A place frees up, and app-12 never starts.
+  await sc("rm", "app-11");
+  await Bun.sleep(3000);
+  expect(leftQueue("app-12")).toHaveLength(0);
+  const tasks = JSON.parse(await sc("ls", "app", "--json"));
+  expect(tasks.find((row: { task: string }) => row.task === "app-12")).toMatchObject({
+    stage: "issue",
+  });
+}, 60_000);

@@ -626,7 +626,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         // queue, so another machine's label can't start it here and there too. A claim that
         // fails is asked for again.
         if (thread.status === "queued") {
-          const owed = await claimQueued(db, thread).then(
+          const owed = await claimQueued(db, sessions, thread, false).then(
             () => "",
             (error) =>
               ` Skelcrew couldn't claim its issue yet, and tries again before it starts: ${errorText(error)}`,
@@ -795,7 +795,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   // which is asked for again each time.
   const startFromQueue = () => {
     try {
-      claimOwed(db);
+      claimOwed(db, sessions);
       for (const thread of leaveQueue(db, removing))
         if (thread.session === null) setUpAndStart(thread);
         else comeBack(thread);
