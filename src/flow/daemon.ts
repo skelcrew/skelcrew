@@ -67,6 +67,7 @@ import {
   refreshClones,
   repositories,
   repositoryAt,
+  repositoryNamed,
 } from "./repo.ts";
 import { allowed, type Caller, DaemonRequest, parseJson } from "./requests.ts";
 import { killReviewers } from "./reviewer.ts";
@@ -460,6 +461,9 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         const own = leadRepository && `${leadRepository.owner}/${leadRepository.repo}`;
         return { repositories: own ? all.filter((r) => r.repository === own) : all };
       }
+      // Says only yes or no, so a lead learns no other repository's name from it.
+      case "repo named":
+        return { named: repositoryNamed(db, request.word) !== undefined };
       case "ps":
         return { threads: listThreads(db, request.repo) };
       case "task ls":
