@@ -2251,6 +2251,23 @@ exec ${bwrap} "$@"`,
       );
       expect(again).not.toContain(question);
       expect(thread().merge_plan).toBe("armed");
+      // Asked for elsewhere while your question is open, a "no" doesn't say it won't merge.
+      expect(await askOn(yours, { command: "merge cancel", repo: "app", task: "12" })).toEqual({
+        said: "app-12 won't merge by itself. It waits for you to merge it.",
+      });
+      const meanwhile = await runSkelInTerminal(
+        socket,
+        env(),
+        ["merge", "--when-ready", "app-12"],
+        question,
+        "n",
+        () => askOn(yours, { ...arming, seen: { pr: 7, started } }),
+      );
+      expect(meanwhile).toContain(
+        "Already merging #7 as soon as it's approved and green. sc merge --cancel app-12 stops it.",
+      );
+      expect(meanwhile).not.toContain("Not merging");
+      expect(thread().merge_plan).toBe("armed");
       // sc ps says so, and the lead hears it, so it knows you asked.
       const ps = Bun.spawnSync([process.execPath, main, "ps"], { env: env(), stdout: "pipe" });
       expect(ps.stdout.toString()).toContain("merges when ready");

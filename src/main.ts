@@ -493,10 +493,9 @@ async function mergeCommand(args: string[]): Promise<void> {
     if (pr === null) throw new Error(`${thread} has no PR yet: ask again once it opens one`);
     // Asking again about a merge already on its way could only mislead: a "no" would leave it
     // merging while sounding like it stopped. So it says so, and how to stop it.
+    const already = `Already merging #${pr} as soon as it's approved and green. sc merge --cancel ${thread} stops it.`;
     if (merging) {
-      console.log(
-        `Already merging #${pr} as soon as it's approved and green. sc merge --cancel ${thread} stops it.`,
-      );
+      console.log(already);
       return;
     }
     const { removeControlCodes } = await import("./screen/look.ts");
@@ -504,8 +503,11 @@ async function mergeCommand(args: string[]): Promise<void> {
     // Only y arms it. Anything else, a bare Enter, which Bun's prompt gives as null, Y or yes
     // included, arms nothing.
     const answer = prompt(`Merge #${pr} (${thread}${shown}) when it's approved and green? [y/N]`);
+    // Another terminal or the lead may have asked for the merge while you read the question,
+    // so the daemon is asked again before saying it won't merge.
     if (answer !== "y") {
-      console.log(`Not merging: ${thread} waits for you to merge it.`);
+      const now = await previewMerge(which);
+      console.log(now.merging ? already : `Not merging: ${thread} waits for you to merge it.`);
       return;
     }
     // Armed only if the daemon still has the PR and thread you said y to.
