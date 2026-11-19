@@ -177,6 +177,7 @@ export async function previewMerge(which: {
       pr: z.number().nullable(),
       title: z.string().nullable(),
       started: z.number().nullable(),
+      merging: z.boolean(),
     }),
     reply,
   );
