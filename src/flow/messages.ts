@@ -420,22 +420,33 @@ export async function typeContinue(
   return deliver(host, id, marks, "continue", { timeout: 60_000, signal });
 }
 
-// Returns an agent's text with any <skelcrew or </skelcrew> removed, so it can't open or close
-// Skelcrew's tag and pass what follows off as coming from someone else.
+// Returns an agent's text with any skelcrew tag removed, so it can't open or close Skelcrew's
+// tag and pass what follows off as coming from someone else. A whole closing tag goes, and of
+// any other only its start, which is enough to undo it. Spaces and case count for nothing, as
+// </skelcrew > or < SKELCREW still read as a tag.
 export function untagged(text: string): string {
+  const tag = /<\s*\/\s*skelcrew\s*>|<\s*\/?\s*skelcrew/gi;
   let inside = text;
   // One pass isn't enough: removing the inner tag of </skel</skelcrew>crew> leaves a whole
   // </skelcrew>.
-  while (/<\/skelcrew>|<skelcrew/i.test(inside))
-    inside = inside.replace(/<\/skelcrew>|<skelcrew/gi, "");
+  while (inside.search(tag) >= 0) inside = inside.replace(tag, "");
   return inside;
 }
 
+// A control character other than a line break or a tab, which a paste would carry as typing.
+const control = /(?![\n\t])\p{Cc}/gu;
+
+// Returns text with each control character but a line break or a tab written as its code, such
+// as &#x1b;. Everything typed into an agent is pasted, and the end of a bracketed paste in it
+// would end the paste early and type the rest as if a person had, outside Skelcrew's tag.
+export const controlsAsCodes = (text: string) =>
+  text.replace(control, (code) => `&#x${(code.codePointAt(0) ?? 0).toString(16)};`);
+
 // Returns the message wrapped in Skelcrew's tag, saying who it is from and the command to answer
 // with, so the receiving agent never takes it for the human. The tag marks where it starts and
-// ends, and the text inside stays plain, without tags of its own.
+// ends, and the text inside stays plain, without tags or control characters of its own.
 function wrapMessage(from: string, reply: string, text: string): string {
-  return `<skelcrew from="${from}" reply="${reply}">\n${untagged(text)}\n</skelcrew>`;
+  return `<skelcrew from="${from}" reply="${reply}">\n${untagged(controlsAsCodes(text))}\n</skelcrew>`;
 }
 
 // Saves the lead's message for the thread's builder, to be typed in as soon as the builder can
@@ -510,8 +521,6 @@ export function messageLead(db: Database, sessions: string, from: Caller, text: 
   record(db, thread.folder, { told_lead: true }, `its builder told the lead: ${text}`);
 }
 
-// A control character other than a line break or a tab, which a paste would carry as typing.
-const control = /(?![\n\t])\p{Cc}/gu;
 // Text that could break out of Skelcrew's wrapper: a skelcrew tag in any form, opening or
 // closing, with spaces or in any case, or a control character.
 const unsafe = /<\s*\/?\s*skelcrew|(?![\n\t])\p{Cc}/iu;
@@ -548,10 +557,7 @@ export function briefLead(
   // tag and none of the human's words needs no heading, as it is all there is.
   const part = (heading: string, said: string) => {
     if (!unsafe.test(said)) return heading ? `${heading}:\n${said}` : said;
-    const escaped = said
-      .replaceAll("&", "&amp;")
-      .replaceAll("<", "&lt;")
-      .replace(control, (code) => `&#x${(code.codePointAt(0) ?? 0).toString(16)};`);
+    const escaped = controlsAsCodes(said.replaceAll("&", "&amp;").replaceAll("<", "&lt;"));
     const how =
       "with each < written as &lt;, each & as &amp; and each control character as its code, such as &#x1b;, as it holds a skelcrew tag or a control character";
     return `${heading || "The brief"}, ${how}:\n${escaped}`;
@@ -597,7 +603,9 @@ async function typeNotes(
       ...needing.map((thread) => `${threadName(db, thread)} needs you: ${thread.noting}`),
       ...notes.map(({ text }) => text),
     ];
-    return { notes, needing, text: lines.join("\n\n") };
+    // Notes can quote outside text, such as a plugin's or a failed check's, so no control
+    // character in them reaches the paste.
+    return { notes, needing, text: controlsAsCodes(lines.join("\n\n")) };
   };
   while (true) {
     const now = batch();

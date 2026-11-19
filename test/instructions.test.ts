@@ -377,6 +377,25 @@ test("a custom lead role that drops the safety rules still gets them after its o
   );
 });
 
+// A repository's own lead role still learns how to brief another repository's lead, and how to
+// carry the human's words, from Skelcrew's rules, or a brief could never let work start.
+test("a custom lead role is told how to brief another lead, with the human's words", () => {
+  const told = leadInstructions(
+    "You are our lead.\n",
+    "simon/app",
+    "/c",
+    { setup: undefined, test: undefined },
+    false,
+  );
+  expect(told).toContain(
+    'run sc tell lead <repo> "<text>", or sc tell lead <repo> - with the brief on stdin',
+  );
+  expect(told).toContain(
+    "add --asked-file asked.txt: only then may that lead start threads from it",
+  );
+  expect(told).toContain('a brief whose tag says asked="yes"');
+});
+
 test("the built-in lead already holds every core rule word for word, so it is told each once", () => {
   const rules = leadRules
     .split("\n")
