@@ -10,6 +10,7 @@ import { savedJson, taskColumns } from "../db.ts";
 import { threadsDir } from "../paths.ts";
 import { type Host, hostNamed, pluginHost } from "../plugins/runtime.ts";
 import { errorText } from "../say.ts";
+import { threadTask } from "./copy.ts";
 import { findRepository } from "./repo.ts";
 import { needsYou, reportStatus } from "./status.ts";
 
@@ -364,7 +365,7 @@ export function renameOnHost(db: Database, folder: string): void {
     const thread = readThread(db, folder);
     if (thread.host === null || thread.host === "tmux" || thread.host_id === null) return;
     const host = pluginHost(db, thread.host);
-    const title = thread.short || thread.title;
+    const title = sessionTitle(db, thread);
     if (host === null || !title) return;
     await renameSession(host, thread.host_id, title).catch((error) =>
       console.log(`couldn't rename ${folder} on ${host.plugin}: ${errorText(error)}`),
@@ -376,6 +377,13 @@ export function renameOnHost(db: Database, folder: string): void {
   settled.then(() => {
     if (renaming.get(folder) === settled) renaming.delete(folder);
   });
+}
+
+// Returns the title a builder's session goes by on its host: its thread's short title, else the
+// task's title as its builder was given it, which a row from before Skelcrew saved titles takes
+// from the copy of the tracker. Null when it has neither.
+export function sessionTitle(db: Database, thread: Thread): string | null {
+  return thread.short || threadTask(db, thread).title || null;
 }
 
 // The renames under way of each thread's builder, by its folder, each settling once it is over.

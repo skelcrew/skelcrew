@@ -44,6 +44,7 @@ import {
   record,
   renameOnHost,
   repositoryOf,
+  sessionTitle,
   Thread,
   threadName,
 } from "./thread.ts";
@@ -581,7 +582,7 @@ export function startOnHost(
       throw new Error(`the thread was ${now.status} while its builder started`);
     // Its title is read as it is now, as the lead may have given it a short title meanwhile.
     const repository = `${thread.owner}/${thread.repo}`;
-    const title = now.short || now.title;
+    const title = sessionTitle(db, now);
     const labels: Labels = {
       repository,
       role: "builder",
@@ -597,7 +598,7 @@ export function startOnHost(
     // A short title given while the host started the session found no ID to rename, so the
     // session's labels may name it by the old title.
     const latest = readThread(db, thread.folder);
-    if ((latest.short || latest.title) !== title) renameOnHost(db, thread.folder);
+    if (sessionTitle(db, latest) !== title) renameOnHost(db, thread.folder);
     await checkAgentStarted(on.host, id, "builder");
   });
 }

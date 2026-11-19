@@ -996,19 +996,24 @@ process.exit(0);`,
   );
 }, 40_000);
 
-for (const [short, title] of [
-  ["login redirect", "login redirect"],
-  [null, "Fix the login redirect"],
+// The last is a row from before Skelcrew saved a thread's title, which takes the issue's from
+// Skelcrew's copy of the tracker.
+for (const [short, title, saved] of [
+  ["login redirect", "login redirect", "Fix the login redirect"],
+  [null, "Fix the login redirect", "Fix the login redirect"],
+  [null, "Fix the login redirect", null],
 ] as const)
-  test(`a builder's session is labelled with its short title, else its full title: ${title}`, () => {
+  test(`a builder's session is labelled with its short title, else its full title: ${title}, saved ${saved}`, () => {
     const fake = join(home, ".config", "skelcrew", "plugins", "fake");
     const labels = runWithFakeHost(
       "sessions",
-      `const host = (await builderSession(db, "unused", readThread(db, "app-12"))).host;
+      `const issue = { kind: "task", id: "12", title: "Fix the login redirect", body: "", state: "open", author: null, labels: [], link: "https://github.com/simon/app/issues/12", created: "2026-11-18T00:00:00Z", updated: "2026-11-18T00:00:00Z", closes: "Closes #12" };
+db.run("INSERT INTO items (owner, repo, kind, id, state, created, item) VALUES ('simon', 'app', 'task', '12', 'open', '2026-11-18T00:00:00Z', ?)", [JSON.stringify(issue)]);
+const host = (await builderSession(db, "unused", readThread(db, "app-12"))).host;
 await startOnHost(db, readThread(db, "app-12"), { host, name: "fake" }, { folder: ${JSON.stringify(home)}, command: ["sleep", "30"], env: {} });
 console.log(require("node:fs").readFileSync(${JSON.stringify(join(fake, "sessions", "fake-app-12", "labels.json"))}, "utf8"));
 process.exit(0);`,
-      { host: "fake", host_id: null, title: "Fix the login redirect", short },
+      { host: "fake", host_id: null, title: saved, short },
     );
     expect(JSON.parse(labels).title).toBe(title);
   }, 40_000);
