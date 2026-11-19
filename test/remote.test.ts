@@ -19,7 +19,6 @@ import {
 } from "node:fs";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
-import { parse } from "yaml";
 import { checkThenSc, quoted } from "../src/machine/remote.ts";
 import { source } from "./harness.ts";
 
@@ -1302,28 +1301,6 @@ test("install removes from the server a plugin you removed on your laptop", asyn
     "config.yaml",
     "skelcrew.lock",
   ]);
-});
-
-// A server set up before the lock has none: its plugins are written into your files as they
-// are before the laptop's files go in, so its first install there removes nothing, even one no
-// repository uses.
-test("install on a server set up before the lock keeps its plugins and pins them as they are", async () => {
-  realServerWithFake();
-  const there = join(home, "server", ".config", "skelcrew");
-  const pinned = readFileSync(join(there, "skelcrew.lock"), "utf8");
-  rmSync(join(there, "skelcrew.lock"));
-  writeFileSync(join(there, "config.yaml"), "harness: codex\n");
-  mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
-  writeFileSync(join(home, ".config", "skelcrew", "config.yaml"), "harness: codex\n");
-  const run = await skel(["--remote", "simon@workbox", "install"]);
-  expect(run.err).toBe("");
-  expect(run.out).not.toContain("Removed");
-  expect(run.code).toBe(0);
-  const db = new Database(join(home, "server", ".local", "share", "skelcrew", "skelcrew.db"));
-  expect(db.query("SELECT name FROM plugins").all()).toEqual([{ name: "fake" }]);
-  db.close();
-  expect(readFileSync(join(there, "config.yaml"), "utf8")).toContain("- simon/skelcrew-fake");
-  expect(parse(readFileSync(join(there, "skelcrew.lock"), "utf8"))).toEqual(parse(pinned));
 });
 
 // The laptop leaves out a plugin that only reaches machines when it has it installed. One your

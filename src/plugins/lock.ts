@@ -61,26 +61,20 @@ export function readLock(): Lock | null {
 // from GitHub are written into a new lock as they are, and added to plugins: in your config.yaml.
 // So the move reinstalls nothing and asks nothing again.
 export function yourLock(db: Database): Lock {
-  return readLock() ?? pinInstalled(db, {});
-}
-
-// Writes each plugin from GitHub installed here that `lock` doesn't pin into your files as it is:
-// pinned in your lock at its installed version and commit, and named under plugins: in your
-// config.yaml. Returns the lock with them. It is the move to a lock, on a machine set up before
-// it, even when a laptop's files have just arrived there.
-export function pinInstalled(db: Database, lock: Lock): Lock {
+  const found = readLock();
+  if (found) return found;
   // A plugin from a folder of yours has no version to pin, so only those from GitHub count.
-  const pinned: Lock = { ...lock };
+  const lock: Lock = {};
   const sources: string[] = [];
   for (const { name, source, folder } of installedPlugins(db)) {
-    if (source === null || lock[source]) continue;
+    if (source === null) continue;
     sources.push(source);
     // One whose folder can't be read is said and left out of the lock, rather than stop every
     // plugin command. Your config.yaml still names it, so it isn't lost from your setup. Its
     // folder is broken, so installing it again is what pins it.
     try {
       const manifest = readManifest(folder);
-      pinned[source] = { name: manifest.name, version: manifest.version, commit: commitOf(folder) };
+      lock[source] = { name: manifest.name, version: manifest.version, commit: commitOf(folder) };
     } catch (error) {
       console.log(
         `Skelcrew couldn't pin ${name} from ${source} in your lock: ${errorText(error)}. To install it again, pinned: sc remove -g ${name}, then sc add -g ${source}`,
@@ -94,8 +88,8 @@ export function pinInstalled(db: Database, lock: Lock): Lock {
   const named = yourPlugins();
   const added = sources.filter((source) => !named.includes(source));
   if (added.length > 0) setYourPlugins([...named, ...added]);
-  if (Object.keys(pinned).length > 0) writeLock(pinned);
-  return pinned;
+  if (Object.keys(lock).length > 0) writeLock(lock);
+  return lock;
 }
 
 // Pins one plugin in your lock at what is installed now, or with null takes it out. Every

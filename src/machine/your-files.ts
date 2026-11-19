@@ -6,15 +6,7 @@ import { join } from "node:path";
 import { configFile, yourConfigDocument } from "../config.ts";
 import { openDb } from "../db.ts";
 import { claudeTokenFile, configDir, dataDir } from "../paths.ts";
-import {
-  type Lock,
-  lockFile,
-  lockText,
-  pinInstalled,
-  readLock,
-  yourLock,
-  yourPlugins,
-} from "../plugins/lock.ts";
+import { type Lock, lockText, readLock, yourLock, yourPlugins } from "../plugins/lock.ts";
 import { installedPlugins, reachesOnlyMachines, readManifest } from "../plugins/plugin.ts";
 
 // Returns the database when this machine has one. Opening it would make one, and a laptop that
@@ -116,13 +108,10 @@ export function yourFiles(): { name: string; text: string | null }[] {
 // were. A file of yours the laptop didn't send, which can only be the token, is removed, so an
 // old sign-in never stays in use. Each file moves in one rename, and a hangup is ignored until
 // all have moved, so a connection that drops partway never leaves a mix of old and new files.
-// A server set up before the lock has none, and its plugins are written into the files that
-// arrived as they are, so its first install there removes and reinstalls nothing.
 export function putSentFiles(folder: string): void {
   // The folder is a name the laptop made, never a path that leads elsewhere.
   if (!/^sending-[\w-]+$/.test(folder)) throw new Error(`${folder} isn't a folder of sent files`);
   const from = join(configDir(), folder);
-  const beforeTheLock = !existsSync(lockFile());
   const ignore = () => {};
   process.on("SIGHUP", ignore);
   try {
@@ -135,8 +124,4 @@ export function putSentFiles(folder: string): void {
     process.off("SIGHUP", ignore);
   }
   rmSync(from, { recursive: true, force: true });
-  // Only after the files are in place, so the pins go into the files the laptop sent. The
-  // laptop's lock always arrives, so the server's own move to a lock would never run otherwise.
-  const db = dbHere();
-  if (beforeTheLock && db) pinInstalled(db, readLock() ?? {});
 }

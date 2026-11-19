@@ -645,7 +645,7 @@ function unnamed(db: Database): Plugin[] {
 // Makes this machine match your personal files, for sc install: removes each plugin from GitHub
 // your files don't name, then installs each plugin under plugins: in your config.yaml at the
 // version and commit your lock pins. One your files don't name that a repository uses as its
-// tracker or forge stays, and is written into your files. A plugin new here, or at
+// tracker or forge stays, and your files are left as they are. A plugin new here, or at
 // another version or commit, is shown and asked about. One already at its locked version asks
 // nothing, as you approved it before. It never moves a pin your lock has. A plugin your config
 // names that the lock lacks gets a pin added, as npm install does: at what is installed here, or
@@ -662,27 +662,13 @@ export function installYourPlugins(remote: string | null): { changed: boolean; l
   // by its manifest.
   const skipMachines = process.env.SKELCREW_REMOTE_NAME !== undefined;
   const skipped: string[] = [];
-  // Removed first, so one of the same name from another repository can be installed after.
-  for (const { name, source, folder } of unnamed(db)) {
+  // Removed first, so one of the same name from another repository can be installed after. One
+  // a repository uses as its tracker or forge stays, or the repository would lose its tasks or
+  // PRs. Your files are left as they are: only you make a plugin yours.
+  for (const { name } of unnamed(db)) {
+    if (jobOf(db, name) !== null) continue;
     changed = true;
-    const job = jobOf(db, name);
-    if (job === null || source === null) {
-      removePlugin(name);
-      continue;
-    }
-    // One a repository uses as its tracker or forge stays, or the repository would lose its
-    // tasks or PRs. Such as on a machine whose lock was written without it, it is written into
-    // your files as it is, as the move to a lock does, so it asks nothing and installs nothing.
-    // A pin your lock has already stays, and the install below moves the plugin to it after
-    // asking. The pin added is added to `lock` too, so the install below reads what the file says.
-    const manifest = readManifest(folder);
-    const pinned = lock[source] ?? lockedAs(manifest, commitOf(folder));
-    writeBoth(() => {
-      setYourPlugins([...yourPlugins(), source]);
-      setLocked(db, source, pinned);
-    });
-    lock[source] = pinned;
-    console.log(`Kept ${name} ${manifest.version} and added it to your files, as it is ${job}.`);
+    removePlugin(name);
   }
   eachAsked(
     yourPlugins(),
@@ -764,7 +750,7 @@ export function listPlugins(json: boolean): void {
       ? null
       : job === null
         ? "sc install removes it"
-        : `sc install keeps it in your files, as it is ${job}`;
+        : `sc install keeps it, as it is ${job}`;
     const to =
       locked?.version === manifest.version
         ? `${locked.version} at commit ${locked.commit.slice(0, 12)}`

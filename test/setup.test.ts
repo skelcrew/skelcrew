@@ -1341,9 +1341,8 @@ test("sc install removes a plugin from GitHub your files don't name", async () =
 });
 
 // A plugin a repository uses as its forge, and so its tracker, is never removed: the repository
-// would lose its tasks and PRs. Such as on a machine whose lock was written without it, it is
-// written into your files as it is, and sc plugins says so before.
-test("sc install keeps a plugin a repository uses that your files don't name, and pins it as it is", async () => {
+// would lose its tasks and PRs. Your files stay as they are, as only you make a plugin yours.
+test("sc install keeps a plugin a repository uses that your files don't name, and leaves your files", async () => {
   noGitHubPlugin();
   fakeGitHub();
   publishFake("0.1.0");
@@ -1360,60 +1359,19 @@ test("sc install keeps a plugin a repository uses that your files don't name, an
     readFileSync(config(), "utf8").replace("plugins: [simon/skelcrew-fake]", "plugins: []"),
   );
   writeFileSync(lock(), "");
+  const configBefore = readFileSync(config(), "utf8");
   expect((await skel("", bin, main(), home, {}, ["plugins"])).out).toBe(
-    "fake 0.1.0 io: tracker. sc install keeps it in your files, as it is the tracker of other.\n",
+    "fake 0.1.0 io: tracker. sc install keeps it, as it is the tracker of other.\n",
   );
   writeFileSync(join(home, "calls"), "");
   const run = await install();
   expect(run.err).toBe("");
   expect(run.code).toBe(0);
-  expect(run.out).toContain(
-    "Kept fake 0.1.0 and added it to your files, as it is the tracker of other.",
-  );
+  expect(run.out).toBe("Nothing to install: this machine has everything your files ask for.\n");
   expect(calls()).toBe("");
   expect(existsSync(join(home, ".local", "share", "skelcrew", "plugins", "fake"))).toBe(true);
-  expect(readFileSync(config(), "utf8")).toContain("- simon/skelcrew-fake");
-  expect(parse(readFileSync(lock(), "utf8"))).toEqual({
-    "simon/skelcrew-fake": { name: "fake", version: "0.1.0", commit: fakeCommit("0.1.0") },
-  });
-  expect((await install()).out).toBe(
-    "Nothing to install: this machine has everything your files ask for.\n",
-  );
-});
-
-// Keeping it never moves a pin your lock has: sc install moves the plugin to the pin after asking.
-test("sc install keeps a plugin a repository uses at the pin your lock has, though your config doesn't name it", async () => {
-  noGitHubPlugin();
-  fakeGitHub();
-  publishFake("0.1.0", "0.2.0");
-  await skel("1\nsk-ant-oat01-good\n");
-  lockFake("0.1.0");
-  await install("y\n");
-  const db = new Database(join(home, ".local", "share", "skelcrew", "skelcrew.db"));
-  db.run(
-    "INSERT INTO repositories (owner, repo, name, forge) VALUES ('simon', 'other', 'other', 'fake')",
-  );
-  db.close();
-  writeFileSync(
-    config(),
-    readFileSync(config(), "utf8").replace("plugins: [simon/skelcrew-fake]", "plugins: []"),
-  );
-  writeFileSync(
-    lock(),
-    `simon/skelcrew-fake: { name: fake, version: 0.2.0, commit: ${fakeCommit("0.2.0")} }\n`,
-  );
-  writeFileSync(join(home, "calls"), "");
-  const run = await install("y\n");
-  expect(run.err).toBe("");
-  expect(run.code).toBe(0);
-  expect(run.out).toContain("Kept fake 0.1.0 and added it to your files");
-  expect(calls()).toBe("fake setup 0.2.0\n");
-  expect(parse(readFileSync(lock(), "utf8"))).toEqual({
-    "simon/skelcrew-fake": { name: "fake", version: "0.2.0", commit: fakeCommit("0.2.0") },
-  });
-  expect((await install()).out).toBe(
-    "Nothing to install: this machine has everything your files ask for.\n",
-  );
+  expect(readFileSync(config(), "utf8")).toBe(configBefore);
+  expect(readFileSync(lock(), "utf8")).toBe("");
 });
 
 // A machine set up before the lock existed has no lock: its plugins are written into one as
