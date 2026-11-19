@@ -34,7 +34,8 @@ test("the help names every command", () => {
   for (const command of [
     "--list",
     "--remote",
-    "remote add",
+    "--remote <host> install",
+    "--remote <host> up --bg",
     "up",
     "up --bg",
     "init",
