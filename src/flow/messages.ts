@@ -521,23 +521,22 @@ export function messageLead(db: Database, sessions: string, from: Caller, text: 
   record(db, thread.folder, { told_lead: true }, `its builder told the lead: ${text}`);
 }
 
-// Text that could break out of Skelcrew's wrapper: a skelcrew tag in any form, opening or
-// closing, with spaces or in any case, or a control character.
-const unsafe = /<\s*\/?\s*skelcrew|(?![\n\t])\p{Cc}/iu;
+// Text that could break out of a brief's tags: a skelcrew, asked or brief tag in any form, opening
+// or closing, with spaces or in any case, or a control character.
+const unsafe = /<\s*\/?\s*(?:skelcrew|asked|brief)|(?![\n\t])\p{Cc}/iu;
 
 // Saves a lead's brief for another repository's lead, to be typed in once that lead can take
 // it, as an urgent note. It is wrapped as from the sending lead, such as app:lead, with the
 // command that answers it, so the other lead takes it for another agent's report, never for the
-// human's say-so. `asked` is the human's own words, which the sending lead gave with
-// --asked-file. Only then may the other lead start work on it, for exactly what those words
-// ask, with the tag saying asked="yes", which only Skelcrew can write. The words and the brief
-// both go in unchanged, unless one could break out of the wrapper. A skelcrew tag in any form,
-// such as </skelcrew >, would end Skelcrew's own early or pass for another. A control
-// character, such as the end of a bracketed paste, would end the paste and act as typing. So
-// such text has each & written &amp;, each < &lt;, and each control character but a line break
-// or tab as its code, such as &#x1b;, and its heading says so: the other lead reads back
-// exactly what was written. Only a lead may brief, and never its own repository, which it plans
-// itself.
+// human's say-so. The brief goes in its own <brief> element. `asked` is the human's own words,
+// which the sending lead gave with --asked-file, in an <asked> element before it. Only then may
+// the other lead start work on it, for exactly what those words ask, with the tag saying
+// asked="yes", which only Skelcrew can write. Each element holds its text exactly, between its
+// tags' lines. Text that could close or fake a tag, or a control character that would end the
+// paste and act as typing, has each & written &amp;, each < &lt;, and each control character but
+// a line break or tab as its code, such as &#x1b;, and its element says escaped="yes": the other
+// lead reads back exactly what was written. Only a lead may brief, and never its own
+// repository, which it plans itself.
 export function briefLead(
   db: Database,
   sessions: string,
@@ -553,29 +552,14 @@ export function briefLead(
     throw new Error(`${to.name} is your own repository: brief its threads with sc tell instead.`);
   const sender = repositories(db).find((r) => r.owner === owner && r.repo === repo);
   const name = sender?.name ?? `${owner}/${repo}`;
-  // Returns text as it goes in, unchanged or escaped when it holds a tag or a control character,
-  // with what its heading adds to say how it was escaped, if it was.
-  const shown = (said: string) =>
+  // Returns text in an element of its own, unchanged, or escaped when it isn't safe there.
+  const element = (tag: "asked" | "brief", said: string) =>
     unsafe.test(said)
-      ? {
-          how: ", with each < written as &lt;, each & as &amp; and each control character as its code, such as &#x1b;, as it holds a skelcrew tag or a control character",
-          as: controlsAsCodes(said.replaceAll("&", "&amp;").replaceAll("<", "&lt;")),
-        }
-      : { how: "", as: said };
-  // The brief comes last, so it ends where Skelcrew's closing tag does, which it can't hold. A
-  // brief with no tag and none of the human's words needs no heading, as it is all there is.
-  const brief = shown(text);
-  let body = brief.how ? `The brief${brief.how}:\n${brief.as}` : brief.as;
-  // The human's words come first, between two lines of ~ longer than any run of ~ in them, so
-  // nothing they hold, such as a line saying "The brief:", can pass for where they end.
-  if (asked !== undefined) {
-    const words = shown(asked);
-    const longest = Math.max(0, ...(words.as.match(/~+/g) ?? []).map((run) => run.length));
-    const fence = "~".repeat(Math.max(3, longest + 1));
-    body = `The human's words, exactly as ${name}'s lead was given them${words.how}, between the two lines of ${fence}:\n${fence}\n${words.as}\n${fence}\n\nThe brief${brief.how}:\n${brief.as}`;
-  }
-  const tag = `<skelcrew from="${name}:lead" reply="sc tell lead ${name}"`;
-  const message = `${tag}${asked === undefined ? "" : ' asked="yes"'}>\n${body}\n</skelcrew>`;
+      ? `<${tag} escaped="yes">\n${controlsAsCodes(said.replaceAll("&", "&amp;").replaceAll("<", "&lt;"))}\n</${tag}>`
+      : `<${tag}>\n${said}\n</${tag}>`;
+  const words = asked === undefined ? "" : `${element("asked", asked)}\n`;
+  const tag = `<skelcrew from="${name}:lead" reply="sc tell lead ${name}"${asked === undefined ? "" : ' asked="yes"'}>`;
+  const message = `${tag}\n${words}${element("brief", text)}\n</skelcrew>`;
   noteForLead(db, sessions, to, message, null, true);
 }
 
