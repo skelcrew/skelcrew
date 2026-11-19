@@ -274,6 +274,17 @@ export async function startLead(
     owner,
     repo,
   ]);
+  // sc repo rm closes the tab before it looks for the lead. A removal that looked while this
+  // session was still starting on a slow host missed it, and would leave it running with no
+  // repository behind it. So a lead whose tab closed or whose repository went meanwhile ends
+  // here. Either this sees the tab closed, or the removal looks after the session is there.
+  const still = db
+    .query("SELECT 1 FROM repositories WHERE owner = ? AND repo = ? AND tab_closed = 0")
+    .get(owner, repo);
+  if (!still) {
+    await endSession(host, id);
+    throw new Error(`${owner}/${repo} was closed or removed while its lead started`);
+  }
   // A host that shows status hears it afresh, as a session starting under an ID it had before
   // has shown nothing yet.
   forgetStatus(hostName, id);

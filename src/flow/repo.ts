@@ -32,6 +32,7 @@ import { cloneDir, configDir, dataDir } from "../paths.ts";
 import { askWhichForge, type Claimed } from "../plugins/ask.ts";
 import { setUpPlugin } from "../plugins/install.ts";
 import { SetupNeeded } from "../plugins/plugin.ts";
+import { hostNamed } from "../plugins/runtime.ts";
 import { builtInRole } from "../roles.ts";
 import { errorText } from "../say.ts";
 import { checkPush, cloneRepository, headCommit, remoteEmpty, updateClone } from "./git.ts";
@@ -678,24 +679,26 @@ export async function removeRepo(name: string, sessions: string): Promise<void> 
     .map((row) => `${name}-${z.object({ task: z.coerce.string() }).parse(row).task}`);
   if (live.length > 0)
     throw new Error(`${name} has live threads: ${live.join(", ")}. Stop them first.`);
-  // Find the lead's session: its host, and its ID there, found by its labels when the daemon
-  // stopped before saving it.
-  const fullName = `${found.owner}/${found.repo}`;
-  const lead = await leadSession(db, sessions, found.owner, found.repo);
   // A lead on a plugin no longer installed may still run there, using the clone, and removing
   // the repository would forget how to reach it. So it waits until that host is back.
-  if (lead === null) {
-    const { host } = leadOf(db, found.owner, found.repo);
+  const fullName = `${found.owner}/${found.repo}`;
+  const { host } = leadOf(db, found.owner, found.repo);
+  if (hostNamed(db, sessions, host) === null)
     throw new Error(
       `${name}'s lead runs on ${host}, which isn't installed now, so it can't be ended. Install ${host} again, then remove ${name}.`,
     );
-  }
   // Its tab closes first, so an open screen moves on at once. A screen that found the lead
-  // gone while its tab was still there would take it for a crash and ask for it back.
+  // gone while its tab was still there would take it for a crash and ask for it back. A lead the
+  // daemon is starting meanwhile sees the tab closed once its session is there, and ends it.
   db.run("UPDATE repositories SET tab_closed = 1 WHERE owner = ? AND repo = ?", [
     found.owner,
     found.repo,
   ]);
+  // Then find the lead's session: its host, and its ID there, found by its labels when the
+  // daemon stopped before saving it. Looked up only now, so a lead whose start began before the
+  // tab closed is found here, on the host it started on, if its start doesn't end it.
+  const lead = await leadSession(db, sessions, found.owner, found.repo);
+  if (lead === null) throw new Error(`${name}'s lead's host went away while it was removed`);
   // Ended as a thread's builder is, and waited for, as the lead reads the clone removed next.
   await stopSession(lead.host, lead.id);
   // Remove the clone, the row and your trust in it. The other repositories are named again,

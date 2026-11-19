@@ -365,6 +365,39 @@ console.log(fs.existsSync(cloneDir("simon", "app")), row.tab_closed);`,
   );
 });
 
+test("a lead still starting on a slow host when its repository is removed is ended, not left running", () => {
+  const fake = join(home, ".config", "skelcrew", "plugins", "fake");
+  const said = runWithFakeHost(
+    "sessions",
+    `const { startLead } = await import(${JSON.stringify(source("flow/lead.ts"))});
+const { removeRepo } = await import(${JSON.stringify(source("flow/repo.ts"))});
+const { cloneDir } = await import(${JSON.stringify(source("paths.ts"))});
+const { pluginHost } = await import(${JSON.stringify(source("plugins/runtime.ts"))});
+const fs = require("node:fs");
+fs.mkdirSync(${JSON.stringify(fake)}, { recursive: true });
+fs.writeFileSync(${JSON.stringify(join(home, ".config", "skelcrew", "config.yaml"))}, "harness: claude\\nsession: fake\\n");
+fs.writeFileSync(${JSON.stringify(join(home, ".config", "skelcrew", "claude-token"))}, "sk-ant-oat01-good\\n");
+db.run("INSERT INTO repositories (name, owner, repo, remote, opened) VALUES ('app', 'simon', 'app', '', 1)");
+db.run("DELETE FROM threads");
+fs.mkdirSync(cloneDir("simon", "app"), { recursive: true });
+Bun.spawnSync(["git", "init", "-q", cloneDir("simon", "app")]);
+const host = pluginHost(db, "fake");
+// The host takes two seconds to start the lead, and the removal looks for it meanwhile.
+fs.writeFileSync(${JSON.stringify(join(fake, "slow-start"))}, "");
+const repository = { name: "app", owner: "simon", repo: "app", forge: null, remote: "" };
+const starting = startLead(db, "unused", repository).then(() => "started", (error) => error.message);
+await Bun.sleep(500);
+await removeRepo("app", "unused");
+console.log(await starting);
+const sessions = await (await import(${JSON.stringify(source("agents/sessions.ts"))})).listSessions(host);
+console.log(sessions.length);`,
+    {},
+  );
+  expect(said).toBe(
+    "Removed app and Skelcrew's clone of it.\nsimon/app was closed or removed while its lead started\n0\n",
+  );
+}, 20_000);
+
 test("removing a repository ends its lead on a plugin's host, found by its labels", () => {
   const fake = join(home, ".config", "skelcrew", "plugins", "fake");
   const said = runWithFakeHost(
