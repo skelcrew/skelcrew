@@ -449,6 +449,8 @@ function prepareTables(db: Database): void {
     lead_briefs: "INTEGER NOT NULL DEFAULT 0",
     ci_seen: "INTEGER NOT NULL DEFAULT 0",
   };
+  // Whether repositories gain `ci_seen` now, so it is filled from the copy below.
+  const repositoriesSeen = !hasColumn(db, "repositories", "ci_seen");
   // SQLite has no ADD COLUMN IF NOT EXISTS, so each column is looked up first.
   for (const [column, type] of Object.entries(repositoryColumns))
     if (!db.query("SELECT 1 FROM pragma_table_info('repositories') WHERE name = ?").get(column))
@@ -637,6 +639,16 @@ function prepareTables(db: Database): void {
   // Skelcrew kept them, which is asked about once more.
   if (!db.query("SELECT 1 FROM pragma_table_info('plugins') WHERE name = 'approved'").get())
     db.run("ALTER TABLE plugins ADD COLUMN approved TEXT");
+  // A PR in the copy that showed CI before repositories kept it counts as CI found. It may have
+  // closed while the daemon was down, and the first poll after drops it from the copy, so a
+  // merge would then take a PR with no checks yet for one in a repository without CI. Skelcrew's
+  // own check is no CI, and an item that isn't JSON is read as none.
+  if (repositoriesSeen)
+    db.run(`UPDATE repositories SET ci_seen = 1 WHERE EXISTS (
+      SELECT 1 FROM items,
+        json_each(CASE WHEN json_valid(items.item) THEN items.item ELSE '{}' END, '$.checks') AS c
+      WHERE items.owner = repositories.owner AND items.repo = repositories.repo
+        AND items.kind = 'pr' AND json_extract(c.value, '$.name') IS NOT 'skelcrew/check')`);
 }
 
 // Upgrades the threads an earlier release saved, whose `turn_ended` is still null, from its
