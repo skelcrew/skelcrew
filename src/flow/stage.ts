@@ -22,3 +22,28 @@ export function taskStage(thread: Thread | null, issueOpen: boolean): Stage {
   const live = thread.status === "working" || thread.status === "waiting";
   return live && readyToMerge(thread) ? "ready for review" : "working";
 }
+
+// The stages of the list, in the order it shows them: not started yet, a builder at work, a
+// review running or waiting, an approval waiting on CI, ready for you to merge, and ended.
+export const ListStage = z.enum(["backlog", "building", "reviewing", "checks", "ready", "done"]);
+export type ListStage = z.infer<typeof ListStage>;
+
+// Returns the stage of the list a task shows under, from the same thread and issue as its stage.
+// Needs you is never a stage: a task that needs you stays where its work is, and its row says
+// so. A thread that stopped or failed is under Building, as its builder is what must start
+// again. A review under way, waiting for a place or for its usage limit, or one that couldn't
+// run, is under Reviewing. An approval the builder isn't working on waits on CI. Ready includes a
+// merge when ready that is about to merge, as it is approved and green.
+export function listStage(thread: Thread | null, issueOpen: boolean): ListStage {
+  const stage = taskStage(thread, issueOpen);
+  if (stage === "issue") return "backlog";
+  if (stage === "merged" || stage === "closed") return "done";
+  if (stage === "ready for review") return "ready";
+  if (thread === null || thread.status === "failed" || thread.status === "stopped")
+    return "building";
+  const reviewFailed = thread.verdict === "failed" || thread.verdict === "timed out";
+  const reviewing = thread.submitting !== null || thread.reviewing !== null;
+  if (reviewing || thread.review_limited || (thread.needs_you && reviewFailed)) return "reviewing";
+  if (thread.verdict === "approve" && thread.status === "waiting") return "checks";
+  return "building";
+}

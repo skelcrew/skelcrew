@@ -181,6 +181,16 @@ try {
   expect(seen).toEqual({ pasted: true, newId: true, delivered: true });
 });
 
+// The list opens a done task's PR from the link saved with it. A task started over has a new
+// attempt with no PR yet, so the earlier attempt's link must go with its PR.
+test("a task started over keeps no PR link from its earlier attempt", () => {
+  const seen = withThread(`record(db, thread.folder, { status: "done" }, "ended");
+db.run("UPDATE tasks SET pr = 7, pr_link = 'https://github.com/simon/app/pull/7' WHERE task = '${own}1'");
+await startThread(db, { repo: "app", task: "${own}1" });
+console.log(JSON.stringify(db.query("SELECT pr, pr_link FROM tasks WHERE task = '${own}1'").get()));`);
+  expect(seen).toEqual({ pr: null, pr_link: null });
+});
+
 // A thread starting over first deletes the old thread's refs of what it pushed. Without a
 // forge, a push ref left behind would make the new thread look as if it had pushed already, and
 // end it at once. So a start over whose refs git can't delete is refused, and nothing changes.
