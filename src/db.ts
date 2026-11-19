@@ -515,6 +515,16 @@ function prepareTables(db: Database): void {
   )`);
   // The reviews Skelcrew posted with your gh login, before its forge posted them as its own app.
   db.run("DROP TABLE IF EXISTS posted");
+  // The claims Skelcrew asked a tracker for, to start a labelled issue, whose outcome it doesn't
+  // know yet: saved before it asks, and gone once the task is recorded or the tracker said no.
+  // One still here after a stop of the engine or a failed ask may have been granted to this
+  // machine, though the tracker now says the issue is taken.
+  db.run(`CREATE TABLE IF NOT EXISTS claims (
+    owner TEXT NOT NULL,
+    repo TEXT NOT NULL,
+    task TEXT NOT NULL,
+    PRIMARY KEY (owner, repo, task)
+  )`);
   // Each harness's usage limit holding reviews: until when, the reset time it gave, the tries
   // in a row that met it with none, and the repositories whose leads were told, as JSON.
   db.run(`CREATE TABLE IF NOT EXISTS limits (

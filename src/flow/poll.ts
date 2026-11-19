@@ -52,7 +52,11 @@ const startLabel = "skelcrew";
 // of its own, such as the branch to start from. A task in `passed`, named the same way, is one
 // this daemon won't start by its label: someone else claimed it, or its claim was this
 // daemon's but the thread failed to start. Kept in memory, so the tracker isn't asked about it
-// on every poll. Nothing starts until Skelcrew's clone has a commit.
+// on every poll. Nothing starts until Skelcrew's clone has a commit. Each claim is saved before
+// it is asked for, until its outcome is known. A claim whose ask failed, or that the engine's
+// stop cut short, may have been granted to this machine, so when the tracker then says the issue
+// is taken, Skelcrew can't tell by whom: it starts nothing, so no task starts twice, and tells
+// the lead, so none is lost without a word.
 async function startLabeled(
   db: Database,
   sessions: string,
@@ -82,8 +86,25 @@ async function startLabeled(
     (!existsSync(cloneDir(owner, repo)) || (await hasNoCommits(db, repository)))
   )
     return;
+  // A claim saved for a task that has a thread now was granted, and the engine stopped before it
+  // was forgotten.
+  db.run(
+    `DELETE FROM claims WHERE owner = ? AND repo = ? AND EXISTS (SELECT 1 FROM threads t
+      WHERE t.owner = claims.owner AND t.repo = claims.repo AND CAST(t.task AS TEXT) = claims.task)`,
+    [owner, repo],
+  );
+  const claimWhere = "WHERE owner = ? AND repo = ? AND task = ?";
+  const forget = (id: string) => db.run(`DELETE FROM claims ${claimWhere}`, [owner, repo, id]);
   for (const task of toStart) {
     const key = `${fullName}#${task.id}`;
+    // Whether an earlier ask for this claim has no known outcome.
+    const unsure =
+      db.query(`SELECT 1 FROM claims ${claimWhere}`).get(owner, repo, task.id) !== null;
+    db.run("INSERT OR IGNORE INTO claims (owner, repo, task) VALUES (?, ?, ?)", [
+      owner,
+      repo,
+      task.id,
+    ]);
     // A claim that fails, such as on a network error, starts nothing and is tried again on the
     // next poll, so a task is never started without its claim.
     const claimed = await claimTask(db, repository, task.id).catch((error) => {
@@ -91,6 +112,15 @@ async function startLabeled(
       return null;
     });
     if (claimed === null) continue;
+    if (!claimed) forget(task.id);
+    if (!claimed && unsure) {
+      const name = `${repository.name}-${task.id}`;
+      const note = `${name}'s claim was cut short, so Skelcrew can't tell if this machine holds it. If no other machine works on it, sc start ${name}.`;
+      console.log(note);
+      noteForLead(db, sessions, { owner, repo }, note);
+      passed.add(key);
+      continue;
+    }
     if (!claimed) {
       // Claimed by another machine, or by this one before a restart, when its thread failed
       // to start.
@@ -102,7 +132,10 @@ async function startLabeled(
     }
     // An sc start that came in while the tracker answered starts the task itself, with its own
     // options, such as the branch to start from, so the poll leaves it be.
-    if (starting.has(key)) continue;
+    if (starting.has(key)) {
+      forget(task.id);
+      continue;
+    }
     // The claim is this daemon's now, so a thread that fails to start isn't started by a
     // later poll either: on another machine, or after a restart, its claim reads as taken.
     const thread = await startThread(db, { repo: fullName, task: task.id }).catch((error) => {
@@ -112,6 +145,8 @@ async function startLabeled(
       passed.add(key);
       return null;
     });
+    // The claim's outcome is known now: the task is recorded, or won't be started by its label.
+    forget(task.id);
     if (thread === null) continue;
     // Claimed already, so only assigned.
     assignIssue(db, thread, false);

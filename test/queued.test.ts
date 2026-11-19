@@ -323,3 +323,24 @@ test("sc start claims an issue before it joins the queue, and a claim that fails
   await Bun.sleep(1000);
   expect(asked(plugin).filter((q) => q.ask === "took")).toHaveLength(claims.length);
 }, 60_000);
+
+test("a labelled issue whose claim the engine's stop cut short starts nowhere twice, and the lead hears of it", async () => {
+  addApp(["12", "13"]);
+  // The engine stopped after asking to claim issue 12, before it recorded the task. The tracker
+  // now says both issues are taken: 12 maybe by this machine, 13 by another.
+  const cut = `import { openDb } from ${JSON.stringify(source("db.ts"))};
+openDb().run("INSERT INTO claims (owner, repo, task) VALUES ('simon', 'app', '12')");`;
+  Bun.spawnSync([process.execPath, "-e", cut], { env: env() });
+  answer(plugin, "took", { took: false });
+  await serveApp();
+  await until(() => leadHears().includes("app-12's claim was cut short"));
+  const polls = () => asked(plugin).filter((q) => q.ask === "changed").length;
+  const before = polls();
+  await until(() => polls() >= before + 3);
+  expect(statuses()).toEqual({ "app-11": "working" });
+  // Each issue was asked about once, and only 12's claim may be this machine's.
+  const claims = asked(plugin).filter((q) => q.ask === "took");
+  expect(claims.map((q) => q.task).sort()).toEqual(["12", "13"]);
+  expect(leadHears()).toContain("If no other machine works on it, sc start app-12.");
+  expect(leadHears()).not.toContain("app-13's claim");
+}, 60_000);
