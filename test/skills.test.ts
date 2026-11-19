@@ -197,17 +197,30 @@ test("skills listed in instructions name each one, what it is for and its SKILL.
   expect(skillsTold([])).toBe("");
 });
 
-// The reviewer's harness must leave the branch's own skills unloaded, so it is told each one.
-test("a branch's skills are each SKILL.md under .agents/skills/, links left out", () => {
+// The reviewer's harness must leave the branch's own skills unloaded, so it is told each one:
+// those the commit has, at any depth and through its links, and any the builder left on disk.
+test("a branch's skills are each SKILL.md the commit or the builder's clone has under .agents/skills/", () => {
   agentsFile("skills/deep/inner/SKILL.md", "Nested.\n");
+  mkdirSync(join(clone, "shared", "kit"), { recursive: true });
+  writeFileSync(join(clone, "shared", "kit", "SKILL.md"), "Shared.\n");
+  symlinkSync("../../shared/kit", join(clone, ".agents", "skills", "kit"));
   git("add", "-A");
   git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "nested");
-  expect(branchSkills(clone, "HEAD").sort()).toEqual([
+  // The builder's clone has a skill git ignores, which no commit holds.
+  const builder = join(home, "app-12");
+  mkdirSync(join(builder, ".agents", "skills", "ghost"), { recursive: true });
+  writeFileSync(join(builder, ".agents", "skills", "ghost", "SKILL.md"), "Ghost.\n");
+  expect(branchSkills(clone, "HEAD", builder).sort()).toEqual([
     ".agents/skills/deep/inner/SKILL.md",
+    ".agents/skills/ghost/SKILL.md",
+    ".agents/skills/kit/SKILL.md",
     ".agents/skills/notes/SKILL.md",
     ".agents/skills/review-sql/SKILL.md",
+    "shared/kit/SKILL.md",
   ]);
-  expect(() => branchSkills(clone, "0".repeat(40))).toThrow("couldn't read the skills of 0000000");
+  expect(() => branchSkills(clone, "0".repeat(40), builder)).toThrow(
+    "couldn't read the skills of 0000000",
+  );
 });
 
 // Codex finds the skills in the checkout it reviews on its own, so each is turned off by path.

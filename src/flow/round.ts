@@ -399,7 +399,7 @@ async function reviewRound(
           // can't be read fails its review rather than run with them.
           let skillsOff: string[];
           try {
-            skillsOff = branchSkills(skelcrewClone, sha);
+            skillsOff = branchSkills(skelcrewClone, sha, cloneOf(thread));
           } catch (error) {
             return { verdict: "failed" as const, body: errorText(error) };
           }

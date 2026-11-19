@@ -87,23 +87,31 @@ export function approveAgents(place: Place, tree: string | null): void {
 }
 
 // Returns the git tree the .agents/ folder in the checkout at `checkout` will have once pushed,
-// for sc init, so it can be approved or asked about before it reaches the default branch. Its
-// files go into Skelcrew's clone, through an index of their own, so neither the checkout's index
-// nor the clone's changes. git reads them as your push will, so once pushed the tree is the same.
-// Throws when git can't read them, such as when .agents is a file.
-export function checkoutAgents(place: Place, checkout: string): string {
+// for sc init, so it can be approved or asked about before it reaches the default branch, or null
+// when git would push none of it, as when a .gitignore rule matches it all. Its files go into
+// Skelcrew's clone, through an index of their own, so neither the checkout's index nor the
+// clone's changes. git reads them as your push will, so once pushed the tree is the same. Throws
+// when git can't read them.
+export function checkoutAgents(place: Place, checkout: string): string | null {
   const folder = mkdtempSync(join(tmpdir(), "skelcrew-agents-"));
   try {
-    // The files of .agents/ the checkout tracks that are still there. Its own index says which,
-    // as the new index starts empty, where git would take each for new and leave out one a
-    // .gitignore rule matches, which every commit keeps.
-    const tracked = Bun.spawnSync(["git", "-C", checkout, "ls-files", "-z", "--", ".agents"], {
-      stdout: "pipe",
-      stderr: "pipe",
-    })
-      .stdout.toString()
-      .split("\0")
-      .filter((path) => path && lstatSync(join(checkout, path), { throwIfNoEntry: false }));
+    // The files a commit of the checkout would hold: those it tracks that are still there, and
+    // new ones git doesn't ignore. Its own index and ignore rules say which. The new index starts
+    // empty, where git would take a tracked file a .gitignore rule matches for new and leave it
+    // out, though every commit keeps it, and would refuse a folder ignored whole.
+    const listed = (args: string[]) =>
+      Bun.spawnSync(["git", "-C", checkout, "ls-files", "-z", ...args, "--", ".agents"], {
+        stdout: "pipe",
+        stderr: "pipe",
+      })
+        .stdout.toString()
+        .split("\0")
+        .filter(Boolean);
+    const files = [
+      ...listed([]).filter((path) => lstatSync(join(checkout, path), { throwIfNoEntry: false })),
+      ...listed(["--others", "--exclude-standard"]),
+    ];
+    if (files.length === 0) return null;
     const git = (args: string[], stdin?: string) => {
       const run = Bun.spawnSync(
         [
@@ -128,10 +136,9 @@ export function checkoutAgents(place: Place, checkout: string): string {
         );
       return run.stdout.toString().trim();
     };
-    // The tracked files first, given on stdin, as there can be more than a command line holds.
-    if (tracked.length > 0)
-      git(["add", "-f", "--pathspec-from-file=-", "--pathspec-file-nul"], tracked.join("\0"));
-    git(["add", "--", ".agents"]);
+    // Given on stdin, as there can be more than a command line holds. Each is one a commit would
+    // hold, so -f only keeps a tracked one a .gitignore rule matches.
+    git(["add", "-f", "--pathspec-from-file=-", "--pathspec-file-nul"], files.join("\0"));
     return git(["write-tree", "--prefix=.agents/"]);
   } finally {
     rmSync(folder, { recursive: true, force: true });

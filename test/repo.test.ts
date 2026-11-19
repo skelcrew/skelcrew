@@ -942,6 +942,21 @@ test("init asks about a checkout's .agents/ with its tracked files that .gitigno
   expect(approvals()).toEqual({ "simon/app": git(checkout, "rev-parse", "HEAD:.agents").trim() });
 });
 
+// A push brings none of an .agents/ that git ignores, so there is nothing to approve, and init
+// still finishes.
+test("init approves nothing when git ignores .agents/, and says so", async () => {
+  const checkout = onGitHub("simon/app", "WRITE");
+  writeFileSync(join(checkout, ".gitignore"), ".agents/\n");
+  const run = await skel(["init"], "", checkout);
+  expect(run.err).toBe("");
+  expect(run.code).toBe(0);
+  expect(run.out).toContain(
+    "git ignores .agents/ in this checkout, so a push won't bring it and Skelcrew approved none of it.",
+  );
+  expect(existsSync(join(home, ".config", "skelcrew", "approved-agents.yaml"))).toBe(false);
+  expect(existsSync(join(checkout, ".agents", "roles", "lead.md"))).toBe(true);
+});
+
 test("init stops outside a git repository, and in one with no remote", async () => {
   const outside = await skel(["init"]);
   expect(outside.code).toBe(1);

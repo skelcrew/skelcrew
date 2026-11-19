@@ -396,12 +396,12 @@ async function reviewNow(given: {
     // view, as no git in the sandbox holds them, and a lock left there would stop the
     // reviewer's own git. A Mac's copy keeps them for good otherwise. The builder's own stay.
     // Every other step must work, or the reviewer never starts.
-    // Last, a link in the branch's .agents/skills/ goes from the view, or a link at .agents or
-    // .agents/skills: Codex follows one to skills it loads on its own, and a builder must not
-    // steer its own reviewer. So do files there the commit doesn't have, which the clean above
-    // keeps when ignored: the builder could leave a skill that way. The commit's own skills
-    // stay, so the checkout is the commit, and the harness is told to leave them unloaded. A
-    // removed link shows as deleted, which only a branch that links its skills ever sees.
+    // Last, files in .agents/skills/ the commit doesn't have go from the view, ignored ones
+    // included, which the clean above keeps: Codex loads the skills it finds there on its own,
+    // and the builder could leave one that way to steer its own reviewer. The commit's own files
+    // stay, links too, so the checkout is the commit, and the harness is told to leave its
+    // skills unloaded. git won't clean through a link, so .agents/skills behind one is left, and
+    // its skills are turned off by path like the rest.
     const index = join(folder, "index");
     const checkout = [
       'index="$(git rev-parse --git-dir)/index"',
@@ -411,7 +411,7 @@ async function reviewNow(given: {
       'cat "$1" > "$index"',
       'printf "%s\\n" "$0" > "$(git rev-parse --git-path HEAD)"',
       'rm -f "$(git rev-parse --git-path index.lock)" "$(git rev-parse --git-path HEAD.lock)"',
-      "{ if test -L .agents; then rm -f .agents; elif test -L .agents/skills; then rm -f .agents/skills; elif test -d .agents/skills; then find .agents/skills -type l -exec rm -f {} + && git clean -q -fdx -- .agents/skills; fi; }",
+      "{ if test -d .agents/skills && ! test -L .agents && ! test -L .agents/skills; then git clean -q -fdx -- .agents/skills; fi; }",
       "shift",
       'exec "$@"',
     ].join(" && ");

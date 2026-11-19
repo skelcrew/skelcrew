@@ -3,6 +3,7 @@
 import {
   chmodSync,
   mkdirSync,
+  mkdtempSync,
   readdirSync,
   readFileSync,
   realpathSync,
@@ -10,7 +11,8 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, join, sep } from "node:path";
+import { tmpdir } from "node:os";
+import { dirname, join, relative, sep } from "node:path";
 import { parse } from "yaml";
 import { z } from "zod";
 import { cloneDir } from "./paths.ts";
@@ -90,27 +92,67 @@ export function skillsTold(skills: Skill[]): string {
   return `The repository gives you skills: knowledge you load when you need it. When one fits your work, read its SKILL.md, and any files it points to beside it.\n${lines.join("\n")}`;
 }
 
-// Returns the SKILL.md files the commit has under .agents/skills/, at any depth, as paths from
-// the top of the repository, for the reviewer's harness to leave unloaded. Read from Skelcrew's
-// clone, which has every submitted commit, never the builder's, whose git settings are its own.
-// Links are left out: the review's view drops them. Throws when git can't read the commit, so the
-// review fails rather than run with the branch's skills.
-export function branchSkills(clone: string, commit: string): string[] {
-  const run = Bun.spawnSync(
-    ["git", "-C", clone, "ls-tree", "-r", "-z", commit, "--", ".agents/skills/"],
-    { stdout: "pipe", stderr: "pipe" },
-  );
-  if (!run.success)
-    throw new Error(
-      `Skelcrew couldn't read the skills of ${commit.slice(0, 7)}: ${run.stderr.toString().trim()}`,
+// Returns the SKILL.md files a reviewer's harness must leave unloaded, as paths from the top of
+// the repository: those under .agents/skills/ in the submitted commit, read from Skelcrew's
+// clone `clone`, which has every submitted commit, and those on disk now in the builder's clone
+// `builderClone`, where the builder could have left one git ignores. The builder's git is never
+// run, as its settings are its own. A commit with a link in .agents/ is checked out into a
+// folder of its own first, so the skills its links reach are found as Codex would find them.
+// Throws when git can't read the commit, so the review fails rather than run with the branch's
+// skills.
+export function branchSkills(clone: string, commit: string, builderClone: string): string[] {
+  const git = (args: string[], env?: Record<string, string>) => {
+    const run = Bun.spawnSync(["git", ...args], {
+      ...(env ? { env: { ...process.env, ...env } } : {}),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    if (!run.success)
+      throw new Error(
+        `Skelcrew couldn't read the skills of ${commit.slice(0, 7)}: ${run.stderr.toString().trim()}`,
+      );
+    return run.stdout.toString();
+  };
+  const entries = git(["-C", clone, "ls-tree", "-r", "-z", commit, "--", ".agents"]).split("\0");
+  const fromRoot = (root: string) => {
+    const top = realpathSync(root);
+    return checkoutSkills(root).flatMap((file) =>
+      file.startsWith(top + sep) ? [relative(top, file)] : [],
     );
-  return run.stdout
-    .toString()
-    .split("\0")
-    .flatMap((line) => {
-      const path = /^(?:100644|100755) blob [0-9a-f]+\t(.+\/SKILL\.md)$/.exec(line)?.[1];
+  };
+  let committed: string[];
+  if (entries.some((line) => line.startsWith("120000 "))) {
+    const folder = mkdtempSync(join(tmpdir(), "skelcrew-skills-"));
+    try {
+      const tree = join(folder, "tree");
+      mkdirSync(tree);
+      git(
+        [
+          "--git-dir",
+          join(clone, ".git"),
+          "--work-tree",
+          tree,
+          "read-tree",
+          "--reset",
+          "-u",
+          commit,
+        ],
+        {
+          GIT_INDEX_FILE: join(folder, "index"),
+        },
+      );
+      committed = fromRoot(tree);
+    } finally {
+      rmSync(folder, { recursive: true, force: true });
+    }
+  } else
+    committed = entries.flatMap((line) => {
+      const path = /^(?:100644|100755) blob [0-9a-f]+\t(\.agents\/skills\/.+\/SKILL\.md)$/.exec(
+        line,
+      )?.[1];
       return path ? [path] : [];
     });
+  return [...new Set([...committed, ...fromRoot(builderClone)])];
 }
 
 // Returns every SKILL.md in the .agents/skills/ of the checkout at `root`, as it is on disk now,

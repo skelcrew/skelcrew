@@ -605,18 +605,22 @@ export async function initRepo(sessions: string): Promise<void> {
   const isNew = repositoryAt(openDb(), remote) === undefined;
   await addRepo(root, sessions);
   const added = repositoryAt(openDb(), remote);
-  if (added && !hasAgents) {
-    if (!agentsAnswered(added)) approveAgents(added, checkoutAgents(added, root));
-    else
+  // Skelcrew reads only a folder of .agents/, and only what a push would bring. A link or a file
+  // at .agents counts as none, so there is nothing to approve.
+  if (added && lstatSync(join(root, ".agents")).isDirectory()) {
+    const current = checkoutAgents(added, root);
+    if (current === null)
+      console.log(
+        "git ignores .agents/ in this checkout, so a push won't bring it and Skelcrew approved none of it.",
+      );
+    else if (!hasAgents && !agentsAnswered(added)) approveAgents(added, current);
+    else if (!hasAgents)
       console.log(
         `Skelcrew kept the .agents/ you approved for ${added.owner}/${added.repo}. Once you push the new one, run sc repo trust ${added.name} to approve it.`,
       );
-  }
-  // A repository new to Skelcrew was asked about its default branch's .agents/ as it came in, so
-  // the checkout's is asked about only when it differs. Skelcrew reads only a folder of .agents/.
-  if (added && hasAgents && lstatSync(join(root, ".agents")).isDirectory()) {
-    const current = checkoutAgents(added, root);
-    if (!isNew || current !== agentsOnDefaultBranch(added))
+    // A repository new to Skelcrew was asked about its default branch's .agents/ as it came in,
+    // so the checkout's is asked about only when it differs.
+    else if (!isNew || current !== agentsOnDefaultBranch(added))
       askAboutAgents(added, added.name, current);
   }
   // Say what was written and when Skelcrew will read it.
