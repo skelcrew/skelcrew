@@ -209,6 +209,7 @@ function recoverMerges(db: Database): void {
 // Saves the link to its issue, and the line that closes it, on each task that lacks them, from
 // Skelcrew's copy of the tracker, for tasks that started before Skelcrew kept them. An issue
 // that has left the copy, as a closed one does once its thread is done, has nothing to give.
+// Neither has an item that isn't JSON: SQLite would stop on it, and the daemon with it.
 function linkIssues(db: Database): void {
   for (const [column, field] of [
     ["issue_link", "link"],
@@ -216,7 +217,7 @@ function linkIssues(db: Database): void {
   ])
     db.run(`UPDATE tasks SET ${column} = (SELECT json_extract(i.item, '$.${field}') FROM items i
       WHERE i.owner = tasks.owner AND i.repo = tasks.repo AND i.kind = 'task'
-        AND i.id = CAST(tasks.task AS TEXT))
+        AND i.id = CAST(tasks.task AS TEXT) AND json_valid(i.item))
       WHERE ${column} IS NULL`);
 }
 

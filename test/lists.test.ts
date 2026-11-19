@@ -608,6 +608,7 @@ db.run(${JSON.stringify(repository)});
 db.run(${JSON.stringify(
     threadSql({ task: "12", seen: "tmux", updates: '[{"from":"you"}]', review_post: "{" }),
   )});
+db.run(${JSON.stringify(threadSql({ task: "15", updates: "[{oops" }))});
 db.run(${JSON.stringify(itemSql("app", "task", 13, "Good", "2026-11-18T00:00:00Z"))});
 db.run("INSERT INTO items (owner, repo, kind, id, state, created, item) VALUES ('simon', 'app', 'task', '14', 'open', '2026-11-18T00:00:00Z', 'not json')");
 db.run("INSERT INTO limits (harness, until, reset, tries, told) VALUES ('claude', 9e15, NULL, 1, '{oops')");
@@ -616,9 +617,10 @@ const rows = sidebarRows(db, [], () => 3, 0, app).map((row) => row.name);
 const issues = listGroups(db, app, "issues", 0).flatMap((group) => group.rows.map((row) => row.title));
 entryCounts(db, app);
 const { seen, updates, review_post } = readThread(db, "app-12");
+const broken = readThread(db, "app-15").updates;
 restoreLimits(db);
 const log = readFileSync(join(process.env.HOME, ".local/share/skelcrew/db.log"), "utf8");
-console.log(JSON.stringify({ rows, issues, seen, updates, review_post, told: [...(limitOn("claude", 0)?.told ?? ["none"])], log }));`;
+console.log(JSON.stringify({ rows, issues, seen, updates, broken, review_post, told: [...(limitOn("claude", 0)?.told ?? ["none"])], log }));`;
   const run = Bun.spawnSync([process.execPath, "-e", code], {
     env: { ...process.env, HOME: home },
     stdout: "pipe",
@@ -627,16 +629,19 @@ console.log(JSON.stringify({ rows, issues, seen, updates, review_post, told: [..
   expect(run.stderr.toString()).toBe("");
   const read = JSON.parse(run.stdout.toString());
   expect(read).toMatchObject({
-    rows: ["lead", "app-12"],
+    rows: ["lead", "app-15", "app-12"],
     issues: ["Good"],
     seen: null,
     updates: [],
+    broken: [],
     review_post: null,
     told: [],
   });
   // Each bad value is logged once, by its table and column, though the sidebar read it twice.
+  // The sidebar reads app-15 first, as the newest thread.
   const logged = read.log.trim().split("\n");
   expect(logged.map((line: string) => line.replace(/^\S+ /, ""))).toEqual([
+    'tasks.updates holds "[{oops", which Skelcrew can\'t read, so it reads as empty.',
     'tasks.seen holds "tmux", which Skelcrew can\'t read, so it reads as empty.',
     'tasks.updates holds "[{\\"from\\":\\"you\\"}]", which Skelcrew can\'t read, so it reads as empty.',
     'tasks.review_post holds "{", which Skelcrew can\'t read, so it reads as empty.',

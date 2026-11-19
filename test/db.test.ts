@@ -676,3 +676,22 @@ console.log(JSON.stringify({ folder, seen, updates }));`;
     updates: "[]",
   });
 });
+
+// The daemon fills in each older task's issue link from Skelcrew's copy of the tracker as it
+// starts. An item there it can't read must leave the link empty, not stop the daemon.
+test("an item Skelcrew can't read leaves its task's link empty as the daemon upgrades", () => {
+  const code = `import { finishUpgrade, openDb } from ${JSON.stringify(source("db.ts"))};
+const db = openDb();
+db.run("INSERT INTO tasks (owner, repo, task) VALUES ('simon', 'app', 12)");
+db.run("INSERT INTO items (owner, repo, kind, id, state, created, item) VALUES ('simon', 'app', 'task', '12', 'open', '2026-11-18T00:00:00Z', 'not json')");
+db.run("INSERT INTO upgrades (step) VALUES ('fill tasks')");
+finishUpgrade(db);
+console.log(JSON.stringify(db.query("SELECT issue_link, closes FROM tasks").get()));`;
+  const run = Bun.spawnSync([process.execPath, "-e", code], {
+    env: { ...process.env, HOME: home },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect(run.stderr.toString()).toBe("");
+  expect(JSON.parse(run.stdout.toString())).toEqual({ issue_link: null, closes: null });
+});
