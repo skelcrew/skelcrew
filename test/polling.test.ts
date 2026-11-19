@@ -2729,8 +2729,9 @@ exec ${bwrap} "$@"`,
     }, 90_000);
 
     // Starts app-12 with a reviewer that asks for changes, and waits until its review is in and
-    // the forge's copy of its PR shows the reviewed commit, with CI still running.
-    const changesApp12 = async () => {
+    // the forge's copy of its PR shows the reviewed commit, with `checks` on it: CI still
+    // running unless a test gives others.
+    const changesApp12 = async (checks: object[] = [check(5, "running")]) => {
       script(
         "codex",
         `for a; do [ "$prev" = -o ] && out=$a; prev=$a; done
@@ -2755,7 +2756,7 @@ echo '{"verdict":"changes","body":"Not yet.","findings":["Handle an empty file",
         30_000,
       );
       const head = pushed();
-      pr({ head, reviews: [skelReview], checks: [check(5, "running")] });
+      pr({ head, reviews: [skelReview], checks });
       await morePolls();
       return head;
     };
@@ -2915,6 +2916,79 @@ echo '{"verdict":"changes","body":"Not yet.","findings":["Handle an empty file",
       expect(String(filed[0]?.body)).toContain("1. Handle an empty file\n2. Test the error");
       expect(String(filed[0]?.body)).toContain("#7");
     }, 90_000);
+
+    // CI found once on another PR, no thread's and closed since, still makes a merge without
+    // approval wait for CI on a PR that shows none yet, as CI is all that guards it.
+    test("a merge without approval waits for CI once the repository had CI, even after that PR closed", async () => {
+      const head = await changesApp12([]);
+      const other = (state: string) =>
+        prItem("20", "Fix a typo", { state, base: "main", checks: [check(8, "passed")] });
+      changes([issue12(), other("open")]);
+      await morePolls();
+      changes([issue12(), other("closed")]);
+      await morePolls();
+      pr({ head, reviews: [skelReview], checks: [] });
+      const yes = await runSkelInTerminal(
+        socket,
+        env(),
+        ["merge", "--skip-review", "app-12"],
+        skipQuestion,
+        "y",
+      );
+      expect(yes).toContain(skipSaid);
+      await until(() => thread().merge_waits === "its checks");
+      await morePolls();
+      expect(merges()).toEqual([]);
+      // Once CI shows on it and passes, it merges the pinned head.
+      pr({ head, reviews: [skelReview], checks: [check(9, "passed")] });
+      await until(() => merges().length === 1, 30_000);
+      expect(merges()[0]).toMatchObject({ pr: 7, commit: head });
+    }, 90_000);
+
+    // A review that ends after you asked can approve the commit. The record then approves too,
+    // never asking for changes the reviewer no longer asks for, and no follow-up issue is filed.
+    test("a merge without approval whose next review approves records that approval", async () => {
+      const head = await changesApp12();
+      const yes = await runSkelInTerminal(
+        socket,
+        env(),
+        ["merge", "--skip-review", "app-12"],
+        skipQuestion,
+        "y",
+      );
+      expect(yes).toContain(skipSaid);
+      script(
+        "codex",
+        `for a; do [ "$prev" = -o ] && out=$a; prev=$a; done
+cat > /dev/null
+echo '{"verdict":"approve","body":"Ready.","findings":[]}' > "$out"`,
+      );
+      const reviewedAt = thread().review_at;
+      const review = Bun.spawnSync([process.execPath, main, "review", "app-12"], {
+        env: env(),
+        stderr: "pipe",
+      });
+      expect(review.stderr.toString()).toBe("");
+      await until(
+        () =>
+          thread().review_at !== reviewedAt &&
+          thread().reviewing === null &&
+          thread().verdict === "approve",
+        30_000,
+      );
+      expect(thread()).toMatchObject({ merge_plan: "armed", merge_pinned: head });
+      pr({ head, reviews: [skelReview], checks: [approved, check(5, "passed")] });
+      await until(() => thread().status === "done", 30_000);
+      const records = asked(plugin).filter(
+        (q) => q.ask === "review" && String(q.body).startsWith("Merging without"),
+      );
+      expect(records).toHaveLength(1);
+      expect(records[0]).toMatchObject({ pr: 7, commit: head, verdict: "approve" });
+      const edits = asked(plugin).filter((q) => q.ask === "edit review");
+      expect(edits).toHaveLength(1);
+      expect(edits[0]).toMatchObject({ pr: 7, verdict: "approve" });
+      expect(asked(plugin).filter((q) => q.ask === "create task")).toHaveLength(0);
+    }, 120_000);
 
     // The forge can merge the PR before Skelcrew finishes, such as when the daemon stopped right
     // after asking it. The poll that finds it merged still edits the record and files the issue.

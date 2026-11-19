@@ -254,8 +254,10 @@ export async function mergeIfReady(
     // answers. It goes before the merge, as a merged PR may take no review, and once for each
     // commit of each plan, saved on the thread, so neither a merge the forge keeps refusing nor
     // a restart posts it again. A plan armed again, or a thread started over, has a new ID, so
-    // it gets a record of its own. Skipping the review it keeps the reviewer's verdict, as
-    // Skelcrew's reviewer never approved that commit.
+    // it gets a record of its own. Skipping the review it keeps the reviewer's last verdict,
+    // which a review still running when you asked may have turned to an approval: a record
+    // asking for changes would then contradict it, and on a forge that requires an approval,
+    // block the merge you asked for.
     const key = `${thread.merge_id} ${commit}`;
     // A record the forge took just before the daemon stopped, with nothing saved yet, is found
     // by its marker in the PR's reviews.
@@ -279,7 +281,7 @@ export async function mergeIfReady(
         const id = await postReview(db, repository, {
           pr: thread.pr,
           commit,
-          verdict: pinned === null ? "approve" : "changes",
+          verdict: pinned === null || thread.verdict === "approve" ? "approve" : "changes",
           body: recordBody(thread, commit, "Merging"),
         });
         record(db, folder, { merge_record: key, merge_record_id: id });
@@ -390,12 +392,13 @@ export async function finishSkippedMerge(
   const pinned = thread.merge_pinned;
   if (thread.merge_plan !== "armed" || pinned === null || thread.pr === null) return null;
   if (pr.head !== null && pr.head !== pinned) return null;
-  // A forge that can't edit the record leaves "Merging", which the merge made true.
+  // A forge that can't edit the record leaves "Merging", which the merge made true. The edit
+  // keeps the verdict the record was posted with, the reviewer's last.
   if (thread.merge_record === `${thread.merge_id} ${pinned}` && thread.merge_record_id !== null)
     await editReview(db, repositoryOf(db, thread), {
       pr: thread.pr,
       id: thread.merge_record_id,
-      verdict: "changes",
+      verdict: thread.verdict === "approve" ? "approve" : "changes",
       body: recordBody(thread, pinned, "Merged"),
     }).catch((error) =>
       console.log(`${thread.folder}: couldn't edit its merge record: ${errorText(error)}`),
