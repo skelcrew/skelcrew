@@ -2,6 +2,7 @@
 // merges, so Skelcrew merges a thread's PR by itself as soon as it is approved and green. Arming
 // it, cancelling it, and the merge itself. Without an armed plan nothing merges by itself.
 import type { Database } from "bun:sqlite";
+import { z } from "zod";
 import { forgeOf, mergePr, postReview } from "../plugins/ask.ts";
 import { errorText } from "../say.ts";
 import { mergeStuck, mergeWaitsOn, type PullRequest } from "./decide.ts";
@@ -51,6 +52,33 @@ export function threadToMerge(
   if (!thread) throw new Error("name the thread, such as app-12, or its PR, such as #7");
   if (thread.status === "done") throw new Error(`${threadName(db, thread)} is done already`);
   return thread;
+}
+
+// Returns what a merge confirm adds about .agents/ for a PR, as Skelcrew's copy has it, at
+// `commit`, or nothing when that commit leaves .agents/ alone. Merging approves no change there,
+// as an agent may have written it, so you hear it before you say y. It reads what a poll saved,
+// never git, as the lists draw each second. A PR no poll has looked at with that head and base,
+// such as one just retargeted, says so, rather than pass for one with no change.
+export function agentsSaid(
+  db: Database,
+  owner: string,
+  repo: string,
+  pr: PullRequest | null,
+  commit: string | null,
+): string {
+  const saved = z
+    .object({ head: z.string(), base: z.string(), changed: z.coerce.boolean() })
+    .nullable()
+    .parse(
+      db
+        .query("SELECT head, base, changed FROM pr_agents WHERE owner = ? AND repo = ? AND pr = ?")
+        .get(owner, repo, pr?.id ?? ""),
+    );
+  if (pr === null || commit === null || saved?.head !== commit || saved.base !== pr.base)
+    return "Skelcrew hasn't checked yet whether it changes .agents/.";
+  return saved.changed
+    ? "It changes .agents/ (roles, flows or skills): the changes wait for sc repo trust."
+    : "";
 }
 
 // Arms a merge when ready on the thread, for sc merge --when-ready, and returns what to say. At

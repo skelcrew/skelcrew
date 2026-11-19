@@ -169,8 +169,9 @@ export async function planMerge(
   return checkReply(z.object({ said: z.string() }), reply).said;
 }
 
-// Asks the daemon which thread and PR sc merge --when-ready names, with its title and when the
-// thread started, so it can ask you about it before arming, and arm only that.
+// Asks the daemon which thread and PR sc merge --when-ready names, with its title, when the
+// thread started and what to say about its changes to .agents/, so it can ask you about it
+// before arming, and arm only that.
 export async function previewMerge(which: {
   repo?: string;
   task?: string;
@@ -185,6 +186,7 @@ export async function previewMerge(which: {
       title: z.string().nullable(),
       started: z.number().nullable(),
       merging: z.boolean(),
+      agents: z.string(),
     }),
     reply,
   );

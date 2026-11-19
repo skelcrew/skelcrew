@@ -154,6 +154,29 @@ export async function fetchInto(
   ]);
 }
 
+// Brings one commit of the repository into Skelcrew's clone in the folder, as a ref of its own,
+// by its hash rather than a branch. A PR from a fork has its branch only on the fork, but its
+// head is still reachable on the repository's remote, such as through GitHub's pull refs, which
+// a fetch by hash reaches. Only a full hash is asked for, as it comes from the forge.
+export async function fetchCommit(
+  db: Database,
+  repository: Repository,
+  folder: string,
+  commit: string,
+  ref: string,
+): Promise<void> {
+  if (!/^[0-9a-f]{40}([0-9a-f]{24})?$/.test(commit)) throw new Error(`${commit} isn't a commit`);
+  await git(db, repository, [
+    "-C",
+    folder,
+    "fetch",
+    "--quiet",
+    "--no-write-fetch-head",
+    repository.remote,
+    `+${commit}:${ref}`,
+  ]);
+}
+
 // Pushes a commit from Skelcrew's clone in the folder to a branch of the repository. Never
 // forced, so a push can only add to what the branch already holds.
 export async function pushCommit(
