@@ -8,7 +8,7 @@ import { harnessNamed } from "../agents/harness.ts";
 import { agentRuns, readSession } from "../agents/sessions.ts";
 import { forQuestion, type Marks, quietSince } from "../agents/transport.ts";
 import { roundLimit } from "../config.ts";
-import { askHost, type Host, hostNamed, pluginHost } from "../plugins/runtime.ts";
+import { askHost, type Host, hostNamed, type PluginHost, pluginHost } from "../plugins/runtime.ts";
 import { errorText } from "../say.ts";
 import { pastRoundLimit } from "./decide.ts";
 import { leadOf } from "./lead.ts";
@@ -17,7 +17,7 @@ import { messageLead, stopDelivering, typeLeadNotes } from "./messages.ts";
 import type { DaemonRequest } from "./requests.ts";
 import { lastPushed } from "./round.ts";
 import {
-  type AgentState,
+  AgentState,
   builderHarness,
   liveThreads,
   queuedForReview,
@@ -150,12 +150,14 @@ export function keepState(db: Database, agent: Agent, state: AgentState): void {
   if ("folder" in agent) {
     db.run("UPDATE threads SET state = ? WHERE folder = ?", [state, agent.folder]);
     reportStatus(db, readThread(db, agent.folder));
-  } else
+  } else {
     db.run("UPDATE repositories SET lead_state = ? WHERE owner = ? AND repo = ?", [
       state,
       agent.owner,
       agent.repo,
     ]);
+    reportLeadStatus(db, agent.owner, agent.repo);
+  }
 }
 
 // Looks at the screen of each running agent whose state is working, and makes it idle once two
@@ -169,7 +171,7 @@ export function keepState(db: Database, agent: Agent, state: AgentState): void {
 // host holds up only its own agents' looks, and one that fails leaves the others' to go on.
 export function noticeIdleScreens(db: Database, sessions: string): void {
   // The working agents: each builder still at work on its thread, on whichever host it runs, and
-  // each lead. A builder whose host plugin is gone can't be looked at.
+  // each lead, on whichever host it runs. An agent whose host plugin is gone can't be looked at.
   const working: { key: Agent; host: Host; name: string; marks: Marks }[] = [];
   const threads = db
     .query(
@@ -188,13 +190,15 @@ export function noticeIdleScreens(db: Database, sessions: string): void {
     .all()
     .map((row) => LeadKey.parse(row));
   for (const lead of leads) {
-    const { name, harness } = leadOf(db, lead.owner, lead.repo);
-    working.push({
-      key: lead,
-      host: sessions,
-      name,
-      marks: harnessNamed(harness ?? "claude").marks,
-    });
+    const { name, harness, host, hostId } = leadOf(db, lead.owner, lead.repo);
+    const on = hostNamed(db, sessions, host);
+    if (on !== null)
+      working.push({
+        key: lead,
+        host: on,
+        name: hostId ?? name,
+        marks: harnessNamed(harness ?? "claude").marks,
+      });
   }
   // An agent no longer working is forgotten. Each other one gets a look, unless the last is
   // still under way.
@@ -241,7 +245,7 @@ const reported = new Map<string, string>();
 // that takes longer is hung, and is ended so the reports after it still go.
 const statusTimeout = 5000;
 
-// The reports still being sent to each builder's host, by the same key, so they arrive in the
+// The reports still being sent to each agent's host, by the same key, so they arrive in the
 // order the changes happened.
 const reporting = new Map<string, Promise<void>>();
 
@@ -263,13 +267,58 @@ export function reportStatus(db: Database, thread: Thread): void {
     console.log(`couldn't work out ${thread.folder}'s status: ${errorText(error)}`);
     return;
   }
-  const id = thread.host_id;
+  tellHost(host, thread.host_id, said, thread.folder, () =>
+    reportStatus(db, readThread(db, thread.folder)),
+  );
+}
+
+// Reports a repository's lead's status to its host, as reportStatus does a builder's, so a
+// host's own apps show what the lead does too. A lead has no stage or round, so its status is
+// what its hooks and the screen check last said: a question waiting on you needs you, and an
+// error is one. A lead that hasn't said yet is working, as it is starting.
+export function reportLeadStatus(db: Database, owner: string, repo: string): void {
+  const row = db
+    .query(
+      "SELECT lead_host, lead_host_id, lead_state FROM repositories WHERE owner = ? AND repo = ?",
+    )
+    .get(owner, repo);
+  const lead = z
+    .object({
+      lead_host: z.string().nullable(),
+      lead_host_id: z.string().nullable(),
+      lead_state: AgentState.nullable(),
+    })
+    .nullable()
+    .parse(row);
+  if (lead === null || lead.lead_host === null || lead.lead_host === "tmux") return;
+  if (lead.lead_host_id === null) return;
+  const host = pluginHost(db, lead.lead_host);
+  if (host === null || !host.status) return;
+  const state = lead.lead_state ?? "working";
+  const said =
+    state === "asking"
+      ? { status: "needs you" as const, reason: "question" }
+      : { status: state, reason: state };
+  tellHost(host, lead.lead_host_id, said, `${owner}/${repo}'s lead`, () =>
+    reportLeadStatus(db, owner, repo),
+  );
+}
+
+// Tells a host that provides status what one of its sessions now shows, unless it heard that
+// last. `who` names the agent in the log. Reports go after the ones before them, whether or not
+// those got through. One that fails is forgotten and `again` is planned a little later, so a host
+// that comes back hears the status then, as it is then.
+function tellHost(
+  host: PluginHost,
+  id: string,
+  said: { status: Status; reason: string },
+  who: string,
+  again: () => void,
+): void {
   const key = `${host.plugin}/${id}`;
   const text = `${said.status} ${said.reason}`;
   if (reported.get(key) === text) return;
   reported.set(key, text);
-  // After the reports before it, whether or not they got through. One that fails is forgotten,
-  // so the next change, or the daemon's next start, says it again.
   const question = { ask: "status", id, ...said };
   const sent = (reporting.get(key) ?? Promise.resolve())
     .then(() => askHost(host, question, z.unknown(), { timeout: statusTimeout }))
@@ -277,10 +326,8 @@ export function reportStatus(db: Database, thread: Thread): void {
       () => {},
       (error) => {
         if (reported.get(key) === text) reported.delete(key);
-        console.log(
-          `couldn't report ${thread.folder}'s status to ${host.plugin}: ${errorText(error)}`,
-        );
-        retryReport(db, thread.folder, key);
+        console.log(`couldn't report ${who}'s status to ${host.plugin}: ${errorText(error)}`);
+        retryReport(key, again);
       },
     );
   reporting.set(key, sent);
@@ -295,17 +342,17 @@ const retryAfter = 5000;
 // The sessions a report is planned again for, by the same key as reported.
 const retrying = new Set<string>();
 
-// Tells the host the thread's status again a little later, as it is then, after a report it
-// failed to hear: without a later change, the host would go on showing an old one. One retry is
-// planned per session at a time, and each failure plans the next, so a host that comes back hears
-// the status then. A thread that has gone by then needs none.
-function retryReport(db: Database, folder: string, key: string): void {
+// Runs `again` a little later, to tell the host an agent's status as it is then, after a report
+// it failed to hear: without a later change, the host would go on showing an old one. One retry
+// is planned per session at a time, and each failure plans the next, so a host that comes back
+// hears the status then. An agent that has gone by then needs none.
+function retryReport(key: string, again: () => void): void {
   if (retrying.has(key)) return;
   retrying.add(key);
   setTimeout(() => {
     retrying.delete(key);
     try {
-      reportStatus(db, readThread(db, folder));
+      again();
     } catch {}
   }, retryAfter);
 }
@@ -314,10 +361,12 @@ function retryReport(db: Database, folder: string, key: string): void {
 // nothing yet.
 export const forgetStatus = (plugin: string, id: string) => reported.delete(`${plugin}/${id}`);
 
-// Reports every live builder's status to its host, for a daemon that starts, as the host heard
-// nothing from it yet.
+// Reports every live builder's status and every lead's to its host, for a daemon that starts,
+// as the host heard nothing from it yet.
 export function reportStatuses(db: Database): void {
   for (const thread of liveThreads(db)) reportStatus(db, thread);
+  const leads = db.query("SELECT owner, repo FROM repositories").all();
+  for (const { owner, repo } of z.array(LeadKey).parse(leads)) reportLeadStatus(db, owner, repo);
 }
 
 // Returns the word for what the thread is doing, given the rounds of changes it may have. Its
@@ -477,10 +526,33 @@ export function questionAnswered(db: Database, folder: string): void {
   else if (thread.submitted || thread.told_lead || thread.turn_ended) record(db, folder, over);
 }
 
-// Returns what a thread's row in the list of threads says of its merge when ready, with what it
-// waits on, or null with none. A thread that failed isn't polled, so it says so itself.
+// Returns what a thread's row in the list of threads says of its armed merge, when ready or over
+// the review, with what it waits on, or null with none. A thread that failed isn't polled, so it
+// says so itself.
 export function mergeShown(thread: Thread): string | null {
   if (thread.merge_plan !== "armed") return null;
+  const kind = thread.merge_pinned === null ? "merges when ready" : "merges without approval";
   const waits = thread.status === "failed" ? "its thread, which failed" : thread.merge_waits;
-  return waits === null ? "merges when ready" : `merges when ready · waiting on ${waits}`;
+  return waits === null ? kind : `${kind} · waiting on ${waits}`;
+}
+
+// Returns what Skelcrew's latest review on the thread's PR still asks for, one finding each, or
+// none once it approved. A merge without approval names them before you say y, and files them as an
+// issue once it merged, so they aren't lost.
+export function openFindings(thread: Thread): string[] {
+  const post = thread.review_post;
+  if (post === null || post.pr !== thread.pr || post.verdict !== "changes") return [];
+  return post.findings;
+}
+
+// Returns what a question to merge without Skelcrew's approval says of that review, such as "It
+// still asks: 1) Handle an empty file 2) Test the error". Each finding is put on one line, as the
+// question is one line at your terminal.
+export function stillAsks(thread: Thread): string {
+  const findings = openFindings(thread).map(
+    (finding, n) => `${n + 1}) ${finding.replace(/\s+/g, " ").trim()}`,
+  );
+  const asks = findings.length > 0 ? `It still asks: ${findings.join(" ")}` : "";
+  if (thread.reviewing === null) return asks || "Its reviewer hasn't approved it";
+  return asks ? `${asks}, and its newest review is still running` : "Its review is still running";
 }

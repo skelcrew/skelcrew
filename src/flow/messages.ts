@@ -12,7 +12,7 @@ import { agentRuns, scrolledBack } from "../agents/sessions.ts";
 import { deliver, draftReason, midTurn, type Typed, whyBusy } from "../agents/transport.ts";
 import { markSeen } from "../plugins/ask.ts";
 import { errorText } from "../say.ts";
-import { leadOf } from "./lead.ts";
+import { leadOf, leadSession } from "./lead.ts";
 import { repositories } from "./repo.ts";
 import type { Caller } from "./requests.ts";
 import {
@@ -600,7 +600,7 @@ async function typeNotes(
   owner: string,
   repo: string,
 ): Promise<void> {
-  const { name, harness } = leadOf(db, owner, repo);
+  const { harness } = leadOf(db, owner, repo);
   const where = "owner = ? AND repo = ?";
   // Returns what the lead would be told now: the threads needing you, the notes in the order
   // they go in, and the message they make together.
@@ -628,7 +628,9 @@ async function typeNotes(
     const now = batch();
     // Stop when nothing is left to say, or nobody is there to hear it.
     if (now.text === "") return;
-    if (!(await agentRuns(sessions, name))) return;
+    const on = await leadSession(db, sessions, owner, repo);
+    if (on === null || !(await agentRuns(on.host, on.id))) return;
+    const { host, id } = on;
     // A lead that is running has started, so it has a harness.
     const { marks } = harnessNamed(harness ?? "claude");
     // Typing asks this right before readying the paste and again right before it goes in. What
@@ -638,7 +640,10 @@ async function typeNotes(
     const cancel = new AbortController();
     const hold = () => {
       if (batch().text !== now.text) cancel.abort();
-      return scrolledBack(sessions, name) ? "the human has scrolled back in it" : "";
+      // Only tmux can say yet whether someone scrolled back, so on a plugin's host the paste
+      // goes in regardless.
+      const back = typeof host === "string" && scrolledBack(host, id);
+      return back ? "the human has scrolled back in it" : "";
     };
     // dropEndNotes cancels typing too, should it drop a note in the moment of the paste.
     for (const { id } of now.notes) typingNote.set(id, cancel);
@@ -646,7 +651,7 @@ async function typeNotes(
     try {
       // However long the lead stays busy, the notes wait for it, as they must reach it.
       const waits = { signal: cancel.signal, hold, timeout: Number.POSITIVE_INFINITY };
-      typed = await deliver(sessions, name, marks, now.text, waits);
+      typed = await deliver(host, id, marks, now.text, waits);
     } finally {
       for (const { id } of now.notes) typingNote.delete(id);
     }

@@ -98,6 +98,16 @@ console.log(JSON.stringify(listRows(openDb(), { owner: "simon", repo: "app" }, $
   return JSON.parse(run.stdout.toString());
 }
 
+// Returns what sc show prints of one of app's tasks.
+function shown(task: string): string {
+  const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
+import { printTask, showTask } from ${JSON.stringify(source("flow/list.ts"))};
+printTask(await showTask(openDb(), { repo: "app", task: ${JSON.stringify(task)} }), false);`;
+  const run = Bun.spawnSync([process.execPath, "-e", code], { env: env(), stderr: "pipe" });
+  if (!run.success) throw new Error(run.stderr.toString());
+  return run.stdout.toString();
+}
+
 test("the lead comes first, then each stage's tasks, those that need you first", () => {
   const shown = rows().map((row) => [row.part, row.name, row.title, row.says, row.pr, row.when]);
   // The approved task first on its own, so a failure says in one line where it went and why.
@@ -362,6 +372,16 @@ test("a forge's base branch reaches the merge question without its control codes
   expect(merge && "ask" in merge ? merge.ask : "").toBe(
     "Merge app#41 into main ]0;evil ? Skelcrew hasn't checked yet whether it changes .agents/. y/n",
   );
+});
+
+// The list's rows leave an armed merge out to stay short, so sc show says it, with what it waits
+// on.
+test("sc show says a task's armed merge and what it waits on", () => {
+  expect(shown("7")).not.toContain("\nMerge ");
+  sql(
+    "UPDATE threads SET merge_plan = 'armed', merge_pinned = 'x', merge_waits = 'its checks' WHERE folder = 'app-7';",
+  );
+  expect(shown("7")).toContain("\nMerge   merges without approval · waiting on its checks\n");
 });
 
 // The list reads only the database: a builder runs while its thread works or waits, and a lead

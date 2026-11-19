@@ -2,11 +2,11 @@
 // lead or a thread's builder once it runs this Skelcrew's code. Plain sc opens the screen on a
 // lead, sc --list shows the lead's repository as a list, and sc attach opens a builder.
 import { z } from "zod";
-import { agentRuns } from "./agents/sessions.ts";
+import { agentRuns, attachSession } from "./agents/sessions.ts";
 import { ask } from "./client.ts";
 import { tellOldKeys } from "./config.ts";
 import { openDb } from "./db.ts";
-import { leadOf } from "./flow/lead.ts";
+import { leadSession } from "./flow/lead.ts";
 import { builderSession, findThread } from "./flow/thread.ts";
 import { runList } from "./list/list.ts";
 import { installService, restartDaemon, servicePid, startDaemon } from "./machine/service.ts";
@@ -153,7 +153,15 @@ export async function attachToLead(
   if ("error" in lead.data) throw new Error(lead.data.error);
   if ("closed" in lead.data) return false;
   tellOldKeys(lead.data.repository);
-  if (list) await runList(sessions, lead.data.repository);
+  if (list) {
+    await runList(sessions, lead.data.repository);
+    return true;
+  }
+  // The screen shows only tmux's sessions, so a lead on a runtime plugin's host is attached
+  // through that host instead, full screen, as a builder there is.
+  const [owner = "", repo = ""] = lead.data.repository.split("/");
+  const on = await leadSession(openDb(), sessions, owner, repo);
+  if (on !== null && typeof on.host !== "string") attachOnHost(on.host, on.id);
   else await openScreen(sessions, lead.data.lead, lead.data.lead, lead.data.repository);
   return true;
 }
@@ -162,7 +170,8 @@ export async function attachToLead(
 // sidebar, and returns when you leave with Alt-Q. Only you can run it, since it takes over
 // your terminal. It checks the builder is running before it starts the daemon. A builder on a
 // runtime plugin's host is attached through that host instead, full screen, as the screen shows
-// only tmux's sessions.
+// only tmux's sessions. So is a builder whose lead runs on such a host, through tmux, as the
+// screen would wait beside it for a lead that never comes to tmux.
 export async function attachToThread(
   sessions: string,
   repository: string,
@@ -187,6 +196,11 @@ export async function attachToThread(
   // the lead can't start.
   const fullName = `${thread.owner}/${thread.repo}`;
   await ask({ command: "lead", from: fullName }, 60_000);
-  const { name } = leadOf(db, thread.owner, thread.repo);
-  await openScreen(sessions, thread.folder, name, fullName);
+  const lead = await leadSession(db, sessions, thread.owner, thread.repo);
+  if (lead === null || typeof lead.host !== "string") {
+    const failed = await attachSession(host, id);
+    if (failed) throw new Error(failed);
+    return;
+  }
+  await openScreen(sessions, id, lead.id, fullName);
 }
