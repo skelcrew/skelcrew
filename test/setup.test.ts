@@ -1802,6 +1802,8 @@ test("sc install leaves out a plugin a repository names without a pin, and one y
   writeFileSync(join(app, "skelcrew.yaml"), "plugins: [simon/skelcrew-fake]\n");
   const unpinned = await atTerminal("y\n", app, ["install"]);
   expect(unpinned.err).toBe("");
+  // It fails, so a script running it can tell the repository's plugin isn't in.
+  expect(unpinned.code).toBe(1);
   expect(unpinned.out).toContain(
     "This checkout's skelcrew.yaml names simon/skelcrew-fake, which its skelcrew.lock doesn't pin, so Skelcrew didn't install it. sc add simon/skelcrew-fake pins it.",
   );
@@ -1813,6 +1815,7 @@ test("sc install leaves out a plugin a repository names without a pin, and one y
   expect(declined.out).toContain(
     "This checkout needs simon/skelcrew-fake at the version its skelcrew.lock pins. sc install asks again.",
   );
+  expect(declined.code).toBe(1);
   // The machine stays set up: plain sc asks nothing of what is yours.
   expect(existsSync(join(home, ".local", "share", "skelcrew", "install-done"))).toBe(true);
 });
@@ -1857,6 +1860,7 @@ test("sc install leaves a plugin your lock and a repository pin at different com
   // On a machine without it, neither side is installed.
   const fresh = await install("y\n");
   expect(fresh.err).toBe("");
+  expect(fresh.code).toBe(1);
   expect(fresh.out).toContain(said);
   expect(fresh.out).not.toContain("Install it?");
   expect(existsSync(fakeFolder())).toBe(false);
@@ -2043,4 +2047,30 @@ openDb().run("INSERT INTO repositories (name, owner, repo) VALUES ('site', 'simo
   expect(run.code).toBe(1);
   expect(run.err).toContain("Skelcrew left out simon/skelcrew-fake");
   expect(run.out).toContain("Skelcrew isn't set up yet, as it can't read the plugins of site:");
+});
+
+// The machine is set up, but a repository's plugin left out by pins that disagree still fails
+// sc install, so a script running it can tell.
+test("sc install fails while two repositories pin a plugin at different commits", async () => {
+  noGitHubPlugin();
+  fakeGitHub();
+  publishFake("0.1.0");
+  await skel("1\nsk-ant-oat01-good\n");
+  const repos = join(home, ".local", "share", "skelcrew", "repos", "simon");
+  repositoryLocksFake(join(repos, "app"), "0.1.0");
+  publishFake("0.1.0");
+  const code = `import { openDb } from ${JSON.stringify(join(checkout, "src", "db.ts"))};
+openDb().run("INSERT INTO repositories (name, owner, repo) VALUES ('site', 'simon', 'site')");`;
+  Bun.spawnSync([process.execPath, "-e", code], { env: { HOME: home } });
+  repositoryLocksFake(join(repos, "site"), "0.1.0");
+  const run = await install("y\n");
+  expect(run.code).toBe(1);
+  expect(run.out).toContain("simon/skelcrew-fake is pinned at");
+  expect(existsSync(fakeFolder())).toBe(false);
+  expect(existsSync(join(home, ".local", "share", "skelcrew", "install-done"))).toBe(true);
+  // With the pins agreeing and the plugin in, it succeeds.
+  repositoryLocksFake(join(repos, "site"), "0.1.0", fakeCommit("0.1.0"));
+  repositoryLocksFake(join(repos, "app"), "0.1.0", fakeCommit("0.1.0"));
+  expect((await install("y\n")).code).toBe(0);
+  expect((await install()).code).toBe(0);
 });

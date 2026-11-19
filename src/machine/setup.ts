@@ -394,8 +394,8 @@ export function firstRun(from?: string): boolean {
 // repository's does, and so does a repository whose files can't be read, as they may pin one of
 // yours at another commit. A machine set up by an older release gets the marks here too. `plain`
 // is set when plain sc runs this, which says nothing when there was nothing to do. Returns whether
-// the machine is set up, so sc install can fail while a plugin is missing, and sc --remote doesn't
-// go on to the command you asked for.
+// the machine matches the files: set up, with every repository's plugin in too. So sc install can
+// fail while a plugin is missing, and sc --remote doesn't go on to the command you asked for.
 export function install(from?: string, plain = false): boolean {
   const finished = installFinished();
   // The mark goes until your plugins are in, so a failure on the way, such as a plugin that needs
@@ -468,7 +468,10 @@ export function install(from?: string, plain = false): boolean {
   // Plain sc on a machine set up by an older release takes the marks without a word.
   else if (!plain && !setUp && !plugins && !repositories.changed && !repositories.missing)
     console.log("Nothing to install: this machine has everything your files ask for.");
-  return true;
+  // A repository's plugin still missing, such as one with no pin, one you said no to or one whose
+  // pins disagree, leaves the machine set up, but sc install fails, so a script running it can
+  // tell the machine doesn't match the files yet. What is missing was said above.
+  return !repositories.missing;
 }
 
 // Reports whether sc install ran to its end here, which plain sc checks to know whether to run it
