@@ -8,7 +8,8 @@
 // `delivered`. With a file hang-status, the first status it is given hangs, and with a file
 // garble-<question> it answers that question with nothing, with fail-<question> it fails it
 // once, with slow-<question> it takes two seconds over it, and with hold-<question> it holds it
-// from a given time on. With a file lose-start, it starts the
+// from a given time on. With a file no-exits, its list gives no exit codes, as a host that keeps
+// no session after its agent exits. With a file lose-start, it starts the
 // next session but fails before saying its ID.
 import {
   appendFileSync,
@@ -120,7 +121,8 @@ const answers: Record<string, () => unknown> = {
       // The code can be read while the shell is still writing it, and nothing written is no code.
       const exit = join(folder(id), "exit");
       const code = existsSync(exit) ? readFileSync(exit, "utf8").trim() : "";
-      const exited = code === "" ? {} : { exited: Number(code) };
+      const hidden = existsSync(join(dir, "no-exits"));
+      const exited = code === "" || hidden ? {} : { exited: Number(code) };
       return {
         id,
         running: running(id),

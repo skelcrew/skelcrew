@@ -37,7 +37,14 @@ import { holdCheckSlot } from "./checks.ts";
 import { ownTask, saveItems } from "./copy.ts";
 import { removeThread, stopThread } from "./events.ts";
 import { noCommits } from "./git.ts";
-import { closeExitedLeads, lastOpened, leadOf, openedRepositories, startLead } from "./lead.ts";
+import {
+  closeExitedLeads,
+  closeIfExited,
+  lastOpened,
+  leadOf,
+  openedRepositories,
+  startLead,
+} from "./lead.ts";
 import { restoreLimits, wakeAfterLimit } from "./limits.ts";
 import { listRepositories, listTasks, listThreads, showTask } from "./list.ts";
 import { armMerge, cancelMerge, refuseWithoutForge, threadToMerge } from "./merging.ts";
@@ -349,14 +356,21 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         return { running: true, pid: process.pid, release, ...runningCode, ...thread };
       }
       case "lead": {
-        // A lead you exited this second is closed first, so the daemon's next look can't close
-        // the tab again while the lead starts, and a tab can't bring it back. It comes before
-        // the choice of repository, so plain sc doesn't pick the one whose tab just closed.
-        await closeExitedLeads(db, sessions);
         // From outside any repository Skelcrew has, the one you opened last.
-        const repository =
+        const pick = () =>
           (request.from === undefined ? undefined : repositoryAt(db, request.from)) ??
           lastOpened(db);
+        // A lead you exited this second is closed first, so the daemon's next look can't close
+        // the tab again while the lead starts, and a tab can't bring it back. Only the picked
+        // repository's lead is looked at, so a slow host holds up no other repository. When its
+        // tab just closed, plain sc picks again, as it must not open the tab you closed.
+        let repository = pick();
+        while (repository) {
+          await closeIfExited(db, sessions, repository);
+          const again = pick();
+          if (again?.owner === repository.owner && again.repo === repository.repo) break;
+          repository = again;
+        }
         if (!repository) throw new Error(noRepositories);
         const { owner, repo } = repository;
         // A tab never brings back a lead you exited, not even from a screen that still shows
