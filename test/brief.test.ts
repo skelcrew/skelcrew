@@ -365,6 +365,9 @@ describe.skipIf(insideSandbox)("briefs between leads", () => {
     expect((await skel(["tell", "lead", "web", "Make it red."], "lead")).err).toBe("");
     await until(() => failures() === 2);
     changeDb("UPDATE repositories SET tab_closed = 1 WHERE repo = 'web'");
+    // A try already under way when the tab closed fails while the clone is still away. The next
+    // one is due a second later, and finds the tab closed. Only then does the clone come back.
+    await Bun.sleep(3000);
     webReachable(true);
     await Bun.sleep(3000);
     expect(hasWebLead()).toBe(false);
