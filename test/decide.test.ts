@@ -835,26 +835,30 @@ test("a merge without approval waits on everything but the reviewer's approval",
   const changes = thread({ status: "waiting", verdict: "changes", ci_seen: true });
   const failed = { ...approved, state: "failed" as const };
   const green = pr({ checks: [failed, run(1, "test", "passed")] });
-  expect(skipReviewWaitsOn(changes, green)).toBeNull();
+  expect(skipReviewWaitsOn(changes, green, true)).toBeNull();
   // A review still running is waited for, so its findings are filed, whatever it says.
-  expect(skipReviewWaitsOn({ ...changes, reviewing: "a".repeat(40) }, green)).toBe("its review");
+  expect(skipReviewWaitsOn({ ...changes, reviewing: "a".repeat(40) }, green, true)).toBe(
+    "its review",
+  );
   // A round on its way brings a new commit, which the human never saw.
-  expect(skipReviewWaitsOn({ ...changes, submitting: "Fix" }, green)).toBe(
+  expect(skipReviewWaitsOn({ ...changes, submitting: "Fix" }, green, true)).toBe(
     "its builder's new round",
   );
-  expect(skipReviewWaitsOn(changes, pr({ ...green, conflicts: true }))).toBe(
+  expect(skipReviewWaitsOn(changes, pr({ ...green, conflicts: true }), true)).toBe(
     "its conflict with main to be fixed",
   );
   const failing = pr({ checks: [run(1, "test", "failed")] });
-  expect(skipReviewWaitsOn(changes, failing)).toBe("its failing checks to be fixed");
-  expect(skipReviewWaitsOn(changes, pr({ checks: [run(1, "test", "running")] }))).toBe(
+  expect(skipReviewWaitsOn(changes, failing, true)).toBe("its failing checks to be fixed");
+  expect(skipReviewWaitsOn(changes, pr({ checks: [run(1, "test", "running")] }), true)).toBe(
     "its checks",
   );
-  // No CI on the PR passes only in a repository whose polls never found CI.
-  expect(skipReviewWaitsOn(changes, pr({ checks: [failed] }))).toBe("its checks");
-  expect(skipReviewWaitsOn({ ...changes, ci_seen: false }, pr({ checks: [failed] }))).toBeNull();
-  expect(skipReviewWaitsOn(changes, pr({ ...green, state: "closed" }))).toBe("its PR");
-  expect(skipReviewWaitsOn({ ...changes, status: "stopped" }, green)).toBe(
+  // No CI on the PR passes only in a repository whose polls never found CI on any PR. This
+  // thread never saw CI, yet the repository did, so it waits: CI is all that guards it here.
+  const unseen = { ...changes, ci_seen: false };
+  expect(skipReviewWaitsOn(unseen, pr({ checks: [failed] }), true)).toBe("its checks");
+  expect(skipReviewWaitsOn(unseen, pr({ checks: [failed] }), false)).toBeNull();
+  expect(skipReviewWaitsOn(changes, pr({ ...green, state: "closed" }), true)).toBe("its PR");
+  expect(skipReviewWaitsOn({ ...changes, status: "stopped" }, green, true)).toBe(
     "its thread, which is stopped",
   );
 });

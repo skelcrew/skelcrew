@@ -97,10 +97,16 @@ export function mergeWaitsOn(
 // Returns what a merge without Skelcrew's approval still waits on, in the same words as a merge
 // when ready, or null once the PR may merge. Only the reviewer's approval is skipped: its review
 // may ask for changes, and Skelcrew's own check, which carries that verdict, is left out. A review
-// still running is waited for, so its findings are known before the merge. CI must still pass, and the PR merge cleanly. A PR with no CI passes only in a repository
-// whose polls never found CI, as elsewhere CI may not have started yet. Whether the head is still
-// the one you saw is the caller's, as a push cancels the plan rather than waits.
-export function skipReviewWaitsOn(thread: Thread, pr: PullRequest | null): string | null {
+// still running is waited for, so its findings are known before the merge. CI must still pass,
+// and the PR merge cleanly. With the review skipped, CI is all that guards the merge, so a PR with
+// no CI check passes only when `repositoryHasCi` is false: no poll ever found CI on any of the
+// repository's PRs. Elsewhere CI may not have started yet. Whether the head is still the one you
+// saw is the caller's, as a push cancels the plan rather than waits.
+export function skipReviewWaitsOn(
+  thread: Thread,
+  pr: PullRequest | null,
+  repositoryHasCi: boolean,
+): string | null {
   if (thread.status === "failed") return "its thread, which failed";
   if (thread.status === "stopped") return "its thread, which is stopped";
   if (pr === null || pr.state !== "open") return "its PR";
@@ -114,7 +120,7 @@ export function skipReviewWaitsOn(thread: Thread, pr: PullRequest | null): strin
   if (ci.some((c) => c.state === "failed" || c.state === "cancelled"))
     return "its failing checks to be fixed";
   if (ci.some((c) => c.state !== "passed")) return "its checks";
-  if (ci.length === 0 && thread.ci_seen) return "its checks";
+  if (ci.length === 0 && repositoryHasCi) return "its checks";
   return null;
 }
 

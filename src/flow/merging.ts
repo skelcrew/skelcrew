@@ -6,8 +6,14 @@
 import type { Database } from "bun:sqlite";
 import { createTask, editReview, forgeOf, mergePr, postReview, trackerOf } from "../plugins/ask.ts";
 import { errorText } from "../say.ts";
-import { openTasks, prOf } from "./copy.ts";
-import { mergeStuck, mergeWaitsOn, type PullRequest, skipReviewWaitsOn } from "./decide.ts";
+import { openPrs, openTasks, prOf } from "./copy.ts";
+import {
+  ciState,
+  mergeStuck,
+  mergeWaitsOn,
+  type PullRequest,
+  skipReviewWaitsOn,
+} from "./decide.ts";
 import { endThread, removing } from "./events.ts";
 import { noteForLead } from "./messages.ts";
 import { findRepository, repositoryAt } from "./repo.ts";
@@ -237,7 +243,10 @@ export async function mergeIfReady(
     return;
   }
   const commit = pinned ?? lastPushed(thread);
-  let waits = pinned === null ? mergeWaitsOn(thread, pr, commit) : skipReviewWaitsOn(thread, pr);
+  let waits =
+    pinned === null
+      ? mergeWaitsOn(thread, pr, commit)
+      : skipReviewWaitsOn(thread, pr, repositoryHasCi(db, thread));
   if (waits === null && commit !== null && thread.pr !== null) {
     const repository = repositoryOf(db, thread);
     // The PR records who asked, with a review on the commit it merges, the call every forge
@@ -334,6 +343,16 @@ export async function mergeIfReady(
   }
 }
 
+// Returns whether a poll ever found CI in the thread's repository: on any of its tasks' PRs, as
+// each task keeps, or on any open PR in Skelcrew's copy. A merge without approval needs CI's
+// checks, so in such a repository a PR with none yet waits for them.
+function repositoryHasCi(db: Database, thread: Thread): boolean {
+  const seen = db
+    .query("SELECT 1 FROM tasks WHERE owner = ? AND repo = ? AND ci_seen = 1 LIMIT 1")
+    .get(thread.owner, thread.repo);
+  return seen !== null || openPrs(db, thread.owner, thread.repo).some((pr) => ciState(pr) !== null);
+}
+
 // Returns the hidden marker in a merge's record on the PR, naming its plan and commit, so the
 // record is found again after a restart. Its kind tells the two merges apart.
 function recordMarker(thread: Thread, commit: string): string {
@@ -386,8 +405,8 @@ export async function finishSkippedMerge(
 // one issue that links back to the PR, so the findings aren't lost with the thread. Returns what
 // the lead's note adds about it, such as " Its open findings are in #13.", or nothing with no
 // findings. It files once: the issue's ID is saved on the thread, and given again after that, and
-// an issue filed but not yet saved is found again by its marker. An issue that can't be filed, such as
-// with no tracker or a tracker that fails, is said in the note instead, so you can file it.
+// an issue filed but not yet saved is found again by its marker. An issue that can't be filed, such
+// as with no tracker or a tracker that fails, is said in the note instead, so you can file it.
 async function fileFollowUps(db: Database, thread: Thread): Promise<string> {
   if (thread.merge_followup !== null) return ` Its open findings are in #${thread.merge_followup}.`;
   const findings = openFindings(thread);
