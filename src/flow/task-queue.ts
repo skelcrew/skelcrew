@@ -4,10 +4,11 @@
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
 import { threadLimit } from "../config.ts";
+import { claimTask } from "../plugins/ask.ts";
 import { errorText } from "../say.ts";
 import { statusOnceBack } from "./builder.ts";
 import { findRepository } from "./repo.ts";
-import { record, Thread, threadName } from "./thread.ts";
+import { record, repositoryOf, Thread, threadName } from "./thread.ts";
 
 // Returns how many of the repository's builders run, its threads at work or waiting, those still
 // setting up included, and how many of its tasks wait in the queue.
@@ -44,12 +45,14 @@ export function queuedText(db: Database, thread: Thread): string {
 // stopped one coming back as statusOnceBack says, and the caller starts its builder. Each keeps
 // when it joined until its builder's session is saved, so backToQueue can put it back should
 // the engine stop before then. It all happens at once, with nothing waited on, so no task leaves
-// the queue twice. A thread in `skip`, such as one sc rm is removing, stays in the queue. A
-// repository whose limit can't be read keeps its queue until it can, and the daemon's log says
-// why once.
+// the queue twice. A thread in `skip`, such as one sc rm is removing, stays in the queue, and so
+// does one that still owes its claim. A repository whose limit can't be read keeps its queue
+// until it can, and the daemon's log says why once.
 export function leaveQueue(db: Database, skip: Set<string>): Thread[] {
   const queued = db
-    .query("SELECT * FROM task_threads WHERE status = 'queued' ORDER BY queued_since, rowid")
+    .query(`SELECT * FROM task_threads t WHERE status = 'queued' AND NOT EXISTS (SELECT 1 FROM claims c
+        WHERE c.owner = t.owner AND c.repo = t.repo AND c.task = CAST(t.task AS TEXT))
+      ORDER BY queued_since, rowid`)
     .all()
     .map((row) => Thread.parse(row));
   const leaving: Thread[] = [];
@@ -89,6 +92,46 @@ export function backToQueue(db: Database): void {
       thread.folder,
       { status: "queued" },
       "back in the queue: the engine stopped as it started",
+    );
+}
+
+// Makes the claim the queued thread's task still owes, if it owes one, and forgets it once the
+// tracker took it, whatever its answer: sc start claims without looking at the answer, as you
+// decided to start the task. Throws when the tracker fails, and the claim stays owed, to be
+// asked again. Asked once at a time per thread: a second call gets the ask under way.
+export function claimQueued(db: Database, thread: Thread): Promise<void> {
+  const under = claiming.get(thread.folder);
+  if (under) return under;
+  const { owner, repo, task } = thread;
+  const where = "WHERE owner = ? AND repo = ? AND task = ?";
+  if (db.query(`SELECT 1 FROM claims ${where}`).get(owner, repo, task) === null)
+    return Promise.resolve();
+  const ask = claimTask(db, repositoryOf(db, thread), task)
+    .then(() => {
+      db.run(`DELETE FROM claims ${where}`, [owner, repo, task]);
+    })
+    .finally(() => claiming.delete(thread.folder));
+  claiming.set(thread.folder, ask);
+  return ask;
+}
+
+// The claims being asked for, by the folder of the queued thread that owes each.
+const claiming = new Map<string, Promise<void>>();
+
+// Asks again for each claim a queued task still owes, such as one whose ask failed or that a
+// restart of the engine cut short, without waiting. A claim that fails again is logged, and
+// asked for once more the next time.
+export function claimOwed(db: Database): void {
+  const owing = db
+    .query(`SELECT * FROM task_threads t WHERE status = 'queued' AND EXISTS (SELECT 1 FROM claims c
+        WHERE c.owner = t.owner AND c.repo = t.repo AND c.task = CAST(t.task AS TEXT))`)
+    .all()
+    .map((row) => Thread.parse(row));
+  for (const thread of owing)
+    claimQueued(db, thread).catch((error) =>
+      console.log(
+        `couldn't claim ${threadName(db, thread)}'s issue, trying again: ${errorText(error)}`,
+      ),
     );
 }
 

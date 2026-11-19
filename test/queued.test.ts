@@ -177,10 +177,13 @@ async function sc(...args: string[]): Promise<string> {
   return out;
 }
 
-// Starts the daemon and waits until it has Skelcrew's copy of the issues and a clone of app.
+// Starts the daemon and waits until it has polled app's tracker. A daemon started again after a
+// stop waits for a poll of its own.
 async function serveApp(): Promise<void> {
+  const polls = () => asked(plugin).filter((q) => q.ask === "changed").length;
+  const before = polls();
   serve();
-  await wait(() => asked(plugin).some((q) => q.ask === "changed"), {
+  await wait(() => polls() > before, {
     timeout: 20_000,
     what: () => readFileSync(join(home, "daemon.log"), "utf8"),
   });
@@ -305,23 +308,26 @@ openDb().exec(${JSON.stringify(cut)});`;
   expect(leftQueue("app-13")[0] ?? 0).toBeGreaterThanOrEqual(endedAt("app-12"));
 }, 60_000);
 
-test("sc start claims an issue before it joins the queue, and a claim that fails refuses it", async () => {
+test("a queued sc start leaves the queue only once its claim is made, across a restart too", async () => {
   addApp();
   await serveApp();
   const failing = join(plugin, "fail-took");
   writeFileSync(failing, "network is down");
-  const refused = await runSkel(["start", "app-12"], env());
-  expect(refused.code).toBe(1);
-  expect(refused.err).toContain("couldn't claim app-12's issue, so it isn't queued");
-  expect(statuses()["app-12"]).toBeUndefined();
+  const said = await sc("start", "app-12");
+  expect(said).toContain("app-12 is queued");
+  expect(said).toContain("couldn't claim its issue yet");
+  // A place frees up, but the task owes its claim, so it waits, after a restart too.
+  await stopDaemon();
+  await serveApp();
+  await sc("rm", "app-11");
+  await Bun.sleep(3000);
+  expect(statuses()["app-12"]).toBe("queued");
+  // Once the tracker takes the claim, it starts, once.
   rmSync(failing);
-  expect(await sc("start", "app-12")).toContain("app-12 is queued");
-  // The claim was taken before sc start answered.
+  await until(() => statuses()["app-12"] === "failed");
+  expect(leftQueue("app-12")).toHaveLength(1);
   const claims = asked(plugin).filter((q) => q.ask === "took");
-  expect(claims.at(-1)).toMatchObject({ task: "12" });
-  // And it isn't claimed a second time.
-  await Bun.sleep(1000);
-  expect(asked(plugin).filter((q) => q.ask === "took")).toHaveLength(claims.length);
+  expect(claims.length).toBeGreaterThanOrEqual(2);
 }, 60_000);
 
 test("a labelled issue whose claim the engine's stop cut short starts nowhere twice, and the lead hears of it", async () => {

@@ -87,10 +87,11 @@ async function startLabeled(
   )
     return;
   // A claim saved for a task that has a thread now was granted, and the engine stopped before it
-  // was forgotten.
+  // was forgotten. One for a queued task is the claim it still owes, which the queue makes.
   db.run(
     `DELETE FROM claims WHERE owner = ? AND repo = ? AND EXISTS (SELECT 1 FROM threads t
-      WHERE t.owner = claims.owner AND t.repo = claims.repo AND CAST(t.task AS TEXT) = claims.task)`,
+      WHERE t.owner = claims.owner AND t.repo = claims.repo AND CAST(t.task AS TEXT) = claims.task
+        AND t.status != 'queued')`,
     [owner, repo],
   );
   const claimWhere = "WHERE owner = ? AND repo = ? AND task = ?";
@@ -138,7 +139,7 @@ async function startLabeled(
     }
     // The claim is this daemon's now, so a thread that fails to start isn't started by a
     // later poll either: on another machine, or after a restart, its claim reads as taken.
-    const thread = await startThread(db, { repo: fullName, task: task.id }).catch((error) => {
+    const thread = await startThread(db, { repo: fullName, task: task.id }, true).catch((error) => {
       console.log(
         `couldn't start ${task.id} in ${fullName}, and its label won't start it again; sc start does: ${errorText(error)}`,
       );

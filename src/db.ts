@@ -518,7 +518,8 @@ function prepareTables(db: Database): void {
   // The claims Skelcrew asked a tracker for, to start a labelled issue, whose outcome it doesn't
   // know yet: saved before it asks, and gone once the task is recorded or the tracker said no.
   // One still here after a stop of the engine or a failed ask may have been granted to this
-  // machine, though the tracker now says the issue is taken.
+  // machine, though the tracker now says the issue is taken. A task sc start put in the queue of
+  // limits.threads has one too, until its claim is made, and can't leave the queue before.
   db.run(`CREATE TABLE IF NOT EXISTS claims (
     owner TEXT NOT NULL,
     repo TEXT NOT NULL,

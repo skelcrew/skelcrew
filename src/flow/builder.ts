@@ -82,7 +82,9 @@ export function statusOnceBack(stopped: Thread): "waiting" | "working" {
 // the .agents/ you approved doesn't have or one with a bad round limit, refuses the start, from
 // sc start or a label alike, before any work begins. A start over the repository's limits.threads
 // records the thread as queued, to start once its turn comes in the queue, and the caller starts
-// nothing for it now.
+// nothing for it now. A task of the tracker that joins the queue is saved as owing its claim,
+// unless `claimed` says the label's start claimed it already, and leaves the queue only once
+// the claim is made.
 // Starts go one at a time: a start over first deletes the old thread's refs, and a second
 // start of the same task, running alongside, could delete the refs of the thread the first
 // just started. One at a time, the second finds that thread and is refused.
@@ -103,8 +105,9 @@ export function startThread(
         short?: string | undefined;
         flow?: string | undefined;
       },
+  claimed = false,
 ): Promise<Thread> {
-  const start = startsBefore.then(() => recordThread(db, given));
+  const start = startsBefore.then(() => recordThread(db, given, claimed));
   // A start that fails holds up none after it.
   startsBefore = start.catch(() => {});
   return start;
@@ -117,6 +120,7 @@ let startsBefore: Promise<unknown> = Promise.resolve();
 async function recordThread(
   db: Database,
   given: Parameters<typeof startThread>[1],
+  claimed: boolean,
 ): Promise<Thread> {
   // Find the repository and whether a tracker holds its tasks, which decides where a named
   // task's title and body come from.
@@ -362,6 +366,13 @@ async function recordThread(
         thread.queued_since,
       ],
     );
+    // Saved with the thread, so a restart can't start it before its claim is made.
+    if (queued && tracked && !ownTask(task) && !claimed)
+      db.run("INSERT OR IGNORE INTO claims (owner, repo, task) VALUES (?, ?, ?)", [
+        owner,
+        repo,
+        task,
+      ]);
     log(db, thread);
     return thread;
   })();
