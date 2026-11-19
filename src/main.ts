@@ -793,24 +793,23 @@ async function runCommand(args: string[]): Promise<void> {
     console.log(help());
     return;
   }
+  // An agent never needs another machine, and Skelcrew there couldn't tell an agent asked.
+  if (process.env.SKELCREW_SANDBOX === "1" && command === "--remote")
+    throw new Error("running sc on a server is only for your own terminal, not for agents");
+  if (command === "--remote" && sub) process.exit(await remote(sub, rest));
   // --json can go anywhere, since tools add it last and people type it where they like. Every
   // command accepts it, and one that only acts prints the same line either way. sc --remote
-  // below keeps it, so the sc it runs on the remote gets it too.
+  // above keeps it, so the sc it runs on the remote gets it too.
   const json = args.includes("--json");
   const words = args.filter((arg) => arg !== "--json");
-  const [first] = words;
-  // An agent is refused a command through sc --remote as well, as Skelcrew on the server can't
-  // tell that an agent ran it. The command there is what follows the host.
-  const remoteHost = command === "--remote" ? sub : undefined;
-  const [asked, also] = remoteHost ? rest.filter((arg) => arg !== "--json") : words;
+  const [first, second] = words;
   // The command as agentRefusals names it: two words for repo and plugin, and "" for
   // attaching to the lead.
-  const named = asked === undefined || asked === "--from" ? "" : asked;
+  const named = first === undefined || first === "--from" ? "" : first;
   const refusal =
-    agentRefusals[asked === "repo" || asked === "plugin" ? `${asked} ${also}` : named];
+    agentRefusals[first === "repo" || first === "plugin" ? `${first} ${second}` : named];
   if (process.env.SKELCREW_SANDBOX === "1" && refusal)
     throw new Error(`${refusal} is only for your own terminal, not for agents`);
-  if (remoteHost) process.exit(await remote(remoteHost, rest));
   // Plain sc, or sc --from <remote> as sc --remote sends it. Either one with --list first shows
   // the list in place of the screen.
   const list = first === "--list";

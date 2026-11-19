@@ -383,8 +383,9 @@ test("sc restart doesn't take an older engine in a terminal for the new one", as
   expect(done.err).toContain("Ctrl-C");
 }, 60_000);
 
-// --remote runs the command on a server, where Skelcrew can't tell that an agent asked.
-test("sc --remote restart is only for your own terminal, not for agents", async () => {
+// --remote runs the command on a server, where Skelcrew can't tell that an agent asked, so agents
+// can't run any command there.
+test("sc --remote is only for your own terminal, not for agents", async () => {
   const run = Bun.spawn(
     [process.execPath, source("main.ts"), "--remote", "simon@workbox", "restart"],
     {
@@ -396,7 +397,7 @@ test("sc --remote restart is only for your own terminal, not for agents", async 
   const [err, code] = await Promise.all([new Response(run.stderr).text(), run.exited]);
   expect(code).toBe(1);
   expect(err).toBe(
-    "Skelcrew: restarting the engine is only for your own terminal, not for agents\n",
+    "Skelcrew: running sc on a server is only for your own terminal, not for agents\n",
   );
 });
 
