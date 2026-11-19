@@ -1,7 +1,7 @@
 // The tabs, one for each repository: switching between them, a tab closing, a lead that
 // stopped being brought back, and a repository removed while the screen shows it.
 import { afterEach, beforeEach, expect, setDefaultTimeout, test } from "bun:test";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { startSession } from "../src/agents/sessions.ts";
 import { leadPlaces } from "../src/paths.ts";
@@ -77,6 +77,40 @@ test("Alt-Shift-Right and Alt-Shift-Left switch both sides to the repository bes
   press("M-S-Right");
   await Bun.sleep(300);
   expect(seen()).toContain(`I am ${siteLead}`);
+  press("M-S-Left");
+  await until(() => seen().includes("I am lead") && seen().includes("app-12"), "app again");
+});
+
+test("a lead on a plugin's host shows through that host from its tab, and comes back once it ends", async () => {
+  daemon();
+  sql(`INSERT INTO repositories (name, owner, repo) VALUES ('site', 'simon', 'site')`);
+  // The host lists site's lead as running while its file running says true.
+  const plugin = join(home, "plugin-fake");
+  mkdirSync(plugin, { recursive: true });
+  writeFileSync(join(plugin, "running"), "true");
+  writeFileSync(
+    join(plugin, "session.sh"),
+    `read -r question; echo >> listed; echo "{\\"sessions\\":[{\\"id\\":\\"fake-site-lead\\",\\"running\\":$(cat running),\\"labels\\":null}]}"\n`,
+  );
+  writeFileSync(join(plugin, "attach.sh"), 'echo "I am $1 on fake"; exec sleep 300\n');
+  writeFileSync(
+    join(plugin, "skelcrew-plugin.yaml"),
+    "name: fake\nversion: 0.1.0\nskelcrew: 0.1.0\nabout: A host\nkind: runtime\nprovides: [sessions]\nsession: [sh, session.sh]\nattach: [sh, attach.sh]\n",
+  );
+  sql(`INSERT INTO plugins (name, folder) VALUES ('fake', '${plugin}');
+UPDATE repositories SET lead_host = 'fake', lead_host_id = 'fake-site-lead' WHERE repo = 'site'`);
+  open("lead");
+  await ready("lead");
+  press("M-S-Right");
+  await until(() => seen().includes("I am fake-site-lead on fake"), "site's lead on its host");
+  await until(() => selected() === "◆ lead", "the sidebar on site's lead");
+  const opened = () => asked.filter((one) => one === "open simon/site from a tab").length;
+  await until(() => opened() === 1, "the daemon to open site");
+  // Once the sidebar has seen the lead run on its host, a lead that ends there is brought back.
+  const looks = () => read(join("plugin-fake", "listed")).split("\n").length;
+  await until(() => looks() > 2, "the sidebar to ask the host");
+  writeFileSync(join(plugin, "running"), "false");
+  await until(() => opened() === 2, "the daemon to bring site's lead back");
   press("M-S-Left");
   await until(() => seen().includes("I am lead") && seen().includes("app-12"), "app again");
 });
