@@ -41,7 +41,10 @@ const script = (name: string, body: string) => writeScript(home, name, body);
 // Stands in for Claude Code, as the lead and as the builder alike: it waits at a ❯ prompt,
 // keeps what is typed into it, and shows esc to interrupt while the file busy is there. While
 // the file quoting is there, it is idle at its prompt with esc to interrupt in its own text, as
-// a builder is after it read Skelcrew's code.
+// a builder is after it read Skelcrew's code. The file exit-now has it exit cleanly, as /exit
+// does. With the file follows-briefs there, it acts on each brief as the lead's instructions
+// say: it starts a thread only when the brief's tag says asked="yes", and otherwise asks its
+// human, adding what it did to acted.
 function fakeClaude(): void {
   script(
     "claude",
@@ -52,6 +55,17 @@ stty -echo
 exec 3<&0
 while IFS= read -r line; do printf '%s\\n' "$line" >> "$CLAUDE_CONFIG_DIR/typed"; done <&3 &
 for i in $(seq 3000); do
+  test -e "$CLAUDE_CONFIG_DIR/exit-now" && { rm -f "$CLAUDE_CONFIG_DIR/exit-now"; exit 0; }
+  # Each brief that came in since the last look is acted on once, by its own tag.
+  briefs=$(grep -c '</skelcrew>' "$CLAUDE_CONFIG_DIR/typed" 2>/dev/null)
+  if test -e "$CLAUDE_CONFIG_DIR/follows-briefs" && [ "\${briefs:-0}" -gt "\${handled:-0}" ]; then
+    handled=$briefs
+    if grep '<skelcrew from=' "$CLAUDE_CONFIG_DIR/typed" | tail -1 | grep -q 'asked="yes"'; then
+      sc start web "CSV export" "Add a CSV export to the reports page." >> "$CLAUDE_CONFIG_DIR/acted" 2>&1
+    else
+      echo "asked my human: app's lead asks for a CSV export. Start it?" >> "$CLAUDE_CONFIG_DIR/acted"
+    fi
+  fi
   now=idle; test -e "$CLAUDE_CONFIG_DIR/quoting" && now=quoting
   test -e "$CLAUDE_CONFIG_DIR/busy" && now=busy
   if [ "$now" != "$shown" ]; then
@@ -375,25 +389,44 @@ describe.skipIf(insideSandbox)("sc tell", () => {
     expect(typed(lead())).toContain('<skelcrew from="web:lead" reply="sc tell lead web">');
   }, 60_000);
 
-  test("a brief to a lead you exited brings it back first", async () => {
+  // Sent right after you exit web's lead, before the daemon's own look closes its tab, the
+  // brief must not be kept for a lead that is gone.
+  test("a brief to a lead you just exited brings it back first", async () => {
     await startTwoLeads();
-    // As if you exited web's lead, which closed its tab.
-    Bun.spawnSync([
-      "tmux",
-      "-L",
-      socket,
-      "kill-session",
-      "-t",
-      `=${leadPlaces("simon", "web").name}`,
-    ]);
-    changeDb("UPDATE repositories SET tab_closed = 1 WHERE repo = 'web'");
+    const name = leadPlaces("simon", "web").name;
+    writeFileSync(join(webLead(), "exit-now"), "");
+    await until(() => {
+      const pane = ["display-message", "-p", "-t", `=${name}:`, "#{pane_dead} #{pane_dead_status}"];
+      return (
+        Bun.spawnSync(["tmux", "-L", socket, ...pane])
+          .stdout.toString()
+          .trim() === "1 0"
+      );
+    });
     const told = await skel(["tell", "lead", "simon/web", "Rename the button."], "lead");
     expect(told.err).toBe("");
-    await until(() => typed(webLead()).includes("Rename the button."));
+    await until(() => typed(webLead()).includes("Rename the button."), 30_000);
     const db = new Database(join(data(), "skelcrew.db"));
     expect(db.query("SELECT tab_closed FROM repositories WHERE repo = 'web'").get()).toEqual({
       tab_closed: 0,
     });
+    db.close();
+  }, 60_000);
+
+  // A repository you never opened has no lead yet. The brief starts it, and gives it a tab, so
+  // it comes back after a restart like any other.
+  test("a brief to a repository whose lead never ran starts it, with a tab", async () => {
+    addApp();
+    addApp("web");
+    serve();
+    await until(() => existsSync(join(data(), "repos", "simon", "web", "README")));
+    expect(await open("app")).toContain(leadPlaces("simon", "app").name);
+    const told = await skel(["tell", "lead", "web", "Add a CSV export."], "lead");
+    expect(told.err).toBe("");
+    await until(() => typed(webLead()).includes("Add a CSV export."), 30_000);
+    const db = new Database(join(data(), "skelcrew.db"));
+    const row = db.query("SELECT opened, tab_closed FROM repositories WHERE repo = 'web'").get();
+    expect(row).toMatchObject({ tab_closed: 0, opened: expect.any(Number) });
     db.close();
   }, 60_000);
 
@@ -418,29 +451,31 @@ describe.skipIf(insideSandbox)("sc tell", () => {
     expect(typed(lead())).not.toContain("Hello.");
   }, 60_000);
 
-  // Only a brief that carries the human's words lets the other lead start work on it, so only
-  // that one's tag says asked. One without stays a report, which starts nothing.
-  test("a brief given the human's words with --asked-file carries them, and one without doesn't", async () => {
+  // A receiving lead that follows its instructions: the brief with the human's words lets it
+  // start a thread from its own socket, and the same brief without them starts nothing, so it
+  // asks its human instead. Only the first brief's tag says asked.
+  test("a brief given the human's words with --asked-file lets the other lead start it, and one without doesn't", async () => {
     await startTwoLeads();
+    writeFileSync(join(webLead(), "follows-briefs"), "");
+    const brief = "Add a CSV export to the reports page.\n";
+    expect((await skel(["tell", "lead", "web", brief], "lead")).err).toBe("");
+    await until(() => read(join(webLead(), "acted")) !== "");
+    expect(read(join(webLead(), "acted"))).toContain("asked my human");
+    expect(typed(webLead())).toContain(
+      '<skelcrew from="app:lead" reply="sc tell lead app">\nAdd a CSV export to the reports page.\n',
+    );
+    expect((await skel(["ps", "--json"], "web's lead")).out.trim()).toBe("[]");
+    // The human said yes in app's chat, so app's lead sends their words.
     const asked = join(home, "asked.txt");
     writeFileSync(asked, "Have web's lead add the CSV export.\nKeep it small.\n");
-    const told = await skel(
-      ["tell", "lead", "web", "--asked-file", asked],
-      "lead",
-      "Add a CSV export to the reports page.\n",
-    );
+    const told = await skel(["tell", "lead", "web", "--asked-file", asked], "lead", brief);
     expect(told.err).toBe("");
-    await until(() => typed(webLead()).includes("</skelcrew>"));
+    await until(() => read(join(webLead(), "acted")).split("\n").length > 2, 30_000);
     expect(typed(webLead())).toContain(
       `<skelcrew from="app:lead" reply="sc tell lead app" asked="yes">\nThe human's words, as app's lead was given them:\nHave web's lead add the CSV export.\nKeep it small.\n\nThe brief:\nAdd a CSV export to the reports page.`,
     );
-    expect((await skel(["tell", "lead", "web", "Also a JSON one."], "lead")).err).toBe("");
-    await until(() => typed(webLead()).includes("Also a JSON one."));
-    expect(typed(webLead())).toContain(
-      '<skelcrew from="app:lead" reply="sc tell lead app">\nAlso a JSON one.\n</skelcrew>',
-    );
-    expect(typed(webLead()).match(/asked="yes"/g)).toHaveLength(1);
-    // Neither brief started anything on its own: only web's lead, at its human's say, can.
-    expect((await skel(["ps", "--json"], "web's lead")).out.trim()).toBe("[]");
+    expect(read(join(webLead(), "acted")).split("\n")[1]).toContain("web-");
+    const threads: unknown = JSON.parse((await skel(["ps", "--json"], "web's lead")).out);
+    expect(threads).toEqual([expect.objectContaining({ title: "CSV export" })]);
   }, 60_000);
 });

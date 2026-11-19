@@ -520,16 +520,26 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
             `${request.to} isn't in Skelcrew. Ask the human to add it in their own terminal, with sc repo add <owner/repo>.`,
           );
         briefLead(db, sessions, caller, to, request.text, request.asked);
-        // A lead whose tab you closed by exiting it is brought back, so the brief reaches it.
-        // Starting it isn't waited on, as an agent's command answers at once. Its notes wait
-        // until it runs, then go in.
-        db.run("UPDATE repositories SET tab_closed = 0 WHERE owner = ? AND repo = ?", [
-          to.owner,
-          to.repo,
-        ]);
-        ensureLead(to)
-          .then(() => typeLeadNotes(db, sessions))
-          .catch((error) => console.log(`couldn't start ${to.name}'s lead: ${errorText(error)}`));
+        // The lead is brought back if you closed its tab by exiting it, or started if it never
+        // ran, as opening the repository does, so the brief reaches it. A lead you exited this
+        // second is closed first: left running, it would be kept, then closed by the daemon's
+        // next look, with the brief still waiting. A repository never opened gets its first
+        // time, or its lead would have no tab and not come back after a restart. One opened
+        // before keeps its time, so plain sc still opens the one you opened last. Starting the
+        // lead isn't waited on, as an agent's command answers at once. Its notes wait until it
+        // runs, then go in.
+        const reopen = async () => {
+          await closeExitedLeads(db, sessions);
+          db.run(
+            "UPDATE repositories SET opened = COALESCE(opened, ?), tab_closed = 0 WHERE owner = ? AND repo = ?",
+            [Date.now(), to.owner, to.repo],
+          );
+          await ensureLead(to);
+          typeLeadNotes(db, sessions);
+        };
+        reopen().catch((error) =>
+          console.log(`couldn't start ${to.name}'s lead: ${errorText(error)}`),
+        );
         return { briefed: to.name };
       }
       case "submit": {
