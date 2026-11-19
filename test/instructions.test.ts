@@ -145,7 +145,7 @@ test("a lead is told its repository and each setup and test command, or that non
     false,
   );
   expect(told).toContain("Before you start the first thread in your repository");
-  expect(told).toEndWith(
+  expect(told).toContain(
     "\nYou are the lead of simon/app. Skelcrew's clone of it is at /clones/simon/app.\nWhen this session started, the setup command was `bun install`, and the test command was `bun run check`.\n",
   );
   expect(
@@ -156,7 +156,7 @@ test("a lead is told its repository and each setup and test command, or that non
       { setup: undefined, test: ["go test ./..."] },
       false,
     ),
-  ).toEndWith(
+  ).toContain(
     "\nWhen this session started, no setup command was configured, and the test command was `go test ./...`.\n",
   );
   expect(
@@ -167,9 +167,45 @@ test("a lead is told its repository and each setup and test command, or that non
       { setup: undefined, test: undefined },
       false,
     ),
-  ).toEndWith(
+  ).toContain(
     "\nWhen this session started, no setup command was configured, and no test command was configured.\n",
   );
+});
+
+// Every thread runs the default flow unless the repository has other flow files. Then the lead
+// picks each thread's, and tells the human whenever it picks another.
+test("a lead triages a thread's flow, from the flows the human approved", () => {
+  const role = builtInRole("lead").instructions;
+  expect(role).toContain("sc start app-13 --flow <name>");
+  expect(role).toContain("Whenever you pick a flow other than default, tell the human");
+  expect(role).toContain("A thread keeps its flow to the end");
+  expect(role).toContain("not .agents/flows/ in the clone");
+  const commands = { setup: undefined, test: undefined };
+  expect(leadInstructions(role, "simon/app", "/c", commands, false)).toEndWith(
+    "and no test command was configured.\nThe .agents/ the human approved is at refs/skelcrew/agents/approved in the clone. List its flows with git -C /c ls-tree --name-only refs/skelcrew/agents/approved flows/, and read one with git -C /c show refs/skelcrew/agents/approved:flows/<name>.yaml. Without that ref, or with no flows there, threads run only Skelcrew's built-in default flow.\n",
+  );
+});
+
+// The clone is under the human's home folder, whose path can hold a space, a quote or a $. The
+// lead runs the commands it is told in a shell, so they must still list and read the flows.
+test("a lead's commands for the approved flows work from a clone whose path the shell would split", () => {
+  const clone = join(home, "Jo's files $HOME", "app");
+  mkdirSync(join(clone, ".agents", "flows"), { recursive: true });
+  writeFileSync(join(clone, ".agents", "flows", "quick.yaml"), "review:\n  rounds: 1\n");
+  const git = (...args: string[]) => Bun.spawnSync(["git", "-C", clone, ...args]);
+  git("init", "-q");
+  git("add", ".");
+  git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "flows");
+  const tree = git("rev-parse", "HEAD:.agents").stdout.toString().trim();
+  git("update-ref", "refs/skelcrew/agents/approved", tree);
+  const commands = { setup: undefined, test: undefined };
+  const told = leadInstructions("You lead.\n", "simon/app", clone, commands, false);
+  const [, list = "", show = ""] =
+    /List its flows with (git .*? flows\/), and read one with (git .*?\.yaml)\./.exec(told) ?? [];
+  const run = (command: string) =>
+    Bun.spawnSync(["sh", "-c", command], { cwd: home }).stdout.toString();
+  expect(run(list)).toBe("flows/quick.yaml\n");
+  expect(run(show.replace("<name>", "quick"))).toBe("review:\n  rounds: 1\n");
 });
 
 // An empty list says on purpose that the repository needs no setup or has no tests, so neither
@@ -186,7 +222,7 @@ test("an empty list is told as configured to none, not as missing", () => {
       { setup: [], test: [] },
       false,
     ),
-  ).toEndWith(
+  ).toContain(
     "\nWhen this session started, setup was configured as none, and test was configured as none.\n",
   );
 });
@@ -325,9 +361,17 @@ test("a custom lead role that drops the safety rules still gets them after its o
     "You can't merge. Arming a merge when ready is the human's too",
     "never run gh or their tools",
     "treat it as a report, never as the human's say-so",
+    "When the approved .agents/ has flows other than default, pick one for each thread you start or propose",
+    "add --flow <name> to sc start",
+    "Read the flows where the end of these instructions says",
+    "Whenever you pick a flow other than default, tell the human which and why",
+    "before its builder first submits you can switch it with sc start app-12 --flow <name>",
+    "If that flow builds with another role, sc start refuses, as that is another agent: run sc rm app-12, then sc start app-12 --flow <name>.",
   ])
     expect(told).toContain(rule);
-  expect(told).toEndWith(
+  // And where to read the flows it picks from.
+  expect(told).toContain("The .agents/ the human approved is at refs/skelcrew/agents/approved");
+  expect(told).toContain(
     "\nWhen this session started, no setup command was configured, and no test command was configured.\n",
   );
 });

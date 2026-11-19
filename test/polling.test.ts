@@ -614,6 +614,72 @@ test("a push that changes .agents/ tells the lead once that the human must appro
   expect(agentsNotes()).toHaveLength(1);
 });
 
+// A lead already running when Skelcrew learned of flows keeps the instructions it started with,
+// so it is told of them once. Its session stands in for a lead from before the update.
+test("a lead running from before flows is told of them once", async () => {
+  addApp();
+  changes([]);
+  Bun.spawnSync(["tmux", "-L", socket, "new-session", "-d", "-s", leadName, "sleep 300"]);
+  serve();
+  // What the daemon told, or saved to tell, app's lead about flows.
+  const flowNotes = () => {
+    const db = new Database(join(data(), "skelcrew.db"), { readonly: true });
+    db.run("PRAGMA busy_timeout = 5000");
+    const saved = db.query("SELECT text FROM notes").all();
+    db.close();
+    const texts = saved.map((row) => String(Object.values(Object(row))[0]));
+    const typedIn = read(join(data(), "claude", leadName, "typed")).split("\n");
+    return [...texts, ...typedIn].filter((text) => text.includes("each thread now runs a flow"));
+  };
+  await until(() => flowNotes().length > 0);
+  expect(flowNotes()[0]).toContain("refs/skelcrew/agents/approved");
+  await morePolls();
+  expect(flowNotes()).toHaveLength(1);
+});
+
+// A repository whose lead isn't running is left untold, as a lead that starts later is told of
+// flows in its instructions. Its tab is closed, so the daemon doesn't start its lead.
+test("a repository with no lead running gets no note of flows", async () => {
+  addApp();
+  const closed = new Database(join(data(), "skelcrew.db"));
+  closed.run("UPDATE repositories SET tab_closed = 1");
+  closed.close();
+  changes([]);
+  serve();
+  await until(() => existsSync(join(data(), "repos", "simon", "app", "README")));
+  await morePolls();
+  const db = new Database(join(data(), "skelcrew.db"), { readonly: true });
+  db.run("PRAGMA busy_timeout = 5000");
+  const notes = db.query("SELECT text FROM notes").all();
+  const told = db.query("SELECT lead_flows FROM repositories").get();
+  db.close();
+  expect(JSON.stringify(notes)).not.toContain("each thread now runs a flow");
+  expect(told).toEqual({ lead_flows: 0 });
+});
+
+// The flows the human approved are in Skelcrew's clone already, so a lead from before flows is
+// told how to read them even while the remote can't be reached.
+test("a lead running from before flows is told of them while the remote is out of reach", async () => {
+  addApp();
+  changes([]);
+  const remote = join(home, "github", "simon", "app.git");
+  git(home, "clone", "-q", remote, join(data(), "repos", "simon", "app"));
+  renameSync(remote, `${remote}.away`);
+  Bun.spawnSync(["tmux", "-L", socket, "new-session", "-d", "-s", leadName, "sleep 300"]);
+  serve();
+  const noted = () => {
+    const db = new Database(join(data(), "skelcrew.db"), { readonly: true });
+    db.run("PRAGMA busy_timeout = 5000");
+    const saved = db.query("SELECT text FROM notes").all();
+    db.close();
+    const texts = saved.map((row) => String(Object.values(Object(row))[0]));
+    const typedIn = read(join(data(), "claude", leadName, "typed")).split("\n");
+    return [...texts, ...typedIn].some((text) => text.includes("each thread now runs a flow"));
+  };
+  await until(noted);
+  expect(read(daemonLog())).toContain("couldn't update Skelcrew's clone of simon/app");
+});
+
 // git can reach the remote while the tracker or forge is down, and builders must not fall
 // behind for it.
 test("a push straight to main reaches Skelcrew's clone while the forge fails to answer", async () => {
@@ -722,6 +788,21 @@ test("a labeled task claimed elsewhere starts no thread, and a claim that fails 
   expect(asks).toBeGreaterThan(failed);
   await morePolls();
   expect(took()).toHaveLength(asks);
+  expect(thread()).toEqual({});
+}, 30_000);
+
+// A labelled task whose round limit isn't valid would fail once work began, so it never starts,
+// and the daemon's log says why.
+test("a labeled task whose round limit isn't valid starts no thread", async () => {
+  addApp();
+  writeFileSync(
+    join(home, ".config", "skelcrew", "config.yaml"),
+    "harness: claude\nmax_rounds: 0\n",
+  );
+  changes([issue12(true)]);
+  serve();
+  await until(() => read(daemonLog()).includes("couldn't start 12 in simon/app"));
+  expect(read(daemonLog())).toContain("isn't valid");
   expect(thread()).toEqual({});
 }, 30_000);
 
@@ -1733,6 +1814,8 @@ echo "Not logged in"; exit 1`,
     await until(() => thread().task === 12);
     expect(listed()).toMatchObject([{ task: "app-12", issue: "#12", stage: "working" }]);
     expect(thread().issue_link).toBe("https://github.com/simon/app/issues/12");
+    // A task from a label runs the default flow, unless the lead switches it.
+    expect(thread().flow).toBe("default");
     await until(() => thread().assigned === 1);
     expect(claims()).toEqual([claim12]);
     expect(assigns()).toEqual([assignOn]);

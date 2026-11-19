@@ -841,7 +841,13 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
     await startApp12();
     await until(() => thread().needs_you === 1 && thread().rounds === 2, 45_000);
     expect(read(join(builder(), "typed"))).not.toContain("Second problem.");
-    const started = await skel(["start", "app-12"]);
+    // Naming the flow it runs already is no switch, though its builder has submitted: a short
+    // title is given as without --flow, and the thread still needs you.
+    const short = await skel(["start", "app-12", "--flow", "default", "--short", "Export"]);
+    expect(short.err).toBe("");
+    expect(short.out).toBe('Gave app-12 the short title "Export".\n');
+    expect(thread()).toMatchObject({ needs_you: 1, rounds: 2 });
+    const started = await skel(["start", "app-12", "--flow", "default"]);
     expect(started.err).toBe("");
     expect(started.out).toContain("app-12 goes on");
     await until(() => read(join(builder(), "typed")).includes("Second problem."), 30_000);

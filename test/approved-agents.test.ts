@@ -293,12 +293,20 @@ test("today's max_rounds still gives its rounds, until an approved flow file nam
   expect(roundsOf("{ ...app, agents: null }")).toBe(5);
 });
 
-test("a flow file naming no rounds leaves max_rounds counting, and your override beats both", () => {
+test("a default flow file replaces max_rounds though it names no rounds, and your override beats both", () => {
   writeFileSync(join(clone, "skelcrew.yaml"), "max_rounds: 5\n");
   agentsFile("flows/default.yaml", "build:\n  role: builder\n");
   commit("flow");
   inHome(approveCurrent);
-  expect(roundsOf()).toBe(5);
+  // The flow file names no rounds, so yours count, or else the built-in flow's.
+  expect(roundsOf()).toBe(3);
+  writeFileSync(join(home, ".config", "skelcrew", "config.yaml"), "rounds: 2\n");
+  expect(roundsOf()).toBe(2);
+  // A bad max_rounds is left unread, so it stops nothing.
+  writeFileSync(join(clone, "skelcrew.yaml"), "max_rounds: 0\n");
+  expect(roundsOf()).toBe(2);
+  // A task on the built-in files has no flow file, so max_rounds counts and is checked.
+  expect(() => roundsOf("{ ...app, agents: null }")).toThrow("skelcrew.yaml isn't valid");
   agentsFile("flows/default.yaml", "review:\n  rounds: 2\n");
   commit("flow");
   inHome(approveCurrent);
@@ -318,23 +326,28 @@ test("the flow file goes over your config's max_rounds, which goes over the buil
   expect(roundsOf()).toBe(4);
 });
 
-test("a flow file that isn't valid stops only what reads the round limit, naming the file", () => {
+test("a flow file that isn't valid stops only what reads the flow, naming the file", () => {
   agentsFile("flows/default.yaml", "review:\n  rounds: 2\n  skip: true\n");
   commit("flow");
   inHome(approveCurrent);
   expect(() => roundsOf()).toThrow(".agents/flows/default.yaml in simon/app");
-  expect(inHome('return readSettings(["builder"], app).builder;')).toEqual({
+  // The flow says who builds, so the builder stops too, but the lead runs on.
+  expect(() => inHome('return readSettings(["builder"], app).builder;')).toThrow(
+    ".agents/flows/default.yaml in simon/app",
+  );
+  expect(inHome('return readSettings(["lead"], app).lead;')).toEqual({
     harness: "claude",
     model: "opus",
   });
 });
 
-test("a flow may name only the role each stage runs today, for both stages", () => {
+test("a stage can't run the lead or the other stage's built-in role", () => {
   for (const flow of [
     "build:\n  role: reviewer\n",
-    "build:\n  role: tester\n",
+    "build:\n  role: lead\n",
     "review:\n  role: builder\n  rounds: 2\n",
-    "review:\n  role: critic\n  rounds: 2\n",
+    "review:\n  role: lead\n  rounds: 2\n",
+    "review:\n  role: ../secret\n  rounds: 2\n",
   ]) {
     agentsFile("flows/default.yaml", flow);
     commit("flow");
@@ -371,6 +384,180 @@ test("only the round limit that wins is read: a bad one below it stops nothing",
   commit("flow");
   inHome(approveCurrent);
   expect(() => roundsOf()).toThrow(".agents/flows/default.yaml in simon/app");
+});
+
+test("a task on another flow reads that flow's rounds, and a flow the tree lacks stops it", () => {
+  agentsFile("flows/default.yaml", "review:\n  rounds: 2\n");
+  agentsFile("flows/quick.yaml", "# For one-line fixes.\nreview:\n  rounds: 1\n");
+  commit("flows");
+  inHome(approveCurrent);
+  expect(roundsOf()).toBe(2);
+  expect(roundsOf('{ ...app, flow: "default" }')).toBe(2);
+  expect(roundsOf('{ ...app, flow: "quick" }')).toBe(1);
+  expect(() => roundsOf('{ ...app, flow: "slow" }')).toThrow(
+    "simon/app has no flow slow in its .agents/flows/",
+  );
+  // A task on the built-in files has only the built-in default flow.
+  expect(() => roundsOf('{ ...app, agents: null, flow: "quick" }')).toThrow(
+    "simon/app has no flow quick",
+  );
+});
+
+const flowsOf = (where = "app") =>
+  inHome(
+    `const { repositoryFlows } = await import(${JSON.stringify(source("flows.ts"))}); return repositoryFlows(${where});`,
+  );
+
+test("a repository's flows are default and each flow file of the .agents/ you approved", () => {
+  expect(flowsOf()).toEqual(["default"]);
+  agentsFile("flows/quick.yaml", "review:\n  rounds: 1\n");
+  agentsFile("flows/careful.yaml", "review:\n  rounds: 5\n");
+  agentsFile("flows/notes.txt", "not a flow\n");
+  agentsFile("flows/deeper/inside.yaml", "review:\n  rounds: 5\n");
+  commit("flows");
+  // A flow file you haven't approved isn't one of its flows yet.
+  expect(flowsOf()).toEqual(["default"]);
+  inHome(approveCurrent);
+  expect(flowsOf()).toEqual(["default", "careful", "quick"]);
+  expect(flowsOf("{ ...app, agents: null }")).toEqual(["default"]);
+});
+
+test("a flow file that is a link isn't a flow", () => {
+  writeFileSync(join(home, "outside.yaml"), "review:\n  rounds: 1\n");
+  mkdirSync(join(clone, ".agents", "flows"), { recursive: true });
+  symlinkSync(join(home, "outside.yaml"), join(clone, ".agents", "flows", "quick.yaml"));
+  agentsFile("roles/builder.md", "Build it.\n");
+  commit("link");
+  inHome(approveCurrent);
+  expect(flowsOf()).toEqual(["default"]);
+});
+
+// Runs `code` with flowRoles and repositoryRole at hand, for a stage's role as an agent gets it.
+const stageOf = (code: string) =>
+  inHome(`const { flowRoles } = await import(${JSON.stringify(source("flows.ts"))}); ${code}`);
+
+test("a flow's stage runs a role of the repository's own, with its file's instructions, harness and model", () => {
+  agentsFile(
+    "flows/default.yaml",
+    "build:\n  role: tester\nreview:\n  role: critic\n  rounds: 2\n",
+  );
+  agentsFile("roles/tester.md", "---\nharness: codex\n---\nTest first.\n");
+  agentsFile("roles/critic.md", "Be hard on it.\n");
+  commit("roles");
+  inHome(approveCurrent);
+  expect(stageOf("return flowRoles(app);")).toEqual({ build: "tester", review: "critic" });
+  expect(stageOf("return repositoryRole(flowRoles(app).build, app).instructions;")).toBe(
+    "Test first.\n",
+  );
+  // A role with no harness or model of its own gets the stage's, from your config.
+  expect(inHome('return readSettings(["builder"], app).builder;')).toEqual({ harness: "codex" });
+  expect(inHome('return readSettings(["reviewer"], app).reviewer;')).toEqual({
+    harness: "claude",
+    model: "opus",
+  });
+  expect(roundsOf()).toBe(2);
+  // A task on the built-in files runs the built-in default flow's roles.
+  expect(stageOf("return flowRoles({ ...app, agents: null });")).toEqual({
+    build: "builder",
+    review: "reviewer",
+  });
+});
+
+test("a flow naming a role with no file is refused, naming the role", () => {
+  agentsFile("flows/default.yaml", "review:\n  role: critic\n");
+  commit("flow");
+  inHome(approveCurrent);
+  expect(() => stageOf("return flowRoles(app);")).toThrow(
+    "it names the role critic, which has no .agents/roles/critic.md",
+  );
+  expect(() => inHome('return readSettings(["reviewer"], app).reviewer;')).toThrow(
+    "has no .agents/roles/critic.md",
+  );
+  // sc start refuses it before a thread starts on it.
+  expect(() =>
+    stageOf(
+      `const { checkFlow } = await import(${JSON.stringify(source("config.ts"))}); checkFlow(app, "app", "default");`,
+    ),
+  ).toThrow("it names the role critic");
+});
+
+test("the lead reads the approved flows at a ref only Skelcrew moves, as each approval changes", () => {
+  const atRef = (path: string) => {
+    const shown = Bun.spawnSync(
+      ["git", "-C", clone, "show", `refs/skelcrew/agents/approved:${path}`],
+      {
+        stdout: "pipe",
+        stderr: "pipe",
+      },
+    );
+    return shown.success ? shown.stdout.toString() : null;
+  };
+  agentsFile("flows/quick.yaml", "review:\n  rounds: 1\n");
+  commit("flows");
+  expect(atRef("flows/quick.yaml")).toBeNull();
+  inHome(approveCurrent);
+  expect(atRef("flows/quick.yaml")).toBe("review:\n  rounds: 1\n");
+  // A change you haven't approved stays out.
+  agentsFile("flows/quick.yaml", "review:\n  rounds: 9\n");
+  commit("unapproved");
+  expect(atRef("flows/quick.yaml")).toBe("review:\n  rounds: 1\n");
+  // The built-in files have no ref.
+  inHome("agents.approveAgents(app, null); return null;");
+  expect(atRef("flows/quick.yaml")).toBeNull();
+  // An approval from before the ref gets it once the daemon marks it.
+  inHome(approveCurrent);
+  git("update-ref", "-d", "refs/skelcrew/agents/approved");
+  inHome("agents.markApproved(app); return null;");
+  expect(atRef("flows/quick.yaml")).toBe("review:\n  rounds: 9\n");
+});
+
+test("a role of the repository's own takes its own roles: lines, never the stage's built-in role's", () => {
+  agentsFile("flows/default.yaml", "build:\n  role: tester\n");
+  agentsFile("roles/tester.md", "Test first.\n");
+  commit("roles");
+  inHome(approveCurrent);
+  const config = join(home, ".config", "skelcrew", "config.yaml");
+  const builder = () => inHome('return readSettings(["builder"], app).builder;');
+  // roles: builder: is the built-in builder's, which doesn't run here.
+  writeFileSync(config, "harness: claude\nmodel: opus\nroles: { builder: { harness: codex } }\n");
+  expect(builder()).toEqual({ harness: "claude", model: "opus" });
+  writeFileSync(
+    config,
+    "harness: claude\nmodel: opus\nroles: { builder: { harness: codex }, tester: { model: sonnet } }\n",
+  );
+  expect(builder()).toEqual({ harness: "claude", model: "sonnet" });
+  // Your override under repos: goes over your general settings for the role, as for any role.
+  writeFileSync(
+    config,
+    "harness: claude\nmodel: opus\nroles: { tester: { model: sonnet } }\nrepos: { simon/app: { roles: { tester: { harness: codex, model: gpt-6 } } } }\n",
+  );
+  expect(builder()).toEqual({ harness: "codex", model: "gpt-6" });
+  // The role file's harness goes over your general settings, and your override over the file.
+  agentsFile("roles/tester.md", "---\nharness: codex\n---\nTest first.\n");
+  commit("tester");
+  inHome(approveCurrent);
+  writeFileSync(config, "harness: claude\nmodel: opus\nroles: { tester: { model: sonnet } }\n");
+  expect(builder()).toEqual({ harness: "codex" });
+  writeFileSync(
+    config,
+    "harness: claude\nmodel: opus\nrepos: { simon/app: { roles: { tester: { harness: claude } } } }\n",
+  );
+  expect(builder()).toEqual({ harness: "claude", model: "opus" });
+});
+
+test("skelcrew.yaml's max_rounds counts until the repository has any flow file, then for no flow", () => {
+  writeFileSync(join(clone, "skelcrew.yaml"), "max_rounds: 5\n");
+  commit("settings");
+  expect(roundsOf()).toBe(5);
+  agentsFile("flows/quick.yaml", "build:\n  role: builder\n");
+  commit("flows");
+  inHome(approveCurrent);
+  expect(roundsOf()).toBe(3);
+  expect(roundsOf('{ ...app, flow: "quick" }')).toBe(3);
+  // Your config's max_rounds is your default for any flow.
+  writeFileSync(join(home, ".config", "skelcrew", "config.yaml"), "max_rounds: 6\n");
+  expect(roundsOf('{ ...app, flow: "quick" }')).toBe(6);
+  expect(roundsOf()).toBe(6);
 });
 
 test("a role file's harness and model are checked only where they count", () => {

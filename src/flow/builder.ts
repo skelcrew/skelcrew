@@ -16,8 +16,9 @@ import {
   stopSession,
 } from "../agents/sessions.ts";
 import { approvedAgents } from "../approved-agents.ts";
-import { agentRole, repositoryCommands, roundLimit, sessionHost } from "../config.ts";
+import { agentRole, checkFlow, repositoryCommands, roundLimit, sessionHost } from "../config.ts";
 import { machineCode } from "../db.ts";
+import { flowRoles } from "../flows.ts";
 import { cloneDir, threadSocket } from "../paths.ts";
 import { trackerOf } from "../plugins/ask.ts";
 import { type Host, hostNamed } from "../plugins/runtime.ts";
@@ -75,15 +76,30 @@ export function statusOnceBack(stopped: Thread): "waiting" | "working" {
 // such as after sc rm: then it starts over in the same folder. It only records the thread,
 // since the lead waits on the answer. Setting up its clone and starting its builder come
 // after, and can take minutes. `given` is a start request, so its `repo` is the repository's
-// name in Skelcrew or its owner/name, and its `short` the short title the lead gave, if any.
+// name in Skelcrew or its owner/name, its `short` the short title the lead gave, if any, and
+// its `flow` the flow the lead picked, `default` when none. A flow checkFlow refuses, such as one
+// the .agents/ you approved doesn't have or one with a bad round limit, refuses the start, from
+// sc start or a label alike, before any work begins.
 // Starts go one at a time: a start over first deletes the old thread's refs, and a second
 // start of the same task, running alongside, could delete the refs of the thread the first
 // just started. One at a time, the second finds that thread and is refused.
 export function startThread(
   db: Database,
   given:
-    | { repo: string; task: string; from?: string | undefined; short?: string | undefined }
-    | { repo: string; title: string; body: string; short?: string | undefined },
+    | {
+        repo: string;
+        task: string;
+        from?: string | undefined;
+        short?: string | undefined;
+        flow?: string | undefined;
+      }
+    | {
+        repo: string;
+        title: string;
+        body: string;
+        short?: string | undefined;
+        flow?: string | undefined;
+      },
 ): Promise<Thread> {
   const start = startsBefore.then(() => recordThread(db, given));
   // A start that fails holds up none after it.
@@ -104,6 +120,10 @@ async function recordThread(
   const repository = findRepository(db, given.repo);
   const { owner, repo, name } = repository;
   const tracked = trackerOf(db, repository) !== null;
+  // The task keeps the .agents/ you approved as it starts, and runs one of its flows.
+  const agents = approvedAgents({ owner, repo });
+  const flow = given.flow ?? "default";
+  checkFlow({ owner, repo, agents }, name, flow);
   const where = "WHERE owner = ? AND repo = ? AND task = ?";
   let task: string;
   let title: string;
@@ -285,7 +305,8 @@ async function recordThread(
       merge_asked: null,
       merge_waits: null,
       merge_noted: null,
-      agents: approvedAgents({ owner, repo }),
+      agents,
+      flow,
       review_post: null,
     };
     // A failed or done thread's row gives way to the new one, and messages that waited for its
@@ -316,8 +337,8 @@ async function recordThread(
     );
     db.run(
       `INSERT OR REPLACE INTO tasks
-        (owner, repo, task, title, body, short, assigned, seen, issue_link, closes, agents)
-        VALUES (?, ?, ?, ?, ?, ?, ?, '[]', ?, ?, ?)`,
+        (owner, repo, task, title, body, short, assigned, seen, issue_link, closes, agents, flow)
+        VALUES (?, ?, ?, ?, ?, ?, ?, '[]', ?, ?, ?, ?)`,
       [
         owner,
         repo,
@@ -329,6 +350,7 @@ async function recordThread(
         issueLink,
         closes,
         thread.agents,
+        thread.flow,
       ],
     );
     log(db, thread);
@@ -513,9 +535,10 @@ export async function startBuilder(db: Database, sessions: string, thread: Threa
     // task in its own words, and the builder still has it after a long conversation is
     // compacted. It asks the builder to ask you only when it must: its question waits on a
     // screen nobody watches.
-    // The builder role's instructions come from the .agents/ the task started with.
+    // The build stage's role, from the task's flow, and its instructions come from the .agents/
+    // the task started with.
     system: builderInstructions(
-      repositoryRole("builder", thread).instructions,
+      repositoryRole(flowRoles(thread).build, thread).instructions,
       repositoryCommands(thread),
     ),
     ...start,

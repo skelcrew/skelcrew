@@ -7,13 +7,21 @@ import { join } from "node:path";
 import { parse } from "yaml";
 import { z } from "zod";
 import { HarnessName } from "./agents/harness.ts";
-import { builtInRounds, repositoryRounds } from "./flows.ts";
+import {
+  builtInRounds,
+  flowRoles,
+  hasFlowFile,
+  repositoryFlows,
+  repositoryRounds,
+} from "./flows.ts";
 import { cloneDir, configDir } from "./paths.ts";
 import { type RoleName, repositoryRole } from "./roles.ts";
 
 // A repository Skelcrew works on, by its owner and name. `agents` is the tree of .agents/ whose
 // role files count, as repositoryRole takes it: a task's own, or without it the one you approved.
-export type Repository = { owner: string; repo: string; agents?: string | null };
+// `flow` is the flow whose file gives the round limit and the roles of its stages: a task's own,
+// or without it `default`.
+export type Repository = { owner: string; repo: string; agents?: string | null; flow?: string };
 
 // A model is plain text, passed to the harness as written: Skelcrew keeps no list of names, and a
 // harness that names models as provider/model knows its own providers.
@@ -192,27 +200,45 @@ export function readSettings<G extends Group>(
   const decidedBy = (layers: File[]) => (k: Key) =>
     layers.some((l) => sameSetting(k).some((key) => l[key] !== undefined && l[key] !== null));
   const overrides = repository ? readOverrides(wanted, repository) : {};
-  // The default flow's rounds go over max_rounds in skelcrew.yaml, which they replace. The flow
-  // file is checked even when your override decides the round limit, as its stages still say
-  // which roles run.
+  // The rounds of the task's flow, `default` unless it named another, go over max_rounds in
+  // skelcrew.yaml, which they replace. The flow file is checked even when your override decides
+  // the round limit, as its stages still say which roles run.
   const agentsFiles: File = {};
   if (repository && groups.some((group) => group === "rounds"))
     agentsFiles.max_rounds = repositoryRounds(repository, decidedBy([overrides])("max_rounds"));
-  // sc init asks without a repository, for the starter skelcrew.yaml it writes.
+  // sc init asks without a repository, for the starter skelcrew.yaml it writes. The old
+  // max_rounds in skelcrew.yaml is the default flow's rounds only until the repository has a
+  // flow file, of any flow. From then on no flow takes it, though its file names no rounds: it
+  // gets yours or the built-in round limit, and a bad max_rounds, left unread, doesn't stop it.
   const aboveShared = decidedBy([overrides, agentsFiles]);
+  const flowFiles = (place: Repository) =>
+    repositoryFlows(place).length > 1 || hasFlowFile({ ...place, flow: "default" });
   const shared = repository
     ? readRepositoryFile(
-        wanted.filter((k) => repositoryKeys.includes(k) && !aboveShared(k)),
+        wanted.filter(
+          (k) =>
+            repositoryKeys.includes(k) &&
+            !aboveShared(k) &&
+            !(k === "max_rounds" && flowFiles(repository)),
+        ),
         repository,
       )
     : {};
   const decided = decidedBy([overrides, agentsFiles, shared]);
   const fromYours = wanted.filter((k) => yourKeys.includes(k) && !decided(k));
   // Only the roles asked for are read, so a mistake in one role's settings stops only its own
-  // agents.
+  // agents. `builder` and `reviewer` are the roles the task's flow runs in the build and review
+  // stages, which are those two unless the flow names one of the repository's own, such as
+  // tester, whose settings are then read.
+  const runs = { lead: "lead", builder: "builder", reviewer: "reviewer" };
+  if (repository && groups.some((group) => group === "builder" || group === "reviewer")) {
+    const stages = flowRoles(repository);
+    runs.builder = stages.build;
+    runs.reviewer = stages.review;
+  }
   const roles: Partial<Record<RoleName, Role>> = {};
   for (const name of ["lead", "builder", "reviewer"] as const)
-    if (groups.some((group) => group === name)) roles[name] = roleOf(name, repository);
+    if (groups.some((group) => group === name)) roles[name] = roleOf(name, runs[name], repository);
   return mergeSettings([overrides, agentsFiles, shared, readYourFile(fromYours)], roles);
 }
 
@@ -261,24 +287,31 @@ function sayIn(data: unknown, path: string[], problem: string): Say {
 // line, which goes over the layer's own harness and model for every role. Throws, naming the
 // file and where in it, when a harness or model that changes the role isn't valid. One that
 // can't change it, such as one your override replaces, stops nothing.
-function roleOf(name: RoleName, repository: Repository | undefined): Role {
+// `run` is the role that runs as `name`, which differs for a flow that names one of the
+// repository's own, such as tester for the builder. Its roles: lines and its role file then
+// count, and the old builder: and reviewer: lines, which are the built-in roles', don't.
+function roleOf(name: RoleName, run: string, repository: Repository | undefined): Role {
   const says: Say[] = [];
+  // The old line for the role in a file, which counts only for the built-in role it names.
+  const line = (data: unknown, problem: string): Say[] =>
+    run === name ? [sayIn(data, [name], problem)] : [];
   const yourFile = `${join(configDir(), "config.yaml")} isn't valid`;
   const yours = yourConfig();
   if (repository) {
     const entry = overrideEntry(repository);
     const problem = overrideProblem(repository);
-    says.push(sayIn(entry, ["roles", name], problem), sayIn(entry, [name], problem), {
+    says.push(sayIn(entry, ["roles", run], problem), ...line(entry, problem), {
       ...sayIn(entry, [], problem),
       everyRole: true,
     });
-    // The role file's frontmatter, whose keys are checked as the file is read.
-    const role = `.agents/roles/${name}.md in ${repository.owner}/${repository.repo} isn't valid`;
-    says.push(sayIn(repositoryRole(name, repository).frontmatter, [], role));
+    // The role file's frontmatter, whose keys are checked as the file is read. It is the file of
+    // the role that runs.
+    const role = `.agents/roles/${run}.md in ${repository.owner}/${repository.repo} isn't valid`;
+    says.push(sayIn(repositoryRole(run, repository).frontmatter, [], role));
     const shared = repositoryData(repository);
-    says.push(sayIn(shared, [name], "the repository's skelcrew.yaml isn't valid"));
+    says.push(...line(shared, "the repository's skelcrew.yaml isn't valid"));
   }
-  says.push(sayIn(yours, ["roles", name], yourFile), sayIn(yours, [name], yourFile));
+  says.push(sayIn(yours, ["roles", run], yourFile), ...line(yours, yourFile));
   const top = sayIn(yours, [], yourFile);
   // A bad value stops the role only when the role would differ with it as some valid value.
   // The first such one, from the top, is refused. Should none change the role on its own,

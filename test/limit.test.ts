@@ -267,6 +267,7 @@ const thread = (change: Partial<Thread>): Thread => ({
   merge_waits: null,
   merge_noted: null,
   agents: null,
+  flow: "default",
   review_post: null,
   turn_ended: false,
   submitted: false,

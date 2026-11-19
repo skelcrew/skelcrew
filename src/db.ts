@@ -90,7 +90,8 @@ const threadColumns = {
 // none, and null only in a row from before Skelcrew kept it. `review_post` is Skelcrew's review
 // on the PR, as JSON: the PR, the review's ID and what it last said, so each round edits it.
 // `agents` is the git tree of the .agents/ you had approved when the task started, which its
-// agents keep, or null for the built-in roles.
+// agents keep, or null for the built-in roles. `flow` is the flow the task runs from start to end,
+// `default` unless it was started with another.
 export const taskColumns = {
   title: "TEXT",
   body: "TEXT",
@@ -126,6 +127,7 @@ export const taskColumns = {
   issue_link: "TEXT",
   closes: "TEXT",
   agents: "TEXT",
+  flow: "TEXT NOT NULL DEFAULT 'default'",
 };
 
 // Marks each done task merged when its thread's log says its work ended by a merge, for tasks
@@ -361,7 +363,8 @@ function prepareTables(db: Database): void {
   // daemon doesn't bring its lead back until you open it again. `lead_state` is what its lead
   // is doing, as a thread's `state` says for its builder. `agents_noted` is the tree of an
   // .agents/ you haven't approved that the lead was told of, or `none` for one removed, so it is
-  // told once.
+  // told once. `lead_flows` is whether the lead knows of flows, from the instructions it started
+  // with or a note, so a lead already running when Skelcrew learned of them is told once.
   const repositoryColumns = {
     open_issues: "INTEGER NOT NULL DEFAULT 0",
     open_prs: "INTEGER NOT NULL DEFAULT 0",
@@ -376,6 +379,7 @@ function prepareTables(db: Database): void {
     tab_closed: "INTEGER NOT NULL DEFAULT 0",
     lead_state: "TEXT",
     agents_noted: "TEXT",
+    lead_flows: "INTEGER NOT NULL DEFAULT 0",
   };
   // SQLite has no ADD COLUMN IF NOT EXISTS, so each column is looked up first.
   for (const [column, type] of Object.entries(repositoryColumns))

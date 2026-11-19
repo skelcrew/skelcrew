@@ -202,6 +202,8 @@ export const Thread = z.object({
   // keep to the end, though you approve another meanwhile. Null for the built-in roles, as
   // every task had before Skelcrew read .agents/.
   agents: z.string().nullable(),
+  // The flow the task runs, from start to end: `default`, or a flow file of its .agents/.
+  flow: z.string(),
   // Skelcrew's review on the task's PR, or null before its first. It names its PR, so a PR
   // opened again after sc rm gets a review of its own.
   review_post: z

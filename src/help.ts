@@ -83,6 +83,7 @@ const sections: [string, [string, string][]][] = [
       ["--json", "Output for tools"],
       ["--all", "Done threads too, on ps, and ended tasks, on ls"],
       ['--short "<words>"', "A thread's short title for the sidebar, on start"],
+      ["--flow <name>", "The flow a task runs, from .agents/flows/, on start"],
       ["--from <remote>", "The repository you're in"],
       ["--version", "Which release of Skelcrew this is"],
     ],

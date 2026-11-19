@@ -5,7 +5,8 @@
 import type { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
 import { z } from "zod";
-import { agentsOnDefaultBranch, agentsWaiting } from "../approved-agents.ts";
+import { hasSession } from "../agents/sessions.ts";
+import { agentsOnDefaultBranch, agentsWaiting, markApproved } from "../approved-agents.ts";
 import { roundLimit } from "../config.ts";
 import type { Repository } from "../db.ts";
 import { cloneDir } from "../paths.ts";
@@ -31,6 +32,7 @@ import {
 } from "./decide.ts";
 import { endThread, removing, tellBuilder, tellingEvents } from "./events.ts";
 import { fetchInto, onRemote } from "./git.ts";
+import { approvedFlowsTold, leadOf } from "./lead.ts";
 import { mergeIfReady } from "./merging.ts";
 import { noteForLead, typeLeadNotes } from "./messages.ts";
 import { forgeKnown, fullNameIs, hasNoCommits, refreshClone, repositories } from "./repo.ts";
@@ -335,6 +337,31 @@ function noteUnapprovedAgents(db: Database, sessions: string, repository: Reposi
     );
 }
 
+// Tells a lead that was already running when Skelcrew learned of flows what its instructions
+// now say of them, once, as a running lead keeps the instructions it started with until its
+// session starts again. A lead that starts later gets them in its instructions, which marks it
+// told, so it gets no note. A repository with no lead running is left untold until one is.
+async function tellLeadOfFlows(
+  db: Database,
+  sessions: string,
+  repository: Repository,
+): Promise<void> {
+  const where = "WHERE owner = ? AND repo = ?";
+  const row = db
+    .query(`SELECT lead_flows FROM repositories ${where}`)
+    .get(repository.owner, repository.repo);
+  const told = z.object({ lead_flows: z.coerce.boolean() }).nullable().parse(row);
+  if (told === null || told.lead_flows) return;
+  if (!(await hasSession(sessions, leadOf(db, repository.owner, repository.repo).name))) return;
+  db.run(`UPDATE repositories SET lead_flows = 1 ${where}`, [repository.owner, repository.repo]);
+  noteForLead(
+    db,
+    sessions,
+    repository,
+    `Skelcrew was updated: each thread now runs a flow, default unless sc start --flow <name> names another. ${approvedFlowsTold(cloneDir(repository.owner, repository.repo))} When the approved .agents/ has flows other than default, pick the one that fits each thread you start or propose, read from there, not from .agents/flows/ in the clone, and add --flow <name> to sc start. Whenever you pick one other than default, tell the human, naming the flow and why. A thread keeps its flow from start to end. A thread started from the skelcrew label runs default, and you can switch it with sc start app-12 --flow <name> until its builder first submits, unless the flow builds with another role, which is another agent: then start it over with sc rm app-12 and sc start app-12 --flow <name>.`,
+  );
+}
+
 // Polls one repository. Asks its tracker and its forge what changed since the `next` each
 // plugin last gave, kept in `nexts`, or for everything open when there is none. Brings
 // Skelcrew's copy up to date, taking tasks only from its tracker and PRs only from its forge,
@@ -379,12 +406,21 @@ async function pollRepository(
     // leaves the clone as it was until the next poll, and holds up nothing else. A repository
     // with no clone yet is left to the daemon's start, sc and a thread's setup, which make
     // it: a remote that can't be cloned would otherwise be tried at every poll.
-    if (existsSync(cloneDir(owner, repo)))
+    if (existsSync(cloneDir(owner, repo))) {
       await refreshClone(db, repository)
         .then(() => noteUnapprovedAgents(db, sessions, repository))
         .catch((error) =>
           console.log(`couldn't update Skelcrew's clone of ${owner}/${repo}: ${errorText(error)}`),
         );
+      // What you approved is in the clone already, so the lead learns how to read it even while
+      // the remote can't be reached, rather than start every thread on default meanwhile.
+      try {
+        markApproved(repository);
+        await tellLeadOfFlows(db, sessions, repository);
+      } catch (error) {
+        console.log(`couldn't tell ${owner}/${repo}'s lead of its flows: ${errorText(error)}`);
+      }
+    }
   }
   // With the copy up to date, start labeled tasks, then act on each thread: by its PR with a
   // forge, or by its branch without one, or without a PR.

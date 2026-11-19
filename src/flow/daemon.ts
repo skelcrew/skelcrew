@@ -13,8 +13,9 @@ import {
   readSession,
   stillRunning,
 } from "../agents/sessions.ts";
-import { leadMayArmMerges, repositoryCommands } from "../config.ts";
+import { checkFlow, leadMayArmMerges, repositoryCommands } from "../config.ts";
 import { finishUpgrade, moveToTasks, moveTurnEnded, openDb, type Repository } from "../db.ts";
+import { flowRoles } from "../flows.ts";
 import { setupDone } from "../machine/setup.ts";
 import { keepUpToDate } from "../machine/update.ts";
 import { cloneDir, daemonCodeFile, daemonSocket, reviewSocket, threadSocket } from "../paths.ts";
@@ -76,6 +77,7 @@ import {
   builderSession,
   findThread,
   liveThreads,
+  readThread,
   record,
   type Thread,
   threadName,
@@ -283,6 +285,32 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
     } catch (error) {
       failThread(db, sessions, thread, error);
     }
+  };
+  // Switches a thread at work, or a stopped one about to come back, to another flow, and gives it a short title too when one comes
+  // with it. A task started from a label runs the default flow, and the lead can switch it to
+  // one that fits better, but only until its builder first submits: after that, the review and
+  // its round limit are under way, so the task keeps its flow to the end. Read again here, as
+  // the builder may have submitted since the caller looked. The builder is already running, or
+  // starting, on its flow's build role, with that role's instructions, harness and model, so a
+  // flow that builds with another role is refused: it would run a builder it doesn't describe.
+  // The round limit it would run with is read too, so a bad one refuses the switch.
+  const switchFlow = (at: Thread, flow: string, short?: string) => {
+    const now = readThread(db, at.folder);
+    const name = threadName(db, now);
+    // Any sign of a submit counts: a review under way sets `reviewing` and clears `submitting`
+    // before it sets `review_at`, and a repository with no forge has no PR.
+    const submitted = [now.pr, now.submitting, now.reviewing, now.review_at, now.review_round];
+    if (submitted.some((sign) => sign !== null) || now.rounds > 0)
+      throw new Error(`${name} keeps the flow ${now.flow}, as its builder has submitted already.`);
+    const repository = findRepository(db, `${now.owner}/${now.repo}`);
+    checkFlow(now, repository.name, flow);
+    const building = flowRoles(now).build;
+    const wanted = flowRoles({ ...now, flow }).build;
+    if (wanted !== building)
+      throw new Error(
+        `${name} keeps the flow ${now.flow}: its builder already runs as ${building}, and ${flow} builds as ${wanted}. To run ${flow}, start it over: sc rm ${name}, then sc start ${name} --flow ${flow}.`,
+      );
+    record(db, now.folder, { flow, ...(short ? { short } : {}) }, `given the flow ${flow}`);
   };
   // Brings back a stopped thread's builder for sc start, with --resume on its last session
   // in the same clone, then carries on the round its stop cut short, as after a restart.
@@ -504,19 +532,33 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         // A thread the task already has is brought back or let past its round limit, with no
         // poll, as nothing new is read from the tracker.
         const before = threadOn(db, request.repo, request.task);
+        const atWork = before !== null && ["working", "waiting"].includes(before.status);
+        // Another flow for a thread at work switches it, as switchFlow allows. The flow it runs
+        // already is no switch, so sc start goes on as without one, such as past the round limit.
+        const switching =
+          before !== null && request.flow !== undefined && request.flow !== before.flow;
+        if (before && atWork && switching && request.flow) {
+          switchFlow(before, request.flow, request.short);
+          return { started: `${threadName(db, before)} now runs the flow ${request.flow}.` };
+        }
         // A short title for a thread already at work, such as one started from GitHub, only
         // names it for the sidebar. Its builder goes on as it was, and nothing else changes.
-        if (before && request.short && ["working", "waiting"].includes(before.status)) {
+        if (before && request.short && atWork) {
           record(db, before.folder, { short: request.short }, "given a short title");
           return { started: `Gave ${threadName(db, before)} the short title "${request.short}".` };
         }
+        // A stopped thread switches to another flow named here as one at work does, before it
+        // comes back, and is refused, staying stopped, where switchFlow refuses.
+        if (before?.status === "stopped" && switching && request.flow)
+          switchFlow(before, request.flow);
         const choice = startChoice(before);
         if (before && choice === "bring back") {
           const name = threadName(db, before);
           resume(before, request.short);
           // Its stop took you off its issue, so starting it again puts you back.
           assignIssue(db, before, true);
-          return { started: `Started ${name} again: its builder is back where it was.` };
+          const on = switching ? ` on the flow ${request.flow}` : "";
+          return { started: `Started ${name} again${on}: its builder is back where it was.` };
         }
         if (before && choice === "go on") {
           goOn(db, sessions, before.folder);
@@ -539,10 +581,13 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
           if (!existsSync(cloneDir(owner, repo))) await refreshClones(db);
           await (await polling.promise)(`${owner}/${repo}`);
           // A poll already past its labels as this began may have started the thread itself. A
-          // short title given here still goes on that thread, so it isn't lost.
+          // short title and flow given here still go on that thread, so they aren't lost, as long
+          // as its builder hasn't submitted meanwhile.
           const started = threadOn(db, request.repo, request.task);
           if (!before && started) {
-            if (request.short)
+            if (request.flow && request.flow !== started.flow)
+              switchFlow(started, request.flow, request.short);
+            else if (request.short)
               record(db, started.folder, { short: request.short }, "given a short title");
             return { started: `Started ${threadName(db, started)}.` };
           }

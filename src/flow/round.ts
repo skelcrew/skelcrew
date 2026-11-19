@@ -5,6 +5,7 @@ import type { Database } from "bun:sqlite";
 import { z } from "zod";
 import { type HarnessName, harnessNamed } from "../agents/harness.ts";
 import { repositoryCommands, reviewConfig, reviewLimit, roundLimit } from "../config.ts";
+import { flowRoles } from "../flows.ts";
 import { cloneDir, reviewSocket } from "../paths.ts";
 import { editReview, failedLog, forgeOf, openPr, postReview, setStatus } from "../plugins/ask.ts";
 import { repositoryRole } from "../roles.ts";
@@ -420,8 +421,9 @@ async function reviewRound(
   };
   const plan = {
     given: {
-      // The reviewer's instructions come from the .agents/ the task started with.
-      instructions: repositoryRole("reviewer", thread).instructions,
+      // The review stage's role, from the task's flow, and its instructions come from the
+      // .agents/ the task started with.
+      instructions: repositoryRole(flowRoles(thread).review, thread).instructions,
       commit: sha,
       signal,
       limit: reviewMinutes * 60_000,

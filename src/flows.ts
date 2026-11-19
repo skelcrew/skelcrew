@@ -3,18 +3,37 @@
 // you approved it.
 import { parse } from "yaml";
 import { z } from "zod";
-import { agentsFile, approvedAgents } from "./approved-agents.ts";
+import { agentsFile, agentsFolder, approvedAgents } from "./approved-agents.ts";
 import defaultFlow from "./defaults/flows/default.yaml" with { type: "text" };
 
-// What a flow file may hold: today's stages and their one setting, the round limit. Anything
+// A flow's name, which names its file in .agents/flows/, so it can't hold a slash or start with a
+// dot and reach another file.
+export const FlowName = z
+  .string()
+  .regex(/^[a-z0-9][a-z0-9_-]*$/i, "a flow's name is letters, digits, - and _");
+
+// The role a stage runs: its built-in one, or a role of the repository's own, named as its file
+// in .agents/roles/ is, so the name can't reach another file either. The lead and the other
+// stage's built-in role are refused: the lead belongs to the repository, not a task, and the
+// builder's and reviewer's instructions are written for their own stage.
+const stageRole = (own: string, other: string) =>
+  z
+    .string()
+    .regex(/^[a-z0-9][a-z0-9_-]*$/i, "a role's name is letters, digits, - and _")
+    .refine(
+      (role) => role !== "lead" && role !== other,
+      `the stage runs ${own} or a role of its own`,
+    )
+    .optional();
+
+// What a flow file may hold: today's stages, the role each runs, and the round limit. Anything
 // else is refused rather than ignored, so a setting put there by mistake doesn't look as if it
-// counts. Each stage runs today's role, so a flow may name only that one: a builder stage on
-// the reviewer, or a role with no agents behind it, would otherwise read as if it counted.
+// counts.
 const Flow = z.strictObject({
-  build: z.strictObject({ role: z.literal("builder").optional() }).nullish(),
+  build: z.strictObject({ role: stageRole("builder", "reviewer") }).nullish(),
   review: z
     .strictObject({
-      role: z.literal("reviewer").optional(),
+      role: stageRole("reviewer", "builder"),
       rounds: z.number().int().positive().optional(),
     })
     .nullish(),
@@ -55,19 +74,89 @@ export function builtInRounds(): number {
   return rounds;
 }
 
-// Returns the round limit a repository's own default flow sets, or nothing when it has no flow
-// file or the file names none. The .agents/ tree counts as for a role: a task's own, null for a
-// task on the built-in files, or without one the version you approved. Throws, naming the file,
-// when it isn't valid, rather than run a task on a flow it doesn't describe. With
-// `withoutRounds`, when your override decides the round limit, the file is still checked, as its
-// stages still say which roles run, but its rounds are left out and nothing is returned.
+// Returns the flows a repository's tasks can run: `default`, which always exists, then each
+// flow file of its .agents/ tree, by name. The tree counts as for a role: a task's own, null for
+// the built-in files, or without one the version you approved.
+export function repositoryFlows(place: {
+  owner: string;
+  repo: string;
+  agents?: string | null;
+}): string[] {
+  const tree = place.agents === undefined ? approvedAgents(place) : place.agents;
+  const files = tree === null ? [] : agentsFolder(place, tree, "flows");
+  const named = files.flatMap((file) => {
+    const name = file.endsWith(".yaml") ? file.slice(0, -".yaml".length) : "";
+    return FlowName.safeParse(name).success && name !== "default" ? [name] : [];
+  });
+  return ["default", ...named.sort()];
+}
+
+// Returns the roles a task's stages run, from its flow's file: the built-in default flow's when
+// the flow is `default` and the repository has no file for it. A role other than the built-in
+// one must have its file in the same .agents/ tree, or the flow is refused, naming it, rather
+// than run a stage on instructions nobody wrote. The rounds are left unread, so a bad one stops
+// only what reads the round limit.
+export function flowRoles(place: {
+  owner: string;
+  repo: string;
+  agents?: string | null;
+  flow?: string;
+}): { build: string; review: string } {
+  const tree = place.agents === undefined ? approvedAgents(place) : place.agents;
+  const flow = place.flow ?? "default";
+  const path = `flows/${flow}.yaml`;
+  const text = tree === null ? null : agentsFile(place, tree, path);
+  if (text === null && flow !== "default")
+    throw new Error(`${place.owner}/${place.repo} has no flow ${flow} in its .agents/flows/`);
+  const where = `.agents/${path} in ${place.owner}/${place.repo}`;
+  let read: Flow;
+  try {
+    read = readFlow(text ?? builtInFlowText, true);
+  } catch (error) {
+    throw new Error(`${where}: ${error instanceof Error ? error.message : error}`);
+  }
+  const roles = { build: read.build?.role ?? "builder", review: read.review?.role ?? "reviewer" };
+  for (const role of [roles.build, roles.review])
+    if (role !== "builder" && role !== "reviewer") {
+      const file = tree === null ? null : agentsFile(place, tree, `roles/${role}.md`);
+      if (file === null)
+        throw new Error(
+          `${where}: it names the role ${role}, which has no .agents/roles/${role}.md`,
+        );
+    }
+  return roles;
+}
+
+// Returns whether the task's flow, `default` when none is given, has a file of its own in the
+// repository's .agents/ tree, which counts as for repositoryFlows, so an error can name it.
+export function hasFlowFile(place: {
+  owner: string;
+  repo: string;
+  agents?: string | null;
+  flow?: string;
+}): boolean {
+  const tree = place.agents === undefined ? approvedAgents(place) : place.agents;
+  return tree !== null && agentsFile(place, tree, `flows/${place.flow ?? "default"}.yaml`) !== null;
+}
+
+// Returns the round limit a repository's own flow sets, or nothing when the flow is `default`
+// with no file of its own, or the file names none. The flow is the task's, `default` when none
+// is given. The .agents/ tree counts as for a role: a task's own, null for a task on the
+// built-in files, or without one the version you approved. Throws, naming the file, when it
+// isn't valid, or when a flow other than `default` has no file there, rather than run a task on
+// a flow it doesn't describe. With `withoutRounds`, when your override decides the round limit,
+// the file is still checked, as its stages still say which roles run, but its rounds are left
+// out and nothing is returned.
 export function repositoryRounds(
-  place: { owner: string; repo: string; agents?: string | null },
+  place: { owner: string; repo: string; agents?: string | null; flow?: string },
   withoutRounds = false,
 ): number | undefined {
   const tree = place.agents === undefined ? approvedAgents(place) : place.agents;
-  const path = "flows/default.yaml";
+  const flow = place.flow ?? "default";
+  const path = `flows/${flow}.yaml`;
   const text = tree === null ? null : agentsFile(place, tree, path);
+  if (text === null && flow !== "default")
+    throw new Error(`${place.owner}/${place.repo} has no flow ${flow} in its .agents/flows/`);
   if (text === null) return undefined;
   try {
     return readFlow(text, withoutRounds).review?.rounds;

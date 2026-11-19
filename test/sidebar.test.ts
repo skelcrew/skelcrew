@@ -986,6 +986,7 @@ const state: Thread = {
   merge_waits: null,
   merge_noted: null,
   agents: null,
+  flow: "default",
   review_post: null,
 };
 const word = (more: Partial<Thread>) => threadWord({ ...state, ...more }, 3);
