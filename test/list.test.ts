@@ -8,8 +8,9 @@ import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import { type Labels, startSession } from "../src/agents/sessions.ts";
-import { drawList } from "../src/list/layout.ts";
-import type { Row } from "../src/list/rows.ts";
+import type { ListStage } from "../src/flow/stage.ts";
+import { drawList, keysFor, tabAt } from "../src/list/layout.ts";
+import { type Row, stageHeadings } from "../src/list/rows.ts";
 import { fakePlugin, itemSql, read, source, threadSql, until as wait } from "./harness.ts";
 
 // Longer than the waits below, so a test that fails says what it waited for.
@@ -27,6 +28,8 @@ const passed = [{ name: "test", id: "1", state: "passed" }];
 // What the stand-in daemon answers when asked for a lead, and to merge.
 let leadAnswer: object = {};
 let mergeAnswer: object = { merged: "Merged." };
+// The clock the rows are read at: 19 November 2026, 15:00, in this machine's time zone.
+const now = new Date(2026, 10, 19, 15, 0).getTime();
 
 const env = () => ({ ...process.env, HOME: home, XDG_RUNTIME_DIR: join(home, "run") });
 
@@ -42,7 +45,8 @@ openDb().run(${JSON.stringify(statements)});`;
 // app has the fake plugin as its tracker and forge, and its lead is the one Skelcrew kept from
 // before, so its session is named lead. site is a second repository, with a thread that needs
 // you. In app: issue 31 has no thread, app-7 works, app-12 asks a question, app-9 stopped, and
-// app-14 is approved on PR 41, whose checks a poll found green, so it is ready for review.
+// app-14 is approved on PR 41, whose checks a poll found green, so it is ready for review. app-7
+// started 5 minutes before the rows' clock, and app-9 last changed a minute before it.
 beforeEach(() => {
   home = realpathSync(mkdtempSync(join(tmpdir(), "skel-list-test-")));
   agents = `skel-test-${process.pid}-${Math.random().toString(36).slice(2)}`;
@@ -56,9 +60,9 @@ beforeEach(() => {
 INSERT INTO repositories (name, owner, repo) VALUES ('site', 'simon', 'site');
 ${itemSql("app", "task", 31, "Export as CSV", "2026-11-05T10:00:00Z")}
 ${itemSql("app", "pr", 41, "Fix the export header", "2026-11-06T10:00:00Z", { head: approved, checks: passed })}
-${threadSql({ task: "7", title: "Login redirect", harness: "claude", started: Date.now() - 300_000 })}
+${threadSql({ task: "7", title: "Login redirect", harness: "claude", started: now - 300_000 })}
 ${threadSql({ task: "12", title: "Rate limit the API", harness: "codex", asking: 1, needs_you: 1 })}
-${threadSql({ task: "9", title: "Old work", status: "stopped" })}
+${threadSql({ task: "9", title: "Old work", status: "stopped", changed: now - 60_000 })}
 ${threadSql({ task: "14", title: "Fix the export header", status: "waiting", needs_you: 1, verdict: "approve", checks: "passing", ci_passed: 1, ci_seen: 1, pr: 41, review_round: 1, reviewed_commit: approved })}
 INSERT INTO pr_agents (owner, repo, pr, head, base, changed)
   VALUES ('simon', 'app', '41', '${approved}', 'main', 0);
@@ -79,12 +83,12 @@ afterEach(() => {
   rmSync(home, { recursive: true, force: true });
 });
 
-// Returns app's rows as the list reads them, with `bin` a folder of programs found before the
-// real ones.
+// Returns app's rows as the list reads them at the rows' clock, with `bin` a folder of programs
+// found before the real ones.
 function rows(bin = ""): Row[] {
   const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
 import { listRows } from ${JSON.stringify(source("list/rows.ts"))};
-console.log(JSON.stringify(listRows(openDb(), { owner: "simon", repo: "app" }, Date.now())));`;
+console.log(JSON.stringify(listRows(openDb(), { owner: "simon", repo: "app" }, ${now})));`;
   const path = bin ? `${bin}:${process.env.PATH ?? ""}` : (process.env.PATH ?? "");
   const run = Bun.spawnSync([process.execPath, "-e", code], {
     env: { ...env(), PATH: path },
@@ -94,58 +98,153 @@ console.log(JSON.stringify(listRows(openDb(), { owner: "simon", repo: "app" }, D
   return JSON.parse(run.stdout.toString());
 }
 
-test("the lead comes first, then issues, then working tasks with those that need you first, then those ready for review", () => {
-  const shown = rows().map((row) => [row.part, row.name, row.title, row.says]);
+test("the lead comes first, then each stage's tasks, those that need you first", () => {
+  const shown = rows().map((row) => [row.part, row.name, row.title, row.says, row.pr, row.when]);
   // The approved task first on its own, so a failure says in one line where it went and why.
   const ready = shown.find(([, name]) => name === "app-14");
-  expect(ready?.join(" | ")).toBe(
-    "ready | app-14 | Fix the export header | #41 · approved · CI passed",
-  );
+  expect(ready?.join(" | ")).toBe("ready | app-14 | Fix the export header | approved | #41 | ");
   expect(shown).toEqual([
-    ["lead", "lead", "", "running · claude"],
-    ["issue", "app-31", "Export as CSV", ""],
-    ["working", "app-12", "Rate limit the API", "needs you: question · codex"],
-    ["working", "app-9", "Old work", "stopped · claude"],
-    ["working", "app-7", "Login redirect", "working · claude · 5m"],
-    ["ready", "app-14", "Fix the export header", "#41 · approved · CI passed"],
+    ["lead", "lead", "claude", "running", "", ""],
+    ["backlog", "app-31", "Export as CSV", "", "", "5 Nov"],
+    ["building", "app-12", "Rate limit the API", "question", "", ""],
+    ["building", "app-9", "Old work", "stopped", "", "14:59"],
+    ["building", "app-7", "Login redirect", "working", "", "14:55"],
+    ["ready", "app-14", "Fix the export header", "approved", "#41", ""],
   ]);
 });
 
-// Enter on a task ready for review opens its PR, so a question there would be out of reach.
-test("an approved task whose builder asks a question stays under Working, to attach to", () => {
+// The stage is where the work is, and needs you is only a mark, so a question on an approved task
+// keeps it under Ready, where Enter reaches its builder.
+test("an approved task whose builder asks a question stays under Ready, marked as needing you", () => {
   sql("UPDATE threads SET asking = 1 WHERE folder = 'app-14';");
   const row = rows().find((candidate) => candidate.name === "app-14");
-  expect(row).toMatchObject({ part: "working", says: "needs you: question · claude", merge: null });
+  expect(row).toMatchObject({
+    part: "ready",
+    says: "question",
+    needsYou: true,
+    merge: null,
+  });
   expect(row?.session).toBe("app-14");
 });
 
-test("a row shows its armed merge when ready and what it waits on, and a ready one shows it too", () => {
+test("each stage's heading counts its tasks and those that need you, open or closed", () => {
+  sql("UPDATE threads SET asking = 1 WHERE folder = 'app-14';");
+  expect(stageHeadings(rows(), new Set<ListStage>(["building"]))).toEqual([
+    { stage: "backlog", count: 1, needYou: 0, open: false },
+    { stage: "building", count: 3, needYou: 1, open: true },
+    { stage: "reviewing", count: 0, needYou: 0, open: false },
+    { stage: "checks", count: 0, needYou: 0, open: false },
+    { stage: "ready", count: 1, needYou: 1, open: false },
+    { stage: "done", count: 0, needYou: 0, open: false },
+  ]);
+});
+
+// The copy of the forge drops a closed PR once its thread is done, so the task keeps the link.
+test("a merged task keeps its PR's link after the copy of the forge drops the PR", () => {
+  sql(
+    "UPDATE threads SET status = 'done' WHERE folder = 'app-14'; UPDATE tasks SET merged = 1 WHERE task = '14';",
+  );
+  const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
+import { prOf, saveItems } from ${JSON.stringify(source("flow/copy.ts"))};
+const db = openDb();
+saveItems(db, "simon", "app", [], ["pr"]);
+console.log(prOf(db, "simon", "app", 41) === null ? "dropped" : "kept");`;
+  const run = Bun.spawnSync([process.execPath, "-e", code], { env: env(), stderr: "pipe" });
+  expect(run.stderr.toString()).toBe("");
+  expect(run.stdout.toString()).toBe("dropped\n");
+  expect(rows().find((row) => row.name === "app-14")).toMatchObject({
+    part: "done",
+    link: "https://github.com/simon/app/pull/41",
+  });
+});
+
+// Starting a task over clears its PR, and the link saved for the earlier attempt's must not
+// stand in for the new attempt's, which has none yet.
+test("a task with no PR this attempt opens no saved link from an earlier one", () => {
+  sql(
+    `UPDATE tasks SET pr = NULL, pr_link = 'https://github.com/simon/app/pull/1' WHERE task = '14';`,
+  );
+  expect(rows().find((row) => row.name === "app-14")?.link).toBeNull();
+});
+
+// A task that changed lately is what you are likely to look for, whenever it started.
+test("within a stage the task that changed last comes first, after those that need you", () => {
+  sql(`UPDATE threads SET changed = ${now - 30_000} WHERE folder = 'app-7';`);
+  const building = rows().filter((row) => row.part === "building");
+  expect(building.map((row) => row.name)).toEqual(["app-12", "app-7", "app-9"]);
+});
+
+test("tasks under review and waiting on checks show in their own stages", () => {
+  sql(`${threadSql({ task: "15", title: "Under review", status: "waiting", reviewing: "abc", pr: 45 })}
+${threadSql({ task: "16", title: "Approved", status: "waiting", verdict: "approve", checks: "pending", pr: 46 })}`);
+  const shown = rows().map((row) => [row.part, row.name, row.says]);
+  expect(shown).toContainEqual(["reviewing", "app-15", "reviewing"]);
+  expect(shown).toContainEqual(["checks", "app-16", "checks"]);
+});
+
+// The clock is 15:00 on 19 November. Ended tasks are saved as merged or closed, each with when
+// it last changed.
+test("Done shows the tasks that ended today, or the last ten when fewer ended today", () => {
+  const hour = 3_600_000;
+  // Returns SQL for tasks from `first` on, ended an hour apart, the first `back` hours ago.
+  const ended = (first: number, count: number, back: number) =>
+    Array.from({ length: count }, (_, i) =>
+      threadSql({
+        task: String(first + i),
+        title: `Ended ${first + i}`,
+        status: "done",
+        merged: i % 2 === 0 ? 1 : 0,
+        pr: first + i,
+        changed: now - (back + i) * hour,
+      }),
+    ).join("\n");
+  // Three today and twelve on earlier days: the three, then the latest seven before them.
+  sql(`${ended(100, 3, 1)}\n${ended(200, 12, 24)}`);
+  const done = () => rows().filter((row) => row.part === "done");
+  expect(done().map((row) => row.name)).toEqual([
+    ...["app-100", "app-101", "app-102"],
+    ...["app-200", "app-201", "app-202", "app-203", "app-204", "app-205", "app-206"],
+  ]);
+  expect(done()[0]).toMatchObject({
+    says: "merged",
+    pr: "#100",
+    when: "14:00",
+    mark: { sign: "○", colour: "dim" },
+    needsYou: false,
+    session: null,
+  });
+  expect(done()[1]?.says).toBe("closed");
+  expect(done()[3]).toMatchObject({ pr: "#200", when: "18 Nov" });
+  // Twelve today: every one of them, and none from before.
+  sql(ended(300, 9, 4));
+  expect(done()).toHaveLength(12);
+  expect(done().every((row) => /^\d\d:\d\d$/.test(row.when))).toBe(true);
+  // Each takes one line: its mark, name and title, then when it ended, lined up.
+  const lines = drawn(0, 40, 80, ["done"]).map((line) => line.trimEnd());
+  expect(lines).toContain("   ○ app-100  Ended 100  14:00");
+  expect(lines).toContain("   ○ app-308  Ended 308  03:00");
+});
+
+// A row stays short enough to read across: a merge when ready or messages waiting are for sc show.
+test("a row says one short word, with no merge when ready or messages waiting after it", () => {
   sql(`UPDATE threads SET merge_plan = 'armed', merge_waits = 'its checks' WHERE folder = 'app-7';
-UPDATE threads SET merge_plan = 'armed' WHERE folder = 'app-14';`);
-  const says = (name: string) => rows().find((row) => row.name === name)?.says;
-  expect(says("app-7")).toBe("working · claude · 5m · merges when ready · waiting on its checks");
-  expect(says("app-14")).toBe("#41 · approved · CI passed · merges when ready");
-});
-
-test("a row counts the messages waiting for its builder, so a stuck delivery shows", () => {
-  sql(`INSERT INTO messages (folder, sender, text, said, at) VALUES
-  ('app-7', 'lead', 'one', 'one', 0), ('app-7', 'lead', 'two', 'two', 0);`);
+INSERT INTO messages (folder, sender, text, said, at) VALUES ('app-7', 'lead', 'one', 'one', 0);`);
   const row = rows().find((candidate) => candidate.name === "app-7");
-  expect(row?.says).toBe("working · claude · 5m · 2 messages waiting");
+  expect(row).toMatchObject({ says: "working", pr: "", when: "14:55" });
 });
 
-test("an issue whose work ended is back under Issues, to start again", () => {
+test("an issue whose work ended is back under Backlog, to start again", () => {
   sql("UPDATE threads SET status = 'done' WHERE folder = 'app-7';");
   sql(itemSql("app", "task", 7, "Login redirect", "2026-11-01T10:00:00Z"));
   expect(
     rows()
-      .filter((row) => row.part === "issue")
+      .filter((row) => row.part === "backlog")
       .map((row) => row.name),
   ).toEqual(["app-31", "app-7"]);
 });
 
 test("Enter asks to start an issue, and m to merge a ready task at the commit you saw", () => {
-  const [issue] = rows().filter((row) => row.part === "issue");
+  const [issue] = rows().filter((row) => row.part === "backlog");
   expect(issue?.start).toEqual({
     ask: "Start app-31? y/n",
     working: "Starting app-31…",
@@ -271,7 +370,9 @@ test("a row knows whether its agent runs, and the lead says what its hooks last 
   sql("UPDATE repositories SET lead_state = 'asking' WHERE repo = 'app';");
   const running = rows();
   expect(running.find((row) => row.name === "lead")).toMatchObject({
-    says: "asks you · claude",
+    says: "asks you",
+    title: "claude",
+    mark: { sign: "●", colour: "yellow" },
     colour: "yellow",
     running: true,
   });
@@ -279,7 +380,8 @@ test("a row knows whether its agent runs, and the lead says what its hooks last 
   expect(running.find((row) => row.name === "app-9")?.running).toBe(false);
   sql("UPDATE repositories SET tab_closed = 1 WHERE repo = 'app';");
   expect(rows().find((row) => row.name === "lead")).toMatchObject({
-    says: "stopped · claude",
+    says: "stopped",
+    mark: { sign: "○", colour: "dim" },
     running: false,
   });
 });
@@ -307,13 +409,28 @@ await runList("skel-test-${process.pid}-none", "simon/app");`;
   expect(printed()).toContain("Skelcrew 9.9.9 installed · restart to use it");
 });
 
+// Printed, the list is whole: a task at work takes three lines, and none may scroll out of sight.
+test("the list printed without a terminal has every task, however many are at work", () => {
+  const more = Array.from({ length: 30 }, (_, i) =>
+    threadSql({ task: String(50 + i), title: `Task ${50 + i}`, changed: now - i * 60_000 }),
+  );
+  sql(more.join("\n"));
+  const code = `import { runList } from ${JSON.stringify(source("list/list.ts"))};
+await runList("skel-test-${process.pid}-none", "simon/app");`;
+  const run = Bun.spawnSync([process.execPath, "-e", code], { env: env(), stderr: "pipe" });
+  const printed = run.stdout.toString();
+  for (let task = 50; task < 80; task += 1) expect(printed).toContain(`app-${task}  Task ${task}`);
+  expect(printed).toContain("app-14  Fix the export header");
+  expect(printed).toContain("app-31  Export as CSV");
+});
+
 // The list reads no settings file, so it knows a thread is past its round limit from the changes
 // the review held back for you.
 test("a task past its round limit says so, from the changes its review held", () => {
   sql(
     "UPDATE tasks SET rounds = 4, held = 'Rename it.' WHERE task = '7'; UPDATE threads SET needs_you = 1, status = 'waiting' WHERE folder = 'app-7';",
   );
-  expect(rows().find((row) => row.name === "app-7")?.says).toBe("needs you: round limit · claude");
+  expect(rows().find((row) => row.name === "app-7")?.says).toBe("round limit");
 });
 
 // A git that fails stands in for tmux and settings too: drawing must never need either.
@@ -344,32 +461,117 @@ const frame = {
     { name: "site", fullName: "simon/site", needYou: 1, colour: "yellow" as const, ready: 0 },
   ],
   notice: "",
-  bottom: "↑↓ move  ⏎ open  q/esc quit",
+  bottom: keysFor(undefined, 1),
   load: "cpu 12%",
 };
-const drawn = (here: number, height = 20, width = 80) =>
-  drawList(rows(), here, 0, frame, { width, height }).lines.map((line) => Bun.stripANSI(line));
+// Returns the list as drawn at the rows' clock, with only `open` stages showing their rows, as
+// the list keeps them, on the row at `here` among those that show.
+function drawnWith(
+  here: number,
+  frameShown: typeof frame,
+  size: { width: number; height: number },
+  open: ListStage[] = ["building"],
+) {
+  const all = rows();
+  const opened = new Set(open);
+  const shown = all.filter((row) => row.part === "lead" || opened.has(row.part));
+  return drawList(shown, stageHeadings(all, opened), here, 0, frameShown, size).lines;
+}
+const drawn = (here: number, height = 20, width = 80, open?: ListStage[]) =>
+  drawnWith(here, frame, { width, height }, open).map((line) => Bun.stripANSI(line));
 
-test("each part has its heading, the row you are on has ▸, and every line fits", () => {
-  const lines = drawn(2);
-  expect(lines[0]).toBe(` Skelcrew v0.6.0 · app${" ".repeat(50)}site •1 `);
-  const headings = lines.filter((line) => /^ [A-Z]\w/.test(line) && !line.includes("Skelcrew"));
-  expect(headings.map((line) => line.trim())).toEqual(["Issues", "Working", "Ready for review"]);
-  // The bottom line has the keys, and the load at its right end.
-  expect(lines.at(-1)).toBe(` ↑↓ move  ⏎ open  q/esc quit${" ".repeat(44)}cpu 12% `);
-  expect(lines.filter((line) => line.includes("▸"))).toEqual([
-    expect.stringMatching(/^ ▸ ● app-12 +Rate limit the API +needs you: question · codex$/),
+test("every stage has its heading with its counts, only open ones show rows, and every line fits", () => {
+  const lines = drawn(1, 24);
+  expect(lines[0]).toBe(" Skelcrew v0.6.0   app    site •1 ");
+  // The lead and each task at work take lines as the sidebar's rows do: mark, name and title,
+  // then the word, then a task's PR, CI and when it changed. So what it does sits under its title.
+  expect(lines.slice(2, 22).map((line) => line.trimEnd())).toEqual([
+    "   ○ lead    claude",
+    "     running",
+    "",
+    " 1 Backlog   1",
+    " 2 Building  3 · 1 needs you",
+    " ▸ ● app-12  Rate limit the API",
+    "     question",
+    "",
+    "   ○ app-9   Old work",
+    "     stopped",
+    "     14:59",
+    "   ○ app-7   Login redirect",
+    "     working",
+    "     14:55",
+    "",
+    " 3 Reviewing 0",
+    " 4 Checks    0",
+    " 5 Ready     1",
+    " 6 Done      0",
+    "",
   ]);
-  for (const line of lines) expect(Bun.stringWidth(line)).toBeLessThanOrEqual(80);
-  expect(lines).toHaveLength(20);
+  // The bottom line has the keys, and the load at its right end, short of the last column.
+  expect(lines.at(-1)).toBe(` ↑↓ move  ⏎ open  1-6 stages  q/esc quit${" ".repeat(32)}cpu 12%`);
+  // Nothing reaches the last column, where a terminal would wait to wrap.
+  for (const line of lines) expect(Bun.stringWidth(line)).toBeLessThanOrEqual(79);
+  expect(lines).toHaveLength(24);
+});
+
+test("an open stage shows its rows, and its heading is bright while a closed one is dim", () => {
+  const lines = drawn(1, 24, 80, ["backlog", "ready"]);
+  // A task in Backlog or Done takes one line, in columns: mark, name, title, when it changed.
+  expect(lines.slice(5, 16).map((line) => line.trimEnd())).toEqual([
+    " 1 Backlog   1",
+    " ▸ ○ app-31  Export as CSV  5 Nov",
+    "",
+    " 2 Building  3 · 1 needs you",
+    " 3 Reviewing 0",
+    " 4 Checks    0",
+    " 5 Ready     1",
+    "   ● app-14  Fix the export header",
+    "     approved",
+    "     #41 · CI passed",
+    "",
+  ]);
+  const coloured = drawnWith(1, frame, { width: 80, height: 24 }, ["backlog"]);
+  expect(coloured).toContain(" \x1b[90m1\x1b[22;39m \x1b[1mBacklog  \x1b[22;39m 1");
+  expect(coloured).toContain(
+    " \x1b[90m2\x1b[22;39m \x1b[90mBuilding \x1b[22;39m 3\x1b[38;5;221m · 1 needs you\x1b[22;39m",
+  );
+});
+
+test("a row's word is in its colour, its step and what follows it are dim, and its title is plain", () => {
+  const all = rows().map((row) =>
+    row.name === "app-7"
+      ? { ...row, step: "Editing rows.ts", pr: "#40", checks: "CI running" }
+      : row,
+  );
+  const shown = all.filter((row) => row.part === "lead" || row.part === "building");
+  const headings = stageHeadings(all, new Set<ListStage>(["building"]));
+  const size = { width: 80, height: 24 };
+  const { lines } = drawList(shown, headings, 1, 0, frame, size);
+  const at = lines.findIndex((line) => line.includes("app-7"));
+  expect(lines.slice(at, at + 3)).toEqual([
+    "   \x1b[1m○\x1b[22;39m app-7   Login redirect",
+    "     \x1b[1mworking\x1b[22;39m\x1b[90m · Editing rows.ts\x1b[22;39m",
+    "     \x1b[90m#40 · CI running · 14:55\x1b[22;39m",
+  ]);
+});
+
+// A wide terminal used to lose the last letter of whatever reached its right edge.
+test("a row as wide as the terminal stops short of its last column, cutting only its title", () => {
+  const long = "A title long enough to run past the right edge of any terminal here";
+  sql(`UPDATE tasks SET title = '${long}' WHERE task = '7';`);
+  for (const width of [60, 61, 80]) {
+    const lines = drawnWith(1, frame, { width, height: 24 }).map((line) => Bun.stripANSI(line));
+    const row = lines.find((line) => line.includes("app-7")) ?? "";
+    expect(Bun.stringWidth(row)).toBe(width - 1);
+    expect(row).toContain("app-7   A title");
+    expect(row).toEndWith("…");
+  }
 });
 
 test("on a narrow terminal every line fits, the row you are on and a question included", () => {
   const asking = { ...frame, bottom: "Merge app#41 into main? y/n, a question longer than this" };
   for (const width of [1, 5, 8, 9, 10, 20, 30, 45]) {
-    const lines = drawList(rows(), 2, 0, asking, { width, height: 20 }).lines.map((line) =>
-      Bun.stripANSI(line),
-    );
+    const lines = drawnWith(1, asking, { width, height: 20 }).map((line) => Bun.stripANSI(line));
     for (const line of lines) expect(Bun.stringWidth(line)).toBeLessThanOrEqual(width);
     // The row you are on shows its ▸ wherever there is room for it.
     if (width >= 3) expect(lines.filter((line) => line.includes("▸"))).toHaveLength(1);
@@ -383,16 +585,88 @@ test("another repository's badge counts what needs you in yellow and what is rea
     { name: "docs", fullName: "simon/docs", needYou: 0, colour: "yellow" as const, ready: 1 },
     { name: "site", fullName: "simon/site", needYou: 2, colour: "yellow" as const, ready: 1 },
   ];
-  const [top = ""] = drawList(rows(), 0, 0, { ...frame, tabs }, { width: 80, height: 20 }).lines;
-  expect(Bun.stripANSI(top)).toEndWith("docs •1  site •2 •1 ");
+  const [top = ""] = drawnWith(0, { ...frame, tabs }, { width: 80, height: 20 });
+  // Every tab is on the left, the open one without its badge, each with a space inside it.
+  expect(Bun.stripANSI(top)).toBe(" Skelcrew v0.6.0   app    docs •1    site •2 •1 ");
   expect(top).toContain("\x1b[38;5;120m•1");
   expect(top).toContain("\x1b[38;5;221m•2");
 });
 
-test("a list taller than the terminal scrolls to keep the row you are on in view", () => {
-  const lines = drawn(5, 8);
-  expect(lines).toHaveLength(8);
-  expect(lines.some((line) => line.includes("▸ ● app-14"))).toBe(true);
+// The open repository's tab tells which one the list shows, so it keeps its place when others
+// don't fit.
+test("the open repository's tab shows when other tabs don't fit", () => {
+  const tabs = ["alpha", "beta", "gamma", "app"].map((name) => ({
+    name,
+    fullName: `simon/${name}`,
+    needYou: 0,
+    colour: "yellow" as const,
+    ready: 0,
+  }));
+  const [top = ""] = drawnWith(0, { ...frame, tabs }, { width: 40, height: 20 });
+  expect(Bun.stripANSI(top)).toBe(" Skelcrew v0.6.0   alpha    app ");
+  expect(top).toContain("\x1b[48;5;238m \x1b[1;38;5;231mapp");
+  expect(tabAt({ ...frame, tabs }, 40, 30)).toBe("simon/app");
+});
+
+test("a list taller than the terminal scrolls only its tasks, keeping the lead and every heading", () => {
+  const more = Array.from({ length: 10 }, (_, i) =>
+    threadSql({ task: String(50 + i), title: `Task ${50 + i}`, changed: now - (10 + i) * 60_000 }),
+  );
+  sql(more.join("\n"));
+  // Building has app-12 first, as it needs you, then by latest change: app-9, app-7, then app-50
+  // to app-59. The last of them is the 13th task, at 13 among the rows after the lead.
+  const lines = drawn(13, 16, 80, ["building", "ready"]);
+  expect(lines).toHaveLength(16);
+  expect(lines[2]).toMatch(/^ {3}○ lead/);
+  expect(lines.filter((line) => /^ \d [A-Z]/.test(line)).map((line) => line.trim())).toEqual([
+    "1 Backlog    1",
+    "2 Building  13 · 1 needs you",
+    "3 Reviewing  0",
+    "4 Checks     0",
+    "5 Ready      1",
+    "6 Done       0",
+  ]);
+  expect(lines.filter((line) => line.includes("▸"))).toEqual([
+    expect.stringMatching(/^ ▸ ○ app-59 /),
+  ]);
+  // The row you are on shows whole: its title, then its word, then when it changed.
+  const at = lines.findIndex((line) => line.includes("▸"));
+  expect(lines.slice(at, at + 3).map((line) => line.trim())).toEqual([
+    "▸ ○ app-59  Task 59",
+    "working",
+    "14:41",
+  ]);
+  expect(lines.some((line) => line.includes("app-12"))).toBe(false);
+});
+
+test("on the lead, a terminal with room for the headings but not a task keeps every heading", () => {
+  // Thirteen lines leave six for the stages: every heading, and no room for a three-line task.
+  const lines = drawn(0, 13, 80, ["building"]);
+  expect(lines.filter((line) => /^ \d [A-Z]/.test(line))).toHaveLength(6);
+  expect(lines.filter((line) => line.includes("▸"))).toEqual([
+    expect.stringMatching(/^ ▸ ○ lead /),
+  ]);
+});
+
+test("a terminal too short for every heading still shows the row you are on", () => {
+  const more = Array.from({ length: 10 }, (_, i) =>
+    threadSql({ task: String(50 + i), title: `Task ${50 + i}`, changed: now - (10 + i) * 60_000 }),
+  );
+  sql(more.join("\n"));
+  // Ten lines leave three for the stages: the row you are on, whole, and no heading.
+  const lines = drawn(13, 10, 80, ["building", "ready"]);
+  expect(lines).toHaveLength(10);
+  expect(lines[2]).toMatch(/^ {3}○ lead/);
+  expect(lines.slice(5, 8).map((line) => line.trim())).toEqual([
+    "▸ ○ app-59  Task 59",
+    "working",
+    "14:41",
+  ]);
+  // Eight leave one: the first line of the row you are on, with its ▸.
+  const fewer = drawn(13, 8, 80, ["building", "ready"]);
+  expect(fewer.filter((line) => line.includes("▸"))).toEqual([
+    expect.stringMatching(/^ ▸ ○ app-59 +Task 59 *$/),
+  ]);
 });
 
 // Stands in for the daemon on the test's own socket: it logs each request and answers a start or
@@ -468,6 +742,11 @@ const here = () =>
     .split("\n")
     .find((line) => line.includes("▸"))
     ?.trim() ?? "";
+// The line under the one with ▸, where a row at work says what it does.
+const below = () => {
+  const lines = seen().split("\n");
+  return lines[lines.findIndex((line) => line.includes("▸")) + 1]?.trim() ?? "";
+};
 const until = (done: () => boolean, what: string) =>
   wait(done, { every: 30, what: () => `${what}:\n${seen()}` });
 // Presses a key in the terminal, as tmux names it, or types text with `literal`.
@@ -524,6 +803,7 @@ for (const [key, name] of [
 ] as const)
   test(`${name} leaves the list while a question is open, and answers nothing`, async () => {
     await open();
+    type("1");
     press("Up");
     await until(() => here().startsWith("▸ ○ app-31"), "the issue's row");
     press("Enter");
@@ -572,7 +852,7 @@ const sendBytes = async (bytes: string[], split: boolean) => {
 for (const [form, bytes] of Object.entries(ctrlQ))
   for (const [agent, arrows, mark] of [
     ["app-7", ["Down", "Down"], "○"],
-    ["lead", ["Up", "Up", "Up"], "◆"],
+    ["lead", ["Up", "Up", "Up"], "○"],
   ] as const)
     test(`Ctrl-Q as ${form} comes back from ${agent} on its row, in pieces or scrolled back`, async () => {
       await open();
@@ -614,6 +894,7 @@ test("Ctrl-Q in every form, and Alt-Q, do nothing on the list", async () => {
 // not drop it.
 test("Ctrl-Q in every form leaves a question open, and y then answers it", async () => {
   await open();
+  type("1");
   press("Up");
   await until(() => here().startsWith("▸ ○ app-31"), "the issue's row");
   press("Enter");
@@ -740,6 +1021,7 @@ test("keys the list doesn't read, and a terminal's answers, never leave it", asy
 // A stray Esc while you answer must not leave the list.
 test("Esc with a question open answers no and stays, and a second Esc leaves", async () => {
   await open();
+  type("1");
   press("Up");
   await until(() => here().startsWith("▸ ○ app-31"), "the issue's row");
   press("Enter");
@@ -754,15 +1036,37 @@ test("Esc with a question open answers no and stays, and a second Esc leaves", a
   await until(() => read(join(home, "left")) === "left", "the list to leave");
 });
 
-test("with only a task ready for review needing you, the list opens on it", async () => {
+// Only Building is open at first, so a task ready for review waits under its closed heading.
+test("with nothing in Building needing you, the list opens on the lead", async () => {
   sql("UPDATE threads SET asking = 0, needs_you = 0 WHERE folder = 'app-12';");
   await open();
-  expect(here()).toStartWith("▸ ● app-14");
+  expect(here()).toStartWith("▸ ○ lead");
+  expect(seen()).toContain(" 5 Ready     1");
+});
+
+test("the number keys open and close the stages, which stay so in another repository", async () => {
+  await open();
+  expect(seen()).not.toContain("app-31");
+  type("1");
+  await until(() => seen().includes("○ app-31"), "Backlog's rows");
+  // The row you are on stays the same as the stage above it opens.
+  expect(here()).toStartWith("▸ ● app-12");
+  type("2");
+  await until(() => !seen().includes("app-7"), "Building closed");
+  expect(seen()).toContain("○ app-31");
+  press("Tab");
+  // The open repository's tab has no badge, so another's shows only while it is open.
+  await until(() => seen().includes(" app •"), "site's list");
+  press("Tab");
+  await until(() => seen().includes(" site •1"), "app's list again");
+  expect(seen()).toContain("○ app-31");
+  expect(seen()).not.toContain("app-7");
 });
 
 test("a forge's refusal shows as words, its control codes never reaching your terminal", async () => {
   mergeAnswer = { error: "Refused:\x1b]0;evil\x07 the branch conflicts" };
   await open();
+  type("5");
   for (const _ of [1, 2, 3]) press("Down");
   await until(() => here().startsWith("▸ ● app-14"), "the ready row");
   type("m");
@@ -781,10 +1085,7 @@ test("Enter on a lead that can't start says why, and attaches to nothing", async
   await open();
   Bun.spawnSync(["tmux", "-L", agents, "kill-session", "-t", "=lead"]);
   for (const _ of [1, 2, 3]) press("Up");
-  await until(
-    () => here().startsWith("▸ ◆ lead") && here().includes("stopped"),
-    "the lead stopped",
-  );
+  await until(() => here().startsWith("▸ ○ lead") && below() === "stopped", "the lead stopped");
   press("Enter");
   await until(
     () => seen().includes("The lead didn't start: Claude Code's login for agents is gone"),
@@ -792,14 +1093,27 @@ test("Enter on a lead that can't start says why, and attaches to nothing", async
   );
 });
 
+// A task that ended before Skelcrew saved PR links has none once its PR leaves the forge's copy.
+test("Enter on a done task with a PR but no saved link names its PR", async () => {
+  sql(`UPDATE threads SET status = 'done' WHERE folder = 'app-14';
+UPDATE tasks SET merged = 1 WHERE task = '14';
+DELETE FROM items WHERE kind = 'pr';`);
+  await open();
+  type("6");
+  for (const _ of [1, 2, 3]) press("Down");
+  await until(() => here().startsWith("▸ ○ app-14"), "the done row");
+  press("Enter");
+  await until(() => seen().includes("app-14's PR #41 has no link saved"), "what Enter says");
+});
+
 test("Enter on the lead attaches to it", async () => {
   await open();
   for (const _ of [1, 2, 3]) press("Up");
-  await until(() => here().startsWith("▸ ◆ lead"), "the lead's row");
+  await until(() => here().startsWith("▸ ○ lead"), "the lead's row");
   press("Enter");
   await until(() => seen().includes("I am lead"), "the lead");
   press("C-q");
-  await until(() => here().startsWith("▸ ◆ lead"), "the list on the lead's row");
+  await until(() => here().startsWith("▸ ○ lead"), "the list on the lead's row");
 });
 
 // A builder on a runtime plugin's host isn't in tmux, so Enter runs the host's own attach on its
@@ -840,6 +1154,7 @@ test("Enter on a builder that isn't running says so, and attaches to nothing", a
 
 test("Enter on an issue asks first: any key but y starts nothing, and y starts it", async () => {
   await open();
+  type("1");
   press("Up");
   await until(() => here().startsWith("▸ ○ app-31"), "the issue's row");
   press("Enter");
@@ -856,6 +1171,7 @@ test("Enter on an issue asks first: any key but y starts nothing, and y starts i
 // A y typed with Enter, before the question showed, must never answer it.
 test("keys that come with Enter on an issue are dropped, so they can't answer its question", async () => {
   await open();
+  type("1");
   press("Up");
   await until(() => here().startsWith("▸ ○ app-31"), "the issue's row");
   type("\ryq");
@@ -870,6 +1186,7 @@ test("keys that come with Enter on an issue are dropped, so they can't answer it
 
 test("a y that comes with m in one read can't answer the merge question", async () => {
   await open();
+  type("5");
   for (const _ of [1, 2, 3]) press("Down");
   await until(() => here().startsWith("▸ ● app-14"), "the ready row");
   type("my");
@@ -885,6 +1202,7 @@ test("a y that comes with m in one read can't answer the merge question", async 
 // rest again when you answer.
 test("a merge whose checks failed while its question was open merges nothing, and says why", async () => {
   await open();
+  type("5");
   for (const _ of [1, 2, 3]) press("Down");
   await until(() => here().startsWith("▸ ● app-14"), "the ready row");
   type("m");
@@ -901,6 +1219,7 @@ test("a merge whose checks failed while its question was open merges nothing, an
 
 test("m on a task ready for review asks first, and y merges it at the commit you saw", async () => {
   await open();
+  type("5");
   for (const _ of [1, 2, 3]) press("Down");
   await until(() => here().startsWith("▸ ● app-14"), "the ready row");
   expect(seen()).toContain("m merge");
@@ -913,7 +1232,20 @@ test("m on a task ready for review asks first, and y merges it at the commit you
 test("Tab moves to the next repository and has the daemon open it, without reopening a closed tab", async () => {
   await open();
   press("Tab");
-  await until(() => seen().includes("· site"), "site's list");
-  expect(seen()).toContain("site-3");
+  await until(() => seen().includes("site-3"), "site's list");
+  await until(() => asked.includes("open simon/site from a tab"), "site opened");
+});
+
+// The tabs are on the top line, left after Skelcrew's version. Your terminal reports a click by
+// its column and row, counted from 1, as typed here.
+test("a click on a repository's tab opens it, and a click elsewhere does nothing", async () => {
+  await open();
+  const top = seen().split("\n")[0] ?? "";
+  expect(top).toMatch(/^ Skelcrew v\S+ {3}app {4}site •1$/);
+  type(`\x1b[<0;${top.indexOf("site") + 1};2M`);
+  type(`\x1b[<0;${top.indexOf("site") + 1};1M\x1b[<0;${top.indexOf("site") + 1};1m`);
+  await until(() => seen().includes("site-3"), "site's list");
+  // It opens on site's task that needs you, as the list does on any repository.
+  expect(here()).toStartWith("▸ ● site-3");
   await until(() => asked.includes("open simon/site from a tab"), "site opened");
 });
