@@ -45,13 +45,14 @@ const stageNames: Record<ListStage, string> = {
 };
 
 // Returns the keys the bottom line offers on a row: Enter always, with Ctrl-Q, which comes back,
-// on a row whose agent Enter attaches to on tmux, the numbers that open and close the stages, m
-// only on a task it can merge, and Tab only with another repository to go to. A runtime plugin's
-// host has its own key to come back, so its rows don't offer Ctrl-Q.
+// on a row whose agent Enter attaches to on tmux, or as showing every issue on Backlog's `… more`
+// row, the numbers that open and close the stages, m only on a task it can merge, and Tab and
+// Alt-Shift with an arrow only with another repository to go to. A runtime plugin's host has its
+// own key to come back, so its rows don't offer Ctrl-Q.
 export function keysFor(row: Row | undefined, tabs: number): string {
-  const open = row?.tmux ? "⏎ open · ctrl+q back" : "⏎ open";
+  const open = row?.more ? "⏎ show all" : row?.tmux ? "⏎ open · ctrl+q back" : "⏎ open";
   const merge = row?.merge && "ask" in row.merge ? ["m merge"] : [];
-  const tab = tabs > 1 ? ["⇥ repository"] : [];
+  const tab = tabs > 1 ? ["⇥/alt+shift+←→ repository"] : [];
   return ["↑↓ move", open, "1-6 stages", ...merge, ...tab, "q/esc quit"].join("  ");
 }
 
@@ -194,16 +195,65 @@ function tallLines(row: Row, here: boolean, nameWidth: number, width: number): s
   return marked(lines, here, width);
 }
 
+// One line of the stages' part of the list: its text, the stage it is in, by its place among the
+// headings, and the row it belongs to, by its place in the rows, or null for a heading or a
+// blank line.
+type BodyLine = { text: string; stage: number; row: number | null };
+
+// Returns the line at one edge of the stages when lines are hidden past it, or an empty line when
+// none are. `arrow` is ↑ or ↓. It says how many rows are hidden there, and in which stage when
+// they are all in one, then each heading hidden there, short: its name, its count and how many
+// need you, in yellow. So every count stays in sight however the list scrolls. Cut to fit,
+// without its colours, on a narrow terminal.
+function edgeLine(
+  arrow: string,
+  hidden: BodyLine[],
+  rows: Row[],
+  headings: Heading[],
+  width: number,
+): string {
+  if (hidden.length === 0) return "";
+  // A row counts as hidden when any of its lines is.
+  const hiddenRows = [...new Set(hidden.flatMap((line) => (line.row === null ? [] : [line.row])))];
+  const stages = new Set(hiddenRows.map((i) => rows[i]?.part));
+  const [only] = [...stages];
+  const where = stages.size === 1 && only && only !== "lead" ? ` in ${stageNames[only]}` : "";
+  const more = hiddenRows.length > 0 ? [`${hiddenRows.length} more${where}`] : [];
+  // While the stages scroll there are no blank lines, so a line of no row is a heading.
+  const pinned = headings.filter((_, stage) =>
+    hidden.some((line) => line.row === null && line.stage === stage),
+  );
+  const parts = pinned.map((heading) => {
+    const needing = heading.needYou === 1 ? "1 needs you" : `${heading.needYou} need you`;
+    return {
+      named: `${stageNames[heading.stage]} ${heading.count}`,
+      note: heading.needYou ? ` · ${needing}` : "",
+    };
+  });
+  const plain = [...more, ...parts.map(({ named, note }) => `${named}${note}`)].join("   ");
+  if (Bun.stringWidth(` ${arrow} ${plain}`) > width)
+    return paint(grey, fitted(` ${arrow} ${plain}`, width));
+  const coloured = parts.map(
+    ({ named, note }) => `${paint(grey, named)}${note && paint(yellow, note)}`,
+  );
+  const items = [...more.map((text) => paint(grey, text)), ...coloured];
+  return ` ${paint(grey, arrow)} ${items.join("   ")}`;
+}
+
 // Returns the list as lines that fill the terminal, on the row at `here`. The top line comes
 // first, then a notice when there is one, then the lead, then every stage's heading, each open
 // one with its rows under it, then the bottom line. `rows` are the rows that show: the lead's and
-// those of the open stages, in the order of the stages. When the rows don't all fit, only the
-// tasks scroll, from `top`, so the row you are on shows: the lead and every heading stay, so no
-// stage's count or need of you goes out of sight. A terminal too short even for that keeps the
-// row you are on, and the headings nearest above it. Gives the lines and the scroll they were drawn
-// at, which the next draw starts from, so the list moves only when the row you are on would
-// leave the screen. Nothing is drawn in the terminal's last column: a terminal waits there to
-// wrap, and clearing the rest of the line from that state erases the last character drawn.
+// those of the open stages, in the order of the stages. The lead never scrolls. When the stages
+// don't all fit, they scroll together, headings and rows, from the line `top`, so an open stage's
+// heading is always right above its rows, and a heading with none under it is closed. Then the
+// first and last lines of the stages say what is hidden above and below, with the headings
+// hidden there, so no stage's count or need of you goes out of sight. The list moves only
+// when the row you are on would leave the screen. A row that is the first of its stage brings
+// its heading into view with it, so opening a stage shows the heading over its rows. A terminal
+// too short for those edge lines keeps only the row you are on, or its first line when even it
+// doesn't fit. Gives the lines and the scroll they were drawn at, which the next draw starts
+// from. Nothing is drawn in the terminal's last column: a terminal waits there to wrap, and
+// clearing the rest of the line from that state erases the last character drawn.
 export function drawList(
   rows: Row[],
   headings: Heading[],
@@ -235,49 +285,53 @@ export function drawList(
   const notice = frame.notice ? [paint(yellow, fitted(` ${frame.notice}`, width))] : [];
   const head = [topParts(frame, width).line, ...notice, "", ...lead];
   const room = Math.max(size.height - head.length - 2, 1);
-  // The tasks that show, by their place in `rows`, in the order of the stages, and how many
-  // lines each takes.
-  const tasks = rows.flatMap((row, i) => (row.part === "lead" ? [] : [i]));
-  const heights = tasks.map((i) => (rows[i] && tall(rows[i]) ? 2 : 1));
-  // Returns the stages' lines with the tasks from `from` up to `to`. With `parted`, an open
-  // stage with rows has a blank line after them, which parts it from the next heading.
-  const stages = (from: number, to: number, parted: boolean) => {
-    const shown = new Set(tasks.slice(from, to));
-    return headings.flatMap((heading, at) => {
+  // Returns the stages' lines: each heading, with an open stage's rows under it. With `parted`,
+  // an open stage with rows has a blank line after them, which parts it from the next heading.
+  const stages = (parted: boolean): BodyLine[] =>
+    headings.flatMap((heading, stage) => {
       const ours = rows.flatMap((row, i) =>
-        row.part === heading.stage && shown.has(i) ? linesOf(i) : [],
+        row.part === heading.stage ? linesOf(i).map((text) => ({ text, stage, row: i })) : [],
       );
-      const after = parted && ours.length > 0 ? [""] : [];
-      return [headingLine(heading, at + 1, countWidth, width), ...ours, ...after];
+      const after = parted && ours.length > 0 ? [{ text: "", stage, row: null }] : [];
+      const line = { text: headingLine(heading, stage + 1, countWidth, width), stage, row: null };
+      return [line, ...ours, ...after];
     });
-  };
-  // Returns how many lines the tasks from `from` up to `to` take, with every heading.
-  const span = (from: number, to: number) =>
-    headings.length + heights.slice(from, to).reduce((sum, height) => sum + height, 0);
-  let from = 0;
-  let to = tasks.length;
-  let body = stages(from, to, true);
-  // Too many to fit: the blank lines go, and the tasks scroll in the room the headings leave,
-  // just enough to keep the row you are on in view, from where they were last drawn.
+  let body = stages(true);
+  let shown = body.map((line) => line.text);
+  let start = 0;
+  // Too many to fit: the blank lines go, and the stages scroll between the two edge lines, just
+  // enough to keep the row you are on in view, from where they were last drawn.
   if (body.length > room) {
-    // On the lead, no task must show, so a short terminal keeps every heading.
-    const onTask = tasks.includes(here);
-    const at = Math.max(tasks.indexOf(here), 0);
-    from = Math.min(top, at);
-    while (from < at && span(from, at + 1) > room) from += 1;
-    to = onTask ? from + 1 : from;
-    while (to < tasks.length && span(from, to + 1) <= room) to += 1;
-    // The room left below the last task is filled with those above it.
-    while (from > 0 && span(from - 1, to) <= room) from -= 1;
-    body = stages(from, to, false);
+    body = stages(false);
+    const edges = room >= 3;
+    const view = edges ? room - 2 : room;
+    start = Math.min(Math.max(top, 0), Math.max(body.length - view, 0));
+    const own = body.flatMap((line, at) => (line.row === here ? [at] : []));
+    const first = own[0];
+    const last = own.at(-1);
+    if (first !== undefined && last !== undefined) {
+      // The heading comes along when the row is its stage's first and both fit.
+      const above = body[first - 1];
+      const from = above && above.row === null && last - first + 2 <= view ? first - 1 : first;
+      start = Math.min(start, from);
+      start = Math.max(start, last - view + 1);
+      // A row taller than the room left keeps its first line, with its ▸.
+      start = Math.min(start, first);
+    }
+    // The view never starts on a row's second line, which would show without its title. Going
+    // one line further down keeps the row you are on, unless it is that row.
+    const cut = body[start];
+    const atRowEnd = cut && cut.row !== null && body[start - 1]?.row === cut.row;
+    if (atRowEnd && (first === undefined || start < first)) start += 1;
+    const visible = body.slice(start, start + view).map((line) => line.text);
+    shown = edges
+      ? [
+          edgeLine("↑", body.slice(0, start), rows, headings, width),
+          ...visible,
+          edgeLine("↓", body.slice(start + view), rows, headings, width),
+        ]
+      : visible;
   }
-  // A terminal too short for every heading and a task cuts the body, lowest lines first, but
-  // never the row you are on, as Enter acts on it: the headings above it give way then. When
-  // even its own lines don't all fit, its first one, with its ▸, stays.
-  const own = linesOf(here);
-  const first = own[0] === undefined ? -1 : body.indexOf(own[0]);
-  const start = first < 0 ? 0 : Math.max(first + Math.min(own.length, room) - room, 0);
-  const shown = body.slice(start, start + room);
   const blank = Array.from({ length: room - shown.length }, () => "");
   // A question or a reason must stay on its one line, so it is cut to fit, and the load gives
   // way first.
@@ -285,5 +339,5 @@ export function drawList(
   const load = frame.load;
   const gap = width - Bun.stringWidth(bottom) - Bun.stringWidth(Bun.stripANSI(load));
   const last = gap > 1 ? `${paint(grey, bottom)}${" ".repeat(gap)}${load}` : paint(grey, bottom);
-  return { lines: [...head, ...shown, ...blank, "", last], top: from };
+  return { lines: [...head, ...shown, ...blank, "", last], top: start };
 }

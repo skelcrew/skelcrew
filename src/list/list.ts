@@ -17,6 +17,7 @@ import { grey, paint, removeControlCodes } from "../screen/look.ts";
 import { version } from "../version.ts";
 import { drawList, type Frame, keysFor, tabAt } from "./layout.ts";
 import {
+  cutBacklog,
   hasForge,
   listRows,
   type Open,
@@ -36,7 +37,9 @@ const openCommand = process.platform === "darwin" ? "open" : "xdg-open";
 // keys, such as Ctrl-Q as ESC[113;5u, and neither its Esc nor its letters may act as keys of
 // their own. Pressing Ctrl-Q once too often after coming back from an agent lands here too, in
 // one of its three forms, and does nothing. Alt with a letter is matched whole, or its Esc or
-// its q would quit.
+// its q would quit. Shift-Tab and Alt-Shift-Left move to the previous repository, and Tab and
+// Alt-Shift-Right to the next: Shift-Tab plain, as kitty's CSI-u and as xterm's extended key,
+// and the arrows plain and with kitty's press event, which it adds when asked for events.
 const keyNames: Record<string, string> = {
   "\x1b[A": "up",
   "\x1bOA": "up",
@@ -45,6 +48,13 @@ const keyNames: Record<string, string> = {
   "\r": "enter",
   "\n": "enter",
   "\t": "tab",
+  "\x1b[1;4C": "tab",
+  "\x1b[1;4:1C": "tab",
+  "\x1b[Z": "back tab",
+  "\x1b[9;2u": "back tab",
+  "\x1b[27;2;9~": "back tab",
+  "\x1b[1;4D": "back tab",
+  "\x1b[1;4:1D": "back tab",
   "\x03": "q",
   "\x1b": "escape",
 };
@@ -91,11 +101,14 @@ export async function runList(agents: string, repository: string): Promise<void>
   // those of the open stages, the row you are on among those and how far it scrolled, the line
   // at the bottom when it says something other than the keys, the question it asks, and whether
   // the daemon is at work on an answer. Only Building is open at first. The stages you open
-  // stay open until you leave the list, whichever repository you move to.
+  // stay open until you leave the list, whichever repository you move to, and so does a whole
+  // Backlog once you asked for it, which shows its newest issues until then.
   let all: Row[] = [];
   let rows: Row[] = [];
   const opened = new Set<ListStage>(["building"]);
-  const showing = () => all.filter((row) => row.part === "lead" || opened.has(row.part));
+  let wholeBacklog = false;
+  const showing = () =>
+    cutBacklog(all, wholeBacklog).filter((row) => row.part === "lead" || opened.has(row.part));
   let here = -1;
   let top = 0;
   let said: string | null = null;
@@ -275,6 +288,10 @@ export async function runList(agents: string, repository: string): Promise<void>
       if (failed) return say(`The lead didn't start: ${failed}`);
       return attach(row.session, row.name);
     }
+    if (row.more > 0) {
+      wholeBacklog = true;
+      return reshow();
+    }
     if (row.part === "backlog" && row.start) {
       asking = { question: row.start, row: row.name, merge: false };
       return draw();
@@ -332,11 +349,12 @@ export async function runList(agents: string, repository: string): Promise<void>
     refresh();
   };
 
-  // Moves to the next repository, after the last back to the first.
-  const nextRepository = () => {
+  // Moves to the next repository by `by` 1, or the previous by -1, from the last round to the
+  // first and from the first back to the last.
+  const nextRepository = (by: 1 | -1) => {
     const tabs = repositoryTabs(db, open);
     const at = tabs.findIndex((tab) => tab.fullName === `${open.owner}/${open.repo}`);
-    const next = tabs[(at + 1) % tabs.length];
+    const next = tabs[(at + by + tabs.length) % tabs.length];
     if (tabs.length > 1 && next) goTo(next.fullName);
   };
 
@@ -391,13 +409,19 @@ export async function runList(agents: string, repository: string): Promise<void>
       here = Math.min(Math.max(here + (key === "up" ? -1 : 1), 0), rows.length - 1);
       return draw();
     }
-    if (key === "tab") return nextRepository();
+    if (key === "tab") return nextRepository(1);
+    if (key === "back tab") return nextRepository(-1);
     if (key.startsWith(`${esc}[<`)) return click(key);
-    // 1 to 6 open or close the stages, in the order they show.
+    // 1 to 6 open or close the stages, in the order they show. Opening one moves you to its
+    // first row, so the list scrolls to show it, rather than open it out of sight.
     const stage = ListStage.options[Number(key) - 1];
     if (/^[1-6]$/.test(key) && stage) {
-      if (!opened.delete(stage)) opened.add(stage);
-      return reshow();
+      if (opened.delete(stage)) return reshow();
+      opened.add(stage);
+      reshow();
+      const first = rows.findIndex((candidate) => candidate.part === stage);
+      if (first >= 0) here = first;
+      return draw();
     }
     if (key === "enter" && row) return openRow(row);
     if (key === "m" && row?.merge) {

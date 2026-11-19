@@ -43,7 +43,8 @@ type Action = Question | { refused: string };
 // a runtime plugin's host, which has a key of its own. `start` is what Enter does on an issue,
 // and `merge` what m does on a task ready for review. `link` is its PR's, which Enter opens, and
 // `branch` the branch a task that is ready without a forge waits on. Each is null where it
-// doesn't apply.
+// doesn't apply. `more` is how many issues the row stands for on the `… more` row at the end of
+// a cut Backlog, which Enter shows, and 0 on every other row.
 export type Row = {
   part: "lead" | ListStage;
   name: string;
@@ -63,6 +64,7 @@ export type Row = {
   merge: Action | null;
   link: string | null;
   branch: string | null;
+  more: number;
 };
 
 // The repository the list shows, by its owner/name.
@@ -121,6 +123,7 @@ function leadRow(db: Database, open: Open): Row {
     merge: null,
     link: null,
     branch: null,
+    more: 0,
   };
 }
 
@@ -229,6 +232,7 @@ function taskRow(
     // it opens one, and must never open the previous attempt's.
     link: copy?.link ?? (thread.pr === null ? null : SavedLink.parse(saved).pr_link),
     branch: thread.branch,
+    more: 0,
   };
 }
 
@@ -296,6 +300,7 @@ export function listRows(db: Database, open: Open, now: number): Row[] {
         merge: null,
         link: null,
         branch: null,
+        more: 0,
       };
     });
   // When each task last changed. For an ended task that is when it ended, as nothing changes
@@ -327,6 +332,43 @@ export function listRows(db: Database, open: Open, now: number): Row[] {
     ...live("ready"),
     ...done,
   ];
+}
+
+// How many issues Backlog shows before its `… more` row, as a long backlog would fill the list.
+const backlogShown = 10;
+
+// Returns the rows with Backlog cut to its newest 10 issues and a `… more` row after them, which
+// stands for the rest, unless `whole` asks for every issue. A Backlog of 10 or fewer is whole.
+export function cutBacklog(rows: Row[], whole: boolean): Row[] {
+  const backlog = rows.filter((row) => row.part === "backlog");
+  const rest = backlog.length - backlogShown;
+  if (whole || rest <= 0) return rows;
+  const hidden = new Set(backlog.slice(backlogShown));
+  const more: Row = {
+    part: "backlog",
+    name: `${rest} more`,
+    title: "",
+    mark: { sign: "…", colour: "dim" },
+    says: "",
+    colour: "dim",
+    step: "",
+    pr: "",
+    checks: "",
+    when: "",
+    needsYou: false,
+    session: null,
+    running: false,
+    tmux: false,
+    start: null,
+    merge: null,
+    link: null,
+    branch: null,
+    more: rest,
+  };
+  // The `… more` row goes where the first issue it stands for was, so it ends Backlog.
+  return rows.flatMap((row) =>
+    row === backlog[backlogShown] ? [more] : hidden.has(row) ? [] : [row],
+  );
 }
 
 // A stage's heading: its stage, how many tasks it has and how many of them need you, and
