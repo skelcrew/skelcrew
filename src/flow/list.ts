@@ -532,7 +532,8 @@ function shortName(name: string, room: number): string {
 // control codes are removed, which could break a row or reach your terminal. A review shows
 // its round, such as changes r3. WAITING counts the messages waiting for each builder. MERGE
 // says merges when ready for a thread Skelcrew will merge once it is approved and green, and
-// merges without approval for one it will merge once CI passes, whatever its review says.
+// merges without approval for one it will merge once CI passes, whatever its review says. What
+// each armed merge waits on follows the table.
 export function printThreads(threads: ThreadRow[], json: boolean): void {
   if (json) {
     console.log(JSON.stringify(threads));
@@ -558,15 +559,7 @@ export function printThreads(threads: ThreadRow[], json: boolean): void {
       `${review}${round}`,
       t.needsYou ? "yes" : "",
       ...(waiting ? [t.waiting === 0 ? "" : `${t.waiting}`] : []),
-      ...(merging
-        ? [
-            t.merge === null
-              ? ""
-              : t.merge.skipReview
-                ? "merges without approval"
-                : "merges when ready",
-          ]
-        : []),
+      ...(merging ? [t.merge === null ? "" : mergeKind(t.merge)] : []),
     ];
   });
   // The name and title share what those columns, and the two spaces after each column but the
@@ -594,7 +587,17 @@ export function printThreads(threads: ThreadRow[], json: boolean): void {
       ...(rows[i] ?? []),
     ]),
   );
+  // What an armed merge waits on, such as a conflict or the forge's refusal, can be long, so it
+  // goes under the table, one line per thread, keeping each row within 80 columns.
+  const waits = threads.flatMap((t) =>
+    t.merge?.waits ? [`${t.thread} ${mergeKind(t.merge)}, waiting on ${t.merge.waits}.`] : [],
+  );
+  if (waits.length > 0) for (const line of ["", ...waits]) console.log(line);
 }
+
+// Returns how sc ps names an armed merge: when ready, or skipping Skelcrew's review.
+const mergeKind = (merge: { skipReview: boolean }) =>
+  merge.skipReview ? "merges without approval" : "merges when ready";
 
 // Returns what is happening on a task, for its row in sc ls, such as "waiting · #31 · CI failed ·
 // changes r3". A task with no thread has nothing yet.

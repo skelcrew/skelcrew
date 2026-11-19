@@ -4,7 +4,7 @@
 // saw once CI is green there, whatever the reviewer says. Arming it, cancelling it, and the merge
 // itself. Without an armed plan nothing merges by itself.
 import type { Database } from "bun:sqlite";
-import { createTask, forgeOf, mergePr, postReview, trackerOf } from "../plugins/ask.ts";
+import { createTask, editReview, forgeOf, mergePr, postReview, trackerOf } from "../plugins/ask.ts";
 import { errorText } from "../say.ts";
 import { prOf } from "./copy.ts";
 import { mergeStuck, mergeWaitsOn, type PullRequest, skipReviewWaitsOn } from "./decide.ts";
@@ -187,10 +187,6 @@ export function cancelMerge(db: Database, thread: Thread): string {
 // it could no longer stop the merge.
 const merging = new Set<string>();
 
-// The approved commits whose PR already has the review saying who asked to merge it when ready,
-// as folder and commit.
-const recorded = new Set<string>();
-
 // Merges an armed thread's PR once it is ready, from a poll, with the PR as its forge just
 // returned it and the thread as it was when the poll began, `before`. When ready, it merges at
 // the approved commit, so a push after the approval is never merged. Skipping the review, it merges
@@ -248,11 +244,16 @@ export async function mergeIfReady(
     const repository = repositoryOf(db, thread);
     // The PR records who asked, with a review on the commit it merges, the call every forge
     // answers. It goes before the merge, as a merged PR may take no review, and once for each
-    // commit of each plan while the daemon runs, so a merge the forge keeps refusing doesn't
-    // post it again at every poll. A plan armed again, or a thread started over, has a new ID,
-    // so it gets a record of its own. Skipping the review it keeps the reviewer's verdict, as
+    // commit of each plan, saved on the thread, so neither a merge the forge keeps refusing nor
+    // a restart posts it again. A plan armed again, or a thread started over, has a new ID, so
+    // it gets a record of its own. Skipping the review it keeps the reviewer's verdict, as
     // Skelcrew's reviewer never approved that commit.
     const key = `${thread.merge_id} ${commit}`;
+    const by = thread.merge_by ?? "you";
+    // A hidden marker in the record names its plan and commit. A record the forge took just
+    // before the daemon stopped, with nothing saved yet, is found by it in the PR's reviews.
+    const kind = pinned === null ? "merge-when-ready" : "merge-skip-review";
+    const marker = `<!-- skelcrew:${kind} plan=${thread.merge_id} commit=${commit} -->`;
     // A forge that fails, such as when it is down, leaves the plan armed, says why it waits,
     // and is tried again at the next poll. It never holds up the poll's other threads.
     const failed = (error: unknown) => `the forge, which failed: ${errorText(error)}`;
@@ -260,20 +261,26 @@ export async function mergeIfReady(
     // acts on the PR and thread as the forge and Skelcrew have them after the record: a check
     // that failed or started, a cancel, a stop, sc rm or a new review while the record was
     // posted all show there, and stop the merge.
-    if (!recorded.has(key)) {
-      const by = thread.merge_by ?? "you";
-      const body =
+    if (thread.merge_record !== key) {
+      const found = pr.reviews.find((review) => review.text.includes(marker));
+      if (found) {
+        record(db, folder, { merge_record: key, merge_record_id: found.id });
+        return;
+      }
+      // It says "Merging", as the merge may still never happen: a check can fail, or the plan
+      // be cancelled. Once merged without approval, it is edited to say so.
+      const said =
         pinned === null
           ? `Merging when ready, as asked by ${by} on ${asked}.`
-          : `Merged without Skelcrew's approval, as asked by ${by} on ${asked}.`;
+          : `Merging without Skelcrew's approval, as asked by ${by} on ${asked}.`;
       try {
-        await postReview(db, repository, {
+        const id = await postReview(db, repository, {
           pr: thread.pr,
           commit,
           verdict: pinned === null ? "approve" : "changes",
-          body,
+          body: `${said}\n\n${marker}`,
         });
-        recorded.add(key);
+        record(db, folder, { merge_record: key, merge_record_id: id });
         return;
       } catch (error) {
         waits = failed(error);
@@ -294,10 +301,26 @@ export async function mergeIfReady(
       }
     }
     if (waits === null && refused === null) {
+      // The record now says it merged. A forge that can't edit it leaves "Merging", which the
+      // merge made true.
+      const recordId = thread.merge_record_id;
+      if (pinned !== null && recordId !== null) {
+        const body = `Merged without Skelcrew's approval, as asked by ${by} on ${asked}.\n\n${marker}`;
+        await editReview(db, repository, {
+          pr: thread.pr,
+          id: recordId,
+          verdict: "changes",
+          body,
+        }).catch((error) =>
+          console.log(`${name}: couldn't edit its merge record: ${errorText(error)}`),
+        );
+      }
+      // A review can end while the forge merges, with findings of its own, so the latest one is
+      // read again for the follow-up issue.
       const how =
         pinned === null
           ? "when ready, as the human asked"
-          : `without Skelcrew's approval, as the human asked.${await fileFollowUps(db, thread)}`;
+          : `without Skelcrew's approval, as the human asked.${await fileFollowUps(db, readThread(db, folder))}`;
       await endThread(
         db,
         sessions,

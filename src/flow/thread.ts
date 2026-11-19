@@ -197,6 +197,11 @@ export const Thread = z.object({
   // The PR's head when you asked to merge it without Skelcrew's approval, or null for a merge when
   // ready. Only this commit merges, as you saw it, so a push after you asked cancels the plan.
   merge_pinned: z.string().nullable(),
+  // The plan's ID and the commit, with a space between, whose record of who asked Skelcrew posted
+  // on the PR, and that review's ID, so the record goes once per plan and commit, through
+  // restarts too. Null before the first.
+  merge_record: z.string().nullable(),
+  merge_record_id: z.string().nullable(),
   // The tree of the .agents/ you had approved when the task started, whose roles its agents
   // keep to the end, though you approve another meanwhile. Null for the built-in roles, as
   // every task had before Skelcrew read .agents/.

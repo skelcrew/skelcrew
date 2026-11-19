@@ -91,6 +91,8 @@ function thread(change: Partial<Thread> = {}): Thread {
     merge_waits: null,
     merge_noted: null,
     merge_pinned: null,
+    merge_record: null,
+    merge_record_id: null,
     agents: null,
     flow: "default",
     review_post: null,

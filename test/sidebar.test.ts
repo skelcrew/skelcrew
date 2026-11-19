@@ -236,7 +236,10 @@ test("sc ps says which threads merge when ready or without approval, only while 
     psRow({ thread: "app-9", merge: { waits: "its checks", skipReview: false } }),
     psRow({ thread: "app-8", merge: { waits: null, skipReview: false } }),
     psRow({ thread: "app-7" }),
-    psRow({ thread: "app-6", merge: { waits: null, skipReview: true } }),
+    psRow({
+      thread: "app-6",
+      merge: { waits: "its conflict with main to be fixed", skipReview: true },
+    }),
   ];
   try {
     printThreads(rows, false);
@@ -249,7 +252,14 @@ test("sc ps says which threads merge when ready or without approval, only while 
   expect(said[2]).toEndWith("merges when ready");
   expect(said[3]).toEndWith("working");
   expect(said[4]).toEndWith("merges without approval");
-  expect(said[5]).toEndWith("NEEDS YOU");
+  // What each armed merge waits on goes under the table, as it can be long.
+  expect(said.slice(5, 8)).toEqual([
+    "",
+    "app-9 merges when ready, waiting on its checks.",
+    "app-6 merges without approval, waiting on its conflict with main to be fixed.",
+  ]);
+  expect(said[8]).toEndWith("NEEDS YOU");
+  expect(said).toHaveLength(10);
 });
 
 // sc ps shows a thread with no short title by its title, cut so the whole row, with its PR, CI
@@ -988,6 +998,8 @@ const state: Thread = {
   merge_waits: null,
   merge_noted: null,
   merge_pinned: null,
+  merge_record: null,
+  merge_record_id: null,
   agents: null,
   flow: "default",
   review_post: null,

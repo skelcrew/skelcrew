@@ -2807,21 +2807,49 @@ echo '{"verdict":"changes","body":"Not yet.","findings":["Handle an empty file",
       const why = `the lead asked to merge #7 without Skelcrew's approval at commit ${head.slice(0, 7)}, as the human asked: ${JSON.stringify(words)}`;
       expect(read(join(data(), "threads", "app-12.log"))).toContain(`"why":${JSON.stringify(why)}`);
 
-      // Green, it records who asked on the PR, merges the pinned head, and files what the review
-      // still asked for as one issue.
-      answer(plugin, "create task", taskItem("13", "Follow-ups from #7's review"));
+      // Green, it first records who asked on the PR, saying it is merging, as it may still not.
+      // A forge that refuses keeps the plan armed, and a restart meanwhile posts no second record.
+      answer(plugin, "merge pr", { refused: "Pull Request is not mergeable" });
       pr({ head, reviews: [skelReview], checks: [check(5, "passed")] });
-      await until(() => thread().status === "done");
-      const records = asked(plugin).filter(
-        (q) => q.ask === "review" && String(q.body).startsWith("Merged without"),
+      await until(
+        () => thread().merge_waits === "the forge, which refused: Pull Request is not mergeable",
       );
-      expect(records).toHaveLength(1);
-      expect(records[0]).toMatchObject({ pr: 7, commit: head, verdict: "changes" });
-      expect(String(records[0]?.body)).toStartWith(
+      const records = () =>
+        asked(plugin).filter(
+          (q) => q.ask === "review" && String(q.body).startsWith("Merging without"),
+        );
+      expect(records()).toHaveLength(1);
+      expect(records()[0]).toMatchObject({ pr: 7, commit: head, verdict: "changes" });
+      const said = `Merging without Skelcrew's approval, as asked by ${login()} via the lead on `;
+      expect(String(records()[0]?.body)).toStartWith(said);
+      const marker = `<!-- skelcrew:merge-skip-review plan=${String(thread().merge_id)} commit=${head} -->`;
+      expect(String(records()[0]?.body)).toEndWith(marker);
+      const first = running.splice(0, 1)[0];
+      first?.kill();
+      await first?.exited;
+      serve();
+      await morePolls();
+      expect(records()).toHaveLength(1);
+
+      // Once the forge agrees, it merges the pinned head, edits the record to say it merged, and
+      // files what the review still asked for as one issue.
+      answer(plugin, "create task", taskItem("13", "Follow-ups from #7's review"));
+      answer(plugin, "merge pr", null);
+      await until(() => thread().status === "done");
+      expect(records()).toHaveLength(1);
+      expect(merges().length).toBeGreaterThan(1);
+      expect(merges().every((merge) => merge.commit === head && merge.pr === 7)).toBe(true);
+      const edits = asked(plugin).filter((q) => q.ask === "edit review");
+      expect(edits).toHaveLength(1);
+      expect(edits[0]).toMatchObject({
+        pr: 7,
+        verdict: "changes",
+        id: String(thread().merge_record_id),
+      });
+      expect(String(edits[0]?.body)).toStartWith(
         `Merged without Skelcrew's approval, as asked by ${login()} via the lead on `,
       );
-      expect(merges()).toHaveLength(1);
-      expect(merges()[0]).toMatchObject({ pr: 7, commit: head });
+      expect(String(edits[0]?.body)).toEndWith(marker);
       await until(() =>
         leadTyped().includes(
           "app-12 is done: #7 merged into main without Skelcrew's approval, as the human asked. Its open findings are in #13.",
