@@ -237,7 +237,10 @@ export async function builderSession(
       names.includes(labels.task ?? ""),
   );
   if (!found) return { host, id: thread.folder };
-  record(db, thread.folder, { host_id: found.name }, "found its builder on its host");
+  const now = record(db, thread.folder, { host_id: found.name }, "found its builder on its host");
+  // A short title given while its ID was unknown found nothing to rename, so its labels may
+  // still name it by the old title.
+  if (found.labels?.title !== (sessionTitle(db, now) ?? undefined)) renameOnHost(db, thread.folder);
   return { host, id: found.name };
 }
 

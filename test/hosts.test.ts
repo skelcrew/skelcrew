@@ -1066,8 +1066,9 @@ test("renames reach the host one at a time, and the last says the latest title",
     "sessions",
     `const fs = require("node:fs");
 const asked = () => fs.readFileSync(${JSON.stringify(join(fake, "asked"))}, "utf8").trim().split("\\n").map((line) => JSON.parse(line)).filter((q) => q.ask === "rename");
+const host = (await builderSession(db, "unused", readThread(db, "app-12"))).host;
+await startSession(host, "app-12", { folder: ${JSON.stringify(home)}, command: ["sleep", "30"], env: {}, labels: { repository: "simon/app", role: "builder", task: "app-12" } });
 // The host holds every rename until the file goes.
-fs.mkdirSync(${JSON.stringify(fake)}, { recursive: true });
 fs.writeFileSync(${JSON.stringify(join(fake, "hold-rename"))}, "1");
 record(db, "app-12", { short: "first" });
 await Bun.sleep(300);
@@ -1088,17 +1089,31 @@ test("a rename the host does but answers with nothing counts as done", () => {
   const fake = join(home, ".config", "skelcrew", "plugins", "fake");
   const said = runWithFakeHost(
     "sessions",
-    `const fs = require("node:fs");
-fs.mkdirSync(${JSON.stringify(fake)}, { recursive: true });
-fs.writeFileSync(${JSON.stringify(join(fake, "garble-rename"))}, "");
+    `const host = (await builderSession(db, "unused", readThread(db, "app-12"))).host;
+await startSession(host, "app-12", { folder: ${JSON.stringify(home)}, command: ["sleep", "30"], env: {}, labels: { repository: "simon/app", role: "builder", task: "app-12", title: "Fix the login redirect" } });
 record(db, "app-12", { short: "login redirect" });
 await Bun.sleep(1000);
 process.exit(0);`,
     { host: "fake", host_id: "fake-app-12", title: "Fix the login redirect" },
   );
-  const renames = readFileSync(join(fake, "asked"), "utf8")
-    .split("\n")
-    .filter((line) => line.includes('"rename"'));
-  expect(renames.length).toBe(1);
+  const labels = readFileSync(join(fake, "sessions", "fake-app-12", "labels.json"), "utf8");
+  expect(JSON.parse(labels).title).toBe("login redirect");
   expect(said).not.toContain("couldn't rename");
+}, 40_000);
+
+test("a builder found on its host after a restart is renamed if its title changed meanwhile", () => {
+  const fake = join(home, ".config", "skelcrew", "plugins", "fake");
+  runWithFakeHost(
+    "sessions",
+    `const host = (await builderSession(db, "unused", readThread(db, "app-12"))).host;
+// The host started the builder under its old title, and the daemon stopped before saving its ID.
+await startSession(host, "app-12", { folder: ${JSON.stringify(home)}, command: ["sleep", "30"], env: {}, labels: { repository: "simon/app", role: "builder", task: "app-12", title: "Fix the login redirect" } });
+record(db, "app-12", { short: "login redirect" });
+await builderSession(db, "unused", readThread(db, "app-12"));
+await Bun.sleep(1000);
+process.exit(0);`,
+    { host: "fake", host_id: null, title: "Fix the login redirect" },
+  );
+  const labels = readFileSync(join(fake, "sessions", "fake-app-12", "labels.json"), "utf8");
+  expect(JSON.parse(labels).title).toBe("login redirect");
 }, 40_000);
