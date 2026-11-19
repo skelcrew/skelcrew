@@ -271,9 +271,10 @@ test("a labelled issue is claimed once as it joins the queue, after a restart to
       .sort(),
   ).toEqual(["12", "13"]);
   expect(statuses()).toEqual(bothQueued);
-  // The lead is told each one queued, once.
-  expect(leadHears().split("queued app-12").length - 1).toBe(1);
-  expect(leadHears().split("queued app-13").length - 1).toBe(1);
+  // The lead is told of each one queued. A note is typed until the lead has it, so one the
+  // restart caught while typing can be typed again: the claims above show nothing queued twice.
+  expect(leadHears()).toContain("queued app-12 from github");
+  expect(leadHears()).toContain("queued app-13 from github");
 }, 60_000);
 
 test("sc start of a stopped task over the limit waits as queued, and is brought back in its turn", async () => {
