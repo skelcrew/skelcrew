@@ -117,9 +117,9 @@ function rowLine(row: Row, here: boolean, nameWidth: number, width: number): str
 }
 
 // Returns the list as lines that fill the terminal, on the row at `here`. The top line comes
-// first, then a notice when there is one, then the lead, then every stage's heading, each open
-// one with its rows under it, scrolled from `top` so the row you are on shows, then the bottom
-// line. `rows` are the rows that show: the lead's and those of the open stages, in the order of
+// first, then a notice when there is one, then the lead, which stays in place, then every
+// stage's heading, each open one with its rows under it, scrolled from `top` so the row you are
+// on shows, then the bottom line. `rows` are the rows that show: the lead's and those of the open stages, in the order of
 // the stages. Gives the lines and the scroll they were drawn at, which the next draw starts from,
 // so the list moves only when the row you are on would leave the screen.
 export function drawList(
@@ -131,22 +131,22 @@ export function drawList(
   size: Size,
 ): { lines: string[]; top: number } {
   const nameWidth = Math.max(...rows.map((row) => Bun.stringWidth(row.name)), 4);
-  // The body: each row's line, with which row it is, under its stage's heading. An open stage
+  // The body: each task's line, with which row it is, under its stage's heading. An open stage
   // with rows has a blank line after them, which parts it from the next heading.
   const line = (row: Row, i: number) => ({
     text: rowLine(row, i === here, nameWidth, size.width),
     row: i,
   });
-  const body: { text: string; row: number | null }[] = rows.flatMap((row, i) =>
-    row.part === "lead" ? [line(row, i), { text: "", row: null }] : [],
-  );
+  const body: { text: string; row: number | null }[] = [];
   headings.forEach((heading, at) => {
     body.push({ text: headingLine(heading, at + 1, size.width), row: null });
     const ours = rows.flatMap((row, i) => (row.part === heading.stage ? [line(row, i)] : []));
     if (ours.length > 0) body.push(...ours, { text: "", row: null });
   });
   const notice = frame.notice ? [paint(yellow, fitted(` ${frame.notice}`, size.width))] : [];
-  const head = [topLine(frame, size.width), ...notice, ""];
+  // The lead is above what scrolls, so it shows however far down the row you are on is.
+  const lead = rows.flatMap((row, i) => (row.part === "lead" ? [line(row, i).text, ""] : []));
+  const head = [topLine(frame, size.width), ...notice, "", ...lead];
   const room = Math.max(size.height - head.length - 2, 1);
   // Scrolls just enough to keep the row you are on in view.
   const at = body.findIndex((line) => line.row === here);

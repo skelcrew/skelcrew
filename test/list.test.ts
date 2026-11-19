@@ -46,7 +46,7 @@ openDb().run(${JSON.stringify(statements)});`;
 // before, so its session is named lead. site is a second repository, with a thread that needs
 // you. In app: issue 31 has no thread, app-7 works, app-12 asks a question, app-9 stopped, and
 // app-14 is approved on PR 41, whose checks a poll found green, so it is ready for review. app-7
-// started 5 minutes before the rows' clock.
+// started 5 minutes before the rows' clock, and app-9 last changed a minute before it.
 beforeEach(() => {
   home = realpathSync(mkdtempSync(join(tmpdir(), "skel-list-test-")));
   agents = `skel-test-${process.pid}-${Math.random().toString(36).slice(2)}`;
@@ -62,7 +62,7 @@ ${itemSql("app", "task", 31, "Export as CSV", "2026-11-05T10:00:00Z")}
 ${itemSql("app", "pr", 41, "Fix the export header", "2026-11-06T10:00:00Z", { head: approved, checks: passed })}
 ${threadSql({ task: "7", title: "Login redirect", harness: "claude", started: now - 300_000 })}
 ${threadSql({ task: "12", title: "Rate limit the API", harness: "codex", asking: 1, needs_you: 1 })}
-${threadSql({ task: "9", title: "Old work", status: "stopped" })}
+${threadSql({ task: "9", title: "Old work", status: "stopped", changed: now - 60_000 })}
 ${threadSql({ task: "14", title: "Fix the export header", status: "waiting", needs_you: 1, verdict: "approve", checks: "passing", ci_passed: 1, ci_seen: 1, pr: 41, review_round: 1, reviewed_commit: approved })}
 ${threadSql({ repo: "site", task: "3", title: "Docs", asking: 1, needs_you: 1 })}`);
 });
@@ -105,7 +105,7 @@ test("the lead comes first, then each stage's tasks, those that need you first",
     ["lead", "lead", "", "running · claude", ""],
     ["backlog", "app-31", "Export as CSV", "", "5 Nov"],
     ["building", "app-12", "Rate limit the API", "needs you: question", ""],
-    ["building", "app-9", "Old work", "stopped", ""],
+    ["building", "app-9", "Old work", "stopped", "14:59"],
     ["building", "app-7", "Login redirect", "working", "14:55"],
     ["ready", "app-14", "Fix the export header", "approved", "#41"],
   ]);
@@ -154,6 +154,13 @@ console.log(prOf(db, "simon", "app", 41) === null ? "dropped" : "kept");`;
     part: "done",
     link: "https://github.com/simon/app/pull/41",
   });
+});
+
+// A task that changed lately is what you are likely to look for, whenever it started.
+test("within a stage the task that changed last comes first, after those that need you", () => {
+  sql(`UPDATE threads SET changed = ${now - 30_000} WHERE folder = 'app-7';`);
+  const building = rows().filter((row) => row.part === "building");
+  expect(building.map((row) => row.name)).toEqual(["app-12", "app-7", "app-9"]);
 });
 
 test("tasks under review and waiting on checks show in their own stages", () => {
@@ -424,7 +431,7 @@ test("every stage has its heading with its counts, only open ones show rows, and
     " 1 Backlog 1",
     " 2 Building 3 · 1 needs you",
     expect.stringMatching(/^ ▸ ● app-12 +Rate limit the API +needs you: question$/),
-    expect.stringMatching(/^ {3}○ app-9 +Old work +stopped$/),
+    expect.stringMatching(/^ {3}○ app-9 +Old work +stopped · 14:59$/),
     expect.stringMatching(/^ {3}○ app-7 +Login redirect +working · 14:55$/),
     "",
     " 3 Reviewing 0",
@@ -486,10 +493,12 @@ test("another repository's badge counts what needs you in yellow and what is rea
   expect(top).toContain("\x1b[38;5;221m•2");
 });
 
-test("a list taller than the terminal scrolls to keep the row you are on in view", () => {
+test("a list taller than the terminal scrolls to keep the row you are on in view, under the lead", () => {
   const lines = drawn(4, 8, 80, ["building", "ready"]);
   expect(lines).toHaveLength(8);
   expect(lines.some((line) => line.includes("▸ ● app-14"))).toBe(true);
+  expect(lines[2]).toMatch(/^ {3}◆ lead/);
+  expect(lines.some((line) => line.includes("app-12"))).toBe(false);
 });
 
 // Stands in for the daemon on the test's own socket: it logs each request and answers a start or

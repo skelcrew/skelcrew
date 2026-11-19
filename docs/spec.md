@@ -758,7 +758,7 @@ The repository's lead comes first, under the top line, always shown. Its row say
 - **Ready**: approved and green, ready for you to merge, which includes a merge when ready about to merge it.
 - **Done**: merged or closed. Those that ended today, or the last 10 when fewer ended today.
 
-Each task is in exactly one stage, decided from its state alone. Needs you is never a stage: a task that needs you stays in the stage of its work, and its row is marked, whatever its stage. Within a stage, those that need you come first, then the newest. Done has the latest first.
+Each task is in exactly one stage, decided from its state alone. Needs you is never a stage: a task that needs you stays in the stage of its work, and its row is marked, whatever its stage. Within a stage, those that need you come first, and each of the two has the task that changed last first. Backlog has the newest issue first.
 
 Each stage's heading has the number key that opens and closes it, its name, how many tasks it has, and how many of them need you, such as `Building 4 · 2 need you`. Every heading always shows, so a closed stage still says what waits in it. Only Building is open when the list starts. The stages you open or close stay so until you leave the list, whichever repository you move to.
 

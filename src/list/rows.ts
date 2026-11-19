@@ -207,7 +207,7 @@ const doneShown = 10;
 // Returns the repository's rows as the database has them now, at a moment in milliseconds: its
 // lead, then its tasks in the order of their stages. Backlog has its open issues no thread works
 // on, newest first. Each other stage has those that need you first, so the list reaches them
-// fastest, then the newest first. Done has the tasks that ended today, latest first, or the last
+// fastest, and within each, the one that changed last first. Done has the tasks that ended today, latest first, or the last
 // ten when fewer ended today, so an old repository's history never fills the list. It reads only
 // the database, never tmux or a settings file, so the list opens at once and works on any session
 // host.
@@ -255,8 +255,9 @@ export function listRows(db: Database, open: Open, now: number): Row[] {
         branch: null,
       };
     });
-  // When each ended task last changed, which is when it ended, as nothing changes it after.
-  const endedAt = (row: Row) => {
+  // When each task last changed. For an ended task that is when it ended, as nothing changes
+  // it after.
+  const changedOf = (row: Row) => {
     const thread = threads.find(
       ({ thread: candidate }) => `${repository.name}-${candidate.task}` === row.name,
     )?.thread;
@@ -265,11 +266,13 @@ export function listRows(db: Database, open: Open, now: number): Row[] {
   const today = new Date(now).toDateString();
   const done = tasks
     .filter((row) => row.part === "done")
-    .sort((a, b) => endedAt(b) - endedAt(a))
-    .filter((row, at) => at < doneShown || new Date(endedAt(row)).toDateString() === today);
-  // Returns a stage's live tasks, those that need you first.
+    .sort((a, b) => changedOf(b) - changedOf(a))
+    .filter((row, at) => at < doneShown || new Date(changedOf(row)).toDateString() === today);
+  // Returns a stage's live tasks, those that need you first, each part latest change first.
   const live = (stage: ListStage) => {
-    const ours = tasks.filter((row) => row.part === stage);
+    const ours = tasks
+      .filter((row) => row.part === stage)
+      .sort((a, b) => changedOf(b) - changedOf(a));
     return [...ours.filter((row) => row.needsYou), ...ours.filter((row) => !row.needsYou)];
   };
   return [
