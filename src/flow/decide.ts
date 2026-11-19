@@ -15,8 +15,11 @@ type Author = PullRequest["comments"][number]["author"];
 export const reviewCheck = "skelcrew/check";
 
 // Returns whether the thread has used up its rounds of changes. Past that it goes on needing
-// you, whatever its builder or reviewer does, until you let it go on.
-export const pastRoundLimit = (thread: Thread, maxRounds: number) => thread.rounds > maxRounds;
+// you, whatever its builder does, until you let it go on or its reviewer approves. An approval
+// answers the changes the limit held, so an approved thread is ready like any other rather
+// than showing the round limit until it merges.
+export const pastRoundLimit = (thread: Thread, maxRounds: number) =>
+  thread.rounds > maxRounds && thread.verdict !== "approve";
 
 // What decide says to do with a thread: end it, with the reason for its log and the note for
 // its lead, or tell its builder what is new and change the thread.
