@@ -21,7 +21,12 @@ const openCommand = process.platform === "darwin" ? "open" : "xdg-open";
 
 // The keys the list reads, as your terminal sends them. Arrows come in either of the two forms a
 // terminal may use, and Ctrl-C leaves as q does, since the terminal is raw. Esc leaves too, but
-// first closes a question that is open.
+// first closes a question that is open. Any other escape sequence is one key, which does
+// nothing. A terminal sends one for a key with Ctrl or Alt when a program asked it for extended
+// keys, such as Ctrl-Q as ESC[113;5u, and neither its Esc nor its letters may act as keys of
+// their own. Pressing Ctrl-Q once too often after coming back from an agent lands here too, in
+// one of its three forms, and does nothing. Alt with a letter is matched whole, or its Esc or
+// its q would quit.
 const keyNames: Record<string, string> = {
   "\x1b[A": "up",
   "\x1bOA": "up",
@@ -34,9 +39,14 @@ const keyNames: Record<string, string> = {
   "\x1b": "escape",
 };
 const esc = "\x1b";
-const keyPattern = new RegExp(`${esc}\\[[AB]|${esc}O[AB]|[\\s\\S]`, "g");
+const keyPattern = new RegExp(
+  `${esc}\\[[0-9;:]*[\x40-\x7e]|${esc}O[A-Za-z]|${esc}[a-z]|[\\s\\S]`,
+  "g",
+);
 // The start of an escape sequence at the end of a read, whose end may come in the next one.
-const endOfSequence = new RegExp(`${esc}[[O]?$`);
+const endOfSequence = new RegExp(`${esc}(\\[[0-9;:]*|O)?$`);
+// Ctrl-Q as a terminal sends it: one byte, or as an extended key in the kitty or the xterm form.
+const ctrlQ = new Set(["\x11", "\x1b[113;5u", "\x1b[27;5;113~"]);
 
 // Runs the list in your terminal for the repository named by its owner/name, until you press q,
 // then says your agents keep running.
@@ -156,8 +166,11 @@ export async function runList(agents: string, repository: string): Promise<void>
   // Keys you typed after Enter that the list hasn't acted on yet, such as ones that came with
   // Enter in one read, were meant for the agent, so they are typed into it first. A builder on a
   // runtime plugin's host is reached through the host's own attach command, by its ID there.
-  // Typing those keys in first takes tmux, so on such a host they are dropped.
-  const attach = async (session: string, host: Host = agents) => {
+  // Typing those keys in first takes tmux, so on such a host they are dropped. On tmux, the
+  // terminal's title says which agent this is and how to come back, as nothing else on the
+  // screen is Skelcrew's. The title you had is saved first and put back after, on terminals
+  // that keep one.
+  const attach = async (session: string, name: string, host: Host = agents) => {
     attached = true;
     process.stdin.pause();
     const after =
@@ -169,8 +182,12 @@ export async function runList(agents: string, repository: string): Promise<void>
     if (after && typeof host === "string") typeKeys(host, session, after);
     giveBack();
     let failed: string | null = null;
-    if (typeof host === "string") failed = await attachSession(host, session);
-    else attachOnHost(host, session);
+    if (typeof host === "string") {
+      const title = removeControlCodes(`${name} · ctrl+q back`);
+      process.stdout.write(`\x1b[22;0t\x1b]2;${title}\x07`);
+      failed = await attachSession(host, session);
+      process.stdout.write("\x1b[23;0t");
+    } else attachOnHost(host, session);
     takeTerminal();
     process.stdin.resume();
     attached = false;
@@ -205,7 +222,7 @@ export async function runList(agents: string, repository: string): Promise<void>
       const failed = await openRepository(`${open.owner}/${open.repo}`, false);
       said = null;
       if (failed) return say(`The lead didn't start: ${failed}`);
-      return attach(row.session);
+      return attach(row.session, row.name);
     }
     if (row.part === "issue" && row.start) {
       asking = { question: row.start, row: row.name, merge: false };
@@ -219,7 +236,7 @@ export async function runList(agents: string, repository: string): Promise<void>
       // leaves out of reach.
       try {
         const { host, id } = await builderSession(db, agents, readThread(db, row.session));
-        return attach(id, host);
+        return attach(id, row.name, host);
       } catch (error) {
         return say(errorText(error));
       }
@@ -264,8 +281,10 @@ export async function runList(agents: string, repository: string): Promise<void>
   // Leaves the list, once the list is ready to leave. `left` says it has.
   let leave: () => void = () => {};
   let left = false;
+  // Ctrl-Q does nothing here, an open question included, so pressing it once too often after
+  // coming back from an agent never answers or drops a question.
   const press = async (key: string) => {
-    if (working || left) return;
+    if (working || left || key === "ctrl-q") return;
     // q and Ctrl-C leave from anywhere, an open question included, which then does nothing. Esc
     // leaves only with no question open, so a stray Esc while you answer is a no and stays.
     if (key === "q" || (key === "escape" && !asking)) return leave();
@@ -320,7 +339,7 @@ export async function runList(agents: string, repository: string): Promise<void>
       // Enter, would otherwise attach after the terminal was given back.
       const key = left ? undefined : typed.shift();
       if (key === undefined) break;
-      const named = keyNames[key.sent] ?? key.sent;
+      const named = ctrlQ.has(key.sent) ? "ctrl-q" : (keyNames[key.sent] ?? key.sent);
       await press(named).catch((error) => say(errorText(error)));
       if (named === "enter" || asking) while (typed[0]?.read === key.read) typed.shift();
     }
