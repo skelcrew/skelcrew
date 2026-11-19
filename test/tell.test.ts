@@ -441,7 +441,8 @@ describe.skipIf(insideSandbox)("sc tell", () => {
   // The brief and the lead's reopened tab are saved together before sc tell answers. So a
   // daemon that stops after that, before the lead is back, still brings the lead back as it
   // starts, and types the brief in. Here the lead can't come back while the first daemon runs,
-  // as its clone and remote are moved away, so the daemon stops in exactly that interval.
+  // as its clone and remote are moved away, so the daemon stops in exactly that interval. The
+  // next daemon can't bring it back at first either, and tries again until it can.
   test("a brief saved before its lead is back reaches it though the daemon stops then", async () => {
     await startTwoLeads();
     const name = leadPlaces("simon", "web").name;
@@ -476,9 +477,13 @@ describe.skipIf(insideSandbox)("sc tell", () => {
     expect(db.query("SELECT COUNT(*) AS n FROM notes WHERE repo = 'web'").get()).toEqual({ n: 1 });
     db.close();
     expect(typed(webLead())).not.toContain("Rename the button.");
+    // The new daemon can't bring the lead back either, until the clone and remote are back,
+    // then it tries again by itself.
+    serve({ SKELCREW_LEAD_RETRY_MS: "1000" });
+    await Bun.sleep(3000);
+    expect(hasLead()).toBe(false);
     renameSync(`${clone}.away`, clone);
     renameSync(`${remote}.away`, remote);
-    serve();
     await until(() => typed(webLead()).includes("Rename the button."), 30_000);
     expect(hasLead()).toBe(true);
   }, 60_000);

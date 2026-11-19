@@ -263,21 +263,22 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       });
     return leadStarts;
   };
-  // Starts the lead a brief waits for, then types its notes in. A lead that can't start, such
-  // as one whose clone is missing for now, would leave the brief waiting with nobody told. So the
-  // sending lead hears why, once, and the start is tried again every minute while a note still
-  // waits for that lead and its tab stays open. A tab you close by exiting the lead ends the
-  // tries, as that lead's notes then wait until you open it.
-  const bringBackForBrief = (
+  // Starts a repository's lead, then types its notes in, such as a brief another lead sent it.
+  // A lead that can't start, such as one whose clone is missing for now, would leave its notes
+  // waiting with nobody told. So `from`, the lead that sent a brief, if one did, hears why, once,
+  // and the start is tried again every minute while a note still waits for that lead and its tab
+  // stays open, here and after the daemon starts again. A tab you close by exiting the lead ends
+  // the tries, as that lead's notes then wait until you open it. Returns once the first try is
+  // over, whichever way it went.
+  const bringBackLead = (
     to: Repository,
-    from: { owner: string; repo: string },
-    told = false,
-  ) => {
+    from: { owner: string; repo: string } | null,
+  ): Promise<void> =>
     ensureLead(to)
       .then(() => typeLeadNotes(db, sessions))
       .catch((error) => {
         console.log(`couldn't start ${to.name}'s lead: ${errorText(error)}`);
-        if (!told)
+        if (from)
           noteForLead(
             db,
             sessions,
@@ -288,9 +289,8 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
           .query(`SELECT 1 FROM notes JOIN repositories USING (owner, repo)
             WHERE owner = ? AND repo = ? AND tab_closed = 0 LIMIT 1`)
           .get(to.owner, to.repo);
-        if (waits) setTimeout(() => bringBackForBrief(to, from, true), leadRetry);
+        if (waits) setTimeout(() => void bringBackLead(to, null), leadRetry);
       });
-  };
   // Returns the request limited to the calling lead's own repository. A request about another
   // repository is refused, and the error tells the lead to ask you to open that one. sc ps and
   // sc ls with no repository mean every repository, which for a lead is its own, and sc pr show,
@@ -585,8 +585,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         })();
         // Starting the lead isn't waited on, as an agent's command answers at once. Its notes go
         // in once it runs.
-        const from = leadOfCaller(caller);
-        if (from) bringBackForBrief(to, from);
+        void bringBackLead(to, leadOfCaller(caller));
         return { briefed: to.name };
       }
       case "submit": {
@@ -798,9 +797,9 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   await open(path, "you");
   console.log(`Listening on ${path}.`);
   // Bring back the lead of each repository you have opened. One that fails is logged, and the
-  // rest still start.
-  for (const repository of openedRepositories(db))
-    await ensureLead(repository).catch((error) => console.log(errorText(error)));
+  // rest still start. One that fails while notes wait for it, such as a brief, is tried again
+  // every minute, so the notes go in once whatever stopped it clears.
+  for (const repository of openedRepositories(db)) await bringBackLead(repository, null);
   // A lead keeps its clone current as it starts, and a repository with no lead needs it too.
   refreshClones(db).catch((error) => console.log(errorText(error)));
   // Notes the daemon's stop kept from the leads.
