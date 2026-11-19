@@ -739,25 +739,23 @@ Two ways to see a repository exist side by side, until you choose which one stay
  1 Backlog   2
  2 Building  3 · 1 needs you
  ▸ ● app-t3  Rate limit the API
-     question
-     #43 · CI running · 14:02
+     question · #43 · CI running · 14:02
    ○ app-24  Login redirect
-     working · Editing rows.ts
-     #40 · CI passed · 14:31
+     working · Editing rows.ts · #40 · CI passed · 14:31
 
  3 Reviewing 1
  4 Checks    0
  5 Ready     1
  6 Done      4
 
- ↑↓ move  ⏎ open  1-6 stages  y/n answer  ⇥ repository  q quit   cpu 63%  mem 9/32G
+ ↑↓ move  ⏎ open  1-6 stages  y/n answer  ⇥/alt+shift+←→ repository  q quit   cpu 63%  mem 9/32G
 ```
 
-The list is one repository's, picked as **Opening a repository** says. The top line has Skelcrew's version, with the host you gave `--remote` after it on a server, then a tab for each repository, together on the left. The open one is highlighted. Each other one has a yellow count when something there needs you. Tab moves to the next one, and a click on a tab opens it.
+The list is one repository's, picked as **Opening a repository** says. The top line has Skelcrew's version, with the host you gave `--remote` after it on a server, then a tab for each repository, together on the left. The open one is highlighted. Each other one has a yellow count when something there needs you. Tab or Alt-Shift-Right moves to the next one, Shift-Tab or Alt-Shift-Left to the previous one, each wrapping round, and a click on a tab opens it. The list asks your terminal to report the mouse only while it shows, so an agent you attach to and your shell after you quit get the mouse as usual.
 
 The repository's lead comes first, under the top line, always shown. Its row looks like a task's, so it reads as a row you open: its mark, `lead` and its harness, then under them what it is doing. Requests from the lead that wait for your yes, such as starting a task or adding a repository, show under it, one per line, newest first. Then come the repository's tasks, never its threads on their own, in six stages, in this order:
 
-- **Backlog**: not started yet. The tracker's open issues Skelcrew knows of that no thread works on, and tasks queued for a builder under `limits.threads`.
+- **Backlog**: not started yet. The tracker's open issues Skelcrew knows of that no thread works on, and tasks queued for a builder under `limits.threads`. The newest 10, then a row such as `… 24 more`, which Enter opens to show them all until you leave the list.
 - **Building**: a builder is working on it, including after the reviewer asked for changes. A thread that failed or stopped is here too, as its builder is what must start again.
 - **Reviewing**: a review is running, or queued for a place under `limits.reviews` or for its harness's usage limit. A review that failed or timed out is here too.
 - **Checks**: Skelcrew's reviewer approved, and the task waits on CI for that commit.
@@ -766,9 +764,9 @@ The repository's lead comes first, under the top line, always shown. Its row loo
 
 Each task is in exactly one stage, decided from its state alone. Needs you is never a stage: a task that needs you stays in the stage of its work, and its row is marked, whatever its stage. Within a stage, those that need you come first, and each of the two has the task that changed last first. Backlog has the newest issue first.
 
-Each stage's heading has the number key that opens and closes it, its name, how many tasks it has, lined up with the other headings' counts, and how many of them need you, such as `Building 4 · 2 need you`. Every heading always shows, so a closed stage still says what waits in it. Only Building is open when the list starts. The stages you open or close stay so until you leave the list, whichever repository you move to.
+Each stage's heading has the number key that opens and closes it, its name, how many tasks it has, lined up with the other headings' counts, and how many of them need you, such as `Building 4 · 2 need you`. Every heading's count always shows, so a closed stage still says what waits in it. An open stage's heading sits right above its rows and scrolls with them, so a heading with no rows under it is closed. When the stages don't fit, the lead stays and the stages scroll, keeping the row you are on in view. The first and last lines of the stages then say what is hidden past them, such as `↓ 5 more in Building`, with each heading hidden there pinned in short, such as `Checks 2`. On a terminal too narrow for that, the edge says it in fewer letters, then by number keys, such as `↓ 4:2`, so no count is cut off. The stages never end on an open heading whose rows are below them: it is pinned at the edge instead. Opening a stage moves you to its first row, so its heading and first rows show. Only Building is open when the list starts. The stages you open or close stay so until you leave the list, whichever repository you move to.
 
-A task in Building, Reviewing, Checks or Ready takes three lines, as in the sidebar, so what it does sits under its title. The first has its mark, its name and its short title, or its title cut with `…` to fit. The second has its word in its colour, then dim the step its builder is on, such as `Editing rows.ts`. The third has, dim, its PR, its CI, such as `CI passed`, and when it last changed, such as `14:31` today or `12 Nov` before. A task in Backlog or Done takes one line, in columns from the left: its mark, its name, its title, then when it last changed. Each column is as wide as the widest value showing, so the rows line up. The row you are on is highlighted on all its lines. Details such as a merge when ready or messages waiting are for `sc show`. When a thread needs you, its mark is yellow and its word says why, such as `question`. Its word says what is happening:
+A task in Building, Reviewing, Checks or Ready takes two lines, so what it does sits under its title. The first has its mark, its name and its short title, or its title cut with `…` to fit. The second has its word in its colour, then dim the step its builder is on, its PR, its CI and when it last changed, such as `working · Editing rows.ts · #40 · CI passed · 14:31`, with `14:31` today or `12 Nov` before. The step shows only when its harness gives one in words, such as a command's description, never the command itself. A task in Backlog or Done takes one line, in columns from the left: its mark, its name, its title, then when it last changed. Each column is as wide as the widest value showing, so the rows line up. The row you are on is highlighted on all its lines. Details such as a merge when ready or messages waiting are for `sc show`. When a thread needs you, its mark is yellow and its word says why, such as `question`. Its word says what is happening:
 
 | Word | Means |
 | --- | --- |
@@ -776,7 +774,7 @@ A task in Building, Reviewing, Checks or Ready takes three lines, as in the side
 | `queued` | The task waits for a builder under `limits.threads` |
 | `queued for review` | A review waits for a place under `limits.reviews` |
 | `reviewing` | A review is under way, or waits for CI's first check |
-| `checks` | Waiting on CI |
+| `checks` | Approved, and waiting on CI for that commit |
 | `changes` | The reviewer asked for changes, and the builder hasn't picked them up yet |
 | `limit · 13:59` | The builder or the review waits for its harness's usage limit to reset |
 | `approved` | Ready to merge |
@@ -799,7 +797,13 @@ The marks: a filled `●` needs you or is ready, a hollow `○` doesn't. Green i
 | Enter | Ready, Done | Opens the PR in your browser, or copies its link, as OSC 52, when Skelcrew runs on a server. Without a forge the bottom line shows the approved branch, such as `app-t3 is ready on branch skelcrew/t3-fix-login`. A ready task whose builder needs you attaches to the builder instead, so one Enter reaches what it waits on |
 | `m` | Ready | Asks `Merge app#41 into main? y/n`, then merges it on the forge. Not offered without a forge, where the line says so, nor while its builder needs you. If the forge refuses, the line says why |
 | `y` `n` | A request from the lead | Answers it |
-| Tab | Anywhere | The next repository |
+| Click | A task | Moves to it. A second click on it, or a double click, does what Enter does |
+| Click | The lead | Attaches full screen to the lead |
+| Click | A heading | Opens or closes its stage |
+| Click | A repository's tab | Opens that repository |
+| Wheel | Anywhere | Moves one row up or down, which scrolls the list |
+| Tab, Alt-Shift-Right | Anywhere | The next repository, after the last the first |
+| Shift-Tab, Alt-Shift-Left | Anywhere | The previous repository, before the first the last |
 | Click | A repository's tab | Opens that repository |
 | `q` | Anywhere | Leaves the list. Everything keeps running. Skelcrew prints `Your agents keep running. Run sc --list to come back.` |
 | Ctrl-Q | Anywhere | Nothing: it comes back from an agent, so pressing it once too often never leaves the list |
