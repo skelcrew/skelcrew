@@ -253,6 +253,24 @@ const skillsOff = (files: string[]): string[] =>
         `skills.config=[${files.map((f) => `{path=${tomlString(f)},enabled=false}`).join(",")}]`,
       ];
 
+// The shell step a review runs Codex through, as its command says. It counts the SKILL.md files
+// under .agents/skills/ with one x each, then lists them a line each, and stops when the two
+// disagree, as a line break in a path would split it. Each is turned off as found from the view's
+// top and as its real path, with \ and " escaped for TOML. find stays quiet on a broken link
+// or a loop, which Codex can't load either. The array may end with a comma, as TOML allows.
+const branchSkillsOff = String.raw`count=$(find -L .agents/skills -maxdepth 8 -name SKILL.md -exec printf x \; 2>/dev/null; true)
+list=$(find -L .agents/skills -maxdepth 8 -name SKILL.md 2>/dev/null; true)
+if [ -n "$list" ] && [ "$(printf '%s\n' "$list" | wc -l)" -ne "$(printf %s "$count" | wc -c)" ]; then
+  echo "a path in .agents/skills/ holds a line break, so Skelcrew won't review it" >&2; exit 1
+fi
+off=$(printf '%s\n' "$list" | while IFS= read -r f; do
+  [ -n "$f" ] || continue
+  for p in "$PWD/$f" "$(realpath "$f" 2>/dev/null)"; do
+    [ -n "$p" ] && printf '{path="%s",enabled=false},' "$(printf '%s' "$p" | sed 's/[\\"]/\\&/g')"
+  done
+done)
+exec codex --no-daemon exec -c "skills.config=[$off]" "$@"`;
+
 // Codex's hooks tell Skelcrew what each agent, the lead and builders alike, is doing: a message
 // going in starts a turn, which ends with Stop, or with Interrupt when you press Esc. A builder
 // on Codex asks a question by ending its turn without sc submit, since Codex has no tool for
@@ -404,15 +422,18 @@ async function startCommand(given: {
 // as a copy there would steer every later review, so the repository's skills go into the
 // review's own folder and are returned for the prompt to list.
 // Codex loads by itself the skills in .agents/skills/ of the checkout it reviews, which are the
-// builder's. Each of `branchSkills`, those SKILL.md files, is turned off, so only the approved
-// ones listed in the prompt reach the reviewer.
+// builder's, and follows links there. So the command is a short shell step, run in the sandbox
+// once the review's view is the submitted commit, that finds every SKILL.md there, as Codex
+// would, and turns each one off by path, as found and as its real path. Run in the final view, it
+// finds what a builder added at any moment before, and the checkout stays as committed. A path
+// with a line break would be read as two, so it stops the review. Any other character TOML
+// can't hold makes Codex refuse the setting, which fails the review too.
 async function reviewCommand(given: {
   home: string;
   folder: string;
   model?: string | undefined;
   signal: AbortSignal;
   skills?: SkillsFrom;
-  branchSkills?: string[];
 }) {
   const { home, folder, model, signal } = given;
   // Skelcrew's own CODEX_HOME, with its login shared out and a sessions folder to keep.
@@ -432,13 +453,14 @@ async function reviewCommand(given: {
   // A copy at another path can't have the real one mounted into it, so it links to it.
   if (at !== skelcrewCodexHome) symlinkSync(sessions, join(at, "sessions"));
   // --no-daemon belongs to codex itself, not to exec: without it Codex may start a
-  // background server that outlives the review.
-  const command = ["codex", "--no-daemon", "exec", "--dangerously-bypass-approvals-and-sandbox"];
+  // background server that outlives the review. The rest of exec's options follow the
+  // setting that turns the branch's skills off.
+  const options = ["--dangerously-bypass-approvals-and-sandbox"];
   // With none named, Codex runs on its own default.
-  if (model) command.push("-m", model);
-  command.push(...skillsOff(given.branchSkills ?? []));
-  command.push("--output-schema", join(folder, "schema.json"), "-o", join(folder, "answer.json"));
-  command.push("-");
+  if (model) options.push("-m", model);
+  options.push("--output-schema", join(folder, "schema.json"), "-o", join(folder, "answer.json"));
+  options.push("-");
+  const command = ["sh", "-c", branchSkillsOff, "sh", ...options];
   const skills = given.skills ? copySkills(given.skills, join(folder, "skills")) : [];
   return { command, mounts, env: { CODEX_HOME: at }, skills };
 }

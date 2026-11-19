@@ -1,7 +1,7 @@
 // A repository's skills reach each session in a folder of its own, from the .agents/ you
 // approved. Against a real git repository standing in for Skelcrew's clone, in a temporary home.
 // No harness starts, so this runs inside Skelcrew's sandbox too.
-import { afterEach, beforeEach, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   existsSync,
   lstatSync,
@@ -17,7 +17,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { z } from "zod";
-import { branchSkills, skillsTold } from "../src/skills.ts";
+import { skillsTold } from "../src/skills.ts";
 import { source } from "./harness.ts";
 
 let home = "";
@@ -197,47 +197,85 @@ test("skills listed in instructions name each one, what it is for and its SKILL.
   expect(skillsTold([])).toBe("");
 });
 
-// The reviewer's harness must leave the branch's own skills unloaded, so it is told each one:
-// those the commit has, at any depth and through its links, and any the builder left on disk.
-test("a branch's skills are each SKILL.md the commit or the builder's clone has under .agents/skills/", () => {
-  agentsFile("skills/deep/inner/SKILL.md", "Nested.\n");
-  mkdirSync(join(clone, "shared", "kit"), { recursive: true });
-  writeFileSync(join(clone, "shared", "kit", "SKILL.md"), "Shared.\n");
-  symlinkSync("../../shared/kit", join(clone, ".agents", "skills", "kit"));
-  git("add", "-A");
-  git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "nested");
-  // The builder's clone has a skill git ignores, which no commit holds.
-  const builder = join(home, "app-12");
-  mkdirSync(join(builder, ".agents", "skills", "ghost"), { recursive: true });
-  writeFileSync(join(builder, ".agents", "skills", "ghost", "SKILL.md"), "Ghost.\n");
-  expect(branchSkills(clone, "HEAD", builder).sort()).toEqual([
-    ".agents/skills/deep/inner/SKILL.md",
-    ".agents/skills/ghost/SKILL.md",
-    ".agents/skills/kit/SKILL.md",
-    ".agents/skills/notes/SKILL.md",
-    ".agents/skills/review-sql/SKILL.md",
-    "shared/kit/SKILL.md",
-  ]);
-  expect(() => branchSkills(clone, "0".repeat(40), builder)).toThrow(
-    "couldn't read the skills of 0000000",
-  );
-});
+// Codex finds the skills in the checkout it reviews on its own, and follows links there. Its
+// review command turns each one off as it starts, in the view the reviewer gets.
+describe("a review on Codex", () => {
+  // Returns the review's command, run in `view` with a fake Codex that prints what it was given.
+  const reviewIn = (view: string) => {
+    const folder = join(home, "review");
+    mkdirSync(folder, { recursive: true });
+    const { command } = z.object({ command: z.array(z.string()) }).parse(
+      inHome(`return await harnessNamed("codex").review({
+        home: env.HOME, folder: ${JSON.stringify(folder)}, signal: new AbortController().signal,
+      });`),
+    );
+    const bin = join(home, "bin");
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(join(bin, "codex"), '#!/bin/sh\nprintf "%s\\n" "$@"\n', { mode: 0o755 });
+    return Bun.spawnSync(command, {
+      cwd: view,
+      env: { PATH: `${bin}:${process.env.PATH ?? ""}` },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+  };
 
-// Codex finds the skills in the checkout it reviews on its own, so each is turned off by path.
-test("a review on Codex turns off each of the branch's skills", () => {
-  const folder = join(home, "review");
-  mkdirSync(folder);
-  const off = ["/v/.agents/skills/a/SKILL.md", '/v/.agents/skills/say "hi"/SKILL.md'];
-  const launched = z.object({ command: z.array(z.string()) }).parse(
-    inHome(`return await harnessNamed("codex").review({
-      home: env.HOME, folder: ${JSON.stringify(folder)}, signal: new AbortController().signal,
-      branchSkills: ${JSON.stringify(off)},
-    });`),
-  );
-  const setting = launched.command[launched.command.indexOf("-c") + 1] ?? "";
-  expect(setting).toStartWith("skills.config=");
-  expect(Bun.TOML.parse(setting.replace("skills.config=", "v = "))).toEqual({
-    v: off.map((path) => ({ path, enabled: false })),
+  test("turns off each skill in the view, through links, and leaves the view as it was", () => {
+    const view = join(home, "view");
+    const skill = (path: string) => {
+      mkdirSync(join(view, path), { recursive: true });
+      writeFileSync(join(view, path, "SKILL.md"), "Builder's words.\n");
+    };
+    skill(".agents/skills/plain");
+    skill('.agents/skills/say "hi" \\ now');
+    skill("shared/kit");
+    symlinkSync("../../shared/kit", join(view, ".agents", "skills", "kit"));
+    const ran = reviewIn(view);
+    expect(ran.stderr.toString()).toBe("");
+    const args = ran.stdout.toString().split("\n");
+    expect(args.slice(0, 3)).toEqual(["--no-daemon", "exec", "-c"]);
+    const setting = args[3] ?? "";
+    const off = z
+      .object({ v: z.array(z.object({ path: z.string(), enabled: z.literal(false) })) })
+      .parse(Bun.TOML.parse(setting.replace("skills.config=", "v = ")))
+      .v.map((entry) => entry.path);
+    for (const path of [
+      ".agents/skills/plain/SKILL.md",
+      '.agents/skills/say "hi" \\ now/SKILL.md',
+      ".agents/skills/kit/SKILL.md",
+      "shared/kit/SKILL.md",
+    ])
+      expect(off).toContain(join(view, path));
+    expect(args).toContain("--dangerously-bypass-approvals-and-sandbox");
+    expect(args.at(-2)).toBe("-");
+    expect(readdirSync(join(view, ".agents", "skills")).sort()).toEqual([
+      "kit",
+      "plain",
+      'say "hi" \\ now',
+    ]);
+  });
+
+  test("with no skills in the view, turns none off", () => {
+    const view = join(home, "view");
+    mkdirSync(view);
+    const ran = reviewIn(view);
+    expect(ran.stdout.toString().split("\n").slice(0, 4)).toEqual([
+      "--no-daemon",
+      "exec",
+      "-c",
+      "skills.config=[]",
+    ]);
+  });
+
+  // A line break would split a path in two, leaving the real one on.
+  test("stops on a skill whose path holds a line break", () => {
+    const view = join(home, "view");
+    mkdirSync(join(view, ".agents", "skills", "two\nlines"), { recursive: true });
+    writeFileSync(join(view, ".agents", "skills", "two\nlines", "SKILL.md"), "Hidden.\n");
+    const ran = reviewIn(view);
+    expect(ran.exitCode).toBe(1);
+    expect(ran.stderr.toString()).toContain("holds a line break");
+    expect(ran.stdout.toString()).toBe("");
   });
 });
 

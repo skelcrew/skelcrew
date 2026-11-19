@@ -281,9 +281,7 @@ function readVerdict(
 // touches only docs and Markdown, so the reviewer runs no tests, and `ci` isn't asked. `test`
 // is the repository's test command, for when the reviewer has to run the suite, which it does
 // through sc check on `socket`, the thread's reviewer socket. `skills` names the .agents/ whose
-// skills the reviewer gets, the one the task started with. `branchSkills` are the SKILL.md files
-// the commit itself has under .agents/skills/, relative to the checkout, which the reviewer
-// must not load.
+// skills the reviewer gets, the one the task started with.
 async function reviewNow(given: {
   instructions: string;
   clone: string;
@@ -300,7 +298,6 @@ async function reviewNow(given: {
   docsOnly?: boolean;
   socket?: string;
   skills?: SkillsFrom;
-  branchSkills?: string[];
 }): Promise<Review | Limited> {
   const { clone, issue, base, model, harness, limit = 30 * 60_000, env = process.env } = given;
   // Fail at once, with a reason you can act on, when the review was cancelled before its turn
@@ -375,8 +372,6 @@ async function reviewNow(given: {
       schema,
       signal,
       ...(given.skills ? { skills: given.skills } : {}),
-      // Where the branch's own skills show in the view, for a harness that finds them there.
-      branchSkills: (given.branchSkills ?? []).map((file) => join(at, file)),
     });
     // Only what a shell and the tests need gets in, with the harness's own keys added.
     const sandboxEnv = { ...launch.env, ...filterEnv(env, keys) };
@@ -396,12 +391,6 @@ async function reviewNow(given: {
     // view, as no git in the sandbox holds them, and a lock left there would stop the
     // reviewer's own git. A Mac's copy keeps them for good otherwise. The builder's own stay.
     // Every other step must work, or the reviewer never starts.
-    // Last, files in .agents/skills/ the commit doesn't have go from the view, ignored ones
-    // included, which the clean above keeps: Codex loads the skills it finds there on its own,
-    // and the builder could leave one that way to steer its own reviewer. The commit's own files
-    // stay, links too, so the checkout is the commit, and the harness is told to leave its
-    // skills unloaded. git won't clean through a link, so .agents/skills behind one is left, and
-    // its skills are turned off by path like the rest.
     const index = join(folder, "index");
     const checkout = [
       'index="$(git rev-parse --git-dir)/index"',
@@ -411,7 +400,6 @@ async function reviewNow(given: {
       'cat "$1" > "$index"',
       'printf "%s\\n" "$0" > "$(git rev-parse --git-path HEAD)"',
       'rm -f "$(git rev-parse --git-path index.lock)" "$(git rev-parse --git-path HEAD.lock)"',
-      "{ if test -d .agents/skills && ! test -L .agents && ! test -L .agents/skills; then git clean -q -fdx -- .agents/skills; fi; }",
       "shift",
       'exec "$@"',
     ].join(" && ");
@@ -425,7 +413,7 @@ async function reviewNow(given: {
       mounts: [...mounts, ...launch.mounts],
       cwd: at,
       command: ["sh", "-c", checkout, given.commit, index, ...launch.command],
-      programs: launch.command.slice(0, 1),
+      programs: [harnessNamed(harness).program],
     });
     // CI's result is there before the reviewer starts, and kept current while it runs. The
     // first answer is waited for, but never past a cancellation or the time limit.

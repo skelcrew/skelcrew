@@ -957,6 +957,24 @@ test("init approves nothing when git ignores .agents/, and says so", async () =>
   expect(existsSync(join(checkout, ".agents", "roles", "lead.md"))).toBe(true);
 });
 
+// A commit takes what is staged, so that is what you are shown and approve, not later edits.
+test("init asks about the .agents/ a commit would hold: what is staged, not unstaged edits", async () => {
+  const checkout = onGitHub("simon/app", "WRITE");
+  expect((await skel(["repo", "add"], "", checkout)).err).toBe("");
+  mkdirSync(join(checkout, ".agents", "roles"), { recursive: true });
+  writeFileSync(join(checkout, ".agents", "roles", "builder.md"), "Staged words.\n");
+  git(checkout, "add", "-A");
+  writeFileSync(join(checkout, ".agents", "roles", "builder.md"), "Unstaged words.\n");
+  const run = await skel(["init"], "y\n", checkout);
+  expect(run.err).toBe("");
+  expect(run.out).toContain("Staged words.");
+  expect(run.out).not.toContain("Unstaged words.");
+  // The checkout's own index is as it was.
+  expect(git(checkout, "diff", "--cached", "--name-only")).toBe(".agents/roles/builder.md\n");
+  git(checkout, "commit", "-q", "-m", "agents");
+  expect(approvals()).toEqual({ "simon/app": git(checkout, "rev-parse", "HEAD:.agents").trim() });
+});
+
 test("init stops outside a git repository, and in one with no remote", async () => {
   const outside = await skel(["init"]);
   expect(outside.code).toBe(1);

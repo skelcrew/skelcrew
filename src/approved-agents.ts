@@ -2,8 +2,8 @@
 // reading its files. Its role instructions decide what agents are told, so only a version you
 // approved ever steers them, and a change to it waits until you approve that too.
 import {
+  copyFileSync,
   existsSync,
-  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -86,60 +86,56 @@ export function approveAgents(place: Place, tree: string | null): void {
   markApproved(place);
 }
 
-// Returns the git tree the .agents/ folder in the checkout at `checkout` will have once pushed,
-// for sc init, so it can be approved or asked about before it reaches the default branch, or null
-// when git would push none of it, as when a .gitignore rule matches it all. Its files go into
-// Skelcrew's clone, through an index of their own, so neither the checkout's index nor the
-// clone's changes. git reads them as your push will, so once pushed the tree is the same. Throws
-// when git can't read them.
+// Returns the git tree of the .agents/ folder that committing in the checkout at `checkout` would
+// bring, for sc init, so it can be approved or asked about before it reaches the default branch,
+// or null when a commit would hold none of it, as when git ignores it all. That is what the
+// checkout has staged, as a commit takes it, and new files git doesn't ignore, as sc init asks you
+// to commit the files it wrote. It is read through a copy of the checkout's index, so the index
+// itself never changes, and the tree and its files are then copied into Skelcrew's clone, which
+// approving needs. Throws when git can't read them.
 export function checkoutAgents(place: Place, checkout: string): string | null {
   const folder = mkdtempSync(join(tmpdir(), "skelcrew-agents-"));
-  try {
-    // The files a commit of the checkout would hold: those it tracks that are still there, and
-    // new ones git doesn't ignore. Its own index and ignore rules say which. The new index starts
-    // empty, where git would take a tracked file a .gitignore rule matches for new and leave it
-    // out, though every commit keeps it, and would refuse a folder ignored whole.
-    const listed = (args: string[]) =>
-      Bun.spawnSync(["git", "-C", checkout, "ls-files", "-z", ...args, "--", ".agents"], {
-        stdout: "pipe",
-        stderr: "pipe",
-      })
-        .stdout.toString()
-        .split("\0")
-        .filter(Boolean);
-    const files = [
-      ...listed([]).filter((path) => lstatSync(join(checkout, path), { throwIfNoEntry: false })),
-      ...listed(["--others", "--exclude-standard"]),
-    ];
-    if (files.length === 0) return null;
-    const git = (args: string[], stdin?: string) => {
-      const run = Bun.spawnSync(
-        [
-          "git",
-          "--git-dir",
-          join(cloneDir(place.owner, place.repo), ".git"),
-          "--work-tree",
-          checkout,
-          ...args,
-        ],
-        {
-          cwd: checkout,
-          env: { ...process.env, GIT_INDEX_FILE: join(folder, "index") },
-          ...(stdin === undefined ? {} : { stdin: new Blob([stdin]) }),
-          stdout: "pipe",
-          stderr: "pipe",
-        },
+  const index = join(folder, "index");
+  // Runs git in `repo`, the checkout unless named, on the copy of its index, with `stdin` if
+  // given, and returns what it printed. Throws, naming what failed, when git does.
+  const git = (args: string[], given: { repo?: string; stdin?: Uint8Array | string } = {}) => {
+    const run = Bun.spawnSync(["git", "-C", given.repo ?? checkout, ...args], {
+      env: { ...process.env, GIT_INDEX_FILE: index },
+      ...(given.stdin === undefined ? {} : { stdin: new Blob([given.stdin]) }),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    if (!run.success)
+      throw new Error(
+        `Skelcrew couldn't read ${checkout}'s .agents/: ${run.stderr.toString().trim()}`,
       );
-      if (!run.success)
-        throw new Error(
-          `Skelcrew couldn't read ${checkout}'s .agents/: ${run.stderr.toString().trim()}`,
-        );
-      return run.stdout.toString().trim();
-    };
-    // Given on stdin, as there can be more than a command line holds. Each is one a commit would
-    // hold, so -f only keeps a tracked one a .gitignore rule matches.
-    git(["add", "-f", "--pathspec-from-file=-", "--pathspec-file-nul"], files.join("\0"));
-    return git(["write-tree", "--prefix=.agents/"]);
+    return run.stdout;
+  };
+  try {
+    // Start from what the checkout has staged. A checkout with nothing staged yet has no index.
+    const staged = Bun.spawnSync(
+      ["git", "-C", checkout, "rev-parse", "--path-format=absolute", "--git-path", "index"],
+      { stdout: "pipe", stderr: "pipe" },
+    )
+      .stdout.toString()
+      .trim();
+    if (staged && existsSync(staged)) copyFileSync(staged, index);
+    // Add the new files git doesn't ignore, given on stdin, as there can be more than a command
+    // line holds. The checkout's own ignore rules say which.
+    const untracked = Bun.spawnSync(
+      ["git", "-C", checkout, "ls-files", "-z", "--others", "--exclude-standard", "--", ".agents"],
+      { stdout: "pipe", stderr: "pipe" },
+    ).stdout.toString();
+    if (untracked)
+      git(["add", "--pathspec-from-file=-", "--pathspec-file-nul"], { stdin: untracked });
+    if (git(["ls-files", "-z", "--", ".agents"]).length === 0) return null;
+    const tree = git(["write-tree", "--prefix=.agents/"]).toString().trim();
+    // Copy the tree and its files into Skelcrew's clone, as a pack, which unpack-objects takes
+    // in one go.
+    const objects = git(["rev-list", "--objects", tree]);
+    const pack = git(["pack-objects", "-q", "--stdout"], { stdin: objects });
+    git(["unpack-objects", "-q"], { repo: cloneDir(place.owner, place.repo), stdin: pack });
+    return tree;
   } finally {
     rmSync(folder, { recursive: true, force: true });
   }

@@ -182,7 +182,6 @@ describe.skipIf(insideSandbox)("reviewer", () => {
       ...given(),
       commit: git("rev-parse", "HEAD"),
       skills: { owner: "simon", repo: "app", agents },
-      branchSkills: [".agents/skills/style/SKILL.md"],
     });
     expect(done.verdict).toBe("approve");
     expect(kept("skills")).toContain("Approved words.");
