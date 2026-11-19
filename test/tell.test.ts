@@ -117,13 +117,12 @@ const leadSocket = (repo = "app") =>
 const builderSocket = () =>
   join(home, "run", "skelcrew", "threads", short("app-12"), "skelcrew.sock");
 
-// Runs sc as you would, or as a lead or a builder would, from its own socket.
-const skel = (args: string[], as?: "lead" | "web's lead" | "builder") => {
+// Runs sc as you would, or as a lead or a builder would, from its own socket, with `input` on
+// its stdin when given.
+const skel = (args: string[], as?: "lead" | "web's lead" | "builder", input?: string) => {
   const sockets = { lead: leadSocket(), "web's lead": leadSocket("web"), builder: builderSocket() };
-  return runSkel(args, {
-    ...env(),
-    ...(as ? { SKELCREW_SANDBOX: "1", SKELCREW_SOCKET: sockets[as] } : {}),
-  });
+  const vars = { ...env(), ...(as ? { SKELCREW_SANDBOX: "1", SKELCREW_SOCKET: sockets[as] } : {}) };
+  return runSkel(args, vars, input);
 };
 
 // Has the daemon open a repository and start its lead, as plain sc in a checkout of it does.
@@ -237,6 +236,17 @@ describe.skipIf(insideSandbox)("sc tell", () => {
     );
     expect(typed(lead()).match(/<\/?skelcrew/gi)).toHaveLength(2);
     expect(threadLog()).toContain("The export needs app-9 first.");
+  }, 60_000);
+
+  // A builder's one word is its message, whatever its stdin holds, as only a lead's brief takes
+  // a second word, or - for stdin.
+  test("a builder's one-word message reaches its lead though stdin brings text", async () => {
+    await startApp12();
+    const told = await skel(["tell", "lead", "Done"], "builder", "Something else.\n");
+    expect(told.err).toBe("");
+    await until(() => typed(lead()).includes("</skelcrew>"));
+    expect(typed(lead())).toContain('<skelcrew from="app-12" reply="sc tell app-12">\nDone\n');
+    expect(typed(lead())).not.toContain("Something else.");
   }, 60_000);
 
   test("a builder can tell only the lead, and you can't tell at all", async () => {

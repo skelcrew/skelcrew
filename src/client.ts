@@ -307,6 +307,15 @@ export async function tellTheLead(text: string): Promise<void> {
   await request({ command: "tell lead", text });
 }
 
+// Has the daemon type a lead's brief into another repository's lead, for sc tell lead <repo>,
+// with the human's words when they asked for it, and returns that repository's name. The
+// calling lead's own socket tells the daemon who sends it. The daemon answers at once, and types
+// it in once the other lead can take it.
+export async function briefOtherLead(to: string, text: string, asked?: string): Promise<string> {
+  const reply = await request({ command: "brief lead", to, text, ...(asked ? { asked } : {}) });
+  return checkReply(z.object({ briefed: z.string() }), reply).briefed;
+}
+
 // Has the daemon review a thread's last submitted commit again, for sc review, and returns
 // the thread's name. The daemon answers at once, and the review runs after, as a round's.
 export async function reviewAgain(repository: string, task: string): Promise<string> {
