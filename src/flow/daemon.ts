@@ -829,6 +829,8 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   await Promise.all(openedRepositories(db).map((repository) => bringBackLead(repository, null)));
   // A lead keeps its clone current as it starts, and a repository with no lead needs it too.
   refreshClones(db).catch((error) => console.log(errorText(error)));
+  // Notes the daemon's stop kept from the leads.
+  typeLeadNotes(db, sessions);
   // Bring back each thread's builder, without waiting on it, and carry on the round it was in.
   // A thread whose builder can't come back ends its review, which would otherwise mark it
   // waiting again once it ended. Either way a review already brought back hears of it.
