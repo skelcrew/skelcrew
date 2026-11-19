@@ -49,7 +49,7 @@ function run(body: string): string {
   const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
 import { leadOf } from ${JSON.stringify(source("flow/lead.ts"))};
 import { briefLead, messageLead, noteForLead, skelcrewNoteForLead, typeLeadNotes } from ${JSON.stringify(source("flow/messages.ts"))};
-import { turnEnded } from ${JSON.stringify(source("flow/status.ts"))};
+import { needsYou, turnEnded } from ${JSON.stringify(source("flow/status.ts"))};
 import { failThread } from ${JSON.stringify(source("flow/builder.ts"))};
 import { readThread, record } from ${JSON.stringify(source("flow/thread.ts"))};
 import { existsSync, readFileSync } from "node:fs";
@@ -100,6 +100,25 @@ console.log(JSON.stringify(db.query("SELECT text FROM notes ORDER BY id").all().
     "My turn ended without a submit, saying:\n\nShould it use JSON or YAML?",
   );
   expect(texts.join("\n")).not.toContain("I told the lead.");
+});
+
+// A builder asks the lead, not the human in its own session. Its turn then ends waiting on the
+// lead's answer, which isn't the human's to give unless the lead brings it to them.
+test("a builder's question reaches the lead, and the turn that ends on it doesn't need you", () => {
+  const seen = JSON.parse(
+    run(`
+messageLead(db, tmux, readThread(db, "app-12"), "Should the export be JSON or CSV? I recommend JSON.");
+turnEnded(db, tmux, "app-12", { message: "I asked the lead which format to use." });
+const thread = readThread(db, "app-12");
+console.log(JSON.stringify({
+  notes: db.query("SELECT text FROM notes ORDER BY id").all().map((n) => n.text),
+  needsYou: needsYou(thread),
+}));`),
+  );
+  expect(seen.notes).toEqual([
+    '<skelcrew from="app-12" reply="sc tell app-12">\nShould the export be JSON or CSV? I recommend JSON.\n</skelcrew>',
+  ]);
+  expect(seen.needsYou).toBe(false);
 });
 
 // A paste while the human reads further up would throw them back to the bottom. Back at the

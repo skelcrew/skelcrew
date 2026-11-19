@@ -55,6 +55,7 @@ const all = [
   "yourHarness",
   "yourReviewer",
   "declined",
+  "plugins",
   "host",
   "leadArms",
 ];
@@ -72,6 +73,7 @@ test("with no files, every setting is the built-in default", () => {
     checks: eighth,
     reviewMinutes: 30,
     declined: [],
+    plugins: [],
     host: "tmux",
     leadArms: false,
   });
@@ -79,7 +81,7 @@ test("with no files, every setting is the built-in default", () => {
 
 test("your config goes over the built-in defaults", () => {
   files(
-    "harness: codex\nmodel: gpt-6\nmax_rounds: 5\nlimits: { reviews: 2 }\nsession: herdr\n",
+    "harness: codex\nmodel: gpt-6\nmax_rounds: 5\nlimits: { reviews: 2 }\nplugins: [simon/herdr]\nsession: herdr\n",
     null,
   );
   expect(read(all).settings).toEqual({
@@ -92,6 +94,7 @@ test("your config goes over the built-in defaults", () => {
     reviewMinutes: 30,
     yourHarness: "codex",
     declined: [],
+    plugins: ["simon/herdr"],
     host: "herdr",
     leadArms: false,
   });
@@ -114,6 +117,7 @@ test("the repository's skelcrew.yaml goes over your config, key by key", () => {
     reviewMinutes: 30,
     yourHarness: "claude",
     declined: [],
+    plugins: [],
     host: "tmux",
     leadArms: false,
   });
@@ -130,12 +134,12 @@ test("a role your config puts on another harness gets your model back when skelc
 });
 
 test("a file sets only what is its own", () => {
-  // Your harness, model and limits fit you, so a repository's lines for them count for nothing.
-  // The tracker belongs to the repository, so yours counts for nothing. Only you can let the lead
-  // arm merges, so the repository's line for that counts for nothing too.
+  // Your harness, model, limits and personal plugins fit you, so a repository's lines for them
+  // count for nothing. The tracker belongs to the repository, so yours counts for nothing. Only
+  // you can let the lead arm merges, so the repository's line for that counts for nothing too.
   files(
     "tracker: linear\n",
-    "harness: codex\nmodel: gpt-6\nlimits: { reviews: 9 }\nsession: rex\nlead: { may_arm_merges: true }\n",
+    "harness: codex\nmodel: gpt-6\nlimits: { reviews: 9 }\nplugins: [simon/sneaky]\nsession: rex\nlead: { may_arm_merges: true }\n",
   );
   expect(read(all).settings).toEqual({
     lead: { harness: "claude" },
@@ -146,6 +150,7 @@ test("a file sets only what is its own", () => {
     checks: eighth,
     reviewMinutes: 30,
     declined: [],
+    plugins: [],
     host: "tmux",
     leadArms: false,
   });

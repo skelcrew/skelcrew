@@ -1,13 +1,14 @@
 // The first run: what a plain sc sets up on a new machine, skipping each step already
 // done.
-import { existsSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { codexHome } from "../agents/codex.ts";
 import { HarnessName, harnessNamed } from "../agents/harness.ts";
 import { configFile, yourConfigDocument } from "../config.ts";
 import { openDb } from "../db.ts";
-import { claudeTokenFile, configDir, dataDir, setUpFile } from "../paths.ts";
-import { installPlugin } from "../plugins/install.ts";
+import { claudeTokenFile, configDir, dataDir, installDoneFile, setUpFile } from "../paths.ts";
+import { addPlugin, askYes, installYourPlugins } from "../plugins/install.ts";
+import { yourPlugins } from "../plugins/lock.ts";
 import { installedPlugins } from "../plugins/plugin.ts";
 import { errorText } from "../say.ts";
 import { readSettings } from "../settings.ts";
@@ -215,44 +216,51 @@ const githubPlugin = "skelcrew/skelcrew-github";
 const hasGitHubPlugin = () => installedPlugins(openDb()).some((p) => p.name === "github");
 
 // Returns the repository to offer the GitHub plugin for, as owner/name, or null for none: a
-// remote that isn't on github.com, a machine with the plugin, or a repository you said no for.
-// Only the remote is read, with no call to GitHub, as plain sc must start fast.
+// remote that isn't on github.com, a machine with the plugin, files of yours that name it already,
+// or a repository you said no for. Files that name it leave it to sc install, at the version your
+// lock pins, which the offer's newest version would replace. Only files are read, with no call
+// to GitHub, as plain sc must start fast.
 function gitHubToOffer(remote: string | null): string | null {
   const found = remote === null ? null : parseRemote(remote);
   if (found?.host !== "github.com" || hasGitHubPlugin()) return null;
+  if (yourPlugins().includes(githubPlugin)) return null;
   const repository = `${found.owner}/${found.repo}`;
   // GitHub's names ignore case, so a no for Simon/App covers simon/app.
   const declined = readSettings(["declined"]).declined.map((name) => name.toLowerCase());
   return declined.includes(repository.toLowerCase()) ? null : repository;
 }
 
-// Offers to install the GitHub plugin for a checkout of `repository`. A yes installs it
-// without asking again, since you said yes to it by name. A no is saved in config.yaml, so no
-// checkout of the repository asks again, and you can undo it there. A failed install is only
-// reported: Skelcrew works from git alone until you run sc plugin install.
+// Offers to install the GitHub plugin for a checkout of `repository`. The offer is asked first,
+// from the checkout's remote alone, so a no needs no network and is saved even with GitHub out of
+// reach. Only a yes fetches the plugin, which then shows its version, kind, what it provides and
+// the commands it runs, and asks again, as for any plugin. A yes there adds it to your plugins. A
+// no to either is saved in config.yaml, so no checkout of the repository asks again, and you can
+// undo it there. A failed install is only reported: Skelcrew works from git alone until you run
+// sc add -g.
 function offerGitHub(repository: string, remote: string): void {
-  console.log("GitHub detected.\n");
-  const answer = prompt(
-    "The GitHub plugin lets Skelcrew work with issues, pull requests\nand CI on your repositories. Install the GitHub plugin? [Y/n]",
+  console.log(
+    "GitHub detected.\n\nThe GitHub plugin lets Skelcrew work with issues, pull requests\nand CI on your repositories.",
   );
-  // Bun's prompt answers a bare Enter with null, which takes the default, yes.
-  if (!["", "y", "yes"].includes(answer?.trim().toLowerCase() ?? "")) {
-    const { declined } = readSettings(["declined"]);
-    const config = yourConfigDocument();
-    config.set("github_declined", [...declined, repository]);
-    mkdirSync(configDir(), { recursive: true });
-    writeFileSync(configFile(), config.toString());
-    console.log(
-      `Skelcrew won't ask again for ${repository}. To install it: sc plugin install ${githubPlugin}`,
-    );
-    return;
+  const answer = askYes("Add it? [Y/n]");
+  // No answer, such as after Ctrl-D, is no decision, so the next run asks again.
+  if (answer === null) return;
+  if (answer) {
+    // The plugin's setup is handed the remote, so it can set itself up for this repository.
+    try {
+      if (addPlugin(githubPlugin, remote)) return;
+    } catch (error) {
+      console.log(`Couldn't install the GitHub plugin: ${errorText(error)}`);
+      return;
+    }
   }
-  // The plugin's setup is handed the remote, so it can set itself up for this repository.
-  try {
-    installPlugin(githubPlugin, remote, false);
-  } catch (error) {
-    console.log(`Couldn't install the GitHub plugin: ${errorText(error)}`);
-  }
+  const { declined } = readSettings(["declined"]);
+  const config = yourConfigDocument();
+  config.set("github_declined", [...declined, repository]);
+  mkdirSync(configDir(), { recursive: true });
+  writeFileSync(configFile(), config.toString());
+  console.log(
+    `Skelcrew won't ask again for ${repository}. To install it: sc add -g ${githubPlugin}`,
+  );
 }
 
 // Asks whether agents run on Claude Code or Codex, refuses one that isn't installed, and saves
@@ -325,8 +333,10 @@ export function setupDone(): boolean {
 // Completes unfinished machine setup before plain sc starts the daemon and attaches to the
 // lead. In a checkout of a GitHub repository it offers the GitHub plugin, on any run. A yes
 // makes GitHub the repository's tracker too, with nothing written into the checkout. `from` is
-// the remote sc --remote brings from your laptop, since the checkout is there.
-export function firstRun(from?: string): void {
+// the remote sc --remote brings from your laptop, since the checkout is there. Returns whether it
+// had anything to set up or offer. sc install marks the machine set up after it, once your
+// plugins are in too.
+export function firstRun(from?: string): boolean {
   const done = setupDone();
   // The tools are found where your login shell finds them, even over ssh, so a codex
   // under nvm isn't taken for missing. Passed to each one, since Bun looks programs up in
@@ -337,9 +347,10 @@ export function firstRun(from?: string): void {
     else checkLinuxTools(env);
     console.log("Setting up Skelcrew...\n");
   }
-  // Read once git is known to be there.
+  // Read once git is known to be there. The offer installs a plugin, which only a yes at a
+  // terminal can do, so with no terminal it isn't made.
   const remote = from ?? originHere();
-  const github = gitHubToOffer(remote);
+  const github = process.stdin.isTTY ? gitHubToOffer(remote) : null;
   if (github !== null && remote !== null) offerGitHub(github, remote);
   if (!done) {
     // The steps left are worked out again after each one, as the harness you pick decides
@@ -364,10 +375,46 @@ export function firstRun(from?: string): void {
     if (yours && other && !Bun.which(other.program, { PATH: env.PATH ?? "" }))
       console.log(`\n${other.title} isn't installed, so reviews run on ${yours.title}.`);
   }
-  if (done) return;
-  mkdirSync(dataDir(), { recursive: true });
-  writeFileSync(setUpFile(), "");
-  console.log("\nSkelcrew is set up.");
+  return !done || github !== null;
+}
+
+// Makes this machine match your files, for sc install: the first run's steps, then your personal
+// plugins at the versions your lock pins, each new or changed one after asking. Safe to run
+// again: with nothing to do, it says so. `from` is as for the first run. The machine is marked
+// set up only once your plugins are in, and loses the mark while one is missing, so after a plugin
+// that failed to install, or one you said no to, plain sc runs all of this again. A machine set up
+// by an older release gets the marks here too. `plain` is set when plain sc runs this, which says
+// nothing when there was nothing to do.
+export function install(from?: string, plain = false): void {
+  const finished = installFinished();
+  // The mark goes until this ends with every plugin in, so a failure on the way, such as a plugin
+  // that needs your yes with no terminal, leaves plain sc to run this again.
+  rmSync(installDoneFile(), { force: true });
+  const setUp = firstRun(from);
+  const { changed: plugins, left } = installYourPlugins(from ?? originHere());
+  // A plugin still missing keeps the mark away, even from a machine that had it, such as after
+  // you named a new plugin and said no to it, so plain sc asks again.
+  if (left.length > 0)
+    console.log(
+      `\nSkelcrew isn't set up yet, as your config.yaml names ${left.join(", ")}, which this machine doesn't have at the version your lock pins. Plain sc asks again. To leave it out here and everywhere, run sc remove -g with its name.`,
+    );
+  else {
+    mkdirSync(dataDir(), { recursive: true });
+    writeFileSync(setUpFile(), "");
+    writeFileSync(installDoneFile(), "");
+    if (!finished && (setUp || plugins)) console.log("\nSkelcrew is set up.");
+    // Plain sc on a machine set up by an older release takes the marks without a word.
+    else if (!plain && !setUp && !plugins)
+      console.log("Nothing to install: this machine has everything your files ask for.");
+  }
+}
+
+// Reports whether sc install ran to its end here, which plain sc checks to know whether to run it
+// again. Neither the daemon's service nor the first run's own mark counts, unlike for setupDone:
+// plain sc installs the service even after a first run where you said no to a plugin your files
+// name, and an older release wrote the mark without installing your plugins.
+export function installFinished(): boolean {
+  return setupDone() && existsSync(installDoneFile());
 }
 
 // A step of the first run: `title` names it, and `take` asks what it needs, starting with a line

@@ -18,3 +18,11 @@ Skelcrew's rules for every lead, which hold whatever the instructions above say:
 - Whenever you pick a flow other than default, tell the human which and why, such as "I'll run this on quick, as it is a one-line fix."
 - A thread keeps its flow to the end, but before its builder first submits you can switch it with sc start app-12 --flow <name>.
 - If that flow builds with another role, sc start refuses, as that is another agent: run sc rm app-12, then sc start app-12 --flow <name>.
+- Builders bring their questions and decisions to you, with sc tell lead or at the end of a turn, rather than asking the human in their own session.
+- Answer one yourself with sc tell when the answer follows from what the human already decided, such as earlier in this conversation, from the repository's spec or design documents, or from a clear technical call.
+- Then tell the human in one line what you answered and why, so they can overrule it, such as "app-12 asked whether to confirm before deleting; I said no, as you decided earlier."
+- Always bring the human a builder's question about editing a spec, trust or security, the work's scope or direction, or merging, however clear the answer seems: these are theirs to decide.
+- Bring such a question, and any you can't answer, to the human in this chat, naming the thread, and pass their answer on to the builder with sc tell.
+- The human should never have to open a builder to answer it.
+- Frame it for someone who hasn't read the code: the background in plain words, the problem with a concrete example, each option with what it means for the human, and your recommendation with why.
+- Leave out file paths and names from the code unless they help.
