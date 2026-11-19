@@ -574,7 +574,8 @@ export function checkoutTop(): string | null {
 // Sets up the checkout you are in for Skelcrew, for sc init: writes the starter skelcrew.yaml and
 // the built-in .agents/ at its top, leaving either as it is when there, then adds the repository
 // as sc repo add does. The .agents/ it writes holds only the built-in defaults, so it is approved
-// as written, unless you already answered for the repository's .agents/: that answer stands, so
+// as written, unless the checkout's index holds other .agents/ files a commit would add to it, or
+// you already answered for the repository's .agents/: that answer stands, so
 // sc init on an old branch never swaps the roles new tasks start on. One that was there is shown
 // and asked about, as it may differ from the default branch. Stops
 // outside a git repository, and in one with no remote, as Skelcrew works from its own clone. That
@@ -599,6 +600,11 @@ export async function initRepo(sessions: string): Promise<void> {
   if (!hasConfig) writeFileSync(file, starterConfig, { flag: "wx" });
   else console.log("skelcrew.yaml is there already, so Skelcrew left it as it is.");
   const hasAgents = lstatSync(join(root, ".agents"), { throwIfNoEntry: false }) !== undefined;
+  // Files of .agents/ the checkout's index holds, such as ones deleted from disk but still
+  // staged. A commit would hold them beside what sc init writes, so that is never approved alone.
+  const staged =
+    Bun.spawnSync(["git", "-C", root, "ls-files", "-z", "--", ".agents"], { stdout: "pipe" }).stdout
+      .length > 0;
   if (!hasAgents) writeAgents(root);
   else console.log(".agents/ is there already, so Skelcrew left it as it is.");
   // Bring the repository in. A repository you didn't trust isn't in, and gets no approval.
@@ -610,8 +616,9 @@ export async function initRepo(sessions: string): Promise<void> {
   const current =
     added && lstatSync(join(root, ".agents")).isDirectory() ? checkoutAgents(added, root) : null;
   if (added && current !== null) {
-    if (!hasAgents && !agentsAnswered(added)) approveAgents(added, current);
-    else if (!hasAgents)
+    const onlyWritten = !hasAgents && !staged;
+    if (onlyWritten && !agentsAnswered(added)) approveAgents(added, current);
+    else if (onlyWritten)
       console.log(
         `Skelcrew kept the .agents/ you approved for ${added.owner}/${added.repo}. Once you push the new one, run sc repo trust ${added.name} to approve it.`,
       );

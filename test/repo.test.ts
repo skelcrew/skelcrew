@@ -955,6 +955,22 @@ test("init approves the .agents/ it writes even when git ignores it", async () =
   expect(approvals()).toEqual({ "simon/app": git(checkout, "rev-parse", "HEAD:.agents").trim() });
 });
 
+// A commit would also hold what the index has staged, which sc init didn't write, so you see
+// all of it and are asked.
+test("init asks rather than approve when the index holds .agents/ files it didn't write", async () => {
+  const checkout = onGitHub("simon/app", "WRITE");
+  mkdirSync(join(checkout, ".agents", "skills", "old"), { recursive: true });
+  writeFileSync(join(checkout, ".agents", "skills", "old", "SKILL.md"), "Old words.\n");
+  git(checkout, "add", "-A");
+  rmSync(join(checkout, ".agents"), { recursive: true });
+  const run = await skel(["init"], "n\n", checkout);
+  expect(run.err).toBe("");
+  expect(existsSync(join(checkout, ".agents", "roles", "lead.md"))).toBe(true);
+  expect(run.out).toContain("Old words.");
+  expect(run.out).toContain("Approve simon/app's .agents/?");
+  expect(approvals()).toEqual({ "simon/app": "none" });
+});
+
 test("init stops outside a git repository, and in one with no remote", async () => {
   const outside = await skel(["init"]);
   expect(outside.code).toBe(1);
