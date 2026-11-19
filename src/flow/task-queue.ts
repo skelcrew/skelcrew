@@ -40,24 +40,33 @@ export function queuedText(db: Database, thread: Thread): string {
   return `${threadName(db, thread)} is queued: ${name} runs as many builders as its limits.threads allows. It starts once one of them ends.`;
 }
 
+// Whether a queued task still owes its claim, as leaveQueue reads it beside the thread.
+const Owes = z.object({ owes: z.coerce.boolean() });
+
 // Takes the tasks whose turn has come out of the queue, in the order they joined, as far as each
 // repository's limit allows now, and returns their threads. Each leaves the queue working, or a
 // stopped one coming back as statusOnceBack says, and the caller starts its builder. Each keeps
 // when it joined until its builder's session is saved, so backToQueue can put it back should
 // the engine stop before then. It all happens at once, with nothing waited on, so no task leaves
-// the queue twice. A thread in `skip`, such as one sc rm is removing, stays in the queue, and so
-// does one that still owes its claim. A repository whose limit can't be read keeps its queue
+// the queue twice. A thread in `skip`, such as one sc rm is removing, stays in the queue. So does
+// one that still owes its claim, and every task of its repository that joined after it, so the
+// queue stays first come first served. A repository whose limit can't be read keeps its queue
 // until it can, and the daemon's log says why once.
 export function leaveQueue(db: Database, skip: Set<string>): Thread[] {
   const queued = db
-    .query(`SELECT * FROM task_threads t WHERE status = 'queued' AND NOT EXISTS (SELECT 1 FROM claims c
-        WHERE c.owner = t.owner AND c.repo = t.repo AND c.task = CAST(t.task AS TEXT))
-      ORDER BY queued_since, rowid`)
+    .query(`SELECT *, EXISTS (SELECT 1 FROM claims c WHERE c.owner = t.owner AND c.repo = t.repo
+          AND c.task = CAST(t.task AS TEXT)) AS owes
+      FROM task_threads t WHERE status = 'queued' ORDER BY queued_since, rowid`)
     .all()
-    .map((row) => Thread.parse(row));
+    .map((row) => ({ thread: Thread.parse(row), ...Owes.parse(row) }));
+  // The repositories whose queue waits on a claim, as owner/repo.
+  const held = new Set<string>();
   const leaving: Thread[] = [];
-  for (const thread of queued) {
+  for (const { thread, owes } of queued) {
     if (skip.has(thread.folder)) continue;
+    const repository = `${thread.owner}/${thread.repo}`;
+    if (owes) held.add(repository);
+    if (held.has(repository)) continue;
     let limit: number | undefined;
     try {
       limit = threadLimit(thread);

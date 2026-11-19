@@ -350,3 +350,25 @@ openDb().run("INSERT INTO claims (owner, repo, task) VALUES ('simon', 'app', '12
   expect(leadHears()).toContain("If no other machine works on it, sc start app-12.");
   expect(leadHears()).not.toContain("app-13's claim");
 }, 60_000);
+
+test("a task that still owes its claim holds back the tasks that joined after it", async () => {
+  addApp();
+  // app-12 joined first and owes its claim, which the tracker fails. app-13 joined after it.
+  const rows = `${threadSql({ task: "12", title: "Add export", status: "queued", queued_since: 1 })}
+${threadSql({ task: "13", title: "Dark mode", status: "queued", queued_since: 2 })}
+INSERT INTO claims (owner, repo, task) VALUES ('simon', 'app', '12');`;
+  const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
+openDb().exec(${JSON.stringify(rows)});`;
+  Bun.spawnSync([process.execPath, "-e", code], { env: env() });
+  const failing = join(plugin, "fail-took");
+  writeFileSync(failing, "network is down");
+  await serveApp();
+  await sc("rm", "app-11");
+  await Bun.sleep(3000);
+  expect(statuses()).toMatchObject({ "app-12": "queued", "app-13": "queued" });
+  // Once app-12's claim is made, it starts first, and app-13 after it.
+  rmSync(failing);
+  await until(() => statuses()["app-13"] === "failed");
+  expect(leftQueue("app-12")).toHaveLength(1);
+  expect(leftQueue("app-13")[0] ?? 0).toBeGreaterThanOrEqual(endedAt("app-12"));
+}, 60_000);
