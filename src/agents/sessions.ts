@@ -105,7 +105,8 @@ bind -T copy-mode Any { if -F "#{pane_in_mode}" { send-keys -X cancel }; send-ke
 
 // Returns Skelcrew's tmux settings for this machine's tmux, with the detach key from your
 // config.yaml bound. A server that is up keeps keys bound before, so the key it bound last, kept
-// in @skelcrew-detach, goes first, and so does Alt-Q, which an older Skelcrew bound. A config
+// in @skelcrew-detach, goes first, and so do Alt-Q and Ctrl-Q, which an older Skelcrew bound
+// without saying so there. Copy mode's table is emptied first anyway. A config
 // that can't be read binds Ctrl-Q, so agents still start: the list says what is wrong with it.
 // tmux sends extended keys in the xterm form unless told otherwise, and Codex reads Shift+Enter
 // only in the CSI u form, which Claude Code reads too. tmux before 3.5 has only the xterm form,
@@ -118,6 +119,7 @@ function settings(socket: string): string {
   const bound = tmux(socket, ["show", "-gqv", "@skelcrew-detach"]).out.trim();
   const detach = tmuxKey(key);
   const keys = `unbind -n M-q
+unbind -n C-q
 ${/^[CM]-[a-z]$/.test(bound) ? `unbind -n ${bound}\n` : ""}bind -n ${detach} detach-client
 bind -T copy-mode ${detach} detach-client
 set -g @skelcrew-detach ${detach}

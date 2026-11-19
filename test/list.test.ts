@@ -599,8 +599,12 @@ test("the detach key comes from your config.yaml", async () => {
   writeFileSync(join(home, ".config", "skelcrew", "config.yaml"), "keys: { detach: alt+x }\n");
   await open();
   expect(seen()).toContain("⏎ open · alt+x back");
+  // A server an older Skelcrew set up bound Ctrl-Q without saying which key it bound.
+  Bun.spawnSync(["tmux", "-L", agents, "set", "-gu", "@skelcrew-detach"]);
   press("Enter");
   await until(() => seen().includes("I am app-12"), "app-12's agent");
+  press("C-q");
+  Bun.spawnSync(["tmux", "-L", agents, "copy-mode", "-t", "=app-12:"]);
   press("C-q");
   await Bun.sleep(300);
   expect(seen()).toContain("I am app-12");

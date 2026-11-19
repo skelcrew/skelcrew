@@ -118,13 +118,16 @@ afterEach(() => {
 function calls(): string {
   const log = join(home, "calls");
   // The long tmux line that opens the screen is cut to the agent it opens on. Asking tmux's
-  // version and giving the agents' server its settings, which each opening does, are left out,
-  // as is asking which daemon the service runs.
+  // version and giving the agents' server its settings, with the detach key it bound before,
+  // which each opening does, are left out, as is asking which daemon the service runs.
   const said = existsSync(log) ? readFileSync(log, "utf8") : "";
   return said
     .replace(/systemctl --user show -p MainPID --value skelcrew\n/g, "")
     .replace(/launchctl print .*\n/g, "")
-    .replace(/tmux -L skelcrew -f \/dev\/null (source-file -|list-panes -a .*)\n/g, "")
+    .replace(
+      /tmux -L skelcrew -f \/dev\/null (source-file -|list-panes -a .*|show -gqv @skelcrew-detach)\n/g,
+      "",
+    )
     .replace(/tmux -V\n/g, "")
     .replace(/tmux -L skelcrew-screen .* sh skelcrew (\S+) \S+ ;.*/g, "screen on $1");
 }

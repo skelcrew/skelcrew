@@ -58,6 +58,7 @@ const all = [
   "plugins",
   "host",
   "leadArms",
+  "detach",
 ];
 const quarter = Math.max(1, Math.floor(availableParallelism() / 4));
 const eighth = Math.max(1, Math.floor(availableParallelism() / 2 / 4));
@@ -76,6 +77,7 @@ test("with no files, every setting is the built-in default", () => {
     plugins: [],
     host: "tmux",
     leadArms: false,
+    detach: "ctrl+q",
   });
 });
 
@@ -97,6 +99,7 @@ test("your config goes over the built-in defaults", () => {
     plugins: ["simon/herdr"],
     host: "herdr",
     leadArms: false,
+    detach: "ctrl+q",
   });
 });
 
@@ -120,6 +123,7 @@ test("the repository's skelcrew.yaml goes over your config, key by key", () => {
     plugins: [],
     host: "tmux",
     leadArms: false,
+    detach: "ctrl+q",
   });
 });
 
@@ -137,9 +141,10 @@ test("a file sets only what is its own", () => {
   // Your harness, model, limits and personal plugins fit you, so a repository's lines for them
   // count for nothing. The tracker belongs to the repository, so yours counts for nothing. Only
   // you can let the lead arm merges, so the repository's line for that counts for nothing too.
+  // Your keys are yours too.
   files(
     "tracker: linear\n",
-    "harness: codex\nmodel: gpt-6\nlimits: { reviews: 9 }\nplugins: [simon/sneaky]\nsession: rex\nlead: { may_arm_merges: true }\n",
+    "harness: codex\nmodel: gpt-6\nlimits: { reviews: 9 }\nplugins: [simon/sneaky]\nsession: rex\nlead: { may_arm_merges: true }\nkeys: { detach: alt+x }\n",
   );
   expect(read(all).settings).toEqual({
     lead: { harness: "claude" },
@@ -153,6 +158,7 @@ test("a file sets only what is its own", () => {
     plugins: [],
     host: "tmux",
     leadArms: false,
+    detach: "ctrl+q",
   });
 });
 
@@ -206,6 +212,7 @@ test("what your config saved reads apart from the defaults", () => {
   expect(read(["yourHarness", "yourReviewer", "declined"]).settings).toMatchObject({
     declined: [],
     leadArms: false,
+    detach: "ctrl+q",
   });
   expect(read(["yourHarness"]).settings?.yourHarness).toBeUndefined();
   expect(read(["yourReviewer"]).settings?.yourReviewer).toBeUndefined();
