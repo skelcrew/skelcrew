@@ -78,11 +78,12 @@ export function approveAgents(place: Place, tree: string | null): void {
   markApproved(place);
 }
 
-// Approves the .agents/ folder in the checkout at `checkout`, for sc init, which writes it from
-// the built-in defaults: as you will push it, before it reaches the default branch. Its files go
-// into Skelcrew's clone, through an index of their own, so neither the checkout's index nor the
-// clone's changes. git reads them as your push will, so once pushed the tree is the same.
-export function approveCheckoutAgents(place: Place, checkout: string): void {
+// Returns the git tree the .agents/ folder in the checkout at `checkout` will have once pushed,
+// for sc init, so it can be approved or asked about before it reaches the default branch. Its
+// files go into Skelcrew's clone, through an index of their own, so neither the checkout's index
+// nor the clone's changes. git reads them as your push will, so once pushed the tree is the same.
+// Throws when git can't read them, such as when .agents is a file.
+export function checkoutAgents(place: Place, checkout: string): string {
   const folder = mkdtempSync(join(tmpdir(), "skelcrew-agents-"));
   try {
     const git = (args: string[]) => {
@@ -109,7 +110,7 @@ export function approveCheckoutAgents(place: Place, checkout: string): void {
       return run.stdout.toString().trim();
     };
     git(["add", "--", ".agents"]);
-    approveAgents(place, git(["write-tree", "--prefix=.agents/"]));
+    return git(["write-tree", "--prefix=.agents/"]);
   } finally {
     rmSync(folder, { recursive: true, force: true });
   }
@@ -212,13 +213,17 @@ export function agentsFolder(place: Place, tree: string, folder: string): string
 }
 
 // Shows what the repository's .agents/ on its default branch holds, or what changed in it since
-// the version you approved, and asks whether to approve it. A yes approves it. A no keeps what
+// the version you approved, and asks whether to approve it. sc init passes `current`, the tree of
+// the .agents/ in your checkout, to ask about that one instead. A yes approves it. A no keeps what
 // you approved, or the built-in roles, and is saved, so plain sc doesn't ask again. With no
 // answer, such as Ctrl-D, nothing is saved. Runs only in your own terminal, as a yes from an
 // agent could approve anything. `name` is the repository's name in Skelcrew, for sc repo trust.
-export function askAboutAgents(place: Place, name: string): void {
+export function askAboutAgents(
+  place: Place,
+  name: string,
+  current = agentsOnDefaultBranch(place),
+): void {
   const fullName = `${place.owner}/${place.repo}`;
-  const current = agentsOnDefaultBranch(place);
   const before = approvedAgents(place);
   // Said only when there is something you approved or could approve.
   if (current === before) {

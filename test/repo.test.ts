@@ -865,6 +865,66 @@ test("init leaves an .agents/ that is there as it is, and asks before approving 
   );
 });
 
+// Pushes an .agents/ with one builder role to the repository's default branch, then takes the
+// checkout back to the commit before it, as an older branch would be.
+function agentsOnlyOnGitHub(checkout: string): void {
+  mkdirSync(join(checkout, ".agents", "roles"), { recursive: true });
+  writeFileSync(join(checkout, ".agents", "roles", "builder.md"), "Ship it fast.\n");
+  git(checkout, "add", "-A");
+  git(checkout, "commit", "-q", "-m", "agents");
+  git(checkout, "push", "-q", join(home, "github", "simon/app.git"), "main");
+  git(checkout, "reset", "-q", "--hard", "HEAD~1");
+}
+
+const approvals = () =>
+  parse(readFileSync(join(home, ".config", "skelcrew", "approved-agents.yaml"), "utf8"));
+
+// A no given as the repository comes in stands, though init then writes the built-in files.
+test("init on a checkout without .agents/ keeps a no given as the repository came in", async () => {
+  const checkout = onGitHub("simon/app", "WRITE");
+  agentsOnlyOnGitHub(checkout);
+  const run = await skel(["init"], "n\n", checkout);
+  expect(run.err).toBe("");
+  expect(run.out).toContain("Approve simon/app's .agents/?");
+  expect(approvals()).toEqual({ "simon/app": "none" });
+  expect(run.out).toContain(
+    "Skelcrew kept the .agents/ you approved for simon/app. Once you push the new one, run sc repo trust app to approve it.",
+  );
+});
+
+// sc init on an old branch must never swap the roles new tasks start on.
+test("init on a checkout without .agents/ keeps the version you approved", async () => {
+  const checkout = onGitHub("simon/app", "WRITE");
+  agentsOnlyOnGitHub(checkout);
+  expect((await skel(["repo", "add"], "y\n", checkout)).out).toContain(
+    "Approved simon/app's .agents/.",
+  );
+  const approved = approvals();
+  const run = await skel(["init"], "", checkout);
+  expect(run.err).toBe("");
+  expect(approvals()).toEqual(approved);
+  expect(existsSync(join(checkout, ".agents", "roles", "lead.md"))).toBe(true);
+});
+
+// The checkout's .agents/ may be on no default branch yet, and a repository Skelcrew has asks
+// nothing as it is added again, so init shows the checkout's own and asks.
+test("init asks about a checkout's .agents/ that isn't on the default branch, for a repository Skelcrew has", async () => {
+  const checkout = onGitHub("simon/app", "WRITE");
+  expect((await skel(["repo", "add"], "", checkout)).err).toBe("");
+  mkdirSync(join(checkout, ".agents", "roles"), { recursive: true });
+  writeFileSync(join(checkout, ".agents", "roles", "builder.md"), "Ship it fast.\n");
+  const run = await skel(["init"], "y\n", checkout);
+  expect(run.err).toBe("");
+  expect(run.out).toContain("Ship it fast.");
+  expect(run.out).toContain("Approved simon/app's .agents/.");
+  expect(readFileSync(join(checkout, ".agents", "roles", "builder.md"), "utf8")).toBe(
+    "Ship it fast.\n",
+  );
+  git(checkout, "add", "-A");
+  git(checkout, "commit", "-q", "-m", "init");
+  expect(approvals()).toEqual({ "simon/app": git(checkout, "rev-parse", "HEAD:.agents").trim() });
+});
+
 test("init stops outside a git repository, and in one with no remote", async () => {
   const outside = await skel(["init"]);
   expect(outside.code).toBe(1);

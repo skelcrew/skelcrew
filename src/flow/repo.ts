@@ -18,8 +18,10 @@ import { refuseCredentials } from "../agents/sandbox.ts";
 import { endSession, exitedCleanly, stopSession } from "../agents/sessions.ts";
 import {
   agentsAnswered,
-  approveCheckoutAgents,
+  agentsOnDefaultBranch,
+  approveAgents,
   askAboutAgents,
+  checkoutAgents,
   forgetAgents,
 } from "../approved-agents.ts";
 import { agentRole } from "../config.ts";
@@ -572,7 +574,9 @@ export function checkoutTop(): string | null {
 // Sets up the checkout you are in for Skelcrew, for sc init: writes the starter skelcrew.yaml and
 // the built-in .agents/ at its top, leaving either as it is when there, then adds the repository
 // as sc repo add does. The .agents/ it writes holds only the built-in defaults, so it is approved
-// as written. One that was there is asked about as the repository comes in, as any is. Stops
+// as written, unless you already answered for the repository's .agents/: that answer stands, so
+// sc init on an old branch never swaps the roles new tasks start on. One that was there is shown
+// and asked about, as it may differ from the default branch. Stops
 // outside a git repository, and in one with no remote, as Skelcrew works from its own clone. That
 // clone is at the default branch, so it says the files count only once pushed there. `sessions`
 // names where the repository's lead runs.
@@ -598,9 +602,23 @@ export async function initRepo(sessions: string): Promise<void> {
   if (!hasAgents) writeAgents(root);
   else console.log(".agents/ is there already, so Skelcrew left it as it is.");
   // Bring the repository in. A repository you didn't trust isn't in, and gets no approval.
+  const isNew = repositoryAt(openDb(), remote) === undefined;
   await addRepo(root, sessions);
   const added = repositoryAt(openDb(), remote);
-  if (!hasAgents && added) approveCheckoutAgents(added, root);
+  if (added && !hasAgents) {
+    if (!agentsAnswered(added)) approveAgents(added, checkoutAgents(added, root));
+    else
+      console.log(
+        `Skelcrew kept the .agents/ you approved for ${added.owner}/${added.repo}. Once you push the new one, run sc repo trust ${added.name} to approve it.`,
+      );
+  }
+  // A repository new to Skelcrew was asked about its default branch's .agents/ as it came in, so
+  // the checkout's is asked about only when it differs. Skelcrew reads only a folder of .agents/.
+  if (added && hasAgents && lstatSync(join(root, ".agents")).isDirectory()) {
+    const current = checkoutAgents(added, root);
+    if (!isNew || current !== agentsOnDefaultBranch(added))
+      askAboutAgents(added, added.name, current);
+  }
   // Say what was written and when Skelcrew will read it.
   const wrote = [hasConfig ? null : "skelcrew.yaml", hasAgents ? null : ".agents/"].filter(
     (name) => name !== null,
