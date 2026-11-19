@@ -86,8 +86,8 @@ export const reviewSocket = (folder: string) =>
 // one connection. A Mac refuses a socket path over 104 bytes, and its runtime and temporary
 // folders are long, so it is in /tmp, with your user number so it is yours alone.
 export const sshFolder = () => `/tmp/sc-${userInfo().uid}`;
-// Returns the parent folder of Skelcrew's repository clones.
-const reposDir = () => join(dataDir(), "repos");
+// Returns the parent folder of Skelcrew's repository clones, which every lead reads.
+export const reposDir = () => join(dataDir(), "repos");
 // Returns a repository's clone folder so Skelcrew works away from your checkout.
 export const cloneDir = (owner: string, repo: string) => join(reposDir(), owner, repo);
 // Returns the folder that holds each thread's clone, with the log of its changes beside it.

@@ -292,7 +292,8 @@ async function checkModel(home: string, model: string, env: Record<string, strin
 // lead or a builder. It starts afresh with the first message in `prompt`, or brings back a
 // saved conversation with `resume`. A builder, given its thread's clone, works there; a lead
 // works in its own `folder`. Each sees nothing else but `origin`, Skelcrew's clone of its
-// repository, read-only, and the login it shares with every Codex session.
+// repository, read-only, the login it shares with every Codex session, and for a lead
+// `repositories`, the folder of every repository's clone, read-only.
 //
 // Settings go on the command line rather than in the session's config.toml: a repository's
 // own .codex/config.toml wins over that file, and could turn the hooks off. Codex's own
@@ -305,13 +306,15 @@ async function startCommand(given: {
   thread?: string;
   folder?: string;
   origin?: string;
+  repositories?: string;
   prompt?: string;
   system?: string;
   resume?: string;
   sessionId?: string;
   env?: Record<string, string | undefined>;
 }): Promise<{ argv: string[]; env: Record<string, string> }> {
-  const { name, socket, model, thread, folder, origin, prompt, system, resume } = given;
+  const { name, socket, model, thread, folder, origin, repositories, prompt, system, resume } =
+    given;
   const env = given.env ?? process.env;
   // Refuse what would start the wrong agent or write outside Skelcrew's folders, and a model
   // Codex doesn't offer.
@@ -351,6 +354,8 @@ async function startCommand(given: {
     refuseCredentials(origin);
     mounts.push(...ro(origin));
   }
+  // Every repository's clone, read-only, for a lead, as for Claude Code.
+  if (repositories) mounts.push(...ro(repositories));
 
   // --no-daemon belongs to codex itself: without it Codex may start a background server that
   // outlives the session.
