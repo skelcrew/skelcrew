@@ -1,4 +1,5 @@
 // The first plain sc on a machine, run as you would run it, against fake tools.
+import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import {
   appendFileSync,
@@ -1226,21 +1227,7 @@ test("keeps the login shell's folders in the service when Skelcrew runs over ssh
   expect(calls()).toBe("daemon lead\nscreen on lead\n");
 });
 
-// sc remote add runs this on the machine it sets up, and leaves connecting to you.
-test("sc first-run takes the steps and installs the service, without attaching", async () => {
-  const run = Bun.spawn([process.execPath, main(), "first-run"], {
-    cwd: home,
-    env: { PATH: bin, HOME: home, XDG_RUNTIME_DIR: join(home, "run"), TMPDIR: join(home, "tmp") },
-    stdin: new Blob(["1\nsk-ant-oat01-good\n"]),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  expect(await run.exited).toBe(0);
-  expect(existsSync(unit())).toBe(true);
-  expect(calls()).not.toContain("attach");
-});
-
-// Logging in on a machine is what sc remote add is for, so --remote never starts it. The laptop
+// Logging in on a machine is what sc --remote <host> install is for, so --remote never starts it. The laptop
 // tells the exit code apart from a failure, and offers to set the machine up.
 test("over --remote, a machine whose first run isn't done exits with its own code and takes no step", async () => {
   const run = await skel("", bin, main(), home, { SKELCREW_REMOTE_NAME: "simon@workbox" });
@@ -1325,6 +1312,62 @@ test("sc install installs your plugins at the version your lock pins after askin
   expect(second.out).toBe("Nothing to install: this machine has everything your files ask for.\n");
   expect(calls()).toBe("");
   expect(readFileSync(lock(), "utf8")).toBe(lockBefore);
+});
+
+// Such as when your files come from a laptop where you removed it: the files say what this
+// machine runs, so a plugin they don't name goes, with its settings and tokens.
+test("sc install removes a plugin from GitHub your files don't name", async () => {
+  noGitHubPlugin();
+  fakeGitHub();
+  publishFake("0.1.0");
+  await skel("1\nsk-ant-oat01-good\n");
+  lockFake("0.1.0");
+  await install("y\n");
+  writeFileSync(
+    config(),
+    readFileSync(config(), "utf8").replace("plugins: [simon/skelcrew-fake]", "plugins: []"),
+  );
+  writeFileSync(lock(), "");
+  expect((await skel("", bin, main(), home, {}, ["plugins"])).out).toBe(
+    "fake 0.1.0 io: tracker. sc install removes it.\n",
+  );
+  const run = await install();
+  expect(run.err).toBe("");
+  expect(run.out).toContain("Removed fake, with its settings and tokens.");
+  expect(existsSync(join(home, ".local", "share", "skelcrew", "plugins", "fake"))).toBe(false);
+  expect((await install()).out).toBe(
+    "Nothing to install: this machine has everything your files ask for.\n",
+  );
+});
+
+// A plugin a repository uses as its forge, and so its tracker, can't go, so the machine doesn't count as set up, and
+// sc --remote <host> install fails rather than say it matched your files.
+test("sc install fails when a plugin your files don't name can't be removed", async () => {
+  noGitHubPlugin();
+  fakeGitHub();
+  publishFake("0.1.0");
+  await skel("1\nsk-ant-oat01-good\n");
+  lockFake("0.1.0");
+  await install("y\n");
+  const db = new Database(join(home, ".local", "share", "skelcrew", "skelcrew.db"));
+  db.run(
+    "INSERT INTO repositories (owner, repo, name, forge) VALUES ('simon', 'other', 'other', 'fake')",
+  );
+  db.close();
+  writeFileSync(
+    config(),
+    readFileSync(config(), "utf8").replace("plugins: [simon/skelcrew-fake]", "plugins: []"),
+  );
+  writeFileSync(lock(), "");
+  const run = await install();
+  expect(run.code).toBe(1);
+  expect(run.out).toContain(
+    "Skelcrew couldn't remove fake: fake is the tracker of other, so Skelcrew keeps it.",
+  );
+  expect(run.out).toContain(
+    "Skelcrew isn't set up yet, as this machine still has fake, which your files don't name.",
+  );
+  expect(existsSync(join(home, ".local", "share", "skelcrew", "plugins", "fake"))).toBe(true);
 });
 
 test("sc install with no answer to read installs nothing", async () => {
@@ -1556,6 +1599,8 @@ test("on a machine already set up, a declined plugin your files name makes plain
   const declined = await install("n\n");
   expect(declined.out).toContain("Skelcrew didn't install fake.");
   expect(declined.out).toContain("Skelcrew isn't set up yet");
+  // A plugin left out fails sc install, so sc --remote doesn't go on to the command you asked for.
+  expect(declined.code).toBe(1);
   const asked = await atTerminal("y\n");
   expect(asked.err).toBe("");
   expect(asked.out).toContain("Install it? [Y/n]");

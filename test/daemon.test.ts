@@ -483,8 +483,8 @@ describe.skipIf(insideSandbox)("with a lead per repository", () => {
     );
     serve();
     await untilAnswers();
-    // The daemon clones both as it starts. A lead that started once its own clone was there,
-    // before the other's, would find only its own.
+    // The daemon clones both as it starts, in the background, and a lead looks only once, as it
+    // starts. Opening app first could start its lead before web's clone is there.
     await until(() => existsSync(join(app, "README")) && existsSync(join(web, "README")));
     expect(await open("app")).toEqual({ lead: leadName("app"), repository: "simon/app" });
     expect(await open("web")).toEqual({ lead: leadName("web"), repository: "simon/web" });

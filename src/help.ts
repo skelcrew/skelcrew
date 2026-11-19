@@ -58,7 +58,8 @@ const sections: [string, [string, string][]][] = [
   [
     "ELSEWHERE",
     [
-      ["remote add <host>", "Set up a server, over ssh"],
+      ["--remote <host> install", "Send your personal files to a server, and set it up"],
+      ["--remote <host> up --bg", "Run the daemon on a server, in the background"],
       ["--remote <host> [command]", "Run sc on a server, over ssh"],
     ],
   ],
@@ -100,7 +101,7 @@ const examples = [
   'sc issue create app "Fix the login redirect" "Sign-in lands on a 404."',
   "sc start app-12",
   "sc ls",
-  "sc remote add simon@workbox",
+  "sc --remote simon@workbox install",
   "sc --remote simon@workbox",
 ];
 
