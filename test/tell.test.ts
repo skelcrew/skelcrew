@@ -264,6 +264,17 @@ describe.skipIf(insideSandbox)("sc tell", () => {
     expect(threadLog()).toContain("The export needs app-9 first.");
   }, 60_000);
 
+  // A builder's one word is its message, whatever its stdin holds, as only a lead's brief takes
+  // a second word, or - for stdin.
+  test("a builder's one-word message reaches its lead though stdin brings text", async () => {
+    await startApp12();
+    const told = await skel(["tell", "lead", "Done"], "builder", "Something else.\n");
+    expect(told.err).toBe("");
+    await until(() => typed(lead()).includes("</skelcrew>"));
+    expect(typed(lead())).toContain('<skelcrew from="app-12" reply="sc tell app-12">\nDone\n');
+    expect(typed(lead())).not.toContain("Something else.");
+  }, 60_000);
+
   test("a builder can tell only the lead, and you can't tell at all", async () => {
     await startApp12();
     const builderToThread = await skel(["tell", "app-12", "Hello."], "builder");
@@ -383,7 +394,11 @@ describe.skipIf(insideSandbox)("sc tell", () => {
     );
     expect(typed(webLead()).match(/<\/?skelcrew/gi)).toHaveLength(2);
     // Web's lead answers the same way, by app's name, here with the text on stdin.
-    const answered = await skel(["tell", "lead", "app"], "web's lead", "Done: web-t1 started.\n");
+    const answered = await skel(
+      ["tell", "lead", "app", "-"],
+      "web's lead",
+      "Done: web-t1 started.\n",
+    );
     expect(answered.err).toBe("");
     await until(() => typed(lead()).includes("Done: web-t1 started."));
     expect(typed(lead())).toContain('<skelcrew from="web:lead" reply="sc tell lead web">');
@@ -441,7 +456,7 @@ describe.skipIf(insideSandbox)("sc tell", () => {
     const own = await skel(["tell", "lead", "app", "Hello."], "lead");
     expect(own.code).not.toBe(0);
     expect(own.err).toContain("app is your own repository");
-    const empty = await skel(["tell", "lead", "web", "--asked-file", asked], "lead");
+    const empty = await skel(["tell", "lead", "web", "-", "--asked-file", asked], "lead");
     expect(empty.code).not.toBe(0);
     expect(empty.err).toContain("needs the brief");
     const you = await skel(["tell", "lead", "web", "Hello."]);
@@ -468,7 +483,7 @@ describe.skipIf(insideSandbox)("sc tell", () => {
     // The human said yes in app's chat, so app's lead sends their words.
     const asked = join(home, "asked.txt");
     writeFileSync(asked, "Have web's lead add the CSV export.\nKeep it small.\n");
-    const told = await skel(["tell", "lead", "web", "--asked-file", asked], "lead", brief);
+    const told = await skel(["tell", "lead", "web", "-", "--asked-file", asked], "lead", brief);
     expect(told.err).toBe("");
     await until(() => read(join(webLead(), "acted")).split("\n").length > 2, 30_000);
     expect(typed(webLead())).toContain(
