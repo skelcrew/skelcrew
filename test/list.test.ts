@@ -517,6 +517,23 @@ test("a list taller than the terminal scrolls only its tasks, keeping the lead a
   expect(lines.some((line) => line.includes("app-12"))).toBe(false);
 });
 
+test("a terminal too short for every heading still shows the row you are on", () => {
+  const more = Array.from({ length: 10 }, (_, i) =>
+    threadSql({ task: String(50 + i), title: `Task ${50 + i}`, changed: now - (10 + i) * 60_000 }),
+  );
+  sql(more.join("\n"));
+  // Eight lines leave two for the stages: the row you are on and its stage's heading above it.
+  const lines = drawn(13, 8, 80, ["building", "ready"]);
+  expect(lines).toHaveLength(8);
+  expect(lines[2]).toMatch(/^ {3}◆ lead/);
+  expect(lines.filter((line) => line.includes("▸"))).toEqual([
+    expect.stringMatching(/^ ▸ ○ app-59 /),
+  ]);
+  expect(lines.filter((line) => /^ \d [A-Z]/.test(line)).map((line) => line.trim())).toEqual([
+    "2 Building 13 · 1 needs you",
+  ]);
+});
+
 // Stands in for the daemon on the test's own socket: it logs each request and answers a start or
 // a merge as the daemon would, and a lead or a merge with what a test sets.
 function daemon(): void {

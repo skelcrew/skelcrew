@@ -121,7 +121,8 @@ function rowLine(row: Row, here: boolean, nameWidth: number, width: number): str
 // one with its rows under it, then the bottom line. `rows` are the rows that show: the lead's and
 // those of the open stages, in the order of the stages. When the rows don't all fit, only the
 // tasks scroll, from `top`, so the row you are on shows: the lead and every heading stay, so no
-// stage's count or need of you goes out of sight. Gives the lines and the scroll they were drawn
+// stage's count or need of you goes out of sight. A terminal too short even for that keeps the
+// row you are on, and the headings nearest above it. Gives the lines and the scroll they were drawn
 // at, which the next draw starts from, so the list moves only when the row you are on would
 // leave the screen.
 export function drawList(
@@ -164,7 +165,12 @@ export function drawList(
     from = Math.min(from, Math.max(tasks.length - fit, 0));
     body = stages(from, fit, false);
   }
-  const shown = body.slice(0, room);
+  // A terminal too short for every heading and a task cuts the body, lowest lines first, but
+  // never the row you are on, as Enter acts on it: the headings above it give way then.
+  const on = rows[here];
+  const selected = on ? body.indexOf(line(on, here)) : -1;
+  const start = Math.max(selected + 1 - room, 0);
+  const shown = body.slice(start, start + room);
   const blank = Array.from({ length: room - shown.length }, () => "");
   // A question or a reason must stay on its one line, so it is cut to fit, and the load gives
   // way first.
