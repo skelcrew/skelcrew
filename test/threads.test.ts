@@ -328,6 +328,11 @@ test("sc start <repo> refuses --from, with the task as words or on stdin, and st
   expect(stdin.code).toBe(1);
   expect(stdin.err).toBe(refused);
   expect(thread()).toEqual({});
+  // A description that says "--from" is the task's own words, so that task starts.
+  const described = await skel("start", "app", "Document the option", "--from");
+  expect(described.err).toBe("");
+  expect(described.out).toBe(`Started app-${own}1.\n`);
+  expect(thread()).toMatchObject({ title: "Document the option", body: "--from" });
 });
 
 test("more data on a connection doesn't run its request again", async () => {

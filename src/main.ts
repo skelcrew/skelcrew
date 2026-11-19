@@ -579,8 +579,9 @@ async function threadCommand(args: string[]): Promise<void> {
     return;
   }
   // --from names the branch an issue's thread starts from. A task with no issue has no such
-  // choice, so --from there is refused before anything starts, never taken as its title.
-  if (command === "start" && sub && !task && words.includes("--from"))
+  // choice, so --from there is refused before anything starts, never taken as its title. Only
+  // the first word is an option: a description that reads "--from" is the task's own words.
+  if (command === "start" && sub && !task && words[0] === "--from")
     throw new Error(
       "sc start <repo> takes no --from. Only sc start <issue> starts from another branch.",
     );
