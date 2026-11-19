@@ -605,15 +605,12 @@ export async function initRepo(sessions: string): Promise<void> {
   const isNew = repositoryAt(openDb(), remote) === undefined;
   await addRepo(root, sessions);
   const added = repositoryAt(openDb(), remote);
-  // Skelcrew reads only a folder of .agents/, and only what a push would bring. A link or a file
-  // at .agents counts as none, so there is nothing to approve.
-  if (added && lstatSync(join(root, ".agents")).isDirectory()) {
-    const current = checkoutAgents(added, root);
-    if (current === null)
-      console.log(
-        "git ignores .agents/ in this checkout, so a push won't bring it and Skelcrew approved none of it.",
-      );
-    else if (!hasAgents && !agentsAnswered(added)) approveAgents(added, current);
+  // Skelcrew reads only a folder of .agents/ with files in it. A link or a file at .agents counts
+  // as none, so there is nothing to approve.
+  const current =
+    added && lstatSync(join(root, ".agents")).isDirectory() ? checkoutAgents(added, root) : null;
+  if (added && current !== null) {
+    if (!hasAgents && !agentsAnswered(added)) approveAgents(added, current);
     else if (!hasAgents)
       console.log(
         `Skelcrew kept the .agents/ you approved for ${added.owner}/${added.repo}. Once you push the new one, run sc repo trust ${added.name} to approve it.`,

@@ -257,9 +257,13 @@ const skillsOff = (files: string[]): string[] =>
 // under .agents/skills/ with one x each, then lists them a line each, and stops when the two
 // disagree, as a line break in a path would split it. Each is turned off as found from the view's
 // top and as its real path, with \ and " escaped for TOML. find stays quiet on a broken link
-// or a loop, which Codex can't load either. The array may end with a comma, as TOML allows.
-const branchSkillsOff = String.raw`count=$(find -L .agents/skills -maxdepth 8 -name SKILL.md -exec printf x \; 2>/dev/null; true)
-list=$(find -L .agents/skills -maxdepth 8 -name SKILL.md 2>/dev/null; true)
+// or a loop, which Codex can't load either. Only options every find has are used, -L and -name,
+// as an option a Mac's find lacked would fail quietly and turn nothing off, and a missing find or
+// realpath stops the review for the same reason. The array may end
+// with a comma, as TOML allows.
+const branchSkillsOff = String.raw`command -v find > /dev/null && command -v realpath > /dev/null || { echo "the review needs find and realpath to keep the branch's skills from Codex" >&2; exit 1; }
+count=$(find -L .agents/skills -name SKILL.md -exec printf x \; 2>/dev/null; true)
+list=$(find -L .agents/skills -name SKILL.md 2>/dev/null; true)
 if [ -n "$list" ] && [ "$(printf '%s\n' "$list" | wc -l)" -ne "$(printf %s "$count" | wc -c)" ]; then
   echo "a path in .agents/skills/ holds a line break, so Skelcrew won't review it" >&2; exit 1
 fi

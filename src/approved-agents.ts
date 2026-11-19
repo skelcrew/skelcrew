@@ -88,9 +88,9 @@ export function approveAgents(place: Place, tree: string | null): void {
 
 // Returns the git tree of the .agents/ folder that committing in the checkout at `checkout` would
 // bring, for sc init, so it can be approved or asked about before it reaches the default branch,
-// or null when a commit would hold none of it, as when git ignores it all. That is what the
-// checkout has staged, as a commit takes it, and new files git doesn't ignore, as sc init asks you
-// to commit the files it wrote. It is read through a copy of the checkout's index, so the index
+// or null when it holds no file. That is what the checkout has staged, as a commit takes it, and
+// every new file, as sc init asks you to commit the files it wrote, even where a .gitignore rule
+// matches them. It is read through a copy of the checkout's index, so the index
 // itself never changes, and the tree and its files are then copied into Skelcrew's clone, which
 // approving needs. Throws when git can't read them.
 export function checkoutAgents(place: Place, checkout: string): string | null {
@@ -120,14 +120,14 @@ export function checkoutAgents(place: Place, checkout: string): string | null {
       .stdout.toString()
       .trim();
     if (staged && existsSync(staged)) copyFileSync(staged, index);
-    // Add the new files git doesn't ignore, given on stdin, as there can be more than a command
-    // line holds. The checkout's own ignore rules say which.
+    // Add every new file, ignored ones too, given on stdin, as there can be more than a command
+    // line holds.
     const untracked = Bun.spawnSync(
-      ["git", "-C", checkout, "ls-files", "-z", "--others", "--exclude-standard", "--", ".agents"],
+      ["git", "-C", checkout, "ls-files", "-z", "--others", "--", ".agents"],
       { stdout: "pipe", stderr: "pipe" },
     ).stdout.toString();
     if (untracked)
-      git(["add", "--pathspec-from-file=-", "--pathspec-file-nul"], { stdin: untracked });
+      git(["add", "-f", "--pathspec-from-file=-", "--pathspec-file-nul"], { stdin: untracked });
     if (git(["ls-files", "-z", "--", ".agents"]).length === 0) return null;
     const tree = git(["write-tree", "--prefix=.agents/"]).toString().trim();
     // Copy the tree and its files into Skelcrew's clone, as a pack, which unpack-objects takes

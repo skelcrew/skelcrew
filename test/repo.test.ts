@@ -942,36 +942,16 @@ test("init asks about a checkout's .agents/ with its tracked files that .gitigno
   expect(approvals()).toEqual({ "simon/app": git(checkout, "rev-parse", "HEAD:.agents").trim() });
 });
 
-// A push brings none of an .agents/ that git ignores, so there is nothing to approve, and init
-// still finishes.
-test("init approves nothing when git ignores .agents/, and says so", async () => {
+// The files sc init writes are approved as written, though a .gitignore rule matches them: you
+// commit them with git add -f.
+test("init approves the .agents/ it writes even when git ignores it", async () => {
   const checkout = onGitHub("simon/app", "WRITE");
   writeFileSync(join(checkout, ".gitignore"), ".agents/\n");
   const run = await skel(["init"], "", checkout);
   expect(run.err).toBe("");
   expect(run.code).toBe(0);
-  expect(run.out).toContain(
-    "git ignores .agents/ in this checkout, so a push won't bring it and Skelcrew approved none of it.",
-  );
-  expect(existsSync(join(home, ".config", "skelcrew", "approved-agents.yaml"))).toBe(false);
-  expect(existsSync(join(checkout, ".agents", "roles", "lead.md"))).toBe(true);
-});
-
-// A commit takes what is staged, so that is what you are shown and approve, not later edits.
-test("init asks about the .agents/ a commit would hold: what is staged, not unstaged edits", async () => {
-  const checkout = onGitHub("simon/app", "WRITE");
-  expect((await skel(["repo", "add"], "", checkout)).err).toBe("");
-  mkdirSync(join(checkout, ".agents", "roles"), { recursive: true });
-  writeFileSync(join(checkout, ".agents", "roles", "builder.md"), "Staged words.\n");
-  git(checkout, "add", "-A");
-  writeFileSync(join(checkout, ".agents", "roles", "builder.md"), "Unstaged words.\n");
-  const run = await skel(["init"], "y\n", checkout);
-  expect(run.err).toBe("");
-  expect(run.out).toContain("Staged words.");
-  expect(run.out).not.toContain("Unstaged words.");
-  // The checkout's own index is as it was.
-  expect(git(checkout, "diff", "--cached", "--name-only")).toBe(".agents/roles/builder.md\n");
-  git(checkout, "commit", "-q", "-m", "agents");
+  git(checkout, "add", "-f", ".agents");
+  git(checkout, "commit", "-q", "-m", "init");
   expect(approvals()).toEqual({ "simon/app": git(checkout, "rev-parse", "HEAD:.agents").trim() });
 });
 
