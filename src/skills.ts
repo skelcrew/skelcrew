@@ -116,14 +116,24 @@ export function checkoutSkills(root: string, shown: string[] = []): string[] {
     const inside = tops.some((top) => real === top || real.startsWith(top + sep));
     if (!inside || seen.has(real)) return;
     seen.add(real);
-    for (const name of readdirSync(dir)) {
+    // A link in a loop, or a folder or file you can't read, is skipped: Codex can't load a
+    // skill from it either, and one such entry must not stop the builder from starting.
+    let names: string[];
+    try {
+      names = readdirSync(dir);
+    } catch {
+      return;
+    }
+    for (const name of names) {
       const path = join(dir, name);
-      const stat = statSync(path, { throwIfNoEntry: false });
-      if (stat?.isDirectory()) walk(path);
-      else if (stat?.isFile() && name === "SKILL.md") {
-        found.add(path);
-        found.add(realpathSync(path));
-      }
+      try {
+        const stat = statSync(path);
+        if (stat.isDirectory()) walk(path);
+        else if (stat.isFile() && name === "SKILL.md") {
+          found.add(path);
+          found.add(realpathSync(path));
+        }
+      } catch {}
     }
   };
   walk(join(root, ".agents", "skills"));

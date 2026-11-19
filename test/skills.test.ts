@@ -295,6 +295,9 @@ test("a builder on Codex turns off each skill in its checkout, through links too
   );
   // A link to a folder the sandbox doesn't show is never walked.
   symlinkSync(home, join(thread, ".agents", "skills", "out"));
+  // Links in a loop, or to nothing, hold no skill, and never stop the builder from starting.
+  symlinkSync("loop", join(thread, ".agents", "skills", "loop"));
+  symlinkSync("gone", join(thread, ".agents", "skills", "broken"));
   const argv = z.array(z.string()).parse(
     inHome(`return (await harnessNamed("codex").start({
       name: "app-12", socket: ${JSON.stringify(join(home, "socket"))},
