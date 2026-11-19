@@ -38,7 +38,7 @@ function settings(yours: string, shared: string | null): void {
 // Runs code against config.ts in a process of its own, as homedir() keeps the HOME this one
 // started with, and returns what it printed and the error it ended with, if any.
 function run(code: string): { out: string; err: string } {
-  const script = `import { checkLimit, repositoryCommands, reviewLimit, threadConfig } from ${JSON.stringify(source("config.ts"))};
+  const script = `import { agentRole, checkLimit, leadMayArmMerges, repositoryCommands, reviewConfig, reviewLimit, roundLimit, sessionHost } from ${JSON.stringify(source("config.ts"))};
 const app = { owner: "simon", repo: "app" };
 ${code}`;
   const done = Bun.spawnSync([process.execPath, "-e", script], {
@@ -50,7 +50,12 @@ ${code}`;
 }
 
 // Returns what a thread of app runs with: each role's harness and model, and the round limit.
-const forApp = () => JSON.parse(run("console.log(JSON.stringify(threadConfig(app)));").out);
+const forApp = () =>
+  JSON.parse(
+    run(
+      'console.log(JSON.stringify({ lead: agentRole("lead", app), builder: agentRole("builder", app), ...reviewConfig(app) }));',
+    ).out,
+  );
 
 test("the repository's skelcrew.yaml sets each role and the round limit, over your config", () => {
   settings(
@@ -89,6 +94,41 @@ test("the reviewer's fallback and a review's time limit come from your config al
   // A fallback that is the reviewer's own harness is none.
   settings("harness: claude\nreviewer: { fallback: claude }\n", null);
   expect(forApp()).toMatchObject({ fallback: null, reviewMinutes: 30 });
+});
+
+// Letting the lead arm a merge when ready grants an agent what is yours, so only your config can,
+// and it is off until you turn it on.
+test("only your config lets the lead arm merges, and it is off by default", () => {
+  const leadArms = () => run("console.log(leadMayArmMerges());").out.trim();
+  settings("harness: claude\n", null);
+  expect(leadArms()).toBe("false");
+  settings("harness: claude\nlead: { may_arm_merges: true }\n", null);
+  expect(leadArms()).toBe("true");
+  // A repository's skelcrew.yaml can't turn it on, and the lead's harness still comes from it.
+  settings("harness: claude\n", "lead: { harness: codex, may_arm_merges: true }\n");
+  expect(leadArms()).toBe("false");
+  expect(forApp().lead).toEqual({ harness: "codex" });
+  // Nor can it turn yours off.
+  settings(
+    "harness: claude\nlead: { may_arm_merges: true }\n",
+    "lead: { may_arm_merges: false }\n",
+  );
+  expect(leadArms()).toBe("true");
+  // Nor can an override for one repository under repos:, as only your general settings count.
+  settings("harness: claude\nrepos:\n  simon/app:\n    lead: { may_arm_merges: true }\n", null);
+  expect(leadArms()).toBe("false");
+  // Nor can anything in the repository's .agents/, such as a settings file put there.
+  settings("harness: claude\n", null);
+  mkdirSync(join(clone(), ".agents"), { recursive: true });
+  writeFileSync(join(clone(), ".agents", "skelcrew.yaml"), "lead: { may_arm_merges: true }\n");
+  writeFileSync(join(clone(), ".agents", "config.yaml"), "lead: { may_arm_merges: true }\n");
+  expect(leadArms()).toBe("false");
+  rmSync(join(clone(), ".agents"), { recursive: true });
+  // A top-level line counts for nothing, and a value that isn't true or false is refused.
+  settings("harness: claude\nmay_arm_merges: true\n", null);
+  expect(leadArms()).toBe("false");
+  settings("harness: claude\nlead: { may_arm_merges: yes please }\n", null);
+  expect(run("leadMayArmMerges();").err).toContain("isn't valid");
 });
 
 // A model name belongs to its harness.
@@ -143,11 +183,21 @@ test("setup and test come from the repository, then your config", () => {
 
 test("a skelcrew.yaml that isn't valid, or isn't a plain file, says so rather than be ignored", () => {
   settings("harness: claude\n", "max_rounds: -1\n");
-  expect(run("threadConfig(app);").err).toContain("the repository's skelcrew.yaml isn't valid");
+  expect(run("roundLimit(app);").err).toContain("the repository's skelcrew.yaml isn't valid");
   settings("harness: claude\n", null);
   writeFileSync(join(home, "secret"), "setup: [cat secret]\n");
   symlinkSync(join(home, "secret"), join(clone(), "skelcrew.yaml"));
   expect(run("repositoryCommands(app);").err).toContain("isn't a plain file");
+});
+
+test("the session host comes from your config only, else tmux", () => {
+  const host = () => run("console.log(sessionHost());").out;
+  settings("harness: claude\n", null);
+  expect(host()).toBe("tmux\n");
+  settings("harness: claude\nsession: herdr\n", "session: rex\n");
+  expect(host()).toBe("herdr\n");
+  settings("harness: claude\n", "session: rex\n");
+  expect(host()).toBe("tmux\n");
 });
 
 test("how many reviews run at once comes from your config only, else a quarter of the cores", () => {

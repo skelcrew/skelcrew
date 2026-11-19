@@ -5,10 +5,12 @@ import { appendFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import { HarnessName, harnessNamed } from "../agents/harness.ts";
+import { listSessions } from "../agents/sessions.ts";
 import { taskColumns } from "../db.ts";
 import { threadsDir } from "../paths.ts";
+import { type Host, hostNamed } from "../plugins/runtime.ts";
 import { findRepository } from "./repo.ts";
-import { needsYou } from "./status.ts";
+import { needsYou, reportStatus } from "./status.ts";
 
 // What an agent is doing: working on a turn, idle at its prompt, asking you a question with its
 // harness's question tool, or stopped on an error its harness reported.
@@ -18,6 +20,16 @@ export type AgentState = z.infer<typeof AgentState>;
 // One message the lead told a thread's builder: who sent it, when it was typed in, in
 // milliseconds since 1970, and its text.
 const TaskUpdate = z.object({ from: z.literal("lead"), at: z.number(), text: z.string() });
+
+// Skelcrew's review on a PR: the PR, the review's ID on the forge, and the verdict and findings it
+// last said, so each round edits that one review, or posts again only when what it says changed.
+const ReviewPost = z.object({
+  pr: z.number(),
+  id: z.string(),
+  verdict: z.enum(["approve", "changes"]),
+  findings: z.array(z.string()),
+});
+export type ReviewPost = z.infer<typeof ReviewPost>;
 
 // A thread with its task, as Skelcrew's database keeps them, one row per thread from the
 // task_threads view. The task's fields are those openDb's taskColumns name, and they are saved on
@@ -111,6 +123,11 @@ export const Thread = z.object({
   // needs you for another reason would read as ready to merge before CI ran. False in a row
   // from before Skelcrew kept it, until the next poll.
   ci_passed: z.coerce.boolean(),
+  // Whether a poll ever found CI checks on the PR, besides Skelcrew's own. It never goes back,
+  // unlike its saved checks, which go back to none when the forge's checks vanish, so the list
+  // can tell a repository with no CI from CI that went missing. False in a row from before
+  // Skelcrew kept it, until a poll finds checks.
+  ci_seen: z.coerce.boolean(),
   // The harness of the review waiting or running, which can differ from the latest finished
   // one's once you change your config.
   reviewer: HarnessName.nullable(),
@@ -120,6 +137,10 @@ export const Thread = z.object({
   review_round: z.number().nullable(),
   verdict: z.enum(["approve", "changes", "failed", "timed out"]).nullable(),
   review_line: z.string().nullable(),
+  // The commit the latest finished review was about, so the list knows which commit an approval
+  // stands for without asking git. Null before the first, and in a row from before Skelcrew kept
+  // it.
+  reviewed_commit: z.string().nullable(),
   // When the latest review was asked for, by sc submit or sc review, or ended, in milliseconds
   // since 1970, for sc ps. Null before the first, and in a row from before Skelcrew kept it.
   review_at: z.number().nullable(),
@@ -148,6 +169,11 @@ export const Thread = z.object({
   // What the builder is doing, as its harness's hooks and its screen tell. Null until its first
   // hook runs, and in a row from before Skelcrew kept it.
   state: AgentState.nullable(),
+  // The session host its builder runs on, tmux or a runtime plugin by name, which it keeps until
+  // the builder ends: a host you pick later is only for new sessions. Null once you stopped it.
+  host: z.string().nullable(),
+  // The builder's session ID on its host, or null for its folder, which is its name on tmux.
+  host_id: z.string().nullable(),
   // Whether the work ended with its changes merged: its PR merged, or without a forge, its
   // branch reached its base. False while it goes on, and once it ended any other way.
   merged: z.coerce.boolean(),
@@ -167,13 +193,62 @@ export const Thread = z.object({
   merge_id: z.string().nullable(),
   merge_by: z.string().nullable(),
   merge_at: z.number().nullable(),
+  // Your words, exactly, when you asked the lead to arm the plan, or null when you armed it at
+  // your terminal.
+  merge_asked: z.string().nullable(),
   merge_waits: z.string().nullable(),
   merge_noted: z.number().nullable(),
+  // The tree of the .agents/ you had approved when the task started, whose roles its agents
+  // keep to the end, though you approve another meanwhile. Null for the built-in roles, as
+  // every task had before Skelcrew read .agents/.
+  agents: z.string().nullable(),
+  // The flow the task runs, from start to end: `default`, or a flow file of its .agents/.
+  flow: z.string(),
+  // Skelcrew's review on the task's PR, or null before its first. It names its PR, so a PR
+  // opened again after sc rm gets a review of its own.
+  review_post: z
+    .string()
+    .nullable()
+    .transform((saved) => (saved === null ? null : ReviewPost.parse(JSON.parse(saved)))),
 });
 export type Thread = z.infer<typeof Thread>;
 
 // Returns the harness the thread's builder runs on, for starting it again and typing into it.
 export const builderHarness = (thread: Thread) => harnessNamed(thread.harness ?? "claude");
+
+// Returns the host the thread's builder session runs on and its ID there, for everything that
+// reaches the builder. A stopped thread has no session, and is looked for on tmux, where nothing
+// of it runs. Throws when its host is a plugin no longer installed, as it can't be reached.
+// A plugin's host gives the ID as it starts the session, and the daemon could stop before saving
+// it. So a thread on a plugin with no ID saved finds its builder by the labels it started with,
+// and saves its ID then, so it is never started a second time.
+export async function builderSession(
+  db: Database,
+  sessions: string,
+  thread: Thread,
+): Promise<{ host: Host; id: string }> {
+  const host = hostNamed(db, sessions, thread.host ?? "tmux");
+  if (host === null) throw new Error(hostGone(thread));
+  if (thread.host_id !== null || typeof host === "string")
+    return { host, id: thread.host_id ?? thread.folder };
+  // The builder's task label is its thread's name when it started: its repository's short name
+  // or, once another repository shares that, its owner and name, then its task's ID. Either is
+  // matched whole, so task 12 never takes the builder of task other-12.
+  const names = [`${thread.repo}-${thread.task}`, `${fullNameOf(thread)}-${thread.task}`];
+  const found = (await listSessions(host)).find(
+    ({ labels }) =>
+      labels?.role === "builder" &&
+      labels.repository === fullNameOf(thread) &&
+      names.includes(labels.task ?? ""),
+  );
+  if (!found) return { host, id: thread.folder };
+  record(db, thread.folder, { host_id: found.name }, "found its builder on its host");
+  return { host, id: found.name };
+}
+
+// Returns why a thread's builder can't be reached when its host plugin is gone.
+export const hostGone = (thread: Thread) =>
+  `its builder's session host ${thread.host} isn't installed any more`;
 
 // Returns whether the thread's review waits in the queue for a place, as limits.reviews already
 // runs. Only a working or waiting thread has a review going on: one stopped, failed or done
@@ -252,9 +327,11 @@ export function record(
     if (columns.length > 0)
       db.run(
         `UPDATE ${table} SET ${columns.map(([column]) => `${column} = ?`).join(", ")} ${where}`,
-        // The IDs seen and the lead's updates are lists, kept as JSON.
+        // The IDs seen, the lead's updates and Skelcrew's review on the PR are kept as JSON.
         [
-          ...columns.map(([, value]) => (Array.isArray(value) ? JSON.stringify(value) : value)),
+          ...columns.map(([, value]) =>
+            typeof value === "object" && value !== null ? JSON.stringify(value) : value,
+          ),
           folder,
         ],
       );
@@ -276,6 +353,7 @@ export function record(
   // see exactly what the database holds.
   const thread = readThread(db, folder);
   log(db, thread, why);
+  reportStatus(db, thread);
   return thread;
 }
 

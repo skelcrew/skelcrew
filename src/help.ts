@@ -8,6 +8,7 @@ const sections: [string, [string, string][]][] = [
     "COMMANDS",
     [
       ["(no command)", "Open this repository's lead, with the sidebar"],
+      ["--list", "This repository's list: its lead, issues and tasks"],
       ["ls [<repo>]", "Tasks, with each one's stage, status, PR, CI and review"],
       ["show <task>", "A task: stage, description, threads, PR, checks, review"],
       ["ps [<repo>]", "Threads: status, PR, CI, review, needs you"],
@@ -40,7 +41,7 @@ const sections: [string, [string, string][]][] = [
       ["repo add [<path> | <url> | <owner/repo>]", "Add a repository, this one by default"],
       ["repo ls", "Repositories Skelcrew works on"],
       ["repo rm <name>", "Remove Skelcrew's clone of one"],
-      ["repo trust <name>", "Trust one your login can't push to"],
+      ["repo trust <name>", "Trust one your login can't push to, or approve its .agents/"],
     ],
   ],
   [
@@ -83,6 +84,7 @@ const sections: [string, [string, string][]][] = [
       ["--json", "Output for tools"],
       ["--all", "Done threads too, on ps, and ended tasks, on ls"],
       ['--short "<words>"', "A thread's short title for the sidebar, on start"],
+      ["--flow <name>", "The flow a task runs, from .agents/flows/, on start"],
       ["--from <remote>", "The repository you're in"],
       ["--version", "Which release of Skelcrew this is"],
     ],

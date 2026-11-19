@@ -32,6 +32,7 @@ test("sc --help, -h and help print the help to stdout and succeed", () => {
 test("the help names every command", () => {
   const out = skel(["--help"]).out;
   for (const command of [
+    "--list",
     "--remote",
     "remote add",
     "up",
@@ -215,6 +216,7 @@ test("sc task is no longer a command", () => {
 });
 
 // The lead names each thread it starts for the sidebar, and you can too.
-test("the help says sc start takes a short title", () => {
+test("the help says sc start takes a short title and a flow", () => {
   expect(skel(["--help"]).out).toContain('  --short "<words>" ');
+  expect(skel(["--help"]).out).toContain("  --flow <name> ");
 });

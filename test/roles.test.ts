@@ -31,8 +31,9 @@ const restarted =
 const asking =
   "\nUse the setup and test commands named at the end of these instructions, as every builder of the repository uses the same ones. If one you need isn't configured, never make one up: ask the lead which to use with sc tell lead, and wait for its answer. That counts as blocked.\n";
 
-// What the lead was told about issues, threads and PRs before sc ls and sc show, and before
-// threads with no issue were named by their machine's code, each with what it is told now.
+// What the lead was told about issues, threads and PRs before sc ls and sc show, before threads
+// with no issue were named by their machine's code, and about the sidebar before sc --list, each
+// with what it is told now.
 const leadTasks = [
   ["prints its name, such as app-t1.", "prints its name, such as app-wr1."],
   [
@@ -54,6 +55,14 @@ const leadTasks = [
   [
     '- sc tell app-13 "<text>" types a message into that thread\'s builder once it is idle,',
     '- sc tell app-13 "<text>", or sc tell app-13/builder "<text>", types a message into that thread\'s builder once it is idle,',
+  ],
+  [
+    "The sidebar shows those words in place of its long title.",
+    "The sidebar and sc --list show those words in place of its long title.",
+  ],
+  [
+    "They answer a builder's question by picking app-12 in the sidebar beside you.",
+    "They answer a builder's question by picking app-12 in the sidebar beside you, or, if they opened you from sc --list, by leaving you with Alt-Q and pressing Enter on app-12 in the list.",
   ],
   // A turn that ended without sc submit brought the human in. Its last message now goes to the
   // lead, who brings a question to the human, unless the builder told the lead in that turn. The
@@ -77,8 +86,8 @@ const threadEnds =
   'When a thread ends, Skelcrew types a one line note too, such as "app-12 is done: #7 merged into main" or "app-12 ended: #7 closed without merging". It comes from Skelcrew, not the human. Drop the thread from what you hold open: never list it as ready to merge again. When useful, tell the human in one line what it unblocks, such as a thread waiting on its work. A thread you removed with sc rm brings no note.\n\n';
 
 // What the lead's file added for a merge when ready: only the human arms one, at their own
-// terminal, and the lead may cancel one.
-const mergeWhenReady = `You can't merge, and you can't arm a merge either. When the human wants a PR merged once it is ready, tell them to run sc merge --when-ready app-12 in their own terminal: it asks them y/n there, and Skelcrew then merges it as soon as it is approved and green. sc ps shows "when ready" under MERGE for such a thread. You may run sc merge --cancel app-12 when the human asks, as cancelling is always safe. If an armed merge still waits after a review round, such as on a conflict or a failing check, Skelcrew types a one line note, such as "app-12 still waits to merge when ready, on its failing checks to be fixed.". Tell the human only if it needs them.\n\n`;
+// terminal, unless they let the lead, and the lead may cancel one.
+const mergeWhenReady = `You can't merge. Arming a merge when ready is the human's too, unless the end of these instructions says they let you arm one. When they haven't and the human wants a PR merged once it is ready, tell them to run sc merge --when-ready app-12 in their own terminal: it asks them y/n there, and Skelcrew then merges it as soon as it is approved and green. sc ps shows "when ready" under MERGE for such a thread. You may run sc merge --cancel app-12 when the human asks, as cancelling is always safe. If an armed merge still waits after a review round, such as on a conflict or a failing check, Skelcrew types a one line note, such as "app-12 still waits to merge when ready, on its failing checks to be fixed.". Tell the human only if it needs them.\n\n`;
 
 // What the builder was told a turn that ended without sc submit does, before its last message
 // went to the lead, and what it is told now.
@@ -90,6 +99,12 @@ const turnEnded =
 // already shows its progress.
 const tellingTheLead =
   " Tell it only when you are blocked or need a decision. Never tell it just to report progress, such as that you submitted, resubmitted or merged main: Skelcrew already shows that.";
+
+// What the lead's file added once flows became files: it picks each task's flow where the
+// repository has others than default, and tells the human whenever it isn't default.
+const triage =
+  "- Each thread runs a flow, which sets its stages and its rounds of review. When the approved .agents/ has flows other than default, pick one for each thread you start or propose, and add --flow <name> to sc start, such as sc start app-13 --flow <name>. Read the flows where the end of these instructions says, not .agents/flows/ in the clone, which may hold changes the human hasn't approved. Whenever you pick a flow other than default, tell the human which and why, such as \"I'll run this on quick, as it is a one-line fix.\" A thread keeps its flow to the end, but before its builder first submits you can switch it with sc start app-12 --flow <name>. If that flow builds with another role, sc start refuses, as that is another agent: run sc rm app-12, then sc start app-12 --flow <name>.\n";
+const labelTriage = " Pick its flow as for any thread.";
 
 // What the builder's file added after that: it never answers the lead only to say it got a
 // message, which would fill the lead's chat with acknowledgements.
@@ -103,8 +118,10 @@ test("the lead and builder files hold the instructions the code gave, but for wh
   expect(lead).toContain(settling);
   expect(lead).toContain(restarted);
   expect(lead).toContain(threadEnds);
+  expect(lead).toContain(triage);
+  expect(lead).toContain(labelTriage);
   expect(lead).toContain(mergeWhenReady);
-  lead = lead.replace(mergeWhenReady, "");
+  lead = lead.replace(triage, "").replace(labelTriage, "").replace(mergeWhenReady, "");
   for (const [before = "", now = ""] of leadTasks) {
     expect(lead).toContain(now);
     lead = lead.replace(now, before);
@@ -135,9 +152,7 @@ test("the lead and builder files hold the instructions the code gave, but for wh
 
 test("the built-in roles name no harness or model, so yours count, as before", () => {
   for (const name of ["lead", "builder", "reviewer"] as const) {
-    const role = builtInRole(name);
-    expect(role.harness).toBeUndefined();
-    expect(role.model).toBeUndefined();
+    expect(builtInRole(name).frontmatter).toEqual({});
   }
 });
 
@@ -158,7 +173,9 @@ ${tests}
 
 Check that it does what this asks and nothing else, and look for bugs, edge cases it misses, missing tests and failing ones.
 
-Answer "approve" only if it is ready to merge. Otherwise answer "changes", and in the body name each problem, where it is and why it matters, so the builder can fix it.`;
+List each problem in the findings, one per entry: what it is, where it is and why it matters, so the builder can fix it. In the body, say in a few lines what you checked and how, such as which tests ran.
+
+Answer "changes" with at least one finding. When you found no problem, answer "approve" with no findings, whatever CI's state: Skelcrew waits for every check to pass before the PR is ready.`;
 }
 
 // Without CI on the commit, the reviewer runs the tests, as it always did.
@@ -168,27 +185,69 @@ const testedBy = ["bun test"];
 
 test("the reviewer is told exactly what its code told it, and who runs the tests", () => {
   const issue = { title: "Fix the flaky test", body: "It fails one run in ten." };
-  expect(reviewerPrompt(issue, "origin/main", "run", testedBy)).toBe(
-    before(issue, "origin/main", runs),
-  );
+  expect(
+    reviewerPrompt(builtInRole("reviewer").instructions, issue, "origin/main", "run", testedBy),
+  ).toBe(before(issue, "origin/main", runs));
 });
 
 test("a task's own text reaches the reviewer as written, even when it looks like a blank", () => {
   // A title or body that holds the blanks' marks, or what a replacement treats as special,
   // must not be filled in again.
   const issue = { title: "Rename {{base}} to $& and $1", body: "Mention {{title}} and {{body}}." };
-  expect(reviewerPrompt(issue, "origin/$&", "run", testedBy)).toBe(
-    before(issue, "origin/$&", runs),
-  );
+  expect(
+    reviewerPrompt(builtInRole("reviewer").instructions, issue, "origin/$&", "run", testedBy),
+  ).toBe(before(issue, "origin/$&", runs));
 });
 
 test("a role file's frontmatter gives its harness and model, and the rest is its instructions", () => {
   const role = readRole("---\nharness: codex\nmodel: gpt-6.1-sol\n---\nReview it.\n");
-  expect(role).toEqual({ harness: "codex", model: "gpt-6.1-sol", instructions: "Review it.\n" });
-  expect(readRole("Build it.\n")).toEqual({ instructions: "Build it.\n" });
+  expect(role).toEqual({
+    frontmatter: { harness: "codex", model: "gpt-6.1-sol" },
+    instructions: "Review it.\n",
+  });
+  expect(readRole("Build it.\n")).toEqual({ frontmatter: {}, instructions: "Build it.\n" });
 });
 
+// Its harness and model are checked by the settings, only where they count.
 test("a role file's frontmatter holds only harness and model", () => {
   expect(() => readRole("---\nharness: codex\nrounds: 5\n---\nReview it.\n")).toThrow("rounds");
-  expect(() => readRole("---\nharness: emacs\n---\nReview it.\n")).toThrow("harness");
+  expect(readRole("---\nharness: emacs\n---\nReview it.\n").instructions).toBe("Review it.\n");
+});
+
+test("a reviewer role that leaves out the blanks still gets the task, the base and the tests", () => {
+  const issue = { title: "Fix the flaky test", body: "It fails one run in ten." };
+  const prompt = reviewerPrompt(
+    "Check it the team's way.\n",
+    issue,
+    "origin/main",
+    "run",
+    testedBy,
+  );
+  expect(prompt).toStartWith("Check it the team's way.\n\n");
+  expect(prompt).toContain("# Fix the flaky test\n\nIt fails one run in ten.");
+  expect(prompt).toContain("git diff origin/main...HEAD");
+  expect(prompt).toContain(runs);
+  // A role that places every blank gets nothing added.
+  const placed = "Task {{title}}: {{body}}. Since {{base}}. {{tests}}\n";
+  expect(reviewerPrompt(placed, issue, "origin/main", "run", testedBy)).toBe(
+    `Task Fix the flaky test: It fails one run in ten.. Since origin/main. ${runs}`,
+  );
+});
+
+// An empty model is refused by the settings, where it counts, as any bad harness or model.
+test("a role file that opens frontmatter must close it", () => {
+  expect(() => readRole("---\nharness: codex\nReview it.\n")).toThrow("never closes");
+  // Closing on the file's last line, with no newline after it, is fine.
+  expect(readRole("---\nharness: codex\n---")).toEqual({
+    frontmatter: { harness: "codex" },
+    instructions: "",
+  });
+});
+
+test("a role file with Windows line endings is read and checked the same", () => {
+  expect(readRole("---\r\nharness: codex\r\n---\r\nReview it.\r\n")).toEqual({
+    frontmatter: { harness: "codex" },
+    instructions: "Review it.\r\n",
+  });
+  expect(() => readRole("---\r\nharness: codex\r\nReview it.\r\n")).toThrow("never closes");
 });

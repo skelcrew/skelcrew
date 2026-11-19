@@ -1272,6 +1272,7 @@ exec sleep 300
         missing: null,
         clone: `${data()}/repos/simon/app`,
         tabClosed: false,
+        agentsWaiting: false,
       },
     ]);
     expect(attach).toBe(

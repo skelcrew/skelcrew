@@ -306,7 +306,7 @@ function pickReviewer(harness: HarnessName): void {
   if (!picked) throw new Error(`${answer.trim()} isn't one of the numbers, so none is saved`);
   if (picked.name === harness) return;
   const config = yourConfigDocument();
-  config.setIn(["reviewer", "harness"], picked.name);
+  config.setIn(["roles", "reviewer", "harness"], picked.name);
   writeFileSync(configFile(), config.toString());
 }
 

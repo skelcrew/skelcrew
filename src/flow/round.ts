@@ -4,9 +4,11 @@
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
 import { type HarnessName, harnessNamed } from "../agents/harness.ts";
-import { repositoryCommands, reviewLimit, threadConfig } from "../config.ts";
+import { repositoryCommands, reviewConfig, reviewLimit, roundLimit } from "../config.ts";
+import { flowRoles } from "../flows.ts";
 import { cloneDir, reviewSocket } from "../paths.ts";
-import { failedLog, forgeOf, openPr, postReview, setStatus } from "../plugins/ask.ts";
+import { editReview, failedLog, forgeOf, openPr, postReview, setStatus } from "../plugins/ask.ts";
+import { repositoryRole } from "../roles.ts";
 import { quietly } from "../run.ts";
 import { errorText } from "../say.ts";
 import { baseOf } from "./builder.ts";
@@ -21,14 +23,16 @@ import {
   onlyDocs,
   pastRoundLimit,
   refusedWorkflow,
+  reviewComment,
   whoRunsTheSuite,
 } from "./decide.ts";
+import { stopping } from "./events.ts";
 import { fetchInto, pushCommit } from "./git.ts";
 import { endLimit, limitOn, reachLimit, tellOfLimit, waitUntil } from "./limits.ts";
 import { dropOldEvents, noteForLead, queueMessage, typeLeadNotes } from "./messages.ts";
 import { Queue } from "./queue.ts";
 import { type Limited, type Review, review } from "./reviewer.ts";
-import { cloneOf, readThread, record, repositoryOf, type Thread, threadName } from "./thread.ts";
+import { cloneOf, readThread, record, repositoryOf, Thread, threadName } from "./thread.ts";
 
 // Runs git in Skelcrew's own clone and returns what it printed, throwing with its error when it
 // fails.
@@ -219,7 +223,7 @@ async function reviewRound(
   const { pr } = thread;
   const hasForge = forgeOf(db, repository) !== null;
   if (hasForge && pr === null) throw new Error("the thread has no pull request to review");
-  const { reviewer: reviewerRole, fallback, reviewMinutes } = threadConfig(thread);
+  const { reviewer: reviewerRole, fallback, reviewMinutes } = reviewConfig(thread);
   const reviewer = reviewerRole.harness;
   const limit = reviewLimit();
   const skelcrewClone = cloneDir(thread.owner, thread.repo);
@@ -328,7 +332,7 @@ async function reviewRound(
     if (signal.aborted) return;
     if (still) {
       const body = `Approval kept: this commit only merges ${base} into ${approved}, which Skelcrew's reviewer approved, and changes nothing else in the PR. Every CI check on it passed.`;
-      const verdict: Review = { verdict: "approve", body };
+      const verdict: Review = { verdict: "approve", body, findings: [] };
       const kept = { verdict, by: thread.reviewed_by ?? reviewer, kept: approved };
       await pending;
       await actOnVerdict(db, sessions, folder, sha, signal, kept, builderBack);
@@ -417,6 +421,9 @@ async function reviewRound(
   };
   const plan = {
     given: {
+      // The review stage's role, from the task's flow, and its instructions come from the
+      // .agents/ the task started with.
+      instructions: repositoryRole(flowRoles(thread).review, thread).instructions,
       commit: sha,
       signal,
       limit: reviewMinutes * 60_000,
@@ -450,8 +457,9 @@ async function reviewRound(
   await actOnVerdict(db, sessions, folder, sha, signal, { verdict, by, kept: null }, builderBack);
 }
 
-// Acts on a review's verdict: with a forge, posts it on the PR and sets Skelcrew's check; saves
-// what it means for the thread, and types changes into the builder once `builderBack` settles.
+// Acts on a review's verdict: with a forge, puts it in Skelcrew's one review on the PR and sets
+// Skelcrew's check; saves what it means for the thread, and types changes into the builder once
+// `builderBack` settles.
 // Without a forge an approved branch needs you at once. An approval is saved as a ref in
 // Skelcrew's clone, so a later submit that only merges the base branch can keep it. `kept` is
 // the approved commit whose approval this one keeps, with no reviewer run, which the check and
@@ -470,7 +478,7 @@ async function actOnVerdict(
   const repository = repositoryOf(db, thread);
   const { pr } = thread;
   const hasForge = forgeOf(db, repository) !== null;
-  const { maxRounds } = threadConfig(thread);
+  const maxRounds = roundLimit(thread);
   // Decide what the verdict means for the thread, then post it on the PR. A failed or timed out
   // review is Skelcrew's problem, not the PR's, so it is never posted. A kept approval says so
   // on the check and in the log, in place of the reviewer's.
@@ -487,13 +495,12 @@ async function actOnVerdict(
           description: `approval kept: only merged ${prBase(db, thread)}`,
           why: ready === null ? `${keptWhy}, so it waits on CI` : `${keptWhy}; ${ready}`,
         };
-  if ((verdict.verdict === "approve" || verdict.verdict === "changes") && pr !== null)
-    await postReview(db, repository, {
-      pr,
-      commit: sha,
-      verdict: verdict.verdict,
-      body: verdict.body,
-    });
+  // The whole review goes in the thread's log first, as the PR keeps only the latest one.
+  if (verdict.verdict === "approve" || verdict.verdict === "changes") {
+    const said = reviewComment(verdict, before + 1, sha);
+    record(db, folder, {}, `the review said (${verdict.verdict}): ${said}`);
+    if (pr !== null) await postOrEdit(db, folder, pr, sha, { ...verdict, round: before + 1 });
+  }
   // A newer round may be reviewing the same commit, and its check must stay pending.
   if (signal.aborted) return;
   if (hasForge)
@@ -530,6 +537,7 @@ async function actOnVerdict(
     review_round: before + 1,
     verdict: verdict.verdict,
     review_line: verdict.body.trim().split("\n")[0]?.slice(0, 200) ?? "",
+    reviewed_commit: sha,
     review_at: Date.now(),
   };
   record(db, folder, change, outcome.why);
@@ -540,6 +548,51 @@ async function actOnVerdict(
   await builderBack;
   if (signal.aborted) return;
   await queueChanges(db, sessions, folder, tell, signal);
+}
+
+// Puts a review's verdict and findings on the PR as Skelcrew's one review there, so the PR shows
+// the latest round rather than a review per round. It edits the review an earlier round posted.
+// When the forge can't edit it, it posts a new one only if the verdict or findings changed, so a
+// round that found the same again adds nothing. One deleted from the PR is posted again. The rounds one by one stay in the thread's log.
+// What it posted is saved on the thread at once, so a later round edits it though this one is
+// cancelled. Two rounds of a thread never post at once: a round's review starts only once the
+// round before has ended, posting included, so the later round always reads what the earlier
+// one saved, and its verdict is the one left on the PR.
+async function postOrEdit(
+  db: Database,
+  folder: string,
+  pr: number,
+  commit: string,
+  review: { verdict: "approve" | "changes"; body: string; findings: string[]; round: number },
+): Promise<void> {
+  const thread = readThread(db, folder);
+  const repository = repositoryOf(db, thread);
+  const { verdict, findings } = review;
+  const body = reviewComment(review, review.round, commit);
+  // Only a review on this PR counts: a PR opened again after sc rm starts with none.
+  const earlier = thread.review_post?.pr === pr ? thread.review_post : null;
+  // A forge that fails to edit, such as a plugin that doesn't know the question yet, is treated
+  // as one that can't, so the review still reaches the PR.
+  const edit =
+    earlier === null
+      ? "gone"
+      : await editReview(db, repository, { pr, id: earlier.id, verdict, body }).catch(
+          () => "can't" as const,
+        );
+  const edited = edit === "edited";
+  // A review deleted from the PR is posted again even when it would say the same, so the PR
+  // always shows one.
+  const same =
+    earlier !== null &&
+    earlier.verdict === verdict &&
+    JSON.stringify(earlier.findings) === JSON.stringify(findings);
+  if (edit === "can't" && same) return;
+  const id =
+    edited && earlier !== null
+      ? earlier.id
+      : await postReview(db, repository, { pr, commit, verdict, body });
+  const how = edited ? `edited its review ${id}` : `posted its review ${id}`;
+  record(db, folder, { review_post: { pr, id, verdict, findings } }, `${how} on PR #${pr}`);
 }
 
 // Runs the review on the reviewer's harness and returns its verdict and the harness it ran on,
@@ -721,8 +774,8 @@ function pushAndReview(
 // it exits.
 export function submitRound(db: Database, sessions: string, folder: string, summary: string): void {
   const thread = readThread(db, folder);
-  const { maxRounds, reviewer } = threadConfig(thread);
-  if (thread.status === "stopped")
+  const { maxRounds, reviewer } = reviewConfig(thread);
+  if (thread.status === "stopped" || stopping.has(folder))
     throw new Error("this thread was stopped, so Skelcrew won't push it");
   // Past the round limit the thread still needs you, whatever the builder does.
   const needs_you = pastRoundLimit(thread, maxRounds);
@@ -753,10 +806,16 @@ export function submitRound(db: Database, sessions: string, folder: string, summ
     `submitted: ${summary}`,
   );
   // A moved branch's notice dropped here never reached the builder, so its commit is forgotten.
-  const dropped = dropOldEvents(db, sessions, folder);
-  const { seen } = readThread(db, folder);
-  const kept = forgetMoves(seen, thread.branch, dropped);
-  if (JSON.stringify(kept) !== JSON.stringify(seen)) record(db, folder, { seen: kept });
+  // A notice being typed as the round started is dropped only once its typing ends, if it never
+  // got in, so its commit is forgotten then.
+  const forget = (dropped: string[]) => {
+    const { seen } = readThread(db, folder);
+    const kept = forgetMoves(seen, thread.branch, dropped);
+    if (JSON.stringify(kept) !== JSON.stringify(seen)) record(db, folder, { seen: kept });
+  };
+  const { dropped, later } = dropOldEvents(db, sessions, folder);
+  forget(dropped);
+  later.then(forget);
   // The older round is cancelled, but its push still runs first, so the branch ends on this
   // round's commit.
   const before = latestRounds.get(folder);
@@ -793,6 +852,22 @@ async function ciEnds(
     const state = shown?.head === sha ? ciState(shown) : null;
     if (state === "passing" || state === "failing") return state;
     await Bun.sleep(5_000);
+  }
+}
+
+// Saves on each approved thread the commit its approval stands for, when the database doesn't
+// have it, as for an approval from before reviews saved it there. Skelcrew's clone keeps that
+// commit as a ref, so the list, which reads only the database, can still merge it. The daemon
+// runs this as it starts. A thread whose ref is gone keeps none, and merges on the forge.
+export function saveApprovedCommits(db: Database): void {
+  const approved = db
+    .query(`SELECT * FROM task_threads WHERE verdict = 'approve' AND reviewed_commit IS NULL
+      AND status != 'done'`)
+    .all()
+    .map((row) => Thread.parse(row));
+  for (const thread of approved) {
+    const commit = lastApproved(thread);
+    if (commit !== null) record(db, thread.folder, { reviewed_commit: commit });
   }
 }
 
@@ -917,7 +992,7 @@ export function rerunReview(
   const sha = submitting === null ? lastPushed(thread) : null;
   if (submitting === null && sha === null)
     throw new Error(`${name} has no submitted commit to review yet`);
-  const { maxRounds } = threadConfig(thread);
+  const maxRounds = roundLimit(thread);
   // Past the round limit the thread still needs you, whatever the review says.
   const needs_you = pastRoundLimit(thread, maxRounds);
   // The commit is saved as under review at once, so a second sc review asked before the

@@ -13,8 +13,9 @@ import {
   readSession,
   stillRunning,
 } from "../agents/sessions.ts";
-import { repositoryCommands } from "../config.ts";
+import { checkFlow, leadMayArmMerges, repositoryCommands } from "../config.ts";
 import { finishUpgrade, moveToTasks, moveTurnEnded, openDb, type Repository } from "../db.ts";
+import { flowRoles } from "../flows.ts";
 import { setupDone } from "../machine/setup.ts";
 import { keepUpToDate } from "../machine/update.ts";
 import { cloneDir, daemonCodeFile, daemonSocket, reviewSocket, threadSocket } from "../paths.ts";
@@ -24,6 +25,7 @@ import { checkoutFolder, git, release, singleFile } from "../version.ts";
 import { assignIssue } from "./assign.ts";
 import {
   bringBack,
+  endEarlierBuilder,
   failThread,
   setUpThread,
   startBuilder,
@@ -51,7 +53,14 @@ import {
 } from "./repo.ts";
 import { allowed, type Caller, DaemonRequest, parseJson } from "./requests.ts";
 import { killReviewers } from "./reviewer.ts";
-import { endRound, goOn, rerunReview, resumeRound, submitRound } from "./round.ts";
+import {
+  endRound,
+  goOn,
+  rerunReview,
+  resumeRound,
+  saveApprovedCommits,
+  submitRound,
+} from "./round.ts";
 import { doing, watchForStalls } from "./stall.ts";
 import {
   keepState,
@@ -59,11 +68,21 @@ import {
   questionAnswered,
   questionAsked,
   questionClosed,
+  reportStatuses,
   stateAfter,
   turnEnded,
   turnFailed,
 } from "./status.ts";
-import { findThread, liveThreads, record, type Thread, threadName, threadOn } from "./thread.ts";
+import {
+  builderSession,
+  findThread,
+  liveThreads,
+  readThread,
+  record,
+  type Thread,
+  threadName,
+  threadOn,
+} from "./thread.ts";
 
 // Tries to hold the daemon lock and returns whether this process owns it, preventing
 // duplicate daemons. The kernel lets go of it when the process ends, however it ends, so a
@@ -170,6 +189,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   moveToTasks(db);
   moveTurnEnded(db);
   finishUpgrade(db);
+  saveApprovedCommits(db);
   // The checkout and commit this daemon's code came from, for sc status. Read once at start,
   // since a git pull afterwards doesn't change the code that runs.
   const runningCode = singleFile
@@ -227,8 +247,9 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   };
   // Returns the request limited to the calling lead's own repository. A request about another
   // repository is refused, and the error tells the lead to ask you to open that one. sc ps and
-  // sc ls with no repository mean every repository, which for a lead is its own, and sc pr show
-  // and sc merge --cancel with a PR number mean the lead's own repository, wherever it ran.
+  // sc ls with no repository mean every repository, which for a lead is its own, and sc pr show,
+  // sc merge --when-ready and sc merge --cancel with a PR number mean the lead's own repository,
+  // wherever it ran.
   // Your requests and a builder's are returned unchanged.
   const limitToOwnRepository = (request: DaemonRequest, caller: Caller): DaemonRequest => {
     const leadRepository = leadOfCaller(caller);
@@ -238,7 +259,11 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
     const own = `${leadRepository.owner}/${leadRepository.repo}`;
     if ((request.command === "ps" || request.command === "task ls") && !request.repo)
       return { ...request, repo: own };
-    if ((request.command === "task show" || request.command === "merge cancel") && !request.repo) {
+    const byNumber =
+      request.command === "task show" ||
+      request.command === "merge when ready" ||
+      request.command === "merge cancel";
+    if (byNumber && !request.repo) {
       const { from, ...rest } = request;
       return { ...rest, repo: own };
     }
@@ -249,15 +274,43 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
     );
   };
   // Sets up a new thread's clone, opens its socket and starts its builder, after sc start
-  // has had its answer. Marks the thread failed, with the reason, when any of it fails.
+  // has had its answer, once any builder a failed start left running has ended. Marks the
+  // thread failed, with the reason, when any of it fails.
   const setUpAndStart = async (thread: Thread) => {
     try {
+      await endEarlierBuilder(db, sessions, thread);
       await setUpThread(db, thread);
       await listenFor(thread);
       await startBuilder(db, sessions, thread);
     } catch (error) {
       failThread(db, sessions, thread, error);
     }
+  };
+  // Switches a thread at work, or a stopped one about to come back, to another flow, and gives it a short title too when one comes
+  // with it. A task started from a label runs the default flow, and the lead can switch it to
+  // one that fits better, but only until its builder first submits: after that, the review and
+  // its round limit are under way, so the task keeps its flow to the end. Read again here, as
+  // the builder may have submitted since the caller looked. The builder is already running, or
+  // starting, on its flow's build role, with that role's instructions, harness and model, so a
+  // flow that builds with another role is refused: it would run a builder it doesn't describe.
+  // The round limit it would run with is read too, so a bad one refuses the switch.
+  const switchFlow = (at: Thread, flow: string, short?: string) => {
+    const now = readThread(db, at.folder);
+    const name = threadName(db, now);
+    // Any sign of a submit counts: a review under way sets `reviewing` and clears `submitting`
+    // before it sets `review_at`, and a repository with no forge has no PR.
+    const submitted = [now.pr, now.submitting, now.reviewing, now.review_at, now.review_round];
+    if (submitted.some((sign) => sign !== null) || now.rounds > 0)
+      throw new Error(`${name} keeps the flow ${now.flow}, as its builder has submitted already.`);
+    const repository = findRepository(db, `${now.owner}/${now.repo}`);
+    checkFlow(now, repository.name, flow);
+    const building = flowRoles(now).build;
+    const wanted = flowRoles({ ...now, flow }).build;
+    if (wanted !== building)
+      throw new Error(
+        `${name} keeps the flow ${now.flow}: its builder already runs as ${building}, and ${flow} builds as ${wanted}. To run ${flow}, start it over: sc rm ${name}, then sc start ${name} --flow ${flow}.`,
+      );
+    record(db, now.folder, { flow, ...(short ? { short } : {}) }, `given the flow ${flow}`);
   };
   // Brings back a stopped thread's builder for sc start, with --resume on its last session
   // in the same clone, then carries on the round its stop cut short, as after a restart.
@@ -299,7 +352,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         // A lead you exited this second is closed first, so the daemon's next look can't close
         // the tab again while the lead starts, and a tab can't bring it back. It comes before
         // the choice of repository, so plain sc doesn't pick the one whose tab just closed.
-        closeExitedLeads(db, sessions);
+        await closeExitedLeads(db, sessions);
         // From outside any repository Skelcrew has, the one you opened last.
         const repository =
           (request.from === undefined ? undefined : repositoryAt(db, request.from)) ??
@@ -372,16 +425,18 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       case "peek": {
         const thread = findThread(db, request.repo, request.task);
         const name = threadName(db, thread);
-        if (!agentRuns(sessions, thread.folder))
+        const { host, id } = await builderSession(db, sessions, thread);
+        if (!(await agentRuns(host, id)))
           throw new Error(`${name}'s builder isn't running: the thread is ${thread.status}`);
-        return { thread: name, screen: readSession(sessions, thread.folder) };
+        return { thread: name, screen: await readSession(host, id) };
       }
       case "interrupt": {
         const thread = findThread(db, request.repo, request.task);
         const name = threadName(db, thread);
-        if (!agentRuns(sessions, thread.folder))
+        const { host, id } = await builderSession(db, sessions, thread);
+        if (!(await agentRuns(host, id)))
           throw new Error(`${name}'s builder isn't running: the thread is ${thread.status}`);
-        interruptSession(sessions, thread.folder);
+        await interruptSession(host, id);
         return { interrupted: name };
       }
       case "rm preview": {
@@ -422,8 +477,25 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
           started: thread.started,
         };
       }
-      case "merge when ready":
-        return { said: armMerge(db, threadToMerge(db, request), request.seen) };
+      // You arm one at your terminal, after saying y. A lead arms one only when you let it in
+      // your config, and only with the words you asked it in, which it gives in a file.
+      case "merge when ready": {
+        const thread = threadToMerge(db, request);
+        if (leadOfCaller(caller) === null) {
+          if (request.asked !== undefined)
+            throw new Error("--asked-file is the lead's: at your terminal, sc merge asks you y/N");
+          return { said: armMerge(db, sessions, thread, { seen: request.seen }) };
+        }
+        if (!leadMayArmMerges())
+          throw new Error(
+            "the human hasn't let you arm a merge when ready: ask them to run sc merge --when-ready in their own terminal",
+          );
+        if (!request.asked?.trim())
+          throw new Error(
+            "give what the human asked with --asked-file, a file holding their exact words",
+          );
+        return { said: armMerge(db, sessions, thread, { asked: request.asked }) };
+      }
       case "merge cancel":
         return { said: cancelMerge(db, threadToMerge(db, request)) };
       case "tell": {
@@ -460,19 +532,33 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         // A thread the task already has is brought back or let past its round limit, with no
         // poll, as nothing new is read from the tracker.
         const before = threadOn(db, request.repo, request.task);
+        const atWork = before !== null && ["working", "waiting"].includes(before.status);
+        // Another flow for a thread at work switches it, as switchFlow allows. The flow it runs
+        // already is no switch, so sc start goes on as without one, such as past the round limit.
+        const switching =
+          before !== null && request.flow !== undefined && request.flow !== before.flow;
+        if (before && atWork && switching && request.flow) {
+          switchFlow(before, request.flow, request.short);
+          return { started: `${threadName(db, before)} now runs the flow ${request.flow}.` };
+        }
         // A short title for a thread already at work, such as one started from GitHub, only
         // names it for the sidebar. Its builder goes on as it was, and nothing else changes.
-        if (before && request.short && ["working", "waiting"].includes(before.status)) {
+        if (before && request.short && atWork) {
           record(db, before.folder, { short: request.short }, "given a short title");
           return { started: `Gave ${threadName(db, before)} the short title "${request.short}".` };
         }
+        // A stopped thread switches to another flow named here as one at work does, before it
+        // comes back, and is refused, staying stopped, where switchFlow refuses.
+        if (before?.status === "stopped" && switching && request.flow)
+          switchFlow(before, request.flow);
         const choice = startChoice(before);
         if (before && choice === "bring back") {
           const name = threadName(db, before);
           resume(before, request.short);
           // Its stop took you off its issue, so starting it again puts you back.
           assignIssue(db, before, true);
-          return { started: `Started ${name} again: its builder is back where it was.` };
+          const on = switching ? ` on the flow ${request.flow}` : "";
+          return { started: `Started ${name} again${on}: its builder is back where it was.` };
         }
         if (before && choice === "go on") {
           goOn(db, sessions, before.folder);
@@ -495,10 +581,13 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
           if (!existsSync(cloneDir(owner, repo))) await refreshClones(db);
           await (await polling.promise)(`${owner}/${repo}`);
           // A poll already past its labels as this began may have started the thread itself. A
-          // short title given here still goes on that thread, so it isn't lost.
+          // short title and flow given here still go on that thread, so they aren't lost, as long
+          // as its builder hasn't submitted meanwhile.
           const started = threadOn(db, request.repo, request.task);
           if (!before && started) {
-            if (request.short)
+            if (request.flow && request.flow !== started.flow)
+              switchFlow(started, request.flow, request.short);
+            else if (request.short)
               record(db, started.folder, { short: request.short }, "given a short title");
             return { started: `Started ${threadName(db, started)}.` };
           }
@@ -600,9 +689,14 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   }
   // A lead you exited while the daemon was down closes its tab, before any request could open
   // it, and isn't brought back. From here on, the daemon looks each second for a lead you exit.
-  closeExitedLeads(db, sessions);
+  await closeExitedLeads(db, sessions);
   setInterval(
-    () => doing("closing the tabs of exited leads", () => closeExitedLeads(db, sessions)),
+    () =>
+      doing("closing the tabs of exited leads", () =>
+        closeExitedLeads(db, sessions).catch((error) =>
+          console.log(`couldn't close the tabs of exited leads: ${errorText(error)}`),
+        ),
+      ),
     1000,
   );
   // From here on, the daemon also looks every two seconds for a working agent whose screen
@@ -614,6 +708,8 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       console.log(`couldn't look at the agents' screens: ${errorText(error)}`);
     }
   }, 2000);
+  // A host that shows status hears each builder's as it is now, and each change from here on.
+  reportStatuses(db);
   // Open your socket.
   await open(path, "you");
   console.log(`Listening on ${path}.`);
@@ -652,5 +748,5 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   // Start polling, which also lets any sc start waiting on it go ahead, and keep Skelcrew itself
   // up to date.
   polling.resolve(pollRepositories(db, sessions, every, setUpAndStart, startingTasks));
-  keepUpToDate();
+  keepUpToDate(db);
 }

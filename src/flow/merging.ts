@@ -1,6 +1,6 @@
-// Merge when ready: a merge you arm once, from your own terminal, so Skelcrew merges a thread's
-// PR by itself as soon as it is approved and green. Arming it, cancelling it, and the merge
-// itself. Without an armed plan nothing merges by itself.
+// Merge when ready: a merge you arm once, from your own terminal or by asking a lead you let arm
+// merges, so Skelcrew merges a thread's PR by itself as soon as it is approved and green. Arming
+// it, cancelling it, and the merge itself. Without an armed plan nothing merges by itself.
 import type { Database } from "bun:sqlite";
 import { forgeOf, mergePr, postReview } from "../plugins/ask.ts";
 import { errorText } from "../say.ts";
@@ -53,36 +53,57 @@ export function threadToMerge(
   return thread;
 }
 
-// Arms a merge when ready on the thread, for sc merge --when-ready, which only you can run, at
-// your terminal, and returns what to say. `seen` is what you said y to: the PR's number and
-// when its thread started. Anything else is refused, such as a thread removed and started
-// over while you read the question, with a PR you never saw. It saves who armed it and when, for the PR's comment
-// once it merges. Refuses a repository with no forge, as Skelcrew merges no branch there: you
-// merge it yourself once it is approved.
+// Arms a merge when ready on the thread, for sc merge --when-ready, and returns what to say. At
+// your terminal, `seen` is what you said y to: the PR's number and when its thread started.
+// Anything else is refused, such as a thread removed and started over while you read the
+// question, with a PR you never saw. From a lead you let arm merges, `asked` is your words in
+// the conversation, quoted by the lead: the thread's log keeps them, the daemon logs them, and
+// a note typed back into the lead says what was armed, so you see it there. It saves who armed
+// it and when, for the PR's record once it merges. Refuses a repository with no forge, as
+// Skelcrew merges no branch there: you merge it yourself once it is approved.
 export function armMerge(
   db: Database,
+  sessions: string,
   thread: Thread,
-  seen: { pr: number; started: number | null } | undefined,
+  how: { seen: { pr: number; started: number | null } | undefined } | { asked: string },
 ): string {
   const name = threadName(db, thread);
   refuseWithoutForge(db, thread);
   // You agree to a PR you can see, by its number, so a PR opened later never merges under it.
   if (thread.pr === null)
     throw new Error(`${name} has no PR yet: arm a merge when ready once it opens one`);
-  if (!seen || seen.pr !== thread.pr || seen.started !== thread.started)
+  const { seen } = "seen" in how ? how : { seen: undefined };
+  if ("seen" in how && (!seen || seen.pr !== thread.pr || seen.started !== thread.started))
     throw new Error(
       `${name} changed since you said y, so nothing is armed: run sc merge --when-ready ${name} again`,
     );
   if (thread.merge_plan === "armed") return `${name} already merges when it is ready.`;
+  const asked = "asked" in how ? how.asked : null;
   const plan = {
     merge_plan: "armed" as const,
     merge_id: crypto.randomUUID(),
-    merge_by: loginName(),
+    merge_by: asked === null ? loginName() : `${loginName()} via the lead`,
     merge_at: Date.now(),
+    merge_asked: asked,
     merge_waits: null,
     merge_noted: null,
   };
-  record(db, thread.folder, plan, "you armed a merge when ready");
+  // The log keeps your words exactly, line breaks and spaces included. Written as JSON, they
+  // still fit on one line of the daemon's log.
+  const why =
+    asked === null
+      ? "you armed a merge when ready"
+      : `the lead armed a merge when ready on #${thread.pr}, as the human asked: ${JSON.stringify(asked)}`;
+  record(db, thread.folder, plan, why);
+  console.log(`${name}: ${why}`);
+  // The note is typed into the lead as one line, so your words go on one line there.
+  if (asked !== null)
+    noteForLead(
+      db,
+      sessions,
+      thread,
+      `Armed: #${thread.pr} (${name}) merges once it is approved and green, as the human asked: "${asked.replace(/\s+/g, " ").trim()}". sc merge --cancel ${name} stops that.`,
+    );
   return `${name} merges once it is approved and green. sc merge --cancel ${name} stops that.`;
 }
 

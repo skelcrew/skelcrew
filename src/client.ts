@@ -95,12 +95,14 @@ export async function createTask(repository: string, title: string, body: string
 // sentence: started a new thread, brought back a stopped one's builder, or let one past the
 // round limit go on. The daemon answers once the thread is recorded; its setup and builder
 // come after. `short` is the thread's short title for the sidebar, which on a thread already
-// at work is all that changes.
+// at work is all that changes. `flow` is the flow the task runs, which on a thread at work that
+// hasn't submitted yet switches it.
 export async function startOn(
   repository: string,
   task: string,
   from?: string,
   short?: string,
+  flow?: string,
 ): Promise<string> {
   const reply = await request({
     command: "start",
@@ -108,18 +110,20 @@ export async function startOn(
     task,
     ...(from ? { from } : {}),
     ...(short ? { short } : {}),
+    ...(flow ? { flow } : {}),
   });
   return checkReply(z.object({ started: z.string() }), reply).started;
 }
 
 // Has the daemon start a thread on a title and body, for sc start in a repository with no
 // tracker, and returns what it did, in a sentence naming the thread, such as app-wr1. `short` is
-// its short title for the sidebar.
+// its short title for the sidebar, and `flow` the flow it runs.
 export async function startNew(
   repository: string,
   title: string,
   body: string,
   short?: string,
+  flow?: string,
 ): Promise<string> {
   const reply = await request({
     command: "start new",
@@ -127,6 +131,7 @@ export async function startNew(
     title,
     body,
     ...(short ? { short } : {}),
+    ...(flow ? { flow } : {}),
   });
   return checkReply(z.object({ started: z.string() }), reply).started;
 }
@@ -140,7 +145,8 @@ export async function startOrMerge(asked: DaemonRequest): Promise<void> {
 
 // Has the daemon arm or cancel a merge when ready, for sc merge, and returns what to say. The
 // thread is named by its repository and task, or by its PR's number, with `from` naming the
-// repository of the checkout sc ran in. Only your own socket arms one.
+// repository of the checkout sc ran in. Your own socket arms one with `seen`, what you said y to,
+// and a lead you let arm merges with `asked`, your words to it, exactly.
 export async function planMerge(
   command: "merge when ready" | "merge cancel",
   which: {
@@ -149,6 +155,7 @@ export async function planMerge(
     pr?: number;
     from?: string;
     seen?: { pr: number; started: number | null };
+    asked?: string;
   },
 ): Promise<string> {
   const reply = await request({ command, ...which });
@@ -388,11 +395,15 @@ export async function reportTurnInterrupted(): Promise<void> {
   await request({ command: "turn interrupted" });
 }
 
-// Has the daemon open a repository, by its owner/name, when the sidebar switches to its tab or
-// finds its lead crashed. The daemon starts the repository's lead if it isn't running, and marks
-// it as the one you opened last. A repository whose tab you closed stays closed, as the screen
-// may still show its tab for a moment. The sidebar doesn't wait for an answer, and if the
-// daemon is down nothing happens.
-export async function openRepository(fullName: string): Promise<void> {
-  await ask({ command: "lead", from: fullName, tab: true }, 60_000);
+// Has the daemon open a repository, by its owner/name, when the list moves to it with Tab, or
+// you press Enter on its lead. The daemon starts the repository's lead if it isn't running, and
+// marks it as the one you opened last. With `tab`, a repository whose tab you closed by exiting
+// its lead stays closed, as the list may still show it for a moment. Without, as Enter on the
+// lead asks, it opens again. Returns why the lead couldn't start, as the daemon says, or that
+// the daemon didn't answer, or null once it runs.
+export async function openRepository(fullName: string, tab: boolean): Promise<string | null> {
+  const reply = await ask({ command: "lead", from: fullName, ...(tab ? { tab } : {}) }, 60_000);
+  if (reply === null) return "the daemon didn't answer: run sc to start it";
+  const failed = z.object({ error: z.string() }).safeParse(reply);
+  return failed.success ? failed.data.error : null;
 }

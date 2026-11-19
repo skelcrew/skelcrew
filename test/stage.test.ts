@@ -46,6 +46,8 @@ const working: Thread = {
   review_round: null,
   verdict: null,
   review_line: null,
+  reviewed_commit: null,
+  ci_seen: false,
   review_at: null,
   harness: null,
   short: null,
@@ -56,12 +58,18 @@ const working: Thread = {
   merged: false,
   issue_link: null,
   closes: null,
+  host: "tmux",
+  host_id: null,
   merge_plan: null,
   merge_id: null,
   merge_by: null,
   merge_at: null,
+  merge_asked: null,
   merge_waits: null,
   merge_noted: null,
+  agents: null,
+  flow: "default",
+  review_post: null,
 };
 const thread = (more: Partial<Thread>) => ({ ...working, ...more });
 

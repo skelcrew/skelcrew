@@ -3,11 +3,20 @@
 // for GitHub.
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { createConnection } from "node:net";
 import { hostname, tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import type { Subprocess } from "bun";
+import { z } from "zod";
 import { stillRunning } from "../src/agents/sessions.ts";
 import { codeOf } from "../src/db.ts";
 import {
@@ -96,6 +105,12 @@ afterEach(async () => {
     await serve.exited;
   }
   Bun.spawnSync(["tmux", "-L", socket, "kill-server"], { stderr: "pipe" });
+  // The fake session host's sessions end with the test too.
+  const hosted = join(home, ".config", "skelcrew", "plugins", "fake", "sessions");
+  for (const id of existsSync(hosted) ? readdirSync(hosted) : [])
+    try {
+      process.kill(-Number(read(join(hosted, id, "pid"))), "SIGKILL");
+    } catch {}
   const folder = join(process.env.TMUX_TMPDIR ?? "/tmp", `tmux-${userInfo().uid}`);
   rmSync(join(folder, socket), { force: true });
   rmSync(home, { recursive: true, force: true });
@@ -201,6 +216,39 @@ const hasSession = (name: string) =>
 
 const clone = () => join(data(), "threads", "app-12");
 
+// Installs the fake session host as a runtime plugin named fake, providing `provides`, and
+// returns its settings folder, where it keeps its sessions and notes what it is asked.
+function fakeHost(provides: string): string {
+  const folder = join(home, "plugin-fake");
+  mkdirSync(folder, { recursive: true });
+  writeFileSync(
+    join(folder, "skelcrew-plugin.yaml"),
+    `name: fake
+version: 0.1.0
+skelcrew: 0.1.0
+about: A session host for tests
+kind: runtime
+provides: [${provides}]
+session: [bun, ${JSON.stringify(join(import.meta.dir, "fake-host.ts"))}]
+attach: ["true"]
+`,
+  );
+  const db = new Database(join(data(), "skelcrew.db"));
+  db.run("PRAGMA busy_timeout = 5000");
+  db.run("INSERT INTO plugins (name, folder) VALUES ('fake', ?)", [folder]);
+  db.close();
+  const settings = join(home, ".config", "skelcrew", "plugins", "fake");
+  mkdirSync(settings, { recursive: true });
+  return settings;
+}
+
+// Has your config name `host` as the session host from now on.
+const useHost = (host: string) =>
+  writeFileSync(
+    join(home, ".config", "skelcrew", "config.yaml"),
+    `harness: claude\nsession: ${host}\n`,
+  );
+
 test("sc issue create creates a task in the repository's tracker and prints its name", async () => {
   addApp();
   serve();
@@ -291,6 +339,90 @@ test("sc start refuses a repository Skelcrew doesn't have, and a task its tracke
   expect(missing.code).not.toBe(0);
   expect(missing.err).toContain("there is no open issue 99 in simon/app");
   expect(existsSync(join(data(), "threads", "app-99"))).toBe(false);
+});
+
+// Puts simon/app on the fake GitHub with a flow file of its own, quick, and tells Skelcrew about
+// it. Returns a checkout to push more from.
+function addFlows(): string {
+  const work = addApp();
+  mkdirSync(join(work, ".agents", "flows"), { recursive: true });
+  writeFileSync(join(work, ".agents", "flows", "quick.yaml"), "review:\n  rounds: 1\n");
+  git(work, "add", ".");
+  git(work, "commit", "-q", "-m", "flows");
+  git(work, "push", "-q", "origin", "main");
+  return work;
+}
+
+// Approves the .agents/ in Skelcrew's clone of simon/app, as sc repo trust would, once it is
+// there.
+async function untilApproved(): Promise<void> {
+  const skelClone = join(data(), "repos", "simon", "app");
+  await until(() => existsSync(join(skelClone, ".agents")));
+  const tree = git(skelClone, "rev-parse", "HEAD:.agents");
+  writeFileSync(join(home, ".config", "skelcrew", "approved-agents.yaml"), `simon/app: ${tree}\n`);
+}
+
+// Returns each task's flow, as Skelcrew's database keeps it.
+function flows(): unknown[] {
+  const db = new Database(join(data(), "skelcrew.db"));
+  db.run("PRAGMA busy_timeout = 5000");
+  try {
+    return db.query("SELECT task, flow FROM tasks ORDER BY task").all();
+  } finally {
+    db.close();
+  }
+}
+
+// In a repository with flow files of its own, the lead picks a task's flow as it starts it. Only
+// a flow file of the .agents/ you approved counts.
+test("sc start --flow runs a task on a flow file of the repository, and refuses one it lacks", async () => {
+  addFlows();
+  serve();
+  await untilCloned();
+  const before = await skel("start", "app", "Fix typo", "In the README", "--flow", "quick");
+  expect(before.err).toBe("Skelcrew: app has no flow quick. Its flows are default.\n");
+  await untilApproved();
+  const quick = await skel("start", "app", "Fix typo", "In the README", "--flow", "quick");
+  expect(quick.err).toBe("");
+  expect(quick.out).toBe(`Started app-${own}1.\n`);
+  expect(flows()).toEqual([{ task: `${own}1`, flow: "quick" }]);
+  const missing = await skel("start", "app-12", "--flow", "slow");
+  expect(missing.err).toBe("Skelcrew: app has no flow slow. Its flows are default, quick.\n");
+  // A flow's name can't reach outside .agents/flows/.
+  expect((await skel("start", "app-12", "--flow", "../x")).code).not.toBe(0);
+  expect((await skel("start", "app-12", "--flow")).code).not.toBe(0);
+  // Without --flow, a task runs default.
+  expect((await skel("start", "app", "Add notes", "As text")).out).toBe(`Started app-${own}2.\n`);
+  expect(flows()).toEqual([
+    { task: `${own}1`, flow: "quick" },
+    { task: `${own}2`, flow: "default" },
+  ]);
+});
+
+// A round limit that isn't valid, wherever it comes from, refuses the start before any work
+// begins, naming where it is.
+test("sc start refuses a task whose round limit isn't valid, from its flow file or your config", async () => {
+  const work = addFlows();
+  writeFileSync(join(work, ".agents", "flows", "quick.yaml"), "review:\n  rounds: 0\n");
+  git(work, "commit", "-q", "-am", "bad rounds");
+  git(work, "push", "-q", "origin", "main");
+  serve();
+  await untilCloned();
+  await untilApproved();
+  const bad = await skel("start", "app", "Fix typo", "In the README", "--flow", "quick");
+  expect(bad.err).toContain("app's flow quick (.agents/flows/quick.yaml) has no valid round limit");
+  expect(bad.err).toContain(".agents/flows/quick.yaml in simon/app");
+  const config = join(home, ".config", "skelcrew", "config.yaml");
+  writeFileSync(config, "harness: claude\nmax_rounds: 0\n");
+  // The flow names no rounds, so your config's bad max_rounds is its round limit.
+  const builtIn = "app's flow default (Skelcrew's built-in default flow) has no valid round limit";
+  const yours = await skel("start", "app", "Fix typo", "In the README");
+  expect(yours.err).toContain(builtIn);
+  expect(yours.err).toContain(`${config} isn't valid`);
+  const issue = await skel("start", "app-12");
+  expect(issue.err).toContain(builtIn);
+  expect(issue.err).toContain(`${config} isn't valid`);
+  expect(flows()).toEqual([]);
 });
 
 // Bringing a repository in by naming it is gone: you add one in your own terminal.
@@ -588,6 +720,111 @@ c.on("data", (d) => process.stdout.write(d));`;
     expect(thread().status).toBe("working");
   }, 60_000);
 
+  test("a builder starts on the session host your config names, which hears its status", async () => {
+    addApp();
+    const host = fakeHost("sessions, transport, status");
+    useHost("fake");
+    serve();
+    await untilCloned();
+    expect((await skel("start", "app-12")).err).toBe("");
+    // The host is saved as the builder starts, and its session's ID once the host gave it.
+    await until(() => thread().host_id === "fake-app-12");
+    expect(thread().host_id).toBe("fake-app-12");
+    expect(hasSession("app-12")).toBe(false);
+    expect(existsSync(join(host, "sessions", "fake-app-12"))).toBe(true);
+    // The builder runs in its sandbox on the host, as on tmux.
+    await until(() => read(join(config("app-12"), "pwd")) !== "");
+    expect(read(join(config("app-12"), "pwd"))).toBe(`${clone()}\n`);
+    expect((await skel("peek", "app-12")).code).toBe(0);
+    await until(() => read(join(host, "statuses")) !== "");
+    expect(JSON.parse(read(join(host, "statuses")).split("\n")[0] ?? "")).toEqual({
+      id: "fake-app-12",
+      status: "working",
+      reason: "working",
+    });
+    // Stopping ends it on the host, and the thread no longer has one.
+    expect((await skel("stop", "app-12")).err).toBe("");
+    expect(existsSync(join(host, "sessions", "fake-app-12"))).toBe(false);
+    expect(thread().host).toBe(null);
+  }, 60_000);
+
+  test("a builder started on tmux stays there after the host changes, until it starts again", async () => {
+    addApp();
+    const first = serve();
+    await untilCloned();
+    await skel("start", "app-12");
+    await until(() => hasSession("app-12"));
+    expect(thread().host).toBe("tmux");
+    const host = fakeHost("sessions");
+    useHost("fake");
+    // A daemon that starts again finds the builder still running on tmux.
+    await stop(first);
+    serve();
+    await untilAnswers();
+    await Bun.sleep(2000);
+    expect(hasSession("app-12")).toBe(true);
+    expect(thread().host).toBe("tmux");
+    expect(read(join(host, "asked"))).not.toContain('"start"');
+    // Once stopped and started, it comes back on the host your config names now.
+    await skel("stop", "app-12");
+    await skel("start", "app-12");
+    await until(() => thread().host === "fake");
+    expect(hasSession("app-12")).toBe(false);
+  }, 60_000);
+
+  test("a builder whose host plugin is gone needs you once the daemon starts, rather than moving", async () => {
+    addApp();
+    fakeHost("sessions");
+    useHost("fake");
+    const first = serve();
+    await untilCloned();
+    await skel("start", "app-12");
+    await until(() => thread().host_id === "fake-app-12");
+    await stop(first);
+    const db = new Database(join(data(), "skelcrew.db"));
+    db.run("DELETE FROM plugins WHERE name = 'fake'");
+    db.close();
+    serve();
+    await until(() => thread().needs_you === 1);
+    expect(String(thread().noting)).toContain("session host fake isn't installed any more");
+    expect(thread().host).toBe("fake");
+    expect(hasSession("app-12")).toBe(false);
+  }, 60_000);
+
+  // One broken plugin must never keep the daemon from starting: every other thread comes back.
+  test("a plugin whose folder went leaves the daemon starting, its threads needing you, and tmux's builders running", async () => {
+    addApp();
+    issue(13, "Add export", "To CSV");
+    const first = serve();
+    await untilCloned();
+    await skel("start", "app-12");
+    await until(() => hasSession("app-12"));
+    await stop(first);
+    // app-13's builder ran on a plugin whose folder has gone since.
+    const db = new Database(join(data(), "skelcrew.db"));
+    db.run("PRAGMA busy_timeout = 5000");
+    db.run("INSERT INTO plugins (name, folder) VALUES ('broken', ?)", [join(home, "gone")]);
+    db.exec(threadSql({ task: "13", session: "s", host: "broken", host_id: "broken-app-13" }));
+    db.close();
+    serve();
+    await untilAnswers();
+    // Reads one thread's row by its folder.
+    const row = (folder: string) => {
+      const db = new Database(join(data(), "skelcrew.db"));
+      db.run("PRAGMA busy_timeout = 5000");
+      try {
+        return z
+          .object({ status: z.string(), host: z.string().nullable(), needs_you: z.number() })
+          .parse(db.query("SELECT * FROM task_threads WHERE folder = ?").get(folder));
+      } finally {
+        db.close();
+      }
+    };
+    await until(() => row("app-13").needs_you === 1);
+    expect(row("app-12")).toEqual({ status: "working", host: "tmux", needs_you: 0 });
+    expect(hasSession("app-12")).toBe(true);
+  }, 60_000);
+
   test("brings back a builder whose session is gone with --resume, where it was, after its repository is renamed", async () => {
     addApp();
     const first = serve();
@@ -708,21 +945,6 @@ nameRepositories(db);`;
     };
     expect(await stoppedWith("pr = 7")).toBe("waiting");
     expect(await stoppedWith("telling = 'Add a test.'")).toBe("working");
-  }, 60_000);
-
-  // The round limit is read only for a thread it can matter to, so a bad one fails the new
-  // thread with the reason rather than refusing sc start.
-  test("a bad max_rounds fails a new thread, and sc start still answers", async () => {
-    addApp();
-    writeFileSync(
-      join(home, ".config", "skelcrew", "config.yaml"),
-      "harness: claude\nmax_rounds: 0\n",
-    );
-    serve();
-    await untilCloned();
-    expect((await skel("start", "app-12")).out).toBe("Started app-12.\n");
-    await until(() => thread().status === "failed");
-    await until(() => read(join(data(), "threads", "app-12.log")).includes("isn't valid"));
   }, 60_000);
 
   // The daemon brings back threads once the lead has started, which takes a moment.
@@ -907,6 +1129,87 @@ nameRepositories(db);`;
     expect(hasSession("app-12")).toBe(true);
     // Without --short, starting it again is still refused.
     expect((await skel("start", "app-12")).err).toBe("Skelcrew: app-12 has a thread already\n");
+  }, 60_000);
+
+  // A task started from a label runs the default flow, and the lead can switch it to another
+  // until its builder first submits.
+  test("sc start --flow switches a thread at work until its builder submits", async () => {
+    // A third flow, careful, builds with a role of the repository's own.
+    const work = addFlows();
+    mkdirSync(join(work, ".agents", "roles"), { recursive: true });
+    writeFileSync(join(work, ".agents", "flows", "careful.yaml"), "build:\n  role: tester\n");
+    writeFileSync(join(work, ".agents", "roles", "tester.md"), "Write the test first.\n");
+    // And lax names no rounds, so your config's max_rounds gives its round limit.
+    writeFileSync(join(work, ".agents", "flows", "lax.yaml"), "build:\n  role: builder\n");
+    git(work, "add", ".");
+    git(work, "commit", "-q", "-m", "careful");
+    git(work, "push", "-q", "origin", "main");
+    serve();
+    await untilCloned();
+    await untilApproved();
+    expect((await skel("start", "app-12")).out).toBe("Started app-12.\n");
+    expect(flows()).toEqual([{ task: 12, flow: "default" }]);
+    const switched = await skel("start", "app-12", "--flow", "quick");
+    expect(switched.err).toBe("");
+    expect(switched.out).toBe("app-12 now runs the flow quick.\n");
+    expect(flows()).toEqual([{ task: 12, flow: "quick" }]);
+    expect((await skel("start", "app-12", "--flow", "slow")).err).toBe(
+      "Skelcrew: app has no flow slow. Its flows are default, careful, lax, quick.\n",
+    );
+    // Its builder already runs as builder, so a flow that builds as another role is refused, and
+    // the builder keeps the instructions it started with.
+    expect((await skel("start", "app-12", "--flow", "careful")).err).toBe(
+      "Skelcrew: app-12 keeps the flow quick: its builder already runs as builder, and careful builds as tester. To run careful, start it over: sc rm app-12, then sc start app-12 --flow careful.\n",
+    );
+    expect(flows()).toEqual([{ task: 12, flow: "quick" }]);
+    expect(read(join(config("app-12"), "args"))).not.toContain("Write the test first.");
+    // A switch to a flow whose round limit isn't valid is refused, naming where it is.
+    const yours = join(home, ".config", "skelcrew", "config.yaml");
+    writeFileSync(yours, "harness: claude\nmax_rounds: 0\n");
+    const lax = (await skel("start", "app-12", "--flow", "lax")).err;
+    expect(lax).toContain("app's flow lax (.agents/flows/lax.yaml) has no valid round limit");
+    expect(lax).toContain(`${yours} isn't valid`);
+    expect(flows()).toEqual([{ task: 12, flow: "quick" }]);
+    writeFileSync(yours, "harness: claude\n");
+    // A stopped thread whose builder hasn't submitted switches too, and comes back on that flow.
+    expect((await skel("stop", "app-12")).code).toBe(0);
+    expect((await skel("start", "app-12", "--flow", "careful")).err).toBe(
+      "Skelcrew: app-12 keeps the flow quick: its builder already runs as builder, and careful builds as tester. To run careful, start it over: sc rm app-12, then sc start app-12 --flow careful.\n",
+    );
+    expect(thread().status).toBe("stopped");
+    const back = await skel("start", "app-12", "--flow", "default");
+    expect(back.err).toBe("");
+    expect(back.out).toBe(
+      "Started app-12 again on the flow default: its builder is back where it was.\n",
+    );
+    expect(flows()).toEqual([{ task: 12, flow: "default" }]);
+    await until(() => thread().status === "working" && hasSession("app-12"));
+    expect((await skel("start", "app-12", "--flow", "quick")).out).toBe(
+      "app-12 now runs the flow quick.\n",
+    );
+    // Once its builder has submitted, the task keeps its flow to the end.
+    const db = new Database(join(data(), "skelcrew.db"));
+    db.run("PRAGMA busy_timeout = 5000");
+    // A first review under way, before it is timed, as in a repository with no forge.
+    db.run("UPDATE tasks SET reviewing = 'abc' WHERE task = 12");
+    expect((await skel("start", "app-12", "--flow", "default")).err).toBe(
+      "Skelcrew: app-12 keeps the flow quick, as its builder has submitted already.\n",
+    );
+    db.run("UPDATE tasks SET reviewing = NULL, review_at = 1 WHERE task = 12");
+    db.close();
+    expect((await skel("start", "app-12", "--flow", "default")).err).toBe(
+      "Skelcrew: app-12 keeps the flow quick, as its builder has submitted already.\n",
+    );
+    // The flow it runs already is no switch, so sc start does what it would without --flow.
+    const same = await skel("start", "app-12", "--flow", "quick", "--short", "Quick fix");
+    expect(same.err).toBe("");
+    expect(same.out).toBe('Gave app-12 the short title "Quick fix".\n');
+    // So does a stopped one, which stays stopped.
+    expect((await skel("stop", "app-12")).code).toBe(0);
+    expect((await skel("start", "app-12", "--flow", "default")).err).toBe(
+      "Skelcrew: app-12 keeps the flow quick, as its builder has submitted already.\n",
+    );
+    expect(thread().status).toBe("stopped");
   }, 60_000);
 
   // Programs often live under the home folder, which the sandbox hides, as npm does under nvm.

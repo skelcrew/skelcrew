@@ -212,6 +212,14 @@ test("runs sc on the server with the repository you are in", async () => {
   expect(run.code).toBe(3);
 });
 
+test("sc --list goes to the server with the repository you are in", async () => {
+  installed();
+  const run = await skel(["--remote", "simon@workbox", "--list"], "", checkout("simon/app"));
+  expect(run.out).toBe(
+    "Skelcrew on the server got 3 arguments\n[--list]\n[--from]\n[git@github.com:simon/app.git]\n",
+  );
+});
+
 test("passes no repository from outside one", async () => {
   installed();
   const run = await skel(["--remote", "simon@workbox"]);

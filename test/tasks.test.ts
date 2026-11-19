@@ -17,7 +17,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Subprocess } from "bun";
-import { fakePlugin, homeEnv, runSkel, source, until } from "./harness.ts";
+import { fakePlugin, git, homeEnv, runSkel, source, until } from "./harness.ts";
 
 const saved = join(import.meta.dir, "databases");
 let home = "";
@@ -134,6 +134,8 @@ openDb().run("UPDATE threads SET ci_passed = 1 WHERE folder = 'app-13'");`);
   // Before the new daemon moves it, sc shows the threads as they are.
   const shownThen = shownBefore();
   turnEndedWaits(shownThen);
+  // That release didn't read .agents/, and neither repository has one, so none waits for you.
+  for (const row of shownThen.repositories) row.agentsWaiting = false;
   const { issues, show, prs, ...saved } = shownThen;
   const before = JSON.parse(run(showAll));
   const { ls, show: shown, ...same } = before;
@@ -222,7 +224,8 @@ console.log(JSON.stringify({ rounds, short, status }));`;
 
 // Leaves the database as the first release with tasks did: moved, with a tasks table without
 // the columns added since: whether the work merged, the link to its issue, the line that
-// closes it and whether CI passed after the approval.
+// closes it, whether CI passed after the approval, whether polls ever found CI and the commit
+// the latest review was about.
 function earlierTasks(): void {
   oldDatabase();
   run(`import { openDb, moveToTasks } from ${JSON.stringify(source("db.ts"))};
@@ -233,6 +236,8 @@ moveToTasks(openDb());`);
   earlier.run("ALTER TABLE tasks DROP COLUMN issue_link");
   earlier.run("ALTER TABLE tasks DROP COLUMN closes");
   earlier.run("ALTER TABLE tasks DROP COLUMN ci_passed");
+  earlier.run("ALTER TABLE tasks DROP COLUMN ci_seen");
+  earlier.run("ALTER TABLE tasks DROP COLUMN reviewed_commit");
   earlier.close();
 }
 
@@ -268,6 +273,47 @@ console.log(JSON.stringify({ approved: stage("app-13"), working: stage("app-15")
   });
 });
 
+// A poll saves a PR's checks as none once they vanish, and polls remember they once found CI
+// only from the release that keeps that. So the upgrade takes saved checks as CI found: a task
+// whose checks then vanish at the first poll after it never reads as a repository without CI.
+test("an upgrade counts saved checks as CI found, which a poll with the checks gone keeps", () => {
+  earlierTasks();
+  const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
+import { readThread, record } from ${JSON.stringify(source("flow/thread.ts"))};
+const db = openDb();
+const seen = (folder) => readThread(db, folder).ci_seen;
+const before = { approved: seen("app-13"), pending: seen("app-12"), none: seen("app-15") };
+// The first poll finds app-13's checks gone, and saves them as a poll does.
+const thread = readThread(db, "app-13");
+record(db, "app-13", { checks: null, ci_seen: thread.ci_seen || false });
+console.log(JSON.stringify({ before, after: [readThread(db, "app-13").checks, seen("app-13")] }));`;
+  expect(JSON.parse(run(code))).toEqual({
+    before: { approved: true, pending: true, none: false },
+    after: [null, true],
+  });
+});
+
+// An approval from before reviews saved their commit keeps standing: the daemon saves on the
+// task the commit Skelcrew's clone keeps as the approval's ref, so the list, which reads only
+// the database, can still merge it. An approval whose ref is gone gets none.
+test("an approval from before the upgrade keeps its commit, from the clone's ref", () => {
+  earlierTasks();
+  const clone = join(data(), "repos", "simon", "app");
+  mkdirSync(clone, { recursive: true });
+  git(clone, "init", "-q");
+  git(clone, "commit", "-q", "--allow-empty", "-m", "approved");
+  const approved = git(clone, "rev-parse", "HEAD");
+  git(clone, "update-ref", "refs/skelcrew/approved/app-13", approved);
+  const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
+import { saveApprovedCommits } from ${JSON.stringify(source("flow/round.ts"))};
+import { readThread } from ${JSON.stringify(source("flow/thread.ts"))};
+const db = openDb();
+const before = readThread(db, "app-13").reviewed_commit;
+saveApprovedCommits(db);
+console.log(JSON.stringify({ before, after: readThread(db, "app-13").reviewed_commit, other: readThread(db, "app-12").reviewed_commit }));`;
+  expect(JSON.parse(run(code))).toEqual({ before: null, after: approved, other: null });
+});
+
 // Writes the logs of three threads whose work ended before Skelcrew kept whether it merged:
 // app-16's PR merged, app-12's merged as a merge when ready, and app-14 was removed after an
 // earlier start of it had merged nothing. Marks app-12 and app-14 done, as they were left.
@@ -292,9 +338,11 @@ function endedBeforeMerges(): void {
   db.close();
 }
 
-// Returns which of the tasks app-12, app-14 and app-16 are marked merged.
+// Returns which of the tasks app-12, app-14 and app-16 are marked merged. The daemon may be
+// writing as it starts, so the read waits for it rather than failing as locked.
 function mergedTasks(): unknown {
   const db = new Database(dbFile(), { readonly: true });
+  db.run("PRAGMA busy_timeout = 5000");
   const rows = db
     .query("SELECT task, merged FROM tasks WHERE task IN (12, 14, 16) ORDER BY task")
     .all();

@@ -323,6 +323,42 @@ openDb().run(${JSON.stringify(threadSql({ task: "12" }))});`;
   expect(calls()).toContain("screen on app-12\n");
 });
 
+// A builder on a plugin's host still talks to the daemon, through its hooks and sc, so the
+// daemon starts before the host attaches you, as on tmux.
+test("sc attach starts the daemon before attaching to a builder on a plugin's host", async () => {
+  await skel("1\nsk-ant-oat01-good\n");
+  rmSync(join(home, "started"));
+  // A host whose builder app-12 runs, and whose attach notes that it ran.
+  const plugin = join(home, "plugin-fake");
+  mkdirSync(plugin, { recursive: true });
+  writeFileSync(
+    join(plugin, "session.sh"),
+    `read -r question; echo '{"sessions":[{"id":"fake-app-12","running":true,"labels":null}]}'\n`,
+  );
+  writeFileSync(join(plugin, "attach.sh"), 'echo "attach on fake $1" >> "$HOME/calls"\n');
+  writeFileSync(
+    join(plugin, "skelcrew-plugin.yaml"),
+    "name: fake\nversion: 0.1.0\nskelcrew: 0.1.0\nabout: A host\nkind: runtime\nprovides: [sessions]\nsession: [/bin/sh, session.sh]\nattach: [/bin/sh, attach.sh]\n",
+  );
+  const db = `import { openDb } from ${JSON.stringify(join(checkout, "src", "db.ts"))};
+const db = openDb();
+db.run(${JSON.stringify(threadSql({ task: "12", host: "fake", host_id: "fake-app-12" }))});
+db.run("INSERT INTO plugins (name, folder) VALUES ('fake', ?)", [${JSON.stringify(plugin)}]);`;
+  Bun.spawnSync([process.execPath, "-e", db], { env: { HOME: home } });
+  writeFileSync(join(home, "calls"), "");
+  const run = Bun.spawn([process.execPath, main(), "attach", "app-12"], {
+    env: { PATH: bin, HOME: home, XDG_RUNTIME_DIR: join(home, "run") },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const err = await new Response(run.stderr).text();
+  expect(err).toBe("");
+  expect(await run.exited).toBe(0);
+  expect(calls().endsWith("systemctl --user start skelcrew\nattach on fake fake-app-12\n")).toBe(
+    true,
+  );
+});
+
 test("shows why when the daemon can't start the lead", async () => {
   await skel("1\nsk-ant-oat01-good\n");
   writeFileSync(join(home, "calls"), "");
@@ -1099,7 +1135,7 @@ test("asks which harness reviews, offering the other one first", async () => {
   );
   expect(parse(readFileSync(config(), "utf8"))).toEqual({
     harness: "claude",
-    reviewer: { harness: "codex" },
+    roles: { reviewer: { harness: "codex" } },
   });
 });
 
@@ -1125,7 +1161,7 @@ test("Codex agents with Claude Code reviews log in to both", async () => {
   expect(run.out).toContain("Sign in to Codex. Press Enter to start.");
   expect(parse(readFileSync(config(), "utf8"))).toEqual({
     harness: "codex",
-    reviewer: { harness: "claude" },
+    roles: { reviewer: { harness: "claude" } },
   });
   expect(readFileSync(token(), "utf8").trim()).toBe("sk-ant-oat01-good");
   expect(calls()).toContain("codex login --device-auth");

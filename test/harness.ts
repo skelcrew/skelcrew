@@ -20,17 +20,17 @@ import { taskColumns } from "../src/db.ts";
 export const source = (file = "") => join(import.meta.dir, "..", "src", file);
 
 // Waits until `done` holds, for what a daemon or a session does in its own time, looking every
-// `every` milliseconds. Past `timeout` it throws, naming `what` if given. `what` is a function
+// `every` milliseconds. `done` may answer later, as asking a session host does. Past `timeout` it throws, naming `what` if given. `what` is a function
 // so a test can show what is on screen at that moment, and pays for that only on failure.
 // The limit is generous, as a busy machine can take many seconds to start a daemon or a
 // sandbox. It only ends a wait that would never end.
 export async function until(
-  done: () => boolean,
+  done: () => boolean | Promise<boolean>,
   options: { timeout?: number; every?: number; what?: () => string } = {},
 ): Promise<void> {
   const { timeout = 30_000, every = 50, what } = options;
   const deadline = Date.now() + timeout;
-  while (!done()) {
+  while (!(await done())) {
     if (Date.now() > deadline)
       throw new Error(what ? `gave up waiting for ${what()}` : "gave up waiting");
     await Bun.sleep(every);

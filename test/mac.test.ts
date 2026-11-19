@@ -177,7 +177,7 @@ test("a sandbox's folders go when its stuck agent is killed as its session stops
   // shell that removes the sandbox's folders with it.
   const script = `import { existsSync } from "node:fs";
 import { startSession, stopSession } from ${JSON.stringify(source("agents/sessions.ts"))};
-startSession(${JSON.stringify(socket)}, "lead", { folder: ${JSON.stringify(home)}, command: ${JSON.stringify(argv)}, env: ${JSON.stringify(given)}, labels: { repository: "simon/app", role: "lead" } });
+await startSession(${JSON.stringify(socket)}, "lead", { folder: ${JSON.stringify(home)}, command: ${JSON.stringify(argv)}, env: ${JSON.stringify(given)}, labels: { repository: "simon/app", role: "lead" } });
 for (let i = 0; i < 150 && !existsSync(${JSON.stringify(seen)}); i++) await Bun.sleep(100);
 await stopSession(${JSON.stringify(socket)}, "lead", 500);`;
   const stopped = await asMacRun(script);
@@ -355,7 +355,7 @@ test("stopping a session asks ps, as a Mac has no /proc", async () => {
   const ps = Bun.which("ps") ?? "ps";
   fake("ps", `exec ${ps} "$@"`);
   const script = `import { startSession, stopSession } from ${JSON.stringify(source("agents/sessions.ts"))};
-startSession(${JSON.stringify(socket)}, "agent", { folder: "/", command: ["sleep", "300"], env: { PATH: process.env.PATH ?? "" }, labels: { repository: "simon/app", role: "builder", task: "app-12" } });
+await startSession(${JSON.stringify(socket)}, "agent", { folder: "/", command: ["sleep", "300"], env: { PATH: process.env.PATH ?? "" }, labels: { repository: "simon/app", role: "builder", task: "app-12" } });
 await stopSession(${JSON.stringify(socket)}, "agent");`;
   fake("systemd-run", 'while [ "$1" != -- ]; do shift; done; shift; exec "$@"');
   const stopped = await asMacRun(script);
@@ -393,7 +393,7 @@ function reviewable(extra: string): string {
     "codex",
     `for a; do [ "$prev" = -o ] && out=$a; prev=$a; done
 ${extra}
-printf '%s' '{"verdict":"approve","body":"Fine."}' > "$out"`,
+printf '%s' '{"verdict":"approve","body":"Fine.","findings":[]}' > "$out"`,
   );
   return clone;
 }
@@ -401,7 +401,7 @@ printf '%s' '{"verdict":"approve","body":"Fine."}' > "$out"`,
 // Runs a review as a Mac would, and returns its verdict.
 async function reviewOnMac(clone: string, more = "") {
   const ran = await asMacRun(`import { review } from ${JSON.stringify(source("flow/reviewer.ts"))};
-console.log(JSON.stringify(await review({ clone: ${JSON.stringify(clone)}, issue: { title: "t", body: "b" }, base: "origin/main", test: [], commit: ${JSON.stringify(git(clone, "rev-parse", "HEAD"))}, model: "opus", harness: "codex", ${more} })));
+console.log(JSON.stringify(await review({ instructions: "Review it.", clone: ${JSON.stringify(clone)}, issue: { title: "t", body: "b" }, base: "origin/main", test: [], commit: ${JSON.stringify(git(clone, "rev-parse", "HEAD"))}, model: "opus", harness: "codex", ${more} })));
 process.exit(0);`);
   expect(ran.err).toBe("");
   return JSON.parse(ran.out);
@@ -415,7 +415,7 @@ echo "$CODEX_HOME" > "$CODEX_HOME/sessions/home"
 echo changed > README
 echo evil > "$CODEX_HOME/config.toml"
 echo renewed > "$CODEX_HOME/auth.json"`);
-  expect(await reviewOnMac(clone)).toEqual({ verdict: "approve", body: "Fine." });
+  expect(await reviewOnMac(clone)).toEqual({ verdict: "approve", body: "Fine.", findings: [] });
   const [where, seen] = readFileSync(join(codexHome(), "sessions", "where"), "utf8").split("\n");
   expect(where).not.toBe(clone);
   expect(seen).toBe("app");
@@ -430,7 +430,7 @@ test("a reviewer gets a plain copy where the disk can't share blocks", async () 
   const clone = reviewable("");
   const cp = Bun.which("cp") ?? "cp";
   fake("cp", `test "$2" = -c && exit 1; exec ${cp} "$@"`);
-  expect(await reviewOnMac(clone)).toEqual({ verdict: "approve", body: "Fine." });
+  expect(await reviewOnMac(clone)).toEqual({ verdict: "approve", body: "Fine.", findings: [] });
 });
 
 test("nothing a reviewer started outlives it, or keeps the review waiting", async () => {

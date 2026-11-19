@@ -1,6 +1,7 @@
 // The requests the daemon takes on its sockets, and who may make which. The daemon and the
 // commands that ask it both go by these.
 import { z } from "zod";
+import { FlowName } from "../flows.ts";
 import { TaskId } from "./copy.ts";
 import type { Thread } from "./thread.ts";
 
@@ -50,6 +51,7 @@ export const DaemonRequest = z.discriminatedUnion("command", [
     task: TaskId,
     from: Branch.optional(),
     short: ShortTitle.optional(),
+    flow: FlowName.optional(),
   }),
   z.object({
     command: z.literal("start new"),
@@ -57,6 +59,7 @@ export const DaemonRequest = z.discriminatedUnion("command", [
     title: z.string().min(1),
     body: TaskBody,
     short: ShortTitle.optional(),
+    flow: FlowName.optional(),
   }),
   z.object({
     command: z.literal("review"),
@@ -105,7 +108,8 @@ export const DaemonRequest = z.discriminatedUnion("command", [
   // A merge when ready names its thread by its task, or by its PR's number. With a number,
   // `from` is the remote of the checkout sc ran in, which names the repository when `repo`
   // doesn't. Arming one carries what you said y to, `seen`: the PR's number and when its thread
-  // started, so a thread started over meanwhile, with another PR, is never armed.
+  // started, so a thread started over meanwhile, with another PR, is never armed. A lead you let
+  // arm merges sends `asked` instead: your words in the conversation, exactly.
   z.object({
     command: z.enum(["merge preview", "merge when ready", "merge cancel"]),
     repo: z.string().optional(),
@@ -113,6 +117,7 @@ export const DaemonRequest = z.discriminatedUnion("command", [
     task: TaskId.optional(),
     pr: z.number().int().positive().optional(),
     seen: z.object({ pr: z.number().int().positive(), started: z.number().nullable() }).optional(),
+    asked: z.string().optional(),
   }),
   z.object({ command: z.literal("tell lead"), text: z.string().min(1) }),
   z.object({ command: z.literal("submit"), summary: z.string().min(1) }),
@@ -147,8 +152,9 @@ export type DaemonRequest = z.infer<typeof DaemonRequest>;
 // repository's lead, never another thread, and may ask for a review of its own thread only. You
 // and a lead may look at a builder's screen and stop its turn, but a builder may not, as it has
 // only its own. You type to a builder yourself in the sidebar, so you have no tell. Merging is
-// yours alone: no agent may merge or arm a merge when ready, as merging stays a human's choice.
-// The lead may cancel one, which is always safe.
+// yours alone: no agent may merge, as merging stays a human's choice. A lead may arm a merge
+// when ready only once your config lets it, which the daemon checks at each one, and only when
+// you ask it to. The lead may cancel one, which is always safe. Builders and reviewers can't.
 export type Caller =
   | "you"
   | { lead: { owner: string; repo: string } }
@@ -193,6 +199,7 @@ export const allowed = {
     "interrupt",
     "rm preview",
     "rm",
+    "merge when ready",
     "merge cancel",
     "tell",
     "question asked",

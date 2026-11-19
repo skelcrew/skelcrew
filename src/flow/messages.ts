@@ -17,6 +17,7 @@ import { repositories } from "./repo.ts";
 import type { Caller } from "./requests.ts";
 import {
   builderHarness,
+  builderSession,
   log,
   readThread,
   record,
@@ -57,9 +58,9 @@ const oldest = (db: Database, folder: string) =>
     db.query("SELECT * FROM messages WHERE folder = ? ORDER BY id").get(folder),
   );
 
-// Returns how many messages wait to be typed into the thread's builder, for sc ps and the
-// sidebar: its waiting messages, and a review's changes saved but not yet among them, as when
-// the daemon starts again.
+// Returns how many messages wait to be typed into the thread's builder, for sc ps, the list and
+// the sidebar: its waiting messages, and a review's changes saved but not yet among them, as
+// when the daemon starts again.
 export function messagesWaiting(db: Database, thread: Thread): number {
   const counted = (sql: string) =>
     z.object({ count: z.number() }).parse(db.query(sql).get(thread.folder)).count;
@@ -71,7 +72,7 @@ export function messagesWaiting(db: Database, thread: Thread): number {
 }
 
 // Returns how many messages wait for a builder, in words, such as "1 message waiting", or
-// nothing when none does, for sc ps and the sidebar.
+// nothing when none does, for sc ps, the list and the sidebar.
 export const waitingText = (count: number) =>
   count === 0 ? "" : `${count} message${count === 1 ? "" : "s"} waiting`;
 
@@ -112,14 +113,20 @@ function noteMissing(db: Database, sessions: string, thread: Thread, why: string
 // knows to be working, from its harness's hooks, is mid-turn, even right after a message went
 // in, before its status line shows. Otherwise its screen tells, whatever its state says: a
 // turn can start with no hook, such as when a background task ends, and only the screen shows a
-// person's draft.
-export async function whyWaiting(sessions: string, thread: Thread): Promise<string> {
+// person's draft. A builder whose host plugin is gone can't be reached at all.
+export async function whyWaiting(db: Database, sessions: string, thread: Thread): Promise<string> {
   if (thread.status !== "working" && thread.status !== "waiting")
     return `the thread is ${thread.status}`;
-  if (!agentRuns(sessions, thread.folder)) return notRunning;
+  let session: Awaited<ReturnType<typeof builderSession>>;
+  try {
+    session = await builderSession(db, sessions, thread);
+    if (!(await agentRuns(session.host, session.id))) return notRunning;
+  } catch (error) {
+    return errorText(error);
+  }
   if (thread.asking) return "it is asking the human a question";
   if (thread.state === "working") return `${midTurn} (its harness says a turn runs)`;
-  return whyBusy(sessions, thread.folder, builderHarness(thread).marks);
+  return whyBusy(session.host, session.id, builderHarness(thread).marks);
 }
 
 // Saves a message for the thread's builder and has the daemon type it in as soon as the builder
@@ -217,17 +224,27 @@ function noteLate(db: Database, sessions: string, thread: Thread, why: string) {
 
 // The attempt under way for each thread, by its folder, with what cancels it and what settles
 // once it ends. A cancelled attempt stays here until it ends, so no second one starts while it
-// may still be pressing Enter on a message it pasted, and type that message again.
-const delivering = new Map<string, { cancel: AbortController; ended: Promise<void> }>();
+// may still be pressing Enter on a message it pasted, and type that message again. `typing`
+// holds the ID of the message it is typing, if any: its paste may be on its way to a plugin's
+// host, so the message is kept until the attempt ends.
+type Attempt = { cancel: AbortController; ended: Promise<void>; typing: { id: number | null } };
+const delivering = new Map<string, Attempt>();
 
 // Types the thread's waiting messages into its builder, oldest first, while it can take them,
-// and returns once none is left or it can't. The ones left wait for the next attempt.
-async function typeWaiting(db: Database, sessions: string, folder: string, signal: AbortSignal) {
+// and returns once none is left or it can't. The ones left wait for the next attempt. It notes
+// in `typing` the message it is typing.
+async function typeWaiting(
+  db: Database,
+  sessions: string,
+  folder: string,
+  signal: AbortSignal,
+  typing: { id: number | null },
+) {
   while (true) {
     const message = oldest(db, folder);
     if (message === null || signal.aborted) return;
     const thread = readThread(db, folder);
-    const waits = await whyWaiting(sessions, thread);
+    const waits = await whyWaiting(db, sessions, thread);
     if (signal.aborted) return;
     if (thread.status === "working" || thread.status === "waiting")
       noteMissing(db, sessions, thread, waits);
@@ -241,11 +258,16 @@ async function typeWaiting(db: Database, sessions: string, folder: string, signa
     // The builder looked ready a moment ago, so typing shouldn't wait long. If it does, the
     // message stays saved for the next attempt.
     const { marks } = builderHarness(thread);
-    const waitsFor = { timeout: 10_000, signal, unsent };
-    const typed = await deliver(sessions, folder, marks, message.text, waitsFor);
-    // Saved, so the draft it left is known for this message's even after a restart.
-    if (typed === "left unsent")
-      db.run("UPDATE messages SET pasted = 1 WHERE id = ?", [message.id]);
+    const { host, id } = await builderSession(db, sessions, thread);
+    // Saved once pasted, so the draft it leaves is known for this message's even after a
+    // restart, or when its Enter fails, as a plugin's host can fail it. The next attempt then
+    // presses Enter alone rather than wait forever behind what looks like a person's draft.
+    const pasted = () => db.run("UPDATE messages SET pasted = 1 WHERE id = ?", [message.id]);
+    const waitsFor = { timeout: 10_000, signal, unsent, pasted };
+    typing.id = message.id;
+    const typed = await deliver(host, id, marks, message.text, waitsFor).finally(() => {
+      typing.id = null;
+    });
     if (typed !== "typed") return;
     // Read again, as an identical comment that came while it was typed joined it, and needs
     // marking seen too. Deleted by its id even when this attempt was cancelled while pasting, as
@@ -259,20 +281,49 @@ async function typeWaiting(db: Database, sessions: string, folder: string, signa
   }
 }
 
+// How many ends of each thread's builder are under way, by its folder. Nothing is typed into it
+// meanwhile: the end may still fail, and leave the builder running with its messages.
+const paused = new Map<string, number>();
+
+// Runs `end`, which ends the thread's builder, with typing into the builder paused all the while,
+// and returns what it returns. Typing under way is cancelled first, and waited for: a message
+// already pasted still gets its Enter, so the end never cuts a paste short, and nothing is typed
+// once the end has started. The messages are kept,
+// and typing goes on as before once `end` is over, such as after it failed.
+export async function pauseDelivering<T>(
+  db: Database,
+  folder: string,
+  end: () => Promise<T>,
+): Promise<T> {
+  paused.set(folder, (paused.get(folder) ?? 0) + 1);
+  stopDelivering(db, folder, false);
+  try {
+    await delivering.get(folder)?.ended;
+    return await end();
+  } finally {
+    const left = (paused.get(folder) ?? 1) - 1;
+    if (left > 0) paused.set(folder, left);
+    else paused.delete(folder);
+  }
+}
+
 // Starts typing the thread's waiting messages into its builder, unless that is under way
-// already, and returns at once. A failure, such as the session ending, is logged, and the
-// messages wait for the next attempt. The promise it gives back settles once the attempt under
-// way ends, so a test can tell when an attempt is over instead of waiting a fixed time.
+// already, or paused while the builder is being ended, and returns at once. A failure, such as
+// the session ending, is logged, and the messages wait for the next attempt. The promise it gives
+// back settles once the attempt under way ends, so a test can tell when an attempt is over
+// instead of waiting a fixed time.
 export function deliverMessages(db: Database, sessions: string, folder: string): Promise<void> {
   const under = delivering.get(folder);
   if (under) return under.ended;
+  if ((paused.get(folder) ?? 0) > 0) return Promise.resolve();
   const cancel = new AbortController();
-  const ended = typeWaiting(db, sessions, folder, cancel.signal)
+  const typing: { id: number | null } = { id: null };
+  const ended = typeWaiting(db, sessions, folder, cancel.signal, typing)
     .catch((error) => console.log(`couldn't type into ${folder}'s builder: ${errorText(error)}`))
     .finally(() => {
       if (delivering.get(folder) === attempt) delivering.delete(folder);
     });
-  const attempt = { cancel, ended };
+  const attempt = { cancel, ended, typing };
   delivering.set(folder, attempt);
   return ended;
 }
@@ -294,22 +345,46 @@ export async function deliverAllWaiting(db: Database, sessions: string): Promise
 // the commit, and one left pasted at the prompt, as it would block the next as a draft. Typing
 // under way is cancelled first, as it may be typing one of them, and starts again with what is
 // left once it has ended. Notices still being prepared learn of the drop by noticeRound.
-// Returns the texts dropped, so what they told can be told again if it still holds.
-export function dropOldEvents(db: Database, sessions: string, folder: string): string[] {
+// The message the cancelled attempt is typing waits for it to end: its paste may already be on
+// its way to a plugin's host, and deleting it then would leave its draft at the prompt unknown,
+// blocking every later message. It is dropped once the attempt ends only if it never got in.
+// Returns the texts dropped at once, and a promise of those dropped once the attempt ends, so
+// what they told can be told again if it still holds.
+export function dropOldEvents(
+  db: Database,
+  sessions: string,
+  folder: string,
+): { dropped: string[]; later: Promise<string[]> } {
   roundsDropped.set(folder, noticeRound(folder) + 1);
-  const ended = delivering.get(folder)?.ended ?? Promise.resolve();
+  const attempt = delivering.get(folder);
+  const ended = attempt?.ended ?? Promise.resolve();
+  const inFlight = attempt?.typing.id ?? null;
   stopDelivering(db, folder, false);
-  const rows = db
-    .query("SELECT * FROM messages WHERE folder = ? AND sender IN ('skelcrew', 'review')")
-    .all(folder);
-  const dropped: string[] = [];
-  for (const message of z.array(Message).parse(rows))
-    if (message.typed_in.length === 0 && !message.pasted) {
-      db.run("DELETE FROM messages WHERE id = ?", [message.id]);
-      dropped.push(message.text);
-    }
-  ended.then(() => deliverMessages(db, sessions, folder));
-  return dropped;
+  // Drops each message that can go among the rows, and returns their texts.
+  const drop = (rows: unknown[]) => {
+    const dropped: string[] = [];
+    for (const message of z.array(Message).parse(rows))
+      if (message.typed_in.length === 0 && !message.pasted) {
+        db.run("DELETE FROM messages WHERE id = ?", [message.id]);
+        dropped.push(message.text);
+      }
+    return dropped;
+  };
+  const events = "folder = ? AND sender IN ('skelcrew', 'review')";
+  const dropped = drop(
+    db.query(`SELECT * FROM messages WHERE ${events} AND id IS NOT ?`).all(folder, inFlight),
+  );
+  // Once the attempt ends, the message it was typing is gone if it went in, and marked pasted if
+  // it waits at the prompt. Otherwise it never got in, and is dropped too. Only it is looked at:
+  // a message saved since belongs to the new round.
+  const later = ended.then(() => {
+    const left = drop(
+      db.query(`SELECT * FROM messages WHERE ${events} AND id = ?`).all(folder, inFlight),
+    );
+    deliverMessages(db, sessions, folder);
+    return left;
+  });
+  return { dropped, later };
 }
 
 // How many times each thread's notices were dropped for a new round, by its folder.
@@ -334,9 +409,15 @@ export function stopDelivering(db: Database, folder: string, drop: boolean, reas
 // goes on with the turn the limit cut off. It goes around the builder's queue: the wake that
 // calls it has its own rules, and gives up once anything else is typed to the builder. Throws
 // after a minute without typing, or once `signal` aborts.
-export function typeContinue(sessions: string, thread: Thread, signal: AbortSignal) {
+export async function typeContinue(
+  db: Database,
+  sessions: string,
+  thread: Thread,
+  signal: AbortSignal,
+) {
   const { marks } = builderHarness(thread);
-  return deliver(sessions, thread.folder, marks, "continue", { timeout: 60_000, signal });
+  const { host, id } = await builderSession(db, sessions, thread);
+  return deliver(host, id, marks, "continue", { timeout: 60_000, signal });
 }
 
 // Returns an agent's text with any <skelcrew or </skelcrew> removed, so it can't open or close
@@ -389,7 +470,9 @@ export async function messageBuilder(
       `${name}'s builder isn't running: the thread is stopped. sc start ${name} brings it back.`,
     );
   // A thread still setting up has no session yet, and one that failed or is done has none left.
-  if (!live || !agentRuns(sessions, thread.folder))
+  if (!live) throw new Error(`${name}'s builder isn't running: the thread is ${thread.status}.`);
+  const { host, id } = await builderSession(db, sessions, thread);
+  if (!(await agentRuns(host, id)))
     throw new Error(`${name}'s builder isn't running: the thread is ${thread.status}.`);
   if (thread.asking)
     throw new Error(
@@ -398,7 +481,7 @@ export async function messageBuilder(
   // Look before saving it, so the answer says whether it goes in now. Messages are typed in
   // order, so any still waiting go first.
   const ahead = messagesWaiting(db, thread);
-  const why = await whyWaiting(sessions, thread);
+  const why = await whyWaiting(db, sessions, thread);
   const message = wrapMessage("lead", "sc tell lead", text);
   queueMessage(db, sessions, thread.folder, {
     sender: "lead",
@@ -463,7 +546,7 @@ async function typeNotes(
     const now = batch();
     // Stop when nothing is left to say, or nobody is there to hear it.
     if (now.text === "") return;
-    if (!agentRuns(sessions, name)) return;
+    if (!(await agentRuns(sessions, name))) return;
     // A lead that is running has started, so it has a harness.
     const { marks } = harnessNamed(harness ?? "claude");
     // Typing asks this right before readying the paste and again right before it goes in. What

@@ -14,6 +14,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { review, reviewerPrompt } from "../src/flow/reviewer.ts";
+import { builtInRole } from "../src/roles.ts";
 import { insideSandbox, source } from "./harness.ts";
 
 let home = "";
@@ -73,9 +74,12 @@ function fakeCodex(answer: string, extra: string[] = []): void {
 }
 
 const kept = (name: string) => readFileSync(join(sessions(), name), "utf8");
-const approve = '{"verdict":"approve","body":"Looks right."}';
+const approve = '{"verdict":"approve","body":"Looks right.","findings":[]}';
+// The built-in reviewer's instructions, as a task with no .agents/ of its own gets them.
+const reviewerRole = builtInRole("reviewer").instructions;
 // A review on Codex, unless `more` names another harness.
 const given = () => ({
+  instructions: reviewerRole,
   clone,
   issue,
   base: "origin/main",
@@ -101,8 +105,14 @@ const ownNiceness = () => Number(Bun.spawnSync(["nice"], { stdout: "pipe" }).std
 // bubblewrap can't start inside Skelcrew's own sandbox, so only there these tests can't run.
 describe.skipIf(insideSandbox)("reviewer", () => {
   test("answers with Codex's verdict, given the task and the base branch", async () => {
-    fakeCodex('{"verdict":"changes","body":"The retry has no test."}');
-    expect(await start()).toEqual({ verdict: "changes", body: "The retry has no test." });
+    fakeCodex(
+      '{"verdict":"changes","body":"The retry has no test.","findings":["The retry has no test."]}',
+    );
+    expect(await start()).toEqual({
+      verdict: "changes",
+      body: "The retry has no test.",
+      findings: ["The retry has no test."],
+    });
     const args = kept("args").split("\n");
     // --no-daemon is an option of codex itself, not of exec.
     expect(args.slice(0, 2)).toEqual(["--no-daemon", "exec"]);
@@ -147,7 +157,7 @@ describe.skipIf(insideSandbox)("reviewer", () => {
       'pwd >> "$CODEX_HOME/sessions/seen"; cat README >> "$CODEX_HOME/sessions/seen"',
       "echo changed > README; echo new > made",
     ]);
-    expect(await start()).toEqual({ verdict: "approve", body: "Looks right." });
+    expect(await start()).toEqual({ verdict: "approve", body: "Looks right.", findings: [] });
     expect(kept("seen")).toBe(`${clone}\napp\n`);
     expect(readFileSync(join(clone, "README"), "utf8")).toBe("app\n");
     expect(existsSync(join(clone, "made"))).toBe(false);
@@ -182,7 +192,7 @@ describe.skipIf(insideSandbox)("reviewer", () => {
     fakeCodex(approve, [
       '{ git rev-parse HEAD; cat README; test -e new || echo no-new; } > "$CODEX_HOME/sessions/seen"',
     ]);
-    expect(await start()).toEqual({ verdict: "approve", body: "Looks right." });
+    expect(await start()).toEqual({ verdict: "approve", body: "Looks right.", findings: [] });
     expect(kept("seen")).toBe(`${commit}\napp\nno-new\n`);
     expect(readFileSync(join(clone, "README"), "utf8")).toBe("unsaved\n");
   });
@@ -201,7 +211,7 @@ describe.skipIf(insideSandbox)("reviewer", () => {
       "echo tried > README && git add README && git -c user.name=t -c user.email=t@t commit -qm tried",
       'git log -1 --format=%s >> "$CODEX_HOME/sessions/seen"',
     ]);
-    expect(await start()).toEqual({ verdict: "approve", body: "Looks right." });
+    expect(await start()).toEqual({ verdict: "approve", body: "Looks right.", findings: [] });
     expect(kept("seen")).toBe(`${commit}\napp\ntried\n`);
     // The builder's git still holds them, and its clone is as it left it.
     expect(existsSync(join(clone, ".git", "index.lock"))).toBe(true);
@@ -216,7 +226,7 @@ describe.skipIf(insideSandbox)("reviewer", () => {
       'other=$(mktemp -d) && git -C "$other" init -q && echo x > "$other/f"',
       'git -C "$other" add f && git -C "$other" ls-files > "$CODEX_HOME/sessions/seen"',
     ]);
-    expect(await start()).toEqual({ verdict: "approve", body: "Looks right." });
+    expect(await start()).toEqual({ verdict: "approve", body: "Looks right.", findings: [] });
     expect(kept("seen")).toBe("f\n");
   });
 
@@ -261,9 +271,46 @@ describe.skipIf(insideSandbox)("reviewer", () => {
     expect(kept("login")).toBe("renewed\n");
   });
 
+  // An empty "changes requested" gives the builder nothing to fix, and an approval with
+  // findings passes over a problem. Skelcrew can't tell which half of such an answer is right,
+  // so the review fails, posts nothing and counts no round.
+  for (const [what, answer, why] of [
+    [
+      "changes with no findings",
+      '{"verdict":"changes","body":"CI pending. I found no code problems.","findings":[]}',
+      "it asked for changes but named no finding",
+    ],
+    [
+      "an approval with findings",
+      '{"verdict":"approve","body":"Fine.","findings":["The retry has no test."]}',
+      "it approved but named findings",
+    ],
+    [
+      "a blank finding",
+      '{"verdict":"changes","body":"See below.","findings":["  "]}',
+      "a finding is blank",
+    ],
+  ]) {
+    test(`fails a review whose verdict and findings disagree: ${what}`, async () => {
+      fakeCodex(answer ?? "");
+      const done = await start();
+      expect(done.verdict).toBe("failed");
+      expect(done.body).toContain(why ?? "");
+    });
+  }
+
+  test("the reviewer's answer must hold its findings", async () => {
+    fakeCodex(approve);
+    await start();
+    const schema = JSON.parse(kept("schema"));
+    expect(schema.required).toContain("findings");
+    expect(schema.properties.findings).toEqual({ type: "array", items: { type: "string" } });
+  });
+
   for (const [what, answer] of [
     ["another verdict", '{"verdict":"maybe","body":"Hm."}'],
     ["a missing body", '{"verdict":"approve"}'],
+    ["missing findings", '{"verdict":"changes","body":"The retry has no test."}'],
     ["more than the shape", '{"verdict":"approve","body":"Fine.","score":3}'],
     ["no JSON", "Looks good to me!"],
   ]) {
@@ -412,7 +459,7 @@ describe.skipIf(insideSandbox)("reviewer", () => {
     mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
     writeFileSync(join(home, ".config", "skelcrew", "claude-token"), "sk-ant-oat01-tok\n");
     fakeClaude([
-      'cat > /dev/null; echo "{\\"type\\":\\"result\\",\\"structured_output\\":{\\"verdict\\":\\"approve\\",\\"body\\":\\"$seen\\"}}"',
+      'cat > /dev/null; echo "{\\"type\\":\\"result\\",\\"structured_output\\":{\\"verdict\\":\\"approve\\",\\"body\\":\\"$seen\\",\\"findings\\":[]}}"',
     ]);
     const done = await review({ ...given(), harness: "claude", model: "sonnet" });
     expect(done.verdict).toBe("approve");
@@ -432,12 +479,12 @@ describe.skipIf(insideSandbox)("reviewer", () => {
   test("reviews on Claude Code when your config picks it, though Codex is installed", async () => {
     mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
     writeFileSync(join(home, ".config", "skelcrew", "claude-token"), "sk-ant-oat01-tok\n");
-    fakeCodex('{"verdict":"changes","body":"From Codex."}');
+    fakeCodex('{"verdict":"changes","body":"From Codex.","findings":["From Codex."]}');
     fakeClaude([
-      'cat > /dev/null; echo \'{"type":"result","structured_output":{"verdict":"approve","body":"From Claude Code."}}\'',
+      'cat > /dev/null; echo \'{"type":"result","structured_output":{"verdict":"approve","body":"From Claude Code.","findings":[]}}\'',
     ]);
     const done = await review({ ...given(), harness: "claude" });
-    expect(done).toEqual({ verdict: "approve", body: "From Claude Code." });
+    expect(done).toEqual({ verdict: "approve", body: "From Claude Code.", findings: [] });
   });
 
   test("a Claude Code review that meets its usage limit is limited, with when it resets", async () => {
@@ -486,10 +533,10 @@ describe.skipIf(insideSandbox)("reviewer", () => {
       'prompt="$CLAUDE_CONFIG_DIR/prompt"; cat > "$prompt"',
       ciFile,
       'body=$(cat "$f" | tr -d "\\n")',
-      'echo "{\\"type\\":\\"result\\",\\"structured_output\\":{\\"verdict\\":\\"approve\\",\\"body\\":\\"$body\\"}}"',
+      'echo "{\\"type\\":\\"result\\",\\"structured_output\\":{\\"verdict\\":\\"approve\\",\\"body\\":\\"$body\\",\\"findings\\":[]}}"',
     ]);
     const done = await start({ harness: "claude", ci });
-    expect(done).toEqual({ verdict: "approve", body: "CI failed on this commit." });
+    expect(done).toEqual({ verdict: "approve", body: "CI failed on this commit.", findings: [] });
   });
 
   test("keeps CI's result current while the review runs", async () => {
@@ -568,8 +615,8 @@ describe("starting a review", () => {
   function roleFor(role: string, settings: string): unknown {
     mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
     writeFileSync(join(home, ".config", "skelcrew", "config.yaml"), settings);
-    const code = `import { agentRoles } from ${JSON.stringify(source("config.ts"))};
-console.log(JSON.stringify(agentRoles().${role}));`;
+    const code = `import { agentRole } from ${JSON.stringify(source("config.ts"))};
+console.log(JSON.stringify(agentRole(${JSON.stringify(role)})));`;
     const run = Bun.spawnSync([process.execPath, "-e", code], { env: env(), stdout: "pipe" });
     return JSON.parse(run.stdout.toString());
   }
@@ -658,7 +705,7 @@ describe("what the reviewer is told about the tests", () => {
   const named = ["bun install", "bun run check"];
   // CI runs the whole suite once per commit, so the reviewer runs it only where there is none.
   test("without CI, the reviewer runs the whole test suite itself", () => {
-    const prompt = reviewerPrompt(issue, "origin/main", "run", named);
+    const prompt = reviewerPrompt(reviewerRole, issue, "origin/main", "run", named);
     expect(prompt).toContain(
       "No CI runs on this commit, so run the repository's whole test suite with `sc check`, which runs `bun install && bun run check` once one of this machine's check slots is free. Never run that command directly, as other agents share this machine.",
     );
@@ -669,23 +716,29 @@ describe("what the reviewer is told about the tests", () => {
   test("with no test command configured, the reviewer reviews without running tests and says so", () => {
     const none =
       "no test command is configured, so don't run the tests. Review the code, and say in the body that you didn't run them, as none is configured.";
-    expect(reviewerPrompt(issue, "origin/main", "run", undefined)).toContain(
+    expect(reviewerPrompt(reviewerRole, issue, "origin/main", "run", undefined)).toContain(
       `No CI runs on this commit, so ${none}`,
     );
-    expect(reviewerPrompt(issue, "origin/main", { ci: "/tmp/review/ci.md" }, undefined)).toContain(
-      `such as only a deploy preview or a CLA check, ${none}`,
-    );
+    expect(
+      reviewerPrompt(reviewerRole, issue, "origin/main", { ci: "/tmp/review/ci.md" }, undefined),
+    ).toContain(`such as only a deploy preview or a CLA check, ${none}`);
   });
 
   // An empty list says on purpose that the repository has no tests to run.
   test("with test configured as none, the reviewer runs no tests and says the repository has none", () => {
-    expect(reviewerPrompt(issue, "origin/main", "run", [])).toContain(
+    expect(reviewerPrompt(reviewerRole, issue, "origin/main", "run", [])).toContain(
       "No CI runs on this commit, so don't run the tests: the repository is configured with none. Review the code, and say in the body that you didn't run them, as it has none.",
     );
   });
 
-  test("with CI, the reviewer reads CI's result, and says when CI is still running", () => {
-    const prompt = reviewerPrompt(issue, "origin/main", { ci: "/tmp/review/ci.md" }, named);
+  test("with CI, the reviewer reads CI's result, and approves clean code while CI runs", () => {
+    const prompt = reviewerPrompt(
+      reviewerRole,
+      issue,
+      "origin/main",
+      { ci: "/tmp/review/ci.md" },
+      named,
+    );
     expect(prompt).not.toContain("run the repository's whole test suite");
     expect(prompt).toContain(
       "CI runs the whole test suite on this commit, so don't run it yourself",
@@ -693,14 +746,20 @@ describe("what the reviewer is told about the tests", () => {
     expect(prompt).toContain("CI's result for this commit is in /tmp/review/ci.md");
     expect(prompt).toContain("whether it passed, failed or is still running");
     expect(prompt).toContain("read it when you start and again just before you answer");
-    expect(prompt).toContain("When CI failed, name the failing tests as problems");
-    expect(prompt).toContain("say in the body that CI is still running");
+    expect(prompt).toContain("When CI failed, list each failing test as a finding");
+    expect(prompt).toContain('approve clean code, and say "CI pending" in the body');
   });
 
   // Any check but Skelcrew's counts as CI, and some, such as a deploy preview or a CLA check,
   // run no tests. Then no one else would run the suite.
   test("with CI whose checks run no tests, the reviewer runs the whole test suite itself", () => {
-    const prompt = reviewerPrompt(issue, "origin/main", { ci: "/tmp/review/ci.md" }, named);
+    const prompt = reviewerPrompt(
+      reviewerRole,
+      issue,
+      "origin/main",
+      { ci: "/tmp/review/ci.md" },
+      named,
+    );
     expect(prompt).toContain(
       "When it lists checks and none of them runs the tests, such as only a deploy preview or a CLA check, run the whole test suite yourself with `sc check`, which runs `bun install && bun run check` once one of this machine's check slots is free. Never run that command directly, as other agents share this machine.",
     );
@@ -708,15 +767,21 @@ describe("what the reviewer is told about the tests", () => {
 
   // Before CI starts, the file lists no checks. That is CI still to come, not CI without tests.
   test("with CI that hasn't reported yet, the reviewer reviews the code without running the suite", () => {
-    const prompt = reviewerPrompt(issue, "origin/main", { ci: "/tmp/review/ci.md" }, named);
+    const prompt = reviewerPrompt(
+      reviewerRole,
+      issue,
+      "origin/main",
+      { ci: "/tmp/review/ci.md" },
+      named,
+    );
     expect(prompt).toContain(
-      "When CI hasn't reported yet, or is still running as you answer, review the code anyway, and say in the body that CI is still running.",
+      'When CI hasn\'t reported yet, or is still running as you answer, review the code anyway: CI running is never a finding, as the PR is ready only once every check passes. Then approve clean code, and say "CI pending" in the body.',
     );
   });
 
   // CI skips a change to docs and Markdown alone, and so does the reviewer: no code changed.
   test("on a change to docs and Markdown alone, the reviewer runs no tests and says so", () => {
-    const prompt = reviewerPrompt(issue, "origin/main", "docs only", named);
+    const prompt = reviewerPrompt(reviewerRole, issue, "origin/main", "docs only", named);
     expect(prompt).toContain(
       "The change only touches docs and Markdown, so don't run the tests. Say in the body that you didn't run them, as no code changed.",
     );

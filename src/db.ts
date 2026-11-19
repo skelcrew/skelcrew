@@ -39,9 +39,14 @@ export function nameRepositories(db: Database): void {
 // thread's log too. `role` is what the agent does on its task, and every thread so far is a
 // builder. `merge_plan` is `armed` while you have armed a merge when ready on the thread.
 // `merge_id` is that plan's own ID, new each time it is armed. `merge_by` and `merge_at` say
-// who armed it and when, for the PR's record. `merge_waits` is what an armed merge waits on, as the last poll
+// who armed it and when, for the PR's record. `merge_asked` is your words, exactly, when you
+// asked the lead to arm it, so the plan itself shows what let it merge, and null when you armed
+// it at your terminal. `merge_waits` is what an armed merge waits on, as the last poll
 // found, and `merge_noted` the review round the lead last heard it still waits after. They are
-// the thread's, so a thread that starts over begins with none.
+// the thread's, so a thread that starts over begins with none. `host` is the session host its
+// builder runs on, tmux or a runtime plugin, and `host_id` the session's ID there, which on tmux
+// is the folder. A thread from before hosts runs on tmux. A thread whose builder you stopped has
+// no host, so it starts again on the current one.
 const threadColumns = {
   needs_you: "INTEGER NOT NULL DEFAULT 0",
   asking: "INTEGER NOT NULL DEFAULT 0",
@@ -58,10 +63,13 @@ const threadColumns = {
   working_since: "INTEGER",
   state: "TEXT",
   role: "TEXT NOT NULL DEFAULT 'builder'",
+  host: "TEXT DEFAULT 'tmux'",
+  host_id: "TEXT",
   merge_plan: "TEXT",
   merge_id: "TEXT",
   merge_by: "TEXT",
   merge_at: "INTEGER",
+  merge_asked: "TEXT",
   merge_waits: "TEXT",
   merge_noted: "INTEGER",
 };
@@ -79,7 +87,11 @@ const threadColumns = {
 // task came from, saved as it starts, and null for a task with no issue, such as wr1. `closes` is
 // the line a PR's body needs to close that issue on merge, saved as it starts too, so its PR
 // closes it though the tracker or Skelcrew's copy of it changed since. It is empty when there is
-// none, and null only in a row from before Skelcrew kept it.
+// none, and null only in a row from before Skelcrew kept it. `review_post` is Skelcrew's review
+// on the PR, as JSON: the PR, the review's ID and what it last said, so each round edits it.
+// `agents` is the git tree of the .agents/ you had approved when the task started, which its
+// agents keep, or null for the built-in roles. `flow` is the flow the task runs from start to end,
+// `default` unless it was started with another.
 export const taskColumns = {
   title: "TEXT",
   body: "TEXT",
@@ -90,6 +102,7 @@ export const taskColumns = {
   checks: "TEXT",
   conflicts: "TEXT",
   ci_passed: "INTEGER NOT NULL DEFAULT 0",
+  ci_seen: "INTEGER NOT NULL DEFAULT 0",
   seen: "TEXT",
   last_review: "INTEGER",
   last_comment: "INTEGER",
@@ -105,12 +118,16 @@ export const taskColumns = {
   review_round: "INTEGER",
   verdict: "TEXT",
   review_line: "TEXT",
+  reviewed_commit: "TEXT",
   review_at: "INTEGER",
   review_limited: "INTEGER NOT NULL DEFAULT 0",
   review_reset: "INTEGER",
+  review_post: "TEXT",
   merged: "INTEGER NOT NULL DEFAULT 0",
   issue_link: "TEXT",
   closes: "TEXT",
+  agents: "TEXT",
+  flow: "TEXT NOT NULL DEFAULT 'default'",
 };
 
 // Marks each done task merged when its thread's log says its work ended by a merge, for tasks
@@ -228,7 +245,7 @@ function viewThreads(db: Database): void {
   // has the same columns, so none depends on whether the threads table still has its own
   // `stalled`. Until the new daemon moves a thread, its `turn_ended` shows that `stalled`, so the
   // screen and sc show a turn that ended meanwhile.
-  const turnEnded = hasThreadColumn(db, "stalled")
+  const turnEnded = hasColumn(db, "threads", "stalled")
     ? "COALESCE(th.turn_ended, th.stalled)"
     : "th.turn_ended";
   const threadColumn = (column: string) =>
@@ -305,6 +322,15 @@ export function finishUpgrade(db: Database): void {
   }).immediate();
 }
 
+// Returns SQL that marks, in `table`, every task whose saved checks show a poll found CI as
+// having seen CI, for a database from before Skelcrew kept that. Otherwise checks that vanish
+// before the first poll after the upgrade would read as a repository without CI.
+const seenBefore = (table: string) => `UPDATE ${table} SET ci_seen = 1 WHERE checks IS NOT NULL`;
+
+// Returns whether the table has the column.
+const hasColumn = (db: Database, table: string, column: string) =>
+  db.query(`SELECT 1 FROM pragma_table_info('${table}') WHERE name = ?`).get(column) !== null;
+
 // Creates the tables Skelcrew keeps, and adds the columns a database from an earlier release
 // lacks, leaving everything already there as it is.
 function prepareTables(db: Database): void {
@@ -335,7 +361,10 @@ function prepareTables(db: Database): void {
   // checkout's remote that uses an old name of the repository, once its forge has said so.
   // `tab_closed` marks a repository whose lead you exited, so its tab stays hidden and the
   // daemon doesn't bring its lead back until you open it again. `lead_state` is what its lead
-  // is doing, as a thread's `state` says for its builder.
+  // is doing, as a thread's `state` says for its builder. `agents_noted` is the tree of an
+  // .agents/ you haven't approved that the lead was told of, or `none` for one removed, so it is
+  // told once. `lead_flows` is whether the lead knows of flows, from the instructions it started
+  // with or a note, so a lead already running when Skelcrew learned of them is told once.
   const repositoryColumns = {
     open_issues: "INTEGER NOT NULL DEFAULT 0",
     open_prs: "INTEGER NOT NULL DEFAULT 0",
@@ -349,6 +378,8 @@ function prepareTables(db: Database): void {
     old_remote: "TEXT",
     tab_closed: "INTEGER NOT NULL DEFAULT 0",
     lead_state: "TEXT",
+    agents_noted: "TEXT",
+    lead_flows: "INTEGER NOT NULL DEFAULT 0",
   };
   // SQLite has no ADD COLUMN IF NOT EXISTS, so each column is looked up first.
   for (const [column, type] of Object.entries(repositoryColumns))
@@ -382,8 +413,11 @@ function prepareTables(db: Database): void {
   // The rest of a thread's columns, added as the repositories' are. A database from before
   // tasks keeps the task's columns on its threads too, where moveToTasks reads them, so they are
   // added here for every release's database. Nothing reads them from threads after that.
+  const threadsSeen = !hasColumn(db, "threads", "ci_seen");
   for (const [column, type] of Object.entries({ ...threadColumns, ...taskColumns }))
-    if (!hasThreadColumn(db, column)) db.run(`ALTER TABLE threads ADD COLUMN ${column} ${type}`);
+    if (!hasColumn(db, "threads", column))
+      db.run(`ALTER TABLE threads ADD COLUMN ${column} ${type}`);
+  if (threadsSeen) db.run(seenBefore("threads"));
   // A new database starts with tasks. One from an earlier release waits for its daemon to move
   // its threads onto tasks, as only the daemon knows no other daemon still writes to it.
   if (fresh) createTasks(db);
@@ -391,13 +425,16 @@ function prepareTables(db: Database): void {
   db.run("CREATE TABLE IF NOT EXISTS upgrades (step TEXT PRIMARY KEY)");
   // A tasks table made by an earlier release lacks the task's newer columns. Filling them in
   // waits for the new daemon, as finishUpgrade says.
-  if (hasTasks(db))
+  if (hasTasks(db)) {
+    const tasksSeen = !hasColumn(db, "tasks", "ci_seen");
     for (const [column, type] of Object.entries(taskColumns))
-      if (!db.query("SELECT 1 FROM pragma_table_info('tasks') WHERE name = ?").get(column)) {
+      if (!hasColumn(db, "tasks", column)) {
         db.run(`ALTER TABLE tasks ADD COLUMN ${column} ${type}`);
         if (column === "issue_link" || column === "merged" || column === "closes")
           db.run("INSERT OR IGNORE INTO upgrades (step) VALUES ('fill tasks')");
       }
+    if (tasksSeen) db.run(seenBefore("tasks"));
+  }
   // Skelcrew's copy of each repository's open tasks and PRs, as items, kept as JSON. The columns
   // are what readers pick and sort by. A database from an earlier release also has an
   // open_items table, which nothing reads now. It stays, as a daemon of that release may still
@@ -418,6 +455,9 @@ function prepareTables(db: Database): void {
   // new note the ID of the last one deleted. Typing a note deletes it by its ID once it is in,
   // and a note dropped while it was typed, such as a thread's end once the thread starts over,
   // must not hand its ID to a note saved meanwhile, which would then be deleted unheard.
+  // The release the daemon installed in the background, for the list's notice, until it runs
+  // on it. At most one row.
+  db.run("CREATE TABLE IF NOT EXISTS installed (release TEXT NOT NULL)");
   db.run(
     "CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY AUTOINCREMENT, text TEXT NOT NULL)",
   );
@@ -495,10 +535,6 @@ function prepareTables(db: Database): void {
     db.run("ALTER TABLE plugins ADD COLUMN approved TEXT");
 }
 
-// Returns whether the database's threads table has the column.
-const hasThreadColumn = (db: Database, column: string) =>
-  db.query("SELECT 1 FROM pragma_table_info('threads') WHERE name = ?").get(column) !== null;
-
 // Upgrades the threads an earlier release saved, whose `turn_ended` is still null, from its
 // `stalled`: a builder that stopped without submitting, which then needed you. Such a turn now
 // waits on the lead, which reads the builder's last message. These turns never sent the lead
@@ -508,7 +544,7 @@ const hasThreadColumn = (db: Database, column: string) =>
 // daemon out: a daemon of the earlier release, still running, could change `stalled` after
 // the move. A thread saved since has `turn_ended`, so each thread moves once.
 export function moveTurnEnded(db: Database): void {
-  if (!hasThreadColumn(db, "stalled")) return;
+  if (!hasColumn(db, "threads", "stalled")) return;
   const unmoved = "turn_ended IS NULL";
   // One transaction, so a move cut short leaves every thread to the next start.
   db.transaction(() => {

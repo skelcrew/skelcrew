@@ -1,13 +1,16 @@
-// Running the daemon in the background, as sc up --bg does, and attaching you to a repository's
-// lead or a thread's builder once it runs this Skelcrew's code. Plain sc attaches to a lead, and
-// sc attach to a builder.
+// Running the daemon in the background, as sc up --bg does, then showing you a repository's
+// lead or a thread's builder once it runs this Skelcrew's code. Plain sc opens the screen on a
+// lead, sc --list shows the lead's repository as a list, and sc attach opens a builder.
 import { z } from "zod";
 import { agentRuns } from "./agents/sessions.ts";
 import { ask } from "./client.ts";
+import { tellOldKeys } from "./config.ts";
 import { openDb } from "./db.ts";
 import { leadOf } from "./flow/lead.ts";
-import { findThread } from "./flow/thread.ts";
+import { builderSession, findThread } from "./flow/thread.ts";
+import { runList } from "./list/list.ts";
 import { installService, restartDaemon, servicePid, startDaemon } from "./machine/service.ts";
+import { attachOnHost } from "./plugins/runtime.ts";
 import { openScreen } from "./screen/screen.ts";
 import { checkoutFolder, git, release, singleFile } from "./version.ts";
 
@@ -124,11 +127,19 @@ export async function upInBackground(): Promise<boolean> {
   return false;
 }
 
-// Makes sure a lead is running, then opens the screen on the lead until you leave with Alt-Q.
-// The daemon must already run, as plain sc starts it first. The lead is for `from`, an
-// owner/repo, or else for the repository you opened last. With `tab`, only a repository whose
-// tab is open will do. Returns false, with no screen opened, when every tab is closed.
-export async function attachToLead(sessions: string, from?: string, tab = false): Promise<boolean> {
+// Makes sure a lead is running, then opens the screen on the lead until you leave with Alt-Q,
+// or with `list` shows the list of the lead's repository until you leave it with q. Both exist
+// side by side until the human picks one. The daemon must already run, as plain sc starts it
+// first. The lead is for `from`, an owner/repo, or else for the repository you opened last.
+// With `tab`, only a repository whose tab is open will do. Returns false, showing nothing, when
+// every tab is closed. Before it shows either, it names once any old keys the opened
+// repository's skelcrew.yaml still uses: only the daemon knows which repository you opened last.
+export async function attachToLead(
+  sessions: string,
+  list: boolean,
+  from?: string,
+  tab = false,
+): Promise<boolean> {
   // Asking for the lead brings it back if it ended while the daemon kept running. Starting it
   // takes longer than a status, hence the longer wait.
   const reply = await ask(
@@ -141,13 +152,17 @@ export async function attachToLead(sessions: string, from?: string, tab = false)
     throw new Error("the daemon answered in a way this Skelcrew doesn't understand");
   if ("error" in lead.data) throw new Error(lead.data.error);
   if ("closed" in lead.data) return false;
-  await openScreen(sessions, lead.data.lead, lead.data.lead, lead.data.repository);
+  tellOldKeys(lead.data.repository);
+  if (list) await runList(sessions, lead.data.repository);
+  else await openScreen(sessions, lead.data.lead, lead.data.lead, lead.data.repository);
   return true;
 }
 
 // Opens the screen with a thread's builder on the right and its repository's lead in the
 // sidebar, and returns when you leave with Alt-Q. Only you can run it, since it takes over
-// your terminal. It checks the builder is running before it starts the daemon.
+// your terminal. It checks the builder is running before it starts the daemon. A builder on a
+// runtime plugin's host is attached through that host instead, full screen, as the screen shows
+// only tmux's sessions.
 export async function attachToThread(
   sessions: string,
   repository: string,
@@ -155,12 +170,15 @@ export async function attachToThread(
 ): Promise<void> {
   const db = openDb();
   const thread = findThread(db, repository, task);
+  const { host, id } = await builderSession(db, sessions, thread);
   // A builder that exited leaves its last screen behind, which would look like it still runs.
-  if (!agentRuns(sessions, thread.folder))
+  if (!(await agentRuns(host, id)))
     throw new Error(
       `${repository}-${task}'s builder isn't running: the thread is ${thread.status}`,
     );
+  // Its hooks and sc reach the daemon wherever it runs, so the daemon runs first on any host.
   await upInBackground();
+  if (typeof host !== "string") return attachOnHost(host, id);
   // Attaching to a thread opens its repository, as plain sc in a checkout of it would, which
   // opens its tab again if you closed it by exiting its lead, and starts that lead. It is asked
   // each time, not only for a tab the database says is closed: a lead you exited a moment ago

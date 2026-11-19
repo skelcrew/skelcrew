@@ -16,6 +16,7 @@ import { versionLine } from "./version.ts";
 // refused because a prompt injection could trick an agent into it.
 const agentRefusals: Record<string, string> = {
   "": "attaching to the lead",
+  "--list": "showing the list",
   up: "running the daemon",
   serve: "running the daemon",
   "repo add": "adding a repository",
@@ -137,10 +138,10 @@ function usage(command?: string): never {
 }
 
 // Sets up Skelcrew if needed and runs the daemon in the background, as sc up --bg does, then
-// opens the screen on a lead. The lead is for the repository you ran sc from, the one --from
-// names, or else the one you opened last. With no repositories there is no lead to open, and
-// bringInFrom has already said so.
-async function leadCommand(from?: string): Promise<void> {
+// opens the screen on a lead, or with `list` shows its repository as a list. The lead is for
+// the repository you ran sc from, the one --from names, or else the one you opened last. With
+// no repositories there is no lead to open, and bringInFrom has already said so.
+async function leadCommand(list: boolean, from?: string): Promise<void> {
   // Loaded only here, so sc --remote on your laptop never loads them.
   const { attachToLead, upInBackground } = await import("./attach.ts");
   const { openDb } = await import("./db.ts");
@@ -162,11 +163,15 @@ async function leadCommand(from?: string): Promise<void> {
   }
   // Adds the repository you ran sc from if Skelcrew doesn't have it yet.
   const found = await bringInFrom(from);
+  // Your config may still use keys a newer shape replaced, which sc names once. The repository's
+  // skelcrew.yaml is named as its lead opens.
+  const { tellOldKeys } = await import("./config.ts");
+  tellOldKeys(undefined);
   if (repositories(openDb()).length === 0) return;
   // Outside any repository, sc opens the repository you opened last only while it has a tab.
   // With every tab closed, you closed them on purpose, so it opens none and says what sc needs.
   const away = from === undefined && origin === null;
-  if (await attachToLead("skelcrew", found, away)) return;
+  if (await attachToLead("skelcrew", list, found, away)) return;
   console.error("No git repository found. Run sc inside a git repository to open it.");
   process.exit(1);
 }
@@ -481,16 +486,28 @@ async function prCommand(args: string[], json: boolean): Promise<void> {
 // Arms a merge when ready, or cancels one, for sc merge. The thread is named by its task, such
 // as app-12, or by its PR's number, such as #7, in the repository of the checkout sc runs in or
 // the one --from names. Arming merges a PR later with nobody watching, so it asks you first at
-// your terminal, naming the PR, and refuses with no terminal, as an agent or a script has none.
-// The daemon refuses every agent besides, by the socket the call comes in on. Cancelling is
-// always safe, so it asks nothing.
+// your terminal, naming the PR, and refuses with no terminal, as a script has none. A lead you
+// let arm merges has no terminal either: it gives --asked-file, a file holding your words,
+// instead, and the daemon checks that it may, by the socket the call comes in on, and refuses
+// every other agent.
+// Cancelling is always safe, so it asks nothing.
 async function mergeCommand(args: string[]): Promise<void> {
   const [, how, named, ...rest] = args;
   const { planMerge, previewMerge } = await import("./client.ts");
   const command =
     how === "--when-ready" ? "merge when ready" : how === "--cancel" ? "merge cancel" : undefined;
-  const given = rest[0] === "--from" && rest[1] && rest.length === 2 ? rest[1] : undefined;
-  if (!command || named === undefined || (rest.length > 0 && !given)) usage("merge");
+  // --from and --asked-file, each at most once, in either order. --asked-file arms, so only
+  // with --when-ready.
+  const options = new Map<string, string>();
+  for (let i = 0; i < rest.length; i += 2) {
+    const [flag = "", value] = [rest[i], rest[i + 1]];
+    if (!["--from", "--asked-file"].includes(flag) || !value || options.has(flag)) usage("merge");
+    options.set(flag, value);
+  }
+  const given = options.get("--from");
+  const asked = options.get("--asked-file");
+  if (!command || named === undefined) usage("merge");
+  if (asked !== undefined && command !== "merge when ready") usage("merge");
   // The thread, by its PR's number or by its task.
   const number = named.match(/^#?(\d+)$/)?.[1];
   const task = splitThreadName(named);
@@ -501,6 +518,18 @@ async function mergeCommand(args: string[]): Promise<void> {
     which = { pr: Number(number), ...(from ? { from } : {}) };
   } else if (task && !given) which = { repo: task[0], task: task[1] };
   else usage("merge");
+  // Your words come in a file the lead wrote with its own file tool, so they never pass through
+  // a shell, which could run or change them. They are read unchanged, a last line break included.
+  if (asked !== undefined) {
+    const { readFileSync } = await import("node:fs");
+    const words = readFileSync(asked, "utf8");
+    if (!words.trim())
+      throw new Error(
+        `${asked} is empty: write the human's words in it, exactly as they wrote them`,
+      );
+    console.log(await planMerge(command, { ...which, asked: words }));
+    return;
+  }
   if (command === "merge when ready") {
     if (!process.stdin.isTTY)
       throw new Error("sc merge --when-ready asks you first, so run it at your own terminal");
@@ -575,31 +604,37 @@ async function threadCommand(args: string[]): Promise<void> {
   // stop, peek, interrupt and attach act on one thread, so they take its role too.
   const thread =
     command === "start" || command === "rm" || command === "review" ? task : splitThreadName(sub);
-  // --short takes the thread's short title for the sidebar, on every form of sc start, and is
-  // taken out before the other words are read. A blank one would show nothing, so it is a
-  // mistake, like a --short with no words after it.
-  const shortAt = command === "start" ? rest.indexOf("--short") : -1;
-  const short = shortAt === -1 ? undefined : rest[shortAt + 1]?.trim();
-  if (shortAt !== -1 && !short) usage(command);
-  const words = rest.filter((_, i) => shortAt === -1 || (i !== shortAt && i !== shortAt + 1));
+  // --short takes the thread's short title for the sidebar, and --flow the flow its task runs,
+  // on every form of sc start. Each is taken out before the other words are read. A blank one
+  // would say nothing, so it is a mistake, like one with no words after it.
+  const option = (name: string) => {
+    const at = command === "start" ? rest.indexOf(name) : -1;
+    const value = at === -1 ? undefined : rest[at + 1]?.trim();
+    if (at !== -1 && !value) usage(command);
+    return { at, value };
+  };
+  const { at: shortAt, value: short } = option("--short");
+  const { at: flowAt, value: flow } = option("--flow");
+  const taken = [shortAt, flowAt].flatMap((at) => (at === -1 ? [] : [at, at + 1]));
+  const words = rest.filter((_, i) => !taken.includes(i));
   // --from takes a branch, and only sc start <issue> takes it.
   const from = words[0] === "--from" && words[1] && words.length === 2 ? words[1] : undefined;
   if (command === "start" && task && (words.length === 0 || from)) {
-    console.log(await startOn(...task, from, short));
+    console.log(await startOn(...task, from, short, flow));
     return;
   }
   // A first word that isn't a task's name is a repository, for a thread on what you said, with
   // no task in the tracker.
   const [title, body] = words;
   if (command === "start" && sub && !task && title && body !== undefined && words.length === 2) {
-    console.log(await startNew(sub, title, bodyFor("sc start", body), short));
+    console.log(await startNew(sub, title, bodyFor("sc start", body), short, flow));
     return;
   }
   // With no title and body as words, they come on stdin, so a long body needs no shell
   // quoting. A terminal is never waited on: there, a missing title and body is a mistake.
   if (command === "start" && sub && !task && words.length === 0 && !process.stdin.isTTY) {
     const given = taskFrom(await Bun.stdin.text());
-    console.log(await startNew(sub, given.title, given.body, short));
+    console.log(await startNew(sub, given.title, given.body, short, flow));
     return;
   }
   if (command === "stop" && thread && rest.length === 0) {
@@ -670,7 +705,7 @@ async function tellCommand(args: string[]): Promise<void> {
   const { tellOn, tellTheLead } = await import("./client.ts");
   if (process.env.SKELCREW_SANDBOX !== "1")
     throw new Error(
-      "sc tell is for the lead and builders. To type to a builder, pick it in the sidebar.",
+      "sc tell is for the lead and builders. To type to a builder, pick it in the sidebar, or press Enter on it in sc --list.",
     );
   const task = to === "lead" ? undefined : splitThreadName(to);
   if (to === "lead" && text && rest.length === 0) {
@@ -751,9 +786,12 @@ async function runCommand(args: string[]): Promise<void> {
     if (code === 0) console.log(`${host} is ready. Connect to it with:\n  sc --remote ${host}`);
     process.exit(code);
   }
-  // Plain sc, or sc --from <remote> as sc --remote sends it.
-  if (words.length === 0 || (first === "--from" && second && words.length === 2))
-    return leadCommand(second);
+  // Plain sc, or sc --from <remote> as sc --remote sends it. Either one with --list first shows
+  // the list in place of the screen.
+  const list = first === "--list";
+  const lead = list ? words.slice(1) : words;
+  if (lead.length === 0 || (lead[0] === "--from" && lead[1] && lead.length === 2))
+    return leadCommand(list, lead[1]);
   switch (first) {
     case "first-run":
     case "take-setup":

@@ -13,24 +13,31 @@ import {
   hasSession,
   type Labels,
   startSession,
+  stopSession,
 } from "../agents/sessions.ts";
-import { repositoryCommands, threadConfig } from "../config.ts";
+import { approvedAgents } from "../approved-agents.ts";
+import { agentRole, checkFlow, repositoryCommands, roundLimit, sessionHost } from "../config.ts";
 import { machineCode } from "../db.ts";
+import { flowRoles } from "../flows.ts";
 import { cloneDir, threadSocket } from "../paths.ts";
 import { trackerOf } from "../plugins/ask.ts";
-import { builtInRole } from "../roles.ts";
+import { type Host, hostNamed } from "../plugins/runtime.ts";
+import { repositoryRole } from "../roles.ts";
 import { quietly } from "../run.ts";
 import { errorText } from "../say.ts";
 import type { Settings } from "../settings.ts";
 import { ownTask, taskOf, threadTask } from "./copy.ts";
 import { pastRoundLimit } from "./decide.ts";
 import { claimedNames, claimName, fetchBranch } from "./git.ts";
-import { dropEndNotes, noteForLead } from "./messages.ts";
+import { dropEndNotes, noteForLead, typeLeadNotes } from "./messages.ts";
 import { findRepository, forgeAuthor, forgeKnown, refreshClones } from "./repo.ts";
+import { forgetStatus } from "./status.ts";
 import {
   builderHarness,
+  builderSession,
   cloneOf,
   folderName,
+  hostGone,
   log,
   readThread,
   record,
@@ -46,7 +53,7 @@ import {
 export function startChoice(thread: Thread | null): "bring back" | "go on" | "new thread" {
   if (thread?.status === "stopped") return "bring back";
   const live = thread?.status === "working" || thread?.status === "waiting";
-  if (thread && live && pastRoundLimit(thread, threadConfig(thread).maxRounds)) return "go on";
+  if (thread && live && pastRoundLimit(thread, roundLimit(thread))) return "go on";
   return "new thread";
 }
 
@@ -69,15 +76,30 @@ export function statusOnceBack(stopped: Thread): "waiting" | "working" {
 // such as after sc rm: then it starts over in the same folder. It only records the thread,
 // since the lead waits on the answer. Setting up its clone and starting its builder come
 // after, and can take minutes. `given` is a start request, so its `repo` is the repository's
-// name in Skelcrew or its owner/name, and its `short` the short title the lead gave, if any.
+// name in Skelcrew or its owner/name, its `short` the short title the lead gave, if any, and
+// its `flow` the flow the lead picked, `default` when none. A flow checkFlow refuses, such as one
+// the .agents/ you approved doesn't have or one with a bad round limit, refuses the start, from
+// sc start or a label alike, before any work begins.
 // Starts go one at a time: a start over first deletes the old thread's refs, and a second
 // start of the same task, running alongside, could delete the refs of the thread the first
 // just started. One at a time, the second finds that thread and is refused.
 export function startThread(
   db: Database,
   given:
-    | { repo: string; task: string; from?: string | undefined; short?: string | undefined }
-    | { repo: string; title: string; body: string; short?: string | undefined },
+    | {
+        repo: string;
+        task: string;
+        from?: string | undefined;
+        short?: string | undefined;
+        flow?: string | undefined;
+      }
+    | {
+        repo: string;
+        title: string;
+        body: string;
+        short?: string | undefined;
+        flow?: string | undefined;
+      },
 ): Promise<Thread> {
   const start = startsBefore.then(() => recordThread(db, given));
   // A start that fails holds up none after it.
@@ -98,6 +120,10 @@ async function recordThread(
   const repository = findRepository(db, given.repo);
   const { owner, repo, name } = repository;
   const tracked = trackerOf(db, repository) !== null;
+  // The task keeps the .agents/ you approved as it starts, and runs one of its flows.
+  const agents = approvedAgents({ owner, repo });
+  const flow = given.flow ?? "default";
+  checkFlow({ owner, repo, agents }, name, flow);
   const where = "WHERE owner = ? AND repo = ? AND task = ?";
   let task: string;
   let title: string;
@@ -253,6 +279,8 @@ async function recordThread(
       review_round: null,
       verdict: null,
       review_line: null,
+      reviewed_commit: null,
+      ci_seen: false,
       review_at: null,
       harness: null,
       short: given.short ?? null,
@@ -262,6 +290,11 @@ async function recordThread(
       changed: null,
       updates: [],
       state: null,
+      // It has no session until its builder starts, on the host your config names then. One
+      // starting over keeps the host the failed thread's builder had, as that builder may still
+      // run there, and is ended before the new one starts.
+      host: before?.host ?? null,
+      host_id: before?.host_id ?? null,
       merged: false,
       issue_link: issueLink,
       closes,
@@ -269,8 +302,12 @@ async function recordThread(
       merge_id: null,
       merge_by: null,
       merge_at: null,
+      merge_asked: null,
       merge_waits: null,
       merge_noted: null,
+      agents,
+      flow,
+      review_post: null,
     };
     // A failed or done thread's row gives way to the new one, and messages that waited for its
     // builder go with it, as they were about the old work. Its task starts afresh too, with no
@@ -282,8 +319,8 @@ async function recordThread(
     dropEndNotes(db, thread.folder);
     // Its turn_ended is set, so the daemon's move of an earlier release's threads passes it by.
     db.run(
-      `INSERT INTO threads (owner, repo, task, folder, branch, base, status, session, started, turn_ended)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+      `INSERT INTO threads (owner, repo, task, folder, branch, base, status, session, started, turn_ended, host, host_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
       [
         owner,
         repo,
@@ -294,13 +331,27 @@ async function recordThread(
         thread.status,
         null,
         thread.started,
+        thread.host,
+        thread.host_id,
       ],
     );
     db.run(
       `INSERT OR REPLACE INTO tasks
-        (owner, repo, task, title, body, short, assigned, seen, issue_link, closes)
-        VALUES (?, ?, ?, ?, ?, ?, ?, '[]', ?, ?)`,
-      [owner, repo, task, title, body, thread.short, thread.assigned, issueLink, closes],
+        (owner, repo, task, title, body, short, assigned, seen, issue_link, closes, agents, flow)
+        VALUES (?, ?, ?, ?, ?, ?, ?, '[]', ?, ?, ?, ?)`,
+      [
+        owner,
+        repo,
+        task,
+        title,
+        body,
+        thread.short,
+        thread.assigned,
+        issueLink,
+        closes,
+        thread.agents,
+        thread.flow,
+      ],
     );
     log(db, thread);
     return thread;
@@ -402,13 +453,16 @@ export async function setUpThread(db: Database, thread: Thread): Promise<void> {
   }
 }
 
-// Returns the builder's instructions: its built-in ones, then the setup and test commands the
+// Returns the builder's instructions: its role's, from `role`, then the setup and test commands the
 // repository's skelcrew.yaml or your config names, each on its own, or that none is configured.
 // The builder can't read your config from its sandbox, so it is told. A builder told one it
 // needs isn't configured asks the lead rather than guess, as a guessed command is often wrong
 // and nobody would see it was a guess.
-export function builderInstructions(commands: Pick<Settings, "setup" | "test">): string {
-  const instructions = builtInRole("builder").instructions.replace(/\n$/, "");
+export function builderInstructions(
+  role: string,
+  commands: Pick<Settings, "setup" | "test">,
+): string {
+  const instructions = role.replace(/\n$/, "");
   const { setup, test } = commands;
   const shown = (list: string[]) => `\`${list.join(" && ")}\``;
   // A missing command is one the builder may need to ask about. An empty list says on purpose
@@ -431,16 +485,27 @@ export function builderInstructions(commands: Pick<Settings, "setup" | "test">):
 // Starts the thread's builder in a session, in the sandbox in its clone: bringing back the
 // conversation it saved, or else afresh with the task as its reviewer gets it as its first
 // message: the title and body from Skelcrew's copy, and the lead's messages after them. Throws
-// when it exits as soon as it starts. A builder's first start picks the harness your config
-// names, and saves it with the thread, which keeps it from then on: a conversation can't move to
-// another harness. The session id is stored before the builder starts, so the builder can be
-// brought back after its session is gone.
+// when it exits as soon as it starts, or when its settings, its round limit included, aren't
+// valid. A builder's first start picks the harness your config names, and saves it with the
+// thread, which keeps it from then on: a conversation can't move to another harness. The session id is stored before the builder starts, so the builder can be
+// brought back after its session is gone. It starts on the session host your config names now,
+// which the thread keeps until its builder ends, and throws when that host isn't installed.
 export async function startBuilder(db: Database, sessions: string, thread: Thread): Promise<void> {
+  const hostName = sessionHost();
+  const host = hostNamed(db, sessions, hostName);
+  if (host === null)
+    throw new Error(
+      `your session host ${hostName} isn't installed as a runtime plugin that provides sessions`,
+    );
+
   // Pick the harness: your config's for a first start, the saved one for a builder coming back.
   // A saved conversation the harness can't find starts afresh under a new id.
   const clone = cloneOf(thread);
   const stored = thread.session;
-  const role = threadConfig(thread).builder;
+  const role = agentRole("builder", thread);
+  // The round limit is checked as the builder starts, so a bad one fails the new thread with
+  // the reason, rather than only its first review once the builder has worked a round.
+  roundLimit(thread);
   const harness = stored === null ? harnessNamed(role.harness) : builderHarness(thread);
   const resume = stored === null ? null : harness.saved(thread.folder, clone, stored);
   const session = resume ?? crypto.randomUUID();
@@ -470,30 +535,133 @@ export async function startBuilder(db: Database, sessions: string, thread: Threa
     // task in its own words, and the builder still has it after a long conversation is
     // compacted. It asks the builder to ask you only when it must: its question waits on a
     // screen nobody watches.
-    system: builderInstructions(repositoryCommands(thread)),
+    // The build stage's role, from the task's flow, and its instructions come from the .agents/
+    // the task started with.
+    system: builderInstructions(
+      repositoryRole(flowRoles(thread).build, thread).instructions,
+      repositoryCommands(thread),
+    ),
     ...start,
   });
-  // Start it in a session of its own, then watch a moment for it to exit at once, so a broken
-  // start fails the thread with a reason.
-  const repository = `${thread.owner}/${thread.repo}`;
-  const labels: Labels = { repository, role: "builder", task: threadName(db, thread) };
-  startSession(sessions, thread.folder, { folder: clone, command: argv, env, labels });
+  await startOnHost(db, thread, { host, name: hostName }, { folder: clone, command: argv, env });
   console.log(`${resume ? "Brought back" : "Started"} the builder of ${thread.folder}.`);
-  await checkAgentStarted(sessions, thread.folder, "builder");
+}
+
+// Starts the thread's builder in a session of its own on the host, running `command`, then
+// watches a moment for it to exit at once, so a broken start fails the thread with a reason. It
+// takes its turn with the builder's ends, so a stop that comes while the host starts it waits,
+// and then ends the builder it started. A thread stopped or ended while this waited its turn
+// starts nothing, and this throws.
+export function startOnHost(
+  db: Database,
+  thread: Thread,
+  on: { host: Host; name: string },
+  session: { folder: string; command: string[]; env: Record<string, string> },
+): Promise<void> {
+  return inTurn(thread.folder, async (earlier) => {
+    await earlier;
+    const { status } = readThread(db, thread.folder);
+    if (status !== "working" && status !== "waiting")
+      throw new Error(`the thread was ${status} while its builder started`);
+    const repository = `${thread.owner}/${thread.repo}`;
+    const labels: Labels = { repository, role: "builder", task: threadName(db, thread) };
+    // The host is saved before the session starts, so a daemon that stops in between finds the
+    // builder there by its labels, rather than starting it again elsewhere.
+    record(db, thread.folder, { host: on.name, host_id: null });
+    const id = await startSession(on.host, thread.folder, { ...session, labels });
+    forgetStatus(on.name, id);
+    record(db, thread.folder, { host_id: id });
+    await checkAgentStarted(on.host, id, "builder");
+  });
+}
+
+// The starts and ends under way of each thread's builder, by its folder, each settling once it
+// is over.
+const turns = new Map<string, Promise<void>>();
+
+// Runs `work` as the next start or end of the thread's builder, and returns its outcome. `work`
+// is given what settles once every earlier one is over, and waits for it before it asks the
+// host: so one never finishes after a later one, and an end never misses a builder still
+// starting. Its place is taken at once, so the order is the order they were asked for.
+export function inTurn<T>(
+  folder: string,
+  work: (earlier: Promise<void>) => Promise<T>,
+): Promise<T> {
+  const earlier = turns.get(folder) ?? Promise.resolve();
+  const done = work(earlier);
+  const settled = done.then(
+    () => {},
+    () => {},
+  );
+  turns.set(folder, settled);
+  settled.then(() => {
+    if (turns.get(folder) === settled) turns.delete(folder);
+  });
+  return done;
+}
+
+// Ends the builder an earlier start of a thread starting over may have left running, before its
+// clone is set up again, so two builders never share the clone. Such as a builder a host started
+// whose answer was lost, so the thread failed without saving its ID: it is found by its labels.
+// The thread then has no host. A host that can't be reached throws and keeps the thread's host,
+// so the next start tries again.
+export async function endEarlierBuilder(
+  db: Database,
+  sessions: string,
+  thread: Thread,
+): Promise<void> {
+  if (thread.host === null) return;
+  const { host, id } = await builderSession(db, sessions, thread);
+  if (await hasSession(host, id)) await stopSession(host, id);
+  record(db, thread.folder, { host: null, host_id: null });
 }
 
 // Brings back a thread's builder after the daemon restarts, or for sc start after sc stop. A
-// builder still running is left alone. One whose session is gone or ended is started again.
-// Throws for a thread with no session: the daemon stopped before its setup finished, and the
-// error says to run sc start again.
+// builder still running is left alone, on whichever host it runs. One whose session is gone or
+// ended is started again, on the host your config names now. Throws for a thread with no
+// session: the daemon stopped before its setup finished, and the error says to run sc start
+// again. A builder whose host plugin is gone may still run there, out of reach, so the thread
+// needs you rather than its builder starting a second time elsewhere. A plugin's host that
+// can't be reached for now, such as one restarting with the machine, is asked again every few
+// seconds for as long as the thread stays as it was: its builder may well still run there, and
+// the thread stays live meanwhile, with its round and messages waiting for it.
 export async function bringBack(db: Database, sessions: string, thread: Thread): Promise<void> {
   if (thread.session === null)
     throw new Error("the daemon stopped while setting up the thread: run sc start again");
-  // A session whose agent ended is ended too, so the new one can take its name.
-  if (agentRuns(sessions, thread.folder)) return;
-  if (hasSession(sessions, thread.folder)) endSession(sessions, thread.folder);
+  // A builder you stopped has no host left to look on.
+  if (thread.host !== null) {
+    if (hostNamed(db, sessions, thread.host) === null) {
+      record(db, thread.folder, { needs_you: true }, hostGone(thread));
+      typeLeadNotes(db, sessions);
+      return;
+    }
+    let told = false;
+    while (true) {
+      try {
+        // A session whose agent ended is ended too, so the new one can take its name.
+        const { host, id } = await builderSession(db, sessions, thread);
+        if (await agentRuns(host, id)) return;
+        if (await hasSession(host, id)) await endSession(host, id);
+        break;
+      } catch (error) {
+        // tmux failing isn't a host that will come back, and a thread stopped or ended
+        // meanwhile isn't this one's to bring back.
+        const now = readThread(db, thread.folder);
+        const live = now.status === "working" || now.status === "waiting";
+        const same = now.started === thread.started && live;
+        if (thread.host === "tmux" || !same) throw error;
+        // Its log says so once, not on every try.
+        if (!told) log(db, now, `couldn't reach ${thread.host}, trying again: ${errorText(error)}`);
+        told = true;
+        await Bun.sleep(hostRetry);
+      }
+    }
+  }
   await startBuilder(db, sessions, thread);
 }
+
+// How long bringBack waits before asking a plugin's host again, in milliseconds.
+const hostRetry = 5000;
 
 // Marks the thread failed and logs why, in its log and the daemon's, so you can see what
 // stopped it and start it again. The lead hears of it in a note that goes ahead of routine
