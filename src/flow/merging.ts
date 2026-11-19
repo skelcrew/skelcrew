@@ -77,7 +77,7 @@ export function agentsSaid(
   if (pr === null || commit === null || saved?.head !== commit || saved.base !== pr.base)
     return "Skelcrew hasn't checked yet whether it changes .agents/.";
   return saved.changed
-    ? "It changes .agents/ (roles, flows or skills): new tasks wait for sc repo trust."
+    ? "It changes .agents/ (roles, flows or skills): the changes wait for sc repo trust."
     : "";
 }
 

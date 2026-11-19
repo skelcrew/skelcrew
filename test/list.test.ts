@@ -172,7 +172,7 @@ test("m's question says when the PR changes .agents/, or that Skelcrew hasn't ch
   };
   sql("UPDATE pr_agents SET changed = 1 WHERE pr = '41';");
   expect(ask()).toBe(
-    "Merge app#41 into main? It changes .agents/ (roles, flows or skills): new tasks wait for sc repo trust. y/n",
+    "Merge app#41 into main? It changes .agents/ (roles, flows or skills): the changes wait for sc repo trust. y/n",
   );
   const unchecked =
     "Merge app#41 into main? Skelcrew hasn't checked yet whether it changes .agents/. y/n";

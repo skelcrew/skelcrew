@@ -265,7 +265,7 @@ INSERT INTO pr_agents (owner, repo, pr, head, base, changed) VALUES
     { key: "m", refused: "app#33 needs a newer forge plugin to merge here: run sc update -g" },
     {
       key: "m",
-      ask: "Merge app#32 into next? It changes .agents/ (roles, flows or skills): new tasks wait for sc repo trust. y/n",
+      ask: "Merge app#32 into next? It changes .agents/ (roles, flows or skills): the changes wait for sc repo trust. y/n",
       working: "Merging app#32…",
       request: { command: "merge", repo: "simon/app", pr: 32, commit: "c".repeat(40) },
     },

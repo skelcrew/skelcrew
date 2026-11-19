@@ -2305,7 +2305,7 @@ exec ${bwrap} "$@"`,
         socket,
         env(),
         ["merge", "--when-ready", "app-12"],
-        `${question} It changes .agents/ (roles, flows or skills): new tasks wait for sc repo trust. [y/N]`,
+        `${question} It changes .agents/ (roles, flows or skills): the changes wait for sc repo trust. [y/N]`,
         "n",
       );
       expect(warned).toContain("Not merging: app-12 waits for you to merge it.");
