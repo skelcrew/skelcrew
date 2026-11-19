@@ -401,15 +401,28 @@ export function install(from?: string, plain = false): void {
   // What repositories need is read first, so a plugin your lock and a repository pin at different
   // commits is left as it is on both sides. A repository whose files can't be read stops only its
   // own part, after your plugins, as it isn't yours.
-  let needs: Need[] = [];
-  let unreadable: unknown = null;
-  try {
-    needs = repositoryNeeds();
-  } catch (error) {
-    unreadable = error;
-  }
-  const conflicting = needs.filter((need) => need.conflict !== null).map((need) => need.source);
-  const { changed: plugins, left } = installYourPlugins(from ?? originHere(), conflicting);
+  const readNeeds = (): { needs: Need[]; unreadable: unknown } => {
+    try {
+      return { needs: repositoryNeeds(), unreadable: null };
+    } catch (error) {
+      return { needs: [], unreadable: error };
+    }
+  };
+  const conflictsIn = (needs: Need[]) =>
+    needs.filter((need) => need.conflict !== null).map((need) => need.source);
+  const before = readNeeds();
+  const { changed: plugins, left: notHere } = installYourPlugins(
+    from ?? originHere(),
+    conflictsIn(before.needs),
+  );
+  // Read again, as installing a plugin of yours with no pin yet pins it, and that new pin may
+  // disagree with a repository's. Such a plugin is left out of the repositories' part, and keeps
+  // the machine unfinished as any disagreement does.
+  const { needs, unreadable } = readNeeds();
+  const conflicting = conflictsIn(needs);
+  const left = [
+    ...new Set([...notHere, ...yourPlugins().filter((source) => conflicting.includes(source))]),
+  ];
   // A plugin still missing keeps the mark away, even from a machine that had it, such as after
   // you named a new plugin and said no to it, so plain sc asks again.
   // One a repository pins at another commit is said apart, as installing it can't help.

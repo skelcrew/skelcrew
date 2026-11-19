@@ -1192,3 +1192,36 @@ test("sc remove -g keeps a plugin a repository still names installed, with its s
   expect(existsSync(join(plugins(), "fake", "0.1.0"))).toBe(true);
   expect(existsSync(join(settings("fake"), "token"))).toBe(true);
 });
+
+// sc install leaves a plugin whose pins disagree as it is, so sc plugins says that, not a move.
+test("sc plugins shows a disagreement over the move your lock alone would make", async () => {
+  publish("skelcrew/skelcrew-fake", "0.1.0", "0.2.0");
+  // Installed at 0.2.0, the newest then.
+  await skel(["add", "-g", "skelcrew/skelcrew-fake"], "y\n");
+  publish("skelcrew/skelcrew-fake", "0.3.0");
+  const app = appCheckout();
+  const commit = (version: string) => tagCommit("skelcrew/skelcrew-fake", version);
+  writeFileSync(join(app, "skelcrew.yaml"), "plugins: [skelcrew/skelcrew-fake]\n");
+  writeFileSync(
+    join(app, "skelcrew.lock"),
+    `skelcrew/skelcrew-fake: { name: fake, version: 0.1.0, commit: ${commit("0.1.0")} }\n`,
+  );
+  // Your lock pins 0.3.0, which alone would move the plugin there.
+  const pinYours = () =>
+    writeFileSync(
+      yourLockFile(),
+      `skelcrew/skelcrew-fake: { name: fake, version: 0.3.0, commit: ${commit("0.3.0")} }\n`,
+    );
+  pinYours();
+  const leaves = `sc install leaves it, as it is pinned at 0.3.0 at commit ${commit("0.3.0").slice(0, 12)} by your lock, 0.1.0 at commit ${commit("0.1.0").slice(0, 12)} by This checkout.`;
+  expect((await skel(["plugins"], "", "", {}, app, false)).out).toBe(
+    `fake 0.2.0 io: tracker, forge. ${leaves}\n`,
+  );
+  // Not installed here, it would be installed at 0.3.0 but for the disagreement.
+  await skel(["remove", "-g", "fake"]);
+  writeFileSync(yourConfig(), "plugins: [skelcrew/skelcrew-fake]\n");
+  pinYours();
+  expect((await skel(["plugins"], "", "", {}, app, false)).out).toBe(
+    `fake 0.3.0 from skelcrew/skelcrew-fake isn't installed. ${leaves}\n`,
+  );
+});

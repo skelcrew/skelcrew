@@ -1933,3 +1933,24 @@ test("sc install moves a runtime plugin that isn't yours to a pinned version tha
   expect(run.out).toContain("Update it? [Y/n]");
   expect(run.out).toContain("Updated fake from 0.1.0 to 0.2.0.");
 });
+
+// Installing a plugin of yours with no pin yet pins its newest version, which may disagree with a
+// repository's pin.
+test("a pin sc install adds for a plugin of yours is checked against the repositories' pins", async () => {
+  noGitHubPlugin();
+  fakeGitHub();
+  publishFake("0.1.0", "0.2.0");
+  await skel("1\nsk-ant-oat01-good\n");
+  appendFileSync(config(), "plugins: [simon/skelcrew-fake]\n");
+  repositoryLocksFake(join(home, ".local", "share", "skelcrew", "repos", "simon", "app"), "0.1.0");
+  const run = await install("y\ny\n");
+  expect(run.err).toBe("");
+  expect(run.out).toContain("Installed fake 0.2.0.");
+  expect(run.out).not.toContain("Update it?");
+  expect(run.out).toContain(
+    "Skelcrew isn't set up yet, as your lock and a repository pin simon/skelcrew-fake at different commits.",
+  );
+  const folder = join(home, ".local", "share", "skelcrew", "plugins", "fake", "0.2.0");
+  expect(git(folder, "rev-parse", "HEAD")).toBe(fakeCommit("0.2.0"));
+  expect(existsSync(join(home, ".local", "share", "skelcrew", "install-done"))).toBe(false);
+});

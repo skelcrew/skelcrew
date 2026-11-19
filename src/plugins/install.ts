@@ -756,6 +756,11 @@ export function listPlugins(json: boolean, needs: Need[]): void {
     }
     return null;
   };
+  // What sc install says of a plugin whose pins disagree, which it leaves as it is, or null.
+  const disagreement = (source: string): string | null => {
+    const conflict = needs.find((need) => need.source === source)?.conflict;
+    return conflict ? `sc install leaves it, as it is pinned at ${conflict}` : null;
+  };
   const rows: Row[] = installed.map((plugin) => {
     const manifest = existsSync(plugin.folder) ? readManifest(plugin.folder) : null;
     if (!manifest) throw new Error(`${plugin.name}'s folder ${plugin.folder} is gone`);
@@ -778,11 +783,12 @@ export function listPlugins(json: boolean, needs: Need[]): void {
       // What it provides, under the name tools read before plugins had kinds.
       jobs: manifest.provides,
       from: plugin.source ?? plugin.folder,
-      change: moves
-        ? `sc install moves it to ${to}`
-        : plugin.source === null
+      // A disagreement goes first, as sc install then leaves the plugin as it is.
+      change:
+        plugin.source === null
           ? null
-          : repositoryChange(plugin.source, plugin),
+          : (disagreement(plugin.source) ??
+            (moves ? `sc install moves it to ${to}` : repositoryChange(plugin.source, plugin))),
     };
   });
   // The plugins your files name that aren't installed here.
@@ -796,7 +802,9 @@ export function listPlugins(json: boolean, needs: Need[]): void {
       provides: [],
       jobs: [],
       from: source,
-      change: locked ? "sc install installs it" : "sc install installs its newest version",
+      change:
+        disagreement(source) ??
+        (locked ? "sc install installs it" : "sc install installs its newest version"),
     });
   }
   // Then those only repositories name that aren't installed here, once each.
