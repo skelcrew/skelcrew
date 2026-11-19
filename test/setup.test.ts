@@ -7,6 +7,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   renameSync,
@@ -1374,29 +1375,56 @@ test("sc install keeps a plugin a repository uses that your files don't name, an
   expect(readFileSync(lock(), "utf8")).toBe("");
 });
 
-// A machine set up before the lock existed has no lock: its plugins are written into one as
-// they are, so sc install removes nothing and asks nothing.
-test("sc install on a machine with no lock keeps its plugins and pins them as they are", async () => {
+// Only a lock makes a plugin yours, so a machine with none pins nothing. A plugin a repository
+// uses is still kept: as its tracker or forge, or as one its skelcrew.lock names.
+test("sc install on a machine with no lock pins nothing, and keeps the plugins repositories use", async () => {
   noGitHubPlugin();
   fakeGitHub();
   publishFake("0.1.0");
+  publishPlugin("team", "0.1.0");
+  publishPlugin("spare", "0.1.0");
   await skel("1\nsk-ant-oat01-good\n");
-  lockFake("0.1.0");
-  await install("y\n");
-  rmSync(lock());
-  writeFileSync(
+  appendFileSync(
     config(),
-    readFileSync(config(), "utf8").replace("plugins: [simon/skelcrew-fake]\n", ""),
+    "plugins: [simon/skelcrew-fake, simon/skelcrew-team, simon/skelcrew-spare]\n",
+  );
+  await install("y\ny\ny\n");
+  const db = new Database(join(home, ".local", "share", "skelcrew", "skelcrew.db"));
+  db.run(
+    "INSERT INTO repositories (owner, repo, name, forge) VALUES ('simon', 'other', 'other', 'fake')",
+  );
+  db.close();
+  // The repository's own lock, in Skelcrew's clone of it, names team.
+  const clone = join(home, ".local", "share", "skelcrew", "repos", "simon", "other");
+  mkdirSync(clone, { recursive: true });
+  writeFileSync(
+    join(clone, "skelcrew.lock"),
+    `simon/skelcrew-team: { name: team, version: 0.1.0, commit: ${"a".repeat(40)} }\n`,
+  );
+  rmSync(lock());
+  writeFileSync(config(), readFileSync(config(), "utf8").replace(/plugins: .*\n/, ""));
+  const configBefore = readFileSync(config(), "utf8");
+  expect((await skel("", bin, main(), home, {}, ["plugins"])).out).toBe(
+    [
+      "fake 0.1.0 io: tracker. sc install keeps it, as it is the tracker of other.",
+      "spare 0.1.0 io: tracker. sc install removes it.",
+      "team 0.1.0 io: tracker. sc install keeps it, as it is named in the skelcrew.lock of other.",
+      "",
+    ].join("\n"),
   );
   writeFileSync(join(home, "calls"), "");
   const run = await install();
   expect(run.err).toBe("");
   expect(run.code).toBe(0);
-  expect(run.out).not.toContain("Removed");
+  expect(run.out).toContain("Removed spare, with its settings and tokens.");
+  expect(run.out).not.toContain("Removed fake");
+  expect(run.out).not.toContain("Removed team");
   expect(calls()).toBe("");
-  expect(parse(readFileSync(lock(), "utf8"))).toEqual({
-    "simon/skelcrew-fake": { name: "fake", version: "0.1.0", commit: fakeCommit("0.1.0") },
-  });
+  const plugins = join(home, ".local", "share", "skelcrew", "plugins");
+  expect(readdirSync(plugins).sort()).toEqual(["fake", "team"]);
+  expect(readFileSync(config(), "utf8")).toBe(configBefore);
+  // Removing spare took it out of a lock, which leaves one that pins nothing.
+  expect(parse(readFileSync(lock(), "utf8"))).toBeNull();
 });
 
 test("sc install with no answer to read installs nothing", async () => {
