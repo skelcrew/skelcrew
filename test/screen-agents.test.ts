@@ -174,6 +174,17 @@ test("Ctrl-Q still leaves, though nothing shows it", async () => {
   await until(() => seen().includes(leaving), "the line that says what happened");
 });
 
+// Ctrl-\ is the agents' server's key to detach. Were it to reach that server, it would detach the
+// agent's pane and leave it empty, so the screen takes it and leaves, as it does on herdr.
+test("Ctrl-\\ leaves the whole screen too, and ends no agent", async () => {
+  open("lead");
+  await ready("lead");
+  press("C-\\");
+  await until(() => existsSync(join(home, "left-one")), "Skelcrew to return");
+  await until(() => seen().includes(leaving), "the line that says what happened");
+  expect(tmux(agents, "has-session", "-t", "=lead").ok).toBe(true);
+});
+
 // Replaces the lead with an agent that asks for extended keys, says its name, and logs every
 // byte it reads to lead.keys. Like Claude Code, it asks only when TERM_PROGRAM says it runs in
 // tmux, as it can't tell from a TERM of tmux-256color alone.

@@ -27,7 +27,7 @@ type Action = Question | { refused: string };
 // One row of the list. `part` is where it is: the lead, or the stage of its task. Its mark is a
 // sign and the colour that says what kind of state it is in, and `says` is the end of the row, in
 // `colour`. `session` is the agent's session, which Enter attaches to, `running` whether its
-// agent runs, and `tmux` whether Enter attaches to it on tmux, where Ctrl-Q comes back, rather
+// agent runs, and `tmux` whether Enter attaches to it on tmux, where Ctrl-\ comes back, rather
 // than on a runtime plugin's host, which has a key of its own. `start` is what Enter does on an
 // issue, and `merge` what m does on a task ready for review. `link` is its PR's, which Enter
 // opens, and `branch` the branch a task that is ready without a forge waits on. Each is null
