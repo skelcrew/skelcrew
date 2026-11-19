@@ -42,6 +42,8 @@ beforeEach(() => {
   agentsFile("skills/review-sql/check.sh", "#!/bin/sh\necho checked\n", 0o755);
   agentsFile("skills/notes/SKILL.md", "No frontmatter here.\n");
   agentsFile("roles/builder.md", "You build.\n");
+  // git allows a line break in a path, so a skill's file may have one.
+  agentsFile("skills/notes/two\nlines.txt", "Both lines.\n");
   // A link could point at any file of yours, so it is never copied.
   symlinkSync(
     join(home, ".config", "skelcrew", "claude-token"),
@@ -104,6 +106,7 @@ for (const harness of ["claude", "codex"] as const)
     const skills = startBuilder(harness);
     expect(readdirSync(skills).sort()).toEqual(["notes", "review-sql"]);
     expect(readFileSync(join(skills, "review-sql", "SKILL.md"), "utf8")).toBe(review);
+    expect(readFileSync(join(skills, "notes", "two\nlines.txt"), "utf8")).toBe("Both lines.\n");
     // A skill's scripts arrive whole and still run.
     const check = join(skills, "review-sql", "check.sh");
     expect(Bun.spawnSync([check]).stdout.toString()).toBe("checked\n");
@@ -230,6 +233,11 @@ describe("a review on Codex", () => {
     skill('.agents/skills/say "hi" \\ now');
     skill("shared/kit");
     symlinkSync("../../shared/kit", join(view, ".agents", "skills", "kit"));
+    // A link can also lead out of the view, such as into Skelcrew's clone.
+    symlinkSync(
+      join(clone, ".agents", "skills", "review-sql"),
+      join(view, ".agents", "skills", "origin"),
+    );
     const ran = reviewIn(view);
     expect(ran.stderr.toString()).toBe("");
     const args = ran.stdout.toString().split("\n");
@@ -244,12 +252,15 @@ describe("a review on Codex", () => {
       '.agents/skills/say "hi" \\ now/SKILL.md',
       ".agents/skills/kit/SKILL.md",
       "shared/kit/SKILL.md",
+      ".agents/skills/origin/SKILL.md",
     ])
       expect(off).toContain(join(view, path));
+    expect(off).toContain(join(clone, ".agents", "skills", "review-sql", "SKILL.md"));
     expect(args).toContain("--dangerously-bypass-approvals-and-sandbox");
     expect(args.at(-2)).toBe("-");
     expect(readdirSync(join(view, ".agents", "skills")).sort()).toEqual([
       "kit",
+      "origin",
       "plain",
       'say "hi" \\ now',
     ]);

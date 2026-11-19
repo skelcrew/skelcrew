@@ -50,7 +50,8 @@ export function copySkills(from: SkillsFrom, into: string): Skill[] {
   const listed = git(["ls-tree", "-r", "-z", from.agents, "skills/"]).toString().split("\0");
   const skills: Skill[] = [];
   for (const line of listed) {
-    const entry = /^(100644|100755) blob ([0-9a-f]+)\tskills\/(.+)$/.exec(line);
+    // A path can hold a line break, which git allows, so its name matches any character.
+    const entry = /^(100644|100755) blob ([0-9a-f]+)\tskills\/([\s\S]+)$/.exec(line);
     if (!entry?.[2] || !entry[3]) continue;
     const [, mode, blob, path] = entry;
     const file = join(into, path);
