@@ -134,8 +134,8 @@ export function tabAt(frame: Frame, width: number, column: number): string | nul
 // wide as the widest that shows, so they line up from one row to the next.
 type Columns = { name: number; title: number; when: number };
 
-// Returns whether a row takes more than one line: the lead's, and a task's in Building,
-// Reviewing, Checks or Ready, which the sidebar shows the same way. Backlog and Done take one.
+// Returns whether a row takes two lines: the lead's, and a task's in Building, Reviewing, Checks
+// or Ready. Backlog and Done take one.
 const tall = (row: Row) => row.part !== "backlog" && row.part !== "done";
 
 // Returns the row you are on as `lines`, shaded across the width, or as they are on another row.
@@ -165,12 +165,12 @@ function shortLine(row: Row, here: boolean, columns: Columns, width: number): st
   return `${markStart(row, here)} ${shownName}  ${shownTitle}${time && tinted(here, grey, time)}`;
 }
 
-// Returns the lead's row, or a task's in Building, Reviewing, Checks or Ready, as its lines, as
-// the sidebar draws one, so what it does sits under its title. The first line has its mark, its
-// name, padded to `nameWidth` so the titles line up, and its title. The second has its word in
-// its colour, then dim the step its builder is on. A task's third has its PR, its CI and when it
-// last changed, dim. The lead has no third line. Each line is cut with … to fit, and the row you
-// are on is shaded on all its lines.
+// Returns the lead's row, or a task's in Building, Reviewing, Checks or Ready, as its two lines,
+// so what it does sits under its title. The first line has its mark, its name, padded to
+// `nameWidth` so the titles line up, and its title. The second has its word in its colour, then
+// dim the step its builder is on, its PR, its CI and when it last changed, such as
+// `working · Editing rows.ts · #40 · CI passed · 14:31`, each left out where it has none. Each
+// line is cut with … to fit, and the row you are on is shaded on both its lines.
 function tallLines(row: Row, here: boolean, nameWidth: number, width: number): string[] {
   const plainStart = `${here ? " ▸ " : "   "}${row.mark.sign} `;
   const indent = " ".repeat(Bun.stringWidth(plainStart));
@@ -182,14 +182,13 @@ function tallLines(row: Row, here: boolean, nameWidth: number, width: number): s
     width < indent.length
       ? fitted(`${plainStart}${top}`, width)
       : `${markStart(row, here)} ${here ? tinted(here, bright, top) : top}`;
-  // The word keeps its colour and the step is dim, so each is split back out of the cut line.
-  const doing = fitted([row.says, row.step].filter(Boolean).join(" · "), room);
+  // The word keeps its colour and the rest is dim, so each is split back out of the cut line.
+  const parts = [row.says, row.step, row.pr, row.checks, row.when];
+  const doing = fitted(parts.filter(Boolean).join(" · "), room);
   const word = doing.slice(0, row.says.length);
-  const step = doing.slice(row.says.length);
-  const second = `${indent}${tinted(here, markColours[row.colour], word)}${step && tinted(here, grey, step)}`;
-  const about = fitted([row.pr, row.checks, row.when].filter(Boolean).join(" · "), room);
-  const third = row.part === "lead" ? [] : [`${indent}${about && tinted(here, grey, about)}`];
-  const lines = [first, second, ...third].map((line) =>
+  const rest = doing.slice(row.says.length);
+  const second = `${indent}${tinted(here, markColours[row.colour], word)}${rest && tinted(here, grey, rest)}`;
+  const lines = [first, second].map((line) =>
     width < indent.length ? fitted(Bun.stripANSI(line), width) : line,
   );
   return marked(lines, here, width);
@@ -239,7 +238,7 @@ export function drawList(
   // The tasks that show, by their place in `rows`, in the order of the stages, and how many
   // lines each takes.
   const tasks = rows.flatMap((row, i) => (row.part === "lead" ? [] : [i]));
-  const heights = tasks.map((i) => (rows[i] && tall(rows[i]) ? 3 : 1));
+  const heights = tasks.map((i) => (rows[i] && tall(rows[i]) ? 2 : 1));
   // Returns the stages' lines with the tasks from `from` up to `to`. With `parted`, an open
   // stage with rows has a blank line after them, which parts it from the next heading.
   const stages = (from: number, to: number, parted: boolean) => {

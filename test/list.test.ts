@@ -409,7 +409,7 @@ await runList("skel-test-${process.pid}-none", "simon/app");`;
   expect(printed()).toContain("Skelcrew 9.9.9 installed · restart to use it");
 });
 
-// Printed, the list is whole: a task at work takes three lines, and none may scroll out of sight.
+// Printed, the list is whole: a task at work takes two lines, and none may scroll out of sight.
 test("the list printed without a terminal has every task, however many are at work", () => {
   const more = Array.from({ length: 30 }, (_, i) =>
     threadSql({ task: String(50 + i), title: `Task ${50 + i}`, changed: now - i * 60_000 }),
@@ -431,6 +431,52 @@ test("a task past its round limit says so, from the changes its review held", ()
     "UPDATE tasks SET rounds = 4, held = 'Rename it.' WHERE task = '7'; UPDATE threads SET needs_you = 1, status = 'waiting' WHERE folder = 'app-7';",
   );
   expect(rows().find((row) => row.name === "app-7")?.says).toBe("round limit");
+});
+
+// sc submit past the round limit drops the held changes and starts a review, and the thread
+// still needs you while it runs. The task is where its work is: under review.
+test("a review running past the round limit is under Reviewing, and says round limit", () => {
+  sql(
+    threadSql({
+      task: "42",
+      title: "Past the limit",
+      status: "waiting",
+      rounds: 6,
+      needs_you: 1,
+      verdict: "changes",
+      reviewing: "abc",
+      pr: 42,
+    }),
+  );
+  expect(rows().find((row) => row.name === "app-42")).toMatchObject({
+    part: "reviewing",
+    says: "round limit",
+    needsYou: true,
+  });
+});
+
+// The changes held at the round limit say why the task waits, even once CI passed and something
+// else cleared its need of you. Checks is only for an approval waiting on CI.
+test("changes held at the round limit say round limit under Building, never checks", () => {
+  sql(
+    threadSql({
+      task: "43",
+      title: "Held",
+      status: "waiting",
+      rounds: 6,
+      needs_you: 0,
+      verdict: "changes",
+      held: "Rename it.",
+      checks: "passing",
+      ci_passed: 1,
+      pr: 43,
+    }),
+  );
+  expect(rows().find((row) => row.name === "app-43")).toMatchObject({
+    part: "building",
+    says: "round limit",
+    checks: "CI passed",
+  });
 });
 
 // A git that fails stands in for tmux and settings too: drawing must never need either.
@@ -483,8 +529,8 @@ const drawn = (here: number, height = 20, width = 80, open?: ListStage[]) =>
 test("every stage has its heading with its counts, only open ones show rows, and every line fits", () => {
   const lines = drawn(1, 24);
   expect(lines[0]).toBe(" Skelcrew v0.6.0   app    site •1 ");
-  // The lead and each task at work take lines as the sidebar's rows do: mark, name and title,
-  // then the word, then a task's PR, CI and when it changed. So what it does sits under its title.
+  // The lead and each task at work take two lines: mark, name and title, then the word with a
+  // task's PR, CI and when it changed. So what it does sits under its title.
   expect(lines.slice(2, 22).map((line) => line.trimEnd())).toEqual([
     "   ○ lead    claude",
     "     running",
@@ -493,18 +539,18 @@ test("every stage has its heading with its counts, only open ones show rows, and
     " 2 Building  3 · 1 needs you",
     " ▸ ● app-12  Rate limit the API",
     "     question",
-    "",
     "   ○ app-9   Old work",
-    "     stopped",
-    "     14:59",
+    "     stopped · 14:59",
     "   ○ app-7   Login redirect",
-    "     working",
-    "     14:55",
+    "     working · 14:55",
     "",
     " 3 Reviewing 0",
     " 4 Checks    0",
     " 5 Ready     1",
     " 6 Done      0",
+    "",
+    "",
+    "",
     "",
   ]);
   // The bottom line has the keys, and the load at its right end, short of the last column.
@@ -517,7 +563,7 @@ test("every stage has its heading with its counts, only open ones show rows, and
 test("an open stage shows its rows, and its heading is bright while a closed one is dim", () => {
   const lines = drawn(1, 24, 80, ["backlog", "ready"]);
   // A task in Backlog or Done takes one line, in columns: mark, name, title, when it changed.
-  expect(lines.slice(5, 16).map((line) => line.trimEnd())).toEqual([
+  expect(lines.slice(5, 17).map((line) => line.trimEnd())).toEqual([
     " 1 Backlog   1",
     " ▸ ○ app-31  Export as CSV  5 Nov",
     "",
@@ -526,8 +572,9 @@ test("an open stage shows its rows, and its heading is bright while a closed one
     " 4 Checks    0",
     " 5 Ready     1",
     "   ● app-14  Fix the export header",
-    "     approved",
-    "     #41 · CI passed",
+    "     approved · #41 · CI passed",
+    "",
+    " 6 Done      0",
     "",
   ]);
   const coloured = drawnWith(1, frame, { width: 80, height: 24 }, ["backlog"]);
@@ -550,8 +597,8 @@ test("a row's word is in its colour, its step and what follows it are dim, and i
   const at = lines.findIndex((line) => line.includes("app-7"));
   expect(lines.slice(at, at + 3)).toEqual([
     "   \x1b[1m○\x1b[22;39m app-7   Login redirect",
-    "     \x1b[1mworking\x1b[22;39m\x1b[90m · Editing rows.ts\x1b[22;39m",
-    "     \x1b[90m#40 · CI running · 14:55\x1b[22;39m",
+    "     \x1b[1mworking\x1b[22;39m\x1b[90m · Editing rows.ts · #40 · CI running · 14:55\x1b[22;39m",
+    "",
   ]);
 });
 
@@ -629,18 +676,17 @@ test("a list taller than the terminal scrolls only its tasks, keeping the lead a
   expect(lines.filter((line) => line.includes("▸"))).toEqual([
     expect.stringMatching(/^ ▸ ○ app-59 /),
   ]);
-  // The row you are on shows whole: its title, then its word, then when it changed.
+  // The row you are on shows whole: its title, then its word and when it changed.
   const at = lines.findIndex((line) => line.includes("▸"));
-  expect(lines.slice(at, at + 3).map((line) => line.trim())).toEqual([
+  expect(lines.slice(at, at + 2).map((line) => line.trim())).toEqual([
     "▸ ○ app-59  Task 59",
-    "working",
-    "14:41",
+    "working · 14:41",
   ]);
   expect(lines.some((line) => line.includes("app-12"))).toBe(false);
 });
 
 test("on the lead, a terminal with room for the headings but not a task keeps every heading", () => {
-  // Thirteen lines leave six for the stages: every heading, and no room for a three-line task.
+  // Thirteen lines leave six for the stages: every heading, and no room for a task.
   const lines = drawn(0, 13, 80, ["building"]);
   expect(lines.filter((line) => /^ \d [A-Z]/.test(line))).toHaveLength(6);
   expect(lines.filter((line) => line.includes("▸"))).toEqual([
@@ -653,14 +699,13 @@ test("a terminal too short for every heading still shows the row you are on", ()
     threadSql({ task: String(50 + i), title: `Task ${50 + i}`, changed: now - (10 + i) * 60_000 }),
   );
   sql(more.join("\n"));
-  // Ten lines leave three for the stages: the row you are on, whole, and no heading.
-  const lines = drawn(13, 10, 80, ["building", "ready"]);
-  expect(lines).toHaveLength(10);
+  // Nine lines leave two for the stages: the row you are on, whole, and no heading.
+  const lines = drawn(13, 9, 80, ["building", "ready"]);
+  expect(lines).toHaveLength(9);
   expect(lines[2]).toMatch(/^ {3}○ lead/);
-  expect(lines.slice(5, 8).map((line) => line.trim())).toEqual([
+  expect(lines.slice(5, 7).map((line) => line.trim())).toEqual([
     "▸ ○ app-59  Task 59",
-    "working",
-    "14:41",
+    "working · 14:41",
   ]);
   // Eight leave one: the first line of the row you are on, with its ▸.
   const fewer = drawn(13, 8, 80, ["building", "ready"]);

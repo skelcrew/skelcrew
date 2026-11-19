@@ -339,8 +339,10 @@ export function threadWord(thread: Thread, maxRounds: number, now = Date.now()):
   if (thread.asking) return "question";
   if (thread.erred && !thread.limited) return "error";
   // The round limit and an approval say what you must do next, so they come before any other
-  // reason the thread needs you.
-  const past = thread.needs_you && pastRoundLimit(thread, maxRounds);
+  // reason the thread needs you. Changes held past the limit say so too after something else,
+  // such as a conflict, cleared the thread's need of you: the task still waits on sc start, and
+  // its CI passing must not read as waiting on checks.
+  const past = thread.held !== null || (thread.needs_you && pastRoundLimit(thread, maxRounds));
   const failed = underWay || verdict === "failed";
   if (past) return "round limit";
   if (readyToMerge(thread)) return "approved";

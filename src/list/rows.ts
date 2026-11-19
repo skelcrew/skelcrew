@@ -72,11 +72,14 @@ export type Open = { owner: string; repo: string };
 export type Tab = Badge & { name: string; fullName: string };
 
 // Returns a round limit that puts the thread past it exactly when its database row says so,
-// as the list reads no settings files. A review past the round limit holds its changes until
-// sc start lets the thread go on, so a thread that holds changes is past the limit, and any
-// other isn't.
-const roundLimit = (thread: Thread) =>
-  thread.held === null ? Number.POSITIVE_INFINITY : thread.rounds - 1;
+// as the list reads no settings files. A thread holding the changes of a review past the limit
+// says so by itself. A submit or sc review past the limit drops those changes, but keeps the
+// thread needing you while its round runs, which no round within the limit does, so such a
+// thread is past it. Any other thread isn't.
+const roundLimit = (thread: Thread) => {
+  const underWay = thread.submitting !== null || thread.reviewing !== null;
+  return thread.needs_you && underWay ? thread.rounds - 1 : Number.POSITIVE_INFINITY;
+};
 
 // What the list reads of a lead beyond leadOf: what its hooks last said it does, and whether you
 // closed its tab by exiting it.

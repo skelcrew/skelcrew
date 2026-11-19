@@ -175,9 +175,9 @@ export async function runList(agents: string, repository: string): Promise<void>
   // whole, with every stage open, and without colours, and sc returns.
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
     rows = listRows(db, open, Date.now());
-    // Tall enough for every row at three lines, the most one takes, every heading and the blank
+    // Tall enough for every row at two lines, the most one takes, every heading and the blank
     // line after each, so nothing scrolls out of the print.
-    const size = { width: 100, height: rows.length * 3 + ListStage.options.length * 2 + 8 };
+    const size = { width: 100, height: rows.length * 2 + ListStage.options.length * 2 + 8 };
     const { lines } = drawList(
       rows,
       stageHeadings(rows, new Set(ListStage.options)),

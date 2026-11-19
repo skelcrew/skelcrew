@@ -739,11 +739,9 @@ Two ways to see a repository exist side by side, until you choose which one stay
  1 Backlog   2
  2 Building  3 · 1 needs you
  ▸ ● app-t3  Rate limit the API
-     question
-     #43 · CI running · 14:02
+     question · #43 · CI running · 14:02
    ○ app-24  Login redirect
-     working · Editing rows.ts
-     #40 · CI passed · 14:31
+     working · Editing rows.ts · #40 · CI passed · 14:31
 
  3 Reviewing 1
  4 Checks    0
@@ -768,7 +766,7 @@ Each task is in exactly one stage, decided from its state alone. Needs you is ne
 
 Each stage's heading has the number key that opens and closes it, its name, how many tasks it has, lined up with the other headings' counts, and how many of them need you, such as `Building 4 · 2 need you`. Every heading always shows, so a closed stage still says what waits in it. Only Building is open when the list starts. The stages you open or close stay so until you leave the list, whichever repository you move to.
 
-A task in Building, Reviewing, Checks or Ready takes three lines, as in the sidebar, so what it does sits under its title. The first has its mark, its name and its short title, or its title cut with `…` to fit. The second has its word in its colour, then dim the step its builder is on, such as `Editing rows.ts`. The third has, dim, its PR, its CI, such as `CI passed`, and when it last changed, such as `14:31` today or `12 Nov` before. A task in Backlog or Done takes one line, in columns from the left: its mark, its name, its title, then when it last changed. Each column is as wide as the widest value showing, so the rows line up. The row you are on is highlighted on all its lines. Details such as a merge when ready or messages waiting are for `sc show`. When a thread needs you, its mark is yellow and its word says why, such as `question`. Its word says what is happening:
+A task in Building, Reviewing, Checks or Ready takes two lines, so what it does sits under its title. The first has its mark, its name and its short title, or its title cut with `…` to fit. The second has its word in its colour, then dim the step its builder is on, its PR, its CI and when it last changed, such as `working · Editing rows.ts · #40 · CI passed · 14:31`, with `14:31` today or `12 Nov` before. The step shows only when its harness gives one in words, such as a command's description, never the command itself. A task in Backlog or Done takes one line, in columns from the left: its mark, its name, its title, then when it last changed. Each column is as wide as the widest value showing, so the rows line up. The row you are on is highlighted on all its lines. Details such as a merge when ready or messages waiting are for `sc show`. When a thread needs you, its mark is yellow and its word says why, such as `question`. Its word says what is happening:
 
 | Word | Means |
 | --- | --- |
@@ -776,7 +774,7 @@ A task in Building, Reviewing, Checks or Ready takes three lines, as in the side
 | `queued` | The task waits for a builder under `limits.threads` |
 | `queued for review` | A review waits for a place under `limits.reviews` |
 | `reviewing` | A review is under way, or waits for CI's first check |
-| `checks` | Waiting on CI |
+| `checks` | Approved, and waiting on CI for that commit |
 | `changes` | The reviewer asked for changes, and the builder hasn't picked them up yet |
 | `limit · 13:59` | The builder or the review waits for its harness's usage limit to reset |
 | `approved` | Ready to merge |
