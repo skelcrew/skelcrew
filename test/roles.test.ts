@@ -106,6 +106,12 @@ const triage =
   "- Each thread runs a flow, which sets its stages and its rounds of review. When the approved .agents/ has flows other than default, pick one for each thread you start or propose, and add --flow <name> to sc start, such as sc start app-13 --flow <name>. Read the flows where the end of these instructions says, not .agents/flows/ in the clone, which may hold changes the human hasn't approved. Whenever you pick a flow other than default, tell the human which and why, such as \"I'll run this on quick, as it is a one-line fix.\" A thread keeps its flow to the end, but before its builder first submits you can switch it with sc start app-12 --flow <name>. If that flow builds with another role, sc start refuses, as that is another agent: run sc rm app-12, then sc start app-12 --flow <name>.\n";
 const labelTriage = " Pick its flow as for any thread.";
 
+// What the lead's file added with limits.threads: a start over the limit waits in a queue.
+const queue =
+  "- A repository's skelcrew.yaml can limit how many builders run at once in it, with limits.threads. A start over the limit isn't refused: sc start says the thread is queued, and it starts by itself, first come first served, once one of the repository's builders ends. sc ps shows it as queued. sc rm takes it out of the queue.\n";
+const labelQueue =
+  ', or "queued app-12 from github: …" when it waits in the queue of limits.threads';
+
 // What the builder's file added after that: it never answers the lead only to say it got a
 // message, which would fill the lead's chat with acknowledgements.
 const noAcknowledgements =
@@ -121,7 +127,14 @@ test("the lead and builder files hold the instructions the code gave, but for wh
   expect(lead).toContain(triage);
   expect(lead).toContain(labelTriage);
   expect(lead).toContain(mergeWhenReady);
-  lead = lead.replace(triage, "").replace(labelTriage, "").replace(mergeWhenReady, "");
+  expect(lead).toContain(queue);
+  expect(lead).toContain(labelQueue);
+  lead = lead
+    .replace(triage, "")
+    .replace(labelTriage, "")
+    .replace(mergeWhenReady, "")
+    .replace(queue, "")
+    .replace(labelQueue, "");
   for (const [before = "", now = ""] of leadTasks) {
     expect(lead).toContain(now);
     lead = lead.replace(now, before);

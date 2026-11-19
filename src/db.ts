@@ -91,7 +91,9 @@ const threadColumns = {
 // on the PR, as JSON: the PR, the review's ID and what it last said, so each round edits it.
 // `agents` is the git tree of the .agents/ you had approved when the task started, which its
 // agents keep, or null for the built-in roles. `flow` is the flow the task runs from start to end,
-// `default` unless it was started with another.
+// `default` unless it was started with another. `queued_since` is when the task last joined the
+// queue of limits.threads, which goes first come first served, and only means something while
+// it waits there.
 export const taskColumns = {
   title: "TEXT",
   body: "TEXT",
@@ -128,6 +130,7 @@ export const taskColumns = {
   closes: "TEXT",
   agents: "TEXT",
   flow: "TEXT NOT NULL DEFAULT 'default'",
+  queued_since: "INTEGER",
 };
 
 // Marks each done task merged when its thread's log says its work ended by a merge, for tasks

@@ -154,6 +154,10 @@ export const stopping = new Map<string, Promise<void>>();
 export async function stopThread(db: Database, sessions: string, thread: Thread): Promise<void> {
   const name = threadName(db, thread);
   if (thread.status === "stopped") throw new Error(`${name} is stopped already`);
+  if (thread.status === "queued")
+    throw new Error(
+      `${name} is queued, so it has no builder to stop. sc rm takes it out of the queue.`,
+    );
   if (thread.status !== "working" && thread.status !== "waiting")
     throw new Error(`${name} is ${thread.status}, so it has no builder to stop`);
   // Its setup would go on to start the builder after the stop.

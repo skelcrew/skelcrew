@@ -32,6 +32,7 @@ import { claimedNames, claimName, fetchBranch } from "./git.ts";
 import { dropEndNotes, noteForLead, typeLeadNotes } from "./messages.ts";
 import { findRepository, forgeAuthor, forgeKnown, refreshClones } from "./repo.ts";
 import { forgetStatus } from "./status.ts";
+import { joinsQueue } from "./task-queue.ts";
 import {
   builderHarness,
   builderSession,
@@ -79,7 +80,9 @@ export function statusOnceBack(stopped: Thread): "waiting" | "working" {
 // name in Skelcrew or its owner/name, its `short` the short title the lead gave, if any, and
 // its `flow` the flow the lead picked, `default` when none. A flow checkFlow refuses, such as one
 // the .agents/ you approved doesn't have or one with a bad round limit, refuses the start, from
-// sc start or a label alike, before any work begins.
+// sc start or a label alike, before any work begins. A start over the repository's limits.threads
+// records the thread as queued, to start once its turn comes in the queue, and the caller starts
+// nothing for it now.
 // Starts go one at a time: a start over first deletes the old thread's refs, and a second
 // start of the same task, running alongside, could delete the refs of the thread the first
 // just started. One at a time, the second finds that thread and is refused.
@@ -235,6 +238,9 @@ async function recordThread(
     );
     if (before && before.status !== "failed" && before.status !== "done")
       throw new Error(`${name}-${task} has a thread already`);
+    // Counted in the same transaction as the thread is recorded, so two starts can't both take
+    // the last place.
+    const queued = joinsQueue(db, repository);
     const thread: Thread = {
       owner,
       repo,
@@ -243,7 +249,7 @@ async function recordThread(
       folder: before?.folder ?? freeFolder(`${folderName(name)}-${task}`),
       branch: slug ? `skelcrew/${task}-${slug}` : `skelcrew/${task}`,
       base: "from" in given ? (given.from ?? null) : null,
-      status: "working",
+      status: queued ? "queued" : "working",
       session: null,
       rounds: 0,
       pr: null,
@@ -308,6 +314,7 @@ async function recordThread(
       agents,
       flow,
       review_post: null,
+      queued_since: queued ? Date.now() : null,
     };
     // A failed or done thread's row gives way to the new one, and messages that waited for its
     // builder go with it, as they were about the old work. Its task starts afresh too, with no
@@ -337,8 +344,9 @@ async function recordThread(
     );
     db.run(
       `INSERT OR REPLACE INTO tasks
-        (owner, repo, task, title, body, short, assigned, seen, issue_link, closes, agents, flow)
-        VALUES (?, ?, ?, ?, ?, ?, ?, '[]', ?, ?, ?, ?)`,
+        (owner, repo, task, title, body, short, assigned, seen, issue_link, closes, agents, flow,
+          queued_since)
+        VALUES (?, ?, ?, ?, ?, ?, ?, '[]', ?, ?, ?, ?, ?)`,
       [
         owner,
         repo,
@@ -351,6 +359,7 @@ async function recordThread(
         closes,
         thread.agents,
         thread.flow,
+        thread.queued_since,
       ],
     );
     log(db, thread);

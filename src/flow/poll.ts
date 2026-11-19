@@ -115,12 +115,14 @@ async function startLabeled(
     if (thread === null) continue;
     // Claimed already, so only assigned.
     assignIssue(db, thread, false);
-    // The lead hears first, then the builder starts. The note is one line, as every note to
-    // the lead is.
-    const note = `started ${threadName(db, thread)} from ${trackerOf(db, repository)}: ${task.title}`;
+    // The lead hears first, then the builder starts, or for a task over the repository's
+    // limits.threads, that it waits in the queue. The note is one line, as every note to the
+    // lead is.
+    const queued = thread.status === "queued";
+    const note = `${queued ? "queued" : "started"} ${threadName(db, thread)} from ${trackerOf(db, repository)}: ${task.title}`;
     noteForLead(db, sessions, { owner, repo }, note.replace(/\s+/g, " ").slice(0, 200));
     // Not waited on, as for sc start: setup can take minutes.
-    setUpAndStart(thread);
+    if (!queued) setUpAndStart(thread);
   }
 }
 
@@ -200,7 +202,7 @@ async function actOnPr(
   const { folder } = before;
   const moved = await movedOnRemote(before, pr.head);
   const thread = readThread(db, folder);
-  if (!["working", "waiting", "stopped"].includes(thread.status)) return;
+  if (!["queued", "working", "waiting", "stopped"].includes(thread.status)) return;
   // Read only for a thread with a PR, so a bad max_rounds never fails the copy's update, nor
   // sc start, which polls first.
   const maxRounds = roundLimit(thread);
@@ -234,8 +236,9 @@ async function actOnPr(
     if (pr.state === "closed") unassignIssue(db, folder);
     await endThread(db, sessions, thread, decision.end, decision.note, pr.state === "merged");
   }
-  // Left unhandled, so a stopped thread's events reach its builder once it starts again.
-  else if (thread.status === "stopped" || tellingEvents.has(folder) || stale) return;
+  // Left unhandled, so a stopped or queued thread's events reach its builder once it starts.
+  else if (["stopped", "queued"].includes(thread.status) || tellingEvents.has(folder) || stale)
+    return;
   else if (decision.tell.length > 0 || decision.notice.length > 0 || decision.failed.length > 0)
     // Not waited on, so fetching a check's log holds up neither the other threads nor the
     // next poll.
@@ -479,10 +482,13 @@ export function pollRepositories(
   // with none, so its first poll brings everything open, and what closed while it was down
   // leaves the copy.
   const nexts = new Map<string, Map<string, string | null>>();
-  // The threads a poll looks after. A stopped thread's PR or branch still merges or closes.
+  // The threads a poll looks after. A stopped thread's PR or branch still merges or closes, and
+  // so does one queued to come back.
   const threadsToPoll = () =>
     db
-      .query("SELECT * FROM task_threads WHERE status IN ('working', 'waiting', 'stopped')")
+      .query(
+        "SELECT * FROM task_threads WHERE status IN ('queued', 'working', 'waiting', 'stopped')",
+      )
       .all()
       .map((row) => Thread.parse(row));
   const poll = (owner: string, repo: string): Promise<void> => {

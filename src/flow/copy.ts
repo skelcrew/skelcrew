@@ -118,12 +118,12 @@ export function saveItems(
         [owner, repo, item.kind, item.id, item.state, item.created, JSON.stringify(item)],
       );
     }
-    // Forget the items that are no longer open, unless a thread still working, waiting or
-    // stopped points to one by its task or PR.
+    // Forget the items that are no longer open, unless a thread still queued, working, waiting
+    // or stopped points to one by its task or PR.
     db.run(
       `DELETE FROM items WHERE owner = ? AND repo = ? AND state != 'open' AND NOT EXISTS (
         SELECT 1 FROM task_threads t WHERE t.owner = items.owner AND t.repo = items.repo
-          AND t.status IN ('working', 'waiting', 'stopped')
+          AND t.status IN ('queued', 'working', 'waiting', 'stopped')
           AND items.id = CAST((CASE items.kind WHEN 'task' THEN t.task ELSE t.pr END) AS TEXT))`,
       [owner, repo],
     );
