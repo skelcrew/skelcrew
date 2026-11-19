@@ -637,3 +637,42 @@ console.log(JSON.stringify({ old: findThread(db, "app", "t4").folder, branch: on
     branch: "skelcrew/lp1-one",
   });
 }, 60_000);
+
+// A screen of the earlier release keeps running while a newer one opens the database, and it
+// keeps the queries it prepared, with their column names. The newer release's view must add its
+// columns where that screen's names still find the values they name, or it reads one column's
+// value as another's, such as a host's name as the JSON of the events seen.
+test("a screen of the earlier release reads every thread right once a newer release adds columns", () => {
+  const code = `import { Database } from "bun:sqlite";
+import { openDb } from ${JSON.stringify(source("db.ts"))};
+// The earlier release's database: this one's view without the columns it lacked, which sit
+// among the thread's and the task's columns.
+const made = openDb();
+made.run("INSERT INTO threads (owner, repo, task, folder, branch, status) VALUES ('simon', 'app', 12, 'app-12', 'skelcrew/12', 'working')");
+made.run("INSERT INTO tasks (owner, repo, task, seen, updates) VALUES ('simon', 'app', 12, '[\\"r1\\"]', '[]')");
+const view = made.query("SELECT sql FROM sqlite_master WHERE name = 'task_threads'").get().sql;
+made.run("DROP VIEW task_threads");
+made.run(view.replace(", th.host, th.host_id", "").replace(", k.review_post", ""));
+made.close();
+// The earlier release's screen has read its threads once.
+const oldScreen = new Database(process.argv[1]);
+const read = "SELECT * FROM task_threads";
+oldScreen.query(read).all();
+// The newer release opens the database, then the screen looks again.
+openDb().close();
+const { folder, seen, updates } = oldScreen.query(read).get();
+console.log(JSON.stringify({ folder, seen, updates }));`;
+  const data = join(home, ".local", "share", "skelcrew");
+  mkdirSync(data, { recursive: true });
+  const run = Bun.spawnSync([process.execPath, "-e", code, join(data, "skelcrew.db")], {
+    env: { ...process.env, HOME: home },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect(run.stderr.toString()).toBe("");
+  expect(JSON.parse(run.stdout.toString())).toEqual({
+    folder: "app-12",
+    seen: '["r1"]',
+    updates: "[]",
+  });
+});

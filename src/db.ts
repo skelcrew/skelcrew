@@ -230,12 +230,13 @@ function createTasks(db: Database): void {
 // in one row, as Thread describes it. Its rowid is the thread's, so newest first still sorts by
 // when the thread started. A database whose threads haven't moved onto tasks yet gets a view of
 // its threads as they are, so sc run before the new daemon starts still shows them. The view is
-// kept in the file, not on one connection: when the daemon moves the threads onto tasks, it
-// makes the view again, and every connection already open reads the new one from then on. Both
-// views have the same columns in the same order, as Bun keeps a cached query's column names
-// when SQLite prepares it again for a changed view, and would put each value under another
-// column's name. It is made again only when it changes, as that changes the file's schema,
-// which every other connection then reads again.
+// kept in the file, not on one connection: when the daemon moves the threads onto tasks, or a
+// newer release adds columns, the view is made again, and every connection already open reads
+// the new one from then on. So the columns the view had keep their places, and new ones go at
+// its end. Bun keeps a cached query's column names when SQLite prepares it again for a changed
+// view, so a column put in the middle would make an older screen, still running, read each
+// value after it under another column's name. It is made again only when it changes, as that
+// changes the file's schema, which every other connection then reads again.
 function viewThreads(db: Database): void {
   const own = ["owner", "repo", "task", "folder", "branch", "base", "status", "session"];
   const moved = hasTasks(db);
@@ -248,13 +249,25 @@ function viewThreads(db: Database): void {
   const turnEnded = hasColumn(db, "threads", "stalled")
     ? "COALESCE(th.turn_ended, th.stalled)"
     : "th.turn_ended";
-  const threadColumn = (column: string) =>
-    column === "turn_ended" ? `${turnEnded} AS stalled` : `th.${column}`;
-  const columns = [
+  // Each column by its name in the view, in the order a new database's view has them.
+  const threadColumn = (column: string): [string, string] =>
+    column === "turn_ended" ? ["stalled", `${turnEnded} AS stalled`] : [column, `th.${column}`];
+  const named = new Map([
     ...[...own, ...Object.keys(threadColumns)].map(threadColumn),
-    ...Object.keys(taskColumns).map((column) => `${moved ? "k" : "th"}.${column}`),
-    `${turnEnded} AS turn_ended`,
-  ];
+    ...Object.keys(taskColumns).map((column): [string, string] => [
+      column,
+      `${moved ? "k" : "th"}.${column}`,
+    ]),
+    ["turn_ended", `${turnEnded} AS turn_ended`],
+  ]);
+  // The view the database has keeps its order, and the columns it lacks follow.
+  const had = db
+    .query("SELECT name FROM pragma_table_info('task_threads')")
+    .all()
+    .map((row) => z.object({ name: z.string() }).parse(row).name)
+    .filter((name) => named.has(name));
+  const order = [...new Set([...had, ...named.keys()])];
+  const columns = order.flatMap((name) => named.get(name) ?? []);
   const view = `CREATE VIEW task_threads AS SELECT th.rowid AS rowid, ${columns.join(", ")}
     FROM threads th${moved ? " JOIN tasks k ON k.owner = th.owner AND k.repo = th.repo AND k.task = th.task" : ""}`;
   const made = db.query("SELECT sql FROM sqlite_master WHERE type = 'view' AND name = ?");
