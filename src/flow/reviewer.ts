@@ -8,6 +8,7 @@ import { type HarnessName, harnessNamed } from "../agents/harness.ts";
 import { filterEnv, sandboxArgs, throwawayMounts } from "../agents/sandbox.ts";
 import { sandboxFolders } from "../agents/seatbelt.ts";
 import { errorText } from "../say.ts";
+import { type SkillsFrom, skillsTold } from "../skills.ts";
 import { limitOn } from "./limits.ts";
 
 // What a review round ends with: the reviewer's verdict, what it said and each problem it found,
@@ -279,7 +280,8 @@ function readVerdict(
 // seconds while the review runs, as CI usually finishes during it. `docsOnly` says the change
 // touches only docs and Markdown, so the reviewer runs no tests, and `ci` isn't asked. `test`
 // is the repository's test command, for when the reviewer has to run the suite, which it does
-// through sc check on `socket`, the thread's reviewer socket.
+// through sc check on `socket`, the thread's reviewer socket. `skills` names the .agents/ whose
+// skills the reviewer gets, the one the task started with.
 async function reviewNow(given: {
   instructions: string;
   clone: string;
@@ -295,6 +297,7 @@ async function reviewNow(given: {
   ci?: { has: () => boolean; read: () => Promise<string> } | undefined;
   docsOnly?: boolean;
   socket?: string;
+  skills?: SkillsFrom;
 }): Promise<Review | Limited> {
   const { clone, issue, base, model, harness, limit = 30 * 60_000, env = process.env } = given;
   // Fail at once, with a reason you can act on, when the review was cancelled before its turn
@@ -364,6 +367,7 @@ async function reviewNow(given: {
       model,
       schema,
       signal,
+      ...(given.skills ? { skills: given.skills } : {}),
     });
     // Only what a shell and the tests need gets in, with the harness's own keys added.
     const sandboxEnv = { ...launch.env, ...filterEnv(env, keys) };
@@ -428,7 +432,11 @@ async function reviewNow(given: {
     const before = whyStopped();
     if (before) return before;
     const tests: Tests = given.docsOnly ? "docs only" : ci ? { ci: ciFile } : "run";
-    const input = reviewerPrompt(given.instructions, issue, base, tests, given.test);
+    // Skills the harness has no folder for are listed last, after the blanks are filled, so a
+    // skill's description is never taken for one.
+    const told = skillsTold(launch.skills);
+    const prompt = reviewerPrompt(given.instructions, issue, base, tests, given.test);
+    const input = told ? `${prompt}\n\n${told}` : prompt;
     const finished = await spawnReviewer({ argv, env: sandboxEnv, input, signal });
     const after = whyStopped();
     if (after) return after;

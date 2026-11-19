@@ -424,6 +424,7 @@ async function reviewRound(
       // The review stage's role, from the task's flow, and its instructions come from the
       // .agents/ the task started with.
       instructions: repositoryRole(flowRoles(thread).review, thread).instructions,
+      skills: thread,
       commit: sha,
       signal,
       limit: reviewMinutes * 60_000,

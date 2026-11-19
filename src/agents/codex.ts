@@ -20,6 +20,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import { dataDir } from "../paths.ts";
+import { copySkills, type SkillsFrom } from "../skills.ts";
 import { editing, type Progress, stepText, toolWords } from "./progress.ts";
 import { resetTime } from "./reset.ts";
 import { filterEnv, refuseCredentials, ro, rw, sandboxArgs, throwawayMounts } from "./sandbox.ts";
@@ -297,7 +298,8 @@ async function checkModel(home: string, model: string, env: Record<string, strin
 // Settings go on the command line rather than in the session's config.toml: a repository's
 // own .codex/config.toml wins over that file, and could turn the hooks off. Codex's own
 // sandbox and approvals are off, since Skelcrew's sandbox draws the boundary. Codex picks its own
-// session ID, so `sessionId` is not passed on.
+// session ID, so `sessionId` is not passed on. The repository's skills, from the .agents/
+// `skills` names, go into the CODEX_HOME's skills/, where Codex finds them.
 async function startCommand(given: {
   name: string;
   socket: string;
@@ -309,9 +311,10 @@ async function startCommand(given: {
   system?: string;
   resume?: string;
   sessionId?: string;
+  skills?: SkillsFrom;
   env?: Record<string, string | undefined>;
 }): Promise<{ argv: string[]; env: Record<string, string> }> {
-  const { name, socket, model, thread, folder, origin, prompt, system, resume } = given;
+  const { name, socket, model, thread, folder, origin, prompt, system, resume, skills } = given;
   const env = given.env ?? process.env;
   // Refuse what would start the wrong agent or write outside Skelcrew's folders, and a model
   // Codex doesn't offer.
@@ -336,6 +339,7 @@ async function startCommand(given: {
   // weigh more than an AGENTS.md. On the command line they would stop the session: tmux refuses
   // a start command past about 16 KB, and Linux an argument past 128 KB.
   if (system) writeFileSync(instructions, `developer_instructions = ${tomlString(system)}\n`);
+  if (skills) copySkills(skills, join(sessionHome, "skills"));
   // Skelcrew's own folder first, so a login the first run just saved there moves to the shared
   // folder before this session links to it.
   shareLogin(home);
@@ -382,12 +386,15 @@ async function startCommand(given: {
 // Returns Codex's review command, mounts and environment. The command reads the review's prompt
 // on stdin and the answer's shape from the review's folder. Every review shares Skelcrew's Codex
 // folder, which holds what Codex reads as instructions. So the reviewer sees a throwaway copy of
-// it, and only its sessions and the login folder reach the real ones.
+// it, and only its sessions and the login folder reach the real ones. Its skills/ stays empty,
+// as a copy there would steer every later review, so the repository's skills go into the
+// review's own folder and are returned for the prompt to list.
 async function reviewCommand(given: {
   home: string;
   folder: string;
   model?: string | undefined;
   signal: AbortSignal;
+  skills?: SkillsFrom;
 }) {
   const { home, folder, model, signal } = given;
   // Skelcrew's own CODEX_HOME, with its login shared out and a sessions folder to keep.
@@ -413,7 +420,8 @@ async function reviewCommand(given: {
   if (model) command.push("-m", model);
   command.push("--output-schema", join(folder, "schema.json"), "-o", join(folder, "answer.json"));
   command.push("-");
-  return { command, mounts, env: { CODEX_HOME: at } };
+  const skills = given.skills ? copySkills(given.skills, join(folder, "skills")) : [];
+  return { command, mounts, env: { CODEX_HOME: at }, skills };
 }
 
 // Returns the reviewer's answer from the file Codex wrote it to, for the reviewer to check
