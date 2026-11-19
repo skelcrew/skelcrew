@@ -489,8 +489,16 @@ async function mergeCommand(args: string[]): Promise<void> {
     if (!process.stdin.isTTY)
       throw new Error("sc merge --when-ready asks you first, so run it at your own terminal");
     // The title comes from the tracker, so its control codes go before it reaches your terminal.
-    const { thread, pr, title, started } = await previewMerge(which);
+    const { thread, pr, title, started, merging } = await previewMerge(which);
     if (pr === null) throw new Error(`${thread} has no PR yet: ask again once it opens one`);
+    // Asking again about a merge already on its way could only mislead: a "no" would leave it
+    // merging while sounding like it stopped. So it says so, and how to stop it.
+    if (merging) {
+      console.log(
+        `Already merging #${pr} as soon as it's approved and green. sc merge --cancel ${thread} stops it.`,
+      );
+      return;
+    }
     const { removeControlCodes } = await import("./screen/look.ts");
     const shown = title ? ` ${removeControlCodes(title)}` : "";
     // Only y arms it. Anything else, a bare Enter, which Bun's prompt gives as null, Y or yes

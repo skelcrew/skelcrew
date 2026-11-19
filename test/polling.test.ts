@@ -2241,6 +2241,16 @@ exec ${bwrap} "$@"`,
         "Merging #7 as soon as it's approved and green. sc merge --cancel app-12 stops it.",
       );
       expect(thread()).toMatchObject({ merge_plan: "armed", merge_by: login() });
+      // Asked again, it asks nothing, so no "no" can sound like it stopped the merge.
+      const again = await runSkelInTerminal(
+        socket,
+        env(),
+        ["merge", "--when-ready", "app-12"],
+        "Already merging #7 as soon as it's approved and green. sc merge --cancel app-12 stops it.",
+        "n",
+      );
+      expect(again).not.toContain(question);
+      expect(thread().merge_plan).toBe("armed");
       // sc ps says so, and the lead hears it, so it knows you asked.
       const ps = Bun.spawnSync([process.execPath, main, "ps"], { env: env(), stdout: "pipe" });
       expect(ps.stdout.toString()).toContain("merges when ready");
