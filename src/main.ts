@@ -337,7 +337,10 @@ async function pluginCommand(args: string[], json: boolean): Promise<void> {
     console.log(`Ran ${rest[0]}'s setup.`);
     return;
   }
-  if (command === "plugins" && rest.length === 0) return listPlugins(json);
+  if (command === "plugins" && rest.length === 0) {
+    const { repositoryNeeds } = await import("./plugins/repository.ts");
+    return listPlugins(json, repositoryNeeds());
+  }
   usage(command);
 }
 

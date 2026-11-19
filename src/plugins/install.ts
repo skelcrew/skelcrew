@@ -38,6 +38,7 @@ import {
   readManifest,
   Version,
 } from "./plugin.ts";
+import type { Need } from "./repository.ts";
 
 // Where plugins installed from GitHub live, each version in a folder of its own.
 const pluginsDir = () => join(dataDir(), "plugins");
@@ -328,6 +329,7 @@ function refuseInstalled(db: Database, name: string): void {
 // setup a server takes. `tag` picks the version, such as v0.1.0, in place of the newest, and
 // `commit` the exact commit to fetch. `pin` is false when the commit came from your lock, which
 // sc install leaves as it is, and `name` true to add the plugin to plugins: in your config.yaml.
+// `io` is true for a repository's plugin, which must be an I/O plugin.
 type Options = {
   remote?: string | null;
   ask?: boolean;
@@ -335,7 +337,18 @@ type Options = {
   commit?: string;
   pin?: boolean;
   name?: boolean;
+  io?: boolean;
 };
+
+// Throws when `io` is true and the plugin is a runtime plugin, before anything of it runs. How you
+// run and watch your agents is yours, so only you add a runtime plugin, and a repository's files
+// can't name one.
+export function refuseRuntime(manifest: Manifest, io: boolean | undefined): void {
+  if (io && manifest.kind === "runtime")
+    throw new Error(
+      `${manifest.name} is a runtime plugin, which is always yours and never a repository's. sc add -g adds it as yours`,
+    );
+}
 
 // Installs a plugin and returns whether it did. `given` is either owner/repo, installed from that
 // GitHub repository's newest version tag or the one `tag` names, or a path to a folder of yours,
@@ -343,7 +356,7 @@ type Options = {
 // and setup, and writes your files as `pin` and `name` say, before the plugin counts as
 // installed. A write that fails leaves the files as they were and the plugin not installed.
 export function installPlugin(given: string, options: Options = {}): boolean {
-  const { ask = true, tag, commit, pin = true, name = false } = options;
+  const { ask = true, tag, commit, pin = true, name = false, io } = options;
   const remote = options.remote === undefined ? originHere() : options.remote;
   const db = openDb();
   const isPath = given.startsWith(".") || given.startsWith("/");
@@ -379,6 +392,7 @@ export function installPlugin(given: string, options: Options = {}): boolean {
   try {
     refuseInstalled(db, manifest.name);
     checkSkelcrewVersion(manifest);
+    refuseRuntime(manifest, io);
     const answer = ask ? confirmPlugin(manifest, given, "Install") : true;
     if (answer === null) throw unanswered(`installing ${manifest.name}`);
     if (!answer) {
@@ -429,7 +443,7 @@ export const lockedAs = (manifest: Manifest, commit: string): Locked => ({
 // showing what it runs and asking, as installing does. Its old version's folder goes, and your
 // lock pins the new one, unless `pin` is false.
 export function updatePlugin(db: Database, plugin: Plugin, options: Options = {}): void {
-  const { ask = true, tag: wanted, commit, pin = true } = options;
+  const { ask = true, tag: wanted, commit, pin = true, io } = options;
   const remote = options.remote === undefined ? originHere() : options.remote;
   const { name, folder, source } = plugin;
   const current = readManifest(folder);
@@ -469,6 +483,7 @@ export function updatePlugin(db: Database, plugin: Plugin, options: Options = {}
     if (manifest.name !== name)
       throw new Error(`${source} now names its plugin ${manifest.name}, not ${name}`);
     checkSkelcrewVersion(manifest);
+    refuseRuntime(manifest, io);
     const answer = ask ? confirmPlugin(manifest, source, "Update") : true;
     if (answer === null) throw unanswered(`updating ${name}`);
     if (!answer) {
@@ -577,14 +592,20 @@ export function addPlugin(given: string, remote = originHere()): boolean {
 
 // Removes a personal plugin, for sc remove -g: from plugins: in your config.yaml, from your lock
 // and from this machine, with its settings and tokens. `given` is its name or its owner/repo. It
-// refuses while the plugin is the tracker or forge of a repository Skelcrew has, and then changes
-// nothing.
+// refuses while the plugin is the tracker or forge of a repository Skelcrew has, and for a plugin
+// only a repository names, and then changes nothing.
 export function removeYourPlugin(given: string): void {
   const db = openDb();
   const lock = yourLock(db);
-  const installed = installedPlugins(db).find(
-    (plugin) => plugin.name === given || plugin.source === given,
-  );
+  const named = yourPlugins();
+  const plugin = installedPlugins(db).find((one) => one.name === given || one.source === given);
+  // A plugin only a repository names isn't yours, so its settings and tokens stay.
+  const yours = plugin && (plugin.source === null || named.includes(plugin.source));
+  if (plugin && !yours)
+    throw new Error(
+      `${given} isn't one of your plugins, as only a repository's skelcrew.yaml names it, so Skelcrew keeps it`,
+    );
+  const installed = yours ? plugin : undefined;
   // A plugin your files name may not be installed here yet, so the lock names it too.
   const source =
     installed?.source ??
@@ -669,15 +690,28 @@ type Row = {
   change: string | null;
 };
 
-// Prints the plugins your files name and this machine has, for sc plugins: each one's name,
-// version, kind and what it provides, such as "github 0.1.0 io: tracker, forge", and what sc
-// install would change. --json gives the same rows for tools, and keeps jobs, so a tool written
-// before kinds still reads it.
-export function listPlugins(json: boolean): void {
+// Prints the plugins your files and repositories' files name and this machine has, for sc
+// plugins: each one's name, version, kind and what it provides, such as "github 0.1.0 io:
+// tracker, forge", and what sc install would change. `needs` are the plugins repositories need,
+// as repositoryNeeds gives them. --json gives the same rows for tools, and keeps jobs, so a tool
+// written before kinds still reads it.
+export function listPlugins(json: boolean, needs: Need[]): void {
   const db = openDb();
   const lock = yourLock(db);
   const wanted = yourPlugins();
   const installed = installedPlugins(db);
+  // What sc install would do for a repository's plugin, or null for nothing. The first need
+  // that changes something is said, as sc install acts on it first.
+  const repositoryChange = (source: string, plugin?: Plugin): string | null => {
+    for (const { where, locked, conflict } of needs.filter((need) => need.source === source)) {
+      if (conflict !== null) return `sc install leaves it, as it is pinned at ${conflict}`;
+      if (!locked) return `${where}'s skelcrew.lock doesn't pin it, so sc install leaves it out`;
+      if (!plugin) return `sc install installs ${locked.version} for ${where}`;
+      if (!matchesLock(plugin, locked))
+        return `sc install moves it to ${locked.version} at commit ${locked.commit.slice(0, 12)} for ${where}`;
+    }
+    return null;
+  };
   const rows: Row[] = installed.map((plugin) => {
     const manifest = existsSync(plugin.folder) ? readManifest(plugin.folder) : null;
     if (!manifest) throw new Error(`${plugin.name}'s folder ${plugin.folder} is gone`);
@@ -700,7 +734,11 @@ export function listPlugins(json: boolean): void {
       // What it provides, under the name tools read before plugins had kinds.
       jobs: manifest.provides,
       from: plugin.source ?? plugin.folder,
-      change: moves ? `sc install moves it to ${to}` : null,
+      change: moves
+        ? `sc install moves it to ${to}`
+        : plugin.source === null
+          ? null
+          : repositoryChange(plugin.source, plugin),
     };
   });
   // The plugins your files name that aren't installed here.
@@ -715,6 +753,19 @@ export function listPlugins(json: boolean): void {
       jobs: [],
       from: source,
       change: locked ? "sc install installs it" : "sc install installs its newest version",
+    });
+  }
+  // Then those only repositories name that aren't installed here, once each.
+  for (const { source, locked } of needs) {
+    if (rows.some((row) => row.from === source)) continue;
+    rows.push({
+      name: locked?.name ?? source,
+      version: locked?.version ?? null,
+      kind: null,
+      provides: [],
+      jobs: [],
+      from: source,
+      change: repositoryChange(source),
     });
   }
   // Plain text gives only what you read. JSON adds where each came from, for tools.

@@ -9,8 +9,23 @@ import { openDb } from "../db.ts";
 import { checkoutTop, repositories } from "../flow/repo.ts";
 import { originHere } from "../machine/origin.ts";
 import { cloneDir } from "../paths.ts";
-import { eachAsked, installPlugin, lockedAs, matchesLock, updatePlugin } from "./install.ts";
-import { type Lock, type Locked, readLock, settleYourLock, writeBoth } from "./lock.ts";
+import {
+  eachAsked,
+  installPlugin,
+  lockedAs,
+  matchesLock,
+  refuseRuntime,
+  updatePlugin,
+} from "./install.ts";
+import {
+  type Lock,
+  type Locked,
+  readLock,
+  settleYourLock,
+  writeBoth,
+  yourLock,
+  yourPlugins,
+} from "./lock.ts";
 import { commitOf, installedPlugins, readManifest } from "./plugin.ts";
 
 // What Skelcrew reads of a repository's skelcrew.yaml here: only plugins:, by the GitHub
@@ -93,10 +108,12 @@ export function addRepositoryPlugin(given: string): boolean {
   settleYourLock(db);
   const installed = () => installedPlugins(db).find((plugin) => plugin.source === given);
   // The repository's plugin goes into its own files, never into your lock.
-  if (!installed() && !installPlugin(given, { remote: originHere(top), pin: false })) return false;
+  if (!installed() && !installPlugin(given, { remote: originHere(top), pin: false, io: true }))
+    return false;
   const plugin = installed();
   if (!plugin) throw new Error(`${given} isn't installed after all`);
   const manifest = readManifest(plugin.folder);
+  refuseRuntime(manifest, true);
   writeBoth(
     () => nameAndPin(top, given, lockedAs(manifest, commitOf(plugin.folder))),
     [join(top, "skelcrew.yaml"), join(top, "skelcrew.lock")],
@@ -107,27 +124,89 @@ export function addRepositoryPlugin(given: string): boolean {
   return true;
 }
 
-// Installs the plugins a repository's files name, at the version and commit its skelcrew.lock
-// pins, for sc install. `where` names the repository in what is said, such as "This checkout".
-// A plugin new here, or at another version or commit, is shown and asked about. One already at
-// its pin asks nothing. One with no pin isn't installed, as only sc add writes into a repository.
-// Your lock is left alone, as these plugins aren't yours. Returns whether there was anything to
-// do, and the plugins still missing or at another version than pinned.
-function installFrom(
-  folder: string,
-  where: string,
-  remote: string | null,
-): { changed: boolean; left: string[] } {
+// One plugin a repository needs: its source, the repository that names it, as `where` says it,
+// such as "This checkout", the pin of that repository's skelcrew.lock, if any, and the remote
+// handed to the plugin's setup. `conflict` says which other pins disagree with this one, or is
+// null when none does. A machine holds one version of a plugin, so a plugin pinned at two commits
+// can't match both, and sc install leaves it until the pins agree.
+export type Need = {
+  source: string;
+  where: string;
+  locked: Locked | undefined;
+  remote: string | null;
+  conflict: string | null;
+};
+
+// Returns how a pin reads in what is said, such as 0.1.0 at commit 4f9c2e1a7b0c.
+const pinText = (locked: Locked) => `${locked.version} at commit ${locked.commit.slice(0, 12)}`;
+
+// Returns the plugins repositories need, for sc install and sc plugins: in a checkout, those its
+// files name, as you see them there. Outside one, those of every repository Skelcrew has, from
+// Skelcrew's clone of its default branch. Each one's pin is compared with your lock's and the
+// other repositories', so a disagreement is said rather than settled by whichever is read last.
+export function repositoryNeeds(): Need[] {
   const db = openDb();
-  const { plugins, lock } = repositoryPlugins(folder);
-  if (plugins.length === 0) return { changed: false, left: [] };
+  const top = checkoutTop();
+  const places =
+    top !== null
+      ? [{ folder: top, where: "This checkout", remote: originHere(top) }]
+      : repositories(db).map((r) => ({
+          folder: cloneDir(r.owner, r.repo),
+          where: r.name,
+          remote: r.remote,
+        }));
+  const needs = places.flatMap(({ folder, where, remote }) => {
+    const { plugins, lock } = repositoryPlugins(folder);
+    return plugins.map((source) => ({ source, where, locked: lock[source], remote }));
+  });
+  // Every pin of each source, yours first, each with who pins it.
+  const yours = yourLock(db);
+  const pins = (source: string) => {
+    const mine = yourPlugins().includes(source) ? yours[source] : undefined;
+    return [
+      ...(mine ? [{ by: "your lock", locked: mine }] : []),
+      ...needs.flatMap(({ source: other, where, locked }) =>
+        other === source && locked ? [{ by: where, locked }] : [],
+      ),
+    ];
+  };
+  return needs.map((need) => {
+    const all = pins(need.source);
+    const agree = all.every(({ locked }) => locked.commit === all[0]?.locked.commit);
+    const conflict = agree
+      ? null
+      : all.map(({ by, locked }) => `${pinText(locked)} by ${by}`).join(", ");
+    return { ...need, conflict };
+  });
+}
+
+// Installs the plugins repositories need, for sc install, at the version and commit each one's
+// skelcrew.lock pins. A plugin new here, or at another version or commit, is shown and asked
+// about. One already at its pin asks nothing. One with no pin isn't installed, as only sc add
+// writes into a repository, and nor is one pinned at two commits, which no machine can match.
+// Your lock is left alone, as these plugins aren't yours. Returns whether there was anything to
+// do, and whether any plugin is still missing. A missing one never takes the machine's set-up
+// mark, as it is the repository's, not yours.
+export function installRepositoryPlugins(): { changed: boolean; missing: boolean } {
+  const needs = repositoryNeeds();
+  if (needs.length === 0) return { changed: false, missing: false };
+  const db = openDb();
   settleYourLock(db);
   let changed = false;
+  // Each disagreement is said once, however many repositories share it.
+  const said = new Set<string>();
   eachAsked(
-    plugins,
-    (source) => source,
-    (source) => {
-      const locked = lock[source];
+    needs,
+    ({ source }) => source,
+    ({ source, where, locked, remote, conflict }) => {
+      if (conflict !== null) {
+        if (!said.has(source))
+          console.log(
+            `${source} is pinned at ${conflict}. A machine holds one version of a plugin, so Skelcrew left it as it is. Pin the same version in each.`,
+          );
+        said.add(source);
+        return;
+      }
       if (!locked) {
         console.log(
           `${where}'s skelcrew.yaml names ${source}, which its skelcrew.lock doesn't pin, so Skelcrew didn't install it. sc add ${source} pins it.`,
@@ -137,48 +216,28 @@ function installFrom(
       const here = installedPlugins(db).find((plugin) => plugin.source === source);
       if (here && matchesLock(here, locked)) return;
       changed = true;
-      const pinned = { tag: `v${locked.version}`, commit: locked.commit, remote, pin: false };
+      const pinned = {
+        tag: `v${locked.version}`,
+        commit: locked.commit,
+        remote,
+        pin: false,
+        io: true,
+      };
       if (here) updatePlugin(db, here, pinned);
       else installPlugin(source, pinned);
     },
   );
   // Read again, as each install changed what is here.
-  const left = plugins.filter((source) => {
+  const left = needs.filter(({ source, locked, conflict }) => {
     const here = installedPlugins(db).find((plugin) => plugin.source === source);
-    const locked = lock[source];
-    return locked !== undefined && (!here || !matchesLock(here, locked));
+    return conflict === null && locked && (!here || !matchesLock(here, locked));
   });
-  for (const source of left)
+  for (const { source, where } of left)
     console.log(
       `${where} needs ${source} at the version its skelcrew.lock pins. sc install asks again.`,
     );
-  const unpinned = plugins.filter((source) => lock[source] === undefined);
-  return { changed, left: [...left, ...unpinned] };
-}
-
-// Installs the plugins repositories name, for sc install: in a checkout, those its files name,
-// as you see them there. Outside one, those of every repository Skelcrew has, from Skelcrew's
-// clone of its default branch. Returns whether there was anything to do, and whether any plugin
-// is still missing. A missing one never takes the machine's set-up mark, as it is the
-// repository's, not yours.
-export function installRepositoryPlugins(): { changed: boolean; missing: boolean } {
-  const top = checkoutTop();
-  const places =
-    top !== null
-      ? [{ folder: top, where: "This checkout", remote: originHere(top) }]
-      : repositories(openDb()).map((r) => ({
-          folder: cloneDir(r.owner, r.repo),
-          where: r.name,
-          remote: r.remote,
-        }));
-  let changed = false;
-  let missing = false;
-  for (const { folder, where, remote } of places) {
-    const done = installFrom(folder, where, remote);
-    changed ||= done.changed;
-    missing ||= done.left.length > 0;
-  }
-  return { changed, missing };
+  const missing = needs.some(({ locked, conflict }) => !locked || conflict !== null);
+  return { changed, missing: missing || left.length > 0 };
 }
 
 // Reports whether the skelcrew.yaml of the checkout you are in names `source`, so plain sc

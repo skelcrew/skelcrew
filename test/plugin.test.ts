@@ -1042,3 +1042,81 @@ test("sc remove -g on a machine with no lock yet takes the plugin out of your co
   expect(readFileSync(yourLockFile(), "utf8")).not.toContain("fake");
   expect((await skel(["plugins"])).out).toBe("No plugins installed.\n");
 });
+
+test("sc remove -g refuses a plugin only a repository names, and keeps its settings", async () => {
+  publish("skelcrew/skelcrew-fake", "0.1.0");
+  const app = appCheckout();
+  await skel(["add", "skelcrew/skelcrew-fake"], "y\n", "", {}, app);
+  const run = await skel(["remove", "-g", "fake"]);
+  expect(run.code).toBe(1);
+  expect(run.err).toContain(
+    "fake isn't one of your plugins, as only a repository's skelcrew.yaml names it, so Skelcrew keeps it",
+  );
+  expect(existsSync(join(plugins(), "fake"))).toBe(true);
+  expect(existsSync(join(settings("fake"), "token"))).toBe(true);
+});
+
+test("sc plugins says what sc install would change for the repository you are in", async () => {
+  publish("skelcrew/skelcrew-fake", "0.1.0", "0.2.0");
+  const app = appCheckout();
+  const pinned = tagCommit("skelcrew/skelcrew-fake", "0.1.0");
+  writeFileSync(join(app, "skelcrew.yaml"), "plugins: [skelcrew/skelcrew-fake, simon/loose]\n");
+  writeFileSync(
+    join(app, "skelcrew.lock"),
+    `skelcrew/skelcrew-fake: { name: fake, version: 0.1.0, commit: ${pinned} }\n`,
+  );
+  expect((await skel(["plugins"], "", "", {}, app, false)).out).toBe(
+    [
+      "fake 0.1.0 from skelcrew/skelcrew-fake isn't installed. sc install installs 0.1.0 for This checkout.",
+      "simon/loose from simon/loose isn't installed. This checkout's skelcrew.lock doesn't pin it, so sc install leaves it out.",
+      "",
+    ].join("\n"),
+  );
+  // Yours at another version, the two pins disagree, so sc install leaves it.
+  await skel(["add", "-g", "skelcrew/skelcrew-fake"], "y\n");
+  const newest = tagCommit("skelcrew/skelcrew-fake", "0.2.0").slice(0, 12);
+  expect((await skel(["plugins"], "", "", {}, app, false)).out).toStartWith(
+    `fake 0.2.0 io: tracker, forge. sc install leaves it, as it is pinned at 0.2.0 at commit ${newest} by your lock, 0.1.0 at commit ${pinned.slice(0, 12)} by This checkout.\n`,
+  );
+  // No longer yours, it moves to the repository's pin.
+  writeFileSync(yourConfig(), "");
+  writeFileSync(yourLockFile(), "");
+  expect((await skel(["plugins"], "", "", {}, app, false)).out).toStartWith(
+    `fake 0.2.0 io: tracker, forge. sc install moves it to 0.1.0 at commit ${pinned.slice(0, 12)} for This checkout.\n`,
+  );
+});
+
+test("a repository can't name a runtime plugin", async () => {
+  const folder = onGitHub("skelcrew/skelcrew-runtime");
+  fakePlugin(folder, "0.1.0", "session: [sh, session.sh]\nattach: [sh, attach.sh]\n");
+  const manifest = join(folder, "skelcrew-plugin.yaml");
+  writeFileSync(
+    manifest,
+    readFileSync(manifest, "utf8").replace(
+      "kind: io\nprovides: [tracker, forge]",
+      "kind: runtime\nprovides: [sessions]",
+    ),
+  );
+  git(folder, "init", "-q", "-b", "main");
+  git(folder, "add", ".");
+  git(folder, "commit", "-q", "-m", "0.1.0");
+  git(folder, "tag", "v0.1.0");
+  const app = appCheckout();
+  // Refused before it asks, so nothing of it runs.
+  const fresh = await skel(["add", "skelcrew/skelcrew-runtime"], "y\n", "", {}, app);
+  expect(fresh.code).toBe(1);
+  expect(fresh.out).not.toContain("Install it?");
+  expect(fresh.err).toContain(
+    "fake is a runtime plugin, which is always yours and never a repository's. sc add -g adds it as yours",
+  );
+  expect(existsSync(join(plugins(), "fake"))).toBe(false);
+  // Installed as yours, it still can't go into the repository's files.
+  await skel(["add", "-g", "skelcrew/skelcrew-runtime"], "y\n");
+  const yours = await skel(["add", "skelcrew/skelcrew-runtime"], "", "", {}, app, false);
+  expect(yours.code).toBe(1);
+  expect(yours.err).toContain("fake is a runtime plugin");
+  expect(readFileSync(join(app, "skelcrew.yaml"), "utf8")).toBe(
+    "# Shared.\nsetup: [bun install]\n",
+  );
+  expect(existsSync(join(app, "skelcrew.lock"))).toBe(false);
+});

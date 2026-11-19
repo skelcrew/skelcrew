@@ -1793,3 +1793,28 @@ test("in a GitHub checkout whose skelcrew.yaml names the GitHub plugin, sc skips
   const run = await atTerminal("", site);
   expect(run.out).not.toContain("GitHub detected");
 });
+
+// A machine holds one version of a plugin, so pins that disagree are said, never settled by
+// whichever is read last.
+test("sc install leaves a plugin your lock and a repository pin at different commits, and says so", async () => {
+  noGitHubPlugin();
+  fakeGitHub();
+  publishFake("0.1.0");
+  await skel("1\nsk-ant-oat01-good\n");
+  const yours = fakeCommit("0.1.0");
+  lockFake("0.1.0");
+  // The repository pins the tag after it moved.
+  publishFake("0.1.0");
+  const theirs = fakeCommit("0.1.0");
+  repositoryLocksFake(join(home, ".local", "share", "skelcrew", "repos", "simon", "app"), "0.1.0");
+  const run = await install("y\n");
+  expect(run.err).toBe("");
+  expect(run.out).toContain(
+    `simon/skelcrew-fake is pinned at 0.1.0 at commit ${yours.slice(0, 12)} by your lock, 0.1.0 at commit ${theirs.slice(0, 12)} by app. A machine holds one version of a plugin, so Skelcrew left it as it is. Pin the same version in each.`,
+  );
+  expect(git(fakeFolder(), "rev-parse", "HEAD")).toBe(yours);
+  const again = await install();
+  expect(again.out).not.toContain("Update it?");
+  expect(again.out).not.toContain("Nothing to install");
+  expect(git(fakeFolder(), "rev-parse", "HEAD")).toBe(yours);
+});
