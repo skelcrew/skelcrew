@@ -34,9 +34,27 @@ const keyNames: Record<string, string> = {
   "\x1b": "escape",
 };
 const esc = "\x1b";
-const keyPattern = new RegExp(`${esc}\\[[AB]|${esc}O[AB]|[\\s\\S]`, "g");
-// The start of an escape sequence at the end of a read, whose end may come in the next one.
-const endOfSequence = new RegExp(`${esc}[[O]?$`);
+// Splits what the terminal sent into keys. Every escape sequence is one key, read or not, as
+// its Esc alone would leave the list. That covers keys such as Right, Home, F5 or Alt-x, and
+// the answers a terminal sends to tmux's questions, which reach the list once you leave an
+// agent. In order: a terminal's string ended by ST or BEL, a CSI sequence, an SS3 one, Alt
+// with a key, then any single character, a lone Esc included.
+const keyPattern = new RegExp(
+  [
+    `${esc}[P\\]X^_][\\s\\S]*?(?:${esc}\\\\|\\x07)`,
+    `${esc}\\[[0-?]*[ -/]*[@-~]`,
+    `${esc}O[\\s\\S]`,
+    `${esc}[^${esc}]`,
+    "[\\s\\S]",
+  ].join("|"),
+  "g",
+);
+// The start of an escape sequence at the end of a read, whose end may come in the next one: an
+// Esc, a CSI or SS3 sequence short of its last character, or a terminal's string short of its ST
+// or BEL.
+const endOfSequence = new RegExp(
+  `${esc}(?:\\[[0-?]*[ -/]*|O|[P\\]X^_](?:[^${esc}\\x07]|${esc}(?!\\\\))*)?$`,
+);
 
 // Runs the list in your terminal for the repository named by its owner/name, until you press q,
 // then says your agents keep running.
