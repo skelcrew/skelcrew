@@ -121,7 +121,9 @@ const threadColumns = {
 // on the PR, as JSON: the PR, the review's ID and what it last said, so each round edits it.
 // `agents` is the git tree of the .agents/ you had approved when the task started, which its
 // agents keep, or null for the built-in roles. `flow` is the flow the task runs from start to end,
-// `default` unless it was started with another.
+// `default` unless it was started with another. `pr_link` is the link to the task's PR, saved from
+// Skelcrew's copy of the forge while the PR is in it, so the list can still open the PR of a task
+// that ended, once the copy has dropped it.
 export const taskColumns = {
   title: "TEXT",
   body: "TEXT",
@@ -158,6 +160,7 @@ export const taskColumns = {
   closes: "TEXT",
   agents: "TEXT",
   flow: "TEXT NOT NULL DEFAULT 'default'",
+  pr_link: "TEXT",
 };
 
 // Marks each done task merged when its thread's log says its work ended by a merge, for tasks
@@ -244,7 +247,7 @@ export function openDb(): Database {
 
 // Returns whether the database keeps tasks, as a new one does, and one from an earlier release
 // does once its threads have moved onto them.
-const hasTasks = (db: Database) =>
+export const hasTasks = (db: Database) =>
   db.query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'tasks'").get() !== null;
 
 // Creates the tasks table: one row per task, named by its repository and its ID, such as 12 or

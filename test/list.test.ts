@@ -137,6 +137,25 @@ test("each stage's heading counts its tasks and those that need you, open or clo
   ]);
 });
 
+// The copy of the forge drops a closed PR once its thread is done, so the task keeps the link.
+test("a merged task keeps its PR's link after the copy of the forge drops the PR", () => {
+  sql(
+    "UPDATE threads SET status = 'done' WHERE folder = 'app-14'; UPDATE tasks SET merged = 1 WHERE task = '14';",
+  );
+  const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
+import { prOf, saveItems } from ${JSON.stringify(source("flow/copy.ts"))};
+const db = openDb();
+saveItems(db, "simon", "app", [], ["pr"]);
+console.log(prOf(db, "simon", "app", 41) === null ? "dropped" : "kept");`;
+  const run = Bun.spawnSync([process.execPath, "-e", code], { env: env(), stderr: "pipe" });
+  expect(run.stderr.toString()).toBe("");
+  expect(run.stdout.toString()).toBe("dropped\n");
+  expect(rows().find((row) => row.name === "app-14")).toMatchObject({
+    part: "done",
+    link: "https://github.com/simon/app/pull/41",
+  });
+});
+
 test("tasks under review and waiting on checks show in their own stages", () => {
   sql(`${threadSql({ task: "15", title: "Under review", status: "waiting", reviewing: "abc", pr: 45 })}
 ${threadSql({ task: "16", title: "Approved", status: "waiting", verdict: "approve", checks: "pending", pr: 46 })}`);

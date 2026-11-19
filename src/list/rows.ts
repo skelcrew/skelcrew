@@ -106,6 +106,10 @@ function leadRow(db: Database, open: Open): Row {
   };
 }
 
+// What the list reads of a task beyond what Thread has: its PR's link, saved as the forge's copy
+// last had it, for a task whose PR has left the copy.
+const SavedLink = z.object({ pr_link: z.string().nullable() });
+
 // Returns the row of a task with a thread, given the thread and the stage it is in. Its word says
 // what is happening, and when the thread needs you, why, in its mark's colour. An ended task says
 // whether it merged. After the word come its PR, when it last changed, its merge when ready with
@@ -116,6 +120,7 @@ function taskRow(
   open: Open,
   repoName: string,
   thread: Thread,
+  saved: unknown,
   stage: ListStage,
   now: number,
 ): Row {
@@ -191,7 +196,7 @@ function taskRow(
     running: runs,
     start: null,
     merge,
-    link: copy?.link ?? null,
+    link: copy?.link ?? SavedLink.parse(saved).pr_link,
     branch: thread.branch,
   };
 }
@@ -212,15 +217,17 @@ export function listRows(db: Database, open: Open, now: number): Row[] {
   const threads = db
     .query("SELECT * FROM task_threads WHERE owner = ? AND repo = ? ORDER BY rowid DESC")
     .all(open.owner, open.repo)
-    .map((saved) => Thread.parse(saved));
+    .map((saved) => ({ saved, thread: Thread.parse(saved) }));
   // A thread whose work ended without a merge while its issue is open is back in Backlog, where
   // its issue's row stands for it, to start again.
-  const tasks = threads.flatMap((thread) => {
+  const tasks = threads.flatMap(({ saved, thread }) => {
     const stage = listStage(
       thread,
       issues.some((issue) => issue.id === thread.task),
     );
-    return stage === "backlog" ? [] : [taskRow(db, open, repository.name, thread, stage, now)];
+    return stage === "backlog"
+      ? []
+      : [taskRow(db, open, repository.name, thread, saved, stage, now)];
   });
   const waiting = issues
     .map((issue) => ({ issue, name: `${repository.name}-${issue.id}` }))
@@ -250,7 +257,9 @@ export function listRows(db: Database, open: Open, now: number): Row[] {
     });
   // When each ended task last changed, which is when it ended, as nothing changes it after.
   const endedAt = (row: Row) => {
-    const thread = threads.find((candidate) => `${repository.name}-${candidate.task}` === row.name);
+    const thread = threads.find(
+      ({ thread: candidate }) => `${repository.name}-${candidate.task}` === row.name,
+    )?.thread;
     return thread?.changed ?? thread?.started ?? 0;
   };
   const today = new Date(now).toDateString();
