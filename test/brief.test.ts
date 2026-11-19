@@ -211,7 +211,10 @@ const webSession = () => leadPlaces("simon", "web").name;
 const hasWebLead = () =>
   Bun.spawnSync(["tmux", "-L", socket, "has-session", "-t", `=${webSession()}`]).success;
 
-// Has web's lead exit cleanly, as /exit does, and waits until its ended session shows it.
+// Has web's lead exit cleanly, as /exit does, and waits until its ended session shows it. The
+// daemon looks each second for a lead that exited cleanly, closes its tab and ends its session.
+// A busy machine can miss the dead pane before that, so a tab the daemon closed counts too, as
+// it closes one only on a clean exit.
 async function exitWebLead(): Promise<void> {
   writeFileSync(join(webLead(), "exit-now"), "");
   const pane = [
@@ -225,7 +228,7 @@ async function exitWebLead(): Promise<void> {
     () =>
       Bun.spawnSync(["tmux", "-L", socket, ...pane])
         .stdout.toString()
-        .trim() === "1 0",
+        .trim() === "1 0" || Object(webRow()).tab_closed === 1,
   );
 }
 
