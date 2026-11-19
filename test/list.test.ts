@@ -311,7 +311,7 @@ const frame = {
     { name: "site", fullName: "simon/site", needYou: 1, colour: "yellow" as const, ready: 0 },
   ],
   notice: "",
-  bottom: "↑↓ move  ⏎ open  q quit",
+  bottom: "↑↓ move  ⏎ open  q/esc quit",
   load: "cpu 12%",
 };
 const drawn = (here: number, height = 20, width = 80) =>
@@ -323,7 +323,7 @@ test("each part has its heading, the row you are on has ▸, and every line fits
   const headings = lines.filter((line) => /^ [A-Z]\w/.test(line) && !line.includes("Skelcrew"));
   expect(headings.map((line) => line.trim())).toEqual(["Issues", "Working", "Ready for review"]);
   // The bottom line has the keys, and the load at its right end.
-  expect(lines.at(-1)).toBe(` ↑↓ move  ⏎ open  q quit${" ".repeat(48)}cpu 12% `);
+  expect(lines.at(-1)).toBe(` ↑↓ move  ⏎ open  q/esc quit${" ".repeat(44)}cpu 12% `);
   expect(lines.filter((line) => line.includes("▸"))).toEqual([
     expect.stringMatching(/^ ▸ ● app-12 +Rate limit the API +needs you: question · codex$/),
   ]);
@@ -454,7 +454,7 @@ process.exit(0);`,
   const vars = `HOME=${home} XDG_RUNTIME_DIR=${join(home, "run")} SKELCREW_FIXED_LOAD='cpu 12%'`;
   const command = `${vars} TERM=xterm-256color ${process.execPath} ${script}; sleep 300`;
   tmux("new-session", "-d", "-s", "one", "-x", "100", "-y", "24", command);
-  await until(() => seen().includes("q quit"), "the list");
+  await until(() => seen().includes("q/esc quit"), "the list");
 }
 
 test("the list opens on the first task that needs you, and q leaves it with every agent running", async () => {
@@ -507,7 +507,7 @@ test("Enter attaches to the builder, every key reaches it, and Alt-Q comes back 
   press("Enter");
   await until(() => read(join(home, "app-7.typed")) === "q m hello\n", "what was typed");
   press("M-q");
-  await until(() => seen().includes("q quit"), "the list again");
+  await until(() => seen().includes("q/esc quit"), "the list again");
   expect(here()).toStartWith("▸ ○ app-7");
   expect(read(join(home, "left"))).toBe("");
 });
@@ -521,7 +521,7 @@ test("an agent that ends while you are attached brings you back to the list, on 
   await until(() => seen().includes("I am app-7"), "app-7's agent");
   type("bye");
   press("Enter");
-  await until(() => seen().includes("q quit"), "the list again");
+  await until(() => seen().includes("q/esc quit"), "the list again");
   expect(here()).toStartWith("▸ ○ app-7");
   expect(read(join(home, "left"))).toBe("");
 });
@@ -564,21 +564,48 @@ test("an agent that ends detaches only the list's own client", async () => {
   await until(() => clients() === "app-7\napp-7", "both clients");
   type("bye");
   press("Enter");
-  await until(() => seen().includes("q quit"), "the list again");
+  await until(() => seen().includes("q/esc quit"), "the list again");
   expect(clients()).toBe("app-7");
 });
 
-// Over ssh an arrow's escape sequence can arrive in two reads.
-test("an arrow whose escape sequence comes in two pieces still moves", async () => {
+// Over ssh an arrow's escape sequence can arrive in two reads, even split right after its Esc,
+// which alone would leave the list. The pause between the pieces makes the list read the first
+// on its own, yet is shorter than the wait that tells a lone Esc from an arrow.
+test("an arrow whose escape sequence comes in two pieces still moves, and never leaves", async () => {
   await open();
   type("\x1b[");
+  await Bun.sleep(40);
   type("B");
   await until(() => here().startsWith("▸ ○ app-9"), "the row below");
-  // Esc alone is still a key, which moves nothing.
   type("\x1b");
-  await Bun.sleep(300);
-  type("\x1b[A");
+  await Bun.sleep(40);
+  type("[A");
   await until(() => here().startsWith("▸ ● app-12"), "the row above");
+  await Bun.sleep(300);
+  expect(read(join(home, "left"))).toBe("");
+});
+
+test("Esc leaves the list", async () => {
+  await open();
+  type("\x1b");
+  await until(() => read(join(home, "left")) === "left", "the list to leave");
+});
+
+// A stray Esc while you answer must not leave the list.
+test("Esc with a question open answers no and stays, and a second Esc leaves", async () => {
+  await open();
+  press("Up");
+  await until(() => here().startsWith("▸ ○ app-31"), "the issue's row");
+  press("Enter");
+  await until(() => seen().includes("Start app-31? y/n"), "the question");
+  type("\x1b");
+  await until(() => !seen().includes("y/n"), "the question to close");
+  await Bun.sleep(300);
+  expect(read(join(home, "left"))).toBe("");
+  expect(here()).toStartWith("▸ ○ app-31");
+  expect(asked.filter((line) => line.startsWith("start"))).toEqual([]);
+  type("\x1b");
+  await until(() => read(join(home, "left")) === "left", "the list to leave");
 });
 
 test("with only a task ready for review needing you, the list opens on it", async () => {
@@ -646,7 +673,7 @@ UPDATE threads SET host = 'fake', host_id = 'fake-app-12' WHERE folder = 'app-12
   press("Enter");
   await until(() => seen().includes("I am fake-app-12 on fake"), "the host's attach");
   press("Enter");
-  await until(() => seen().includes("q quit"), "the list again");
+  await until(() => seen().includes("q/esc quit"), "the list again");
   expect(here()).toStartWith("▸ ● app-12");
   expect(read(join(home, "left"))).toBe("");
 });
@@ -669,7 +696,7 @@ test("Enter on an issue asks first: any key but y starts nothing, and y starts i
   press("Enter");
   await until(() => seen().includes("Start app-31? y/n"), "the question");
   type("n");
-  await until(() => seen().includes("q quit"), "the keys again");
+  await until(() => seen().includes("q/esc quit"), "the keys again");
   expect(asked.filter((line) => line.startsWith("start"))).toEqual([]);
   press("Enter");
   await until(() => seen().includes("Start app-31? y/n"), "the question again");
