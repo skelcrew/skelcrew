@@ -673,11 +673,15 @@ export function installYourPlugins(remote: string | null): { changed: boolean; l
     // One a repository uses as its tracker or forge stays, or the repository would lose its
     // tasks or PRs. Such as on a machine whose lock was written without it, it is written into
     // your files as it is, as the move to a lock does, so it asks nothing and installs nothing.
+    // A pin your lock has already stays, and the install below moves the plugin to it after
+    // asking. The pin added is added to `lock` too, so the install below reads what the file says.
     const manifest = readManifest(folder);
+    const pinned = lock[source] ?? lockedAs(manifest, commitOf(folder));
     writeBoth(() => {
       setYourPlugins([...yourPlugins(), source]);
-      setLocked(db, source, lockedAs(manifest, commitOf(folder)));
+      setLocked(db, source, pinned);
     });
+    lock[source] = pinned;
     console.log(`Kept ${name} ${manifest.version} and added it to your files, as it is ${job}.`);
   }
   eachAsked(
