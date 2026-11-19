@@ -1,7 +1,8 @@
 // Trust for a repository's .agents/: the version of it you approved, for each repository, and
 // reading its files. Its role instructions decide what agents are told, so only a version you
 // approved ever steers them, and a change to it waits until you approve that too.
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse, stringify } from "yaml";
 import { z } from "zod";
@@ -75,6 +76,43 @@ export function approveAgents(place: Place, tree: string | null): void {
     throw new Error(`Skelcrew's clone of ${place.owner}/${place.repo} has no tree ${tree}`);
   writeApprovals({ ...readApprovals(), [`${place.owner}/${place.repo}`]: tree ?? "none" });
   markApproved(place);
+}
+
+// Approves the .agents/ folder in the checkout at `checkout`, for sc init, which writes it from
+// the built-in defaults: as you will push it, before it reaches the default branch. Its files go
+// into Skelcrew's clone, through an index of their own, so neither the checkout's index nor the
+// clone's changes. git reads them as your push will, so once pushed the tree is the same.
+export function approveCheckoutAgents(place: Place, checkout: string): void {
+  const folder = mkdtempSync(join(tmpdir(), "skelcrew-agents-"));
+  try {
+    const git = (args: string[]) => {
+      const run = Bun.spawnSync(
+        [
+          "git",
+          "--git-dir",
+          join(cloneDir(place.owner, place.repo), ".git"),
+          "--work-tree",
+          checkout,
+          ...args,
+        ],
+        {
+          cwd: checkout,
+          env: { ...process.env, GIT_INDEX_FILE: join(folder, "index") },
+          stdout: "pipe",
+          stderr: "pipe",
+        },
+      );
+      if (!run.success)
+        throw new Error(
+          `Skelcrew couldn't read ${checkout}'s .agents/: ${run.stderr.toString().trim()}`,
+        );
+      return run.stdout.toString().trim();
+    };
+    git(["add", "--", ".agents"]);
+    approveAgents(place, git(["write-tree", "--prefix=.agents/"]));
+  } finally {
+    rmSync(folder, { recursive: true, force: true });
+  }
 }
 
 // The ref in Skelcrew's clone at the .agents/ you approved, where the lead reads the flows it

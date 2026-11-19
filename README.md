@@ -36,7 +36,7 @@ It sets the machine up and prints the command that connects to it, such as `sc -
 | Command | What it does |
 | --- | --- |
 | `sc` | Opens the lead of the repository you are in. |
-| `sc init` | Writes a starter `skelcrew.yaml` in a checkout. |
+| `sc init` | Writes `skelcrew.yaml` and `.agents/` from the built-in defaults in a checkout, and adds the repository. |
 | `sc ps` | Lists threads, with their status and which need you. |
 | `sc attach <thread>` | Opens a thread's builder. Ctrl-Q detaches. |
 | `sc stop <thread>` | Ends a thread and keeps its branch and PR. |
