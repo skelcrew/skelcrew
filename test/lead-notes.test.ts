@@ -217,7 +217,7 @@ console.log(JSON.stringify({ during, after: received() }));`),
 // Web's lead isn't running here, so the brief stays saved as its note, to be read back.
 test("a lead's brief waits for the other lead as a report from its lead, and only a lead can brief another", () => {
   const said = run(`
-db.run("INSERT INTO repositories (name, owner, repo) VALUES ('web', 'simon', 'web')");
+db.run("INSERT INTO repositories (name, owner, repo, lead_briefs) VALUES ('web', 'simon', 'web', 1)");
 const web = { name: "web", owner: "simon", repo: "web" };
 briefLead(db, tmux, { lead: app }, web, "Add a CSV export.\\n");
 const refused = [];
@@ -336,4 +336,27 @@ console.log(JSON.stringify(received()));`);
   expect(received).toContain("started app-13 from github:");
   expect(received).toContain("app-12 needs you:");
   expect(received).not.toMatch(/<\s*\/?\s*skelcrew/i);
+});
+
+// A lead running from before briefs still has its old instructions. The rules come first, in
+// the same note as the first brief, so that brief is never read without them, and only once.
+test("the first brief to a lead not yet told of briefs brings the rules ahead of it", () => {
+  const said = run(`
+db.run("INSERT INTO repositories (name, owner, repo) VALUES ('web', 'simon', 'web')");
+const web = { name: "web", owner: "simon", repo: "web" };
+briefLead(db, tmux, { lead: app }, web, "Add CSV.", "Have web add CSV.");
+briefLead(db, tmux, { lead: app }, web, "Also JSON.");
+const told = db.query("SELECT lead_briefs FROM repositories WHERE repo = 'web'").get();
+console.log(JSON.stringify({ notes: db.query("SELECT text FROM notes ORDER BY id").all().map((n) => n.text), told }));`);
+  const { notes, told } = JSON.parse(said);
+  const [first = "", second = ""]: string[] = notes;
+  expect(first).toStartWith("Skelcrew was updated: leads can brief each other.");
+  expect(first.indexOf('whose tag says asked="yes"')).toBeLessThan(first.indexOf("<skelcrew"));
+  expect(first).toEndWith(
+    '\n\n<skelcrew from="app:lead" reply="sc tell lead app" asked="yes">\n<asked>\nHave web add CSV.\n</asked>\n<brief>\nAdd CSV.\n</brief>\n</skelcrew>',
+  );
+  expect(second).toBe(
+    '<skelcrew from="app:lead" reply="sc tell lead app">\n<brief>\nAlso JSON.\n</brief>\n</skelcrew>',
+  );
+  expect(told).toEqual({ lead_briefs: 1 });
 });
