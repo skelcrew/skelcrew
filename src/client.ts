@@ -150,18 +150,19 @@ export async function startOrMerge(asked: DaemonRequest): Promise<void> {
   await request(asked);
 }
 
-// Has the daemon arm or cancel a merge when ready, for sc merge, and returns what to say. The
-// thread is named by its repository and task, or by its PR's number, with `from` naming the
-// repository of the checkout sc ran in. Your own socket arms one with `seen`, what you said y to,
-// and a lead you let arm merges with `asked`, your words to it, exactly.
+// Has the daemon arm a merge, when ready or without Skelcrew's approval, or cancel one, for sc
+// merge, and returns what to say. The thread is named by its repository and task, or by its PR's
+// number, with `from` naming the repository of the checkout sc ran in. Your own socket arms one
+// with `seen`, what you said y to, and a lead you let arm merges with `asked`, your words to it,
+// exactly.
 export async function planMerge(
-  command: "merge when ready" | "merge cancel",
+  command: "merge when ready" | "merge skip review" | "merge cancel",
   which: {
     repo?: string;
     task?: string;
     pr?: number;
     from?: string;
-    seen?: { pr: number; started: number | null };
+    seen?: { pr: number; started: number | null; head?: string };
     asked?: string;
   },
 ): Promise<string> {
@@ -169,9 +170,10 @@ export async function planMerge(
   return checkReply(z.object({ said: z.string() }), reply).said;
 }
 
-// Asks the daemon which thread and PR sc merge --when-ready names, with its title, when the
-// thread started and what to say about its changes to .agents/, so it can ask you about it
-// before arming, and arm only that.
+// Asks the daemon which thread and PR sc merge names, with its title, when the thread started,
+// what it says of a merge already armed, and what to say about its changes to .agents/, so it can
+// ask you about it before arming, and arm only that. For a merge without approval, also the PR's
+// head it would pin and what the review still asks.
 export async function previewMerge(which: {
   repo?: string;
   task?: string;
@@ -185,7 +187,9 @@ export async function previewMerge(which: {
       pr: z.number().nullable(),
       title: z.string().nullable(),
       started: z.number().nullable(),
-      merging: z.boolean(),
+      merging: z.string().nullable(),
+      head: z.string().nullable(),
+      asks: z.string(),
       agents: z.string(),
     }),
     reply,
