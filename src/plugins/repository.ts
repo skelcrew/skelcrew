@@ -1,7 +1,7 @@
 // A repository's plugins: plugins: in its skelcrew.yaml, each pinned at its exact version and
 // commit in its skelcrew.lock, which you commit. sc add writes both in your checkout, and sc
 // install installs what they pin.
-import { lstatSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse, parseDocument } from "yaml";
 import { z } from "zod";
@@ -20,15 +20,7 @@ import {
   removePlugin,
   updatePlugin,
 } from "./install.ts";
-import {
-  type Lock,
-  type Locked,
-  readLockAt,
-  settleYourLock,
-  writeBoth,
-  yourLock,
-  yourPlugins,
-} from "./lock.ts";
+import { type Lock, type Locked, readLockAt, writeBoth, yourLock, yourPlugins } from "./lock.ts";
 import { commitOf, installedPlugins, readManifest } from "./plugin.ts";
 
 // What Skelcrew reads of a repository's skelcrew.yaml here: only plugins:, by the GitHub
@@ -112,8 +104,6 @@ export function addRepositoryPlugin(given: string): boolean {
   // Read first, so files that aren't valid stop the add before anything installs.
   repositoryPlugins(top);
   const db = openDb();
-  // Your lock must be in place before a plugin that isn't yours is installed.
-  settleYourLock(db);
   const installed = () => installedPlugins(db).find((plugin) => plugin.source === given);
   // The repository's plugin goes into its own files, never into your lock.
   const fresh = !installed();
@@ -160,6 +150,50 @@ export type Need = {
 // Returns how a pin reads in what is said, such as 0.1.0 at commit 4f9c2e1a7b0c.
 const pinText = (locked: Locked) => `${locked.version} at commit ${locked.commit.slice(0, 12)}`;
 
+// Returns why what the repositories Skelcrew has need can't be told, or null when it can.
+// `unreadable` are those whose files can't be read, as repositoryNeeds gives them. A repository
+// whose clone isn't there, such as one not cloned yet or removed for holding a token, counts too:
+// its files would read as naming no plugin. While either holds, sc install removes no plugin.
+export function cantTell(unreadable: string[]): string | null {
+  if (unreadable.length > 0) return `Skelcrew can't read the plugins of ${unreadable.join("; ")}`;
+  const missing = repositories(openDb()).filter((r) => !existsSync(cloneDir(r.owner, r.repo)));
+  if (missing.length > 0)
+    return `Skelcrew's clone of ${missing.map((r) => r.name).join(", ")} isn't there yet`;
+  return null;
+}
+
+// Returns where repositories' files are read: the checkout you are in, as you see it there, and
+// with `everywhere`, or outside a checkout, Skelcrew's clone of each repository it has, at its
+// default branch. Each comes with the name said for it and its remote.
+function places(everywhere: boolean): { folder: string; where: string; remote: string | null }[] {
+  const top = checkoutTop();
+  const clones = repositories(openDb()).map((r) => ({
+    folder: cloneDir(r.owner, r.repo),
+    where: r.name,
+    remote: r.remote,
+  }));
+  return [
+    ...(top !== null ? [{ folder: top, where: "This checkout", remote: originHere(top) }] : []),
+    ...(top === null || everywhere ? clones : []),
+  ];
+}
+
+// Returns every plugin the checkout you are in or any repository Skelcrew has names in its
+// skelcrew.yaml or pins in its skelcrew.lock, for sc install and sc plugins, which never remove
+// one. A pin with no line in skelcrew.yaml counts too: it is stale, but removing the plugin would
+// lose its settings and tokens. What can't be read goes into `unreadable`, as for repositoryNeeds.
+export function everyNamed(unreadable: string[]): string[] {
+  return places(true).flatMap(({ folder, where }) => {
+    try {
+      const { plugins, lock } = repositoryPlugins(folder);
+      return [...plugins, ...Object.keys(lock)];
+    } catch (error) {
+      unreadable.push(`${where}: ${errorText(error)}`);
+      return [];
+    }
+  });
+}
+
 // Returns the plugins repositories need, for sc install and sc plugins: in a checkout, those its
 // files name, as you see them there. Outside one, those of every repository Skelcrew has, from
 // Skelcrew's clone of its default branch. `everywhere` adds every repository Skelcrew has to the
@@ -169,18 +203,7 @@ const pinText = (locked: Locked) => `${locked.version} at commit ${locked.commit
 // `unreadable` is given: then what is wrong goes there, and the other repositories still count,
 // so one broken file can't hide another repository's pins.
 export function repositoryNeeds(everywhere = false, unreadable?: string[]): Need[] {
-  const db = openDb();
-  const top = checkoutTop();
-  const clones = repositories(db).map((r) => ({
-    folder: cloneDir(r.owner, r.repo),
-    where: r.name,
-    remote: r.remote,
-  }));
-  const places = [
-    ...(top !== null ? [{ folder: top, where: "This checkout", remote: originHere(top) }] : []),
-    ...(top === null || everywhere ? clones : []),
-  ];
-  const needs = places.flatMap(({ folder, where, remote }) => {
+  const needs = places(everywhere).flatMap(({ folder, where, remote }) => {
     try {
       const { plugins, lock } = repositoryPlugins(folder);
       return plugins.map((source) => ({ source, where, locked: lock[source], remote }));
@@ -191,7 +214,7 @@ export function repositoryNeeds(everywhere = false, unreadable?: string[]): Need
     }
   });
   // Every pin of each source, yours first, each with who pins it.
-  const yours = yourLock(db);
+  const yours = yourLock();
   const pins = (source: string) => {
     const mine = yourPlugins().includes(source) ? yours[source] : undefined;
     return [
@@ -222,7 +245,6 @@ export function repositoryNeeds(everywhere = false, unreadable?: string[]): Need
 export function installRepositoryPlugins(needs: Need[]): { changed: boolean; missing: boolean } {
   if (needs.length === 0) return { changed: false, missing: false };
   const db = openDb();
-  settleYourLock(db);
   let changed = false;
   // Each disagreement is said once, however many repositories share it.
   const said = new Set<string>();

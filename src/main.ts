@@ -333,11 +333,13 @@ async function pluginCommand(args: string[], json: boolean): Promise<void> {
     return;
   }
   if (command === "plugins" && rest.length === 0) {
-    const { repositoryNeeds } = await import("./plugins/repository.ts");
-    // What any repository names stays, so sc plugins doesn't say sc install removes it.
+    const { cantTell, everyNamed, repositoryNeeds } = await import("./plugins/repository.ts");
+    // What any repository names stays, so sc plugins doesn't say sc install removes it. A
+    // repository that can't be read keeps every plugin, and its row says why, rather than stop
+    // the list of all the others.
     const anywhere: string[] = [];
-    const needed = repositoryNeeds(true, anywhere).map((need) => need.source);
-    return listPlugins(json, repositoryNeeds(), anywhere.length > 0 ? null : needed);
+    const needed = everyNamed(anywhere);
+    return listPlugins(json, repositoryNeeds(false, []), cantTell(anywhere) ?? needed);
   }
   usage(command);
 }
