@@ -2868,7 +2868,7 @@ echo '{"verdict":"changes","body":"Not yet.","findings":["Handle an empty file",
 
     // The forge can merge the PR before Skelcrew finishes, such as when the daemon stopped right
     // after asking it. The poll that finds it merged still edits the record and files the issue.
-    test("a merge without approval the forge finished first still gets its record and follow-up issue", async () => {
+    test("a merge without approval the forge finished first still gets its record, and finds an issue already filed", async () => {
       const head = await changesApp12();
       const yes = await runSkelInTerminal(
         socket,
@@ -2883,8 +2883,21 @@ echo '{"verdict":"changes","body":"Not yet.","findings":["Handle an empty file",
       await until(
         () => thread().merge_waits === "the forge, which refused: Pull Request is not mergeable",
       );
-      answer(plugin, "create task", taskItem("13", "Follow-ups from #7's review"));
-      pr({ state: "merged", head, reviews: [skelReview], checks: [check(5, "passed")] });
+      // The tracker made the issue just before a stop, so Skelcrew finds it by its marker in its
+      // copy and files none.
+      const filedBefore = taskItem("13", "Follow-ups from #7's review", {
+        body: `Skelcrew's reviewer still asked for these.\n\n<!-- skelcrew:follow-ups plan=${String(thread().merge_id)} -->`,
+      });
+      const merged = prItem("7", "Add export", {
+        head,
+        state: "merged",
+        conflicts: false,
+        base: "main",
+        reviews: [skelReview],
+        comments: [],
+        checks: [check(5, "passed")],
+      });
+      changes([issue12(), filedBefore, merged]);
       await until(() => thread().status === "done");
       await until(() =>
         leadTyped().includes(
@@ -2897,7 +2910,7 @@ echo '{"verdict":"changes","body":"Not yet.","findings":["Handle an empty file",
       expect(String(edits[0]?.body)).toStartWith(
         "Merged without Skelcrew's approval, as asked by ",
       );
-      expect(asked(plugin).filter((q) => q.ask === "create task")).toHaveLength(1);
+      expect(asked(plugin).filter((q) => q.ask === "create task")).toHaveLength(0);
       expect(thread().merge_followup).toBe("13");
     }, 90_000);
 

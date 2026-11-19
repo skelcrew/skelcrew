@@ -836,7 +836,8 @@ test("a merge without approval waits on everything but the reviewer's approval",
   const failed = { ...approved, state: "failed" as const };
   const green = pr({ checks: [failed, run(1, "test", "passed")] });
   expect(skipReviewWaitsOn(changes, green)).toBeNull();
-  expect(skipReviewWaitsOn({ ...changes, reviewing: "a".repeat(40) }, green)).toBeNull();
+  // A review still running is waited for, so its findings are filed, whatever it says.
+  expect(skipReviewWaitsOn({ ...changes, reviewing: "a".repeat(40) }, green)).toBe("its review");
   // A round on its way brings a new commit, which the human never saw.
   expect(skipReviewWaitsOn({ ...changes, submitting: "Fix" }, green)).toBe(
     "its builder's new round",

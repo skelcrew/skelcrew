@@ -6,7 +6,7 @@
 import type { Database } from "bun:sqlite";
 import { createTask, editReview, forgeOf, mergePr, postReview, trackerOf } from "../plugins/ask.ts";
 import { errorText } from "../say.ts";
-import { prOf } from "./copy.ts";
+import { openTasks, prOf } from "./copy.ts";
 import { mergeStuck, mergeWaitsOn, type PullRequest, skipReviewWaitsOn } from "./decide.ts";
 import { endThread, removing } from "./events.ts";
 import { noteForLead } from "./messages.ts";
@@ -385,7 +385,8 @@ export async function finishSkippedMerge(
 // Files what Skelcrew's latest review still asked for, once its PR merged without its approval, as
 // one issue that links back to the PR, so the findings aren't lost with the thread. Returns what
 // the lead's note adds about it, such as " Its open findings are in #13.", or nothing with no
-// findings. It files once: the issue's ID is saved on the thread, and given again after that. An issue that can't be filed, such as
+// findings. It files once: the issue's ID is saved on the thread, and given again after that, and
+// an issue filed but not yet saved is found again by its marker. An issue that can't be filed, such as
 // with no tracker or a tracker that fails, is said in the note instead, so you can file it.
 async function fileFollowUps(db: Database, thread: Thread): Promise<string> {
   if (thread.merge_followup !== null) return ` Its open findings are in #${thread.merge_followup}.`;
@@ -393,10 +394,16 @@ async function fileFollowUps(db: Database, thread: Thread): Promise<string> {
   if (findings.length === 0) return "";
   const repository = repositoryOf(db, thread);
   const listed = findings.map((finding, n) => `${n + 1}. ${finding.trim()}`).join("\n");
-  const body = `Skelcrew's reviewer still asked for these when #${thread.pr} merged without its approval, as asked by ${thread.merge_by ?? "you"}:\n\n${listed}\n\nFrom #${thread.pr}.`;
+  // A hidden marker names the plan. An issue the tracker made just before the daemon stopped,
+  // with its ID not saved yet, is found by it in Skelcrew's copy, which the poll brought up to
+  // date first, so a restart never files a second one.
+  const marker = `<!-- skelcrew:follow-ups plan=${thread.merge_id} -->`;
+  const body = `Skelcrew's reviewer still asked for these when #${thread.pr} merged without its approval, as asked by ${thread.merge_by ?? "you"}:\n\n${listed}\n\nFrom #${thread.pr}.\n\n${marker}`;
   try {
     if (trackerOf(db, repository) === null) throw new Error("its repository has no tracker");
-    const issue = await createTask(db, repository, `Follow-ups from #${thread.pr}'s review`, body);
+    const issue =
+      openTasks(db, thread.owner, thread.repo).find((task) => task.body.includes(marker)) ??
+      (await createTask(db, repository, `Follow-ups from #${thread.pr}'s review`, body));
     record(
       db,
       thread.folder,
