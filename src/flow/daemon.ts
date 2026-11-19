@@ -285,11 +285,17 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
             from,
             `${to.name}'s lead couldn't start to take your brief: ${errorText(error)}. Skelcrew tries again every minute while it waits.`,
           );
-        const waits = db
-          .query(`SELECT 1 FROM notes JOIN repositories USING (owner, repo)
-            WHERE owner = ? AND repo = ? AND tab_closed = 0 LIMIT 1`)
-          .get(to.owner, to.repo);
-        if (waits) setTimeout(() => void bringBackLead(to, null), leadRetry);
+        // Asked again when the time comes, as meanwhile the lead may have started and you may
+        // have exited it, closing its tab, or its notes may have gone in.
+        const waits = () =>
+          db
+            .query(`SELECT 1 FROM notes JOIN repositories USING (owner, repo)
+              WHERE owner = ? AND repo = ? AND tab_closed = 0 LIMIT 1`)
+            .get(to.owner, to.repo) !== null;
+        if (waits())
+          setTimeout(() => {
+            if (waits()) void bringBackLead(to, null);
+          }, leadRetry);
       });
   // Returns the request limited to the calling lead's own repository. A request about another
   // repository is refused, and the error tells the lead to ask you to open that one. sc ps and

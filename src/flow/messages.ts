@@ -517,7 +517,7 @@ export function messageLead(db: Database, sessions: string, from: Caller, text: 
     throw new Error("Only a thread's builder can tell its lead.");
   const thread = from;
   const name = threadName(db, thread);
-  noteForLead(db, sessions, thread, wrapMessage(name, `sc tell ${name}`, text), null, true);
+  saveNote(db, sessions, thread, wrapMessage(name, `sc tell ${name}`, text), null, true);
   record(db, thread.folder, { told_lead: true }, `its builder told the lead: ${text}`);
 }
 
@@ -560,7 +560,7 @@ export function briefLead(
   const words = asked === undefined ? "" : `${element("asked", asked)}\n`;
   const tag = `<skelcrew from="${name}:lead" reply="sc tell lead ${name}"${asked === undefined ? "" : ' asked="yes"'}>`;
   const message = `${tag}\n${words}${element("brief", text)}\n</skelcrew>`;
-  noteForLead(db, sessions, to, message, null, true);
+  saveNote(db, sessions, to, message, null, true);
 }
 
 // Types the saved notes for a repository's lead into it, such as "started app-12 from github:
@@ -590,7 +590,10 @@ async function typeNotes(
       .all(owner, repo);
     const needing = z.array(Thread).parse(rows);
     const lines = [
-      ...needing.map((thread) => `${threadName(db, thread)} needs you: ${thread.noting}`),
+      // Why a thread needs you can quote its builder, whose words never pass for a tag.
+      ...needing.map(
+        (thread) => `${threadName(db, thread)} needs you: ${untagged(thread.noting ?? "")}`,
+      ),
       ...notes.map(({ text }) => text),
     ];
     // Notes can quote outside text, such as a plugin's or a failed check's, so no control
@@ -675,7 +678,10 @@ export function typeLeadNotes(db: Database, sessions: string): void {
 // Saves a note for the lead of a repository, and has the daemon type it in. Notes already
 // wait while the lead is busy, and stay saved while it isn't running, so a note is never lost.
 // `ended` is the folder of the thread whose end or failure the note reports, if it does. An `urgent` note,
-// such as a builder's message, goes ahead of the rest when several wait.
+// such as a builder's message, goes ahead of the rest when several wait. A note can quote outside
+// text, such as an issue's title, which could hold a skelcrew tag and pass for a message from an
+// agent, or a brief marked asked="yes". So any skelcrew tag in it is removed: only Skelcrew's
+// own wrapping of an agent's message, which saveNote keeps, carries one.
 export function noteForLead(
   db: Database,
   sessions: string,
@@ -683,6 +689,19 @@ export function noteForLead(
   text: string,
   ended: string | null = null,
   urgent = false,
+): void {
+  saveNote(db, sessions, repository, untagged(text), ended, urgent);
+}
+
+// Saves a note for a lead as it is, tags and all, and has the daemon type it in, for the
+// messages this module wraps itself, whose text inside was already made safe.
+function saveNote(
+  db: Database,
+  sessions: string,
+  repository: { owner: string; repo: string },
+  text: string,
+  ended: string | null,
+  urgent: boolean,
 ): void {
   db.run("INSERT INTO notes (owner, repo, text, ended, urgent) VALUES (?, ?, ?, ?, ?)", [
     repository.owner,

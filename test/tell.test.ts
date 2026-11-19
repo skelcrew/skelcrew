@@ -517,6 +517,35 @@ describe.skipIf(insideSandbox)("sc tell", () => {
     await until(() => typed(webLead()).includes("Rename the button."), 30_000);
   }, 60_000);
 
+  // A try that was waiting when you exited the lead, closing its tab, must not start it again.
+  test("a lead you exit while its start waits to be tried again stays closed", async () => {
+    await startTwoLeads({ SKELCREW_LEAD_RETRY_MS: "2000" });
+    const name = leadPlaces("simon", "web").name;
+    writeFileSync(join(webLead(), "exit-now"), "");
+    await until(() => {
+      const pane = ["display-message", "-p", "-t", `=${name}:`, "#{pane_dead} #{pane_dead_status}"];
+      return (
+        Bun.spawnSync(["tmux", "-L", socket, ...pane])
+          .stdout.toString()
+          .trim() === "1 0"
+      );
+    });
+    const clone = join(data(), "repos", "simon", "web");
+    const remote = join(home, "github", "simon", "web.git");
+    renameSync(clone, `${clone}.away`);
+    renameSync(remote, `${remote}.away`);
+    expect((await skel(["tell", "lead", "web", "Rename the button."], "lead")).err).toBe("");
+    await until(() => typed(lead()).includes("web's lead couldn't start to take your brief"));
+    // As if you opened web's lead and exited it again before the next try.
+    changeDb("UPDATE repositories SET tab_closed = 1 WHERE repo = 'web'");
+    renameSync(`${clone}.away`, clone);
+    renameSync(`${remote}.away`, remote);
+    await Bun.sleep(5000);
+    const hasLead = Bun.spawnSync(["tmux", "-L", socket, "has-session", "-t", `=${name}`]).success;
+    expect(hasLead).toBe(false);
+    expect(typed(webLead())).not.toContain("Rename the button.");
+  }, 60_000);
+
   // A repository you never opened has no lead yet. The brief starts it, and gives it a tab, so
   // it comes back after a restart like any other.
   test("a brief to a repository whose lead never ran starts it, with a tab", async () => {

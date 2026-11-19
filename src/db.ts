@@ -365,6 +365,7 @@ function prepareTables(db: Database): void {
   // .agents/ you haven't approved that the lead was told of, or `none` for one removed, so it is
   // told once. `lead_flows` is whether the lead knows of flows, from the instructions it started
   // with or a note, so a lead already running when Skelcrew learned of them is told once.
+  // `lead_briefs` is the same for briefing another repository's lead.
   const repositoryColumns = {
     open_issues: "INTEGER NOT NULL DEFAULT 0",
     open_prs: "INTEGER NOT NULL DEFAULT 0",
@@ -380,6 +381,7 @@ function prepareTables(db: Database): void {
     lead_state: "TEXT",
     agents_noted: "TEXT",
     lead_flows: "INTEGER NOT NULL DEFAULT 0",
+    lead_briefs: "INTEGER NOT NULL DEFAULT 0",
   };
   // SQLite has no ADD COLUMN IF NOT EXISTS, so each column is looked up first.
   for (const [column, type] of Object.entries(repositoryColumns))
