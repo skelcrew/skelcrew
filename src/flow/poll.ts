@@ -56,7 +56,7 @@ const startLabel = "skelcrew";
 // it is asked for, until its outcome is known. A claim whose ask failed, or that the engine's
 // stop cut short, may have been granted to this machine, so when the tracker then says the issue
 // is taken, Skelcrew can't tell by whom: it starts nothing, so no task starts twice, and tells
-// the lead, so none is lost without a word.
+// the lead, so none is lost without a word. So does one whose label is gone since.
 async function startLabeled(
   db: Database,
   sessions: string,
@@ -96,6 +96,26 @@ async function startLabeled(
   );
   const claimWhere = "WHERE owner = ? AND repo = ? AND task = ?";
   const forget = (id: string) => db.run(`DELETE FROM claims ${claimWhere}`, [owner, repo, id]);
+  // A claim saved for a task with no thread that its label no longer asks to start, such as one
+  // whose label was removed or whose issue was closed, was cut short by the engine's stop. It may
+  // be this machine's, so the lead hears of it, and Skelcrew doesn't ask the tracker again, as
+  // that would claim an issue nobody asks for now. The claim is forgotten as the note is saved.
+  const asked = new Set(toStart.map((task) => task.id));
+  const stranded = db
+    .query(`SELECT task FROM claims c WHERE owner = ? AND repo = ? AND NOT EXISTS (SELECT 1
+      FROM threads t WHERE t.owner = c.owner AND t.repo = c.repo AND CAST(t.task AS TEXT) = c.task)`)
+    .all(owner, repo)
+    .map((row) => z.object({ task: z.string() }).parse(row).task)
+    .filter((id) => !asked.has(id) && !starting.has(`${fullName}#${id}`));
+  for (const id of stranded) {
+    const name = `${repository.name}-${id}`;
+    const note = `${name}'s claim was cut short, and its issue no longer asks Skelcrew to start it, so Skelcrew can't tell if this machine holds it. To start it, sc start ${name}.`;
+    console.log(note);
+    db.transaction(() => {
+      forget(id);
+      noteForLead(db, sessions, { owner, repo }, note);
+    })();
+  }
   for (const task of toStart) {
     const key = `${fullName}#${task.id}`;
     // Whether an earlier ask for this claim has no known outcome.

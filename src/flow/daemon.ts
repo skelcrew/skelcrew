@@ -634,7 +634,11 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
             (error) =>
               ` Skelcrew couldn't claim its issue yet, and tries again before it starts: ${errorText(error)}`,
           );
-          assignIssue(db, thread, false);
+          // sc rm may have taken the task out of the queue while the tracker answered, and
+          // taken you off its issue: assigning you now would put you back on a task nobody runs.
+          const now = readThread(db, thread.folder);
+          if (now.status === "queued" && now.started === thread.started)
+            assignIssue(db, thread, false);
           return { started: `${queuedText(db, thread)}${owed}` };
         }
         // Not waited on: an agent's command must answer quickly, and setup can take minutes.

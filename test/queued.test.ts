@@ -442,3 +442,38 @@ openDb().exec(${JSON.stringify(later)});`;
   await until(() => statuses()["app-12"] === "failed");
   expect(leftQueue("app-12")[0] ?? 0).toBeGreaterThanOrEqual(endedAt("app-13"));
 }, 60_000);
+
+test("sc rm while a queued sc start waits for its claim leaves the issue unassigned", async () => {
+  addApp();
+  await serveApp();
+  // The tracker takes its time to answer the claim, and sc rm comes in meanwhile.
+  const hold = join(plugin, "hold-took");
+  writeFileSync(hold, "");
+  const starting = sc("start", "app-12");
+  await until(() => asked(plugin).some((q) => q.ask === "took"));
+  expect(await sc("rm", "app-12")).toContain("Removed app-12");
+  rmSync(hold);
+  expect(await starting).toContain("app-12 is queued");
+  // sc start's work with the tracker comes after its answer, so a few polls give it time.
+  const polls = () => asked(plugin).filter((q) => q.ask === "changed").length;
+  const before = polls();
+  await until(() => polls() >= before + 3);
+  expect(asked(plugin).filter((q) => q.ask === "assign" && q.on === true)).toHaveLength(0);
+  expect(statuses()["app-12"]).toBe("done");
+}, 60_000);
+
+test("a claim the engine's stop cut short is told to the lead, though its label was removed meanwhile", async () => {
+  addApp();
+  // The engine stopped after asking to claim issue 12 from its label, before it recorded the
+  // task. Before the restart, someone took the label off.
+  const cut = `import { openDb } from ${JSON.stringify(source("db.ts"))};
+openDb().run("INSERT INTO claims (owner, repo, task) VALUES ('simon', 'app', '12')");`;
+  Bun.spawnSync([process.execPath, "-e", cut], { env: env() });
+  await serveApp();
+  await until(() => leadHears().includes("app-12's claim was cut short"));
+  expect(leadHears()).toContain("sc start app-12");
+  expect(claimsSaved()).toBe(0);
+  expect(statuses()).toEqual({ "app-11": "working" });
+  // Nothing claims the issue now that nobody asks for it.
+  expect(asked(plugin).filter((q) => q.ask === "took")).toHaveLength(0);
+}, 60_000);
