@@ -21,6 +21,7 @@ import { machineCode } from "../db.ts";
 import { flowRoles } from "../flows.ts";
 import { cloneDir, threadSocket } from "../paths.ts";
 import { trackerOf } from "../plugins/ask.ts";
+import { needsInstall } from "../plugins/repository.ts";
 import { type Host, hostNamed } from "../plugins/runtime.ts";
 import { repositoryRole } from "../roles.ts";
 import { quietly } from "../run.ts";
@@ -124,6 +125,12 @@ async function recordThread(
   const agents = approvedAgents({ owner, repo });
   const flow = given.flow ?? "default";
   checkFlow({ owner, repo, agents }, name, flow);
+  // A plugin the repository's files name that this machine lacks, such as its forge, would leave
+  // the task without it. Only you can install one, at your terminal, so the start waits for you.
+  if (needsInstall(cloneDir(owner, repo)))
+    throw new Error(
+      `${name}'s plugins aren't all installed here, so its tasks can't start. Run sc install in your own terminal, then start it again.`,
+    );
   const where = "WHERE owner = ? AND repo = ? AND task = ?";
   let task: string;
   let title: string;

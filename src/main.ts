@@ -414,9 +414,11 @@ async function agentCommand(args: string[]): Promise<void> {
   usage(command);
 }
 
-// Prints the threads, or one repository's, for sc ps.
+// Prints the threads, or one repository's, for sc ps. Below them goes a line for each repository
+// that needs you to run sc install, as its tasks can't start until then. --json gives the threads
+// alone, as tools read them.
 async function psCommand(args: string[], json: boolean): Promise<void> {
-  const { askForThreads } = await import("./client.ts");
+  const { askForRepositories, askForThreads } = await import("./client.ts");
   const { printThreads } = await import("./flow/list.ts");
   // Done threads pile up forever and would bury the live ones, so only --all shows them.
   const all = args.includes("--all");
@@ -425,6 +427,14 @@ async function psCommand(args: string[], json: boolean): Promise<void> {
   if (rest.length > 2) usage("ps");
   const rows = await askForThreads(rest[1]);
   printThreads(all ? rows : rows.filter((row) => row.status !== "done"), json);
+  if (json) return;
+  const waiting = (await askForRepositories()).filter(
+    (r) => r.installWaiting && (rest[1] === undefined || [r.name, r.repository].includes(rest[1])),
+  );
+  for (const r of waiting)
+    console.log(
+      `${r.name} needs you: its plugins aren't all installed here, so its tasks wait. Run sc install.`,
+    );
 }
 
 // Prints the tasks, or one repository's, for sc ls and its short name sc issue ls. Merged and

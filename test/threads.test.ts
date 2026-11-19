@@ -341,6 +341,23 @@ test("sc start refuses a repository Skelcrew doesn't have, and a task its tracke
   expect(existsSync(join(data(), "threads", "app-99"))).toBe(false);
 });
 
+// Only you can install a plugin, at your terminal, so a task waits for you rather than start
+// without one its repository names, such as its forge.
+test("a repository whose plugins aren't all installed starts no task, and sc ps says to run sc install", async () => {
+  addApp({ "skelcrew.yaml": "plugins: [simon/skelcrew-other]\n" });
+  serve();
+  await untilCloned();
+  const start = await skel("start", "app", "Fix typo", "In the README");
+  expect(start.err).toBe(
+    "Skelcrew: app's plugins aren't all installed here, so its tasks can't start. Run sc install in your own terminal, then start it again.\n",
+  );
+  expect(flows()).toEqual([]);
+  expect((await skel("ps")).out).toContain(
+    "app needs you: its plugins aren't all installed here, so its tasks wait. Run sc install.\n",
+  );
+  expect((await skel("ps", "--json")).out).toBe("[]\n");
+});
+
 // Puts simon/app on the fake GitHub with a flow file of its own, quick, and tells Skelcrew about
 // it. Returns a checkout to push more from.
 function addFlows(): string {
