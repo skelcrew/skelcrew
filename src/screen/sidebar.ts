@@ -5,6 +5,7 @@
 // strip, tells the footer what to say under an agent, and switches tabs.
 import {
   attachCommand,
+  attachThen,
   exitedCleanly,
   listSessions,
   listTmuxSessions,
@@ -99,8 +100,7 @@ export async function runSidebar(
   const paneOn = (first: string): string[] => {
     if (leadAttach === null) return attachCommand(agents, first, open.lead);
     if (first === open.lead) return ["sh", "-c", leadLine()];
-    const client = 'unset TMUX; tmux -L "$1" -f /dev/null attach -t "=$2"';
-    return ["sh", "-c", `${client}; ${leadLine()}`, "sh", agents, first];
+    return attachThen(agents, first, leadLine());
   };
   // The agents running on a plugin's host, builders by their thread's folder and the open lead by
   // its name, with the line that attaches to each, as the last look at the hosts found them. The look runs in the background, one at a
