@@ -368,6 +368,10 @@ Skelcrew no longer supports Sprites itself. These are for the Sprite machine plu
 - **`set -t =name` fails with "no such session".** An option's target takes `=name:`.
 - **Every `set` redraws the whole screen.** About 3.9 KB on a 120 by 40 terminal, so set a
   status line only when it changed, and all its lines in one run.
+- **A pane in copy mode looks up keys only in copy mode's table.** Keys bound with `bind -n`
+  never fire there. With a catch-all `Any` binding that leaves copy mode, the detach key left
+  copy mode instead, and reached the agent: Alt-Q as Esc, which stopped its turn. You only
+  had to scroll an agent back. Bind the detach key in the `copy-mode` table too.
 - **Ctrl-Q is XON, and is not eaten.** A tty has `ixon` on until tmux makes it raw, and the key
   reached tmux locally, through `ssh -t` and through `sprite exec --tty`.
 - **`sprite exec` prints the command it runs.** A test that waits for text in the output

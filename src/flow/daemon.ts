@@ -8,6 +8,8 @@ import { dirname } from "node:path";
 import { z } from "zod";
 import {
   agentRuns,
+  endExitedSession,
+  exitedCleanly,
   interruptSession,
   processTree,
   readSession,
@@ -41,7 +43,14 @@ import { closeExitedLeads, lastOpened, leadOf, openedRepositories, startLead } f
 import { restoreLimits, wakeAfterLimit } from "./limits.ts";
 import { listRepositories, listTasks, listThreads, showTask } from "./list.ts";
 import { armMerge, cancelMerge, refuseWithoutForge, threadToMerge } from "./merging.ts";
-import { deliverAllWaiting, messageBuilder, messageLead, typeLeadNotes } from "./messages.ts";
+import {
+  briefLead,
+  deliverAllWaiting,
+  messageBuilder,
+  messageLead,
+  noteForLead,
+  typeLeadNotes,
+} from "./messages.ts";
 import { pollRepositories } from "./poll.ts";
 import {
   findRepository,
@@ -49,6 +58,7 @@ import {
   hasNoCommits,
   noRepositories,
   refreshClones,
+  repositories,
   repositoryAt,
 } from "./repo.ts";
 import { allowed, type Caller, DaemonRequest, parseJson } from "./requests.ts";
@@ -138,6 +148,14 @@ const stopWait = z.coerce
   .min(0)
   .catch(5000)
   .parse(process.env.SKELCREW_STOP_WAIT_MS ?? 5000);
+
+// How long to wait before trying again to start a lead a brief waits for, in milliseconds. Tests
+// set SKELCREW_LEAD_RETRY_MS shorter, so they don't each wait a minute.
+const leadRetry = z.coerce
+  .number()
+  .min(0)
+  .catch(60_000)
+  .parse(process.env.SKELCREW_LEAD_RETRY_MS ?? 60_000);
 
 // Ends the daemon on a signal: removes its sockets, ends the processes it started, and exits.
 // The agents' sessions aren't the daemon's processes, so agents keep working while the
@@ -245,6 +263,40 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       });
     return leadStarts;
   };
+  // Starts a repository's lead, then types its notes in, such as a brief another lead sent it.
+  // A lead that can't start, such as one whose clone is missing for now, would leave its notes
+  // waiting with nobody told. So `from`, the lead that sent a brief, if one did, hears why, once,
+  // and the start is tried again every minute while a note still waits for that lead and its tab
+  // stays open, here and after the daemon starts again. A tab you close by exiting the lead ends
+  // the tries, as that lead's notes then wait until you open it. Returns once the first try is
+  // over, whichever way it went.
+  const bringBackLead = (
+    to: Repository,
+    from: { owner: string; repo: string } | null,
+  ): Promise<void> =>
+    ensureLead(to)
+      .then(() => typeLeadNotes(db, sessions))
+      .catch((error) => {
+        console.log(`couldn't start ${to.name}'s lead: ${errorText(error)}`);
+        if (from)
+          noteForLead(
+            db,
+            sessions,
+            from,
+            `${to.name}'s lead couldn't start to take your brief: ${errorText(error)}. Skelcrew tries again every minute while it waits.`,
+          );
+        // Asked again when the time comes, as meanwhile the lead may have started and you may
+        // have exited it, closing its tab, or its notes may have gone in.
+        const waits = () =>
+          db
+            .query(`SELECT 1 FROM notes JOIN repositories USING (owner, repo)
+              WHERE owner = ? AND repo = ? AND tab_closed = 0 LIMIT 1`)
+            .get(to.owner, to.repo) !== null;
+        if (waits())
+          setTimeout(() => {
+            if (waits()) void bringBackLead(to, null);
+          }, leadRetry);
+      });
   // Returns the request limited to the calling lead's own repository. A request about another
   // repository is refused, and the error tells the lead to ask you to open that one. sc ps and
   // sc ls with no repository mean every repository, which for a lead is its own, and sc pr show,
@@ -507,6 +559,43 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       case "tell lead":
         messageLead(db, sessions, caller, request.text);
         return { told: "lead" };
+      case "brief lead": {
+        // Only you bring a repository in, in your own terminal, so the lead is told how to ask.
+        const to = repositories(db).find((r) => r.name === request.to || fullNameIs(r, request.to));
+        if (!to)
+          throw new Error(
+            `${request.to} isn't in Skelcrew. Ask the human to add it in their own terminal, with sc repo add <owner/repo>.`,
+          );
+        // The lead is brought back if you closed its tab by exiting it, or started if it never
+        // ran, as opening the repository does, so the brief reaches it. A lead you exited this
+        // second leaves its ended session behind, which would be kept, and a look for exited
+        // leads would close its tab again with the brief waiting. So that session goes first,
+        // with its tab closed, as such a look would leave it. Then saving the brief and opening
+        // the tab are one change. Nothing waits between the steps, and a daemon stopped after
+        // any of them finds things as one of its own looks would: the lead closed with no brief,
+        // or open with its brief, which its start brings back and types in. A repository never
+        // opened gets its first time, or its lead would have no tab. One opened before keeps its
+        // time, so plain sc still opens the one you opened last.
+        const { name } = leadOf(db, to.owner, to.repo);
+        if (exitedCleanly(sessions, name)) {
+          db.run("UPDATE repositories SET tab_closed = 1 WHERE owner = ? AND repo = ?", [
+            to.owner,
+            to.repo,
+          ]);
+          endExitedSession(sessions, name);
+        }
+        db.transaction(() => {
+          briefLead(db, sessions, caller, to, request.text, request.asked);
+          db.run(
+            "UPDATE repositories SET opened = COALESCE(opened, ?), tab_closed = 0 WHERE owner = ? AND repo = ?",
+            [Date.now(), to.owner, to.repo],
+          );
+        })();
+        // Starting the lead isn't waited on, as an agent's command answers at once. Its notes go
+        // in once it runs.
+        void bringBackLead(to, leadOfCaller(caller));
+        return { briefed: to.name };
+      }
       case "submit": {
         const thread = callingThread(caller);
         submitRound(db, sessions, thread.folder, request.summary);
@@ -716,9 +805,9 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   await open(path, "you");
   console.log(`Listening on ${path}.`);
   // Bring back the lead of each repository you have opened. One that fails is logged, and the
-  // rest still start.
-  for (const repository of openedRepositories(db))
-    await ensureLead(repository).catch((error) => console.log(errorText(error)));
+  // rest still start. One that fails while notes wait for it, such as a brief, is tried again
+  // every minute, so the notes go in once whatever stopped it clears.
+  for (const repository of openedRepositories(db)) await bringBackLead(repository, null);
   // A lead keeps its clone current as it starts, and a repository with no lead needs it too.
   refreshClones(db).catch((error) => console.log(errorText(error)));
   // Notes the daemon's stop kept from the leads.
