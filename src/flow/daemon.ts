@@ -48,6 +48,7 @@ import {
   deliverAllWaiting,
   messageBuilder,
   messageLead,
+  noteForLead,
   typeLeadNotes,
 } from "./messages.ts";
 import { pollRepositories } from "./poll.ts";
@@ -147,6 +148,14 @@ const stopWait = z.coerce
   .min(0)
   .catch(5000)
   .parse(process.env.SKELCREW_STOP_WAIT_MS ?? 5000);
+
+// How long to wait before trying again to start a lead a brief waits for, in milliseconds. Tests
+// set SKELCREW_LEAD_RETRY_MS shorter, so they don't each wait a minute.
+const leadRetry = z.coerce
+  .number()
+  .min(0)
+  .catch(60_000)
+  .parse(process.env.SKELCREW_LEAD_RETRY_MS ?? 60_000);
 
 // Ends the daemon on a signal: removes its sockets, ends the processes it started, and exits.
 // The agents' sessions aren't the daemon's processes, so agents keep working while the
@@ -253,6 +262,34 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         await startLead(db, sessions, repository);
       });
     return leadStarts;
+  };
+  // Starts the lead a brief waits for, then types its notes in. A lead that can't start, such
+  // as one whose clone is missing for now, would leave the brief waiting with nobody told. So the
+  // sending lead hears why, once, and the start is tried again every minute while a note still
+  // waits for that lead and its tab stays open. A tab you close by exiting the lead ends the
+  // tries, as that lead's notes then wait until you open it.
+  const bringBackForBrief = (
+    to: Repository,
+    from: { owner: string; repo: string },
+    told = false,
+  ) => {
+    ensureLead(to)
+      .then(() => typeLeadNotes(db, sessions))
+      .catch((error) => {
+        console.log(`couldn't start ${to.name}'s lead: ${errorText(error)}`);
+        if (!told)
+          noteForLead(
+            db,
+            sessions,
+            from,
+            `${to.name}'s lead couldn't start to take your brief: ${errorText(error)}. Skelcrew tries again every minute while it waits.`,
+          );
+        const waits = db
+          .query(`SELECT 1 FROM notes JOIN repositories USING (owner, repo)
+            WHERE owner = ? AND repo = ? AND tab_closed = 0 LIMIT 1`)
+          .get(to.owner, to.repo);
+        if (waits) setTimeout(() => bringBackForBrief(to, from, true), leadRetry);
+      });
   };
   // Returns the request limited to the calling lead's own repository. A request about another
   // repository is refused, and the error tells the lead to ask you to open that one. sc ps and
@@ -548,9 +585,8 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         })();
         // Starting the lead isn't waited on, as an agent's command answers at once. Its notes go
         // in once it runs.
-        ensureLead(to)
-          .then(() => typeLeadNotes(db, sessions))
-          .catch((error) => console.log(`couldn't start ${to.name}'s lead: ${errorText(error)}`));
+        const from = leadOfCaller(caller);
+        if (from) bringBackForBrief(to, from);
         return { briefed: to.name };
       }
       case "submit": {

@@ -128,7 +128,8 @@ afterEach(async () => {
 const env = () => homeEnv(home);
 
 // Runs this test's daemon, which the test's clean-up stops.
-const serve = () => startDaemon(socket, env(), running);
+const serve = (more: Record<string, string> = {}) =>
+  startDaemon(socket, { ...env(), ...more }, running);
 
 // The sockets the daemon opens for a repository's lead and for app-12's builder, which tell
 // it who calls. Each is named by a short hash.
@@ -221,10 +222,10 @@ const typed = (agent: string) => read(join(agent, "typed"));
 const webLead = () => join(data(), "claude", leadPlaces("simon", "web").name);
 
 // Starts the daemon with app and web, and opens both, as plain sc in a checkout of each does.
-async function startTwoLeads() {
+async function startTwoLeads(more: Record<string, string> = {}) {
   addApp();
   addApp("web");
-  serve();
+  serve(more);
   await until(() => existsSync(join(data(), "repos", "simon", "web", "README")));
   expect(await open("app")).toContain(leadPlaces("simon", "app").name);
   expect(await open("web")).toContain(leadPlaces("simon", "web").name);
@@ -480,6 +481,35 @@ describe.skipIf(insideSandbox)("sc tell", () => {
     serve();
     await until(() => typed(webLead()).includes("Rename the button."), 30_000);
     expect(hasLead()).toBe(true);
+  }, 60_000);
+
+  // A lead that can't start for now, such as while its clone is missing, would leave the brief
+  // waiting with nobody told. The sending lead hears why, once, and the lead is tried again
+  // until it starts and the brief goes in, with no restart.
+  test("a brief whose lead can't start yet tells the sender, and goes in once it can", async () => {
+    await startTwoLeads({ SKELCREW_LEAD_RETRY_MS: "1000" });
+    const name = leadPlaces("simon", "web").name;
+    writeFileSync(join(webLead(), "exit-now"), "");
+    await until(() => {
+      const pane = ["display-message", "-p", "-t", `=${name}:`, "#{pane_dead} #{pane_dead_status}"];
+      return (
+        Bun.spawnSync(["tmux", "-L", socket, ...pane])
+          .stdout.toString()
+          .trim() === "1 0"
+      );
+    });
+    const clone = join(data(), "repos", "simon", "web");
+    const remote = join(home, "github", "simon", "web.git");
+    renameSync(clone, `${clone}.away`);
+    renameSync(remote, `${remote}.away`);
+    expect((await skel(["tell", "lead", "web", "Rename the button."], "lead")).err).toBe("");
+    await until(() => typed(lead()).includes("web's lead couldn't start to take your brief"));
+    // Several tries fail meanwhile, and the sender hears it once.
+    await Bun.sleep(3000);
+    expect(typed(lead()).split("couldn't start to take your brief")).toHaveLength(2);
+    renameSync(`${clone}.away`, clone);
+    renameSync(`${remote}.away`, remote);
+    await until(() => typed(webLead()).includes("Rename the button."), 30_000);
   }, 60_000);
 
   // A repository you never opened has no lead yet. The brief starts it, and gives it a tab, so
