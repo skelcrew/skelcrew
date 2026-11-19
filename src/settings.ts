@@ -66,6 +66,18 @@ const File = z.looseObject({
   plugins: z.array(z.string()).optional(),
   // The host new sessions start on: tmux, built in, or a runtime plugin by its name.
   session: z.string().min(1).optional(),
+  // The key that leaves an agent for the list, written as keys: { detach: ctrl+q }: Ctrl or
+  // Alt with a letter. Ctrl with h, i, j or m is the same byte as Backspace, Tab or Enter, which
+  // you could then no longer type into an agent.
+  keys: z
+    .looseObject({
+      detach: z
+        .string()
+        .regex(/^(ctrl|alt)\+[a-z]$/, "write it as ctrl+ or alt+ and a letter, such as ctrl+q")
+        .refine((key) => !/^ctrl\+[hijm]$/.test(key), "is Backspace, Tab or Enter to a terminal")
+        .optional(),
+    })
+    .optional(),
 });
 type File = z.infer<typeof File>;
 type Key = keyof typeof File.shape;
@@ -86,7 +98,7 @@ export type Role = { harness: HarnessName; model?: string };
 // `declined` the repositories never offered the GitHub plugin again. `plugins` are your personal
 // plugins. `host` is where new sessions start: tmux, or the name of a runtime plugin that provides
 // sessions. `leadArms` is whether the lead may arm a merge when ready when you ask it to, off
-// unless you turn it on.
+// unless you turn it on. `detach` is the key that leaves an agent for the list, such as ctrl+q.
 export type Settings = {
   lead: Role;
   builder: Role;
@@ -105,6 +117,7 @@ export type Settings = {
   plugins: string[];
   host: string;
   leadArms: boolean;
+  detach: string;
 };
 type Group = keyof Settings;
 
@@ -128,11 +141,12 @@ const keysOf: Record<Group, Key[]> = {
   plugins: ["plugins"],
   host: ["session"],
   leadArms: ["may_arm_merges"],
+  detach: ["keys"],
 };
 
 // What each file may set. Your harness, model, limits, the reviewer's fallback, a review's time,
-// the repositories you declined the GitHub plugin for, your personal plugins and the session host
-// fit you, your account and your machine, so a repository can't set them. Letting the lead arm merges grants an agent
+// the repositories you declined the GitHub plugin for, your personal plugins, the session host and
+// your keys fit you, your account and your machine, so a repository can't set them. Letting the lead arm merges grants an agent
 // what is yours, so only you can, never a repository. The tracker belongs to the repository, so your
 // config doesn't. Setup and test can come from either: yours stand in for a repository you
 // don't want to commit a skelcrew.yaml to.
@@ -151,6 +165,7 @@ const yourKeys: Key[] = [
   "plugins",
   "session",
   "may_arm_merges",
+  "keys",
 ];
 const repositoryKeys: Key[] = ["max_rounds", "setup", "test", "tracker"];
 // What an override under repos: may set, besides the harness and model of its roles, which
@@ -594,5 +609,6 @@ function mergeSettings(layers: File[], roles: Partial<Record<RoleName, Role>>): 
     plugins: first((l) => l.plugins) ?? [],
     host: first((l) => l.session) ?? "tmux",
     leadArms: first((l) => l.may_arm_merges) ?? false,
+    detach: first((l) => l.keys?.detach) ?? "ctrl+q",
   };
 }

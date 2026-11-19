@@ -38,7 +38,7 @@ function settings(yours: string, shared: string | null): void {
 // Runs code against config.ts in a process of its own, as homedir() keeps the HOME this one
 // started with, and returns what it printed and the error it ended with, if any.
 function run(code: string): { out: string; err: string } {
-  const script = `import { agentRole, checkLimit, leadMayArmMerges, repositoryCommands, reviewConfig, reviewLimit, roundLimit, sessionHost } from ${JSON.stringify(source("config.ts"))};
+  const script = `import { agentRole, checkLimit, detachKey, leadMayArmMerges, repositoryCommands, reviewConfig, reviewLimit, roundLimit, sessionHost } from ${JSON.stringify(source("config.ts"))};
 const app = { owner: "simon", repo: "app" };
 ${code}`;
   const done = Bun.spawnSync([process.execPath, "-e", script], {
@@ -198,6 +198,21 @@ test("the session host comes from your config only, else tmux", () => {
   expect(host()).toBe("herdr\n");
   settings("harness: claude\n", "session: rex\n");
   expect(host()).toBe("tmux\n");
+});
+
+test("the key that leaves an agent comes from your config only, else ctrl+q", () => {
+  const key = () => run("console.log(detachKey());");
+  settings("harness: claude\n", null);
+  expect(key().out).toBe("ctrl+q\n");
+  settings("harness: claude\nkeys: { detach: alt+x }\n", "keys: { detach: ctrl+y }\n");
+  expect(key().out).toBe("alt+x\n");
+  settings("harness: claude\n", "keys: { detach: ctrl+y }\n");
+  expect(key().out).toBe("ctrl+q\n");
+  // A key that isn't Ctrl or Alt with a letter, or that is Enter to a terminal, is refused.
+  settings("harness: claude\nkeys: { detach: f12 }\n", null);
+  expect(key().err).toContain("such as ctrl+q");
+  settings("harness: claude\nkeys: { detach: ctrl+m }\n", null);
+  expect(key().err).toContain("Backspace, Tab or Enter");
 });
 
 test("how many reviews run at once comes from your config only, else a quarter of the cores", () => {
