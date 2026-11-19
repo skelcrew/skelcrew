@@ -346,6 +346,25 @@ keepState(db, { owner: "simon", repo: "app" }, "idle");`);
   ]);
 });
 
+test("removing a repository refuses while its lead's host plugin isn't installed, and keeps it", () => {
+  const said = runWithFakeHost(
+    "sessions",
+    `const { removeRepo } = await import(${JSON.stringify(source("flow/repo.ts"))});
+const { cloneDir } = await import(${JSON.stringify(source("paths.ts"))});
+const fs = require("node:fs");
+db.run("INSERT INTO repositories (name, owner, repo, remote, lead_host, lead_host_id) VALUES ('app', 'simon', 'app', '', 'gone', 'gone-1')");
+db.run("DELETE FROM threads");
+fs.mkdirSync(cloneDir("simon", "app"), { recursive: true });
+console.log(await removeRepo("app", "unused").then(() => "removed", (error) => error.message));
+const row = db.query("SELECT tab_closed FROM repositories WHERE repo = 'app'").get();
+console.log(fs.existsSync(cloneDir("simon", "app")), row.tab_closed);`,
+    {},
+  );
+  expect(said).toBe(
+    "app's lead runs on gone, which isn't installed now, so it can't be ended. Install gone again, then remove app.\ntrue 0\n",
+  );
+});
+
 test("removing a repository ends its lead on a plugin's host, found by its labels", () => {
   const fake = join(home, ".config", "skelcrew", "plugins", "fake");
   const said = runWithFakeHost(

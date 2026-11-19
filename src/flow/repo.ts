@@ -682,6 +682,14 @@ export async function removeRepo(name: string, sessions: string): Promise<void> 
   // stopped before saving it.
   const fullName = `${found.owner}/${found.repo}`;
   const lead = await leadSession(db, sessions, found.owner, found.repo);
+  // A lead on a plugin no longer installed may still run there, using the clone, and removing
+  // the repository would forget how to reach it. So it waits until that host is back.
+  if (lead === null) {
+    const { host } = leadOf(db, found.owner, found.repo);
+    throw new Error(
+      `${name}'s lead runs on ${host}, which isn't installed now, so it can't be ended. Install ${host} again, then remove ${name}.`,
+    );
+  }
   // Its tab closes first, so an open screen moves on at once. A screen that found the lead
   // gone while its tab was still there would take it for a crash and ask for it back.
   db.run("UPDATE repositories SET tab_closed = 1 WHERE owner = ? AND repo = ?", [
@@ -689,10 +697,7 @@ export async function removeRepo(name: string, sessions: string): Promise<void> 
     found.repo,
   ]);
   // Ended as a thread's builder is, and waited for, as the lead reads the clone removed next.
-  // A lead on a plugin no longer installed is out of reach, and is left where it runs.
-  if (lead === null)
-    console.log(`${fullName}'s lead runs on a plugin that isn't installed, so it is left`);
-  else await stopSession(lead.host, lead.id);
+  await stopSession(lead.host, lead.id);
   // Remove the clone, the row and your trust in it. The other repositories are named again,
   // as one that shared a name with this one can drop its owner.
   rmSync(cloneDir(found.owner, found.repo), { recursive: true, force: true });

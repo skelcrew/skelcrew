@@ -52,6 +52,20 @@ function repositoryAndLead(db: ReturnType<typeof openDb>, fullName: string): Ope
   }
 }
 
+// Returns the line that attaches to the open repository's lead when it runs on a plugin's host,
+// as the screen can't show it through tmux. Null for a lead on tmux, one whose plugin is gone,
+// and a repository Skelcrew no longer has.
+function leadOnHost(db: ReturnType<typeof openDb>, { owner, repo }: Open): string | null {
+  try {
+    const { host, hostId, name } = leadOf(db, owner, repo);
+    if (host === "tmux") return null;
+    const plugin = pluginHost(db, host);
+    return plugin && attachOnHostLine(plugin, hostId ?? name);
+  } catch {
+    return null;
+  }
+}
+
 // Runs the sidebar until its pane goes. The session given is its own, on the screen's server,
 // `where` says which remote Skelcrew runs on, if any, for the header above it, and `repository`
 // is the owner/name of the repository it opens on.
@@ -70,6 +84,24 @@ export async function runSidebar(
   // its terminal, and what it last drew.
   const db = openDb();
   let open = repositoryAndLead(db, repository);
+  // How the right pane reaches the open repository's lead: through its plugin's host, by this
+  // line, or through tmux when null. It is read again each second, as a lead the daemon is still
+  // starting may land on a plugin's host after the pane began waiting for it.
+  let leadAttach = leadOnHost(db, open);
+  // Returns a shell line that shows the open repository's lead, and again whenever it ends or you
+  // leave it, as tmux's attach to the lead does.
+  const leadLine = () =>
+    leadAttach === null
+      ? attachCommand(agents, open.lead, open.lead).map(quoteForSh).join(" ")
+      : `while :; do ${leadAttach}; sleep 1; done`;
+  // Returns the command for the right pane that shows `first`, a tmux session, then the lead
+  // once it ends or you leave it.
+  const paneOn = (first: string): string[] => {
+    if (leadAttach === null) return attachCommand(agents, first, open.lead);
+    if (first === open.lead) return ["sh", "-c", leadLine()];
+    const client = 'unset TMUX; tmux -L "$1" -f /dev/null attach -t "=$2"';
+    return ["sh", "-c", `${client}; ${leadLine()}`, "sh", agents, first];
+  };
   // The builders running on a plugin's host, by their thread's folder, with the line that attaches
   // to each, as the last look at the hosts found them. The look runs in the background, one at a
   // time, as a host can be slow, and the sidebar never waits on it.
@@ -145,6 +177,15 @@ export async function runSidebar(
       }
       switchTo(next.fullName);
     }
+    // A lead that moved to or from a plugin's host is shown through its host now.
+    const lead = doing("reading the lead's host", () => leadOnHost(db, open));
+    if (lead !== leadAttach) {
+      leadAttach = lead;
+      if (shown === open.lead) {
+        respawnPane(agents, rightPane, paneOn(open.lead));
+        tty = paneTty(agents, rightPane);
+      }
+    }
     notice = noticeLines(updateNotice(db), size().width);
     rows = doing("reading the rows", () => sidebarRows(db, running, roundLimit, Date.now(), open));
     entries = doing("counting the lists", () => entryCounts(db, open));
@@ -213,18 +254,22 @@ export async function runSidebar(
     // An entry's list runs in the pane in place of what was there. Coming from a list, or onto
     // a client still attaching, a new client starts on the agent. Otherwise the client switches.
     // A builder on a plugin's host runs that host's attach in the pane, and the lead comes back
-    // once you leave it, as after a tmux session.
+    // once you leave it, as after a tmux session. So does a lead on a plugin's host, which no
+    // tmux client can switch to.
     const entry = entries.find((candidate) => entryPlace(candidate.entry) === next);
     const fullName = `${open.owner}/${open.repo}`;
     const onHost = hosted.get(next);
     if (entry)
       respawnPane(agents, rightPane, paneCommand(agents, session, entry.entry, where, fullName));
     else if (onHost !== undefined) {
-      const lead = attachCommand(agents, open.lead, open.lead).map(quoteForSh).join(" ");
-      respawnPane(agents, rightPane, ["sh", "-c", `${onHost}; exec ${lead}`]);
+      respawnPane(agents, rightPane, ["sh", "-c", `${onHost}; ${leadLine()}`]);
       tty = paneTty(agents, rightPane);
-    } else if (isEntry(shown) || shownSession(agents, tty) === null) {
-      respawnPane(agents, rightPane, attachCommand(agents, next, open.lead));
+    } else if (
+      isEntry(shown) ||
+      shownSession(agents, tty) === null ||
+      (next === open.lead && leadAttach !== null)
+    ) {
+      respawnPane(agents, rightPane, paneOn(next));
       tty = paneTty(agents, rightPane);
     } else showSession(agents, tty, next);
     page = null;
@@ -236,11 +281,12 @@ export async function runSidebar(
   function switchTo(fullName: string) {
     if (fullName === `${open.owner}/${open.repo}`) return;
     open = repositoryAndLead(db, fullName);
-    // Not waited on, so the sidebar draws at once. The right pane starts a client on the new
-    // lead, and no list shows.
+    leadAttach = leadOnHost(db, open);
+    // Not waited on, so the sidebar draws at once. The right pane starts on the new lead, through
+    // its own host, and no list shows.
     openRepository(fullName, true);
     asked = open.lead;
-    respawnPane(agents, rightPane, attachCommand(agents, open.lead, open.lead));
+    respawnPane(agents, rightPane, paneOn(open.lead));
     tty = paneTty(agents, rightPane);
     page = null;
     shown = open.lead;

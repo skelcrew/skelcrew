@@ -1,7 +1,7 @@
 // The tabs, one for each repository: switching between them, a tab closing, a lead that
 // stopped being brought back, and a repository removed while the screen shows it.
 import { afterEach, beforeEach, expect, setDefaultTimeout, test } from "bun:test";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { startSession } from "../src/agents/sessions.ts";
 import { leadPlaces } from "../src/paths.ts";
@@ -77,6 +77,27 @@ test("Alt-Shift-Right and Alt-Shift-Left switch both sides to the repository bes
   press("M-S-Right");
   await Bun.sleep(300);
   expect(seen()).toContain(`I am ${siteLead}`);
+  press("M-S-Left");
+  await until(() => seen().includes("I am lead") && seen().includes("app-12"), "app again");
+});
+
+test("switching to a repository whose lead runs on a plugin's host attaches to it through that host", async () => {
+  sql(`INSERT INTO repositories (name, owner, repo) VALUES ('site', 'simon', 'site')`);
+  const plugin = join(home, "plugin-fake");
+  mkdirSync(plugin, { recursive: true });
+  writeFileSync(join(plugin, "session.sh"), `read -r question; echo '{"sessions":[]}'\n`);
+  writeFileSync(join(plugin, "attach.sh"), 'echo "I am $1 on fake"; exec sleep 300\n');
+  writeFileSync(
+    join(plugin, "skelcrew-plugin.yaml"),
+    "name: fake\nversion: 0.1.0\nskelcrew: 0.1.0\nabout: A host\nkind: runtime\nprovides: [sessions]\nsession: [sh, session.sh]\nattach: [sh, attach.sh]\n",
+  );
+  sql(`INSERT INTO plugins (name, folder) VALUES ('fake', '${plugin}');
+UPDATE repositories SET lead_host = 'fake', lead_host_id = 'fake-site-lead' WHERE repo = 'site'`);
+  open("lead");
+  await ready("lead");
+  press("M-S-Right");
+  await until(() => seen().includes("I am fake-site-lead on fake"), "site's lead on its host");
+  await until(() => selected() === "◆ lead", "the sidebar on site's lead");
   press("M-S-Left");
   await until(() => seen().includes("I am lead") && seen().includes("app-12"), "app again");
 });
