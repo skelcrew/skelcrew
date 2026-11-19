@@ -1,17 +1,21 @@
-// Merge when ready: a merge you arm once, from your own terminal or by asking a lead you let arm
-// merges, so Skelcrew merges a thread's PR by itself as soon as it is approved and green. Arming
-// it, cancelling it, and the merge itself. Without an armed plan nothing merges by itself.
+// Merge when ready, and merge without Skelcrew's approval: a merge you arm once, from your own
+// terminal or by asking a lead you let arm merges, so Skelcrew merges a thread's PR by itself. When
+// ready, it merges once the PR is approved and green. Skipping the review, it merges the commit you
+// saw once CI is green there, whatever the reviewer says. Arming it, cancelling it, and the merge
+// itself. Without an armed plan nothing merges by itself.
 import type { Database } from "bun:sqlite";
-import { forgeOf, mergePr, postReview } from "../plugins/ask.ts";
+import { createTask, forgeOf, mergePr, postReview, trackerOf } from "../plugins/ask.ts";
 import { errorText } from "../say.ts";
-import { mergeStuck, mergeWaitsOn, type PullRequest } from "./decide.ts";
+import { prOf } from "./copy.ts";
+import { mergeStuck, mergeWaitsOn, type PullRequest, skipReviewWaitsOn } from "./decide.ts";
 import { endThread, removing } from "./events.ts";
 import { noteForLead } from "./messages.ts";
 import { findRepository, repositoryAt } from "./repo.ts";
 import { lastPushed } from "./round.ts";
+import { openFindings } from "./status.ts";
 import { readThread, record, repositoryOf, Thread, threadName, threadOn } from "./thread.ts";
 
-// Returns the thread a merge when ready names: by its task, such as app-12, or by its PR's
+// Returns the thread sc merge names: by its task, such as app-12, or by its PR's
 // number in the repository `repo` names, or else the one of the checkout sc ran in, `from`.
 // Throws when there is none, or its thread is done, as a done thread has nothing to merge.
 export function threadToMerge(
@@ -53,20 +57,39 @@ export function threadToMerge(
   return thread;
 }
 
-// Arms a merge when ready on the thread, for sc merge --when-ready, and returns what to say. At
-// your terminal, `seen` is what you said y to: the PR's number and when its thread started.
-// Anything else is refused, such as a thread removed and started over while you read the
-// question, with a PR you never saw. From a lead you let arm merges, `asked` is your words in
-// the conversation, quoted by the lead: the thread's log keeps them and the daemon logs them.
-// A merge you asked for at your terminal is typed into the lead as a note, so it knows. One
-// the lead asked for isn't, as the lead tells you itself and a note would say it twice. It saves who armed it and when, for the PR's record once it
-// merges. Refuses a repository with no forge, as Skelcrew merges no branch there: you merge it
-// yourself once it is approved.
+// Returns how a thread's armed merge is said, after "Merging #7", such as "as soon as it's
+// approved and green", for what sc merge says and the lead's notes.
+const mergeWhen = (thread: Pick<Thread, "merge_pinned">) =>
+  thread.merge_pinned === null
+    ? "as soon as it's approved and green"
+    : "without Skelcrew's approval once its checks pass";
+
+// Returns what sc merge says of a merge already armed on the thread, and how to stop it, so a
+// second ask, or a "no" to it, never sounds like it stopped the merge.
+export function alreadyMerging(db: Database, thread: Thread): string {
+  const name = threadName(db, thread);
+  return `Already merging #${thread.pr} ${mergeWhen(thread)}. sc merge --cancel ${name} stops it.`;
+}
+
+// Arms a merge on the thread and returns what to say: when ready, for sc merge --when-ready, or
+// `skip` the review, for sc merge --skip-review and m in the list. At your terminal, `seen` is what
+// you said y to: the PR's number and when its thread started, and when skipping the review the PR's
+// head. Anything else is refused, such as a thread removed and started over while you read the
+// question, with a PR you never saw, or a push you never saw. From a lead you let arm merges,
+// `asked` is your words in the conversation, quoted by the lead: the thread's log keeps them and
+// the daemon logs them, and when skipping the review the head is the one Skelcrew's copy has as it
+// asks. A merge you asked for at your terminal is typed into the lead as a note, so it knows. One
+// the lead asked for isn't, as the lead tells you itself and a note would say it twice. It saves
+// who armed it and when, for the PR's record once it merges. Refuses a repository with no forge, as
+// Skelcrew merges no branch there: you merge it yourself.
 export function armMerge(
   db: Database,
   sessions: string,
   thread: Thread,
-  how: { seen: { pr: number; started: number | null } | undefined } | { asked: string },
+  how:
+    | { seen: { pr: number; started: number | null; head?: string | undefined } | undefined }
+    | { asked: string },
+  skip: boolean,
 ): string {
   const name = threadName(db, thread);
   refuseWithoutForge(db, thread);
@@ -74,13 +97,24 @@ export function armMerge(
   if (thread.pr === null) throw new Error(`${name} has no PR yet: ask again once it opens one`);
   // A plan already on the thread is reported first, even to a y given to an older PR: saying
   // it won't merge would be untrue while that plan stays.
-  const merges = `#${thread.pr} as soon as it's approved and green`;
-  if (thread.merge_plan === "armed")
-    return `Already merging ${merges}. sc merge --cancel ${name} stops it.`;
+  if (thread.merge_plan === "armed") return alreadyMerging(db, thread);
+  // Skipping the review, the head is the commit Skelcrew's copy of the PR has now, which is the one
+  // the question showed you, as anything newer would be a push you never saw.
+  const head = skip ? prOf(db, thread.owner, thread.repo, thread.pr)?.head : undefined;
+  const flag = skip ? "--skip-review" : "--when-ready";
   const { seen } = "seen" in how ? how : { seen: undefined };
-  if ("seen" in how && (!seen || seen.pr !== thread.pr || seen.started !== thread.started))
+  const changed =
+    !seen || seen.pr !== thread.pr || seen.started !== thread.started || seen.head !== head;
+  if ("seen" in how && changed)
     throw new Error(
-      `${name} changed since you said y, so it won't merge by itself: run sc merge --when-ready ${name} again`,
+      `${name} changed since you said y, so it won't merge by itself: run sc merge ${flag} ${name} again`,
+    );
+  if (skip && !head)
+    throw new Error(`Skelcrew hasn't seen #${thread.pr}'s newest commit yet: ask again shortly`);
+  // An approval of that very commit needs no merge without it.
+  if (skip && thread.verdict === "approve" && thread.reviewed_commit === head)
+    throw new Error(
+      `${name} is approved already: merge it with m in the list, or sc merge --when-ready ${name}`,
     );
   const asked = "asked" in how ? how.asked : null;
   const plan = {
@@ -91,13 +125,18 @@ export function armMerge(
     merge_asked: asked,
     merge_waits: null,
     merge_noted: null,
+    merge_pinned: head ?? null,
   };
+  const when = mergeWhen(plan);
   // The log keeps your words exactly, line breaks and spaces included. Written as JSON, they
   // still fit on one line of the daemon's log.
+  const what = head
+    ? `merge #${thread.pr} without Skelcrew's approval at commit ${head.slice(0, 7)}`
+    : `merge #${thread.pr} once it's approved and green`;
   const why =
     asked === null
-      ? `you asked to merge #${thread.pr} once it's approved and green`
-      : `the lead asked to merge #${thread.pr} once it's approved and green, as the human asked: ${JSON.stringify(asked)}`;
+      ? `you asked to ${what}`
+      : `the lead asked to ${what}, as the human asked: ${JSON.stringify(asked)}`;
   record(db, thread.folder, plan, why);
   console.log(`${name}: ${why}`);
   // The lead can't see your terminal, so it hears of a merge you asked for there. One it asked
@@ -107,9 +146,9 @@ export function armMerge(
       db,
       sessions,
       thread,
-      `Merging #${thread.pr} (${name}) as soon as it's approved and green, as you asked at your terminal. sc merge --cancel ${name} stops it.`,
+      `Merging #${thread.pr} (${name}) ${when}, as you asked at your terminal. sc merge --cancel ${name} stops it.`,
     );
-  return `Merging ${merges}. sc merge --cancel ${name} stops it.`;
+  return `Merging #${thread.pr} ${when}. sc merge --cancel ${name} stops it.`;
 }
 
 // Refuses a merge when ready in a repository with no forge, as Skelcrew merges no branch
@@ -130,17 +169,17 @@ function loginName(): string {
   return (id.success && id.stdout.toString().trim()) || "you";
 }
 
-// Drops the thread's merge when ready, and returns what to say. Cancelling is always safe, so
-// the lead may do it too, and nothing asks first.
+// Drops the thread's armed merge, when ready or without approval, and returns what to say.
+// Cancelling is always safe, so the lead may do it too, and nothing asks first.
 export function cancelMerge(db: Database, thread: Thread): string {
   const name = threadName(db, thread);
-  if (thread.merge_plan === null) return `${name} had no merge when ready.`;
+  if (thread.merge_plan === null) return `${name} had no merge armed.`;
   // Once the forge was asked to merge, nothing can take that back, so saying it won't merge
   // would be untrue.
   if (merging.has(thread.folder))
     throw new Error(`${name} is merging on its forge right now, so it can't be cancelled`);
-  const none = { merge_plan: null, merge_waits: null, merge_noted: null };
-  record(db, thread.folder, none, "its merge when ready was cancelled");
+  const none = { merge_plan: null, merge_waits: null, merge_noted: null, merge_pinned: null };
+  record(db, thread.folder, none, "its armed merge was cancelled");
   return `${name} won't merge by itself. It waits for you to merge it.`;
 }
 
@@ -153,12 +192,15 @@ const merging = new Set<string>();
 const recorded = new Set<string>();
 
 // Merges an armed thread's PR once it is ready, from a poll, with the PR as its forge just
-// returned it and the thread as it was when the poll began, `before`. It merges at the approved commit, so a push after the approval is never merged,
-// at a poll after the one that posted a review on the PR saying who asked for it. Whether the PR merges cleanly is the
-// forge's to say as it merges: a refusal keeps the plan armed, with the forge's reason as what
-// it waits on. Once merged, it ends the thread, and the lead's one note says it merged when
-// ready. Otherwise it saves what the merge waits on, for the thread's row, and tells the lead
-// once per review round when that needs someone to act.
+// returned it and the thread as it was when the poll began, `before`. When ready, it merges at
+// the approved commit, so a push after the approval is never merged. Skipping the review, it merges
+// at the commit you saw, and a push after you asked cancels the plan and tells the lead. Either
+// merges at a poll after the one that posted a review on the PR saying who asked for it.
+// Whether the PR merges cleanly is the forge's to say as it merges: a refusal keeps the plan
+// armed, with the forge's reason as what it waits on. Once merged without approval, what the
+// review still asked for is filed as one issue. Then it ends the thread, and the lead's one note
+// says how it merged. Otherwise it saves what the merge waits on, for the thread's row, and
+// tells the lead once per review round when that needs someone to act.
 export async function mergeIfReady(
   db: Database,
   sessions: string,
@@ -181,21 +223,36 @@ export async function mergeIfReady(
     thread.verdict !== before.verdict;
   if (moved) return;
   const name = threadName(db, thread);
-  const approved = lastPushed(thread);
-  let waits = mergeWaitsOn(thread, pr, approved);
-  if (waits === null && approved !== null && thread.pr !== null) {
+  const pinned = thread.merge_pinned;
+  // You asked to merge the commit you saw without approval. A newer one is a change nobody you
+  // trust has looked at, so the plan ends, rather than waiting, and the lead hears it.
+  if (pinned !== null && pr.state === "open" && pr.head !== null && pr.head !== pinned) {
+    const none = { merge_plan: null, merge_waits: null, merge_noted: null, merge_pinned: null };
+    record(db, folder, none, `a push to #${thread.pr} cancelled its merge without approval`);
+    noteForLead(
+      db,
+      sessions,
+      thread,
+      `#${thread.pr} (${name}) got a new commit after the human asked to merge it without Skelcrew's approval, so it won't merge. Ask them again if they still want it.`,
+    );
+    return;
+  }
+  const commit = pinned ?? lastPushed(thread);
+  let waits = pinned === null ? mergeWaitsOn(thread, pr, commit) : skipReviewWaitsOn(thread, pr);
+  if (waits === null && commit !== null && thread.pr !== null) {
     const asked = new Date(thread.merge_at ?? Date.now()).toLocaleDateString("en-GB", {
       day: "numeric",
       month: "long",
       year: "numeric",
     });
     const repository = repositoryOf(db, thread);
-    // The PR records who asked, with a review on the approved commit, the call every forge
+    // The PR records who asked, with a review on the commit it merges, the call every forge
     // answers. It goes before the merge, as a merged PR may take no review, and once for each
     // commit of each plan while the daemon runs, so a merge the forge keeps refusing doesn't
     // post it again at every poll. A plan armed again, or a thread started over, has a new ID,
-    // so it gets a record of its own.
-    const key = `${thread.merge_id} ${approved}`;
+    // so it gets a record of its own. Skipping the review it keeps the reviewer's verdict, as
+    // Skelcrew's reviewer never approved that commit.
+    const key = `${thread.merge_id} ${commit}`;
     // A forge that fails, such as when it is down, leaves the plan armed, says why it waits,
     // and is tried again at the next poll. It never holds up the poll's other threads.
     const failed = (error: unknown) => `the forge, which failed: ${errorText(error)}`;
@@ -204,12 +261,16 @@ export async function mergeIfReady(
     // that failed or started, a cancel, a stop, sc rm or a new review while the record was
     // posted all show there, and stop the merge.
     if (!recorded.has(key)) {
-      const body = `Merging when ready, as asked by ${thread.merge_by ?? "you"} on ${asked}.`;
+      const by = thread.merge_by ?? "you";
+      const body =
+        pinned === null
+          ? `Merging when ready, as asked by ${by} on ${asked}.`
+          : `Merged without Skelcrew's approval, as asked by ${by} on ${asked}.`;
       try {
         await postReview(db, repository, {
           pr: thread.pr,
-          commit: approved,
-          verdict: "approve",
+          commit,
+          verdict: pinned === null ? "approve" : "changes",
           body,
         });
         recorded.add(key);
@@ -225,7 +286,7 @@ export async function mergeIfReady(
     if (waits === null) {
       merging.add(folder);
       try {
-        refused = await mergePr(db, repository, { pr: thread.pr, commit: approved });
+        refused = await mergePr(db, repository, { pr: thread.pr, commit });
       } catch (error) {
         waits = failed(error);
       } finally {
@@ -233,12 +294,16 @@ export async function mergeIfReady(
       }
     }
     if (waits === null && refused === null) {
+      const how =
+        pinned === null
+          ? "when ready, as the human asked"
+          : `without Skelcrew's approval, as the human asked.${await fileFollowUps(db, thread)}`;
       await endThread(
         db,
         sessions,
         thread,
-        `PR #${thread.pr} was merged when ready`,
-        `is done: #${thread.pr} merged into ${pr.base} when ready, as the human asked`,
+        `PR #${thread.pr} was merged ${pinned === null ? "when ready" : "without approval"}`,
+        `is done: #${thread.pr} merged into ${pr.base} ${how}`,
         true,
       );
       return;
@@ -258,14 +323,42 @@ export async function mergeIfReady(
   if (!samePlan) return;
   // What it waits on changes only now and then, so the log isn't filled with every poll.
   if (waits !== now.merge_waits)
-    record(db, folder, { merge_waits: waits }, `its merge when ready waits on ${waits}`);
+    record(db, folder, { merge_waits: waits }, `its armed merge waits on ${waits}`);
   if (mergeStuck(now, waits)) {
     record(db, folder, { merge_noted: now.review_round });
+    const when = pinned === null ? "once it's approved and green" : "without Skelcrew's approval";
     noteForLead(
       db,
       sessions,
       now,
-      `Still merging #${now.pr} (${name}) once it's approved and green, waiting on ${waits}.`,
+      `Still merging #${now.pr} (${name}) ${when}, waiting on ${waits}.`,
     );
+  }
+}
+
+// Files what Skelcrew's latest review still asked for, once its PR merged without its approval, as
+// one issue that links back to the PR, so the findings aren't lost with the thread. Returns what
+// the lead's note adds about it, such as " Its open findings are in #13.", or nothing with no
+// findings. It runs once, as the thread ends right after. An issue that can't be filed, such as
+// with no tracker or a tracker that fails, is said in the note instead, so you can file it.
+async function fileFollowUps(db: Database, thread: Thread): Promise<string> {
+  const findings = openFindings(thread);
+  if (findings.length === 0) return "";
+  const repository = repositoryOf(db, thread);
+  const listed = findings.map((finding, n) => `${n + 1}. ${finding.trim()}`).join("\n");
+  const body = `Skelcrew's reviewer still asked for these when #${thread.pr} merged without its approval, as asked by ${thread.merge_by ?? "you"}:\n\n${listed}\n\nFrom #${thread.pr}.`;
+  try {
+    if (trackerOf(db, repository) === null) throw new Error("its repository has no tracker");
+    const issue = await createTask(db, repository, `Follow-ups from #${thread.pr}'s review`, body);
+    record(
+      db,
+      thread.folder,
+      {},
+      `filed the open findings of #${thread.pr}'s review as #${issue.id}`,
+    );
+    return ` Its open findings are in #${issue.id}.`;
+  } catch (error) {
+    console.log(`${thread.folder}: couldn't file its open findings: ${errorText(error)}`);
+    return ` Its open findings couldn't be filed as an issue: ${errorText(error)}`;
   }
 }

@@ -2677,5 +2677,165 @@ exec ${bwrap} "$@"`,
       expect(thread().merge_plan).toBeNull();
       expect(merges()).toEqual([]);
     }, 90_000);
+
+    // Starts app-12 with a reviewer that asks for changes, and waits until its review is in and
+    // the forge's copy of its PR shows the reviewed commit, with CI still running.
+    const changesApp12 = async () => {
+      script(
+        "codex",
+        `for a; do [ "$prev" = -o ] && out=$a; prev=$a; done
+cat > /dev/null
+echo '{"verdict":"changes","body":"Not yet.","findings":["Handle an empty file","Test the error"]}' > "$out"`,
+      );
+      addApp();
+      changes([issue12()]);
+      serve();
+      await until(() => existsSync(join(data(), "repos", "simon", "app", "README")));
+      const started = Bun.spawnSync([process.execPath, main, "start", "app-12"], {
+        env: env(),
+        stderr: "pipe",
+      });
+      expect(started.stderr.toString()).toBe("");
+      await until(
+        () =>
+          thread().verdict === "changes" &&
+          thread().pr === 7 &&
+          thread().reviewing === null &&
+          String(thread().review_post).includes("Test the error"),
+        30_000,
+      );
+      const head = pushed();
+      pr({ head, reviews: [skelReview], checks: [check(5, "running")] });
+      await morePolls();
+      return head;
+    };
+    const skipQuestion =
+      "Merge #7 (app-12 Add export) without Skelcrew's approval? CI must still pass. It still asks: 1) Handle an empty file 2) Test the error [y/N]";
+    const skipSaid =
+      "Merging #7 without Skelcrew's approval once its checks pass. sc merge --cancel app-12 stops it.";
+
+    test("a merge without approval pins the head you saw, waits for checks, and a push cancels it", async () => {
+      const head = await changesApp12();
+      const no = await runSkelInTerminal(
+        socket,
+        env(),
+        ["merge", "--skip-review", "app-12"],
+        skipQuestion,
+        "n",
+      );
+      expect(no).toContain("Not merging: app-12 waits for you to merge it.");
+      expect(thread().merge_plan).toBeNull();
+      // Only the head you saw is pinned: a y to any other commit is refused.
+      const yours = join(home, "run", "skelcrew.sock");
+      const started = Number(thread().started);
+      const arming = { command: "merge skip review", repo: "app", task: "12" };
+      expect(
+        await askOn(yours, { ...arming, seen: { pr: 7, started, head: "e".repeat(40) } }),
+      ).toEqual({
+        error:
+          "app-12 changed since you said y, so it won't merge by itself: run sc merge --skip-review app-12 again",
+      });
+      // Builders never can, and the lead needs your leave.
+      expect(await askOn(builderSocket(), arming)).toEqual({
+        error: "the daemon doesn't know that request",
+      });
+      expect(await askOn(leadSocket(), { ...arming, asked: "force merge it" })).toEqual({
+        error:
+          "the human hasn't let you arm a merge: ask them to run sc merge --skip-review in their own terminal",
+      });
+      expect(thread().merge_plan).toBeNull();
+
+      const yes = await runSkelInTerminal(
+        socket,
+        env(),
+        ["merge", "--skip-review", "app-12"],
+        skipQuestion,
+        "y",
+      );
+      expect(yes).toContain(skipSaid);
+      expect(thread()).toMatchObject({ merge_plan: "armed", merge_pinned: head });
+      // It waits for CI like any merge, and sc ps and the lead say so.
+      await until(() => thread().merge_waits === "its checks");
+      const ps = Bun.spawnSync([process.execPath, main, "ps"], { env: env(), stdout: "pipe" });
+      expect(ps.stdout.toString()).toContain("merges without approval");
+      await until(() =>
+        leadTyped().includes(
+          "Merging #7 (app-12) without Skelcrew's approval once its checks pass, as you asked at your terminal. sc merge --cancel app-12 stops it.",
+        ),
+      );
+      // A push after you asked cancels it, even with CI green, and the lead hears it.
+      pr({ head: "b".repeat(40), reviews: [skelReview], checks: [check(5, "passed")] });
+      await until(() => thread().merge_plan === null);
+      expect(thread().merge_pinned).toBeNull();
+      await until(() =>
+        leadTyped().includes(
+          "#7 (app-12) got a new commit after the human asked to merge it without Skelcrew's approval, so it won't merge. Ask them again if they still want it.",
+        ),
+      );
+      await morePolls();
+      expect(merges()).toEqual([]);
+    }, 90_000);
+
+    test("a lead you let arm merges merges without approval with your words, and files its findings once", async () => {
+      const head = await changesApp12();
+      const words = "Force merge #7, the edge cases\ncan wait.";
+      const file = join(home, "asked.txt");
+      writeFileSync(file, words);
+      const asLead = () =>
+        Bun.spawnSync(
+          [process.execPath, main, "merge", "--skip-review", "#7", "--asked-file", file],
+          { env: { ...env(), SKELCREW_SOCKET: leadSocket() }, stdout: "pipe", stderr: "pipe" },
+        );
+      expect(asLead().stderr.toString()).toContain("the human hasn't let you arm a merge");
+      expect(thread().merge_plan).toBeNull();
+      const config = join(home, ".config", "skelcrew", "config.yaml");
+      writeFileSync(config, `${read(config)}lead: { may_arm_merges: true }\n`);
+      expect(
+        await askOn(leadSocket(), { command: "merge skip review", repo: "app", task: "12" }),
+      ).toEqual({
+        error: "give what the human asked with --asked-file, a file holding their exact words",
+      });
+      const armed = asLead();
+      expect(armed.stderr.toString()).toBe("");
+      expect(armed.stdout.toString()).toContain(skipSaid);
+      expect(thread()).toMatchObject({
+        merge_plan: "armed",
+        merge_pinned: head,
+        merge_by: `${login()} via the lead`,
+        merge_asked: words,
+      });
+      const why = `the lead asked to merge #7 without Skelcrew's approval at commit ${head.slice(0, 7)}, as the human asked: ${JSON.stringify(words)}`;
+      expect(read(join(data(), "threads", "app-12.log"))).toContain(`"why":${JSON.stringify(why)}`);
+
+      // Green, it records who asked on the PR, merges the pinned head, and files what the review
+      // still asked for as one issue.
+      answer(plugin, "create task", taskItem("13", "Follow-ups from #7's review"));
+      pr({ head, reviews: [skelReview], checks: [check(5, "passed")] });
+      await until(() => thread().status === "done");
+      const records = asked(plugin).filter(
+        (q) => q.ask === "review" && String(q.body).startsWith("Merged without"),
+      );
+      expect(records).toHaveLength(1);
+      expect(records[0]).toMatchObject({ pr: 7, commit: head, verdict: "changes" });
+      expect(String(records[0]?.body)).toStartWith(
+        `Merged without Skelcrew's approval, as asked by ${login()} via the lead on `,
+      );
+      expect(merges()).toHaveLength(1);
+      expect(merges()[0]).toMatchObject({ pr: 7, commit: head });
+      await until(() =>
+        leadTyped().includes(
+          "app-12 is done: #7 merged into main without Skelcrew's approval, as the human asked. Its open findings are in #13.",
+        ),
+      );
+      await morePolls();
+      const filed = asked(plugin).filter((q) => q.ask === "create task");
+      expect(filed).toHaveLength(1);
+      expect(filed[0]).toMatchObject({
+        repository: "simon/app",
+        title: "Follow-ups from #7's review",
+      });
+      expect(String(filed[0]?.body)).toContain("1. Handle an empty file\n2. Test the error");
+      expect(String(filed[0]?.body)).toContain("#7");
+    }, 90_000);
   });
 });

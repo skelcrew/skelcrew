@@ -67,6 +67,7 @@ const working: Thread = {
   merge_asked: null,
   merge_waits: null,
   merge_noted: null,
+  merge_pinned: null,
   agents: null,
   flow: "default",
   review_post: null,

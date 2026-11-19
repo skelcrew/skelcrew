@@ -34,13 +34,19 @@ import {
   statusOnceBack,
 } from "./builder.ts";
 import { holdCheckSlot } from "./checks.ts";
-import { ownTask, saveItems } from "./copy.ts";
+import { ownTask, prOf, saveItems } from "./copy.ts";
 import { removeThread, stopThread } from "./events.ts";
 import { noCommits } from "./git.ts";
 import { closeExitedLeads, lastOpened, leadOf, openedRepositories, startLead } from "./lead.ts";
 import { restoreLimits, wakeAfterLimit } from "./limits.ts";
 import { listRepositories, listTasks, listThreads, showTask } from "./list.ts";
-import { armMerge, cancelMerge, refuseWithoutForge, threadToMerge } from "./merging.ts";
+import {
+  alreadyMerging,
+  armMerge,
+  cancelMerge,
+  refuseWithoutForge,
+  threadToMerge,
+} from "./merging.ts";
 import { deliverAllWaiting, messageBuilder, messageLead, typeLeadNotes } from "./messages.ts";
 import { pollRepositories } from "./poll.ts";
 import {
@@ -70,6 +76,7 @@ import {
   questionClosed,
   reportStatuses,
   stateAfter,
+  stillAsks,
   turnEnded,
   turnFailed,
 } from "./status.ts";
@@ -247,9 +254,8 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   };
   // Returns the request limited to the calling lead's own repository. A request about another
   // repository is refused, and the error tells the lead to ask you to open that one. sc ps and
-  // sc ls with no repository mean every repository, which for a lead is its own, and sc pr show,
-  // sc merge --when-ready and sc merge --cancel with a PR number mean the lead's own repository,
-  // wherever it ran.
+  // sc ls with no repository mean every repository, which for a lead is its own, and sc pr show
+  // and sc merge with a PR number mean the lead's own repository, wherever it ran.
   // Your requests and a builder's are returned unchanged.
   const limitToOwnRepository = (request: DaemonRequest, caller: Caller): DaemonRequest => {
     const leadRepository = leadOfCaller(caller);
@@ -262,6 +268,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
     const byNumber =
       request.command === "task show" ||
       request.command === "merge when ready" ||
+      request.command === "merge skip review" ||
       request.command === "merge cancel";
     if (byNumber && !request.repo) {
       const { from, ...rest } = request;
@@ -465,38 +472,47 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         );
         return { merged: `Merged ${repository.name}#${request.pr}.` };
       }
-      // What sc merge --when-ready asks you about at your terminal before it arms, and whether
-      // it merges when ready already, so you aren't asked again.
+      // What sc merge asks you about at your terminal before it arms, and whether a merge is
+      // armed already, so you aren't asked again. A merge without approval also shows the head
+      // it would pin, as Skelcrew's copy of the PR has it, and what the review still asks.
       case "merge preview": {
         const thread = threadToMerge(db, request);
         refuseWithoutForge(db, thread);
+        const copy = thread.pr === null ? null : prOf(db, thread.owner, thread.repo, thread.pr);
         // Its whole title, not the short one, so you can tell which PR you agree to.
         return {
           thread: threadName(db, thread),
           pr: thread.pr,
           title: thread.title,
           started: thread.started,
-          merging: thread.merge_plan !== null,
+          merging: thread.merge_plan === null ? null : alreadyMerging(db, thread),
+          head: copy?.head ?? null,
+          asks: stillAsks(thread),
         };
       }
-      // You arm one at your terminal, after saying y. A lead arms one only when you let it in
-      // your config, and only with the words you asked it in, which it gives in a file.
-      case "merge when ready": {
+      // You arm one at your terminal, after saying y, or with m in the list. A lead arms one
+      // only when you let it in your config, and only with the words you asked it in, which it
+      // gives in a file.
+      case "merge when ready":
+      case "merge skip review": {
         const thread = threadToMerge(db, request);
+        const skip = request.command === "merge skip review";
         if (leadOfCaller(caller) === null) {
           if (request.asked !== undefined)
             throw new Error("--asked-file is the lead's: at your terminal, sc merge asks you y/N");
-          return { said: armMerge(db, sessions, thread, { seen: request.seen }) };
+          return { said: armMerge(db, sessions, thread, { seen: request.seen }, skip) };
         }
         if (!leadMayArmMerges())
           throw new Error(
-            "the human hasn't let you arm a merge when ready: ask them to run sc merge --when-ready in their own terminal",
+            skip
+              ? "the human hasn't let you arm a merge: ask them to run sc merge --skip-review in their own terminal"
+              : "the human hasn't let you arm a merge when ready: ask them to run sc merge --when-ready in their own terminal",
           );
         if (!request.asked?.trim())
           throw new Error(
             "give what the human asked with --asked-file, a file holding their exact words",
           );
-        return { said: armMerge(db, sessions, thread, { asked: request.asked }) };
+        return { said: armMerge(db, sessions, thread, { asked: request.asked }, skip) };
       }
       case "merge cancel":
         return { said: cancelMerge(db, threadToMerge(db, request)) };

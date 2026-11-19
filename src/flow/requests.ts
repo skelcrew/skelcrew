@@ -105,18 +105,25 @@ export const DaemonRequest = z.discriminatedUnion("command", [
     pr: z.number().int().positive(),
     commit: z.string().regex(/^[0-9a-f]{40,64}$/),
   }),
-  // A merge when ready names its thread by its task, or by its PR's number. With a number,
-  // `from` is the remote of the checkout sc ran in, which names the repository when `repo`
-  // doesn't. Arming one carries what you said y to, `seen`: the PR's number and when its thread
-  // started, so a thread started over meanwhile, with another PR, is never armed. A lead you let
-  // arm merges sends `asked` instead: your words in the conversation, exactly.
+  // A merge when ready, or without Skelcrew's approval, names its thread by its task, or by its
+  // PR's number. With a number, `from` is the remote of the checkout sc ran in, which names the
+  // repository when `repo` doesn't. Arming one carries what you said y to, `seen`: the PR's number
+  // and when its thread started, so a thread started over meanwhile, with another PR, is never
+  // armed. Skipping the review it also carries the PR's head you saw, the only commit it merges. A
+  // lead you let arm merges sends `asked` instead: your words in the conversation, exactly.
   z.object({
-    command: z.enum(["merge preview", "merge when ready", "merge cancel"]),
+    command: z.enum(["merge preview", "merge when ready", "merge skip review", "merge cancel"]),
     repo: z.string().optional(),
     from: z.string().optional(),
     task: TaskId.optional(),
     pr: z.number().int().positive().optional(),
-    seen: z.object({ pr: z.number().int().positive(), started: z.number().nullable() }).optional(),
+    seen: z
+      .object({
+        pr: z.number().int().positive(),
+        started: z.number().nullable(),
+        head: z.string().optional(),
+      })
+      .optional(),
     asked: z.string().optional(),
   }),
   z.object({ command: z.literal("tell lead"), text: z.string().min(1) }),
@@ -145,16 +152,16 @@ export const DaemonRequest = z.discriminatedUnion("command", [
 ]);
 export type DaemonRequest = z.infer<typeof DaemonRequest>;
 
-// Who is on the other end of a socket: you, a repository's lead, a thread's builder, or a
-// thread's reviewer, which may only run sc check. An
-// agent may ask only for what its commands and its harness's hooks need. Trusting a repository
-// is never a request: only you can, in your own terminal. A builder may tell only its
-// repository's lead, never another thread, and may ask for a review of its own thread only. You
-// and a lead may look at a builder's screen and stop its turn, but a builder may not, as it has
-// only its own. You type to a builder yourself in the sidebar, so you have no tell. Merging is
-// yours alone: no agent may merge, as merging stays a human's choice. A lead may arm a merge
-// when ready only once your config lets it, which the daemon checks at each one, and only when
-// you ask it to. The lead may cancel one, which is always safe. Builders and reviewers can't.
+// Who is on the other end of a socket: you, a repository's lead, a thread's builder, or a thread's
+// reviewer, which may only run sc check. An agent may ask only for what its commands and its
+// harness's hooks need. Trusting a repository is never a request: only you can, in your own
+// terminal. A builder may tell only its repository's lead, never another thread, and may ask for a
+// review of its own thread only. You and a lead may look at a builder's screen and stop its turn,
+// but a builder may not, as it has only its own. You type to a builder yourself in the sidebar, so
+// you have no tell. Merging is yours alone: no agent may merge, as merging stays a human's choice.
+// A lead may arm a merge, when ready or without Skelcrew's approval, only once your config lets it,
+// which the daemon checks at each one, and only when you ask it to. The lead may cancel one, which
+// is always safe. Builders and reviewers can't.
 export type Caller =
   | "you"
   | { lead: { owner: string; repo: string } }
@@ -181,6 +188,7 @@ export const allowed = {
     "merge",
     "merge preview",
     "merge when ready",
+    "merge skip review",
     "merge cancel",
     "check",
   ],
@@ -200,6 +208,7 @@ export const allowed = {
     "rm preview",
     "rm",
     "merge when ready",
+    "merge skip review",
     "merge cancel",
     "tell",
     "question asked",

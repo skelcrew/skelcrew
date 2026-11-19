@@ -92,6 +92,15 @@ console.log(JSON.stringify(listRows(openDb(), { owner: "simon", repo: "app" }, D
   return JSON.parse(run.stdout.toString());
 }
 
+// Returns one column of a thread's row, as the database keeps it.
+function threadField(folder: string, column: string): unknown {
+  const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
+console.log(JSON.stringify(openDb().query("SELECT ${column} AS v FROM task_threads WHERE folder = ?").get(${JSON.stringify(folder)})));`;
+  const run = Bun.spawnSync([process.execPath, "-e", code], { env: env(), stderr: "pipe" });
+  if (!run.success) throw new Error(run.stderr.toString());
+  return z.object({ v: z.unknown() }).parse(JSON.parse(run.stdout.toString())).v;
+}
+
 test("the lead comes first, then issues, then working tasks with those that need you first, then those ready for review", () => {
   const shown = rows().map((row) => [row.part, row.name, row.title, row.says]);
   // The approved task first on its own, so a failure says in one line where it went and why.
@@ -238,6 +247,49 @@ test("a forge's base branch reaches the merge question without its control codes
   sql(itemSql("app", "pr", 41, "Fix the export header", "2026-11-06T10:00:00Z", base));
   const merge = rows().find((row) => row.name === "app-14")?.merge;
   expect(merge && "ask" in merge ? merge.ask : "").toBe("Merge app#41 into main ]0;evil ? y/n");
+});
+
+// A PR whose review still asks for changes, or still runs, can only merge without Skelcrew's
+// approval. m asks first, naming what the review still asks for, and the y pins the head you saw.
+test("m on a PR whose review asks for changes offers to merge it without approval", () => {
+  const head = "c".repeat(40);
+  const post = JSON.stringify({
+    pr: 42,
+    id: "9",
+    verdict: "changes",
+    findings: ["Handle an\nempty file", "Test the error\x1b]0;evil\x07"],
+  });
+  sql(`UPDATE threads SET pr = 42 WHERE folder = 'app-7';
+UPDATE tasks SET pr = 42, verdict = 'changes', review_round = 3, review_post = '${post}' WHERE task = '7';
+${itemSql("app", "pr", 42, "Login redirect", "2026-11-06T10:00:00Z", { head, checks: passed })}`);
+  const merge = () => rows().find((row) => row.name === "app-7")?.merge;
+  const started = rows().length && Number(threadField("app-7", "started"));
+  expect(merge()).toEqual({
+    ask: "Merge app#42 without Skelcrew's approval? CI must still pass. It still asks: 1) Handle an empty file 2) Test the error ]0;evil  y/n",
+    working: "Arming the merge of app#42 without approval…",
+    request: {
+      command: "merge skip review",
+      repo: "simon/app",
+      task: "7",
+      seen: { pr: 42, started, head },
+    },
+  });
+  // A review still running has nothing to name yet.
+  sql("UPDATE tasks SET verdict = NULL, review_post = NULL, reviewing = 'd' WHERE task = '7';");
+  const running = merge();
+  expect(running && "ask" in running ? running.ask : "").toBe(
+    "Merge app#42 without Skelcrew's approval? CI must still pass. Its review is still running y/n",
+  );
+  // Once armed, it isn't offered again, and the row says it merges without approval.
+  sql("UPDATE threads SET merge_plan = 'armed', merge_pinned = 'x' WHERE folder = 'app-7';");
+  expect(merge()).toEqual({
+    refused: "app-7 merges without Skelcrew's approval already: sc merge --cancel app-7 stops it",
+  });
+  expect(rows().find((row) => row.name === "app-7")?.says).toContain("merges without approval");
+  // A thread with no review yet has nothing to merge over.
+  sql("UPDATE tasks SET reviewing = NULL WHERE task = '7';");
+  sql("UPDATE threads SET merge_plan = NULL, merge_pinned = NULL WHERE folder = 'app-7';");
+  expect(merge()).toBeNull();
 });
 
 // The list reads only the database: a builder runs while its thread works or waits, and a lead

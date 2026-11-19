@@ -72,7 +72,10 @@ export function nameRepositories(db: Database): void {
 // who armed it and when, for the PR's record. `merge_asked` is your words, exactly, when you
 // asked the lead to arm it, so the plan itself shows what let it merge, and null when you armed
 // it at your terminal. `merge_waits` is what an armed merge waits on, as the last poll
-// found, and `merge_noted` the review round the lead last heard it still waits after. They are
+// found, and `merge_noted` the review round the lead last heard it still waits after.
+// `merge_pinned` is the PR's head when you asked to merge it without Skelcrew's approval, and
+// null for a merge when ready: only that commit merges, so a push after you asked cancels it.
+// They are
 // the thread's, so a thread that starts over begins with none. `host` is the session host its
 // builder runs on, tmux or a runtime plugin, and `host_id` the session's ID there, which on tmux
 // is the folder. A thread from before hosts runs on tmux. A thread whose builder you stopped has
@@ -102,6 +105,7 @@ const threadColumns = {
   merge_asked: "TEXT",
   merge_waits: "TEXT",
   merge_noted: "INTEGER",
+  merge_pinned: "TEXT",
 };
 
 // A task's columns past its repository and ID: what belongs to the work rather than the agent
