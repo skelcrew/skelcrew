@@ -4,7 +4,7 @@
 import type { Database } from "bun:sqlite";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { parse, parseDocument, stringify } from "yaml";
+import { isMap, parse, parseDocument, stringify } from "yaml";
 import { z } from "zod";
 import { configFile, yourConfigDocument } from "../config.ts";
 import { configDir } from "../paths.ts";
@@ -103,6 +103,12 @@ export function setLocked(db: Database, source: string, locked: Locked | null): 
   const file = lockFile();
   if (!existsSync(file)) writeLock({});
   const document = parseDocument(readFileSync(file, "utf8"));
+  // A lock that pins nothing, such as one with only its first line, has no map to change, so it
+  // is written afresh.
+  if (!isMap(document.contents)) {
+    writeLock(locked === null ? {} : { [source]: locked });
+    return;
+  }
   if (locked === null) document.delete(source);
   else document.set(source, locked);
   // With no line width, a long line you wrote, such as a pin on one line, isn't folded.

@@ -380,6 +380,8 @@ async function sendYourFiles(where: string, machine: Machine): Promise<Sending |
     rmSync(folder, { recursive: true, force: true });
   }
   // sc install there runs holding a lock, and puts your files in place just before it starts.
+  // A server with no sc keeps its files, so a no to putting Skelcrew there changes nothing, and
+  // its shell's 127 tells the laptop so, as it does for any command.
   // So two installs at once, even from two laptops, each install from their own files, one after
   // the other. The files are copied, not moved, so a run that stops before installing, such as
   // for an update of Skelcrew there, leaves them for the next. Copying ignores a hangup, so a
@@ -389,7 +391,7 @@ async function sendYourFiles(where: string, machine: Machine): Promise<Sending |
     ...sent.map(({ name }) => `cp -f ${sending}/${name} ${name}`),
     ...gone.map((name) => `rm -f ${name}`),
   ];
-  const put = `(trap '' HUP && cd .config/skelcrew && ${steps.join(" && ")}) && exec "$@"`;
+  const put = `command -v sc >/dev/null || exit 127; (trap '' HUP && cd .config/skelcrew && ${steps.join(" && ")}) && exec "$@"`;
   const before = ["flock", ".config/skelcrew/.install", "sh", "-c", put, "put"];
   return { folder: sending, before };
 }

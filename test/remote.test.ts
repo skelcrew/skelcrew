@@ -334,7 +334,9 @@ test("in a terminal, --remote asks before sending your files to a server that is
   expect(code).toBe(3);
   const asked = wrote.indexOf("simon@workbox isn't set up. Set it up now? [Y/n]");
   expect(asked).toBeGreaterThan(-1);
-  expect(wrote.indexOf("Sending your config.yaml to simon@workbox.")).toBeGreaterThan(asked);
+  expect(
+    wrote.indexOf("Sending your config.yaml, skelcrew.lock to simon@workbox."),
+  ).toBeGreaterThan(asked);
   expect(wrote.indexOf("sc install on the server")).toBeGreaterThan(asked);
   expect(readFileSync(join(home, "server", ".config", "skelcrew", "config.yaml"), "utf8")).toBe(
     "harness: codex\n",
@@ -884,6 +886,21 @@ test("install puts Skelcrew on a server after asking, then runs sc install there
   );
 });
 
+// A server can have your old setup but no sc, such as after sc was deleted there. A no to
+// putting Skelcrew there must leave that setup as it was.
+test("a no to putting Skelcrew on a server leaves its files as they were", async () => {
+  mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
+  writeFileSync(join(home, ".config", "skelcrew", "config.yaml"), "harness: codex\n");
+  const there = join(home, "server", ".config", "skelcrew");
+  mkdirSync(there, { recursive: true });
+  writeFileSync(join(there, "config.yaml"), "harness: claude\n");
+  writeFileSync(join(there, "claude-token"), "sk-ant-oat01-old");
+  const run = await skelInTerminal(["--remote", "simon@workbox", "install"], ["n"]);
+  expect(run.code).toBe(1);
+  expect(readdirSync(there).sort()).toEqual(["claude-token", "config.yaml"]);
+  expect(readFileSync(join(there, "config.yaml"), "utf8")).toBe("harness: claude\n");
+});
+
 test("install puts nothing on a server without Skelcrew when you say no", async () => {
   const run = await skelInTerminal(["--remote", "simon@workbox", "install"], ["n"]);
   expect(run.code).toBe(1);
@@ -1029,7 +1046,7 @@ test("install sends your config.yaml, lock and Claude sign-in, readable only by 
   );
   // sc install runs holding a lock, and puts your files in place first, ignoring a hangup.
   const copied = names.map((name) => `cp -f ${sending}/${name} ${name}`).join(" && ");
-  const put = `(trap '' HUP && cd .config/skelcrew && ${copied}) && exec "$@"`;
+  const put = `command -v sc >/dev/null || exit 127; (trap '' HUP && cd .config/skelcrew && ${copied}) && exec "$@"`;
   const lock = `flock .config/skelcrew/.install sh -c ${quoted(put)} put sh -c `;
   expect(lines.at(-3)).toContain(` SKELCREW_LAPTOP_LOCK=`);
   expect(lines.at(-3)).toContain(lock);
@@ -1045,8 +1062,9 @@ test("install sends your config.yaml, lock and Claude sign-in, readable only by 
   expect(readdirSync(join(home, "tmp"))).toEqual([]);
 });
 
-// Your setup is the laptop's, so an old sign-in or pin never stays in use on the server.
-test("install removes from the server a token or lock you no longer have", async () => {
+// Your setup is the laptop's, so an old sign-in or pin never stays in use on the server. No lock
+// pins nothing, so the server gets an empty one, and sc install there removes plugins it has.
+test("install removes from the server a token you no longer have, and empties its lock", async () => {
   const config = join(home, ".config", "skelcrew");
   mkdirSync(config, { recursive: true });
   writeFileSync(join(config, "config.yaml"), "harness: codex\n");
@@ -1057,7 +1075,10 @@ test("install removes from the server a token or lock you no longer have", async
   installed(laptop.commit);
   const run = await skel(["--remote", "simon@workbox", "install"]);
   expect(run.code).toBe(0);
-  expect(readdirSync(there)).toEqual(["config.yaml"]);
+  expect(readdirSync(there).sort()).toEqual(["config.yaml", "skelcrew.lock"]);
+  expect(readFileSync(join(there, "skelcrew.lock"), "utf8")).toBe(
+    "# Your personal plugins at their exact versions, written by Skelcrew. sc install installs them.\n",
+  );
 });
 
 // Two installs at once each send through their own folder, so neither removes or moves the
@@ -1075,6 +1096,7 @@ test("two installs at once both send your files", async () => {
   expect(readdirSync(join(home, "server", ".config", "skelcrew")).sort()).toEqual([
     "claude-token",
     "config.yaml",
+    "skelcrew.lock",
   ]);
 });
 
@@ -1097,7 +1119,10 @@ test("install after updating Skelcrew there installs from your files", async () 
   expect(run.code).toBe(0);
   expect(run.out).toContain("Updated simon@workbox");
   expect(readFileSync(join(home, "server", "installed-from"), "utf8")).toBe("harness: codex\n");
-  expect(readdirSync(join(home, "server", ".config", "skelcrew"))).toEqual(["config.yaml"]);
+  expect(readdirSync(join(home, "server", ".config", "skelcrew")).sort()).toEqual([
+    "config.yaml",
+    "skelcrew.lock",
+  ]);
 });
 
 test("install with no files of yours sends nothing and runs sc install there", async () => {

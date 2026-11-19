@@ -1313,6 +1313,32 @@ test("sc install installs your plugins at the version your lock pins after askin
   expect(readFileSync(lock(), "utf8")).toBe(lockBefore);
 });
 
+// Such as when your files come from a laptop where you removed it: the files say what this
+// machine runs, so a plugin they don't name goes, with its settings and tokens.
+test("sc install removes a plugin from GitHub your files don't name", async () => {
+  noGitHubPlugin();
+  fakeGitHub();
+  publishFake("0.1.0");
+  await skel("1\nsk-ant-oat01-good\n");
+  lockFake("0.1.0");
+  await install("y\n");
+  writeFileSync(
+    config(),
+    readFileSync(config(), "utf8").replace("plugins: [simon/skelcrew-fake]", "plugins: []"),
+  );
+  writeFileSync(lock(), "");
+  expect((await skel("", bin, main(), home, {}, ["plugins"])).out).toBe(
+    "fake 0.1.0 io: tracker. sc install removes it.\n",
+  );
+  const run = await install();
+  expect(run.err).toBe("");
+  expect(run.out).toContain("Removed fake, with its settings and tokens.");
+  expect(existsSync(join(home, ".local", "share", "skelcrew", "plugins", "fake"))).toBe(false);
+  expect((await install()).out).toBe(
+    "Nothing to install: this machine has everything your files ask for.\n",
+  );
+});
+
 test("sc install with no answer to read installs nothing", async () => {
   noGitHubPlugin();
   fakeGitHub();

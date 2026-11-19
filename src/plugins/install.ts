@@ -17,6 +17,7 @@ import { openDb } from "../db.ts";
 import { repositories } from "../flow/repo.ts";
 import { originHere } from "../machine/origin.ts";
 import { configDir, dataDir } from "../paths.ts";
+import { errorText } from "../say.ts";
 import { removeControlCodes } from "../screen/look.ts";
 import { release } from "../version.ts";
 import { trackerOf } from "./ask.ts";
@@ -35,6 +36,7 @@ import {
   installedPlugins,
   type Manifest,
   type Plugin,
+  reachesOnlyMachines,
   readManifest,
   Version,
 } from "./plugin.ts";
@@ -609,8 +611,25 @@ function matchesLock(plugin: Plugin, locked: Locked): boolean {
   );
 }
 
-// Makes this machine match your personal files, for sc install: installs each plugin under
-// plugins: in your config.yaml at the version and commit your lock pins. A plugin new here, or at
+// Returns the plugins from GitHub installed here that your files don't name, which sc install
+// removes, such as one you removed on another machine before sending your files here. A plugin
+// from a folder is this machine's own, and one that only reaches machines isn't sent to a
+// server, so neither counts. One whose folder can't be read is left for you to remove.
+function unnamed(db: Database): Plugin[] {
+  const named = yourPlugins();
+  return installedPlugins(db).filter((plugin) => {
+    if (plugin.source === null || named.includes(plugin.source)) return false;
+    try {
+      return !reachesOnlyMachines(readManifest(plugin.folder));
+    } catch {
+      return false;
+    }
+  });
+}
+
+// Makes this machine match your personal files, for sc install: removes each plugin from GitHub
+// your files don't name, then installs each plugin under plugins: in your config.yaml at the
+// version and commit your lock pins. A plugin new here, or at
 // another version or commit, is shown and asked about. One already at its locked version asks
 // nothing, as you approved it before. It never moves a pin your lock has. A plugin your config
 // names that the lock lacks gets a pin added, as npm install does: at what is installed here, or
@@ -621,6 +640,18 @@ export function installYourPlugins(remote: string | null): { changed: boolean; l
   const db = openDb();
   const lock = yourLock(db);
   let changed = false;
+  // Removed first, so one of the same name from another repository can be installed after. One
+  // that is a repository's tracker or forge refuses to go, which is only said.
+  for (const plugin of unnamed(db)) {
+    changed = true;
+    try {
+      removePlugin(plugin.name);
+    } catch (error) {
+      console.log(
+        `Skelcrew kept ${plugin.name}, which your files don't name: ${errorText(error)}.`,
+      );
+    }
+  }
   eachAsked(
     yourPlugins(),
     (source) => source,
@@ -675,6 +706,7 @@ export function listPlugins(json: boolean): void {
   const lock = yourLock(db);
   const wanted = yourPlugins();
   const installed = installedPlugins(db);
+  const removed = unnamed(db).map((plugin) => plugin.name);
   const rows: Row[] = installed.map((plugin) => {
     const manifest = existsSync(plugin.folder) ? readManifest(plugin.folder) : null;
     if (!manifest) throw new Error(`${plugin.name}'s folder ${plugin.folder} is gone`);
@@ -697,7 +729,11 @@ export function listPlugins(json: boolean): void {
       // What it provides, under the name tools read before plugins had kinds.
       jobs: manifest.provides,
       from: plugin.source ?? plugin.folder,
-      change: moves ? `sc install moves it to ${to}` : null,
+      change: removed.includes(plugin.name)
+        ? "sc install removes it"
+        : moves
+          ? `sc install moves it to ${to}`
+          : null,
     };
   });
   // The plugins your files name that aren't installed here.

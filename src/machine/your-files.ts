@@ -7,7 +7,7 @@ import { configFile, yourConfigDocument } from "../config.ts";
 import { openDb } from "../db.ts";
 import { claudeTokenFile, dataDir } from "../paths.ts";
 import { type Lock, lockText, readLock, yourLock, yourPlugins } from "../plugins/lock.ts";
-import { installedPlugins, readManifest } from "../plugins/plugin.ts";
+import { installedPlugins, reachesOnlyMachines, readManifest } from "../plugins/plugin.ts";
 
 // Returns the database when this machine has one. Opening it would make one, and a laptop that
 // only runs sc --remote needs none.
@@ -21,8 +21,7 @@ function laptopOnly(): string[] {
   return (db ? installedPlugins(db) : []).flatMap(({ source, folder }) => {
     if (source === null) return [];
     try {
-      const { kind, provides } = readManifest(folder);
-      return kind === "runtime" && provides.every((one) => one === "machine") ? [source] : [];
+      return reachesOnlyMachines(readManifest(folder)) ? [source] : [];
     } catch {
       return [];
     }
@@ -70,8 +69,8 @@ export function lockDiffers(): boolean {
 }
 
 // Returns your personal files as a server gets them, each by its name in ~/.config/skelcrew. A
-// file you don't have has null, so the server's copy goes too, and an old token or pin never stays
-// in use there. A laptop with no config.yaml has no setup, and gets an empty list, so each server
+// token you don't have is null, so the server's copy goes too, and an old sign-in never stays in
+// use there. A laptop with no config.yaml has no setup, and gets an empty list, so each server
 // keeps its own. A plugin only the laptop uses is taken out of plugins: and the lock, so sc install
 // there doesn't install it. A laptop set up before the lock gets its lock first, written from the
 // plugins it has, so a server set up the same way gets the same pins and installs nothing.
@@ -91,12 +90,14 @@ export function yourFiles(): { name: string; text: string | null }[] {
     );
     config = document.toString();
   }
-  // The lock is written afresh, which only drops its comments, as Skelcrew writes it.
-  const lock = lockToSend();
+  // The lock is written afresh, which only drops its comments, as Skelcrew writes it. No lock
+  // is sent as an empty one, so the server doesn't write its own from the plugins it has, and sc
+  // install there removes those your files don't name.
+  const lock = lockToSend() ?? {};
   const token = existsSync(claudeTokenFile()) ? readFileSync(claudeTokenFile(), "utf8") : null;
   return [
     { name: "config.yaml", text: config },
-    { name: "skelcrew.lock", text: lock ? lockText(lock) : null },
+    { name: "skelcrew.lock", text: lockText(lock) },
     { name: "claude-token", text: token },
   ];
 }
