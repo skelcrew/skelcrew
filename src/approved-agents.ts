@@ -1,7 +1,15 @@
 // Trust for a repository's .agents/: the version of it you approved, for each repository, and
 // reading its files. Its role instructions decide what agents are told, so only a version you
 // approved ever steers them, and a change to it waits until you approve that too.
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse, stringify } from "yaml";
@@ -86,7 +94,17 @@ export function approveAgents(place: Place, tree: string | null): void {
 export function checkoutAgents(place: Place, checkout: string): string {
   const folder = mkdtempSync(join(tmpdir(), "skelcrew-agents-"));
   try {
-    const git = (args: string[]) => {
+    // The files of .agents/ the checkout tracks that are still there. Its own index says which,
+    // as the new index starts empty, where git would take each for new and leave out one a
+    // .gitignore rule matches, which every commit keeps.
+    const tracked = Bun.spawnSync(["git", "-C", checkout, "ls-files", "-z", "--", ".agents"], {
+      stdout: "pipe",
+      stderr: "pipe",
+    })
+      .stdout.toString()
+      .split("\0")
+      .filter((path) => path && lstatSync(join(checkout, path), { throwIfNoEntry: false }));
+    const git = (args: string[], stdin?: string) => {
       const run = Bun.spawnSync(
         [
           "git",
@@ -99,6 +117,7 @@ export function checkoutAgents(place: Place, checkout: string): string {
         {
           cwd: checkout,
           env: { ...process.env, GIT_INDEX_FILE: join(folder, "index") },
+          ...(stdin === undefined ? {} : { stdin: new Blob([stdin]) }),
           stdout: "pipe",
           stderr: "pipe",
         },
@@ -109,6 +128,9 @@ export function checkoutAgents(place: Place, checkout: string): string {
         );
       return run.stdout.toString().trim();
     };
+    // The tracked files first, given on stdin, as there can be more than a command line holds.
+    if (tracked.length > 0)
+      git(["add", "-f", "--pathspec-from-file=-", "--pathspec-file-nul"], tracked.join("\0"));
     git(["add", "--", ".agents"]);
     return git(["write-tree", "--prefix=.agents/"]);
   } finally {

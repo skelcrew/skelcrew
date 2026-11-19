@@ -925,6 +925,23 @@ test("init asks about a checkout's .agents/ that isn't on the default branch, fo
   expect(approvals()).toEqual({ "simon/app": git(checkout, "rev-parse", "HEAD:.agents").trim() });
 });
 
+// A tracked file stays in every commit though a .gitignore rule matches it, so it is in the
+// version you are asked to approve too.
+test("init asks about a checkout's .agents/ with its tracked files that .gitignore matches", async () => {
+  const checkout = onGitHub("simon/app", "WRITE");
+  expect((await skel(["repo", "add"], "", checkout)).err).toBe("");
+  mkdirSync(join(checkout, ".agents", "roles"), { recursive: true });
+  writeFileSync(join(checkout, ".agents", "roles", "builder.md"), "Ship it fast.\n");
+  writeFileSync(join(checkout, ".agents", "roles", "lead.md"), "Lead calmly.\n");
+  writeFileSync(join(checkout, ".gitignore"), "builder.md\n");
+  git(checkout, "add", "-f", "-A");
+  git(checkout, "commit", "-q", "-m", "agents");
+  const run = await skel(["init"], "y\n", checkout);
+  expect(run.err).toBe("");
+  expect(run.out).toContain("Ship it fast.");
+  expect(approvals()).toEqual({ "simon/app": git(checkout, "rev-parse", "HEAD:.agents").trim() });
+});
+
 test("init stops outside a git repository, and in one with no remote", async () => {
   const outside = await skel(["init"]);
   expect(outside.code).toBe(1);
