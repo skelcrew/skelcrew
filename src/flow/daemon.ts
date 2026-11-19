@@ -549,7 +549,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
           asks: stillAsks(thread),
         };
       }
-      // You arm one at your terminal, after saying y, or with m in the list. A lead arms one
+      // You arm one at your terminal, after saying y. A lead arms one
       // only when you let it in your config, and only with the words you asked it in, which it
       // gives in a file.
       case "merge when ready":

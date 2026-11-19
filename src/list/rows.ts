@@ -20,7 +20,6 @@ import { agentsSaid } from "../flow/merging.ts";
 import { findRepository } from "../flow/repo.ts";
 import type { DaemonRequest } from "../flow/requests.ts";
 import { ListStage, listStage } from "../flow/stage.ts";
-import { stillAsks } from "../flow/status.ts";
 import { Thread } from "../flow/thread.ts";
 import { forgeOf } from "../plugins/ask.ts";
 import { changedAt } from "../screen/lists.ts";
@@ -30,8 +29,8 @@ import { builderProgress } from "../screen/progress.ts";
 // What y does on a row once its question is answered: the question the bottom line asks, what it
 // says while the daemon works, and the request the daemon gets.
 export type Question = { ask: string; working: string; request: DaemonRequest };
-// What m does on a task ready for review, or on one whose review asks for changes or still runs:
-// asks, or says why it can't, such as for a PR whose forge plugin is too old to merge.
+// What m does on a task ready for review: asks, or says why it can't, such as for a PR whose
+// forge plugin is too old to merge.
 type Action = Question | { refused: string };
 
 // One row of the list. `part` is where it is: the lead, or the stage of its task. Its mark is a
@@ -42,9 +41,9 @@ type Action = Question | { refused: string };
 // merge. `session` is the agent's session, which Enter attaches to, `running` whether its agent
 // runs, and `tmux` whether Enter attaches to it on tmux, where Ctrl-Q comes back, rather than on
 // a runtime plugin's host, which has a key of its own. `start` is what Enter does on an issue,
-// and `merge` what m does on a task ready for review, or on one it can merge without Skelcrew's
-// approval. `link` is its PR's, which Enter opens, and `branch` the branch a task that is ready
-// without a forge waits on. Each is null where it doesn't apply.
+// and `merge` what m does on a task ready for review. `link` is its PR's, which Enter opens, and
+// `branch` the branch a task that is ready without a forge waits on. Each is null where it
+// doesn't apply.
 export type Row = {
   part: "lead" | ListStage;
   name: string;
@@ -131,8 +130,7 @@ const SavedLink = z.object({ pr_link: z.string().nullable() });
 // An ended task says whether it merged. A builder at work, or at work while its review runs, also
 // has the step it is on, as the sidebar shows it. Then come its PR, its CI and when it last
 // changed. The rest, such as a merge when ready or messages waiting, is for sc show, so a row
-// stays short. A task ready for review offers m when it has a PR to merge. A task not ended whose
-// review asks for changes, or still runs, offers m to merge it without Skelcrew's approval.
+// stays short. A task ready for review offers m when it has a PR to merge.
 function taskRow(
   db: Database,
   open: Open,
@@ -201,41 +199,6 @@ function taskRow(
           repo: `${open.owner}/${open.repo}`,
           pr: thread.pr,
           commit: approved,
-        },
-      };
-  }
-  // A PR whose review asks for changes, or still runs, can merge only without its approval. m arms
-  // that merge at the head the forge last sent, the one you see, after a question that names what
-  // the review still asks for. The daemon refuses it once the head moved.
-  const disputed = thread.verdict === "changes" || thread.reviewing !== null;
-  if (!ready && !ended && disputed && thread.pr !== null && copy !== null) {
-    const named = `${repoName}#${thread.pr}`;
-    // The row leaves an armed merge out to stay short, so m says it and what it waits on. A
-    // thread that failed isn't polled, so it says so itself.
-    if (thread.merge_plan !== null) {
-      const armed = thread.merge_pinned === null ? "when ready" : "without Skelcrew's approval";
-      const waits = thread.status === "failed" ? "its thread, which failed" : thread.merge_waits;
-      const waiting = waits === null ? "" : `, waiting on ${waits}`;
-      merge = { refused: `${name} merges ${armed}${waiting}: sc merge --cancel ${name} stops it` };
-    } else if (copy.head === null)
-      merge = {
-        refused: `${named} needs a newer forge plugin to merge here: run sc plugin update`,
-      };
-    else
-      merge = {
-        ask: [
-          `Merge ${named} without Skelcrew's approval? CI must still pass. ${removeControlCodes(stillAsks(thread))}`,
-          agentsSaid(db, open.owner, open.repo, copy, copy.head),
-          "y/n",
-        ]
-          .filter(Boolean)
-          .join(" "),
-        working: `Arming the merge of ${named} without approval…`,
-        request: {
-          command: "merge skip review",
-          repo: `${open.owner}/${open.repo}`,
-          task: thread.task,
-          seen: { pr: thread.pr, started: thread.started, head: copy.head },
         },
       };
   }

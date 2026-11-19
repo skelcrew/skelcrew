@@ -498,7 +498,7 @@ export function openFindings(thread: Thread): string[] {
 
 // Returns what a question to merge without Skelcrew's approval says of that review, such as "It
 // still asks: 1) Handle an empty file 2) Test the error". Each finding is put on one line, as the
-// question is one line at the bottom of the list or at your terminal.
+// question is one line at your terminal.
 export function stillAsks(thread: Thread): string {
   const findings = openFindings(thread).map(
     (finding, n) => `${n + 1}) ${finding.replace(/\s+/g, " ").trim()}`,

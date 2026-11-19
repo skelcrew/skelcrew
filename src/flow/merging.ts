@@ -106,7 +106,7 @@ export function agentsSaid(
 }
 
 // Arms a merge on the thread and returns what to say: when ready, for sc merge --when-ready, or
-// `skip` the review, for sc merge --skip-review and m in the list. At your terminal, `seen` is what
+// `skip` the review, for sc merge --skip-review. At your terminal, `seen` is what
 // you said y to: the PR's number and when its thread started, and when skipping the review the PR's
 // head. Anything else is refused, such as a thread removed and started over while you read the
 // question, with a PR you never saw, or a push you never saw. From a lead you let arm merges,
