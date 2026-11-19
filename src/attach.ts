@@ -3,10 +3,12 @@
 // lead, sc --list shows the lead's repository as a list, and sc attach opens a builder.
 import { z } from "zod";
 import { agentRuns } from "./agents/sessions.ts";
+import { agentsAnswered, askAboutAgents } from "./approved-agents.ts";
 import { ask } from "./client.ts";
 import { tellOldKeys } from "./config.ts";
 import { openDb } from "./db.ts";
 import { leadOf } from "./flow/lead.ts";
+import { repositories } from "./flow/repo.ts";
 import { builderSession, findThread } from "./flow/thread.ts";
 import { runList } from "./list/list.ts";
 import { installService, restartDaemon, servicePid, startDaemon } from "./machine/service.ts";
@@ -133,7 +135,8 @@ export async function upInBackground(): Promise<boolean> {
 // first. The lead is for `from`, an owner/repo, or else for the repository you opened last.
 // With `tab`, only a repository whose tab is open will do. Returns false, showing nothing, when
 // every tab is closed. Before it shows either, it names once any old keys the opened
-// repository's skelcrew.yaml still uses: only the daemon knows which repository you opened last.
+// repository's skelcrew.yaml still uses, and without `from` asks about an .agents/ you never
+// answered for: only the daemon knows which repository you opened last.
 export async function attachToLead(
   sessions: string,
   list: boolean,
@@ -153,6 +156,11 @@ export async function attachToLead(
   if ("error" in lead.data) throw new Error(lead.data.error);
   if ("closed" in lead.data) return false;
   tellOldKeys(lead.data.repository);
+  // With `from`, sc already asked about that repository's .agents/ as it brought it in, so
+  // asking again would repeat a question you just left unanswered.
+  const { repository } = lead.data;
+  const opened = repositories(openDb()).find((r) => `${r.owner}/${r.repo}` === repository);
+  if (!from && opened && !agentsAnswered(opened)) askAboutAgents(opened, opened.name);
   if (list) await runList(sessions, lead.data.repository);
   else await openScreen(sessions, lead.data.lead, lead.data.lead, lead.data.repository);
   return true;

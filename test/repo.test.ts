@@ -1033,6 +1033,20 @@ describe("a repository's .agents/", () => {
     expect(approved()).toBe(git(checkout, "rev-parse", "HEAD:.agents").trim());
   });
 
+  test("sc outside a checkout asks about the .agents/ of the repository it opens again", async () => {
+    const checkout = onGitHub("simon/app", "WRITE");
+    pushRole(checkout, "Build it the team's way.\n");
+    await skel(["repo", "add"], "", checkout);
+    expect(approved()).toBeUndefined();
+    // The daemon answers with the repository you opened last.
+    const run = await skel([], "y\n");
+    expect(run.err).toBe("");
+    expect(run.out).toContain("+Build it the team's way.");
+    expect(run.out).toContain("Approve simon/app's .agents/?");
+    expect(approved()).toBe(git(checkout, "rev-parse", "HEAD:.agents").trim());
+    expect((await skel([], "")).out).not.toContain("Approve");
+  });
+
   test("a repository with none asks nothing", async () => {
     const run = await skel(["repo", "add"], "", onGitHub("simon/app", "WRITE"));
     expect(run.out).not.toContain(".agents");
