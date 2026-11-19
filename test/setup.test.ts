@@ -1815,11 +1815,12 @@ test("sc install leaves a plugin your lock and a repository pin at different com
   expect(fresh.out).toContain(said);
   expect(fresh.out).not.toContain("Install it?");
   expect(existsSync(fakeFolder())).toBe(false);
-  // Your plugin is missing, so the machine isn't set up, and plain sc tries again.
-  expect(fresh.out).toContain(
-    "Skelcrew isn't set up yet, as your config.yaml names simon/skelcrew-fake",
-  );
-  expect(existsSync(join(home, ".local", "share", "skelcrew", "install-done"))).toBe(false);
+  // The machine isn't set up while the pins disagree, so plain sc tries again and says why.
+  const unfinished =
+    "Skelcrew isn't set up yet, as your lock and a repository pin simon/skelcrew-fake at different commits. Plain sc asks again. Pin the same version in each.";
+  const done = join(home, ".local", "share", "skelcrew", "install-done");
+  expect(fresh.out).toContain(unfinished);
+  expect(existsSync(done)).toBe(false);
   // Installed at the repository's pin, your lock doesn't move it either.
   repositoryLocksFake(clone, "0.1.0", yours);
   await install("y\n");
@@ -1830,6 +1831,9 @@ test("sc install leaves a plugin your lock and a repository pin at different com
   expect(again.out).not.toContain("Update it?");
   expect(again.out).not.toContain("Nothing to install");
   expect(git(fakeFolder(), "rev-parse", "HEAD")).toBe(yours);
+  // Installed at your pin, it still keeps the machine unfinished until the pins agree.
+  expect(again.out).toContain(unfinished);
+  expect(existsSync(done)).toBe(false);
 });
 
 // The lock says which plugin a repository gets, so one by another name is never taken for it.

@@ -412,11 +412,18 @@ export function install(from?: string, plain = false): void {
   const { changed: plugins, left } = installYourPlugins(from ?? originHere(), conflicting);
   // A plugin still missing keeps the mark away, even from a machine that had it, such as after
   // you named a new plugin and said no to it, so plain sc asks again.
-  if (left.length > 0)
+  // One a repository pins at another commit is said apart, as installing it can't help.
+  const missing = left.filter((source) => !conflicting.includes(source));
+  const disagreeing = left.filter((source) => conflicting.includes(source));
+  if (missing.length > 0)
     console.log(
-      `\nSkelcrew isn't set up yet, as your config.yaml names ${left.join(", ")}, which this machine doesn't have at the version your lock pins. Plain sc asks again. To leave it out here and everywhere, run sc remove -g with its name.`,
+      `\nSkelcrew isn't set up yet, as your config.yaml names ${missing.join(", ")}, which this machine doesn't have at the version your lock pins. Plain sc asks again. To leave it out here and everywhere, run sc remove -g with its name.`,
     );
-  else {
+  if (disagreeing.length > 0)
+    console.log(
+      `\nSkelcrew isn't set up yet, as your lock and a repository pin ${disagreeing.join(", ")} at different commits. Plain sc asks again. Pin the same version in each.`,
+    );
+  if (left.length === 0) {
     mkdirSync(dataDir(), { recursive: true });
     writeFileSync(setUpFile(), "");
     writeFileSync(installDoneFile(), "");
