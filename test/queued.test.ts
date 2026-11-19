@@ -517,3 +517,29 @@ test("a claim the engine's stop cut short after sc rm is told to the lead, not f
   expect(claimsSaved()).toBe(0);
   expect(statuses()["app-12"]).toBe("done");
 }, 60_000);
+
+test("a queued task sc rm is removing holds its place, and keeps it when sc rm fails", async () => {
+  addApp();
+  // app-12, stopped with a PR, waits first in the queue to come back. app-13 joined after it.
+  const rows = `${threadSql({ task: "12", title: "Add export", status: "queued", session: "t", pr: 7, queued_since: 1 })}
+${threadSql({ task: "13", title: "Dark mode", status: "queued", queued_since: 2 })}`;
+  const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
+openDb().exec(${JSON.stringify(rows)});`;
+  Bun.spawnSync([process.execPath, "-e", code], { env: env() });
+  await serveApp();
+  // sc rm of app-12 waits on the forge to close its PR, which then fails.
+  writeFileSync(join(plugin, "hold-close-pr"), "");
+  writeFileSync(join(plugin, "fail-close-pr"), "the forge is down");
+  const removal = runSkel(["rm", "app-12"], env());
+  await until(() => asked(plugin).some((q) => q.ask === "close pr"));
+  // A place frees up while app-12 is being removed: app-13, behind it, doesn't take it.
+  await sc("rm", "app-11");
+  await Bun.sleep(3000);
+  expect(statuses()).toMatchObject({ "app-12": "queued", "app-13": "queued" });
+  rmSync(join(plugin, "hold-close-pr"));
+  expect((await removal).code).not.toBe(0);
+  // app-12 stays first, and leaves the queue before app-13.
+  await until(() => statuses()["app-13"] === "failed");
+  expect(leftQueue("app-12")).toHaveLength(1);
+  expect(leftQueue("app-13")[0] ?? 0).toBeGreaterThanOrEqual(leftQueue("app-12")[0] ?? 0);
+}, 60_000);

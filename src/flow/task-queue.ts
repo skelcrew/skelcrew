@@ -60,9 +60,9 @@ const Owes = z.object({ owes: z.coerce.boolean() });
 // stopped one coming back as statusOnceBack says, and the caller starts its builder. Each keeps
 // when it joined until its builder's session is saved, so backToQueue can put it back should
 // the engine stop before then. It all happens at once, with nothing waited on, so no task leaves
-// the queue twice. A thread in `skip`, such as one sc rm is removing, stays in the queue. So does
-// one that still owes its claim, and every task of its repository that joined after it, so the
-// queue stays first come first served. A repository whose limit can't be read keeps its queue
+// the queue twice. A thread in `skip`, such as one sc rm is removing, stays in the queue, as does
+// one that still owes its claim. Each also holds back every task of its repository that joined
+// after it, so the queue stays first come first served, even when sc rm then fails. A repository whose limit can't be read keeps its queue
 // until it can, and the daemon's log says why once.
 export function leaveQueue(db: Database, skip: Set<string>): Thread[] {
   const queued = db
@@ -75,9 +75,8 @@ export function leaveQueue(db: Database, skip: Set<string>): Thread[] {
   const held = new Set<string>();
   const leaving: Thread[] = [];
   for (const { thread, owes } of queued) {
-    if (skip.has(thread.folder)) continue;
     const repository = `${thread.owner}/${thread.repo}`;
-    if (owes) held.add(repository);
+    if (owes || skip.has(thread.folder)) held.add(repository);
     if (held.has(repository)) continue;
     let limit: number | undefined;
     try {
