@@ -604,21 +604,29 @@ test("a repository whose default branch is gone still logs why its clone can't u
   expect(read(daemonLog())).not.toContain("no commits yet");
 });
 
-// What the daemon saved to tell app's lead about its .agents/, and what it typed in. Inside
-// Skelcrew's own sandbox the lead can't start, so its notes stay saved, and elsewhere they are
-// typed in. A note is deleted only a moment after it is typed, so it can briefly be in both.
+// The notes about .agents/ that wait, saved, for app's lead, and those typed into it.
 function agentsNotes(): { saved: string[]; typed: string[] } {
   const db = new Database(join(data(), "skelcrew.db"), { readonly: true });
   db.run("PRAGMA busy_timeout = 5000");
   const rows = db.query("SELECT text FROM notes").all();
   db.close();
+  const saved = rows.map((row) => String(Object.values(Object(row))[0]));
+  const typed = read(join(data(), "claude", leadName, "typed")).split("\n");
   const about = (text: string) => text.includes(".agents/");
-  return {
-    saved: rows.map((row) => String(Object.values(Object(row))[0])).filter(about),
-    typed: read(join(data(), "claude", leadName, "typed"))
-      .split("\n")
-      .filter(about),
-  };
+  return { saved: saved.filter(about), typed: typed.filter(about) };
+}
+
+// What the daemon told, or saved to tell, app's lead about its .agents/, once there is a note.
+// Inside Skelcrew's own sandbox the lead can't start, so its notes stay saved, and elsewhere
+// they are typed in. A note stays saved from its paste until a moment after its Enter, so
+// counting both places then would count it twice. Outside the sandbox the count waits until
+// no note is left saved, and counts what the lead got.
+async function toldAboutAgents(): Promise<string[]> {
+  const any = () => agentsNotes().saved.length + agentsNotes().typed.length > 0;
+  await until(any);
+  if (insideSandbox) return agentsNotes().saved;
+  await until(() => agentsNotes().saved.length === 0);
+  return agentsNotes().typed;
 }
 
 test("a push that changes .agents/ tells the lead once that the human must approve it", async () => {
@@ -633,18 +641,10 @@ test("a push that changes .agents/ tells the lead once that the human must appro
   git(work, "add", ".");
   git(work, "commit", "-q", "-m", "roles");
   git(work, "push", "-q", remote, "main");
-  // Wait until the note is in one place only: saved for a lead that can't start, or typed in.
-  const settled = () => {
-    const { saved, typed } = agentsNotes();
-    return saved.length + typed.length > 0 && (saved.length === 0 || typed.length === 0);
-  };
-  await until(settled);
-  const told = () => [...agentsNotes().saved, ...agentsNotes().typed];
-  expect(told()[0]).toContain("sc repo trust app");
+  expect((await toldAboutAgents())[0]).toContain("sc repo trust app");
   // Later polls of the same .agents/ say nothing more.
   await morePolls();
-  await until(settled);
-  expect(told()).toHaveLength(1);
+  expect(await toldAboutAgents()).toHaveLength(1);
 });
 
 // A lead already running when Skelcrew learned of flows keeps the instructions it started with,
