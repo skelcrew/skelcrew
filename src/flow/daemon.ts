@@ -19,7 +19,7 @@ import { flowRoles } from "../flows.ts";
 import { setupDone } from "../machine/setup.ts";
 import { keepUpToDate } from "../machine/update.ts";
 import { cloneDir, daemonCodeFile, daemonSocket, reviewSocket, threadSocket } from "../paths.ts";
-import { createTask, mergePr } from "../plugins/ask.ts";
+import { claimTask, createTask, mergePr, trackerOf } from "../plugins/ask.ts";
 import { errorText } from "../say.ts";
 import { checkoutFolder, git, release, singleFile } from "../version.ts";
 import { assignIssue } from "./assign.ts";
@@ -73,7 +73,7 @@ import {
   turnEnded,
   turnFailed,
 } from "./status.ts";
-import { joinsQueue, leaveQueue, queuedText } from "./task-queue.ts";
+import { backToQueue, joinsQueue, leaveQueue, queuedText } from "./task-queue.ts";
 import {
   builderSession,
   findThread,
@@ -593,6 +593,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         const key = `${owner}/${repo}#${request.task}`;
         startingTasks.add(key);
         let thread: Thread;
+        let claimed = false;
         try {
           // Its skelcrew.yaml, which can name its tracker, is in Skelcrew's clone, which the daemon
           // may still be making.
@@ -610,15 +611,30 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
             return { started: `Started ${threadName(db, started)}.` };
           }
           if (await hasNoCommits(db, repository)) throw new Error(noCommits(repository));
+          // An issue that will wait in the queue is claimed before it joins, and joins only once
+          // the tracker has the claim, so another machine's label doesn't start it while it
+          // waits. A claim that fails refuses the start. As for any sc start, the answer isn't
+          // looked at: you decided to start it.
+          if (
+            joinsQueue(db, repository) &&
+            !ownTask(request.task) &&
+            trackerOf(db, repository) !== null
+          ) {
+            await claimTask(db, repository, request.task).catch((error) => {
+              throw new Error(
+                `couldn't claim ${repository.name}-${request.task}'s issue, so it isn't queued: ${errorText(error)}. Run sc start again.`,
+              );
+            });
+            claimed = true;
+          }
           thread = await startThread(db, request);
         } finally {
           startingTasks.delete(key);
         }
         // Not waited on: an agent's command must answer quickly, and setup can take minutes.
-        // The claim and assignment wait on the tracker, and change only what it shows. A task
-        // that joined the queue is claimed and assigned as it joins, so another machine doesn't
-        // start it meanwhile.
-        assignIssue(db, thread, true);
+        // The claim, unless made above, and the assignment wait on the tracker, and change only
+        // what it shows.
+        assignIssue(db, thread, !claimed);
         if (thread.status === "queued") return { started: queuedText(db, thread) };
         setUpAndStart(thread);
         return { started: `Started ${threadName(db, thread)}.` };
@@ -692,6 +708,9 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   restoreLimits(db);
   // A freeze leaves nothing else in the log, so the daemon logs its own stalls.
   watchForStalls("The daemon");
+  // A task that left the queue but whose builder's start the stop cut short goes back to it
+  // first, as it can't be brought back.
+  backToQueue(db);
   // Taken before any request comes in, so a thread started meanwhile, still setting up,
   // isn't taken for one whose setup the daemon's stop cut short.
   const before = liveThreads(db);

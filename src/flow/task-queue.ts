@@ -41,10 +41,12 @@ export function queuedText(db: Database, thread: Thread): string {
 
 // Takes the tasks whose turn has come out of the queue, in the order they joined, as far as each
 // repository's limit allows now, and returns their threads. Each leaves the queue working, or a
-// stopped one coming back as statusOnceBack says, and the caller starts its builder. It all
-// happens at once, with nothing waited on, so no task leaves the queue twice. A thread in `skip`,
-// such as one sc rm is removing, stays in the queue. A repository whose limit can't be read
-// keeps its queue until it can, and the daemon's log says why once.
+// stopped one coming back as statusOnceBack says, and the caller starts its builder. Each keeps
+// when it joined until its builder's session is saved, so backToQueue can put it back should
+// the engine stop before then. It all happens at once, with nothing waited on, so no task leaves
+// the queue twice. A thread in `skip`, such as one sc rm is removing, stays in the queue. A
+// repository whose limit can't be read keeps its queue until it can, and the daemon's log says
+// why once.
 export function leaveQueue(db: Database, skip: Set<string>): Thread[] {
   const queued = db
     .query("SELECT * FROM task_threads WHERE status = 'queued' ORDER BY queued_since, rowid")
@@ -64,10 +66,30 @@ export function leaveQueue(db: Database, skip: Set<string>): Thread[] {
     }
     if (limit !== undefined && counted(db, thread).running >= limit) continue;
     const status = thread.session === null ? "working" : statusOnceBack(thread);
-    const change = { status, queued_since: null };
-    leaving.push(record(db, thread.folder, change, "its turn came in the queue of limits.threads"));
+    leaving.push(
+      record(db, thread.folder, { status }, "its turn came in the queue of limits.threads"),
+    );
   }
   return leaving;
+}
+
+// Puts back in the queue each task that left it but whose builder's start the engine's stop cut
+// short, before its session was saved. Such a thread can't be brought back, and would otherwise
+// fail and leave the queue for good. It goes back in its place, by when it first joined, ahead
+// of the tasks that joined after it. For the daemon's start, before it brings back builders.
+export function backToQueue(db: Database): void {
+  const cut = db
+    .query(`SELECT * FROM task_threads WHERE status IN ('working', 'waiting')
+      AND session IS NULL AND queued_since IS NOT NULL`)
+    .all()
+    .map((row) => Thread.parse(row));
+  for (const thread of cut)
+    record(
+      db,
+      thread.folder,
+      { status: "queued" },
+      "back in the queue: the engine stopped as it started",
+    );
 }
 
 // What the daemon's log already said of a queue that can't read its limit.

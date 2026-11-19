@@ -286,3 +286,40 @@ openDb().exec(${JSON.stringify(stopped)});`;
   await until(() => statuses()["app-12"] === "failed");
   expect(leftQueue("app-12")).toHaveLength(1);
 }, 60_000);
+
+test("a task the engine stopped while it left the queue goes back in its place, and starts once", async () => {
+  addApp();
+  // app-12 left the queue, but the engine stopped before its builder's session was saved.
+  const cut = threadSql({ task: "12", title: "Add export", queued_since: 1 });
+  const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
+openDb().exec(${JSON.stringify(cut)});`;
+  Bun.spawnSync([process.execPath, "-e", code], { env: env() });
+  await serveApp();
+  await sc("start", "app-13");
+  await Bun.sleep(3000);
+  expect(statuses()).toEqual({ "app-11": "working", "app-12": "queued", "app-13": "queued" });
+  // It joined first, so it starts first.
+  await sc("rm", "app-11");
+  await until(() => statuses()["app-13"] === "failed");
+  expect(leftQueue("app-12")).toHaveLength(1);
+  expect(leftQueue("app-13")[0] ?? 0).toBeGreaterThanOrEqual(endedAt("app-12"));
+}, 60_000);
+
+test("sc start claims an issue before it joins the queue, and a claim that fails refuses it", async () => {
+  addApp();
+  await serveApp();
+  const failing = join(plugin, "fail-took");
+  writeFileSync(failing, "network is down");
+  const refused = await runSkel(["start", "app-12"], env());
+  expect(refused.code).toBe(1);
+  expect(refused.err).toContain("couldn't claim app-12's issue, so it isn't queued");
+  expect(statuses()["app-12"]).toBeUndefined();
+  rmSync(failing);
+  expect(await sc("start", "app-12")).toContain("app-12 is queued");
+  // The claim was taken before sc start answered.
+  const claims = asked(plugin).filter((q) => q.ask === "took");
+  expect(claims.at(-1)).toMatchObject({ task: "12" });
+  // And it isn't claimed a second time.
+  await Bun.sleep(1000);
+  expect(asked(plugin).filter((q) => q.ask === "took")).toHaveLength(claims.length);
+}, 60_000);

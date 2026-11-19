@@ -213,7 +213,8 @@ export const Thread = z.object({
     .nullable()
     .transform((saved) => (saved === null ? null : ReviewPost.parse(JSON.parse(saved)))),
   // When the task last joined the queue of limits.threads, in milliseconds since 1970. The queue
-  // goes in this order, after a restart too. It only means something while the thread is queued.
+  // goes in this order, after a restart too. Kept once the task leaves the queue, until its
+  // builder's session is saved, so a restart before then puts it back in its place.
   queued_since: z.number().nullable(),
 });
 export type Thread = z.infer<typeof Thread>;

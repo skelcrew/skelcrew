@@ -92,8 +92,8 @@ const threadColumns = {
 // `agents` is the git tree of the .agents/ you had approved when the task started, which its
 // agents keep, or null for the built-in roles. `flow` is the flow the task runs from start to end,
 // `default` unless it was started with another. `queued_since` is when the task last joined the
-// queue of limits.threads, which goes first come first served, and only means something while
-// it waits there.
+// queue of limits.threads, which goes first come first served, kept until its builder's session
+// is saved.
 export const taskColumns = {
   title: "TEXT",
   body: "TEXT",

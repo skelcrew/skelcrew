@@ -526,7 +526,9 @@ export async function startBuilder(db: Database, sessions: string, thread: Threa
     const { title, body } = threadTask(db, thread);
     start = { sessionId: session, prompt: body ? `${title}\n\n${body}` : title };
   }
-  record(db, thread.folder, { session, harness: harness.name });
+  // Once its session is saved, a restart brings the builder back, so a thread that came from
+  // the queue of limits.threads no longer needs its place there.
+  record(db, thread.folder, { session, harness: harness.name, queued_since: null });
   // Starting the builder starts a stretch of work, which the sidebar times.
   db.run("UPDATE threads SET working_since = ? WHERE folder = ?", [Date.now(), thread.folder]);
   const { argv, env } = await harness.start({
