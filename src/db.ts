@@ -489,6 +489,23 @@ function prepareTables(db: Database): void {
   // ahead of Skelcrew's routine notes when several wait for the lead.
   if (!db.query("SELECT 1 FROM pragma_table_info('notes') WHERE name = 'urgent'").get())
     db.run("ALTER TABLE notes ADD COLUMN urgent INTEGER NOT NULL DEFAULT 0");
+  // `wrapped` marks a builder's message or a brief, which Skelcrew wraps in its own tags, apart
+  // from notes whose tags, from outside text, are removed as they are typed in. A builder's
+  // message saved before is told by its exact shape: Skelcrew's opening tag on its first line,
+  // its closing tag on its last, and no tag between, as the older Skelcrew removed them from
+  // inside. No other note starts so, as each starts with a thread's name or Skelcrew's words.
+  if (!db.query("SELECT 1 FROM pragma_table_info('notes') WHERE name = 'wrapped'").get()) {
+    db.run("ALTER TABLE notes ADD COLUMN wrapped INTEGER NOT NULL DEFAULT 0");
+    const saved = z.array(z.object({ id: z.number(), text: z.string() }));
+    for (const { id, text } of saved.parse(db.query("SELECT id, text FROM notes").all())) {
+      const shape = text.match(
+        /^<skelcrew from="[^"<>]+" reply="sc tell [^"<>]+">\n([\s\S]*)\n<\/skelcrew>$/,
+      );
+      const inside = shape?.[1];
+      if (inside !== undefined && !/<\s*\/?\s*(?:skelcrew|asked|brief)/i.test(inside))
+        db.run("UPDATE notes SET wrapped = 1 WHERE id = ?", [id]);
+    }
+  }
   // A lead table means a database from before each repository had its own lead.
   if (db.query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'lead'").get())
     adoptOldLead(db);

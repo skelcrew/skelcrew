@@ -27,7 +27,8 @@ import {
 } from "./thread.ts";
 
 // A note waiting to be typed into a lead.
-const Note = z.object({ id: z.number(), text: z.string() });
+// `wrapped` marks a message Skelcrew wrapped itself, whose tags are its own.
+const Note = z.object({ id: z.number(), text: z.string(), wrapped: z.coerce.boolean() });
 
 // The PR's reviews and comments a message carries, for the forge to mark seen once it is typed.
 const TypedIn = z.array(z.object({ kind: z.enum(["review", "comment"]), id: z.string() }));
@@ -420,12 +421,13 @@ export async function typeContinue(
   return deliver(host, id, marks, "continue", { timeout: 60_000, signal });
 }
 
-// Returns an agent's text with any skelcrew tag removed, so it can't open or close Skelcrew's
-// tag and pass what follows off as coming from someone else. A whole closing tag goes, and of
-// any other only its start, which is enough to undo it. Spaces and case count for nothing, as
-// </skelcrew > or < SKELCREW still read as a tag.
+// Returns an agent's or outside text with any skelcrew tag removed, so it can't open or close
+// Skelcrew's tag and pass what follows off as coming from someone else. A brief's <asked> and
+// <brief> tags go too, so nothing can pass for the human's words in a brief. A whole closing tag
+// goes, and of any other only its start, which is enough to undo it. Spaces and case count for
+// nothing, as </skelcrew > or < ASKED still read as a tag.
 export function untagged(text: string): string {
-  const tag = /<\s*\/\s*skelcrew\s*>|<\s*\/?\s*skelcrew/gi;
+  const tag = /<\s*\/\s*(?:skelcrew|asked|brief)\s*>|<\s*\/?\s*(?:skelcrew|asked|brief)/gi;
   let inside = text;
   // One pass isn't enough: removing the inner tag of </skel</skelcrew>crew> leaves a whole
   // </skelcrew>.
@@ -517,7 +519,7 @@ export function messageLead(db: Database, sessions: string, from: Caller, text: 
     throw new Error("Only a thread's builder can tell its lead.");
   const thread = from;
   const name = threadName(db, thread);
-  saveNote(db, sessions, thread, wrapMessage(name, `sc tell ${name}`, text), null, true);
+  saveNote(db, sessions, thread, wrapMessage(name, `sc tell ${name}`, text), null, true, true);
   record(db, thread.folder, { told_lead: true }, `its builder told the lead: ${text}`);
 }
 
@@ -574,7 +576,7 @@ export function briefLead(
   const told = z.object({ lead_briefs: z.coerce.boolean() }).nullable().parse(row);
   const rules = told === null || told.lead_briefs ? "" : `${briefsNote}\n\n`;
   if (rules) db.run(`UPDATE repositories SET lead_briefs = 1 ${where}`, [to.owner, to.repo]);
-  saveNote(db, sessions, to, `${rules}${message}`, null, true);
+  saveNote(db, sessions, to, `${rules}${message}`, null, true, true);
 }
 
 // Types the saved notes for a repository's lead into it, such as "started app-12 from github:
@@ -597,7 +599,7 @@ async function typeNotes(
   // Returns what the lead would be told now: the threads needing you, the notes in the order
   // they go in, and the message they make together.
   const batch = () => {
-    const sql = `SELECT id, text FROM notes WHERE ${where} ORDER BY urgent DESC, id`;
+    const sql = `SELECT id, text, wrapped FROM notes WHERE ${where} ORDER BY urgent DESC, id`;
     const notes = z.array(Note).parse(db.query(sql).all(owner, repo));
     const rows = db
       .query(`SELECT * FROM task_threads WHERE noting IS NOT NULL AND ${where} ORDER BY rowid`)
@@ -608,7 +610,9 @@ async function typeNotes(
       ...needing.map(
         (thread) => `${threadName(db, thread)} needs you: ${untagged(thread.noting ?? "")}`,
       ),
-      ...notes.map(({ text }) => text),
+      // A note Skelcrew didn't wrap itself may hold outside text, saved by an older Skelcrew
+      // before it removed tags, so no tag of its own goes in.
+      ...notes.map(({ text, wrapped }) => (wrapped ? text : untagged(text))),
     ];
     // Notes can quote outside text, such as a plugin's or a failed check's, so no control
     // character in them reaches the paste.
@@ -704,11 +708,13 @@ export function noteForLead(
   ended: string | null = null,
   urgent = false,
 ): void {
-  saveNote(db, sessions, repository, untagged(text), ended, urgent);
+  saveNote(db, sessions, repository, untagged(text), ended, urgent, false);
 }
 
-// Saves a note for a lead as it is, tags and all, and has the daemon type it in, for the
-// messages this module wraps itself, whose text inside was already made safe.
+// Saves a note for a lead and has the daemon type it in. `wrapped` marks one of the messages this
+// module wraps itself, whose text inside was already made safe, so its tags are kept as they are
+// typed in. Any other note has its tags removed again then, as one saved by an older Skelcrew
+// may hold some.
 function saveNote(
   db: Database,
   sessions: string,
@@ -716,13 +722,11 @@ function saveNote(
   text: string,
   ended: string | null,
   urgent: boolean,
+  wrapped: boolean,
 ): void {
-  db.run("INSERT INTO notes (owner, repo, text, ended, urgent) VALUES (?, ?, ?, ?, ?)", [
-    repository.owner,
-    repository.repo,
-    text,
-    ended,
-    urgent ? 1 : 0,
-  ]);
+  db.run(
+    "INSERT INTO notes (owner, repo, text, ended, urgent, wrapped) VALUES (?, ?, ?, ?, ?, ?)",
+    [repository.owner, repository.repo, text, ended, urgent ? 1 : 0, wrapped ? 1 : 0],
+  );
   typeLeadNotes(db, sessions);
 }

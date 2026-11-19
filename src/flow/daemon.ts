@@ -8,13 +8,13 @@ import { dirname } from "node:path";
 import { z } from "zod";
 import {
   agentRuns,
+  endExitedSession,
   exitedCleanly,
   interruptSession,
   processTree,
   readSession,
   stillRunning,
 } from "../agents/sessions.ts";
-import { mustTmux } from "../agents/tmux.ts";
 import { checkFlow, leadMayArmMerges, repositoryCommands } from "../config.ts";
 import { finishUpgrade, moveToTasks, moveTurnEnded, openDb, type Repository } from "../db.ts";
 import { flowRoles } from "../flows.ts";
@@ -580,7 +580,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
             to.owner,
             to.repo,
           ]);
-          mustTmux(sessions, ["kill-session", "-t", `=${name}`]);
+          endExitedSession(sessions, name);
         }
         db.transaction(() => {
           briefLead(db, sessions, caller, to, request.text, request.asked);
