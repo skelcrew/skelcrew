@@ -108,27 +108,25 @@ export async function restartStaleDaemon(): Promise<void> {
 // started beside it would fail on the lock. Agents keep running, as only the engine restarts.
 export async function restartEngine(): Promise<void> {
   const before = await daemonRuns();
-  // An engine from an older release reports no process id, so nothing tells whether it runs in
-  // a terminal, and restarting the service beside one would fail on its lock. Plain sc moves such
-  // an engine to this release, after which it reports one.
-  if (before?.pid === 0)
-    throw new Error(
-      "Skelcrew's engine is from an older release, which doesn't say where it runs. If you ran it with sc up in a terminal, stop it there, such as with Ctrl-C, and run it again. Otherwise run sc, which restarts it on this release. Your agents keep running.",
-    );
-  if (before && outsideService(before))
+  // An engine from an older release reports no process id. When the service runs none, it
+  // surely runs in a terminal. Otherwise it may be the service's, so the service restarts, and
+  // the wait below catches one in a terminal: it keeps answering, and with no id.
+  const terminal =
+    before !== null && (before.pid === 0 ? servicePid() === 0 : outsideService(before));
+  if (terminal)
     throw new Error(
       "Skelcrew's engine runs in a terminal, with sc up, not as its service. Stop it there, such as with Ctrl-C, then run sc up again, or sc up --bg to run it as the service. Your agents keep running.",
     );
   const log = restartDaemon();
   // The old engine can still answer for a moment while it stops, so only another process id
-  // counts as the new one.
+  // counts as the new one. Engines of this release always report theirs.
   const deadline = Date.now() + restartWait;
   while (true) {
     const now = await daemonRuns();
     if (now && now.pid !== 0 && now.pid !== before?.pid) break;
     if (Date.now() > deadline)
       throw new Error(
-        `Skelcrew's engine didn't come back within ${restartWait / 1000} seconds: ${log} shows why`,
+        `Skelcrew's engine didn't come back within ${restartWait / 1000} seconds: ${log} shows why. An engine from an older release that you ran with sc up in a terminal keeps a new one from starting: stop it there, such as with Ctrl-C.`,
       );
     await Bun.sleep(100);
   }

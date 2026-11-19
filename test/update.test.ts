@@ -187,15 +187,16 @@ const daemonLog = () =>
 // launchctl restarted it. In a process of its own, as one in the test's process got no answer
 // while the test waited on Skelcrew, and on Bun.listen, as a node:net server refused connections
 // for a moment after it said it was listening.
-async function daemon(before: object, after: object): Promise<void> {
+async function daemon(before: object, after: object, service = 1): Promise<void> {
   const managers: [string, string][] = [
     ["systemctl", "--user restart skelcrew"],
     ["launchctl", `kickstart -k gui/${userInfo().uid}/dev.skelcrew.daemon`],
   ];
-  // The service runs the daemon whose process id is 1. Asking so isn't noted with the calls.
+  // The service runs the daemon whose process id is `service`, or none for 0. Asking so isn't
+  // noted with the calls.
   const asked: Record<string, string> = {
-    systemctl: 'test "$2" = show && echo 1 && exit 0',
-    launchctl: 'test "$1" = print && echo "pid = 1" && exit 0',
+    systemctl: `test "$2" = show && echo ${service} && exit 0`,
+    launchctl: `test "$1" = print && echo "pid = ${service}" && exit 0`,
   };
   for (const [name, restart] of managers)
     writeScript(
@@ -354,15 +355,49 @@ test("sc restart says where to look when no new engine answers", async () => {
   expect(done.err).toContain(daemonLog());
 }, 60_000);
 
-// An engine of an older release reports no process id, so nothing tells whether it runs in a
-// terminal, even while the service manager runs a process of its own, such as one retrying.
-test("sc restart leaves alone an older engine that reports no process id", async () => {
-  await daemon({ pid: 0 }, { pid: 2 });
+// An engine of an older release reports no process id. One that answers while the service runs
+// none runs in a terminal.
+test("sc restart asks you to stop an older engine run in a terminal, with no service running", async () => {
+  await daemon({ pid: 0 }, {}, 0);
   const done = await restart();
   expect(done.code).toBe(1);
-  expect(done.err).toContain("older release");
   expect(done.err).toContain("Ctrl-C");
   expect(done.calls).toBe("");
+});
+
+test("sc restart restarts an older engine the service runs, which reports no process id", async () => {
+  await daemon({ pid: 0 }, { pid: 2 });
+  const done = await restart();
+  expect(done.err).toBe("");
+  expect(done.code).toBe(0);
+  expect(done.calls).toBe(restartCall);
+});
+
+// The service manager can run a process of its own beside an older engine in a terminal, such
+// as one retrying on the lock. The old engine keeps answering, with no id, which never counts.
+test("sc restart doesn't take an older engine in a terminal for the new one", async () => {
+  await daemon({ pid: 0 }, { pid: 0 });
+  const done = await restart({ SKELCREW_RESTART_WAIT_MS: "2000" });
+  expect(done.code).toBe(1);
+  expect(done.err).toContain("within 2 seconds");
+  expect(done.err).toContain("Ctrl-C");
+}, 60_000);
+
+// --remote runs the command on a server, where Skelcrew can't tell that an agent asked.
+test("sc --remote restart is only for your own terminal, not for agents", async () => {
+  const run = Bun.spawn(
+    [process.execPath, source("main.ts"), "--remote", "simon@workbox", "restart"],
+    {
+      env: { ...env(), SKELCREW_SANDBOX: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    },
+  );
+  const [err, code] = await Promise.all([new Response(run.stderr).text(), run.exited]);
+  expect(code).toBe(1);
+  expect(err).toBe(
+    "Skelcrew: restarting the engine is only for your own terminal, not for agents\n",
+  );
 });
 
 test("sc restart is only for your own terminal, not for agents", async () => {
