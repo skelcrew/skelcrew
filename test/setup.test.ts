@@ -1,4 +1,5 @@
 // The first plain sc on a machine, run as you would run it, against fake tools.
+import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import {
   appendFileSync,
@@ -1337,6 +1338,36 @@ test("sc install removes a plugin from GitHub your files don't name", async () =
   expect((await install()).out).toBe(
     "Nothing to install: this machine has everything your files ask for.\n",
   );
+});
+
+// A plugin a repository uses as its forge, and so its tracker, can't go, so the machine doesn't count as set up, and
+// sc --remote <host> install fails rather than say it matched your files.
+test("sc install fails when a plugin your files don't name can't be removed", async () => {
+  noGitHubPlugin();
+  fakeGitHub();
+  publishFake("0.1.0");
+  await skel("1\nsk-ant-oat01-good\n");
+  lockFake("0.1.0");
+  await install("y\n");
+  const db = new Database(join(home, ".local", "share", "skelcrew", "skelcrew.db"));
+  db.run(
+    "INSERT INTO repositories (owner, repo, name, forge) VALUES ('simon', 'other', 'other', 'fake')",
+  );
+  db.close();
+  writeFileSync(
+    config(),
+    readFileSync(config(), "utf8").replace("plugins: [simon/skelcrew-fake]", "plugins: []"),
+  );
+  writeFileSync(lock(), "");
+  const run = await install();
+  expect(run.code).toBe(1);
+  expect(run.out).toContain(
+    "Skelcrew couldn't remove fake: fake is the tracker of other, so Skelcrew keeps it.",
+  );
+  expect(run.out).toContain(
+    "Skelcrew isn't set up yet, as this machine still has fake, which your files don't name.",
+  );
+  expect(existsSync(join(home, ".local", "share", "skelcrew", "plugins", "fake"))).toBe(true);
 });
 
 test("sc install with no answer to read installs nothing", async () => {

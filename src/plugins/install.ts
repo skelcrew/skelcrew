@@ -634,22 +634,27 @@ function unnamed(db: Database): Plugin[] {
 // nothing, as you approved it before. It never moves a pin your lock has. A plugin your config
 // names that the lock lacks gets a pin added, as npm install does: at what is installed here, or
 // else at its newest version tag once you say yes. Returns whether there was anything to do, and
-// the plugins still missing or at another version than locked, as you said no to them.
-// `remote` is handed to each setup.
-export function installYourPlugins(remote: string | null): { changed: boolean; left: string[] } {
+// the plugins still missing or at another version than locked, as you said no to them, and the
+// ones your files don't name that couldn't be removed. `remote` is handed to each setup.
+export function installYourPlugins(remote: string | null): {
+  changed: boolean;
+  left: string[];
+  kept: string[];
+} {
   const db = openDb();
   const lock = yourLock(db);
   let changed = false;
   // Removed first, so one of the same name from another repository can be installed after. One
-  // that is a repository's tracker or forge refuses to go, which is only said.
+  // that is a repository's tracker or forge refuses to go, which is said here and returned, so the
+  // machine isn't marked set up while it still runs a plugin your files removed.
+  const kept: string[] = [];
   for (const plugin of unnamed(db)) {
     changed = true;
     try {
       removePlugin(plugin.name);
     } catch (error) {
-      console.log(
-        `Skelcrew kept ${plugin.name}, which your files don't name: ${errorText(error)}.`,
-      );
+      console.log(`Skelcrew couldn't remove ${plugin.name}: ${errorText(error)}.`);
+      kept.push(plugin.name);
     }
   }
   eachAsked(
@@ -681,7 +686,7 @@ export function installYourPlugins(remote: string | null): { changed: boolean; l
     const locked = now[source];
     return !here || (locked !== undefined && !matchesLock(here, locked));
   });
-  return { changed, left };
+  return { changed, left, kept };
 }
 
 // One row of sc plugins: a plugin your files name or this machine has. The version, kind and
