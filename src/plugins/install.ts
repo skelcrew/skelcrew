@@ -4,9 +4,7 @@
 import type { Database } from "bun:sqlite";
 import {
   existsSync,
-  lstatSync,
   mkdirSync,
-  readFileSync,
   readSync,
   realpathSync,
   renameSync,
@@ -14,17 +12,15 @@ import {
   writeSync,
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { parse } from "yaml";
 import { z } from "zod";
-import { openDb, type Repository } from "../db.ts";
+import { openDb } from "../db.ts";
 import { repositories } from "../flow/repo.ts";
 import { originHere } from "../machine/origin.ts";
-import { cloneDir, configDir, dataDir } from "../paths.ts";
+import { configDir, dataDir } from "../paths.ts";
 import { removeControlCodes } from "../screen/look.ts";
 import { release } from "../version.ts";
 import { trackerOf } from "./ask.ts";
 import {
-  Lock,
   type Locked,
   setLocked,
   setYourPlugins,
@@ -43,6 +39,7 @@ import {
   readManifest,
   Version,
 } from "./plugin.ts";
+import type { Need } from "./repository.ts";
 
 // Where plugins installed from GitHub live, each version in a folder of its own.
 const pluginsDir = () => join(dataDir(), "plugins");
@@ -250,7 +247,7 @@ const unanswered = (doing: string) =>
 // Runs `change` for each plugin, and fails at the end naming each one left out for want of a
 // terminal to say yes at, by the name `nameOf` gives. Any other error stops at once, as for a
 // single plugin.
-function eachAsked<T>(
+export function eachAsked<T>(
   plugins: T[],
   nameOf: (plugin: T) => string,
   change: (plugin: T) => void,
@@ -333,6 +330,8 @@ function refuseInstalled(db: Database, name: string): void {
 // setup a server takes. `tag` picks the version, such as v0.1.0, in place of the newest, and
 // `commit` the exact commit to fetch. `pin` is false when the commit came from your lock, which
 // sc install leaves as it is, and `name` true to add the plugin to plugins: in your config.yaml.
+// `io` is true for a repository's plugin, which must be an I/O plugin, and `called` the name a
+// repository's lock gives it, which its manifest must give too.
 type Options = {
   remote?: string | null;
   ask?: boolean;
@@ -340,9 +339,30 @@ type Options = {
   commit?: string;
   pin?: boolean;
   name?: boolean;
+  io?: boolean;
+  called?: string;
   // Refuses a plugin that only reaches machines, with OnlyReachesMachines, before asking.
   skipMachines?: boolean;
 };
+
+// Throws when the plugin's manifest names it otherwise than the lock that pins it, `called`, before
+// anything of it runs. The lock says which plugin you get, so another one is never taken for it.
+export function refuseOtherName(manifest: Manifest, called: string | undefined): void {
+  if (called !== undefined && manifest.name !== called)
+    throw new Error(
+      `the lock pins ${called}, and the plugin there is ${manifest.name}, so Skelcrew won't take one for the other`,
+    );
+}
+
+// Throws when `io` is true and the plugin is a runtime plugin, before anything of it runs. How you
+// run and watch your agents is yours, so only you add a runtime plugin, and a repository's files
+// can't name one.
+export function refuseRuntime(manifest: Manifest, io: boolean | undefined): void {
+  if (io && manifest.kind === "runtime")
+    throw new Error(
+      `${manifest.name} is a runtime plugin, which is always yours and never a repository's. sc add -g adds it as yours`,
+    );
+}
 
 // The error for a plugin that only reaches machines, refused on a machine you reach with
 // --remote, as such a plugin is used where you run --remote.
@@ -354,7 +374,7 @@ class OnlyReachesMachines extends Error {}
 // and setup, and writes your files as `pin` and `name` say, before the plugin counts as
 // installed. A write that fails leaves the files as they were and the plugin not installed.
 export function installPlugin(given: string, options: Options = {}): boolean {
-  const { ask = true, tag, commit, pin = true, name = false } = options;
+  const { ask = true, tag, commit, pin = true, name = false, io, called } = options;
   const remote = options.remote === undefined ? originHere() : options.remote;
   const db = openDb();
   const isPath = given.startsWith(".") || given.startsWith("/");
@@ -392,6 +412,8 @@ export function installPlugin(given: string, options: Options = {}): boolean {
       throw new OnlyReachesMachines(manifest.name);
     refuseInstalled(db, manifest.name);
     checkSkelcrewVersion(manifest);
+    refuseRuntime(manifest, io);
+    refuseOtherName(manifest, called);
     const answer = ask ? confirmPlugin(manifest, given, "Install") : true;
     if (answer === null) throw unanswered(`installing ${manifest.name}`);
     if (!answer) {
@@ -431,7 +453,7 @@ export function installPlugin(given: string, options: Options = {}): boolean {
 }
 
 // Returns how the lock pins a plugin at this manifest's version and this commit.
-const lockedAs = (manifest: Manifest, commit: string): Locked => ({
+export const lockedAs = (manifest: Manifest, commit: string): Locked => ({
   name: manifest.name,
   version: manifest.version,
   commit,
@@ -442,7 +464,7 @@ const lockedAs = (manifest: Manifest, commit: string): Locked => ({
 // showing what it runs and asking, as installing does. Its old version's folder goes, and your
 // lock pins the new one, unless `pin` is false.
 export function updatePlugin(db: Database, plugin: Plugin, options: Options = {}): void {
-  const { ask = true, tag: wanted, commit, pin = true } = options;
+  const { ask = true, tag: wanted, commit, pin = true, io, called } = options;
   const remote = options.remote === undefined ? originHere() : options.remote;
   const { name, folder, source } = plugin;
   const current = readManifest(folder);
@@ -482,6 +504,8 @@ export function updatePlugin(db: Database, plugin: Plugin, options: Options = {}
     if (manifest.name !== name)
       throw new Error(`${source} now names its plugin ${manifest.name}, not ${name}`);
     checkSkelcrewVersion(manifest);
+    refuseRuntime(manifest, io);
+    refuseOtherName(manifest, called);
     const answer = ask ? confirmPlugin(manifest, source, "Update") : true;
     if (answer === null) throw unanswered(`updating ${name}`);
     if (!answer) {
@@ -513,16 +537,19 @@ export function updatePlugin(db: Database, plugin: Plugin, options: Options = {}
   }
 }
 
-// Updates the named plugin, or every one, for sc update -g. A plugin your files name that isn't
-// installed here is installed at its newest version instead, after asking, so its lock moves
-// too. `name` is a plugin's name or its owner/repo.
+// Updates the named plugin, or every one of yours, for sc update -g. A plugin your files name
+// that isn't installed here is installed at its newest version instead, after asking, so its lock
+// moves too. `name` is a plugin's name or its owner/repo. A plugin only a repository's files name
+// isn't yours, so it is left at the version that repository's skelcrew.lock pins.
 export function updatePlugins(name?: string): void {
   const db = openDb();
   const lock = yourLock();
-  const installed = installedPlugins(db);
-  const missing = yourPlugins().filter(
-    (source) => !installed.some((plugin) => plugin.source === source),
+  const named = yourPlugins();
+  // A plugin from a folder is yours, as no repository can name one.
+  const installed = installedPlugins(db).filter(
+    (plugin) => plugin.source === null || named.includes(plugin.source),
   );
+  const missing = named.filter((source) => !installed.some((plugin) => plugin.source === source));
   const chosen = installed.filter(
     (plugin) => name === undefined || plugin.name === name || plugin.source === name,
   );
@@ -540,50 +567,17 @@ export function updatePlugins(name?: string): void {
   );
 }
 
-// Returns the plugins a repository's skelcrew.lock pins, by the GitHub repository each comes
-// from, read from Skelcrew's clone of its default branch. A repository with none pins nothing.
-// A link is refused, since it could point at any file of yours.
-function repositoryLock(repository: Repository): string[] {
-  const file = join(cloneDir(repository.owner, repository.repo), "skelcrew.lock");
-  // lstat, so a link is seen as one and refused, not followed.
-  const stat = lstatSync(file, { throwIfNoEntry: false });
-  if (!stat) return [];
-  if (!stat.isFile())
-    throw new Error(
-      `${repository.name}'s skelcrew.lock isn't a plain file, so Skelcrew won't read it`,
-    );
-  let parsed: unknown;
-  try {
-    parsed = parse(readFileSync(file, "utf8"));
-  } catch (error) {
-    throw new Error(`${repository.name}'s skelcrew.lock isn't valid YAML: ${String(error)}`);
-  }
-  // A lock with only comments is empty, which YAML reads as null.
-  const lock = Lock.safeParse(parsed ?? {});
-  if (!lock.success)
-    throw new Error(
-      `${repository.name}'s skelcrew.lock isn't valid: ${z.prettifyError(lock.error)}`,
-    );
-  return Object.keys(lock.data);
-}
-
 // Returns what the plugin does for the repositories Skelcrew has, such as "the tracker of app",
-// or null when no repository uses it. A repository uses a plugin as its tracker or forge, or by
-// pinning it in its skelcrew.lock. Such a plugin is never removed, as its repositories would lose
-// their tasks, their PRs and their login for pushing, or a plugin the team chose.
-function jobOf(db: Database, { name, source }: Plugin): string | null {
-  // The repositories that use it as their tracker, then as their forge, then name it in their
-  // lock. The first found is enough to say why it stays.
-  const all = repositories(db);
+// or null when it is no repository's tracker or forge. Such a plugin is never removed, as its
+// repositories would lose their tasks, or their PRs and their login for pushing.
+function jobOf(db: Database, name: string): string | null {
+  // The repositories that use it as their tracker, then as their forge. The first job found is
+  // enough to say why it stays.
   for (const [job, usingIt] of [
-    ["the tracker of", all.filter((r) => trackerOf(db, r) === name)],
-    ["the forge of", all.filter((r) => r.forge === name)],
-    [
-      "named in the skelcrew.lock of",
-      source === null ? [] : all.filter((r) => repositoryLock(r).includes(source)),
-    ],
+    ["tracker", repositories(db).filter((r) => trackerOf(db, r) === name)],
+    ["forge", repositories(db).filter((r) => r.forge === name)],
   ] as const)
-    if (usingIt.length > 0) return `${job} ${usingIt.map((r) => r.name).join(", ")}`;
+    if (usingIt.length > 0) return `the ${job} of ${usingIt.map((r) => r.name).join(", ")}`;
   return null;
 }
 
@@ -595,7 +589,7 @@ function jobOf(db: Database, { name, source }: Plugin): string | null {
 export function removePlugin(name: string, named = false): void {
   const db = openDb();
   const plugin = findPlugin(db, name);
-  const job = jobOf(db, plugin);
+  const job = jobOf(db, name);
   if (job !== null) throw new Error(`${name} is ${job}, so Skelcrew keeps it`);
   // Your files change first. A write that fails puts both back and removes nothing, so the
   // plugin stays installed and named, and a retry starts over.
@@ -615,8 +609,23 @@ export function removePlugin(name: string, named = false): void {
 // Adds a personal plugin, for sc add -g: installs it after asking, then names it under plugins:
 // in your config.yaml, beside the version your lock now pins. A folder of yours is installed on
 // this machine only: its path means nothing on another machine, and it has no version to pin, so
-// it stays out of your files and says so. Returns whether it was installed.
+// it stays out of your files and says so. A plugin a repository had installed here becomes yours at
+// the version installed, asking nothing, as you approved that exact version before. Returns
+// whether it was installed.
 export function addPlugin(given: string, remote = originHere()): boolean {
+  const db = openDb();
+  const here = installedPlugins(db).find((plugin) => plugin.source === given);
+  if (here && !yourPlugins().includes(given)) {
+    const manifest = readManifest(here.folder);
+    writeBoth(() => {
+      setYourPlugins([...yourPlugins(), given]);
+      setLocked(given, lockedAs(manifest, commitOf(here.folder)));
+    });
+    console.log(
+      `Added ${manifest.name} ${manifest.version} to your plugins, at the version installed here.`,
+    );
+    return true;
+  }
   if (!installPlugin(given, { remote, name: true })) return false;
   if (given.startsWith(".") || given.startsWith("/"))
     console.log(
@@ -626,15 +635,23 @@ export function addPlugin(given: string, remote = originHere()): boolean {
 }
 
 // Removes a personal plugin, for sc remove -g: from plugins: in your config.yaml, from your lock
-// and from this machine, with its settings and tokens. `given` is its name or its owner/repo. It
-// refuses while the plugin is the tracker or forge of a repository Skelcrew has, and then changes
-// nothing.
-export function removeYourPlugin(given: string): void {
+// and from this machine, with its settings and tokens. `given` is its name or its owner/repo. A
+// plugin a repository still needs, as `needs` from repositoryNeeds says, leaves your files only,
+// and stays installed with its settings and tokens, such as its login. It refuses while the plugin
+// is the tracker or forge of a repository Skelcrew has, and for a plugin only a repository names,
+// and then changes nothing.
+export function removeYourPlugin(given: string, needs: Need[]): void {
   const db = openDb();
   const lock = yourLock();
-  const installed = installedPlugins(db).find(
-    (plugin) => plugin.name === given || plugin.source === given,
-  );
+  const named = yourPlugins();
+  const plugin = installedPlugins(db).find((one) => one.name === given || one.source === given);
+  // A plugin only a repository names isn't yours, so its settings and tokens stay.
+  const yours = plugin && (plugin.source === null || named.includes(plugin.source));
+  if (plugin && !yours)
+    throw new Error(
+      `${given} isn't one of your plugins, as only a repository's skelcrew.yaml names it, so Skelcrew keeps it`,
+    );
+  const installed = yours ? plugin : undefined;
   // A plugin your files name may not be installed here yet, so the lock names it too.
   const source =
     installed?.source ??
@@ -642,7 +659,8 @@ export function removeYourPlugin(given: string): void {
     null;
   if (!installed && source === null)
     throw new Error(`there is no plugin named ${given}: sc plugins lists them`);
-  if (installed) {
+  const needed = needs.find((need) => need.source === source);
+  if (installed && !needed) {
     removePlugin(installed.name, true);
     return;
   }
@@ -651,11 +669,15 @@ export function removeYourPlugin(given: string): void {
     setYourPlugins(yourPlugins().filter((one) => one !== source));
     setLocked(source, null);
   });
-  console.log(`Removed ${given} from your plugins.`);
+  console.log(
+    installed && needed
+      ? `Removed ${given} from your plugins. It stays installed, as ${needed.where}'s skelcrew.yaml names it.`
+      : `Removed ${given} from your plugins.`,
+  );
 }
 
 // Returns whether the plugin is installed at exactly the version and commit locked.
-function matchesLock(plugin: Plugin, locked: Locked): boolean {
+export function matchesLock(plugin: Plugin, locked: Locked): boolean {
   return (
     readManifest(plugin.folder).version === locked.version &&
     commitOf(plugin.folder) === locked.commit
@@ -665,10 +687,10 @@ function matchesLock(plugin: Plugin, locked: Locked): boolean {
 // Returns the plugins from GitHub installed here that your files don't name, which sc install
 // removes, such as one you removed on another machine before sending your files here. A plugin
 // from a folder is this machine's own, and one that only reaches machines isn't sent to a
-// server, so neither counts. One whose folder can't be read is left for you to remove. One that
-// is a repository's tracker or forge is among them, though sc install keeps it.
-function unnamed(db: Database): Plugin[] {
-  const named = yourPlugins();
+// server, so neither counts. Nor does one a repository needs, by `needed`, the plugins any
+// repository Skelcrew has names. One whose folder can't be read is left for you to remove.
+function unnamed(db: Database, needed: string[]): Plugin[] {
+  const named = [...yourPlugins(), ...needed];
   return installedPlugins(db).filter((plugin) => {
     if (plugin.source === null || named.includes(plugin.source)) return false;
     try {
@@ -681,15 +703,24 @@ function unnamed(db: Database): Plugin[] {
 
 // Makes this machine match your personal files, for sc install: removes each plugin from GitHub
 // your files don't name, then installs each plugin under plugins: in your config.yaml at the
-// version and commit your lock pins. One your files don't name that a repository uses stays, and
-// your files are left as they are. A plugin new here, or at
+// version and commit your lock pins. A plugin new here, or at
 // another version or commit, is shown and asked about. One already at its locked version asks
 // nothing, as you approved it before. It never moves a pin your lock has. A plugin your config
 // names that the lock lacks gets a pin added, as npm install does: at what is installed here, or
 // else at its newest version tag once you say yes. Returns whether there was anything to do, and
-// the plugins still missing or at another version than locked, as you said no to them. `remote`
-// is handed to each setup.
-export function installYourPlugins(remote: string | null): { changed: boolean; left: string[] } {
+// the plugins still missing or at another version than locked, as you said no to them. One your
+// files don't name that is a repository's tracker or forge stays, and your files are left as they
+// are, as only you make a plugin yours. `remote` is handed to each setup. `conflicting` are the
+// plugins a repository pins at another commit than your lock: each is left as it is, neither
+// installed nor moved, and the repository's install says why. Each of them is among those still
+// missing, until the pins agree. `needed` are the plugins repositories name, which stay though
+// your files don't name them. It is instead why what repositories need can't be told, such as a
+// repository whose files can't be read or whose clone isn't there: then every plugin stays.
+export function installYourPlugins(
+  remote: string | null,
+  conflicting: string[] = [],
+  needed: string[] | string = [],
+): { changed: boolean; left: string[] } {
   const db = openDb();
   const lock = yourLock();
   let changed = false;
@@ -700,15 +731,20 @@ export function installYourPlugins(remote: string | null): { changed: boolean; l
   const skipMachines = process.env.SKELCREW_REMOTE_NAME !== undefined;
   const skipped: string[] = [];
   // Removed first, so one of the same name from another repository can be installed after. One
-  // a repository uses stays, as its tracker, its forge or one its skelcrew.lock names. Your files
-  // are left as they are: only you make a plugin yours.
-  for (const plugin of unnamed(db)) {
-    if (jobOf(db, plugin) !== null) continue;
-    changed = true;
-    removePlugin(plugin.name);
-  }
+  // that is a repository's tracker or forge stays, or the repository would lose its tasks or PRs.
+  // While what repositories need can't be told, every one stays, and says why.
+  if (typeof needed === "string")
+    for (const plugin of unnamed(db, []))
+      console.log(`Skelcrew kept ${plugin.name}, which your files don't name, as ${needed}.`);
+  else
+    for (const plugin of unnamed(db, needed)) {
+      if (jobOf(db, plugin.name) !== null) continue;
+      changed = true;
+      removePlugin(plugin.name);
+    }
+  const mine = yourPlugins().filter((source) => !conflicting.includes(source));
   eachAsked(
-    yourPlugins(),
+    mine,
     (source) => source,
     (source) => {
       const locked = lock[source];
@@ -739,10 +775,13 @@ export function installYourPlugins(remote: string | null): { changed: boolean; l
   );
   // Read again, as an install added its pin.
   const now = yourLock();
+  // One left as it is for a repository's pin always counts, even at your pin, so the machine
+  // isn't set up until the pins agree, and plain sc says why each time.
   const left = yourPlugins().filter((source) => {
     if (skipped.includes(source)) return false;
     const here = installedPlugins(db).find((plugin) => plugin.source === source);
     const locked = now[source];
+    if (conflicting.includes(source)) return true;
     return !here || (locked !== undefined && !matchesLock(here, locked));
   });
   return { changed, left };
@@ -761,16 +800,42 @@ type Row = {
   change: string | null;
 };
 
-// Prints the plugins your files name and this machine has, for sc plugins: each one's name,
-// version, kind and what it provides, such as "github 0.1.0 io: tracker, forge", and what sc
-// install would change. --json gives the same rows for tools, and keeps jobs, so a tool written
-// before kinds still reads it.
-export function listPlugins(json: boolean): void {
+// Prints the plugins your files and repositories' files name and this machine has, for sc
+// plugins: each one's name, version, kind and what it provides, such as "github 0.1.0 io:
+// tracker, forge", and what sc install would change. `needs` are the plugins repositories need,
+// as repositoryNeeds gives them, and `needed` the plugins any repository Skelcrew has names, or
+// why that can't be told, as installYourPlugins takes them. --json gives the same rows for
+// tools, and keeps jobs, so a tool written before kinds still reads it.
+export function listPlugins(json: boolean, needs: Need[], needed: string[] | string): void {
   const db = openDb();
   const lock = yourLock();
   const wanted = yourPlugins();
   const installed = installedPlugins(db);
-  const unnamedHere = unnamed(db).map((plugin) => plugin.name);
+  // What sc install would do for a repository's plugin, or null for nothing. The first need
+  // that changes something is said, as sc install acts on it first.
+  const repositoryChange = (source: string, plugin?: Plugin): string | null => {
+    for (const { where, locked, conflict } of needs.filter((need) => need.source === source)) {
+      if (conflict !== null) return `sc install leaves it, as it is pinned at ${conflict}`;
+      if (!locked) return `${where}'s skelcrew.lock doesn't pin it, so sc install leaves it out`;
+      if (!plugin) return `sc install installs ${locked.version} for ${where}`;
+      if (!matchesLock(plugin, locked))
+        return `sc install moves it to ${locked.version} at commit ${locked.commit.slice(0, 12)} for ${where}`;
+    }
+    return null;
+  };
+  // What sc install says of a plugin whose pins disagree, which it leaves as it is, or null.
+  const disagreement = (source: string): string | null => {
+    const conflict = needs.find((need) => need.source === source)?.conflict;
+    return conflict ? `sc install leaves it, as it is pinned at ${conflict}` : null;
+  };
+  const removed = unnamed(db, typeof needed === "string" ? [] : needed).map((p) => p.name);
+  // What sc install does to a plugin no file names: removes it, unless a repository uses it or
+  // what repositories need can't be told.
+  const goes = (name: string) => {
+    if (typeof needed === "string") return `sc install keeps it, as ${needed}`;
+    const job = jobOf(db, name);
+    return job === null ? "sc install removes it" : `sc install keeps it, as it is ${job}`;
+  };
   const rows: Row[] = installed.map((plugin) => {
     const manifest = existsSync(plugin.folder) ? readManifest(plugin.folder) : null;
     if (!manifest) throw new Error(`${plugin.name}'s folder ${plugin.folder} is gone`);
@@ -781,13 +846,6 @@ export function listPlugins(json: boolean): void {
       wanted.includes(plugin.source) &&
       locked &&
       !matchesLock(plugin, locked);
-    // One your files don't name goes, unless a repository uses it.
-    const job = jobOf(db, plugin);
-    const goes = !unnamedHere.includes(plugin.name)
-      ? null
-      : job === null
-        ? "sc install removes it"
-        : `sc install keeps it, as it is ${job}`;
     const to =
       locked?.version === manifest.version
         ? `${locked.version} at commit ${locked.commit.slice(0, 12)}`
@@ -800,7 +858,13 @@ export function listPlugins(json: boolean): void {
       // What it provides, under the name tools read before plugins had kinds.
       jobs: manifest.provides,
       from: plugin.source ?? plugin.folder,
-      change: goes ?? (moves ? `sc install moves it to ${to}` : null),
+      // A disagreement goes first, as sc install then leaves the plugin as it is.
+      change: removed.includes(plugin.name)
+        ? goes(plugin.name)
+        : plugin.source === null
+          ? null
+          : (disagreement(plugin.source) ??
+            (moves ? `sc install moves it to ${to}` : repositoryChange(plugin.source, plugin))),
     };
   });
   // The plugins your files name that aren't installed here.
@@ -814,7 +878,22 @@ export function listPlugins(json: boolean): void {
       provides: [],
       jobs: [],
       from: source,
-      change: locked ? "sc install installs it" : "sc install installs its newest version",
+      change:
+        disagreement(source) ??
+        (locked ? "sc install installs it" : "sc install installs its newest version"),
+    });
+  }
+  // Then those only repositories name that aren't installed here, once each.
+  for (const { source, locked } of needs) {
+    if (rows.some((row) => row.from === source)) continue;
+    rows.push({
+      name: locked?.name ?? source,
+      version: locked?.version ?? null,
+      kind: null,
+      provides: [],
+      jobs: [],
+      from: source,
+      change: repositoryChange(source),
     });
   }
   // Plain text gives only what you read. JSON adds where each came from, for tools.

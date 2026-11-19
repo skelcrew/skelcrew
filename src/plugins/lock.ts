@@ -22,8 +22,7 @@ const Locked = z.object({
 });
 export type Locked = z.infer<typeof Locked>;
 // The lock: each plugin by the GitHub repository it comes from, such as skelcrew/skelcrew-github.
-// A repository's skelcrew.lock has the same shape.
-export const Lock = z.record(z.string(), Locked);
+const Lock = z.record(z.string(), Locked);
 export type Lock = z.infer<typeof Lock>;
 
 // Returns the text of a lock file, sorted, with a line on top saying who writes it.
@@ -40,8 +39,11 @@ function writeLock(lock: Lock): void {
 }
 
 // Returns your lock file, checked, or null when this machine has none yet.
-export function readLock(): Lock | null {
-  const file = lockFile();
+export const readLock = (): Lock | null => readLockAt(lockFile());
+
+// Returns the lock in `file`, checked: yours, or a repository's skelcrew.lock. Returns null when
+// the file isn't there.
+export function readLockAt(file: string): Lock | null {
   if (!existsSync(file)) return null;
   let parsed: unknown;
   try {
@@ -82,10 +84,10 @@ export function setLocked(source: string, locked: Locked | null): void {
   writeFileSync(file, document.toString({ lineWidth: 0 }));
 }
 
-// Runs `write`, which changes your config.yaml or your lock. When it fails, both files are put
-// back as they were, so a plugin is never left named in one and missing from the other.
-export function writeBoth(write: () => void): void {
-  const files = [configFile(), lockFile()];
+// Runs `write`, which changes `files`: by default your config.yaml and your lock, or a
+// repository's skelcrew.yaml and skelcrew.lock. When it fails, each file is put back as it was,
+// so a plugin is never left named in one and missing from the other.
+export function writeBoth(write: () => void, files = [configFile(), lockFile()]): void {
   const before = files.map((file) => (existsSync(file) ? readFileSync(file, "utf8") : null));
   try {
     write();

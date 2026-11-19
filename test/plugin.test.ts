@@ -745,12 +745,111 @@ test("a machine with no lock gets none written from its plugins", async () => {
   expect(existsSync(yourLockFile())).toBe(false);
 });
 
-test("sc add, remove and update without -g refuse, as a repository's plugins aren't here yet", async () => {
-  for (const command of ["add", "remove", "update"]) {
+test("sc remove and update without -g refuse, as a repository's plugins can't be removed or updated yet", async () => {
+  for (const command of ["remove", "update"]) {
     const run = await skel([command, "skelcrew/skelcrew-fake"]);
     expect(run.code).toBe(1);
     expect(run.err).toContain(`sc ${command} -g is for your own`);
   }
+});
+
+// Returns a new checkout of simon/app in home/app, with a skelcrew.yaml of its own.
+function appCheckout(): string {
+  const folder = join(home, "app");
+  mkdirSync(folder, { recursive: true });
+  git(folder, "init", "-q", "-b", "main");
+  git(folder, "remote", "add", "origin", "git@example.com:simon/app.git");
+  writeFileSync(join(folder, "skelcrew.yaml"), "# Shared.\nsetup: [bun install]\n");
+  return folder;
+}
+
+test("sc add without -g names the plugin in the checkout's skelcrew.yaml and pins it in its skelcrew.lock", async () => {
+  publish("skelcrew/skelcrew-fake", "0.1.0", "0.2.0");
+  const app = appCheckout();
+  const added = await skel(["add", "skelcrew/skelcrew-fake"], "y\n", "", {}, app);
+  expect(added.err).toBe("");
+  expect(added.out).toContain("Install it? [Y/n]");
+  expect(added.out).toContain("Installed fake 0.2.0.");
+  expect(added.out).toContain(
+    "Added fake 0.2.0 to skelcrew.yaml and skelcrew.lock. They count once you commit and push them.",
+  );
+  // The file keeps its comment and other lines.
+  expect(readFileSync(join(app, "skelcrew.yaml"), "utf8")).toBe(
+    "# Shared.\nsetup: [bun install]\nplugins:\n  - skelcrew/skelcrew-fake\n",
+  );
+  const lock = readFileSync(join(app, "skelcrew.lock"), "utf8");
+  expect(lock).toStartWith("# Written by sc add and sc update. Commit it.\n");
+  expect(parse(lock)).toEqual({
+    "skelcrew/skelcrew-fake": {
+      name: "fake",
+      version: "0.2.0",
+      commit: tagCommit("skelcrew/skelcrew-fake", "0.2.0"),
+    },
+  });
+  // It is the repository's, never yours.
+  expect(existsSync(yourConfig())).toBe(false);
+  expect(existsSync(yourLockFile())).toBe(false);
+  // Adding it again changes nothing, and asks nothing.
+  const again = await skel(["add", "skelcrew/skelcrew-fake"], "", "", {}, app, false);
+  expect(again.err).toBe("");
+  expect(again.out).not.toContain("[Y/n]");
+  expect(readFileSync(join(app, "skelcrew.lock"), "utf8")).toBe(lock);
+  expect(readFileSync(join(app, "skelcrew.yaml"), "utf8")).toContain(
+    "plugins:\n  - skelcrew/skelcrew-fake\n",
+  );
+  expect(readFileSync(join(app, "skelcrew.yaml"), "utf8").match(/skelcrew-fake/g)?.length).toBe(1);
+});
+
+// You approved the installed version already, and the lock must say what this machine runs.
+test("sc add without -g pins a plugin installed here already at its version, asking nothing", async () => {
+  publish("skelcrew/skelcrew-fake", "0.1.0");
+  await skel(["add", "-g", "skelcrew/skelcrew-fake"], "y\n");
+  publish("skelcrew/skelcrew-fake", "0.2.0");
+  const app = appCheckout();
+  rmSync(join(app, "skelcrew.yaml"));
+  const added = await skel(["add", "skelcrew/skelcrew-fake"], "", "", {}, app, false);
+  expect(added.err).toBe("");
+  expect(added.out).toBe(
+    "Added fake 0.1.0 to skelcrew.yaml and skelcrew.lock. They count once you commit and push them.\n",
+  );
+  expect(parse(readFileSync(join(app, "skelcrew.yaml"), "utf8"))).toEqual({
+    plugins: ["skelcrew/skelcrew-fake"],
+  });
+  expect(parse(readFileSync(join(app, "skelcrew.lock"), "utf8"))["skelcrew/skelcrew-fake"]).toEqual(
+    { name: "fake", version: "0.1.0", commit: tagCommit("skelcrew/skelcrew-fake", "0.1.0") },
+  );
+});
+
+test("sc add without -g refuses outside a checkout, and for a folder, and a no writes nothing", async () => {
+  publish("skelcrew/skelcrew-fake", "0.1.0");
+  const outside = await skel(["add", "skelcrew/skelcrew-fake"]);
+  expect(outside.code).toBe(1);
+  expect(outside.err).toContain(
+    "this folder isn't in a checkout of one. sc add -g adds it as yours",
+  );
+  const app = appCheckout();
+  const folder = await skel(["add", "./skelcrew-fake"], "", "", {}, app);
+  expect(folder.code).toBe(1);
+  expect(folder.err).toContain("a plugin from a folder is on this machine only");
+  const no = await skel(["add", "skelcrew/skelcrew-fake"], "n\n", "", {}, app);
+  expect(no.out).toContain("Skelcrew didn't install fake.");
+  expect(readFileSync(join(app, "skelcrew.yaml"), "utf8")).toBe(
+    "# Shared.\nsetup: [bun install]\n",
+  );
+  expect(existsSync(join(app, "skelcrew.lock"))).toBe(false);
+});
+
+// A repository's plugin isn't yours, so sc update -g leaves it to the repository's lock.
+test("sc update -g leaves a plugin only a repository names alone", async () => {
+  publish("skelcrew/skelcrew-fake", "0.1.0");
+  const app = appCheckout();
+  await skel(["add", "skelcrew/skelcrew-fake"], "y\n", "", {}, app);
+  publish("skelcrew/skelcrew-fake", "0.2.0");
+  const run = await skel(["update", "-g"], "y\n");
+  expect(run.out).not.toContain("Update it?");
+  expect((await skel(["plugins"], "", "", {}, app, false)).out).toBe(
+    "fake 0.1.0 io: tracker, forge\n",
+  );
 });
 
 test("agents can't run the plugin commands", async () => {
@@ -859,10 +958,212 @@ test("sc remove -g on a machine with no lock yet takes the plugin out of your co
   publish("skelcrew/skelcrew-fake", "0.1.0");
   await skel(["add", "-g", "skelcrew/skelcrew-fake"], "y\n");
   rmSync(yourLockFile());
-  writeFileSync(yourConfig(), "harness: claude\n");
+  writeFileSync(yourConfig(), "harness: claude\nplugins: [skelcrew/skelcrew-fake]\n");
   const removed = await skel(["remove", "-g", "fake"]);
   expect(removed.err).toBe("");
   expect(parse(readFileSync(yourConfig(), "utf8"))).toEqual({ harness: "claude", plugins: [] });
   expect(readFileSync(yourLockFile(), "utf8")).not.toContain("fake");
   expect((await skel(["plugins"])).out).toBe("No plugins installed.\n");
+});
+
+test("sc remove -g refuses a plugin only a repository names, and keeps its settings", async () => {
+  publish("skelcrew/skelcrew-fake", "0.1.0");
+  const app = appCheckout();
+  await skel(["add", "skelcrew/skelcrew-fake"], "y\n", "", {}, app);
+  const run = await skel(["remove", "-g", "fake"]);
+  expect(run.code).toBe(1);
+  expect(run.err).toContain(
+    "fake isn't one of your plugins, as only a repository's skelcrew.yaml names it, so Skelcrew keeps it",
+  );
+  expect(existsSync(join(plugins(), "fake"))).toBe(true);
+  expect(existsSync(join(settings("fake"), "token"))).toBe(true);
+});
+
+test("sc plugins says what sc install would change for the repository you are in", async () => {
+  publish("skelcrew/skelcrew-fake", "0.1.0", "0.2.0");
+  const app = appCheckout();
+  const pinned = tagCommit("skelcrew/skelcrew-fake", "0.1.0");
+  writeFileSync(join(app, "skelcrew.yaml"), "plugins: [skelcrew/skelcrew-fake, simon/loose]\n");
+  writeFileSync(
+    join(app, "skelcrew.lock"),
+    `skelcrew/skelcrew-fake: { name: fake, version: 0.1.0, commit: ${pinned} }\n`,
+  );
+  expect((await skel(["plugins"], "", "", {}, app, false)).out).toBe(
+    [
+      "fake 0.1.0 from skelcrew/skelcrew-fake isn't installed. sc install installs 0.1.0 for This checkout.",
+      "simon/loose from simon/loose isn't installed. This checkout's skelcrew.lock doesn't pin it, so sc install leaves it out.",
+      "",
+    ].join("\n"),
+  );
+  // Yours at another version, the two pins disagree, so sc install leaves it.
+  await skel(["add", "-g", "skelcrew/skelcrew-fake"], "y\n");
+  const newest = tagCommit("skelcrew/skelcrew-fake", "0.2.0").slice(0, 12);
+  expect((await skel(["plugins"], "", "", {}, app, false)).out).toStartWith(
+    `fake 0.2.0 io: tracker, forge. sc install leaves it, as it is pinned at 0.2.0 at commit ${newest} by your lock, 0.1.0 at commit ${pinned.slice(0, 12)} by This checkout.\n`,
+  );
+  // No longer yours, it moves to the repository's pin.
+  writeFileSync(yourConfig(), "");
+  writeFileSync(yourLockFile(), "");
+  expect((await skel(["plugins"], "", "", {}, app, false)).out).toStartWith(
+    `fake 0.2.0 io: tracker, forge. sc install moves it to 0.1.0 at commit ${pinned.slice(0, 12)} for This checkout.\n`,
+  );
+});
+
+test("a repository can't name a runtime plugin", async () => {
+  const folder = onGitHub("skelcrew/skelcrew-runtime");
+  fakePlugin(folder, "0.1.0", "session: [sh, session.sh]\nattach: [sh, attach.sh]\n");
+  const manifest = join(folder, "skelcrew-plugin.yaml");
+  writeFileSync(
+    manifest,
+    readFileSync(manifest, "utf8").replace(
+      "kind: io\nprovides: [tracker, forge]",
+      "kind: runtime\nprovides: [sessions]",
+    ),
+  );
+  git(folder, "init", "-q", "-b", "main");
+  git(folder, "add", ".");
+  git(folder, "commit", "-q", "-m", "0.1.0");
+  git(folder, "tag", "v0.1.0");
+  const app = appCheckout();
+  // Refused before it asks, so nothing of it runs.
+  const fresh = await skel(["add", "skelcrew/skelcrew-runtime"], "y\n", "", {}, app);
+  expect(fresh.code).toBe(1);
+  expect(fresh.out).not.toContain("Install it?");
+  expect(fresh.err).toContain(
+    "fake is a runtime plugin, which is always yours and never a repository's. sc add -g adds it as yours",
+  );
+  expect(existsSync(join(plugins(), "fake"))).toBe(false);
+  // Installed as yours, it still can't go into the repository's files.
+  await skel(["add", "-g", "skelcrew/skelcrew-runtime"], "y\n");
+  const yours = await skel(["add", "skelcrew/skelcrew-runtime"], "", "", {}, app, false);
+  expect(yours.code).toBe(1);
+  expect(yours.err).toContain("fake is a runtime plugin");
+  expect(readFileSync(join(app, "skelcrew.yaml"), "utf8")).toBe(
+    "# Shared.\nsetup: [bun install]\n",
+  );
+  expect(existsSync(join(app, "skelcrew.lock"))).toBe(false);
+});
+
+// The files and the machine change together, so an add whose files can't be written takes back
+// the plugin it installed.
+test("sc add without -g removes the plugin it installed when the repository's files can't be written", async () => {
+  publish("skelcrew/skelcrew-fake", "0.1.0");
+  const app = appCheckout();
+  // skelcrew.yaml can be written, and the folder can't take a new skelcrew.lock.
+  chmodSync(app, 0o555);
+  try {
+    const run = await skel(["add", "skelcrew/skelcrew-fake"], "y\n", "", {}, app);
+    expect(run.code).not.toBe(0);
+    expect(run.out).toContain("Installed fake 0.1.0.");
+    expect(run.err).toContain("skelcrew.lock");
+  } finally {
+    chmodSync(app, 0o755);
+  }
+  expect(readFileSync(join(app, "skelcrew.yaml"), "utf8")).toBe(
+    "# Shared.\nsetup: [bun install]\n",
+  );
+  expect(existsSync(join(app, "skelcrew.lock"))).toBe(false);
+  expect(existsSync(join(plugins(), "fake"))).toBe(false);
+  expect(existsSync(settings("fake"))).toBe(false);
+  expect((await skel(["plugins"])).out).toBe("No plugins installed.\n");
+});
+
+// You approved the version installed for the repository, so making it yours asks nothing.
+test("sc add -g makes a plugin installed for a repository yours, at its version, asking nothing", async () => {
+  publish("skelcrew/skelcrew-fake", "0.1.0");
+  const app = appCheckout();
+  await skel(["add", "skelcrew/skelcrew-fake"], "y\n", "", {}, app);
+  publish("skelcrew/skelcrew-fake", "0.2.0");
+  const run = await skel(["add", "-g", "skelcrew/skelcrew-fake"], "", "", {}, home, false);
+  expect(run.err).toBe("");
+  expect(run.out).toBe("Added fake 0.1.0 to your plugins, at the version installed here.\n");
+  expect(parse(readFileSync(yourConfig(), "utf8")).plugins).toEqual(["skelcrew/skelcrew-fake"]);
+  expect(parse(readFileSync(yourLockFile(), "utf8"))["skelcrew/skelcrew-fake"]).toEqual({
+    name: "fake",
+    version: "0.1.0",
+    commit: tagCommit("skelcrew/skelcrew-fake", "0.1.0"),
+  });
+  // Yours already, it points to sc update -g as before.
+  const again = await skel(["add", "-g", "skelcrew/skelcrew-fake"], "", "", {}, home, false);
+  expect(again.err).toContain("run sc update -g fake");
+});
+
+// A repository still needs it, so it keeps its folder, settings and tokens, such as its login.
+test("sc remove -g keeps a plugin a repository still names installed, with its settings", async () => {
+  publish("skelcrew/skelcrew-fake", "0.1.0");
+  await skel(["add", "-g", "skelcrew/skelcrew-fake"], "y\n");
+  const app = appCheckout();
+  await skel(["add", "skelcrew/skelcrew-fake"], "", "", {}, app, false);
+  // From a checkout of another repository, the one that names it is still found by its clone.
+  const db = new Database(join(home, ".local", "share", "skelcrew", "skelcrew.db"));
+  db.run("INSERT INTO repositories (owner, repo, name) VALUES ('simon', 'app', 'app')");
+  db.close();
+  const clone = join(home, ".local", "share", "skelcrew", "repos", "simon", "app");
+  mkdirSync(clone, { recursive: true });
+  for (const file of ["skelcrew.yaml", "skelcrew.lock"])
+    writeFileSync(join(clone, file), readFileSync(join(app, file), "utf8"));
+  const other = join(home, "other");
+  mkdirSync(other);
+  git(other, "init", "-q", "-b", "main");
+  const run = await skel(["remove", "-g", "fake"], "", "", {}, other, false);
+  expect(run.err).toBe("");
+  expect(run.out).toBe(
+    "Removed fake from your plugins. It stays installed, as app's skelcrew.yaml names it.\n",
+  );
+  expect(parse(readFileSync(yourConfig(), "utf8")).plugins).toEqual([]);
+  expect(readFileSync(yourLockFile(), "utf8")).not.toContain("fake");
+  expect(existsSync(join(plugins(), "fake", "0.1.0"))).toBe(true);
+  expect(existsSync(join(settings("fake"), "token"))).toBe(true);
+});
+
+// One repository's broken lock can't hide every other plugin: sc plugins still lists them all, and
+// says sc install keeps them, as what that repository needs can't be told.
+test("sc plugins lists every plugin while a repository's skelcrew.lock isn't valid", async () => {
+  publish("skelcrew/skelcrew-fake", "0.1.0");
+  await skel(["add", "-g", "skelcrew/skelcrew-fake"], "y\n");
+  writeFileSync(yourConfig(), "plugins: []\n");
+  const db = new Database(join(home, ".local", "share", "skelcrew", "skelcrew.db"));
+  db.run("INSERT INTO repositories (owner, repo, name) VALUES ('simon', 'app', 'app')");
+  db.close();
+  const clone = join(home, ".local", "share", "skelcrew", "repos", "simon", "app");
+  mkdirSync(clone, { recursive: true });
+  writeFileSync(join(clone, "skelcrew.lock"), "skelcrew/skelcrew-fake: [\n");
+  const listed = await skel(["plugins"]);
+  expect(listed.err).toBe("");
+  expect(listed.out).toStartWith(
+    "fake 0.1.0 io: tracker, forge. sc install keeps it, as Skelcrew can't read the plugins of app:",
+  );
+});
+
+// sc install leaves a plugin whose pins disagree as it is, so sc plugins says that, not a move.
+test("sc plugins shows a disagreement over the move your lock alone would make", async () => {
+  publish("skelcrew/skelcrew-fake", "0.1.0", "0.2.0");
+  // Installed at 0.2.0, the newest then.
+  await skel(["add", "-g", "skelcrew/skelcrew-fake"], "y\n");
+  publish("skelcrew/skelcrew-fake", "0.3.0");
+  const app = appCheckout();
+  const commit = (version: string) => tagCommit("skelcrew/skelcrew-fake", version);
+  writeFileSync(join(app, "skelcrew.yaml"), "plugins: [skelcrew/skelcrew-fake]\n");
+  writeFileSync(
+    join(app, "skelcrew.lock"),
+    `skelcrew/skelcrew-fake: { name: fake, version: 0.1.0, commit: ${commit("0.1.0")} }\n`,
+  );
+  // Your lock pins 0.3.0, which alone would move the plugin there.
+  const pinYours = () =>
+    writeFileSync(
+      yourLockFile(),
+      `skelcrew/skelcrew-fake: { name: fake, version: 0.3.0, commit: ${commit("0.3.0")} }\n`,
+    );
+  pinYours();
+  const leaves = `sc install leaves it, as it is pinned at 0.3.0 at commit ${commit("0.3.0").slice(0, 12)} by your lock, 0.1.0 at commit ${commit("0.1.0").slice(0, 12)} by This checkout.`;
+  expect((await skel(["plugins"], "", "", {}, app, false)).out).toBe(
+    `fake 0.2.0 io: tracker, forge. ${leaves}\n`,
+  );
+  // Not installed here, it would be installed at 0.3.0 but for the disagreement.
+  await skel(["remove", "-g", "fake"]);
+  writeFileSync(yourConfig(), "plugins: [skelcrew/skelcrew-fake]\n");
+  pinYours();
+  expect((await skel(["plugins"], "", "", {}, app, false)).out).toBe(
+    `fake 0.3.0 from skelcrew/skelcrew-fake isn't installed. ${leaves}\n`,
+  );
 });
