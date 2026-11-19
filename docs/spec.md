@@ -726,7 +726,7 @@ The engine calls `status` for every change, from wherever it came: a hook, the s
 
 Two ways to see a repository exist side by side, until you choose which one stays: the split screen and the list. Plain `sc` opens the split screen: a sidebar of the repository's tasks and a tab for each repository, with the lead beside them, on a tmux server of the screen's own. Picking a thread in the sidebar shows its builder beside it, and `sc attach` opens the screen on a builder. `sc --list` shows the list instead. The rest of this section describes the list.
 
-`sc --list` shows a list: a picker, not a layout. You pick a row, and Skelcrew either attaches you full screen to an agent or does what the row offers. Detaching, with Ctrl-Q, brings you back to the list, on the same row. While you are attached, the terminal's title names the agent and the key back, such as `app-24 · ctrl+q back`, and the title you had comes back with you. Nothing else of Skelcrew's shows over the agent. There is no sidebar, no split, and no tmux server of the screen's own.
+`sc --list` shows a list: a picker, not a layout. You pick a row, and Skelcrew either attaches you full screen to an agent or does what the row offers. Detaching, with Ctrl-Q, brings you back to the list, on the same row. While you are attached on tmux, the terminal's title names the agent and the key back, such as `app-24 · ctrl+q back`, and the title you had comes back with you. Nothing else of Skelcrew's shows over the agent. On a row Enter attaches on tmux, the bottom line says so before you go, as `⏎ open · ctrl+q back`. A runtime plugin's host has its own key to come back, and its rows say only `⏎ open`. There is no sidebar, no split, and no tmux server of the screen's own.
 
 ```
  Skelcrew v0.6.0 · app                                        site •1  docs
@@ -746,7 +746,7 @@ Two ways to see a repository exist side by side, until you choose which one stay
  Ready for review
  ▸ ● app-22        Fix the export header   #41 · approved · CI passed
 
- ↑↓ move  ⏎ open · ctrl+q back  m merge  y/n answer  ⇥ repository  q quit   cpu 63%  mem 9/32G
+ ↑↓ move  ⏎ open  m merge  y/n answer  ⇥ repository  q quit   cpu 63%  mem 9/32G
 ```
 
 The list is one repository's, picked as **Opening a repository** says. The top line has Skelcrew's version, with the host you gave `--remote` after it on a server, and names the other repositories, each with a yellow count when something there needs you. Tab moves to the next one. Its parts are:

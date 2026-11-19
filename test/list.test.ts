@@ -259,6 +259,15 @@ test("a row knows whether its agent runs, and the lead says what its hooks last 
   });
 });
 
+// Skelcrew's detach key comes back only from tmux, so the list offers it only where Enter
+// attaches there.
+test("a row knows whether Enter attaches to its agent on tmux", () => {
+  const onTmux = () => Object.fromEntries(rows().map((row) => [row.name, row.tmux]));
+  expect(onTmux()).toMatchObject({ lead: true, "app-7": true, "app-14": false, "app-31": false });
+  sql("UPDATE threads SET host = 'fake' WHERE folder = 'app-7';");
+  expect(onTmux()["app-7"]).toBe(false);
+});
+
 // The notice of a release installed in the background comes from the database too, never from a
 // file. The list, printed once as there is no terminal, shows only the database's.
 test("the notice of an installed release comes from the database, not a file", () => {
@@ -651,6 +660,9 @@ test("keys that come with Enter reach the agent, not the list", async () => {
   type("\rq m now\r");
   await until(() => read(join(home, "app-7.typed")) === "q m now\n", "what was typed");
   expect(read(join(home, "left"))).toBe("");
+  // The keys are typed into the agent before the list attaches, so Ctrl-Q waits for the agent's
+  // screen: pressed earlier, it would land on the list, where it does nothing.
+  await until(() => seen().includes("I am app-7"), "app-7's agent");
   press("C-q");
   await until(() => here().startsWith("▸ ○ app-7"), "the list again");
 });
@@ -758,6 +770,9 @@ test("Enter on a builder on a plugin's host attaches to it through that host", a
 UPDATE threads SET host = 'fake', host_id = 'fake-app-12' WHERE folder = 'app-12'`);
   await open();
   await until(() => here().startsWith("▸ ● app-12"), "app-12's row");
+  // The host has a key of its own to come back, so the list doesn't offer tmux's.
+  expect(seen()).toContain("⏎ open  ");
+  expect(seen()).not.toContain("ctrl+q back");
   press("Enter");
   await until(() => seen().includes("I am fake-app-12 on fake"), "the host's attach");
   press("Enter");

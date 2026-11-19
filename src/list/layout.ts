@@ -36,12 +36,14 @@ export type Size = { width: number; height: number };
 const headings = { issue: "Issues", working: "Working", ready: "Ready for review" } as const;
 
 // Returns the keys the bottom line offers on a row: Enter always, with the detach key that comes
-// back from an agent, such as ctrl+q, m only on a task it can merge, and Tab only with another
-// repository to go to.
+// back, such as ctrl+q, on a row whose agent Enter attaches to on tmux, m only on a task it can
+// merge, and Tab only with another repository to go to. A runtime plugin's host has its own key
+// to come back, so its rows don't offer Skelcrew's.
 export function keysFor(row: Row | undefined, tabs: number, detach: string): string {
+  const open = row?.tmux ? `⏎ open · ${detach} back` : "⏎ open";
   const merge = row?.merge && "ask" in row.merge ? ["m merge"] : [];
   const tab = tabs > 1 ? ["⇥ repository"] : [];
-  return ["↑↓ move", `⏎ open · ${detach} back`, ...merge, ...tab, "q quit"].join("  ");
+  return ["↑↓ move", open, ...merge, ...tab, "q quit"].join("  ");
 }
 
 // Returns the top line: Skelcrew in bold, its version and where it runs, dim, and the open
