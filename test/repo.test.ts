@@ -955,20 +955,37 @@ test("init approves the .agents/ it writes even when git ignores it", async () =
   expect(approvals()).toEqual({ "simon/app": git(checkout, "rev-parse", "HEAD:.agents").trim() });
 });
 
-// A commit would also hold what the index has staged, which sc init didn't write, so you see
-// all of it and are asked.
-test("init asks rather than approve when the index holds .agents/ files it didn't write", async () => {
+// git commit and git commit -a would take different versions of an edited file, so init asks
+// you to settle which before it shows or approves either.
+test("init approves nothing while .agents/ has changes that aren't staged", async () => {
+  const checkout = onGitHub("simon/app", "WRITE");
+  expect((await skel(["repo", "add"], "", checkout)).err).toBe("");
+  mkdirSync(join(checkout, ".agents", "roles"), { recursive: true });
+  writeFileSync(join(checkout, ".agents", "roles", "builder.md"), "Staged words.\n");
+  git(checkout, "add", "-A");
+  writeFileSync(join(checkout, ".agents", "roles", "builder.md"), "Unstaged words.\n");
+  const run = await skel(["init"], "y\n", checkout);
+  expect(run.err).toBe("");
+  expect(run.out).toContain(
+    ".agents/ has changes you haven't staged, so Skelcrew can't tell which version you'll commit. Stage or drop them, then run sc init again.",
+  );
+  expect(run.out).not.toContain("Approve");
+  expect(existsSync(join(home, ".config", "skelcrew", "approved-agents.yaml"))).toBe(false);
+});
+
+// A file staged and then deleted from disk is such a change too, and sc init never approves its
+// own files beside it.
+test("init approves nothing when the index holds .agents/ files it didn't write", async () => {
   const checkout = onGitHub("simon/app", "WRITE");
   mkdirSync(join(checkout, ".agents", "skills", "old"), { recursive: true });
   writeFileSync(join(checkout, ".agents", "skills", "old", "SKILL.md"), "Old words.\n");
   git(checkout, "add", "-A");
   rmSync(join(checkout, ".agents"), { recursive: true });
-  const run = await skel(["init"], "n\n", checkout);
+  const run = await skel(["init"], "", checkout);
   expect(run.err).toBe("");
   expect(existsSync(join(checkout, ".agents", "roles", "lead.md"))).toBe(true);
-  expect(run.out).toContain("Old words.");
-  expect(run.out).toContain("Approve simon/app's .agents/?");
-  expect(approvals()).toEqual({ "simon/app": "none" });
+  expect(run.out).toContain(".agents/ has changes you haven't staged");
+  expect(existsSync(join(home, ".config", "skelcrew", "approved-agents.yaml"))).toBe(false);
 });
 
 test("init stops outside a git repository, and in one with no remote", async () => {

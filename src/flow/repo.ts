@@ -574,8 +574,7 @@ export function checkoutTop(): string | null {
 // Sets up the checkout you are in for Skelcrew, for sc init: writes the starter skelcrew.yaml and
 // the built-in .agents/ at its top, leaving either as it is when there, then adds the repository
 // as sc repo add does. The .agents/ it writes holds only the built-in defaults, so it is approved
-// as written, unless the checkout's index holds other .agents/ files a commit would add to it, or
-// you already answered for the repository's .agents/: that answer stands, so
+// as written, unless you already answered for the repository's .agents/: that answer stands, so
 // sc init on an old branch never swaps the roles new tasks start on. One that was there is shown
 // and asked about, as it may differ from the default branch. Stops
 // outside a git repository, and in one with no remote, as Skelcrew works from its own clone. That
@@ -600,11 +599,6 @@ export async function initRepo(sessions: string): Promise<void> {
   if (!hasConfig) writeFileSync(file, starterConfig, { flag: "wx" });
   else console.log("skelcrew.yaml is there already, so Skelcrew left it as it is.");
   const hasAgents = lstatSync(join(root, ".agents"), { throwIfNoEntry: false }) !== undefined;
-  // Files of .agents/ the checkout's index holds, such as ones deleted from disk but still
-  // staged. A commit would hold them beside what sc init writes, so that is never approved alone.
-  const staged =
-    Bun.spawnSync(["git", "-C", root, "ls-files", "-z", "--", ".agents"], { stdout: "pipe" }).stdout
-      .length > 0;
   if (!hasAgents) writeAgents(root);
   else console.log(".agents/ is there already, so Skelcrew left it as it is.");
   // Bring the repository in. A repository you didn't trust isn't in, and gets no approval.
@@ -613,12 +607,23 @@ export async function initRepo(sessions: string): Promise<void> {
   const added = repositoryAt(openDb(), remote);
   // Skelcrew reads only a folder of .agents/ with files in it. A link or a file at .agents counts
   // as none, so there is nothing to approve.
+  // A tracked file whose edits aren't staged has two versions, and git commit takes one while
+  // git commit -a takes the other, so Skelcrew can't tell which to show you. It asks you to
+  // settle that first rather than approve the wrong one. A file staged and then deleted is such
+  // an edit too, so with none, a checkout without .agents/ tracks nothing there, and what sc init
+  // wrote is all a commit would hold.
+  const unstaged = !Bun.spawnSync(["git", "-C", root, "diff", "--quiet", "--", ".agents"]).success;
+  if (added && unstaged)
+    console.log(
+      ".agents/ has changes you haven't staged, so Skelcrew can't tell which version you'll commit. Stage or drop them, then run sc init again.",
+    );
   const current =
-    added && lstatSync(join(root, ".agents")).isDirectory() ? checkoutAgents(added, root) : null;
+    added && !unstaged && lstatSync(join(root, ".agents")).isDirectory()
+      ? checkoutAgents(added, root)
+      : null;
   if (added && current !== null) {
-    const onlyWritten = !hasAgents && !staged;
-    if (onlyWritten && !agentsAnswered(added)) approveAgents(added, current);
-    else if (onlyWritten)
+    if (!hasAgents && !agentsAnswered(added)) approveAgents(added, current);
+    else if (!hasAgents)
       console.log(
         `Skelcrew kept the .agents/ you approved for ${added.owner}/${added.repo}. Once you push the new one, run sc repo trust ${added.name} to approve it.`,
       );

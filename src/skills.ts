@@ -94,10 +94,16 @@ export function skillsTold(skills: Skill[]): string {
 // for a Codex builder to leave unloaded: Codex loads the skills it finds there on its own, and
 // those are the default branch's or the builder's, not the ones you approved. Links are followed,
 // as Codex follows them, and each file is given both as found and as its real path, since either
-// could be how Codex names it. Only folders inside the checkout are walked, as the sandbox shows
-// nothing else.
-export function checkoutSkills(root: string): string[] {
-  const top = realpathSync(root);
+// could be how Codex names it. Only folders the sandbox shows are walked: the checkout and the
+// folders in `shown`, such as Skelcrew's clone of the repository, which a link could lead into.
+export function checkoutSkills(root: string, shown: string[] = []): string[] {
+  const tops = [root, ...shown].flatMap((folder) => {
+    try {
+      return [realpathSync(folder)];
+    } catch {
+      return [];
+    }
+  });
   const found = new Set<string>();
   const seen = new Set<string>();
   const walk = (dir: string) => {
@@ -107,7 +113,8 @@ export function checkoutSkills(root: string): string[] {
     } catch {
       return;
     }
-    if ((real !== top && !real.startsWith(top + sep)) || seen.has(real)) return;
+    const inside = tops.some((top) => real === top || real.startsWith(top + sep));
+    if (!inside || seen.has(real)) return;
     seen.add(real);
     for (const name of readdirSync(dir)) {
       const path = join(dir, name);

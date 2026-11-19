@@ -399,8 +399,9 @@ async function startCommand(given: {
   command.push("-c", "check_for_update_on_startup=false", "-c", "tui.disable_paste_burst=true");
   command.push("-c", "features.hooks=true", ...agentHooks);
   // A builder's checkout has the default branch's .agents/skills/, which you may not have
-  // approved, so Codex leaves each skill there unloaded.
-  if (thread) command.push(...skillsOff(checkoutSkills(thread)));
+  // approved, so Codex leaves each skill there unloaded, and each one a link there reaches in
+  // Skelcrew's clone, which the sandbox shows too.
+  if (thread) command.push(...skillsOff(checkoutSkills(thread, origin ? [origin] : [])));
   // Codex layers $CODEX_HOME/skelcrew.config.toml over its config when asked for that profile.
   // A repository's own .codex/config.toml could win over it, but Codex loads that only for a
   // folder trusted in a config file, not by the -c above.

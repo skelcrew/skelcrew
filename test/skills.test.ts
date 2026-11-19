@@ -288,12 +288,17 @@ test("a builder on Codex turns off each skill in its checkout, through links too
   mkdirSync(join(thread, "shared", "linked"), { recursive: true });
   writeFileSync(join(thread, "shared", "linked", "SKILL.md"), "Linked.\n");
   symlinkSync(join(thread, "shared", "linked"), join(thread, ".agents", "skills", "linked"));
-  // A link out of the checkout is never walked, as the sandbox doesn't show it.
+  // The sandbox shows Skelcrew's clone too, read-only, so a link can lead to a skill there.
+  symlinkSync(
+    join(clone, ".agents", "skills", "review-sql"),
+    join(thread, ".agents", "skills", "origin"),
+  );
+  // A link to a folder the sandbox doesn't show is never walked.
   symlinkSync(home, join(thread, ".agents", "skills", "out"));
   const argv = z.array(z.string()).parse(
     inHome(`return (await harnessNamed("codex").start({
       name: "app-12", socket: ${JSON.stringify(join(home, "socket"))},
-      thread: ${JSON.stringify(thread)}, prompt: "Add export", env,
+      thread: ${JSON.stringify(thread)}, origin: ${JSON.stringify(clone)}, prompt: "Add export", env,
     })).argv;`),
   );
   const setting = argv.find((arg) => arg.startsWith("skills.config=")) ?? "";
@@ -307,6 +312,8 @@ test("a builder on Codex turns off each skill in its checkout, through links too
       join(thread, ".agents", "skills", "draft", "SKILL.md"),
       join(thread, ".agents", "skills", "linked", "SKILL.md"),
       join(thread, "shared", "linked", "SKILL.md"),
+      join(thread, ".agents", "skills", "origin", "SKILL.md"),
+      join(clone, ".agents", "skills", "review-sql", "SKILL.md"),
     ].sort(),
   );
 });
