@@ -1,7 +1,8 @@
 // A session host for tests, run as a runtime plugin's session command. It keeps each session in
 // a folder of its own under its settings folder: the session's labels, its process, what its
 // agent printed, which is its screen, and a pipe its agent reads, which paste and keys write to.
-// It notes each question it is asked in `asked`, and each status it is given in `statuses`. Its
+// It notes each question it is asked in `asked`, and keeps a session's new title from rename
+// with its labels, answering nothing. It notes each status it is given in `statuses`. Its
 // own transport, when the test's manifest says it provides one, takes an agent as idle unless
 // its screen shows Claude Code's busy mark, and types a message in one step, noting it in
 // `delivered`. With a file hang-status, the first status it is given hangs, and with a file
@@ -120,6 +121,14 @@ const answers: Record<string, () => unknown> = {
       labels: JSON.parse(readFileSync(join(folder(id), "labels.json"), "utf8")),
     })),
   }),
+  // Stores the session's new title with its labels, and prints nothing at all, as Skelcrew
+  // doesn't read the answer to a rename.
+  rename: () => {
+    const file = join(folder(question.id), "labels.json");
+    const labels = JSON.parse(readFileSync(file, "utf8"));
+    writeFileSync(file, JSON.stringify({ ...labels, title: question.title }));
+    process.exit(0);
+  },
   idle: () => ({ idle: !screen(question.id).includes(busy) }),
   // Types the message in one step once the agent is idle, or fails past the timeout.
   deliver: async () => {

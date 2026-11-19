@@ -43,6 +43,7 @@ import { closeExitedLeads, lastOpened, leadOf, openedRepositories, startLead } f
 import { restoreLimits, wakeAfterLimit } from "./limits.ts";
 import { listRepositories, listTasks, listThreads, showTask } from "./list.ts";
 import {
+  agentsSaid,
   alreadyMerging,
   armMerge,
   cancelMerge,
@@ -530,15 +531,21 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       case "merge preview": {
         const thread = threadToMerge(db, request);
         refuseWithoutForge(db, thread);
-        const copy = thread.pr === null ? null : prOf(db, thread.owner, thread.repo, thread.pr);
-        // Its whole title, not the short one, so you can tell which PR you agree to.
+        // Its whole title, not the short one, so you can tell which PR you agree to. What it
+        // says of .agents/ is about the PR's head as Skelcrew's copy has it, the commit you see,
+        // which a merge without approval pins.
+        const pr = thread.pr === null ? null : prOf(db, thread.owner, thread.repo, thread.pr);
         return {
+          agents:
+            thread.pr === null
+              ? ""
+              : agentsSaid(db, thread.owner, thread.repo, pr, pr?.head ?? null),
           thread: threadName(db, thread),
           pr: thread.pr,
           title: thread.title,
           started: thread.started,
           merging: thread.merge_plan === null ? null : alreadyMerging(db, thread),
-          head: copy?.head ?? null,
+          head: pr?.head ?? null,
           asks: stillAsks(thread),
         };
       }

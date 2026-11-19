@@ -164,9 +164,9 @@ export async function planMerge(
 }
 
 // Asks the daemon which thread and PR sc merge names, with its title, when the thread started,
-// and what it says of a merge already armed, so it can ask you about it before arming, and arm
-// only that. For a merge without approval, also the PR's head it would pin and what the review
-// still asks.
+// what it says of a merge already armed, and what to say about its changes to .agents/, so it can
+// ask you about it before arming, and arm only that. For a merge without approval, also the PR's
+// head it would pin and what the review still asks.
 export async function previewMerge(which: {
   repo?: string;
   task?: string;
@@ -183,6 +183,7 @@ export async function previewMerge(which: {
       merging: z.string().nullable(),
       head: z.string().nullable(),
       asks: z.string(),
+      agents: z.string(),
     }),
     reply,
   );

@@ -5,10 +5,12 @@ import { appendFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import { HarnessName, harnessNamed } from "../agents/harness.ts";
-import { listSessions } from "../agents/sessions.ts";
+import { listSessions, renameSession } from "../agents/sessions.ts";
 import { savedJson, taskColumns } from "../db.ts";
 import { threadsDir } from "../paths.ts";
-import { type Host, hostNamed } from "../plugins/runtime.ts";
+import { type Host, hostNamed, pluginHost } from "../plugins/runtime.ts";
+import { errorText } from "../say.ts";
+import { threadTask } from "./copy.ts";
 import { findRepository } from "./repo.ts";
 import { needsYou, reportStatus } from "./status.ts";
 
@@ -247,7 +249,10 @@ export async function builderSession(
       names.includes(labels.task ?? ""),
   );
   if (!found) return { host, id: thread.folder };
-  record(db, thread.folder, { host_id: found.name }, "found its builder on its host");
+  const now = record(db, thread.folder, { host_id: found.name }, "found its builder on its host");
+  // A short title given while its ID was unknown found nothing to rename, so its labels may
+  // still name it by the old title.
+  if (found.labels?.title !== (sessionTitle(db, now) ?? undefined)) renameOnHost(db, thread.folder);
   return { host, id: found.name };
 }
 
@@ -359,8 +364,45 @@ export function record(
   const thread = readThread(db, folder);
   log(db, thread, why);
   reportStatus(db, thread);
+  if (thread.short !== before.short) renameOnHost(db, folder);
   return thread;
 }
+
+// Tells the builder's host the thread's title, when the host is a plugin, so its own apps stop
+// showing an old one. A builder on tmux needs nothing, as Skelcrew's list reads the title from
+// here. It doesn't wait for the host, and a host that fails, such as an older plugin that
+// doesn't know the question, only costs the new name, so it is logged. Each rename waits for
+// the one before on the same session and sends the title as it is then, so two quick changes
+// can't reach the host out of order and leave it on the older title.
+export function renameOnHost(db: Database, folder: string): void {
+  const previous = renaming.get(folder) ?? Promise.resolve();
+  const sent = previous.then(async () => {
+    const thread = readThread(db, folder);
+    if (thread.host === null || thread.host === "tmux" || thread.host_id === null) return;
+    const host = pluginHost(db, thread.host);
+    const title = sessionTitle(db, thread);
+    if (host === null || !title) return;
+    await renameSession(host, thread.host_id, title).catch((error) =>
+      console.log(`couldn't rename ${folder} on ${host.plugin}: ${errorText(error)}`),
+    );
+  });
+  // A thread gone by then, which readThread throws for, has nothing to rename.
+  const settled = sent.catch(() => {});
+  renaming.set(folder, settled);
+  settled.then(() => {
+    if (renaming.get(folder) === settled) renaming.delete(folder);
+  });
+}
+
+// Returns the title a builder's session goes by on its host: its thread's short title, else the
+// task's title as its builder was given it, which a row from before Skelcrew saved titles takes
+// from the copy of the tracker. Null when it has neither.
+export function sessionTitle(db: Database, thread: Thread): string | null {
+  return thread.short || threadTask(db, thread).title || null;
+}
+
+// The renames under way of each thread's builder, by its folder, each settling once it is over.
+const renaming = new Map<string, Promise<void>>();
 
 // Returns the thread's name, such as app-12, for replies. It uses the repository's name
 // now, which can gain its owner since the thread started, or owner/name once Skelcrew no longer

@@ -16,6 +16,7 @@ import {
   needsDecision,
   shownOf,
 } from "../flow/marks.ts";
+import { agentsSaid } from "../flow/merging.ts";
 import { findRepository } from "../flow/repo.ts";
 import type { DaemonRequest } from "../flow/requests.ts";
 import { ListStage, listStage } from "../flow/stage.ts";
@@ -187,7 +188,13 @@ function taskRow(
       merge = { refused: `${named}'s checks haven't passed on the approved commit yet` };
     else
       merge = {
-        ask: `Merge ${named} into ${removeControlCodes(copy.base)}? y/n`,
+        ask: [
+          `Merge ${named} into ${removeControlCodes(copy.base)}?`,
+          agentsSaid(db, open.owner, open.repo, copy, approved),
+          "y/n",
+        ]
+          .filter(Boolean)
+          .join(" "),
         working: `Merging ${named}…`,
         request: {
           command: "merge",
@@ -216,7 +223,13 @@ function taskRow(
       };
     else
       merge = {
-        ask: `Merge ${named} without Skelcrew's approval? CI must still pass. ${removeControlCodes(stillAsks(thread))} y/n`,
+        ask: [
+          `Merge ${named} without Skelcrew's approval? CI must still pass. ${removeControlCodes(stillAsks(thread))}`,
+          agentsSaid(db, open.owner, open.repo, copy, copy.head),
+          "y/n",
+        ]
+          .filter(Boolean)
+          .join(" "),
         working: `Arming the merge of ${named} without approval…`,
         request: {
           command: "merge skip review",

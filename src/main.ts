@@ -557,7 +557,7 @@ async function mergeCommand(args: string[]): Promise<void> {
     if (!process.stdin.isTTY)
       throw new Error(`sc merge ${how} asks you first, so run it at your own terminal`);
     const skip = command === "merge skip review";
-    const { thread, pr, title, started, merging, head, asks } = await previewMerge(which);
+    const { thread, pr, title, started, merging, head, asks, agents } = await previewMerge(which);
     if (pr === null) throw new Error(`${thread} has no PR yet: ask again once it opens one`);
     // Asking again about a merge already on its way could only mislead: a "no" would leave it
     // merging while sounding like it stopped. So it says so, and how to stop it.
@@ -572,11 +572,12 @@ async function mergeCommand(args: string[]): Promise<void> {
     const { removeControlCodes } = await import("./screen/look.ts");
     const shown = title ? ` ${removeControlCodes(title)}` : "";
     const question = skip
-      ? `Merge #${pr} (${thread}${shown}) without Skelcrew's approval? CI must still pass. ${removeControlCodes(asks)} [y/N]`
-      : `Merge #${pr} (${thread}${shown}) when it's approved and green? [y/N]`;
-    // Only y arms it. Anything else, a bare Enter, which Bun's prompt gives as null, Y or yes
-    // included, arms nothing.
-    const answer = prompt(question);
+      ? `Merge #${pr} (${thread}${shown}) without Skelcrew's approval? CI must still pass. ${removeControlCodes(asks)}`
+      : `Merge #${pr} (${thread}${shown}) when it's approved and green?`;
+    // A PR that changes .agents/ says so, as the merge approves nothing there. Only y arms it.
+    // Anything else, a bare Enter, which Bun's prompt gives as null, Y or yes included, arms
+    // nothing.
+    const answer = prompt([question, agents, "[y/N]"].filter(Boolean).join(" "));
     // Another terminal or the lead may have asked for the merge while you read the question,
     // so the daemon is asked again before saying it won't merge. The thread may also have been
     // started over meanwhile, with another PR, so the answer names the one it has now.

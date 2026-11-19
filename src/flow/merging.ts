@@ -4,6 +4,7 @@
 // saw once CI is green there, whatever the reviewer says. Arming it, cancelling it, and the merge
 // itself. Without an armed plan nothing merges by itself.
 import type { Database } from "bun:sqlite";
+import { z } from "zod";
 import { createTask, editReview, forgeOf, mergePr, postReview, trackerOf } from "../plugins/ask.ts";
 import { errorText } from "../say.ts";
 import { openPrs, openTasks, prOf } from "./copy.ts";
@@ -75,6 +76,33 @@ const mergeWhen = (thread: Pick<Thread, "merge_pinned">) =>
 export function alreadyMerging(db: Database, thread: Thread): string {
   const name = threadName(db, thread);
   return `Already merging #${thread.pr} ${mergeWhen(thread)}. sc merge --cancel ${name} stops it.`;
+}
+
+// Returns what a merge confirm adds about .agents/ for a PR, as Skelcrew's copy has it, at
+// `commit`, or nothing when that commit leaves .agents/ alone. Merging approves no change there,
+// as an agent may have written it, so you hear it before you say y. It reads what a poll saved,
+// never git, as the lists draw each second. A PR no poll has looked at with that head and base,
+// such as one just retargeted, says so, rather than pass for one with no change.
+export function agentsSaid(
+  db: Database,
+  owner: string,
+  repo: string,
+  pr: PullRequest | null,
+  commit: string | null,
+): string {
+  const saved = z
+    .object({ head: z.string(), base: z.string(), changed: z.coerce.boolean() })
+    .nullable()
+    .parse(
+      db
+        .query("SELECT head, base, changed FROM pr_agents WHERE owner = ? AND repo = ? AND pr = ?")
+        .get(owner, repo, pr?.id ?? ""),
+    );
+  if (pr === null || commit === null || saved?.head !== commit || saved.base !== pr.base)
+    return "Skelcrew hasn't checked yet whether it changes .agents/.";
+  return saved.changed
+    ? "It changes .agents/ (roles, flows or skills): the changes wait for sc repo trust."
+    : "";
 }
 
 // Arms a merge on the thread and returns what to say: when ready, for sc merge --when-ready, or
