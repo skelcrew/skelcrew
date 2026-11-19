@@ -34,7 +34,7 @@ import { endThread, removing, tellBuilder, tellingEvents } from "./events.ts";
 import { fetchInto, onRemote } from "./git.ts";
 import { approvedFlowsTold, leadOf } from "./lead.ts";
 import { mergeIfReady } from "./merging.ts";
-import { briefsNote, noteForLead, typeLeadNotes } from "./messages.ts";
+import { briefsNote, noteForLead, skelcrewNoteForLead, typeLeadNotes } from "./messages.ts";
 import { forgeKnown, fullNameIs, hasNoCommits, refreshClone, repositories } from "./repo.ts";
 import { lastPushed } from "./round.ts";
 import { needsYou } from "./status.ts";
@@ -358,7 +358,7 @@ async function tellRunningLead(
   if (known === null || known.told) return;
   if (!(await hasSession(sessions, leadOf(db, repository.owner, repository.repo).name))) return;
   db.run(`UPDATE repositories SET ${told} = 1 ${where}`, [repository.owner, repository.repo]);
-  noteForLead(db, sessions, repository, text);
+  skelcrewNoteForLead(db, sessions, repository, text);
 }
 
 // What a lead already running when Skelcrew learned of flows is told of them.
