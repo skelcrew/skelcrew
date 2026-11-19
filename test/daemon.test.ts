@@ -483,6 +483,9 @@ describe.skipIf(insideSandbox)("with a lead per repository", () => {
     );
     serve();
     await untilAnswers();
+    // The daemon clones in the background once it answers, and a lead looks as it starts, so
+    // each lead opens once both clones are there.
+    await until(() => existsSync(join(app, "README")) && existsSync(join(web, "README")));
     expect(await open("app")).toEqual({ lead: leadName("app"), repository: "simon/app" });
     expect(await open("web")).toEqual({ lead: leadName("web"), repository: "simon/web" });
     expect(leadName("app")).not.toBe(leadName("web"));
