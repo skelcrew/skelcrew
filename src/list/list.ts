@@ -89,6 +89,8 @@ const keyPattern = new RegExp(
 const endOfSequence = new RegExp(
   `${esc}(?:\\[[0-?]*[ -/]*|O|[P\\]X^_](?:[^${esc}\\x07]|${esc}(?!\\\\))*)?$`,
 );
+// Any mouse report in SGR, a press with M or a release with m, which only the list reads.
+const mousePattern = new RegExp(`^${esc}\\[<\\d+;\\d+;\\d+[Mm]$`);
 // Ctrl-Q as a terminal sends it: one byte, or as an extended key in the kitty or the xterm form.
 const ctrlQ = new Set(["\x11", "\x1b[113;5u", "\x1b[27;5;113~"]);
 
@@ -240,15 +242,19 @@ export async function runList(agents: string, repository: string): Promise<void>
   // Typing those keys in first takes tmux, so on such a host they are dropped. On tmux, the
   // terminal's title says which agent this is and how to come back, as nothing else on the
   // screen is Skelcrew's. The title you had is saved first and put back after, on terminals
-  // that keep one.
+  // that keep one. Mouse reports among those keys are the list's, such as the rest of the click
+  // that attached, and would reach the agent's prompt as text, so they are dropped, and so is the
+  // start of one cut off at the end of a read.
   const attach = async (session: string, name: string, host: Host = agents) => {
     attached = true;
     process.stdin.pause();
+    const rest = partial.startsWith(`${esc}[<`) ? "" : partial;
     const after =
       typed
         .splice(0)
+        .filter((key) => !mousePattern.test(key.sent))
         .map((key) => key.sent)
-        .join("") + partial;
+        .join("") + rest;
     partial = "";
     if (after && typeof host === "string") typeKeys(host, session, after);
     giveBack();
@@ -496,9 +502,13 @@ export async function runList(agents: string, repository: string): Promise<void>
   // into one keeps that end until the next read completes it. Esc alone looks the same, so what
   // is kept counts as typed once no more comes for a moment, as terminals and editors do.
   let flush: ReturnType<typeof setTimeout> | undefined;
+  // A mouse button's release follows its press, often in a read of its own. The press did what a
+  // click does, so the release is dropped here: as a key it would answer the question a click
+  // just asked, as no.
   const take = (text: string) => {
     reads += 1;
-    for (const [sent] of text.matchAll(keyPattern)) typed.push({ sent, read: reads });
+    for (const [sent] of text.matchAll(keyPattern))
+      if (!(mousePattern.test(sent) && sent.endsWith("m"))) typed.push({ sent, read: reads });
     void act();
   };
   process.stdin.on("data", (bytes) => {

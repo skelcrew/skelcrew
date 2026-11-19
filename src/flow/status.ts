@@ -358,11 +358,14 @@ export function threadWord(thread: Thread, maxRounds: number, now = Date.now()):
   if (thread.review_limited) return limitWord(thread.review_reset);
   // A review waiting for a place shows as queued, any other round under way as reviewing, and
   // a review's changes still waiting to be typed into the builder as changes. Otherwise it
-  // works or waits on checks.
+  // works, or waits: on CI only for an approval, and on the builder after changes asked for.
+  // Anything else only waits, as saying checks would claim CI is what it waits on.
   if (queuedForReview(thread)) return "queued for review";
   if (underWay) return "reviewing";
   if (thread.telling !== null) return "changes";
-  return status === "working" ? "working" : "checks";
+  if (status === "working") return "working";
+  if (verdict === "approve") return "checks";
+  return verdict === "changes" ? "changes" : "waiting";
 }
 
 // The builder asked you a question with AskUserQuestion, from Claude Code's PreToolUse hook.

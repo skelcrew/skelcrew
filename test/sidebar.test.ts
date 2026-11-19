@@ -999,6 +999,11 @@ test("a thread's word says who has it right now", () => {
   expect(word({ status: "waiting", reviewing: "abc", queued: 5 })).toBe("queued for review");
   expect(word({ status: "waiting", verdict: "approve" })).toBe("checks");
   expect(word({ telling: "fix it", verdict: "changes" })).toBe("changes");
+  // Checks is only for an approval waiting on CI. Changes asked for wait on the builder, and a
+  // thread with neither only waits.
+  expect(word({ status: "waiting", verdict: "changes", checks: "passing" })).toBe("changes");
+  expect(word({ status: "waiting", verdict: null })).toBe("waiting");
+  expect(word({ status: "waiting", verdict: "failed" })).toBe("waiting");
 });
 
 // A review that waited when the daemon stopped is saved with when it joined the queue, which a

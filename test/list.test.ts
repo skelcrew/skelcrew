@@ -1547,6 +1547,36 @@ test("a click on a task selects it, and a second click opens it, as Enter does",
   expect(mouseOn()).toBe(false);
 });
 
+// A release comes after its press, often in a read of its own, after the press already asked
+// its question. It must not answer it.
+test("a click that asks a question isn't answered by its button's release", async () => {
+  await open();
+  clickOn(lineOf("Backlog"));
+  await until(() => here().startsWith("▸ ○ app-31"), "Backlog open, on its issue");
+  const line = lineOf("app-31");
+  type(`\x1b[<0;10;${line}M`);
+  await until(() => seen().includes("Start app-31? y/n"), "the question");
+  type(`\x1b[<0;10;${line}m`);
+  await Bun.sleep(300);
+  expect(seen()).toContain("Start app-31? y/n");
+  type("y");
+  await until(() => asked.includes("start simon/app 31"), "the start");
+});
+
+// The rest of the click that attaches, and any mouse report after it in the same read, are the
+// list's, and never reach the agent's prompt as text.
+test("a click that attaches types no mouse report into the agent", async () => {
+  await open();
+  clickOn(lineOf("app-7"));
+  await until(() => here().startsWith("▸ ○ app-7"), "app-7 selected");
+  const line = lineOf("app-7");
+  type(`\x1b[<0;10;${line}M\x1b[<0;10;${line}m\x1b[<65;10;3M\x1b[<0;10;${line}M`);
+  await until(() => seen().includes("I am app-7"), "app-7's agent");
+  type("hello");
+  press("Enter");
+  await until(() => read(join(home, "app-7.typed")) === "hello\n", "only what was typed");
+});
+
 test("a click on the lead's row opens the lead at once", async () => {
   await open();
   clickOn(lineOf("lead    claude"));

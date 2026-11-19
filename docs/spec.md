@@ -775,6 +775,7 @@ A task in Building, Reviewing, Checks or Ready takes two lines, so what it does 
 | `queued for review` | A review waits for a place under `limits.reviews` |
 | `reviewing` | A review is under way, or waits for CI's first check |
 | `checks` | Approved, and waiting on CI for that commit |
+| `waiting` | The builder waits, with no review under way, no approval and no changes asked for |
 | `changes` | The reviewer asked for changes, and the builder hasn't picked them up yet |
 | `limit · 13:59` | The builder or the review waits for its harness's usage limit to reset |
 | `approved` | Ready to merge |
