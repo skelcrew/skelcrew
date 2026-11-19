@@ -534,8 +534,8 @@ const knownTerminal = (term: string) =>
   Bun.spawnSync(["infocmp", term], { stdout: "ignore", stderr: "ignore" }).success;
 
 // Attaches your terminal full screen to the named session, and returns once you leave it with
-// Alt-Q or Ctrl-Q, or its agent ends. Gives tmux's error when it couldn't attach, such as to a
-// session that just ended, or null. A session can stay after its agent ends, showing its last
+// Ctrl-Q, or its agent ends. Gives tmux's error when it couldn't attach, such as to a session
+// that just ended, or null. A session can stay after its agent ends, showing its last
 // screen, and tmux would keep you on it. So while you are attached it looks each half second,
 // and detaches you once the agent no longer runs. The server may have started under an older
 // Skelcrew, so it gets today's settings first. TMUX must go, or tmux refuses to attach from

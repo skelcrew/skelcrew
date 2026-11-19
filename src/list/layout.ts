@@ -43,7 +43,7 @@ export function keysFor(row: Row | undefined, tabs: number, detach: string): str
   const open = row?.tmux ? `⏎ open · ${detach} back` : "⏎ open";
   const merge = row?.merge && "ask" in row.merge ? ["m merge"] : [];
   const tab = tabs > 1 ? ["⇥ repository"] : [];
-  return ["↑↓ move", open, ...merge, ...tab, "q quit"].join("  ");
+  return ["↑↓ move", open, ...merge, ...tab, "q/esc quit"].join("  ");
 }
 
 // Returns the top line: Skelcrew in bold, its version and where it runs, dim, and the open
