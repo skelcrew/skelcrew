@@ -155,7 +155,8 @@ function startServer(socket: string): void {
 // session's ID on its host. On tmux the ID is the name. A plugin's host gives its own, and is
 // handed the name and labels to show. With `keepOnExit`, the session stays when its agent exits
 // cleanly too, so Skelcrew can tell a lead you exited from one that crashed: the first closes its
-// tab, the second doesn't. Only leads ask for that, and they run on tmux.
+// tab, the second doesn't. Only leads ask for that, and only tmux keeps it: a plugin's host isn't
+// asked to.
 export async function startSession(
   host: Host,
   name: string,
@@ -571,6 +572,15 @@ export function attachCommand(socket: string, name: string, then: string): strin
   const wait = `[ -n "$said" ] || { echo; echo 'Waiting for the lead to start.'; said=1; }`;
   const script = `unset TMUX; ${client} "=$2" 2>/dev/null || ${wait}; while sleep 1; do ${client} "=$3" 2>/dev/null && said= || { ${wait}; }; done`;
   return ["sh", "-c", script, "sh", socket, name, then];
+}
+
+// Returns a command that attaches a terminal to the named session once, then runs `then`, a line
+// for sh. The screen's right pane uses it when the lead it comes back to runs on a plugin's host,
+// which attachCommand's tmux client can't reach. TMUX must go, or tmux refuses to attach from
+// inside tmux.
+export function attachThen(socket: string, name: string, then: string): string[] {
+  const client = 'unset TMUX; tmux -L "$1" -f /dev/null attach -t "=$2"';
+  return ["sh", "-c", `${client}; ${then}`, "sh", socket, name];
 }
 
 // Returns the session shown in the terminal at `tty`, which attachCommand attached, or null while

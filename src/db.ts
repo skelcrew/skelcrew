@@ -430,7 +430,9 @@ function prepareTables(db: Database): void {
   // with or a note, so a lead already running when Skelcrew learned of them is told once.
   // `lead_briefs` is the same for briefing another repository's lead. `ci_seen` is whether a
   // poll ever found CI on any of the repository's PRs, kept after they close, so a merge never
-  // takes a PR with no checks yet for one without CI.
+  // takes a PR with no checks yet for one without CI. `lead_host` is the session host the lead
+  // runs on, tmux or a runtime plugin, which it keeps until it ends, and `lead_host_id` its
+  // session's ID there. A lead from before hosts runs on tmux, where its ID is its name.
   const repositoryColumns = {
     open_issues: "INTEGER NOT NULL DEFAULT 0",
     open_prs: "INTEGER NOT NULL DEFAULT 0",
@@ -448,6 +450,8 @@ function prepareTables(db: Database): void {
     lead_flows: "INTEGER NOT NULL DEFAULT 0",
     lead_briefs: "INTEGER NOT NULL DEFAULT 0",
     ci_seen: "INTEGER NOT NULL DEFAULT 0",
+    lead_host: "TEXT DEFAULT 'tmux'",
+    lead_host_id: "TEXT",
   };
   // Whether repositories gain `ci_seen` now, so it is filled from the copy below.
   const repositoriesSeen = !hasColumn(db, "repositories", "ci_seen");
