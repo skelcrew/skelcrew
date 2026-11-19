@@ -81,10 +81,19 @@ const remoteIs = (r: Repository, url: string) => {
   );
 };
 
-// Returns the repository a command names, by its name in Skelcrew or its owner/name, in any case.
-// Throws when Skelcrew has no such repository, since commands only work on ones it has.
+// Returns the repository a word names, by its name in Skelcrew, its owner/name in any case, or
+// its remote URL, or none. sc start asks it first, as a repository's name can end like a task's,
+// such as api-v2.
+export function repositoryNamed(db: Database, given: string): Repository | undefined {
+  return repositories(db).find(
+    (r) => r.name === given || fullNameIs(r, given) || remoteIs(r, given),
+  );
+}
+
+// Returns the repository a command names, as repositoryNamed reads it. Throws when Skelcrew has
+// no such repository, since commands only work on ones it has.
 export function findRepository(db: Database, given: string): Repository {
-  const found = repositories(db).find((r) => r.name === given || fullNameIs(r, given));
+  const found = repositoryNamed(db, given);
   if (!found) throw new Error(`there is no repository named ${given}`);
   return found;
 }

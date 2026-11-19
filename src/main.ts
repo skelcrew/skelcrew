@@ -629,9 +629,22 @@ async function checkCommand(args: string[]): Promise<void> {
 async function threadCommand(args: string[]): Promise<void> {
   const [command, sub, ...rest] = args;
   const { attachToThread } = await import("./attach.ts");
-  const { interruptOn, peekAt, previewRemoval, removeOn, reviewAgain, startNew, startOn, stopOn } =
-    await import("./client.ts");
-  const task = splitTaskName(sub);
+  const {
+    interruptOn,
+    namesRepository,
+    peekAt,
+    previewRemoval,
+    removeOn,
+    reviewAgain,
+    startNew,
+    startOn,
+    stopOn,
+  } = await import("./client.ts");
+  // sc start takes a repository or a task, and a repository's name can end like a task's, such
+  // as api-v2. A word that names a repository is that repository, and only another word is read
+  // as a task. Commands that take only tasks read every word as one.
+  const named = command === "start" && sub !== undefined && (await namesRepository(sub));
+  const task = named ? undefined : splitTaskName(sub);
   // stop, peek, interrupt and attach act on one thread, so they take its role too.
   const thread =
     command === "start" || command === "rm" || command === "review" ? task : splitThreadName(sub);

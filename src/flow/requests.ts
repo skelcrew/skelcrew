@@ -28,6 +28,9 @@ export const DaemonRequest = z.discriminatedUnion("command", [
     tab: z.literal(true).optional(),
   }),
   z.object({ command: z.literal("repo ls") }),
+  // Whether a word names a repository Skelcrew has. It isn't `repo`, as a word that names none
+  // is no request about another repository.
+  z.object({ command: z.literal("repo named"), word: z.string() }),
   z.object({ command: z.literal("ps"), repo: z.string().optional() }),
   z.object({ command: z.literal("task ls"), repo: z.string().optional() }),
   // A task is named by its ID, or by its PR's number for sc pr show. With a number, `from` is
@@ -176,6 +179,7 @@ export const allowed = {
     "status",
     "lead",
     "repo ls",
+    "repo named",
     "ps",
     "task ls",
     "task show",
@@ -197,6 +201,7 @@ export const allowed = {
   lead: [
     "status",
     "repo ls",
+    "repo named",
     "ps",
     "task ls",
     "task show",
