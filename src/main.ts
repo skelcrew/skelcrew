@@ -745,16 +745,47 @@ async function threadCommand(args: string[]): Promise<void> {
   usage(command);
 }
 
-// Types a message from the lead into a builder, or from a builder into the lead. The daemon
-// decides who may tell whom, from the socket the call comes in on. In your terminal it only
-// says how to type to a builder yourself.
+// Types a message from the lead into a builder, from a builder into the lead, or from a lead
+// into another repository's lead, as sc tell lead <repo> "<text>". A brief can be long, so with
+// - as its text it comes on stdin instead, which needs no shell quoting. A builder's sc tell lead
+// "<text>" has one word after lead, so only a second word makes a brief, and a builder's message
+// never waits on stdin. --asked-file gives the human's words with a brief, in a file the lead
+// wrote, as sc merge --when-ready takes them. The daemon decides who may tell whom, from the
+// socket the call comes in on. In your terminal it only says how to type to a builder yourself.
 async function tellCommand(args: string[]): Promise<void> {
-  const [command, to, text, ...rest] = args;
-  const { tellOn, tellTheLead } = await import("./client.ts");
+  const command = args[0];
+  const { briefOtherLead, tellOn, tellTheLead } = await import("./client.ts");
   if (process.env.SKELCREW_SANDBOX !== "1")
     throw new Error(
       "sc tell is for the lead and builders. To type to a builder, pick it in the sidebar, or press Enter on it in sc --list.",
     );
+  // --asked-file, at most once and anywhere, then the words left.
+  const flag = args.indexOf("--asked-file");
+  const askedFile = flag < 0 ? undefined : args[flag + 1];
+  if (flag >= 0 && (askedFile === undefined || args.lastIndexOf("--asked-file") !== flag))
+    usage(command);
+  const [, to, text, ...rest] = flag < 0 ? args : args.toSpliced(flag, 2);
+  const words = rest[0];
+  if (to === "lead" && text !== undefined && words !== undefined && rest.length === 1) {
+    const brief = words === "-" ? await Bun.stdin.text() : words;
+    if (!brief.trim())
+      throw new Error(`sc tell lead ${text} needs the brief, as words or on stdin`);
+    // The human's words come in a file the lead wrote with its own file tool, so they never
+    // pass through a shell, which could run or change them. They are read unchanged.
+    let asked: string | undefined;
+    if (askedFile !== undefined) {
+      const { readFileSync } = await import("node:fs");
+      asked = readFileSync(askedFile, "utf8");
+      if (!asked.trim())
+        throw new Error(
+          `${askedFile} is empty: write the human's words in it, exactly as they wrote them`,
+        );
+    }
+    const name = await briefOtherLead(text, brief, asked);
+    console.log(`Telling ${name}'s lead. Skelcrew types it in once that lead is idle.`);
+    return;
+  }
+  if (askedFile !== undefined) usage(command);
   const task = to === "lead" ? undefined : splitThreadName(to);
   if (to === "lead" && text && rest.length === 0) {
     await tellTheLead(text);

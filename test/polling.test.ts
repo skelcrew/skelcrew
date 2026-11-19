@@ -637,6 +637,31 @@ test("a lead running from before flows is told of them once", async () => {
   expect(flowNotes()).toHaveLength(1);
 });
 
+// A lead already running when Skelcrew learned of briefs keeps the instructions it started with,
+// so it is told once how to brief another lead, and when a brief lets it start work.
+test("a lead running from before briefs is told of them once", async () => {
+  addApp();
+  changes([]);
+  Bun.spawnSync(["tmux", "-L", socket, "new-session", "-d", "-s", leadName, "sleep 300"]);
+  serve();
+  // What the daemon told, or saved to tell, app's lead about briefs.
+  const briefNotes = () => {
+    const db = new Database(join(data(), "skelcrew.db"), { readonly: true });
+    db.run("PRAGMA busy_timeout = 5000");
+    const saved = db.query("SELECT text FROM notes").all();
+    db.close();
+    const texts = saved.map((row) => String(Object.values(Object(row))[0]));
+    const typedIn = read(join(data(), "claude", leadName, "typed")).split("\n");
+    return [...texts, ...typedIn].filter((text) => text.includes("leads can brief each other"));
+  };
+  await until(() => briefNotes().length > 0);
+  expect(briefNotes()[0]).toContain("sc tell lead <repo>");
+  expect(briefNotes()[0]).toContain("--asked-file asked.txt");
+  expect(briefNotes()[0]).toContain('whose tag says asked="yes"');
+  await morePolls();
+  expect(briefNotes()).toHaveLength(1);
+});
+
 // A repository whose lead isn't running is left untold, as a lead that starts later is told of
 // flows in its instructions. Its tab is closed, so the daemon doesn't start its lead.
 test("a repository with no lead running gets no note of flows", async () => {
