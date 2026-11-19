@@ -117,11 +117,13 @@ function rowLine(row: Row, here: boolean, nameWidth: number, width: number): str
 }
 
 // Returns the list as lines that fill the terminal, on the row at `here`. The top line comes
-// first, then a notice when there is one, then the lead, which stays in place, then every
-// stage's heading, each open one with its rows under it, scrolled from `top` so the row you are
-// on shows, then the bottom line. `rows` are the rows that show: the lead's and those of the open stages, in the order of
-// the stages. Gives the lines and the scroll they were drawn at, which the next draw starts from,
-// so the list moves only when the row you are on would leave the screen.
+// first, then a notice when there is one, then the lead, then every stage's heading, each open
+// one with its rows under it, then the bottom line. `rows` are the rows that show: the lead's and
+// those of the open stages, in the order of the stages. When the rows don't all fit, only the
+// tasks scroll, from `top`, so the row you are on shows: the lead and every heading stay, so no
+// stage's count or need of you goes out of sight. Gives the lines and the scroll they were drawn
+// at, which the next draw starts from, so the list moves only when the row you are on would
+// leave the screen.
 export function drawList(
   rows: Row[],
   headings: Heading[],
@@ -131,28 +133,38 @@ export function drawList(
   size: Size,
 ): { lines: string[]; top: number } {
   const nameWidth = Math.max(...rows.map((row) => Bun.stringWidth(row.name)), 4);
-  // The body: each task's line, with which row it is, under its stage's heading. An open stage
-  // with rows has a blank line after them, which parts it from the next heading.
-  const line = (row: Row, i: number) => ({
-    text: rowLine(row, i === here, nameWidth, size.width),
-    row: i,
-  });
-  const body: { text: string; row: number | null }[] = [];
-  headings.forEach((heading, at) => {
-    body.push({ text: headingLine(heading, at + 1, size.width), row: null });
-    const ours = rows.flatMap((row, i) => (row.part === heading.stage ? [line(row, i)] : []));
-    if (ours.length > 0) body.push(...ours, { text: "", row: null });
-  });
+  const line = (row: Row, i: number) => rowLine(row, i === here, nameWidth, size.width);
+  // The lead is above the stages, and never scrolls.
+  const lead = rows.flatMap((row, i) => (row.part === "lead" ? [line(row, i), ""] : []));
   const notice = frame.notice ? [paint(yellow, fitted(` ${frame.notice}`, size.width))] : [];
-  // The lead is above what scrolls, so it shows however far down the row you are on is.
-  const lead = rows.flatMap((row, i) => (row.part === "lead" ? [line(row, i).text, ""] : []));
   const head = [topLine(frame, size.width), ...notice, "", ...lead];
   const room = Math.max(size.height - head.length - 2, 1);
-  // Scrolls just enough to keep the row you are on in view.
-  const at = body.findIndex((line) => line.row === here);
-  let from = Math.min(Math.max(top, at - room + 1, 0), Math.max(at, 0));
-  from = Math.min(from, Math.max(body.length - room, 0));
-  const shown = body.slice(from, from + room).map((line) => line.text);
+  // The tasks that show, by their place in `rows`, in the order of the stages.
+  const tasks = rows.flatMap((row, i) => (row.part === "lead" ? [] : [i]));
+  // Returns the stages' lines with the tasks from `from` on, `count` of them. With `parted`, an
+  // open stage with rows has a blank line after them, which parts it from the next heading.
+  const stages = (from: number, count: number, parted: boolean) => {
+    const shown = new Set(tasks.slice(from, from + count));
+    return headings.flatMap((heading, at) => {
+      const ours = rows.flatMap((row, i) =>
+        row.part === heading.stage && shown.has(i) ? [line(row, i)] : [],
+      );
+      const after = parted && ours.length > 0 ? [""] : [];
+      return [headingLine(heading, at + 1, size.width), ...ours, ...after];
+    });
+  };
+  let body = stages(0, tasks.length, true);
+  let from = 0;
+  // Too many to fit: the blank lines go, and the tasks scroll in the room the headings leave,
+  // just enough to keep the row you are on in view.
+  if (body.length > room) {
+    const fit = Math.max(room - headings.length, 1);
+    const at = tasks.indexOf(here);
+    from = Math.min(Math.max(top, at - fit + 1, 0), Math.max(at, 0));
+    from = Math.min(from, Math.max(tasks.length - fit, 0));
+    body = stages(from, fit, false);
+  }
+  const shown = body.slice(0, room);
   const blank = Array.from({ length: room - shown.length }, () => "");
   // A question or a reason must stay on its one line, so it is cut to fit, and the load gives
   // way first.

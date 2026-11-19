@@ -493,11 +493,27 @@ test("another repository's badge counts what needs you in yellow and what is rea
   expect(top).toContain("\x1b[38;5;221m•2");
 });
 
-test("a list taller than the terminal scrolls to keep the row you are on in view, under the lead", () => {
-  const lines = drawn(4, 8, 80, ["building", "ready"]);
-  expect(lines).toHaveLength(8);
-  expect(lines.some((line) => line.includes("▸ ● app-14"))).toBe(true);
+test("a list taller than the terminal scrolls only its tasks, keeping the lead and every heading", () => {
+  const more = Array.from({ length: 10 }, (_, i) =>
+    threadSql({ task: String(50 + i), title: `Task ${50 + i}`, changed: now - (10 + i) * 60_000 }),
+  );
+  sql(more.join("\n"));
+  // Building has app-12 first, as it needs you, then by latest change: app-9, app-7, then app-50
+  // to app-59. The last of them is the 13th task, at 13 among the rows after the lead.
+  const lines = drawn(13, 16, 80, ["building", "ready"]);
+  expect(lines).toHaveLength(16);
   expect(lines[2]).toMatch(/^ {3}◆ lead/);
+  expect(lines.filter((line) => /^ \d [A-Z]/.test(line)).map((line) => line.trim())).toEqual([
+    "1 Backlog 1",
+    "2 Building 13 · 1 needs you",
+    "3 Reviewing 0",
+    "4 Checks 0",
+    "5 Ready 1",
+    "6 Done 0",
+  ]);
+  expect(lines.filter((line) => line.includes("▸"))).toEqual([
+    expect.stringMatching(/^ ▸ ○ app-59 /),
+  ]);
   expect(lines.some((line) => line.includes("app-12"))).toBe(false);
 });
 
