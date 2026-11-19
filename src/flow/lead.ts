@@ -215,6 +215,8 @@ export async function startLead(
       repositoryCommands(repository),
       leadMayArmMerges(),
     ),
+    // Its skills come from the .agents/ you approved, as its role does.
+    skills: { owner, repo, agents: approvedAgents(repository) },
     ...(resume ? { resume } : { sessionId: session }),
   });
   // The session stays when the lead exits, so closeExitedLeads can tell exiting it from a crash.

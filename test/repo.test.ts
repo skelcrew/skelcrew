@@ -17,6 +17,8 @@ import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse } from "yaml";
+import { builtInFlowText } from "../src/flows.ts";
+import { builtInRole } from "../src/roles.ts";
 import { asked, fakePlugin, source, threadSql } from "./harness.ts";
 
 const main = source("main.ts");
@@ -770,7 +772,10 @@ test("repo add and init refuse inside Skelcrew's sandbox, where a yes could come
   expect(existsSync(clone("simon/app"))).toBe(false);
 });
 
-test("init writes a starter skelcrew.yaml with your harness and model for each role, and adds the repository", async () => {
+// The files sc init writes are the built-in defaults, with your harness and model in each role,
+// so the repository works the same for a teammate. Setup and test are only examples, as
+// Skelcrew never guesses them.
+test("init writes skelcrew.yaml and .agents/ from the built-in defaults, approves them, and adds the repository", async () => {
   writeFileSync(
     join(home, ".config", "skelcrew", "config.yaml"),
     "harness: claude\nmodel: sonnet\nlead: { model: opus }\nreviewer: { harness: codex }\n",
@@ -782,20 +787,42 @@ test("init writes a starter skelcrew.yaml with your harness and model for each r
   expect(run.err).toBe("");
   expect(run.code).toBe(0);
   expect(run.out).not.toContain("tracker");
+  expect(run.out).not.toContain("Approve");
   expect(readFileSync(join(checkout, "skelcrew.yaml"), "utf8")).toBe(
     `# Shared with everyone who works on this repository. Never put a secret here.
-lead:     { harness: claude, model: opus }
-builder:  { harness: claude, model: sonnet }
-reviewer: { harness: codex }
 # setup: [bun install]
 # test: [bun test]
 # Keeps this repository on git alone, with no tracker.
 # tracker: none
 `,
   );
+  const role = (name: "lead" | "builder" | "reviewer") =>
+    readFileSync(join(checkout, ".agents", "roles", `${name}.md`), "utf8");
+  expect(role("lead")).toBe(
+    `---\nharness: claude\nmodel: opus\n---\n${builtInRole("lead").instructions}`,
+  );
+  expect(role("builder")).toBe(
+    `---\nharness: claude\nmodel: sonnet\n---\n${builtInRole("builder").instructions}`,
+  );
+  expect(role("reviewer")).toBe(
+    `---\nharness: codex\n---\n${builtInRole("reviewer").instructions}`,
+  );
+  expect(readFileSync(join(checkout, ".agents", "flows", "default.yaml"), "utf8")).toBe(
+    builtInFlowText,
+  );
+  // Nothing is staged in the checkout, and what is approved is the tree the push will bring.
+  expect(git(checkout, "status", "--porcelain")).toBe("?? .agents/\n?? skelcrew.yaml\n");
+  git(checkout, "add", "-A");
+  git(checkout, "commit", "-q", "-m", "init");
+  const approved = parse(
+    readFileSync(join(home, ".config", "skelcrew", "approved-agents.yaml"), "utf8"),
+  );
+  expect(approved).toEqual({ "simon/app": git(checkout, "rev-parse", "HEAD:.agents").trim() });
   expect(existsSync(join(clone("simon/app"), "README"))).toBe(true);
   expect(run.out).toContain("Added simon/app, as app.");
-  expect(run.out).toContain("Wrote skelcrew.yaml. Commit and push it to start.");
+  expect(run.out).toContain(
+    "Wrote skelcrew.yaml and .agents/. They count once you commit and push them to the default branch.",
+  );
 });
 
 // YAML reads true, null or 123 as something other than text, which a model name must be.
@@ -806,11 +833,12 @@ test("init writes model names that read back as the same text", async () => {
   );
   const checkout = onGitHub("simon/app", "WRITE");
   expect((await skel(["init"], "", checkout)).err).toBe("");
-  expect(parse(readFileSync(join(checkout, "skelcrew.yaml"), "utf8"))).toEqual({
-    lead: { harness: "claude", model: "true" },
-    builder: { harness: "claude", model: "null" },
-    reviewer: { harness: "claude", model: "123" },
-  });
+  const model = (name: string) =>
+    parse(
+      readFileSync(join(checkout, ".agents", "roles", `${name}.md`), "utf8").split("---\n")[1] ??
+        "",
+    ).model;
+  expect([model("lead"), model("builder"), model("reviewer")]).toEqual(["true", "null", "123"]);
 });
 
 test("init leaves a skelcrew.yaml that is there as it is, and adds the repository", async () => {
@@ -822,7 +850,154 @@ test("init leaves a skelcrew.yaml that is there as it is, and adds the repositor
   expect(run.code).toBe(0);
   expect(readFileSync(file, "utf8")).toBe("# How to build it.\nsetup: [make]\n");
   expect(run.out).toContain("skelcrew.yaml is there already, so Skelcrew left it as it is.");
+  expect(run.out).toContain(
+    "Wrote .agents/. It counts once you commit and push it to the default branch.",
+  );
   expect(run.out).toContain("Added simon/app, as app.");
+});
+
+// Being able to push isn't having read what a teammate wrote in .agents/, so init writes nothing
+// into one that is there and asks before approving it.
+test("init leaves an .agents/ that is there as it is, and asks before approving it", async () => {
+  const checkout = onGitHub("simon/app", "WRITE");
+  mkdirSync(join(checkout, ".agents", "roles"), { recursive: true });
+  writeFileSync(join(checkout, ".agents", "roles", "builder.md"), "Ship it fast.\n");
+  git(checkout, "add", "-A");
+  git(checkout, "commit", "-q", "-m", "agents");
+  git(checkout, "push", "-q", join(home, "github", "simon/app.git"), "main");
+  const run = await skel(["init"], "n\n", checkout);
+  expect(run.err).toBe("");
+  expect(run.out).toContain(".agents/ is there already, so Skelcrew left it as it is.");
+  expect(run.out).toContain("Ship it fast.");
+  expect(run.out).toContain("Approve simon/app's .agents/?");
+  expect(run.out).toContain("Tasks in simon/app run on the built-in roles.");
+  expect(git(checkout, "status", "--porcelain")).toBe("?? skelcrew.yaml\n");
+  expect(readFileSync(join(home, ".config", "skelcrew", "approved-agents.yaml"), "utf8")).toBe(
+    "simon/app: none\n",
+  );
+});
+
+// Pushes an .agents/ with one builder role to the repository's default branch, then takes the
+// checkout back to the commit before it, as an older branch would be.
+function agentsOnlyOnGitHub(checkout: string): void {
+  mkdirSync(join(checkout, ".agents", "roles"), { recursive: true });
+  writeFileSync(join(checkout, ".agents", "roles", "builder.md"), "Ship it fast.\n");
+  git(checkout, "add", "-A");
+  git(checkout, "commit", "-q", "-m", "agents");
+  git(checkout, "push", "-q", join(home, "github", "simon/app.git"), "main");
+  git(checkout, "reset", "-q", "--hard", "HEAD~1");
+}
+
+const approvals = () =>
+  parse(readFileSync(join(home, ".config", "skelcrew", "approved-agents.yaml"), "utf8"));
+
+// A no given as the repository comes in stands, though init then writes the built-in files.
+test("init on a checkout without .agents/ keeps a no given as the repository came in", async () => {
+  const checkout = onGitHub("simon/app", "WRITE");
+  agentsOnlyOnGitHub(checkout);
+  const run = await skel(["init"], "n\n", checkout);
+  expect(run.err).toBe("");
+  expect(run.out).toContain("Approve simon/app's .agents/?");
+  expect(approvals()).toEqual({ "simon/app": "none" });
+  expect(run.out).toContain(
+    "Skelcrew kept the .agents/ you approved for simon/app. Once you push the new one, run sc repo trust app to approve it.",
+  );
+});
+
+// sc init on an old branch must never swap the roles new tasks start on.
+test("init on a checkout without .agents/ keeps the version you approved", async () => {
+  const checkout = onGitHub("simon/app", "WRITE");
+  agentsOnlyOnGitHub(checkout);
+  expect((await skel(["repo", "add"], "y\n", checkout)).out).toContain(
+    "Approved simon/app's .agents/.",
+  );
+  const approved = approvals();
+  const run = await skel(["init"], "", checkout);
+  expect(run.err).toBe("");
+  expect(approvals()).toEqual(approved);
+  expect(existsSync(join(checkout, ".agents", "roles", "lead.md"))).toBe(true);
+});
+
+// The checkout's .agents/ may be on no default branch yet, and a repository Skelcrew has asks
+// nothing as it is added again, so init shows the checkout's own and asks.
+test("init asks about a checkout's .agents/ that isn't on the default branch, for a repository Skelcrew has", async () => {
+  const checkout = onGitHub("simon/app", "WRITE");
+  expect((await skel(["repo", "add"], "", checkout)).err).toBe("");
+  mkdirSync(join(checkout, ".agents", "roles"), { recursive: true });
+  writeFileSync(join(checkout, ".agents", "roles", "builder.md"), "Ship it fast.\n");
+  const run = await skel(["init"], "y\n", checkout);
+  expect(run.err).toBe("");
+  expect(run.out).toContain("Ship it fast.");
+  expect(run.out).toContain("Approved simon/app's .agents/.");
+  expect(readFileSync(join(checkout, ".agents", "roles", "builder.md"), "utf8")).toBe(
+    "Ship it fast.\n",
+  );
+  git(checkout, "add", "-A");
+  git(checkout, "commit", "-q", "-m", "init");
+  expect(approvals()).toEqual({ "simon/app": git(checkout, "rev-parse", "HEAD:.agents").trim() });
+});
+
+// A tracked file stays in every commit though a .gitignore rule matches it, so it is in the
+// version you are asked to approve too.
+test("init asks about a checkout's .agents/ with its tracked files that .gitignore matches", async () => {
+  const checkout = onGitHub("simon/app", "WRITE");
+  expect((await skel(["repo", "add"], "", checkout)).err).toBe("");
+  mkdirSync(join(checkout, ".agents", "roles"), { recursive: true });
+  writeFileSync(join(checkout, ".agents", "roles", "builder.md"), "Ship it fast.\n");
+  writeFileSync(join(checkout, ".agents", "roles", "lead.md"), "Lead calmly.\n");
+  writeFileSync(join(checkout, ".gitignore"), "builder.md\n");
+  git(checkout, "add", "-f", "-A");
+  git(checkout, "commit", "-q", "-m", "agents");
+  const run = await skel(["init"], "y\n", checkout);
+  expect(run.err).toBe("");
+  expect(run.out).toContain("Ship it fast.");
+  expect(approvals()).toEqual({ "simon/app": git(checkout, "rev-parse", "HEAD:.agents").trim() });
+});
+
+// The files sc init writes are approved as written, though a .gitignore rule matches them: you
+// commit them with git add -f.
+test("init approves the .agents/ it writes even when git ignores it", async () => {
+  const checkout = onGitHub("simon/app", "WRITE");
+  writeFileSync(join(checkout, ".gitignore"), ".agents/\n");
+  const run = await skel(["init"], "", checkout);
+  expect(run.err).toBe("");
+  expect(run.code).toBe(0);
+  git(checkout, "add", "-f", ".agents");
+  git(checkout, "commit", "-q", "-m", "init");
+  expect(approvals()).toEqual({ "simon/app": git(checkout, "rev-parse", "HEAD:.agents").trim() });
+});
+
+// git commit and git commit -a would take different versions of an edited file, so init asks
+// you to settle which before it shows or approves either.
+test("init approves nothing while .agents/ has changes that aren't staged", async () => {
+  const checkout = onGitHub("simon/app", "WRITE");
+  expect((await skel(["repo", "add"], "", checkout)).err).toBe("");
+  mkdirSync(join(checkout, ".agents", "roles"), { recursive: true });
+  writeFileSync(join(checkout, ".agents", "roles", "builder.md"), "Staged words.\n");
+  git(checkout, "add", "-A");
+  writeFileSync(join(checkout, ".agents", "roles", "builder.md"), "Unstaged words.\n");
+  const run = await skel(["init"], "y\n", checkout);
+  expect(run.err).toBe("");
+  expect(run.out).toContain(
+    ".agents/ has changes you haven't staged, so Skelcrew can't tell which version you'll commit. Stage or drop them, then run sc init again.",
+  );
+  expect(run.out).not.toContain("Approve");
+  expect(existsSync(join(home, ".config", "skelcrew", "approved-agents.yaml"))).toBe(false);
+});
+
+// A file staged and then deleted from disk is such a change too, and sc init never approves its
+// own files beside it.
+test("init approves nothing when the index holds .agents/ files it didn't write", async () => {
+  const checkout = onGitHub("simon/app", "WRITE");
+  mkdirSync(join(checkout, ".agents", "skills", "old"), { recursive: true });
+  writeFileSync(join(checkout, ".agents", "skills", "old", "SKILL.md"), "Old words.\n");
+  git(checkout, "add", "-A");
+  rmSync(join(checkout, ".agents"), { recursive: true });
+  const run = await skel(["init"], "", checkout);
+  expect(run.err).toBe("");
+  expect(existsSync(join(checkout, ".agents", "roles", "lead.md"))).toBe(true);
+  expect(run.out).toContain(".agents/ has changes you haven't staged");
+  expect(existsSync(join(home, ".config", "skelcrew", "approved-agents.yaml"))).toBe(false);
 });
 
 test("init stops outside a git repository, and in one with no remote", async () => {
