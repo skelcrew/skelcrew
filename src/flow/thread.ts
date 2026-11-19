@@ -181,8 +181,9 @@ export const Thread = z.object({
   // the task starts. Empty for a task with no issue. Null only in a row from before Skelcrew
   // kept it, which takes the line from Skelcrew's copy of the tracker.
   closes: z.string().nullable(),
-  // A merge when ready you armed, so Skelcrew merges the PR once it is approved and green, or
-  // null with none, and then nothing merges by itself. Who armed it and when, what it waits on
+  // A merge you armed, or null with none, and then nothing merges by itself. A merge when ready
+  // merges the PR once it is approved and green, and one skipping the review, with `merge_pinned`,
+  // once CI is green at the commit you saw. Who armed it and when, what it waits on
   // as the last poll found, and the review round the lead last heard it still waits after.
   merge_plan: z.enum(["armed"]).nullable(),
   // The armed plan's own ID, new each time it is armed, so a plan cancelled and armed again is
@@ -195,6 +196,17 @@ export const Thread = z.object({
   merge_asked: z.string().nullable(),
   merge_waits: z.string().nullable(),
   merge_noted: z.number().nullable(),
+  // The PR's head when you asked to merge it without Skelcrew's approval, or null for a merge when
+  // ready. Only this commit merges, as you saw it, so a push after you asked cancels the plan.
+  merge_pinned: z.string().nullable(),
+  // The plan's ID and the commit, with a space between, whose record of who asked Skelcrew posted
+  // on the PR, and that review's ID, so the record goes once per plan and commit, through
+  // restarts too. Null before the first.
+  merge_record: z.string().nullable(),
+  merge_record_id: z.string().nullable(),
+  // The issue a merge without approval filed what its review still asked for in, once filed, so
+  // a poll after a restart never files a second one.
+  merge_followup: z.string().nullable(),
   // The tree of the .agents/ you had approved when the task started, whose roles its agents
   // keep to the end, though you approve another meanwhile. Null for the built-in roles, as
   // every task had before Skelcrew read .agents/.

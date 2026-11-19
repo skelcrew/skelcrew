@@ -19,7 +19,7 @@ import { ciSummary, reviewVerdict } from "./page.ts";
 import { findRepository, noRepositories, repositories, repositoryAt } from "./repo.ts";
 import { roundRunning } from "./round.ts";
 import { Stage, taskStage } from "./stage.ts";
-import { needsYou } from "./status.ts";
+import { mergeShown, needsYou } from "./status.ts";
 import { queuedForReview, Thread, threadName, threadOn } from "./thread.ts";
 
 // A repository as sc repo ls shows it. `missing` is a tracker its skelcrew.yaml names that
@@ -80,8 +80,9 @@ function tabClosed(db: Database, r: { owner: string; repo: string }): boolean {
 // and `checks` are null without a PR, and `review` without a forge, where sc ps leaves those
 // columns empty. `checks` is what the PR's CI says, without Skelcrew's own check. `review` is
 // where Skelcrew's reviewer stands: its round, and when it was asked for or ended, as an ISO
-// time. `waiting` is how many messages wait to be typed into its builder. `merge` is its merge
-// when ready, with what it waits on, or null with none.
+// time. `waiting` is how many messages wait to be typed into its builder. `merge` is its armed
+// merge, with what it waits on and whether it merges without Skelcrew's approval rather than when
+// ready, or null with none.
 export const ThreadRow = z.object({
   thread: z.string(),
   short: z.string().nullable(),
@@ -101,7 +102,10 @@ export const ThreadRow = z.object({
     })
     .nullable(),
   waiting: z.number(),
-  merge: z.object({ waits: z.string().nullable() }).nullable().default(null),
+  merge: z
+    .object({ waits: z.string().nullable(), skipReview: z.boolean().default(false) })
+    .nullable()
+    .default(null),
 });
 export type ThreadRow = z.infer<typeof ThreadRow>;
 
@@ -166,7 +170,10 @@ function threadRow(db: Database, thread: Thread, forge: boolean): ThreadRow {
     checks: pr === null ? null : ciOf(thread, copy),
     review: forge ? reviewOf(thread) : null,
     waiting: messagesWaiting(db, thread),
-    merge: thread.merge_plan === null ? null : { waits: thread.merge_waits },
+    merge:
+      thread.merge_plan === null
+        ? null
+        : { waits: thread.merge_waits, skipReview: thread.merge_pinned !== null },
   };
 }
 
@@ -305,7 +312,8 @@ export type PrPage = z.infer<typeof PrPage>;
 // one in Skelcrew's copy for a task not started, or null for a task with no issue, such as app-wr1. `threads` names each of its threads with its role, such
 // as app-12/builder. `pr` is its PR's number, as sc ps gives it, and `review` where Skelcrew's
 // review stands, with a forge or without one. `prPage` is its PR from Skelcrew's copy, or null once the copy no longer has
-// it, as after a merge.
+// it, as after a merge. `merge` is its armed merge with what it waits on, such as `merges without
+// approval · waiting on its checks`, or null with none, as the list's rows leave that out.
 export const TaskView = z.object({
   task: z.string(),
   stage: Stage,
@@ -318,6 +326,7 @@ export const TaskView = z.object({
   pr: z.number().nullable(),
   review: ThreadRow.shape.review,
   prPage: PrPage.nullable(),
+  merge: z.string().nullable(),
 });
 export type TaskView = z.infer<typeof TaskView>;
 
@@ -445,6 +454,7 @@ export async function showTask(
     // Reviews run without a forge too, so their state shows here even then.
     review: thread && reviewOf(thread),
     prPage: pr === null ? null : await prPageOf(db, repository, pr),
+    merge: thread ? mergeShown(thread) : null,
   };
 }
 
@@ -524,7 +534,9 @@ function shortName(name: string, room: number): string {
 // both whole. The title comes from the tracker and the short title from the lead, so their
 // control codes are removed, which could break a row or reach your terminal. A review shows
 // its round, such as changes r3. WAITING counts the messages waiting for each builder. MERGE
-// says merges when ready for a thread Skelcrew will merge once it is approved and green.
+// says merges when ready for a thread Skelcrew will merge once it is approved and green, and
+// merges without approval for one it will merge once CI passes, whatever its review says. What
+// each armed merge waits on follows the table.
 export function printThreads(threads: ThreadRow[], json: boolean): void {
   if (json) {
     console.log(JSON.stringify(threads));
@@ -538,7 +550,7 @@ export function printThreads(threads: ThreadRow[], json: boolean): void {
   // wait their turn, so the status says which. WAITING shows only while a message waits for
   // some builder, so it takes no room from the others the rest of the time.
   const waiting = threads.some((t) => t.waiting > 0);
-  // MERGE shows only while a thread has a merge when ready.
+  // MERGE shows only while a thread has an armed merge.
   const merging = threads.some((t) => t.merge !== null);
   const rows = threads.map((t) => {
     const review = t.review === null ? "" : t.review.state;
@@ -550,7 +562,7 @@ export function printThreads(threads: ThreadRow[], json: boolean): void {
       `${review}${round}`,
       t.needsYou ? "yes" : "",
       ...(waiting ? [t.waiting === 0 ? "" : `${t.waiting}`] : []),
-      ...(merging ? [t.merge === null ? "" : "merges when ready"] : []),
+      ...(merging ? [t.merge === null ? "" : mergeKind(t.merge)] : []),
     ];
   });
   // The name and title share what those columns, and the two spaces after each column but the
@@ -578,7 +590,17 @@ export function printThreads(threads: ThreadRow[], json: boolean): void {
       ...(rows[i] ?? []),
     ]),
   );
+  // What an armed merge waits on, such as a conflict or the forge's refusal, can be long, so it
+  // goes under the table, one line per thread, keeping each row within 80 columns.
+  const waits = threads.flatMap((t) =>
+    t.merge?.waits ? [`${t.thread} ${mergeKind(t.merge)}, waiting on ${t.merge.waits}.`] : [],
+  );
+  if (waits.length > 0) for (const line of ["", ...waits]) console.log(line);
 }
+
+// Returns how sc ps names an armed merge: when ready, or skipping Skelcrew's review.
+const mergeKind = (merge: { skipReview: boolean }) =>
+  merge.skipReview ? "merges without approval" : "merges when ready";
 
 // Returns what is happening on a task, for its row in sc ls, such as "waiting · #31 · CI failed ·
 // changes r3". A task with no thread has nothing yet.
@@ -653,6 +675,7 @@ export function printTask(task: TaskView, json: boolean): void {
     ...(review && review.state !== "none"
       ? [["Review", review.round === null ? review.state : `${review.state} r${review.round}`]]
       : []),
+    ...(task.merge === null ? [] : [["Merge", task.merge]]),
     ...(prPage ? [["Link", prPage.link]] : []),
   ];
   console.log(`${task.task}  ${task.title}`);
