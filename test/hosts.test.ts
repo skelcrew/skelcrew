@@ -301,6 +301,141 @@ console.log(readThread(db, "app-12").host_id);`,
   expect(said).toBe("fake-app-12\nfake-app-12\n");
 });
 
+test("a lead whose ID never got saved is found on its host by its labels", () => {
+  const said = runWithFakeHost(
+    "sessions",
+    `const { leadSession } = await import(${JSON.stringify(source("flow/lead.ts"))});
+db.run("INSERT INTO repositories (name, owner, repo, remote, lead_host) VALUES ('app', 'simon', 'app', '', 'fake')");
+const { host } = await leadSession(db, "unused", "simon", "app");
+await startSession(host, "lead-app", { folder: ${JSON.stringify(home)}, command: ["sleep", "30"], env: {}, labels: { repository: "simon/app", role: "lead" } });
+console.log((await leadSession(db, "unused", "simon", "app")).id);
+console.log(db.query("SELECT lead_host_id FROM repositories WHERE repo = 'app'").get().lead_host_id);`,
+    {},
+  );
+  expect(said).toBe("fake-lead-app\nfake-lead-app\n");
+});
+
+test("a lead on a plugin no longer installed is out of reach, and isn't started elsewhere", () => {
+  const said = runWithFakeHost(
+    "sessions",
+    `const { leadSession, startLead } = await import(${JSON.stringify(source("flow/lead.ts"))});
+db.run("INSERT INTO repositories (name, owner, repo, remote, lead_host, lead_host_id) VALUES ('app', 'simon', 'app', '', 'gone', 'gone-1')");
+console.log(await leadSession(db, "unused", "simon", "app"));
+const repository = { name: "app", owner: "simon", repo: "app", forge: null, remote: "" };
+console.log(await startLead(db, "unused", repository).catch((error) => error.message));`,
+    {},
+  );
+  expect(said).toBe(
+    "null\nsimon/app's lead ran on gone, which isn't installed now: install it again to reach the lead\n",
+  );
+});
+
+test("a lead on a host that shows status hears each change of what it does", () => {
+  const said =
+    statusesAfter(`db.run("INSERT INTO repositories (name, owner, repo, remote, lead_host, lead_host_id) VALUES ('app', 'simon', 'app', '', 'fake', 'fake-lead-app')");
+keepState(db, { owner: "simon", repo: "app" }, "working");
+keepState(db, { owner: "simon", repo: "app" }, "asking");
+keepState(db, { owner: "simon", repo: "app" }, "asking");
+keepState(db, { owner: "simon", repo: "app" }, "error");
+keepState(db, { owner: "simon", repo: "app" }, "idle");`);
+  expect(said).toEqual([
+    { id: "fake-lead-app", status: "working", reason: "working" },
+    { id: "fake-lead-app", status: "needs you", reason: "question" },
+    { id: "fake-lead-app", status: "error", reason: "error" },
+    { id: "fake-lead-app", status: "idle", reason: "idle" },
+  ]);
+});
+
+test("removing a repository refuses while its lead's host plugin isn't installed, and keeps it", () => {
+  const said = runWithFakeHost(
+    "sessions",
+    `const { removeRepo } = await import(${JSON.stringify(source("flow/repo.ts"))});
+const { cloneDir } = await import(${JSON.stringify(source("paths.ts"))});
+const fs = require("node:fs");
+db.run("INSERT INTO repositories (name, owner, repo, remote, lead_host, lead_host_id) VALUES ('app', 'simon', 'app', '', 'gone', 'gone-1')");
+db.run("DELETE FROM threads");
+fs.mkdirSync(cloneDir("simon", "app"), { recursive: true });
+console.log(await removeRepo("app", "unused").then(() => "removed", (error) => error.message));
+const row = db.query("SELECT tab_closed FROM repositories WHERE repo = 'app'").get();
+console.log(fs.existsSync(cloneDir("simon", "app")), row.tab_closed);`,
+    {},
+  );
+  expect(said).toBe(
+    "app's lead runs on gone, which isn't installed now, so it can't be ended. Install gone again, then remove app.\ntrue 0\n",
+  );
+});
+
+test("a lead still starting on a slow host when its repository is removed is ended, not left running", () => {
+  const fake = join(home, ".config", "skelcrew", "plugins", "fake");
+  const said = runWithFakeHost(
+    "sessions",
+    `const { startLead } = await import(${JSON.stringify(source("flow/lead.ts"))});
+const { removeRepo } = await import(${JSON.stringify(source("flow/repo.ts"))});
+const { cloneDir } = await import(${JSON.stringify(source("paths.ts"))});
+const { pluginHost } = await import(${JSON.stringify(source("plugins/runtime.ts"))});
+const fs = require("node:fs");
+fs.mkdirSync(${JSON.stringify(fake)}, { recursive: true });
+fs.writeFileSync(${JSON.stringify(join(home, ".config", "skelcrew", "config.yaml"))}, "harness: claude\\nsession: fake\\n");
+fs.writeFileSync(${JSON.stringify(join(home, ".config", "skelcrew", "claude-token"))}, "sk-ant-oat01-good\\n");
+db.run("INSERT INTO repositories (name, owner, repo, remote, opened) VALUES ('app', 'simon', 'app', '', 1)");
+db.run("DELETE FROM threads");
+fs.mkdirSync(cloneDir("simon", "app"), { recursive: true });
+Bun.spawnSync(["git", "init", "-q", cloneDir("simon", "app")]);
+const host = pluginHost(db, "fake");
+// The host takes two seconds to start the lead, and the removal looks for it meanwhile.
+fs.writeFileSync(${JSON.stringify(join(fake, "slow-start"))}, "");
+const repository = { name: "app", owner: "simon", repo: "app", forge: null, remote: "" };
+const starting = startLead(db, "unused", repository).then(() => "started", (error) => error.message);
+await Bun.sleep(500);
+await removeRepo("app", "unused");
+console.log(await starting);
+const sessions = await (await import(${JSON.stringify(source("agents/sessions.ts"))})).listSessions(host);
+console.log(sessions.length);`,
+    {},
+  );
+  expect(said).toBe(
+    "Removed app and Skelcrew's clone of it.\nsimon/app was closed or removed while its lead started\n0\n",
+  );
+}, 20_000);
+
+test("removing a repository whose lead's host fails keeps it, with its tab open", () => {
+  const fake = join(home, ".config", "skelcrew", "plugins", "fake");
+  const said = runWithFakeHost(
+    "sessions",
+    `const { removeRepo } = await import(${JSON.stringify(source("flow/repo.ts"))});
+const { cloneDir } = await import(${JSON.stringify(source("paths.ts"))});
+const fs = require("node:fs");
+db.run("INSERT INTO repositories (name, owner, repo, remote, lead_host, lead_host_id) VALUES ('app', 'simon', 'app', '', 'fake', 'fake-lead-app')");
+db.run("DELETE FROM threads");
+fs.mkdirSync(cloneDir("simon", "app"), { recursive: true });
+fs.mkdirSync(${JSON.stringify(fake)}, { recursive: true });
+fs.writeFileSync(${JSON.stringify(join(fake, "fail-list"))}, "");
+console.log(await removeRepo("app", "unused").then(() => "removed", () => "refused"));
+const row = db.query("SELECT tab_closed FROM repositories WHERE repo = 'app'").get();
+console.log(fs.existsSync(cloneDir("simon", "app")), row.tab_closed);`,
+    {},
+  );
+  expect(said).toBe("refused\ntrue 0\n");
+});
+
+test("removing a repository ends its lead on a plugin's host, found by its labels", () => {
+  const fake = join(home, ".config", "skelcrew", "plugins", "fake");
+  const said = runWithFakeHost(
+    "sessions",
+    `const { removeRepo } = await import(${JSON.stringify(source("flow/repo.ts"))});
+const { pluginHost } = await import(${JSON.stringify(source("plugins/runtime.ts"))});
+db.run("INSERT INTO repositories (name, owner, repo, remote, lead_host) VALUES ('app', 'simon', 'app', '', 'fake')");
+const host = pluginHost(db, "fake");
+await startSession(host, "lead-app", { folder: ${JSON.stringify(home)}, command: ["sleep", "30"], env: {}, labels: { repository: "simon/app", role: "lead" } });
+db.run("DELETE FROM threads");
+await removeRepo("app", "unused");
+console.log(await hasSession(host, "fake-lead-app"));`,
+    {},
+  );
+  expect(said).toBe("Removed app and Skelcrew's clone of it.\nfalse\n");
+  expect(readFileSync(join(fake, "asked"), "utf8")).toContain('"ask":"end"');
+});
+
 test("a builder that can't be ended keeps its host, and stopping it again tries again", () => {
   const said = runWithFakeHost(
     "sessions",
@@ -994,4 +1129,126 @@ process.exit(0);`,
   expect(said).toBe(
     "fake answered end in a way Skelcrew doesn't understand\nworking true true 1\n",
   );
+}, 40_000);
+
+// The last is a row from before Skelcrew saved a thread's title, which takes the issue's from
+// Skelcrew's copy of the tracker.
+for (const [short, title, saved] of [
+  ["login redirect", "login redirect", "Fix the login redirect"],
+  [null, "Fix the login redirect", "Fix the login redirect"],
+  [null, "Fix the login redirect", null],
+] as const)
+  test(`a builder's session is labelled with its short title, else its full title: ${title}, saved ${saved}`, () => {
+    const fake = join(home, ".config", "skelcrew", "plugins", "fake");
+    const labels = runWithFakeHost(
+      "sessions",
+      `const issue = { kind: "task", id: "12", title: "Fix the login redirect", body: "", state: "open", author: null, labels: [], link: "https://github.com/simon/app/issues/12", created: "2026-11-18T00:00:00Z", updated: "2026-11-18T00:00:00Z", closes: "Closes #12" };
+db.run("INSERT INTO items (owner, repo, kind, id, state, created, item) VALUES ('simon', 'app', 'task', '12', 'open', '2026-11-18T00:00:00Z', ?)", [JSON.stringify(issue)]);
+const host = (await builderSession(db, "unused", readThread(db, "app-12"))).host;
+await startOnHost(db, readThread(db, "app-12"), { host, name: "fake" }, { folder: ${JSON.stringify(home)}, command: ["sleep", "30"], env: {} });
+console.log(require("node:fs").readFileSync(${JSON.stringify(join(fake, "sessions", "fake-app-12", "labels.json"))}, "utf8"));
+process.exit(0);`,
+      { host: "fake", host_id: null, title: saved, short },
+    );
+    expect(JSON.parse(labels).title).toBe(title);
+  }, 40_000);
+
+test("a new short title on a running builder reaches its host as a rename", () => {
+  const fake = join(home, ".config", "skelcrew", "plugins", "fake");
+  runWithFakeHost(
+    "sessions",
+    `record(db, "app-12", { short: "login redirect" }, "given a short title");
+record(db, "app-12", { rounds: 1 });
+await Bun.sleep(1000);`,
+    { host: "fake", host_id: "fake-app-12", title: "Fix the login redirect" },
+  );
+  const renames = readFileSync(join(fake, "asked"), "utf8")
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line))
+    .filter((question) => question.ask === "rename");
+  // Only the change of title renames it, not every change to the thread.
+  expect(renames).toEqual([{ ask: "rename", id: "fake-app-12", title: "login redirect" }]);
+}, 40_000);
+
+test("a short title given while the host starts the builder still reaches the host", () => {
+  const fake = join(home, ".config", "skelcrew", "plugins", "fake");
+  runWithFakeHost(
+    "sessions",
+    `const fs = require("node:fs");
+const host = (await builderSession(db, "unused", readThread(db, "app-12"))).host;
+// The host takes two seconds to start the builder, and the short title comes meanwhile.
+fs.writeFileSync(${JSON.stringify(join(fake, "slow-start"))}, "");
+const starting = startOnHost(db, readThread(db, "app-12"), { host, name: "fake" }, { folder: ${JSON.stringify(home)}, command: ["sleep", "30"], env: {} });
+await Bun.sleep(500);
+record(db, "app-12", { short: "login redirect" }, "given a short title");
+await starting;
+await Bun.sleep(1500);
+process.exit(0);`,
+    { host: "fake", host_id: null, title: "Fix the login redirect" },
+  );
+  const renames = readFileSync(join(fake, "asked"), "utf8")
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line))
+    .filter((question) => question.ask === "rename");
+  expect(renames).toEqual([{ ask: "rename", id: "fake-app-12", title: "login redirect" }]);
+}, 40_000);
+
+test("renames reach the host one at a time, and the last says the latest title", () => {
+  const fake = join(home, ".config", "skelcrew", "plugins", "fake");
+  const said = runWithFakeHost(
+    "sessions",
+    `const fs = require("node:fs");
+const asked = () => fs.readFileSync(${JSON.stringify(join(fake, "asked"))}, "utf8").trim().split("\\n").map((line) => JSON.parse(line)).filter((q) => q.ask === "rename");
+const host = (await builderSession(db, "unused", readThread(db, "app-12"))).host;
+await startSession(host, "app-12", { folder: ${JSON.stringify(home)}, command: ["sleep", "30"], env: {}, labels: { repository: "simon/app", role: "builder", task: "app-12" } });
+// The host holds every rename until the file goes.
+fs.writeFileSync(${JSON.stringify(join(fake, "hold-rename"))}, "1");
+record(db, "app-12", { short: "first" });
+await Bun.sleep(300);
+record(db, "app-12", { short: "second" });
+await Bun.sleep(1000);
+console.log(asked().length);
+fs.rmSync(${JSON.stringify(join(fake, "hold-rename"))});
+await Bun.sleep(1500);
+console.log(asked().map((q) => q.title).join(" "));
+process.exit(0);`,
+    { host: "fake", host_id: "fake-app-12", title: "Fix the login redirect" },
+  );
+  // The second waited for the first to finish, so the host ends on the latest title.
+  expect(said).toBe("1\nfirst second\n");
+}, 40_000);
+
+test("a rename the host does but answers with nothing counts as done", () => {
+  const fake = join(home, ".config", "skelcrew", "plugins", "fake");
+  const said = runWithFakeHost(
+    "sessions",
+    `const host = (await builderSession(db, "unused", readThread(db, "app-12"))).host;
+await startSession(host, "app-12", { folder: ${JSON.stringify(home)}, command: ["sleep", "30"], env: {}, labels: { repository: "simon/app", role: "builder", task: "app-12", title: "Fix the login redirect" } });
+record(db, "app-12", { short: "login redirect" });
+await Bun.sleep(1000);
+process.exit(0);`,
+    { host: "fake", host_id: "fake-app-12", title: "Fix the login redirect" },
+  );
+  const labels = readFileSync(join(fake, "sessions", "fake-app-12", "labels.json"), "utf8");
+  expect(JSON.parse(labels).title).toBe("login redirect");
+  expect(said).not.toContain("couldn't rename");
+}, 40_000);
+
+test("a builder found on its host after a restart is renamed if its title changed meanwhile", () => {
+  const fake = join(home, ".config", "skelcrew", "plugins", "fake");
+  runWithFakeHost(
+    "sessions",
+    `const host = (await builderSession(db, "unused", readThread(db, "app-12"))).host;
+// The host started the builder under its old title, and the daemon stopped before saving its ID.
+await startSession(host, "app-12", { folder: ${JSON.stringify(home)}, command: ["sleep", "30"], env: {}, labels: { repository: "simon/app", role: "builder", task: "app-12", title: "Fix the login redirect" } });
+record(db, "app-12", { short: "login redirect" });
+await builderSession(db, "unused", readThread(db, "app-12"));
+await Bun.sleep(1000);
+process.exit(0);`,
+    { host: "fake", host_id: null, title: "Fix the login redirect" },
+  );
+  const labels = readFileSync(join(fake, "sessions", "fake-app-12", "labels.json"), "utf8");
+  expect(JSON.parse(labels).title).toBe("login redirect");
 }, 40_000);
