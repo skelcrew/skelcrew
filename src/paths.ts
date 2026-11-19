@@ -93,7 +93,9 @@ export const reviewSocket = (folder: string) =>
 export const sshFolder = () => `/tmp/sc-${userInfo().uid}`;
 // Returns the parent folder of Skelcrew's repository clones, which every lead reads.
 export const reposDir = () => join(dataDir(), "repos");
-// Returns a repository's clone folder so Skelcrew works away from your checkout.
-export const cloneDir = (owner: string, repo: string) => join(reposDir(), owner, repo);
+// Returns a repository's clone folder so Skelcrew works away from your checkout. Pass a home
+// for the same reason as for configDir.
+export const cloneDir = (owner: string, repo: string, home = homedir()) =>
+  join(dataDir(home), "repos", owner, repo);
 // Returns the folder that holds each thread's clone, with the log of its changes beside it.
 export const threadsDir = () => join(dataDir(), "threads");

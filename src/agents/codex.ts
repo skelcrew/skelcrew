@@ -396,7 +396,7 @@ async function startCommand(given: {
   // weigh more than an AGENTS.md. On the command line they would stop the session: tmux refuses
   // a start command past about 16 KB, and Linux an argument past 128 KB.
   if (system) writeFileSync(instructions, `developer_instructions = ${tomlString(system)}\n`);
-  if (skills) copySkills(skills, join(sessionHome, "skills"));
+  if (skills) copySkills(skills, join(sessionHome, "skills"), home);
   // Skelcrew's own folder first, so a login the first run just saved there moves to the shared
   // folder before this session links to it.
   shareLogin(home);
@@ -496,7 +496,7 @@ async function reviewCommand(given: {
   options.push("--output-schema", join(folder, "schema.json"), "-o", join(folder, "answer.json"));
   options.push("-");
   const command = withSkillsOff(2, ["--no-daemon", "exec", ...options]);
-  const skills = given.skills ? copySkills(given.skills, join(folder, "skills")) : [];
+  const skills = given.skills ? copySkills(given.skills, join(folder, "skills"), home) : [];
   return { command, mounts, env: { CODEX_HOME: at }, skills };
 }
 

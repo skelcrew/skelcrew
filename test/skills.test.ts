@@ -17,6 +17,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { z } from "zod";
+import { harnessNamed } from "../src/agents/harness.ts";
 import { skillsTold } from "../src/skills.ts";
 import { source } from "./harness.ts";
 
@@ -142,6 +143,20 @@ test("a session on the built-in files gets no skills", () => {
   const skills = startBuilder("claude");
   expect(startBuilder("claude", "builtIn")).toBe(skills);
   expect(readdirSync(skills)).toEqual([]);
+});
+
+// A harness is handed the home its session runs under, and Skelcrew's clone is under that one,
+// not the home this process started with, as for a review run from a test.
+test("skills come from Skelcrew's clone under the home a harness is given", async () => {
+  const folder = join(home, "review");
+  mkdirSync(folder);
+  const launched = await harnessNamed("codex").review({
+    home,
+    folder,
+    signal: new AbortController().signal,
+    skills: { owner: "simon", repo: "app", agents: tree },
+  });
+  expect(launched.skills.map((skill) => skill.name).sort()).toEqual(["notes", "review-sql"]);
 });
 
 // Every Claude Code review has a config folder of its own, so its skills go there.

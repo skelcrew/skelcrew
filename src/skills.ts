@@ -22,13 +22,14 @@ const Frontmatter = z.looseObject({ name: z.string(), description: z.string() })
 // skill copied. Whatever was there goes first, so an agent that changed its copy, or a skill the
 // repository has since dropped, never lasts into the next start. Only plain files are copied: a
 // link could point at any file of yours. Throws when Skelcrew's clone has lost the tree, as the
-// session's roles do.
-export function copySkills(from: SkillsFrom, into: string): Skill[] {
+// session's roles do. `home` is the home folder Skelcrew's clone is under, as a harness is given
+// it.
+export function copySkills(from: SkillsFrom, into: string, home: string): Skill[] {
   // A link the agent left at `into` is removed, never followed.
   rmSync(into, { recursive: true, force: true });
   mkdirSync(into, { recursive: true, mode: 0o700 });
   if (from.agents === null) return [];
-  const clone = cloneDir(from.owner, from.repo);
+  const clone = cloneDir(from.owner, from.repo, home);
   const git = (args: string[]) => {
     const run = Bun.spawnSync(["git", "-C", clone, ...args], { stdout: "pipe", stderr: "pipe" });
     if (!run.success)

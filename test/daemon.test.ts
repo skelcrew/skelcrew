@@ -479,7 +479,8 @@ describe.skipIf(insideSandbox)("with a lead per repository", () => {
     const app = addRepository("app");
     const web = addRepository("web");
     fakeClaude(
-      `for r in ${app} ${web}; do test -e $r/README && echo "$r" >> seen; done; exec sleep 300`,
+      // Written whole and then moved in, so the test never reads it half written.
+      `for r in ${app} ${web}; do test -e $r/README && echo "$r" >> seen.tmp; done; mv seen.tmp seen; exec sleep 300`,
     );
     serve();
     await untilAnswers();

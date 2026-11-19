@@ -322,7 +322,7 @@ function startCommand(given: {
 
   trustFolder(config, cwd);
   skipBypassWarning(config);
-  if (skills) copySkills(skills, join(config, "skills"));
+  if (skills) copySkills(skills, join(config, "skills"), home);
   // The instructions go in a file of the session's own, not on the command line. tmux refuses
   // a start command past about 16 KB, and the lead's instructions alone came close.
   if (system) writeFileSync(instructions, system);
@@ -393,7 +393,7 @@ function reviewCommand(given: {
   const config = join(folder, "claude");
   mkdirSync(config);
   skipBypassWarning(config);
-  if (skills) copySkills(skills, join(config, "skills"));
+  if (skills) copySkills(skills, join(config, "skills"), home);
   const env = { CLAUDE_CONFIG_DIR: config, CLAUDE_CODE_OAUTH_TOKEN: token };
   return { command, mounts: [], env, skills: [] };
 }
