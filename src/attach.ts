@@ -1,6 +1,8 @@
 // Running the daemon in the background, as sc up --bg does, then showing you a repository's
 // lead or a thread's builder once it runs this Skelcrew's code. Plain sc opens the screen on a
-// lead, sc --list shows the lead's repository as a list, and sc attach opens a builder.
+// lead, sc --list shows the lead's repository as a list, and sc attach opens a builder. sc restart
+// restarts the daemon when you ask.
+import { hostname, userInfo } from "node:os";
 import { z } from "zod";
 import { agentRuns } from "./agents/sessions.ts";
 import { ask } from "./client.ts";
@@ -98,6 +100,32 @@ export async function restartStaleDaemon(): Promise<void> {
       );
     await Bun.sleep(100);
   }
+}
+
+// Restarts the engine's service on this machine, for sc restart, and returns once a new engine
+// answers. sc --remote runs it on a server too. An engine run in a terminal with sc up is left
+// alone and you are asked to stop it, as the service manager can't restart it and a service
+// started beside it would fail on the lock. Agents keep running, as only the engine restarts.
+export async function restartEngine(): Promise<void> {
+  const before = await daemonRuns();
+  if (before && outsideService(before))
+    throw new Error(
+      "Skelcrew's engine runs in a terminal, with sc up, not as its service. Stop it there, such as with Ctrl-C, then run sc up again, or sc up --bg to run it as the service. Your agents keep running.",
+    );
+  const log = restartDaemon();
+  // The old engine can still answer for a moment while it stops, so only another process id
+  // counts as the new one. An engine of an older release reports none, and then any answer does.
+  const deadline = Date.now() + restartWait;
+  while (true) {
+    const now = await daemonRuns();
+    if (now && (now.pid === 0 || now.pid !== before?.pid)) break;
+    if (Date.now() > deadline)
+      throw new Error(
+        `Skelcrew's engine didn't come back within ${restartWait / 1000} seconds: ${log} shows why`,
+      );
+    await Bun.sleep(100);
+  }
+  console.log(`Restarted the engine on ${userInfo().username}@${hostname()}. Agents kept running.`);
 }
 
 // Runs the daemon as the background service on this Skelcrew's code, and returns once it

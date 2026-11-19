@@ -233,6 +233,14 @@ test("sc --list goes to the server with the repository you are in", async () => 
   );
 });
 
+// sc restart there restarts the server's engine, with no ssh by hand.
+test("sc restart goes to the server and restarts its engine there", async () => {
+  installed();
+  const run = await skel(["--remote", "simon@workbox", "restart"], "", checkout("simon/app"));
+  expect(calls()).toBe(`${onServer(" restart")}\n`);
+  expect(run.out).toBe("Skelcrew on the server got 1 arguments\n[restart]\n");
+});
+
 test("passes no repository from outside one", async () => {
   installed();
   const run = await skel(["--remote", "simon@workbox"]);

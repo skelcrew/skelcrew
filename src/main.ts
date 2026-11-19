@@ -11,6 +11,7 @@ const agentRefusals: Record<string, string> = {
   "": "attaching to the lead",
   "--list": "showing the list",
   up: "running the daemon",
+  restart: "restarting the engine",
   serve: "running the daemon",
   "repo add": "adding a repository",
   "repo rm": "removing a repository",
@@ -88,6 +89,7 @@ function usage(command?: string): never {
   const known = [
     "up",
     "serve",
+    "restart",
     "init",
     "repo",
     "ps",
@@ -167,9 +169,15 @@ async function leadCommand(list: boolean, from?: string): Promise<void> {
 }
 
 // Runs sc up, which runs the daemon: in the foreground, or with --bg as the background service.
-// sc serve is the older name of sc up, kept for services installed before sc up.
+// sc serve is the older name of sc up, kept for services installed before sc up. sc restart
+// restarts the daemon wherever it runs.
 async function machineCommand(args: string[]): Promise<void> {
   const [command] = args;
+  if (command === "restart" && args.length === 1) {
+    const { restartEngine } = await import("./attach.ts");
+    await restartEngine();
+    return;
+  }
   const { serve } = await import("./flow/daemon.ts");
   if (command === "up" && args.length === 1) {
     await serve("skelcrew");
@@ -808,6 +816,7 @@ async function runCommand(args: string[]): Promise<void> {
   switch (first) {
     case "up":
     case "serve":
+    case "restart":
       return machineCommand(words);
     case "sidebar":
     case "list":
