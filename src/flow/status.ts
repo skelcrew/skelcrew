@@ -526,10 +526,33 @@ export function questionAnswered(db: Database, folder: string): void {
   else if (thread.submitted || thread.told_lead || thread.turn_ended) record(db, folder, over);
 }
 
-// Returns what a thread's row in the list of threads says of its merge when ready, with what it
-// waits on, or null with none. A thread that failed isn't polled, so it says so itself.
+// Returns what a thread's row in the list of threads says of its armed merge, when ready or over
+// the review, with what it waits on, or null with none. A thread that failed isn't polled, so it
+// says so itself.
 export function mergeShown(thread: Thread): string | null {
   if (thread.merge_plan !== "armed") return null;
+  const kind = thread.merge_pinned === null ? "merges when ready" : "merges without approval";
   const waits = thread.status === "failed" ? "its thread, which failed" : thread.merge_waits;
-  return waits === null ? "merges when ready" : `merges when ready · waiting on ${waits}`;
+  return waits === null ? kind : `${kind} · waiting on ${waits}`;
+}
+
+// Returns what Skelcrew's latest review on the thread's PR still asks for, one finding each, or
+// none once it approved. A merge without approval names them before you say y, and files them as an
+// issue once it merged, so they aren't lost.
+export function openFindings(thread: Thread): string[] {
+  const post = thread.review_post;
+  if (post === null || post.pr !== thread.pr || post.verdict !== "changes") return [];
+  return post.findings;
+}
+
+// Returns what a question to merge without Skelcrew's approval says of that review, such as "It
+// still asks: 1) Handle an empty file 2) Test the error". Each finding is put on one line, as the
+// question is one line at your terminal.
+export function stillAsks(thread: Thread): string {
+  const findings = openFindings(thread).map(
+    (finding, n) => `${n + 1}) ${finding.replace(/\s+/g, " ").trim()}`,
+  );
+  const asks = findings.length > 0 ? `It still asks: ${findings.join(" ")}` : "";
+  if (thread.reviewing === null) return asks || "Its reviewer hasn't approved it";
+  return asks ? `${asks}, and its newest review is still running` : "Its review is still running";
 }
