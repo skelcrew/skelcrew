@@ -13,7 +13,7 @@ import {
   readSession,
   stillRunning,
 } from "../agents/sessions.ts";
-import { agentsAnswered, agentsOnDefaultBranch } from "../approved-agents.ts";
+import { agentsUnanswered } from "../approved-agents.ts";
 import { checkFlow, leadMayArmMerges, repositoryCommands } from "../config.ts";
 import { finishUpgrade, moveToTasks, moveTurnEnded, openDb, type Repository } from "../db.ts";
 import { flowRoles } from "../flows.ts";
@@ -231,8 +231,8 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   let leadStarts: Promise<void> = Promise.resolve();
   // Opens a repository's lead's own socket, so the daemon knows which lead calls on it, then
   // keeps the lead running or starts it. One at a time, so two requests at once can't start
-  // two sessions.
-  const ensureLead = (repository: Repository) => {
+  // two sessions. With `hold`, a lead whose .agents/ you never answered for isn't started.
+  const ensureLead = (repository: Repository, hold = false) => {
     leadStarts = leadStarts
       .catch(() => {})
       .then(async () => {
@@ -242,7 +242,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
           listening.add(socket);
           await open(socket, { lead: { owner, repo } });
         }
-        await startLead(db, sessions, repository);
+        await startLead(db, sessions, repository, hold);
       });
     return leadStarts;
   };
@@ -380,8 +380,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         if (
           request.from === undefined &&
           request.asked !== `${owner}/${repo}` &&
-          !agentsAnswered(repository) &&
-          agentsOnDefaultBranch(repository) !== null
+          agentsUnanswered(repository)
         )
           return { agents: { owner, repo, name: repository.name } };
         // Opening a repository opens its tab too, if you had closed it by exiting its lead.
@@ -728,9 +727,9 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   await open(path, "you");
   console.log(`Listening on ${path}.`);
   // Bring back the lead of each repository you have opened. One that fails is logged, and the
-  // rest still start.
+  // rest still start. One whose .agents/ you never answered for waits for sc to ask you.
   for (const repository of openedRepositories(db))
-    await ensureLead(repository).catch((error) => console.log(errorText(error)));
+    await ensureLead(repository, true).catch((error) => console.log(errorText(error)));
   // A lead keeps its clone current as it starts, and a repository with no lead needs it too.
   refreshClones(db).catch((error) => console.log(errorText(error)));
   // Notes the daemon's stop kept from the leads.

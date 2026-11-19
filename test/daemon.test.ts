@@ -719,6 +719,39 @@ describe.skipIf(insideSandbox)("with a lead per repository", () => {
     expect(hasLead()).toBe(true);
   });
 
+  // The daemon's start would otherwise bring the lead back on the built-in roles, and the lead
+  // would keep them after you approved its own.
+  test("a daemon that starts leaves the lead of an .agents/ you never answered for to sc", async () => {
+    setUp();
+    const clone = addRepository("app");
+    const work = join(home, "work", "app");
+    mkdirSync(join(work, ".agents", "roles"), { recursive: true });
+    writeFileSync(join(work, ".agents", "roles", "lead.md"), "Lead it the team's way.\n");
+    git(work, "add", "-A");
+    git(work, "commit", "-q", "-m", "roles");
+    git(work, "push", "-q", "origin", "HEAD:main");
+    openedBefore();
+    serve();
+    await untilAnswers();
+    await until(() => existsSync(join(clone, ".agents")));
+    expect(await ask({ command: "lead" })).toEqual({
+      agents: { owner: "simon", repo: "app", name: "app" },
+    });
+    // You approve as sc asks, and the lead starts once, on the role you approved.
+    const tree = Bun.spawnSync(["git", "-C", work, "rev-parse", "HEAD:.agents"]).stdout;
+    writeFileSync(
+      join(home, ".config", "skelcrew", "approved-agents.yaml"),
+      `simon/app: ${tree.toString().trim()}\n`,
+    );
+    expect(await ask({ command: "lead", asked: "simon/app" })).toEqual({
+      lead: leadName(),
+      repository: "simon/app",
+    });
+    await until(() => claudeLines().length > 0);
+    expect(claudeLines()).toHaveLength(1);
+    expect(claudeLines()[0]).toContain("Lead it the team's way.");
+  });
+
   test("with no repositories, there is no lead to open", async () => {
     setUp();
     serve();

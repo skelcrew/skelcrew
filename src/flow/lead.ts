@@ -14,7 +14,7 @@ import {
   type Labels,
   startSession,
 } from "../agents/sessions.ts";
-import { approvedRef, markApproved } from "../approved-agents.ts";
+import { agentsUnanswered, approvedRef, markApproved } from "../approved-agents.ts";
 import { agentRole, leadMayArmMerges, repositoryCommands } from "../config.ts";
 import { Repository } from "../db.ts";
 import leadRules from "../defaults/roles/lead-rules.md" with { type: "text" };
@@ -137,11 +137,14 @@ export function approvedFlowsTold(clone: string): string {
 // is one. A lead's first start picks the harness your config names for leads, and the lead
 // keeps it from then on, as a conversation can't move to another harness. The session id and
 // harness are stored before the lead starts, so the lead can be brought back after its session
-// is gone. Codex picks its own id, and its module finds the conversation it saved.
+// is gone. Codex picks its own id, and its module finds the conversation it saved. With `hold`,
+// a lead not running whose .agents/ you never answered for isn't started, as only sc can ask
+// you, and a lead started first would keep the built-in roles after you approve.
 export async function startLead(
   db: Database,
   sessions: string,
   repository: Repository,
+  hold = false,
 ): Promise<void> {
   const { owner, repo } = repository;
   const lead = leadOf(db, owner, repo);
@@ -164,6 +167,11 @@ export async function startLead(
   if (!existsSync(clone)) await refreshClones(db);
   if (!existsSync(clone))
     throw new Error(`Skelcrew couldn't clone ${owner}/${repo}, so its lead can't start yet`);
+  // Looked at once the clone is there, as its .agents/ is read from it.
+  if (hold && agentsUnanswered(repository)) {
+    console.log(`${owner}/${repo}'s lead waits for sc to ask you about its .agents/.`);
+    return;
+  }
   // Pick the harness and the conversation to bring back, if the harness still has it, and save
   // both before starting.
   const role = agentRole("lead", repository);
