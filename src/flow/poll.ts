@@ -31,7 +31,7 @@ import {
   type PullRequest,
 } from "./decide.ts";
 import { endThread, removing, tellBuilder, tellingEvents } from "./events.ts";
-import { fetchInto, onRemote } from "./git.ts";
+import { fetchCommit, fetchInto, onRemote } from "./git.ts";
 import { approvedFlowsTold, leadOf } from "./lead.ts";
 import { mergeIfReady } from "./merging.ts";
 import { noteForLead, typeLeadNotes } from "./messages.ts";
@@ -257,9 +257,10 @@ async function actOnPr(
 // the PR or moving its base can change that with the same head. That is git in Skelcrew's clone
 // alone, unless the base isn't the default branch, or this poll couldn't bring the default
 // branch up to date (`refreshed`), or the head isn't in the clone yet, such as someone else's
-// push: those are fetched. A PR it can't check, such as one from a fork or while the remote is
-// out of reach, loses what was saved for it, so its confirm says it isn't checked, and is logged
-// once per head.
+// push or a PR from a fork: those are fetched, the head by its commit, as a fork's branch isn't
+// on the repository's remote. A PR it can't check, such as while the remote is out of reach,
+// loses what was saved for it, so its confirm says it isn't checked, and is logged once per
+// head.
 async function saveAgentsChanges(
   db: Database,
   repository: Repository,
@@ -290,7 +291,7 @@ async function saveAgentsChanges(
         await fetchInto(db, repository, skelcrewClone, pr.base, base);
       }
       if (!(await git("cat-file", "-e", `${pr.head}^{commit}`)).ok)
-        await fetchInto(db, repository, skelcrewClone, pr.branch, `refs/skelcrew/prs/${pr.id}`);
+        await fetchCommit(db, repository, skelcrewClone, pr.head, `refs/skelcrew/prs/${pr.id}`);
       // The PR's own changes are those since the head left its base, which is what a merge brings.
       const from = await git("merge-base", base, pr.head);
       if (!from.ok) throw new Error(`git merge-base failed: ${from.err.trim()}`);

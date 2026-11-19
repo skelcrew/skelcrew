@@ -679,6 +679,24 @@ test("each poll finds whether an open PR changes .agents/, again as its base cha
   await until(() => prAgents("8") === null);
 });
 
+// A PR from a fork has its branch only on the fork. Its head is still on the repository's
+// remote, as GitHub keeps it under refs/pull/, so the poll fetches it by its commit.
+test("a PR from a fork that changes .agents/ is found, though its branch isn't on the remote", async () => {
+  const work = addApp();
+  const remote = join(home, "github", "simon", "app.git");
+  git(work, "checkout", "-q", "-b", "theirs");
+  mkdirSync(join(work, ".agents", "roles"), { recursive: true });
+  writeFileSync(join(work, ".agents", "roles", "builder.md"), "Build it their way.\n");
+  git(work, "add", ".");
+  git(work, "commit", "-q", "-m", "roles");
+  const head = headOf(work);
+  git(work, "push", "-q", remote, `${head}:refs/pull/9/head`);
+  changes([prItem("9", "Their roles", { head, branch: "theirs", base: "main" })]);
+  serve();
+  await until(() => prAgents("9") !== null);
+  expect(prAgents("9")).toEqual({ head, changed: 1 });
+});
+
 test("a lead running from before flows is told of them once", async () => {
   addApp();
   changes([]);
