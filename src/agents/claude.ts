@@ -321,7 +321,9 @@ function startCommand(given: {
   if (resume) command.push("--resume", resume);
   if (sessionId) command.push("--session-id", sessionId);
   if (system) command.push("--append-system-prompt-file", instructions);
-  if (prompt) command.push(prompt);
+  // The first message comes after --, as one that starts with dashes, such as a task titled
+  // "--from", would otherwise be read as an option and stop Claude Code before it starts.
+  if (prompt) command.push("--", prompt);
 
   // Only the environment the agent needs, plus its own config folder and login.
   const kept = filterEnv(env, claude.keys);
