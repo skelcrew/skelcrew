@@ -131,6 +131,60 @@ test("a builder is told each command that isn't configured, and asks the lead ra
   );
 });
 
+// The human talks to the lead, so a builder's question goes there, framed for someone who
+// hasn't read the code. A question asked in the builder's own session would make the human
+// open it to answer.
+test("a builder asks the lead, not the human in its session, with background, options and a recommendation", () => {
+  const told = builderInstructions(instructions, { setup: undefined, test: undefined });
+  expect(told).toContain("Ask the lead, never the human in this session: run sc tell lead");
+  expect(told).toContain(
+    "Never use your harness's tool for asking questions, such as AskUserQuestion",
+  );
+  for (const part of [
+    "- Background, in plain words",
+    "- The problem, with a concrete example.",
+    "- Each option, and what it means for the human",
+    "- Your recommendation, and why.",
+    "Leave out file paths and names from the code unless they help.",
+  ])
+    expect(told).toContain(part);
+  expect(told).not.toContain("questions for the human still go to the human");
+});
+
+// The lead answers what the human already decided, and says so in one line. What is the
+// human's by rule goes to them, whatever lead role the repository brings.
+test("a lead answers what the human already decided, and always brings the human's decisions to them, whatever its role", () => {
+  const lead = builtInRole("lead").instructions;
+  expect(lead).toContain(
+    "Answer one yourself with sc tell when the answer follows from what the human already decided",
+  );
+  expect(lead).toContain(
+    "Then tell the human in one line what you answered and why, so they can overrule it",
+  );
+  expect(lead).toContain("The human should never have to open a builder to answer it.");
+  expect(lead).toContain("and your recommendation with why.");
+  const theirs =
+    "Always bring the human a builder's question about editing a spec, trust or security, the work's scope or direction, or merging, however clear the answer seems: these are theirs to decide.";
+  expect(lead).toContain(theirs);
+  const custom = leadInstructions(
+    "You are our lead. Answer the builders yourself.\n",
+    "simon/app",
+    "/c",
+    { setup: undefined, test: undefined },
+    false,
+  );
+  for (const rule of [
+    theirs,
+    "Answer one yourself with sc tell when the answer follows from what the human already decided",
+    "Then tell the human in one line what you answered and why, so they can overrule it",
+    "pass their answer on to the builder with sc tell.",
+    "The human should never have to open a builder to answer it.",
+    "Frame it for someone who hasn't read the code: the background in plain words, the problem with a concrete example, each option with what it means for the human, and your recommendation with why.",
+    "Leave out file paths and names from the code unless they help.",
+  ])
+    expect(custom).toContain(rule);
+});
+
 // The lead can't read the human's config from its sandbox, so it is told which commands are
 // configured, each on its own, and proposes only the ones that are missing.
 test("a lead is told its repository and each setup and test command, or that none is configured", () => {
