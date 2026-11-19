@@ -1,16 +1,7 @@
 // A repository's skills: the folders of .agents/skills/ you approved, copied into a folder of one
 // session's own as it starts, or listed in its instructions for a harness that reads no folder.
-import {
-  chmodSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  realpathSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-} from "node:fs";
-import { dirname, join, sep } from "node:path";
+import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { parse } from "yaml";
 import { z } from "zod";
 import { cloneDir } from "./paths.ts";
@@ -89,54 +80,4 @@ export function skillsTold(skills: Skill[]): string {
       `- ${skill.name}, in ${skill.file}${skill.description ? `: ${skill.description}` : ""}`,
   );
   return `The repository gives you skills: knowledge you load when you need it. When one fits your work, read its SKILL.md, and any files it points to beside it.\n${lines.join("\n")}`;
-}
-
-// Returns every SKILL.md in the .agents/skills/ of the checkout at `root`, as it is on disk now,
-// for a Codex builder to leave unloaded: Codex loads the skills it finds there on its own, and
-// those are the default branch's or the builder's, not the ones you approved. Links are followed,
-// as Codex follows them, and each file is given both as found and as its real path, since either
-// could be how Codex names it. Only folders the sandbox shows are walked: the checkout and the
-// folders in `shown`, such as Skelcrew's clone of the repository, which a link could lead into.
-export function checkoutSkills(root: string, shown: string[] = []): string[] {
-  const tops = [root, ...shown].flatMap((folder) => {
-    try {
-      return [realpathSync(folder)];
-    } catch {
-      return [];
-    }
-  });
-  const found = new Set<string>();
-  const seen = new Set<string>();
-  const walk = (dir: string) => {
-    let real: string;
-    try {
-      real = realpathSync(dir);
-    } catch {
-      return;
-    }
-    const inside = tops.some((top) => real === top || real.startsWith(top + sep));
-    if (!inside || seen.has(real)) return;
-    seen.add(real);
-    // A link in a loop, or a folder or file you can't read, is skipped: Codex can't load a
-    // skill from it either, and one such entry must not stop the builder from starting.
-    let names: string[];
-    try {
-      names = readdirSync(dir);
-    } catch {
-      return;
-    }
-    for (const name of names) {
-      const path = join(dir, name);
-      try {
-        const stat = statSync(path);
-        if (stat.isDirectory()) walk(path);
-        else if (stat.isFile() && name === "SKILL.md") {
-          found.add(path);
-          found.add(realpathSync(path));
-        }
-      } catch {}
-    }
-  };
-  walk(join(root, ".agents", "skills"));
-  return [...found];
 }

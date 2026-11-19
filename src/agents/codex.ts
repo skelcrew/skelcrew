@@ -20,7 +20,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import { dataDir } from "../paths.ts";
-import { checkoutSkills, copySkills, type SkillsFrom } from "../skills.ts";
+import { copySkills, type SkillsFrom } from "../skills.ts";
 import { editing, type Progress, stepText, toolWords } from "./progress.ts";
 import { resetTime } from "./reset.ts";
 import { filterEnv, refuseCredentials, ro, rw, sandboxArgs, throwawayMounts } from "./sandbox.ts";
@@ -242,30 +242,24 @@ function callStep(
 // Returns a TOML value for a -c setting. JSON's strings are TOML's too.
 const tomlString = (text: string) => JSON.stringify(text);
 
-// Returns the -c setting that turns off each SKILL.md in `files`, which Codex would otherwise
-// load from the checkout on its own, or nothing with none. Skills you approved come from the
-// session's own folder, or are listed in the prompt, and are never among them.
-const skillsOff = (files: string[]): string[] =>
-  files.length === 0
-    ? []
-    : [
-        "-c",
-        `skills.config=[${files.map((f) => `{path=${tomlString(f)},enabled=false}`).join(",")}]`,
-      ];
-
-// The shell step a review runs Codex through, as its command says. It counts the SKILL.md files
-// under .agents/skills/ with one x each, then lists them a line each, and stops when the two
-// disagree, as a line break in a path would split it. Each is turned off as found from the view's
-// top and as its real path, with \ and " escaped for TOML. find stays quiet on a broken link
-// or a loop, which Codex can't load either. Only options every find has are used, -L and -name,
-// as an option a Mac's find lacked would fail quietly and turn nothing off, and a missing find or
-// realpath stops the review for the same reason. The array may end
-// with a comma, as TOML allows.
-const branchSkillsOff = String.raw`command -v find > /dev/null && command -v realpath > /dev/null || { echo "the review needs find and realpath to keep the branch's skills from Codex" >&2; exit 1; }
+// The shell step a Codex builder or reviewer starts through, inside its sandbox, in the folder it
+// works in: Codex loads by itself the skills it finds in .agents/skills/ there and follows links
+// there, wherever they lead. Those are the default branch's or the builder's, not the ones you
+// approved, which come from the session's own folder or are listed in the prompt. Run inside the
+// sandbox, the step sees exactly what Codex will, at the moment it starts.
+// It counts the SKILL.md files with one x each, then lists them a line each, and stops when the
+// two disagree, as a line break in a path would split it. Each is turned off as found from the
+// folder's top and as its real path, with \ and " escaped for TOML, by a -c setting put in after
+// the number of Codex's arguments its first argument gives. find stays quiet on a broken link or
+// a loop, which Codex can't load either. Only options every find has are used, -L and -name, as
+// an option a Mac's find lacked would fail quietly and turn nothing off, and a missing find or
+// realpath stops Codex for the same reason. The array may end with a comma, as TOML allows.
+const skillsOffStep = String.raw`k=$1; shift
+command -v find > /dev/null && command -v realpath > /dev/null || { echo "Skelcrew needs find and realpath to keep unapproved skills from Codex" >&2; exit 1; }
 count=$(find -L .agents/skills -name SKILL.md -exec printf x \; 2>/dev/null; true)
 list=$(find -L .agents/skills -name SKILL.md 2>/dev/null; true)
 if [ -n "$list" ] && [ "$(printf '%s\n' "$list" | wc -l)" -ne "$(printf %s "$count" | wc -c)" ]; then
-  echo "a path in .agents/skills/ holds a line break, so Skelcrew won't review it" >&2; exit 1
+  echo "a path in .agents/skills/ holds a line break, so Skelcrew won't start Codex there" >&2; exit 1
 fi
 off=$(printf '%s\n' "$list" | while IFS= read -r f; do
   [ -n "$f" ] || continue
@@ -273,7 +267,25 @@ off=$(printf '%s\n' "$list" | while IFS= read -r f; do
     [ -n "$p" ] && printf '{path="%s",enabled=false},' "$(printf '%s' "$p" | sed 's/[\\"]/\\&/g')"
   done
 done)
-exec codex --no-daemon exec -c "skills.config=[$off]" "$@"`;
+i=0
+for a do
+  shift
+  [ "$i" -eq "$k" ] && set -- "$@" -c "skills.config=[$off]"
+  set -- "$@" "$a"
+  i=$((i + 1))
+done
+exec codex "$@"`;
+
+// Returns the command that runs codex with `args` through skillsOffStep, its setting put in after
+// the first `after` of them.
+const withSkillsOff = (after: number, args: string[]): string[] => [
+  "sh",
+  "-c",
+  skillsOffStep,
+  "sh",
+  String(after),
+  ...args,
+];
 
 // Codex's hooks tell Skelcrew what each agent, the lead and builders alike, is doing: a message
 // going in starts a turn, which ends with Stop, or with Interrupt when you press Esc. A builder
@@ -398,10 +410,6 @@ async function startCommand(given: {
   command.push("-c", `projects.${tomlString(cwd)}.trust_level="trusted"`);
   command.push("-c", "check_for_update_on_startup=false", "-c", "tui.disable_paste_burst=true");
   command.push("-c", "features.hooks=true", ...agentHooks);
-  // A builder's checkout has the default branch's .agents/skills/, which you may not have
-  // approved, so Codex leaves each skill there unloaded, and each one a link there reaches in
-  // Skelcrew's clone, which the sandbox shows too.
-  if (thread) command.push(...skillsOff(checkoutSkills(thread, origin ? [origin] : [])));
   // Codex layers $CODEX_HOME/skelcrew.config.toml over its config when asked for that profile.
   // A repository's own .codex/config.toml could win over it, but Codex loads that only for a
   // folder trusted in a config file, not by the -c above.
@@ -416,7 +424,18 @@ async function startCommand(given: {
   kept.CODEX_HOME = sessionHome;
   // Only a builder has a thread. The lead is what you type into, so it keeps its priority.
   const path = env.PATH ?? "";
-  const argv = sandboxArgs({ home, path, mounts, socket, cwd, command, normalPriority: !thread });
+  // Codex starts through the step that turns off the skills in its folder's .agents/skills/,
+  // put in after resume and --no-daemon.
+  const argv = sandboxArgs({
+    home,
+    path,
+    mounts,
+    socket,
+    cwd,
+    command: withSkillsOff(resume ? 2 : 1, command.slice(1)),
+    programs: ["codex"],
+    normalPriority: !thread,
+  });
   return { argv, env: kept };
 }
 
@@ -426,13 +445,10 @@ async function startCommand(given: {
 // it, and only its sessions and the login folder reach the real ones. Its skills/ stays empty,
 // as a copy there would steer every later review, so the repository's skills go into the
 // review's own folder and are returned for the prompt to list.
-// Codex loads by itself the skills in .agents/skills/ of the checkout it reviews, which are the
-// builder's, and follows links there. So the command is a short shell step, run in the sandbox
-// once the review's view is the submitted commit, that finds every SKILL.md there, as Codex
-// would, and turns each one off by path, as found and as its real path. Run in the final view, it
-// finds what a builder added at any moment before, and the checkout stays as committed. A path
-// with a line break would be read as two, so it stops the review. Any other character TOML
-// can't hold makes Codex refuse the setting, which fails the review too.
+// The command starts Codex through skillsOffStep, once the review's view is the submitted
+// commit, so the builder's skills there stay unloaded, though it added one at any moment
+// before, and the checkout stays as committed. Any character TOML can't hold in a path makes
+// Codex refuse the setting, which fails the review.
 async function reviewCommand(given: {
   home: string;
   folder: string;
@@ -465,7 +481,7 @@ async function reviewCommand(given: {
   if (model) options.push("-m", model);
   options.push("--output-schema", join(folder, "schema.json"), "-o", join(folder, "answer.json"));
   options.push("-");
-  const command = ["sh", "-c", branchSkillsOff, "sh", ...options];
+  const command = withSkillsOff(2, ["--no-daemon", "exec", ...options]);
   const skills = given.skills ? copySkills(given.skills, join(folder, "skills")) : [];
   return { command, mounts, env: { CODEX_HOME: at }, skills };
 }

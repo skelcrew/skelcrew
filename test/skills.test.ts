@@ -200,6 +200,20 @@ test("skills listed in instructions name each one, what it is for and its SKILL.
   expect(skillsTold([])).toBe("");
 });
 
+// Runs `command`, a Codex start's shell step, in `cwd`, with a fake Codex that prints each
+// argument it was given on a line of its own.
+function runWithFakeCodex(command: string[], cwd: string) {
+  const bin = join(home, "bin");
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(join(bin, "codex"), '#!/bin/sh\nprintf "%s\\n" "$@"\n', { mode: 0o755 });
+  return Bun.spawnSync(command, {
+    cwd,
+    env: { PATH: `${bin}:${process.env.PATH ?? ""}` },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+}
+
 // Codex finds the skills in the checkout it reviews on its own, and follows links there. Its
 // review command turns each one off as it starts, in the view the reviewer gets.
 describe("a review on Codex", () => {
@@ -212,15 +226,7 @@ describe("a review on Codex", () => {
         home: env.HOME, folder: ${JSON.stringify(folder)}, signal: new AbortController().signal,
       });`),
     );
-    const bin = join(home, "bin");
-    mkdirSync(bin, { recursive: true });
-    writeFileSync(join(bin, "codex"), '#!/bin/sh\nprintf "%s\\n" "$@"\n', { mode: 0o755 });
-    return Bun.spawnSync(command, {
-      cwd: view,
-      env: { PATH: `${bin}:${process.env.PATH ?? ""}` },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    return runWithFakeCodex(command, view);
   };
 
   test("turns off each skill in the view, through links, and leaves the view as it was", () => {
@@ -292,7 +298,7 @@ describe("a review on Codex", () => {
 
 // A builder's checkout holds the default branch's .agents/skills/, which you may not have
 // approved, and Codex loads what it finds there on its own.
-test("a builder on Codex turns off each skill in its checkout, through links too", () => {
+test("a builder on Codex turns off each skill its folder reaches, through links wherever they lead", () => {
   const thread = join(home, "app-12");
   mkdirSync(join(thread, ".agents", "skills", "draft"), { recursive: true });
   writeFileSync(join(thread, ".agents", "skills", "draft", "SKILL.md"), "Not approved.\n");
@@ -304,8 +310,10 @@ test("a builder on Codex turns off each skill in its checkout, through links too
     join(clone, ".agents", "skills", "review-sql"),
     join(thread, ".agents", "skills", "origin"),
   );
-  // A link to a folder the sandbox doesn't show is never walked.
-  symlinkSync(home, join(thread, ".agents", "skills", "out"));
+  // Or to any other folder the sandbox shows.
+  mkdirSync(join(home, "elsewhere"));
+  writeFileSync(join(home, "elsewhere", "SKILL.md"), "Elsewhere.\n");
+  symlinkSync(join(home, "elsewhere"), join(thread, ".agents", "skills", "out"));
   // Links in a loop, or to nothing, hold no skill, and never stop the builder from starting.
   symlinkSync("loop", join(thread, ".agents", "skills", "loop"));
   symlinkSync("gone", join(thread, ".agents", "skills", "broken"));
@@ -315,19 +323,27 @@ test("a builder on Codex turns off each skill in its checkout, through links too
       thread: ${JSON.stringify(thread)}, origin: ${JSON.stringify(clone)}, prompt: "Add export", env,
     })).argv;`),
   );
-  const setting = argv.find((arg) => arg.startsWith("skills.config=")) ?? "";
+  // Run the start's shell step, as the sandbox would, with a fake Codex.
+  const step = argv.slice(argv.indexOf("sh"));
+  expect(step[1]).toBe("-c");
+  const ran = runWithFakeCodex(step, thread);
+  expect(ran.stderr.toString()).toBe("");
+  const args = ran.stdout.toString().split("\n");
+  expect(args.slice(0, 2)).toEqual(["--no-daemon", "-c"]);
+  expect(args).toContain("--dangerously-bypass-hook-trust");
+  expect(args.slice(-3)).toEqual(["--", "Add export", ""]);
   const off = z
     .object({ v: z.array(z.object({ path: z.string(), enabled: z.literal(false) })) })
-    .parse(Bun.TOML.parse(setting.replace("skills.config=", "v = ")))
-    .v.map((entry) => entry.path)
-    .sort();
-  expect(off).toEqual(
-    [
-      join(thread, ".agents", "skills", "draft", "SKILL.md"),
-      join(thread, ".agents", "skills", "linked", "SKILL.md"),
-      join(thread, "shared", "linked", "SKILL.md"),
-      join(thread, ".agents", "skills", "origin", "SKILL.md"),
-      join(clone, ".agents", "skills", "review-sql", "SKILL.md"),
-    ].sort(),
-  );
+    .parse(Bun.TOML.parse((args[2] ?? "").replace("skills.config=", "v = ")))
+    .v.map((entry) => entry.path);
+  for (const path of [
+    join(thread, ".agents", "skills", "draft", "SKILL.md"),
+    join(thread, ".agents", "skills", "linked", "SKILL.md"),
+    join(thread, "shared", "linked", "SKILL.md"),
+    join(thread, ".agents", "skills", "origin", "SKILL.md"),
+    join(clone, ".agents", "skills", "review-sql", "SKILL.md"),
+    join(thread, ".agents", "skills", "out", "SKILL.md"),
+    join(home, "elsewhere", "SKILL.md"),
+  ])
+    expect(off).toContain(path);
 });
