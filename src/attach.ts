@@ -107,18 +107,23 @@ export async function restartStaleDaemon(): Promise<void> {
 // alone and you are asked to stop it, as the service manager can't restart it and a service
 // started beside it would fail on the lock. Agents keep running, as only the engine restarts.
 export async function restartEngine(): Promise<void> {
+  // An engine is told by its process id. One from an older release reports none, so it goes by
+  // the id of the engine the service runs: 0 then means the service runs none, and the engine
+  // that answers runs in a terminal.
+  const id = (runs: z.infer<typeof DaemonBuild>) => runs.pid || servicePid();
   const before = await daemonRuns();
-  if (before && outsideService(before))
+  const was = before ? id(before) : 0;
+  if (before && (was === 0 || outsideService(before)))
     throw new Error(
       "Skelcrew's engine runs in a terminal, with sc up, not as its service. Stop it there, such as with Ctrl-C, then run sc up again, or sc up --bg to run it as the service. Your agents keep running.",
     );
   const log = restartDaemon();
-  // The old engine can still answer for a moment while it stops, so only another process id
-  // counts as the new one. An engine of an older release reports none, and then any answer does.
+  // The old engine can still answer for a moment while it stops, so only another id counts as
+  // the new one.
   const deadline = Date.now() + restartWait;
   while (true) {
     const now = await daemonRuns();
-    if (now && (now.pid === 0 || now.pid !== before?.pid)) break;
+    if (now && ![0, was].includes(id(now))) break;
     if (Date.now() > deadline)
       throw new Error(
         `Skelcrew's engine didn't come back within ${restartWait / 1000} seconds: ${log} shows why`,
