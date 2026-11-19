@@ -577,6 +577,21 @@ test("Ctrl-Q in every form, and Alt-Q, do nothing on the list", async () => {
   expect(read(join(home, "left"))).toBe("");
 });
 
+// A question takes y or n, and any other key is a no, but Ctrl-Q pressed once too often must
+// not drop it.
+test("Ctrl-Q in every form leaves a question open, and y then answers it", async () => {
+  await open();
+  press("Up");
+  await until(() => here().startsWith("▸ ○ app-31"), "the issue's row");
+  press("Enter");
+  await until(() => seen().includes("Start app-31? y/n"), "the question");
+  for (const bytes of Object.values(ctrlQ)) await sendBytes(bytes, true);
+  await Bun.sleep(300);
+  expect(seen()).toContain("Start app-31? y/n");
+  type("y");
+  await until(() => asked.includes("start simon/app 31"), "the start");
+});
+
 // Nothing on an agent's screen is Skelcrew's, so the title says how to come back, and the one
 // you had comes back with you.
 test("while attached the title names the agent and the key back, and the list shows the key", async () => {

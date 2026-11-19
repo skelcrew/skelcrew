@@ -54,8 +54,18 @@ const endOfSequence = new RegExp(`${esc}(\\[[0-9;:]*|O)?$`);
 export async function runList(agents: string, repository: string): Promise<void> {
   const db = openDb();
   const where = process.env.SKELCREW_REMOTE_NAME ?? "";
-  // The key that comes back from an agent, from your config.yaml.
+  // The key that comes back from an agent, from your config.yaml, and the forms a terminal may
+  // send it in: as one byte for Ctrl or after Esc for Alt, and as an extended key in the kitty
+  // and the xterm forms.
   const detach = detachKey();
+  const letter = detach.slice(-1);
+  const code = letter.charCodeAt(0);
+  const ctrl = detach.startsWith("ctrl+");
+  const detachForms = new Set([
+    ctrl ? String.fromCharCode(code - 96) : `\x1b${letter}`,
+    `\x1b[${code};${ctrl ? 5 : 3}u`,
+    `\x1b[27;${ctrl ? 5 : 3};${code}~`,
+  ]);
   const [owner = "", repo = ""] = repository.split("/");
   let open: Open = { owner, repo };
   // What the list keeps between draws: its rows, the row you are on and how far it scrolled,
@@ -280,8 +290,10 @@ export async function runList(agents: string, repository: string): Promise<void>
   // Leaves the list, once the list is ready to leave. `left` says it has.
   let leave: () => void = () => {};
   let left = false;
+  // The detach key does nothing here, an open question included, so pressing it once too often
+  // after coming back from an agent never answers or drops a question.
   const press = async (key: string) => {
-    if (working || left) return;
+    if (working || left || key === "detach") return;
     // q and Ctrl-C leave from anywhere, an open question included, which then does nothing.
     if (key === "q") return leave();
     if (asking) {
@@ -335,7 +347,7 @@ export async function runList(agents: string, repository: string): Promise<void>
       // Enter, would otherwise attach after the terminal was given back.
       const key = left ? undefined : typed.shift();
       if (key === undefined) break;
-      const named = keyNames[key.sent] ?? key.sent;
+      const named = detachForms.has(key.sent) ? "detach" : (keyNames[key.sent] ?? key.sent);
       await press(named).catch((error) => say(errorText(error)));
       if (named === "enter" || asking) while (typed[0]?.read === key.read) typed.shift();
     }
