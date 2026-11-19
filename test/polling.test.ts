@@ -2241,9 +2241,14 @@ exec ${bwrap} "$@"`,
         "Merging #7 as soon as it's approved and green. sc merge --cancel app-12 stops it.",
       );
       expect(thread()).toMatchObject({ merge_plan: "armed", merge_by: login() });
-      // sc ps says so.
+      // sc ps says so, and the lead hears it, so it knows you asked.
       const ps = Bun.spawnSync([process.execPath, main, "ps"], { env: env(), stdout: "pipe" });
-      expect(ps.stdout.toString()).toContain("when ready");
+      expect(ps.stdout.toString()).toContain("merges when ready");
+      await until(() =>
+        leadTyped().includes(
+          "Merging #7 (app-12) as soon as it's approved and green, as you asked at your terminal. sc merge --cancel app-12 stops it.",
+        ),
+      );
     }, 60_000);
 
     // You let the lead arm merges in your own config. It then arms one with your words, and

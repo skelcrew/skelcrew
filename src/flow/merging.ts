@@ -58,12 +58,13 @@ export function threadToMerge(
 // Anything else is refused, such as a thread removed and started over while you read the
 // question, with a PR you never saw. From a lead you let arm merges, `asked` is your words in
 // the conversation, quoted by the lead: the thread's log keeps them and the daemon logs them.
-// Nothing is typed back into the lead, as it tells you itself, and a second note would say it
-// twice in your conversation. It saves who armed it and when, for the PR's record once it
+// A merge you asked for at your terminal is typed into the lead as a note, so it knows. One
+// the lead asked for isn't, as the lead tells you itself and a note would say it twice. It saves who armed it and when, for the PR's record once it
 // merges. Refuses a repository with no forge, as Skelcrew merges no branch there: you merge it
 // yourself once it is approved.
 export function armMerge(
   db: Database,
+  sessions: string,
   thread: Thread,
   how: { seen: { pr: number; started: number | null } | undefined } | { asked: string },
 ): string {
@@ -96,6 +97,15 @@ export function armMerge(
       : `the lead armed a merge when ready on #${thread.pr}, as the human asked: ${JSON.stringify(asked)}`;
   record(db, thread.folder, plan, why);
   console.log(`${name}: ${why}`);
+  // The lead can't see your terminal, so it hears of a merge you asked for there. One it asked
+  // for itself it already told you about.
+  if (asked === null)
+    noteForLead(
+      db,
+      sessions,
+      thread,
+      `Merging #${thread.pr} (${name}) as soon as it's approved and green, as you asked at your terminal. sc merge --cancel ${name} stops it.`,
+    );
   return `Merging ${merges}. sc merge --cancel ${name} stops it.`;
 }
 
