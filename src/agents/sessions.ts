@@ -11,11 +11,14 @@ import { sandboxFolders } from "./seatbelt.ts";
 import { envWithoutTmux, mustTmux, tmux, tmuxIsAtLeast } from "./tmux.ts";
 
 // What every session carries, so Skelcrew can tell whose it is: its repository, as owner/name,
-// its role, and for a builder its thread's task, such as app-12.
+// its role, and for a builder its thread's task, such as app-12, and its title, for a host's
+// own apps to name it by. The title is the thread's short title, else its full one. tmux keeps
+// no title, as Skelcrew's list, which shows its sessions, reads titles from the database.
 export const Labels = z.object({
   repository: z.string().min(1),
   role: z.enum(["lead", "builder"]),
   task: z.string().min(1).optional(),
+  title: z.string().min(1).optional(),
 });
 export type Labels = z.infer<typeof Labels>;
 
@@ -152,7 +155,8 @@ function startServer(socket: string): void {
 // session's ID on its host. On tmux the ID is the name. A plugin's host gives its own, and is
 // handed the name and labels to show. With `keepOnExit`, the session stays when its agent exits
 // cleanly too, so Skelcrew can tell a lead you exited from one that crashed: the first closes its
-// tab, the second doesn't. Only leads ask for that, and they run on tmux.
+// tab, the second doesn't. Only leads ask for that, and only tmux keeps it: a plugin's host isn't
+// asked to.
 export async function startSession(
   host: Host,
   name: string,
@@ -442,6 +446,13 @@ export function listTmuxSessions(
   });
 }
 
+// Gives a session on a plugin's host a new title, such as when the lead gives its thread a short
+// title, so the host's own apps show the new title in place of the one its labels gave. Its
+// answer isn't read, so a host that renames and prints nothing has done it.
+export async function renameSession(host: PluginHost, id: string, title: string): Promise<void> {
+  await askHost(host, { ask: "rename", id, title }, z.unknown(), { unread: true });
+}
+
 // Returns the screen the agent in the named session shows now, as text, such as to see whether
 // it is ready for a message. Throws when the session is gone.
 export async function readSession(host: Host, name: string): Promise<string> {
@@ -561,6 +572,15 @@ export function attachCommand(socket: string, name: string, then: string): strin
   const wait = `[ -n "$said" ] || { echo; echo 'Waiting for the lead to start.'; said=1; }`;
   const script = `unset TMUX; ${client} "=$2" 2>/dev/null || ${wait}; while sleep 1; do ${client} "=$3" 2>/dev/null && said= || { ${wait}; }; done`;
   return ["sh", "-c", script, "sh", socket, name, then];
+}
+
+// Returns a command that attaches a terminal to the named session once, then runs `then`, a line
+// for sh. The screen's right pane uses it when the lead it comes back to runs on a plugin's host,
+// which attachCommand's tmux client can't reach. TMUX must go, or tmux refuses to attach from
+// inside tmux.
+export function attachThen(socket: string, name: string, then: string): string[] {
+  const client = 'unset TMUX; tmux -L "$1" -f /dev/null attach -t "=$2"';
+  return ["sh", "-c", `${client}; ${then}`, "sh", socket, name];
 }
 
 // Returns the session shown in the terminal at `tty`, which attachCommand attached, or null while

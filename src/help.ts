@@ -22,7 +22,11 @@ const sections: [string, [string, string][]][] = [
       ["interrupt <thread>", "Stop that builder's turn, as Esc does"],
       ["review <task>", "Run the task's last review again"],
       ["merge --when-ready <thread> | <#pr>", "Merge it once it is approved and green"],
-      ["merge --cancel <thread> | <#pr>", "Stop a merge when ready"],
+      [
+        "merge --skip-review <thread> | <#pr>",
+        "Merge it without Skelcrew's approval once CI passes",
+      ],
+      ["merge --cancel <thread> | <#pr>", "Stop a merge armed with either"],
     ],
   ],
   [

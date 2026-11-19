@@ -5,10 +5,12 @@ import { appendFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import { HarnessName, harnessNamed } from "../agents/harness.ts";
-import { listSessions } from "../agents/sessions.ts";
+import { listSessions, renameSession } from "../agents/sessions.ts";
 import { savedJson, taskColumns } from "../db.ts";
 import { threadsDir } from "../paths.ts";
-import { type Host, hostNamed } from "../plugins/runtime.ts";
+import { type Host, hostNamed, pluginHost } from "../plugins/runtime.ts";
+import { errorText } from "../say.ts";
+import { threadTask } from "./copy.ts";
 import { findRepository } from "./repo.ts";
 import { needsYou, reportStatus } from "./status.ts";
 
@@ -179,8 +181,9 @@ export const Thread = z.object({
   // the task starts. Empty for a task with no issue. Null only in a row from before Skelcrew
   // kept it, which takes the line from Skelcrew's copy of the tracker.
   closes: z.string().nullable(),
-  // A merge when ready you armed, so Skelcrew merges the PR once it is approved and green, or
-  // null with none, and then nothing merges by itself. Who armed it and when, what it waits on
+  // A merge you armed, or null with none, and then nothing merges by itself. A merge when ready
+  // merges the PR once it is approved and green, and one skipping the review, with `merge_pinned`,
+  // once CI is green at the commit you saw. Who armed it and when, what it waits on
   // as the last poll found, and the review round the lead last heard it still waits after.
   merge_plan: z.enum(["armed"]).nullable(),
   // The armed plan's own ID, new each time it is armed, so a plan cancelled and armed again is
@@ -193,6 +196,17 @@ export const Thread = z.object({
   merge_asked: z.string().nullable(),
   merge_waits: z.string().nullable(),
   merge_noted: z.number().nullable(),
+  // The PR's head when you asked to merge it without Skelcrew's approval, or null for a merge when
+  // ready. Only this commit merges, as you saw it, so a push after you asked cancels the plan.
+  merge_pinned: z.string().nullable(),
+  // The plan's ID and the commit, with a space between, whose record of who asked Skelcrew posted
+  // on the PR, and that review's ID, so the record goes once per plan and commit, through
+  // restarts too. Null before the first.
+  merge_record: z.string().nullable(),
+  merge_record_id: z.string().nullable(),
+  // The issue a merge without approval filed what its review still asked for in, once filed, so
+  // a poll after a restart never files a second one.
+  merge_followup: z.string().nullable(),
   // The tree of the .agents/ you had approved when the task started, whose roles its agents
   // keep to the end, though you approve another meanwhile. Null for the built-in roles, as
   // every task had before Skelcrew read .agents/.
@@ -235,7 +249,10 @@ export async function builderSession(
       names.includes(labels.task ?? ""),
   );
   if (!found) return { host, id: thread.folder };
-  record(db, thread.folder, { host_id: found.name }, "found its builder on its host");
+  const now = record(db, thread.folder, { host_id: found.name }, "found its builder on its host");
+  // A short title given while its ID was unknown found nothing to rename, so its labels may
+  // still name it by the old title.
+  if (found.labels?.title !== (sessionTitle(db, now) ?? undefined)) renameOnHost(db, thread.folder);
   return { host, id: found.name };
 }
 
@@ -347,8 +364,45 @@ export function record(
   const thread = readThread(db, folder);
   log(db, thread, why);
   reportStatus(db, thread);
+  if (thread.short !== before.short) renameOnHost(db, folder);
   return thread;
 }
+
+// Tells the builder's host the thread's title, when the host is a plugin, so its own apps stop
+// showing an old one. A builder on tmux needs nothing, as Skelcrew's list reads the title from
+// here. It doesn't wait for the host, and a host that fails, such as an older plugin that
+// doesn't know the question, only costs the new name, so it is logged. Each rename waits for
+// the one before on the same session and sends the title as it is then, so two quick changes
+// can't reach the host out of order and leave it on the older title.
+export function renameOnHost(db: Database, folder: string): void {
+  const previous = renaming.get(folder) ?? Promise.resolve();
+  const sent = previous.then(async () => {
+    const thread = readThread(db, folder);
+    if (thread.host === null || thread.host === "tmux" || thread.host_id === null) return;
+    const host = pluginHost(db, thread.host);
+    const title = sessionTitle(db, thread);
+    if (host === null || !title) return;
+    await renameSession(host, thread.host_id, title).catch((error) =>
+      console.log(`couldn't rename ${folder} on ${host.plugin}: ${errorText(error)}`),
+    );
+  });
+  // A thread gone by then, which readThread throws for, has nothing to rename.
+  const settled = sent.catch(() => {});
+  renaming.set(folder, settled);
+  settled.then(() => {
+    if (renaming.get(folder) === settled) renaming.delete(folder);
+  });
+}
+
+// Returns the title a builder's session goes by on its host: its thread's short title, else the
+// task's title as its builder was given it, which a row from before Skelcrew saved titles takes
+// from the copy of the tracker. Null when it has neither.
+export function sessionTitle(db: Database, thread: Thread): string | null {
+  return thread.short || threadTask(db, thread).title || null;
+}
+
+// The renames under way of each thread's builder, by its folder, each settling once it is over.
+const renaming = new Map<string, Promise<void>>();
 
 // Returns the thread's name, such as app-12, for replies. It uses the repository's name
 // now, which can gain its owner since the thread started, or owner/name once Skelcrew no longer

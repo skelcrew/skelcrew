@@ -28,13 +28,15 @@ import { agentRole } from "../config.ts";
 import { nameRepositories, openDb, Repository } from "../db.ts";
 import { builtInFlowText } from "../flows.ts";
 import { originHere, parseRemote } from "../machine/origin.ts";
-import { cloneDir, configDir, dataDir, leadPlaces } from "../paths.ts";
+import { cloneDir, configDir, dataDir } from "../paths.ts";
 import { askWhichForge, type Claimed } from "../plugins/ask.ts";
 import { setUpPlugin } from "../plugins/install.ts";
 import { SetupNeeded } from "../plugins/plugin.ts";
+import { hostNamed } from "../plugins/runtime.ts";
 import { builtInRole } from "../roles.ts";
 import { errorText } from "../say.ts";
 import { checkPush, cloneRepository, headCommit, remoteEmpty, updateClone } from "./git.ts";
+import { leadOf, leadSession } from "./lead.ts";
 
 // What sc says outside any repository while Skelcrew has none yet, so you know where to run it.
 export const noRepositories = "Skelcrew has no repositories yet. Run sc in a checkout of one.";
@@ -468,18 +470,10 @@ function oldRemoteOf(
 // tab. One never opened stays as it is, as only sc or its tab starts a lead the first time.
 async function openAgain(db: Database, sessions: string, had: Repository): Promise<void> {
   const row = db
-    .query("SELECT tab_closed, opened, kept_lead FROM repositories WHERE owner = ? AND repo = ?")
+    .query("SELECT tab_closed, opened FROM repositories WHERE owner = ? AND repo = ?")
     .get(had.owner, had.repo);
-  const {
-    tab_closed: closed,
-    opened,
-    kept_lead: kept,
-  } = z
-    .object({
-      tab_closed: z.coerce.boolean(),
-      opened: z.number().nullable(),
-      kept_lead: z.coerce.boolean(),
-    })
+  const { tab_closed: closed, opened } = z
+    .object({ tab_closed: z.coerce.boolean(), opened: z.number().nullable() })
     .parse(row);
   if (closed || opened !== null) {
     // Imported here, as the client's replies are checked with what sc repo ls lists, which
@@ -487,8 +481,10 @@ async function openAgain(db: Database, sessions: string, had: Repository): Promi
     const { ask } = await import("../client.ts");
     const reply = await ask({ command: "lead", from: `${had.owner}/${had.repo}` }, 60_000);
     if (reply === null) {
-      const { name } = leadPlaces(had.owner, had.repo, kept);
-      if (exitedCleanly(sessions, name)) await endSession(sessions, name);
+      // Only a lead on tmux keeps its session after you exit it.
+      const { name, host, hostId } = leadOf(db, had.owner, had.repo);
+      const id = hostId ?? name;
+      if (host === "tmux" && exitedCleanly(sessions, id)) await endSession(sessions, id);
       db.run("UPDATE repositories SET tab_closed = 0 WHERE owner = ? AND repo = ?", [
         had.owner,
         had.repo,
@@ -683,24 +679,40 @@ export async function removeRepo(name: string, sessions: string): Promise<void> 
     .map((row) => `${name}-${z.object({ task: z.coerce.string() }).parse(row).task}`);
   if (live.length > 0)
     throw new Error(`${name} has live threads: ${live.join(", ")}. Stop them first.`);
-  // Find the lead's session name. The lead this machine had before each repository got its
-  // own keeps its old name.
+  // A lead on a plugin no longer installed may still run there, using the clone, and removing
+  // the repository would forget how to reach it. So it waits until that host is back.
   const fullName = `${found.owner}/${found.repo}`;
-  const keptLead = z
-    .object({ kept_lead: z.coerce.boolean() })
-    .parse(
-      db
-        .query("SELECT kept_lead FROM repositories WHERE owner = ? AND repo = ?")
-        .get(found.owner, found.repo),
-    ).kept_lead;
+  const { host } = leadOf(db, found.owner, found.repo);
+  if (hostNamed(db, sessions, host) === null)
+    throw new Error(
+      `${name}'s lead runs on ${host}, which isn't installed now, so it can't be ended. Install ${host} again, then remove ${name}.`,
+    );
   // Its tab closes first, so an open screen moves on at once. A screen that found the lead
-  // gone while its tab was still there would take it for a crash and ask for it back.
-  db.run("UPDATE repositories SET tab_closed = 1 WHERE owner = ? AND repo = ?", [
-    found.owner,
-    found.repo,
-  ]);
-  // Ended as a thread's builder is, and waited for, as the lead reads the clone removed next.
-  await stopSession(sessions, leadPlaces(found.owner, found.repo, keptLead).name);
+  // gone while its tab was still there would take it for a crash and ask for it back. A lead the
+  // daemon is starting meanwhile sees the tab closed once its session is there, and ends it.
+  const where = "WHERE owner = ? AND repo = ?";
+  const tab = z
+    .object({ tab_closed: z.number() })
+    .parse(db.query(`SELECT tab_closed FROM repositories ${where}`).get(found.owner, found.repo));
+  db.run(`UPDATE repositories SET tab_closed = 1 ${where}`, [found.owner, found.repo]);
+  try {
+    // Then find the lead's session: its host, and its ID there, found by its labels when the
+    // daemon stopped before saving it. Looked up only now, so a lead whose start began before
+    // the tab closed is found here, on the host it started on, if its start doesn't end it.
+    const lead = await leadSession(db, sessions, found.owner, found.repo);
+    if (lead === null) throw new Error(`${name}'s lead's host went away while it was removed`);
+    // Ended as a thread's builder is, and waited for, as the lead reads the clone removed next.
+    await stopSession(lead.host, lead.id);
+  } catch (error) {
+    // A host that can't be reached leaves the lead and the repository as they were, so its tab
+    // goes back as it was too, rather than hiding a repository Skelcrew still has.
+    db.run(`UPDATE repositories SET tab_closed = ? ${where}`, [
+      tab.tab_closed,
+      found.owner,
+      found.repo,
+    ]);
+    throw error;
+  }
   // Remove the clone, the row and your trust in it. The other repositories are named again,
   // as one that shared a name with this one can drop its owner.
   rmSync(cloneDir(found.owner, found.repo), { recursive: true, force: true });

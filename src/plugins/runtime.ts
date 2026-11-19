@@ -68,17 +68,20 @@ function sessionCommand(host: PluginHost) {
 }
 
 // Returns a host's answer checked against `Answer`, or throws saying what went wrong: the last
-// line it wrote to stderr when it failed, or that its answer isn't understood.
+// line it wrote to stderr when it failed, or that its answer isn't understood. With `unread`,
+// a host that exited cleanly is done whatever it printed, and the answer is null.
 function checkAnswer<T>(
   host: PluginHost,
   question: { ask: string; [key: string]: unknown },
   done: { out: string; err: string; code: number | null },
   Answer: z.ZodType<T>,
+  unread: boolean,
 ): T {
   if (done.code !== 0) {
     const last = done.err.trim().split("\n").at(-1) || `it exited with code ${done.code}`;
     throw new Error(`${host.plugin} couldn't ${question.ask}: ${last}`);
   }
+  if (unread) return Answer.parse(null);
   // Output that isn't JSON, empty output included, is refused like a wrong answer: a host that
   // printed nothing may not have done what it was asked, such as type a message in.
   const misunderstood = new Error(
@@ -101,14 +104,20 @@ function checkAnswer<T>(
 // throws, so a hung plugin can't hold back what waits after it. Once `signal` aborts, it is
 // killed too, so it types nothing more, and this throws. It runs in a process group of its own,
 // which is killed whole: a program it started could otherwise hold its output open, and the
-// wait for that output would never end.
+// wait for that output would never end. With `unread`, for a question whose answer the protocol
+// says isn't read, such as rename, a clean exit is enough, so a host that prints nothing is
+// done.
 export async function askHost<T>(
   host: PluginHost,
   question: { ask: string; [key: string]: unknown },
   Answer: z.ZodType<T>,
-  limits: { signal?: AbortSignal | undefined; timeout?: number | undefined } = {},
+  limits: {
+    signal?: AbortSignal | undefined;
+    timeout?: number | undefined;
+    unread?: boolean;
+  } = {},
 ): Promise<T> {
-  const { signal, timeout = 30_000 } = limits;
+  const { signal, timeout = 30_000, unread = false } = limits;
   const run = Bun.spawn(sessionCommand(host).argv, {
     ...sessionCommand(host),
     stdin: new Blob([`${JSON.stringify(question)}\n`]),
@@ -142,7 +151,7 @@ export async function askHost<T>(
       throw new Error(
         `${host.plugin} didn't answer ${question.ask} within ${timeout} milliseconds`,
       );
-    return checkAnswer(host, question, { out, err, code }, Answer);
+    return checkAnswer(host, question, { out, err, code }, Answer, unread);
   } finally {
     clearTimeout(timer);
     signal?.removeEventListener("abort", kill);

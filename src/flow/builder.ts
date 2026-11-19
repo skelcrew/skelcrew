@@ -42,7 +42,9 @@ import {
   log,
   readThread,
   record,
+  renameOnHost,
   repositoryOf,
+  sessionTitle,
   Thread,
   threadName,
 } from "./thread.ts";
@@ -318,6 +320,10 @@ async function recordThread(
       merge_asked: null,
       merge_waits: null,
       merge_noted: null,
+      merge_pinned: null,
+      merge_record: null,
+      merge_record_id: null,
+      merge_followup: null,
       agents,
       flow,
       review_post: null,
@@ -575,17 +581,28 @@ export function startOnHost(
 ): Promise<void> {
   return inTurn(thread.folder, async (earlier) => {
     await earlier;
-    const { status } = readThread(db, thread.folder);
-    if (status !== "working" && status !== "waiting")
-      throw new Error(`the thread was ${status} while its builder started`);
+    const now = readThread(db, thread.folder);
+    if (now.status !== "working" && now.status !== "waiting")
+      throw new Error(`the thread was ${now.status} while its builder started`);
+    // Its title is read as it is now, as the lead may have given it a short title meanwhile.
     const repository = `${thread.owner}/${thread.repo}`;
-    const labels: Labels = { repository, role: "builder", task: threadName(db, thread) };
+    const title = sessionTitle(db, now);
+    const labels: Labels = {
+      repository,
+      role: "builder",
+      task: threadName(db, thread),
+      ...(title ? { title } : {}),
+    };
     // The host is saved before the session starts, so a daemon that stops in between finds the
     // builder there by its labels, rather than starting it again elsewhere.
     record(db, thread.folder, { host: on.name, host_id: null });
     const id = await startSession(on.host, thread.folder, { ...session, labels });
     forgetStatus(on.name, id);
     record(db, thread.folder, { host_id: id });
+    // A short title given while the host started the session found no ID to rename, so the
+    // session's labels may name it by the old title.
+    const latest = readThread(db, thread.folder);
+    if (sessionTitle(db, latest) !== title) renameOnHost(db, thread.folder);
     await checkAgentStarted(on.host, id, "builder");
   });
 }
