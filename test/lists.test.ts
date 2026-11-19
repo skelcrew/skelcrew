@@ -601,7 +601,7 @@ import { join } from "node:path";
 import { openDb } from ${JSON.stringify(source("db.ts"))};
 import { limitOn, restoreLimits } from ${JSON.stringify(source("flow/limits.ts"))};
 import { readThread } from ${JSON.stringify(source("flow/thread.ts"))};
-import { entryCounts, listGroups } from ${JSON.stringify(source("screen/lists.ts"))};
+import { entryCounts, listGroups, pageRow } from ${JSON.stringify(source("screen/lists.ts"))};
 import { sidebarRows } from ${JSON.stringify(source("screen/rows.ts"))};
 const db = openDb();
 db.run(${JSON.stringify(repository)});
@@ -616,11 +616,12 @@ const app = { owner: "simon", repo: "app", lead: "lead" };
 const rows = sidebarRows(db, [], () => 3, 0, app).map((row) => row.name);
 const issues = listGroups(db, app, "issues", 0).flatMap((group) => group.rows.map((row) => row.title));
 entryCounts(db, app);
+const page = pageRow(db, app, "https://github.com/simon/app/issues/13")?.title;
 const { seen, updates, review_post } = readThread(db, "app-12");
 const broken = readThread(db, "app-15").updates;
 restoreLimits(db);
 const log = readFileSync(join(process.env.HOME, ".local/share/skelcrew/db.log"), "utf8");
-console.log(JSON.stringify({ rows, issues, seen, updates, broken, review_post, told: [...(limitOn("claude", 0)?.told ?? ["none"])], log }));`;
+console.log(JSON.stringify({ rows, issues, page, seen, updates, broken, review_post, told: [...(limitOn("claude", 0)?.told ?? ["none"])], log }));`;
   const run = Bun.spawnSync([process.execPath, "-e", code], {
     env: { ...process.env, HOME: home },
     stdout: "pipe",
@@ -631,6 +632,7 @@ console.log(JSON.stringify({ rows, issues, seen, updates, broken, review_post, t
   expect(read).toMatchObject({
     rows: ["lead", "app-15", "app-12"],
     issues: ["Good"],
+    page: "Good",
     seen: null,
     updates: [],
     broken: [],

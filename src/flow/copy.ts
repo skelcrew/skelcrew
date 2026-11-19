@@ -205,9 +205,11 @@ export function openPrs(
 }
 
 // Returns the item a list's row links to, for its page, or null when the copy has none there.
+// Each item is read and checked here, not picked by SQLite's json_extract, which stops on any
+// item that isn't JSON, however good the one at the link. It runs only as a page opens.
 export function itemAt(db: Database, link: string): Item | null {
-  const rows = db.query("SELECT item FROM items WHERE json_extract(item, '$.link') = ?").all(link);
-  return parseItems(rows)[0] ?? null;
+  const items = parseItems(db.query("SELECT item FROM items").all());
+  return items.find((item) => item.link === link) ?? null;
 }
 
 // Returns the task a thread works on, for its builder, its reviewer, its PR and sc issue show:
