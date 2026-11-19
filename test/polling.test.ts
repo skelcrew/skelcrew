@@ -2268,6 +2268,10 @@ exec ${bwrap} "$@"`,
       );
       expect(meanwhile).not.toContain("Not merging");
       expect(thread().merge_plan).toBe("armed");
+      // A y to an older PR, once a plan is on the thread, reports that plan, not a refusal.
+      expect(await askOn(yours, { ...arming, seen: { pr: 8, started } })).toEqual({
+        said: "Already merging #7 as soon as it's approved and green. sc merge --cancel app-12 stops it.",
+      });
       // sc ps says so, and the lead hears it, so it knows you asked.
       const ps = Bun.spawnSync([process.execPath, main, "ps"], { env: env(), stdout: "pipe" });
       expect(ps.stdout.toString()).toContain("merges when ready");

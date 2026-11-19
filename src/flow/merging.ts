@@ -72,13 +72,16 @@ export function armMerge(
   refuseWithoutForge(db, thread);
   // You agree to a PR you can see, by its number, so a PR opened later never merges under it.
   if (thread.pr === null) throw new Error(`${name} has no PR yet: ask again once it opens one`);
+  // A plan already on the thread is reported first, even to a y given to an older PR: saying
+  // it won't merge would be untrue while that plan stays.
+  const merges = `#${thread.pr} as soon as it's approved and green`;
+  if (thread.merge_plan === "armed")
+    return `Already merging ${merges}. sc merge --cancel ${name} stops it.`;
   const { seen } = "seen" in how ? how : { seen: undefined };
   if ("seen" in how && (!seen || seen.pr !== thread.pr || seen.started !== thread.started))
     throw new Error(
       `${name} changed since you said y, so it won't merge by itself: run sc merge --when-ready ${name} again`,
     );
-  const merges = `#${thread.pr} as soon as it's approved and green`;
-  if (thread.merge_plan === "armed") return `Already merging ${merges}.`;
   const asked = "asked" in how ? how.asked : null;
   const plan = {
     merge_plan: "armed" as const,
