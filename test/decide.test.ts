@@ -20,6 +20,7 @@ import {
   refusedWorkflow,
   reviewCheck,
   reviewComment,
+  skipReviewWaitsOn,
   whoRunsTheSuite,
 } from "../src/flow/decide.ts";
 import { endedWithoutSubmit, waitsOnSubmit } from "../src/flow/status.ts";
@@ -89,6 +90,10 @@ function thread(change: Partial<Thread> = {}): Thread {
     merge_asked: null,
     merge_waits: null,
     merge_noted: null,
+    merge_pinned: null,
+    merge_record: null,
+    merge_record_id: null,
+    merge_followup: null,
     agents: null,
     flow: "default",
     review_post: null,
@@ -790,37 +795,76 @@ test("a merge when ready waits until the approved head is green and merges clean
   const head = "a".repeat(40);
   const ready = thread({ status: "waiting", verdict: "approve" });
   const green = pr({ head, checks: [approved, run(1, "test", "passed")] });
-  expect(mergeWaitsOn(ready, green, head)).toBeNull();
+  expect(mergeWaitsOn(ready, green, head, true)).toBeNull();
   // A new push waits for its own approval, and a push nobody reviewed is never merged.
-  expect(mergeWaitsOn({ ...ready, submitting: "Fix" }, green, head)).toBe("its review");
-  expect(mergeWaitsOn({ ...ready, reviewing: head }, green, head)).toBe("its review");
-  expect(mergeWaitsOn(ready, pr({ ...green, head: "b".repeat(40) }), head)).toBe(
+  expect(mergeWaitsOn({ ...ready, submitting: "Fix" }, green, head, true)).toBe("its review");
+  expect(mergeWaitsOn({ ...ready, reviewing: head }, green, head, true)).toBe("its review");
+  expect(mergeWaitsOn(ready, pr({ ...green, head: "b".repeat(40) }), head, true)).toBe(
     "a review of its newest commit",
   );
-  expect(mergeWaitsOn({ ...ready, verdict: "changes" }, green, head)).toBe("an approval");
+  expect(mergeWaitsOn({ ...ready, verdict: "changes" }, green, head, true)).toBe("an approval");
   // A conflict or a failing check needs the builder, and running checks only time.
-  expect(mergeWaitsOn(ready, pr({ ...green, conflicts: true }), head)).toBe(
+  expect(mergeWaitsOn(ready, pr({ ...green, conflicts: true }), head, true)).toBe(
     "its conflict with main to be fixed",
   );
-  expect(mergeWaitsOn({ ...ready, conflicts: "main" }, green, head)).toBe(
+  expect(mergeWaitsOn({ ...ready, conflicts: "main" }, green, head, true)).toBe(
     "its conflict with main to be fixed",
   );
   const failing = pr({ ...green, checks: [approved, run(1, "test", "failed")] });
-  expect(mergeWaitsOn(ready, failing, head)).toBe("its failing checks to be fixed");
+  expect(mergeWaitsOn(ready, failing, head, true)).toBe("its failing checks to be fixed");
   const running = pr({ ...green, checks: [approved, run(1, "test", "running")] });
-  expect(mergeWaitsOn(ready, running, head)).toBe("its checks");
+  expect(mergeWaitsOn(ready, running, head, true)).toBe("its checks");
   // Skelcrew's own check counts too, as it carries the review's verdict.
   const pending = pr({ ...green, checks: [{ ...approved, state: "running" }] });
-  expect(mergeWaitsOn(ready, pending, head)).toBe("its checks");
+  expect(mergeWaitsOn(ready, pending, head, true)).toBe("its checks");
   // A PR the forge shows without Skelcrew's check yet isn't green, with CI or without.
-  expect(mergeWaitsOn(ready, pr({ ...green, checks: [] }), head)).toBe("its checks");
+  expect(mergeWaitsOn(ready, pr({ ...green, checks: [] }), head, true)).toBe("its checks");
   const ciOnly = pr({ ...green, checks: [run(1, "test", "passed")] });
-  expect(mergeWaitsOn(ready, ciOnly, head)).toBe("its checks");
+  expect(mergeWaitsOn(ready, ciOnly, head, true)).toBe("its checks");
+  // Approved with no CI check passes only in a repository where no poll ever found CI. Where one
+  // did, CI may not have started on this PR yet, so it waits.
+  const reviewedOnly = pr({ ...green, checks: [approved] });
+  expect(mergeWaitsOn(ready, reviewedOnly, head, true)).toBe("its checks");
+  expect(mergeWaitsOn(ready, reviewedOnly, head, false)).toBeNull();
   // A thread that failed or stopped keeps its plan, and says why it waits.
-  expect(mergeWaitsOn({ ...ready, status: "failed" }, green, head)).toBe(
+  expect(mergeWaitsOn({ ...ready, status: "failed" }, green, head, true)).toBe(
     "its thread, which failed",
   );
-  expect(mergeWaitsOn({ ...ready, status: "stopped" }, green, head)).toBe(
+  expect(mergeWaitsOn({ ...ready, status: "stopped" }, green, head, true)).toBe(
+    "its thread, which is stopped",
+  );
+});
+
+// A merge without approval skips only Skelcrew's approval: its review may ask for changes or still
+// run. Everything else a merge when ready waits on still holds, CI's checks green included.
+test("a merge without approval waits on everything but the reviewer's approval", () => {
+  const changes = thread({ status: "waiting", verdict: "changes", ci_seen: true });
+  const failed = { ...approved, state: "failed" as const };
+  const green = pr({ checks: [failed, run(1, "test", "passed")] });
+  expect(skipReviewWaitsOn(changes, green, true)).toBeNull();
+  // A review still running is waited for, so its findings are filed, whatever it says.
+  expect(skipReviewWaitsOn({ ...changes, reviewing: "a".repeat(40) }, green, true)).toBe(
+    "its review",
+  );
+  // A round on its way brings a new commit, which the human never saw.
+  expect(skipReviewWaitsOn({ ...changes, submitting: "Fix" }, green, true)).toBe(
+    "its builder's new round",
+  );
+  expect(skipReviewWaitsOn(changes, pr({ ...green, conflicts: true }), true)).toBe(
+    "its conflict with main to be fixed",
+  );
+  const failing = pr({ checks: [run(1, "test", "failed")] });
+  expect(skipReviewWaitsOn(changes, failing, true)).toBe("its failing checks to be fixed");
+  expect(skipReviewWaitsOn(changes, pr({ checks: [run(1, "test", "running")] }), true)).toBe(
+    "its checks",
+  );
+  // No CI on the PR passes only in a repository whose polls never found CI on any PR. This
+  // thread never saw CI, yet the repository did, so it waits: CI is all that guards it here.
+  const unseen = { ...changes, ci_seen: false };
+  expect(skipReviewWaitsOn(unseen, pr({ checks: [failed] }), true)).toBe("its checks");
+  expect(skipReviewWaitsOn(unseen, pr({ checks: [failed] }), false)).toBeNull();
+  expect(skipReviewWaitsOn(changes, pr({ ...green, state: "closed" }), true)).toBe("its PR");
+  expect(skipReviewWaitsOn({ ...changes, status: "stopped" }, green, true)).toBe(
     "its thread, which is stopped",
   );
 });

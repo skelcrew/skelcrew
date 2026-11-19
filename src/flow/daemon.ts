@@ -42,7 +42,14 @@ import { noCommits } from "./git.ts";
 import { closeExitedLeads, lastOpened, leadOf, openedRepositories, startLead } from "./lead.ts";
 import { restoreLimits, wakeAfterLimit } from "./limits.ts";
 import { listRepositories, listTasks, listThreads, showTask } from "./list.ts";
-import { agentsSaid, armMerge, cancelMerge, refuseWithoutForge, threadToMerge } from "./merging.ts";
+import {
+  agentsSaid,
+  alreadyMerging,
+  armMerge,
+  cancelMerge,
+  refuseWithoutForge,
+  threadToMerge,
+} from "./merging.ts";
 import {
   briefLead,
   deliverAllWaiting,
@@ -80,6 +87,7 @@ import {
   questionClosed,
   reportStatuses,
   stateAfter,
+  stillAsks,
   turnEnded,
   turnFailed,
 } from "./status.ts";
@@ -254,15 +262,17 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
     await open(socket, thread);
     await open(reviewSocket(thread.folder), { review: thread });
   };
-  let leadStarts: Promise<void> = Promise.resolve();
+  // The lead start under way for each repository, by its owner/name.
+  const leadStarts = new Map<string, Promise<void>>();
   // Opens a repository's lead's own socket, so the daemon knows which lead calls on it, then
-  // keeps the lead running or starts it. One at a time, so two requests at once can't start
-  // two sessions.
+  // keeps the lead running or starts it. One at a time for each repository, so two requests at
+  // once can't start two sessions, while a host that hangs holds up no other repository's lead.
   const ensureLead = (repository: Repository) => {
-    leadStarts = leadStarts
+    const { owner, repo } = repository;
+    const key = `${owner}/${repo}`;
+    const start = (leadStarts.get(key) ?? Promise.resolve())
       .catch(() => {})
       .then(async () => {
-        const { owner, repo } = repository;
         const { socket } = leadOf(db, owner, repo);
         if (!listening.has(socket)) {
           listening.add(socket);
@@ -270,7 +280,13 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         }
         await startLead(db, sessions, repository);
       });
-    return leadStarts;
+    leadStarts.set(key, start);
+    start
+      .finally(() => {
+        if (leadStarts.get(key) === start) leadStarts.delete(key);
+      })
+      .catch(() => {});
+    return start;
   };
   // Starts a repository's lead, then types its notes in, such as a brief another lead sent it.
   // A lead that can't start, such as one whose clone is missing for now, would leave its notes
@@ -308,9 +324,8 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       });
   // Returns the request limited to the calling lead's own repository. A request about another
   // repository is refused, and the error tells the lead to ask you to open that one. sc ps and
-  // sc ls with no repository mean every repository, which for a lead is its own, and sc pr show,
-  // sc merge --when-ready and sc merge --cancel with a PR number mean the lead's own repository,
-  // wherever it ran.
+  // sc ls with no repository mean every repository, which for a lead is its own, and sc pr show
+  // and sc merge with a PR number mean the lead's own repository, wherever it ran.
   // Your requests and a builder's are returned unchanged.
   const limitToOwnRepository = (request: DaemonRequest, caller: Caller): DaemonRequest => {
     const leadRepository = leadOfCaller(caller);
@@ -323,6 +338,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
     const byNumber =
       request.command === "task show" ||
       request.command === "merge when ready" ||
+      request.command === "merge skip review" ||
       request.command === "merge cancel";
     if (byNumber && !request.repo) {
       const { from, ...rest } = request;
@@ -531,13 +547,15 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         );
         return { merged: `Merged ${repository.name}#${request.pr}.` };
       }
-      // What sc merge --when-ready asks you about at your terminal before it arms, and whether
-      // it merges when ready already, so you aren't asked again.
+      // What sc merge asks you about at your terminal before it arms, and whether a merge is
+      // armed already, so you aren't asked again. A merge without approval also shows the head
+      // it would pin, as Skelcrew's copy of the PR has it, and what the review still asks.
       case "merge preview": {
         const thread = threadToMerge(db, request);
         refuseWithoutForge(db, thread);
         // Its whole title, not the short one, so you can tell which PR you agree to. What it
-        // says of .agents/ is about the PR's head as Skelcrew's copy has it, the commit you see.
+        // says of .agents/ is about the PR's head as Skelcrew's copy has it, the commit you see,
+        // which a merge without approval pins.
         const pr = thread.pr === null ? null : prOf(db, thread.owner, thread.repo, thread.pr);
         return {
           agents:
@@ -548,27 +566,34 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
           pr: thread.pr,
           title: thread.title,
           started: thread.started,
-          merging: thread.merge_plan !== null,
+          merging: thread.merge_plan === null ? null : alreadyMerging(db, thread),
+          head: pr?.head ?? null,
+          asks: stillAsks(thread),
         };
       }
-      // You arm one at your terminal, after saying y. A lead arms one only when you let it in
-      // your config, and only with the words you asked it in, which it gives in a file.
-      case "merge when ready": {
+      // You arm one at your terminal, after saying y. A lead arms one
+      // only when you let it in your config, and only with the words you asked it in, which it
+      // gives in a file.
+      case "merge when ready":
+      case "merge skip review": {
         const thread = threadToMerge(db, request);
+        const skip = request.command === "merge skip review";
         if (leadOfCaller(caller) === null) {
           if (request.asked !== undefined)
             throw new Error("--asked-file is the lead's: at your terminal, sc merge asks you y/N");
-          return { said: armMerge(db, sessions, thread, { seen: request.seen }) };
+          return { said: armMerge(db, sessions, thread, { seen: request.seen }, skip) };
         }
         if (!leadMayArmMerges())
           throw new Error(
-            "the human hasn't let you arm a merge when ready: ask them to run sc merge --when-ready in their own terminal",
+            skip
+              ? "the human hasn't let you arm a merge: ask them to run sc merge --skip-review in their own terminal"
+              : "the human hasn't let you arm a merge when ready: ask them to run sc merge --when-ready in their own terminal",
           );
         if (!request.asked?.trim())
           throw new Error(
             "give what the human asked with --asked-file, a file holding their exact words",
           );
-        return { said: armMerge(db, sessions, thread, { asked: request.asked }) };
+        return { said: armMerge(db, sessions, thread, { asked: request.asked }, skip) };
       }
       case "merge cancel":
         return { said: cancelMerge(db, threadToMerge(db, request)) };
@@ -596,13 +621,15 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         // or open with its brief, which its start brings back and types in. A repository never
         // opened gets its first time, or its lead would have no tab. One opened before keeps its
         // time, so plain sc still opens the one you opened last.
-        const { name } = leadOf(db, to.owner, to.repo);
-        if (exitedCleanly(sessions, name)) {
+        // Only a lead on tmux keeps its session after you exit it.
+        const { name, host, hostId } = leadOf(db, to.owner, to.repo);
+        const id = hostId ?? name;
+        if (host === "tmux" && exitedCleanly(sessions, id)) {
           db.run("UPDATE repositories SET tab_closed = 1 WHERE owner = ? AND repo = ?", [
             to.owner,
             to.repo,
           ]);
-          endExitedSession(sessions, name);
+          endExitedSession(sessions, id);
         }
         db.transaction(() => {
           briefLead(db, sessions, caller, to, request.text, request.asked);
@@ -857,10 +884,13 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   // Open your socket.
   await open(path, "you");
   console.log(`Listening on ${path}.`);
-  // Bring back the lead of each repository you have opened. One that fails is logged, and the
-  // rest still start. One that fails while notes wait for it, such as a brief, is tried again
-  // every minute, so the notes go in once whatever stopped it clears.
-  for (const repository of openedRepositories(db)) await bringBackLead(repository, null);
+  // Bring back the lead of each repository you have opened, side by side, so a host that hangs
+  // holds up no other lead. One that fails is logged, and the rest still start. One that fails
+  // while notes wait for it, such as a brief, is tried again every minute, so the notes go in
+  // once whatever stopped it clears. The builders and polling wait for them, as before leads
+  // could run on other hosts, so a lead's start and the first poll never overlap. Requests are
+  // answered meanwhile, as the socket is open.
+  await Promise.all(openedRepositories(db).map((repository) => bringBackLead(repository, null)));
   // A lead keeps its clone current as it starts, and a repository with no lead needs it too.
   refreshClones(db).catch((error) => console.log(errorText(error)));
   // Notes the daemon's stop kept from the leads.

@@ -299,6 +299,34 @@ console.log(JSON.stringify({ before, after: [readThread(db, "app-13").checks, se
   });
 });
 
+// A PR that showed CI before the repository kept it may close while the daemon is down, and the
+// first poll after then drops it from the copy. So the upgrade takes CI on a PR in the copy as
+// CI found in its repository, so neither merge reads it as a repository without CI.
+test("an upgrade counts CI on a PR in the copy as the repository's, before a poll drops it", () => {
+  earlierTasks();
+  const earlier = new Database(dbFile());
+  earlier.run("ALTER TABLE repositories DROP COLUMN ci_seen");
+  earlier.run("DELETE FROM items");
+  const item = (repo: string, id: string, checks: object[]) =>
+    earlier.run(
+      "INSERT INTO items (owner, repo, kind, id, state, created, item) VALUES ('simon', ?, 'pr', ?, 'open', '2026-11-05T10:00:00Z', ?)",
+      [repo, id, JSON.stringify({ id, checks })],
+    );
+  item("app", "50", [{ name: "test", id: "1", state: "passed" }]);
+  // Skelcrew's own check is no CI, and an item that isn't JSON is skipped.
+  item("notes", "51", [{ name: "skelcrew/check", id: null, state: "passed" }]);
+  earlier.run(
+    "INSERT INTO items (owner, repo, kind, id, state, created, item) VALUES ('simon', 'notes', 'pr', '52', 'open', '2026-11-05T10:00:00Z', 'not json')",
+  );
+  earlier.close();
+  const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
+console.log(JSON.stringify(openDb().query("SELECT repo, ci_seen FROM repositories ORDER BY repo").all()));`;
+  expect(JSON.parse(run(code))).toEqual([
+    { repo: "app", ci_seen: 1 },
+    { repo: "notes", ci_seen: 0 },
+  ]);
+});
+
 // An approval from before reviews saved their commit keeps standing: the daemon saves on the
 // task the commit Skelcrew's clone keeps as the approval's ref, so the list, which reads only
 // the database, can still merge it. An approval whose ref is gone gets none.

@@ -72,7 +72,13 @@ export function nameRepositories(db: Database): void {
 // who armed it and when, for the PR's record. `merge_asked` is your words, exactly, when you
 // asked the lead to arm it, so the plan itself shows what let it merge, and null when you armed
 // it at your terminal. `merge_waits` is what an armed merge waits on, as the last poll
-// found, and `merge_noted` the review round the lead last heard it still waits after. They are
+// found, and `merge_noted` the review round the lead last heard it still waits after.
+// `merge_pinned` is the PR's head when you asked to merge it without Skelcrew's approval, and
+// null for a merge when ready: only that commit merges, so a push after you asked cancels it.
+// `merge_record` is the plan and commit whose record Skelcrew posted on the PR, and
+// `merge_record_id` that review's ID, so a restart never posts it twice. `merge_followup` is the
+// issue a merge without approval filed its review's open findings in, so it files one only.
+// They are
 // the thread's, so a thread that starts over begins with none. `host` is the session host its
 // builder runs on, tmux or a runtime plugin, and `host_id` the session's ID there, which on tmux
 // is the folder. A thread from before hosts runs on tmux. A thread whose builder you stopped has
@@ -102,6 +108,10 @@ const threadColumns = {
   merge_asked: "TEXT",
   merge_waits: "TEXT",
   merge_noted: "INTEGER",
+  merge_pinned: "TEXT",
+  merge_record: "TEXT",
+  merge_record_id: "TEXT",
+  merge_followup: "TEXT",
 };
 
 // A task's columns past its repository and ID: what belongs to the work rather than the agent
@@ -421,7 +431,11 @@ function prepareTables(db: Database): void {
   // .agents/ you haven't approved that the lead was told of, or `none` for one removed, so it is
   // told once. `lead_flows` is whether the lead knows of flows, from the instructions it started
   // with or a note, so a lead already running when Skelcrew learned of them is told once.
-  // `lead_briefs` is the same for briefing another repository's lead.
+  // `lead_briefs` is the same for briefing another repository's lead. `ci_seen` is whether a
+  // poll ever found CI on any of the repository's PRs, kept after they close, so a merge never
+  // takes a PR with no checks yet for one without CI. `lead_host` is the session host the lead
+  // runs on, tmux or a runtime plugin, which it keeps until it ends, and `lead_host_id` its
+  // session's ID there. A lead from before hosts runs on tmux, where its ID is its name.
   const repositoryColumns = {
     open_issues: "INTEGER NOT NULL DEFAULT 0",
     open_prs: "INTEGER NOT NULL DEFAULT 0",
@@ -438,7 +452,12 @@ function prepareTables(db: Database): void {
     agents_noted: "TEXT",
     lead_flows: "INTEGER NOT NULL DEFAULT 0",
     lead_briefs: "INTEGER NOT NULL DEFAULT 0",
+    ci_seen: "INTEGER NOT NULL DEFAULT 0",
+    lead_host: "TEXT DEFAULT 'tmux'",
+    lead_host_id: "TEXT",
   };
+  // Whether repositories gain `ci_seen` now, so it is filled from the copy below.
+  const repositoriesSeen = !hasColumn(db, "repositories", "ci_seen");
   // SQLite has no ADD COLUMN IF NOT EXISTS, so each column is looked up first.
   for (const [column, type] of Object.entries(repositoryColumns))
     if (!db.query("SELECT 1 FROM pragma_table_info('repositories') WHERE name = ?").get(column))
@@ -638,6 +657,16 @@ function prepareTables(db: Database): void {
   // Skelcrew kept them, which is asked about once more.
   if (!db.query("SELECT 1 FROM pragma_table_info('plugins') WHERE name = 'approved'").get())
     db.run("ALTER TABLE plugins ADD COLUMN approved TEXT");
+  // A PR in the copy that showed CI before repositories kept it counts as CI found. It may have
+  // closed while the daemon was down, and the first poll after drops it from the copy, so a
+  // merge would then take a PR with no checks yet for one in a repository without CI. Skelcrew's
+  // own check is no CI, and an item that isn't JSON is read as none.
+  if (repositoriesSeen)
+    db.run(`UPDATE repositories SET ci_seen = 1 WHERE EXISTS (
+      SELECT 1 FROM items,
+        json_each(CASE WHEN json_valid(items.item) THEN items.item ELSE '{}' END, '$.checks') AS c
+      WHERE items.owner = repositories.owner AND items.repo = repositories.repo
+        AND items.kind = 'pr' AND json_extract(c.value, '$.name') IS NOT 'skelcrew/check')`);
 }
 
 // Upgrades the threads an earlier release saved, whose `turn_ended` is still null, from its
