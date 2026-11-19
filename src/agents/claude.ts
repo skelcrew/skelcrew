@@ -18,7 +18,7 @@ import { z } from "zod";
 import { claudeTokenFile, dataDir } from "../paths.ts";
 import { editing, type Progress, stepText, toolWords } from "./progress.ts";
 import { resetTime } from "./reset.ts";
-import { filterEnv, refuseCredentials, ro, rw, sandboxArgs } from "./sandbox.ts";
+import { everyRepository, filterEnv, refuseCredentials, ro, rw, sandboxArgs } from "./sandbox.ts";
 
 const { O_NONBLOCK, O_NOFOLLOW, O_RDONLY } = constants;
 
@@ -242,8 +242,9 @@ function skipBypassWarning(config: string): void {
 // sandbox command and environment. It starts afresh with `sessionId` and the first message
 // in `prompt`, or brings back a saved conversation with `resume`. A builder, given its thread's
 // clone, works there; a lead works in its own `folder`. Each sees nothing else but `origin`,
-// Skelcrew's clone of its repository, read-only. Each session keeps its own transcripts. It logs
-// in with Skelcrew's agent token, while your other credentials stay hidden.
+// Skelcrew's clone of its repository, read-only, and a lead also `repositories`, the folder of
+// every repository's clone, read-only. Each session keeps its own transcripts. It logs in with
+// Skelcrew's agent token, while your other credentials stay hidden.
 function startCommand(given: {
   name: string;
   socket: string;
@@ -251,6 +252,7 @@ function startCommand(given: {
   thread?: string;
   folder?: string;
   origin?: string;
+  repositories?: string;
   prompt?: string;
   system?: string;
   resume?: string;
@@ -264,6 +266,7 @@ function startCommand(given: {
     thread,
     folder,
     origin,
+    repositories,
     prompt,
     system,
     resume,
@@ -307,6 +310,11 @@ function startCommand(given: {
     refuseCredentials(origin);
     mounts.push(...ro(origin));
   }
+  // A lead also reads every repository Skelcrew has, read-only, to understand them and review
+  // their leads' work. The folder that holds the clones is mounted whole, so one added later
+  // shows up in a running lead. A clone added later was checked for credentials before it
+  // moved into the folder.
+  if (repositories) mounts.push(...everyRepository(repositories));
 
   trustFolder(config, cwd);
   skipBypassWarning(config);

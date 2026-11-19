@@ -474,7 +474,7 @@ describe.skipIf(insideSandbox)("with a lead per repository", () => {
     expect(hasLead()).toBe(true);
   });
 
-  test("each repository you open gets a lead of its own, which sees only its own clone", async () => {
+  test("each repository you open gets a lead of its own, which reads every repository's clone", async () => {
     setUp();
     const app = addRepository("app");
     const web = addRepository("web");
@@ -490,8 +490,8 @@ describe.skipIf(insideSandbox)("with a lead per repository", () => {
     const seen = (folder: string) => readFileSync(join(folder, "seen"), "utf8");
     await until(() => existsSync(join(leadFolder("app"), "seen")));
     await until(() => existsSync(join(leadFolder("web"), "seen")));
-    expect(seen(leadFolder("app"))).toBe(`${app}\n`);
-    expect(seen(leadFolder("web"))).toBe(`${web}\n`);
+    expect(seen(leadFolder("app"))).toBe(`${app}\n${web}\n`);
+    expect(seen(leadFolder("web"))).toBe(`${app}\n${web}\n`);
   });
 
   test("stopping the daemon leaves the lead running", async () => {
@@ -943,7 +943,7 @@ describe.skipIf(insideSandbox)("with a lead per repository", () => {
     expect(claudeCalls()).toContain("--resume");
   });
 
-  // A lead sees only its own repository, so it mustn't act on another's threads or tasks.
+  // A lead acts only in its own repository, so it mustn't act on another's threads or tasks.
   test("a lead's commands reach only its own repository", async () => {
     setUp();
     addRepository("app");

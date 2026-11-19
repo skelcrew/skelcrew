@@ -11,7 +11,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { createServer } from "node:net";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import { HarnessName, harnessNamed } from "../src/agents/harness.ts";
@@ -146,7 +146,10 @@ test("a lead is told its repository and each setup and test command, or that non
   );
   expect(told).toContain("Before you start the first thread in your repository");
   expect(told).toContain(
-    "\nYou are the lead of simon/app. Skelcrew's clone of it is at /clones/simon/app.\nWhen this session started, the setup command was `bun install`, and the test command was `bun run check`.\n",
+    "\nYou are the lead of simon/app. Skelcrew's clone of it is at /clones/simon/app.\n",
+  );
+  expect(told).toContain(
+    "\nWhen this session started, the setup command was `bun install`, and the test command was `bun run check`.\n",
   );
   expect(
     leadInstructions(
@@ -170,6 +173,19 @@ test("a lead is told its repository and each setup and test command, or that non
   ).toContain(
     "\nWhen this session started, no setup command was configured, and no test command was configured.\n",
   );
+});
+
+// The human wants each lead to understand the other repositories and review their leads' work,
+// so it is told where their clones are and that it can only read them.
+test("a lead is told where every other repository's clone is, read-only", () => {
+  const commands = { setup: undefined, test: undefined };
+  const told = leadInstructions("You lead.\n", "simon/app", "/c", commands, false);
+  const repos = join(homedir(), ".local", "share", "skelcrew", "repos");
+  expect(told).toContain(
+    `Skelcrew's clone of every repository it has is at ${repos}/<owner>/<repo>`,
+  );
+  expect(told).toContain("They are read-only.");
+  expect(told).toContain("Your commands still work only in your own repository.");
 });
 
 // Every thread runs the default flow unless the repository has other flow files. Then the lead
