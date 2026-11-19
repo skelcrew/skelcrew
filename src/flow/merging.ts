@@ -57,27 +57,27 @@ export function threadToMerge(
 // your terminal, `seen` is what you said y to: the PR's number and when its thread started.
 // Anything else is refused, such as a thread removed and started over while you read the
 // question, with a PR you never saw. From a lead you let arm merges, `asked` is your words in
-// the conversation, quoted by the lead: the thread's log keeps them, the daemon logs them, and
-// a note typed back into the lead says what was armed, so you see it there. It saves who armed
-// it and when, for the PR's record once it merges. Refuses a repository with no forge, as
-// Skelcrew merges no branch there: you merge it yourself once it is approved.
+// the conversation, quoted by the lead: the thread's log keeps them and the daemon logs them.
+// Nothing is typed back into the lead, as it tells you itself, and a second note would say it
+// twice in your conversation. It saves who armed it and when, for the PR's record once it
+// merges. Refuses a repository with no forge, as Skelcrew merges no branch there: you merge it
+// yourself once it is approved.
 export function armMerge(
   db: Database,
-  sessions: string,
   thread: Thread,
   how: { seen: { pr: number; started: number | null } | undefined } | { asked: string },
 ): string {
   const name = threadName(db, thread);
   refuseWithoutForge(db, thread);
   // You agree to a PR you can see, by its number, so a PR opened later never merges under it.
-  if (thread.pr === null)
-    throw new Error(`${name} has no PR yet: arm a merge when ready once it opens one`);
+  if (thread.pr === null) throw new Error(`${name} has no PR yet: ask again once it opens one`);
   const { seen } = "seen" in how ? how : { seen: undefined };
   if ("seen" in how && (!seen || seen.pr !== thread.pr || seen.started !== thread.started))
     throw new Error(
-      `${name} changed since you said y, so nothing is armed: run sc merge --when-ready ${name} again`,
+      `${name} changed since you said y, so it won't merge by itself: run sc merge --when-ready ${name} again`,
     );
-  if (thread.merge_plan === "armed") return `${name} already merges when it is ready.`;
+  const merges = `#${thread.pr} as soon as it's approved and green`;
+  if (thread.merge_plan === "armed") return `Already merging ${merges}.`;
   const asked = "asked" in how ? how.asked : null;
   const plan = {
     merge_plan: "armed" as const,
@@ -96,15 +96,7 @@ export function armMerge(
       : `the lead armed a merge when ready on #${thread.pr}, as the human asked: ${JSON.stringify(asked)}`;
   record(db, thread.folder, plan, why);
   console.log(`${name}: ${why}`);
-  // The note is typed into the lead as one line, so your words go on one line there.
-  if (asked !== null)
-    noteForLead(
-      db,
-      sessions,
-      thread,
-      `Armed: #${thread.pr} (${name}) merges once it is approved and green, as the human asked: "${asked.replace(/\s+/g, " ").trim()}". sc merge --cancel ${name} stops that.`,
-    );
-  return `${name} merges once it is approved and green. sc merge --cancel ${name} stops that.`;
+  return `Merging ${merges}. sc merge --cancel ${name} stops it.`;
 }
 
 // Refuses a merge when ready in a repository with no forge, as Skelcrew merges no branch
@@ -256,6 +248,11 @@ export async function mergeIfReady(
     record(db, folder, { merge_waits: waits }, `its merge when ready waits on ${waits}`);
   if (mergeStuck(now, waits)) {
     record(db, folder, { merge_noted: now.review_round });
-    noteForLead(db, sessions, now, `${name} still waits to merge when ready, on ${waits}.`);
+    noteForLead(
+      db,
+      sessions,
+      now,
+      `Still merging #${now.pr} (${name}) once it's approved and green, waiting on ${waits}.`,
+    );
   }
 }

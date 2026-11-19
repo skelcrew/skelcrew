@@ -484,7 +484,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         if (leadOfCaller(caller) === null) {
           if (request.asked !== undefined)
             throw new Error("--asked-file is the lead's: at your terminal, sc merge asks you y/N");
-          return { said: armMerge(db, sessions, thread, { seen: request.seen }) };
+          return { said: armMerge(db, thread, { seen: request.seen }) };
         }
         if (!leadMayArmMerges())
           throw new Error(
@@ -494,7 +494,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
           throw new Error(
             "give what the human asked with --asked-file, a file holding their exact words",
           );
-        return { said: armMerge(db, sessions, thread, { asked: request.asked }) };
+        return { said: armMerge(db, thread, { asked: request.asked }) };
       }
       case "merge cancel":
         return { said: cancelMerge(db, threadToMerge(db, request)) };

@@ -490,15 +490,14 @@ async function mergeCommand(args: string[]): Promise<void> {
       throw new Error("sc merge --when-ready asks you first, so run it at your own terminal");
     // The title comes from the tracker, so its control codes go before it reaches your terminal.
     const { thread, pr, title, started } = await previewMerge(which);
-    if (pr === null)
-      throw new Error(`${thread} has no PR yet: arm a merge when ready once it opens one`);
+    if (pr === null) throw new Error(`${thread} has no PR yet: ask again once it opens one`);
     const { removeControlCodes } = await import("./screen/look.ts");
     const shown = title ? ` ${removeControlCodes(title)}` : "";
     // Only y arms it. Anything else, a bare Enter, which Bun's prompt gives as null, Y or yes
     // included, arms nothing.
     const answer = prompt(`Merge #${pr} (${thread}${shown}) when it's approved and green? [y/N]`);
     if (answer !== "y") {
-      console.log(`Nothing is armed: ${thread} waits for you to merge it.`);
+      console.log(`Not merging: ${thread} waits for you to merge it.`);
       return;
     }
     // Armed only if the daemon still has the PR and thread you said y to.
