@@ -995,3 +995,38 @@ process.exit(0);`,
     "fake answered end in a way Skelcrew doesn't understand\nworking true true 1\n",
   );
 }, 40_000);
+
+for (const [short, title] of [
+  ["login redirect", "login redirect"],
+  [null, "Fix the login redirect"],
+] as const)
+  test(`a builder's session is labelled with its short title, else its full title: ${title}`, () => {
+    const fake = join(home, ".config", "skelcrew", "plugins", "fake");
+    const labels = runWithFakeHost(
+      "sessions",
+      `const host = (await builderSession(db, "unused", readThread(db, "app-12"))).host;
+await startOnHost(db, readThread(db, "app-12"), { host, name: "fake" }, { folder: ${JSON.stringify(home)}, command: ["sleep", "30"], env: {} });
+console.log(require("node:fs").readFileSync(${JSON.stringify(join(fake, "sessions", "fake-app-12", "labels.json"))}, "utf8"));
+process.exit(0);`,
+      { host: "fake", host_id: null, title: "Fix the login redirect", short },
+    );
+    expect(JSON.parse(labels).title).toBe(title);
+  }, 40_000);
+
+test("a new short title on a running builder reaches its host as a rename", () => {
+  const fake = join(home, ".config", "skelcrew", "plugins", "fake");
+  runWithFakeHost(
+    "sessions",
+    `record(db, "app-12", { short: "login redirect" }, "given a short title");
+record(db, "app-12", { rounds: 1 });
+await Bun.sleep(1000);`,
+    { host: "fake", host_id: "fake-app-12", title: "Fix the login redirect" },
+  );
+  const renames = readFileSync(join(fake, "asked"), "utf8")
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line))
+    .filter((question) => question.ask === "rename");
+  // Only the change of title renames it, not every change to the thread.
+  expect(renames).toEqual([{ ask: "rename", id: "fake-app-12", title: "login redirect" }]);
+}, 40_000);

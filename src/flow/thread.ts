@@ -5,10 +5,11 @@ import { appendFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import { HarnessName, harnessNamed } from "../agents/harness.ts";
-import { listSessions } from "../agents/sessions.ts";
+import { listSessions, renameSession } from "../agents/sessions.ts";
 import { savedJson, taskColumns } from "../db.ts";
 import { threadsDir } from "../paths.ts";
-import { type Host, hostNamed } from "../plugins/runtime.ts";
+import { type Host, hostNamed, pluginHost } from "../plugins/runtime.ts";
+import { errorText } from "../say.ts";
 import { findRepository } from "./repo.ts";
 import { needsYou, reportStatus } from "./status.ts";
 
@@ -347,7 +348,22 @@ export function record(
   const thread = readThread(db, folder);
   log(db, thread, why);
   reportStatus(db, thread);
+  if (thread.short !== before.short) renameOnHost(db, thread);
   return thread;
+}
+
+// Tells the builder's host the thread's new title, when the host is a plugin, so its own apps
+// stop showing the old one. A builder on tmux needs nothing, as Skelcrew's list reads the title
+// from here. It doesn't wait for the host, and a host that fails, such as an older plugin that
+// doesn't know the question, only costs the new name, so it is logged.
+function renameOnHost(db: Database, thread: Thread): void {
+  if (thread.host === null || thread.host === "tmux" || thread.host_id === null) return;
+  const host = pluginHost(db, thread.host);
+  const title = thread.short || thread.title;
+  if (host === null || !title) return;
+  renameSession(host, thread.host_id, title).catch((error) =>
+    console.log(`couldn't rename ${thread.folder} on ${host.plugin}: ${errorText(error)}`),
+  );
 }
 
 // Returns the thread's name, such as app-12, for replies. It uses the repository's name
