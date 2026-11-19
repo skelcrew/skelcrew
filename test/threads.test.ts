@@ -306,6 +306,35 @@ test("sc start <repo> says what its stdin left out, and starts nothing", async (
   expect(thread()).toEqual({});
 });
 
+// --from picks the branch an issue's thread starts from. A task with no issue takes none, so
+// sc start refuses it there rather than read it as the title, with words or on stdin.
+test("sc start <repo> refuses --from, with the task as words or on stdin, and starts nothing", async () => {
+  addApp();
+  serve();
+  await untilAnswers();
+  const refused =
+    "Skelcrew: sc start <repo> takes no --from. Only sc start <issue> starts from another branch.\n";
+  const words = await skel("start", "app", "--from", "feature");
+  expect(words.code).toBe(1);
+  expect(words.err).toBe(refused);
+  const withShort = await skel("start", "app", "--from", "feature", "--short", "x", "T", "B");
+  expect(withShort.code).toBe(1);
+  expect(withShort.err).toBe(refused);
+  const stdin = await runSkel(
+    ["start", "app", "--from", "feature", "--short", "x"],
+    env(),
+    "# Add export\n\nAs JSON\n",
+  );
+  expect(stdin.code).toBe(1);
+  expect(stdin.err).toBe(refused);
+  expect(thread()).toEqual({});
+  // A description that says "--from" is the task's own words, so that task starts.
+  const described = await skel("start", "app", "Document the option", "--from");
+  expect(described.err).toBe("");
+  expect(described.out).toBe(`Started app-${own}1.\n`);
+  expect(thread()).toMatchObject({ title: "Document the option", body: "--from" });
+});
+
 test("more data on a connection doesn't run its request again", async () => {
   addApp();
   serve();
@@ -1058,6 +1087,20 @@ nameRepositories(db);`;
     expect(read(join(config(`app-${own}1`), "args"))).toContain("Add export\n\nAs JSON");
     expect(thread()).toMatchObject({ task: `${own}1`, title: "Add export", body: "As JSON" });
     expect(asked(plugin).filter((q) => q.ask === "create task")).toEqual([]);
+  }, 60_000);
+
+  // A first message that starts like an option, such as a title of "--fast", must reach the
+  // builder as its message. Claude Code would otherwise read it as an option and exit at once.
+  test("a title that starts with dashes reaches the builder as its first message", async () => {
+    addApp();
+    serve();
+    await untilAnswers();
+    const run = await skel("start", "app", "--fast", "Make the build quicker");
+    expect(run.err).toBe("");
+    await until(() => read(join(config(`app-${own}1`), "args")) !== "");
+    expect(read(join(config(`app-${own}1`), "args"))).toEndWith(
+      "\n--\n--fast\n\nMake the build quicker\n",
+    );
   }, 60_000);
 
   // A long body needs no shell quoting when the lead gives the task on stdin, from a heredoc.

@@ -23,7 +23,7 @@ import {
 import {
   type Lock,
   type Locked,
-  readLock,
+  readLockAt,
   settleYourLock,
   writeBoth,
   yourLock,
@@ -67,7 +67,7 @@ export function repositoryPlugins(folder: string): { plugins: string[]; lock: Lo
   // An empty file is YAML's null.
   const shared = Shared.safeParse(data ?? {});
   if (!shared.success) throw new Error(`${yamlFile} isn't valid: ${z.prettifyError(shared.error)}`);
-  return { plugins: shared.data.plugins ?? [], lock: readLock(lockFile) };
+  return { plugins: shared.data.plugins ?? [], lock: readLockAt(lockFile) ?? {} };
 }
 
 // Names `source` under plugins: in the skelcrew.yaml in `folder`, and pins it in its

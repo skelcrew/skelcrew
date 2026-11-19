@@ -17,6 +17,7 @@ import { openDb } from "../db.ts";
 import { repositories } from "../flow/repo.ts";
 import { originHere } from "../machine/origin.ts";
 import { configDir, dataDir } from "../paths.ts";
+import { errorText } from "../say.ts";
 import { removeControlCodes } from "../screen/look.ts";
 import { release } from "../version.ts";
 import { trackerOf } from "./ask.ts";
@@ -35,6 +36,7 @@ import {
   installedPlugins,
   type Manifest,
   type Plugin,
+  reachesOnlyMachines,
   readManifest,
   Version,
 } from "./plugin.ts";
@@ -340,6 +342,8 @@ type Options = {
   name?: boolean;
   io?: boolean;
   called?: string;
+  // Refuses a plugin that only reaches machines, with OnlyReachesMachines, before asking.
+  skipMachines?: boolean;
 };
 
 // Throws when the plugin's manifest names it otherwise than the lock that pins it, `called`, before
@@ -360,6 +364,10 @@ export function refuseRuntime(manifest: Manifest, io: boolean | undefined): void
       `${manifest.name} is a runtime plugin, which is always yours and never a repository's. sc add -g adds it as yours`,
     );
 }
+
+// The error for a plugin that only reaches machines, refused on a machine you reach with
+// --remote, as such a plugin is used where you run --remote.
+class OnlyReachesMachines extends Error {}
 
 // Installs a plugin and returns whether it did. `given` is either owner/repo, installed from that
 // GitHub repository's newest version tag or the one `tag` names, or a path to a folder of yours,
@@ -401,6 +409,8 @@ export function installPlugin(given: string, options: Options = {}): boolean {
   const cloned = cloneTag(given, tag ?? newestTag(given), commit);
   const { staged, manifest } = cloned;
   try {
+    if (options.skipMachines && reachesOnlyMachines(manifest))
+      throw new OnlyReachesMachines(manifest.name);
     refuseInstalled(db, manifest.name);
     checkSkelcrewVersion(manifest);
     refuseRuntime(manifest, io);
@@ -668,23 +678,68 @@ export function matchesLock(plugin: Plugin, locked: Locked): boolean {
   );
 }
 
-// Makes this machine match your personal files, for sc install: installs each plugin under
-// plugins: in your config.yaml at the version and commit your lock pins. A plugin new here, or at
+// Returns the plugins from GitHub installed here that your files don't name, which sc install
+// removes, such as one you removed on another machine before sending your files here. A plugin
+// from a folder is this machine's own, and one that only reaches machines isn't sent to a
+// server, so neither counts. Nor does one a repository needs, by `needed`, the plugins any
+// repository Skelcrew has names. One whose folder can't be read is left for you to remove.
+function unnamed(db: Database, needed: string[]): Plugin[] {
+  const named = [...yourPlugins(), ...needed];
+  return installedPlugins(db).filter((plugin) => {
+    if (plugin.source === null || named.includes(plugin.source)) return false;
+    try {
+      return !reachesOnlyMachines(readManifest(plugin.folder));
+    } catch {
+      return false;
+    }
+  });
+}
+
+// Makes this machine match your personal files, for sc install: removes each plugin from GitHub
+// your files don't name, then installs each plugin under plugins: in your config.yaml at the
+// version and commit your lock pins. A plugin new here, or at
 // another version or commit, is shown and asked about. One already at its locked version asks
 // nothing, as you approved it before. It never moves a pin your lock has. A plugin your config
 // names that the lock lacks gets a pin added, as npm install does: at what is installed here, or
 // else at its newest version tag once you say yes. Returns whether there was anything to do, and
-// the plugins still missing or at another version than locked, as you said no to them.
-// `remote` is handed to each setup. `conflicting` are the plugins a repository pins at another
-// commit than your lock: each is left as it is, neither installed nor moved, and the repository's
-// install says why. Each of them is among those still missing, until the pins agree.
+// the plugins still missing or at another version than locked, as you said no to them, and the
+// ones your files don't name that couldn't be removed. `remote` is handed to each setup.
+// `conflicting` are the plugins a repository pins at another commit than your lock: each is left
+// as it is, neither installed nor moved, and the repository's install says why. Each of them is
+// among those still missing, until the pins agree. `needed` are the plugins repositories name,
+// which stay though your files don't name them, or null when a repository's files can't be read,
+// which keeps every plugin, as what it needs can't be told.
 export function installYourPlugins(
   remote: string | null,
   conflicting: string[] = [],
-): { changed: boolean; left: string[] } {
+  needed: string[] | null = [],
+): {
+  changed: boolean;
+  left: string[];
+  kept: string[];
+} {
   const db = openDb();
   const lock = yourLock(db);
   let changed = false;
+  // On a machine you reach with --remote, a plugin that only reaches machines isn't installed,
+  // as it is used where you run --remote. The laptop leaves those it has out of the files it
+  // sends, but one your files name that the laptop doesn't have yet can only be told apart here,
+  // by its manifest.
+  const skipMachines = process.env.SKELCREW_REMOTE_NAME !== undefined;
+  const skipped: string[] = [];
+  // Removed first, so one of the same name from another repository can be installed after. One
+  // that is a repository's tracker or forge refuses to go, which is said here and returned, so the
+  // machine isn't marked set up while it still runs a plugin your files removed.
+  const kept: string[] = [];
+  for (const plugin of needed === null ? [] : unnamed(db, needed)) {
+    changed = true;
+    try {
+      removePlugin(plugin.name);
+    } catch (error) {
+      console.log(`Skelcrew couldn't remove ${plugin.name}: ${errorText(error)}.`);
+      kept.push(plugin.name);
+    }
+  }
   const mine = yourPlugins().filter((source) => !conflicting.includes(source));
   eachAsked(
     mine,
@@ -700,11 +755,19 @@ export function installYourPlugins(
       if (here && locked && matchesLock(here, locked)) return;
       changed = true;
       // Installing with no pin adds one. One with a pin leaves the lock as it is.
-      if (!locked) installPlugin(source, { remote });
-      else {
-        const pinned = { tag: `v${locked.version}`, commit: locked.commit, remote, pin: false };
-        if (here) updatePlugin(db, here, pinned);
-        else installPlugin(source, pinned);
+      try {
+        if (!locked) installPlugin(source, { remote, skipMachines });
+        else {
+          const pinned = { tag: `v${locked.version}`, commit: locked.commit, remote, pin: false };
+          if (here) updatePlugin(db, here, pinned);
+          else installPlugin(source, { ...pinned, skipMachines });
+        }
+      } catch (error) {
+        if (!(error instanceof OnlyReachesMachines)) throw error;
+        console.log(
+          `Skelcrew skipped ${error.message}, which only reaches machines, so it belongs where you run sc --remote, not here.`,
+        );
+        skipped.push(source);
       }
     },
   );
@@ -713,12 +776,13 @@ export function installYourPlugins(
   // One left as it is for a repository's pin always counts, even at your pin, so the machine
   // isn't set up until the pins agree, and plain sc says why each time.
   const left = yourPlugins().filter((source) => {
+    if (skipped.includes(source)) return false;
     const here = installedPlugins(db).find((plugin) => plugin.source === source);
     const locked = now[source];
     if (conflicting.includes(source)) return true;
     return !here || (locked !== undefined && !matchesLock(here, locked));
   });
-  return { changed, left };
+  return { changed, left, kept };
 }
 
 // One row of sc plugins: a plugin your files name or this machine has. The version, kind and
@@ -737,9 +801,10 @@ type Row = {
 // Prints the plugins your files and repositories' files name and this machine has, for sc
 // plugins: each one's name, version, kind and what it provides, such as "github 0.1.0 io:
 // tracker, forge", and what sc install would change. `needs` are the plugins repositories need,
-// as repositoryNeeds gives them. --json gives the same rows for tools, and keeps jobs, so a tool
-// written before kinds still reads it.
-export function listPlugins(json: boolean, needs: Need[]): void {
+// as repositoryNeeds gives them, and `needed` the plugins any repository Skelcrew has names, or
+// null when one can't be read, as installYourPlugins takes them. --json gives the same rows for
+// tools, and keeps jobs, so a tool written before kinds still reads it.
+export function listPlugins(json: boolean, needs: Need[], needed: string[] | null): void {
   const db = openDb();
   const lock = yourLock(db);
   const wanted = yourPlugins();
@@ -761,6 +826,7 @@ export function listPlugins(json: boolean, needs: Need[]): void {
     const conflict = needs.find((need) => need.source === source)?.conflict;
     return conflict ? `sc install leaves it, as it is pinned at ${conflict}` : null;
   };
+  const removed = needed === null ? [] : unnamed(db, needed).map((plugin) => plugin.name);
   const rows: Row[] = installed.map((plugin) => {
     const manifest = existsSync(plugin.folder) ? readManifest(plugin.folder) : null;
     if (!manifest) throw new Error(`${plugin.name}'s folder ${plugin.folder} is gone`);
@@ -784,8 +850,9 @@ export function listPlugins(json: boolean, needs: Need[]): void {
       jobs: manifest.provides,
       from: plugin.source ?? plugin.folder,
       // A disagreement goes first, as sc install then leaves the plugin as it is.
-      change:
-        plugin.source === null
+      change: removed.includes(plugin.name)
+        ? "sc install removes it"
+        : plugin.source === null
           ? null
           : (disagreement(plugin.source) ??
             (moves ? `sc install moves it to ${to}` : repositoryChange(plugin.source, plugin))),

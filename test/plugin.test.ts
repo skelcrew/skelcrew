@@ -852,7 +852,9 @@ test("sc update -g leaves a plugin only a repository names alone", async () => {
   publish("skelcrew/skelcrew-fake", "0.2.0");
   const run = await skel(["update", "-g"], "y\n");
   expect(run.out).not.toContain("Update it?");
-  expect((await skel(["plugins"])).out).toBe("fake 0.1.0 io: tracker, forge\n");
+  expect((await skel(["plugins"], "", "", {}, app, false)).out).toBe(
+    "fake 0.1.0 io: tracker, forge\n",
+  );
 });
 
 test("agents can't run the plugin commands", async () => {

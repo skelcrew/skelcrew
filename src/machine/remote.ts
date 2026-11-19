@@ -1,9 +1,17 @@
-// sc --remote and sc remote add: run a Skelcrew command on your server over ssh -t, from your
-// laptop, and set a server up for that. --remote offers to replace Skelcrew there when it is an
-// older release than yours, or was built from another commit, warns when it runs from a checkout
-// behind yours, and copies your setup there when it changed. Your laptop can be a Mac, so this file loads nothing of the Skelcrew that runs on
-// the server.
-import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+// sc --remote: run a Skelcrew command on your server over ssh -t, from your laptop, and with
+// install, set a server up by sending your personal files and running sc install there.
+// --remote offers to replace Skelcrew there when it is an older release than yours, or was built
+// from another commit, and warns when it runs from a checkout behind yours. Your laptop can be a
+// Mac, so this file loads nothing of the Skelcrew that runs on the server until it needs it.
+import {
+  chmodSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { isIP } from "node:net";
 import { homedir, tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
@@ -22,7 +30,6 @@ import {
   releases,
   singleFile,
 } from "../version.ts";
-import { type Setup, setupHash, setupHere, writeSent } from "./copy-setup.ts";
 import { originHere } from "./origin.ts";
 import { downloadRelease, releaseSum } from "./update.ts";
 
@@ -78,11 +85,9 @@ export const checkThenSc = [
 // What a copied Skelcrew exits with when the laptop's build differs. Skelcrew otherwise exits 0 or
 // 1, and the server's shell 127 when it finds no Skelcrew.
 export const outdated = 98;
-// What Skelcrew exits with when --remote reaches it before its first run has finished there, so
-// the laptop can offer to finish it.
+// What Skelcrew exits with when --remote reaches it before sc install has set the machine up,
+// so the laptop can offer to set it up.
 export const unfinished = 97;
-// What Skelcrew exits with when its setup differs from the laptop's, so the laptop copies its own.
-export const otherSetup = 96;
 
 // Reports whether this Skelcrew, copied to a server, is from another build than the
 // laptop that runs it there with --remote, and says so. The laptop passes its build along
@@ -196,54 +201,57 @@ function sharedConnection(host: string): string[] {
 }
 
 // Returns how to run sc on the host with these words, with `shared` from sharedConnection. It
-// takes the environment to add to what it always passes, and gives back the exit code. With a
-// terminal, ssh says "Connection to <host> closed." each time it ends, several times in one
-// setup, so it is told to say only errors.
-const onServer = (host: string, shared: string[], words: string[]) => (env: string[]) =>
-  runInTerminal([
-    "ssh",
-    "-o",
-    "LogLevel=ERROR",
-    "-t",
-    ...shared,
-    host,
-    [
-      "env",
-      pathOnServer,
-      quoted(`SKELCREW_REMOTE_NAME=${host}`),
-      ...env.map(quoted),
-      // The check is shell, and your login shell there may not be sh, so sh runs it. The words
-      // after the second sh become its "$@".
-      "sh",
-      "-c",
-      quoted(checkThenSc),
-      "sh",
-      ...words.map(quoted),
-    ].join(" "),
-  ]);
+// takes the environment to add to what it always passes, and gives back the exit code. `before`
+// is a command that runs sc in its turn, such as one that takes a lock first. With a terminal,
+// ssh says "Connection to <host> closed." each time it ends, several times in one setup, so it
+// is told to say only errors.
+const onServer =
+  (host: string, shared: string[], words: string[], before: string[] = []) =>
+  (env: string[]) =>
+    runInTerminal([
+      "ssh",
+      "-o",
+      "LogLevel=ERROR",
+      "-t",
+      ...shared,
+      host,
+      [
+        "env",
+        pathOnServer,
+        quoted(`SKELCREW_REMOTE_NAME=${host}`),
+        ...env.map(quoted),
+        ...before.map(quoted),
+        // The check is shell, and your login shell there may not be sh, so sh runs it. The words
+        // after the second sh become its "$@".
+        "sh",
+        "-c",
+        quoted(checkThenSc),
+        "sh",
+        ...words.map(quoted),
+      ].join(" "),
+    ]);
 
 // Says a machine isn't set up, and how to do that.
 export const notSetUp = (where: string) =>
-  `${where} isn't set up. Run this on your laptop:\n  sc remote add ${where}`;
+  `${where} isn't set up. Run this on your laptop:\n  sc --remote ${where} install`;
+
+// Asks a yes or no question in your terminal, where a bare Enter means yes. Bun's prompt answers
+// a bare Enter with null.
+const saysYes = (question: string) =>
+  ["", "y", "yes"].includes(prompt(`${question} [Y/n]`)?.trim().toLowerCase() ?? "");
 
 // Offers to set up a machine that --remote found not set up, and returns the exit code. A yes
-// runs `add`, which is what sc remote add runs, then `connect`, the command you asked for. Setting
-// up means logins, so it never happens without your yes. Without a terminal nobody can answer,
-// so it only says what to run.
-async function setUpFirst(
-  where: string,
-  add: () => Promise<number>,
-  connect: () => Promise<number>,
-): Promise<number> {
+// runs sc --remote <host> install, then `connect`, the command you asked for. Setting up means
+// logins, so it never happens without your yes. Without a terminal nobody can answer, so it only
+// says what to run.
+async function setUpFirst(where: string, connect: () => Promise<number>): Promise<number> {
   if (!process.stdin.isTTY) throw new Error(notSetUp(where));
-  // Bun's prompt answers a bare Enter with null, which takes the default, yes.
-  const answer = prompt(`${where} isn't set up. Set it up now? [Y/n]`);
-  if (!["", "y", "yes"].includes(answer?.trim().toLowerCase() ?? "")) {
-    console.log(`Nothing was set up. To set it up later, run:\n  sc remote add ${where}`);
+  if (!saysYes(`${where} isn't set up. Set it up now?`)) {
+    console.log(`Nothing was set up. To set it up later, run:\n  sc --remote ${where} install`);
     return 1;
   }
-  const added = await add();
-  return added === 0 ? connect() : added;
+  const installed = await installServer(where, true);
+  return installed === 0 ? connect() : installed;
 }
 
 // Stops at a host that names a machine plugin, such as demo:box, rather than taking it for an
@@ -258,9 +266,10 @@ function checkHost(host: string): void {
 
 // Runs a Skelcrew command on the host and returns its exit code. Plain Skelcrew passes the
 // repository you are in on the laptop, so it opens that repository's lead there. Offers to set
-// the host up when it has no Skelcrew, or its first run hasn't finished.
+// the host up when it has no Skelcrew, or sc install hasn't set it up. install sets it up.
 export async function remote(host: string, args: string[]): Promise<number> {
   checkHost(host);
+  if (args.length === 1 && args[0] === "install") return installServer(host);
   // The server can't see the checkout you are in, so its remote goes along as --from where the
   // command needs it: plain sc, sc --list, and sc pr show with a PR's number, which names a PR
   // of that repository. A thread's name already names its repository.
@@ -279,88 +288,133 @@ export async function remote(host: string, args: string[]): Promise<number> {
   // The server's shell exits 127 when it finds no Skelcrew to run. Skelcrew itself never does: it
   // exits 1 on any error.
   if (code !== 127 && code !== unfinished) return code;
-  return setUpFirst(host, () => addServer(host), connect);
+  return setUpFirst(host, connect);
 }
 
-// Sets up your server for --remote and returns the exit code, for sc remote add.
-export async function addServer(host: string): Promise<number> {
+// Sets up your server, for sc --remote <host> install, and returns the exit code. It sends your
+// personal files there, then runs sc install there in your terminal, where each plugin's setup
+// signs in on its own. The checkout you are in goes along as --from, as a plugin's setup is handed
+// it on the laptop, such as for the GitHub plugin to pick that repository. A server with no Skelcrew gets the laptop's after you say yes, unless you
+// already said yes to setting it up, which `asked` says. Running it again is safe, as sc install
+// skips what is done, which is how a setup that stopped partway gets finished.
+export async function installServer(host: string, asked = false): Promise<number> {
   checkHost(host);
-  console.log(`Setting up ${host}: copying Skelcrew there and setting it up.`);
   const machine = serverMachine(host);
-  return addMachine(host, machine.sc(["first-run"]), machine);
+  const sending = await sendYourFiles(host, machine);
+  try {
+    return await installThere(host, machine, sending, asked);
+  } finally {
+    // sc install there removes the folder once it puts your files in place. It is still there
+    // when sc install never started, such as after a no, and goes here.
+    if (sending) await quietly(machine.shell(`rm -rf .config/skelcrew/${sending}`));
+  }
 }
 
-// Puts Skelcrew on a server if it isn't there, and runs the first run through `there`,
-// without attaching, so that logging in there stays separate from starting to work. It prints
-// no way to connect, as --remote connects right after it and only sc remote add prints one.
-// Running it again is safe, as the first run skips what is done, which is how a setup that
-// stopped partway gets finished.
-async function addMachine(
-  where: string,
-  there: (env: string[]) => Promise<number>,
+// Runs sc install on the server, after putting Skelcrew there when it has none, and returns the
+// exit code. `sending` is the folder your files were sent to, which sc install puts in place
+// first, or null when you have none to send. Every question here comes before sc install starts,
+// so a no to any of them leaves the server's files as they were.
+async function installThere(
+  host: string,
   machine: Machine,
+  sending: string | null,
+  asked: boolean,
 ): Promise<number> {
-  let code = await runUpToDate(where, there, machine);
-  // 127 is the machine's shell finding no Skelcrew, so it gets one and the first run goes again,
-  // after your setup is copied there. A fresh copy is the laptop's build, so it skips that check.
-  if (code === 127) {
-    await withLinuxSkel(machine);
-    code = await runUpToDate(where, there, machine, null);
+  const from = originHere();
+  const words = [
+    "install",
+    ...(from ? ["--from", from] : []),
+    ...(sending ? ["--files", sending] : []),
+  ];
+  // sc install there runs holding a lock, so two installs at once, even from two laptops, each
+  // put their own files in place and install from them, one after the other. flock lets go of
+  // the lock when it ends, so a crash leaves nothing that blocks the next install.
+  const there = machine.sc(words, sending ? ["flock", ".config/skelcrew/.install"] : []);
+  const code = await runUpToDate(host, there, machine);
+  // 127 is the machine's shell finding no Skelcrew to run.
+  if (code !== 127) return code;
+  if (!asked) {
+    const put = `sc --remote ${host} install`;
+    if (!process.stdin.isTTY)
+      throw new Error(
+        `${host} has no Skelcrew. To put it there, run this in a terminal:\n  ${put}`,
+      );
+    if (!saysYes(`${host} has no Skelcrew. Put yours there?`)) {
+      console.log(`Nothing was put there. To do it later, run:\n  ${put}`);
+      return 1;
+    }
   }
-  return code;
+  await withLinuxSkel(machine);
+  // A fresh copy is the laptop's build, so it skips that check.
+  return runUpToDate(host, there, machine, null);
+}
+
+// Sends your config.yaml, your lock and the agents' Claude Code token to a folder of this
+// install's own in the server's ~/.config/skelcrew, made readable only by you before it is
+// filled. Nothing is replaced yet: sc install there puts them in place once every question
+// before it is answered. Returns the folder's name in ~/.config/skelcrew, or null when the laptop
+// has no setup to send.
+async function sendYourFiles(where: string, machine: Machine): Promise<string | null> {
+  // Loaded only here, as it brings in much of Skelcrew that other commands need none of.
+  const { yourFiles } = await import("./your-files.ts");
+  const files = yourFiles();
+  if (files.length === 0) return null;
+  // A file left out, which can only be the token, is removed there as the files go in place.
+  const sent = files.flatMap(({ name, text }) => (text === null ? [] : [{ name, text }]));
+  // mkdir fails on a folder already there, so the folder is this install's alone.
+  const sending = `sending-${crypto.randomUUID()}`;
+  const staging = `.config/skelcrew/${sending}`;
+  const place = `umask 077 && mkdir -p .config/skelcrew && mkdir ${staging}`;
+  if ((await runInTerminal(machine.shell(place))) !== 0)
+    throw new Error(`couldn't make a place for your files on ${where}, so none were sent`);
+  console.log(`Sending your ${sent.map((file) => file.name).join(", ")} to ${where}.`);
+  const folder = mkdtempSync(join(tmpdir(), "skelcrew-"));
+  try {
+    for (const { name, text } of sent) {
+      const file = join(folder, name);
+      // Readable only by you here too, and scp gives the copy the same mode.
+      writeFileSync(file, text, { mode: 0o600 });
+      // scp shows a progress bar named after the temporary file, which means nothing to you,
+      // so the copy runs out of your terminal and says why it failed.
+      const pushed = await quietly(machine.push(file, `${staging}/${name}`));
+      if (!pushed.ok) {
+        await quietly(machine.shell(`rm -rf ${staging}`));
+        throw new Error(`couldn't send your ${name} to ${where}:\n${pushed.said}`);
+      }
+    }
+  } finally {
+    rmSync(folder, { recursive: true, force: true });
+  }
+  return sending;
 }
 
 // Runs sc on a server through `there`, and returns its exit code. `there` takes the
 // environment to add to what it always passes. When the Skelcrew there is from another build
 // than this laptop's, it runs nothing and you are asked whether to replace it. Either way the
 // command then runs without that check, so a build with uncommitted changes can't ask twice.
-// When the setup there differs from the laptop's, the laptop's is copied there first. `build` is
-// null for a Skelcrew just copied there, which is the laptop's own.
+// The laptop's lock goes along by its fingerprint, so Skelcrew there says when its own differs.
+// `build` is null for a Skelcrew just copied there, which is the laptop's own.
 async function runUpToDate(
   where: string,
   there: (env: string[]) => Promise<number>,
   machine: Machine,
   build = release || laptopBuild(),
 ): Promise<number> {
-  // A laptop with no setup yet has nothing to copy, and the first run there asks as usual.
-  const setup = setupHere();
-  const setupCheck = setup ? [`SKELCREW_LAPTOP_SETUP=${setupHash(setup)}`] : [];
-  // A copy there that differs exits with `outdated` or `otherSetup` before running anything.
-  let code = await there([...(build ? [`SKELCREW_LAPTOP_BUILD=${build}`] : []), ...setupCheck]);
+  // Loaded only here, as it brings in much of Skelcrew that the check on each command needs
+  // only this of.
+  const { laptopLockHash } = await import("./your-files.ts");
+  const lock = laptopLockHash();
+  const lockCheck = lock ? [`SKELCREW_LAPTOP_LOCK=${lock}`] : [];
+  // A copy there that differs exits with `outdated` before running anything.
+  let code = await there([...(build ? [`SKELCREW_LAPTOP_BUILD=${build}`] : []), ...lockCheck]);
   if (code === outdated) {
     // Bun's prompt answers a bare Enter with null, so only a no keeps the old Skelcrew.
     const answer = prompt("Update it? [Y/n]")?.trim().toLowerCase() ?? "";
     if (["n", "no"].includes(answer)) console.log(`Running it on the old Skelcrew on ${where}.`);
     else await update(where, machine);
-    code = await there(setupCheck);
+    code = await there(lockCheck);
   }
-  if (code !== otherSetup || !setup) return code;
-  const taken = await sendSetup(where, machine, setup);
-  return taken === 0 ? there([]) : taken;
-}
-
-// Copies the laptop's setup to a server, and has Skelcrew there take it in your
-// terminal, where a plugin's setup can ask you things. Returns the exit code of taking it.
-async function sendSetup(where: string, machine: Machine, setup: Setup): Promise<number> {
-  const to = ".config/skelcrew/laptop-setup.json";
-  // The file holds the token, so it is made there readable only by you before it is filled.
-  // scp keeps the mode of a file that is already there.
-  const make = `umask 077 && mkdir -p .config/skelcrew && rm -f ${to} && : > ${to}`;
-  if ((await runInTerminal(machine.shell(make))) !== 0)
-    throw new Error("couldn't make a place for your setup there, so it wasn't copied");
-  const folder = mkdtempSync(join(tmpdir(), "skelcrew-"));
-  try {
-    const file = join(folder, "setup.json");
-    writeSent(file, setup, originHere());
-    // scp shows a progress bar named after the temporary file, which
-    // means nothing to you, so the copy runs out of your terminal and says why it failed.
-    console.log(`Copying your settings, Claude sign-in and plugins to ${where}.`);
-    const pushed = await quietly(machine.push(file, to));
-    if (!pushed.ok) throw new Error(`couldn't copy your setup to ${where}:\n${pushed.said}`);
-  } finally {
-    rmSync(folder, { recursive: true, force: true });
-  }
-  return machine.sc(["take-setup"])([]);
+  return code;
 }
 
 // Puts a Skelcrew built for a server in its ~/.local/bin. `shell` makes the command
@@ -388,7 +442,7 @@ function serverMachine(host: string): Machine {
   return {
     shell,
     push,
-    sc: (words) => onServer(host, shared, words),
+    sc: (words, before) => onServer(host, shared, words, before),
     // The unit names the Skelcrew the daemon runs, with each % doubled for systemd. A unit an
     // older Skelcrew wrote runs sc serve rather than sc up.
     daemonSkel: async () => {
@@ -408,9 +462,9 @@ export type Machine = {
   shell: (script: string) => string[];
   // Returns the command that sends a file to a path in your home there.
   push: (file: string, to: string) => string[];
-  // Returns how to run sc there with these words in your terminal. It takes the environment to
-  // add, and gives back the exit code.
-  sc: (words: string[]) => (env: string[]) => Promise<number>;
+  // Returns how to run sc there with these words in your terminal, through the command `before`
+  // when given. It takes the environment to add, and gives back the exit code.
+  sc: (words: string[], before?: string[]) => (env: string[]) => Promise<number>;
   // Returns the sc the daemon's service starts there, or null when there is no service.
   daemonSkel: () => Promise<string | null>;
   // Copies a built Skelcrew there.

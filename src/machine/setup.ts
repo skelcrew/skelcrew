@@ -392,9 +392,11 @@ export function firstRun(from?: string): boolean {
 // one you said no to, plain sc runs all of this again. A repository's plugin never takes the mark,
 // as it is the repository's, not yours. But a plugin of yours whose pins disagree with a
 // repository's does, and so does a repository whose files can't be read, as they may pin one of
-// yours at another commit. A machine set up by an older release gets the marks here
-// too. `plain` is set when plain sc runs this, which says nothing when there was nothing to do.
-export function install(from?: string, plain = false): void {
+// yours at another commit. A machine set up by an older release gets the marks here too. `plain`
+// is set when plain sc runs this, which says nothing when there was nothing to do. Returns whether
+// the machine is set up, so sc install can fail while a plugin is missing, and sc --remote doesn't
+// go on to the command you asked for.
+export function install(from?: string, plain = false): boolean {
   const finished = installFinished();
   // The mark goes until your plugins are in, so a failure on the way, such as a plugin that needs
   // your yes with no terminal, leaves plain sc to run this again.
@@ -402,12 +404,21 @@ export function install(from?: string, plain = false): void {
   const setUp = firstRun(from);
   // What repositories need is read first, so a plugin your lock and a repository pin at different
   // commits is left as it is on both sides. Each repository is read on its own, so one whose files
-  // can't be read hides nothing of the others.
+  // can't be read hides nothing of the others. A plugin any repository Skelcrew has names stays,
+  // though your files don't name it, and while one can't be read none is removed, as what it
+  // needs can't be told.
   const conflictsIn = (needs: Need[]) =>
     needs.filter((need) => need.conflict !== null).map((need) => need.source);
-  const { changed: plugins, left: notHere } = installYourPlugins(
+  const anywhere: string[] = [];
+  const everyNeed = repositoryNeeds(true, anywhere).map((need) => need.source);
+  const {
+    changed: plugins,
+    left: notHere,
+    kept,
+  } = installYourPlugins(
     from ?? originHere(),
     conflictsIn(repositoryNeeds(false, [])),
+    anywhere.length > 0 ? null : everyNeed,
   );
   // Read again, as installing a plugin of yours with no pin yet pins it, and that new pin may
   // disagree with a repository's. Such a plugin is left out of the repositories' part, and keeps
@@ -431,9 +442,15 @@ export function install(from?: string, plain = false): void {
     console.log(
       `\nSkelcrew isn't set up yet, as your lock and a repository pin ${disagreeing.join(", ")} at different commits. Plain sc asks again. Pin the same version in each.`,
     );
+  // So does one your files no longer name that is still here, such as a repository's tracker.
+  if (kept.length > 0)
+    console.log(
+      `\nSkelcrew isn't set up yet, as this machine still has ${kept.join(", ")}, which your files don't name. Once no repository uses it, sc install removes it.`,
+    );
   // A repository whose files can't be read may pin a plugin of yours at another commit, which
   // can't be known, so the machine isn't set up until they can be read.
-  if (left.length === 0 && unreadable.length === 0) {
+  const ready = left.length === 0 && kept.length === 0 && unreadable.length === 0;
+  if (ready) {
     mkdirSync(dataDir(), { recursive: true });
     writeFileSync(setUpFile(), "");
     writeFileSync(installDoneFile(), "");
@@ -446,11 +463,12 @@ export function install(from?: string, plain = false): void {
   const repositories = installRepositoryPlugins(needs);
   if (unreadable.length > 0)
     throw new Error("some repositories' plugins can't be read, as said above");
-  if (left.length > 0) return;
+  if (!ready) return false;
   if (!finished && (setUp || plugins || repositories.changed)) console.log("\nSkelcrew is set up.");
   // Plain sc on a machine set up by an older release takes the marks without a word.
   else if (!plain && !setUp && !plugins && !repositories.changed && !repositories.missing)
     console.log("Nothing to install: this machine has everything your files ask for.");
+  return true;
 }
 
 // Reports whether sc install ran to its end here, which plain sc checks to know whether to run it

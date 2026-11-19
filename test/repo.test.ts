@@ -778,6 +778,8 @@ describe("a repository no forge claims", () => {
     expect(run.err).toContain("Permission denied (publickey).");
     expect(run.err).toContain("a key with no passphrase or a credential helper");
     expect(await listed()).toEqual([]);
+    // Every lead reads the folder of clones, so one Skelcrew didn't add is gone from it.
+    expect(existsSync(clone("simon/notes"))).toBe(false);
   });
 
   // Two servers can each hold a simon/notes. Taking the second as the one Skelcrew has would
