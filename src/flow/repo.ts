@@ -690,17 +690,29 @@ export async function removeRepo(name: string, sessions: string): Promise<void> 
   // Its tab closes first, so an open screen moves on at once. A screen that found the lead
   // gone while its tab was still there would take it for a crash and ask for it back. A lead the
   // daemon is starting meanwhile sees the tab closed once its session is there, and ends it.
-  db.run("UPDATE repositories SET tab_closed = 1 WHERE owner = ? AND repo = ?", [
-    found.owner,
-    found.repo,
-  ]);
-  // Then find the lead's session: its host, and its ID there, found by its labels when the
-  // daemon stopped before saving it. Looked up only now, so a lead whose start began before the
-  // tab closed is found here, on the host it started on, if its start doesn't end it.
-  const lead = await leadSession(db, sessions, found.owner, found.repo);
-  if (lead === null) throw new Error(`${name}'s lead's host went away while it was removed`);
-  // Ended as a thread's builder is, and waited for, as the lead reads the clone removed next.
-  await stopSession(lead.host, lead.id);
+  const where = "WHERE owner = ? AND repo = ?";
+  const tab = z
+    .object({ tab_closed: z.number() })
+    .parse(db.query(`SELECT tab_closed FROM repositories ${where}`).get(found.owner, found.repo));
+  db.run(`UPDATE repositories SET tab_closed = 1 ${where}`, [found.owner, found.repo]);
+  try {
+    // Then find the lead's session: its host, and its ID there, found by its labels when the
+    // daemon stopped before saving it. Looked up only now, so a lead whose start began before
+    // the tab closed is found here, on the host it started on, if its start doesn't end it.
+    const lead = await leadSession(db, sessions, found.owner, found.repo);
+    if (lead === null) throw new Error(`${name}'s lead's host went away while it was removed`);
+    // Ended as a thread's builder is, and waited for, as the lead reads the clone removed next.
+    await stopSession(lead.host, lead.id);
+  } catch (error) {
+    // A host that can't be reached leaves the lead and the repository as they were, so its tab
+    // goes back as it was too, rather than hiding a repository Skelcrew still has.
+    db.run(`UPDATE repositories SET tab_closed = ? ${where}`, [
+      tab.tab_closed,
+      found.owner,
+      found.repo,
+    ]);
+    throw error;
+  }
   // Remove the clone, the row and your trust in it. The other repositories are named again,
   // as one that shared a name with this one can drop its owner.
   rmSync(cloneDir(found.owner, found.repo), { recursive: true, force: true });

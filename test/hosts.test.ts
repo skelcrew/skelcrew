@@ -398,6 +398,26 @@ console.log(sessions.length);`,
   );
 }, 20_000);
 
+test("removing a repository whose lead's host fails keeps it, with its tab open", () => {
+  const fake = join(home, ".config", "skelcrew", "plugins", "fake");
+  const said = runWithFakeHost(
+    "sessions",
+    `const { removeRepo } = await import(${JSON.stringify(source("flow/repo.ts"))});
+const { cloneDir } = await import(${JSON.stringify(source("paths.ts"))});
+const fs = require("node:fs");
+db.run("INSERT INTO repositories (name, owner, repo, remote, lead_host, lead_host_id) VALUES ('app', 'simon', 'app', '', 'fake', 'fake-lead-app')");
+db.run("DELETE FROM threads");
+fs.mkdirSync(cloneDir("simon", "app"), { recursive: true });
+fs.mkdirSync(${JSON.stringify(fake)}, { recursive: true });
+fs.writeFileSync(${JSON.stringify(join(fake, "fail-list"))}, "");
+console.log(await removeRepo("app", "unused").then(() => "removed", () => "refused"));
+const row = db.query("SELECT tab_closed FROM repositories WHERE repo = 'app'").get();
+console.log(fs.existsSync(cloneDir("simon", "app")), row.tab_closed);`,
+    {},
+  );
+  expect(said).toBe("refused\ntrue 0\n");
+});
+
 test("removing a repository ends its lead on a plugin's host, found by its labels", () => {
   const fake = join(home, ".config", "skelcrew", "plugins", "fake");
   const said = runWithFakeHost(
