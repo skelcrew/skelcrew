@@ -70,6 +70,10 @@ beforeEach(async () => {
       if (JSON.parse(data.toString()).command === "status") return connection.end("{}\n");
       appendFileSync(join(home, "calls"), "daemon lead\n");
       writeFileSync(join(home, "asked"), data.toString());
+      // A real daemon starts a stopped lead here, on the .agents/ approved by now.
+      const approvals = join(home, ".config", "skelcrew", "approved-agents.yaml");
+      if (existsSync(approvals))
+        writeFileSync(join(home, "approved-at-lead"), readFileSync(approvals));
       connection.end(`${daemonReply}\n`);
     }),
   );
@@ -1038,12 +1042,15 @@ describe("a repository's .agents/", () => {
     pushRole(checkout, "Build it the team's way.\n");
     await skel(["repo", "add"], "", checkout);
     expect(approved()).toBeUndefined();
-    // The daemon answers with the repository you opened last.
+    // The daemon answers with the repository you opened last, and starts its lead if it stopped.
     const run = await skel([], "y\n");
     expect(run.err).toBe("");
     expect(run.out).toContain("+Build it the team's way.");
     expect(run.out).toContain("Approve simon/app's .agents/?");
-    expect(approved()).toBe(git(checkout, "rev-parse", "HEAD:.agents").trim());
+    const tree = git(checkout, "rev-parse", "HEAD:.agents").trim();
+    expect(approved()).toBe(tree);
+    // The lead starts on what you approved, so the question came before the daemon was asked.
+    expect(readFileSync(join(home, "approved-at-lead"), "utf8")).toContain(tree);
     expect((await skel([], "")).out).not.toContain("Approve");
   });
 

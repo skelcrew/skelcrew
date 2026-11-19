@@ -7,8 +7,7 @@ import { agentsAnswered, askAboutAgents } from "./approved-agents.ts";
 import { ask } from "./client.ts";
 import { tellOldKeys } from "./config.ts";
 import { openDb } from "./db.ts";
-import { leadOf } from "./flow/lead.ts";
-import { repositories } from "./flow/repo.ts";
+import { lastOpened, leadOf } from "./flow/lead.ts";
 import { builderSession, findThread } from "./flow/thread.ts";
 import { runList } from "./list/list.ts";
 import { installService, restartDaemon, servicePid, startDaemon } from "./machine/service.ts";
@@ -135,14 +134,27 @@ export async function upInBackground(): Promise<boolean> {
 // first. The lead is for `from`, an owner/repo, or else for the repository you opened last.
 // With `tab`, only a repository whose tab is open will do. Returns false, showing nothing, when
 // every tab is closed. Before it shows either, it names once any old keys the opened
-// repository's skelcrew.yaml still uses, and without `from` asks about an .agents/ you never
-// answered for: only the daemon knows which repository you opened last.
+// repository's skelcrew.yaml still uses: the daemon has the last word on which repository you
+// opened last. Without `from`, it first asks about that repository's .agents/ if you never
+// answered for it.
 export async function attachToLead(
   sessions: string,
   list: boolean,
   from?: string,
   tab = false,
 ): Promise<boolean> {
+  // The daemon starts a stopped lead before it answers, on the roles you approved by then, so
+  // the question comes before the request. The repository is picked here as the daemon picks it.
+  // A tab that is closed won't open, so it asks nothing. With `from`, sc already asked as it
+  // brought the repository in.
+  const db = openDb();
+  const next = from ? null : lastOpened(db);
+  const closed =
+    next &&
+    db
+      .query("SELECT 1 FROM repositories WHERE owner = ? AND repo = ? AND tab_closed = 1")
+      .get(next.owner, next.repo);
+  if (next && !(tab && closed) && !agentsAnswered(next)) askAboutAgents(next, next.name);
   // Asking for the lead brings it back if it ended while the daemon kept running. Starting it
   // takes longer than a status, hence the longer wait.
   const reply = await ask(
@@ -156,11 +168,6 @@ export async function attachToLead(
   if ("error" in lead.data) throw new Error(lead.data.error);
   if ("closed" in lead.data) return false;
   tellOldKeys(lead.data.repository);
-  // With `from`, sc already asked about that repository's .agents/ as it brought it in, so
-  // asking again would repeat a question you just left unanswered.
-  const { repository } = lead.data;
-  const opened = repositories(openDb()).find((r) => `${r.owner}/${r.repo}` === repository);
-  if (!from && opened && !agentsAnswered(opened)) askAboutAgents(opened, opened.name);
   if (list) await runList(sessions, lead.data.repository);
   else await openScreen(sessions, lead.data.lead, lead.data.lead, lead.data.repository);
   return true;
