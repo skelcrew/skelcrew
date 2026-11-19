@@ -81,11 +81,17 @@ test("Alt-Shift-Right and Alt-Shift-Left switch both sides to the repository bes
   await until(() => seen().includes("I am lead") && seen().includes("app-12"), "app again");
 });
 
-test("switching to a repository whose lead runs on a plugin's host attaches to it through that host", async () => {
+test("a lead on a plugin's host shows through that host from its tab, and comes back once it ends", async () => {
+  daemon();
   sql(`INSERT INTO repositories (name, owner, repo) VALUES ('site', 'simon', 'site')`);
+  // The host lists site's lead as running while its file running says true.
   const plugin = join(home, "plugin-fake");
   mkdirSync(plugin, { recursive: true });
-  writeFileSync(join(plugin, "session.sh"), `read -r question; echo '{"sessions":[]}'\n`);
+  writeFileSync(join(plugin, "running"), "true");
+  writeFileSync(
+    join(plugin, "session.sh"),
+    `read -r question; echo >> listed; echo "{\\"sessions\\":[{\\"id\\":\\"fake-site-lead\\",\\"running\\":$(cat running),\\"labels\\":null}]}"\n`,
+  );
   writeFileSync(join(plugin, "attach.sh"), 'echo "I am $1 on fake"; exec sleep 300\n');
   writeFileSync(
     join(plugin, "skelcrew-plugin.yaml"),
@@ -98,6 +104,13 @@ UPDATE repositories SET lead_host = 'fake', lead_host_id = 'fake-site-lead' WHER
   press("M-S-Right");
   await until(() => seen().includes("I am fake-site-lead on fake"), "site's lead on its host");
   await until(() => selected() === "◆ lead", "the sidebar on site's lead");
+  const opened = () => asked.filter((one) => one === "open simon/site from a tab").length;
+  await until(() => opened() === 1, "the daemon to open site");
+  // Once the sidebar has seen the lead run on its host, a lead that ends there is brought back.
+  const looks = () => read(join("plugin-fake", "listed")).split("\n").length;
+  await until(() => looks() > 2, "the sidebar to ask the host");
+  writeFileSync(join(plugin, "running"), "false");
+  await until(() => opened() === 2, "the daemon to bring site's lead back");
   press("M-S-Left");
   await until(() => seen().includes("I am lead") && seen().includes("app-12"), "app again");
 });

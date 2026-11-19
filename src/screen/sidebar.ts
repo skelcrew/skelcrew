@@ -102,15 +102,15 @@ export async function runSidebar(
     const client = 'unset TMUX; tmux -L "$1" -f /dev/null attach -t "=$2"';
     return ["sh", "-c", `${client}; ${leadLine()}`, "sh", agents, first];
   };
-  // The builders running on a plugin's host, by their thread's folder, with the line that attaches
-  // to each, as the last look at the hosts found them. The look runs in the background, one at a
+  // The agents running on a plugin's host, builders by their thread's folder and the open lead by
+  // its name, with the line that attaches to each, as the last look at the hosts found them. The look runs in the background, one at a
   // time, as a host can be slow, and the sidebar never waits on it.
   let hosted = new Map<string, string>();
   let lookingAtHosts = false;
   const lookAtHosts = () => {
     if (lookingAtHosts) return;
     lookingAtHosts = true;
-    hostedBuilders(db)
+    hostedAgents(db, open)
       .then((found) => {
         hosted = found;
       })
@@ -336,21 +336,33 @@ export async function runSidebar(
   process.exit(0);
 }
 
-// Returns the builders running on a plugin's host, by their thread's folder, each with the line
-// that attaches to it, for the sidebar. Each host is asked once for all its builders. A host
-// that fails shows none of them as running.
-async function hostedBuilders(db: ReturnType<typeof openDb>): Promise<Map<string, string>> {
+// Returns the agents running on a plugin's host, each with the line that attaches to it, for the
+// sidebar: builders by their thread's folder, and the open repository's lead by its name, so a
+// lead there that ends is noticed and brought back, as one on tmux is. Each host is asked once
+// for all its agents. A host that fails shows none of them as running.
+async function hostedAgents(
+  db: ReturnType<typeof openDb>,
+  open: Open,
+): Promise<Map<string, string>> {
   const found = new Map<string, string>();
-  const threads = liveThreads(db).filter(
-    (thread) => thread.host !== null && thread.host !== "tmux" && thread.host_id !== null,
+  // Each agent on a plugin's host: what the sidebar knows it by, its host and its ID there.
+  const agents = liveThreads(db).flatMap((thread) =>
+    thread.host !== null && thread.host !== "tmux" && thread.host_id !== null
+      ? [{ key: thread.folder, host: thread.host, id: thread.host_id }]
+      : [],
   );
-  for (const name of new Set(threads.map((thread) => thread.host ?? ""))) {
+  try {
+    const lead = leadOf(db, open.owner, open.repo);
+    if (lead.host !== "tmux" && lead.hostId !== null)
+      agents.push({ key: open.lead, host: lead.host, id: lead.hostId });
+  } catch {}
+  for (const name of new Set(agents.map((agent) => agent.host))) {
     const host = pluginHost(db, name);
     if (host === null) continue;
     const listed = await listSessions(host).catch(() => []);
-    for (const thread of threads)
-      if (thread.host === name && listed.some((one) => one.name === thread.host_id && one.running))
-        found.set(thread.folder, attachOnHostLine(host, thread.host_id ?? ""));
+    for (const agent of agents)
+      if (agent.host === name && listed.some((one) => one.name === agent.id && one.running))
+        found.set(agent.key, attachOnHostLine(host, agent.id));
   }
   return found;
 }
