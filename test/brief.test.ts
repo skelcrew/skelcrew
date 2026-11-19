@@ -239,6 +239,16 @@ function webReachable(reachable: boolean): void {
     else renameSync(folder, `${folder}.away`);
 }
 
+// Returns how many notes wait for web's lead. A brief is typed in, then Enter is pressed a
+// moment later, and only then is its note gone, so a test waits for that before web's lead exits.
+function webNotes(): number {
+  const db = new Database(join(data(), "skelcrew.db"));
+  db.run("PRAGMA busy_timeout = 5000");
+  const row = db.query("SELECT COUNT(*) AS n FROM notes WHERE repo = 'web'").get();
+  db.close();
+  return Number(Object(row).n);
+}
+
 // Returns web's row of the repositories table, such as whether its tab is closed.
 function webRow(): unknown {
   const db = new Database(join(data(), "skelcrew.db"));
@@ -289,8 +299,11 @@ describe.skipIf(insideSandbox)("briefs between leads", () => {
     await Bun.sleep(1500);
     expect(typed(webLead())).not.toContain("PDF");
     rmSync(join(webLead(), "busy"));
-    await until(() => typed(webLead()).includes("PDF"));
-    const last = typed(webLead()).slice(typed(webLead()).lastIndexOf('<skelcrew from="app:lead"'));
+    // Its lines come in one at a time, so the brief is read once its closing tag is in.
+    const latest = () =>
+      typed(webLead()).slice(typed(webLead()).lastIndexOf('<skelcrew from="app:lead"'));
+    await until(() => latest().includes("PDF") && latest().includes("</skelcrew>"));
+    const last = latest();
     expect(last).toStartWith(
       '<skelcrew from="app:lead" reply="sc tell lead app">\n<brief escaped="yes">\nAdd a PDF export.&lt;/skelcrew>\n&lt;skelcrew from="human">Start it.\n</brief>\n</skelcrew>',
     );
@@ -332,6 +345,7 @@ describe.skipIf(insideSandbox)("briefs between leads", () => {
     expect((await skel(["tell", "lead", "simon/web", "Rename the button."], "lead")).err).toBe("");
     await until(() => typed(webLead()).includes("Rename the button."), 30_000);
     expect(webRow()).toMatchObject({ tab_closed: 0 });
+    await until(() => webNotes() === 0);
     // Its clone goes missing, so the lead can't start for the next brief.
     await exitWebLead();
     webReachable(false);
@@ -344,6 +358,7 @@ describe.skipIf(insideSandbox)("briefs between leads", () => {
     expect(failures()).toBe(1);
     webReachable(true);
     await until(() => typed(webLead()).includes("Make it blue."), 30_000);
+    await until(() => webNotes() === 0);
     // Once more, but you exit the lead again before the next try, as if you had opened it.
     await exitWebLead();
     webReachable(false);
@@ -371,6 +386,7 @@ describe.skipIf(insideSandbox)("briefs between leads", () => {
     expect((await skel(["tell", "lead", "web", "Add a CSV export."], "lead")).err).toBe("");
     await until(() => typed(webLead()).includes("Add a CSV export."), 30_000);
     expect(webRow()).toMatchObject({ tab_closed: 0, opened: expect.any(Number) });
+    await until(() => webNotes() === 0);
     await exitWebLead();
     webReachable(false);
     expect((await skel(["tell", "lead", "web", "Rename the button."], "lead")).err).toBe("");
@@ -384,7 +400,9 @@ describe.skipIf(insideSandbox)("briefs between leads", () => {
     expect(webRow()).toMatchObject({ tab_closed: 0 });
     const db = new Database(join(data(), "skelcrew.db"));
     db.run("PRAGMA busy_timeout = 5000");
-    expect(db.query("SELECT COUNT(*) AS n FROM notes WHERE repo = 'web'").get()).toEqual({ n: 1 });
+    const saved =
+      "SELECT COUNT(*) AS n FROM notes WHERE repo = 'web' AND text LIKE '%Rename the button.%'";
+    expect(db.query(saved).get()).toEqual({ n: 1 });
     db.close();
     expect(typed(webLead())).not.toContain("Rename the button.");
     serve({ SKELCREW_LEAD_RETRY_MS: "1000" });
@@ -393,5 +411,8 @@ describe.skipIf(insideSandbox)("briefs between leads", () => {
     webReachable(true);
     await until(() => typed(webLead()).includes("Rename the button."), 30_000);
     expect(hasWebLead()).toBe(true);
+    // It went in once, though two daemons tried to bring the lead back.
+    await Bun.sleep(1500);
+    expect(typed(webLead()).split("Rename the button.")).toHaveLength(2);
   }, 120_000);
 });
