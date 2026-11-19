@@ -7,7 +7,7 @@ import { HarnessName, harnessNamed } from "../agents/harness.ts";
 import {
   checkAgentStarted,
   endSession,
-  exitedCleanly,
+  exitedCleanlyOnHost,
   failedScreen,
   hasSession,
   keepOnExit,
@@ -26,6 +26,7 @@ import { builtInRole, repositoryRole } from "../roles.ts";
 import { errorText } from "../say.ts";
 import type { Settings } from "../settings.ts";
 import { refreshClones } from "./repo.ts";
+import { forgetStatus, reportLeadStatus } from "./status.ts";
 
 // What Skelcrew's database keeps about a repository's lead, checked as it is read back.
 const LeadRow = z.object({
@@ -273,6 +274,10 @@ export async function startLead(
     owner,
     repo,
   ]);
+  // A host that shows status hears it afresh, as a session starting under an ID it had before
+  // has shown nothing yet.
+  forgetStatus(hostName, id);
+  reportLeadStatus(db, owner, repo);
   // A remote can be slow or away, and attaching waits on this.
   refreshClones(db).catch((error) => console.log(errorText(error)));
   // A lead that had a conversation but starts a new one says so, as it starts without its
@@ -290,16 +295,28 @@ export async function startLead(
 // daemon was down, has its tab closed too. Only the lead ends: the repository, its threads and
 // its clone stay, and its conversation is kept for when you open it again. The tab is marked
 // closed before the session ends, so a sidebar that finds the session gone also finds the tab
-// closed, and doesn't bring the lead back. Only a lead on tmux keeps its session on a clean exit,
-// so a lead on a plugin's host is never taken for one you exited.
+// closed, and doesn't bring the lead back. Each lead is asked of its own host at once, so a host
+// that fails or hangs holds up no lead on another. A lead still being asked about is skipped, so
+// looks at a slow host never pile up.
 export async function closeExitedLeads(db: Database, sessions: string): Promise<void> {
-  for (const { owner, repo } of openedRepositories(db)) {
-    const { name, host, hostId } = leadOf(db, owner, repo);
-    if (host !== "tmux") continue;
-    const id = hostId ?? name;
-    if (!exitedCleanly(sessions, id)) continue;
-    db.run("UPDATE repositories SET tab_closed = 1 WHERE owner = ? AND repo = ?", [owner, repo]);
-    await endSession(sessions, id);
-    console.log(`${owner}/${repo}'s lead exited, so its tab is closed until you open it again.`);
-  }
+  const close = async ({ owner, repo }: Repository) => {
+    const key = `${owner}/${repo}`;
+    if (asking.has(key)) return;
+    asking.add(key);
+    try {
+      const lead = await leadSession(db, sessions, owner, repo);
+      if (lead === null || !(await exitedCleanlyOnHost(lead.host, lead.id))) return;
+      db.run("UPDATE repositories SET tab_closed = 1 WHERE owner = ? AND repo = ?", [owner, repo]);
+      await endSession(lead.host, lead.id);
+      console.log(`${key}'s lead exited, so its tab is closed until you open it again.`);
+    } catch (error) {
+      console.log(`couldn't tell whether ${key}'s lead exited: ${errorText(error)}`);
+    } finally {
+      asking.delete(key);
+    }
+  };
+  await Promise.all(openedRepositories(db).map(close));
 }
+
+// The leads being asked about by closeExitedLeads, by owner/name.
+const asking = new Set<string>();

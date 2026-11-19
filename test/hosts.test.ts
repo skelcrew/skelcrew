@@ -330,6 +330,59 @@ console.log(await startLead(db, "unused", repository).catch((error) => error.mes
   );
 });
 
+test("a lead on a host that shows status hears each change of what it does", () => {
+  const said =
+    statusesAfter(`db.run("INSERT INTO repositories (name, owner, repo, remote, lead_host, lead_host_id) VALUES ('app', 'simon', 'app', '', 'fake', 'fake-lead-app')");
+keepState(db, { owner: "simon", repo: "app" }, "working");
+keepState(db, { owner: "simon", repo: "app" }, "asking");
+keepState(db, { owner: "simon", repo: "app" }, "asking");
+keepState(db, { owner: "simon", repo: "app" }, "error");
+keepState(db, { owner: "simon", repo: "app" }, "idle");`);
+  expect(said).toEqual([
+    { id: "fake-lead-app", status: "working", reason: "working" },
+    { id: "fake-lead-app", status: "needs you", reason: "question" },
+    { id: "fake-lead-app", status: "error", reason: "error" },
+    { id: "fake-lead-app", status: "idle", reason: "idle" },
+  ]);
+});
+
+test("a lead the host kept after it exited cleanly is told from one that crashed", () => {
+  const said = runWithFakeHost(
+    "sessions",
+    `const { exitedCleanlyOnHost } = await import(${JSON.stringify(source("agents/sessions.ts"))});
+const { pluginHost } = await import(${JSON.stringify(source("plugins/runtime.ts"))});
+const host = pluginHost(db, "fake");
+const start = (name, code) => startSession(host, name, { folder: ${JSON.stringify(home)}, command: ["sh", "-c", code], env: {}, labels: { repository: "simon/" + name, role: "lead" }, keepOnExit: true });
+const running = await start("running", "sleep 30");
+const clean = await start("clean", "exit 0");
+const crashed = await start("crashed", "exit 3");
+await Bun.sleep(1000);
+console.log(await exitedCleanlyOnHost(host, running), await exitedCleanlyOnHost(host, clean), await exitedCleanlyOnHost(host, crashed), await exitedCleanlyOnHost(host, "nobody"));
+const asked = require("node:fs").readFileSync(${JSON.stringify(join(home, ".config", "skelcrew", "plugins", "fake", "asked"))}, "utf8");
+console.log(asked.split("\\n").filter((line) => line.includes('"ask":"start"')).every((line) => JSON.parse(line).keepOnExit === true));`,
+    {},
+  );
+  expect(said).toBe("false true false false\ntrue\n");
+});
+
+test("removing a repository ends its lead on a plugin's host, found by its labels", () => {
+  const fake = join(home, ".config", "skelcrew", "plugins", "fake");
+  const said = runWithFakeHost(
+    "sessions",
+    `const { removeRepo } = await import(${JSON.stringify(source("flow/repo.ts"))});
+const { pluginHost } = await import(${JSON.stringify(source("plugins/runtime.ts"))});
+db.run("INSERT INTO repositories (name, owner, repo, remote, lead_host) VALUES ('app', 'simon', 'app', '', 'fake')");
+const host = pluginHost(db, "fake");
+await startSession(host, "lead-app", { folder: ${JSON.stringify(home)}, command: ["sleep", "30"], env: {}, labels: { repository: "simon/app", role: "lead" } });
+db.run("DELETE FROM threads");
+await removeRepo("app", "unused");
+console.log(await hasSession(host, "fake-lead-app"));`,
+    {},
+  );
+  expect(said).toBe("Removed app and Skelcrew's clone of it.\nfalse\n");
+  expect(readFileSync(join(fake, "asked"), "utf8")).toContain('"ask":"end"');
+});
+
 test("a builder that can't be ended keeps its host, and stopping it again tries again", () => {
   const said = runWithFakeHost(
     "sessions",

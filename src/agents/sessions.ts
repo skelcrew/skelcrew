@@ -147,8 +147,7 @@ function startServer(socket: string): void {
 // session's ID on its host. On tmux the ID is the name. A plugin's host gives its own, and is
 // handed the name and labels to show. With `keepOnExit`, the session stays when its agent exits
 // cleanly too, so Skelcrew can tell a lead you exited from one that crashed: the first closes its
-// tab, the second doesn't. Only leads ask for that, and only tmux keeps it: a plugin's host isn't
-// asked to.
+// tab, the second doesn't. Only leads ask for that. A plugin's host is asked to keep it too.
 export async function startSession(
   host: Host,
   name: string,
@@ -162,7 +161,8 @@ export async function startSession(
 ): Promise<string> {
   if (typeof host !== "string") {
     const { folder, command, env, labels } = session;
-    const question = { ask: "start", name, folder, command, env, labels };
+    const keep = session.keepOnExit ? { keepOnExit: true } : {};
+    const question = { ask: "start", name, folder, command, env, labels, ...keep };
     return (await askHost(host, question, z.object({ id: z.string().min(1) }))).id;
   }
   const socket = host;
@@ -285,6 +285,19 @@ export async function failedScreen(host: Host, name: string): Promise<string | n
 export function exitedCleanly(socket: string, name: string): boolean {
   const target = ["display-message", "-p", "-t", `=${name}:`, "#{pane_dead} #{pane_dead_status}"];
   return tmux(socket, target).out.trim() === "1 0";
+}
+
+// Reports whether an agent exited with code 0 on whichever host it ran, as exitedCleanly does on
+// tmux. A plugin's host gives an ended session's exit code in its list when it kept the session,
+// as it is asked to for a lead. One that gives none never reads as a clean exit, so a lead there
+// that ended is taken for one that crashed, and brought back.
+export async function exitedCleanlyOnHost(host: Host, id: string): Promise<boolean> {
+  if (typeof host === "string") return exitedCleanly(host, id);
+  const Listed = z.object({ id: z.string(), running: z.boolean(), exited: z.number().optional() });
+  const answer = z.object({ sessions: z.array(Listed) });
+  const { sessions } = await askHost(host, { ask: "list" }, answer);
+  const found = sessions.find((session) => session.id === id);
+  return found?.running === false && found.exited === 0;
 }
 
 // Reports whether the agent in the named session is still running, so Skelcrew only types into

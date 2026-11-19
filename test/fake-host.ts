@@ -1,6 +1,7 @@
 // A session host for tests, run as a runtime plugin's session command. It keeps each session in
 // a folder of its own under its settings folder: the session's labels, its process, what its
-// agent printed, which is its screen, and a pipe its agent reads, which paste and keys write to.
+// agent printed, which is its screen, a pipe its agent reads, which paste and keys write to, and
+// once its agent ended, the exit code, which its list gives.
 // It notes each question it is asked in `asked`, and each status it is given in `statuses`. Its
 // own transport, when the test's manifest says it provides one, takes an agent as idle unless
 // its screen shows Claude Code's busy mark, and types a message in one step, noting it in
@@ -113,12 +114,20 @@ const answers: Record<string, () => unknown> = {
     while (left()) await Bun.sleep(50);
     rmSync(folder(question.id), { recursive: true, force: true });
   },
+  // A session whose agent ended gives its exit code too, as the session stays after it.
   list: () => ({
-    sessions: (existsSync(sessions) ? readdirSync(sessions) : []).map((id) => ({
-      id,
-      running: running(id),
-      labels: JSON.parse(readFileSync(join(folder(id), "labels.json"), "utf8")),
-    })),
+    sessions: (existsSync(sessions) ? readdirSync(sessions) : []).map((id) => {
+      // The code can be read while the shell is still writing it, and nothing written is no code.
+      const exit = join(folder(id), "exit");
+      const code = existsSync(exit) ? readFileSync(exit, "utf8").trim() : "";
+      const exited = code === "" ? {} : { exited: Number(code) };
+      return {
+        id,
+        running: running(id),
+        labels: JSON.parse(readFileSync(join(folder(id), "labels.json"), "utf8")),
+        ...exited,
+      };
+    }),
   }),
   idle: () => ({ idle: !screen(question.id).includes(busy) }),
   // Types the message in one step once the agent is idle, or fails past the timeout.

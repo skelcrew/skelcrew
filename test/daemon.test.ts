@@ -1114,6 +1114,26 @@ describe.skipIf(insideSandbox)("with a lead per repository", () => {
     expect(claudeCalls()).toBe(`--session-id ${id}\n--resume ${id}\n`);
   });
 
+  test("a lead you exit on a plugin's host closes its tab, and a restart doesn't bring it back", async () => {
+    setUp();
+    addRepository("app");
+    leadExitsWhenTold(0);
+    const first = serve();
+    await untilAnswers();
+    installFakeHost();
+    useSessionHost("fake");
+    await open();
+    expect(fakeHostStarts()[0].keepOnExit).toBe(true);
+    tellLeadToExit();
+    await until(() => tabClosed());
+    await stop(first);
+    serve();
+    await untilAnswers();
+    await Bun.sleep(500);
+    expect(tabClosed()).toBe(true);
+    expect(fakeHostStarts()).toHaveLength(1);
+  });
+
   test("leaves a lead that is still running alone", async () => {
     setUp();
     addRepository("app");
