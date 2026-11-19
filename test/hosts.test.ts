@@ -346,68 +346,6 @@ keepState(db, { owner: "simon", repo: "app" }, "idle");`);
   ]);
 });
 
-test("a lead the host kept after it exited cleanly is told from one that crashed", () => {
-  const said = runWithFakeHost(
-    "sessions",
-    `const { exitedCleanlyOnHost } = await import(${JSON.stringify(source("agents/sessions.ts"))});
-const { pluginHost } = await import(${JSON.stringify(source("plugins/runtime.ts"))});
-const host = pluginHost(db, "fake");
-const start = (name, code) => startSession(host, name, { folder: ${JSON.stringify(home)}, command: ["sh", "-c", code], env: {}, labels: { repository: "simon/" + name, role: "lead" }, keepOnExit: true });
-const running = await start("running", "sleep 30");
-const clean = await start("clean", "exit 0");
-const crashed = await start("crashed", "exit 3");
-await Bun.sleep(1000);
-console.log(await exitedCleanlyOnHost(host, running), await exitedCleanlyOnHost(host, clean), await exitedCleanlyOnHost(host, crashed), await exitedCleanlyOnHost(host, "nobody"));
-const asked = require("node:fs").readFileSync(${JSON.stringify(join(home, ".config", "skelcrew", "plugins", "fake", "asked"))}, "utf8");
-console.log(asked.split("\\n").filter((line) => line.includes('"ask":"start"')).every((line) => JSON.parse(line).keepOnExit === true));`,
-    {},
-  );
-  expect(said).toBe("false true false false\ntrue\n");
-});
-
-test("a lead that exited cleanly on a host that gives no exit codes is taken for one that crashed", () => {
-  const fake = join(home, ".config", "skelcrew", "plugins", "fake");
-  const said = runWithFakeHost(
-    "sessions",
-    `const { exitedCleanlyOnHost } = await import(${JSON.stringify(source("agents/sessions.ts"))});
-const { pluginHost } = await import(${JSON.stringify(source("plugins/runtime.ts"))});
-const host = pluginHost(db, "fake");
-require("node:fs").mkdirSync(${JSON.stringify(fake)}, { recursive: true });
-require("node:fs").writeFileSync(${JSON.stringify(join(fake, "no-exits"))}, "");
-const clean = await startSession(host, "clean", { folder: ${JSON.stringify(home)}, command: ["sh", "-c", "exit 0"], env: {}, labels: { repository: "simon/app", role: "lead" }, keepOnExit: true });
-await Bun.sleep(1000);
-console.log(await exitedCleanlyOnHost(host, clean));`,
-    {},
-  );
-  expect(said).toBe("false\n");
-});
-
-test("a look at whether a lead exited joins the one under way, and closes its tab once", () => {
-  const fake = join(home, ".config", "skelcrew", "plugins", "fake");
-  const said = runWithFakeHost(
-    "sessions",
-    `const { closeIfExited } = await import(${JSON.stringify(source("flow/lead.ts"))});
-const { pluginHost } = await import(${JSON.stringify(source("plugins/runtime.ts"))});
-const fs = require("node:fs");
-db.run("INSERT INTO repositories (name, owner, repo, remote, opened, lead_host, lead_host_id) VALUES ('app', 'simon', 'app', '', 1, 'fake', 'fake-lead-app')");
-await startSession(pluginHost(db, "fake"), "lead-app", { folder: ${JSON.stringify(home)}, command: ["sh", "-c", "exit 0"], env: {}, labels: { repository: "simon/app", role: "lead" }, keepOnExit: true });
-await Bun.sleep(1000);
-fs.writeFileSync(${JSON.stringify(join(fake, "slow-list"))}, "");
-const lists = () => fs.readFileSync(${JSON.stringify(join(fake, "asked"))}, "utf8").split("\\n").filter((line) => line.includes('"ask":"list"')).length;
-const before = lists();
-const first = closeIfExited(db, "unused", { owner: "simon", repo: "app" });
-await Bun.sleep(200);
-// What opening the repository does: it waits for the look under way, and only then opens the tab.
-await closeIfExited(db, "unused", { owner: "simon", repo: "app" });
-console.log(db.query("SELECT tab_closed FROM repositories").get().tab_closed, lists() - before);
-await first;`,
-    {},
-  );
-  expect(said).toBe(
-    "simon/app's lead exited, so its tab is closed until you open it again.\n1 1\n",
-  );
-}, 20_000);
-
 test("removing a repository ends its lead on a plugin's host, found by its labels", () => {
   const fake = join(home, ".config", "skelcrew", "plugins", "fake");
   const said = runWithFakeHost(

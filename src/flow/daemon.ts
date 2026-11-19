@@ -37,14 +37,7 @@ import { holdCheckSlot } from "./checks.ts";
 import { ownTask, saveItems } from "./copy.ts";
 import { removeThread, stopThread } from "./events.ts";
 import { noCommits } from "./git.ts";
-import {
-  closeExitedLeads,
-  closeIfExited,
-  lastOpened,
-  leadOf,
-  openedRepositories,
-  startLead,
-} from "./lead.ts";
+import { closeExitedLeads, lastOpened, leadOf, openedRepositories, startLead } from "./lead.ts";
 import { restoreLimits, wakeAfterLimit } from "./limits.ts";
 import { listRepositories, listTasks, listThreads, showTask } from "./list.ts";
 import { armMerge, cancelMerge, refuseWithoutForge, threadToMerge } from "./merging.ts";
@@ -234,15 +227,17 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
     await open(socket, thread);
     await open(reviewSocket(thread.folder), { review: thread });
   };
-  let leadStarts: Promise<void> = Promise.resolve();
+  // The lead start under way for each repository, by its owner/name.
+  const leadStarts = new Map<string, Promise<void>>();
   // Opens a repository's lead's own socket, so the daemon knows which lead calls on it, then
-  // keeps the lead running or starts it. One at a time, so two requests at once can't start
-  // two sessions.
+  // keeps the lead running or starts it. One at a time for each repository, so two requests at
+  // once can't start two sessions, while a host that hangs holds up no other repository's lead.
   const ensureLead = (repository: Repository) => {
-    leadStarts = leadStarts
+    const { owner, repo } = repository;
+    const key = `${owner}/${repo}`;
+    const start = (leadStarts.get(key) ?? Promise.resolve())
       .catch(() => {})
       .then(async () => {
-        const { owner, repo } = repository;
         const { socket } = leadOf(db, owner, repo);
         if (!listening.has(socket)) {
           listening.add(socket);
@@ -250,7 +245,13 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         }
         await startLead(db, sessions, repository);
       });
-    return leadStarts;
+    leadStarts.set(key, start);
+    start
+      .finally(() => {
+        if (leadStarts.get(key) === start) leadStarts.delete(key);
+      })
+      .catch(() => {});
+    return start;
   };
   // Returns the request limited to the calling lead's own repository. A request about another
   // repository is refused, and the error tells the lead to ask you to open that one. sc ps and
@@ -356,21 +357,14 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         return { running: true, pid: process.pid, release, ...runningCode, ...thread };
       }
       case "lead": {
+        // A lead you exited this second is closed first, so the daemon's next look can't close
+        // the tab again while the lead starts, and a tab can't bring it back. It comes before
+        // the choice of repository, so plain sc doesn't pick the one whose tab just closed.
+        await closeExitedLeads(db, sessions);
         // From outside any repository Skelcrew has, the one you opened last.
-        const pick = () =>
+        const repository =
           (request.from === undefined ? undefined : repositoryAt(db, request.from)) ??
           lastOpened(db);
-        // A lead you exited this second is closed first, so the daemon's next look can't close
-        // the tab again while the lead starts, and a tab can't bring it back. Only the picked
-        // repository's lead is looked at, so a slow host holds up no other repository. When its
-        // tab just closed, plain sc picks again, as it must not open the tab you closed.
-        let repository = pick();
-        while (repository) {
-          await closeIfExited(db, sessions, repository);
-          const again = pick();
-          if (again?.owner === repository.owner && again.repo === repository.repo) break;
-          repository = again;
-        }
         if (!repository) throw new Error(noRepositories);
         const { owner, repo } = repository;
         // A tab never brings back a lead you exited, not even from a screen that still shows
@@ -729,14 +723,15 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   // Open your socket.
   await open(path, "you");
   console.log(`Listening on ${path}.`);
-  // Bring back the lead of each repository you have opened. One that fails is logged, and the
-  // rest still start.
-  for (const repository of openedRepositories(db))
-    await ensureLead(repository).catch((error) => console.log(errorText(error)));
+  // Bring back the lead of each repository you have opened, each on its own, so a host that
+  // hangs holds up no other. One that fails is logged, and the rest still start. The notes the
+  // daemon's stop kept from the leads go in once they are back.
+  const leadsBack = openedRepositories(db).map((repository) =>
+    ensureLead(repository).catch((error) => console.log(errorText(error))),
+  );
+  Promise.all(leadsBack).then(() => typeLeadNotes(db, sessions));
   // A lead keeps its clone current as it starts, and a repository with no lead needs it too.
   refreshClones(db).catch((error) => console.log(errorText(error)));
-  // Notes the daemon's stop kept from the leads.
-  typeLeadNotes(db, sessions);
   // Bring back each thread's builder, without waiting on it, and carry on the round it was in.
   // A thread whose builder can't come back ends its review, which would otherwise mark it
   // waiting again once it ended. Either way a review already brought back hears of it.

@@ -1114,24 +1114,27 @@ describe.skipIf(insideSandbox)("with a lead per repository", () => {
     expect(claudeCalls()).toBe(`--session-id ${id}\n--resume ${id}\n`);
   });
 
-  test("a lead you exit on a plugin's host closes its tab, and a restart doesn't bring it back", async () => {
+  test("a host that hangs holds up neither the daemon's start nor another repository's lead", async () => {
     setUp();
     addRepository("app");
-    leadExitsWhenTold(0);
+    addRepository("web");
     const first = serve();
     await untilAnswers();
+    await open("app");
     installFakeHost();
     useSessionHost("fake");
-    await open();
-    expect(fakeHostStarts()[0].keepOnExit).toBe(true);
-    tellLeadToExit();
-    await until(() => tabClosed());
+    await open("web");
+    expect(leadHost("web")).toMatchObject({ lead_host: "fake" });
     await stop(first);
+    // From here on, the fake host holds every list it is asked for, until the file goes.
+    writeFileSync(join(fakeHostSettings(), "hold-list"), "0");
+    const started = Date.now();
     serve();
     await untilAnswers();
-    await Bun.sleep(500);
-    expect(tabClosed()).toBe(true);
-    expect(fakeHostStarts()).toHaveLength(1);
+    expect(await open("app")).toEqual({ lead: leadName("app"), repository: "simon/app" });
+    expect(Date.now() - started).toBeLessThan(15_000);
+    expect(hasLead("app")).toBe(true);
+    rmSync(join(fakeHostSettings(), "hold-list"));
   });
 
   test("leaves a lead that is still running alone", async () => {

@@ -7,7 +7,7 @@ import { HarnessName, harnessNamed } from "../agents/harness.ts";
 import {
   checkAgentStarted,
   endSession,
-  exitedCleanlyOnHost,
+  exitedCleanly,
   failedScreen,
   hasSession,
   keepOnExit,
@@ -293,40 +293,20 @@ export async function startLead(
 // session. A lead that crashed exits with another code and keeps its tab. The daemon looks at
 // its start and every second, so a lead that exited while no screen was open, or while the
 // daemon was down, has its tab closed too. Only the lead ends: the repository, its threads and
-// its clone stay, and its conversation is kept for when you open it again. Each lead is asked of
-// its own host at once, so a host that fails or hangs holds up no lead on another.
+// its clone stay, and its conversation is kept for when you open it again. The tab is marked
+// closed before the session ends, so a sidebar that finds the session gone also finds the tab
+// closed, and doesn't bring the lead back. Only a lead on tmux keeps its session on a clean exit,
+// so a lead on a plugin's host is never taken for one you exited: it comes back as one that
+// crashed. Only tmux is asked, which answers at once, so a plugin's host that hangs holds up
+// nothing here.
 export async function closeExitedLeads(db: Database, sessions: string): Promise<void> {
-  await Promise.all(openedRepositories(db).map((one) => closeIfExited(db, sessions, one)));
-}
-
-// Closes the repository's tab and ends its lead's session if you exited the lead, as
-// closeExitedLeads does for each. The tab is marked closed before the session ends, so a sidebar
-// that finds the session gone also finds the tab closed, and doesn't bring the lead back. A look
-// already under way for this lead is joined rather than started again, so whoever opens the
-// repository next waits for its answer: a look that answered after the lead started again would
-// close the tab you just opened, and on a host that reuses its IDs, end the new lead.
-export function closeIfExited(
-  db: Database,
-  sessions: string,
-  { owner, repo }: Pick<Repository, "owner" | "repo">,
-): Promise<void> {
-  const key = `${owner}/${repo}`;
-  const under = looking.get(key);
-  if (under) return under;
-  const look = (async () => {
-    const lead = await leadSession(db, sessions, owner, repo);
-    if (lead === null || !(await exitedCleanlyOnHost(lead.host, lead.id))) return;
+  for (const { owner, repo } of openedRepositories(db)) {
+    const { name, host, hostId } = leadOf(db, owner, repo);
+    if (host !== "tmux") continue;
+    const id = hostId ?? name;
+    if (!exitedCleanly(sessions, id)) continue;
     db.run("UPDATE repositories SET tab_closed = 1 WHERE owner = ? AND repo = ?", [owner, repo]);
-    await endSession(lead.host, lead.id);
-    console.log(`${key}'s lead exited, so its tab is closed until you open it again.`);
-  })()
-    .catch((error) =>
-      console.log(`couldn't tell whether ${key}'s lead exited: ${errorText(error)}`),
-    )
-    .finally(() => looking.delete(key));
-  looking.set(key, look);
-  return look;
+    await endSession(sessions, id);
+    console.log(`${owner}/${repo}'s lead exited, so its tab is closed until you open it again.`);
+  }
 }
-
-// The looks under way at whether a lead exited, by its repository's owner/name.
-const looking = new Map<string, Promise<void>>();

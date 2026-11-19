@@ -15,7 +15,7 @@ import { dirname, join, resolve } from "node:path";
 import { stringify } from "yaml";
 import { z } from "zod";
 import { refuseCredentials } from "../agents/sandbox.ts";
-import { endSession, exitedCleanlyOnHost, stopSession } from "../agents/sessions.ts";
+import { endSession, exitedCleanly, stopSession } from "../agents/sessions.ts";
 import {
   agentsAnswered,
   agentsOnDefaultBranch,
@@ -35,7 +35,7 @@ import { SetupNeeded } from "../plugins/plugin.ts";
 import { builtInRole } from "../roles.ts";
 import { errorText } from "../say.ts";
 import { checkPush, cloneRepository, headCommit, remoteEmpty, updateClone } from "./git.ts";
-import { leadSession } from "./lead.ts";
+import { leadOf, leadSession } from "./lead.ts";
 
 // What sc says outside any repository while Skelcrew has none yet, so you know where to run it.
 export const noRepositories = "Skelcrew has no repositories yet. Run sc in a checkout of one.";
@@ -479,13 +479,11 @@ async function openAgain(db: Database, sessions: string, had: Repository): Promi
     // imports this file, and a loop of imports leaves one of them unset as the other loads.
     const { ask } = await import("../client.ts");
     const reply = await ask({ command: "lead", from: `${had.owner}/${had.repo}` }, 60_000);
-    // A lead you exited left its session behind, on whichever host it ran, which goes so the
-    // daemon's next start brings the lead back.
     if (reply === null) {
-      // A host that can't say leaves the lead as it is, so adding the repository still goes on.
-      const lead = await leadSession(db, sessions, had.owner, had.repo);
-      const exited = lead && (await exitedCleanlyOnHost(lead.host, lead.id).catch(() => false));
-      if (lead && exited) await endSession(lead.host, lead.id);
+      // Only a lead on tmux keeps its session after you exit it.
+      const { name, host, hostId } = leadOf(db, had.owner, had.repo);
+      const id = hostId ?? name;
+      if (host === "tmux" && exitedCleanly(sessions, id)) await endSession(sessions, id);
       db.run("UPDATE repositories SET tab_closed = 0 WHERE owner = ? AND repo = ?", [
         had.owner,
         had.repo,
