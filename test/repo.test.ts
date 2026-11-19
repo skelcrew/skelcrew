@@ -720,6 +720,8 @@ describe("a repository no forge claims", () => {
     expect(run.err).toContain("Permission denied (publickey).");
     expect(run.err).toContain("a key with no passphrase or a credential helper");
     expect(await listed()).toEqual([]);
+    // Every lead reads the folder of clones, so one Skelcrew didn't add is gone from it.
+    expect(existsSync(clone("simon/notes"))).toBe(false);
   });
 
   // Two servers can each hold a simon/notes. Taking the second as the one Skelcrew has would
@@ -1152,7 +1154,7 @@ ${fails ? 'echo "GitHub is unreachable" >&2; exit 1' : 'rm "$SKELCREW_PLUGIN_CON
     const run = await skel([], "\n", checkout);
     expect(run.code).toBe(0);
     expect(run.err).toBe(
-      "Skelcrew: github failed: Skelcrew's GitHub App isn't installed on simon/app. Run sc plugin setup github to set it up again.\n",
+      "Skelcrew: github failed: Skelcrew's GitHub App isn't installed on simon/app. Run sc setup github to set it up again.\n",
     );
     expect(existsSync(join(forge, "setup-remote"))).toBe(false);
     expect(existsSync(clone("simon/app"))).toBe(false);

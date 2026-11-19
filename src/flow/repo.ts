@@ -379,8 +379,11 @@ async function bringIn(db: Database, details: RepositoryDetails): Promise<void> 
   if (!existsSync(cloneDir(owner, repo))) console.log(`Cloning ${fullName} for Skelcrew.`);
   await refreshClone(db, repository, true);
   if (known) return;
+  // A repository git can't push to isn't added, and its clone goes: every lead reads the folder
+  // of clones, which must hold only the repositories Skelcrew has.
   if (claimed === null)
     await checkPush(db, repository, cloneDir(owner, repo)).catch((error) => {
+      rmSync(cloneDir(owner, repo), { recursive: true, force: true });
       throw new Error(
         `${fullName} has no forge, so Skelcrew pushes threads' branches on your own git login, and git refused: ${errorText(error)}. Give the daemon a login it can use without you, such as a key with no passphrase or a credential helper, then run this again.`,
       );

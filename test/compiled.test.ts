@@ -12,7 +12,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { insideSandbox, source } from "./harness.ts";
+import { insideSandbox, inTerminal, source } from "./harness.ts";
 
 let home = "";
 let skel = "";
@@ -51,15 +51,18 @@ afterAll(() => {
 });
 
 async function run(args: string[], file = skel, typed = "") {
+  const env = {
+    PATH: `${join(home, "bin")}:/usr/bin:/bin`,
+    HOME: home,
+    XDG_RUNTIME_DIR: join(home, "run"),
+    // Without it Skelcrew's temporary files go to /tmp, which a Mac sandbox hides.
+    TMPDIR: join(home, "tmp"),
+  };
+  // Answers are typed at a terminal, as only an answer there installs a plugin.
+  if (typed !== "") return inTerminal([file, ...args], { typed, env, cwd: home });
   const proc = Bun.spawn([file, ...args], {
     cwd: home,
-    env: {
-      PATH: `${join(home, "bin")}:/usr/bin:/bin`,
-      HOME: home,
-      XDG_RUNTIME_DIR: join(home, "run"),
-      // Without it Skelcrew's temporary files go to /tmp, which a Mac sandbox hides.
-      TMPDIR: join(home, "tmp"),
-    },
+    env,
     stdin: new Blob([typed]),
     stdout: "pipe",
     stderr: "pipe",

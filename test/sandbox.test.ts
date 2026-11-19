@@ -63,21 +63,25 @@ function git(cwd: string, ...args: string[]) {
   if (!done.success) throw new Error(done.stderr.toString());
 }
 
-// Skelcrew's clone of a repository, with one file in it.
-function repository() {
-  const repo = join(home, ".local", "share", "skelcrew", "repos", "simon", "app");
+// The folder of Skelcrew's clones, one per repository.
+const repos = () => join(home, ".local", "share", "skelcrew", "repos");
+
+// Skelcrew's clone of a repository, app unless named, with one file in it holding its name.
+function repository(name = "app") {
+  const repo = join(repos(), "simon", name);
   mkdirSync(repo, { recursive: true });
-  writeFileSync(join(repo, "README"), "app\n");
+  writeFileSync(join(repo, "README"), `${name}\n`);
   git(repo, "init", "-q");
   return repo;
 }
 
-// What a lead's start is given: where app's lead works, and app's clone, which it sees. The
-// clone goes along only once a test made it, as bwrap can't mount a folder that is missing.
-function lead(): { folder: string; origin?: string } {
+// What a lead's start is given: where app's lead works, app's clone, and the folder of every
+// repository's clone, which it reads. The clones go along only once a test made app's, as
+// bwrap can't mount a folder that is missing.
+function lead(): { folder: string; origin?: string; repositories?: string } {
   const folder = join(home, ".local", "share", "skelcrew", "leads", "simon", "app");
-  const repo = join(home, ".local", "share", "skelcrew", "repos", "simon", "app");
-  return existsSync(repo) ? { folder, origin: repo } : { folder };
+  const repo = join(repos(), "simon", "app");
+  return existsSync(repo) ? { folder, origin: repo, repositories: repos() } : { folder };
 }
 
 // Stands in for Claude Code: reports what it was given, sees and may change.
@@ -137,6 +141,43 @@ describe.skipIf(insideSandbox)("sandbox", () => {
     expect(done.err).toContain("Read-only file system");
     expect(readFileSync(join(folder, "note"), "utf8")).toBe("hi\n");
     expect(existsSync(join(repo, "new"))).toBe(false);
+  });
+
+  test("a lead reads another repository's clone and can't change it", async () => {
+    repository();
+    const web = repository("web");
+    const done = await asLead(`cat ${web}/README; echo x > ${web}/new || echo refused`);
+    expect(done.out).toBe("web\nrefused\n");
+    expect(existsSync(join(web, "new"))).toBe(false);
+  });
+
+  test("a repository added while a lead runs shows up in that lead", async () => {
+    repository();
+    const web = join(repos(), "simon", "web");
+    const { folder } = lead();
+    // The lead marks that it started, then waits up to five seconds for web's clone.
+    const waits = `for i in $(seq 50); do [ -f ${web}/README ] && break; sleep 0.1; done`;
+    const running = asLead(`touch started; ${waits}; cat ${web}/README`);
+    while (!existsSync(join(folder, "started"))) await Bun.sleep(20);
+    repository("web");
+    expect((await running).out).toBe("web\n");
+  });
+
+  test("a builder sees its own repository's clone and no other", async () => {
+    const app = repository();
+    const web = repository("web");
+    saveToken();
+    fakeClaude([`cat ${app}/README; cat ${web}/README || echo hidden`]);
+    const thread = join(home, ".local", "share", "skelcrew", "threads", "app-12");
+    const { argv, env } = claude.start({
+      name: "app-12",
+      socket: socketPath,
+      thread,
+      origin: app,
+      model: "opus",
+      env: outside(),
+    });
+    expect((await run(argv, env)).out).toBe("app\nhidden\n");
   });
 
   test("starts from a checkout of Skelcrew with no node_modules", async () => {
@@ -355,6 +396,7 @@ console.log(JSON.stringify(claude.start({ name: "lead", ...${JSON.stringify(lead
         agentSettings,
         "--resume",
         "abc-123",
+        "--",
         "Fix the bug",
         "CLAUDE_CODE_DISABLE_AGENT_VIEW=1",
         "CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false",
@@ -460,6 +502,25 @@ describe("starting Claude Code", () => {
     symlinkSync(join(home, "elsewhere"), config);
     expect(start).toThrow("link");
     expect(readdirSync(join(home, "elsewhere"))).toEqual([]);
+  });
+
+  // Claude Code reads a first message that starts with dashes, such as a task titled
+  // "--from", as an option it doesn't know, and exits before the builder does anything.
+  test("passes the first message after --, so it is never read as an option", () => {
+    repository();
+    saveToken();
+    const prompt = "--from\n\nskelcrew/298-the-list";
+    const { argv } = claude.start({
+      ...lead(),
+      name: "app-t3",
+      socket: socketPath,
+      model: "opus",
+      prompt,
+      sessionId: "6f1c2a8e-3b4d-4e5f-8a9b-0c1d2e3f4a5b",
+      env: outside(),
+    });
+    expect(argv.slice(-2)).toEqual(["--", prompt]);
+    expect(argv.filter((a) => a === prompt)).toHaveLength(1);
   });
 
   // Claude Code ignores this setting when it comes only from --settings, and then runs in
@@ -608,6 +669,42 @@ claude.start({ name: "app-12", socket: "x", model: "opus", ...${JSON.stringify(l
     const options = argv.slice(0, argv.indexOf("--")).join(" ");
     expect(options).toContain("--proc /proc");
     expect(options).toContain("--unshare-pid");
+  });
+
+  test("only a lead gets every repository's clone, read-only, on either harness", async () => {
+    const app = repository();
+    saveToken();
+    const env = { ...outside(), PATH: "/usr/bin:/bin" };
+    // bubblewrap mounts the folder read-only on Linux. A Mac's profile lets the agent read it,
+    // and write nowhere in it.
+    const mounted =
+      process.platform === "darwin"
+        ? `(allow file-read* (subpath ${JSON.stringify(repos())}))`
+        : `--ro-bind ${repos()} ${repos()}`;
+    const thread = join(home, ".local", "share", "skelcrew", "threads", "app-12");
+    const builder = { name: "app-12", socket: socketPath, thread, origin: app, env };
+    const theLead = { ...lead(), name: "lead", socket: socketPath, env };
+    // What draws the boundary: bubblewrap's arguments, or the profile file sandbox-exec reads.
+    const boundary = (argv: string[]) =>
+      argv.includes("-f")
+        ? readFileSync(argv[argv.indexOf("-f") + 1] ?? "", "utf8")
+        : argv.join(" ");
+    for (const { argv } of [claude.start(theLead), await codex.start(theLead)]) {
+      expect(boundary(argv)).toContain(mounted);
+      expect(boundary(argv)).not.toContain(`file-write* (subpath ${JSON.stringify(repos())}`);
+    }
+    for (const { argv } of [claude.start(builder), await codex.start(builder)])
+      expect(boundary(argv)).not.toContain(mounted);
+  });
+
+  test("a lead won't start while another repository's clone holds a credential", async () => {
+    repository();
+    const web = repository("web");
+    git(web, "remote", "add", "origin", "https://x:ghp_secret@github.com/simon/web");
+    saveToken();
+    const theLead = { ...lead(), name: "lead", socket: socketPath, env: outside() };
+    expect(() => claude.start(theLead)).toThrow("holds a credential");
+    await expect(codex.start(theLead)).rejects.toThrow("holds a credential");
   });
 
   test("says to run sc first when there is no token", () => {

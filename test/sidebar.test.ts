@@ -244,8 +244,8 @@ test("sc ps says which threads merge when ready, only while one does", () => {
     log.mockRestore();
   }
   expect(said[0]).toEndWith("NEEDS YOU  MERGE");
-  expect(said[1]).toEndWith("when ready");
-  expect(said[2]).toEndWith("when ready");
+  expect(said[1]).toEndWith("merges when ready");
+  expect(said[2]).toEndWith("merges when ready");
   expect(said[3]).toEndWith("working");
   expect(said[4]).toEndWith("NEEDS YOU");
 });

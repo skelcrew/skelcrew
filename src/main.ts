@@ -29,6 +29,12 @@ const agentRefusals: Record<string, string> = {
   "first-run": "setting up this machine",
   "take-setup": "taking your laptop's setup",
   "remote add": "setting up a machine",
+  install: "setting up this machine",
+  add: "adding a plugin",
+  remove: "removing a plugin",
+  update: "updating a plugin",
+  setup: "setting up a plugin",
+  plugins: "listing plugins",
   "plugin install": "installing a plugin",
   "plugin update": "updating a plugin",
   "plugin setup": "setting up a plugin",
@@ -110,6 +116,12 @@ function usage(command?: string): never {
     "submit",
     "check",
     "tell",
+    "install",
+    "add",
+    "remove",
+    "update",
+    "setup",
+    "plugins",
     "plugin",
   ];
   const first = command ?? "";
@@ -135,8 +147,10 @@ async function leadCommand(list: boolean, from?: string): Promise<void> {
   const { openDb } = await import("./db.ts");
   const { bringInFrom, checkoutTop, repositories } = await import("./flow/repo.ts");
   const { originHere } = await import("./machine/origin.ts");
-  const { firstRun } = await import("./machine/setup.ts");
-  firstRun(from);
+  const { firstRun, install, installFinished } = await import("./machine/setup.ts");
+  // A machine where sc install never ran to its end gets all of it, your plugins included.
+  if (installFinished()) firstRun(from);
+  else install(from, true);
   await upInBackground();
   // In a repository with no remote, sc opens nothing, even with tabs open or no repositories
   // yet. Opening another repository there would look as if Skelcrew had ignored where you are.
@@ -174,12 +188,13 @@ async function machineCommand(args: string[]): Promise<void> {
     return;
   }
   const { serve } = await import("./flow/daemon.ts");
-  const { firstRun } = await import("./machine/setup.ts");
+  const { install } = await import("./machine/setup.ts");
   const { upInBackground } = await import("./attach.ts");
-  // Run by sc remote add on the machine it sets up, not by people, so usage leaves it out. The
-  // daemon starts there too, so sc --remote finds it running.
+  // Run by sc remote add on the machine it sets up, not by people, so usage leaves it out. It is
+  // all of sc install, as only that marks the machine set up. The daemon starts there too, so sc
+  // --remote finds it running.
   if (command === "first-run" && args.length === 1) {
-    firstRun();
+    install();
     await upInBackground();
     return;
   }
@@ -285,26 +300,56 @@ async function repoCommand(args: string[], json: boolean): Promise<void> {
   usage(command);
 }
 
-// Installs, updates, sets up again, removes or lists plugins, for sc plugin. --json changes
-// only what ls prints.
+// Runs sc install, sc add, sc remove, sc update, sc setup and sc plugins. -g marks your personal
+// plugins, the only kind there is so far: a repository's own plugins come with skelcrew.lock, so
+// these refuse without it rather than act on your files instead. --json changes only what sc
+// plugins prints.
 async function pluginCommand(args: string[], json: boolean): Promise<void> {
-  const [command, sub, ...rest] = args;
-  const { installPlugin, listPlugins, removePlugin, setUpPlugin, updatePlugins } = await import(
+  const [command, ...rest] = args;
+  const { addPlugin, listPlugins, removeYourPlugin, setUpPlugin, updatePlugins } = await import(
     "./plugins/install.ts"
   );
-  // Each takes a name or a source as its one word, except update, where it is optional.
-  if (sub === "install" && rest[0] && rest.length === 1) return installPlugin(rest[0]);
-  if (sub === "update" && rest.length <= 1) return updatePlugins(rest[0]);
-  // sc plugin setup sets the plugin up for the checkout you are in, as install does.
-  if (sub === "setup" && rest[0] && rest.length === 1) {
+  const yours = rest[0] === "-g";
+  const [name, ...more] = yours ? rest.slice(1) : rest;
+  if (command === "install" && rest.length === 0) {
+    const { install } = await import("./machine/setup.ts");
+    return install();
+  }
+  if ((command === "add" || command === "remove" || command === "update") && !yours)
+    throw new Error(
+      `sc ${command} without -g is for a repository's plugins, which Skelcrew doesn't have yet. sc ${command} -g is for your own`,
+    );
+  if (command === "add" && name && more.length === 0) {
+    addPlugin(name);
+    return;
+  }
+  if (command === "remove" && name && more.length === 0) return removeYourPlugin(name);
+  if (command === "update" && more.length === 0) return updatePlugins(name);
+  // sc setup sets the plugin up for the checkout you are in, as sc add does.
+  if (command === "setup" && rest[0] && rest.length === 1) {
     const { originHere } = await import("./machine/origin.ts");
     setUpPlugin(rest[0], originHere());
     console.log(`Ran ${rest[0]}'s setup.`);
     return;
   }
-  if (sub === "rm" && rest[0] && rest.length === 1) return removePlugin(rest[0]);
-  if (sub === "ls" && rest.length === 0) return listPlugins(json);
+  if (command === "plugins" && rest.length === 0) return listPlugins(json);
   usage(command);
+}
+
+// Runs sc plugin install, update, setup, rm and ls, the names these commands had before sc add
+// -g, sc update -g, sc setup, sc remove -g and sc plugins, which they stand for.
+async function oldPluginCommand(args: string[], json: boolean): Promise<void> {
+  const [command, sub, ...rest] = args;
+  const now: Record<string, string[]> = {
+    install: ["add", "-g"],
+    update: ["update", "-g"],
+    setup: ["setup"],
+    rm: ["remove", "-g"],
+    ls: ["plugins"],
+  };
+  const words = sub === undefined ? undefined : now[sub];
+  if (!words) return usage(command);
+  return pluginCommand([...words, ...rest], json);
 }
 
 // Runs what agents and their hooks call: a builder submitting its work, and the hooks that
@@ -489,16 +534,31 @@ async function mergeCommand(args: string[]): Promise<void> {
     if (!process.stdin.isTTY)
       throw new Error("sc merge --when-ready asks you first, so run it at your own terminal");
     // The title comes from the tracker, so its control codes go before it reaches your terminal.
-    const { thread, pr, title, started } = await previewMerge(which);
-    if (pr === null)
-      throw new Error(`${thread} has no PR yet: arm a merge when ready once it opens one`);
+    const { thread, pr, title, started, merging } = await previewMerge(which);
+    if (pr === null) throw new Error(`${thread} has no PR yet: ask again once it opens one`);
+    // Asking again about a merge already on its way could only mislead: a "no" would leave it
+    // merging while sounding like it stopped. So it says so, and how to stop it.
+    const already = (number: number | null, name: string) =>
+      `Already merging #${number} as soon as it's approved and green. sc merge --cancel ${name} stops it.`;
+    if (merging) {
+      console.log(already(pr, thread));
+      return;
+    }
     const { removeControlCodes } = await import("./screen/look.ts");
     const shown = title ? ` ${removeControlCodes(title)}` : "";
     // Only y arms it. Anything else, a bare Enter, which Bun's prompt gives as null, Y or yes
     // included, arms nothing.
     const answer = prompt(`Merge #${pr} (${thread}${shown}) when it's approved and green? [y/N]`);
+    // Another terminal or the lead may have asked for the merge while you read the question,
+    // so the daemon is asked again before saying it won't merge. The thread may also have been
+    // started over meanwhile, with another PR, so the answer names the one it has now.
     if (answer !== "y") {
-      console.log(`Nothing is armed: ${thread} waits for you to merge it.`);
+      const now = await previewMerge(which);
+      console.log(
+        now.merging
+          ? already(now.pr, now.thread)
+          : `Not merging: ${now.thread} waits for you to merge it.`,
+      );
       return;
     }
     // Armed only if the daemon still has the PR and thread you said y to.
@@ -578,6 +638,13 @@ async function threadCommand(args: string[]): Promise<void> {
     console.log(await startOn(...task, from, short, flow));
     return;
   }
+  // --from names the branch an issue's thread starts from. A task with no issue has no such
+  // choice, so --from there is refused before anything starts, never taken as its title. Only
+  // the first word is an option: a description that reads "--from" is the task's own words.
+  if (command === "start" && sub && !task && words[0] === "--from")
+    throw new Error(
+      "sc start <repo> takes no --from. Only sc start <issue> starts from another branch.",
+    );
   // A first word that isn't a task's name is a repository, for a thread on what you said, with
   // no task in the tracker.
   const [title, body] = words;
@@ -699,6 +766,7 @@ async function runCommand(args: string[]): Promise<void> {
   if (
     process.env.SKELCREW_REMOTE_NAME &&
     command !== "first-run" &&
+    command !== "install" &&
     command !== "take-setup" &&
     !onScreen &&
     process.env.SKELCREW_SANDBOX !== "1"
@@ -788,8 +856,15 @@ async function runCommand(args: string[]): Promise<void> {
       return checkCommand(words);
     case "merge":
       return mergeCommand(words);
-    case "plugin":
+    case "install":
+    case "add":
+    case "remove":
+    case "update":
+    case "setup":
+    case "plugins":
       return pluginCommand(words, json);
+    case "plugin":
+      return oldPluginCommand(words, json);
     default:
       usage(first);
   }
