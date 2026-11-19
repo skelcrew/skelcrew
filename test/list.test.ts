@@ -259,8 +259,7 @@ test("a row knows whether its agent runs, and the lead says what its hooks last 
   });
 });
 
-// Skelcrew's detach key comes back only from tmux, so the list offers it only where Enter
-// attaches there.
+// Ctrl-Q comes back only from tmux, so the list offers it only where Enter attaches there.
 test("a row knows whether Enter attaches to its agent on tmux", () => {
   const onTmux = () => Object.fromEntries(rows().map((row) => [row.name, row.tmux]));
   expect(onTmux()).toMatchObject({ lead: true, "app-7": true, "app-14": false, "app-31": false });
@@ -615,25 +614,6 @@ test("while attached the title names the agent and the key back, and the list sh
   press("C-q");
   await until(() => seen().includes("q/esc quit"), "the list again");
   await until(() => title() === "my shell\n", "the title you had");
-});
-
-// The key is yours to change, and the old one then reaches the agent as any key does.
-test("the detach key comes from your config.yaml", async () => {
-  mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
-  writeFileSync(join(home, ".config", "skelcrew", "config.yaml"), "keys: { detach: alt+x }\n");
-  await open();
-  expect(seen()).toContain("⏎ open · alt+x back");
-  // A server an older Skelcrew set up bound Ctrl-Q without saying which key it bound.
-  Bun.spawnSync(["tmux", "-L", agents, "set", "-gu", "@skelcrew-detach"]);
-  press("Enter");
-  await until(() => seen().includes("I am app-12"), "app-12's agent");
-  press("C-q");
-  Bun.spawnSync(["tmux", "-L", agents, "copy-mode", "-t", "=app-12:"]);
-  press("C-q");
-  await Bun.sleep(300);
-  expect(seen()).toContain("I am app-12");
-  press("M-x");
-  await until(() => here().startsWith("▸ ● app-12"), "the list again");
 });
 
 test("an agent that ends while you are attached brings you back to the list, on its row", async () => {

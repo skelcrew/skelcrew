@@ -6,7 +6,6 @@
 // Skelcrew never deals with tmux or a plugin for its agents.
 import { closeSync, constants, openSync, rmSync, writeSync } from "node:fs";
 import { z } from "zod";
-import { detachKey } from "../config.ts";
 import { askHost, type Host, type PluginHost } from "../plugins/runtime.ts";
 import { sandboxFolders } from "./seatbelt.ts";
 import { envWithoutTmux, mustTmux, tmux, tmuxIsAtLeast } from "./tmux.ts";
@@ -22,13 +21,13 @@ export type Labels = z.infer<typeof Labels>;
 
 // Skelcrew's tmux settings. They are sent on stdin with each new session instead of kept in a
 // file, so there is no file to find or keep in step, and a server that outlives an upgrade
-// picks up changes. Your own ~/.tmux.conf never applies: -f /dev/null replaces it. Your detach
-// key with no prefix, Ctrl-Q unless your config.yaml names another, and no status bar make
-// attaching feel like being inside Claude Code. tmux reads that key however your terminal sends
-// it, as one byte or as an extended key, and in pieces over a slow link. A session whose
-// command fails keeps its last screen, so Skelcrew can say why it ended instead of finding it
-// gone. tmux only passes synchronized output on to terminals it knows have it, and without it
-// Claude Code's redraws arrive in pieces, so the prompt flickers over a slow link.
+// picks up changes. Your own ~/.tmux.conf never applies: -f /dev/null replaces it. Ctrl-Q with
+// no prefix and no status bar make attaching feel like being inside Claude Code. tmux reads
+// Ctrl-Q however your terminal sends it, as one byte or as an extended key, and in pieces over
+// a slow link. Alt-Q, which an older Skelcrew bound, is unbound on a server it left running. A
+// session whose command fails keeps its last screen, so Skelcrew can say why it ended instead
+// of finding it gone. tmux only passes synchronized output on to terminals it knows have it, and
+// without it Claude Code's redraws arrive in pieces, so the prompt flickers over a slow link.
 // Terminals without it ignore the codes. That setting has a fixed index, since these settings
 // run again with each new session, and appending would add it every time.
 //
@@ -42,8 +41,8 @@ export type Labels = z.infer<typeof Labels>;
 // the moment before that key, so the key leaves it only if it is still there. mode-keys is set
 // to emacs because when $EDITOR says vi, tmux uses vi's copy-mode table, which these bindings
 // don't touch. In copy mode tmux looks only in copy mode's table, never at the keys bound
-// without a prefix, so the detach key is bound there too. Otherwise an agent you scrolled back
-// would keep you, and get the key typed into it.
+// without a prefix, so Ctrl-Q is bound there too. Otherwise an agent you scrolled back would
+// keep you, and get the key typed into it.
 //
 // Extended keys let Shift+Enter reach the agent as a key of its own, which Claude Code and
 // Codex take for a newline. Without them, tmux reads it from your terminal as plain Enter, and
@@ -69,6 +68,8 @@ export type Labels = z.infer<typeof Labels>;
 const copied = `run-shell -d 0.3; send-keys -X copy-selection-no-clear; delete-buffer
   if -F "#{==:#{scroll_position},0}" { send-keys -X cancel }`;
 const tmuxConfig = `set -g status off
+unbind -n M-q
+bind -n C-q detach-client
 set -g remain-on-exit failed
 set -s terminal-features[90] "*:sync:extkeys:clipboard"
 set -s extended-keys on
@@ -92,6 +93,7 @@ bind -n TripleClick1Pane {
   if -F "#{mouse_any_flag}" { send-keys -M } { copy-mode -H; send-keys -X select-line; ${copied} }
 }
 unbind -a -T copy-mode
+bind -T copy-mode C-q detach-client
 bind -T copy-mode WheelUpPane send-keys -X -N 5 scroll-up
 bind -T copy-mode WheelDownPane send-keys -X -N 5 scroll-down
 bind -T copy-mode MouseDown1Pane send-keys -X clear-selection
@@ -103,33 +105,12 @@ bind -T copy-mode TripleClick1Pane { send-keys -X select-line; ${copied} }
 bind -T copy-mode Any { if -F "#{pane_in_mode}" { send-keys -X cancel }; send-keys }
 `;
 
-// Returns Skelcrew's tmux settings for this machine's tmux, with the detach key from your
-// config.yaml bound. A server that is up keeps keys bound before, so the key it bound last, kept
-// in @skelcrew-detach, goes first, and so do Alt-Q and Ctrl-Q, which an older Skelcrew bound
-// without saying so there. Copy mode's table is emptied first anyway. A config
-// that can't be read binds Ctrl-Q, so agents still start: the list says what is wrong with it.
-// tmux sends extended keys in the xterm form unless told otherwise, and Codex reads Shift+Enter
-// only in the CSI u form, which Claude Code reads too. tmux before 3.5 has only the xterm form,
-// and refuses the setting.
-function settings(socket: string): string {
-  let key = "ctrl+q";
-  try {
-    key = detachKey();
-  } catch {}
-  const bound = tmux(socket, ["show", "-gqv", "@skelcrew-detach"]).out.trim();
-  const detach = tmuxKey(key);
-  const keys = `unbind -n M-q
-unbind -n C-q
-${/^[CM]-[a-z]$/.test(bound) ? `unbind -n ${bound}\n` : ""}bind -n ${detach} detach-client
-bind -T copy-mode ${detach} detach-client
-set -g @skelcrew-detach ${detach}
-`;
-  const config = `${tmuxConfig}${keys}`;
-  return tmuxIsAtLeast(3, 5) ? `${config}set -s extended-keys-format csi-u\n` : config;
+// Returns Skelcrew's tmux settings for this machine's tmux. tmux sends extended keys in the
+// xterm form unless told otherwise, and Codex reads Shift+Enter only in the CSI u form, which
+// Claude Code reads too. tmux before 3.5 has only the xterm form, and refuses the setting.
+function settings(): string {
+  return tmuxIsAtLeast(3, 5) ? `${tmuxConfig}set -s extended-keys-format csi-u\n` : tmuxConfig;
 }
-
-// Returns a key as your config.yaml writes it, such as ctrl+q, as tmux names it, such as C-q.
-const tmuxKey = (key: string) => key.replace("ctrl+", "C-").replace("alt+", "M-");
 
 // Starts Skelcrew's tmux server if needed, keeping agent sessions alive independently of the
 // daemon. A server started by the daemon would live in skelcrew.service's cgroup, so stopping
@@ -156,7 +137,7 @@ function startServer(socket: string): void {
   const run = (command: string[]) =>
     Bun.spawnSync(command, {
       env: envWithoutTmux(),
-      stdin: new Blob([settings(socket)]),
+      stdin: new Blob([settings()]),
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -206,7 +187,7 @@ export async function startSession(
   // first.
   const start = ["new-session", "-d", "-s", name, "-c", session.folder];
   mustTmux(socket, [...start, "--", ...clean, ...session.command]);
-  mustTmux(socket, ["source-file", "-"], settings(socket));
+  mustTmux(socket, ["source-file", "-"], settings());
   // On a Mac the sandbox's folders are removed by a shell that a SIGKILL takes with it, so
   // the session keeps their names for stopSession to remove them.
   const folders = sandboxFolders(session.command);
@@ -245,7 +226,7 @@ export function keepOnExit(socket: string, name: string): void {
 // otherwise send the prompt on Shift+Enter until it restarts. Codex, the other harness, always
 // asks, so only those are left.
 export function applyConfig(socket: string): void {
-  tmux(socket, ["source-file", "-"], settings(socket));
+  tmux(socket, ["source-file", "-"], settings());
   // The request goes into the pane's terminal, where tmux reads it as if the agent had sent
   // it. A tmux that doesn't know pane_key_mode leaves it empty, and nothing is written.
   // O_NOCTTY keeps the terminal from becoming Skelcrew's own.

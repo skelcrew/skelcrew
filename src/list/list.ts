@@ -5,7 +5,6 @@
 import { cpus } from "node:os";
 import { attachSession, typeKeys } from "../agents/sessions.ts";
 import { openRepository, startOrMerge } from "../client.ts";
-import { detachKey } from "../config.ts";
 import { openDb } from "../db.ts";
 import { builderSession, readThread } from "../flow/thread.ts";
 import { updateNotice } from "../machine/update.ts";
@@ -25,8 +24,9 @@ const openCommand = process.platform === "darwin" ? "open" : "xdg-open";
 // first closes a question that is open. Any other escape sequence is one key, which does
 // nothing. A terminal sends one for a key with Ctrl or Alt when a program asked it for extended
 // keys, such as Ctrl-Q as ESC[113;5u, and neither its Esc nor its letters may act as keys of
-// their own. Pressing the detach key once too often lands here too: Ctrl-Q as one byte does
-// nothing, and Alt with a letter is matched whole, or its Esc or its q would quit.
+// their own. Pressing Ctrl-Q once too often after coming back from an agent lands here too, in
+// one of its three forms, and does nothing. Alt with a letter is matched whole, or its Esc or
+// its q would quit.
 const keyNames: Record<string, string> = {
   "\x1b[A": "up",
   "\x1bOA": "up",
@@ -45,6 +45,8 @@ const keyPattern = new RegExp(
 );
 // The start of an escape sequence at the end of a read, whose end may come in the next one.
 const endOfSequence = new RegExp(`${esc}(\\[[0-9;:]*|O)?$`);
+// Ctrl-Q as a terminal sends it: one byte, or as an extended key in the kitty or the xterm form.
+const ctrlQ = new Set(["\x11", "\x1b[113;5u", "\x1b[27;5;113~"]);
 
 // Runs the list in your terminal for the repository named by its owner/name, until you press q,
 // then says your agents keep running.
@@ -55,18 +57,6 @@ const endOfSequence = new RegExp(`${esc}(\\[[0-9;:]*|O)?$`);
 export async function runList(agents: string, repository: string): Promise<void> {
   const db = openDb();
   const where = process.env.SKELCREW_REMOTE_NAME ?? "";
-  // The key that comes back from an agent, from your config.yaml, and the forms a terminal may
-  // send it in: as one byte for Ctrl or after Esc for Alt, and as an extended key in the kitty
-  // and the xterm forms.
-  const detach = detachKey();
-  const letter = detach.slice(-1);
-  const code = letter.charCodeAt(0);
-  const ctrl = detach.startsWith("ctrl+");
-  const detachForms = new Set([
-    ctrl ? String.fromCharCode(code - 96) : `\x1b${letter}`,
-    `\x1b[${code};${ctrl ? 5 : 3}u`,
-    `\x1b[27;${ctrl ? 5 : 3};${code}~`,
-  ]);
   const [owner = "", repo = ""] = repository.split("/");
   let open: Open = { owner, repo };
   // What the list keeps between draws: its rows, the row you are on and how far it scrolled,
@@ -110,7 +100,7 @@ export async function runList(agents: string, repository: string): Promise<void>
     // What the bottom line says can come from outside, such as a forge's reason for refusing a
     // merge, so its control codes never reach your terminal.
     const bottom = (tabs: number) =>
-      removeControlCodes(said ?? asking?.question.ask ?? keysFor(rows[here], tabs, detach));
+      removeControlCodes(said ?? asking?.question.ask ?? keysFor(rows[here], tabs));
     const size = { width: process.stdout.columns || 80, height: process.stdout.rows || 24 };
     const drawn = drawList(rows, here, top, frameWith(bottom, load), size);
     top = drawn.top;
@@ -193,7 +183,7 @@ export async function runList(agents: string, repository: string): Promise<void>
     giveBack();
     let failed: string | null = null;
     if (typeof host === "string") {
-      const title = removeControlCodes(`${name} · ${detach} back`);
+      const title = removeControlCodes(`${name} · ctrl+q back`);
       process.stdout.write(`\x1b[22;0t\x1b]2;${title}\x07`);
       failed = await attachSession(host, session);
       process.stdout.write("\x1b[23;0t");
@@ -291,10 +281,10 @@ export async function runList(agents: string, repository: string): Promise<void>
   // Leaves the list, once the list is ready to leave. `left` says it has.
   let leave: () => void = () => {};
   let left = false;
-  // The detach key does nothing here, an open question included, so pressing it once too often
-  // after coming back from an agent never answers or drops a question.
+  // Ctrl-Q does nothing here, an open question included, so pressing it once too often after
+  // coming back from an agent never answers or drops a question.
   const press = async (key: string) => {
-    if (working || left || key === "detach") return;
+    if (working || left || key === "ctrl-q") return;
     // q and Ctrl-C leave from anywhere, an open question included, which then does nothing. Esc
     // leaves only with no question open, so a stray Esc while you answer is a no and stays.
     if (key === "q" || (key === "escape" && !asking)) return leave();
@@ -349,7 +339,7 @@ export async function runList(agents: string, repository: string): Promise<void>
       // Enter, would otherwise attach after the terminal was given back.
       const key = left ? undefined : typed.shift();
       if (key === undefined) break;
-      const named = detachForms.has(key.sent) ? "detach" : (keyNames[key.sent] ?? key.sent);
+      const named = ctrlQ.has(key.sent) ? "ctrl-q" : (keyNames[key.sent] ?? key.sent);
       await press(named).catch((error) => say(errorText(error)));
       if (named === "enter" || asking) while (typed[0]?.read === key.read) typed.shift();
     }

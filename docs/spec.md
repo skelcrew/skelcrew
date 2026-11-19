@@ -221,7 +221,6 @@ What belongs to you or your machine stays in `~/.config/skelcrew/`:
 - per-repository overrides, under `repos:`;
 - what you declined, such as `github_declined`;
 - whether the lead may arm a merge when ready when you ask it to, `lead: { may_arm_merges: true }`, off by default;
-- the key that comes back to the list from an agent, `keys: { detach: ctrl+q }`: Ctrl or Alt with a letter, Ctrl-Q by default;
 - your personal plugins, which no repository names, such as every runtime plugin, pinned in `~/.config/skelcrew/skelcrew.lock`.
 
 ```yaml
@@ -651,7 +650,7 @@ Every agent runs in a terminal session of its own: one for each repository's lea
 
 Every session carries three labels: its repository (`simon/app`), its task (`app-12`, none for a lead) and its role (`builder`, or `lead`). They stay with the session for as long as it lives, so a starting engine knows whose each session is, and a host's own apps can group and filter by them.
 
-The built-in host is tmux. Its sessions run on Skelcrew's own tmux server (`tmux -L skelcrew`) with Skelcrew's own config, sent with each new session, and keep every trap in `docs/learnings.md`. The labels are tmux user options on the session. tmux keeps sessions alive, handles attach and detach, and answers the terminal's queries. Skelcrew never runs its own terminal emulator. The config binds your detach key, Ctrl-Q unless `keys.detach` names another, to detach with no prefix, also in copy mode, where an agent you scrolled back is. It hides the status bar, so attaching feels like being inside the harness. tmux reads the key however your terminal sends it: as one byte, as an extended key in the kitty or the xterm form, and in pieces over a slow link. A runtime plugin's host keeps its own key to detach. Only this module runs tmux for agents, and a test fails if anything else does.
+The built-in host is tmux. Its sessions run on Skelcrew's own tmux server (`tmux -L skelcrew`) with Skelcrew's own config, sent with each new session, and keep every trap in `docs/learnings.md`. The labels are tmux user options on the session. tmux keeps sessions alive, handles attach and detach, and answers the terminal's queries. Skelcrew never runs its own terminal emulator. The config binds Ctrl-Q to detach with no prefix, also in copy mode, where an agent you scrolled back is. It hides the status bar, so attaching feels like being inside the harness. tmux reads the key however your terminal sends it: as one byte, as an extended key in the kitty or the xterm form, and in pieces over a slow link. A runtime plugin's host keeps its own key to detach. Only this module runs tmux for agents, and a test fails if anything else does.
 
 Your `session:` setting picks the host for new sessions. Each thread remembers the host it started on, and an agent already running stays there until it ends. A resumed agent, such as after `sc stop` and `sc start`, starts on the current host with its conversation, since the conversation belongs to the harness. If a thread's host plugin is gone when the engine starts, the thread needs you, rather than being moved silently.
 
