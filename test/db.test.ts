@@ -1,7 +1,7 @@
 // Skelcrew's database, opened over one that lacks the newer columns.
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fakePlugin, source, threadSql } from "./harness.ts";
@@ -637,3 +637,69 @@ console.log(JSON.stringify({ old: findThread(db, "app", "t4").folder, branch: on
     branch: "skelcrew/lp1-one",
   });
 }, 60_000);
+
+// A screen of the release before 2026-11-18 keeps running while a newer release opens its
+// database, and it keeps the queries it prepared, with their column names. The database is one
+// that release made, saved in test/databases, with a thread whose events seen and updates are
+// JSON. Once the newer release opens it and its daemon upgrades it, the old screen's query must
+// read every column as before, or it reads a host's name as the JSON of the events seen.
+test("a screen of the release before 2026-11-18 reads every thread right once a newer release opens its database", () => {
+  const data = join(home, ".local", "share", "skelcrew");
+  mkdirSync(data, { recursive: true });
+  copyFileSync(join(import.meta.dir, "databases", "before-nov-18.db"), join(data, "skelcrew.db"));
+  const code = `import { Database } from "bun:sqlite";
+import { finishUpgrade, moveToTasks, moveTurnEnded, openDb } from ${JSON.stringify(source("db.ts"))};
+import { sidebarRows } from ${JSON.stringify(source("screen/rows.ts"))};
+// The old screen's sidebar, with its query as that release wrote it, has drawn once.
+const oldScreen = new Database(process.argv[1]);
+const threads = oldScreen.query(\`SELECT * FROM task_threads
+      WHERE status IN ('working', 'waiting', 'failed') AND owner = ? AND repo = ?
+      ORDER BY rowid DESC\`);
+const before = threads.all("simon", "app");
+// The newer release's sc opens the database, and its daemon starts and upgrades it.
+const db = openDb();
+moveToTasks(db);
+moveTurnEnded(db);
+finishUpgrade(db);
+const after = threads.all("simon", "app");
+// The newer release's own sidebar draws from it too.
+const rows = sidebarRows(db, [], () => 3, 0, { owner: "simon", repo: "app", lead: "lead" });
+console.log(JSON.stringify({ before, after, rows: rows.map((row) => row.name) }));`;
+  const run = Bun.spawnSync([process.execPath, "-e", code, join(data, "skelcrew.db")], {
+    env: { ...process.env, HOME: home },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect(run.stderr.toString()).toBe("");
+  const { before, after, rows } = JSON.parse(run.stdout.toString());
+  expect(before[0]).toMatchObject({ folder: "app-12", seen: '["review-1"]', pr: 7 });
+  expect(after).toEqual(before);
+  expect(rows).toEqual(["lead", "app-12"]);
+});
+
+// The daemon fills in each older task's issue link from Skelcrew's copy of the tracker as it
+// starts. An item there it can't read must leave the link empty, not stop the daemon, and is
+// logged though no list reads it.
+test("an item Skelcrew can't read leaves its task's link empty as the daemon upgrades", () => {
+  const code = `import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { finishUpgrade, openDb } from ${JSON.stringify(source("db.ts"))};
+const db = openDb();
+db.run("INSERT INTO tasks (owner, repo, task) VALUES ('simon', 'app', 12)");
+db.run("INSERT INTO items (owner, repo, kind, id, state, created, item) VALUES ('simon', 'app', 'task', '12', 'open', '2026-11-18T00:00:00Z', 'not json')");
+db.run("INSERT INTO upgrades (step) VALUES ('fill tasks')");
+finishUpgrade(db);
+const log = readFileSync(join(process.env.HOME, ".local/share/skelcrew/db.log"), "utf8");
+console.log(JSON.stringify({ ...db.query("SELECT issue_link, closes FROM tasks").get(), log }));`;
+  const run = Bun.spawnSync([process.execPath, "-e", code], {
+    env: { ...process.env, HOME: home },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect(run.stderr.toString()).toBe("");
+  const { log, ...task } = JSON.parse(run.stdout.toString());
+  expect(task).toEqual({ issue_link: null, closes: null });
+  expect(log.replace(/^\S+ /, "")).toBe(
+    'items.item holds "not json", which Skelcrew can\'t read, so it reads as empty.\n',
+  );
+});

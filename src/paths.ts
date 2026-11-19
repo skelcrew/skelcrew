@@ -12,6 +12,9 @@ export const configDir = (home = homedir()) => join(home, ".config", "skelcrew")
 export const dataDir = (home = homedir()) => join(home, ".local", "share", "skelcrew");
 // Returns the file the screen's sidebar logs its stalls in, as its own output is your terminal.
 export const screenLogFile = () => join(dataDir(), "screen.log");
+// Returns the file where a value Skelcrew can't read back from its database is logged, as the
+// screen, which reads it too, has your terminal for its output.
+export const dbLogFile = () => join(dataDir(), "db.log");
 // Returns the file where a daemon run from a checkout writes the full commit it started from and
 // that checkout's folder, on one line. sc --remote reads it there with plain shell, so it must
 // stay at $HOME/.local/share/skelcrew/daemon-code.
@@ -19,6 +22,11 @@ export const daemonCodeFile = () => join(dataDir(), "daemon-code");
 // Returns the file the first run writes once every step is done, so an interrupted one goes on
 // where it stopped.
 export const setUpFile = () => join(dataDir(), "set-up");
+// Returns the file sc install writes once it ran to its end, your plugins included. It is apart
+// from setUpFile, which releases from before sc install wrote at the first run's end, so a machine
+// upgraded from one still gets sc install once. "installed" beside it is a release update's note,
+// which the daemon deletes as it starts.
+export const installDoneFile = () => join(dataDir(), "install-done");
 // Returns the private agent token file path used by setup and Claude Code sessions.
 export const claudeTokenFile = (home = homedir()) => join(configDir(home), "claude-token");
 
@@ -86,9 +94,11 @@ export const reviewSocket = (folder: string) =>
 // one connection. A Mac refuses a socket path over 104 bytes, and its runtime and temporary
 // folders are long, so it is in /tmp, with your user number so it is yours alone.
 export const sshFolder = () => `/tmp/sc-${userInfo().uid}`;
-// Returns the parent folder of Skelcrew's repository clones.
-const reposDir = () => join(dataDir(), "repos");
-// Returns a repository's clone folder so Skelcrew works away from your checkout.
-export const cloneDir = (owner: string, repo: string) => join(reposDir(), owner, repo);
+// Returns the parent folder of Skelcrew's repository clones, which every lead reads.
+export const reposDir = () => join(dataDir(), "repos");
+// Returns a repository's clone folder so Skelcrew works away from your checkout. Pass a home
+// for the same reason as for configDir.
+export const cloneDir = (owner: string, repo: string, home = homedir()) =>
+  join(dataDir(home), "repos", owner, repo);
 // Returns the folder that holds each thread's clone, with the log of its changes beside it.
 export const threadsDir = () => join(dataDir(), "threads");

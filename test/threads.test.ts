@@ -306,6 +306,35 @@ test("sc start <repo> says what its stdin left out, and starts nothing", async (
   expect(thread()).toEqual({});
 });
 
+// --from picks the branch an issue's thread starts from. A task with no issue takes none, so
+// sc start refuses it there rather than read it as the title, with words or on stdin.
+test("sc start <repo> refuses --from, with the task as words or on stdin, and starts nothing", async () => {
+  addApp();
+  serve();
+  await untilAnswers();
+  const refused =
+    "Skelcrew: sc start <repo> takes no --from. Only sc start <issue> starts from another branch.\n";
+  const words = await skel("start", "app", "--from", "feature");
+  expect(words.code).toBe(1);
+  expect(words.err).toBe(refused);
+  const withShort = await skel("start", "app", "--from", "feature", "--short", "x", "T", "B");
+  expect(withShort.code).toBe(1);
+  expect(withShort.err).toBe(refused);
+  const stdin = await runSkel(
+    ["start", "app", "--from", "feature", "--short", "x"],
+    env(),
+    "# Add export\n\nAs JSON\n",
+  );
+  expect(stdin.code).toBe(1);
+  expect(stdin.err).toBe(refused);
+  expect(thread()).toEqual({});
+  // A description that says "--from" is the task's own words, so that task starts.
+  const described = await skel("start", "app", "Document the option", "--from");
+  expect(described.err).toBe("");
+  expect(described.out).toBe(`Started app-${own}1.\n`);
+  expect(thread()).toMatchObject({ title: "Document the option", body: "--from" });
+});
+
 test("more data on a connection doesn't run its request again", async () => {
   addApp();
   serve();
@@ -339,6 +368,23 @@ test("sc start refuses a repository Skelcrew doesn't have, and a task its tracke
   expect(missing.code).not.toBe(0);
   expect(missing.err).toContain("there is no open issue 99 in simon/app");
   expect(existsSync(join(data(), "threads", "app-99"))).toBe(false);
+});
+
+// Only you can install a plugin, at your terminal, so a task waits for you rather than start
+// without one its repository names, such as its forge.
+test("a repository whose plugins aren't all installed starts no task, and sc ps says to run sc install", async () => {
+  addApp({ "skelcrew.yaml": "plugins: [simon/skelcrew-other]\n" });
+  serve();
+  await untilCloned();
+  const start = await skel("start", "app", "Fix typo", "In the README");
+  expect(start.err).toBe(
+    "Skelcrew: app's plugins aren't all installed here, so its tasks can't start. Run sc install in your own terminal, then start it again.\n",
+  );
+  expect(flows()).toEqual([]);
+  expect((await skel("ps")).out).toContain(
+    "app needs you: its plugins aren't all installed here, so its tasks wait. Run sc install.\n",
+  );
+  expect((await skel("ps", "--json")).out).toBe("[]\n");
 });
 
 // Puts simon/app on the fake GitHub with a flow file of its own, quick, and tells Skelcrew about
@@ -440,6 +486,23 @@ test("a repository Skelcrew doesn't have, named by its owner/name, is no reposit
 
 describe("a clone the daemon makes as it starts", () => {
   // Left running, it would write into the folder the next daemon clones into.
+  // The plugins a repository needs are in Skelcrew's clone, so a start made before the clone is
+  // there waits for it rather than read no plugins at all.
+  test("sc start of a new task waits for the clone before checking the repository's plugins", async () => {
+    addApp({ "skelcrew.yaml": "plugins: [simon/skelcrew-other]\n" }, "site");
+    holdClones();
+    serve();
+    await untilAnswers();
+    await until(() => existsSync(join(home, "held")));
+    const started = skel("start", "site", "Fix typo", "In the README");
+    await Bun.sleep(500);
+    expect(existsSync(join(data(), "repos", "simon", "site"))).toBe(false);
+    writeFileSync(join(home, "go"), "");
+    expect((await started).err).toBe(
+      "Skelcrew: site's plugins aren't all installed here, so its tasks can't start. Run sc install in your own terminal, then start it again.\n",
+    );
+  }, 60_000);
+
   test("stopping the daemon stops a clone it started", async () => {
     addApp({}, "site");
     holdClones();
@@ -1024,6 +1087,20 @@ nameRepositories(db);`;
     expect(read(join(config(`app-${own}1`), "args"))).toContain("Add export\n\nAs JSON");
     expect(thread()).toMatchObject({ task: `${own}1`, title: "Add export", body: "As JSON" });
     expect(asked(plugin).filter((q) => q.ask === "create task")).toEqual([]);
+  }, 60_000);
+
+  // A first message that starts like an option, such as a title of "--fast", must reach the
+  // builder as its message. Claude Code would otherwise read it as an option and exit at once.
+  test("a title that starts with dashes reaches the builder as its first message", async () => {
+    addApp();
+    serve();
+    await untilAnswers();
+    const run = await skel("start", "app", "--fast", "Make the build quicker");
+    expect(run.err).toBe("");
+    await until(() => read(join(config(`app-${own}1`), "args")) !== "");
+    expect(read(join(config(`app-${own}1`), "args"))).toEndWith(
+      "\n--\n--fast\n\nMake the build quicker\n",
+    );
   }, 60_000);
 
   // A long body needs no shell quoting when the lead gives the task on stdin, from a heredoc.

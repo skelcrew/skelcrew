@@ -468,6 +468,11 @@ Skelcrew no longer supports Sprites itself. These are for the Sprite machine plu
   Keep its result, wait, and read it then, and it holds the times from that moment: the CPU
   figure from two samples read 0%. Seen on Bun 1.3.14 on Linux. Copy the numbers out as you
   call it.
+- **A screen outlives the daemon's restart, and keeps its queries.** Bun's `db.query` keeps a
+  query's column names. When a newer release makes the `task_threads` view again, SQLite
+  prepares the query again, but Bun puts each value under the old names. A column added in the
+  middle shifted every name after it, and the sidebar read `tmux` as `seen` and stopped on
+  "JSON Parse error". Seen on Bun 1.3.14. New columns go at the view's end.
 
 ## Tests
 

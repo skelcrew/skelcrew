@@ -483,5 +483,5 @@ export function questionAnswered(db: Database, folder: string): void {
 export function mergeShown(thread: Thread): string | null {
   if (thread.merge_plan !== "armed") return null;
   const waits = thread.status === "failed" ? "its thread, which failed" : thread.merge_waits;
-  return waits === null ? "merge when ready" : `merge when ready · waits on ${waits}`;
+  return waits === null ? "merges when ready" : `merges when ready · waiting on ${waits}`;
 }

@@ -113,6 +113,12 @@ export const Manifest = z
   });
 export type Manifest = z.infer<typeof Manifest>;
 
+// Reports whether a plugin only reaches machines, a runtime plugin that provides machine alone.
+// Such a plugin is used where you run --remote, never on the server, so its files leave it out
+// there, and a server keeps whichever it has.
+export const reachesOnlyMachines = ({ kind, provides }: Manifest) =>
+  kind === "runtime" && provides.every((one) => one === "machine");
+
 // Returns the manifest in a plugin's folder, or throws saying what is wrong with it. The
 // folder is the plugin's, so a link, which could point Skelcrew at any file of yours, is refused.
 export function readManifest(folder: string): Manifest {
@@ -130,6 +136,17 @@ export function readManifest(folder: string): Manifest {
   const manifest = Manifest.safeParse(parsed);
   if (!manifest.success) throw new Error(`${file} isn't valid: ${z.prettifyError(manifest.error)}`);
   return manifest.data;
+}
+
+// Returns the commit a plugin's clone is at. A plugin from GitHub is a clone of its version tag,
+// so this is the commit you approved when it was installed.
+export function commitOf(folder: string): string {
+  const run = Bun.spawnSync(["git", "-C", folder, "rev-parse", "HEAD"], {
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  if (!run.success) throw new Error(`${folder} isn't a git clone, so it has no commit to lock`);
+  return run.stdout.toString().trim();
 }
 
 // An installed plugin as the database records it: its name, its folder, and the GitHub repository
@@ -152,7 +169,7 @@ export const installedPlugins = (db: Database): Plugin[] =>
 // Returns the installed plugin of that name, or throws when there is none.
 export function findPlugin(db: Database, name: string): Plugin {
   const found = installedPlugins(db).find((plugin) => plugin.name === name);
-  if (!found) throw new Error(`there is no plugin named ${name}: sc plugin ls lists them`);
+  if (!found) throw new Error(`there is no plugin named ${name}: sc plugins lists them`);
   return found;
 }
 
@@ -191,7 +208,7 @@ export class SetupNeeded extends Error {
     readonly plugin: string,
     reason: string,
   ) {
-    super(`${plugin} failed: ${reason}. Run sc plugin setup ${plugin} to set it up again.`);
+    super(`${plugin} failed: ${reason}. Run sc setup ${plugin} to set it up again.`);
   }
 }
 

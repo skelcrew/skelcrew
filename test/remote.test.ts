@@ -1,6 +1,7 @@
-// sc --remote and sc remote add, run as you would run them on your laptop, against a
+// sc --remote and sc --remote <host> install, run as you would run them on your laptop, against a
 // fake ssh and scp that play a server in a folder of the test, and a fake bun that builds a
 // stand-in Skelcrew.
+import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import {
   cpSync,
@@ -29,15 +30,21 @@ let laptop = { folder: "", main: "", commit: "" };
 // The Skelcrew the fake bun builds: it says what reached it, one argument per line, so a test
 // can see that each one arrived exactly as typed. Built with a commit, it stops as a copied
 // Skelcrew does when the laptop's build differs. Without one, it is a Skelcrew from before builds
-// carried their commit. On a server whose first run hasn't finished, it runs nothing but the
-// first run, which finishes it, and says so before checking its build or setup, as a copied
-// Skelcrew does. Until it takes the laptop's setup, it stops on a laptop that has one, as a
-// copied Skelcrew does when its setup differs.
+// carried their commit. On a server that sc install hasn't set up, it runs nothing but sc
+// install, which sets it up, and says so before checking its build, as a copied Skelcrew does.
+// Its sc install puts the files sent with --files in place, as Skelcrew's does.
 const serverSkel = (built?: string) => `#!/bin/sh
-test "$1" != first-run && test "$1" != take-setup && test -f first-run-unfinished && exit 97
-${built === undefined ? "" : `test -n "$SKELCREW_LAPTOP_BUILD" && test "$SKELCREW_LAPTOP_BUILD" != "${built}" && { echo "Skelcrew on $SKELCREW_REMOTE_NAME is from ${built}"; exit 98; }\n`}test -n "$SKELCREW_LAPTOP_SETUP" && test ! -f setup-taken && exit 96
-test "$1" = take-setup && { echo "took the laptop's setup"; cp .config/skelcrew/laptop-setup.json setup-taken; exit; }
-test "$1" = first-run && { echo "the first run on the server"; rm -f first-run-unfinished; test ! -f first-run-fails; exit; }
+test "$1" != install && test -f not-set-up && exit 97
+${built === undefined ? "" : `test -n "$SKELCREW_LAPTOP_BUILD" && test "$SKELCREW_LAPTOP_BUILD" != "${built}" && { echo "Skelcrew on $SKELCREW_REMOTE_NAME is from ${built}"; exit 98; }\n`}test "$1" = install && {
+  f=; prev=; for w; do test "$prev" = --files && f=$w; prev=$w; done
+  if test -n "$f"; then
+    for n in config.yaml skelcrew.lock claude-token; do
+      if test -f ".config/skelcrew/$f/$n"; then mv ".config/skelcrew/$f/$n" ".config/skelcrew/$n"; else rm -f ".config/skelcrew/$n"; fi
+    done
+    rmdir ".config/skelcrew/$f"
+  fi
+  echo "sc install on the server"; cp .config/skelcrew/config.yaml installed-from 2>/dev/null; rm -f not-set-up; test ! -f install-fails; exit
+}
 echo "Skelcrew on the server got $# arguments"
 for word in "$@"; do echo "[$word]"; done
 exit 3
@@ -105,6 +112,12 @@ cd "$HOME/server" && HOME="$HOME/server" PATH="$bin:/usr/bin:/bin" exec sh -c "$
   writeFileSync(
     join(home, "serverbin", "systemctl"),
     `#!/bin/sh\necho "systemctl $*" >> "${join(home, "calls")}"\n`,
+    { mode: 0o755 },
+  );
+  // flock on the server only says it took the lock, so the tests run where flock isn't, as on a Mac.
+  writeFileSync(
+    join(home, "serverbin", "flock"),
+    `#!/bin/sh\necho "flock $1" >> "${join(home, "calls")}"\nshift\nexec "$@"\n`,
     { mode: 0o755 },
   );
   // The server is x64, whatever CPU this machine has, unless a test says otherwise.
@@ -255,22 +268,29 @@ test("a command reaches the server exactly as typed", async () => {
   );
 });
 
+test("up --bg runs the engine on the server, with no repository passed", async () => {
+  installed(laptop.commit);
+  const run = await skel(["--remote", "simon@workbox", "up", "--bg"], "", checkout("simon/app"));
+  expect(run.out).toBe("Skelcrew on the server got 2 arguments\n[up]\n[--bg]\n");
+  expect(calls()).toBe(`${onServer(" up --bg")}\n`);
+});
+
 test("without a terminal, --remote on a server without Skelcrew only says how to set it up", async () => {
   const run = await skel(["--remote", "simon@workbox", "ps"]);
   // The server's shell says first that it found no Skelcrew.
   expect(run.err).toEndWith(
-    "Skelcrew: simon@workbox isn't set up. Run this on your laptop:\n  sc remote add simon@workbox\n",
+    "Skelcrew: simon@workbox isn't set up. Run this on your laptop:\n  sc --remote simon@workbox install\n",
   );
   expect(run.code).toBe(1);
   expect(calls()).toBe(`${onServer(" ps")}\n`);
 });
 
-test("without a terminal, --remote on a server whose first run isn't done only says how to set it up", async () => {
+test("without a terminal, --remote on a server that isn't set up only says how to set it up", async () => {
   installed(laptop.commit);
-  writeFileSync(join(home, "server", "first-run-unfinished"), "");
+  writeFileSync(join(home, "server", "not-set-up"), "");
   const run = await skel(["--remote", "simon@workbox", "ps"]);
   expect(run.err).toBe(
-    "Skelcrew: simon@workbox isn't set up. Run this on your laptop:\n  sc remote add simon@workbox\n",
+    "Skelcrew: simon@workbox isn't set up. Run this on your laptop:\n  sc --remote simon@workbox install\n",
   );
   expect(run.code).toBe(1);
   expect(calls()).toBe(`${onServer(" ps")}\n`);
@@ -279,63 +299,80 @@ test("without a terminal, --remote on a server whose first run isn't done only s
 test("in a terminal, --remote offers to set up a server without Skelcrew, then runs the command", async () => {
   const { wrote, code } = await skelInTerminal(["--remote", "simon@workbox", "ps"], [""]);
   expect(wrote).toContain("simon@workbox isn't set up. Set it up now? [Y/n]");
-  expect(wrote).toContain("the first run on the server");
+  // Your yes covers putting Skelcrew there, so it isn't asked again.
+  expect(wrote).not.toContain("Put yours there?");
+  expect(wrote).toContain("sc install on the server");
   expect(wrote).toContain("Skelcrew on the server got 1 arguments\r\n[ps]\r\n");
-  // It connects right away, so it prints no command to connect.
-  expect(wrote).not.toContain("Connect to it with");
   expect(code).toBe(3);
   const lines = calls().trim().split("\n");
   expect(lines[0]).toBe(onServer(" ps"));
-  // What sc remote add runs, then the command you asked for.
-  expect(lines[1]).toBe(onServer(" first-run"));
+  // What sc --remote <host> install runs, then the command you asked for.
+  expect(lines[1]).toBe(onServer(" install"));
   expect(lines).toContain(`${ssh} mv -f .local/bin/sc.new .local/bin/sc`);
-  expect(lines.at(-2)).toBe(onServer(" first-run", null));
+  expect(lines.at(-2)).toBe(onServer(" install", null));
   expect(lines.at(-1)).toBe(onServer(" ps"));
 });
 
-test("in a terminal, --remote finishes a first run that isn't done, then runs the command", async () => {
+test("in a terminal, --remote sets up a server that isn't, then runs the command", async () => {
   installed(laptop.commit);
-  writeFileSync(join(home, "server", "first-run-unfinished"), "");
+  writeFileSync(join(home, "server", "not-set-up"), "");
   const { wrote, code } = await skelInTerminal(["--remote", "simon@workbox", "ps"], ["y"]);
   expect(wrote).toContain("simon@workbox isn't set up. Set it up now? [Y/n]");
   expect(code).toBe(3);
-  expect(calls()).toBe(`${onServer(" ps")}\n${onServer(" first-run")}\n${onServer(" ps")}\n`);
+  expect(calls()).toBe(`${onServer(" ps")}\n${onServer(" install")}\n${onServer(" ps")}\n`);
 });
 
-// Your setup holds logins and installs plugins there, which is setting the server up, so it
-// waits for your yes.
-test("in a terminal, --remote asks before copying your setup to a server whose first run isn't done", async () => {
+// sc install there fails while a plugin you said no to is missing, and then the command you
+// asked for doesn't run on a server that isn't set up.
+test("in a terminal, --remote runs nothing more when setting up the server fails", async () => {
+  installed(laptop.commit);
+  writeFileSync(join(home, "server", "not-set-up"), "");
+  writeFileSync(join(home, "server", "install-fails"), "");
+  const { code } = await skelInTerminal(["--remote", "simon@workbox", "ps"], ["y"]);
+  expect(code).toBe(1);
+  expect(calls()).toBe(`${onServer(" ps")}\n${onServer(" install")}\n`);
+});
+
+// Your files hold logins and name plugins to install there, which is setting the server up, so
+// they wait for your yes.
+test("in a terminal, --remote asks before sending your files to a server that isn't set up", async () => {
   mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
   writeFileSync(join(home, ".config", "skelcrew", "config.yaml"), "harness: codex\n");
   installed(laptop.commit);
-  writeFileSync(join(home, "server", "first-run-unfinished"), "");
+  writeFileSync(join(home, "server", "not-set-up"), "");
   const { wrote, code } = await skelInTerminal(["--remote", "simon@workbox", "ps"], ["y"]);
   expect(code).toBe(3);
   const asked = wrote.indexOf("simon@workbox isn't set up. Set it up now? [Y/n]");
   expect(asked).toBeGreaterThan(-1);
-  expect(wrote.indexOf("took the laptop's setup")).toBeGreaterThan(asked);
-  expect(wrote.indexOf("the first run on the server")).toBeGreaterThan(asked);
+  expect(
+    wrote.indexOf("Sending your config.yaml, skelcrew.lock to simon@workbox."),
+  ).toBeGreaterThan(asked);
+  expect(wrote.indexOf("sc install on the server")).toBeGreaterThan(asked);
+  expect(readFileSync(join(home, "server", ".config", "skelcrew", "config.yaml"), "utf8")).toBe(
+    "harness: codex\n",
+  );
 });
 
-test("in a terminal, a no to setting up a server whose first run isn't done copies none of your setup", async () => {
+test("in a terminal, a no to setting up a server that isn't set up sends none of your files", async () => {
   mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
   writeFileSync(join(home, ".config", "skelcrew", "config.yaml"), "harness: codex\n");
   installed(laptop.commit);
-  writeFileSync(join(home, "server", "first-run-unfinished"), "");
+  writeFileSync(join(home, "server", "not-set-up"), "");
   const { wrote, code } = await skelInTerminal(["--remote", "simon@workbox", "ps"], ["n"]);
-  expect(wrote).toContain("sc remote add simon@workbox");
+  expect(wrote).toContain("sc --remote simon@workbox install");
   expect(code).toBe(1);
   // Only the command you asked for reached the server.
   const lines = calls().trim().split("\n");
   expect(lines).toHaveLength(1);
   expect(lines[0]).toMatch(/^ssh .* simon@workbox .* sh ps$/);
-  expect(existsSync(join(home, "server", ".config", "skelcrew", "laptop-setup.json"))).toBe(false);
-  expect(existsSync(join(home, "server", "setup-taken"))).toBe(false);
+  expect(existsSync(join(home, "server", ".config", "skelcrew"))).toBe(false);
 });
 
 test("in a terminal, a no to setting up sets up nothing and says what to run later", async () => {
   const { wrote, code } = await skelInTerminal(["--remote", "simon@workbox", "ps"], ["n"]);
-  expect(wrote).toContain("sc remote add simon@workbox");
+  expect(wrote).toContain(
+    "Nothing was set up. To set it up later, run:\r\n  sc --remote simon@workbox install",
+  );
   expect(code).toBe(1);
   expect(calls()).toBe(`${onServer(" ps")}\n`);
   expect(existsSync(join(home, "server", ".local", "bin", "sc"))).toBe(false);
@@ -351,7 +388,7 @@ test("replaces a link at ~/.local/bin/sc instead of writing through it", async (
   writeFileSync(launcher, original, { mode: 0o755 });
   mkdirSync(join(home, "server", ".local", "bin"), { recursive: true });
   symlinkSync(launcher, join(home, "server", ".local", "bin", "sc"));
-  const run = await skel(["remote", "add", "simon@workbox"]);
+  const run = await skelInTerminal(["--remote", "simon@workbox", "install"], [""]);
   expect(run.code).toBe(0);
   expect(readFileSync(launcher, "utf8")).toBe(original);
   expect(lstatSync(join(home, "server", ".local", "bin", "sc")).isSymbolicLink()).toBe(false);
@@ -791,9 +828,9 @@ test("a list runs whichever laptop's build its tmux server remembers", () => {
   expect(run.out).toBe("");
 });
 
-// Out of date, or with another setup, Skelcrew there would have the laptop copy and install
-// things, so a machine that isn't set up says so first, and the laptop asks.
-test("a copied Skelcrew whose first run isn't done says so before its build or setup is checked", () => {
+// Out of date, Skelcrew there would have the laptop copy things, so a machine that isn't set up
+// says so first, and the laptop asks.
+test("a copied Skelcrew that isn't set up says so before its build is checked", () => {
   const run = Bun.spawnSync(
     [process.execPath, "--define", 'SKELCREW_BUILD="abc1234"', laptop.main, "ps"],
     {
@@ -802,7 +839,7 @@ test("a copied Skelcrew whose first run isn't done says so before its build or s
         HOME: home,
         SKELCREW_REMOTE_NAME: "x",
         SKELCREW_LAPTOP_BUILD: "def5678",
-        SKELCREW_LAPTOP_SETUP: "another",
+        SKELCREW_LAPTOP_LOCK: "another",
       },
     },
   );
@@ -822,23 +859,21 @@ test("Skelcrew from a checkout never says it is out of date", () => {
   expect(farSkel(null, "def5678").out).toContain("USAGE");
 });
 
+// sc update is for plugins now, so the old way of updating Skelcrew on a server reaches nothing.
 test("Skelcrew update is gone", async () => {
   const run = await skel(["update", "--remote", "simon@workbox"]);
-  expect(run.err).toBe("Skelcrew: that isn't a Skelcrew command. Run sc --help to see them.\n");
+  expect(run.err).toStartWith("Skelcrew: sc update without -g is for a repository's plugins");
   expect(run.code).toBe(1);
   expect(calls()).toBe("");
 });
 
-test("sc remote add copies Skelcrew to a server, runs the first run, and prints how to connect", async () => {
-  const run = await skel(["remote", "add", "simon@workbox"]);
+test("install puts Skelcrew on a server after asking, then runs sc install there", async () => {
+  const run = await skelInTerminal(["--remote", "simon@workbox", "install"], [""]);
   expect(run.code).toBe(0);
-  expect(run.out).toContain("Setting up simon@workbox: copying Skelcrew there and setting it up.");
-  expect(run.out).toContain("the first run on the server\n");
-  expect(run.out).toEndWith(
-    "simon@workbox is ready. Connect to it with:\n  sc --remote simon@workbox\n",
-  );
+  expect(run.wrote).toContain("simon@workbox has no Skelcrew. Put yours there? [Y/n]");
+  expect(run.wrote).toContain("sc install on the server\r\n");
   const lines = calls().split("\n");
-  expect(lines[0]).toBe(onServer(" first-run"));
+  expect(lines[0]).toBe(onServer(" install"));
   expect(lines[1]).toBe(`${ssh} uname -m`);
   // Built for the server, which is Linux, whatever the laptop runs, with the commit it came
   // from, so the server can tell when the laptop has moved on.
@@ -853,7 +888,7 @@ test("sc remote add copies Skelcrew to a server, runs the first run, and prints 
   );
   expect(lines[5]).toBe(`${ssh} mv -f .local/bin/sc.new .local/bin/sc`);
   // A fresh copy is the laptop's build, so it runs without the check.
-  expect(lines[6]).toBe(onServer(" first-run", null));
+  expect(lines[6]).toBe(onServer(" install", null));
   // The build is removed once copied.
   expect(readdirSync(join(home, "tmp"))).toEqual([]);
   expect(readFileSync(join(home, "server", ".local", "bin", "sc"), "utf8")).toBe(
@@ -861,10 +896,45 @@ test("sc remote add copies Skelcrew to a server, runs the first run, and prints 
   );
 });
 
+// A server can have your old setup but no sc, such as after sc was deleted there. A no to
+// putting Skelcrew there must leave that setup as it was.
+test("a no to putting Skelcrew on a server leaves its files as they were", async () => {
+  mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
+  writeFileSync(join(home, ".config", "skelcrew", "config.yaml"), "harness: codex\n");
+  const there = join(home, "server", ".config", "skelcrew");
+  mkdirSync(there, { recursive: true });
+  writeFileSync(join(there, "config.yaml"), "harness: claude\n");
+  writeFileSync(join(there, "claude-token"), "sk-ant-oat01-old");
+  const run = await skelInTerminal(["--remote", "simon@workbox", "install"], ["n"]);
+  expect(run.code).toBe(1);
+  expect(readdirSync(there).sort()).toEqual(["claude-token", "config.yaml"]);
+  expect(readFileSync(join(there, "config.yaml"), "utf8")).toBe("harness: claude\n");
+});
+
+test("install puts nothing on a server without Skelcrew when you say no", async () => {
+  const run = await skelInTerminal(["--remote", "simon@workbox", "install"], ["n"]);
+  expect(run.code).toBe(1);
+  expect(run.wrote).toContain(
+    "Nothing was put there. To do it later, run:\r\n  sc --remote simon@workbox install",
+  );
+  expect(calls()).toBe(`${onServer(" install")}\n`);
+});
+
+test("without a terminal, install puts nothing on a server without Skelcrew", async () => {
+  const run = await skel(["--remote", "simon@workbox", "install"]);
+  expect(run.code).toBe(1);
+  expect(run.err).toEndWith(
+    "Skelcrew: simon@workbox has no Skelcrew. To put it there, run this in a terminal:\n  sc --remote simon@workbox install\n",
+  );
+  expect(calls()).toBe(`${onServer(" install")}\n`);
+});
+
 // Each new ssh connection can ask for your passphrase or a touch of your key, so one setup
 // shares one connection, through sockets in a folder only you can reach.
 test("every ssh and scp for a setup shares one connection, through a private folder", async () => {
-  await skel(["remote", "add", "simon@workbox"]);
+  mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
+  writeFileSync(join(home, ".config", "skelcrew", "config.yaml"), "harness: codex\n");
+  await skelInTerminal(["--remote", "simon@workbox", "install"], [""]);
   const lines = calls()
     .trim()
     .split("\n")
@@ -965,57 +1035,396 @@ test("a ProxyJump host gets none of the sharing options", async () => {
   expect(jump).not.toContain("Control");
 });
 
-test("sc remote add copies your setup there before the first run", async () => {
-  mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
-  writeFileSync(join(home, ".config", "skelcrew", "config.yaml"), "harness: codex\n");
-  const run = await skel(["remote", "add", "simon@workbox"]);
+test("install sends your config.yaml, lock and Claude sign-in, readable only by you, before sc install there", async () => {
+  const config = join(home, ".config", "skelcrew");
+  mkdirSync(config, { recursive: true });
+  writeFileSync(join(config, "config.yaml"), "# mine\nharness: codex\n");
+  writeFileSync(join(config, "skelcrew.lock"), pin("fake", "0.2.0"));
+  writeFileSync(join(config, "claude-token"), "sk-ant-oat01-secret");
+  installed(laptop.commit);
+  const run = await skel(["--remote", "simon@workbox", "install"]);
   expect(run.code).toBe(0);
-  expect(run.out).toContain(
-    "Copying your settings, Claude sign-in and plugins to simon@workbox.\ntook the laptop's setup\nthe first run on the server\n",
+  expect(run.out).toBe(
+    "Sending your config.yaml, skelcrew.lock, claude-token to simon@workbox.\nsc install on the server\n",
   );
   const lines = calls().trim().split("\n");
-  const send = ".config/skelcrew/laptop-setup.json";
-  expect(lines).toContain(
-    `${ssh} umask 077 && mkdir -p .config/skelcrew && rm -f ${send} && : > ${send}`,
+  const names = ["config.yaml", "skelcrew.lock", "claude-token"];
+  // The files go through a folder of this transfer's own, which is gone once they are in place.
+  const sending = lines[0]?.match(/mkdir \.config\/skelcrew\/(sending-[\w-]+)$/)?.[1] ?? "";
+  expect(lines[0]).toBe(
+    `${ssh} umask 077 && mkdir -p .config/skelcrew && mkdir .config/skelcrew/${sending}`,
   );
-  expect(lines.at(-1)).toMatch(/ sh first-run$/);
-  expect(lines.at(-2)).toMatch(/ sh take-setup$/);
-  // The file sent holds the token, so it is readable only by you there.
-  const taken = join(home, "server", "setup-taken");
-  expect(JSON.parse(readFileSync(taken, "utf8"))).toMatchObject({
-    config: "harness: codex\n",
-    token: null,
-    plugins: [],
-  });
-  expect(lstatSync(join(home, "server", send)).mode & 0o777).toBe(0o600);
+  // sc install runs holding a lock, and is told where your files are, to put them in place.
+  expect(lines.at(-3)).toContain(" SKELCREW_LAPTOP_LOCK=");
+  expect(lines.at(-3)).toContain(" flock .config/skelcrew/.install sh -c ");
+  expect(lines.at(-3)).toMatch(new RegExp(` sh install --files ${sending}$`));
+  expect(lines.at(-2)).toBe("flock .config/skelcrew/.install");
+  // The folder sent through goes once the install is over.
+  expect(lines.at(-1)).toBe(`${ssh} rm -rf .config/skelcrew/${sending}`);
+  const there = join(home, "server", ".config", "skelcrew");
+  expect(readFileSync(join(there, "config.yaml"), "utf8")).toBe("# mine\nharness: codex\n");
+  expect(readFileSync(join(there, "claude-token"), "utf8")).toBe("sk-ant-oat01-secret");
+  for (const name of names) expect(lstatSync(join(there, name)).mode & 0o777).toBe(0o600);
+  expect(readdirSync(there).sort()).toEqual([...names].sort());
+  expect(readdirSync(join(home, "tmp"))).toEqual([]);
 });
 
-test("sc remote add builds Skelcrew for the server's CPU", async () => {
+// Your setup is the laptop's, so an old sign-in or pin never stays in use on the server. No lock
+// pins nothing, so the server gets an empty one, and sc install there removes plugins it has.
+test("install removes from the server a token you no longer have, and empties its lock", async () => {
+  const config = join(home, ".config", "skelcrew");
+  mkdirSync(config, { recursive: true });
+  writeFileSync(join(config, "config.yaml"), "harness: codex\n");
+  const there = join(home, "server", ".config", "skelcrew");
+  mkdirSync(there, { recursive: true });
+  writeFileSync(join(there, "claude-token"), "sk-ant-oat01-old");
+  writeFileSync(join(there, "skelcrew.lock"), pin("fake", "0.1.0"));
+  installed(laptop.commit);
+  const run = await skel(["--remote", "simon@workbox", "install"]);
+  expect(run.code).toBe(0);
+  expect(readdirSync(there).sort()).toEqual(["config.yaml", "skelcrew.lock"]);
+  expect(readFileSync(join(there, "skelcrew.lock"), "utf8")).toBe(
+    "# Your personal plugins at their exact versions, written by Skelcrew. sc install installs them.\n",
+  );
+});
+
+// Two installs at once each send through their own folder, so neither removes or moves the
+// other's files.
+test("two installs at once both send your files", async () => {
+  const config = join(home, ".config", "skelcrew");
+  mkdirSync(config, { recursive: true });
+  writeFileSync(join(config, "config.yaml"), "harness: codex\n");
+  writeFileSync(join(config, "claude-token"), "sk-ant-oat01-secret");
+  installed(laptop.commit);
+  const runs = await Promise.all([1, 2].map(() => skel(["--remote", "simon@workbox", "install"])));
+  expect(runs.map((run) => run.code)).toEqual([0, 0]);
+  const folders = calls().match(/mkdir \.config\/skelcrew\/sending-[\w-]+$/gm) ?? [];
+  expect(new Set(folders).size).toBe(2);
+  expect(readdirSync(join(home, "server", ".config", "skelcrew")).sort()).toEqual([
+    "claude-token",
+    "config.yaml",
+    "skelcrew.lock",
+  ]);
+});
+
+// A plugin's setup there is handed the repository you are in, as on the laptop.
+test("install passes the repository you are in to sc install there", async () => {
+  installed(laptop.commit);
+  const run = await skel(["--remote", "simon@workbox", "install"], "", checkout("simon/app"));
+  expect(run.code).toBe(0);
+  expect(calls()).toBe(`${onServer(" install --from git@github.com:simon/app.git")}\n`);
+});
+
+// A laptop with no setup only reaches servers, and each keeps the setup it has.
+// A run that stops before installing, such as to update Skelcrew there, leaves your files for the
+// next, which installs from them.
+test("install after updating Skelcrew there installs from your files", async () => {
+  mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
+  writeFileSync(join(home, ".config", "skelcrew", "config.yaml"), "harness: codex\n");
+  installed("0000000");
+  const run = await skel(["--remote", "simon@workbox", "install"], "y\n");
+  expect(run.code).toBe(0);
+  expect(run.out).toContain("Updated simon@workbox");
+  expect(readFileSync(join(home, "server", "installed-from"), "utf8")).toBe("harness: codex\n");
+  expect(readdirSync(join(home, "server", ".config", "skelcrew")).sort()).toEqual([
+    "config.yaml",
+    "skelcrew.lock",
+  ]);
+});
+
+test("install with no files of yours sends nothing and runs sc install there", async () => {
+  installed(laptop.commit);
+  const run = await skel(["--remote", "simon@workbox", "install"]);
+  expect(run.code).toBe(0);
+  expect(calls()).toBe(`${onServer(" install")}\n`);
+});
+
+test("install builds Skelcrew for the server's CPU", async () => {
   writeFileSync(join(home, "serverbin", "uname"), "#!/bin/sh\necho aarch64\n", { mode: 0o755 });
-  const run = await skel(["remote", "add", "simon@workbox"]);
+  const run = await skelInTerminal(["--remote", "simon@workbox", "install"], [""]);
   expect(run.code).toBe(0);
   expect(calls()).toContain("bun build --compile --target=bun-linux-arm64 ");
 });
 
-// A setup that stopped partway is finished by running it again, so this must be safe.
-test("sc remote add on a server with sc copies nothing and runs the first run", async () => {
+test("a failed sc install there fails here", async () => {
   installed(laptop.commit);
-  const run = await skel(["remote", "add", "simon@workbox"]);
-  expect(run.code).toBe(0);
-  expect(calls()).toBe(`${onServer(" first-run")}\n`);
-});
-
-test("sc remote add prints no way to connect when the first run fails", async () => {
-  installed(laptop.commit);
-  writeFileSync(join(home, "server", "first-run-fails"), "");
-  const run = await skel(["remote", "add", "simon@workbox"]);
+  writeFileSync(join(home, "server", "install-fails"), "");
+  const run = await skel(["--remote", "simon@workbox", "install"]);
   expect(run.code).toBe(1);
-  expect(run.out).not.toContain("sc --remote");
 });
 
-test("sc remote add needs a host", async () => {
-  const run = await skel(["remote", "add"]);
-  expect(run.err).toContain("sc remote add needs a host");
+// A pin in a lock, at the given version.
+const pin = (name: string, version: string) =>
+  `simon/skelcrew-${name}:\n  name: ${name}\n  version: ${version}\n  commit: ${"a".repeat(40)}\n`;
+
+// Gives the laptop your config naming two plugins, a lock pinning both, and the machine plugin
+// box installed, which only reaches machines from the laptop.
+function laptopWithMachinePlugin(): void {
+  const config = join(home, ".config", "skelcrew");
+  mkdirSync(config, { recursive: true });
+  writeFileSync(
+    join(config, "config.yaml"),
+    "harness: codex\nplugins:\n  - simon/skelcrew-fake\n  - simon/skelcrew-box\n",
+  );
+  writeFileSync(
+    join(config, "skelcrew.lock"),
+    `# pins\n${pin("box", "0.1.0")}${pin("fake", "0.2.0")}`,
+  );
+  const box = join(home, "box");
+  mkdirSync(box);
+  writeFileSync(
+    join(box, "skelcrew-plugin.yaml"),
+    "name: box\nversion: 0.1.0\nskelcrew: 0.1.0\nabout: Reaches boxes.\nkind: runtime\nprovides: [machine]\nadd: [./add]\nexec: [./exec]\npush: [./push]\n",
+  );
+  const data = join(home, ".local", "share", "skelcrew");
+  mkdirSync(data, { recursive: true });
+  const db = new Database(join(data, "skelcrew.db"));
+  db.run("CREATE TABLE plugins (name TEXT PRIMARY KEY, folder TEXT NOT NULL, source TEXT)");
+  db.run("INSERT INTO plugins VALUES ('box', ?, 'simon/skelcrew-box')", [box]);
+  db.close();
+}
+
+test("install leaves out a plugin that only reaches machines, from your config and your lock", async () => {
+  laptopWithMachinePlugin();
+  installed(laptop.commit);
+  const run = await skel(["--remote", "simon@workbox", "install"]);
+  expect(run.code).toBe(0);
+  const there = join(home, "server", ".config", "skelcrew");
+  expect(readFileSync(join(there, "config.yaml"), "utf8")).toBe(
+    "harness: codex\nplugins:\n  - simon/skelcrew-fake\n",
+  );
+  expect(readFileSync(join(there, "skelcrew.lock"), "utf8")).toBe(
+    `# Your personal plugins at their exact versions, written by Skelcrew. sc install installs them.\n${pin("fake", "0.2.0")}`,
+  );
+  // The laptop's own files stay as they were.
+  expect(readFileSync(join(home, ".config", "skelcrew", "skelcrew.lock"), "utf8")).toContain("box");
+});
+
+// A server set up by sc remote add has the laptop's plugins at the laptop's versions, and no
+// lock. The laptop pins its plugins as they are and sends those pins, so sc install there finds
+// each plugin already at its pin and installs nothing.
+test("install from a laptop set up before the lock pins its plugins as they are and sends the pins", async () => {
+  const config = join(home, ".config", "skelcrew");
+  mkdirSync(config, { recursive: true });
+  writeFileSync(join(config, "config.yaml"), "harness: codex\n");
+  const fake = join(home, "fake");
+  mkdirSync(fake);
+  writeFileSync(
+    join(fake, "skelcrew-plugin.yaml"),
+    "name: fake\nversion: 0.3.0\nskelcrew: 0.1.0\nabout: Tracks.\nkind: io\nprovides: [tracker]\ncall: [./call]\n",
+  );
+  const git = (...args: string[]) =>
+    Bun.spawnSync(["git", "-C", fake, "-c", "user.name=t", "-c", "user.email=t", ...args], {
+      stdout: "pipe",
+    });
+  git("init", "-q");
+  git("add", ".");
+  git("commit", "-q", "-m", "fake");
+  const commit = git("rev-parse", "HEAD").stdout.toString().trim();
+  const data = join(home, ".local", "share", "skelcrew");
+  mkdirSync(data, { recursive: true });
+  const db = new Database(join(data, "skelcrew.db"));
+  db.run("CREATE TABLE plugins (name TEXT PRIMARY KEY, folder TEXT NOT NULL, source TEXT)");
+  db.run("INSERT INTO plugins VALUES ('fake', ?, 'simon/skelcrew-fake')", [fake]);
+  db.close();
+  installed(laptop.commit);
+  const run = await skel(["--remote", "simon@workbox", "install"]);
+  expect(run.code).toBe(0);
+  const there = join(home, "server", ".config", "skelcrew");
+  expect(readFileSync(join(there, "config.yaml"), "utf8")).toContain("- simon/skelcrew-fake");
+  expect(readFileSync(join(there, "skelcrew.lock"), "utf8")).toContain(
+    `simon/skelcrew-fake:\n  name: fake\n  version: 0.3.0\n  commit: ${commit}\n`,
+  );
+});
+
+// Makes the server run this checkout's real Skelcrew, set up with Codex, with the plugin fake
+// from simon/skelcrew-fake installed, named in its config and pinned in its lock, as sc remote
+// add left a server whose laptop had it.
+function realServerWithFake(): void {
+  const server = join(home, "server");
+  mkdirSync(join(server, ".local", "bin"), { recursive: true });
+  writeFileSync(
+    join(server, ".local", "bin", "sc"),
+    `#!/bin/sh\nexec ${process.execPath} ${laptop.main} "$@"\n`,
+    { mode: 0o755 },
+  );
+  const config = join(server, ".config", "skelcrew");
+  const data = join(server, ".local", "share", "skelcrew");
+  for (const folder of [config, join(data, "codex")]) mkdirSync(folder, { recursive: true });
+  writeFileSync(join(data, "codex", "auth.json"), "login\n");
+  writeFileSync(join(data, "set-up"), "");
+  writeFileSync(join(config, "config.yaml"), "harness: codex\nplugins: [simon/skelcrew-fake]\n");
+  const fake = join(data, "plugins", "fake", "0.1.0");
+  mkdirSync(fake, { recursive: true });
+  writeFileSync(
+    join(fake, "skelcrew-plugin.yaml"),
+    "name: fake\nversion: 0.1.0\nskelcrew: 0.1.0\nabout: Tracks.\nkind: io\nprovides: [tracker]\ncall: [./call]\n",
+  );
+  const git = (...args: string[]) =>
+    Bun.spawnSync(["git", "-C", fake, "-c", "user.name=t", "-c", "user.email=t", ...args], {
+      stdout: "pipe",
+    });
+  git("init", "-q");
+  git("add", ".");
+  git("commit", "-q", "-m", "fake");
+  const commit = git("rev-parse", "HEAD").stdout.toString().trim();
+  writeFileSync(
+    join(config, "skelcrew.lock"),
+    `simon/skelcrew-fake:\n  name: fake\n  version: 0.1.0\n  commit: ${commit}\n`,
+  );
+  const db = new Database(join(data, "skelcrew.db"));
+  db.run("CREATE TABLE plugins (name TEXT PRIMARY KEY, folder TEXT NOT NULL, source TEXT)");
+  db.run("INSERT INTO plugins VALUES ('fake', ?, 'simon/skelcrew-fake')", [fake]);
+  db.close();
+}
+
+// Your files say which plugins your machines run, as npm's lock does, so one you removed on the
+// laptop goes from the server too.
+test("install removes from the server a plugin you removed on your laptop", async () => {
+  realServerWithFake();
+  mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
+  writeFileSync(join(home, ".config", "skelcrew", "config.yaml"), "harness: codex\nplugins: []\n");
+  const run = await skel(["--remote", "simon@workbox", "install"]);
+  expect(run.err).toBe("");
+  expect(run.out).toContain("Removed fake, with its settings and tokens.");
+  expect(run.code).toBe(0);
+  const server = join(home, "server");
+  expect(existsSync(join(server, ".local", "share", "skelcrew", "plugins", "fake"))).toBe(false);
+  const db = new Database(join(server, ".local", "share", "skelcrew", "skelcrew.db"));
+  expect(db.query("SELECT name FROM plugins").all()).toEqual([]);
+  db.close();
+  expect(readFileSync(join(server, ".config", "skelcrew", "config.yaml"), "utf8")).toBe(
+    "harness: codex\nplugins: []\n",
+  );
+  // The folder the files were sent through is gone.
+  expect(readdirSync(join(server, ".config", "skelcrew")).sort()).toEqual([
+    "config.yaml",
+    "skelcrew.lock",
+  ]);
+});
+
+// The laptop leaves out a plugin that only reaches machines when it has it installed. One your
+// files name that the laptop doesn't have yet is told apart on the server, by its manifest.
+test("install skips a plugin that only reaches machines, even one the laptop hasn't installed", async () => {
+  realServerWithFake();
+  // simon/skelcrew-box on a fake GitHub the server reaches, tagged v0.1.0.
+  const box = join(home, "github", "simon", "skelcrew-box");
+  mkdirSync(box, { recursive: true });
+  writeFileSync(
+    join(box, "skelcrew-plugin.yaml"),
+    "name: box\nversion: 0.1.0\nskelcrew: 0.1.0\nabout: Reaches boxes.\nkind: runtime\nprovides: [machine]\nadd: [./add]\nexec: [./exec]\npush: [./push]\n",
+  );
+  const git = (...args: string[]) =>
+    Bun.spawnSync(["git", "-C", box, "-c", "user.name=t", "-c", "user.email=t", ...args], {
+      stdout: "pipe",
+    });
+  git("init", "-q", "-b", "main");
+  git("add", ".");
+  git("commit", "-q", "-m", "box");
+  git("tag", "v0.1.0");
+  const commit = git("rev-parse", "HEAD").stdout.toString().trim();
+  writeFileSync(
+    join(home, "server", ".gitconfig"),
+    `[url "file://${home}/github/"]\n\tinsteadOf = https://github.com/\n`,
+  );
+  // The laptop's files name box, and keep fake, but the laptop has neither installed.
+  const config = join(home, ".config", "skelcrew");
+  mkdirSync(config, { recursive: true });
+  writeFileSync(
+    join(config, "config.yaml"),
+    "harness: codex\nplugins: [simon/skelcrew-fake, simon/skelcrew-box]\n",
+  );
+  const fake = readFileSync(join(home, "server", ".config", "skelcrew", "skelcrew.lock"), "utf8");
+  writeFileSync(
+    join(config, "skelcrew.lock"),
+    `${fake}simon/skelcrew-box:\n  name: box\n  version: 0.1.0\n  commit: ${commit}\n`,
+  );
+  const run = await skel(["--remote", "simon@workbox", "install"]);
+  expect(run.err).toBe("");
+  expect(run.out).toContain(
+    "Skelcrew skipped box, which only reaches machines, so it belongs where you run sc --remote, not here.",
+  );
+  expect(run.out).not.toContain("isn't set up yet");
+  expect(run.code).toBe(0);
+  const db = new Database(join(home, "server", ".local", "share", "skelcrew", "skelcrew.db"));
+  expect(db.query("SELECT name FROM plugins").all()).toEqual([{ name: "fake" }]);
+  db.close();
+});
+
+// --files names a folder the laptop made, so a path that leads elsewhere moves nothing.
+test("sc install refuses --files that isn't a folder of sent files", () => {
+  for (const folder of ["../../elsewhere", "/tmp/x", "sending-a/../.."]) {
+    const run = Bun.spawnSync([process.execPath, laptop.main, "install", "--files", folder], {
+      env: { PATH: "/usr/bin:/bin", HOME: home },
+    });
+    expect(run.exitCode).toBe(1);
+    expect(run.stderr.toString()).toBe(`Skelcrew: ${folder} isn't a folder of sent files\n`);
+  }
+});
+
+// Runs main.ts as the Skelcrew on a set-up server would run it, for a laptop that passes the
+// given lock fingerprint, and returns what it said on stderr.
+function serverSaid(lock: string): string {
+  const server = join(home, "server");
+  const config = join(server, ".config", "skelcrew");
+  const codex = join(server, ".local", "share", "skelcrew", "codex");
+  const units = join(server, ".config", "systemd", "user");
+  for (const folder of [config, codex, units]) mkdirSync(folder, { recursive: true });
+  writeFileSync(join(codex, "auth.json"), "login\n");
+  writeFileSync(join(units, "skelcrew.service"), "");
+  // A server that got no config.yaml from the laptop has its own.
+  if (!existsSync(join(config, "config.yaml")))
+    writeFileSync(join(config, "config.yaml"), "harness: codex\n");
+  const env = {
+    PATH: "/usr/bin:/bin",
+    HOME: server,
+    SKELCREW_REMOTE_NAME: "simon@workbox",
+    SKELCREW_LAPTOP_LOCK: lock,
+  };
+  const run = Bun.spawnSync([process.execPath, laptop.main, "--help"], { env });
+  expect(run.exitCode).toBe(0);
+  expect(run.stdout.toString()).toContain("USAGE");
+  return run.stderr.toString();
+}
+
+// You send your setup when you change it, so a server whose lock differs says so, and runs the
+// command anyway.
+test("--remote says when the server's lock differs from yours, and how to send yours", async () => {
+  laptopWithMachinePlugin();
+  installed(laptop.commit);
+  await skel(["--remote", "simon@workbox", "install"]);
+  await skel(["--remote", "simon@workbox", "ps"]);
+  const lock = calls().match(/ SKELCREW_LAPTOP_LOCK=(\w+) sh -c .* sh ps$/m)?.[1] ?? "";
+  expect(lock).not.toBe("");
+  // The server took the laptop's lock, without the machine plugin, so they match.
+  expect(serverSaid(lock)).toBe("");
+  const there = join(home, "server", ".config", "skelcrew", "skelcrew.lock");
+  writeFileSync(there, pin("fake", "0.1.0"));
+  expect(serverSaid(lock)).toBe(
+    "Your lock on simon@workbox differs from your laptop's. To send yours there, run on your laptop:\n  sc --remote simon@workbox install\n",
+  );
+  rmSync(there);
+  expect(serverSaid(lock)).toContain("differs from your laptop's");
+});
+
+// No lock pins nothing, so a laptop without one still tells a server that pins plugins.
+test("--remote from a laptop with no lock says when the server has one", async () => {
+  mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
+  writeFileSync(join(home, ".config", "skelcrew", "config.yaml"), "harness: codex\n");
+  installed(laptop.commit);
+  await skel(["--remote", "simon@workbox", "ps"]);
+  const lock = calls().match(/ SKELCREW_LAPTOP_LOCK=(\w+) sh -c .* sh ps$/m)?.[1] ?? "";
+  expect(lock).not.toBe("");
+  expect(serverSaid(lock)).toBe("");
+  writeFileSync(join(home, "server", ".config", "skelcrew", "skelcrew.lock"), pin("fake", "0.1.0"));
+  expect(serverSaid(lock)).toContain("differs from your laptop's");
+});
+
+test("sc remote add names what replaced it", async () => {
+  const run = await skel(["remote", "add", "simon@workbox"]);
+  expect(run.err).toBe(
+    "Skelcrew: sc remote add is now sc --remote <host> install, such as sc --remote simon@workbox install.\n",
+  );
   expect(run.code).toBe(1);
   expect(calls()).toBe("");
 });
@@ -1023,7 +1432,7 @@ test("sc remote add needs a host", async () => {
 test("a host that names a machine plugin is refused, not taken as an SSH host", async () => {
   for (const plugin of ["sprite", "3cloud"]) {
     for (const args of [
-      ["remote", "add", `${plugin}:demo`],
+      ["--remote", `${plugin}:demo`, "install"],
       ["--remote", `${plugin}:demo`, "ps"],
     ]) {
       const run = await skel(args);
@@ -1037,7 +1446,7 @@ test("a host that names a machine plugin is refused, not taken as an SSH host", 
 test("an IPv6 address is an SSH host, though it starts like a plugin name", async () => {
   for (const host of ["abcd::1", "[abcd::1]", "simon@abcd::1"]) {
     for (const args of [
-      ["remote", "add", host],
+      ["--remote", host, "install"],
       ["--remote", host, "ps"],
     ]) {
       const run = await skel(args);
@@ -1050,9 +1459,7 @@ test("an IPv6 address is an SSH host, though it starts like a plugin name", asyn
 
 test("an agent can't set up a machine", () => {
   const env = { PATH: "/usr/bin:/bin", HOME: home, SKELCREW_SANDBOX: "1" };
-  const said = (args: string[]) =>
-    Bun.spawnSync([process.execPath, laptop.main, ...args], { env }).stderr.toString();
-  expect(said(["remote", "add", "simon@workbox"])).toContain("only for your own terminal");
-  expect(said(["first-run"])).toContain("only for your own terminal");
+  const said = Bun.spawnSync([process.execPath, laptop.main, "install"], { env }).stderr;
+  expect(said.toString()).toContain("only for your own terminal");
   expect(calls()).toBe("");
 });

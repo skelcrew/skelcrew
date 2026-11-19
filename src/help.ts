@@ -37,7 +37,7 @@ const sections: [string, [string, string][]][] = [
   [
     "REPOSITORIES",
     [
-      ["init", "Write a starter skelcrew.yaml here and add this repository"],
+      ["init", "Write skelcrew.yaml and .agents/ here and add this repository"],
       ["repo add [<path> | <url> | <owner/repo>]", "Add a repository, this one by default"],
       ["repo ls", "Repositories Skelcrew works on"],
       ["repo rm <name>", "Remove Skelcrew's clone of one"],
@@ -47,17 +47,20 @@ const sections: [string, [string, string][]][] = [
   [
     "PLUGINS",
     [
-      ["plugin install <owner/repo> | <path>", "Install a plugin, after asking"],
-      ["plugin update [<name>]", "Move one, or all, to its newest version"],
-      ["plugin setup <name>", "Run its setup again, such as to sign in again"],
-      ["plugin rm <name>", "Remove one, with its settings and tokens"],
-      ["plugin ls", "Plugins installed, with their kind and what they provide"],
+      ["install", "Set up this machine and the plugins your files name, asking"],
+      ["add <owner/repo>", "Add a plugin to this repository, after asking"],
+      ["add -g <owner/repo> | <path>", "Add a plugin of your own, after asking"],
+      ["update -g [<name>]", "Move one, or all, to its newest version, after asking"],
+      ["setup <name>", "Run its setup again, such as to sign in again"],
+      ["remove -g <name>", "Remove one, with its settings and tokens"],
+      ["plugins", "Your plugins, and what install would change"],
     ],
   ],
   [
     "ELSEWHERE",
     [
-      ["remote add <host>", "Set up a server, over ssh"],
+      ["--remote <host> install", "Send your personal files to a server, and set it up"],
+      ["--remote <host> up --bg", "Run the daemon on a server, in the background"],
       ["--remote <host> [command]", "Run sc on a server, over ssh"],
     ],
   ],
@@ -98,7 +101,7 @@ const examples = [
   'sc issue create app "Fix the login redirect" "Sign-in lands on a 404."',
   "sc start app-12",
   "sc ls",
-  "sc remote add simon@workbox",
+  "sc --remote simon@workbox install",
   "sc --remote simon@workbox",
 ];
 

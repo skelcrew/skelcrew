@@ -34,7 +34,8 @@ test("the help names every command", () => {
   for (const command of [
     "--list",
     "--remote",
-    "remote add",
+    "--remote <host> install",
+    "--remote <host> up --bg",
     "up",
     "up --bg",
     "init",
@@ -56,20 +57,22 @@ test("the help names every command", () => {
     "peek",
     "interrupt",
     "review",
-    "plugin install",
-    "plugin update",
-    "plugin setup",
-    "plugin rm",
-    "plugin ls",
+    "install",
+    "add -g",
+    "update -g",
+    "setup",
+    "remove -g",
+    "plugins",
   ])
     expect(out).toContain(`  ${command} `);
 });
 
-// --remote keeps Skelcrew on the other side up to date, so there is no command for it.
-test("the help names no update command, and says --remote keeps Skelcrew up to date", () => {
+// --remote keeps Skelcrew on the other side up to date, so there is no command for it. The one
+// update command is for your plugins.
+test("the help names no update command for Skelcrew, and says --remote keeps it up to date", () => {
   const out = skel(["--help"]).out;
   expect(out).not.toContain("update --remote");
-  expect(out).not.toMatch(/^ {2}update/m);
+  expect(out.match(/^ {2}update.*/gm)).toEqual([expect.stringContaining("update -g [<name>]")]);
   expect(out).toContain("up to date");
 });
 

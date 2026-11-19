@@ -3,6 +3,7 @@
 // them waits on the tracker.
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
+import { readJson } from "../db.ts";
 
 // Who wrote an item, review or comment. `you` is whether it is you, as signed in to the
 // tracker or forge. `push` is whether they can push to the repository, or null where the
@@ -141,9 +142,12 @@ export function saveItems(
 }
 
 // Returns the items that the query's rows hold, checked, as what was saved could come from an
-// older Skelcrew.
+// older Skelcrew. An item it can't read is left out until the next poll saves it again.
 const parseItems = (rows: unknown[]) =>
-  rows.map((row) => Item.parse(JSON.parse(z.object({ item: z.string() }).parse(row).item)));
+  rows.flatMap(
+    (row) =>
+      readJson("items.item", z.object({ item: z.string() }).parse(row).item, Item, null) ?? [],
+  );
 
 // Returns a task from the copy, open or kept for its thread, for its builder, its reviewer and
 // sc issue show. Throws when the copy doesn't have it.
@@ -201,9 +205,11 @@ export function openPrs(
 }
 
 // Returns the item a list's row links to, for its page, or null when the copy has none there.
+// Each item is read and checked here, not picked by SQLite's json_extract, which stops on any
+// item that isn't JSON, however good the one at the link. It runs only as a page opens.
 export function itemAt(db: Database, link: string): Item | null {
-  const rows = db.query("SELECT item FROM items WHERE json_extract(item, '$.link') = ?").all(link);
-  return parseItems(rows)[0] ?? null;
+  const items = parseItems(db.query("SELECT item FROM items").all());
+  return items.find((item) => item.link === link) ?? null;
 }
 
 // Returns the task a thread works on, for its builder, its reviewer, its PR and sc issue show:

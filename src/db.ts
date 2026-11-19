@@ -1,10 +1,10 @@
 // Skelcrew's state on this machine: one SQLite file.
 import { Database } from "bun:sqlite";
-import { mkdirSync, readFileSync, rmSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { hostname } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
-import { dataDir, threadsDir } from "./paths.ts";
+import { dataDir, dbLogFile, threadsDir } from "./paths.ts";
 
 // `name` is the repository's name in Skelcrew. `owner` and `repo` are its name on its forge, or
 // without a forge its remote's path. `forge` is the plugin that claims its remote, or null
@@ -17,6 +17,36 @@ export const Repository = z.object({
   remote: z.string(),
 });
 export type Repository = z.infer<typeof Repository>;
+
+// The bad values already logged, so a reader that looks each second logs each one once.
+const loggedValues = new Set<string>();
+
+// Returns the JSON a column saved, checked against `shape`, or `empty` when it can't be read, such
+// as a value an older release saved in another shape. `column` names its table and column, such
+// as tasks.seen, for the line logged then. A bad value must never stop the sidebar, the lists or
+// the daemon, so it reads as empty and goes to the log, once, rather than to your screen.
+export function readJson<T>(column: string, saved: string, shape: z.ZodType<T>, empty: T): T {
+  try {
+    const read = shape.safeParse(JSON.parse(saved));
+    if (read.success) return read.data;
+  } catch {}
+  const line = `${column} holds ${JSON.stringify(saved)}, which Skelcrew can't read, so it reads as empty.`;
+  if (loggedValues.has(line)) return empty;
+  loggedValues.add(line);
+  // A log that can't be written, such as on a full disk, must not stop the reader either.
+  try {
+    appendFileSync(dbLogFile(), `${new Date().toISOString()} ${line}\n`);
+  } catch {}
+  return empty;
+}
+
+// Returns a check for a column that holds JSON or null, which reads both as `shape`, and a
+// value it can't read as `empty`, as readJson does. Null reads as `empty` too.
+export const savedJson = <T>(column: string, shape: z.ZodType<T>, empty: T) =>
+  z
+    .string()
+    .nullable()
+    .transform((saved) => (saved === null ? empty : readJson(column, saved, shape, empty)));
 
 // Updates repository names, adding the owner only when repositories share a name.
 // Names are unique in the end, and no row ever takes a name another row still holds.
@@ -182,14 +212,18 @@ function recoverMerges(db: Database): void {
 // Saves the link to its issue, and the line that closes it, on each task that lacks them, from
 // Skelcrew's copy of the tracker, for tasks that started before Skelcrew kept them. An issue
 // that has left the copy, as a closed one does once its thread is done, has nothing to give.
+// Neither has an item that isn't JSON: SQLite would stop on it, and the daemon with it. Such
+// an item is logged here, as no list may ever read it.
 function linkIssues(db: Database): void {
+  for (const row of db.query("SELECT item FROM items WHERE NOT json_valid(item)").all())
+    readJson("items.item", z.object({ item: z.string() }).parse(row).item, z.unknown(), null);
   for (const [column, field] of [
     ["issue_link", "link"],
     ["closes", "closes"],
   ])
     db.run(`UPDATE tasks SET ${column} = (SELECT json_extract(i.item, '$.${field}') FROM items i
       WHERE i.owner = tasks.owner AND i.repo = tasks.repo AND i.kind = 'task'
-        AND i.id = CAST(tasks.task AS TEXT))
+        AND i.id = CAST(tasks.task AS TEXT) AND json_valid(i.item))
       WHERE ${column} IS NULL`);
 }
 
@@ -233,12 +267,13 @@ function createTasks(db: Database): void {
 // in one row, as Thread describes it. Its rowid is the thread's, so newest first still sorts by
 // when the thread started. A database whose threads haven't moved onto tasks yet gets a view of
 // its threads as they are, so sc run before the new daemon starts still shows them. The view is
-// kept in the file, not on one connection: when the daemon moves the threads onto tasks, it
-// makes the view again, and every connection already open reads the new one from then on. Both
-// views have the same columns in the same order, as Bun keeps a cached query's column names
-// when SQLite prepares it again for a changed view, and would put each value under another
-// column's name. It is made again only when it changes, as that changes the file's schema,
-// which every other connection then reads again.
+// kept in the file, not on one connection: when the daemon moves the threads onto tasks, or a
+// newer release adds columns, the view is made again, and every connection already open reads
+// the new one from then on. So the columns the view had keep their places, and new ones go at
+// its end. Bun keeps a cached query's column names when SQLite prepares it again for a changed
+// view, so a column put in the middle would make an older screen, still running, read each
+// value after it under another column's name. It is made again only when it changes, as that
+// changes the file's schema, which every other connection then reads again.
 function viewThreads(db: Database): void {
   const own = ["owner", "repo", "task", "folder", "branch", "base", "status", "session"];
   const moved = hasTasks(db);
@@ -251,13 +286,28 @@ function viewThreads(db: Database): void {
   const turnEnded = hasColumn(db, "threads", "stalled")
     ? "COALESCE(th.turn_ended, th.stalled)"
     : "th.turn_ended";
-  const threadColumn = (column: string) =>
-    column === "turn_ended" ? `${turnEnded} AS stalled` : `th.${column}`;
-  const columns = [
+  // Each column by its name in the view, in the order a new database's view has them.
+  const threadColumn = (column: string): [string, string] =>
+    column === "turn_ended" ? ["stalled", `${turnEnded} AS stalled`] : [column, `th.${column}`];
+  const named = new Map([
     ...[...own, ...Object.keys(threadColumns)].map(threadColumn),
-    ...Object.keys(taskColumns).map((column) => `${moved ? "k" : "th"}.${column}`),
-    `${turnEnded} AS turn_ended`,
-  ];
+    ...Object.keys(taskColumns).map((column): [string, string] => [
+      column,
+      `${moved ? "k" : "th"}.${column}`,
+    ]),
+    ["turn_ended", `${turnEnded} AS turn_ended`],
+  ]);
+  // The view the database has keeps its order, and the columns it lacks follow. That holds for
+  // a view an earlier release made in another order too. Putting an older order back would
+  // fix no screen: one that cached the older order stopped at its first bad value, as a throw
+  // ends the sidebar. It would break every screen and daemon started since, which read this one.
+  const had = db
+    .query("SELECT name FROM pragma_table_info('task_threads')")
+    .all()
+    .map((row) => z.object({ name: z.string() }).parse(row).name)
+    .filter((name) => named.has(name));
+  const order = [...new Set([...had, ...named.keys()])];
+  const columns = order.flatMap((name) => named.get(name) ?? []);
   const view = `CREATE VIEW task_threads AS SELECT th.rowid AS rowid, ${columns.join(", ")}
     FROM threads th${moved ? " JOIN tasks k ON k.owner = th.owner AND k.repo = th.repo AND k.task = th.task" : ""}`;
   const made = db.query("SELECT sql FROM sqlite_master WHERE type = 'view' AND name = ?");
@@ -542,6 +592,11 @@ function prepareTables(db: Database): void {
     folder TEXT NOT NULL,
     source TEXT
   )`);
+  // The commands you approved for a plugin from a folder of yours, as JSON, so building it again
+  // asks only when they change. Null for a plugin from GitHub, and for one installed before
+  // Skelcrew kept them, which is asked about once more.
+  if (!db.query("SELECT 1 FROM pragma_table_info('plugins') WHERE name = 'approved'").get())
+    db.run("ALTER TABLE plugins ADD COLUMN approved TEXT");
 }
 
 // Upgrades the threads an earlier release saved, whose `turn_ended` is still null, from its

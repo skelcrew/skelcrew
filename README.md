@@ -26,21 +26,21 @@ Within 2 minutes Skelcrew starts a thread on it, and the lead tells you. A revie
 ## Keep working with the laptop closed
 
 ```sh
-sc remote add <host>   # a server of your own, such as simon@workbox
+sc --remote <host> install   # a server of your own, such as simon@workbox
 ```
 
-It sets the machine up and prints the command that connects to it, such as `sc --remote <host>`. Run that, and the work carries on after you close the laptop.
+It sends your settings and plugins there and sets the machine up. Then `sc --remote <host>` connects to it, and the work carries on after you close the laptop. Run the install again whenever you change your settings or plugins.
 
 ## Key commands
 
 | Command | What it does |
 | --- | --- |
 | `sc` | Opens the lead of the repository you are in. |
-| `sc init` | Writes a starter `skelcrew.yaml` in a checkout. |
+| `sc init` | Writes `skelcrew.yaml` and `.agents/` from the built-in defaults in a checkout, and adds the repository. |
 | `sc ps` | Lists threads, with their status and which need you. |
 | `sc attach <thread>` | Opens a thread's builder. Ctrl-Q detaches. |
 | `sc stop <thread>` | Ends a thread and keeps its branch and PR. |
-| `sc remote add <host>` | Sets up a server to run Skelcrew. |
+| `sc --remote <host> install` | Sets up a server to run Skelcrew, with your settings and plugins. |
 | `sc --remote <host>` | Connects to Skelcrew on that server. |
 
 The full list is in [the spec](docs/spec.md#commands).

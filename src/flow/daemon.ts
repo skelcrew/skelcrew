@@ -479,7 +479,8 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         );
         return { merged: `Merged ${repository.name}#${request.pr}.` };
       }
-      // What sc merge --when-ready asks you about at your terminal before it arms.
+      // What sc merge --when-ready asks you about at your terminal before it arms, and whether
+      // it merges when ready already, so you aren't asked again.
       case "merge preview": {
         const thread = threadToMerge(db, request);
         refuseWithoutForge(db, thread);
@@ -489,6 +490,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
           pr: thread.pr,
           title: thread.title,
           started: thread.started,
+          merging: thread.merge_plan !== null,
         };
       }
       // You arm one at your terminal, after saying y. A lead arms one only when you let it in

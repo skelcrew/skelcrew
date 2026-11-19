@@ -21,6 +21,7 @@ import { machineCode } from "../db.ts";
 import { flowRoles } from "../flows.ts";
 import { cloneDir, threadSocket } from "../paths.ts";
 import { trackerOf } from "../plugins/ask.ts";
+import { needsInstall } from "../plugins/repository.ts";
 import { type Host, hostNamed } from "../plugins/runtime.ts";
 import { repositoryRole } from "../roles.ts";
 import { quietly } from "../run.ts";
@@ -131,6 +132,16 @@ async function recordThread(
   const agents = approvedAgents({ owner, repo });
   const flow = given.flow ?? "default";
   checkFlow({ owner, repo, agents }, name, flow);
+  // A plugin the repository's files name that this machine lacks, such as its forge, would leave
+  // the task without it. Only you can install one, at your terminal, so the start waits for you.
+  // The files are in Skelcrew's clone, so this is run only once the clone is waited for: below for
+  // a new task, before it claims a name, and by the daemon for a task from the tracker.
+  const refuseMissingPlugins = () => {
+    if (needsInstall(cloneDir(owner, repo)))
+      throw new Error(
+        `${name}'s plugins aren't all installed here, so its tasks can't start. Run sc install in your own terminal, then start it again.`,
+      );
+  };
   const where = "WHERE owner = ? AND repo = ? AND task = ?";
   let task: string;
   let title: string;
@@ -151,6 +162,7 @@ async function recordThread(
     // works at. So it is waited for until both are there, and the repository read again after.
     if (!existsSync(clone) || !forgeKnown(db, repository)) await refreshClones(db);
     const current = findRepository(db, given.repo);
+    refuseMissingPlugins();
     const claimed = await claimedNames(db, current, code);
     const started = db
       .query("SELECT task FROM threads WHERE owner = ? AND repo = ? AND task GLOB ?")
@@ -167,6 +179,7 @@ async function recordThread(
     // Skelcrew kept the line has, so a later issue of the same ID is never closed by its PR.
     closes = "";
   } else {
+    refuseMissingPlugins();
     // A named task takes its words from Skelcrew's copy of the tracker. One of the repository's
     // own, or one the tracker no longer has, can only start over on the words its failed or
     // done thread kept.
@@ -563,6 +576,8 @@ export async function startBuilder(db: Database, sessions: string, thread: Threa
       repositoryRole(flowRoles(thread).build, thread).instructions,
       repositoryCommands(thread),
     ),
+    // Its skills come from the same .agents/ as its role.
+    skills: thread,
     ...start,
   });
   await startOnHost(db, thread, { host, name: hostName }, { folder: clone, command: argv, env });
