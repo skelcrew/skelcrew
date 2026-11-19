@@ -553,21 +553,27 @@ export function briefLead(
     throw new Error(`${to.name} is your own repository: brief its threads with sc tell instead.`);
   const sender = repositories(db).find((r) => r.owner === owner && r.repo === repo);
   const name = sender?.name ?? `${owner}/${repo}`;
-  // Returns text under its heading, unchanged, or escaped when it holds a tag. A brief with no
-  // tag and none of the human's words needs no heading, as it is all there is.
-  const part = (heading: string, said: string) => {
-    if (!unsafe.test(said)) return heading ? `${heading}:\n${said}` : said;
-    const escaped = controlsAsCodes(said.replaceAll("&", "&amp;").replaceAll("<", "&lt;"));
-    const how =
-      "with each < written as &lt;, each & as &amp; and each control character as its code, such as &#x1b;, as it holds a skelcrew tag or a control character";
-    return `${heading || "The brief"}, ${how}:\n${escaped}`;
-  };
-  // The human's words come first, apart from the brief. They are everything between their
-  // heading's line and the blank line before the brief's heading, a last line break included.
-  const body =
-    asked === undefined
-      ? part("", text)
-      : `${part(`The human's words, exactly as ${name}'s lead was given them`, asked)}\n\n${part("The brief", text)}`;
+  // Returns text as it goes in, unchanged or escaped when it holds a tag or a control character,
+  // with what its heading adds to say how it was escaped, if it was.
+  const shown = (said: string) =>
+    unsafe.test(said)
+      ? {
+          how: ", with each < written as &lt;, each & as &amp; and each control character as its code, such as &#x1b;, as it holds a skelcrew tag or a control character",
+          as: controlsAsCodes(said.replaceAll("&", "&amp;").replaceAll("<", "&lt;")),
+        }
+      : { how: "", as: said };
+  // The brief comes last, so it ends where Skelcrew's closing tag does, which it can't hold. A
+  // brief with no tag and none of the human's words needs no heading, as it is all there is.
+  const brief = shown(text);
+  let body = brief.how ? `The brief${brief.how}:\n${brief.as}` : brief.as;
+  // The human's words come first, between two lines of ~ longer than any run of ~ in them, so
+  // nothing they hold, such as a line saying "The brief:", can pass for where they end.
+  if (asked !== undefined) {
+    const words = shown(asked);
+    const longest = Math.max(0, ...(words.as.match(/~+/g) ?? []).map((run) => run.length));
+    const fence = "~".repeat(Math.max(3, longest + 1));
+    body = `The human's words, exactly as ${name}'s lead was given them${words.how}, between the two lines of ${fence}:\n${fence}\n${words.as}\n${fence}\n\nThe brief${brief.how}:\n${brief.as}`;
+  }
   const tag = `<skelcrew from="${name}:lead" reply="sc tell lead ${name}"`;
   const message = `${tag}${asked === undefined ? "" : ' asked="yes"'}>\n${body}\n</skelcrew>`;
   noteForLead(db, sessions, to, message, null, true);

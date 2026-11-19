@@ -4,7 +4,15 @@
 // config folder.
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { createConnection } from "node:net";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
@@ -429,9 +437,11 @@ describe.skipIf(insideSandbox)("sc tell", () => {
     db.close();
   }, 60_000);
 
-  // The brief and the lead's reopened tab are saved together before sc tell answers, so a
-  // daemon that stops right after it still brings the lead back as it starts, and types it in.
-  test("a brief to a lead you exited reaches it though the daemon stops right after", async () => {
+  // The brief and the lead's reopened tab are saved together before sc tell answers. So a
+  // daemon that stops after that, before the lead is back, still brings the lead back as it
+  // starts, and types the brief in. Here the lead can't come back while the first daemon runs,
+  // as its clone and remote are moved away, so the daemon stops in exactly that interval.
+  test("a brief saved before its lead is back reaches it though the daemon stops then", async () => {
     await startTwoLeads();
     const name = leadPlaces("simon", "web").name;
     writeFileSync(join(webLead(), "exit-now"), "");
@@ -443,9 +453,16 @@ describe.skipIf(insideSandbox)("sc tell", () => {
           .trim() === "1 0"
       );
     });
-    // Brought back before the daemon stops, the lead would still be busy, so the brief waits.
-    writeFileSync(join(webLead(), "busy"), "");
+    const clone = join(data(), "repos", "simon", "web");
+    const remote = join(home, "github", "simon", "web.git");
+    renameSync(clone, `${clone}.away`);
+    renameSync(remote, `${remote}.away`);
     expect((await skel(["tell", "lead", "web", "Rename the button."], "lead")).err).toBe("");
+    // The daemon tries to bring the lead back, and can't without the clone.
+    await Bun.sleep(3000);
+    const hasLead = () =>
+      Bun.spawnSync(["tmux", "-L", socket, "has-session", "-t", `=${name}`]).success;
+    expect(hasLead()).toBe(false);
     for (const daemon of running.splice(0)) {
       daemon.kill("SIGKILL");
       await daemon.exited;
@@ -457,9 +474,12 @@ describe.skipIf(insideSandbox)("sc tell", () => {
     });
     expect(db.query("SELECT COUNT(*) AS n FROM notes WHERE repo = 'web'").get()).toEqual({ n: 1 });
     db.close();
+    expect(typed(webLead())).not.toContain("Rename the button.");
+    renameSync(`${clone}.away`, clone);
+    renameSync(`${remote}.away`, remote);
     serve();
-    rmSync(join(webLead(), "busy"));
     await until(() => typed(webLead()).includes("Rename the button."), 30_000);
+    expect(hasLead()).toBe(true);
   }, 60_000);
 
   // A repository you never opened has no lead yet. The brief starts it, and gives it a tab, so
@@ -521,7 +541,7 @@ describe.skipIf(insideSandbox)("sc tell", () => {
     expect(told.err).toBe("");
     await until(() => read(join(webLead(), "acted")).split("\n").length > 2, 30_000);
     expect(typed(webLead())).toContain(
-      `<skelcrew from="app:lead" reply="sc tell lead app" asked="yes">\nThe human's words, exactly as app's lead was given them:\nHave web's lead add the CSV export.\nKeep it small.\n\n\nThe brief:\nAdd a CSV export to the reports page.`,
+      `<skelcrew from="app:lead" reply="sc tell lead app" asked="yes">\nThe human's words, exactly as app's lead was given them, between the two lines of ~~~:\n~~~\nHave web's lead add the CSV export.\nKeep it small.\n\n~~~\n\nThe brief:\nAdd a CSV export to the reports page.`,
     );
     expect(read(join(webLead(), "acted")).split("\n")[1]).toContain("web-");
     const threads: unknown = JSON.parse((await skel(["ps", "--json"], "web's lead")).out);
