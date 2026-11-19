@@ -162,6 +162,38 @@ export function cantTell(unreadable: string[]): string | null {
   return null;
 }
 
+// Returns where repositories' files are read: the checkout you are in, as you see it there, and
+// with `everywhere`, or outside a checkout, Skelcrew's clone of each repository it has, at its
+// default branch. Each comes with the name said for it and its remote.
+function places(everywhere: boolean): { folder: string; where: string; remote: string | null }[] {
+  const top = checkoutTop();
+  const clones = repositories(openDb()).map((r) => ({
+    folder: cloneDir(r.owner, r.repo),
+    where: r.name,
+    remote: r.remote,
+  }));
+  return [
+    ...(top !== null ? [{ folder: top, where: "This checkout", remote: originHere(top) }] : []),
+    ...(top === null || everywhere ? clones : []),
+  ];
+}
+
+// Returns every plugin the checkout you are in or any repository Skelcrew has names in its
+// skelcrew.yaml or pins in its skelcrew.lock, for sc install and sc plugins, which never remove
+// one. A pin with no line in skelcrew.yaml counts too: it is stale, but removing the plugin would
+// lose its settings and tokens. What can't be read goes into `unreadable`, as for repositoryNeeds.
+export function everyNamed(unreadable: string[]): string[] {
+  return places(true).flatMap(({ folder, where }) => {
+    try {
+      const { plugins, lock } = repositoryPlugins(folder);
+      return [...plugins, ...Object.keys(lock)];
+    } catch (error) {
+      unreadable.push(`${where}: ${errorText(error)}`);
+      return [];
+    }
+  });
+}
+
 // Returns the plugins repositories need, for sc install and sc plugins: in a checkout, those its
 // files name, as you see them there. Outside one, those of every repository Skelcrew has, from
 // Skelcrew's clone of its default branch. `everywhere` adds every repository Skelcrew has to the
@@ -171,18 +203,7 @@ export function cantTell(unreadable: string[]): string | null {
 // `unreadable` is given: then what is wrong goes there, and the other repositories still count,
 // so one broken file can't hide another repository's pins.
 export function repositoryNeeds(everywhere = false, unreadable?: string[]): Need[] {
-  const db = openDb();
-  const top = checkoutTop();
-  const clones = repositories(db).map((r) => ({
-    folder: cloneDir(r.owner, r.repo),
-    where: r.name,
-    remote: r.remote,
-  }));
-  const places = [
-    ...(top !== null ? [{ folder: top, where: "This checkout", remote: originHere(top) }] : []),
-    ...(top === null || everywhere ? clones : []),
-  ];
-  const needs = places.flatMap(({ folder, where, remote }) => {
+  const needs = places(everywhere).flatMap(({ folder, where, remote }) => {
     try {
       const { plugins, lock } = repositoryPlugins(folder);
       return plugins.map((source) => ({ source, where, locked: lock[source], remote }));

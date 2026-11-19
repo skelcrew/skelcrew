@@ -13,6 +13,7 @@ import { installedPlugins } from "../plugins/plugin.ts";
 import {
   cantTell,
   checkoutNames,
+  everyNamed,
   installRepositoryPlugins,
   type Need,
   repositoryNeeds,
@@ -406,12 +407,12 @@ export function install(from?: string, plain = false): boolean {
   // What repositories need is read first, so a plugin your lock and a repository pin at different
   // commits is left as it is on both sides. Each repository is read on its own, so one whose files
   // can't be read hides nothing of the others. A plugin any repository Skelcrew has names stays,
-  // though your files don't name it, and while one can't be read none is removed, as what it
-  // needs can't be told.
+  // though your files don't name it, as does one it only pins in its skelcrew.lock. While one
+  // can't be read none is removed, as what it needs can't be told.
   const conflictsIn = (needs: Need[]) =>
     needs.filter((need) => need.conflict !== null).map((need) => need.source);
   const anywhere: string[] = [];
-  const everyNeed = repositoryNeeds(true, anywhere).map((need) => need.source);
+  const everyNeed = everyNamed(anywhere);
   const { changed: plugins, left: notHere } = installYourPlugins(
     from ?? originHere(),
     conflictsIn(repositoryNeeds(false, [])),
@@ -439,31 +440,37 @@ export function install(from?: string, plain = false): boolean {
     console.log(
       `\nSkelcrew isn't set up yet, as your lock and a repository pin ${disagreeing.join(", ")} at different commits. Plain sc asks again. Pin the same version in each.`,
     );
-  // A repository whose files can't be read may pin a plugin of yours at another commit, which
-  // can't be known, so the machine isn't set up until they can be read.
-  const ready = left.length === 0 && unreadable.length === 0;
+  const ready = left.length === 0;
   if (ready) {
     mkdirSync(dataDir(), { recursive: true });
     writeFileSync(setUpFile(), "");
     writeFileSync(installDoneFile(), "");
   }
-  // Said before the other repositories' plugins install, so one of them failing can't hide it.
+  // A repository whose files can't be read stops nothing else: every plugin was kept above, as
+  // what it needs can't be told, and the other repositories' plugins still install. It is said
+  // before they install, so one of them failing can't hide it, and sc install fails, as the
+  // machine may lack that repository's plugins.
   if (unreadable.length > 0)
     console.log(
-      `\nSkelcrew isn't set up yet, as it can't read the plugins of ${unreadable.join("; ")}. Plain sc asks again.`,
+      `\nSkelcrew can't read the plugins of ${unreadable.join("; ")}, so it installs none of them and removes no plugin. Fix the file, then run sc install again.`,
     );
   const repositories = installRepositoryPlugins(needs);
-  if (unreadable.length > 0)
-    throw new Error("some repositories' plugins can't be read, as said above");
   if (!ready) return false;
   if (!finished && (setUp || plugins || repositories.changed)) console.log("\nSkelcrew is set up.");
   // Plain sc on a machine set up by an older release takes the marks without a word.
-  else if (!plain && !setUp && !plugins && !repositories.changed && !repositories.missing)
+  else if (
+    !plain &&
+    !setUp &&
+    !plugins &&
+    !repositories.changed &&
+    !repositories.missing &&
+    unreadable.length === 0
+  )
     console.log("Nothing to install: this machine has everything your files ask for.");
   // A repository's plugin still missing, such as one with no pin, one you said no to or one whose
   // pins disagree, leaves the machine set up, but sc install fails, so a script running it can
   // tell the machine doesn't match the files yet. What is missing was said above.
-  return !repositories.missing;
+  return !repositories.missing && unreadable.length === 0;
 }
 
 // Reports whether sc install ran to its end here, which plain sc checks to know whether to run it
