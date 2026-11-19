@@ -15,7 +15,7 @@ import { errorText } from "../say.ts";
 import { cpuBusy, cpuSample, loadText, memoryInUse, readMemory } from "../screen/load.ts";
 import { grey, paint, removeControlCodes } from "../screen/look.ts";
 import { version } from "../version.ts";
-import { drawList, type Frame, keysFor, tabAt } from "./layout.ts";
+import { drawList, type Frame, keysFor, type Target, tabAt } from "./layout.ts";
 import {
   cutBacklog,
   hasForge,
@@ -39,7 +39,9 @@ const openCommand = process.platform === "darwin" ? "open" : "xdg-open";
 // one of its three forms, and does nothing. Alt with a letter is matched whole, or its Esc or
 // its q would quit. Shift-Tab and Alt-Shift-Left move to the previous repository, and Tab and
 // Alt-Shift-Right to the next: Shift-Tab plain, as kitty's CSI-u and as xterm's extended key,
-// and the arrows plain and with kitty's press event, which it adds when asked for events.
+// and the arrows plain and with kitty's press event, which it adds when asked for events. Kitty
+// sends the main arrows so even in its CSI-u mode, and its keypad arrows as CSI-u, 57417 left
+// and 57418 right.
 const keyNames: Record<string, string> = {
   "\x1b[A": "up",
   "\x1bOA": "up",
@@ -50,11 +52,15 @@ const keyNames: Record<string, string> = {
   "\t": "tab",
   "\x1b[1;4C": "tab",
   "\x1b[1;4:1C": "tab",
+  "\x1b[57418;4u": "tab",
+  "\x1b[57418;4:1u": "tab",
   "\x1b[Z": "back tab",
   "\x1b[9;2u": "back tab",
   "\x1b[27;2;9~": "back tab",
   "\x1b[1;4D": "back tab",
   "\x1b[1;4:1D": "back tab",
+  "\x1b[57417;4u": "back tab",
+  "\x1b[57417;4:1u": "back tab",
   "\x03": "q",
   "\x1b": "escape",
 };
@@ -111,6 +117,8 @@ export async function runList(agents: string, repository: string): Promise<void>
     cutBacklog(all, wholeBacklog).filter((row) => row.part === "lead" || opened.has(row.part));
   let here = -1;
   let top = 0;
+  // What a click on each line of the screen reaches, as it was last drawn.
+  let targets: Target[] = [];
   let said: string | null = null;
   // The open question, with the row it is about and whether it is a merge or a start.
   let asking: { question: Question; row: string; merge: boolean } | null = null;
@@ -157,6 +165,7 @@ export async function runList(agents: string, repository: string): Promise<void>
       size,
     );
     top = drawn.top;
+    targets = drawn.targets;
     const text = `\x1b[H${drawn.lines.map((line) => `${line}\x1b[K`).join("\r\n")}\x1b[J`;
     if (text === lastFrame) return;
     lastFrame = text;
@@ -358,18 +367,54 @@ export async function runList(agents: string, repository: string): Promise<void>
     if (tabs.length > 1 && next) goTo(next.fullName);
   };
 
-  // Acts on a click of the left button on the top line: on a repository's tab, it opens that
-  // repository. Any other click, a release or the wheel does nothing.
+  // Opens or closes a stage, as its number key does. Opening one moves you to its first row, so
+  // the list scrolls to show it, rather than open it out of sight.
+  const toggleStage = (stage: ListStage) => {
+    if (opened.delete(stage)) return reshow();
+    opened.add(stage);
+    reshow();
+    const first = rows.findIndex((candidate) => candidate.part === stage);
+    if (first >= 0) here = first;
+    return draw();
+  };
+
+  // Moves you one row up, by -1, or down, by 1, staying among the rows.
+  const move = (by: 1 | -1) => {
+    here = Math.min(Math.max(here + by, 0), rows.length - 1);
+    return draw();
+  };
+
+  // Acts on the mouse, by what was drawn where it was pressed. The left button on a repository's
+  // tab opens that repository, and on a stage's heading opens or closes the stage. On a task's
+  // row it moves you there, and on the row you are on already it opens it, as Enter does, so a
+  // double click opens a row too. The lead's row opens the lead at once. The wheel moves you a
+  // row up or down, which scrolls the list, as the row you are on always stays in view. A
+  // release, another button, or a click on nothing does nothing.
   const click = (sent: string) => {
     const [, button, column, line] = clickPattern.exec(sent) ?? [];
-    if (button !== "0" || line !== "1") return draw();
-    const width = process.stdout.columns || 80;
-    const tab = tabAt(
-      frameWith(() => "", ""),
-      width,
-      Number(column),
-    );
-    return tab ? goTo(tab) : draw();
+    if (button === "64") return move(-1);
+    if (button === "65") return move(1);
+    if (button !== "0") return draw();
+    if (line === "1") {
+      const width = process.stdout.columns || 80;
+      const tab = tabAt(
+        frameWith(() => "", ""),
+        width,
+        Number(column),
+      );
+      return tab ? goTo(tab) : draw();
+    }
+    const target = targets[Number(line) - 1] ?? null;
+    if (target === null) return draw();
+    if ("stage" in target) return toggleStage(target.stage);
+    const row = rows[target.row];
+    if (!row) return draw();
+    if (target.row === here || row.part === "lead") {
+      here = target.row;
+      return openRow(row);
+    }
+    here = target.row;
+    return draw();
   };
 
   // Acts on one key. A question takes only y and n, and anything else is a no, Esc included. A
@@ -405,24 +450,13 @@ export async function runList(agents: string, repository: string): Promise<void>
     }
     said = null;
     const row = rows[here];
-    if (key === "up" || key === "down") {
-      here = Math.min(Math.max(here + (key === "up" ? -1 : 1), 0), rows.length - 1);
-      return draw();
-    }
+    if (key === "up" || key === "down") return move(key === "up" ? -1 : 1);
     if (key === "tab") return nextRepository(1);
     if (key === "back tab") return nextRepository(-1);
     if (key.startsWith(`${esc}[<`)) return click(key);
-    // 1 to 6 open or close the stages, in the order they show. Opening one moves you to its
-    // first row, so the list scrolls to show it, rather than open it out of sight.
+    // 1 to 6 open or close the stages, in the order they show.
     const stage = ListStage.options[Number(key) - 1];
-    if (/^[1-6]$/.test(key) && stage) {
-      if (opened.delete(stage)) return reshow();
-      opened.add(stage);
-      reshow();
-      const first = rows.findIndex((candidate) => candidate.part === stage);
-      if (first >= 0) here = first;
-      return draw();
-    }
+    if (/^[1-6]$/.test(key) && stage) return toggleStage(stage);
     if (key === "enter" && row) return openRow(row);
     if (key === "m" && row?.merge) {
       if ("refused" in row.merge) return say(row.merge.refused);

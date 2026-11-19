@@ -470,7 +470,8 @@ test("a task past its round limit says so, from the changes its review held", ()
 });
 
 // sc submit past the round limit drops the held changes and starts a review, and the thread
-// still needs you while it runs. The task is where its work is: under review.
+// still needs you while it runs. The task is where its work is: under review. The built-in
+// round limit is 3.
 test("a review running past the round limit is under Reviewing, and says round limit", () => {
   sql(
     threadSql({
@@ -489,6 +490,26 @@ test("a review running past the round limit is under Reviewing, and says round l
     says: "round limit",
     needsYou: true,
   });
+});
+
+// A thread within its round limit can need you during a review for another reason, such as a
+// message that couldn't be typed in, which is never the round limit.
+test("a review within the round limit that needs you for another reason never says round limit", () => {
+  sql(
+    threadSql({
+      task: "44",
+      title: "Within the limit",
+      status: "waiting",
+      rounds: 1,
+      needs_you: 1,
+      verdict: "changes",
+      reviewing: "abc",
+      pr: 44,
+    }),
+  );
+  const row = rows().find((candidate) => candidate.name === "app-44");
+  expect(row?.part).toBe("reviewing");
+  expect(row?.says).not.toBe("round limit");
 });
 
 // The changes held at the round limit say why the task waits, even once CI passed and something
@@ -618,6 +639,82 @@ test("an open stage shows its rows, and its heading is bright while a closed one
   expect(coloured).toContain(
     " \x1b[90m2\x1b[22;39m \x1b[90mBuilding \x1b[22;39m 3\x1b[38;5;221m · 1 needs you\x1b[22;39m",
   );
+});
+
+// Returns SQL for the tasks of the stages 1 to 4 test: more at work, one under review and two
+// approved and waiting on CI.
+const fourStagesSql = () => `${Array.from({ length: 6 }, (_, i) =>
+  threadSql({ task: String(50 + i), title: `Task ${50 + i}`, changed: now - (10 + i) * 60_000 }),
+).join("\n")}
+${threadSql({ task: "15", title: "Under review", status: "waiting", reviewing: "abc", pr: 45 })}
+${threadSql({ task: "16", title: "Approved", status: "waiting", verdict: "approve", checks: "pending", pr: 46 })}
+${threadSql({ task: "17", title: "Approved too", status: "waiting", verdict: "approve", checks: "pending", pr: 47 })}`;
+
+// However tall the terminal and wherever you are, an open stage's heading never shows with its
+// rows out of view below it, and every stage's count stays in sight, on a narrow terminal too.
+test("no open heading ends the view without its rows, and every count shows, at any size", () => {
+  sql(fourStagesSql());
+  const all = rows();
+  const opened = new Set<ListStage>(["backlog", "building", "reviewing", "checks"]);
+  const shown = all.filter((row) => row.part === "lead" || opened.has(row.part));
+  const headings = stageHeadings(all, opened);
+  for (const width of [41, 80])
+    for (let height = 9; height <= 30; height += 1)
+      for (let here = 0; here < shown.length; here += 1) {
+        const size = { width, height };
+        const { lines, targets } = drawList(shown, headings, here, 0, frame, size);
+        const plain = lines.map((line) => Bun.stripANSI(line));
+        const where = `at ${width}x${height} on row ${here}:\n${plain.join("\n")}`;
+        // The last line of the stages is the one before the bottom edge, two blank lines and
+        // the keys, and a heading of an open stage with rows is never that line.
+        targets.forEach((target, at) => {
+          if (target === null || !("stage" in target)) return;
+          const hasRows = shown.some((row) => row.part === target.stage);
+          const after = targets[at + 1];
+          if (opened.has(target.stage) && hasRows)
+            expect(after !== null && after !== undefined && "row" in after, where).toBe(true);
+        });
+        // Every heading shows, in full or pinned at an edge, in full or short words or by its
+        // number key, once there is room for the edges.
+        const text = plain.join("\n");
+        if (height >= 12)
+          ["Back", "Build", "Rev", "Chk", "Ready", "Done"].forEach((stage, at) => {
+            const full = ["Backlog", "Building", "Reviewing", "Checks", "Ready", "Done"][at] ?? "";
+            const seenHere = [stage, full, `${at + 1}:`].some((name) => text.includes(name));
+            expect(seenHere, `${stage} ${where}`).toBe(true);
+          });
+      }
+});
+
+test("an edge too wide for the terminal says its counts in fewer letters", () => {
+  sql(fourStagesSql());
+  const open: ListStage[] = ["backlog", "building", "reviewing", "checks"];
+  const lines = drawn(13, 16, 41, open).map((line) => line.trimEnd());
+  expect(lines[5]).toBe(" ↑ +10  Back 1  Build 9·1!  Rev 1");
+  expect(lines[13]).toBe(" ↓ Ready 1   Done 0");
+});
+
+// A click reaches what was drawn where it lands, so the list hit-tests from its own layout.
+test("each line drawn says what a click on it reaches", () => {
+  const all = rows();
+  const opened = new Set<ListStage>(["building"]);
+  const shown = all.filter((row) => row.part === "lead" || opened.has(row.part));
+  const { lines, targets } = drawList(shown, stageHeadings(all, opened), 1, 0, frame, {
+    width: 80,
+    height: 24,
+  });
+  expect(targets).toHaveLength(lines.length);
+  // Returns what a click reaches on the first line that shows `text`.
+  const at = (text: string) =>
+    targets[lines.findIndex((line) => Bun.stripANSI(line).includes(text))];
+  expect(at("lead    claude")).toEqual({ row: 0 });
+  expect(at("running")).toEqual({ row: 0 });
+  expect(at("Backlog")).toEqual({ stage: "backlog" });
+  expect(at("Ready")).toEqual({ stage: "ready" });
+  expect(at("app-7")).toEqual({ row: shown.findIndex((row) => row.name === "app-7") });
+  expect(at("working · 14:55")).toEqual(at("app-7"));
+  expect(targets[0]).toBeNull();
+  expect(targets.at(-1)).toBeNull();
 });
 
 test("a row's word is in its colour, its step and what follows it are dim, and its title is plain", () => {
@@ -1375,6 +1472,15 @@ test("Shift-Tab and Alt-Shift-Left go back a repository, Alt-Shift-Right on, wra
   await until(onApp, "app, back from site with xterm's Shift-Tab");
   type("\x1b[1;4:1D");
   await until(onSite, "site, back from app in kitty's form");
+  // Kitty's keypad arrows, in its CSI-u form, plain and with the press event.
+  type("\x1b[57418;4u");
+  await until(onApp, "app, on from site, wrapping round, in kitty's CSI-u form");
+  type("\x1b[57417;4u");
+  await until(onSite, "site, back from app, wrapping round, in kitty's CSI-u form");
+  type("\x1b[57418;4:1u");
+  await until(onApp, "app, on from site in kitty's CSI-u form with its event");
+  type("\x1b[57417;4:1u");
+  await until(onSite, "site, back from app in kitty's CSI-u form with its event");
   expect(seen()).toContain("⇥/alt+shift+←→ repository");
 });
 
@@ -1407,6 +1513,65 @@ test("opening a stage with its key brings its heading and first rows into view",
     .map((line) => line.trimEnd());
   const at = lines.findIndex((line) => line.includes("▸"));
   expect(lines[at - 1]).toMatch(/^ 5 Ready +1$/);
+});
+
+// Returns the line, counted from 1 as your terminal reports a click, that shows `text` first.
+const lineOf = (text: string) =>
+  seen()
+    .split("\n")
+    .findIndex((line) => line.includes(text)) + 1;
+// Presses the left button on a line and lets it go, as your terminal reports it in SGR.
+const clickOn = (line: number) => type(`\x1b[<0;10;${line}M\x1b[<0;10;${line}m`);
+// Whether the terminal's pane has mouse reporting on, as tmux keeps it for the pane.
+const mouseOn = () =>
+  tmux("display", "-p", "-t", "=one:", "#{mouse_standard_flag}#{mouse_sgr_flag}")
+    .stdout.toString()
+    .trim() === "11";
+
+test("a click on a task selects it, and a second click opens it, as Enter does", async () => {
+  await open();
+  expect(mouseOn()).toBe(true);
+  clickOn(lineOf("app-7"));
+  await until(() => here().startsWith("▸ ○ app-7"), "app-7 selected");
+  expect(seen()).not.toContain("I am app-7");
+  // Its second line is part of its row too.
+  clickOn(lineOf("app-7") + 1);
+  await until(() => seen().includes("I am app-7"), "app-7's agent");
+  // The agent gets the mouse as your terminal would give it: the list's reporting is off.
+  expect(mouseOn()).toBe(false);
+  press("C-q");
+  await until(() => here().startsWith("▸ ○ app-7"), "the list on app-7's row");
+  expect(mouseOn()).toBe(true);
+  type("q");
+  await until(() => read(join(home, "left")) === "left", "the list to leave");
+  expect(mouseOn()).toBe(false);
+});
+
+test("a click on the lead's row opens the lead at once", async () => {
+  await open();
+  clickOn(lineOf("lead    claude"));
+  await until(() => seen().includes("I am lead"), "the lead");
+  press("C-q");
+  await until(() => here().startsWith("▸ ○ lead"), "the list on the lead's row");
+});
+
+test("a click on a stage's heading opens or closes it, and the wheel moves a row", async () => {
+  await open();
+  clickOn(lineOf("Backlog"));
+  await until(() => here().startsWith("▸ ○ app-31"), "Backlog open, on its issue");
+  clickOn(lineOf("Building"));
+  await until(() => !seen().includes("app-7"), "Building closed");
+  clickOn(lineOf("Building"));
+  await until(() => seen().includes("app-7"), "Building open again");
+  // The wheel down, then up, as SGR reports it, with the pointer anywhere.
+  await until(() => here().startsWith("▸ ● app-12"), "Building's first task");
+  type("\x1b[<65;10;3M");
+  await until(() => here().startsWith("▸ ○ app-9"), "a row down");
+  type("\x1b[<64;10;3M");
+  await until(() => here().startsWith("▸ ● app-12"), "a row up");
+  // A click on a blank line reaches nothing.
+  clickOn(2);
+  expect(here()).toStartWith("▸ ● app-12");
 });
 
 // The tabs are on the top line, left after Skelcrew's version. Your terminal reports a click by

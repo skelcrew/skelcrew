@@ -22,7 +22,7 @@ import type { DaemonRequest } from "../flow/requests.ts";
 import { ListStage, listStage } from "../flow/stage.ts";
 import { Thread } from "../flow/thread.ts";
 import { forgeOf } from "../plugins/ask.ts";
-import { changedAt } from "../screen/lists.ts";
+import { changedAt, roundLimit as settingsRoundLimit } from "../screen/lists.ts";
 import { removeControlCodes } from "../screen/look.ts";
 import { builderProgress } from "../screen/progress.ts";
 
@@ -73,14 +73,15 @@ export type Open = { owner: string; repo: string };
 // A repository's tab: its name in Skelcrew, its owner/name, and its badge.
 export type Tab = Badge & { name: string; fullName: string };
 
-// Returns a round limit that puts the thread past it exactly when its database row says so,
-// as the list reads no settings files. A thread holding the changes of a review past the limit
-// says so by itself. A submit or sc review past the limit drops those changes, but keeps the
-// thread needing you while its round runs, which no round within the limit does, so such a
-// thread is past it. Any other thread isn't.
+// Returns the round limit the list judges a thread's word by. A thread holding the changes of a
+// review past the limit says so by itself. Past the limit, sc submit and sc review drop those
+// changes but keep the thread needing you while its round runs, and so can other reasons, such
+// as a message that couldn't be typed in. Only the thread's real round limit tells them apart,
+// so for such a thread alone the list reads its settings, and settings that aren't valid read as
+// no limit. Any other thread reads none, so drawing the list stays fast.
 const roundLimit = (thread: Thread) => {
   const underWay = thread.submitting !== null || thread.reviewing !== null;
-  return thread.needs_you && underWay ? thread.rounds - 1 : Number.POSITIVE_INFINITY;
+  return thread.needs_you && underWay ? settingsRoundLimit(thread) : Number.POSITIVE_INFINITY;
 };
 
 // What the list reads of a lead beyond leadOf: what its hooks last said it does, and whether you
@@ -252,8 +253,9 @@ const doneShown = 10;
 // fastest, and within each, the one that changed last first. Done has the tasks that ended
 // today, latest first, or the last ten when fewer ended today, so an old repository's history
 // never fills the list. It reads the database, and a working builder's conversation file for its
-// step, as the sidebar does, never tmux or a settings file, so the list opens at once and works
-// on any session host.
+// step, as the sidebar does, never tmux, so the list opens at once and works on any session
+// host. Settings are read only for a thread that needs you while a review runs, to tell the
+// round limit from another reason.
 export function listRows(db: Database, open: Open, now: number): Row[] {
   const repository = findRepository(db, `${open.owner}/${open.repo}`);
   const issues = openTasks(db, open.owner, open.repo);
