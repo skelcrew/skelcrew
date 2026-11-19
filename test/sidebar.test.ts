@@ -1193,7 +1193,11 @@ console.log(JSON.stringify(sidebarRows(db, ["lead", "app-12"], () => 3, ${now}, 
   // A line too long for one read would hold every later read where it began.
   test("a line too long to read whole is passed over, and what follows it still counts", () => {
     const usage = { input_tokens: 1, cache_creation_input_tokens: 0, output_tokens: 849 };
-    const bash = { type: "tool_use", name: "Bash", input: { command: "bun test" } };
+    const bash = {
+      type: "tool_use",
+      name: "Bash",
+      input: { command: "bun test", description: "Run the tests" },
+    };
     const answer = JSON.stringify({
       type: "assistant",
       message: { id: "m1", usage, content: [bash] },
@@ -1217,8 +1221,8 @@ console.log(JSON.stringify(looks.map((row) => [row?.tokens, row?.step])));`;
     expect(run.stderr.toString()).toBe("");
     expect(JSON.parse(run.stdout.toString())).toEqual([
       ["", "working"],
-      ["850 tok", "bun test"],
-      ["850 tok", "bun test"],
+      ["850 tok", "Run the tests"],
+      ["850 tok", "Run the tests"],
     ]);
   });
 

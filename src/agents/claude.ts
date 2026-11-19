@@ -152,7 +152,8 @@ function readProgress(lines: string[], before: Progress): Progress {
         usage.output_tokens;
       last = id;
     }
-    // TodoWrite sets the plan, and every other tool call is a step.
+    // TodoWrite sets the plan, and every other tool call is the step, or ends the one before
+    // when it has nothing short to say.
     for (const part of content) {
       const call = ToolUse.safeParse(part);
       if (!call.success) continue;
@@ -163,16 +164,16 @@ function readProgress(lines: string[], before: Progress): Progress {
           done: items.filter((item) => item.status === "completed").length,
           total: items.length,
         };
-      } else if (call.data.name !== "TodoWrite")
-        step = toolStep(call.data.name, call.data.input) ?? step;
+      } else if (call.data.name !== "TodoWrite") step = toolStep(call.data.name, call.data.input);
     }
   }
   return { step, tokens, plan, last };
 }
 
-// Returns the step a tool call says the builder is on, in a few words. A command says what it
-// does in its own description, or else is the command itself. A file is named without its
-// folder, and a subagent by what it was asked to do. Any other tool is its name in words.
+// Returns the step a tool call says the builder is on, in a few words, or null when it has none.
+// A command says what it does in its own description. Without one it has no step, as the
+// command itself, such as a cd and a heredoc, reads as noise in a row. A file is named without
+// its folder, and a subagent by what it was asked to do. Any other tool is its name in words.
 function toolStep(tool: string, input: Record<string, unknown>): string | null {
   // The tool's input as text, or empty when it has no such field or it isn't text.
   const field = (key: string) => {
@@ -180,7 +181,7 @@ function toolStep(tool: string, input: Record<string, unknown>): string | null {
     return typeof value === "string" ? value : "";
   };
   // Agent was called Task in earlier releases of Claude Code.
-  if (tool === "Bash") return stepText(field("description")) ?? stepText(field("command"));
+  if (tool === "Bash") return stepText(field("description"));
   if (tool === "Agent" || tool === "Task") return stepText(field("description")) ?? toolWords(tool);
   if (["Edit", "Write", "MultiEdit"].includes(tool) && field("file_path"))
     return editing(field("file_path"));
