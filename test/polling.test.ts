@@ -3124,7 +3124,10 @@ echo '{"verdict":"approve","body":"Ready.","findings":[]}' > "$out"`,
       );
       expect(records).toHaveLength(1);
       expect(records[0]).toMatchObject({ pr: 7, commit: head, verdict: "approve" });
-      const edits = asked(plugin).filter((q) => q.ask === "edit review");
+      // The new review edits Skelcrew's review on the PR too, so only the record's edit counts.
+      const edits = asked(plugin).filter(
+        (q) => q.ask === "edit review" && String(q.body).startsWith("Merged without"),
+      );
       expect(edits).toHaveLength(1);
       expect(edits[0]).toMatchObject({ pr: 7, verdict: "approve" });
       expect(asked(plugin).filter((q) => q.ask === "create task")).toHaveLength(0);
