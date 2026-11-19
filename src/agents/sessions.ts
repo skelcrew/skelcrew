@@ -11,11 +11,14 @@ import { sandboxFolders } from "./seatbelt.ts";
 import { envWithoutTmux, mustTmux, tmux, tmuxIsAtLeast } from "./tmux.ts";
 
 // What every session carries, so Skelcrew can tell whose it is: its repository, as owner/name,
-// its role, and for a builder its thread's task, such as app-12.
+// its role, and for a builder its thread's task, such as app-12, and its title, for a host's
+// own apps to name it by. The title is the thread's short title, else its full one. tmux keeps
+// no title, as Skelcrew's list, which shows its sessions, reads titles from the database.
 export const Labels = z.object({
   repository: z.string().min(1),
   role: z.enum(["lead", "builder"]),
   task: z.string().min(1).optional(),
+  title: z.string().min(1).optional(),
 });
 export type Labels = z.infer<typeof Labels>;
 
@@ -441,6 +444,13 @@ export function listTmuxSessions(
     const labels = Labels.safeParse({ repository, role, ...(task ? { task } : {}) });
     return [{ name, running: dead === "0", labels: labels.success ? labels.data : null }];
   });
+}
+
+// Gives a session on a plugin's host a new title, such as when the lead gives its thread a short
+// title, so the host's own apps show the new title in place of the one its labels gave. Its
+// answer isn't read, so a host that renames and prints nothing has done it.
+export async function renameSession(host: PluginHost, id: string, title: string): Promise<void> {
+  await askHost(host, { ask: "rename", id, title }, z.unknown(), { unread: true });
 }
 
 // Returns the screen the agent in the named session shows now, as text, such as to see whether
