@@ -221,6 +221,7 @@ What belongs to you or your machine stays in `~/.config/skelcrew/`:
 - per-repository overrides, under `repos:`;
 - what you declined, such as `github_declined`;
 - whether the lead may arm a merge when ready when you ask it to, `lead: { may_arm_merges: true }`, off by default;
+- the key that comes back to the list from an agent, `keys: { detach: ctrl+q }`: Ctrl or Alt with a letter, Ctrl-Q by default;
 - your personal plugins, which no repository names, such as every runtime plugin, pinned in `~/.config/skelcrew/skelcrew.lock`.
 
 ```yaml
@@ -650,7 +651,7 @@ Every agent runs in a terminal session of its own: one for each repository's lea
 
 Every session carries three labels: its repository (`simon/app`), its task (`app-12`, none for a lead) and its role (`builder`, or `lead`). They stay with the session for as long as it lives, so a starting engine knows whose each session is, and a host's own apps can group and filter by them.
 
-The built-in host is tmux. Its sessions run on Skelcrew's own tmux server (`tmux -L skelcrew`) with Skelcrew's own config, sent with each new session, and keep every trap in `docs/learnings.md`. The labels are tmux user options on the session. tmux keeps sessions alive, handles attach and detach, and answers the terminal's queries. Skelcrew never runs its own terminal emulator. The config binds Alt-Q, and Ctrl-Q, to detach with no prefix and hides the status bar, so attaching feels like being inside the harness. Only this module runs tmux for agents, and a test fails if anything else does.
+The built-in host is tmux. Its sessions run on Skelcrew's own tmux server (`tmux -L skelcrew`) with Skelcrew's own config, sent with each new session, and keep every trap in `docs/learnings.md`. The labels are tmux user options on the session. tmux keeps sessions alive, handles attach and detach, and answers the terminal's queries. Skelcrew never runs its own terminal emulator. The config binds your detach key, Ctrl-Q unless `keys.detach` names another, to detach with no prefix, also in copy mode, where an agent you scrolled back is. It hides the status bar, so attaching feels like being inside the harness. tmux reads the key however your terminal sends it: as one byte, as an extended key in the kitty or the xterm form, and in pieces over a slow link. A runtime plugin's host keeps its own key to detach. Only this module runs tmux for agents, and a test fails if anything else does.
 
 Your `session:` setting picks the host for new sessions. Each thread remembers the host it started on, and an agent already running stays there until it ends. A resumed agent, such as after `sc stop` and `sc start`, starts on the current host with its conversation, since the conversation belongs to the harness. If a thread's host plugin is gone when the engine starts, the thread needs you, rather than being moved silently.
 
@@ -725,7 +726,7 @@ The engine calls `status` for every change, from wherever it came: a hook, the s
 
 Two ways to see a repository exist side by side, until you choose which one stays: the split screen and the list. Plain `sc` opens the split screen: a sidebar of the repository's tasks and a tab for each repository, with the lead beside them, on a tmux server of the screen's own. Picking a thread in the sidebar shows its builder beside it, and `sc attach` opens the screen on a builder. `sc --list` shows the list instead. The rest of this section describes the list.
 
-`sc --list` shows a list: a picker, not a layout. You pick a row, and Skelcrew either attaches you full screen to an agent or does what the row offers. Detaching, with Alt-Q, brings you back to the list. There is no sidebar, no split, and no tmux server of the screen's own.
+`sc --list` shows a list: a picker, not a layout. You pick a row, and Skelcrew either attaches you full screen to an agent or does what the row offers. Detaching, with Ctrl-Q, brings you back to the list, on the same row. While you are attached, the terminal's title names the agent and the key back, such as `app-24 · ctrl+q back`, and the title you had comes back with you. Nothing else of Skelcrew's shows over the agent. There is no sidebar, no split, and no tmux server of the screen's own.
 
 ```
  Skelcrew v0.6.0 · app                                        site •1  docs
@@ -745,7 +746,7 @@ Two ways to see a repository exist side by side, until you choose which one stay
  Ready for review
  ▸ ● app-22        Fix the export header   #41 · approved · CI passed
 
- ↑↓ move  ⏎ open  m merge  y/n answer  ⇥ repository  q quit   cpu 63%  mem 9/32G
+ ↑↓ move  ⏎ open · ctrl+q back  m merge  y/n answer  ⇥ repository  q quit   cpu 63%  mem 9/32G
 ```
 
 The list is one repository's, picked as **Opening a repository** says. The top line has Skelcrew's version, with the host you gave `--remote` after it on a server, and names the other repositories, each with a yellow count when something there needs you. Tab moves to the next one. Its parts are:
@@ -788,6 +789,7 @@ While messages wait for a builder, the row says how many, such as `1 message wai
 | `y` `n` | A request from the lead | Answers it |
 | Tab | Anywhere | The next repository |
 | `q` | Anywhere | Leaves the list. Everything keeps running. Skelcrew prints `Your agents keep running. Run sc --list to come back.` |
+| Ctrl-Q | Anywhere | Nothing: it comes back from an agent, so pressing it once too often never leaves the list |
 
 The engine does what the keys ask, as only it talks to the tracker and forge. Merging and starting stay yours: the lead can't press these keys, and the merge confirm says when the PR changes `.agents/`.
 

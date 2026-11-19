@@ -35,12 +35,13 @@ export type Size = { width: number; height: number };
 // The headings of the parts of the list, by the part their rows are in. The lead has none.
 const headings = { issue: "Issues", working: "Working", ready: "Ready for review" } as const;
 
-// Returns the keys the bottom line offers on a row: Enter always, m only on a task it can merge,
-// and Tab only with another repository to go to.
-export function keysFor(row: Row | undefined, tabs: number): string {
+// Returns the keys the bottom line offers on a row: Enter always, with the detach key that comes
+// back from an agent, such as ctrl+q, m only on a task it can merge, and Tab only with another
+// repository to go to.
+export function keysFor(row: Row | undefined, tabs: number, detach: string): string {
   const merge = row?.merge && "ask" in row.merge ? ["m merge"] : [];
   const tab = tabs > 1 ? ["⇥ repository"] : [];
-  return ["↑↓ move", "⏎ open", ...merge, ...tab, "q quit"].join("  ");
+  return ["↑↓ move", `⏎ open · ${detach} back`, ...merge, ...tab, "q quit"].join("  ");
 }
 
 // Returns the top line: Skelcrew in bold, its version and where it runs, dim, and the open

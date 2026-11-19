@@ -62,7 +62,7 @@ const leadTasks = [
   ],
   [
     "They answer a builder's question by picking app-12 in the sidebar beside you.",
-    "They answer a builder's question by picking app-12 in the sidebar beside you, or, if they opened you from sc --list, by leaving you with Alt-Q and pressing Enter on app-12 in the list.",
+    "They answer a builder's question by picking app-12 in the sidebar beside you, or, if they opened you from sc --list, by leaving you with Ctrl-Q and pressing Enter on app-12 in the list.",
   ],
   // A turn that ended without sc submit brought the human in. Its last message now goes to the
   // lead, who brings a question to the human, unless the builder told the lead in that turn. The

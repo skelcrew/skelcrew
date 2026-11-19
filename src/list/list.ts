@@ -5,6 +5,7 @@
 import { cpus } from "node:os";
 import { attachSession, typeKeys } from "../agents/sessions.ts";
 import { openRepository, startOrMerge } from "../client.ts";
+import { detachKey } from "../config.ts";
 import { openDb } from "../db.ts";
 import { builderSession, readThread } from "../flow/thread.ts";
 import { updateNotice } from "../machine/update.ts";
@@ -20,7 +21,11 @@ import { hasForge, listRows, type Open, type Question, type Row, repositoryTabs 
 const openCommand = process.platform === "darwin" ? "open" : "xdg-open";
 
 // The keys the list reads, as your terminal sends them. Arrows come in either of the two forms a
-// terminal may use, and Ctrl-C leaves as q does, since the terminal is raw.
+// terminal may use, and Ctrl-C leaves as q does, since the terminal is raw. Any other escape
+// sequence is one key, which does nothing. A terminal sends one for a key with Ctrl or Alt
+// when a program asked it for extended keys, such as Ctrl-Q as ESC[113;5u, and its letters
+// must never act as keys of their own. Pressing the detach key once too often lands here too:
+// Ctrl-Q as one byte does nothing, and Alt with a letter is matched whole, or its q would quit.
 const keyNames: Record<string, string> = {
   "\x1b[A": "up",
   "\x1bOA": "up",
@@ -33,9 +38,12 @@ const keyNames: Record<string, string> = {
   "\x1b": "escape",
 };
 const esc = "\x1b";
-const keyPattern = new RegExp(`${esc}\\[[AB]|${esc}O[AB]|[\\s\\S]`, "g");
+const keyPattern = new RegExp(
+  `${esc}\\[[0-9;:]*[\x40-\x7e]|${esc}O[A-Za-z]|${esc}[a-z]|[\\s\\S]`,
+  "g",
+);
 // The start of an escape sequence at the end of a read, whose end may come in the next one.
-const endOfSequence = new RegExp(`${esc}[[O]?$`);
+const endOfSequence = new RegExp(`${esc}(\\[[0-9;:]*|O)?$`);
 
 // Runs the list in your terminal for the repository named by its owner/name, until you press q,
 // then says your agents keep running.
@@ -46,6 +54,8 @@ const endOfSequence = new RegExp(`${esc}[[O]?$`);
 export async function runList(agents: string, repository: string): Promise<void> {
   const db = openDb();
   const where = process.env.SKELCREW_REMOTE_NAME ?? "";
+  // The key that comes back from an agent, from your config.yaml.
+  const detach = detachKey();
   const [owner = "", repo = ""] = repository.split("/");
   let open: Open = { owner, repo };
   // What the list keeps between draws: its rows, the row you are on and how far it scrolled,
@@ -89,7 +99,7 @@ export async function runList(agents: string, repository: string): Promise<void>
     // What the bottom line says can come from outside, such as a forge's reason for refusing a
     // merge, so its control codes never reach your terminal.
     const bottom = (tabs: number) =>
-      removeControlCodes(said ?? asking?.question.ask ?? keysFor(rows[here], tabs));
+      removeControlCodes(said ?? asking?.question.ask ?? keysFor(rows[here], tabs, detach));
     const size = { width: process.stdout.columns || 80, height: process.stdout.rows || 24 };
     const drawn = drawList(rows, here, top, frameWith(bottom, load), size);
     top = drawn.top;
@@ -155,8 +165,11 @@ export async function runList(agents: string, repository: string): Promise<void>
   // Keys you typed after Enter that the list hasn't acted on yet, such as ones that came with
   // Enter in one read, were meant for the agent, so they are typed into it first. A builder on a
   // runtime plugin's host is reached through the host's own attach command, by its ID there.
-  // Typing those keys in first takes tmux, so on such a host they are dropped.
-  const attach = async (session: string, host: Host = agents) => {
+  // Typing those keys in first takes tmux, so on such a host they are dropped. On tmux, the
+  // terminal's title says which agent this is and how to come back, as nothing else on the
+  // screen is Skelcrew's. The title you had is saved first and put back after, on terminals
+  // that keep one.
+  const attach = async (session: string, name: string, host: Host = agents) => {
     attached = true;
     process.stdin.pause();
     const after =
@@ -168,8 +181,12 @@ export async function runList(agents: string, repository: string): Promise<void>
     if (after && typeof host === "string") typeKeys(host, session, after);
     giveBack();
     let failed: string | null = null;
-    if (typeof host === "string") failed = await attachSession(host, session);
-    else attachOnHost(host, session);
+    if (typeof host === "string") {
+      const title = removeControlCodes(`${name} · ${detach} back`);
+      process.stdout.write(`\x1b[22;0t\x1b]2;${title}\x07`);
+      failed = await attachSession(host, session);
+      process.stdout.write("\x1b[23;0t");
+    } else attachOnHost(host, session);
     takeTerminal();
     process.stdin.resume();
     attached = false;
@@ -204,7 +221,7 @@ export async function runList(agents: string, repository: string): Promise<void>
       const failed = await openRepository(`${open.owner}/${open.repo}`, false);
       said = null;
       if (failed) return say(`The lead didn't start: ${failed}`);
-      return attach(row.session);
+      return attach(row.session, row.name);
     }
     if (row.part === "issue" && row.start) {
       asking = { question: row.start, row: row.name, merge: false };
@@ -218,7 +235,7 @@ export async function runList(agents: string, repository: string): Promise<void>
       // leaves out of reach.
       try {
         const { host, id } = await builderSession(db, agents, readThread(db, row.session));
-        return attach(id, host);
+        return attach(id, row.name, host);
       } catch (error) {
         return say(errorText(error));
       }
