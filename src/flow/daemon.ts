@@ -477,7 +477,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
           agents:
             thread.pr === null
               ? ""
-              : agentsSaid(db, thread.owner, thread.repo, thread.pr, pr?.head ?? null),
+              : agentsSaid(db, thread.owner, thread.repo, pr, pr?.head ?? null),
           thread: threadName(db, thread),
           pr: thread.pr,
           title: thread.title,

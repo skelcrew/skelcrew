@@ -60,7 +60,8 @@ ${threadSql({ task: "7", title: "Login redirect", harness: "claude", started: Da
 ${threadSql({ task: "12", title: "Rate limit the API", harness: "codex", asking: 1, needs_you: 1 })}
 ${threadSql({ task: "9", title: "Old work", status: "stopped" })}
 ${threadSql({ task: "14", title: "Fix the export header", status: "waiting", needs_you: 1, verdict: "approve", checks: "passing", ci_passed: 1, ci_seen: 1, pr: 41, review_round: 1, reviewed_commit: approved })}
-INSERT INTO pr_agents (owner, repo, pr, head, changed) VALUES ('simon', 'app', '41', '${approved}', 0);
+INSERT INTO pr_agents (owner, repo, pr, head, base, changed)
+  VALUES ('simon', 'app', '41', '${approved}', 'main', 0);
 ${threadSql({ repo: "site", task: "3", title: "Docs", asking: 1, needs_you: 1 })}`);
 });
 afterEach(() => {
@@ -162,7 +163,8 @@ test("Enter asks to start an issue, and m to merge a ready task at the commit yo
 });
 
 // Merging approves no change to .agents/, so the question says when the approved commit makes one,
-// from what a poll saved. A commit no poll has looked at yet doesn't pass for one with no change.
+// from what a poll saved. A commit, or a base, no poll has looked at yet doesn't pass for one with
+// no change: a PR retargeted at another base can bring other changes with the same head.
 test("m's question says when the PR changes .agents/, or that Skelcrew hasn't checked yet", () => {
   const ask = () => {
     const merge = rows().find((row) => row.name === "app-14")?.merge;
@@ -172,10 +174,12 @@ test("m's question says when the PR changes .agents/, or that Skelcrew hasn't ch
   expect(ask()).toBe(
     "Merge app#41 into main? It changes .agents/ (roles, flows or skills): new tasks wait for sc repo trust. y/n",
   );
-  sql("UPDATE pr_agents SET head = 'f00d' WHERE pr = '41';");
-  expect(ask()).toBe(
-    "Merge app#41 into main? Skelcrew hasn't checked yet whether it changes .agents/. y/n",
-  );
+  const unchecked =
+    "Merge app#41 into main? Skelcrew hasn't checked yet whether it changes .agents/. y/n";
+  sql("UPDATE pr_agents SET base = 'next', changed = 0 WHERE pr = '41';");
+  expect(ask()).toBe(unchecked);
+  sql("UPDATE pr_agents SET base = 'main', head = 'f00d' WHERE pr = '41';");
+  expect(ask()).toBe(unchecked);
 });
 
 // The list reads only the database, so it opens at once however many tasks are ready, and starts
@@ -255,7 +259,10 @@ test("a forge's base branch reaches the merge question without its control codes
   const base = { head: approved, checks: passed, base: "main\x1b]0;evil\x07" };
   sql(itemSql("app", "pr", 41, "Fix the export header", "2026-11-06T10:00:00Z", base));
   const merge = rows().find((row) => row.name === "app-14")?.merge;
-  expect(merge && "ask" in merge ? merge.ask : "").toBe("Merge app#41 into main ]0;evil ? y/n");
+  // No poll has looked at the PR with this base, so the question says so too.
+  expect(merge && "ask" in merge ? merge.ask : "").toBe(
+    "Merge app#41 into main ]0;evil ? Skelcrew hasn't checked yet whether it changes .agents/. y/n",
+  );
 });
 
 // The list reads only the database: a builder runs while its thread works or waits, and a lead

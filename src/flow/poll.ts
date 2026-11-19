@@ -255,10 +255,16 @@ async function actOnPr(
 // the merge confirms can say so while reading only the database. Merging approves no change
 // there. It looks again at every poll, from where the head left its base now, as retargeting
 // the PR or moving its base can change that with the same head. That is git in Skelcrew's clone
-// alone, unless the base isn't the default branch or the head isn't in the clone yet, such as
-// someone else's push: those are fetched. A PR it can't check, such as one from a fork, loses
-// what was saved for it, so its confirm says it isn't checked, and is logged once per head.
-async function saveAgentsChanges(db: Database, repository: Repository): Promise<void> {
+// alone, unless the base isn't the default branch, or this poll couldn't bring the default
+// branch up to date (`refreshed`), or the head isn't in the clone yet, such as someone else's
+// push: those are fetched. A PR it can't check, such as one from a fork or while the remote is
+// out of reach, loses what was saved for it, so its confirm says it isn't checked, and is logged
+// once per head.
+async function saveAgentsChanges(
+  db: Database,
+  repository: Repository,
+  refreshed: boolean,
+): Promise<void> {
   const { owner, repo } = repository;
   const skelcrewClone = cloneDir(owner, repo);
   const git = (...args: string[]) => quietly(["git", "-C", skelcrewClone, ...args]);
@@ -270,7 +276,8 @@ async function saveAgentsChanges(db: Database, repository: Repository): Promise<
       AND pr NOT IN (SELECT value FROM json_each(?))`,
     [owner, repo, JSON.stringify(open)],
   );
-  // The clone is on the default branch, kept current by this poll, so it needs no fetch.
+  // The clone is on the default branch, which this poll brought up to date unless it failed. A
+  // stale one could hide a change to .agents/ the PR now brings, so it is fetched then.
   const onDefault = (await git("symbolic-ref", "--short", "HEAD")).out.trim();
   for (const pr of prs) {
     if (pr.head === null) continue;
@@ -278,7 +285,7 @@ async function saveAgentsChanges(db: Database, repository: Repository): Promise<
       db.run("DELETE FROM pr_agents WHERE owner = ? AND repo = ? AND pr = ?", [owner, repo, pr.id]);
     try {
       let base = "HEAD";
-      if (pr.base !== onDefault) {
+      if (!refreshed || pr.base !== onDefault) {
         base = `refs/skelcrew/pr-bases/${pr.id}`;
         await fetchInto(db, repository, skelcrewClone, pr.base, base);
       }
@@ -290,8 +297,9 @@ async function saveAgentsChanges(db: Database, repository: Repository): Promise<
       const files = await git("diff", "--name-only", from.out.trim(), pr.head, "--", ".agents");
       if (!files.ok) throw new Error(`git diff failed: ${files.err.trim()}`);
       db.run(
-        "INSERT OR REPLACE INTO pr_agents (owner, repo, pr, head, changed) VALUES (?, ?, ?, ?, ?)",
-        [owner, repo, pr.id, pr.head, files.out.trim() === "" ? 0 : 1],
+        `INSERT OR REPLACE INTO pr_agents (owner, repo, pr, head, base, changed)
+          VALUES (?, ?, ?, ?, ?, ?)`,
+        [owner, repo, pr.id, pr.head, pr.base, files.out.trim() === "" ? 0 : 1],
       );
     } catch (error) {
       forget();
@@ -435,6 +443,8 @@ async function pollRepository(
   passed: Set<string>,
 ): Promise<void> {
   const { owner, repo } = repository;
+  // Whether Skelcrew's clone's default branch is up to date with the remote as of this poll.
+  let refreshed = false;
   // Ask each plugin in turn, telling a forge which PRs Skelcrew watches: those of this
   // repository's threads. A plugin's answer only updates the kinds its jobs cover. A first
   // poll, with no `next`, replaces those kinds in the copy outright, so what closed while the
@@ -464,7 +474,10 @@ async function pollRepository(
     // it: a remote that can't be cloned would otherwise be tried at every poll.
     if (existsSync(cloneDir(owner, repo))) {
       await refreshClone(db, repository)
-        .then(() => noteUnapprovedAgents(db, sessions, repository))
+        .then(() => {
+          refreshed = true;
+          noteUnapprovedAgents(db, sessions, repository);
+        })
         .catch((error) =>
           console.log(`couldn't update Skelcrew's clone of ${owner}/${repo}: ${errorText(error)}`),
         );
@@ -481,7 +494,7 @@ async function pollRepository(
   // With the copy and the clone up to date, find which open PRs change .agents/, for the merge
   // confirms. A repository with no clone yet has nothing to look in.
   if (forgeOf(db, repository) !== null && existsSync(cloneDir(owner, repo)))
-    await saveAgentsChanges(db, repository);
+    await saveAgentsChanges(db, repository, refreshed);
   // With the copy up to date, start labeled tasks, then act on each thread: by its PR with a
   // forge, or by its branch without one, or without a PR.
   if (trackerOf(db, repository) !== null)

@@ -253,8 +253,9 @@ ${itemSql("app", "pr", 37, "Fix import", "2026-11-10T10:00:00Z", head)}
 ${threadSql({ task: "12", status: "waiting", pr: 31, needs_you: 1, ci_passed: 1, verdict: "approve", review_round: 1 })}
 ${threadSql({ task: "13", status: "waiting", pr: 36, verdict: "approve", review_round: 1 })}
 ${threadSql({ task: "14", pr: 37, review_round: 1, verdict: "changes" })}
-INSERT INTO pr_agents (owner, repo, pr, head, changed) VALUES
-  ('simon', 'app', '32', '${"c".repeat(40)}', 1), ('simon', 'app', '31', '${"c".repeat(40)}', 0);`;
+INSERT INTO pr_agents (owner, repo, pr, head, base, changed) VALUES
+  ('simon', 'app', '32', '${"c".repeat(40)}', 'next', 1),
+  ('simon', 'app', '31', '${"c".repeat(40)}', 'main', 0);`;
   const { prs } = after(sql);
   expect(prs.map((group) => group.rows.map((row) => row.name))).toEqual([
     ["app#33", "app#32", "app#31"],

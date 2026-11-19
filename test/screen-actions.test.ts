@@ -109,8 +109,8 @@ test("s on an issue's page starts a thread on that issue", async () => {
 // found its changes there leave .agents/ alone.
 const readyPr = (id = 35, created = "2026-11-06T10:00:00Z") =>
   sql(
-    `INSERT OR REPLACE INTO pr_agents (owner, repo, pr, head, changed)
-      VALUES ('simon', 'app', '${id}', '${"c".repeat(40)}', 0);
+    `INSERT OR REPLACE INTO pr_agents (owner, repo, pr, head, base, changed)
+      VALUES ('simon', 'app', '${id}', '${"c".repeat(40)}', 'main', 0);
 ${itemSql("app", "pr", id, `Add export ${id}`, created, {
   head: "c".repeat(40),
   checks: [{ name: "test", id: "1", state: "passed" }],

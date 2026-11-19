@@ -667,6 +667,13 @@ test("each poll finds whether an open PR changes .agents/, again as its base cha
   git(work, "push", "-q", remote, "roles:main");
   await until(() => prAgents("8")?.changed === 0);
   expect(prAgents("8")).toEqual({ head, changed: 0 });
+  // While the remote is out of reach, the clone's main may be behind it, and a stale main can
+  // hide a change the PR now brings. So the PR counts as not checked until main can be fetched.
+  renameSync(remote, `${remote}.away`);
+  await until(() => prAgents("8") === null);
+  renameSync(`${remote}.away`, remote);
+  await until(() => prAgents("8") !== null);
+  expect(prAgents("8")).toEqual({ head, changed: 0 });
   // A PR that closed leaves nothing saved behind.
   changes([{ ...fix("main"), state: "closed" }]);
   await until(() => prAgents("8") === null);

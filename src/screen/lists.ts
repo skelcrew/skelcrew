@@ -173,7 +173,7 @@ function prGroups(db: Database, open: Open, threads: Known[]): Group[] {
         key: "m",
         ask: [
           `Merge ${named} into ${pr.base}?`,
-          agentsSaid(db, open.owner, open.repo, pr.id, pr.head),
+          agentsSaid(db, open.owner, open.repo, pr, pr.head),
           "y/n",
         ]
           .filter(Boolean)
