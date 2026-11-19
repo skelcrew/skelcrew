@@ -111,6 +111,40 @@ const labelTriage = " Pick its flow as for any thread.";
 const noAcknowledgements =
   ' When the lead tells you something, answer only with a result, a question or a disagreement. Never answer just to confirm it, such as "noted, nothing to do": a message that needs nothing from you gets no reply.';
 
+// What the builder was told about asking before it brought every question to the lead, and
+// what it is told now.
+const askingBefore =
+  "To ask the human, use your harness's tool for asking questions, such as AskUserQuestion, if it has one. Otherwise end your turn with the question. ";
+const askingTheLead = `Ask the lead, never the human in this session: run sc tell lead "<text>" with your question or the decision you need, and its options. The human talks to the lead and doesn't watch this session. The lead answers what the human already decided, and brings the rest to them. Never use your harness's tool for asking questions, such as AskUserQuestion, as the human would have to open this session to answer it. Once you asked, end your turn and wait for the answer, unless you have other work meanwhile.
+
+Write a question so the human could answer it without reading the code, as the lead may pass it on as it is:
+- Background, in plain words: what you are building and where the question comes up.
+- The problem, with a concrete example.
+- Each option, and what it means for the human or the people who use the work.
+- Your recommendation, and why.
+Leave out file paths and names from the code unless they help.
+
+`;
+const otherThreadsBefore =
+  " You can't tell other threads, and questions for the human still go to the human.";
+const otherThreads = " You can't tell other threads.";
+
+// What the lead was told to do with a builder's question before it answered what the human
+// already decided, and what it is told now.
+const answeringBefore =
+  "If it asks the human a question, or needs a decision that is theirs, bring it to them plainly, naming the thread.";
+const answering = "If it asks a question or needs a decision, handle it as below.";
+const answeringAdded = `
+
+Builders bring their questions and decisions to you, with sc tell lead or at the end of a turn, rather than asking the human in their own session. Answer one yourself with sc tell when the answer follows from what the human already decided, such as earlier in this conversation, from the repository's spec or design documents, or from a clear technical call. Then tell the human in one line what you answered and why, so they can overrule it, such as "app-12 asked whether to confirm before deleting; I said no, as you decided earlier."
+Always bring the human a builder's question about editing a spec, trust or security, the work's scope or direction, or merging, however clear the answer seems: these are theirs to decide.
+Bring such a question, and any you can't answer, to the human in this chat, naming the thread, and pass their answer on to the builder with sc tell. The human should never have to open a builder to answer it. Frame it for someone who hasn't read the code:
+- Background, in plain words: what the thread is building and where the question comes up.
+- The problem, with a concrete example.
+- Each option, and what it means for the human or the people who use the work.
+- Your recommendation, and why.
+Leave out file paths and names from the code unless they help.`;
+
 test("the lead and builder files hold the instructions the code gave, but for what was added since", () => {
   // The digests of src/agents/prompts/lead.md and builder.md before they moved.
   let lead = builtInRole("lead").instructions;
@@ -121,7 +155,14 @@ test("the lead and builder files hold the instructions the code gave, but for wh
   expect(lead).toContain(triage);
   expect(lead).toContain(labelTriage);
   expect(lead).toContain(mergeWhenReady);
-  lead = lead.replace(triage, "").replace(labelTriage, "").replace(mergeWhenReady, "");
+  expect(lead).toContain(answering);
+  expect(lead).toContain(answeringAdded);
+  lead = lead
+    .replace(triage, "")
+    .replace(labelTriage, "")
+    .replace(mergeWhenReady, "")
+    .replace(answeringAdded, "")
+    .replace(answering, answeringBefore);
   for (const [before = "", now = ""] of leadTasks) {
     expect(lead).toContain(now);
     lead = lead.replace(now, before);
@@ -139,7 +180,11 @@ test("the lead and builder files hold the instructions the code gave, but for wh
   expect(builder).toContain(noAcknowledgements);
   expect(builder).toContain(fetching);
   expect(builder).toContain(turnEnded);
+  expect(builder).toContain(askingTheLead);
+  expect(builder).toContain(otherThreads);
   const before = builder
+    .replace(askingTheLead, askingBefore)
+    .replace(otherThreads, otherThreadsBefore)
     .replace(workflows, "")
     .replace(fetching, "")
     .replace(asking, "")
