@@ -34,7 +34,7 @@ let laptop = { folder: "", main: "", commit: "" };
 // install, which sets it up, and says so before checking its build, as a copied Skelcrew does.
 const serverSkel = (built?: string) => `#!/bin/sh
 test "$1" != install && test -f not-set-up && exit 97
-${built === undefined ? "" : `test -n "$SKELCREW_LAPTOP_BUILD" && test "$SKELCREW_LAPTOP_BUILD" != "${built}" && { echo "Skelcrew on $SKELCREW_REMOTE_NAME is from ${built}"; exit 98; }\n`}test "$1" = install && { echo "sc install on the server"; rm -f not-set-up; test ! -f install-fails; exit; }
+${built === undefined ? "" : `test -n "$SKELCREW_LAPTOP_BUILD" && test "$SKELCREW_LAPTOP_BUILD" != "${built}" && { echo "Skelcrew on $SKELCREW_REMOTE_NAME is from ${built}"; exit 98; }\n`}test "$1" = install && { echo "sc install on the server"; cp .config/skelcrew/config.yaml installed-from 2>/dev/null; rm -f not-set-up; test ! -f install-fails; exit; }
 echo "Skelcrew on the server got $# arguments"
 for word in "$@"; do echo "[$word]"; done
 exit 3
@@ -1027,13 +1027,16 @@ test("install sends your config.yaml, lock and Claude sign-in, readable only by 
   expect(lines[0]).toBe(
     `${ssh} umask 077 && mkdir -p .config/skelcrew && mkdir .config/skelcrew/${sending}`,
   );
-  // One command puts them all in place, holding a lock and ignoring a dropped connection.
-  const moved = names.map((name) => `mv -f ${sending}/${name} ${name}`).join(" && ");
-  expect(lines.at(-3)).toBe(
-    `${ssh} cd .config/skelcrew && trap '' HUP && flock .install sh -c '${moved} && rmdir ${sending}'`,
-  );
-  expect(lines.at(-2)).toBe("flock .install");
-  expect(lines.at(-1)).toMatch(/ sh install$/);
+  // sc install runs holding a lock, and puts your files in place first, ignoring a hangup.
+  const copied = names.map((name) => `cp -f ${sending}/${name} ${name}`).join(" && ");
+  const put = `(trap '' HUP && cd .config/skelcrew && ${copied}) && exec "$@"`;
+  const lock = `flock .config/skelcrew/.install sh -c ${quoted(put)} put sh -c `;
+  expect(lines.at(-3)).toContain(` SKELCREW_LAPTOP_LOCK=`);
+  expect(lines.at(-3)).toContain(lock);
+  expect(lines.at(-3)).toMatch(/ sh install$/);
+  expect(lines.at(-2)).toBe("flock .config/skelcrew/.install");
+  // The folder sent through goes once the install is over.
+  expect(lines.at(-1)).toBe(`${ssh} rm -rf .config/skelcrew/${sending}`);
   const there = join(home, "server", ".config", "skelcrew");
   expect(readFileSync(join(there, "config.yaml"), "utf8")).toBe("# mine\nharness: codex\n");
   expect(readFileSync(join(there, "claude-token"), "utf8")).toBe("sk-ant-oat01-secret");
@@ -1084,6 +1087,19 @@ test("install passes the repository you are in to sc install there", async () =>
 });
 
 // A laptop with no setup only reaches servers, and each keeps the setup it has.
+// A run that stops before installing, such as to update Skelcrew there, leaves your files for the
+// next, which installs from them.
+test("install after updating Skelcrew there installs from your files", async () => {
+  mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
+  writeFileSync(join(home, ".config", "skelcrew", "config.yaml"), "harness: codex\n");
+  installed("0000000");
+  const run = await skel(["--remote", "simon@workbox", "install"], "y\n");
+  expect(run.code).toBe(0);
+  expect(run.out).toContain("Updated simon@workbox");
+  expect(readFileSync(join(home, "server", "installed-from"), "utf8")).toBe("harness: codex\n");
+  expect(readdirSync(join(home, "server", ".config", "skelcrew"))).toEqual(["config.yaml"]);
+});
+
 test("install with no files of yours sends nothing and runs sc install there", async () => {
   installed(laptop.commit);
   const run = await skel(["--remote", "simon@workbox", "install"]);

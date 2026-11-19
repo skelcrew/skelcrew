@@ -201,31 +201,35 @@ function sharedConnection(host: string): string[] {
 }
 
 // Returns how to run sc on the host with these words, with `shared` from sharedConnection. It
-// takes the environment to add to what it always passes, and gives back the exit code. With a
-// terminal, ssh says "Connection to <host> closed." each time it ends, several times in one
-// setup, so it is told to say only errors.
-const onServer = (host: string, shared: string[], words: string[]) => (env: string[]) =>
-  runInTerminal([
-    "ssh",
-    "-o",
-    "LogLevel=ERROR",
-    "-t",
-    ...shared,
-    host,
-    [
-      "env",
-      pathOnServer,
-      quoted(`SKELCREW_REMOTE_NAME=${host}`),
-      ...env.map(quoted),
-      // The check is shell, and your login shell there may not be sh, so sh runs it. The words
-      // after the second sh become its "$@".
-      "sh",
-      "-c",
-      quoted(checkThenSc),
-      "sh",
-      ...words.map(quoted),
-    ].join(" "),
-  ]);
+// takes the environment to add to what it always passes, and gives back the exit code. `before`
+// is a command that runs sc in its turn, such as one that takes a lock first. With a terminal,
+// ssh says "Connection to <host> closed." each time it ends, several times in one setup, so it
+// is told to say only errors.
+const onServer =
+  (host: string, shared: string[], words: string[], before: string[] = []) =>
+  (env: string[]) =>
+    runInTerminal([
+      "ssh",
+      "-o",
+      "LogLevel=ERROR",
+      "-t",
+      ...shared,
+      host,
+      [
+        "env",
+        pathOnServer,
+        quoted(`SKELCREW_REMOTE_NAME=${host}`),
+        ...env.map(quoted),
+        ...before.map(quoted),
+        // The check is shell, and your login shell there may not be sh, so sh runs it. The words
+        // after the second sh become its "$@".
+        "sh",
+        "-c",
+        quoted(checkThenSc),
+        "sh",
+        ...words.map(quoted),
+      ].join(" "),
+    ]);
 
 // Says a machine isn't set up, and how to do that.
 export const notSetUp = (where: string) =>
@@ -296,9 +300,27 @@ export async function remote(host: string, args: string[]): Promise<number> {
 export async function installServer(host: string, asked = false): Promise<number> {
   checkHost(host);
   const machine = serverMachine(host);
-  await sendYourFiles(host, machine);
+  const sending = await sendYourFiles(host, machine);
+  try {
+    return await installThere(host, machine, sending, asked);
+  } finally {
+    // The files sent stay until here, as each run of sc install there puts them in place again.
+    if (sending) await quietly(machine.shell(`rm -rf .config/skelcrew/${sending.folder}`));
+  }
+}
+
+// Runs sc install on the server, after putting Skelcrew there when it has none, and returns the
+// exit code. `sending` holds the command that puts your files in place first, or null when you
+// have none to send.
+async function installThere(
+  host: string,
+  machine: Machine,
+  sending: Sending | null,
+  asked: boolean,
+): Promise<number> {
   const from = originHere();
-  const there = machine.sc(from ? ["install", "--from", from] : ["install"]);
+  const words = from ? ["install", "--from", from] : ["install"];
+  const there = machine.sc(words, sending?.before ?? []);
   const code = await runUpToDate(host, there, machine);
   // 127 is the machine's shell finding no Skelcrew to run.
   if (code !== 127) return code;
@@ -318,18 +340,22 @@ export async function installServer(host: string, asked = false): Promise<number
   return runUpToDate(host, there, machine, null);
 }
 
-// Makes the server's ~/.config/skelcrew hold your config.yaml, your lock and the agents' Claude
-// Code token as the laptop has them, removing one the laptop doesn't have. Each goes first to a
-// folder of this transfer's own there, made readable only by you before it is filled, so a copy
-// that breaks off changes nothing. Once all are there, one command puts them in place.
-async function sendYourFiles(where: string, machine: Machine): Promise<void> {
+// Your files, sent to a folder on the server: the folder's name in ~/.config/skelcrew, and the
+// command to run sc install through, which puts them in place first.
+type Sending = { folder: string; before: string[] };
+
+// Sends your config.yaml, your lock and the agents' Claude Code token to a folder of this
+// install's own in the server's ~/.config/skelcrew, made readable only by you before it is
+// filled. Returns how sc install there puts them in place, or null when the laptop has no setup
+// to send.
+async function sendYourFiles(where: string, machine: Machine): Promise<Sending | null> {
   // Loaded only here, as it brings in much of Skelcrew that other commands need none of.
   const { yourFiles } = await import("./your-files.ts");
   const files = yourFiles();
-  if (files.length === 0) return;
+  if (files.length === 0) return null;
   const sent = files.flatMap(({ name, text }) => (text === null ? [] : [{ name, text }]));
   const gone = files.flatMap(({ name, text }) => (text === null ? [name] : []));
-  // mkdir fails on a folder already there, so the folder is this transfer's alone.
+  // mkdir fails on a folder already there, so the folder is this install's alone.
   const sending = `sending-${crypto.randomUUID()}`;
   const staging = `.config/skelcrew/${sending}`;
   const place = `umask 077 && mkdir -p .config/skelcrew && mkdir ${staging}`;
@@ -353,18 +379,19 @@ async function sendYourFiles(where: string, machine: Machine): Promise<void> {
   } finally {
     rmSync(folder, { recursive: true, force: true });
   }
-  // The moves hold a lock, so two installs at once, even from two laptops, each put their whole
-  // set in place, one after the other, and never a mix. They ignore a hangup, so a connection
-  // that drops partway doesn't stop them between two files. flock lets go of the lock when it
-  // ends, so a crash leaves nothing that blocks the next install.
+  // sc install there runs holding a lock, and puts your files in place just before it starts.
+  // So two installs at once, even from two laptops, each install from their own files, one after
+  // the other. The files are copied, not moved, so a run that stops before installing, such as
+  // for an update of Skelcrew there, leaves them for the next. Copying ignores a hangup, so a
+  // connection that drops partway never leaves a mix of old and new files. flock lets go of the
+  // lock when it ends, so a crash leaves nothing that blocks the next install.
   const steps = [
-    ...sent.map(({ name }) => `mv -f ${sending}/${name} ${name}`),
+    ...sent.map(({ name }) => `cp -f ${sending}/${name} ${name}`),
     ...gone.map((name) => `rm -f ${name}`),
-    `rmdir ${sending}`,
   ];
-  const publish = `cd .config/skelcrew && trap '' HUP && flock .install sh -c '${steps.join(" && ")}'`;
-  if ((await runInTerminal(machine.shell(publish))) !== 0)
-    throw new Error(`couldn't put your files in place on ${where}`);
+  const put = `(trap '' HUP && cd .config/skelcrew && ${steps.join(" && ")}) && exec "$@"`;
+  const before = ["flock", ".config/skelcrew/.install", "sh", "-c", put, "put"];
+  return { folder: sending, before };
 }
 
 // Runs sc on a server through `there`, and returns its exit code. `there` takes the
@@ -421,7 +448,7 @@ function serverMachine(host: string): Machine {
   return {
     shell,
     push,
-    sc: (words) => onServer(host, shared, words),
+    sc: (words, before) => onServer(host, shared, words, before),
     // The unit names the Skelcrew the daemon runs, with each % doubled for systemd. A unit an
     // older Skelcrew wrote runs sc serve rather than sc up.
     daemonSkel: async () => {
@@ -441,9 +468,9 @@ export type Machine = {
   shell: (script: string) => string[];
   // Returns the command that sends a file to a path in your home there.
   push: (file: string, to: string) => string[];
-  // Returns how to run sc there with these words in your terminal. It takes the environment to
-  // add, and gives back the exit code.
-  sc: (words: string[]) => (env: string[]) => Promise<number>;
+  // Returns how to run sc there with these words in your terminal, through the command `before`
+  // when given. It takes the environment to add, and gives back the exit code.
+  sc: (words: string[], before?: string[]) => (env: string[]) => Promise<number>;
   // Returns the sc the daemon's service starts there, or null when there is no service.
   daemonSkel: () => Promise<string | null>;
   // Copies a built Skelcrew there.
