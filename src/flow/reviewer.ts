@@ -7,7 +7,6 @@ import { z } from "zod";
 import { type HarnessName, harnessNamed } from "../agents/harness.ts";
 import { filterEnv, sandboxArgs, throwawayMounts } from "../agents/sandbox.ts";
 import { sandboxFolders } from "../agents/seatbelt.ts";
-import { builtInRole } from "../roles.ts";
 import { errorText } from "../say.ts";
 import { limitOn } from "./limits.ts";
 
@@ -82,19 +81,30 @@ function testsTold(tests: Tests, test: string[] | undefined): string {
   return `The repository's CI runs the whole test suite on this commit, so don't run it yourself. Run a single test only to settle a doubt. CI's result for this commit is in ${tests.ci}: whether it passed, failed or is still running, and the end of each failed check's log. Skelcrew updates that file as CI goes on, so read it when you start and again just before you answer. When CI failed, list each failing test as a finding. When it lists checks and none of them runs the tests, such as only a deploy preview or a CLA check, ${runSuite("run the whole test suite yourself", test)} When CI hasn't reported yet, or is still running as you answer, review the code anyway: CI running is never a finding, as the PR is ready only once every check passes. Then approve clean code, and say "CI pending" in the body.`;
 }
 
-// Returns what the reviewer is told: its built-in instructions, with the task it checks the
+// Returns what the reviewer is told: its role's instructions, with the task it checks the
 // PR against, where the change starts, and who runs the tests and with what filled into their
-// blanks. All blanks are filled in one pass, so a task whose text holds a blank's mark, or a `$&`, reaches
+// blanks. A repository's own role may leave the blanks out, and a reviewer that never sees the
+// task or the CI policy can't review against them, so what the role leaves out is added after
+// its instructions. All blanks are filled in one pass, so a task whose text holds a blank's mark, or a `$&`, reaches
 // the reviewer as written. The file's last newline is dropped, as the reviewer has always been
 // told without one.
 export function reviewerPrompt(
+  role: string,
   issue: { title: string; body: string },
   base: string,
   tests: Tests,
   test: string[] | undefined,
 ): string {
   const blanks: Record<string, string> = { ...issue, base, tests: testsTold(tests, test) };
-  const instructions = builtInRole("reviewer").instructions.replace(/\n$/, "");
+  const has = (blank: string) => role.includes(`{{${blank}}}`);
+  const added = [
+    has("title") && has("body") ? null : "It should do this:\n\n# {{title}}\n\n{{body}}",
+    has("base")
+      ? null
+      : "The change is everything on HEAD since {{base}}. Read the whole diff with `git diff {{base}}...HEAD`.",
+    has("tests") ? null : "{{tests}}",
+  ].filter((part) => part !== null);
+  const instructions = [role.replace(/\n$/, ""), ...added].join("\n\n");
   return instructions.replace(
     /\{\{(title|body|base|tests)\}\}/g,
     (_, blank: string) => blanks[blank] ?? "",
@@ -262,7 +272,7 @@ function readVerdict(
 }
 
 // Runs a fresh reviewer against a throwaway view of the clone and returns its verdict or failure
-// reason. Enforces cancellation and a time limit, then removes the review's temporary
+// reason. `instructions` are the reviewer role's, from the task's .agents/ or built in. Enforces cancellation and a time limit, then removes the review's temporary
 // files. `ci` says whether CI runs on the commit, asked as the review starts, since CI may have
 // shown a check while it waited its turn, and what CI says about the commit. With CI, the reviewer
 // reads CI's result rather than running the whole test suite. It is asked again every 15
@@ -271,6 +281,7 @@ function readVerdict(
 // is the repository's test command, for when the reviewer has to run the suite, which it does
 // through sc check on `socket`, the thread's reviewer socket.
 async function reviewNow(given: {
+  instructions: string;
   clone: string;
   issue: { title: string; body: string };
   base: string;
@@ -417,7 +428,7 @@ async function reviewNow(given: {
     const before = whyStopped();
     if (before) return before;
     const tests: Tests = given.docsOnly ? "docs only" : ci ? { ci: ciFile } : "run";
-    const input = reviewerPrompt(issue, base, tests, given.test);
+    const input = reviewerPrompt(given.instructions, issue, base, tests, given.test);
     const finished = await spawnReviewer({ argv, env: sandboxEnv, input, signal });
     const after = whyStopped();
     if (after) return after;

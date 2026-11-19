@@ -583,6 +583,37 @@ test("a repository whose default branch is gone still logs why its clone can't u
   expect(read(daemonLog())).not.toContain("no commits yet");
 });
 
+// What the daemon told, or saved to tell, app's lead about its .agents/. Inside Skelcrew's own
+// sandbox the lead can't start, so its notes stay saved, and elsewhere they are typed in.
+function agentsNotes(): string[] {
+  const db = new Database(join(data(), "skelcrew.db"), { readonly: true });
+  db.run("PRAGMA busy_timeout = 5000");
+  const saved = db.query("SELECT text FROM notes").all();
+  db.close();
+  const texts = saved.map((row) => String(Object.values(Object(row))[0]));
+  const typedIn = read(join(data(), "claude", leadName, "typed")).split("\n");
+  return [...texts, ...typedIn].filter((text) => text.includes(".agents/"));
+}
+
+test("a push that changes .agents/ tells the lead once that the human must approve it", async () => {
+  const work = addApp();
+  const remote = join(home, "github", "simon", "app.git");
+  changes([]);
+  serve();
+  const skelcrewClone = join(data(), "repos", "simon", "app");
+  await until(() => existsSync(join(skelcrewClone, "README")));
+  mkdirSync(join(work, ".agents", "roles"), { recursive: true });
+  writeFileSync(join(work, ".agents", "roles", "builder.md"), "Build it the team's way.\n");
+  git(work, "add", ".");
+  git(work, "commit", "-q", "-m", "roles");
+  git(work, "push", "-q", remote, "main");
+  await until(() => agentsNotes().length > 0);
+  expect(agentsNotes()[0]).toContain("sc repo trust app");
+  // Later polls of the same .agents/ say nothing more.
+  await morePolls();
+  expect(agentsNotes()).toHaveLength(1);
+});
+
 // git can reach the remote while the tracker or forge is down, and builders must not fall
 // behind for it.
 test("a push straight to main reaches Skelcrew's clone while the forge fails to answer", async () => {

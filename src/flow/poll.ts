@@ -4,7 +4,9 @@
 // ends a thread once its branch is merged or gone.
 import type { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
-import { threadConfig } from "../config.ts";
+import { z } from "zod";
+import { agentsOnDefaultBranch, agentsWaiting } from "../approved-agents.ts";
+import { roundLimit } from "../config.ts";
 import type { Repository } from "../db.ts";
 import { cloneDir } from "../paths.ts";
 import {
@@ -153,7 +155,7 @@ async function actOnMovedBranch(
   if (!(await movedOnRemote(before, head))) return;
   const thread = readThread(db, before.folder);
   if (!["working", "waiting"].includes(thread.status) || tellingEvents.has(thread.folder)) return;
-  const { maxRounds } = threadConfig(thread);
+  const maxRounds = roundLimit(thread);
   const decision = decideBranch(thread, head, { maxRounds, moved: true });
   // Not waited on, as for a PR's events.
   if (decision !== null) tellBuilder(db, sessions, thread, decision);
@@ -199,7 +201,7 @@ async function actOnPr(
   if (!["working", "waiting", "stopped"].includes(thread.status)) return;
   // Read only for a thread with a PR, so a bad max_rounds never fails the copy's update, nor
   // sc start, which polls first.
-  const { maxRounds } = threadConfig(thread);
+  const maxRounds = roundLimit(thread);
   // The decision is pure; what follows carries it out. The poll is stale when a round
   // changed the thread since it began.
   const decision = decide(thread, pr, { maxRounds, moved });
@@ -305,6 +307,34 @@ async function actOnBranch(db: Database, sessions: string, repository: Repositor
   if (head.ok) await actOnMovedBranch(db, sessions, thread, head.out.trim());
 }
 
+// Tells the repository's lead, once, when its default branch has an .agents/ other than the one
+// you approved, so it asks you to run sc repo trust. Until then new tasks keep the approved
+// version, so the repository needs you. Only you can approve, in your own terminal, so the lead
+// is told what to ask for rather than given a way to do it.
+function noteUnapprovedAgents(db: Database, sessions: string, repository: Repository): void {
+  const where = "WHERE owner = ? AND repo = ?";
+  // What to remember as told: the waiting tree, `none` for a removed .agents/, or nothing when
+  // the default branch has what you approved.
+  const waiting = agentsWaiting(repository) ? (agentsOnDefaultBranch(repository) ?? "none") : null;
+  const row = db
+    .query(`SELECT agents_noted FROM repositories ${where}`)
+    .get(repository.owner, repository.repo);
+  const noted = z.object({ agents_noted: z.string().nullable() }).nullable().parse(row);
+  if (noted === null || noted.agents_noted === waiting) return;
+  db.run(`UPDATE repositories SET agents_noted = ? ${where}`, [
+    waiting,
+    repository.owner,
+    repository.repo,
+  ]);
+  if (waiting !== null)
+    noteForLead(
+      db,
+      sessions,
+      repository,
+      `${repository.name}'s .agents/ on its default branch isn't the version the human approved. It steers agents, so new tasks keep the approved version, or the built-in roles, until the human runs sc repo trust ${repository.name} in their own terminal, which shows what changed. Tell the human.`,
+    );
+}
+
 // Polls one repository. Asks its tracker and its forge what changed since the `next` each
 // plugin last gave, kept in `nexts`, or for everything open when there is none. Brings
 // Skelcrew's copy up to date, taking tasks only from its tracker and PRs only from its forge,
@@ -350,9 +380,11 @@ async function pollRepository(
     // with no clone yet is left to the daemon's start, sc and a thread's setup, which make
     // it: a remote that can't be cloned would otherwise be tried at every poll.
     if (existsSync(cloneDir(owner, repo)))
-      await refreshClone(db, repository).catch((error) =>
-        console.log(`couldn't update Skelcrew's clone of ${owner}/${repo}: ${errorText(error)}`),
-      );
+      await refreshClone(db, repository)
+        .then(() => noteUnapprovedAgents(db, sessions, repository))
+        .catch((error) =>
+          console.log(`couldn't update Skelcrew's clone of ${owner}/${repo}: ${errorText(error)}`),
+        );
   }
   // With the copy up to date, start labeled tasks, then act on each thread: by its PR with a
   // forge, or by its branch without one, or without a PR.

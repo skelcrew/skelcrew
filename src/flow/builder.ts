@@ -15,12 +15,13 @@ import {
   startSession,
   stopSession,
 } from "../agents/sessions.ts";
-import { repositoryCommands, sessionHost, threadConfig } from "../config.ts";
+import { approvedAgents } from "../approved-agents.ts";
+import { agentRole, repositoryCommands, roundLimit, sessionHost } from "../config.ts";
 import { machineCode } from "../db.ts";
 import { cloneDir, threadSocket } from "../paths.ts";
 import { trackerOf } from "../plugins/ask.ts";
 import { type Host, hostNamed } from "../plugins/runtime.ts";
-import { builtInRole } from "../roles.ts";
+import { repositoryRole } from "../roles.ts";
 import { quietly } from "../run.ts";
 import { errorText } from "../say.ts";
 import type { Settings } from "../settings.ts";
@@ -51,7 +52,7 @@ import {
 export function startChoice(thread: Thread | null): "bring back" | "go on" | "new thread" {
   if (thread?.status === "stopped") return "bring back";
   const live = thread?.status === "working" || thread?.status === "waiting";
-  if (thread && live && pastRoundLimit(thread, threadConfig(thread).maxRounds)) return "go on";
+  if (thread && live && pastRoundLimit(thread, roundLimit(thread))) return "go on";
   return "new thread";
 }
 
@@ -284,6 +285,7 @@ async function recordThread(
       merge_asked: null,
       merge_waits: null,
       merge_noted: null,
+      agents: approvedAgents({ owner, repo }),
       review_post: null,
     };
     // A failed or done thread's row gives way to the new one, and messages that waited for its
@@ -314,9 +316,20 @@ async function recordThread(
     );
     db.run(
       `INSERT OR REPLACE INTO tasks
-        (owner, repo, task, title, body, short, assigned, seen, issue_link, closes)
-        VALUES (?, ?, ?, ?, ?, ?, ?, '[]', ?, ?)`,
-      [owner, repo, task, title, body, thread.short, thread.assigned, issueLink, closes],
+        (owner, repo, task, title, body, short, assigned, seen, issue_link, closes, agents)
+        VALUES (?, ?, ?, ?, ?, ?, ?, '[]', ?, ?, ?)`,
+      [
+        owner,
+        repo,
+        task,
+        title,
+        body,
+        thread.short,
+        thread.assigned,
+        issueLink,
+        closes,
+        thread.agents,
+      ],
     );
     log(db, thread);
     return thread;
@@ -418,13 +431,16 @@ export async function setUpThread(db: Database, thread: Thread): Promise<void> {
   }
 }
 
-// Returns the builder's instructions: its built-in ones, then the setup and test commands the
+// Returns the builder's instructions: its role's, from `role`, then the setup and test commands the
 // repository's skelcrew.yaml or your config names, each on its own, or that none is configured.
 // The builder can't read your config from its sandbox, so it is told. A builder told one it
 // needs isn't configured asks the lead rather than guess, as a guessed command is often wrong
 // and nobody would see it was a guess.
-export function builderInstructions(commands: Pick<Settings, "setup" | "test">): string {
-  const instructions = builtInRole("builder").instructions.replace(/\n$/, "");
+export function builderInstructions(
+  role: string,
+  commands: Pick<Settings, "setup" | "test">,
+): string {
+  const instructions = role.replace(/\n$/, "");
   const { setup, test } = commands;
   const shown = (list: string[]) => `\`${list.join(" && ")}\``;
   // A missing command is one the builder may need to ask about. An empty list says on purpose
@@ -447,9 +463,9 @@ export function builderInstructions(commands: Pick<Settings, "setup" | "test">):
 // Starts the thread's builder in a session, in the sandbox in its clone: bringing back the
 // conversation it saved, or else afresh with the task as its reviewer gets it as its first
 // message: the title and body from Skelcrew's copy, and the lead's messages after them. Throws
-// when it exits as soon as it starts. A builder's first start picks the harness your config
-// names, and saves it with the thread, which keeps it from then on: a conversation can't move to
-// another harness. The session id is stored before the builder starts, so the builder can be
+// when it exits as soon as it starts, or when its settings, its round limit included, aren't
+// valid. A builder's first start picks the harness your config names, and saves it with the
+// thread, which keeps it from then on: a conversation can't move to another harness. The session id is stored before the builder starts, so the builder can be
 // brought back after its session is gone. It starts on the session host your config names now,
 // which the thread keeps until its builder ends, and throws when that host isn't installed.
 export async function startBuilder(db: Database, sessions: string, thread: Thread): Promise<void> {
@@ -464,7 +480,10 @@ export async function startBuilder(db: Database, sessions: string, thread: Threa
   // A saved conversation the harness can't find starts afresh under a new id.
   const clone = cloneOf(thread);
   const stored = thread.session;
-  const role = threadConfig(thread).builder;
+  const role = agentRole("builder", thread);
+  // The round limit is checked as the builder starts, so a bad one fails the new thread with
+  // the reason, rather than only its first review once the builder has worked a round.
+  roundLimit(thread);
   const harness = stored === null ? harnessNamed(role.harness) : builderHarness(thread);
   const resume = stored === null ? null : harness.saved(thread.folder, clone, stored);
   const session = resume ?? crypto.randomUUID();
@@ -494,7 +513,11 @@ export async function startBuilder(db: Database, sessions: string, thread: Threa
     // task in its own words, and the builder still has it after a long conversation is
     // compacted. It asks the builder to ask you only when it must: its question waits on a
     // screen nobody watches.
-    system: builderInstructions(repositoryCommands(thread)),
+    // The builder role's instructions come from the .agents/ the task started with.
+    system: builderInstructions(
+      repositoryRole("builder", thread).instructions,
+      repositoryCommands(thread),
+    ),
     ...start,
   });
   await startOnHost(db, thread, { host, name: hostName }, { folder: clone, command: argv, env });

@@ -7,7 +7,7 @@ import { z } from "zod";
 import { harnessNamed } from "../agents/harness.ts";
 import { agentRuns, readSession } from "../agents/sessions.ts";
 import { forQuestion, type Marks, quietSince } from "../agents/transport.ts";
-import { threadConfig } from "../config.ts";
+import { roundLimit } from "../config.ts";
 import { askHost, type Host, hostNamed, pluginHost } from "../plugins/runtime.ts";
 import { errorText } from "../say.ts";
 import { pastRoundLimit } from "./decide.ts";
@@ -257,7 +257,7 @@ export function reportStatus(db: Database, thread: Thread): void {
   if (host === null || !host.status) return;
   let said: { status: Status; reason: string };
   try {
-    const { maxRounds } = threadConfig(thread);
+    const maxRounds = roundLimit(thread);
     said = { status: statusOf(thread, maxRounds), reason: threadWord(thread, maxRounds) };
   } catch (error) {
     console.log(`couldn't work out ${thread.folder}'s status: ${errorText(error)}`);

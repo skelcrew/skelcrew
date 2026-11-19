@@ -3,6 +3,7 @@
 // for a terminal or JSON for tools.
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
+import { agentsWaiting } from "../approved-agents.ts";
 import { repositoryTracker } from "../config.ts";
 import type { Repository } from "../db.ts";
 import { colorful } from "../help.ts";
@@ -21,7 +22,8 @@ import { needsYou } from "./status.ts";
 import { queuedForReview, Thread, threadName, threadOn } from "./thread.ts";
 
 // A repository as sc repo ls shows it. `missing` is a tracker its skelcrew.yaml names that
-// isn't installed, so it has none until you install that plugin.
+// isn't installed, so it has none until you install that plugin. `agentsWaiting` says its
+// default branch has an .agents/ you haven't approved, so it needs you to run sc repo trust.
 export const RepositoryRow = z.object({
   name: z.string(),
   repository: z.string(),
@@ -30,6 +32,7 @@ export const RepositoryRow = z.object({
   missing: z.string().nullable(),
   clone: z.string(),
   tabClosed: z.boolean(),
+  agentsWaiting: z.boolean(),
 });
 export type RepositoryRow = z.infer<typeof RepositoryRow>;
 
@@ -54,6 +57,7 @@ export function listRepositories(db: Database): RepositoryRow[] {
       missing: tracker === null ? named : null,
       clone: cloneDir(r.owner, r.repo),
       tabClosed: tabClosed(db, r),
+      agentsWaiting: agentsWaiting(r),
     };
   });
 }
@@ -459,9 +463,22 @@ const columnWidth = (rows: string[][], i: number) =>
 
 // Prints repositories for sc repo ls: as JSON for tools, or else as a table, with the
 // plugin to install for a tracker a repository's skelcrew.yaml names that isn't installed, or
-// how to bring in the first one. A repository whose tab you closed ends in a dim note, as it
-// has no tab to find it by. The note goes last, so its colour codes can't put the columns out
-// of line.
+// how to bring in the first one. A repository whose tab you closed, or whose .agents/ waits for
+// your OK, ends in a note. The note goes last, so its colour codes can't put the columns out of
+// line.
+// Returns the note at the end of a repository's row in sc repo ls, if any, as one cell: a dim
+// one for a tab you closed, and a yellow one saying what to run while the default branch has an
+// .agents/ you haven't approved, as new tasks keep the version you approved and the lead may be
+// closed.
+function notesOf(r: RepositoryRow): string[] {
+  const paint = (code: string, text: string) => (colorful() ? `\x1b[${code}m${text}\x1b[0m` : text);
+  const notes = [
+    ...(r.tabClosed ? [paint("2", "tab closed")] : []),
+    ...(r.agentsWaiting ? [paint("33", `run sc repo trust ${r.name}`)] : []),
+  ];
+  return notes.length === 0 ? [] : [notes.join(" · ")];
+}
+
 export function printRepositories(repositories: RepositoryRow[], json: boolean): void {
   if (json) console.log(JSON.stringify(repositories));
   else if (repositories.length === 0) console.log(noRepositories);
@@ -474,7 +491,7 @@ export function printRepositories(repositories: RepositoryRow[], json: boolean):
         r.tracker ?? (r.missing ? `${r.missing}, not installed` : "none"),
         r.forge ?? "none",
         r.clone,
-        ...(r.tabClosed ? [colorful() ? "\x1b[2mtab closed\x1b[0m" : "tab closed"] : []),
+        ...notesOf(r),
       ]),
     );
 }

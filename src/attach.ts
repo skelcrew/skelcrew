@@ -4,6 +4,7 @@
 import { z } from "zod";
 import { agentRuns } from "./agents/sessions.ts";
 import { ask } from "./client.ts";
+import { tellOldKeys } from "./config.ts";
 import { openDb } from "./db.ts";
 import { leadOf } from "./flow/lead.ts";
 import { builderSession, findThread } from "./flow/thread.ts";
@@ -131,7 +132,8 @@ export async function upInBackground(): Promise<boolean> {
 // side by side until the human picks one. The daemon must already run, as plain sc starts it
 // first. The lead is for `from`, an owner/repo, or else for the repository you opened last.
 // With `tab`, only a repository whose tab is open will do. Returns false, showing nothing, when
-// every tab is closed.
+// every tab is closed. Before it shows either, it names once any old keys the opened
+// repository's skelcrew.yaml still uses: only the daemon knows which repository you opened last.
 export async function attachToLead(
   sessions: string,
   list: boolean,
@@ -150,6 +152,7 @@ export async function attachToLead(
     throw new Error("the daemon answered in a way this Skelcrew doesn't understand");
   if ("error" in lead.data) throw new Error(lead.data.error);
   if ("closed" in lead.data) return false;
+  tellOldKeys(lead.data.repository);
   if (list) await runList(sessions, lead.data.repository);
   else await openScreen(sessions, lead.data.lead, lead.data.lead, lead.data.repository);
   return true;

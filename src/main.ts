@@ -149,6 +149,10 @@ async function leadCommand(list: boolean, from?: string): Promise<void> {
   }
   // Adds the repository you ran sc from if Skelcrew doesn't have it yet.
   const found = await bringInFrom(from);
+  // Your config may still use keys a newer shape replaced, which sc names once. The repository's
+  // skelcrew.yaml is named as its lead opens.
+  const { tellOldKeys } = await import("./config.ts");
+  tellOldKeys(undefined);
   if (repositories(openDb()).length === 0) return;
   // Outside any repository, sc opens the repository you opened last only while it has a tab.
   // With every tab closed, you closed them on purpose, so it opens none and says what sc needs.

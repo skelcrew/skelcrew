@@ -41,7 +41,7 @@ const sections: [string, [string, string][]][] = [
       ["repo add [<path> | <url> | <owner/repo>]", "Add a repository, this one by default"],
       ["repo ls", "Repositories Skelcrew works on"],
       ["repo rm <name>", "Remove Skelcrew's clone of one"],
-      ["repo trust <name>", "Trust one your login can't push to"],
+      ["repo trust <name>", "Trust one your login can't push to, or approve its .agents/"],
     ],
   ],
   [

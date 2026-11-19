@@ -38,7 +38,7 @@ function settings(yours: string, shared: string | null): void {
 // Runs code against config.ts in a process of its own, as homedir() keeps the HOME this one
 // started with, and returns what it printed and the error it ended with, if any.
 function run(code: string): { out: string; err: string } {
-  const script = `import { checkLimit, leadMayArmMerges, repositoryCommands, reviewLimit, sessionHost, threadConfig } from ${JSON.stringify(source("config.ts"))};
+  const script = `import { agentRole, checkLimit, leadMayArmMerges, repositoryCommands, reviewConfig, reviewLimit, roundLimit, sessionHost } from ${JSON.stringify(source("config.ts"))};
 const app = { owner: "simon", repo: "app" };
 ${code}`;
   const done = Bun.spawnSync([process.execPath, "-e", script], {
@@ -50,7 +50,12 @@ ${code}`;
 }
 
 // Returns what a thread of app runs with: each role's harness and model, and the round limit.
-const forApp = () => JSON.parse(run("console.log(JSON.stringify(threadConfig(app)));").out);
+const forApp = () =>
+  JSON.parse(
+    run(
+      'console.log(JSON.stringify({ lead: agentRole("lead", app), builder: agentRole("builder", app), ...reviewConfig(app) }));',
+    ).out,
+  );
 
 test("the repository's skelcrew.yaml sets each role and the round limit, over your config", () => {
   settings(
@@ -178,7 +183,7 @@ test("setup and test come from the repository, then your config", () => {
 
 test("a skelcrew.yaml that isn't valid, or isn't a plain file, says so rather than be ignored", () => {
   settings("harness: claude\n", "max_rounds: -1\n");
-  expect(run("threadConfig(app);").err).toContain("the repository's skelcrew.yaml isn't valid");
+  expect(run("roundLimit(app);").err).toContain("the repository's skelcrew.yaml isn't valid");
   settings("harness: claude\n", null);
   writeFileSync(join(home, "secret"), "setup: [cat secret]\n");
   symlinkSync(join(home, "secret"), join(clone(), "skelcrew.yaml"));

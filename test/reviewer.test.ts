@@ -14,6 +14,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { review, reviewerPrompt } from "../src/flow/reviewer.ts";
+import { builtInRole } from "../src/roles.ts";
 import { insideSandbox, source } from "./harness.ts";
 
 let home = "";
@@ -74,8 +75,11 @@ function fakeCodex(answer: string, extra: string[] = []): void {
 
 const kept = (name: string) => readFileSync(join(sessions(), name), "utf8");
 const approve = '{"verdict":"approve","body":"Looks right.","findings":[]}';
+// The built-in reviewer's instructions, as a task with no .agents/ of its own gets them.
+const reviewerRole = builtInRole("reviewer").instructions;
 // A review on Codex, unless `more` names another harness.
 const given = () => ({
+  instructions: reviewerRole,
   clone,
   issue,
   base: "origin/main",
@@ -611,8 +615,8 @@ describe("starting a review", () => {
   function roleFor(role: string, settings: string): unknown {
     mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
     writeFileSync(join(home, ".config", "skelcrew", "config.yaml"), settings);
-    const code = `import { agentRoles } from ${JSON.stringify(source("config.ts"))};
-console.log(JSON.stringify(agentRoles().${role}));`;
+    const code = `import { agentRole } from ${JSON.stringify(source("config.ts"))};
+console.log(JSON.stringify(agentRole(${JSON.stringify(role)})));`;
     const run = Bun.spawnSync([process.execPath, "-e", code], { env: env(), stdout: "pipe" });
     return JSON.parse(run.stdout.toString());
   }
@@ -701,7 +705,7 @@ describe("what the reviewer is told about the tests", () => {
   const named = ["bun install", "bun run check"];
   // CI runs the whole suite once per commit, so the reviewer runs it only where there is none.
   test("without CI, the reviewer runs the whole test suite itself", () => {
-    const prompt = reviewerPrompt(issue, "origin/main", "run", named);
+    const prompt = reviewerPrompt(reviewerRole, issue, "origin/main", "run", named);
     expect(prompt).toContain(
       "No CI runs on this commit, so run the repository's whole test suite with `sc check`, which runs `bun install && bun run check` once one of this machine's check slots is free. Never run that command directly, as other agents share this machine.",
     );
@@ -712,23 +716,29 @@ describe("what the reviewer is told about the tests", () => {
   test("with no test command configured, the reviewer reviews without running tests and says so", () => {
     const none =
       "no test command is configured, so don't run the tests. Review the code, and say in the body that you didn't run them, as none is configured.";
-    expect(reviewerPrompt(issue, "origin/main", "run", undefined)).toContain(
+    expect(reviewerPrompt(reviewerRole, issue, "origin/main", "run", undefined)).toContain(
       `No CI runs on this commit, so ${none}`,
     );
-    expect(reviewerPrompt(issue, "origin/main", { ci: "/tmp/review/ci.md" }, undefined)).toContain(
-      `such as only a deploy preview or a CLA check, ${none}`,
-    );
+    expect(
+      reviewerPrompt(reviewerRole, issue, "origin/main", { ci: "/tmp/review/ci.md" }, undefined),
+    ).toContain(`such as only a deploy preview or a CLA check, ${none}`);
   });
 
   // An empty list says on purpose that the repository has no tests to run.
   test("with test configured as none, the reviewer runs no tests and says the repository has none", () => {
-    expect(reviewerPrompt(issue, "origin/main", "run", [])).toContain(
+    expect(reviewerPrompt(reviewerRole, issue, "origin/main", "run", [])).toContain(
       "No CI runs on this commit, so don't run the tests: the repository is configured with none. Review the code, and say in the body that you didn't run them, as it has none.",
     );
   });
 
   test("with CI, the reviewer reads CI's result, and approves clean code while CI runs", () => {
-    const prompt = reviewerPrompt(issue, "origin/main", { ci: "/tmp/review/ci.md" }, named);
+    const prompt = reviewerPrompt(
+      reviewerRole,
+      issue,
+      "origin/main",
+      { ci: "/tmp/review/ci.md" },
+      named,
+    );
     expect(prompt).not.toContain("run the repository's whole test suite");
     expect(prompt).toContain(
       "CI runs the whole test suite on this commit, so don't run it yourself",
@@ -743,7 +753,13 @@ describe("what the reviewer is told about the tests", () => {
   // Any check but Skelcrew's counts as CI, and some, such as a deploy preview or a CLA check,
   // run no tests. Then no one else would run the suite.
   test("with CI whose checks run no tests, the reviewer runs the whole test suite itself", () => {
-    const prompt = reviewerPrompt(issue, "origin/main", { ci: "/tmp/review/ci.md" }, named);
+    const prompt = reviewerPrompt(
+      reviewerRole,
+      issue,
+      "origin/main",
+      { ci: "/tmp/review/ci.md" },
+      named,
+    );
     expect(prompt).toContain(
       "When it lists checks and none of them runs the tests, such as only a deploy preview or a CLA check, run the whole test suite yourself with `sc check`, which runs `bun install && bun run check` once one of this machine's check slots is free. Never run that command directly, as other agents share this machine.",
     );
@@ -751,7 +767,13 @@ describe("what the reviewer is told about the tests", () => {
 
   // Before CI starts, the file lists no checks. That is CI still to come, not CI without tests.
   test("with CI that hasn't reported yet, the reviewer reviews the code without running the suite", () => {
-    const prompt = reviewerPrompt(issue, "origin/main", { ci: "/tmp/review/ci.md" }, named);
+    const prompt = reviewerPrompt(
+      reviewerRole,
+      issue,
+      "origin/main",
+      { ci: "/tmp/review/ci.md" },
+      named,
+    );
     expect(prompt).toContain(
       'When CI hasn\'t reported yet, or is still running as you answer, review the code anyway: CI running is never a finding, as the PR is ready only once every check passes. Then approve clean code, and say "CI pending" in the body.',
     );
@@ -759,7 +781,7 @@ describe("what the reviewer is told about the tests", () => {
 
   // CI skips a change to docs and Markdown alone, and so does the reviewer: no code changed.
   test("on a change to docs and Markdown alone, the reviewer runs no tests and says so", () => {
-    const prompt = reviewerPrompt(issue, "origin/main", "docs only", named);
+    const prompt = reviewerPrompt(reviewerRole, issue, "origin/main", "docs only", named);
     expect(prompt).toContain(
       "The change only touches docs and Markdown, so don't run the tests. Say in the body that you didn't run them, as no code changed.",
     );

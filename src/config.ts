@@ -1,11 +1,12 @@
 // Your config.yaml as the first run edits it, and the settings the rest of Skelcrew asks for,
 // each read through the one loader in settings.ts.
-import { existsSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, lstatSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { parseDocument } from "yaml";
+import { parse, parseDocument } from "yaml";
 import type { HarnessName } from "./agents/harness.ts";
-import { configDir } from "./paths.ts";
-import { type Repository, readSettings, type Settings } from "./settings.ts";
+import { cloneDir, configDir, dataDir } from "./paths.ts";
+import type { RoleName } from "./roles.ts";
+import { type Repository, type Role, readSettings, type Settings } from "./settings.ts";
 
 // Returns the path of your settings file.
 export const configFile = () => join(configDir(), "config.yaml");
@@ -21,42 +22,49 @@ export function yourConfigDocument() {
   return config;
 }
 
-// Returns the harness and model of the lead, builders and reviewers. For a repository, its
-// skelcrew.yaml goes over your config. Without one, only your config counts.
-export const agentRoles = (repository?: Repository): Settings["roles"] =>
-  readSettings(["roles"], repository).roles;
+// Returns the harness and model of one role: the lead, builders or reviewers. For a repository,
+// its files go over your config. Without one, only your config counts. Only that role is read, so
+// a mistake in another role's settings or file stops only that role's agents.
+export const agentRole = (name: RoleName, repository?: Repository): Role =>
+  readSettings([name], repository)[name];
 
-// Returns what a repository's threads run with: each agent's harness and model, as agentRoles
-// gives them, the round limit, the harness reviews fall back to during a usage limit, or null
-// with none, and how many minutes a review may run. A fallback that is the reviewer's own harness
+// Returns how many rounds of changes a repository's thread gets before it needs you.
+export const roundLimit = (repository: Repository): number =>
+  readSettings(["rounds"], repository).rounds;
+
+// Returns what a repository's reviews run with: the reviewer's harness and model, as agentRole
+// gives them, the harness reviews fall back to during a usage limit, or null with none, how many
+// minutes a review may run, and the round limit. A fallback that is the reviewer's own harness
 // is none.
-export function threadConfig(repository: Repository): Settings["roles"] & {
-  maxRounds: number;
+export function reviewConfig(repository: Repository): {
+  reviewer: Role;
   fallback: HarnessName | null;
   reviewMinutes: number;
+  maxRounds: number;
 } {
-  const { rounds, roles, fallback, reviewMinutes } = readSettings(
-    ["rounds", "roles", "fallback", "reviewMinutes"],
+  const { rounds, reviewer, fallback, reviewMinutes } = readSettings(
+    ["rounds", "reviewer", "fallback", "reviewMinutes"],
     repository,
   );
   return {
-    ...roles,
-    maxRounds: rounds,
-    fallback: fallback === undefined || fallback === roles.reviewer.harness ? null : fallback,
+    reviewer,
+    fallback: fallback === undefined || fallback === reviewer.harness ? null : fallback,
     reviewMinutes,
+    maxRounds: rounds,
   };
 }
 
-// Returns the repository's setup and test commands: each from its skelcrew.yaml, else your
-// config, or missing when neither names it. An empty list named on purpose stays empty. Skelcrew never guesses them: the lead settles them with you once, and every
-// builder and reviewer then uses the same ones.
+// Returns the repository's setup and test commands: each from your override for it under
+// repos:, else its skelcrew.yaml, else your config, or missing when none names it. An empty list
+// named on purpose stays empty. Skelcrew never guesses them: the lead settles them with you
+// once, and every builder and reviewer then uses the same ones.
 export function repositoryCommands(repository: Repository): Pick<Settings, "setup" | "test"> {
   const { setup, test } = readSettings(["setup", "test"], repository);
   return { setup, test };
 }
 
-// Returns the plugin the repository's skelcrew.yaml names as its tracker, or nothing when it
-// names none.
+// Returns the plugin your override for the repository under repos: names as its tracker, else
+// its skelcrew.yaml, or nothing when neither names one.
 export const repositoryTracker = (repository: Repository): string | undefined =>
   readSettings(["tracker"], repository).tracker;
 
@@ -68,6 +76,76 @@ export const checkLimit = (): number => readSettings(["checks"]).checks;
 // Returns the host new sessions start on: tmux, or the name of a runtime plugin. It is yours
 // alone, as how you watch your agents is, so a repository's skelcrew.yaml can't set it.
 export const sessionHost = (): string => readSettings(["host"]).host;
+
+// Says once, for each old key still in use, which new key replaces it. In your config.yaml,
+// the harness and model under lead:, builder: and reviewer: give way to roles:, and max_rounds: to rounds:, at the top and
+// under each repository in repos:. For the repository named by its owner/repo, lead:, builder:,
+// reviewer: and max_rounds: in its skelcrew.yaml give way to its .agents/. The old keys still
+// work, so nothing breaks, but you should know of the new shape. Skelcrew changes no file
+// itself. What was said is kept in Skelcrew's data folder, so it is said once per key. A file
+// that can't be read says nothing here, as reading the settings says what is wrong with it.
+export function tellOldKeys(repository: string | undefined): void {
+  const told = join(dataDir(), "told-old-keys");
+  const before = existsSync(told) ? readFileSync(told, "utf8").split("\n") : [];
+  // Says `text` unless the key was said before, and remembers it.
+  const tell = (key: string, text: string) => {
+    if (before.includes(key)) return;
+    console.log(`${text} It keeps working, and Skelcrew changes no file itself.`);
+    mkdirSync(dataDir(), { recursive: true });
+    appendFileSync(told, `${key}\n`);
+  };
+  const isMapping = (v: unknown): v is Record<string, unknown> =>
+    typeof v === "object" && v !== null && !Array.isArray(v);
+  // Your general settings, then each repository's overrides, with where each is said to be.
+  const yours = readYaml(configFile());
+  const repos = isMapping(yours) && isMapping(yours.repos) ? Object.entries(yours.repos) : [];
+  const places: [string, unknown][] = [
+    ["", yours],
+    ...repos.map(([name, entry]): [string, unknown] => [` under repos: ${name}`, entry]),
+  ];
+  const replaced: [string, string][] = [
+    ["lead", "roles: { lead: … }"],
+    ["builder", "roles: { builder: … }"],
+    ["reviewer", "roles: { reviewer: … }"],
+    ["max_rounds", "rounds:"],
+  ];
+  // A role's line is old only for its harness and model. Its other settings stay there, such
+  // as lead: { may_arm_merges: true } and the reviewer's fallback.
+  const isOld = (value: unknown) => !isMapping(value) || "harness" in value || "model" in value;
+  for (const [where, settings] of places)
+    for (const [old, now] of replaced)
+      if (isMapping(settings) && old in settings && (old === "max_rounds" || isOld(settings[old])))
+        tell(
+          `config.yaml${where} ${old}`,
+          `Your config.yaml's ${old}:${where} is read as ${now}, which replaces it.`,
+        );
+  if (repository === undefined) return;
+  // Read from Skelcrew's clone, as the settings are, and never through a link.
+  const [owner = "", repo = ""] = repository.split("/");
+  const file = join(cloneDir(owner, repo), "skelcrew.yaml");
+  const shared = lstatSync(file, { throwIfNoEntry: false })?.isFile() ? readYaml(file) : {};
+  const named = `${repository}'s skelcrew.yaml has`;
+  for (const name of ["lead", "builder", "reviewer"].filter((name) => name in shared))
+    tell(
+      `${repository} skelcrew.yaml ${name}`,
+      `${named} ${name}:, read as the harness and model in .agents/roles/${name}.md, which replaces it.`,
+    );
+  if ("max_rounds" in shared)
+    tell(
+      `${repository} skelcrew.yaml max_rounds`,
+      `${named} max_rounds:, read as rounds: in .agents/flows/default.yaml, which replaces it.`,
+    );
+}
+
+// Returns the mapping a YAML file holds, or an empty one when it can't be read or isn't one.
+function readYaml(file: string): object {
+  try {
+    const data: unknown = parse(readFileSync(file, "utf8"));
+    return typeof data === "object" && data !== null ? data : {};
+  } catch {
+    return {};
+  }
+}
 
 // Returns whether you let the lead arm a merge when ready when you ask it to in the
 // conversation. Only your config.yaml can say so, so a repository's files never grant it. Off

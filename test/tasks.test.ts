@@ -134,6 +134,8 @@ openDb().run("UPDATE threads SET ci_passed = 1 WHERE folder = 'app-13'");`);
   // Before the new daemon moves it, sc shows the threads as they are.
   const shownThen = shownBefore();
   turnEndedWaits(shownThen);
+  // That release didn't read .agents/, and neither repository has one, so none waits for you.
+  for (const row of shownThen.repositories) row.agentsWaiting = false;
   const { issues, show, prs, ...saved } = shownThen;
   const before = JSON.parse(run(showAll));
   const { ls, show: shown, ...same } = before;
@@ -336,9 +338,11 @@ function endedBeforeMerges(): void {
   db.close();
 }
 
-// Returns which of the tasks app-12, app-14 and app-16 are marked merged.
+// Returns which of the tasks app-12, app-14 and app-16 are marked merged. The daemon may be
+// writing as it starts, so the read waits for it rather than failing as locked.
 function mergedTasks(): unknown {
   const db = new Database(dbFile(), { readonly: true });
+  db.run("PRAGMA busy_timeout = 5000");
   const rows = db
     .query("SELECT task, merged FROM tasks WHERE task IN (12, 14, 16) ORDER BY task")
     .all();

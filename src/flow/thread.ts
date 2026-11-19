@@ -198,6 +198,10 @@ export const Thread = z.object({
   merge_asked: z.string().nullable(),
   merge_waits: z.string().nullable(),
   merge_noted: z.number().nullable(),
+  // The tree of the .agents/ you had approved when the task started, whose roles its agents
+  // keep to the end, though you approve another meanwhile. Null for the built-in roles, as
+  // every task had before Skelcrew read .agents/.
+  agents: z.string().nullable(),
   // Skelcrew's review on the task's PR, or null before its first. It names its PR, so a PR
   // opened again after sc rm gets a review of its own.
   review_post: z

@@ -1095,7 +1095,7 @@ test("asks which harness reviews, offering the other one first", async () => {
   );
   expect(parse(readFileSync(config(), "utf8"))).toEqual({
     harness: "claude",
-    reviewer: { harness: "codex" },
+    roles: { reviewer: { harness: "codex" } },
   });
 });
 
@@ -1121,7 +1121,7 @@ test("Codex agents with Claude Code reviews log in to both", async () => {
   expect(run.out).toContain("Sign in to Codex. Press Enter to start.");
   expect(parse(readFileSync(config(), "utf8"))).toEqual({
     harness: "codex",
-    reviewer: { harness: "claude" },
+    roles: { reviewer: { harness: "claude" } },
   });
   expect(readFileSync(token(), "utf8").trim()).toBe("sk-ant-oat01-good");
   expect(calls()).toContain("codex login --device-auth");

@@ -144,9 +144,7 @@ test("the lead and builder files hold the instructions the code gave, but for wh
 
 test("the built-in roles name no harness or model, so yours count, as before", () => {
   for (const name of ["lead", "builder", "reviewer"] as const) {
-    const role = builtInRole(name);
-    expect(role.harness).toBeUndefined();
-    expect(role.model).toBeUndefined();
+    expect(builtInRole(name).frontmatter).toEqual({});
   }
 });
 
@@ -179,27 +177,69 @@ const testedBy = ["bun test"];
 
 test("the reviewer is told exactly what its code told it, and who runs the tests", () => {
   const issue = { title: "Fix the flaky test", body: "It fails one run in ten." };
-  expect(reviewerPrompt(issue, "origin/main", "run", testedBy)).toBe(
-    before(issue, "origin/main", runs),
-  );
+  expect(
+    reviewerPrompt(builtInRole("reviewer").instructions, issue, "origin/main", "run", testedBy),
+  ).toBe(before(issue, "origin/main", runs));
 });
 
 test("a task's own text reaches the reviewer as written, even when it looks like a blank", () => {
   // A title or body that holds the blanks' marks, or what a replacement treats as special,
   // must not be filled in again.
   const issue = { title: "Rename {{base}} to $& and $1", body: "Mention {{title}} and {{body}}." };
-  expect(reviewerPrompt(issue, "origin/$&", "run", testedBy)).toBe(
-    before(issue, "origin/$&", runs),
-  );
+  expect(
+    reviewerPrompt(builtInRole("reviewer").instructions, issue, "origin/$&", "run", testedBy),
+  ).toBe(before(issue, "origin/$&", runs));
 });
 
 test("a role file's frontmatter gives its harness and model, and the rest is its instructions", () => {
   const role = readRole("---\nharness: codex\nmodel: gpt-6.1-sol\n---\nReview it.\n");
-  expect(role).toEqual({ harness: "codex", model: "gpt-6.1-sol", instructions: "Review it.\n" });
-  expect(readRole("Build it.\n")).toEqual({ instructions: "Build it.\n" });
+  expect(role).toEqual({
+    frontmatter: { harness: "codex", model: "gpt-6.1-sol" },
+    instructions: "Review it.\n",
+  });
+  expect(readRole("Build it.\n")).toEqual({ frontmatter: {}, instructions: "Build it.\n" });
 });
 
+// Its harness and model are checked by the settings, only where they count.
 test("a role file's frontmatter holds only harness and model", () => {
   expect(() => readRole("---\nharness: codex\nrounds: 5\n---\nReview it.\n")).toThrow("rounds");
-  expect(() => readRole("---\nharness: emacs\n---\nReview it.\n")).toThrow("harness");
+  expect(readRole("---\nharness: emacs\n---\nReview it.\n").instructions).toBe("Review it.\n");
+});
+
+test("a reviewer role that leaves out the blanks still gets the task, the base and the tests", () => {
+  const issue = { title: "Fix the flaky test", body: "It fails one run in ten." };
+  const prompt = reviewerPrompt(
+    "Check it the team's way.\n",
+    issue,
+    "origin/main",
+    "run",
+    testedBy,
+  );
+  expect(prompt).toStartWith("Check it the team's way.\n\n");
+  expect(prompt).toContain("# Fix the flaky test\n\nIt fails one run in ten.");
+  expect(prompt).toContain("git diff origin/main...HEAD");
+  expect(prompt).toContain(runs);
+  // A role that places every blank gets nothing added.
+  const placed = "Task {{title}}: {{body}}. Since {{base}}. {{tests}}\n";
+  expect(reviewerPrompt(placed, issue, "origin/main", "run", testedBy)).toBe(
+    `Task Fix the flaky test: It fails one run in ten.. Since origin/main. ${runs}`,
+  );
+});
+
+// An empty model is refused by the settings, where it counts, as any bad harness or model.
+test("a role file that opens frontmatter must close it", () => {
+  expect(() => readRole("---\nharness: codex\nReview it.\n")).toThrow("never closes");
+  // Closing on the file's last line, with no newline after it, is fine.
+  expect(readRole("---\nharness: codex\n---")).toEqual({
+    frontmatter: { harness: "codex" },
+    instructions: "",
+  });
+});
+
+test("a role file with Windows line endings is read and checked the same", () => {
+  expect(readRole("---\r\nharness: codex\r\n---\r\nReview it.\r\n")).toEqual({
+    frontmatter: { harness: "codex" },
+    instructions: "Review it.\r\n",
+  });
+  expect(() => readRole("---\r\nharness: codex\r\nReview it.\r\n")).toThrow("never closes");
 });
