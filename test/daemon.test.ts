@@ -1116,15 +1116,21 @@ describe.skipIf(insideSandbox)("with a lead per repository", () => {
 
   test("a host that hangs holds up neither the daemon's start nor another repository's lead", async () => {
     setUp();
-    addRepository("app");
-    addRepository("web");
+    const app = addRepository("app");
+    const web = addRepository("web");
     const first = serve();
     await untilAnswers();
+    // The daemon clones both as it starts, in the background, and a lead starts only once its
+    // clone is there.
+    await until(() => existsSync(join(app, "README")) && existsSync(join(web, "README")));
     await open("app");
+    expect(hasLead("app")).toBe(true);
     installFakeHost();
     useSessionHost("fake");
     await open("web");
     expect(leadHost("web")).toMatchObject({ lead_host: "fake" });
+    // New sessions go to tmux again, so only web's lead depends on the fake host.
+    useSessionHost("tmux");
     await stop(first);
     // From here on, the fake host holds every list it is asked for, until the file goes.
     writeFileSync(join(fakeHostSettings(), "hold-list"), "0");
