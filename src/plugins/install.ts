@@ -337,7 +337,13 @@ type Options = {
   commit?: string;
   pin?: boolean;
   name?: boolean;
+  // Refuses a plugin that only reaches machines, with OnlyReachesMachines, before asking.
+  skipMachines?: boolean;
 };
+
+// The error for a plugin that only reaches machines, refused on a machine you reach with
+// --remote, as such a plugin is used where you run --remote.
+class OnlyReachesMachines extends Error {}
 
 // Installs a plugin and returns whether it did. `given` is either owner/repo, installed from that
 // GitHub repository's newest version tag or the one `tag` names, or a path to a folder of yours,
@@ -379,6 +385,8 @@ export function installPlugin(given: string, options: Options = {}): boolean {
   const cloned = cloneTag(given, tag ?? newestTag(given), commit);
   const { staged, manifest } = cloned;
   try {
+    if (options.skipMachines && reachesOnlyMachines(manifest))
+      throw new OnlyReachesMachines(manifest.name);
     refuseInstalled(db, manifest.name);
     checkSkelcrewVersion(manifest);
     const answer = ask ? confirmPlugin(manifest, given, "Install") : true;
@@ -644,6 +652,12 @@ export function installYourPlugins(remote: string | null): {
   const db = openDb();
   const lock = yourLock(db);
   let changed = false;
+  // On a machine you reach with --remote, a plugin that only reaches machines isn't installed,
+  // as it is used where you run --remote. The laptop leaves those it has out of the files it
+  // sends, but one your files name that the laptop doesn't have yet can only be told apart here,
+  // by its manifest.
+  const skipMachines = process.env.SKELCREW_REMOTE_NAME !== undefined;
+  const skipped: string[] = [];
   // Removed first, so one of the same name from another repository can be installed after. One
   // that is a repository's tracker or forge refuses to go, which is said here and returned, so the
   // machine isn't marked set up while it still runs a plugin your files removed.
@@ -671,17 +685,26 @@ export function installYourPlugins(remote: string | null): {
       if (here && locked && matchesLock(here, locked)) return;
       changed = true;
       // Installing with no pin adds one. One with a pin leaves the lock as it is.
-      if (!locked) installPlugin(source, { remote });
-      else {
-        const pinned = { tag: `v${locked.version}`, commit: locked.commit, remote, pin: false };
-        if (here) updatePlugin(db, here, pinned);
-        else installPlugin(source, pinned);
+      try {
+        if (!locked) installPlugin(source, { remote, skipMachines });
+        else {
+          const pinned = { tag: `v${locked.version}`, commit: locked.commit, remote, pin: false };
+          if (here) updatePlugin(db, here, pinned);
+          else installPlugin(source, { ...pinned, skipMachines });
+        }
+      } catch (error) {
+        if (!(error instanceof OnlyReachesMachines)) throw error;
+        console.log(
+          `Skelcrew skipped ${error.message}, which only reaches machines, so it belongs where you run sc --remote, not here.`,
+        );
+        skipped.push(source);
       }
     },
   );
   // Read again, as an install added its pin.
   const now = yourLock(db);
   const left = yourPlugins().filter((source) => {
+    if (skipped.includes(source)) return false;
     const here = installedPlugins(db).find((plugin) => plugin.source === source);
     const locked = now[source];
     return !here || (locked !== undefined && !matchesLock(here, locked));

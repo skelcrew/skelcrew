@@ -1303,6 +1303,54 @@ test("install removes from the server a plugin you removed on your laptop", asyn
   ]);
 });
 
+// The laptop leaves out a plugin that only reaches machines when it has it installed. One your
+// files name that the laptop doesn't have yet is told apart on the server, by its manifest.
+test("install skips a plugin that only reaches machines, even one the laptop hasn't installed", async () => {
+  realServerWithFake();
+  // simon/skelcrew-box on a fake GitHub the server reaches, tagged v0.1.0.
+  const box = join(home, "github", "simon", "skelcrew-box");
+  mkdirSync(box, { recursive: true });
+  writeFileSync(
+    join(box, "skelcrew-plugin.yaml"),
+    "name: box\nversion: 0.1.0\nskelcrew: 0.1.0\nabout: Reaches boxes.\nkind: runtime\nprovides: [machine]\nadd: [./add]\nexec: [./exec]\npush: [./push]\n",
+  );
+  const git = (...args: string[]) =>
+    Bun.spawnSync(["git", "-C", box, "-c", "user.name=t", "-c", "user.email=t", ...args], {
+      stdout: "pipe",
+    });
+  git("init", "-q", "-b", "main");
+  git("add", ".");
+  git("commit", "-q", "-m", "box");
+  git("tag", "v0.1.0");
+  const commit = git("rev-parse", "HEAD").stdout.toString().trim();
+  writeFileSync(
+    join(home, "server", ".gitconfig"),
+    `[url "file://${home}/github/"]\n\tinsteadOf = https://github.com/\n`,
+  );
+  // The laptop's files name box, and keep fake, but the laptop has neither installed.
+  const config = join(home, ".config", "skelcrew");
+  mkdirSync(config, { recursive: true });
+  writeFileSync(
+    join(config, "config.yaml"),
+    "harness: codex\nplugins: [simon/skelcrew-fake, simon/skelcrew-box]\n",
+  );
+  const fake = readFileSync(join(home, "server", ".config", "skelcrew", "skelcrew.lock"), "utf8");
+  writeFileSync(
+    join(config, "skelcrew.lock"),
+    `${fake}simon/skelcrew-box:\n  name: box\n  version: 0.1.0\n  commit: ${commit}\n`,
+  );
+  const run = await skel(["--remote", "simon@workbox", "install"]);
+  expect(run.err).toBe("");
+  expect(run.out).toContain(
+    "Skelcrew skipped box, which only reaches machines, so it belongs where you run sc --remote, not here.",
+  );
+  expect(run.out).not.toContain("isn't set up yet");
+  expect(run.code).toBe(0);
+  const db = new Database(join(home, "server", ".local", "share", "skelcrew", "skelcrew.db"));
+  expect(db.query("SELECT name FROM plugins").all()).toEqual([{ name: "fake" }]);
+  db.close();
+});
+
 // --files names a folder the laptop made, so a path that leads elsewhere moves nothing.
 test("sc install refuses --files that isn't a folder of sent files", () => {
   for (const folder of ["../../elsewhere", "/tmp/x", "sending-a/../.."]) {
