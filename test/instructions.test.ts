@@ -241,7 +241,8 @@ test("a lead tells the human to arm a merge when ready in their own terminal", (
   expect(told).toContain("run sc merge --when-ready app-12 in their own terminal");
   expect(told).toContain("You may run sc merge --cancel app-12 when the human asks");
   expect(told).toContain("The human hasn't let you arm a merge when ready.");
-  expect(told).not.toContain("--asked");
+  // Briefing another lead takes --asked-file too, so the merge's own use of it is what stays out.
+  expect(told).not.toContain("--when-ready app-12 --asked-file");
 });
 
 // A lead the human lets arm merges arms one only on the human's own request, quoting it, and

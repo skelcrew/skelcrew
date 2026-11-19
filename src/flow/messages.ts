@@ -511,15 +511,19 @@ export function messageLead(db: Database, sessions: string, from: Caller, text: 
 }
 
 // Saves a lead's brief for another repository's lead, to be typed in once that lead can take
-// it, as an urgent note. It is wrapped as from the sending lead, such as skelcrew:lead, with the
+// it, as an urgent note. It is wrapped as from the sending lead, such as app:lead, with the
 // command that answers it, so the other lead takes it for another agent's report, never for the
-// human's say-so. Only a lead may brief, and never its own repository, which it plans itself.
+// human's say-so. `asked` is the human's own words, which the sending lead gave with
+// --asked-file. They go in with the brief, and the tag says asked="yes", which only Skelcrew can
+// write, as the text can't hold a tag of its own. Only then may the other lead start work on
+// it. Only a lead may brief, and never its own repository, which it plans itself.
 export function briefLead(
   db: Database,
   sessions: string,
   from: Caller,
   to: { name: string; owner: string; repo: string },
   text: string,
+  asked?: string,
 ): void {
   if (from === "you" || !("lead" in from))
     throw new Error("Only a lead can brief another repository's lead.");
@@ -527,8 +531,15 @@ export function briefLead(
   if (owner === to.owner && repo === to.repo)
     throw new Error(`${to.name} is your own repository: brief its threads with sc tell instead.`);
   const sender = repositories(db).find((r) => r.owner === owner && r.repo === repo);
-  const name = `${sender?.name ?? `${owner}/${repo}`}:lead`;
-  noteForLead(db, sessions, to, wrapMessage(name, `sc tell ${name}`, text), null, true);
+  const name = sender?.name ?? `${owner}/${repo}`;
+  const tag = `<skelcrew from="${name}:lead" reply="sc tell lead ${name}"`;
+  // The human's words come first, apart from the brief, exactly as the sending lead gave them.
+  const body =
+    asked === undefined
+      ? untagged(text)
+      : `The human's words, as ${name}'s lead was given them:\n${untagged(asked).trimEnd()}\n\nThe brief:\n${untagged(text)}`;
+  const message = `${tag}${asked === undefined ? "" : ' asked="yes"'}>\n${body}\n</skelcrew>`;
+  noteForLead(db, sessions, to, message, null, true);
 }
 
 // Types the saved notes for a repository's lead into it, such as "started app-12 from github:

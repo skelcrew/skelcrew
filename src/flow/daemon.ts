@@ -519,7 +519,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
           throw new Error(
             `${request.to} isn't in Skelcrew. Ask the human to add it in their own terminal, with sc repo add <owner/repo>.`,
           );
-        briefLead(db, sessions, caller, to, request.text);
+        briefLead(db, sessions, caller, to, request.text, request.asked);
         // A lead whose tab you closed by exiting it is brought back, so the brief reaches it.
         // Starting it isn't waited on, as an agent's command answers at once. Its notes wait
         // until it runs, then go in.
