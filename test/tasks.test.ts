@@ -128,9 +128,11 @@ test("after the move, every command and the screen show the same threads under t
   // The saved database's app has GitHub as its forge, which shows its PRs.
   fakePlugin(home);
   // The first poll after the upgrade finds every check on app-13's approved PR green, as the
-  // earlier release took them to be. Until a poll says so, it waits, as tested below.
+  // earlier release took them to be, and that its PR leaves .agents/ alone, which that release
+  // never asked. Until a poll says so, it waits, as tested below.
   run(`import { openDb } from ${JSON.stringify(source("db.ts"))};
-openDb().run("UPDATE threads SET ci_passed = 1 WHERE folder = 'app-13'");`);
+openDb().run("UPDATE threads SET ci_passed = 1 WHERE folder = 'app-13'");
+openDb().run("INSERT INTO pr_agents (owner, repo, pr, head, base, changed) VALUES ('simon', 'app', '41', 'abc123', 'main', 0)");`);
   // Before the new daemon moves it, sc shows the threads as they are.
   const shownThen = shownBefore();
   turnEndedWaits(shownThen);
