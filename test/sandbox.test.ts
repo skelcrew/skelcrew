@@ -146,9 +146,8 @@ describe.skipIf(insideSandbox)("sandbox", () => {
   test("a lead reads another repository's clone and can't change it", async () => {
     repository();
     const web = repository("web");
-    const done = await asLead(`cat ${web}/README; echo x > ${web}/new`);
-    expect(done.out).toBe("web\n");
-    expect(done.err).toContain("Read-only file system");
+    const done = await asLead(`cat ${web}/README; echo x > ${web}/new || echo refused`);
+    expect(done.out).toBe("web\nrefused\n");
     expect(existsSync(join(web, "new"))).toBe(false);
   });
 
@@ -656,15 +655,26 @@ claude.start({ name: "app-12", socket: "x", model: "opus", ...${JSON.stringify(l
     const app = repository();
     saveToken();
     const env = { ...outside(), PATH: "/usr/bin:/bin" };
-    const options = (argv: string[]) => argv.slice(0, argv.indexOf("--")).join(" ");
-    const mounted = `--ro-bind ${repos()} ${repos()}`;
+    // bubblewrap mounts the folder read-only on Linux. A Mac's profile lets the agent read it,
+    // and write nowhere in it.
+    const mounted =
+      process.platform === "darwin"
+        ? `(allow file-read* (subpath ${JSON.stringify(repos())}))`
+        : `--ro-bind ${repos()} ${repos()}`;
     const thread = join(home, ".local", "share", "skelcrew", "threads", "app-12");
     const builder = { name: "app-12", socket: socketPath, thread, origin: app, env };
     const theLead = { ...lead(), name: "lead", socket: socketPath, env };
-    expect(options(claude.start(theLead).argv)).toContain(mounted);
-    expect(options((await codex.start(theLead)).argv)).toContain(mounted);
-    expect(options(claude.start(builder).argv)).not.toContain(mounted);
-    expect(options((await codex.start(builder)).argv)).not.toContain(mounted);
+    // What draws the boundary: bubblewrap's arguments, or the profile file sandbox-exec reads.
+    const boundary = (argv: string[]) =>
+      argv.includes("-f")
+        ? readFileSync(argv[argv.indexOf("-f") + 1] ?? "", "utf8")
+        : argv.join(" ");
+    for (const { argv } of [claude.start(theLead), await codex.start(theLead)]) {
+      expect(boundary(argv)).toContain(mounted);
+      expect(boundary(argv)).not.toContain(`file-write* (subpath ${JSON.stringify(repos())}`);
+    }
+    for (const { argv } of [claude.start(builder), await codex.start(builder)])
+      expect(boundary(argv)).not.toContain(mounted);
   });
 
   test("a lead won't start while another repository's clone holds a credential", async () => {
