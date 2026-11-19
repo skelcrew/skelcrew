@@ -38,6 +38,10 @@ function lockToSend(): Lock | null {
   return Object.fromEntries(Object.entries(lock).filter(([source]) => !skipped.includes(source)));
 }
 
+// Reports whether this machine has your setup to send. A laptop that has no config.yaml never
+// ran sc install, so it only reaches servers, and each server keeps the setup it has.
+const setupHere = () => existsSync(configFile());
+
 // Returns a short fingerprint of a lock, the same for the same pins in any order or layout.
 const lockHash = (lock: Lock) =>
   new Bun.CryptoHasher("sha256")
@@ -46,53 +50,53 @@ const lockHash = (lock: Lock) =>
     .slice(0, 16);
 
 // Returns the fingerprint of the lock this laptop would send, which sc --remote passes with each
-// command so the server can tell its own lock differs. Null with no lock to compare.
+// command so the server can tell its own lock differs. No lock pins nothing, so it counts as an
+// empty one. Null for a laptop with no setup to compare.
 export function laptopLockHash(): string | null {
-  const lock = lockToSend();
-  return lock ? lockHash(lock) : null;
+  return setupHere() ? lockHash(lockToSend() ?? {}) : null;
 }
 
 // Reports whether this server's lock differs from the one the laptop that runs this command
-// with --remote would send. A lock that can't be read differs, as install replaces it.
+// with --remote would send. No lock counts as an empty one, as on the laptop. A lock that can't
+// be read differs, as install replaces it.
 export function lockDiffers(): boolean {
   const laptop = process.env.SKELCREW_LAPTOP_LOCK;
   if (!laptop) return false;
   try {
-    const here = readLock();
-    return here === null || lockHash(here) !== laptop;
+    return lockHash(readLock() ?? {}) !== laptop;
   } catch {
     return true;
   }
 }
 
-// Returns your personal files as a server gets them, each by its name in ~/.config/skelcrew,
-// with a file you don't have left out. A plugin only the laptop uses is taken out of plugins:
-// and the lock, so sc install there doesn't install it. A laptop set up before the lock gets
-// its lock first, written from the plugins it has, so a server set up the same way gets the
-// same pins and installs nothing.
-export function yourFiles(): { name: string; text: string }[] {
+// Returns your personal files as a server gets them, each by its name in ~/.config/skelcrew. A
+// file you don't have has null, so the server's copy goes too, and an old token or pin never stays
+// in use there. A laptop with no config.yaml has no setup, and gets an empty list, so each server
+// keeps its own. A plugin only the laptop uses is taken out of plugins: and the lock, so sc install
+// there doesn't install it. A laptop set up before the lock gets its lock first, written from the
+// plugins it has, so a server set up the same way gets the same pins and installs nothing.
+export function yourFiles(): { name: string; text: string | null }[] {
+  if (!setupHere()) return [];
   const db = dbHere();
   if (db) yourLock(db);
   const skipped = laptopOnly();
-  const files: { name: string; text: string }[] = [];
   // Your config as it is, or with only plugins: changed, so its comments and layout stay.
-  if (existsSync(configFile())) {
-    const named = yourPlugins();
-    let text = readFileSync(configFile(), "utf8");
-    if (named.some((source) => skipped.includes(source))) {
-      const config = yourConfigDocument();
-      config.set(
-        "plugins",
-        named.filter((source) => !skipped.includes(source)),
-      );
-      text = config.toString();
-    }
-    files.push({ name: "config.yaml", text });
+  const named = yourPlugins();
+  let config = readFileSync(configFile(), "utf8");
+  if (named.some((source) => skipped.includes(source))) {
+    const document = yourConfigDocument();
+    document.set(
+      "plugins",
+      named.filter((source) => !skipped.includes(source)),
+    );
+    config = document.toString();
   }
   // The lock is written afresh, which only drops its comments, as Skelcrew writes it.
   const lock = lockToSend();
-  if (lock) files.push({ name: "skelcrew.lock", text: lockText(lock) });
-  if (existsSync(claudeTokenFile()))
-    files.push({ name: "claude-token", text: readFileSync(claudeTokenFile(), "utf8") });
-  return files;
+  const token = existsSync(claudeTokenFile()) ? readFileSync(claudeTokenFile(), "utf8") : null;
+  return [
+    { name: "config.yaml", text: config },
+    { name: "skelcrew.lock", text: lock ? lockText(lock) : null },
+    { name: "claude-token", text: token },
+  ];
 }

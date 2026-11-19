@@ -1005,12 +1005,11 @@ test("install sends your config.yaml, lock and Claude sign-in, readable only by 
   );
   const lines = calls().trim().split("\n");
   const names = ["config.yaml", "skelcrew.lock", "claude-token"];
-  const made = names.map((name) => `rm -f ${name}.new && : > ${name}.new`).join(" && ");
-  expect(lines[0]).toBe(
-    `${ssh} umask 077 && mkdir -p .config/skelcrew && cd .config/skelcrew && ${made}`,
-  );
-  const moved = names.map((name) => `mv -f ${name}.new ${name}`).join(" && ");
-  expect(lines.at(-2)).toBe(`${ssh} cd .config/skelcrew && ${moved}`);
+  // The files go through a folder of this transfer's own, which is gone once they are in place.
+  const staging = lines[0]?.match(/mkdir (\.config\/skelcrew\/sending-[\w-]+)$/)?.[1] ?? "";
+  expect(lines[0]).toBe(`${ssh} umask 077 && mkdir -p .config/skelcrew && mkdir ${staging}`);
+  const moved = names.map((name) => `mv -f ${staging}/${name} .config/skelcrew/${name}`);
+  expect(lines.at(-2)).toBe(`${ssh} ${moved.join(" && ")} && rmdir ${staging}`);
   expect(lines.at(-1)).toMatch(/ sh install$/);
   const there = join(home, "server", ".config", "skelcrew");
   expect(readFileSync(join(there, "config.yaml"), "utf8")).toBe("# mine\nharness: codex\n");
@@ -1020,6 +1019,48 @@ test("install sends your config.yaml, lock and Claude sign-in, readable only by 
   expect(readdirSync(join(home, "tmp"))).toEqual([]);
 });
 
+// Your setup is the laptop's, so an old sign-in or pin never stays in use on the server.
+test("install removes from the server a token or lock you no longer have", async () => {
+  const config = join(home, ".config", "skelcrew");
+  mkdirSync(config, { recursive: true });
+  writeFileSync(join(config, "config.yaml"), "harness: codex\n");
+  const there = join(home, "server", ".config", "skelcrew");
+  mkdirSync(there, { recursive: true });
+  writeFileSync(join(there, "claude-token"), "sk-ant-oat01-old");
+  writeFileSync(join(there, "skelcrew.lock"), pin("fake", "0.1.0"));
+  installed(laptop.commit);
+  const run = await skel(["--remote", "simon@workbox", "install"]);
+  expect(run.code).toBe(0);
+  expect(readdirSync(there)).toEqual(["config.yaml"]);
+});
+
+// Two installs at once each send through their own folder, so neither removes or moves the
+// other's files.
+test("two installs at once both send your files", async () => {
+  const config = join(home, ".config", "skelcrew");
+  mkdirSync(config, { recursive: true });
+  writeFileSync(join(config, "config.yaml"), "harness: codex\n");
+  writeFileSync(join(config, "claude-token"), "sk-ant-oat01-secret");
+  installed(laptop.commit);
+  const runs = await Promise.all([1, 2].map(() => skel(["--remote", "simon@workbox", "install"])));
+  expect(runs.map((run) => run.code)).toEqual([0, 0]);
+  const folders = calls().match(/mkdir \.config\/skelcrew\/sending-[\w-]+$/gm) ?? [];
+  expect(new Set(folders).size).toBe(2);
+  expect(readdirSync(join(home, "server", ".config", "skelcrew")).sort()).toEqual([
+    "claude-token",
+    "config.yaml",
+  ]);
+});
+
+// A plugin's setup there is handed the repository you are in, as on the laptop.
+test("install passes the repository you are in to sc install there", async () => {
+  installed(laptop.commit);
+  const run = await skel(["--remote", "simon@workbox", "install"], "", checkout("simon/app"));
+  expect(run.code).toBe(0);
+  expect(calls()).toBe(`${onServer(" install --from git@github.com:simon/app.git")}\n`);
+});
+
+// A laptop with no setup only reaches servers, and each keeps the setup it has.
 test("install with no files of yours sends nothing and runs sc install there", async () => {
   installed(laptop.commit);
   const run = await skel(["--remote", "simon@workbox", "install"]);
@@ -1135,6 +1176,9 @@ function serverSaid(lock: string): string {
   for (const folder of [config, codex, units]) mkdirSync(folder, { recursive: true });
   writeFileSync(join(codex, "auth.json"), "login\n");
   writeFileSync(join(units, "skelcrew.service"), "");
+  // A server that got no config.yaml from the laptop has its own.
+  if (!existsSync(join(config, "config.yaml")))
+    writeFileSync(join(config, "config.yaml"), "harness: codex\n");
   const env = {
     PATH: "/usr/bin:/bin",
     HOME: server,
@@ -1164,6 +1208,19 @@ test("--remote says when the server's lock differs from yours, and how to send y
     "Your lock on simon@workbox differs from your laptop's. To send yours there, run on your laptop:\n  sc --remote simon@workbox install\n",
   );
   rmSync(there);
+  expect(serverSaid(lock)).toContain("differs from your laptop's");
+});
+
+// No lock pins nothing, so a laptop without one still tells a server that pins plugins.
+test("--remote from a laptop with no lock says when the server has one", async () => {
+  mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
+  writeFileSync(join(home, ".config", "skelcrew", "config.yaml"), "harness: codex\n");
+  installed(laptop.commit);
+  await skel(["--remote", "simon@workbox", "ps"]);
+  const lock = calls().match(/ SKELCREW_LAPTOP_LOCK=(\w+) sh -c .* sh ps$/m)?.[1] ?? "";
+  expect(lock).not.toBe("");
+  expect(serverSaid(lock)).toBe("");
+  writeFileSync(join(home, "server", ".config", "skelcrew", "skelcrew.lock"), pin("fake", "0.1.0"));
   expect(serverSaid(lock)).toContain("differs from your laptop's");
 });
 

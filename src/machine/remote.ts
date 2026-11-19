@@ -3,7 +3,15 @@
 // --remote offers to replace Skelcrew there when it is an older release than yours, or was built
 // from another commit, and warns when it runs from a checkout behind yours. Your laptop can be a
 // Mac, so this file loads nothing of the Skelcrew that runs on the server until it needs it.
-import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import {
+  chmodSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { isIP } from "node:net";
 import { homedir, tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
@@ -281,14 +289,16 @@ export async function remote(host: string, args: string[]): Promise<number> {
 
 // Sets up your server, for sc --remote <host> install, and returns the exit code. It sends your
 // personal files there, then runs sc install there in your terminal, where each plugin's setup
-// signs in on its own. A server with no Skelcrew gets the laptop's after you say yes, unless you
+// signs in on its own. The checkout you are in goes along as --from, as a plugin's setup is handed
+// it on the laptop, such as for the GitHub plugin to pick that repository. A server with no Skelcrew gets the laptop's after you say yes, unless you
 // already said yes to setting it up, which `asked` says. Running it again is safe, as sc install
 // skips what is done, which is how a setup that stopped partway gets finished.
 export async function installServer(host: string, asked = false): Promise<number> {
   checkHost(host);
   const machine = serverMachine(host);
   await sendYourFiles(host, machine);
-  const there = machine.sc(["install"]);
+  const from = originHere();
+  const there = machine.sc(from ? ["install", "--from", from] : ["install"]);
   const code = await runUpToDate(host, there, machine);
   // 127 is the machine's shell finding no Skelcrew to run.
   if (code !== 127) return code;
@@ -308,36 +318,47 @@ export async function installServer(host: string, asked = false): Promise<number
   return runUpToDate(host, there, machine, null);
 }
 
-// Sends your config.yaml, your lock and the agents' Claude Code token to the server's
-// ~/.config/skelcrew. Each goes to a new file beside its place, made readable only by you
-// before it is filled, as scp keeps the mode of a file already there. Once all are there they
-// are renamed into place together, so a copy that breaks off changes nothing.
+// Makes the server's ~/.config/skelcrew hold your config.yaml, your lock and the agents' Claude
+// Code token as the laptop has them, removing one the laptop doesn't have. Each goes first to a
+// folder of this transfer's own there, made readable only by you before it is filled, so two
+// installs at once never mix their files. Once all are there they are moved into place
+// together, so a copy that breaks off changes nothing.
 async function sendYourFiles(where: string, machine: Machine): Promise<void> {
   // Loaded only here, as it brings in much of Skelcrew that other commands need none of.
   const { yourFiles } = await import("./your-files.ts");
   const files = yourFiles();
   if (files.length === 0) return;
-  const names = files.map((file) => file.name);
-  const make = names.map((name) => `rm -f ${name}.new && : > ${name}.new`).join(" && ");
-  const place = `umask 077 && mkdir -p .config/skelcrew && cd .config/skelcrew && ${make}`;
+  const sent = files.flatMap(({ name, text }) => (text === null ? [] : [{ name, text }]));
+  const gone = files.flatMap(({ name, text }) => (text === null ? [name] : []));
+  // mkdir fails on a folder already there, so the folder is this transfer's alone.
+  const staging = `.config/skelcrew/sending-${crypto.randomUUID()}`;
+  const place = `umask 077 && mkdir -p .config/skelcrew && mkdir ${staging}`;
   if ((await runInTerminal(machine.shell(place))) !== 0)
     throw new Error(`couldn't make a place for your files on ${where}, so none were sent`);
-  console.log(`Sending your ${names.join(", ")} to ${where}.`);
+  console.log(`Sending your ${sent.map((file) => file.name).join(", ")} to ${where}.`);
   const folder = mkdtempSync(join(tmpdir(), "skelcrew-"));
   try {
-    for (const { name, text } of files) {
+    for (const { name, text } of sent) {
       const file = join(folder, name);
-      await Bun.write(file, text);
+      // Readable only by you here too, and scp gives the copy the same mode.
+      writeFileSync(file, text, { mode: 0o600 });
       // scp shows a progress bar named after the temporary file, which means nothing to you,
       // so the copy runs out of your terminal and says why it failed.
-      const pushed = await quietly(machine.push(file, `.config/skelcrew/${name}.new`));
-      if (!pushed.ok) throw new Error(`couldn't send your ${name} to ${where}:\n${pushed.said}`);
+      const pushed = await quietly(machine.push(file, `${staging}/${name}`));
+      if (!pushed.ok) {
+        await quietly(machine.shell(`rm -rf ${staging}`));
+        throw new Error(`couldn't send your ${name} to ${where}:\n${pushed.said}`);
+      }
     }
   } finally {
     rmSync(folder, { recursive: true, force: true });
   }
-  const moves = names.map((name) => `mv -f ${name}.new ${name}`).join(" && ");
-  if ((await runInTerminal(machine.shell(`cd .config/skelcrew && ${moves}`))) !== 0)
+  const steps = [
+    ...sent.map(({ name }) => `mv -f ${staging}/${name} .config/skelcrew/${name}`),
+    ...gone.map((name) => `rm -f .config/skelcrew/${name}`),
+    `rmdir ${staging}`,
+  ];
+  if ((await runInTerminal(machine.shell(steps.join(" && ")))) !== 0)
     throw new Error(`couldn't put your files in place on ${where}`);
 }
 

@@ -285,9 +285,12 @@ async function pluginCommand(args: string[], json: boolean): Promise<void> {
   );
   const yours = rest[0] === "-g";
   const [name, ...more] = yours ? rest.slice(1) : rest;
-  if (command === "install" && rest.length === 0) {
+  // --from is the checkout sc --remote <host> install ran in on your laptop, handed to each
+  // plugin's setup as on the laptop, such as for the GitHub plugin to pick that repository.
+  const from = rest[0] === "--from" && rest[1] && rest.length === 2 ? rest[1] : undefined;
+  if (command === "install" && (rest.length === 0 || from)) {
     const { install } = await import("./machine/setup.ts");
-    return install();
+    return install(from);
   }
   if ((command === "add" || command === "remove" || command === "update") && !yours)
     throw new Error(
