@@ -127,6 +127,13 @@ async function recordThread(
   checkFlow({ owner, repo, agents }, name, flow);
   // A plugin the repository's files name that this machine lacks, such as its forge, would leave
   // the task without it. Only you can install one, at your terminal, so the start waits for you.
+  // The files are in Skelcrew's clone, which the daemon may still be making, and a clone not
+  // there yet would name no plugins, so it is waited for first.
+  if (!existsSync(cloneDir(owner, repo))) await refreshClones(db);
+  if (!existsSync(cloneDir(owner, repo)))
+    throw new Error(
+      `Skelcrew hasn't cloned ${name} yet, so it can't tell which plugins its tasks need. Try again once the clone is there.`,
+    );
   if (needsInstall(cloneDir(owner, repo)))
     throw new Error(
       `${name}'s plugins aren't all installed here, so its tasks can't start. Run sc install in your own terminal, then start it again.`,

@@ -457,6 +457,23 @@ test("a repository Skelcrew doesn't have, named by its owner/name, is no reposit
 
 describe("a clone the daemon makes as it starts", () => {
   // Left running, it would write into the folder the next daemon clones into.
+  // The plugins a repository needs are in Skelcrew's clone, so a start made before the clone is
+  // there waits for it rather than read no plugins at all.
+  test("sc start of a new task waits for the clone before checking the repository's plugins", async () => {
+    addApp({ "skelcrew.yaml": "plugins: [simon/skelcrew-other]\n" }, "site");
+    holdClones();
+    serve();
+    await untilAnswers();
+    await until(() => existsSync(join(home, "held")));
+    const started = skel("start", "site", "Fix typo", "In the README");
+    await Bun.sleep(500);
+    expect(existsSync(join(data(), "repos", "simon", "site"))).toBe(false);
+    writeFileSync(join(home, "go"), "");
+    expect((await started).err).toBe(
+      "Skelcrew: site's plugins aren't all installed here, so its tasks can't start. Run sc install in your own terminal, then start it again.\n",
+    );
+  }, 60_000);
+
   test("stopping the daemon stops a clone it started", async () => {
     addApp({}, "site");
     holdClones();
