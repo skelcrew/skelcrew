@@ -1,7 +1,15 @@
 // What Skelcrew's tests share: finding Skelcrew's source files, waiting, and running sc and its
 // daemon as a user would. Each test file keeps its own home folder and tmux socket and hands
 // them in, so a test that outlives its file can never reach another file's home.
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, sep } from "node:path";
 import type { Subprocess } from "bun";
@@ -44,6 +52,37 @@ export function homeEnv(home: string): Record<string, string> {
     if (value) env[name] = value;
   }
   return env;
+}
+
+// Quotes a word for sh.
+const quoteForSh = (word: string) => `'${word.replaceAll("'", "'\\''")}'`;
+
+// Runs a program with a terminal as its input, as you run sc at yours, and types `typed` into
+// it, then Ctrl-D, which ends the input. Skelcrew asks before installing a plugin only at a
+// terminal, so a test that answers yes needs one. Bun gives the program the terminal, on Linux and
+// macOS alike. The program's output goes to files through sh rather than to the terminal, so it
+// reads as from a pipe, and the terminal's echo of what was typed stays out of it.
+export async function inTerminal(
+  argv: string[],
+  options: { typed: string; env: Record<string, string>; cwd: string },
+): Promise<{ out: string; err: string; code: number }> {
+  const folder = mkdtempSync(join(tmpdir(), "skelcrew-terminal-"));
+  const [out, err] = [join(folder, "out"), join(folder, "err")];
+  try {
+    const command = `exec ${argv.map(quoteForSh).join(" ")} >${quoteForSh(out)} 2>${quoteForSh(err)}`;
+    // The terminal's own output is only the echo, read and dropped so it never fills up.
+    const run = Bun.spawn(["/bin/sh", "-c", command], {
+      cwd: options.cwd,
+      env: options.env,
+      terminal: { cols: 120, rows: 40, data() {} },
+    });
+    run.terminal?.write(`${options.typed}\x04`);
+    const code = await run.exited;
+    run.terminal?.close();
+    return { out: read(out), err: read(err), code };
+  } finally {
+    rmSync(folder, { recursive: true, force: true });
+  }
 }
 
 // Returns what a file holds, or nothing before it exists, for a test watching a file appear.

@@ -16,7 +16,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
-import { git, source } from "./harness.ts";
+import { git, inTerminal, source } from "./harness.ts";
 
 let root = "";
 const laptop = () => join(root, "laptop");
@@ -116,13 +116,17 @@ const firstRunUnfinished = () => rmSync(join(serverConfig(), "claude-token"));
 
 // Runs sc on a machine with this home, with what you type, and returns what it said.
 async function skel(home: string, args: string[], typed = "") {
-  const run = Bun.spawn([process.execPath, source("main.ts"), ...args], {
+  const argv = [process.execPath, source("main.ts"), ...args];
+  const env = {
+    HOME: home,
+    XDG_RUNTIME_DIR: join(home, "run"),
+    PATH: `${join(root, home === server() ? "serverbin" : "bin")}:/usr/bin:/bin`,
+  };
+  // Answers are typed at a terminal, as only an answer there installs a plugin.
+  if (typed !== "") return inTerminal(argv, { typed, env, cwd: home });
+  const run = Bun.spawn(argv, {
     cwd: home,
-    env: {
-      HOME: home,
-      XDG_RUNTIME_DIR: join(home, "run"),
-      PATH: `${join(root, home === server() ? "serverbin" : "bin")}:/usr/bin:/bin`,
-    },
+    env,
     stdin: new Blob([typed]),
     stdout: "pipe",
     stderr: "pipe",
@@ -147,8 +151,10 @@ const serverPlugins = async () => (await skel(server(), ["plugin", "ls"])).out;
 const serverSources = async () =>
   Object.fromEntries(
     z
-      .array(z.object({ name: z.string(), from: z.string() }))
+      .array(z.object({ name: z.string(), from: z.string(), kind: z.string().nullable() }))
       .parse(JSON.parse((await skel(server(), ["plugin", "ls", "--json"])).out))
+      // A plugin your config names that isn't installed there has no kind.
+      .filter((plugin) => plugin.kind !== null)
       .map((plugin) => [plugin.name, plugin.from]),
   );
 
@@ -158,7 +164,7 @@ test("the first sc --remote copies your config, token and plugins, and runs each
   expect((await skel(laptop(), ["plugin", "install", "owner/fake"], "\n")).code).toBe(0);
   const run = await remote("ps");
   expect(run.out).toContain("setting up fake");
-  expect(serverFile("config.yaml")).toBe("harness: claude\n");
+  expect(serverFile("config.yaml")).toBe("harness: claude\nplugins:\n  - owner/fake\n");
   expect(serverFile("claude-token")).toBe("sk-ant-oat01-laptop\n");
   expect(statSync(join(serverConfig(), "claude-token")).mode & 0o777).toBe(0o600);
   expect(await serverPlugins()).toBe("fake 0.1.0 io: tracker\n");
@@ -253,7 +259,9 @@ openDb().run("INSERT INTO repositories (owner, repo, name, forge) VALUES ('simon
   );
   expect(run.out).toContain("Your command still runs.");
   expect(await serverSources()).toEqual({ fake: "owner/other" });
-  expect(await serverPlugins()).toBe("fake 0.2.0 io: tracker\n");
+  expect(await serverPlugins()).toBe(
+    "fake 0.2.0 io: tracker\nowner/fake from owner/fake isn't installed. sc install installs its newest version.\n",
+  );
 });
 
 test("a machine plugin stays on the laptop", async () => {
@@ -261,8 +269,8 @@ test("a machine plugin stays on the laptop", async () => {
   publish(["0.1.0"], true);
   expect((await skel(laptop(), ["plugin", "install", "owner/fake"], "\n")).code).toBe(0);
   await remote("ps");
-  expect(serverFile("config.yaml")).toBe("harness: claude\n");
-  expect(await serverPlugins()).toBe("No plugins installed.\n");
+  expect(serverFile("config.yaml")).toBe("harness: claude\nplugins:\n  - owner/fake\n");
+  expect(await serverSources()).toEqual({});
 });
 
 test("a laptop with no setup copies nothing", async () => {

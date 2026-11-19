@@ -258,7 +258,7 @@ ${threadSql({ task: "14", pr: 37, review_round: 1, verdict: "changes" })}`;
     ["app#37", "app#36", "app#35", "app#34"],
   ]);
   expect(actions(prs)).toEqual([
-    { key: "m", refused: "app#33 needs a newer forge plugin to merge here: run sc plugin update" },
+    { key: "m", refused: "app#33 needs a newer forge plugin to merge here: run sc update -g" },
     {
       key: "m",
       ask: "Merge app#32 into next? y/n",

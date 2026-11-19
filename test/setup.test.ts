@@ -19,7 +19,7 @@ import { createServer, type Server } from "node:net";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import { parse } from "yaml";
-import { git, threadSql } from "./harness.ts";
+import { git, inTerminal, threadSql } from "./harness.ts";
 
 let home = "";
 let bin = "";
@@ -615,49 +615,70 @@ function checkoutWith(name: string, remote?: string): string {
   return folder;
 }
 
-const offer = "Install the GitHub plugin? [Y/n]";
+// The offer is the plugin's own question, showing what it runs.
+const offer =
+  "github 0.1.0 from skelcrew/skelcrew-github is an I/O plugin that provides tracker, forge.";
+// The offer's own question, asked before anything is fetched.
+const offered =
+  "GitHub detected.\n\nThe GitHub plugin lets Skelcrew work with issues, pull requests\nand CI on your repositories.\nAdd it? [Y/n]";
+
+// Runs plain sc, or the command in `args`, in `cwd` with a terminal as its input, typing `typed`
+// into it. Skelcrew offers and installs a plugin only to an answer at a terminal. The token's
+// question reads keys one by one there, through stty.
+function atTerminal(typed: string, cwd = home, args: string[] = []) {
+  if (!existsSync(join(bin, "stty"))) symlinkSync(Bun.which("stty") ?? "stty", join(bin, "stty"));
+  const env = {
+    PATH: bin,
+    HOME: home,
+    XDG_RUNTIME_DIR: join(home, "run"),
+    TMPDIR: join(home, "tmp"),
+  };
+  return inTerminal([process.execPath, main(), ...args], { typed, env, cwd });
+}
 
 // The GitHub plugin is offered where you work on a GitHub repository, and only there, on any run
 // until it is installed or you say no.
 test("offers the GitHub plugin only in a checkout on github.com, on any run", async () => {
   noGitHubPlugin();
   fakeGitHub();
+  publishGitHubPlugin();
   const outside = await skel("1\nsk-ant-oat01-good\n");
   expect(outside.code).toBe(0);
   expect(outside.out).not.toContain("GitHub");
   const folder = checkoutWith("app");
-  expect((await skel("", bin, main(), folder)).out).not.toContain("GitHub");
+  expect((await atTerminal("", folder)).out).not.toContain("GitHub");
   git(folder, "remote", "add", "origin", "git@gitlab.com:simon/app.git");
-  expect((await skel("", bin, main(), folder)).out).not.toContain("GitHub");
+  expect((await atTerminal("", folder)).out).not.toContain("GitHub");
   git(folder, "remote", "set-url", "origin", "git@github.com:simon/app.git");
-  const later = await skel("n\n", bin, main(), join(folder));
-  expect(later.out).toStartWith(
-    "GitHub detected.\n\nThe GitHub plugin lets Skelcrew work with issues, pull requests\nand CI on your repositories. Install the GitHub plugin? [Y/n]",
-  );
+  const later = await atTerminal("n\n", folder);
+  expect(later.out).toStartWith(offered);
+  // A no fetches nothing, so the plugin's own question never comes.
+  expect(later.out).not.toContain(offer);
 });
 
 test("a no holds for the repository, in every checkout of it, and another repository asks once", async () => {
   noGitHubPlugin();
   fakeGitHub();
+  publishGitHubPlugin();
   const app = checkoutWith("app", "git@github.com:simon/app.git");
-  const first = await skel("n\n1\nsk-ant-oat01-good\n", bin, main(), app);
+  const first = await atTerminal("n\n1\nsk-ant-oat01-good\n", app);
   expect(first.code).toBe(0);
-  expect(first.out).toContain(offer);
+  expect(first.out).toContain(offered);
   expect(first.out).toContain(
-    "Skelcrew won't ask again for simon/app. To install it: sc plugin install skelcrew/skelcrew-github",
+    "Skelcrew won't ask again for simon/app. To install it: sc add -g skelcrew/skelcrew-github",
   );
   // The offer comes before the first step.
-  expect(first.out.indexOf(offer)).toBeLessThan(first.out.indexOf("Choose the coding agent"));
+  expect(first.out.indexOf(offered)).toBeLessThan(first.out.indexOf("Choose the coding agent"));
   expect(parse(readFileSync(config(), "utf8"))).toMatchObject({
     harness: "claude",
     github_declined: ["simon/app"],
   });
   const again = checkoutWith("app-again", "https://github.com/Simon/app.git");
-  expect((await skel("", bin, main(), again)).out).not.toContain("GitHub");
-  expect((await skel("", bin, main(), app)).out).not.toContain("GitHub");
+  expect((await atTerminal("", again)).out).not.toContain("GitHub");
+  expect((await atTerminal("", app)).out).not.toContain("GitHub");
   const site = checkoutWith("site", "git@github.com:simon/site.git");
-  const other = await skel("n\n", bin, main(), site);
-  expect(other.out).toContain(offer);
+  const other = await atTerminal("n\n", site);
+  expect(other.out).toContain(offered);
   expect(parse(readFileSync(config(), "utf8")).github_declined).toEqual([
     "simon/app",
     "simon/site",
@@ -666,12 +687,30 @@ test("a no holds for the repository, in every checkout of it, and another reposi
   expect(git(app, "status", "--porcelain")).toBe("");
 });
 
+// The offer is asked from the checkout's remote alone, so a no is saved with GitHub out of reach.
+test("a no to the offer needs no network, and is saved with GitHub out of reach", async () => {
+  noGitHubPlugin();
+  // github.com leads to a folder that isn't there, and nothing is published.
+  writeFileSync(
+    join(home, ".gitconfig"),
+    `[url "file://${home}/nowhere/"]\n\tinsteadOf = https://github.com/\n\tinsteadOf = git@github.com:\n`,
+  );
+  await skel("1\nsk-ant-oat01-good\n");
+  const app = checkoutWith("app", "git@github.com:simon/app.git");
+  const run = await atTerminal("n\n", app);
+  expect(run.out).toContain(offered);
+  expect(run.out).not.toContain("Couldn't install");
+  expect(run.out).toContain("Skelcrew won't ask again for simon/app.");
+  expect(parse(readFileSync(config(), "utf8")).github_declined).toEqual(["simon/app"]);
+});
+
 test("over --remote, the offer reads the remote sc brought from your laptop", async () => {
   noGitHubPlugin();
   fakeGitHub();
+  publishGitHubPlugin();
   await skel("1\nsk-ant-oat01-good\n");
-  const run = await skel("n\n", bin, main(), home, {}, ["--from", "git@github.com:simon/app.git"]);
-  expect(run.out).toContain(offer);
+  const run = await atTerminal("n\n", home, ["--from", "git@github.com:simon/app.git"]);
+  expect(run.out).toContain(offered);
   expect(parse(readFileSync(config(), "utf8")).github_declined).toEqual(["simon/app"]);
 });
 
@@ -732,17 +771,18 @@ function siteOnGitHub(): string {
   return site;
 }
 
-// Enter takes the offer. You said yes to this plugin by name, so the install asks nothing more.
-// GitHub is then the repository's tracker, so nothing is written into the checkout, and the
-// line saying Skelcrew is set up goes straight on to bringing the repository in.
-test("a yes installs the GitHub plugin with no second question, writes nothing here, and the lead opens", async () => {
+// Enter takes the offer, and Enter again the plugin's own question, which shows what it runs.
+// GitHub is then the repository's tracker, so nothing is written into the checkout, and the line
+// saying Skelcrew is set up goes straight on to bringing the repository in.
+test("a yes installs the GitHub plugin after the offer and its own question, writes nothing here, and the lead opens", async () => {
   const site = siteOnGitHub();
-  const run = await skel("\n1\nsk-ant-oat01-good\n", bin, main(), site);
+  const run = await atTerminal("\n\n1\nsk-ant-oat01-good\n", site);
   expect(run.err).toBe("");
   expect(run.code).toBe(0);
-  expect(run.out).toContain(
-    "Installing github 0.1.0 from skelcrew/skelcrew-github...\nInstalled github 0.1.0.\n",
-  );
+  expect(run.out).toContain(offered);
+  expect(run.out).toContain(offer);
+  expect(run.out).toContain("Install it? [Y/n] Installed github 0.1.0.\n");
+  expect(run.out.match(/\[Y\/n\]/g)).toHaveLength(2);
   expect(run.out).not.toContain("[y/N]");
   expect(readFileSync(join(home, "handed"), "utf8")).toBe("https://github.com/simon/site\n");
   expect(run.out).not.toContain("sc init");
@@ -756,7 +796,7 @@ test("a yes installs the GitHub plugin with no second question, writes nothing h
 test("on a run after setup, a yes installs the plugin and the lead opens, with nothing written here", async () => {
   const site = siteOnGitHub();
   await skel("1\nsk-ant-oat01-good\n");
-  const run = await skel("\n", bin, main(), site);
+  const run = await atTerminal("\n\n", site);
   expect(run.err).toBe("");
   expect(run.out).toStartWith("GitHub detected.");
   expect(run.out).toContain("Installed github 0.1.0.");
@@ -1214,4 +1254,421 @@ test("over --remote, a machine that finished its first run attaches as usual", a
   const run = await skel("", bin, main(), home, { SKELCREW_REMOTE_NAME: "simon@workbox" });
   expect(run.err).toBe("");
   expect(run.code).toBe(0);
+});
+
+// Puts a plugin on the fake GitHub as simon/skelcrew-fake, with a commit and a tag for each
+// version. Its setup adds a line to the calls each time it runs.
+function publishFake(...versions: string[]): void {
+  publishPlugin("fake", ...versions);
+}
+
+// Puts a plugin of this name on the fake GitHub as simon/skelcrew-<name>, as publishFake does.
+function publishPlugin(name: string, ...versions: string[]): void {
+  const plugin = join(home, "github", "simon", `skelcrew-${name}`);
+  mkdirSync(plugin, { recursive: true });
+  for (const version of versions) {
+    writeFileSync(
+      join(plugin, "skelcrew-plugin.yaml"),
+      `name: ${name}\nversion: ${version}\nskelcrew: 0.1.0\nabout: Fake\nkind: io\nprovides: [tracker]\nsetup: [bun, setup.ts]\ncall: ["true"]\n`,
+    );
+    writeFileSync(
+      join(plugin, "setup.ts"),
+      `import { appendFileSync } from "node:fs";\nappendFileSync(process.env.HOME + "/calls", "${name} setup ${version}\\n");\n`,
+    );
+    if (!existsSync(join(plugin, ".git"))) git(plugin, "init", "-q", "-b", "main");
+    git(plugin, "add", ".");
+    // Empty when nothing changed, so publishing a version again moves its tag to a new commit.
+    git(plugin, "commit", "-q", "--allow-empty", "-m", version);
+    git(plugin, "tag", "-f", `v${version}`);
+  }
+}
+
+const lock = () => join(home, ".config", "skelcrew", "skelcrew.lock");
+const install = (typed = "") => atTerminal(typed, home, ["install"]);
+const fakeCommit = (version: string) =>
+  git(join(home, "github", "simon", "skelcrew-fake"), "rev-parse", `v${version}^{commit}`);
+// Writes your config and lock as another machine of yours would have them: the fake plugin at
+// this version and commit.
+// The lock has a comment and a layout of its own, so a test can see sc install leave it as it is.
+function lockFake(version: string, commit = fakeCommit(version)): void {
+  appendFileSync(config(), "plugins: [simon/skelcrew-fake]\n");
+  writeFileSync(
+    lock(),
+    `# From my laptop.\nsimon/skelcrew-fake: { name: fake, version: ${version}, commit: ${commit} }\n`,
+  );
+}
+
+test("sc install on a machine with nothing to do says so, and changes nothing", async () => {
+  await skel("1\nsk-ant-oat01-good\n");
+  writeFileSync(join(home, "calls"), "");
+  const run = await install();
+  expect(run.err).toBe("");
+  expect(run.out).toBe("Nothing to install: this machine has everything your files ask for.\n");
+  expect(calls()).toBe("");
+});
+
+test("sc install installs your plugins at the version your lock pins after asking, and asks nothing the second time", async () => {
+  noGitHubPlugin();
+  fakeGitHub();
+  publishFake("0.1.0", "0.2.0");
+  await skel("1\nsk-ant-oat01-good\n");
+  lockFake("0.1.0");
+  writeFileSync(join(home, "calls"), "");
+  const first = await install("y\n");
+  expect(first.err).toBe("");
+  expect(first.out).toContain("fake 0.1.0 from simon/skelcrew-fake is an I/O plugin");
+  expect(first.out).toContain("Installed fake 0.1.0.");
+  expect(calls()).toBe("fake setup 0.1.0\n");
+  const lockBefore = readFileSync(lock(), "utf8");
+  writeFileSync(join(home, "calls"), "");
+  const second = await install();
+  expect(second.out).toBe("Nothing to install: this machine has everything your files ask for.\n");
+  expect(calls()).toBe("");
+  expect(readFileSync(lock(), "utf8")).toBe(lockBefore);
+});
+
+test("sc install with no answer to read installs nothing", async () => {
+  noGitHubPlugin();
+  fakeGitHub();
+  publishFake("0.1.0");
+  await skel("1\nsk-ant-oat01-good\n");
+  lockFake("0.1.0");
+  const run = await install("");
+  expect(run.code).toBe(1);
+  expect(run.err).toContain("Skelcrew left out simon/skelcrew-fake, as each runs its commands");
+  expect(existsSync(join(home, ".local", "share", "skelcrew", "plugins", "fake"))).toBe(false);
+});
+
+test("sc install installs the commit your lock pins, even after its tag moved, and a changed commit asks again", async () => {
+  noGitHubPlugin();
+  fakeGitHub();
+  publishFake("0.1.0");
+  await skel("1\nsk-ant-oat01-good\n");
+  lockFake("0.1.0");
+  await install("y\n");
+  // The tag moves to a new commit, which your lock doesn't pin, so nothing changes here.
+  const before = fakeCommit("0.1.0");
+  publishFake("0.1.0");
+  expect((await install()).out).toContain("Nothing to install");
+  // A machine with nothing installed gets exactly the commit locked, not where the tag is now,
+  // and the lock stays as it was.
+  noGitHubPlugin();
+  writeFileSync(join(home, "calls"), "");
+  const lockBefore = readFileSync(lock(), "utf8");
+  const fresh = await install("y\n");
+  expect(readFileSync(lock(), "utf8")).toBe(lockBefore);
+  expect(fresh.err).toBe("");
+  expect(fresh.out).toContain("Installed fake 0.1.0.");
+  expect(calls()).toBe("fake setup 0.1.0\n");
+  const folder = join(home, ".local", "share", "skelcrew", "plugins", "fake", "0.1.0");
+  expect(git(folder, "rev-parse", "HEAD")).toBe(before);
+  // Your lock from another machine pins the new commit, which asks again, and moves the plugin
+  // with the lock left as it was.
+  writeFileSync(config(), "harness: claude\n");
+  lockFake("0.1.0");
+  const newLock = readFileSync(lock(), "utf8");
+  writeFileSync(join(home, "calls"), "");
+  const moved = await install("y\n");
+  expect(moved.err).toBe("");
+  expect(moved.out).toContain("Update it? [Y/n]");
+  expect(calls()).toBe("fake setup 0.1.0\n");
+  expect(readFileSync(lock(), "utf8")).toBe(newLock);
+  expect(newLock).toContain(fakeCommit("0.1.0"));
+});
+
+// No network or no login says nothing of the commit, so the error keeps git's words and
+// doesn't suggest moving the lock.
+test("a repository sc install can't reach keeps git's error and the lock", async () => {
+  noGitHubPlugin();
+  fakeGitHub();
+  publishFake("0.1.0");
+  await skel("1\nsk-ant-oat01-good\n");
+  lockFake("0.1.0");
+  const lockBefore = readFileSync(lock(), "utf8");
+  const locked = fakeCommit("0.1.0");
+  renameSync(join(home, "github", "simon"), join(home, "github", "away"));
+  const run = await install("y\n");
+  expect(run.code).toBe(1);
+  expect(run.err).toContain(
+    `git couldn't reach commit ${locked.slice(0, 12)} of simon/skelcrew-fake, which your lock pins:`,
+  );
+  expect(run.err).toContain("Nor its tag v0.1.0:");
+  expect(run.err).toContain("does not appear to be a git repository");
+  expect(run.err).not.toContain("sc update -g");
+  expect(readFileSync(lock(), "utf8")).toBe(lockBefore);
+});
+
+test("a locked commit the repository no longer has is refused, and sc update -g moves past it", async () => {
+  noGitHubPlugin();
+  fakeGitHub();
+  publishFake("0.1.0");
+  await skel("1\nsk-ant-oat01-good\n");
+  lockFake("0.1.0", "deadbeef".repeat(5));
+  const refused = await install("y\n");
+  expect(refused.code).toBe(1);
+  expect(refused.err).toContain("simon/skelcrew-fake no longer serves commit deadbeefdead");
+  expect(refused.err).toContain("sc update -g moves it to its newest version");
+  const updated = await atTerminal("y\n", home, ["update", "-g", "fake"]);
+  expect(updated.err).toBe("");
+  expect(updated.out).toContain("Installed fake 0.1.0.");
+  expect(readFileSync(lock(), "utf8")).toContain(fakeCommit("0.1.0"));
+  expect((await install()).out).toContain("Nothing to install");
+});
+
+test("sc update -g moves an installed plugin to its tag's new commit, after asking", async () => {
+  noGitHubPlugin();
+  fakeGitHub();
+  publishFake("0.1.0");
+  await skel("1\nsk-ant-oat01-good\n");
+  lockFake("0.1.0");
+  await install("y\n");
+  expect((await atTerminal("", home, ["update", "-g", "fake"])).out).toContain(
+    "fake is at its newest version, 0.1.0.",
+  );
+  publishFake("0.1.0");
+  writeFileSync(join(home, "calls"), "");
+  const moved = await atTerminal("y\n", home, ["update", "-g", "fake"]);
+  expect(moved.err).toBe("");
+  expect(moved.out).toContain("Update it? [Y/n]");
+  expect(calls()).toBe("fake setup 0.1.0\n");
+  expect(readFileSync(lock(), "utf8")).toContain(fakeCommit("0.1.0"));
+});
+
+test("sc install without a terminal installs nothing, even with a yes piped in, and names each plugin left out", async () => {
+  noGitHubPlugin();
+  fakeGitHub();
+  publishFake("0.1.0");
+  publishPlugin("bar", "0.1.0");
+  await skel("1\nsk-ant-oat01-good\n");
+  lockFake("0.1.0");
+  writeFileSync(
+    config(),
+    readFileSync(config(), "utf8").replace(
+      "plugins: [simon/skelcrew-fake]",
+      "plugins: [simon/skelcrew-fake, simon/skelcrew-bar]",
+    ),
+  );
+  const run = await skel("y\n", bin, main(), home, {}, ["install"]);
+  expect(run.out).toContain("There is no terminal to answer in");
+  // It fails, so a script running it can tell the machine doesn't match your files.
+  expect(run.code).toBe(1);
+  expect(run.err).toContain(
+    "Skelcrew left out simon/skelcrew-fake, simon/skelcrew-bar, as each runs its commands, which needs your yes at a terminal",
+  );
+  expect(existsSync(join(home, ".local", "share", "skelcrew", "plugins", "fake"))).toBe(false);
+  expect(existsSync(join(home, ".local", "share", "skelcrew", "plugins", "bar"))).toBe(false);
+});
+
+// The harness and its login are there, as copied from another machine, and only the service is
+// missing. Bun's own prompts read ahead of piped input, so this keeps the plugin's question first.
+// An older release marked the machine set up at the first run's end, without ever installing the
+// plugins your files name, so plain sc after an upgrade still runs sc install once.
+test("plain sc on a machine set up by an older release installs the plugins your files name", async () => {
+  noGitHubPlugin();
+  fakeGitHub();
+  publishFake("0.1.0");
+  await skel("1\nsk-ant-oat01-good\n");
+  // The older release left only its own mark, and a release update its note beside it.
+  const data = join(home, ".local", "share", "skelcrew");
+  rmSync(join(data, "install-done"));
+  expect(existsSync(join(data, "set-up"))).toBe(true);
+  writeFileSync(join(data, "installed"), "0.2.0\n");
+  lockFake("0.1.0");
+  const run = await atTerminal("y\n");
+  expect(run.err).toBe("");
+  expect(run.out).toContain("Install it? [Y/n]");
+  expect(run.out).toContain("Installed fake 0.1.0.");
+  expect(calls()).toContain("fake setup 0.1.0\n");
+  expect(existsSync(join(data, "install-done"))).toBe(true);
+  // The release update's note is left as it was, for the next sc to tell you about.
+  expect(readFileSync(join(data, "installed"), "utf8")).toBe("0.2.0\n");
+  // A daemon starting deletes that note, which leaves sc install done: plain sc asks nothing.
+  rmSync(join(data, "installed"));
+  const later = await atTerminal("");
+  expect(later.err).toBe("");
+  expect(later.out).not.toContain("[Y/n]");
+  expect(later.out).not.toContain("Nothing to install");
+});
+
+test("plain sc on a machine that isn't set up installs your plugins too", async () => {
+  noGitHubPlugin();
+  fakeGitHub();
+  publishFake("0.1.0");
+  mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
+  writeFileSync(config(), "harness: claude\n");
+  writeFileSync(token(), "sk-ant-oat01-good\n");
+  lockFake("0.1.0");
+  const run = await atTerminal("y\n");
+  expect(run.err).toBe("");
+  expect(run.out).toContain("Installed fake 0.1.0.");
+  expect(calls()).toContain("fake setup 0.1.0\n");
+});
+
+// A plugin that fails to install leaves the machine not set up, so the next plain sc tries again.
+test("after a first run whose plugin failed to install, plain sc installs it again", async () => {
+  noGitHubPlugin();
+  fakeGitHub();
+  mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
+  writeFileSync(config(), "harness: claude\n");
+  writeFileSync(token(), "sk-ant-oat01-good\n");
+  // The plugin isn't published yet, so fetching it fails.
+  appendFileSync(config(), "plugins: [simon/skelcrew-fake]\n");
+  const failed = await atTerminal("y\n");
+  expect(failed.code).not.toBe(0);
+  expect(failed.out).not.toContain("Skelcrew is set up.");
+  publishFake("0.1.0");
+  const retried = await atTerminal("y\n");
+  expect(retried.err).toBe("");
+  expect(retried.out).toContain("Installed fake 0.1.0.");
+  expect(retried.out).toContain("Skelcrew is set up.");
+  expect(calls()).toContain("fake setup 0.1.0\n");
+});
+
+// A plugin you said no to is still named in your files, so the machine isn't set up until it is in.
+test("after a first run where you said no to a plugin, plain sc asks again", async () => {
+  noGitHubPlugin();
+  fakeGitHub();
+  publishFake("0.1.0");
+  mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
+  writeFileSync(config(), "harness: claude\n");
+  writeFileSync(token(), "sk-ant-oat01-good\n");
+  lockFake("0.1.0");
+  const declined = await atTerminal("n\n");
+  expect(declined.out).toContain("Skelcrew didn't install fake.");
+  expect(declined.out).toContain(
+    "Skelcrew isn't set up yet, as your config.yaml names simon/skelcrew-fake, which this machine doesn't have at the version your lock pins. Plain sc asks again.",
+  );
+  expect(declined.out).not.toContain("Skelcrew is set up.");
+  const asked = await atTerminal("y\n");
+  expect(asked.err).toBe("");
+  expect(asked.out).toContain("Install it? [Y/n]");
+  expect(asked.out).toContain("Installed fake 0.1.0.");
+  expect(asked.out).toContain("Skelcrew is set up.");
+});
+
+// A machine already set up loses its mark when a plugin newly named in your files is declined.
+test("on a machine already set up, a declined plugin your files name makes plain sc ask again", async () => {
+  noGitHubPlugin();
+  fakeGitHub();
+  publishFake("0.1.0");
+  await skel("1\nsk-ant-oat01-good\n");
+  lockFake("0.1.0");
+  const declined = await install("n\n");
+  expect(declined.out).toContain("Skelcrew didn't install fake.");
+  expect(declined.out).toContain("Skelcrew isn't set up yet");
+  const asked = await atTerminal("y\n");
+  expect(asked.err).toBe("");
+  expect(asked.out).toContain("Install it? [Y/n]");
+  expect(asked.out).toContain("Installed fake 0.1.0.");
+  // Installed, it is asked about no more.
+  expect((await atTerminal("")).out).not.toContain("[Y/n]");
+});
+
+// A failed sc install takes the mark away too, so plain sc tries again.
+test("on a machine already set up, sc install failing for want of a terminal makes plain sc ask again", async () => {
+  noGitHubPlugin();
+  fakeGitHub();
+  publishFake("0.1.0");
+  await skel("1\nsk-ant-oat01-good\n");
+  lockFake("0.1.0");
+  const failed = await skel("", bin, main(), home, {}, ["install"]);
+  expect(failed.code).toBe(1);
+  expect(failed.err).toContain("Skelcrew left out simon/skelcrew-fake");
+  const asked = await atTerminal("y\n");
+  expect(asked.err).toBe("");
+  expect(asked.out).toContain("Install it? [Y/n]");
+  expect(asked.out).toContain("Installed fake 0.1.0.");
+});
+
+// On a new machine your files decide which GitHub plugin it gets, so the offer, which would
+// install its newest version, isn't made.
+test("in a GitHub checkout, files that name the GitHub plugin skip the offer, and sc install gets the locked commit", async () => {
+  const site = siteOnGitHub();
+  await skel("1\nsk-ant-oat01-good\n");
+  const plugin = join(home, "github", "skelcrew", "skelcrew-github");
+  const locked = git(plugin, "rev-parse", "HEAD");
+  // The tag moves on after your lock pinned it.
+  git(plugin, "commit", "-q", "--allow-empty", "-m", "later");
+  git(plugin, "tag", "-f", "v0.1.0");
+  appendFileSync(config(), "plugins: [skelcrew/skelcrew-github]\n");
+  writeFileSync(
+    lock(),
+    `skelcrew/skelcrew-github: { name: github, version: 0.1.0, commit: ${locked} }\n`,
+  );
+  const run = await atTerminal("y\n", site, ["install"]);
+  expect(run.err).toBe("");
+  expect(run.out).not.toContain("GitHub detected");
+  expect(run.out).toContain("Installed github 0.1.0.");
+  const folder = join(home, ".local", "share", "skelcrew", "plugins", "github", "0.1.0");
+  expect(git(folder, "rev-parse", "HEAD")).toBe(locked);
+  expect(readFileSync(lock(), "utf8")).toContain(locked);
+});
+
+// A forge can refuse to serve a commit by its id. Then the tag counts only while it still points
+// at the commit your lock pins. A git that refuses such fetches stands in for that forge.
+test("when the forge won't serve the locked commit, sc install takes the tag only while it is still at that commit", async () => {
+  noGitHubPlugin();
+  fakeGitHub();
+  publishFake("0.1.0");
+  await skel("1\nsk-ant-oat01-good\n");
+  const real = Bun.which("git") ?? "git";
+  unlinkSync(join(bin, "git"));
+  writeFileSync(
+    join(bin, "git"),
+    `#!/bin/sh\ncase "$*" in *" fetch --quiet --depth 1 "*) echo "fatal: unadvertised object" >&2; exit 128 ;; esac\nexec ${real} "$@"\n`,
+    { mode: 0o755 },
+  );
+  const locked = fakeCommit("0.1.0");
+  lockFake("0.1.0");
+  const run = await install("y\n");
+  expect(run.err).toBe("");
+  expect(run.out).toContain("Installed fake 0.1.0.");
+  const folder = join(home, ".local", "share", "skelcrew", "plugins", "fake", "0.1.0");
+  expect(git(folder, "rev-parse", "HEAD")).toBe(locked);
+  // Once the tag moves, the locked commit can't be reached, which is said, and the lock stays.
+  publishFake("0.1.0");
+  noGitHubPlugin();
+  const lockBefore = readFileSync(lock(), "utf8");
+  const gone = await install("y\n");
+  expect(gone.code).toBe(1);
+  expect(gone.err).toContain(
+    `simon/skelcrew-fake no longer serves commit ${locked.slice(0, 12)}, which your lock pins: git couldn't fetch it (fatal: unadvertised object)`,
+  );
+  expect(gone.err).toContain(`its tag v0.1.0 is at ${fakeCommit("0.1.0").slice(0, 12)} now`);
+  expect(readFileSync(lock(), "utf8")).toBe(lockBefore);
+});
+
+// sc install never moves a pin your lock has, and adds one for a plugin your config names that
+// the lock lacks, as npm install does.
+test("sc install leaves every pin as it is and adds a pin for a plugin your lock lacks", async () => {
+  noGitHubPlugin();
+  fakeGitHub();
+  publishFake("0.1.0");
+  publishPlugin("other", "0.1.0", "0.2.0");
+  await skel("1\nsk-ant-oat01-good\n");
+  lockFake("0.1.0");
+  writeFileSync(
+    config(),
+    "harness: claude\nplugins: [simon/skelcrew-fake, simon/skelcrew-other]\n",
+  );
+  const pinned = readFileSync(lock(), "utf8");
+  writeFileSync(join(home, "calls"), "");
+  const run = await install("y\ny\n");
+  expect(run.err).toBe("");
+  expect(run.out).toContain("Installed fake 0.1.0.");
+  expect(run.out).toContain("Installed other 0.2.0.");
+  expect(calls()).toBe("fake setup 0.1.0\nother setup 0.2.0\n");
+  // The existing pin and its comment are as they were, and the new pin follows them.
+  const now = readFileSync(lock(), "utf8");
+  expect(now).toStartWith(pinned);
+  const other = git(
+    join(home, "github", "simon", "skelcrew-other"),
+    "rev-parse",
+    "v0.2.0^{commit}",
+  );
+  expect(parse(now)).toEqual({
+    "simon/skelcrew-fake": { name: "fake", version: "0.1.0", commit: fakeCommit("0.1.0") },
+    "simon/skelcrew-other": { name: "other", version: "0.2.0", commit: other },
+  });
+  expect((await install()).out).toContain("Nothing to install");
 });
