@@ -392,19 +392,14 @@ export function install(from?: string, plain = false): boolean {
   // that needs your yes with no terminal, leaves plain sc to run this again.
   rmSync(installDoneFile(), { force: true });
   const setUp = firstRun(from);
-  const { changed: plugins, left, kept } = installYourPlugins(from ?? originHere());
+  const { changed: plugins, left } = installYourPlugins(from ?? originHere());
   // A plugin still missing keeps the mark away, even from a machine that had it, such as after
   // you named a new plugin and said no to it, so plain sc asks again.
   if (left.length > 0)
     console.log(
       `\nSkelcrew isn't set up yet, as your config.yaml names ${left.join(", ")}, which this machine doesn't have at the version your lock pins. Plain sc asks again. To leave it out here and everywhere, run sc remove -g with its name.`,
     );
-  // So does one your files no longer name that is still here, such as a repository's tracker.
-  if (kept.length > 0)
-    console.log(
-      `\nSkelcrew isn't set up yet, as this machine still has ${kept.join(", ")}, which your files don't name. Once no repository uses it, sc install removes it.`,
-    );
-  if (left.length > 0 || kept.length > 0) return false;
+  if (left.length > 0) return false;
   mkdirSync(dataDir(), { recursive: true });
   writeFileSync(setUpFile(), "");
   writeFileSync(installDoneFile(), "");

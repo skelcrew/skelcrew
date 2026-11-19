@@ -17,7 +17,6 @@ import { openDb } from "../db.ts";
 import { repositories } from "../flow/repo.ts";
 import { originHere } from "../machine/origin.ts";
 import { configDir, dataDir } from "../paths.ts";
-import { errorText } from "../say.ts";
 import { removeControlCodes } from "../screen/look.ts";
 import { release } from "../version.ts";
 import { trackerOf } from "./ask.ts";
@@ -537,6 +536,20 @@ export function updatePlugins(name?: string): void {
   );
 }
 
+// Returns what the plugin does for the repositories Skelcrew has, such as "the tracker of app",
+// or null when it is no repository's tracker or forge. Such a plugin is never removed, as its
+// repositories would lose their tasks, or their PRs and their login for pushing.
+function jobOf(db: Database, name: string): string | null {
+  // The repositories that use it as their tracker, then as their forge. The first job found is
+  // enough to say why it stays.
+  for (const [job, usingIt] of [
+    ["tracker", repositories(db).filter((r) => trackerOf(db, r) === name)],
+    ["forge", repositories(db).filter((r) => r.forge === name)],
+  ] as const)
+    if (usingIt.length > 0) return `the ${job} of ${usingIt.map((r) => r.name).join(", ")}`;
+  return null;
+}
+
 // Removes a plugin with its settings and tokens. A plugin from GitHub loses its folders and its
 // line in your lock too, and with `named` its line under plugins: in your config.yaml. A folder of
 // yours stays. It refuses while the plugin is the tracker of a repository Skelcrew has, as that
@@ -545,15 +558,8 @@ export function updatePlugins(name?: string): void {
 export function removePlugin(name: string, named = false): void {
   const db = openDb();
   const plugin = findPlugin(db, name);
-  // The repositories that use it as their tracker, then as their forge.
-  for (const [job, usingIt] of [
-    ["tracker", repositories(db).filter((r) => trackerOf(db, r) === name)],
-    ["forge", repositories(db).filter((r) => r.forge === name)],
-  ] as const)
-    if (usingIt.length > 0)
-      throw new Error(
-        `${name} is the ${job} of ${usingIt.map((r) => r.name).join(", ")}, so Skelcrew keeps it`,
-      );
+  const job = jobOf(db, name);
+  if (job !== null) throw new Error(`${name} is ${job}, so Skelcrew keeps it`);
   // Your files change first. A write that fails puts both back and removes nothing, so the
   // plugin stays installed and named, and a retry starts over.
   const { source } = plugin;
@@ -622,7 +628,8 @@ function matchesLock(plugin: Plugin, locked: Locked): boolean {
 // Returns the plugins from GitHub installed here that your files don't name, which sc install
 // removes, such as one you removed on another machine before sending your files here. A plugin
 // from a folder is this machine's own, and one that only reaches machines isn't sent to a
-// server, so neither counts. One whose folder can't be read is left for you to remove.
+// server, so neither counts. One whose folder can't be read is left for you to remove. One that
+// is a repository's tracker or forge is among them, though sc install keeps it.
 function unnamed(db: Database): Plugin[] {
   const named = yourPlugins();
   return installedPlugins(db).filter((plugin) => {
@@ -637,18 +644,15 @@ function unnamed(db: Database): Plugin[] {
 
 // Makes this machine match your personal files, for sc install: removes each plugin from GitHub
 // your files don't name, then installs each plugin under plugins: in your config.yaml at the
-// version and commit your lock pins. A plugin new here, or at
+// version and commit your lock pins. One your files don't name that a repository uses as its
+// tracker or forge stays, and is written into your files. A plugin new here, or at
 // another version or commit, is shown and asked about. One already at its locked version asks
 // nothing, as you approved it before. It never moves a pin your lock has. A plugin your config
 // names that the lock lacks gets a pin added, as npm install does: at what is installed here, or
 // else at its newest version tag once you say yes. Returns whether there was anything to do, and
-// the plugins still missing or at another version than locked, as you said no to them, and the
-// ones your files don't name that couldn't be removed. `remote` is handed to each setup.
-export function installYourPlugins(remote: string | null): {
-  changed: boolean;
-  left: string[];
-  kept: string[];
-} {
+// the plugins still missing or at another version than locked, as you said no to them. `remote`
+// is handed to each setup.
+export function installYourPlugins(remote: string | null): { changed: boolean; left: string[] } {
   const db = openDb();
   const lock = yourLock(db);
   let changed = false;
@@ -658,18 +662,23 @@ export function installYourPlugins(remote: string | null): {
   // by its manifest.
   const skipMachines = process.env.SKELCREW_REMOTE_NAME !== undefined;
   const skipped: string[] = [];
-  // Removed first, so one of the same name from another repository can be installed after. One
-  // that is a repository's tracker or forge refuses to go, which is said here and returned, so the
-  // machine isn't marked set up while it still runs a plugin your files removed.
-  const kept: string[] = [];
-  for (const plugin of unnamed(db)) {
+  // Removed first, so one of the same name from another repository can be installed after.
+  for (const { name, source, folder } of unnamed(db)) {
     changed = true;
-    try {
-      removePlugin(plugin.name);
-    } catch (error) {
-      console.log(`Skelcrew couldn't remove ${plugin.name}: ${errorText(error)}.`);
-      kept.push(plugin.name);
+    const job = jobOf(db, name);
+    if (job === null || source === null) {
+      removePlugin(name);
+      continue;
     }
+    // One a repository uses as its tracker or forge stays, or the repository would lose its
+    // tasks or PRs. Such as on a machine whose lock was written without it, it is written into
+    // your files as it is, as the move to a lock does, so it asks nothing and installs nothing.
+    const manifest = readManifest(folder);
+    writeBoth(() => {
+      setYourPlugins([...yourPlugins(), source]);
+      setLocked(db, source, lockedAs(manifest, commitOf(folder)));
+    });
+    console.log(`Kept ${name} ${manifest.version} and added it to your files, as it is ${job}.`);
   }
   eachAsked(
     yourPlugins(),
@@ -709,7 +718,7 @@ export function installYourPlugins(remote: string | null): {
     const locked = now[source];
     return !here || (locked !== undefined && !matchesLock(here, locked));
   });
-  return { changed, left, kept };
+  return { changed, left };
 }
 
 // One row of sc plugins: a plugin your files name or this machine has. The version, kind and
@@ -734,7 +743,7 @@ export function listPlugins(json: boolean): void {
   const lock = yourLock(db);
   const wanted = yourPlugins();
   const installed = installedPlugins(db);
-  const removed = unnamed(db).map((plugin) => plugin.name);
+  const unnamedHere = unnamed(db).map((plugin) => plugin.name);
   const rows: Row[] = installed.map((plugin) => {
     const manifest = existsSync(plugin.folder) ? readManifest(plugin.folder) : null;
     if (!manifest) throw new Error(`${plugin.name}'s folder ${plugin.folder} is gone`);
@@ -745,6 +754,13 @@ export function listPlugins(json: boolean): void {
       wanted.includes(plugin.source) &&
       locked &&
       !matchesLock(plugin, locked);
+    // One your files don't name goes, unless a repository uses it.
+    const job = jobOf(db, plugin.name);
+    const goes = !unnamedHere.includes(plugin.name)
+      ? null
+      : job === null
+        ? "sc install removes it"
+        : `sc install keeps it in your files, as it is ${job}`;
     const to =
       locked?.version === manifest.version
         ? `${locked.version} at commit ${locked.commit.slice(0, 12)}`
@@ -757,11 +773,7 @@ export function listPlugins(json: boolean): void {
       // What it provides, under the name tools read before plugins had kinds.
       jobs: manifest.provides,
       from: plugin.source ?? plugin.folder,
-      change: removed.includes(plugin.name)
-        ? "sc install removes it"
-        : moves
-          ? `sc install moves it to ${to}`
-          : null,
+      change: goes ?? (moves ? `sc install moves it to ${to}` : null),
     };
   });
   // The plugins your files name that aren't installed here.
