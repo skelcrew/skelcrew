@@ -153,7 +153,7 @@ test("a builder asks the lead, not the human in its session, with background, op
 
 // The lead answers what the human already decided, and says so in one line. What is the
 // human's by rule goes to them, whatever lead role the repository brings.
-test("a lead answers what the human already decided, and always brings the human's decisions to them", () => {
+test("a lead answers what the human already decided, and always brings the human's decisions to them, whatever its role", () => {
   const lead = builtInRole("lead").instructions;
   expect(lead).toContain(
     "Answer one yourself with sc tell when the answer follows from what the human already decided",
@@ -162,7 +162,7 @@ test("a lead answers what the human already decided, and always brings the human
     "Then tell the human in one line what you answered and why, so they can overrule it",
   );
   expect(lead).toContain("The human should never have to open a builder to answer it.");
-  expect(lead).toContain("- Your recommendation, and why.");
+  expect(lead).toContain("and your recommendation with why.");
   const theirs =
     "Always bring the human a builder's question about editing a spec, trust or security, the work's scope or direction, or merging, however clear the answer seems: these are theirs to decide.";
   expect(lead).toContain(theirs);
@@ -173,7 +173,16 @@ test("a lead answers what the human already decided, and always brings the human
     { setup: undefined, test: undefined },
     false,
   );
-  expect(custom).toContain(theirs);
+  for (const rule of [
+    theirs,
+    "Answer one yourself with sc tell when the answer follows from what the human already decided",
+    "Then tell the human in one line what you answered and why, so they can overrule it",
+    "pass their answer on to the builder with sc tell.",
+    "The human should never have to open a builder to answer it.",
+    "Frame it for someone who hasn't read the code: the background in plain words, the problem with a concrete example, each option with what it means for the human, and your recommendation with why.",
+    "Leave out file paths and names from the code unless they help.",
+  ])
+    expect(custom).toContain(rule);
 });
 
 // The lead can't read the human's config from its sandbox, so it is told which commands are

@@ -138,12 +138,7 @@ const answeringAdded = `
 
 Builders bring their questions and decisions to you, with sc tell lead or at the end of a turn, rather than asking the human in their own session. Answer one yourself with sc tell when the answer follows from what the human already decided, such as earlier in this conversation, from the repository's spec or design documents, or from a clear technical call. Then tell the human in one line what you answered and why, so they can overrule it, such as "app-12 asked whether to confirm before deleting; I said no, as you decided earlier."
 Always bring the human a builder's question about editing a spec, trust or security, the work's scope or direction, or merging, however clear the answer seems: these are theirs to decide.
-Bring such a question, and any you can't answer, to the human in this chat, naming the thread, and pass their answer on to the builder with sc tell. The human should never have to open a builder to answer it. Frame it for someone who hasn't read the code:
-- Background, in plain words: what the thread is building and where the question comes up.
-- The problem, with a concrete example.
-- Each option, and what it means for the human or the people who use the work.
-- Your recommendation, and why.
-Leave out file paths and names from the code unless they help.`;
+Bring such a question, and any you can't answer, to the human in this chat, naming the thread, and pass their answer on to the builder with sc tell. The human should never have to open a builder to answer it. Frame it for someone who hasn't read the code: the background in plain words, the problem with a concrete example, each option with what it means for the human, and your recommendation with why. Leave out file paths and names from the code unless they help.`;
 
 test("the lead and builder files hold the instructions the code gave, but for what was added since", () => {
   // The digests of src/agents/prompts/lead.md and builder.md before they moved.
