@@ -510,16 +510,25 @@ export function messageLead(db: Database, sessions: string, from: Caller, text: 
   record(db, thread.folder, { told_lead: true }, `its builder told the lead: ${text}`);
 }
 
+// A control character other than a line break or a tab, which a paste would carry as typing.
+const control = /(?![\n\t])\p{Cc}/gu;
+// Text that could break out of Skelcrew's wrapper: a skelcrew tag in any form, opening or
+// closing, with spaces or in any case, or a control character.
+const unsafe = /<\s*\/?\s*skelcrew|(?![\n\t])\p{Cc}/iu;
+
 // Saves a lead's brief for another repository's lead, to be typed in once that lead can take
 // it, as an urgent note. It is wrapped as from the sending lead, such as app:lead, with the
 // command that answers it, so the other lead takes it for another agent's report, never for the
 // human's say-so. `asked` is the human's own words, which the sending lead gave with
 // --asked-file. Only then may the other lead start work on it, for exactly what those words
 // ask, with the tag saying asked="yes", which only Skelcrew can write. The words and the brief
-// both go in unchanged. One holding a <skelcrew tag would end Skelcrew's own early or pass for
-// another, so in it each & is written &amp; and each < &lt;, and its heading says so: the other
-// lead reads back exactly what was written. Only a lead may brief, and never its own
-// repository, which it plans itself.
+// both go in unchanged, unless one could break out of the wrapper. A skelcrew tag in any form,
+// such as </skelcrew >, would end Skelcrew's own early or pass for another. A control
+// character, such as the end of a bracketed paste, would end the paste and act as typing. So
+// such text has each & written &amp;, each < &lt;, and each control character but a line break
+// or tab as its code, such as &#x1b;, and its heading says so: the other lead reads back
+// exactly what was written. Only a lead may brief, and never its own repository, which it plans
+// itself.
 export function briefLead(
   db: Database,
   sessions: string,
@@ -538,9 +547,13 @@ export function briefLead(
   // Returns text under its heading, unchanged, or escaped when it holds a tag. A brief with no
   // tag and none of the human's words needs no heading, as it is all there is.
   const part = (heading: string, said: string) => {
-    if (untagged(said) === said) return heading ? `${heading}:\n${said}` : said;
-    const escaped = said.replaceAll("&", "&amp;").replaceAll("<", "&lt;");
-    const how = "with each < written as &lt; and each & as &amp;, as it holds a skelcrew tag";
+    if (!unsafe.test(said)) return heading ? `${heading}:\n${said}` : said;
+    const escaped = said
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replace(control, (code) => `&#x${(code.codePointAt(0) ?? 0).toString(16)};`);
+    const how =
+      "with each < written as &lt;, each & as &amp; and each control character as its code, such as &#x1b;, as it holds a skelcrew tag or a control character";
     return `${heading || "The brief"}, ${how}:\n${escaped}`;
   };
   // The human's words come first, apart from the brief. They are everything between their
