@@ -97,17 +97,17 @@ console.log(JSON.stringify(listRows(openDb(), { owner: "simon", repo: "app" }, $
 }
 
 test("the lead comes first, then each stage's tasks, those that need you first", () => {
-  const shown = rows().map((row) => [row.part, row.name, row.title, row.says, row.about]);
+  const shown = rows().map((row) => [row.part, row.name, row.title, row.says, row.pr, row.when]);
   // The approved task first on its own, so a failure says in one line where it went and why.
   const ready = shown.find(([, name]) => name === "app-14");
-  expect(ready?.join(" | ")).toBe("ready | app-14 | Fix the export header | approved | #41");
+  expect(ready?.join(" | ")).toBe("ready | app-14 | Fix the export header | approved | #41 | ");
   expect(shown).toEqual([
-    ["lead", "lead", "", "running · claude", ""],
-    ["backlog", "app-31", "Export as CSV", "", "5 Nov"],
-    ["building", "app-12", "Rate limit the API", "needs you: question", ""],
-    ["building", "app-9", "Old work", "stopped", "14:59"],
-    ["building", "app-7", "Login redirect", "working", "14:55"],
-    ["ready", "app-14", "Fix the export header", "approved", "#41"],
+    ["lead", "lead", "claude", "running", "", ""],
+    ["backlog", "app-31", "Export as CSV", "", "", "5 Nov"],
+    ["building", "app-12", "Rate limit the API", "question", "", ""],
+    ["building", "app-9", "Old work", "stopped", "", "14:59"],
+    ["building", "app-7", "Login redirect", "working", "", "14:55"],
+    ["ready", "app-14", "Fix the export header", "approved", "#41", ""],
   ]);
 });
 
@@ -118,7 +118,7 @@ test("an approved task whose builder asks a question stays under Ready, marked a
   const row = rows().find((candidate) => candidate.name === "app-14");
   expect(row).toMatchObject({
     part: "ready",
-    says: "needs you: question",
+    says: "question",
     needsYou: true,
     merge: null,
   });
@@ -196,32 +196,26 @@ test("Done shows the tasks that ended today, or the last ten when fewer ended to
   ]);
   expect(done()[0]).toMatchObject({
     says: "merged",
-    about: "#100 · 14:00",
+    pr: "#100",
+    when: "14:00",
     mark: { sign: "○", colour: "dim" },
     needsYou: false,
     session: null,
   });
   expect(done()[1]?.says).toBe("closed");
-  expect(done()[3]?.about).toBe("#200 · 18 Nov");
+  expect(done()[3]).toMatchObject({ pr: "#200", when: "18 Nov" });
   // Twelve today: every one of them, and none from before.
   sql(ended(300, 9, 4));
   expect(done()).toHaveLength(12);
-  expect(done().every((row) => /^#\d+ · \d\d:\d\d$/.test(row.about))).toBe(true);
+  expect(done().every((row) => /^\d\d:\d\d$/.test(row.when))).toBe(true);
 });
 
-test("a row shows its armed merge when ready and what it waits on, and a ready one shows it too", () => {
+// A row stays short enough to read across: a merge when ready or messages waiting are for sc show.
+test("a row says one short word, with no merge when ready or messages waiting after it", () => {
   sql(`UPDATE threads SET merge_plan = 'armed', merge_waits = 'its checks' WHERE folder = 'app-7';
-UPDATE threads SET merge_plan = 'armed' WHERE folder = 'app-14';`);
-  const says = (name: string) => rows().find((row) => row.name === name)?.about;
-  expect(says("app-7")).toBe("14:55 · merges when ready · waiting on its checks");
-  expect(says("app-14")).toBe("#41 · merges when ready");
-});
-
-test("a row counts the messages waiting for its builder, so a stuck delivery shows", () => {
-  sql(`INSERT INTO messages (folder, sender, text, said, at) VALUES
-  ('app-7', 'lead', 'one', 'one', 0), ('app-7', 'lead', 'two', 'two', 0);`);
+INSERT INTO messages (folder, sender, text, said, at) VALUES ('app-7', 'lead', 'one', 'one', 0);`);
   const row = rows().find((candidate) => candidate.name === "app-7");
-  expect(row?.about).toBe("14:55 · 2 messages waiting");
+  expect(row).toMatchObject({ says: "working", pr: "", when: "14:55" });
 });
 
 test("an issue whose work ended is back under Backlog, to start again", () => {
@@ -338,7 +332,9 @@ test("a row knows whether its agent runs, and the lead says what its hooks last 
   sql("UPDATE repositories SET lead_state = 'asking' WHERE repo = 'app';");
   const running = rows();
   expect(running.find((row) => row.name === "lead")).toMatchObject({
-    says: "asks you · claude",
+    says: "asks you",
+    title: "claude",
+    mark: { sign: "●", colour: "yellow" },
     colour: "yellow",
     running: true,
   });
@@ -346,7 +342,8 @@ test("a row knows whether its agent runs, and the lead says what its hooks last 
   expect(running.find((row) => row.name === "app-9")?.running).toBe(false);
   sql("UPDATE repositories SET tab_closed = 1 WHERE repo = 'app';");
   expect(rows().find((row) => row.name === "lead")).toMatchObject({
-    says: "stopped · claude",
+    says: "stopped",
+    mark: { sign: "○", colour: "dim" },
     running: false,
   });
 });
@@ -372,7 +369,7 @@ test("a task past its round limit says so, from the changes its review held", ()
   sql(
     "UPDATE tasks SET rounds = 4, held = 'Rename it.' WHERE task = '7'; UPDATE threads SET needs_you = 1, status = 'waiting' WHERE folder = 'app-7';",
   );
-  expect(rows().find((row) => row.name === "app-7")?.says).toBe("needs you: round limit");
+  expect(rows().find((row) => row.name === "app-7")?.says).toBe("round limit");
 });
 
 // A git that fails stands in for tmux and settings too: drawing must never need either.
@@ -423,51 +420,92 @@ const drawn = (here: number, height = 20, width = 80, open?: ListStage[]) =>
   drawnWith(here, frame, { width, height }, open).map((line) => Bun.stripANSI(line));
 
 test("every stage has its heading with its counts, only open ones show rows, and every line fits", () => {
-  const lines = drawn(1);
-  expect(lines[0]).toBe(` Skelcrew v0.6.0 · app${" ".repeat(50)}site •1 `);
-  expect(lines.slice(2, 14).map((line) => line.trimEnd())).toEqual([
-    expect.stringMatching(/^ {3}◆ lead +running · claude$/),
+  const lines = drawn(1, 24);
+  expect(lines[0]).toBe(" Skelcrew v0.6.0   app    site •1 ");
+  // The lead and each task at work take lines as the sidebar's rows do: mark, name and title,
+  // then the word, then a task's PR, CI and when it changed. So what it does sits under its title.
+  expect(lines.slice(2, 22).map((line) => line.trimEnd())).toEqual([
+    "   ○ lead    claude",
+    "     running",
     "",
-    " 1 Backlog 1",
-    " 2 Building 3 · 1 needs you",
-    expect.stringMatching(/^ ▸ ● app-12 +Rate limit the API +needs you: question$/),
-    expect.stringMatching(/^ {3}○ app-9 +Old work +stopped · 14:59$/),
-    expect.stringMatching(/^ {3}○ app-7 +Login redirect +working · 14:55$/),
+    " 1 Backlog   1",
+    " 2 Building  3 · 1 needs you",
+    " ▸ ● app-12  Rate limit the API",
+    "     question",
+    "",
+    "   ○ app-9   Old work",
+    "     stopped",
+    "     14:59",
+    "   ○ app-7   Login redirect",
+    "     working",
+    "     14:55",
     "",
     " 3 Reviewing 0",
-    " 4 Checks 0",
-    " 5 Ready 1",
-    " 6 Done 0",
+    " 4 Checks    0",
+    " 5 Ready     1",
+    " 6 Done      0",
+    "",
   ]);
-  // The bottom line has the keys, and the load at its right end.
-  expect(lines.at(-1)).toBe(` ↑↓ move  ⏎ open  1-6 stages  q/esc quit${" ".repeat(32)}cpu 12% `);
-  for (const line of lines) expect(Bun.stringWidth(line)).toBeLessThanOrEqual(80);
-  expect(lines).toHaveLength(20);
+  // The bottom line has the keys, and the load at its right end, short of the last column.
+  expect(lines.at(-1)).toBe(` ↑↓ move  ⏎ open  1-6 stages  q/esc quit${" ".repeat(32)}cpu 12%`);
+  // Nothing reaches the last column, where a terminal would wait to wrap.
+  for (const line of lines) expect(Bun.stringWidth(line)).toBeLessThanOrEqual(79);
+  expect(lines).toHaveLength(24);
 });
 
 test("an open stage shows its rows, and its heading is bright while a closed one is dim", () => {
   const lines = drawn(1, 24, 80, ["backlog", "ready"]);
-  expect(lines.slice(4, 12).map((line) => line.trimEnd())).toEqual([
-    " 1 Backlog 1",
-    expect.stringMatching(/^ ▸ ○ app-31 +Export as CSV +5 Nov$/),
+  // A task in Backlog or Done takes one line, in columns: mark, name, its word and PR where it
+  // has them, when it changed, then its title.
+  expect(lines.slice(5, 16).map((line) => line.trimEnd())).toEqual([
+    " 1 Backlog   1",
+    " ▸ ○ app-31  5 Nov  Export as CSV",
     "",
-    " 2 Building 3 · 1 needs you",
+    " 2 Building  3 · 1 needs you",
     " 3 Reviewing 0",
-    " 4 Checks 0",
-    " 5 Ready 1",
-    expect.stringMatching(/^ {3}● app-14 +Fix the export header +approved · #41$/),
+    " 4 Checks    0",
+    " 5 Ready     1",
+    "   ● app-14  Fix the export header",
+    "     approved",
+    "     #41 · CI passed",
+    "",
   ]);
   const coloured = drawnWith(1, frame, { width: 80, height: 24 }, ["backlog"]);
-  expect(coloured).toContain(" \x1b[90m1\x1b[22;39m \x1b[1mBacklog 1\x1b[22;39m");
+  expect(coloured).toContain(" \x1b[90m1\x1b[22;39m \x1b[1mBacklog  \x1b[22;39m 1");
   expect(coloured).toContain(
-    " \x1b[90m2\x1b[22;39m \x1b[90mBuilding 3\x1b[22;39m\x1b[38;5;221m · 1 needs you\x1b[22;39m",
+    " \x1b[90m2\x1b[22;39m \x1b[90mBuilding \x1b[22;39m 3\x1b[38;5;221m · 1 needs you\x1b[22;39m",
   );
 });
 
-test("a row's word is in its colour and what follows it is dim", () => {
-  const coloured = drawnWith(1, frame, { width: 80, height: 20 });
-  const row = coloured.find((line) => line.includes("app-7")) ?? "";
-  expect(row).toContain("\x1b[1mworking\x1b[22;39m\x1b[90m · 14:55\x1b[22;39m");
+test("a row's word is in its colour, its step and what follows it are dim, and its title is plain", () => {
+  const all = rows().map((row) =>
+    row.name === "app-7"
+      ? { ...row, step: "Editing rows.ts", pr: "#40", checks: "CI running" }
+      : row,
+  );
+  const shown = all.filter((row) => row.part === "lead" || row.part === "building");
+  const headings = stageHeadings(all, new Set<ListStage>(["building"]));
+  const size = { width: 80, height: 24 };
+  const { lines } = drawList(shown, headings, 1, 0, frame, size);
+  const at = lines.findIndex((line) => line.includes("app-7"));
+  expect(lines.slice(at, at + 3)).toEqual([
+    "   \x1b[1m○\x1b[22;39m app-7   Login redirect",
+    "     \x1b[1mworking\x1b[22;39m\x1b[90m · Editing rows.ts\x1b[22;39m",
+    "     \x1b[90m#40 · CI running · 14:55\x1b[22;39m",
+  ]);
+});
+
+// A wide terminal used to lose the last letter of whatever reached its right edge.
+test("a row as wide as the terminal stops short of its last column, cutting only its title", () => {
+  const long = "A title long enough to run past the right edge of any terminal here";
+  sql(`UPDATE tasks SET title = '${long}' WHERE task = '7';`);
+  for (const width of [60, 61, 80]) {
+    const lines = drawnWith(1, frame, { width, height: 24 }).map((line) => Bun.stripANSI(line));
+    const row = lines.find((line) => line.includes("app-7")) ?? "";
+    expect(Bun.stringWidth(row)).toBe(width - 1);
+    expect(row).toContain("app-7   A title");
+    expect(row).toEndWith("…");
+  }
 });
 
 test("on a narrow terminal every line fits, the row you are on and a question included", () => {
@@ -488,7 +526,8 @@ test("another repository's badge counts what needs you in yellow and what is rea
     { name: "site", fullName: "simon/site", needYou: 2, colour: "yellow" as const, ready: 1 },
   ];
   const [top = ""] = drawnWith(0, { ...frame, tabs }, { width: 80, height: 20 });
-  expect(Bun.stripANSI(top)).toEndWith("docs •1  site •2 •1 ");
+  // Every tab is on the left, the open one without its badge, each with a space inside it.
+  expect(Bun.stripANSI(top)).toBe(" Skelcrew v0.6.0   app    docs •1    site •2 •1 ");
   expect(top).toContain("\x1b[38;5;120m•1");
   expect(top).toContain("\x1b[38;5;221m•2");
 });
@@ -502,17 +541,24 @@ test("a list taller than the terminal scrolls only its tasks, keeping the lead a
   // to app-59. The last of them is the 13th task, at 13 among the rows after the lead.
   const lines = drawn(13, 16, 80, ["building", "ready"]);
   expect(lines).toHaveLength(16);
-  expect(lines[2]).toMatch(/^ {3}◆ lead/);
+  expect(lines[2]).toMatch(/^ {3}○ lead/);
   expect(lines.filter((line) => /^ \d [A-Z]/.test(line)).map((line) => line.trim())).toEqual([
-    "1 Backlog 1",
-    "2 Building 13 · 1 needs you",
-    "3 Reviewing 0",
-    "4 Checks 0",
-    "5 Ready 1",
-    "6 Done 0",
+    "1 Backlog    1",
+    "2 Building  13 · 1 needs you",
+    "3 Reviewing  0",
+    "4 Checks     0",
+    "5 Ready      1",
+    "6 Done       0",
   ]);
   expect(lines.filter((line) => line.includes("▸"))).toEqual([
     expect.stringMatching(/^ ▸ ○ app-59 /),
+  ]);
+  // The row you are on shows whole: its title, then its word, then when it changed.
+  const at = lines.findIndex((line) => line.includes("▸"));
+  expect(lines.slice(at, at + 3).map((line) => line.trim())).toEqual([
+    "▸ ○ app-59  Task 59",
+    "working",
+    "14:41",
   ]);
   expect(lines.some((line) => line.includes("app-12"))).toBe(false);
 });
@@ -522,15 +568,19 @@ test("a terminal too short for every heading still shows the row you are on", ()
     threadSql({ task: String(50 + i), title: `Task ${50 + i}`, changed: now - (10 + i) * 60_000 }),
   );
   sql(more.join("\n"));
-  // Eight lines leave two for the stages: the row you are on and its stage's heading above it.
-  const lines = drawn(13, 8, 80, ["building", "ready"]);
-  expect(lines).toHaveLength(8);
-  expect(lines[2]).toMatch(/^ {3}◆ lead/);
-  expect(lines.filter((line) => line.includes("▸"))).toEqual([
-    expect.stringMatching(/^ ▸ ○ app-59 /),
+  // Ten lines leave three for the stages: the row you are on, whole, and no heading.
+  const lines = drawn(13, 10, 80, ["building", "ready"]);
+  expect(lines).toHaveLength(10);
+  expect(lines[2]).toMatch(/^ {3}○ lead/);
+  expect(lines.slice(5, 8).map((line) => line.trim())).toEqual([
+    "▸ ○ app-59  Task 59",
+    "working",
+    "14:41",
   ]);
-  expect(lines.filter((line) => /^ \d [A-Z]/.test(line)).map((line) => line.trim())).toEqual([
-    "2 Building 13 · 1 needs you",
+  // Eight leave one: the first line of the row you are on, with its ▸.
+  const fewer = drawn(13, 8, 80, ["building", "ready"]);
+  expect(fewer.filter((line) => line.includes("▸"))).toEqual([
+    expect.stringMatching(/^ ▸ ○ app-59 +Task 59 *$/),
   ]);
 });
 
@@ -602,6 +652,11 @@ const here = () =>
     .split("\n")
     .find((line) => line.includes("▸"))
     ?.trim() ?? "";
+// The line under the one with ▸, where a row at work says what it does.
+const below = () => {
+  const lines = seen().split("\n");
+  return lines[lines.findIndex((line) => line.includes("▸")) + 1]?.trim() ?? "";
+};
 const until = (done: () => boolean, what: string) =>
   wait(done, { every: 30, what: () => `${what}:\n${seen()}` });
 // Presses a key in the terminal, as tmux names it, or types text with `literal`.
@@ -786,8 +841,8 @@ test("Esc with a question open answers no and stays, and a second Esc leaves", a
 test("with nothing in Building needing you, the list opens on the lead", async () => {
   sql("UPDATE threads SET asking = 0, needs_you = 0 WHERE folder = 'app-12';");
   await open();
-  expect(here()).toStartWith("▸ ◆ lead");
-  expect(seen()).toContain(" 5 Ready 1");
+  expect(here()).toStartWith("▸ ○ lead");
+  expect(seen()).toContain(" 5 Ready     1");
 });
 
 test("the number keys open and close the stages, which stay so in another repository", async () => {
@@ -801,9 +856,10 @@ test("the number keys open and close the stages, which stay so in another reposi
   await until(() => !seen().includes("app-7"), "Building closed");
   expect(seen()).toContain("○ app-31");
   press("Tab");
-  await until(() => seen().includes("· site"), "site's list");
+  // The open repository's tab has no badge, so another's shows only while it is open.
+  await until(() => seen().includes(" app •"), "site's list");
   press("Tab");
-  await until(() => seen().includes("· app"), "app's list again");
+  await until(() => seen().includes(" site •1"), "app's list again");
   expect(seen()).toContain("○ app-31");
   expect(seen()).not.toContain("app-7");
 });
@@ -830,10 +886,7 @@ test("Enter on a lead that can't start says why, and attaches to nothing", async
   await open();
   Bun.spawnSync(["tmux", "-L", agents, "kill-session", "-t", "=lead"]);
   for (const _ of [1, 2, 3]) press("Up");
-  await until(
-    () => here().startsWith("▸ ◆ lead") && here().includes("stopped"),
-    "the lead stopped",
-  );
+  await until(() => here().startsWith("▸ ○ lead") && below() === "stopped", "the lead stopped");
   press("Enter");
   await until(
     () => seen().includes("The lead didn't start: Claude Code's login for agents is gone"),
@@ -844,11 +897,11 @@ test("Enter on a lead that can't start says why, and attaches to nothing", async
 test("Enter on the lead attaches to it", async () => {
   await open();
   for (const _ of [1, 2, 3]) press("Up");
-  await until(() => here().startsWith("▸ ◆ lead"), "the lead's row");
+  await until(() => here().startsWith("▸ ○ lead"), "the lead's row");
   press("Enter");
   await until(() => seen().includes("I am lead"), "the lead");
   press("M-q");
-  await until(() => here().startsWith("▸ ◆ lead"), "the list on the lead's row");
+  await until(() => here().startsWith("▸ ○ lead"), "the list on the lead's row");
 });
 
 // A builder on a runtime plugin's host isn't in tmux, so Enter runs the host's own attach on its
@@ -964,7 +1017,20 @@ test("m on a task ready for review asks first, and y merges it at the commit you
 test("Tab moves to the next repository and has the daemon open it, without reopening a closed tab", async () => {
   await open();
   press("Tab");
-  await until(() => seen().includes("· site"), "site's list");
-  expect(seen()).toContain("site-3");
+  await until(() => seen().includes("site-3"), "site's list");
+  await until(() => asked.includes("open simon/site from a tab"), "site opened");
+});
+
+// The tabs are on the top line, left after Skelcrew's version. Your terminal reports a click by
+// its column and row, counted from 1, as typed here.
+test("a click on a repository's tab opens it, and a click elsewhere does nothing", async () => {
+  await open();
+  const top = seen().split("\n")[0] ?? "";
+  expect(top).toMatch(/^ Skelcrew v\S+ {3}app {4}site •1$/);
+  type(`\x1b[<0;${top.indexOf("site") + 1};2M`);
+  type(`\x1b[<0;${top.indexOf("site") + 1};1M\x1b[<0;${top.indexOf("site") + 1};1m`);
+  await until(() => seen().includes("site-3"), "site's list");
+  // It opens on site's task that needs you, as the list does on any repository.
+  expect(here()).toStartWith("▸ ● site-3");
   await until(() => asked.includes("open simon/site from a tab"), "site opened");
 });

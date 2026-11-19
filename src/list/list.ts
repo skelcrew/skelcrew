@@ -15,7 +15,7 @@ import { errorText } from "../say.ts";
 import { cpuBusy, cpuSample, loadText, memoryInUse, readMemory } from "../screen/load.ts";
 import { grey, paint, removeControlCodes } from "../screen/look.ts";
 import { version } from "../version.ts";
-import { drawList, type Frame, keysFor } from "./layout.ts";
+import { drawList, type Frame, keysFor, tabAt } from "./layout.ts";
 import {
   hasForge,
   listRows,
@@ -44,9 +44,14 @@ const keyNames: Record<string, string> = {
   "\x1b": "escape",
 };
 const esc = "\x1b";
-const keyPattern = new RegExp(`${esc}\\[[AB]|${esc}O[AB]|[\\s\\S]`, "g");
+// A click comes as your terminal reports the mouse, with its button, column and row.
+const clickPattern = new RegExp(`^${esc}\\[<(\\d+);(\\d+);(\\d+)M$`);
+const keyPattern = new RegExp(
+  `${esc}\\[<\\d+;\\d+;\\d+[Mm]|${esc}\\[[AB]|${esc}O[AB]|[\\s\\S]`,
+  "g",
+);
 // The start of an escape sequence at the end of a read, whose end may come in the next one.
-const endOfSequence = new RegExp(`${esc}[[O]?$`);
+const endOfSequence = new RegExp(`${esc}(?:\\[<[\\d;]*|[[O])?$`);
 
 // Runs the list in your terminal for the repository named by its owner/name, until you press q,
 // then says your agents keep running.
@@ -169,14 +174,15 @@ export async function runList(agents: string, repository: string): Promise<void>
   };
 
   // Takes the terminal for the list: the alternate screen, so leaving puts back what was there,
-  // no cursor, and raw keys. Gives it back as it was for an agent or for your shell.
+  // no cursor, raw keys, and clicks, which 1000 and 1006 ask your terminal to report, so a click
+  // on a repository's tab opens it. Gives it back as it was for an agent or for your shell.
   const takeTerminal = () => {
     process.stdin.setRawMode(true);
-    process.stdout.write("\x1b[?1049h\x1b[?25l");
+    process.stdout.write("\x1b[?1049h\x1b[?25l\x1b[?1000h\x1b[?1006h");
     lastFrame = "";
   };
   const giveBack = () => {
-    process.stdout.write("\x1b[?25h\x1b[?1049l");
+    process.stdout.write("\x1b[?1000l\x1b[?1006l\x1b[?25h\x1b[?1049l");
     process.stdin.setRawMode(false);
   };
 
@@ -274,22 +280,40 @@ export async function runList(agents: string, repository: string): Promise<void>
     say(`Copied ${row.link}`);
   };
 
-  // Moves to the next repository, after the last back to the first, and has the daemon start
-  // its lead if it never has. Not waited on, so the list draws at once.
-  const nextRepository = () => {
-    const tabs = repositoryTabs(db, open);
-    if (tabs.length < 2) return;
-    const at = tabs.findIndex((tab) => tab.fullName === `${open.owner}/${open.repo}`);
-    const next = tabs[(at + 1) % tabs.length];
-    if (!next) return;
-    const [nextOwner = "", nextRepo = ""] = next.fullName.split("/");
+  // Moves to a repository by its owner/name, and has the daemon start its lead if it never has.
+  // Not waited on, so the list draws at once.
+  const goTo = (fullName: string) => {
+    if (fullName === `${open.owner}/${open.repo}`) return draw();
+    const [nextOwner = "", nextRepo = ""] = fullName.split("/");
     open = { owner: nextOwner, repo: nextRepo };
-    openRepository(next.fullName, true).catch(() => {});
+    openRepository(fullName, true).catch(() => {});
     all = [];
     rows = [];
     here = -1;
     top = 0;
     refresh();
+  };
+
+  // Moves to the next repository, after the last back to the first.
+  const nextRepository = () => {
+    const tabs = repositoryTabs(db, open);
+    const at = tabs.findIndex((tab) => tab.fullName === `${open.owner}/${open.repo}`);
+    const next = tabs[(at + 1) % tabs.length];
+    if (tabs.length > 1 && next) goTo(next.fullName);
+  };
+
+  // Acts on a click of the left button on the top line: on a repository's tab, it opens that
+  // repository. Any other click, a release or the wheel does nothing.
+  const click = (sent: string) => {
+    const [, button, column, line] = clickPattern.exec(sent) ?? [];
+    if (button !== "0" || line !== "1") return draw();
+    const width = process.stdout.columns || 80;
+    const tab = tabAt(
+      frameWith(() => "", ""),
+      width,
+      Number(column),
+    );
+    return tab ? goTo(tab) : draw();
   };
 
   // Acts on one key. A question takes only y and n, and anything else is a no, Esc included. A
@@ -328,6 +352,7 @@ export async function runList(agents: string, repository: string): Promise<void>
       return draw();
     }
     if (key === "tab") return nextRepository();
+    if (key.startsWith(`${esc}[<`)) return click(key);
     // 1 to 6 open or close the stages, in the order they show.
     const stage = ListStage.options[Number(key) - 1];
     if (/^[1-6]$/.test(key) && stage) {
