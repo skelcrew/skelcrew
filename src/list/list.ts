@@ -39,12 +39,27 @@ const keyNames: Record<string, string> = {
   "\x1b": "escape",
 };
 const esc = "\x1b";
+// Splits what the terminal sent into keys. Every escape sequence is one key, read or not, as
+// its Esc alone would leave the list. That covers keys such as Right, Home, F5 or Alt-x, and
+// the answers a terminal sends to tmux's questions, which reach the list once you leave an
+// agent. In order: a terminal's string ended by ST or BEL, a CSI sequence, an SS3 one, Alt
+// with a key, then any single character, a lone Esc included.
 const keyPattern = new RegExp(
-  `${esc}\\[[0-9;:]*[\x40-\x7e]|${esc}O[A-Za-z]|${esc}[a-z]|[\\s\\S]`,
+  [
+    `${esc}[P\\]X^_][\\s\\S]*?(?:${esc}\\\\|\\x07)`,
+    `${esc}\\[[0-?]*[ -/]*[@-~]`,
+    `${esc}O[\\s\\S]`,
+    `${esc}[^${esc}]`,
+    "[\\s\\S]",
+  ].join("|"),
   "g",
 );
-// The start of an escape sequence at the end of a read, whose end may come in the next one.
-const endOfSequence = new RegExp(`${esc}(\\[[0-9;:]*|O)?$`);
+// The start of an escape sequence at the end of a read, whose end may come in the next one: an
+// Esc, a CSI or SS3 sequence short of its last character, or a terminal's string short of its ST
+// or BEL.
+const endOfSequence = new RegExp(
+  `${esc}(?:\\[[0-?]*[ -/]*|O|[P\\]X^_](?:[^${esc}\\x07]|${esc}(?!\\\\))*)?$`,
+);
 // Ctrl-\ as a terminal sends it: one byte, or as an extended key in the kitty or the xterm form.
 const back = new Set(["\x1c", "\x1b[92;5u", "\x1b[27;5;92~"]);
 

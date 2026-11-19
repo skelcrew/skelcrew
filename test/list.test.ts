@@ -717,6 +717,20 @@ test("Esc leaves the list", async () => {
   await until(() => read(join(home, "left")) === "left", "the list to leave");
 });
 
+// Keys the list doesn't read, such as Left or PageUp, also start with Esc, and so do the answers
+// a terminal sends to tmux's questions, which can reach the list once you leave an agent. None
+// of them is an Esc.
+test("keys the list doesn't read, and a terminal's answers, never leave it", async () => {
+  await open();
+  for (const key of ["Left", "Right", "Home", "End", "PPage", "F5", "M-x"]) press(key);
+  type("\x1b[?1;2;4c\x1b[>84;0;0c\x1bP>|tmux 3.6\x1b\\");
+  press("Down");
+  await until(() => here().startsWith("▸ ○ app-9"), "the row below");
+  await Bun.sleep(300);
+  expect(read(join(home, "left"))).toBe("");
+  expect(seen()).not.toContain("y/n");
+});
+
 // A stray Esc while you answer must not leave the list.
 test("Esc with a question open answers no and stays, and a second Esc leaves", async () => {
   await open();

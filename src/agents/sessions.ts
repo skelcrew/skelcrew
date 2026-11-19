@@ -294,6 +294,15 @@ export function exitedCleanly(socket: string, name: string): boolean {
   return tmux(socket, target).out.trim() === "1 0";
 }
 
+// Ends the named tmux session at once when its agent exited cleanly, and says whether it did. A
+// lead you exited leaves its session behind, and the daemon must clear it before anything else
+// runs, or its next look for exited leads would take it for one you just exited.
+export function endExitedSession(socket: string, name: string): boolean {
+  if (!exitedCleanly(socket, name)) return false;
+  mustTmux(socket, ["kill-session", "-t", `=${name}`]);
+  return true;
+}
+
 // Reports whether the agent in the named session is still running, so Skelcrew only types into
 // or attaches to a live one. A session alone doesn't say: an agent that failed leaves its
 // last screen behind in a session that looks alive.
