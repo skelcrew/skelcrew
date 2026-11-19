@@ -2485,12 +2485,37 @@ exec ${bwrap} "$@"`,
       );
     }, 90_000);
 
+    // CI found once on any PR of the repository, even one no thread works on and that closed
+    // since, means CI may still be starting on a PR with none. So an approved PR waits for it.
+    test("a merge when ready waits for CI once the repository had CI, even after that PR closed", async () => {
+      await approvedApp12();
+      const head = pushed();
+      const other = (state: string) =>
+        prItem("20", "Fix a typo", { state, base: "main", checks: [check(8, "passed")] });
+      changes([issue12(), other("open")]);
+      await morePolls();
+      changes([issue12(), other("closed")]);
+      await morePolls();
+      await arm();
+      pr({ head, reviews: [skelReview], checks: [approved] });
+      await until(() => thread().merge_waits === "its checks");
+      await morePolls();
+      expect(merges()).toEqual([]);
+      // Once CI shows on it and passes, it merges.
+      pr({ head, reviews: [skelReview], checks: [approved, check(9, "passed")] });
+      await until(() => merges().length === 1, 30_000);
+      expect(merges()[0]).toMatchObject({ pr: 7, commit: head });
+    }, 90_000);
+
     // The thread or its checks can change while the forge takes the record. The PR stays green
     // in Skelcrew's copy in each case below, so only the change itself can stop the merge.
     test("a failing check, a pending review or a stop while the record is posted stops the merge", async () => {
       await approvedApp12();
       const head = pushed();
-      const green = () => pr({ head, reviews: [skelReview], checks: [approved] });
+      // CI passed too: once the check below fails, the repository has had CI, so a PR with only
+      // Skelcrew's check would wait for CI rather than be green.
+      const green = () =>
+        pr({ head, reviews: [skelReview], checks: [approved, check(10, "passed")] });
       const sc = (...words: string[]) =>
         Bun.spawnSync([process.execPath, main, ...words], { env: env(), stderr: "pipe" });
       // Arms a new plan, which posts a record of its own, and holds that record.

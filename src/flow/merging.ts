@@ -243,10 +243,11 @@ export async function mergeIfReady(
     return;
   }
   const commit = pinned ?? lastPushed(thread);
+  const hasCi = repositoryHasCi(db, thread);
   let waits =
     pinned === null
-      ? mergeWaitsOn(thread, pr, commit)
-      : skipReviewWaitsOn(thread, pr, repositoryHasCi(db, thread));
+      ? mergeWaitsOn(thread, pr, commit, hasCi)
+      : skipReviewWaitsOn(thread, pr, hasCi);
   if (waits === null && commit !== null && thread.pr !== null) {
     const repository = repositoryOf(db, thread);
     // The PR records who asked, with a review on the commit it merges, the call every forge
@@ -343,12 +344,14 @@ export async function mergeIfReady(
   }
 }
 
-// Returns whether a poll ever found CI in the thread's repository: on any of its tasks' PRs, as
-// each task keeps, or on any open PR in Skelcrew's copy. A merge without approval needs CI's
-// checks, so in such a repository a PR with none yet waits for them.
+// Returns whether a poll ever found CI in the thread's repository, so that both merges wait for
+// CI's checks on a PR that has none yet. The repository keeps it once any of its PRs showed CI,
+// so a PR that closed since still counts. Its tasks' PRs and the open PRs in Skelcrew's copy
+// count too, for a database from before the repository kept it, until its next poll.
 function repositoryHasCi(db: Database, thread: Thread): boolean {
   const seen = db
-    .query("SELECT 1 FROM tasks WHERE owner = ? AND repo = ? AND ci_seen = 1 LIMIT 1")
+    .query(`SELECT 1 FROM repositories WHERE owner = ?1 AND repo = ?2 AND ci_seen = 1
+      UNION SELECT 1 FROM tasks WHERE owner = ?1 AND repo = ?2 AND ci_seen = 1 LIMIT 1`)
     .get(thread.owner, thread.repo);
   return seen !== null || openPrs(db, thread.owner, thread.repo).some((pr) => ciState(pr) !== null);
 }

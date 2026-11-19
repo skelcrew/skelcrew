@@ -404,6 +404,10 @@ async function pollRepository(
       ];
       const items = answer.items.filter((item) => kinds.includes(item.kind));
       saveItems(db, owner, repo, items, next === null ? kinds : []);
+      // The repository keeps that CI ran on one of its PRs, as that PR may close before a merge
+      // asks, and a merge must wait for CI's checks wherever CI has run.
+      if (items.some((item) => item.kind === "pr" && ciState(item) !== null))
+        db.run("UPDATE repositories SET ci_seen = 1 WHERE owner = ? AND repo = ?", [owner, repo]);
       nexts.set(plugin, answer.next);
     }
   } finally {

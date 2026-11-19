@@ -425,7 +425,9 @@ function prepareTables(db: Database): void {
   // .agents/ you haven't approved that the lead was told of, or `none` for one removed, so it is
   // told once. `lead_flows` is whether the lead knows of flows, from the instructions it started
   // with or a note, so a lead already running when Skelcrew learned of them is told once.
-  // `lead_briefs` is the same for briefing another repository's lead.
+  // `lead_briefs` is the same for briefing another repository's lead. `ci_seen` is whether a
+  // poll ever found CI on any of the repository's PRs, kept after they close, so a merge never
+  // takes a PR with no checks yet for one without CI.
   const repositoryColumns = {
     open_issues: "INTEGER NOT NULL DEFAULT 0",
     open_prs: "INTEGER NOT NULL DEFAULT 0",
@@ -442,6 +444,7 @@ function prepareTables(db: Database): void {
     agents_noted: "TEXT",
     lead_flows: "INTEGER NOT NULL DEFAULT 0",
     lead_briefs: "INTEGER NOT NULL DEFAULT 0",
+    ci_seen: "INTEGER NOT NULL DEFAULT 0",
   };
   // SQLite has no ADD COLUMN IF NOT EXISTS, so each column is looked up first.
   for (const [column, type] of Object.entries(repositoryColumns))
