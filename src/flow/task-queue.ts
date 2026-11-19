@@ -36,6 +36,16 @@ export function joinsQueue(db: Database, repository: { owner: string; repo: stri
   return queued > 0 || running >= limit;
 }
 
+// Returns the time a task joining the queue now joins at, in milliseconds since 1970: now, or
+// just after the latest time any task joined, should the clock not have moved on or gone back.
+// So two tasks never share a time, and the queue's order is the order they joined.
+export function joinTime(db: Database): number {
+  const latest = z
+    .object({ latest: z.number().nullable() })
+    .parse(db.query("SELECT MAX(queued_since) AS latest FROM tasks").get()).latest;
+  return Math.max(Date.now(), (latest ?? 0) + 1);
+}
+
 // Returns what sc start, the lead or the label's note says of a task that joined the queue.
 export function queuedText(db: Database, thread: Thread): string {
   const { name } = findRepository(db, `${thread.owner}/${thread.repo}`);

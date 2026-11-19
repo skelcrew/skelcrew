@@ -158,8 +158,6 @@ async function startLabeled(
       return null;
     });
     if (thread === null) continue;
-    // The claim's outcome is known now: the task is recorded.
-    forget(task.id);
     // Claimed already, so only assigned.
     assignIssue(db, thread, false);
     // The lead hears first, then the builder starts, or for a task over the repository's

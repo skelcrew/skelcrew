@@ -78,6 +78,7 @@ import {
   claimOwed,
   claimQueued,
   joinsQueue,
+  joinTime,
   leaveQueue,
   queuedText,
 } from "./task-queue.ts";
@@ -571,7 +572,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
           const name = threadName(db, before);
           // Over the limit, it waits its turn in the queue, and comes back then.
           if (joinsQueue(db, before)) {
-            const change = { status: "queued" as const, queued_since: Date.now() };
+            const change = { status: "queued" as const, queued_since: joinTime(db) };
             const short = request.short ? { short: request.short } : {};
             const queued = record(db, before.folder, { ...change, ...short }, "queued");
             assignIssue(db, before, true);

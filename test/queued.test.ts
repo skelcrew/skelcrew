@@ -156,6 +156,17 @@ const endedAt = (folder: string) =>
     logOf(folder).find((line) => line.status !== "working" && line.status !== "queued")?.at ?? "",
   );
 
+// Returns how many claims Skelcrew has saved, whose outcome it doesn't know yet.
+function claimsSaved(): number {
+  const db = new Database(join(data(), "skelcrew.db"));
+  db.run("PRAGMA busy_timeout = 5000");
+  try {
+    return Number(Object.values(Object(db.query("SELECT COUNT(*) FROM claims").get()))[0]);
+  } finally {
+    db.close();
+  }
+}
+
 // Returns what the lead was told, and what still waits to be typed into it: a lead can't start
 // where the tests run inside Skelcrew's own sandbox, and its notes then wait.
 function leadHears(): string {
@@ -258,6 +269,8 @@ test("a labelled issue is claimed once as it joins the queue, after a restart to
     what: () => `${JSON.stringify(statuses())}\n${readFileSync(join(home, "daemon.log"), "utf8")}`,
   });
   expect(statuses()).toEqual(bothQueued);
+  // Their claims were made, so none is left for a restart to take for one cut short.
+  expect(claimsSaved()).toBe(0);
   const claims = () => asked(plugin).filter((q) => q.ask === "took");
   await stopDaemon();
   await serveApp();
@@ -408,4 +421,24 @@ test("a queued task whose issue another machine claimed while its claim failed l
   expect(tasks.find((row: { task: string }) => row.task === "app-12")).toMatchObject({
     stage: "issue",
   });
+}, 60_000);
+
+test("a task joins the queue after every task already in it, though the clock went back", async () => {
+  addApp();
+  // app-13 joined the queue at a time later than now, as before the clock was set back.
+  const later = threadSql({
+    task: "13",
+    title: "Dark mode",
+    status: "queued",
+    queued_since: Date.now() + 60_000,
+  });
+  const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
+openDb().exec(${JSON.stringify(later)});`;
+  Bun.spawnSync([process.execPath, "-e", code], { env: env() });
+  await serveApp();
+  await sc("start", "app-12");
+  // app-13 joined first, so it starts first.
+  await sc("rm", "app-11");
+  await until(() => statuses()["app-12"] === "failed");
+  expect(leftQueue("app-12")[0] ?? 0).toBeGreaterThanOrEqual(endedAt("app-13"));
 }, 60_000);

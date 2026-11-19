@@ -32,7 +32,7 @@ import { claimedNames, claimName, fetchBranch } from "./git.ts";
 import { dropEndNotes, noteForLead, typeLeadNotes } from "./messages.ts";
 import { findRepository, forgeAuthor, forgeKnown, refreshClones } from "./repo.ts";
 import { forgetStatus } from "./status.ts";
-import { joinsQueue } from "./task-queue.ts";
+import { joinsQueue, joinTime } from "./task-queue.ts";
 import {
   builderHarness,
   builderSession,
@@ -318,7 +318,7 @@ async function recordThread(
       agents,
       flow,
       review_post: null,
-      queued_since: queued ? Date.now() : null,
+      queued_since: queued ? joinTime(db) : null,
     };
     // A failed or done thread's row gives way to the new one, and messages that waited for its
     // builder go with it, as they were about the old work. Its task starts afresh too, with no
@@ -366,13 +366,13 @@ async function recordThread(
         thread.queued_since,
       ],
     );
-    // Saved with the thread, so a restart can't start it before its claim is made.
-    if (queued && tracked && !ownTask(task) && !claimed)
-      db.run("INSERT OR IGNORE INTO claims (owner, repo, task) VALUES (?, ?, ?)", [
-        owner,
-        repo,
-        task,
-      ]);
+    // Saved with the thread, so a restart can't start it before its claim is made. A claim the
+    // label's start made is forgotten here, with the thread recorded, so a stop between the two
+    // can't leave it to be taken for one cut short.
+    const claims = [owner, repo, task];
+    if (claimed) db.run("DELETE FROM claims WHERE owner = ? AND repo = ? AND task = ?", claims);
+    else if (queued && tracked && !ownTask(task))
+      db.run("INSERT OR IGNORE INTO claims (owner, repo, task) VALUES (?, ?, ?)", claims);
     log(db, thread);
     return thread;
   })();
