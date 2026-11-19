@@ -10,7 +10,12 @@ import { claudeTokenFile, configDir, dataDir, installDoneFile, setUpFile } from 
 import { addPlugin, askYes, installYourPlugins } from "../plugins/install.ts";
 import { yourPlugins } from "../plugins/lock.ts";
 import { installedPlugins } from "../plugins/plugin.ts";
-import { checkoutNames, installRepositoryPlugins } from "../plugins/repository.ts";
+import {
+  checkoutNames,
+  installRepositoryPlugins,
+  type Need,
+  repositoryNeeds,
+} from "../plugins/repository.ts";
 import { errorText } from "../say.ts";
 import { readSettings } from "../settings.ts";
 import { originHere, parseRemote } from "./origin.ts";
@@ -393,7 +398,18 @@ export function install(from?: string, plain = false): void {
   // your yes with no terminal, leaves plain sc to run this again.
   rmSync(installDoneFile(), { force: true });
   const setUp = firstRun(from);
-  const { changed: plugins, left } = installYourPlugins(from ?? originHere());
+  // What repositories need is read first, so a plugin your lock and a repository pin at different
+  // commits is left as it is on both sides. A repository whose files can't be read stops only its
+  // own part, after your plugins, as it isn't yours.
+  let needs: Need[] = [];
+  let unreadable: unknown = null;
+  try {
+    needs = repositoryNeeds();
+  } catch (error) {
+    unreadable = error;
+  }
+  const conflicting = needs.filter((need) => need.conflict !== null).map((need) => need.source);
+  const { changed: plugins, left } = installYourPlugins(from ?? originHere(), conflicting);
   // A plugin still missing keeps the mark away, even from a machine that had it, such as after
   // you named a new plugin and said no to it, so plain sc asks again.
   if (left.length > 0)
@@ -405,7 +421,8 @@ export function install(from?: string, plain = false): void {
     writeFileSync(setUpFile(), "");
     writeFileSync(installDoneFile(), "");
   }
-  const repositories = installRepositoryPlugins();
+  if (unreadable !== null) throw unreadable;
+  const repositories = installRepositoryPlugins(needs);
   if (left.length > 0) return;
   if (!finished && (setUp || plugins || repositories.changed)) console.log("\nSkelcrew is set up.");
   // Plain sc on a machine set up by an older release takes the marks without a word.

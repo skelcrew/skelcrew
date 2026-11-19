@@ -1806,17 +1806,51 @@ test("sc install leaves a plugin your lock and a repository pin at different com
   // The repository pins the tag after it moved.
   publishFake("0.1.0");
   const theirs = fakeCommit("0.1.0");
-  repositoryLocksFake(join(home, ".local", "share", "skelcrew", "repos", "simon", "app"), "0.1.0");
-  const run = await install("y\n");
-  expect(run.err).toBe("");
-  expect(run.out).toContain(
-    `simon/skelcrew-fake is pinned at 0.1.0 at commit ${yours.slice(0, 12)} by your lock, 0.1.0 at commit ${theirs.slice(0, 12)} by app. A machine holds one version of a plugin, so Skelcrew left it as it is. Pin the same version in each.`,
-  );
+  const clone = join(home, ".local", "share", "skelcrew", "repos", "simon", "app");
+  repositoryLocksFake(clone, "0.1.0");
+  const said = `simon/skelcrew-fake is pinned at 0.1.0 at commit ${yours.slice(0, 12)} by your lock, 0.1.0 at commit ${theirs.slice(0, 12)} by app. A machine holds one version of a plugin, so Skelcrew left it as it is. Pin the same version in each.`;
+  // On a machine without it, neither side is installed.
+  const fresh = await install("y\n");
+  expect(fresh.err).toBe("");
+  expect(fresh.out).toContain(said);
+  expect(fresh.out).not.toContain("Install it?");
+  expect(existsSync(fakeFolder())).toBe(false);
+  // Installed at the repository's pin, your lock doesn't move it either.
+  repositoryLocksFake(clone, "0.1.0", yours);
+  await install("y\n");
   expect(git(fakeFolder(), "rev-parse", "HEAD")).toBe(yours);
-  const again = await install();
+  repositoryLocksFake(clone, "0.1.0", theirs);
+  const again = await install("y\n");
+  expect(again.out).toContain(said);
   expect(again.out).not.toContain("Update it?");
   expect(again.out).not.toContain("Nothing to install");
   expect(git(fakeFolder(), "rev-parse", "HEAD")).toBe(yours);
+});
+
+// The lock says which plugin a repository gets, so one by another name is never taken for it.
+test("sc install refuses a plugin whose manifest names it otherwise than the repository's lock", async () => {
+  noGitHubPlugin();
+  fakeGitHub();
+  publishFake("0.1.0");
+  await skel("1\nsk-ant-oat01-good\n");
+  const app = checkoutWith("app", "git@example.com:simon/app.git");
+  repositoryLocksFake(app, "0.1.0");
+  const lockText = () => readFileSync(join(app, "skelcrew.lock"), "utf8");
+  writeFileSync(join(app, "skelcrew.lock"), lockText().replace("name: fake", "name: other"));
+  const said =
+    "the lock pins other, and the plugin there is fake, so Skelcrew won't take one for the other";
+  const fresh = await atTerminal("y\n", app, ["install"]);
+  expect(fresh.code).toBe(1);
+  expect(fresh.err).toContain(said);
+  expect(fresh.out).not.toContain("Install it?");
+  expect(existsSync(fakeFolder())).toBe(false);
+  // Installed already at the pinned commit, it still isn't the plugin the lock names.
+  writeFileSync(join(app, "skelcrew.lock"), lockText().replace("name: other", "name: fake"));
+  await atTerminal("y\n", app, ["install"]);
+  writeFileSync(join(app, "skelcrew.lock"), lockText().replace("name: fake", "name: other"));
+  const installed = await atTerminal("", app, ["install"]);
+  expect(installed.code).toBe(1);
+  expect(installed.err).toContain(said);
 });
 
 // A folder plugin has no pin, so a repository naming a path could pick code of its own to run.

@@ -96,8 +96,10 @@ export function setLocked(db: Database, source: string, locked: Locked | null): 
   settleYourLock(db);
   const file = lockFile();
   const document = parseDocument(readFileSync(file, "utf8"));
-  if (locked === null) document.delete(source);
-  else document.set(source, locked);
+  // A lock with only its first line holds nothing YAML can delete from, so it is checked first.
+  if (locked === null) {
+    if (document.has(source)) document.delete(source);
+  } else document.set(source, locked);
   // With no line width, a long line you wrote, such as a pin on one line, isn't folded.
   writeFileSync(file, document.toString({ lineWidth: 0 }));
 }

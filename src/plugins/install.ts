@@ -329,7 +329,8 @@ function refuseInstalled(db: Database, name: string): void {
 // setup a server takes. `tag` picks the version, such as v0.1.0, in place of the newest, and
 // `commit` the exact commit to fetch. `pin` is false when the commit came from your lock, which
 // sc install leaves as it is, and `name` true to add the plugin to plugins: in your config.yaml.
-// `io` is true for a repository's plugin, which must be an I/O plugin.
+// `io` is true for a repository's plugin, which must be an I/O plugin, and `called` the name a
+// repository's lock gives it, which its manifest must give too.
 type Options = {
   remote?: string | null;
   ask?: boolean;
@@ -338,7 +339,17 @@ type Options = {
   pin?: boolean;
   name?: boolean;
   io?: boolean;
+  called?: string;
 };
+
+// Throws when the plugin's manifest names it otherwise than the lock that pins it, `called`, before
+// anything of it runs. The lock says which plugin you get, so another one is never taken for it.
+export function refuseOtherName(manifest: Manifest, called: string | undefined): void {
+  if (called !== undefined && manifest.name !== called)
+    throw new Error(
+      `the lock pins ${called}, and the plugin there is ${manifest.name}, so Skelcrew won't take one for the other`,
+    );
+}
 
 // Throws when `io` is true and the plugin is a runtime plugin, before anything of it runs. How you
 // run and watch your agents is yours, so only you add a runtime plugin, and a repository's files
@@ -356,7 +367,7 @@ export function refuseRuntime(manifest: Manifest, io: boolean | undefined): void
 // and setup, and writes your files as `pin` and `name` say, before the plugin counts as
 // installed. A write that fails leaves the files as they were and the plugin not installed.
 export function installPlugin(given: string, options: Options = {}): boolean {
-  const { ask = true, tag, commit, pin = true, name = false, io } = options;
+  const { ask = true, tag, commit, pin = true, name = false, io, called } = options;
   const remote = options.remote === undefined ? originHere() : options.remote;
   const db = openDb();
   const isPath = given.startsWith(".") || given.startsWith("/");
@@ -393,6 +404,7 @@ export function installPlugin(given: string, options: Options = {}): boolean {
     refuseInstalled(db, manifest.name);
     checkSkelcrewVersion(manifest);
     refuseRuntime(manifest, io);
+    refuseOtherName(manifest, called);
     const answer = ask ? confirmPlugin(manifest, given, "Install") : true;
     if (answer === null) throw unanswered(`installing ${manifest.name}`);
     if (!answer) {
@@ -443,7 +455,7 @@ export const lockedAs = (manifest: Manifest, commit: string): Locked => ({
 // showing what it runs and asking, as installing does. Its old version's folder goes, and your
 // lock pins the new one, unless `pin` is false.
 export function updatePlugin(db: Database, plugin: Plugin, options: Options = {}): void {
-  const { ask = true, tag: wanted, commit, pin = true, io } = options;
+  const { ask = true, tag: wanted, commit, pin = true, io, called } = options;
   const remote = options.remote === undefined ? originHere() : options.remote;
   const { name, folder, source } = plugin;
   const current = readManifest(folder);
@@ -484,6 +496,7 @@ export function updatePlugin(db: Database, plugin: Plugin, options: Options = {}
       throw new Error(`${source} now names its plugin ${manifest.name}, not ${name}`);
     checkSkelcrewVersion(manifest);
     refuseRuntime(manifest, io);
+    refuseOtherName(manifest, called);
     const answer = ask ? confirmPlugin(manifest, source, "Update") : true;
     if (answer === null) throw unanswered(`updating ${name}`);
     if (!answer) {
@@ -640,13 +653,19 @@ export function matchesLock(plugin: Plugin, locked: Locked): boolean {
 // names that the lock lacks gets a pin added, as npm install does: at what is installed here, or
 // else at its newest version tag once you say yes. Returns whether there was anything to do, and
 // the plugins still missing or at another version than locked, as you said no to them.
-// `remote` is handed to each setup.
-export function installYourPlugins(remote: string | null): { changed: boolean; left: string[] } {
+// `remote` is handed to each setup. `conflicting` are the plugins a repository pins at another
+// commit than your lock: each is left as it is, neither installed nor moved, and the repository's
+// install says why.
+export function installYourPlugins(
+  remote: string | null,
+  conflicting: string[] = [],
+): { changed: boolean; left: string[] } {
   const db = openDb();
   const lock = yourLock(db);
   let changed = false;
+  const mine = yourPlugins().filter((source) => !conflicting.includes(source));
   eachAsked(
-    yourPlugins(),
+    mine,
     (source) => source,
     (source) => {
       const locked = lock[source];
@@ -669,7 +688,7 @@ export function installYourPlugins(remote: string | null): { changed: boolean; l
   );
   // Read again, as an install added its pin.
   const now = yourLock(db);
-  const left = yourPlugins().filter((source) => {
+  const left = mine.filter((source) => {
     const here = installedPlugins(db).find((plugin) => plugin.source === source);
     const locked = now[source];
     return !here || (locked !== undefined && !matchesLock(here, locked));

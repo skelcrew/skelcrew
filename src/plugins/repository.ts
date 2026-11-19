@@ -14,7 +14,9 @@ import {
   installPlugin,
   lockedAs,
   matchesLock,
+  refuseOtherName,
   refuseRuntime,
+  removePlugin,
   updatePlugin,
 } from "./install.ts";
 import {
@@ -113,16 +115,28 @@ export function addRepositoryPlugin(given: string): boolean {
   settleYourLock(db);
   const installed = () => installedPlugins(db).find((plugin) => plugin.source === given);
   // The repository's plugin goes into its own files, never into your lock.
-  if (!installed() && !installPlugin(given, { remote: originHere(top), pin: false, io: true }))
+  const fresh = !installed();
+  if (fresh && !installPlugin(given, { remote: originHere(top), pin: false, io: true }))
     return false;
   const plugin = installed();
   if (!plugin) throw new Error(`${given} isn't installed after all`);
   const manifest = readManifest(plugin.folder);
   refuseRuntime(manifest, true);
-  writeBoth(
-    () => nameAndPin(top, given, lockedAs(manifest, commitOf(plugin.folder))),
-    [join(top, "skelcrew.yaml"), join(top, "skelcrew.lock")],
-  );
+  try {
+    writeBoth(
+      () => nameAndPin(top, given, lockedAs(manifest, commitOf(plugin.folder))),
+      [join(top, "skelcrew.yaml"), join(top, "skelcrew.lock")],
+    );
+  } catch (error) {
+    // The files and the machine change together: a plugin this add installed goes again, with
+    // its settings and tokens. Its removal failing says nothing of why the add failed, so the
+    // add's own error is the one shown.
+    if (fresh)
+      try {
+        removePlugin(manifest.name);
+      } catch {}
+    throw error;
+  }
   console.log(
     `Added ${manifest.name} ${manifest.version} to skelcrew.yaml and skelcrew.lock. They count once you commit and push them.`,
   );
@@ -185,15 +199,15 @@ export function repositoryNeeds(): Need[] {
   });
 }
 
-// Installs the plugins repositories need, for sc install, at the version and commit each one's
-// skelcrew.lock pins. A plugin new here, or at another version or commit, is shown and asked
+// Installs the plugins repositories need, as repositoryNeeds gave them, for sc install, at the
+// version and commit each one's skelcrew.lock pins. A plugin new here, or at another version or commit, is shown and asked
 // about. One already at its pin asks nothing. One with no pin isn't installed, as only sc add
 // writes into a repository, and nor is one pinned at two commits, which no machine can match.
-// Your lock is left alone, as these plugins aren't yours. Returns whether there was anything to
-// do, and whether any plugin is still missing. A missing one never takes the machine's set-up
+// Nor is one whose manifest names another plugin than the lock does. Your lock is left alone, as
+// these plugins aren't yours. Returns whether there was anything to do, and whether any plugin is
+// still missing. A missing one never takes the machine's set-up
 // mark, as it is the repository's, not yours.
-export function installRepositoryPlugins(): { changed: boolean; missing: boolean } {
-  const needs = repositoryNeeds();
+export function installRepositoryPlugins(needs: Need[]): { changed: boolean; missing: boolean } {
   if (needs.length === 0) return { changed: false, missing: false };
   const db = openDb();
   settleYourLock(db);
@@ -219,11 +233,16 @@ export function installRepositoryPlugins(): { changed: boolean; missing: boolean
         return;
       }
       const here = installedPlugins(db).find((plugin) => plugin.source === source);
-      // One installed as yours may be a runtime plugin, which a repository can't name.
-      if (here) refuseRuntime(readManifest(here.folder), true);
+      // One installed as yours may be a runtime plugin, which a repository can't name, or
+      // another plugin than the lock names.
+      if (here) {
+        refuseRuntime(readManifest(here.folder), true);
+        refuseOtherName(readManifest(here.folder), locked.name);
+      }
       if (here && matchesLock(here, locked)) return;
       changed = true;
       const pinned = {
+        called: locked.name,
         tag: `v${locked.version}`,
         commit: locked.commit,
         remote,

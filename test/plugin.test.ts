@@ -1120,3 +1120,27 @@ test("a repository can't name a runtime plugin", async () => {
   );
   expect(existsSync(join(app, "skelcrew.lock"))).toBe(false);
 });
+
+// The files and the machine change together, so an add whose files can't be written takes back
+// the plugin it installed.
+test("sc add without -g removes the plugin it installed when the repository's files can't be written", async () => {
+  publish("skelcrew/skelcrew-fake", "0.1.0");
+  const app = appCheckout();
+  // skelcrew.yaml can be written, and the folder can't take a new skelcrew.lock.
+  chmodSync(app, 0o555);
+  try {
+    const run = await skel(["add", "skelcrew/skelcrew-fake"], "y\n", "", {}, app);
+    expect(run.code).not.toBe(0);
+    expect(run.out).toContain("Installed fake 0.1.0.");
+    expect(run.err).toContain("skelcrew.lock");
+  } finally {
+    chmodSync(app, 0o755);
+  }
+  expect(readFileSync(join(app, "skelcrew.yaml"), "utf8")).toBe(
+    "# Shared.\nsetup: [bun install]\n",
+  );
+  expect(existsSync(join(app, "skelcrew.lock"))).toBe(false);
+  expect(existsSync(join(plugins(), "fake"))).toBe(false);
+  expect(existsSync(settings("fake"))).toBe(false);
+  expect((await skel(["plugins"])).out).toBe("No plugins installed.\n");
+});
