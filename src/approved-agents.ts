@@ -1,7 +1,16 @@
 // Trust for a repository's .agents/: the version of it you approved, for each repository, and
 // reading its files. Its role instructions decide what agents are told, so only a version you
 // approved ever steers them, and a change to it waits until you approve that too.
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse, stringify } from "yaml";
 import { z } from "zod";
@@ -75,6 +84,61 @@ export function approveAgents(place: Place, tree: string | null): void {
     throw new Error(`Skelcrew's clone of ${place.owner}/${place.repo} has no tree ${tree}`);
   writeApprovals({ ...readApprovals(), [`${place.owner}/${place.repo}`]: tree ?? "none" });
   markApproved(place);
+}
+
+// Returns the git tree of the .agents/ folder that committing in the checkout at `checkout` would
+// bring, for sc init, so it can be approved or asked about before it reaches the default branch,
+// or null when it holds no file. That is what the checkout has staged, as a commit takes it, and
+// every new file, as sc init asks you to commit the files it wrote, even where a .gitignore rule
+// matches them. It is read through a copy of the checkout's index, so the index
+// itself never changes, and the tree and its files are then copied into Skelcrew's clone, which
+// approving needs. Throws when git can't read them.
+export function checkoutAgents(place: Place, checkout: string): string | null {
+  const folder = mkdtempSync(join(tmpdir(), "skelcrew-agents-"));
+  const index = join(folder, "index");
+  // Runs git in `repo`, the checkout unless named, on the copy of its index, with `stdin` if
+  // given, and returns what it printed. Throws, naming what failed, when git does.
+  const git = (args: string[], given: { repo?: string; stdin?: Uint8Array | string } = {}) => {
+    const run = Bun.spawnSync(["git", "-C", given.repo ?? checkout, ...args], {
+      env: { ...process.env, GIT_INDEX_FILE: index },
+      ...(given.stdin === undefined ? {} : { stdin: new Blob([given.stdin]) }),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    if (!run.success)
+      throw new Error(
+        `Skelcrew couldn't read ${checkout}'s .agents/: ${run.stderr.toString().trim()}`,
+      );
+    return run.stdout;
+  };
+  try {
+    // Start from what the checkout has staged. A checkout with nothing staged yet has no index.
+    const staged = Bun.spawnSync(
+      ["git", "-C", checkout, "rev-parse", "--path-format=absolute", "--git-path", "index"],
+      { stdout: "pipe", stderr: "pipe" },
+    )
+      .stdout.toString()
+      .trim();
+    if (staged && existsSync(staged)) copyFileSync(staged, index);
+    // Add every new file, ignored ones too, given on stdin, as there can be more than a command
+    // line holds.
+    const untracked = Bun.spawnSync(
+      ["git", "-C", checkout, "ls-files", "-z", "--others", "--", ".agents"],
+      { stdout: "pipe", stderr: "pipe" },
+    ).stdout.toString();
+    if (untracked)
+      git(["add", "-f", "--pathspec-from-file=-", "--pathspec-file-nul"], { stdin: untracked });
+    if (git(["ls-files", "-z", "--", ".agents"]).length === 0) return null;
+    const tree = git(["write-tree", "--prefix=.agents/"]).toString().trim();
+    // Copy the tree and its files into Skelcrew's clone, as a pack, which unpack-objects takes
+    // in one go.
+    const objects = git(["rev-list", "--objects", tree]);
+    const pack = git(["pack-objects", "-q", "--stdout"], { stdin: objects });
+    git(["unpack-objects", "-q"], { repo: cloneDir(place.owner, place.repo), stdin: pack });
+    return tree;
+  } finally {
+    rmSync(folder, { recursive: true, force: true });
+  }
 }
 
 // The ref in Skelcrew's clone at the .agents/ you approved, where the lead reads the flows it
@@ -174,13 +238,17 @@ export function agentsFolder(place: Place, tree: string, folder: string): string
 }
 
 // Shows what the repository's .agents/ on its default branch holds, or what changed in it since
-// the version you approved, and asks whether to approve it. A yes approves it. A no keeps what
+// the version you approved, and asks whether to approve it. sc init passes `current`, the tree of
+// the .agents/ in your checkout, to ask about that one instead. A yes approves it. A no keeps what
 // you approved, or the built-in roles, and is saved, so plain sc doesn't ask again. With no
 // answer, such as Ctrl-D, nothing is saved. Runs only in your own terminal, as a yes from an
 // agent could approve anything. `name` is the repository's name in Skelcrew, for sc repo trust.
-export function askAboutAgents(place: Place, name: string): void {
+export function askAboutAgents(
+  place: Place,
+  name: string,
+  current = agentsOnDefaultBranch(place),
+): void {
   const fullName = `${place.owner}/${place.repo}`;
-  const current = agentsOnDefaultBranch(place);
   const before = approvedAgents(place);
   // Said only when there is something you approved or could approve.
   if (current === before) {
