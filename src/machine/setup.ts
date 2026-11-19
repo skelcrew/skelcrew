@@ -10,6 +10,7 @@ import { claudeTokenFile, configDir, dataDir, installDoneFile, setUpFile } from 
 import { addPlugin, askYes, installYourPlugins } from "../plugins/install.ts";
 import { yourPlugins } from "../plugins/lock.ts";
 import { installedPlugins } from "../plugins/plugin.ts";
+import { checkoutNames, installRepositoryPlugins } from "../plugins/repository.ts";
 import { errorText } from "../say.ts";
 import { readSettings } from "../settings.ts";
 import { originHere, parseRemote } from "./origin.ts";
@@ -216,14 +217,14 @@ const githubPlugin = "skelcrew/skelcrew-github";
 const hasGitHubPlugin = () => installedPlugins(openDb()).some((p) => p.name === "github");
 
 // Returns the repository to offer the GitHub plugin for, as owner/name, or null for none: a
-// remote that isn't on github.com, a machine with the plugin, files of yours that name it already,
-// or a repository you said no for. Files that name it leave it to sc install, at the version your
-// lock pins, which the offer's newest version would replace. Only files are read, with no call
-// to GitHub, as plain sc must start fast.
+// remote that isn't on github.com, a machine with the plugin, files of yours or of the checkout you
+// are in that name it already, or a repository you said no for. Files that name it leave it to sc
+// install, at the version their lock pins, which the offer's newest version would replace. Only
+// files are read, with no call to GitHub, as plain sc must start fast.
 function gitHubToOffer(remote: string | null): string | null {
   const found = remote === null ? null : parseRemote(remote);
   if (found?.host !== "github.com" || hasGitHubPlugin()) return null;
-  if (yourPlugins().includes(githubPlugin)) return null;
+  if (yourPlugins().includes(githubPlugin) || checkoutNames(githubPlugin)) return null;
   const repository = `${found.owner}/${found.repo}`;
   // GitHub's names ignore case, so a no for Simon/App covers simon/app.
   const declined = readSettings(["declined"]).declined.map((name) => name.toLowerCase());
@@ -379,16 +380,17 @@ export function firstRun(from?: string): boolean {
 }
 
 // Makes this machine match your files, for sc install: the first run's steps, then your personal
-// plugins at the versions your lock pins, each new or changed one after asking. Safe to run
-// again: with nothing to do, it says so. `from` is as for the first run. The machine is marked
-// set up only once your plugins are in, and loses the mark while one is missing, so after a plugin
-// that failed to install, or one you said no to, plain sc runs all of this again. A machine set up
-// by an older release gets the marks here too. `plain` is set when plain sc runs this, which says
-// nothing when there was nothing to do.
+// plugins at the versions your lock pins, then the plugins repositories name at the versions their
+// skelcrew.lock pins, each new or changed one after asking. Safe to run again: with nothing to do,
+// it says so. `from` is as for the first run. The machine is marked set up only once your plugins
+// are in, and loses the mark while one is missing, so after a plugin that failed to install, or
+// one you said no to, plain sc runs all of this again. A repository's plugin never takes the mark,
+// as it is the repository's, not yours. A machine set up by an older release gets the marks here
+// too. `plain` is set when plain sc runs this, which says nothing when there was nothing to do.
 export function install(from?: string, plain = false): void {
   const finished = installFinished();
-  // The mark goes until this ends with every plugin in, so a failure on the way, such as a plugin
-  // that needs your yes with no terminal, leaves plain sc to run this again.
+  // The mark goes until your plugins are in, so a failure on the way, such as a plugin that needs
+  // your yes with no terminal, leaves plain sc to run this again.
   rmSync(installDoneFile(), { force: true });
   const setUp = firstRun(from);
   const { changed: plugins, left } = installYourPlugins(from ?? originHere());
@@ -402,11 +404,13 @@ export function install(from?: string, plain = false): void {
     mkdirSync(dataDir(), { recursive: true });
     writeFileSync(setUpFile(), "");
     writeFileSync(installDoneFile(), "");
-    if (!finished && (setUp || plugins)) console.log("\nSkelcrew is set up.");
-    // Plain sc on a machine set up by an older release takes the marks without a word.
-    else if (!plain && !setUp && !plugins)
-      console.log("Nothing to install: this machine has everything your files ask for.");
   }
+  const repositories = installRepositoryPlugins();
+  if (left.length > 0) return;
+  if (!finished && (setUp || plugins || repositories.changed)) console.log("\nSkelcrew is set up.");
+  // Plain sc on a machine set up by an older release takes the marks without a word.
+  else if (!plain && !setUp && !plugins && !repositories.changed && !repositories.missing)
+    console.log("Nothing to install: this machine has everything your files ask for.");
 }
 
 // Reports whether sc install ran to its end here, which plain sc checks to know whether to run it

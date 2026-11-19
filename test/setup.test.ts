@@ -1672,3 +1672,124 @@ test("sc install leaves every pin as it is and adds a pin for a plugin your lock
   });
   expect((await install()).out).toContain("Nothing to install");
 });
+
+// Writes a repository's skelcrew.yaml naming the fake plugin and its skelcrew.lock pinning it at
+// this version, into `folder`: your checkout of it, or Skelcrew's clone.
+function repositoryLocksFake(folder: string, version: string, commit = fakeCommit(version)): void {
+  mkdirSync(folder, { recursive: true });
+  writeFileSync(join(folder, "skelcrew.yaml"), "plugins: [simon/skelcrew-fake]\n");
+  writeFileSync(
+    join(folder, "skelcrew.lock"),
+    `simon/skelcrew-fake: { name: fake, version: ${version}, commit: ${commit} }\n`,
+  );
+}
+
+const fakeFolder = () => join(home, ".local", "share", "skelcrew", "plugins", "fake", "0.1.0");
+
+test("sc install in a checkout installs the plugins its skelcrew.lock pins after asking, and asks nothing the second time", async () => {
+  noGitHubPlugin();
+  fakeGitHub();
+  publishFake("0.1.0", "0.2.0");
+  await skel("1\nsk-ant-oat01-good\n");
+  const app = checkoutWith("app", "git@example.com:simon/app.git");
+  const locked = fakeCommit("0.1.0");
+  // The tag moves on after the repository pinned it.
+  publishFake("0.1.0");
+  repositoryLocksFake(app, "0.1.0", locked);
+  writeFileSync(join(home, "calls"), "");
+  const first = await atTerminal("y\n", app, ["install"]);
+  expect(first.err).toBe("");
+  expect(first.out).toContain("fake 0.1.0 from simon/skelcrew-fake is an I/O plugin");
+  expect(first.out).toContain("Installed fake 0.1.0.");
+  expect(calls()).toBe("fake setup 0.1.0\n");
+  expect(git(fakeFolder(), "rev-parse", "HEAD")).toBe(locked);
+  // Nothing is written into the checkout, and the plugin isn't yours.
+  expect(git(app, "status", "--porcelain")).toBe("?? skelcrew.lock\n?? skelcrew.yaml");
+  expect(readFileSync(join(app, "skelcrew.lock"), "utf8")).toContain(locked);
+  expect(readFileSync(config(), "utf8")).not.toContain("plugins");
+  expect(existsSync(lock()) ? readFileSync(lock(), "utf8") : "").not.toContain("fake");
+  writeFileSync(join(home, "calls"), "");
+  const second = await atTerminal("", app, ["install"]);
+  expect(second.err).toBe("");
+  expect(second.out).toBe("Nothing to install: this machine has everything your files ask for.\n");
+  expect(calls()).toBe("");
+  // Your own plugins and lock never take it in, even read later on a machine with no lock.
+  await atTerminal("", home, ["plugins"]);
+  expect(readFileSync(config(), "utf8")).not.toContain("plugins");
+});
+
+test("sc install outside a checkout installs the plugins of every repository Skelcrew has, from its clone", async () => {
+  noGitHubPlugin();
+  fakeGitHub();
+  publishFake("0.1.0");
+  await skel("1\nsk-ant-oat01-good\n");
+  repositoryLocksFake(join(home, ".local", "share", "skelcrew", "repos", "simon", "app"), "0.1.0");
+  const run = await install("y\n");
+  expect(run.err).toBe("");
+  expect(run.out).toContain("Installed fake 0.1.0.");
+  expect((await install()).out).toContain("Nothing to install");
+});
+
+test("a changed commit in a repository's skelcrew.lock asks again", async () => {
+  noGitHubPlugin();
+  fakeGitHub();
+  publishFake("0.1.0");
+  await skel("1\nsk-ant-oat01-good\n");
+  const app = checkoutWith("app", "git@example.com:simon/app.git");
+  repositoryLocksFake(app, "0.1.0");
+  await atTerminal("y\n", app, ["install"]);
+  publishFake("0.1.0");
+  repositoryLocksFake(app, "0.1.0");
+  writeFileSync(join(home, "calls"), "");
+  const moved = await atTerminal("y\n", app, ["install"]);
+  expect(moved.err).toBe("");
+  expect(moved.out).toContain("Update it? [Y/n]");
+  expect(calls()).toBe("fake setup 0.1.0\n");
+  expect((await atTerminal("", app, ["install"])).out).toContain("Nothing to install");
+});
+
+test("sc install leaves out a plugin a repository names without a pin, and one you say no to, keeping the machine set up", async () => {
+  noGitHubPlugin();
+  fakeGitHub();
+  publishFake("0.1.0");
+  await skel("1\nsk-ant-oat01-good\n");
+  const app = checkoutWith("app", "git@example.com:simon/app.git");
+  writeFileSync(join(app, "skelcrew.yaml"), "plugins: [simon/skelcrew-fake]\n");
+  const unpinned = await atTerminal("y\n", app, ["install"]);
+  expect(unpinned.err).toBe("");
+  expect(unpinned.out).toContain(
+    "This checkout's skelcrew.yaml names simon/skelcrew-fake, which its skelcrew.lock doesn't pin, so Skelcrew didn't install it. sc add simon/skelcrew-fake pins it.",
+  );
+  expect(unpinned.out).not.toContain("Nothing to install");
+  expect(existsSync(fakeFolder())).toBe(false);
+  repositoryLocksFake(app, "0.1.0");
+  const declined = await atTerminal("n\n", app, ["install"]);
+  expect(declined.out).toContain("Skelcrew didn't install fake.");
+  expect(declined.out).toContain(
+    "This checkout needs simon/skelcrew-fake at the version its skelcrew.lock pins. sc install asks again.",
+  );
+  // The machine stays set up: plain sc asks nothing of what is yours.
+  expect(existsSync(join(home, ".local", "share", "skelcrew", "install-done"))).toBe(true);
+});
+
+test("sc install without a terminal installs none of a repository's plugins", async () => {
+  noGitHubPlugin();
+  fakeGitHub();
+  publishFake("0.1.0");
+  await skel("1\nsk-ant-oat01-good\n");
+  const app = checkoutWith("app", "git@example.com:simon/app.git");
+  repositoryLocksFake(app, "0.1.0");
+  const run = await skel("y\n", bin, main(), app, {}, ["install"]);
+  expect(run.code).toBe(1);
+  expect(run.err).toContain("Skelcrew left out simon/skelcrew-fake, as each runs its commands");
+  expect(existsSync(fakeFolder())).toBe(false);
+});
+
+// The repository's files decide which GitHub plugin it gets, at the version its lock pins.
+test("in a GitHub checkout whose skelcrew.yaml names the GitHub plugin, sc skips the offer", async () => {
+  const site = siteOnGitHub();
+  await skel("1\nsk-ant-oat01-good\n");
+  writeFileSync(join(site, "skelcrew.yaml"), "plugins: [skelcrew/skelcrew-github]\n");
+  const run = await atTerminal("", site);
+  expect(run.out).not.toContain("GitHub detected");
+});

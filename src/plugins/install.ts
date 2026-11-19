@@ -245,7 +245,7 @@ const unanswered = (doing: string) =>
 // Runs `change` for each plugin, and fails at the end naming each one left out for want of a
 // terminal to say yes at, by the name `nameOf` gives. Any other error stops at once, as for a
 // single plugin.
-function eachAsked<T>(
+export function eachAsked<T>(
   plugins: T[],
   nameOf: (plugin: T) => string,
   change: (plugin: T) => void,
@@ -418,7 +418,7 @@ export function installPlugin(given: string, options: Options = {}): boolean {
 }
 
 // Returns how the lock pins a plugin at this manifest's version and this commit.
-const lockedAs = (manifest: Manifest, commit: string): Locked => ({
+export const lockedAs = (manifest: Manifest, commit: string): Locked => ({
   name: manifest.name,
   version: manifest.version,
   commit,
@@ -500,16 +500,19 @@ export function updatePlugin(db: Database, plugin: Plugin, options: Options = {}
   }
 }
 
-// Updates the named plugin, or every one, for sc update -g. A plugin your files name that isn't
-// installed here is installed at its newest version instead, after asking, so its lock moves
-// too. `name` is a plugin's name or its owner/repo.
+// Updates the named plugin, or every one of yours, for sc update -g. A plugin your files name
+// that isn't installed here is installed at its newest version instead, after asking, so its lock
+// moves too. `name` is a plugin's name or its owner/repo. A plugin only a repository's files name
+// isn't yours, so it is left at the version that repository's skelcrew.lock pins.
 export function updatePlugins(name?: string): void {
   const db = openDb();
   const lock = yourLock(db);
-  const installed = installedPlugins(db);
-  const missing = yourPlugins().filter(
-    (source) => !installed.some((plugin) => plugin.source === source),
+  const named = yourPlugins();
+  // A plugin from a folder is yours, as no repository can name one.
+  const installed = installedPlugins(db).filter(
+    (plugin) => plugin.source === null || named.includes(plugin.source),
   );
+  const missing = named.filter((source) => !installed.some((plugin) => plugin.source === source));
   const chosen = installed.filter(
     (plugin) => name === undefined || plugin.name === name || plugin.source === name,
   );
@@ -602,7 +605,7 @@ export function removeYourPlugin(given: string): void {
 }
 
 // Returns whether the plugin is installed at exactly the version and commit locked.
-function matchesLock(plugin: Plugin, locked: Locked): boolean {
+export function matchesLock(plugin: Plugin, locked: Locked): boolean {
   return (
     readManifest(plugin.folder).version === locked.version &&
     commitOf(plugin.folder) === locked.commit

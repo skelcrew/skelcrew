@@ -301,9 +301,9 @@ async function repoCommand(args: string[], json: boolean): Promise<void> {
 }
 
 // Runs sc install, sc add, sc remove, sc update, sc setup and sc plugins. -g marks your personal
-// plugins, the only kind there is so far: a repository's own plugins come with skelcrew.lock, so
-// these refuse without it rather than act on your files instead. --json changes only what sc
-// plugins prints.
+// plugins. sc add without it adds a plugin to the repository you are in. sc remove and sc update
+// without it would change a repository's plugins, which they can't yet, so they refuse rather
+// than act on your files instead. --json changes only what sc plugins prints.
 async function pluginCommand(args: string[], json: boolean): Promise<void> {
   const [command, ...rest] = args;
   const { addPlugin, listPlugins, removeYourPlugin, setUpPlugin, updatePlugins } = await import(
@@ -315,9 +315,14 @@ async function pluginCommand(args: string[], json: boolean): Promise<void> {
     const { install } = await import("./machine/setup.ts");
     return install();
   }
-  if ((command === "add" || command === "remove" || command === "update") && !yours)
+  if (command === "add" && name && more.length === 0 && !yours) {
+    const { addRepositoryPlugin } = await import("./plugins/repository.ts");
+    addRepositoryPlugin(name);
+    return;
+  }
+  if ((command === "remove" || command === "update") && !yours)
     throw new Error(
-      `sc ${command} without -g is for a repository's plugins, which Skelcrew doesn't have yet. sc ${command} -g is for your own`,
+      `sc ${command} without -g is for a repository's plugins, which Skelcrew can't ${command} yet. sc ${command} -g is for your own`,
     );
   if (command === "add" && name && more.length === 0) {
     addPlugin(name);
