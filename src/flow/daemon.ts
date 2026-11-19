@@ -8,11 +8,13 @@ import { dirname } from "node:path";
 import { z } from "zod";
 import {
   agentRuns,
+  exitedCleanly,
   interruptSession,
   processTree,
   readSession,
   stillRunning,
 } from "../agents/sessions.ts";
+import { mustTmux } from "../agents/tmux.ts";
 import { checkFlow, leadMayArmMerges, repositoryCommands } from "../config.ts";
 import { finishUpgrade, moveToTasks, moveTurnEnded, openDb, type Repository } from "../db.ts";
 import { flowRoles } from "../flows.ts";
@@ -519,27 +521,28 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
           throw new Error(
             `${request.to} isn't in Skelcrew. Ask the human to add it in their own terminal, with sc repo add <owner/repo>.`,
           );
-        briefLead(db, sessions, caller, to, request.text, request.asked);
         // The lead is brought back if you closed its tab by exiting it, or started if it never
-        // ran, as opening the repository does, so the brief reaches it. A lead you exited this
-        // second is closed first: left running, it would be kept, then closed by the daemon's
-        // next look, with the brief still waiting. A repository never opened gets its first
-        // time, or its lead would have no tab and not come back after a restart. One opened
-        // before keeps its time, so plain sc still opens the one you opened last. Starting the
-        // lead isn't waited on, as an agent's command answers at once. Its notes wait until it
-        // runs, then go in.
-        const reopen = async () => {
-          await closeExitedLeads(db, sessions);
+        // ran, as opening the repository does, so the brief reaches it. Saving the brief and
+        // opening the tab are one change, so a daemon that stops right after still brings the
+        // lead back at its start, and types the brief in. A repository never opened gets its
+        // first time, or its lead would have no tab. One opened before keeps its time, so plain
+        // sc still opens the one you opened last.
+        db.transaction(() => {
+          briefLead(db, sessions, caller, to, request.text, request.asked);
           db.run(
             "UPDATE repositories SET opened = COALESCE(opened, ?), tab_closed = 0 WHERE owner = ? AND repo = ?",
             [Date.now(), to.owner, to.repo],
           );
-          await ensureLead(to);
-          typeLeadNotes(db, sessions);
-        };
-        reopen().catch((error) =>
-          console.log(`couldn't start ${to.name}'s lead: ${errorText(error)}`),
-        );
+        })();
+        // A lead you exited this second leaves its ended session behind, which would be kept,
+        // and the daemon's next look would close its tab again with the brief still waiting. So
+        // it is ended now, before anything else runs, as tmux answers at once. Starting the lead
+        // isn't waited on, as an agent's command answers at once. Its notes go in once it runs.
+        const { name } = leadOf(db, to.owner, to.repo);
+        if (exitedCleanly(sessions, name)) mustTmux(sessions, ["kill-session", "-t", `=${name}`]);
+        ensureLead(to)
+          .then(() => typeLeadNotes(db, sessions))
+          .catch((error) => console.log(`couldn't start ${to.name}'s lead: ${errorText(error)}`));
         return { briefed: to.name };
       }
       case "submit": {

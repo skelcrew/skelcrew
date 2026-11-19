@@ -514,9 +514,11 @@ export function messageLead(db: Database, sessions: string, from: Caller, text: 
 // it, as an urgent note. It is wrapped as from the sending lead, such as app:lead, with the
 // command that answers it, so the other lead takes it for another agent's report, never for the
 // human's say-so. `asked` is the human's own words, which the sending lead gave with
-// --asked-file. They go in with the brief, and the tag says asked="yes", which only Skelcrew can
-// write, as the text can't hold a tag of its own. Only then may the other lead start work on
-// it. Only a lead may brief, and never its own repository, which it plans itself.
+// --asked-file. Only then may the other lead start work on it, for exactly what those words
+// ask, so they go in unchanged, with the tag saying asked="yes", which only Skelcrew can write.
+// Words holding a <skelcrew tag would end Skelcrew's own early, and removing it would change
+// them, so they are refused instead. Only a lead may brief, and never its own repository, which
+// it plans itself.
 export function briefLead(
   db: Database,
   sessions: string,
@@ -530,14 +532,19 @@ export function briefLead(
   const { owner, repo } = from.lead;
   if (owner === to.owner && repo === to.repo)
     throw new Error(`${to.name} is your own repository: brief its threads with sc tell instead.`);
+  if (asked !== undefined && untagged(asked) !== asked)
+    throw new Error(
+      "The human's words hold a <skelcrew> tag, which can't go in a brief unchanged. Send the brief without --asked-file, and the other lead asks its human.",
+    );
   const sender = repositories(db).find((r) => r.owner === owner && r.repo === repo);
   const name = sender?.name ?? `${owner}/${repo}`;
   const tag = `<skelcrew from="${name}:lead" reply="sc tell lead ${name}"`;
-  // The human's words come first, apart from the brief, exactly as the sending lead gave them.
+  // The human's words come first, apart from the brief. They are everything between their
+  // heading's line and the blank line before "The brief:", a last line break included.
   const body =
     asked === undefined
       ? untagged(text)
-      : `The human's words, as ${name}'s lead was given them:\n${untagged(asked).trimEnd()}\n\nThe brief:\n${untagged(text)}`;
+      : `The human's words, exactly as ${name}'s lead was given them:\n${asked}\n\nThe brief:\n${untagged(text)}`;
   const message = `${tag}${asked === undefined ? "" : ' asked="yes"'}>\n${body}\n</skelcrew>`;
   noteForLead(db, sessions, to, message, null, true);
 }

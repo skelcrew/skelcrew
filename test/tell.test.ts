@@ -428,6 +428,39 @@ describe.skipIf(insideSandbox)("sc tell", () => {
     db.close();
   }, 60_000);
 
+  // The brief and the lead's reopened tab are saved together before sc tell answers, so a
+  // daemon that stops right after it still brings the lead back as it starts, and types it in.
+  test("a brief to a lead you exited reaches it though the daemon stops right after", async () => {
+    await startTwoLeads();
+    const name = leadPlaces("simon", "web").name;
+    writeFileSync(join(webLead(), "exit-now"), "");
+    await until(() => {
+      const pane = ["display-message", "-p", "-t", `=${name}:`, "#{pane_dead} #{pane_dead_status}"];
+      return (
+        Bun.spawnSync(["tmux", "-L", socket, ...pane])
+          .stdout.toString()
+          .trim() === "1 0"
+      );
+    });
+    // Brought back before the daemon stops, the lead would still be busy, so the brief waits.
+    writeFileSync(join(webLead(), "busy"), "");
+    expect((await skel(["tell", "lead", "web", "Rename the button."], "lead")).err).toBe("");
+    for (const daemon of running.splice(0)) {
+      daemon.kill("SIGKILL");
+      await daemon.exited;
+    }
+    const db = new Database(join(data(), "skelcrew.db"));
+    db.run("PRAGMA busy_timeout = 5000");
+    expect(db.query("SELECT tab_closed FROM repositories WHERE repo = 'web'").get()).toEqual({
+      tab_closed: 0,
+    });
+    expect(db.query("SELECT COUNT(*) AS n FROM notes WHERE repo = 'web'").get()).toEqual({ n: 1 });
+    db.close();
+    serve();
+    rmSync(join(webLead(), "busy"));
+    await until(() => typed(webLead()).includes("Rename the button."), 30_000);
+  }, 60_000);
+
   // A repository you never opened has no lead yet. The brief starts it, and gives it a tab, so
   // it comes back after a restart like any other.
   test("a brief to a repository whose lead never ran starts it, with a tab", async () => {
@@ -487,7 +520,7 @@ describe.skipIf(insideSandbox)("sc tell", () => {
     expect(told.err).toBe("");
     await until(() => read(join(webLead(), "acted")).split("\n").length > 2, 30_000);
     expect(typed(webLead())).toContain(
-      `<skelcrew from="app:lead" reply="sc tell lead app" asked="yes">\nThe human's words, as app's lead was given them:\nHave web's lead add the CSV export.\nKeep it small.\n\nThe brief:\nAdd a CSV export to the reports page.`,
+      `<skelcrew from="app:lead" reply="sc tell lead app" asked="yes">\nThe human's words, exactly as app's lead was given them:\nHave web's lead add the CSV export.\nKeep it small.\n\n\nThe brief:\nAdd a CSV export to the reports page.`,
     );
     expect(read(join(webLead(), "acted")).split("\n")[1]).toContain("web-");
     const threads: unknown = JSON.parse((await skel(["ps", "--json"], "web's lead")).out);
