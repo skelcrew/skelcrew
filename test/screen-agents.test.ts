@@ -202,6 +202,36 @@ UPDATE repositories SET lead_host = 'fake', lead_host_id = 'fake-lead-1' WHERE r
   await until(() => seen().includes("I am fake-lead-2 on fake"), "the lead where it went");
 });
 
+// A builder shown on the right comes back to the lead once it ends. A lead that moved on its host
+// meanwhile is shown where it went, with its row marked, though no tmux client says it shows.
+test("a builder that ends after its lead moved on its host comes back to where the lead went", async () => {
+  tmux(agents, "kill-session", "-t", "=lead");
+  const plugin = join(home, "plugin-fake");
+  mkdirSync(plugin, { recursive: true });
+  writeFileSync(
+    join(plugin, "session.sh"),
+    `read -r question; echo '{"sessions":[{"id":"fake-lead-1","running":true,"labels":null},{"id":"fake-lead-2","running":true,"labels":null}]}'\n`,
+  );
+  writeFileSync(join(plugin, "attach.sh"), 'echo "I am $1 on fake"; exec sleep 300\n');
+  writeFileSync(
+    join(plugin, "skelcrew-plugin.yaml"),
+    "name: fake\nversion: 0.1.0\nskelcrew: 0.1.0\nabout: A host\nkind: runtime\nprovides: [sessions]\nsession: [sh, session.sh]\nattach: [sh, attach.sh]\n",
+  );
+  sql(`INSERT INTO plugins (name, folder) VALUES ('fake', '${plugin}');
+UPDATE repositories SET lead_host = 'fake', lead_host_id = 'fake-lead-1' WHERE repo = 'app'`);
+  open("lead");
+  await until(() => seen().includes("I am fake-lead-1 on fake"), "the lead through its host");
+  toFirstThread();
+  await until(() => seen().includes("I am app-12"), "app-12");
+  await until(() => selected() === "○ 12 app-12", "the sidebar to follow");
+  sql("UPDATE repositories SET lead_host_id = 'fake-lead-2' WHERE repo = 'app'");
+  // The sidebar looks each second.
+  await Bun.sleep(2500);
+  tmux(agents, "kill-session", "-t", "=app-12");
+  await until(() => seen().includes("I am fake-lead-2 on fake"), "the lead where it went");
+  await until(() => selected() === "◆ lead", "the lead's row");
+});
+
 test("a screen opened on an agent starts on it, marked in the sidebar", async () => {
   open("app-7");
   await ready("app-7");

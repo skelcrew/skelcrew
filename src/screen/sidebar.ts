@@ -91,6 +91,9 @@ export async function runSidebar(
     if (first === open.lead) return ["sh", "-c", leadLine()];
     return attachThen(agents, first, leadLine());
   };
+  // Returns the command for the right pane that runs `line`, the attach to a builder on a plugin's
+  // host, then shows the lead once it ends.
+  const hostThenLead = (line: string) => ["sh", "-c", `${line}; ${leadLine()}`];
   // The agents running on a plugin's host, builders by their thread's folder and the open lead by
   // its name, with the line that attaches to each, as the last look at the hosts found them. The look runs in the background, one at a
   // time, as a host can be slow, and the sidebar never waits on it.
@@ -170,22 +173,28 @@ export async function runSidebar(
     rows = doing("reading the rows", () => sidebarRows(db, running, roundLimit, Date.now(), open));
     entries = doing("counting the lists", () => entryCounts(db, open));
     // An agent can end and its client move to the lead by itself, so the session shown is asked
-    // of tmux, unless a list shows. With no client on the right while the lead isn't running,
-    // the right side is waiting for the lead, such as after a builder ended while its lead was
-    // gone, so the lead is what it shows.
+    // of tmux, unless a list shows. With no client on the right, the right side shows the lead:
+    // when the lead isn't running it waits for it, such as after a builder ended while its lead
+    // was gone, and when the agent shown has ended, it came back to a lead on a plugin's host,
+    // which no tmux client names. Only a running agent on a plugin's host shows with no client.
     if (!isEntry(shown)) {
       const client = doing("asking tmux which agent shows", () => shownSession(agents, tty));
       if (client) shown = client;
-      else if (!running.includes(open.lead)) shown = open.lead;
+      else if (shown === null || !running.includes(shown) || !running.includes(open.lead))
+        shown = open.lead;
     }
     // A lead that moved to or from a plugin's host, or to another session on it, is shown
     // through its host now. This comes once the sidebar knows what the right side shows, as at
     // the first look it doesn't yet, and the lead may have moved since the screen started it.
     const lead = doing("reading the lead's host", () => leadOnHost(db, open));
+    // An agent shown in place of the lead comes back to the lead once it ends, so it is attached
+    // again too, to come back to where the lead is now.
     if (lead !== leadAttach) {
       leadAttach = lead;
-      if (shown === open.lead) {
-        respawnPane(agents, rightPane, paneOn(open.lead));
+      if (shown !== null && !isEntry(shown)) {
+        const onHost = hosted.get(shown);
+        const builder = onHost !== undefined && shown !== open.lead;
+        respawnPane(agents, rightPane, builder ? hostThenLead(onHost) : paneOn(shown));
         tty = paneTty(agents, rightPane);
       }
     }
@@ -253,7 +262,7 @@ export async function runSidebar(
     if (entry)
       respawnPane(agents, rightPane, paneCommand(agents, session, entry.entry, where, fullName));
     else if (onHost !== undefined) {
-      respawnPane(agents, rightPane, ["sh", "-c", `${onHost}; ${leadLine()}`]);
+      respawnPane(agents, rightPane, hostThenLead(onHost));
       tty = paneTty(agents, rightPane);
     } else if (
       isEntry(shown) ||
