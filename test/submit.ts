@@ -42,8 +42,9 @@ export const script = (name: string, body: string) => writeScript(home, name, bo
 // the Stop hooks its settings give, and waits at a ❯ prompt, keeping what is typed into it. Each
 // typed message ends in a paste mark and an Enter, and it runs the UserPromptSubmit hooks, then
 // answers it with another round, as a builder fixing a review would. `submits` false leaves the
-// first round to the test. While the file busy is in its config folder after a round, it looks
-// busy, as Claude Code does mid-turn, and its turn ends once the file is gone. Once a round's
+// first round to the test, and `answers` false keeps what is typed in without answering it.
+// While the file busy is in its config folder after a round, it looks busy, as Claude Code does
+// mid-turn, and its turn ends once the file is gone. Once a round's
 // Stop hooks have run, the file ended holds its number. A ci.yml there goes into each round as
 // the repository's first workflow. With docs-only there, a round changes only the file it names, else docs/change.md,
 // and with code-to-docs there, it moves src/app.ts to docs/app.md. As a reviewer, run with -p,
@@ -52,7 +53,7 @@ export const script = (name: string, body: string) => writeScript(home, name, bo
 // arguments are written aside and moved into place, so a test that sees the file never reads
 // them half written. The instructions it reads from its instructions file go in told, the same
 // way and before them, so a test that sees its arguments can read told too.
-export function fakeClaude(submits = true): void {
+export function fakeClaude(submits = true, answers = true): void {
   script(
     "claude",
     `case "$CLAUDE_CONFIG_DIR" in */lead-*) stty -echo; echo "❯"; exec cat > "$CLAUDE_CONFIG_DIR/typed" ;; esac
@@ -97,7 +98,7 @@ echo "❯"
 end=$(printf '\\033[201~')
 while IFS= read -r line; do
   printf '%s\\n' "$line" >> "$CLAUDE_CONFIG_DIR/typed"
-  case "$line" in *"$end"*) hook UserPromptSubmit; round; echo "❯" ;; esac
+  case "$line" in *"$end"*) hook UserPromptSubmit; ${answers ? "round; " : ""}echo "❯" ;; esac
 done
 exec sleep 300`,
   );
@@ -265,10 +266,11 @@ openDb().run("INSERT INTO repositories (name, owner, repo, opened, forge, remote
 export const untilCloned = (timeout = 30_000) =>
   until(() => existsSync(join(data(), "repos", "simon", "app", "README")), timeout);
 
-// Waits until the thread no longer holds a review. The forge gets the review's check before
-// the daemon saves the thread, so a test that waited only for the check could read the thread
-// mid-review.
-export const untilReviewSaved = () => until(() => thread().reviewing === null);
+// Waits until the thread no longer holds a review, and its verdict is on the PR. The daemon
+// saves the verdict first, then posts it and sets its check, so a test that waited only for
+// one of them could read the other mid-way.
+export const untilReviewSaved = () =>
+  until(() => thread().reviewing === null && thread().posting === null);
 
 export function thread(): Record<string, unknown> {
   const db = new Database(join(data(), "skelcrew.db"));
@@ -298,9 +300,13 @@ export const statuses = (): Status[] =>
       state: String(q.state),
       description: String(q.description),
     }));
+// A review's body as the PR shows it: without the hidden marker Skelcrew puts last, naming the
+// thread, which the forge doesn't show.
+export const shown = (body: unknown) =>
+  String(body).replace(/\n\n<!-- skelcrew:review thread=[\w-]+ -->$/, "");
 // A review's body without the line Skelcrew puts first, naming its round and commit, so a test
 // reads what the reviewer said and found.
-export const said = (body: unknown) => String(body).replace(/^Round \d+ · commit \w+\n\n/, "");
+export const said = (body: unknown) => shown(body).replace(/^Round \d+ · commit \w+\n\n/, "");
 export const reviews = () =>
   asked(plugin)
     .filter((q) => q.ask === "review")
@@ -309,7 +315,7 @@ export const reviews = () =>
 export const edits = () =>
   asked(plugin)
     .filter((q) => q.ask === "edit review")
-    .map(({ pr, id, verdict, body }) => ({ pr, id, verdict, body }));
+    .map(({ pr, id, verdict, body }) => ({ pr, id, verdict, body: shown(body) }));
 // PR 7 as Skelcrew's copy of the forge holds it, or nothing yet.
 export function copiedPr(): string {
   const db = new Database(join(data(), "skelcrew.db"));
@@ -325,6 +331,18 @@ export function copiedPr(): string {
 export const opened = () => asked(plugin).find((q) => q.ask === "open pr");
 export const typedMessages = () => read(join(builder(), "typed")).split("\x1b[201~").length - 1;
 export const finished = (state: string) => statuses().filter((s) => s.state === state);
+
+// Starts app-12 again after sc stop, and waits until its builder is back. The round it had
+// carries on only then, so a review asked for before could otherwise start a second time. The
+// builder brought back neither submits nor answers what is typed in, so the reviews that follow
+// are only those the test asks for.
+export async function startAgain() {
+  fakeClaude(false, false);
+  rmSync(join(builder(), "args"), { force: true });
+  expect((await skel(["start", "app-12"])).err).toBe("");
+  await until(() => existsSync(join(builder(), "args")), 30_000);
+  await Bun.sleep(1000);
+}
 
 // Starts the daemon, as `serve` does, and app-12 once Skelcrew has cloned app.
 export async function startApp12(daemon: Daemon = {}) {

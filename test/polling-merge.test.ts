@@ -512,14 +512,19 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
       const tried = merges().length;
       answer(plugin, "merge pr", null);
       await morePolls();
-      expect(thread().reviewing).not.toBeNull();
+      // The review is still on its way: running, or its verdict saved but held from the PR.
+      expect(thread().reviewing !== null || thread().posting !== null).toBe(true);
       expect(merges()).toHaveLength(tried);
       expect(thread().merge_plan).toBe("armed");
       // Once the review ends, the PR stops being green, so this phase merges nothing after it.
       pr({ head, reviews: [skelReview], checks: [{ ...approved, state: "running" }] });
       rmSync(join(plugin, "hold-review"));
       rmSync(join(plugin, "hold-edit-review"));
-      await until(() => thread().reviewing === null && thread().submitting === null, 30_000);
+      await until(
+        () =>
+          thread().reviewing === null && thread().submitting === null && thread().posting === null,
+        30_000,
+      );
       await morePolls();
       expect(merges()).toHaveLength(tried);
 

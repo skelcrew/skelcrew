@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Subprocess } from "bun";
-import { answer, git, insideSandbox, prItem, read, taskItem } from "./harness.ts";
+import { answer, asked, git, insideSandbox, prItem, read, taskItem } from "./harness.ts";
 import {
   addApp,
   builder,
@@ -29,6 +29,7 @@ import {
   setUp,
   skel,
   socket,
+  startAgain,
   startApp12,
   statuses,
   tearDown,
@@ -437,12 +438,16 @@ describe.skipIf(insideSandbox)("sc submit", () => {
     rmSync(join(builder(), "busy"));
     await until(() => typedMessages() === 1, 30_000);
     expect(read(join(builder(), "typed"))).toContain("The export has no test.");
-    expect(reviews()).toHaveLength(1);
-    expect(
-      statuses()
-        .filter((s) => s.sha === reviewed)
-        .map((s) => s.state),
-    ).toEqual(["pending", "failure"]);
+    // One review was posted. The stop may cut short posting it, after the forge took it but
+    // before Skelcrew saved its ID, and it is then posted again, the same. A real forge's review
+    // is found by its marker instead, which this forge's copy, with no PR, can't show.
+    expect(new Set(reviews().map((review) => JSON.stringify(review))).size).toBe(1);
+    // No second review ran, so no pending check came after the verdict's. The stop may cut short
+    // setting the verdict's check too, which is then set again, the same.
+    const states = statuses()
+      .filter((s) => s.sha === reviewed)
+      .map((s) => s.state);
+    expect(states.filter((state, n) => state !== states[n - 1])).toEqual(["pending", "failure"]);
     await until(() => thread().telling === null);
     // The review set the thread working again before the builder's turn ended, but that turn
     // had its submit, so the builder never waited on you.
@@ -602,7 +607,9 @@ describe.skipIf(insideSandbox)("sc submit", () => {
     expect(statuses().map((s) => s.state)).toEqual(["pending", "success", "pending"]);
   }, 120_000);
 
-  test("a review cancelled while it is posted doesn't set the check on the commit submitted again", async () => {
+  // A review being posted has its verdict saved already, so it still sets its check, which
+  // the PR's review and the thread agree with. The newer submit's pending check comes after it.
+  test("a review cancelled while it is posted sets its check before the commit submitted again gets pending", async () => {
     addApp();
     verdict(1, "approve", "Stale.");
     verdict(2, "approve", "Fresh.");
@@ -617,7 +624,184 @@ describe.skipIf(insideSandbox)("sc submit", () => {
     await until(() => existsSync(join(codexHome(), "sessions", "prompt-2")), 30_000);
     expect(reviews()).toHaveLength(1);
     await Bun.sleep(1500);
-    expect(statuses().map((s) => s.state)).toEqual(["pending", "pending"]);
+    expect(statuses().map((s) => s.state)).toEqual(["pending", "success", "pending"]);
+  }, 120_000);
+
+  // Past the round limit, sc review asks again, and the reviewer approves. sc stop ends the
+  // round while the approval is being posted. The PR then shows it, so Skelcrew must have saved
+  // it too, rather than the changes that reached the limit.
+  test("past the round limit, a review stopped while it is posted is saved as the PR shows it", async () => {
+    addApp();
+    config("max_rounds: 1\n");
+    verdict(1, "changes", "First problem.");
+    verdict(2, "changes", "Second problem.");
+    verdict(3, "approve", "Ready to merge.");
+    await startApp12();
+    await until(() => thread().needs_you === 1 && thread().rounds === 2, 45_000);
+    writeFileSync(join(plugin, "hold-review"), "");
+    expect((await skel(["review", "app-12"])).err).toBe("");
+    await until(
+      () => existsSync(join(plugin, "held-review")) && reviews().at(-1)?.verdict === "approve",
+      60_000,
+    );
+    expect((await skel(["stop", "app-12"])).err).toBe("");
+    rmSync(join(plugin, "hold-review"));
+    await until(() => finished("success").length === 1, 30_000);
+    expect(thread()).toMatchObject({ verdict: "approve", review_round: 3, held: null });
+    expect((await skel(["ps", "--json"])).out).not.toContain("round limit");
+  }, 120_000);
+
+  // The daemon can stop after saving a verdict but before the PR has it. As it starts again, it
+  // puts it there, so the PR shows what Skelcrew saved and Skelcrew's check doesn't stay pending.
+  test("a verdict the daemon's stop kept from the PR is posted as it starts again", async () => {
+    addApp();
+    verdict(1, "approve", "Ready to merge.");
+    writeFileSync(join(plugin, "hold-review"), "");
+    const first = serve();
+    await untilCloned();
+    await skel(["start", "app-12"]);
+    await until(() => existsSync(join(plugin, "held-review")), 60_000);
+    first.kill();
+    await first.exited;
+    expect(thread()).toMatchObject({ verdict: "approve", reviewing: null });
+    rmSync(join(plugin, "hold-review"));
+    serve();
+    await until(() => finished("success").length === 1, 30_000);
+    expect(reviews().at(-1)).toEqual({
+      commit: pushed(),
+      verdict: "approve",
+      body: "Ready to merge.",
+    });
+    await until(() => thread().posting === null);
+  }, 120_000);
+
+  // The forge can take the review just before the daemon stops, with its ID not yet saved. The
+  // review is then in Skelcrew's copy of the PR, with its marker, so it isn't posted again.
+  test("a review the forge took before the daemon stopped is found by its marker, not posted twice", async () => {
+    addApp();
+    verdict(1, "approve", "Ready to merge.");
+    writeFileSync(join(plugin, "hold-review"), "");
+    const first = serve();
+    await untilCloned();
+    await skel(["start", "app-12"]);
+    await until(() => existsSync(join(plugin, "held-review")), 60_000);
+    first.kill();
+    await first.exited;
+    // The forge took it: the copy of PR 7 shows it with the body Skelcrew sent.
+    const body = String(asked(plugin).find((q) => q.ask === "review")?.body);
+    expect(body).toContain("<!-- skelcrew:review thread=app-12 -->");
+    answer(plugin, "changed", {
+      items: [
+        taskItem("12", "Add export", { body: "As JSON" }),
+        prItem("7", "Add export", {
+          branch: "skelcrew/12-add-export",
+          head: pushed(),
+          reviews: [{ id: "1001", text: body, author: null, verdict: "commented", lines: [] }],
+        }),
+      ],
+      next: null,
+    });
+    rmSync(join(plugin, "hold-review"));
+    serve({ every: 1_000 });
+    await until(() => finished("success").length === 1, 30_000);
+    await until(() => thread().posting === null);
+    expect(reviews()).toHaveLength(1);
+    expect(String(thread().review_post)).toContain('"id":"1001"');
+  }, 120_000);
+
+  // sc stop ends the round while its approval is being posted, and the daemon stops before the
+  // post ends. A stopped thread isn't brought back, so the daemon's start posts it anyway.
+  test("a stopped thread's verdict the daemon's stop kept from the PR is posted as it starts again", async () => {
+    addApp();
+    verdict(1, "approve", "Ready to merge.");
+    writeFileSync(join(plugin, "hold-review"), "");
+    const first = serve();
+    await untilCloned();
+    await skel(["start", "app-12"]);
+    await until(() => existsSync(join(plugin, "held-review")), 60_000);
+    expect((await skel(["stop", "app-12"])).err).toBe("");
+    first.kill();
+    await first.exited;
+    expect(thread()).toMatchObject({ status: "stopped", verdict: "approve" });
+    rmSync(join(plugin, "hold-review"));
+    serve();
+    await until(() => finished("success").length === 1, 30_000);
+    await until(() => thread().posting === null);
+    expect(thread().status).toBe("stopped");
+  }, 120_000);
+
+  // A forge that fails to take the verdict doesn't stop the round: the lead hears of it, and the
+  // changes still reach the builder. The verdict stays saved, and the PR gets it once the forge
+  // takes it again, at the next poll or with the next round.
+  test("a verdict whose post failed still types its changes in, and is posted once the forge is back", async () => {
+    addApp();
+    verdict(1, "changes", "The export has no test.");
+    verdict(2, "approve", "Ready to merge.");
+    writeFileSync(join(plugin, "fail-review"), "GitHub is down");
+    await startApp12({ every: 1_000 });
+    await until(() => read(join(builder(), "typed")).includes("The export has no test."), 60_000);
+    await until(() =>
+      read(join(data(), "threads", "app-12.log")).includes("couldn't put its review on the forge"),
+    );
+    expect(thread().review_failed).toBe(0);
+    rmSync(join(plugin, "fail-review"));
+    await until(() => finished("success").length === 1, 60_000);
+    await until(() => thread().posting === null);
+    expect(reviews().at(-1)?.verdict).toBe("approve");
+  }, 120_000);
+
+  // A failed review is never posted. So when the forge didn't take the review before it, that
+  // review is the one the PR must show once the forge is back.
+  test("a failed review keeps the review before it that the forge didn't take yet", async () => {
+    addApp();
+    verdict(1, "changes", "The export has no test.");
+    writeFileSync(join(plugin, "fail-review"), "GitHub is down");
+    await startApp12({ every: 1_000 });
+    await until(() => thread().verdict === "failed", 60_000);
+    rmSync(join(plugin, "fail-review"));
+    await until(() => thread().posting === null, 30_000);
+    expect(String(thread().review_post)).toContain('"verdict":"changes"');
+    expect(finished("failure").at(-1)?.description).toBe("review failed");
+  }, 120_000);
+
+  // A review stopped while its pending check waits for an earlier post never sets it, as no
+  // review of it would then end it.
+  test("a review stopped while its pending check waits behind an earlier post sets none", async () => {
+    addApp();
+    verdict(1, "approve", "Ready to merge.");
+    writeFileSync(join(plugin, "hold-review"), "");
+    await startApp12();
+    await until(() => existsSync(join(plugin, "held-review")), 60_000);
+    expect((await skel(["stop", "app-12"])).err).toBe("");
+    await startAgain();
+    expect((await skel(["review", "app-12"])).err).toBe("");
+    expect((await skel(["stop", "app-12"])).err).toBe("");
+    rmSync(join(plugin, "hold-review"));
+    await until(() => finished("success").length === 1, 30_000);
+    await Bun.sleep(1500);
+    expect(statuses().map((s) => s.state)).toEqual(["pending", "success"]);
+  }, 120_000);
+
+  // sc stop forgets the round while its approval is still being posted. A review asked for
+  // after sc start then waits for that post, so the PR ends on the newer verdict, as the thread
+  // does, and the newer review's pending check comes after the older one's.
+  test("a review asked for after sc stop posts after the stopped round's review", async () => {
+    addApp();
+    verdict(1, "approve", "Ready to merge.");
+    verdict(2, "changes", "The export has no test.");
+    writeFileSync(join(plugin, "hold-review"), "");
+    await startApp12();
+    await until(() => existsSync(join(plugin, "held-review")), 60_000);
+    expect((await skel(["stop", "app-12"])).err).toBe("");
+    await startAgain();
+    expect((await skel(["review", "app-12"])).err).toBe("");
+    await Bun.sleep(2000);
+    rmSync(join(plugin, "hold-review"));
+    await until(() => finished("failure").length === 1, 60_000);
+    expect(statuses().map((s) => s.state)).toEqual(["pending", "success", "pending", "failure"]);
+    expect(reviews().map((r) => r.verdict)).toEqual(["approve", "changes"]);
+    await until(() => thread().posting === null);
+    expect(thread()).toMatchObject({ verdict: "changes", review_round: 1, rounds: 1 });
   }, 120_000);
 
   test("a thread started from another branch is reviewed against it, and its PR goes into it", async () => {

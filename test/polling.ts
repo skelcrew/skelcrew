@@ -330,6 +330,9 @@ export async function approvedApp12(from?: string, wait?: number): Promise<strin
     30_000,
   );
   await until(() => read(join(data(), "threads", "app-12.log")).includes("waits on CI"));
+  // The approval is saved before it goes on the PR, so wait for it there too, as a test may
+  // then hold what goes on the PR.
+  await until(() => thread().posting === null);
   expect(thread()).toMatchObject({ status: "waiting", needs_you: 0 });
   return work;
 }

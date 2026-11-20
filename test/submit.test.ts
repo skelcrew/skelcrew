@@ -37,6 +37,7 @@ import {
   reviews,
   serve,
   setUp,
+  shown,
   skel,
   socket,
   startApp12,
@@ -178,7 +179,7 @@ describe.skipIf(insideSandbox)("sc submit", () => {
       },
       { commit: second, verdict: "approve", body: "Ready to merge." },
     ]);
-    expect(asked(plugin).find((q) => q.ask === "review")?.body).toBe(
+    expect(shown(asked(plugin).find((q) => q.ask === "review")?.body)).toBe(
       `Round 1 · commit ${first.slice(0, 7)}\n\nThe export has no test.\n\n1. The export has no test.`,
     );
     expect(edits()).toEqual([

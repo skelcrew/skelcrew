@@ -280,6 +280,8 @@ done`,
     await startApp12();
     await until(() => thread().review_failed === 1, 30_000);
     expect(thread()).toMatchObject({ verdict: "timed out", reviewing: null, needs_you: 0 });
+    // The verdict is saved before its check is set.
+    await until(() => finished("failure").length === 1);
     expect(finished("failure")[0]?.description).toBe("review timed out");
     expect(reviews()).toEqual([]);
     await until(() =>

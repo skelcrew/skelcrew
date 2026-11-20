@@ -99,6 +99,7 @@ function thread(change: Partial<Thread> = {}): Thread {
     agents: null,
     flow: "noreview",
     review_post: null,
+    posting: null,
     review_findings: null,
     queued_since: null,
     ...change,
