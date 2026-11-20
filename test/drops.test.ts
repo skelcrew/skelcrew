@@ -64,7 +64,8 @@ function file(name: string, text = `the text of ${name}`): string {
 // Returns what reached the screen once the filter has had time to copy, with each drop's
 // question, which the screen keeps from the agent.
 async function sentOn(): Promise<string> {
-  await Bun.sleep(50);
+  // Longer than the filter's wait after a lone Esc.
+  await Bun.sleep(150);
   return sent;
 }
 // Returns what reached the agent once the filter has had time to copy.
@@ -243,6 +244,25 @@ test("a paste's start split anywhere across two reads is still seen, and the que
     const out = await sentOn();
     expect(out).toMatch(new RegExp(`^x\\x1b\\[200~\\x1b\\[201~${question}${copied}y$`));
   }
+});
+
+test("a text paste whose start is split across two reads passes byte for byte", async () => {
+  const whole = `x${pasted("hello there")}y`;
+  for (let cut = 2; cut < 7; cut++) {
+    sent = "";
+    const take = filter();
+    take(Buffer.from(whole.slice(0, cut)));
+    take(Buffer.from(whole.slice(cut)));
+    expect(await sentOn()).toBe(whole);
+  }
+});
+
+test("Enter after a lone Esc and a paste that copies nothing still follows the paste", async () => {
+  const take = filter();
+  const missing = join(home, "gone.png");
+  take(Buffer.from("\x1b"));
+  take(Buffer.from(`${pasted(missing)}\r`));
+  expect(await sentOn()).toBe(`\x1b${pasted(missing)}\r`);
 });
 
 test("the question never goes in right after a lone Esc, which more of a sequence may follow", async () => {

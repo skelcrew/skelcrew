@@ -316,29 +316,28 @@ export async function openScreen(
   // Files dropped onto the screen are copied into the folder of the agent your typing goes to,
   // once the sidebar answers, and to none while your typing goes to the sidebar. A sidebar that
   // doesn't answer within two seconds leaves the paste as it came.
-  const answer = () =>
-    Bun.spawnSync(
-      [
-        "tmux",
-        "-L",
-        screenSocket(agents),
-        "display",
-        "-p",
-        "-t",
-        `=${name}:`,
-        `#{${dropAnswerOption}}`,
-      ],
-      { env },
-    )
-      .stdout.toString()
-      .trim();
+  // Reads the sidebar's last answer. It never holds up the screen, and a tmux that doesn't answer
+  // within a second is stopped, so a drop never waits on it for long.
+  const answer = async () => {
+    const asked = ["display", "-p", "-t", `=${name}:`, `#{${dropAnswerOption}}`];
+    const run = Bun.spawn(["tmux", "-L", screenSocket(agents), ...asked], {
+      env,
+      stdout: "pipe",
+      stderr: "ignore",
+    });
+    const stop = setTimeout(() => run.kill(), 1000);
+    const said = await new Response(run.stdout).text();
+    clearTimeout(stop);
+    return said.trim();
+  };
   const drop: Drop = {
     where: async (ask) => {
-      const before = answer();
+      const before = await answer();
       ask();
-      for (let waited = 0; waited < 200; waited++) {
+      const deadline = Date.now() + 2000;
+      while (Date.now() < deadline) {
         await Bun.sleep(10);
-        const now = answer();
+        const now = await answer();
         if (now !== before) return answeredFolder(now);
       }
       return null;

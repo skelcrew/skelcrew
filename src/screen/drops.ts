@@ -3,8 +3,8 @@
 // is on your laptop. So a layer between your terminal and the screen copies each dropped file into
 // the agent's own folder and passes the paste on with the copies' paths. Everything else passes
 // through untouched.
-import { accessSync, constants, realpathSync, statSync } from "node:fs";
-import { copyFile, mkdir, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { access, copyFile, mkdir, realpath, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 
 // The folder inside an agent's folder that holds its dropped files. It ignores itself in git, so
@@ -111,11 +111,12 @@ function writtenLike(written: string, path: string): string {
 
 // Says whether a dropped file can be copied: a regular file, or a link to one, that you can read
 // and that isn't over largestDrop. A folder, a missing path or one you can't read keeps its path.
-export function droppable(path: string): boolean {
+// It looks without holding up the screen, as a disk can be slow to answer.
+async function droppable(path: string): Promise<boolean> {
   try {
-    const found = statSync(path);
+    const found = await stat(path);
     if (!found.isFile() || found.size > largestDrop) return false;
-    accessSync(path, constants.R_OK);
+    await access(path, constants.R_OK);
     return true;
   } catch {
     return false;
@@ -132,10 +133,10 @@ export function dropPath(folder: string, file: string): string {
 // Says whether the agent can read `file` by that path already: a path inside its folder, with no
 // .. in it, that stays inside once every link on the way is followed. A link inside that points
 // out, such as into your home folder, leads where the sandbox hides it, so its file is copied.
-function readableBy(folder: string, file: string): boolean {
+async function readableBy(folder: string, file: string): Promise<boolean> {
   if (!file.startsWith(`${folder}/`) || file.split("/").includes("..")) return false;
   try {
-    return realpathSync(file).startsWith(`${realpathSync(folder)}/`);
+    return (await realpath(file)).startsWith(`${await realpath(folder)}/`);
   } catch {
     return false;
   }
@@ -144,11 +145,11 @@ function readableBy(folder: string, file: string): boolean {
 // Copies dropped files into an agent's folder on this machine, and returns each copy's path, in
 // order, or null for a file left as it was. A file the agent can read where it is is left, such
 // as one sc --remote sent there already.
-// The copy runs off the main thread, so a big file or a slow disk never holds up the screen.
+// It runs without holding up the screen, so a big file or a slow disk never stops it.
 export function copyDrops(folder: string, files: string[]): Promise<(string | null)[]> {
   return Promise.all(
     files.map(async (file) => {
-      if (readableBy(folder, file)) return null;
+      if (await readableBy(folder, file)) return null;
       try {
         const copy = dropPath(folder, file);
         await mkdir(dirname(copy), { recursive: true });
@@ -205,11 +206,14 @@ function unfinished(last: string, sent: string): string {
 export function pasteFilter(send: (bytes: Uint8Array) => void, drop: Drop) {
   // The paste read so far, without its start, or null outside one.
   let held: Buffer | null = null;
-  // The escape sequence what went on last ends inside, or "".
+  // The escape sequence what went on last ends inside, or "", and how much of the held paste's
+  // start went on in it, when its start came split across two reads.
   let openSequence = "";
+  let startSent = 0;
   // What the filter has to add, waiting for the stream to be between sequences, and the timer
   // that adds it anyway after a lone Esc.
-  const adding: Buffer[] = [];
+  // Each comes with what to do once it went in.
+  const adding: { bytes: Buffer; then: () => void }[] = [];
   let addLater: ReturnType<typeof setTimeout> | null = null;
   // Whether a drop's files are on their way, and what you sent meanwhile.
   let dropping = false;
@@ -219,15 +223,20 @@ export function pasteFilter(send: (bytes: Uint8Array) => void, drop: Drop) {
   const addWaiting = () => {
     if (addLater) clearTimeout(addLater);
     addLater = null;
-    for (const bytes of adding.splice(0)) send(bytes);
+    for (const { bytes, then } of adding.splice(0)) {
+      send(bytes);
+      then();
+    }
   };
-  // Adds bytes to the stream between sequences: now, or once the sequence sent last ends.
-  const add = (bytes: Buffer) => {
+  // Adds bytes to the stream between sequences, now or once the sequence sent last ends, then
+  // does `then`.
+  const add = (bytes: Buffer, then = () => {}) => {
     if (openSequence === "") {
       send(bytes);
+      then();
       return;
     }
-    adding.push(bytes);
+    adding.push({ bytes, then });
     addLater ??= setTimeout(() => {
       openSequence = "";
       addWaiting();
@@ -246,9 +255,9 @@ export function pasteFilter(send: (bytes: Uint8Array) => void, drop: Drop) {
     const parts = pastedPaths(text);
     if (!parts) return null;
     // Only the files that can be copied go to `drop`, each once, in the order pasted.
-    const files = parts.flatMap((part) =>
-      part.path !== undefined && droppable(part.path) ? [part.path] : [],
-    );
+    const paths = parts.flatMap((part) => (part.path === undefined ? [] : [part.path]));
+    const can = await Promise.all(paths.map(droppable));
+    const files = paths.filter((_, at) => can[at]);
     if (files.length === 0) return null;
     const folder = await drop.where(() => add(Buffer.from(dropSignal)));
     if (folder === null) return null;
@@ -271,8 +280,7 @@ export function pasteFilter(send: (bytes: Uint8Array) => void, drop: Drop) {
     let rest: Buffer = Buffer.from(piece);
     while (rest.length > 0) {
       // Outside a paste, everything goes on, up to the start of one. A start split across two
-      // reads began in the sequence sent last. Its rest goes on at once with an empty paste's
-      // end, which closes it as a paste with nothing in it, and the paste goes on whole later.
+      // reads began in the sequence sent last, and startSent says how much of it went.
       if (held === null) {
         const seen = Buffer.concat([Buffer.from(openSequence, "latin1"), rest]);
         const start = seen.indexOf(pasteStart);
@@ -281,8 +289,8 @@ export function pasteFilter(send: (bytes: Uint8Array) => void, drop: Drop) {
           return;
         }
         const sent = openSequence.length;
-        if (start < sent) pass(Buffer.concat([pasteStart.subarray(sent - start), pasteEnd]));
-        else if (start > sent) pass(seen.subarray(sent, start));
+        startSent = Math.max(sent - start, 0);
+        if (start > sent) pass(seen.subarray(sent, start));
         held = Buffer.alloc(0);
         rest = seen.subarray(start + pasteStart.length);
         continue;
@@ -298,21 +306,25 @@ export function pasteFilter(send: (bytes: Uint8Array) => void, drop: Drop) {
       rest = sofar.subarray(end + pasteEnd.length);
       const text = sofar.subarray(0, end).toString();
       const asCame = Buffer.concat([pasteStart, sofar.subarray(0, end), pasteEnd]);
-      // Text goes on at once, without waiting on anything.
+      // Text goes on at once, as it came, after what was sent of its start already.
       if (pastedPaths(text) === null) {
-        pass(asCame);
+        pass(asCame.subarray(startSent));
         continue;
       }
-      // Paths wait for their files, and what came after them waits for the paste.
+      // Paths wait for their files. A start sent in part is closed first as a paste with nothing
+      // in it, as the question must go in between sequences, and the paste then goes whole.
+      if (startSent > 0) pass(Buffer.concat([pasteStart.subarray(startSent), pasteEnd]));
+      // What came after the paste waits until it has gone in, whenever that is.
       dropping = true;
       waiting.push(rest);
       rewritten(text)
         .catch(() => null)
-        .then((changed) => {
-          add(changed === null ? asCame : Buffer.from(`\x1b[200~${changed}\x1b[201~`));
-          dropping = false;
-          for (const next of waiting.splice(0)) take(next);
-        });
+        .then((changed) =>
+          add(changed === null ? asCame : Buffer.from(`\x1b[200~${changed}\x1b[201~`), () => {
+            dropping = false;
+            for (const next of waiting.splice(0)) take(next);
+          }),
+        );
       return;
     }
   };
