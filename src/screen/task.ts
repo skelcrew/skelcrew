@@ -27,7 +27,9 @@ export function showTask(agents: string, session: string, repository: string, na
 }
 
 // Attaches the right side of the screen whose session is named to the builder of a task's row,
-// through its session host, and moves your typing there. Once the attachment ends, by Ctrl-\ or
+// by the row's name, such as app-12, in the repository named by its owner/name. The row is read
+// here, as it is now, so any sidebar can call this with only the name. It goes through the
+// builder's session host, and moves your typing there. Once the attachment ends, by Ctrl-\ or
 // by the builder ending, even one on tmux whose session stays with its last screen, the right
 // side shows the task's details again and your typing goes back to the sidebar. Returns why it
 // couldn't attach, such as a builder that isn't running, or null once attached.
@@ -35,11 +37,14 @@ export async function attachTask(
   agents: string,
   session: string,
   repository: string,
-  row: Row,
+  name: string,
 ): Promise<string | null> {
-  if (row.session === null || !row.running)
-    return `${row.name}'s builder isn't running: sc start ${row.name} brings it back`;
   const db = openDb();
+  const [owner = "", repo = ""] = repository.split("/");
+  const row = listRows(db, { owner, repo }, Date.now()).find((one) => one.name === name);
+  if (!row) return `${name} is no longer in the list`;
+  if (row.session === null || !row.running)
+    return `${name}'s builder isn't running: sc start ${name} brings it back`;
   let attach: string[];
   try {
     const { host, id } = await builderSession(db, agents, readThread(db, row.session));

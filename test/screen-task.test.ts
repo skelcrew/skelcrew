@@ -40,20 +40,14 @@ const typingTo = () =>
   tmux(screen, "display-message", "-p", "-t", `=${session()}:`, "#{pane_index}").out.trim();
 
 // Does what the sidebar does on a task's row, by the row's name, as a process of its own with the
-// test's home: `show` shows the task's details, and `attach` attaches to its builder, which
-// prints why it couldn't, if it couldn't.
+// test's home: `show` shows the task's details, and `attach` attaches to its builder, both by the
+// row's name alone, and prints why it couldn't, if it couldn't.
 function onRow(action: "show" | "attach", name: string): string {
-  const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
-import { listRows } from ${JSON.stringify(source("list/rows.ts"))};
-import { attachTask, showTask } from ${JSON.stringify(source("screen/task.ts"))};
+  const code = `import { attachTask, showTask } from ${JSON.stringify(source("screen/task.ts"))};
 const agents = ${JSON.stringify(agents)};
 const session = ${JSON.stringify(session())};
 if (${JSON.stringify(action)} === "show") showTask(agents, session, "simon/app", ${JSON.stringify(name)});
-else {
-  const row = listRows(openDb(), { owner: "simon", repo: "app" }, Date.now()).find((one) => one.name === ${JSON.stringify(name)});
-  if (!row) throw new Error("no row");
-  console.log((await attachTask(agents, session, "simon/app", row)) ?? "");
-}`;
+else console.log((await attachTask(agents, session, "simon/app", ${JSON.stringify(name)})) ?? "");`;
   const run = Bun.spawnSync([process.execPath, "-e", code], { env: env(), stderr: "pipe" });
   if (!run.success) throw new Error(run.stderr.toString());
   return run.stdout.toString().trim();
@@ -133,13 +127,15 @@ test("Ctrl-\\ on the lead or a task's details does nothing", async () => {
   expect(right()).toContain("I am app-7");
 });
 
-test("Enter on a task whose builder isn't running says so, and attaches to nothing", async () => {
+test("Enter on a task whose builder isn't running, or that went, says so, and attaches to nothing", async () => {
   sql("UPDATE threads SET status = 'stopped' WHERE folder = 'app-7'");
   await onApp7();
   expect(right()).toContain("Builder not running");
   expect(onRow("attach", "app-7")).toBe(
     "app-7's builder isn't running: sc start app-7 brings it back",
   );
+  // A row removed a moment before Enter is read as it is now, and has nothing to attach to.
+  expect(onRow("attach", "app-99")).toBe("app-99 is no longer in the list");
   expect(typingTo()).toBe("0");
 });
 
