@@ -412,36 +412,52 @@ test("writes down the full commit and checkout it started from", async () => {
   expect(readFileSync(file, "utf8")).toBe(`${commit.trim()} ${checkout}\n`);
 });
 
-// A daemon stopped after a yes started a new task, but before the lead heard, finishes the yes as
-// it starts again: it finds the task the yes started, tells the lead, and starts nothing twice.
-test("a yes whose start took effect before a stop is reported once the daemon is back, never run again", async () => {
+// A daemon stopped partway through a yes does it again as it starts, and the lead hears what that
+// said. Here the yes asks for a flow that doesn't exist, so doing it again fails and says why, and
+// the task stays as it was.
+test("a yes a stop cut short is done again once the daemon is back, and the lead hears what it said", async () => {
   setUp();
   addRepository("app");
   serve();
   await untilAnswers();
   for (const run of running.splice(0)) await stop(run);
-  const said = Date.now() - 1000;
   onDb((db) =>
     db.run(`INSERT INTO lead_requests (owner, repo, action, says, made, answered) VALUES
-  ('simon', 'app', '{"kind":"start new","title":"CSV export","body":"Add it."}',
-    'Start a new task: CSV export?', 1, ${said});
-${threadSql({ task: "t100", title: "CSV export", body: "Add it.", status: "stopped", started: Date.now() })}`),
+  ('simon', 'app', '{"kind":"start","task":"t100","flow":"nowhere"}', 'Start APP-T100?', 1, 1);
+${threadSql({ task: "t100", title: "CSV export", status: "stopped" })}`),
   );
   serve();
   await untilAnswers();
   await until(() => onDb((db) => db.query("SELECT 1 FROM lead_requests").all()).length === 0);
-  const started = onDb((db) =>
-    db.query("SELECT task FROM task_threads WHERE title = 'CSV export'").all(),
+  const notes = onDb((db) => db.query("SELECT text FROM notes WHERE text LIKE '%request%'").all());
+  expect(JSON.stringify(notes)).toContain(
+    "Skelcrew stopped partway through the human's yes in the list to your request: Start APP-T100? It did it again: It failed: ",
   );
-  expect(started).toEqual([{ task: "t100" }]);
-  const notes = onDb((db) =>
-    db.query("SELECT text FROM notes WHERE text LIKE '%your request%'").all(),
-  );
-  expect(notes).toEqual([
-    {
-      text: "The human said yes in the list to your request: Start a new task: CSV export? Started APP-T100.",
-    },
+  expect(onDb((db) => db.query("SELECT task, status FROM task_threads").all())).toEqual([
+    { task: "t100", status: "stopped" },
   ]);
+});
+
+// A no goes in one step with the lead's note, so no request is left marked for a restart to act on.
+test("your no takes the request away and tells the lead at once, leaving nothing to finish", async () => {
+  setUp();
+  addRepository("app");
+  serve();
+  await untilAnswers();
+  onDb((db) =>
+    db.run(`INSERT INTO lead_requests (owner, repo, action, says, made) VALUES
+  ('simon', 'app', '{"kind":"start","task":"12"}', 'Start APP-12?', 1)`),
+  );
+  expect(await ask({ command: "answer", repo: "simon/app", id: 1, yes: false })).toEqual({
+    said: "Told the lead no to: Start APP-12?",
+  });
+  expect(onDb((db) => db.query("SELECT 1 FROM lead_requests").all())).toEqual([]);
+  expect(onDb((db) => db.query("SELECT text FROM notes").all())).toEqual([
+    { text: "The human said no in the list to your request: Start APP-12?" },
+  ]);
+  expect(await ask({ command: "answer", repo: "simon/app", id: 1, yes: false })).toEqual({
+    error: "That request was answered already.",
+  });
 });
 
 // Asks the daemon to open a repository, as plain sc in a checkout of it does.

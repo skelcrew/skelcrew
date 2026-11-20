@@ -110,9 +110,31 @@ describe.skipIf(insideSandbox)("the lead's requests", () => {
     await until(() => read(join(data(), "claude", "app-12", "args")) !== "", 30_000);
     await until(() =>
       read(join(lead(), "typed")).includes(
-        "The human said yes in the list to your request: Start APP-12 Add export? Started APP-12.",
+        "Skelcrew stopped partway through the human's yes in the list to your request: Start APP-12 Add export? It did it again: Started APP-12.",
       ),
     );
+  }, 60_000);
+
+  // A stop right after your yes to a new task leaves it unfiled, or filed and named on the request.
+  // Either way the daemon starts it once as it comes back, with one thread.
+  test("a yes to a new task that a stop cut short starts it once the daemon is back", async () => {
+    addApp();
+    const db = new Database(join(data(), "skelcrew.db"));
+    db.run(`INSERT INTO lead_requests (owner, repo, action, says, made, answered) VALUES
+      ('simon', 'app', '{"kind":"start new","title":"CSV export","body":"Add it.","short":"CSV"}',
+        'Start a new task: CSV export?', 1, 1)`);
+    db.close();
+    serve();
+    await until(() => existsSync(join(data(), "repos", "simon", "app", "README")));
+    expect(await askForLead("simon/app")).toContain(leadPlaces("simon", "app").name);
+    await until(() => threadOf("t100") !== null, 30_000);
+    expect(threadOf("t100")).toMatchObject({ title: "CSV export", body: "Add it.", short: "CSV" });
+    await until(() =>
+      read(join(lead(), "typed")).includes(
+        "Skelcrew stopped partway through the human's yes in the list to your request: Start a new task: CSV export? It did it again: Started APP-T100.",
+      ),
+    );
+    expect(threadOf("t101")).toBeNull();
   }, 60_000);
 
   test("a yes to a new task starts it with its title, description, short title and flow", async () => {

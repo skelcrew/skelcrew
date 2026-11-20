@@ -55,9 +55,10 @@ import {
   answeredRequests,
   answerRequest,
   type LeadRequest,
+  nameFiledTask,
+  refuseRequest,
   requestAnswered,
   saveRequest,
-  startedBy,
 } from "./lead-requests.ts";
 import { restoreLimits, wakeAfterLimit } from "./limits.ts";
 import { listRepositories, listTasks, listThreads, showTask } from "./list.ts";
@@ -476,32 +477,53 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
     })();
   // Does what your yes to a lead's request asks, tells the lead, and returns what the bottom line
   // says. A yes to adding a repository only tells the lead, as only sc repo add at your terminal
-  // adds one. A start runs as sc start, and the lead hears what it did or why it failed.
-  const doYes = async (repository: Repository, taken: LeadRequest): Promise<string> => {
-    const { action, says } = taken;
-    const yes = `The human said yes in the list to your request: ${says}`;
-    if (action.kind === "repo add") {
+  // adds one. A start runs as sc start, and the lead hears what sc start said, such as that the
+  // task was queued, or why it failed. A new task is first filed in the backlog, as sc task add
+  // does, and the request then names it, so doing the yes again, after a stop of the daemon,
+  // starts that task rather than a second one. `again` says the yes is done again after such a
+  // stop, which the lead is told, as the first try may have done some of it.
+  const doYes = async (repository: Repository, taken: LeadRequest, again = false) => {
+    const { says } = taken;
+    const yes = again
+      ? `Skelcrew stopped partway through the human's yes in the list to your request: ${says} It did it again:`
+      : `The human said yes in the list to your request: ${says}`;
+    if (taken.action.kind === "repo add") {
+      const { repository: name } = taken.action;
       settle(
         repository,
         taken.id,
-        `${yes} Only they can add it, with sc repo add ${action.repository} at their own terminal.`,
+        `${yes} Only they can add it, with sc repo add ${name} at their own terminal.`,
       );
-      return `Told the lead yes. Add it with sc repo add ${action.repository} in your terminal.`;
+      return `Told the lead yes. Add it with sc repo add ${name} in your terminal.`;
     }
-    const { short, flow } = action;
-    const options = { ...(short ? { short } : {}), ...(flow ? { flow } : {}) };
-    const full = `${repository.owner}/${repository.repo}`;
-    const start: DaemonRequest =
-      action.kind === "start"
-        ? {
-            command: "start",
-            repo: full,
-            task: action.task,
-            ...(action.from ? { from: action.from } : {}),
-            ...options,
-          }
-        : { command: "start new", repo: full, title: action.title, body: action.body, ...options };
+    const { owner, repo } = repository;
     try {
+      let action = taken.action;
+      if (action.kind === "start new") {
+        const clone = cloneDir(owner, repo);
+        if (!existsSync(clone) || !forgeKnown(db, repository)) await refreshClones(db);
+        const { title, body, short, flow } = action;
+        const by = `${loginName()} via the lead`;
+        // A filing whose outcome a stop cut short is found again by fileTask, so it files once.
+        const { task } = await fileTask(db, findRepository(db, `${owner}/${repo}`), clone, {
+          title,
+          body,
+          by,
+        });
+        action = { kind: "start", task, ...(short ? { short } : {}), ...(flow ? { flow } : {}) };
+        nameFiledTask(db, taken.id, action);
+        // Read back, so the start finds the commit the task is filed at.
+        await refreshClone(db, repository).catch((error) => console.log(errorText(error)));
+      }
+      const { task, from, short, flow } = action;
+      const start: DaemonRequest = {
+        command: "start",
+        repo: `${owner}/${repo}`,
+        task,
+        ...(from ? { from } : {}),
+        ...(short ? { short } : {}),
+        ...(flow ? { flow } : {}),
+      };
       const { started } = z.object({ started: z.string() }).parse(await handle(start, "you"));
       settle(repository, taken.id, `${yes} ${started}`);
       return started;
@@ -510,17 +532,13 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       throw error;
     }
   };
-  // Finishes each yes whose start the last stop of the daemon cut short. A start that took effect
-  // is only reported to the lead, and one that didn't runs now, so a yes never starts twice and
-  // the lead always hears it.
+  // Does again each yes to a lead's request that the last stop of the daemon cut short. Doing a
+  // start again never starts a task twice: one already at work stays as it is, and only gains
+  // the short title or flow asked. The lead hears what doing it again said.
   const finishAnswers = async () => {
     for (const taken of answeredRequests(db)) {
       try {
-        const repository = findRepository(db, `${taken.owner}/${taken.repo}`);
-        const name = startedBy(db, repository, taken.action, taken.answered);
-        const yes = `The human said yes in the list to your request: ${taken.says}`;
-        if (name !== null) settle(repository, taken.id, `${yes} Started ${name}.`);
-        else await doYes(repository, taken);
+        await doYes(findRepository(db, `${taken.owner}/${taken.repo}`), taken, true);
       } catch (error) {
         console.log(`couldn't finish the answer to a lead's request: ${errorText(error)}`);
       }
@@ -801,16 +819,21 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       case "answer": {
         const repository = findRepository(db, request.repo);
         const { owner, repo } = repository;
+        // A no goes in one step with the lead's note, so nothing is left to do after a stop.
+        if (!request.yes) {
+          const says = refuseRequest(db, owner, repo, request.id, (refused) =>
+            noteForLead(
+              db,
+              sessions,
+              repository,
+              `The human said no in the list to your request: ${refused}`,
+            ),
+          );
+          if (says === null) throw new Error("That request was answered already.");
+          return { said: `Told the lead no to: ${says}` };
+        }
         const taken = answerRequest(db, owner, repo, request.id, Date.now());
         if (taken === null) throw new Error("That request was answered already.");
-        if (!request.yes) {
-          settle(
-            repository,
-            taken.id,
-            `The human said no in the list to your request: ${taken.says}`,
-          );
-          return { said: `Told the lead no to: ${taken.says}` };
-        }
         return { said: await doYes(repository, taken) };
       }
       case "tell lead":
@@ -1048,8 +1071,8 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   // would overwrite a limit a review met meanwhile and forget when it was met, so a review
   // that started before it could end it by finishing.
   restoreLimits(db);
-  // A yes to a lead's request whose start the last stop cut short is finished. It isn't waited
-  // on, as a start waits for the first poll.
+  // A yes to a lead's request that the last stop cut short is done again. It isn't waited on, as
+  // a start waits for the first poll.
   void finishAnswers();
   // A freeze leaves nothing else in the log, so the daemon logs its own stalls.
   watchForStalls("The daemon");

@@ -93,49 +93,43 @@ export function requestAnswered(db: Database, id: number): void {
   db.run("DELETE FROM lead_requests WHERE id = ?", [id]);
 }
 
-// Returns the requests you said yes to whose start a stop of the daemon cut short, with their
-// repository and when you said yes. A no and a yes to adding a repository finish in one step, so
-// only a start is ever left here.
-export function answeredRequests(
-  db: Database,
-): (LeadRequest & { owner: string; repo: string; answered: number })[] {
+// Returns the requests you said yes to that a stop of the daemon cut short, with their repository.
+// A no is never left here, as it goes in one step.
+export function answeredRequests(db: Database): (LeadRequest & { owner: string; repo: string })[] {
   return db
-    .query(
-      "SELECT id, owner, repo, action, says, answered FROM lead_requests WHERE answered IS NOT NULL",
-    )
+    .query("SELECT id, owner, repo, action, says FROM lead_requests WHERE answered IS NOT NULL")
     .all()
     .flatMap((row) => {
-      const { owner, repo, answered } = z
-        .object({ owner: z.string(), repo: z.string(), answered: z.number() })
-        .parse(row);
-      return readBack(row).map((request) => ({ ...request, owner, repo, answered }));
+      const { owner, repo } = z.object({ owner: z.string(), repo: z.string() }).parse(row);
+      return readBack(row).map((request) => ({ ...request, owner, repo }));
     });
 }
 
-// Returns the name of the task a yes started, such as APP-12, when the start took effect before a
-// stop of the daemon cut it short, or null when it didn't, so the start runs once and only once.
-// An issue's start took effect when its thread is at work, started or changed since the yes. A new
-// task's took effect when the repository has a thread with its title and description that
-// started since.
-export function startedBy(
+// Saves on a request you said yes to the start of the task its yes filed, in place of the new
+// task it asked for, so doing the yes again starts that task rather than filing a second one.
+export function nameFiledTask(db: Database, id: number, action: LeadAction): void {
+  db.run("UPDATE lead_requests SET action = ? WHERE id = ?", [JSON.stringify(action), id]);
+}
+
+// Takes a request that waits for your answer away as you say no, and has `tell` tell its lead, in
+// one step, so a stop of the daemon never leaves a no half done. Returns the request's line, or
+// null when it was answered already.
+export function refuseRequest(
   db: Database,
-  repository: Repository,
-  action: LeadAction,
-  answered: number,
+  owner: string,
+  repo: string,
+  id: number,
+  tell: (says: string) => void,
 ): string | null {
-  const { owner, repo } = repository;
-  if (action.kind === "start") {
-    const thread = threadOn(db, `${owner}/${repo}`, action.task);
-    const live = thread !== null && ["working", "waiting", "queued"].includes(thread.status);
-    const since = Math.max(thread?.started ?? 0, thread?.changed ?? 0) >= answered;
-    return live && since ? taskName(repository.name, action.task) : null;
-  }
-  if (action.kind === "repo add") return null;
-  const found = db
-    .query(`SELECT task FROM task_threads WHERE owner = ? AND repo = ? AND title = ? AND body = ?
-      AND started >= ? ORDER BY started DESC LIMIT 1`)
-    .get(owner, repo, action.title, action.body, answered);
-  return found === null
-    ? null
-    : taskName(repository.name, z.object({ task: z.string() }).parse(found).task);
+  return db.transaction(() => {
+    const taken = db
+      .query(
+        "DELETE FROM lead_requests WHERE owner = ? AND repo = ? AND id = ? AND answered IS NULL RETURNING says",
+      )
+      .get(owner, repo, id);
+    if (taken === null) return null;
+    const { says } = z.object({ says: z.string() }).parse(taken);
+    tell(says);
+    return says;
+  })();
 }
