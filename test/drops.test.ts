@@ -257,6 +257,19 @@ test("a text paste whose start is split across two reads passes byte for byte", 
   }
 });
 
+test("a missing path or a folder whose paste's start is split across two reads passes byte for byte", async () => {
+  for (const path of [join(home, "gone.png"), join(home, "Screen Shots")]) {
+    const whole = `x${pasted(path)}y`;
+    for (let cut = 2; cut < 7; cut++) {
+      sent = "";
+      const take = filter();
+      take(Buffer.from(whole.slice(0, cut)));
+      take(Buffer.from(whole.slice(cut)));
+      expect(await sentOn()).toBe(whole);
+    }
+  }
+});
+
 test("Enter after a lone Esc and a paste that copies nothing still follows the paste", async () => {
   const take = filter();
   const missing = join(home, "gone.png");

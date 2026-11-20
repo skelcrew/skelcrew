@@ -250,8 +250,9 @@ export function pasteFilter(send: (bytes: Uint8Array) => void, drop: Drop) {
   };
 
   // Returns the paste's text with each droppable path replaced by its copy's, or null when
-  // nothing was copied, so the paste goes on as it came.
-  const rewritten = async (text: string): Promise<string | null> => {
+  // nothing was copied, so the paste goes on as it came. It calls `asking` just before it asks
+  // where the files go, which happens only when one of them can be copied.
+  const rewritten = async (text: string, asking: () => void): Promise<string | null> => {
     const parts = pastedPaths(text);
     if (!parts) return null;
     // Only the files that can be copied go to `drop`, each once, in the order pasted.
@@ -259,6 +260,7 @@ export function pasteFilter(send: (bytes: Uint8Array) => void, drop: Drop) {
     const can = await Promise.all(paths.map(droppable));
     const files = paths.filter((_, at) => can[at]);
     if (files.length === 0) return null;
+    asking();
     const folder = await drop.where(() => add(Buffer.from(dropSignal)));
     if (folder === null) return null;
     const copies = await drop.put(folder, files);
@@ -311,20 +313,33 @@ export function pasteFilter(send: (bytes: Uint8Array) => void, drop: Drop) {
         pass(asCame.subarray(startSent));
         continue;
       }
-      // Paths wait for their files. A start sent in part is closed first as a paste with nothing
-      // in it, as the question must go in between sequences, and the paste then goes whole.
-      if (startSent > 0) pass(Buffer.concat([pasteStart.subarray(startSent), pasteEnd]));
-      // What came after the paste waits until it has gone in, whenever that is.
+      // Paths wait for their files, and what came after the paste waits until it has gone in.
       dropping = true;
       waiting.push(rest);
-      rewritten(text)
+      const release = () => {
+        dropping = false;
+        for (const next of waiting.splice(0)) take(next);
+      };
+      // A start sent in part is closed as a paste with nothing in it, but only once a file can
+      // be copied, just before the question, which must go in between sequences. The paste then
+      // goes whole. A paste with nothing to copy goes on byte for byte, after the part sent.
+      const begun = startSent;
+      let closed = false;
+      const asking = () => {
+        if (begun === 0) return;
+        pass(Buffer.concat([pasteStart.subarray(begun), pasteEnd]));
+        closed = true;
+      };
+      rewritten(text, asking)
         .catch(() => null)
-        .then((changed) =>
-          add(changed === null ? asCame : Buffer.from(`\x1b[200~${changed}\x1b[201~`), () => {
-            dropping = false;
-            for (const next of waiting.splice(0)) take(next);
-          }),
-        );
+        .then((changed) => {
+          if (changed === null && begun > 0 && !closed) {
+            pass(asCame.subarray(begun));
+            release();
+            return;
+          }
+          add(changed === null ? asCame : Buffer.from(`\x1b[200~${changed}\x1b[201~`), release);
+        });
       return;
     }
   };
