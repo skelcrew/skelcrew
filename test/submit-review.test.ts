@@ -59,7 +59,7 @@ describe.skipIf(insideSandbox)("sc review", () => {
     const again = await skel(["review", "app-12"]);
     expect(again.err).toBe("");
     expect(again.code).toBe(0);
-    expect(again.out).toContain("app-12");
+    expect(again.out).toContain("APP-12");
     await until(() => finished("success").length === 1, 45_000);
     expect(
       statuses()
@@ -144,11 +144,11 @@ describe.skipIf(insideSandbox)("sc review", () => {
     await until(() => read(join(builder(), "args")) !== "");
     const early = await skel(["review", "app-12"]);
     expect(early.code).not.toBe(0);
-    expect(early.err).toContain("app-12 has no submitted commit to review yet");
+    expect(early.err).toContain("APP-12 has no submitted commit to review yet");
     setThread("status = 'done'");
     const done = await skel(["review", "app-12"]);
     expect(done.code).not.toBe(0);
-    expect(done.err).toContain("app-12 is done");
+    expect(done.err).toContain("APP-12 is done");
     expect(statuses()).toEqual([]);
   }, 60_000);
 
@@ -161,17 +161,17 @@ describe.skipIf(insideSandbox)("sc review", () => {
     const fromLead = await skel(["review", "app-12"], { SKELCREW_SOCKET: leadSocketPath() });
     expect(fromLead.code).not.toBe(0);
     expect(fromLead.err).toContain(
-      "a review of app-12's last commit is already waiting or running",
+      "a review of APP-12's last commit is already waiting or running",
     );
     // Refused only as already running, so the builder may ask for its own thread.
     const fromBuilder = await skel(["review", "app-12"], { SKELCREW_SOCKET: builderSocket() });
     expect(fromBuilder.code).not.toBe(0);
     expect(fromBuilder.err).toContain(
-      "a review of app-12's last commit is already waiting or running",
+      "a review of APP-12's last commit is already waiting or running",
     );
     const another = await skel(["review", "app-13"], { SKELCREW_SOCKET: builderSocket() });
     expect(another.code).not.toBe(0);
-    expect(another.err).toContain("you may ask for a review of app-12 only");
+    expect(another.err).toContain("you may ask for a review of APP-12 only");
   }, 60_000);
 
   test("a newer sc submit cancels a review asked for again", async () => {
@@ -187,7 +187,7 @@ describe.skipIf(insideSandbox)("sc review", () => {
     writeFileSync(join(plugin, "hold-status-pending"), "");
     expect((await skel(["review", "app-12"], { SKELCREW_SOCKET: leadSocketPath() })).err).toBe("");
     const twice = await skel(["review", "app-12"]);
-    expect(twice.err).toContain("a review of app-12's last commit is already waiting or running");
+    expect(twice.err).toContain("a review of APP-12's last commit is already waiting or running");
     rmSync(join(plugin, "hold-status-pending"));
     await until(() => existsSync(join(codexHome(), "sessions", "prompt-2")), 30_000);
     writeFileSync(join(clone(), "change"), "newer\n");

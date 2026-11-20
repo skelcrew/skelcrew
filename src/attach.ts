@@ -10,7 +10,7 @@ import { askAboutAgents } from "./approved-agents.ts";
 import { ask } from "./client.ts";
 import { tellOldKeys } from "./config.ts";
 import { openDb } from "./db.ts";
-import { builderSession, findThread } from "./flow/thread.ts";
+import { builderSession, findThread, taskName } from "./flow/thread.ts";
 import { runList } from "./list/list.ts";
 import { installService, restartDaemon, servicePid, startDaemon } from "./machine/service.ts";
 import { daemonSocket } from "./paths.ts";
@@ -235,7 +235,7 @@ export async function attachToThread(
   // A builder that exited leaves its last screen behind, which would look like it still runs.
   if (!(await agentRuns(host, id)))
     throw new Error(
-      `${repository}-${task}'s builder isn't running: the thread is ${thread.status}`,
+      `${taskName(repository, task)}'s builder isn't running: the thread is ${thread.status}`,
     );
   // Its hooks and sc reach the daemon wherever it runs, so the daemon runs first on any host.
   await upInBackground();

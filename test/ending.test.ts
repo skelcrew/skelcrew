@@ -57,7 +57,7 @@ await Bun.sleep(5);
 await startThread(db, { repo: "app", task: "t100" });
 const notes = db.query("SELECT text FROM notes").all();
 console.log(JSON.stringify({ held, notes }));`);
-  expect(seen).toEqual({ held: [`app-t100 failed: its setup command failed`], notes: [] });
+  expect(seen).toEqual({ held: [`APP-T100 failed: its setup command failed`], notes: [] });
 });
 
 // Runs a script against the test's own home, with a thread app-t100 started on a repository with
@@ -120,7 +120,7 @@ console.log(JSON.stringify({ failed, after, status: readThread(db, thread.folder
     status: "done",
     logged: 1,
     clone: false,
-    notes: [{ text: `app-t100 is done: #7 merged into main` }],
+    notes: [{ text: `APP-T100 is done: #7 merged into main` }],
   });
 });
 
@@ -139,7 +139,7 @@ console.log(JSON.stringify({ queued, notes }));`);
   expect(seen).toEqual({
     queued: [
       { text: "started app-t101 from github: Fix login" },
-      { text: `app-t100 is done: #7 merged into main` },
+      { text: `APP-T100 is done: #7 merged into main` },
     ],
     notes: [{ text: "started app-t101 from github: Fix login" }],
   });
@@ -160,12 +160,12 @@ const until = async (done) => { for (let i = 0; i < 400 && !done(); i++) await B
 const tmux = (...args) => Bun.spawnSync(["tmux", "-L", socket, "-f", "/dev/null", ...args]);
 tmux("new-session", "-d", "-s", leadPlaces("simon", "app").name, "-x", "100", "-y", "30", "sh", "-c", ${JSON.stringify(lead)});
 // Each note sent, with its Enter after its paste, which the terminal hands on as a new line.
-const sent = () => typedSoFar().split("app-t100 is done: #7 merged into main\\x1b[201~\\n").length - 1;
+const sent = () => typedSoFar().split("APP-T100 is done: #7 merged into main\\x1b[201~\\n").length - 1;
 try {
   await endThread(db, socket, thread, "PR #7 was merged", "is done: #7 merged into main");
   const first = db.query("SELECT id FROM notes").get().id;
   // The end note is pasted, and its Enter comes a moment later.
-  const pasted = await until(() => typedSoFar().includes("app-t100 is done"));
+  const pasted = await until(() => typedSoFar().includes("APP-T100 is done"));
   await Bun.sleep(5);
   const fresh = await startThread(db, { repo: "app", task: "t100" });
   await endThread(db, socket, fresh, "PR #7 was merged", "is done: #7 merged into main");
@@ -202,7 +202,7 @@ git("commit", "-q", "--allow-empty", "-m", "pushed");
 git("update-ref", "refs/skelcrew/threads/app-t100", "HEAD");
 writeFileSync(${JSON.stringify(join(clone, ".git", "refs", "skelcrew", "threads", `app-t100.lock`))}, "");
 const refused = await startThread(db, { repo: "app", task: "t100" }).then(() => "", (error) => String(error));
-console.log(JSON.stringify({ refused: refused.includes("couldn't start app-t100 over"), status: readThread(db, thread.folder).status, started: readThread(db, thread.folder).started === thread.started }));`);
+console.log(JSON.stringify({ refused: refused.includes("couldn't start APP-T100 over"), status: readThread(db, thread.folder).status, started: readThread(db, thread.folder).started === thread.started }));`);
   expect(seen).toEqual({ refused: true, status: "done", started: true });
 });
 

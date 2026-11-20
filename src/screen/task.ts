@@ -28,7 +28,7 @@ export function showTask(agents: string, session: string, repository: string, na
 }
 
 // Attaches the right side of the screen whose session is named to the builder of a task's row,
-// by the row's name, such as app-12, in the repository named by its owner/name. The row is read
+// by the row's name, such as APP-12, in the repository named by its owner/name. The row is read
 // here, as it is now, so any sidebar can call this with only the name. It goes through the
 // builder's session host, and moves your typing there. Once the attachment ends, by Ctrl-\ or
 // by the builder ending, even one on tmux whose session stays with its last screen, the right

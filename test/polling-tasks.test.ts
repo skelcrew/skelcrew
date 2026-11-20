@@ -65,11 +65,11 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
     expect(thread().needs_you).toBe(0);
     // The lead hears it is done, so it stops listing the PR as ready to merge.
     const leadTyped = () => read(join(data(), "claude", leadName, "typed"));
-    await until(() => leadTyped().includes("app-12 is done: #7 merged into main"));
+    await until(() => leadTyped().includes("APP-12 is done: #7 merged into main"));
     // A thread that is done isn't polled again. Its repository still is, for labeled issues.
     await morePolls();
     expect(asked(plugin).at(-1)).toMatchObject({ ask: "changed", prs: [] });
-    expect(leadTyped().split("app-12 is done").length - 1).toBe(1);
+    expect(leadTyped().split("APP-12 is done").length - 1).toBe(1);
   }, 60_000);
 
   // m on the screen's list of PRs asks on your socket. The lead's and builders' sockets refuse it,
@@ -186,9 +186,9 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
     const runDir = join(home, "run", "skelcrew");
     // At a terminal, sc rm says what it will do and asks first, and anything but y changes
     // nothing.
-    const question = "Remove app-12? This closes PR #7 and deletes its branch and clone. [y/N]";
+    const question = "Remove APP-12? This closes PR #7 and deletes its branch and clone. [y/N]";
     const kept = await runSkelInTerminal(socket, env(), ["rm", "app-12"], question, "n");
-    expect(kept).toContain("Skelcrew didn't remove app-12.");
+    expect(kept).toContain("Skelcrew didn't remove APP-12.");
     expect(asked(plugin).filter((q) => q.ask === "close pr")).toEqual([]);
     expect(thread().status).toBe("waiting");
     expect(fakeBuilders()).toHaveLength(1);
@@ -204,7 +204,7 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
     );
     expect(fromLead.stderr.toString()).toBe("");
     expect(fromLead.stdout.toString()).toBe(
-      "Removed app-12. Issue #12 stays open, and sc start app-12 starts it over.\n",
+      "Removed APP-12. Issue #12 stays open, and sc start APP-12 starts it over.\n",
     );
     expect(asked(plugin).filter((q) => q.ask === "close pr")).toEqual([
       {
@@ -229,17 +229,17 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
       env: env(),
     });
     expect(JSON.parse(listed.stdout.toString())).toMatchObject([
-      { task: "app-12", issue: "#12", stage: "issue" },
+      { task: "APP-12", issue: "#12", stage: "issue" },
     ]);
     const again = Bun.spawnSync([process.execPath, main, "rm", "app-12"], {
       env: env(),
       stderr: "pipe",
     });
-    expect(again.stderr.toString()).toContain("app-12 is done already");
+    expect(again.stderr.toString()).toContain("APP-12 is done already");
     // The lead removed it itself, so it hears nothing of it: not even the closed PR a poll sees.
     await morePolls();
     const leadTyped = () => read(join(data(), "claude", leadName, "typed"));
-    expect(leadTyped()).not.toContain("app-12 ended");
+    expect(leadTyped()).not.toContain("APP-12 ended");
     // The forge deletes the branch as it closes the PR, which the fake plugin leaves to the test.
     git(join(home, "github", "simon", "app.git"), "branch", "-D", branch);
 
@@ -251,10 +251,10 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
       stdout: "pipe",
     });
     expect(started.stderr.toString()).toBe("");
-    expect(started.stdout.toString()).toBe("Started app-12.\n");
+    expect(started.stdout.toString()).toBe("Started APP-12.\n");
     await until(() => thread().pr === 7 && thread().submitting === null, 30_000);
     const removed = await runSkelInTerminal(socket, env(), ["rm", "app-12"], question, "y");
-    expect(removed).toContain("Removed app-12.");
+    expect(removed).toContain("Removed APP-12.");
     expect(
       asked(plugin)
         .filter((q) => q.ask === "close pr")
@@ -268,8 +268,8 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
     });
     expect(thread().status).toBe("done");
     // Removed by you, it is news to the lead.
-    await until(() => leadTyped().includes("app-12 ended: you removed it, closing #7"));
-    expect(leadTyped().split("app-12 ended").length - 1).toBe(1);
+    await until(() => leadTyped().includes("APP-12 ended: you removed it, closing #7"));
+    expect(leadTyped().split("APP-12 ended").length - 1).toBe(1);
   }, 60_000);
 
   // A forge answers what changed since the last poll, and nothing changes on the PR while
@@ -332,7 +332,7 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
       stderr: "pipe",
     });
     expect(started.stderr.toString()).toBe("");
-    expect(started.stdout.toString()).toBe("Started app-12.\n");
+    expect(started.stdout.toString()).toBe("Started APP-12.\n");
     expect(thread()).toMatchObject({ task: 12, status: "working", base: "next" });
   }, 60_000);
 
@@ -357,7 +357,7 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
     await Bun.sleep(2000);
     rmSync(hold);
     expect(await new Response(started.stderr).text()).toBe("");
-    expect(await new Response(started.stdout).text()).toBe("Started app-12.\n");
+    expect(await new Response(started.stdout).text()).toBe("Started APP-12.\n");
     await started.exited;
     expect(thread()).toMatchObject({ task: 12, status: "working", base: "next" });
   }, 30_000);
@@ -391,7 +391,7 @@ echo "Not logged in"; exit 1`,
     pr({ labeled: true });
     serve();
     const lead = () => read(join(data(), "claude", leadName, "typed"));
-    await until(() => lead().includes("started app-12 from github: Add export"));
+    await until(() => lead().includes("started APP-12 from github: Add export"));
     const took = () => asked(plugin).filter((q) => q.ask === "took");
     await until(() => took().length > 0);
     expect(took()).toEqual([{ ask: "took", repository: "simon/app", task: "12" }]);
@@ -405,7 +405,7 @@ echo "Not logged in"; exit 1`,
     await morePolls();
     expect(thread().status).toBe("failed");
     expect(took()).toHaveLength(1);
-    expect(lead().split("started app-12").length - 1).toBe(1);
+    expect(lead().split("started APP-12").length - 1).toBe(1);
   }, 60_000);
 
   test("a labeled task whose claim the tracker grants starts a thread", async () => {
@@ -443,7 +443,7 @@ echo "Not logged in"; exit 1`,
     await until(() => listed().length === 1);
     expect(listed()).toEqual([
       {
-        task: "app-12",
+        task: "APP-12",
         stage: "issue",
         title: "Add export",
         short: null,
@@ -459,7 +459,7 @@ echo "Not logged in"; exit 1`,
     expect(claims()).toEqual([]);
     changes([issue12(true)]);
     await until(() => thread().task === 12);
-    expect(listed()).toMatchObject([{ task: "app-12", issue: "#12", stage: "working" }]);
+    expect(listed()).toMatchObject([{ task: "APP-12", issue: "#12", stage: "working" }]);
     expect(thread().issue_link).toBe("https://github.com/simon/app/issues/12");
     // A task from a label runs the default flow, unless the lead switches it.
     expect(thread().flow).toBe("default");
@@ -476,7 +476,7 @@ echo "Not logged in"; exit 1`,
     // Approved with every check green, it waits for you to merge.
     pr({ labeled: true, reviews: [skelReview], checks: [approved, check(900, "passed")] });
     await until(() => thread().needs_you === 1);
-    expect(listed()).toMatchObject([{ task: "app-12", issue: "#12", stage: "ready for review" }]);
+    expect(listed()).toMatchObject([{ task: "APP-12", issue: "#12", stage: "ready for review" }]);
     // Merged, the task is too, and you stay assigned. The tracker then closes the issue.
     pr({
       labeled: true,
@@ -488,10 +488,10 @@ echo "Not logged in"; exit 1`,
     // A merged task leaves the list at once, though its issue is still open, and only --all
     // shows it.
     expect(listed()).toEqual([]);
-    expect(listed("--all")).toMatchObject([{ task: "app-12", issue: "#12", stage: "merged" }]);
+    expect(listed("--all")).toMatchObject([{ task: "APP-12", issue: "#12", stage: "merged" }]);
     changes([taskItem("12", "Add export", { state: "closed", labels: ["skelcrew"] })]);
     await until(() => listed("--all")[0]?.issue === null);
-    expect(listed("--all")).toMatchObject([{ task: "app-12", stage: "merged" }]);
+    expect(listed("--all")).toMatchObject([{ task: "APP-12", stage: "merged" }]);
     expect(assigns()).toEqual([assignOn]);
   }, 60_000);
 
@@ -509,7 +509,7 @@ echo "Not logged in"; exit 1`,
       stderr: "pipe",
     });
     expect(started.stderr.toString()).toBe("");
-    expect(started.stdout.toString()).toBe("Started app-12.\n");
+    expect(started.stdout.toString()).toBe("Started APP-12.\n");
     expect(thread()).toMatchObject({ task: 12, status: "working" });
     await until(() => took().length === 2);
     expect(took()).toEqual([claim12, claim12]);
@@ -646,7 +646,7 @@ echo "Not logged in"; exit 1`,
     expect(assigns()).toEqual([assignOn, assignOff]);
     await until(() => thread().assigned === 0);
     const leadTyped = () => read(join(data(), "claude", leadName, "typed"));
-    await until(() => leadTyped().includes("app-12 ended: #7 closed without merging"));
+    await until(() => leadTyped().includes("APP-12 ended: #7 closed without merging"));
   }, 60_000);
 
   // A thread that failed still holds its issue, so you stay assigned, and starting it over

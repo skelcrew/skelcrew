@@ -247,7 +247,7 @@ test("sc issue create creates a task in the repository's tracker and prints its 
   await untilAnswers();
   const made = await skel("issue", "create", "app", "Add import", "From CSV");
   expect(made.err).toBe("");
-  expect(made.out).toBe("app-13\n");
+  expect(made.out).toBe("APP-13\n");
   expect(asked(plugin).filter((q) => q.ask === "create task")).toEqual([
     { ask: "create task", repository: "simon/app", title: "Add import", body: "From CSV" },
   ]);
@@ -285,7 +285,7 @@ test("a lead's sc issue create is refused without the human's words, and goes th
     lead,
   );
   expect(made.err).toBe("");
-  expect(made.out).toBe("app-13\n");
+  expect(made.out).toBe("APP-13\n");
   expect(asked(plugin).filter((q) => q.ask === "create task")).toHaveLength(1);
 }, 60_000);
 
@@ -359,7 +359,7 @@ test("sc start <repo> refuses --from, with the task as words or on stdin, and st
   // A description that says "--from" is the task's own words, so that task starts.
   const described = await skel("start", "app", "Document the option", "--from");
   expect(described.err).toBe("");
-  expect(described.out).toBe(`Started app-t100.\n`);
+  expect(described.out).toBe(`Started APP-T100.\n`);
   expect(thread()).toMatchObject({ title: "Document the option", body: "--from" });
 });
 
@@ -373,21 +373,21 @@ test("sc start <repo> takes a repository whose name ends like a task, by any of 
   await untilAnswers();
   const byName = await runSkel(["start", "skelcrew-herdr-v2"], env(), "# Add export\n\nAs JSON\n");
   expect(byName.err).toBe("");
-  expect(byName.out).toBe(`Started skelcrew-herdr-v2-t100.\n`);
+  expect(byName.out).toBe(`Started SKELCREW-HERDR-V2-T100.\n`);
   const byFullName = await skel("start", "simon/skelcrew-herdr-v2", "Add import", "From CSV");
   expect(byFullName.err).toBe("");
-  expect(byFullName.out).toBe(`Started skelcrew-herdr-v2-t101.\n`);
+  expect(byFullName.out).toBe(`Started SKELCREW-HERDR-V2-T101.\n`);
   const byUrl = await skel("start", "https://github.com/simon/skelcrew-herdr-v2", "Add a", "B");
   expect(byUrl.err).toBe("");
-  expect(byUrl.out).toBe(`Started skelcrew-herdr-v2-t102.\n`);
+  expect(byUrl.out).toBe(`Started SKELCREW-HERDR-V2-T102.\n`);
   // A task of that repository still splits at its last dash.
   const task = await skel("start", "skelcrew-herdr-v2-12");
   expect(task.err).toBe("");
-  expect(task.out).toBe("Started skelcrew-herdr-v2-12.\n");
+  expect(task.out).toBe("Started SKELCREW-HERDR-V2-12.\n");
   // And a task of the other repository is still a task.
   const other = await skel("start", "skelcrew-herdr-12");
   expect(other.err).toBe("");
-  expect(other.out).toBe("Started skelcrew-herdr-12.\n");
+  expect(other.out).toBe("Started SKELCREW-HERDR-12.\n");
 });
 
 test("more data on a connection doesn't run its request again", async () => {
@@ -485,7 +485,7 @@ test("sc start --flow runs a task on a flow file of the repository, and refuses 
   await untilApproved();
   const quick = await skel("start", "app", "Fix typo", "In the README", "--flow", "quick");
   expect(quick.err).toBe("");
-  expect(quick.out).toBe(`Started app-t100.\n`);
+  expect(quick.out).toBe(`Started APP-T100.\n`);
   expect(flows()).toEqual([{ task: `t100`, flow: "quick" }]);
   const missing = await skel("start", "app-12", "--flow", "slow");
   expect(missing.err).toBe("Skelcrew: app has no flow slow. Its flows are default, quick.\n");
@@ -493,7 +493,7 @@ test("sc start --flow runs a task on a flow file of the repository, and refuses 
   expect((await skel("start", "app-12", "--flow", "../x")).code).not.toBe(0);
   expect((await skel("start", "app-12", "--flow")).code).not.toBe(0);
   // Without --flow, a task runs default.
-  expect((await skel("start", "app", "Add notes", "As text")).out).toBe(`Started app-t101.\n`);
+  expect((await skel("start", "app", "Add notes", "As text")).out).toBe(`Started APP-T101.\n`);
   expect(flows()).toEqual([
     { task: `t100`, flow: "quick" },
     { task: `t101`, flow: "default" },
@@ -635,7 +635,7 @@ describe.skipIf(insideSandbox)("with a builder", () => {
     await untilCloned();
     const started = await skel("start", "app-12");
     expect(started.err).toBe("");
-    expect(started.out).toBe("Started app-12.\n");
+    expect(started.out).toBe("Started APP-12.\n");
     await until(() => read(join(config("app-12"), "seen")) !== "");
     expect(git(clone(), "rev-parse", "--abbrev-ref", "HEAD")).toBe("skelcrew/12-add-export");
     expect(read(join(clone(), "setup-ran"))).toBe("set up\ntoken-hidden\n");
@@ -701,7 +701,7 @@ c.on("data", (d) => process.stdout.write(d));`;
     const replies = read(join(config("app-12"), "replies"))
       .trim()
       .split("\n");
-    expect(JSON.parse(replies[0] ?? "")).toMatchObject({ running: true, thread: "app-12" });
+    expect(JSON.parse(replies[0] ?? "")).toMatchObject({ running: true, thread: "APP-12" });
     expect(replies.slice(1).map((reply) => JSON.parse(reply))).toEqual([
       { error: "the daemon doesn't know that request" },
       { error: "the daemon doesn't know that request" },
@@ -729,7 +729,7 @@ c.on("data", (d) => process.stdout.write(d));`;
     const out = join(data(), "leads", "simon", "app", "out");
     await until(() => read(out) !== "");
     expect(read(out)).toBe(
-      `app-13\nStarted app-12.\nSkelcrew: trusting a repository is only for your own terminal, not for agents\n{"error":"the daemon doesn't know that request"}\n`,
+      `APP-13\nStarted APP-12.\nSkelcrew: trusting a repository is only for your own terminal, not for agents\n{"error":"the daemon doesn't know that request"}\n`,
     );
     await until(() => read(join(config("app-12"), "args")) !== "");
   }, 60_000);
@@ -738,7 +738,7 @@ c.on("data", (d) => process.stdout.write(d));`;
     const work = addApp({ "skelcrew.yaml": "setup: [echo fine, echo broken >&2 && exit 3]\n" });
     serve();
     await untilCloned();
-    expect((await skel("start", "app-12")).out).toBe("Started app-12.\n");
+    expect((await skel("start", "APP-12")).out).toBe("Started APP-12.\n");
     await until(() => thread().status === "failed");
     // The daemon saves a thread before it appends the thread to its log.
     await until(() => read(join(data(), "threads", "app-12.log")).includes("broken"));
@@ -746,7 +746,7 @@ c.on("data", (d) => process.stdout.write(d));`;
     writeFileSync(join(work, "skelcrew.yaml"), "setup: [echo fixed > fixed]\n");
     git(work, "commit", "-q", "-am", "fix setup");
     git(work, "push", "-q", "origin", "main");
-    expect((await skel("start", "app-12")).out).toBe("Started app-12.\n");
+    expect((await skel("start", "APP-12")).out).toBe("Started APP-12.\n");
     await until(() => read(join(config("app-12"), "args")) !== "");
     expect(read(join(clone(), "fixed"))).toBe("fixed\n");
     expect(thread().status).toBe("working");
@@ -779,7 +779,7 @@ c.on("data", (d) => process.stdout.write(d));`;
     writeFileSync(join(plugin, "fail-changed"), "HTTP 502: Bad Gateway");
     const again = await skel("start", "app-12");
     expect(again.code).not.toBe(0);
-    expect(again.err).toBe("Skelcrew: app-12 has a thread already\n");
+    expect(again.err).toBe("Skelcrew: APP-12 has a thread already\n");
   }, 60_000);
 
   test("sc stop ends the builder and keeps its clone, a restart leaves it stopped, and sc start brings it back with --resume", async () => {
@@ -813,11 +813,11 @@ c.on("data", (d) => process.stdout.write(d));`;
     const lead = new Bun.CryptoHasher("sha256").update("simon/app").digest("hex").slice(0, 16);
     const fromLead = stopFrom(join(home, "run", "skelcrew", "leads", lead, "skelcrew.sock"));
     expect(fromLead.stderr.toString()).toBe("");
-    expect(fromLead.stdout.toString()).toContain("Stopped app-12.");
+    expect(fromLead.stdout.toString()).toContain("Stopped APP-12.");
     expect(hasSession("app-12")).toBe(false);
     expect(existsSync(join(clone(), "README"))).toBe(true);
     expect(thread().status).toBe("stopped");
-    expect((await skel("stop", "app-12")).err).toContain("app-12 is stopped already");
+    expect((await skel("stop", "APP-12")).err).toContain("APP-12 is stopped already");
 
     await stop(first);
     rmSync(join(config("app-12"), "calls"));
@@ -831,7 +831,7 @@ c.on("data", (d) => process.stdout.write(d));`;
     // A short title given as it comes back is saved with it.
     const started = await skel("start", "app-12", "--short", "Export");
     expect(started.err).toBe("");
-    expect(started.out).toContain("Started app-12 again");
+    expect(started.out).toContain("Started APP-12 again");
     expect(thread().short).toBe("Export");
     await until(() => read(join(config("app-12"), "calls")).includes("--resume"));
     expect(read(join(config("app-12"), "calls"))).toContain(`--resume ${session}`);
@@ -994,8 +994,8 @@ nameRepositories(db);`;
     expect(read(join(config("app-12"), "pwd"))).toBe(`${clone()}\n`);
     expect(hasSession("app-12")).toBe(true);
     expect(thread().session).toBe(session);
-    expect((await skel("start", "simon/app-12")).err).toContain(
-      "simon/app-12 has a thread already",
+    expect((await skel("start", "SIMON/APP-12")).err).toContain(
+      "SIMON/APP-12 has a thread already",
     );
   }, 60_000);
 
@@ -1062,11 +1062,11 @@ nameRepositories(db);`;
     await untilCloned();
     await skel("start", "app-12");
     expect((await skel("stop", "app-12")).err).toContain(
-      "app-12 is still setting up: stop it once its builder has started",
+      "APP-12 is still setting up: stop it once its builder has started",
     );
     await until(() => thread().status === "failed");
     expect((await skel("stop", "app-12")).err).toContain(
-      "app-12 is failed, so it has no builder to stop",
+      "APP-12 is failed, so it has no builder to stop",
     );
   }, 60_000);
 
@@ -1084,7 +1084,7 @@ nameRepositories(db);`;
       db.run("PRAGMA busy_timeout = 5000");
       db.run(`UPDATE tasks SET ${columns}`);
       db.close();
-      expect((await skel("start", "app-12")).out).toContain("Started app-12 again");
+      expect((await skel("start", "APP-12")).out).toContain("Started APP-12 again");
       return thread().status;
     };
     expect(await stoppedWith("pr = 7")).toBe("waiting");
@@ -1096,7 +1096,7 @@ nameRepositories(db);`;
     addApp({ "skelcrew.yaml": "setup: [sleep 3]\n" });
     serve();
     await untilAnswers();
-    expect((await skel("start", "app-12")).out).toBe("Started app-12.\n");
+    expect((await skel("start", "APP-12")).out).toBe("Started APP-12.\n");
     await until(() => read(join(config("app-12"), "args")) !== "");
     expect(thread().status).toBe("working");
   }, 60_000);
@@ -1134,7 +1134,7 @@ nameRepositories(db);`;
     serve();
     await untilAnswers();
     expect(existsSync(join(data(), "repos", "simon", "app"))).toBe(false);
-    expect((await skel("start", "app-12")).out).toBe("Started app-12.\n");
+    expect((await skel("start", "APP-12")).out).toBe("Started APP-12.\n");
     await until(() => read(join(config("app-12"), "args")) !== "");
     expect(thread().status).toBe("working");
   }, 60_000);
@@ -1150,7 +1150,7 @@ nameRepositories(db);`;
     await Bun.sleep(300);
     expect(existsSync(join(data(), "repos", "simon", "site"))).toBe(false);
     writeFileSync(join(home, "go"), "");
-    expect((await started).out).toBe("Started site-12.\n");
+    expect((await started).out).toBe("Started SITE-12.\n");
     await until(() => read(join(config("site-12"), "args")) !== "");
     expect(thread()).toMatchObject({ owner: "simon", repo: "site", status: "working" });
   }, 60_000);
@@ -1163,7 +1163,7 @@ nameRepositories(db);`;
     await untilAnswers();
     const run = await skel("start", "app", "Add export", "As JSON");
     expect(run.err).toBe("");
-    expect(run.out).toBe(`Started app-t100.\n`);
+    expect(run.out).toBe(`Started APP-T100.\n`);
     await until(() => read(join(config(`app-t100`), "args")) !== "");
     expect(read(join(config(`app-t100`), "args"))).toContain("Add export\n\nAs JSON");
     expect(thread()).toMatchObject({ task: `t100`, title: "Add export", body: "As JSON" });
@@ -1192,7 +1192,7 @@ nameRepositories(db);`;
     const task = '# Add export\n\n\nAs JSON, with "quotes" and $HOME.\nAnd dates.\n';
     const run = await runSkel(["start", "app"], env(), task);
     expect(run.err).toBe("");
-    expect(run.out).toBe(`Started app-t100.\n`);
+    expect(run.out).toBe(`Started APP-T100.\n`);
     expect(thread()).toMatchObject({
       task: `t100`,
       title: "Add export",
@@ -1209,7 +1209,7 @@ nameRepositories(db);`;
     await untilCloned();
     const run = await skel("start", "app", "Add export", "As JSON");
     expect(run.err).toBe("");
-    expect(run.out).toBe(`Started app-t101.\n`);
+    expect(run.out).toBe(`Started APP-T101.\n`);
     expect(thread()).toMatchObject({ task: `t101`, branch: `skelcrew/t101-add-export` });
     const claims = git(work, "ls-remote", "origin", "refs/skelcrew/names/*");
     expect(claims).toContain(`refs/skelcrew/names/t101`);
@@ -1226,7 +1226,7 @@ nameRepositories(db);`;
     const refused = await skel("start", `app-t100`);
     expect(refused.err).toContain(`there is no open issue t100 in app`);
     const run = await skel("start", "app", "Add export", "As JSON");
-    expect(run.out).toBe(`Started app-t100.\n`);
+    expect(run.out).toBe(`Started APP-T100.\n`);
     expect(thread()).toMatchObject({ task: `t100`, title: "Add export" });
   }, 60_000);
 
@@ -1237,7 +1237,7 @@ nameRepositories(db);`;
     await untilCloned();
     const named = await skel("start", "app", "Add export", "As JSON", "--short", "JSON export");
     expect(named.err).toBe("");
-    expect(named.out).toBe(`Started app-t100.\n`);
+    expect(named.out).toBe(`Started APP-T100.\n`);
     expect(thread()).toMatchObject({ task: `t100`, title: "Add export", short: "JSON export" });
     const piped = await runSkel(
       ["start", "app", "--short", "Notes"],
@@ -1245,10 +1245,10 @@ nameRepositories(db);`;
       "Add notes\n\nAs text",
     );
     expect(piped.err).toBe("");
-    expect(piped.out).toBe(`Started app-t101.\n`);
+    expect(piped.out).toBe(`Started APP-T101.\n`);
     const issue = await skel("start", "app-12", "--short", "Export");
     expect(issue.err).toBe("");
-    expect(issue.out).toBe("Started app-12.\n");
+    expect(issue.out).toBe("Started APP-12.\n");
     const db = new Database(join(data(), "skelcrew.db"));
     db.run("PRAGMA busy_timeout = 5000");
     const shorts = db.query("SELECT task, short FROM tasks ORDER BY task").all();
@@ -1278,7 +1278,7 @@ nameRepositories(db);`;
     const calls = read(join(config("app-12"), "calls"));
     const named = await skel("start", "app-12", "--short", "Export");
     expect(named.err).toBe("");
-    expect(named.out).toBe('Gave app-12 the short title "Export".\n');
+    expect(named.out).toBe('Gave APP-12 the short title "Export".\n');
     // The tracker would hear of a claim or assignment within moments of the answer.
     await Bun.sleep(1000);
     expect(tracker()).toHaveLength(asks);
@@ -1287,7 +1287,7 @@ nameRepositories(db);`;
     expect(read(join(config("app-12"), "calls"))).toBe(calls);
     expect(hasSession("app-12")).toBe(true);
     // Without --short, starting it again is still refused.
-    expect((await skel("start", "app-12")).err).toBe("Skelcrew: app-12 has a thread already\n");
+    expect((await skel("start", "APP-12")).err).toBe("Skelcrew: APP-12 has a thread already\n");
   }, 60_000);
 
   // A task started from a label runs the default flow, and the lead can switch it to another
@@ -1306,11 +1306,11 @@ nameRepositories(db);`;
     serve();
     await untilCloned();
     await untilApproved();
-    expect((await skel("start", "app-12")).out).toBe("Started app-12.\n");
+    expect((await skel("start", "APP-12")).out).toBe("Started APP-12.\n");
     expect(flows()).toEqual([{ task: 12, flow: "default" }]);
     const switched = await skel("start", "app-12", "--flow", "quick");
     expect(switched.err).toBe("");
-    expect(switched.out).toBe("app-12 now runs the flow quick.\n");
+    expect(switched.out).toBe("APP-12 now runs the flow quick.\n");
     expect(flows()).toEqual([{ task: 12, flow: "quick" }]);
     expect((await skel("start", "app-12", "--flow", "slow")).err).toBe(
       "Skelcrew: app has no flow slow. Its flows are default, careful, lax, quick.\n",
@@ -1318,7 +1318,7 @@ nameRepositories(db);`;
     // Its builder already runs as builder, so a flow that builds as another role is refused, and
     // the builder keeps the instructions it started with.
     expect((await skel("start", "app-12", "--flow", "careful")).err).toBe(
-      "Skelcrew: app-12 keeps the flow quick: its builder already runs as builder, and careful builds as tester. To run careful, start it over: sc rm app-12, then sc start app-12 --flow careful.\n",
+      "Skelcrew: APP-12 keeps the flow quick: its builder already runs as builder, and careful builds as tester. To run careful, start it over: sc rm APP-12, then sc start APP-12 --flow careful.\n",
     );
     expect(flows()).toEqual([{ task: 12, flow: "quick" }]);
     expect(read(join(config("app-12"), "args"))).not.toContain("Write the test first.");
@@ -1333,18 +1333,18 @@ nameRepositories(db);`;
     // A stopped thread whose builder hasn't submitted switches too, and comes back on that flow.
     expect((await skel("stop", "app-12")).code).toBe(0);
     expect((await skel("start", "app-12", "--flow", "careful")).err).toBe(
-      "Skelcrew: app-12 keeps the flow quick: its builder already runs as builder, and careful builds as tester. To run careful, start it over: sc rm app-12, then sc start app-12 --flow careful.\n",
+      "Skelcrew: APP-12 keeps the flow quick: its builder already runs as builder, and careful builds as tester. To run careful, start it over: sc rm APP-12, then sc start APP-12 --flow careful.\n",
     );
     expect(thread().status).toBe("stopped");
     const back = await skel("start", "app-12", "--flow", "default");
     expect(back.err).toBe("");
     expect(back.out).toBe(
-      "Started app-12 again on the flow default: its builder is back where it was.\n",
+      "Started APP-12 again on the flow default: its builder is back where it was.\n",
     );
     expect(flows()).toEqual([{ task: 12, flow: "default" }]);
     await until(() => thread().status === "working" && hasSession("app-12"));
     expect((await skel("start", "app-12", "--flow", "quick")).out).toBe(
-      "app-12 now runs the flow quick.\n",
+      "APP-12 now runs the flow quick.\n",
     );
     // Once its builder has submitted, the task keeps its flow to the end.
     const db = new Database(join(data(), "skelcrew.db"));
@@ -1352,21 +1352,21 @@ nameRepositories(db);`;
     // A first review under way, before it is timed, as in a repository with no forge.
     db.run("UPDATE tasks SET reviewing = 'abc' WHERE task = 12");
     expect((await skel("start", "app-12", "--flow", "default")).err).toBe(
-      "Skelcrew: app-12 keeps the flow quick, as its builder has submitted already.\n",
+      "Skelcrew: APP-12 keeps the flow quick, as its builder has submitted already.\n",
     );
     db.run("UPDATE tasks SET reviewing = NULL, review_at = 1 WHERE task = 12");
     db.close();
     expect((await skel("start", "app-12", "--flow", "default")).err).toBe(
-      "Skelcrew: app-12 keeps the flow quick, as its builder has submitted already.\n",
+      "Skelcrew: APP-12 keeps the flow quick, as its builder has submitted already.\n",
     );
     // The flow it runs already is no switch, so sc start does what it would without --flow.
     const same = await skel("start", "app-12", "--flow", "quick", "--short", "Quick fix");
     expect(same.err).toBe("");
-    expect(same.out).toBe('Gave app-12 the short title "Quick fix".\n');
+    expect(same.out).toBe('Gave APP-12 the short title "Quick fix".\n');
     // So does a stopped one, which stays stopped.
     expect((await skel("stop", "app-12")).code).toBe(0);
     expect((await skel("start", "app-12", "--flow", "default")).err).toBe(
-      "Skelcrew: app-12 keeps the flow quick, as its builder has submitted already.\n",
+      "Skelcrew: APP-12 keeps the flow quick, as its builder has submitted already.\n",
     );
     expect(thread().status).toBe("stopped");
   }, 60_000);
@@ -1420,7 +1420,7 @@ nameRepositories(db);`;
     serve();
     await until(() => existsSync(join(data(), "repos", "simon", long, "README")));
     await until(() => existsSync(join(data(), "repos", "simon", ".github", "README")));
-    expect((await skel("start", ".github-12")).out).toBe("Started .github-12.\n");
+    expect((await skel("start", ".github-12")).out).toBe("Started .GITHUB-12.\n");
     expect((await skel("start", `${long}-12`)).err).toBe("");
     const folders = [`github-12`, `${long.slice(0, 60)}-12`];
     for (const folder of folders) await until(() => read(join(config(folder), "args")) !== "");
@@ -1442,21 +1442,21 @@ describe("the backlog", () => {
     await untilCloned();
     const filed = await skel("task", "add", "app", "Add export", "As JSON");
     expect(filed.err).toBe("");
-    expect(filed.out).toBe("Filed app-t100 in the backlog. sc start app-t100 starts it.\n");
+    expect(filed.out).toBe("Filed APP-T100 in the backlog. sc start APP-T100 starts it.\n");
     // Its words and stdin, as sc start <repo> takes them.
     const piped = await runSkel(["task", "add", "app"], env(), "# Add notes\n\nAs text\n");
-    expect(piped.out).toBe("Filed app-t101 in the backlog. sc start app-t101 starts it.\n");
+    expect(piped.out).toBe("Filed APP-T101 in the backlog. sc start APP-T101 starts it.\n");
     // The same task filed again on purpose is a task of its own.
     const again = await skel("task", "add", "app", "Add export", "As JSON");
-    expect(again.out).toBe("Filed app-t102 in the backlog. sc start app-t102 starts it.\n");
+    expect(again.out).toBe("Filed APP-T102 in the backlog. sc start APP-T102 starts it.\n");
     // On the remote, under hidden refs, never as a branch, and never in the tracker.
     const refs = git(work, "ls-remote", "origin");
     expect(refs).toContain("refs/skelcrew/tasks/t100");
     expect(refs).toContain("refs/skelcrew/names/t100");
     expect(git(work, "ls-remote", "--heads", "origin")).not.toContain("t100");
     expect(asked(plugin).filter((q) => q.ask === "create task")).toEqual([]);
-    expect(await listed("app-t100")).toEqual({
-      task: "app-t100",
+    expect(await listed("APP-T100")).toEqual({
+      task: "APP-T100",
       stage: "issue",
       title: "Add export",
       short: null,
@@ -1466,9 +1466,9 @@ describe("the backlog", () => {
       checks: null,
       review: null,
     });
-    const shown = await skel("show", "app-t101");
+    const shown = await skel("show", "APP-T101");
     expect(shown.err).toBe("");
-    expect(shown.out).toStartWith("app-t101  Add notes\nStage   issue\nIssue   none\nFiled   by ");
+    expect(shown.out).toStartWith("APP-T101  Add notes\nStage   issue\nIssue   none\nFiled   by ");
     expect(shown.out).toContain("\nDescription\nAs text\n");
     expect(thread()).toEqual({});
     // A description is all a builder sees besides its title.
@@ -1487,17 +1487,17 @@ describe("the backlog", () => {
     knowApp();
     serve();
     await untilCloned();
-    await until(async () => (await listed("app-t100")) !== undefined);
-    expect(await listed("app-t100")).toMatchObject({ title: "Add export", stage: "issue" });
-    const started = await skel("start", "app-t100");
+    await until(async () => (await listed("APP-T100")) !== undefined);
+    expect(await listed("APP-T100")).toMatchObject({ title: "Add export", stage: "issue" });
+    const started = await skel("start", "APP-T100");
     expect(started.err).toBe("");
-    expect(started.out).toBe("Started app-t100.\n");
+    expect(started.out).toBe("Started APP-T100.\n");
     expect(thread()).toMatchObject({ task: "t100", title: "Add export", body: "As JSON" });
     // Started, it leaves the backlog on the remote, so no other machine starts it too.
     expect(git(join(home, "work", "simon", "app"), "ls-remote", "origin")).not.toContain(
       "refs/skelcrew/tasks/t100",
     );
-    expect(await listed("app-t100")).toMatchObject({ thread: expect.anything() });
+    expect(await listed("APP-T100")).toMatchObject({ thread: expect.anything() });
   }, 60_000);
 
   // The remote refuses to let the task go, as when another machine started it a moment before.
@@ -1512,11 +1512,11 @@ describe("the backlog", () => {
       `#!/bin/sh\ncase "$*" in *push*":refs/skelcrew/tasks/"*) echo refused >&2; exit 1 ;; esac\nexec ${Bun.which("git") ?? "git"} "$@"\n`,
       { mode: 0o755 },
     );
-    const refused = await skel("start", "app-t100");
-    expect(refused.err).toContain("app-t100 was started or removed on another machine");
+    const refused = await skel("start", "APP-T100");
+    expect(refused.err).toContain("APP-T100 was started or removed on another machine");
     expect(thread()).toEqual({});
     expect(git(work, "ls-remote", "origin")).toContain("refs/skelcrew/tasks/t100");
-    expect(await listed("app-t100")).toMatchObject({ title: "Add export", thread: null });
+    expect(await listed("APP-T100")).toMatchObject({ title: "Add export", thread: null });
   }, 60_000);
 
   // Leaves the remote as a start on some machine leaves it when a stop cuts it short: the task
@@ -1558,8 +1558,8 @@ describe("the backlog", () => {
     serve();
     await until(() => !git(work, "ls-remote", "origin").includes("refs/skelcrew/started/t100"));
     expect(git(work, "ls-remote", "origin")).toContain("refs/skelcrew/tasks/t100");
-    await until(async () => (await listed("app-t100")) !== undefined);
-    expect(await listed("app-t100")).toMatchObject({ title: "Add export", thread: null });
+    await until(async () => (await listed("APP-T100")) !== undefined);
+    expect(await listed("APP-T100")).toMatchObject({ title: "Add export", thread: null });
   }, 60_000);
 
   // A stop after the thread was recorded leaves only the claim to remove. Another machine's claim,
@@ -1578,8 +1578,8 @@ describe("the backlog", () => {
     serve();
     await until(() => !git(work, "ls-remote", "origin").includes("refs/skelcrew/started/t100"));
     expect(git(work, "ls-remote", "origin")).toContain("refs/skelcrew/started/t101");
-    expect(await listed("app-t100")).toMatchObject({ thread: { status: "stopped" } });
-    expect(await listed("app-t101")).toBeUndefined();
+    expect(await listed("APP-T100")).toMatchObject({ thread: { status: "stopped" } });
+    expect(await listed("APP-T101")).toBeUndefined();
   }, 60_000);
 
   // The remote takes the push that claims the start, and the connection drops before git hears
@@ -1594,9 +1594,9 @@ describe("the backlog", () => {
       `#!/bin/sh\ncase "$*" in *":refs/skelcrew/started/"*) ${Bun.which("git") ?? "git"} "$@"; echo "connection lost" >&2; exit 1 ;; esac\nexec ${Bun.which("git") ?? "git"} "$@"\n`,
       { mode: 0o755 },
     );
-    const started = await skel("start", "app-t100");
+    const started = await skel("start", "APP-T100");
     expect(started.err).toBe("");
-    expect(started.out).toBe("Started app-t100.\n");
+    expect(started.out).toBe("Started APP-T100.\n");
     expect(thread()).toMatchObject({ task: "t100", title: "Add export" });
     const refs = git(work, "ls-remote", "origin");
     expect(refs).not.toContain("refs/skelcrew/tasks/t100");
@@ -1623,13 +1623,13 @@ describe("the backlog", () => {
     writeFileSync(join(home, "hold"), "");
     const added = skel("task", "add", "app", "Add import", "From CSV");
     await until(() => existsSync(join(home, "held")));
-    const removed = skel("rm", "app-t100");
+    const removed = skel("rm", "APP-T100");
     await Bun.sleep(500);
     rmSync(join(home, "hold"));
     expect((await added).err).toBe("");
-    expect((await removed).out).toBe("Removed app-t100 from the backlog.\n");
-    expect(await listed("app-t100")).toBeUndefined();
-    expect(await listed("app-t101")).toMatchObject({ title: "Add import" });
+    expect((await removed).out).toBe("Removed APP-T100 from the backlog.\n");
+    expect(await listed("APP-T100")).toBeUndefined();
+    expect(await listed("APP-T101")).toMatchObject({ title: "Add import" });
   }, 60_000);
 
   // The remote takes the push that files the task, and the connection drops before git hears
@@ -1645,7 +1645,7 @@ describe("the backlog", () => {
     );
     const filed = await skel("task", "add", "app", "Add export", "As JSON");
     expect(filed.err).toBe("");
-    expect(filed.out).toBe("Filed app-t100 in the backlog. sc start app-t100 starts it.\n");
+    expect(filed.out).toBe("Filed APP-T100 in the backlog. sc start APP-T100 starts it.\n");
     const refs = git(work, "ls-remote", "origin", "refs/skelcrew/tasks/*");
     expect(refs).toContain("refs/skelcrew/tasks/t100");
     expect(refs).not.toContain("refs/skelcrew/tasks/t101");
@@ -1660,8 +1660,8 @@ describe("the backlog", () => {
     const body = `${"Export every row as JSON. ".repeat(8000)}\n`;
     const filed = await runSkel(["task", "add", "app"], env(), `Add export\n\n${body}`);
     expect(filed.err).toBe("");
-    expect(filed.out).toBe("Filed app-t100 in the backlog. sc start app-t100 starts it.\n");
-    expect((await skel("start", "app-t100")).out).toBe("Started app-t100.\n");
+    expect(filed.out).toBe("Filed APP-T100 in the backlog. sc start APP-T100 starts it.\n");
+    expect((await skel("start", "APP-T100")).out).toBe("Started APP-T100.\n");
     expect(thread()).toMatchObject({ task: "t100", title: "Add export", body });
   }, 60_000);
 
@@ -1690,7 +1690,7 @@ exec ${real} "$@"
     const again = await skel("task", "add", "app", "Add export", "As JSON");
     expect(again.err).toBe("");
     expect(again.out).toBe(
-      "app-t100 already holds this task in the backlog, so nothing more was filed. sc start app-t100 starts it.\n",
+      "APP-T100 already holds this task in the backlog, so nothing more was filed. sc start APP-T100 starts it.\n",
     );
     const refs = git(work, "ls-remote", "origin", "refs/skelcrew/tasks/*");
     expect(refs).toContain("refs/skelcrew/tasks/t100");
@@ -1698,7 +1698,7 @@ exec ${real} "$@"
     // That try is settled, so the same task filed again on purpose is a task of its own.
     rmSync(join(home, "bin", "git"));
     const twice = await skel("task", "add", "app", "Add export", "As JSON");
-    expect(twice.out).toBe("Filed app-t101 in the backlog. sc start app-t101 starts it.\n");
+    expect(twice.out).toBe("Filed APP-T101 in the backlog. sc start APP-T101 starts it.\n");
   }, 60_000);
 
   // The remote takes the push that files the task and the answer is lost. Then the first look at
@@ -1722,7 +1722,7 @@ exec ${real} "$@"
     expect(failed.err).toContain("run the same sc task add again once it can be reached");
     rmSync(join(home, "bin", "git"));
     const again = await skel("task", "add", "app", "Add export", "As JSON");
-    expect(again.out).toStartWith("app-t100 already holds this task");
+    expect(again.out).toStartWith("APP-T100 already holds this task");
     expect(git(work, "ls-remote", "origin", "refs/skelcrew/tasks/*")).not.toContain("t101");
   }, 60_000);
 
@@ -1776,13 +1776,13 @@ exec ${real} "$@"
 `,
       { mode: 0o755 },
     );
-    const failed = await skel("start", "app-t100");
-    expect(failed.err).toContain("app-t100");
+    const failed = await skel("start", "APP-T100");
+    expect(failed.err).toContain("APP-T100");
     expect(thread()).toEqual({});
     rmSync(join(home, "down"));
-    const again = await skel("start", "app-t100");
+    const again = await skel("start", "APP-T100");
     expect(again.err).toBe("");
-    expect(again.out).toBe("Started app-t100.\n");
+    expect(again.out).toBe("Started APP-T100.\n");
     expect(thread()).toMatchObject({ task: "t100", title: "Add export", body: "As JSON" });
     const refs = git(work, "ls-remote", "origin");
     expect(refs).not.toContain("refs/skelcrew/started/t100");
@@ -1794,17 +1794,17 @@ exec ${real} "$@"
     serve();
     await untilCloned();
     await skel("task", "add", "app", "Add export", "As JSON");
-    const removed = await skel("rm", "app-t100");
+    const removed = await skel("rm", "APP-T100");
     expect(removed.err).toBe("");
-    expect(removed.out).toBe("Removed app-t100 from the backlog.\n");
+    expect(removed.out).toBe("Removed APP-T100 from the backlog.\n");
     expect(git(work, "ls-remote", "origin")).not.toContain("refs/skelcrew/tasks/t100");
     // Its words are on no ref left: the name's claim holds none of them.
     git(work, "fetch", "-q", "origin", "+refs/skelcrew/*:refs/skelcrew/*");
     expect(git(work, "log", "--format=%B", "--glob=refs/skelcrew/*")).not.toContain("As JSON");
-    expect(await listed("app-t100")).toBeUndefined();
-    expect((await skel("show", "app-t100")).err).toBe("Skelcrew: there is no task app-t100\n");
+    expect(await listed("APP-T100")).toBeUndefined();
+    expect((await skel("show", "APP-T100")).err).toBe("Skelcrew: there is no task APP-T100\n");
     // The name stays claimed, so it never names other work.
     const next = await skel("task", "add", "app", "Add import", "From CSV");
-    expect(next.out).toBe("Filed app-t101 in the backlog. sc start app-t101 starts it.\n");
+    expect(next.out).toBe("Filed APP-T101 in the backlog. sc start APP-T101 starts it.\n");
   }, 60_000);
 });

@@ -59,7 +59,7 @@ test("resizing the terminal resizes the agent and keeps the sidebar as wide", as
   // A terminal shorter than the list keeps the row you are looking at in view.
   await toSecondThread();
   tmux(terminal, "resize-window", "-t", "=one:", "-x", "150", "-y", "6");
-  await until(() => selected().includes("app-7"), "the sidebar to scroll");
+  await until(() => selected().includes("APP-7"), "the sidebar to scroll");
 });
 
 test("on a narrow terminal the sidebar narrows, so the right side keeps half of it", async () => {

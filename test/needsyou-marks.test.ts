@@ -39,7 +39,7 @@ describe.skipIf(insideSandbox)("needs you", () => {
     expect(read(join(builder(), "hooks"))).toBe("");
     await untilNeedsYou(true);
     await until(() => notes() === 1);
-    expect(read(join(lead(), "typed"))).toContain("app-12 needs you: its builder asked a question");
+    expect(read(join(lead(), "typed"))).toContain("APP-12 needs you: its builder asked a question");
 
     // A second question while the first still waits is no news.
     await hook("ask");
@@ -65,7 +65,7 @@ describe.skipIf(insideSandbox)("needs you", () => {
     await untilNeedsYou(true);
     await until(() => notes() === 1);
     expect(read(join(lead(), "typed"))).toContain(
-      "app-12 needs you: its builder's harness stopped on an error",
+      "APP-12 needs you: its builder's harness stopped on an error",
     );
     // You fix it, such as with /login, and type to the builder.
     await hook("talk");
@@ -150,7 +150,7 @@ describe.skipIf(insideSandbox)("needs you", () => {
     const action = "apply the check.yml split in PR #463";
     const marked = await asLead(["needs-you", "app-12", action]);
     expect(marked.err).toBe("");
-    expect(marked.out).toContain(`app-12 needs you: ${action}`);
+    expect(marked.out).toContain(`APP-12 needs you: ${action}`);
     await untilNeedsYou(true);
     expect(await needsYouFor()).toBe(action);
     expect((await skel(["show", "app-12"])).out).toContain(`needs you: ${action}`);
@@ -160,7 +160,7 @@ describe.skipIf(insideSandbox)("needs you", () => {
 
     const cleared = await asLead(["needs-you", "--clear", "app-12"]);
     expect(cleared.err).toBe("");
-    expect(cleared.out).toContain("app-12 no longer needs you.");
+    expect(cleared.out).toContain("APP-12 no longer needs you.");
     await untilNeedsYou(false);
     expect(read(join(data(), "threads", "app-12.log"))).toContain(
       `the lead cleared its needs you: ${action}`,
@@ -179,7 +179,7 @@ describe.skipIf(insideSandbox)("needs you", () => {
     await untilNeedsYou(true);
     await until(() => notes() === 1);
     expect(read(join(lead(), "typed"))).toContain(
-      "app-12 needs you: you marked it: check the new design",
+      "APP-12 needs you: you marked it: check the new design",
     );
   }, 60_000);
 
@@ -234,7 +234,7 @@ describe.skipIf(insideSandbox)("needs you", () => {
     expect(await needsYouFor()).toBe(said);
     await until(() =>
       read(join(lead(), "typed")).includes(
-        `app-12 needs you: nobody acted on its stopped builder for 0.02 minutes: ${said}`,
+        `APP-12 needs you: nobody acted on its stopped builder for 0.02 minutes: ${said}`,
       ),
     );
     // The lead clears it, and the safety net doesn't mark it again.

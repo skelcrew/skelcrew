@@ -498,9 +498,9 @@ function addThread(repo: string, task: number): void {
   );
 }
 
-// app-1 as sc ps gives it. app has no forge, so it has no PR, CI or review to show.
+// APP-1 as sc ps gives it. app has no forge, so it has no PR, CI or review to show.
 const stoppedApp1 = {
-  thread: "app-1",
+  thread: "APP-1",
   short: null,
   title: null,
   status: "stopped",
@@ -660,7 +660,7 @@ describe.skipIf(insideSandbox)("with a lead per repository", () => {
     await until(() => claudeLines().length > 0);
     const [line] = claudeLines();
     expect(line).toContain('--short "<words>"');
-    expect(line).toContain('sc start app-12 --short "Login redirect"');
+    expect(line).toContain('sc start APP-12 --short "Login redirect"');
   });
 
   // A lead an older release started has Claude Code's agent view on. Its live conversation can

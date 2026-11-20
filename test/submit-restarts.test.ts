@@ -374,7 +374,7 @@ describe.skipIf(insideSandbox)("sc submit", () => {
     await until(() => app13().review_failed === 1, longWait);
     expect(app13().queued).toBeNull();
     expect((await skel(["ps", "app", "--json"])).out).toContain(
-      '"thread":"app-13","short":null,"title":"Add import","status":"waiting","needsYou":false,"needsYouFor":null,"queued":false',
+      '"thread":"APP-13","short":null,"title":"Add import","status":"waiting","needsYou":false,"needsYouFor":null,"queued":false',
     );
   }, 120_000);
 
@@ -488,7 +488,7 @@ describe.skipIf(insideSandbox)("sc submit", () => {
     await until(() => Date.now() > Number(thread().working_since) + 2000);
     Bun.spawnSync(["tmux", "-L", socket, "kill-session", "-t", "=app-12"]);
     await until(
-      () => read(join(lead(), "typed")).includes("app-12's builder isn't running"),
+      () => read(join(lead(), "typed")).includes("APP-12's builder isn't running"),
       30_000,
     );
     expect(thread().needs_you).toBe(0);

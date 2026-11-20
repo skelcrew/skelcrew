@@ -123,7 +123,7 @@ const sections: [string, [string, string][]][] = [
 const examples = [
   "sc",
   'sc issue create app "Fix the login redirect" "Sign-in lands on a 404."',
-  "sc start app-12",
+  "sc start APP-12",
   "sc ls",
   "sc --remote simon@workbox install",
   "sc --remote simon@workbox",
@@ -156,10 +156,10 @@ export function help(color = colorful()): string {
   lines.push("", heading("EXAMPLES"), ...examples.map((example) => `  ${dim("%")} ${example}`));
   lines.push(
     "",
-    dim("  A task is named after its issue, such as app-12, or, started with no issue,"),
-    dim("  by a t and a number, such as app-t100. Its thread is named after its task and"),
-    dim("  role, app-12/builder, or app-12 for short. Type a name in any case: APP-T100"),
-    dim("  is app-t100. --remote keeps Skelcrew on the other side up to date with yours,"),
+    dim("  A task is named after its issue, such as APP-12, or, started with no issue,"),
+    dim("  by a T and a number, such as APP-T100. Its thread is named after its task and"),
+    dim("  role, APP-12/builder, or APP-12 for short. Type a name in any case: app-t100"),
+    dim("  is APP-T100. --remote keeps Skelcrew on the other side up to date with yours,"),
     dim("  after asking. See skelcrew.dev."),
     "",
   );
