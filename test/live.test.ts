@@ -194,7 +194,7 @@ test("what is left fills the live view from the bottom up", async () => {
     events: [],
   };
   const live = { screen: agentOutput("claude", await screen("claude-busy.txt")) };
-  const lines = drawPane(row, details, live, 60, 12, true).map((line) =>
+  const lines = drawPane(row, details, live, 60, 12, true).lines.map((line) =>
     Bun.stripANSI(line).trimEnd(),
   );
   expect(lines.at(-1)).toBe("✻ Kneading… (42s · ↓ 1.2k tokens · esc to interrupt)");
