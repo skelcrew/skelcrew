@@ -405,6 +405,20 @@ ${threadSql({ task: "15", asking: 1 })}`;
   ]);
 });
 
+// The default flow gives 3 rounds of changes, so 4 is past the limit. Its approval answers it.
+test("an approval past the round limit counts as ready, not as needing you", () => {
+  const sql = `${repository}
+${itemSql("app", "pr", 34, "Fix login", "2026-11-05T10:00:00Z")}
+${threadSql({ task: "12", status: "waiting", pr: 34, needs_you: 1, ci_passed: 1, verdict: "approve", rounds: 4 })}`;
+  const { entries, threads } = after(sql);
+  expect(entries.slice(1)).toEqual([
+    { entry: "threads", name: "Threads", total: 1, notes: [] },
+    { entry: "prs", name: "PRs", total: 1, notes: [["1 ready", "38;5;120"]] },
+  ]);
+  expect(threads.map((group) => group.heading)).toEqual(["Ready to merge"]);
+  expect(threads[0]?.rows[0]?.ends[0]?.[0]).toBe("approved");
+});
+
 test("each entry is there with nothing open, so the threads below never move", () => {
   expect(after(repository).entries).toEqual([
     { entry: "issues", name: "Issues", total: 0, notes: [] },

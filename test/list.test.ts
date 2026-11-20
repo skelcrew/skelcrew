@@ -137,6 +137,16 @@ test("an approved task whose builder asks a question stays under Ready, marked a
   expect(row?.session).toBe("app-14");
 });
 
+// The default flow gives 3 rounds of changes, so 4 is past the limit. A review run again after it
+// approved, so the task is ready, and the round limit no longer needs you.
+test("a task approved past the round limit is under Ready, not needing you", () => {
+  sql("UPDATE tasks SET rounds = 4 WHERE task = '14';");
+  const row = rows().find((candidate) => candidate.name === "app-14");
+  expect(row).toMatchObject({ part: "ready", says: "approved", needsYou: false });
+  const ready = stageHeadings(rows(), new Set<ListStage>()).find((h) => h.stage === "ready");
+  expect(ready).toMatchObject({ count: 1, needYou: 0 });
+});
+
 test("each stage's heading counts its tasks and those that need you, open or closed", () => {
   sql("UPDATE threads SET asking = 1 WHERE folder = 'app-14';");
   expect(stageHeadings(rows(), new Set<ListStage>(["building"]))).toEqual([
@@ -442,7 +452,7 @@ test("a row knows whether its agent runs, and the lead says what its hooks last 
   });
 });
 
-// Ctrl-Q comes back only from tmux, so the list offers it only where Enter attaches there.
+// Ctrl-\ comes back only from tmux, so the list offers it only where Enter attaches there.
 test("a row knows whether Enter attaches to its agent on tmux", () => {
   const onTmux = () => Object.fromEntries(rows().map((row) => [row.name, row.tmux]));
   expect(onTmux()).toMatchObject({ lead: true, "app-7": true, "app-14": false, "app-31": false });
@@ -1086,7 +1096,7 @@ for (const [key, name] of [
     expect(asked.filter((line) => line.startsWith("start"))).toEqual([]);
   });
 
-test("Enter attaches to the builder, every key reaches it, and Ctrl-Q comes back on the same row", async () => {
+test("Enter attaches to the builder, every key reaches it, and Ctrl-\\ comes back on the same row", async () => {
   await open();
   press("Down");
   press("Down");
@@ -1097,18 +1107,18 @@ test("Enter attaches to the builder, every key reaches it, and Ctrl-Q comes back
   type("q m hello");
   press("Enter");
   await until(() => read(join(home, "app-7.typed")) === "q m hello\n", "what was typed");
-  press("C-q");
+  press("C-\\");
   await until(() => seen().includes("q/esc quit"), "the list again");
   expect(here()).toStartWith("▸ ○ app-7");
   expect(read(join(home, "left"))).toBe("");
 });
 
-// Ctrl-Q as your terminal sends it: one byte, or as an extended key in the kitty or the xterm
+// Ctrl-\ as your terminal sends it: one byte, or as an extended key in the kitty or the xterm
 // form once a program asked for those, in hex as tmux takes it.
-const ctrlQ = {
-  byte: ["11"],
-  kitty: "1b 5b 31 31 33 3b 35 75".split(" "),
-  xterm: "1b 5b 32 37 3b 35 3b 31 31 33 7e".split(" "),
+const back = {
+  byte: ["1c"],
+  kitty: "1b 5b 39 32 3b 35 75".split(" "),
+  xterm: "1b 5b 32 37 3b 35 3b 39 32 7e".split(" "),
 };
 // Types bytes into the terminal as they are, in two reads when `split`, as over a slow link.
 const sendBytes = async (bytes: string[], split: boolean) => {
@@ -1120,14 +1130,14 @@ const sendBytes = async (bytes: string[], split: boolean) => {
 };
 
 // You may have scrolled an agent back, which puts its session in tmux's copy mode, where keys
-// have a table of their own. Ctrl-Q must leave from there too, and never reach the agent. The
+// have a table of their own. Ctrl-\ must leave from there too, and never reach the agent. The
 // lead stands in for Claude Code and app-7 for Codex.
-for (const [form, bytes] of Object.entries(ctrlQ))
+for (const [form, bytes] of Object.entries(back))
   for (const [agent, arrows, mark] of [
     ["app-7", ["Down", "Down"], "○"],
     ["lead", ["Up", "Up", "Up"], "○"],
   ] as const)
-    test(`Ctrl-Q as ${form} comes back from ${agent} on its row, in pieces or scrolled back`, async () => {
+    test(`Ctrl-\\ as ${form} comes back from ${agent} on its row, in pieces or scrolled back`, async () => {
       await open();
       for (const arrow of arrows) press(arrow);
       await until(() => here().startsWith(`▸ ${mark} ${agent}`), `${agent}'s row`);
@@ -1149,29 +1159,48 @@ for (const [form, bytes] of Object.entries(ctrlQ))
       expect(read(join(home, "left"))).toBe("");
     });
 
-// Ctrl-Q pressed once too often lands on the list, in whatever form your terminal sends it, and
-// only q leaves the list. Alt-Q, which once came back from an agent, leaves nothing either.
-test("Ctrl-Q in every form, and Alt-Q, do nothing on the list", async () => {
+// Ctrl-\ is herdr's key to detach, and the only one on tmux. Ctrl-Q, which came back before,
+// now stays with the agent.
+test("Ctrl-Q no longer comes back from an agent", async () => {
   await open();
-  for (const bytes of Object.values(ctrlQ)) {
+  press("Down");
+  press("Down");
+  await until(() => here().startsWith("▸ ○ app-7"), "app-7's row");
+  press("Enter");
+  await until(() => seen().includes("I am app-7"), "app-7's agent");
+  press("C-q");
+  await Bun.sleep(500);
+  expect(seen()).toContain("I am app-7");
+  expect(seen()).not.toContain("q/esc quit");
+  press("C-\\");
+  await until(() => here().startsWith("▸ ○ app-7"), "the list again");
+});
+
+// Ctrl-\ pressed once too often lands on the list, in whatever form your terminal sends it, and
+// only q leaves the list. Alt-Q and Ctrl-Q, which once came back from an agent, leave nothing
+// either.
+test("Ctrl-\\ in every form, Alt-Q and Ctrl-Q do nothing on the list", async () => {
+  await open();
+  for (const bytes of Object.values(back)) {
     await sendBytes(bytes, false);
     await sendBytes(bytes, true);
   }
   press("M-q");
+  press("C-q");
   await Bun.sleep(500);
   expect(here()).toStartWith("▸ ● app-12");
   expect(read(join(home, "left"))).toBe("");
 });
 
-// A question takes y or n, and any other key is a no, but Ctrl-Q pressed once too often must
+// A question takes y or n, and any other key is a no, but Ctrl-\ pressed once too often must
 // not drop it.
-test("Ctrl-Q in every form leaves a question open, and y then answers it", async () => {
+test("Ctrl-\\ in every form leaves a question open, and y then answers it", async () => {
   await open();
   type("1");
   await until(() => here().startsWith("▸ ○ app-31"), "the issue's row");
   press("Enter");
   await until(() => seen().includes("Start app-31? y/n"), "the question");
-  for (const bytes of Object.values(ctrlQ)) await sendBytes(bytes, true);
+  for (const bytes of Object.values(back)) await sendBytes(bytes, true);
   await Bun.sleep(300);
   expect(seen()).toContain("Start app-31? y/n");
   type("y");
@@ -1182,14 +1211,14 @@ test("Ctrl-Q in every form leaves a question open, and y then answers it", async
 // you had comes back with you.
 test("while attached the title names the agent and the key back, and the list shows the key", async () => {
   await open();
-  expect(seen()).toContain("⏎ open · ctrl+q back");
+  expect(seen()).toContain("⏎ open · ctrl+\\ back");
   const title = () =>
     tmux("display-message", "-p", "-t", "=one:", "#{pane_title}").stdout.toString();
   tmux("select-pane", "-t", "=one:", "-T", "my shell");
   press("Enter");
   await until(() => seen().includes("I am app-12"), "app-12's agent");
-  await until(() => title() === "app-12 · ctrl+q back\n", "the title");
-  press("C-q");
+  await until(() => title() === "app-12 · ctrl+\\ back\n", "the title");
+  press("C-\\");
   await until(() => seen().includes("q/esc quit"), "the list again");
   await until(() => title() === "my shell\n", "the title you had");
 });
@@ -1218,10 +1247,10 @@ test("keys that come with Enter reach the agent, not the list", async () => {
   type("\rq m now\r");
   await until(() => read(join(home, "app-7.typed")) === "q m now\n", "what was typed");
   expect(read(join(home, "left"))).toBe("");
-  // The keys are typed into the agent before the list attaches, so Ctrl-Q waits for the agent's
+  // The keys are typed into the agent before the list attaches, so Ctrl-\ waits for the agent's
   // screen: pressed earlier, it would land on the list, where it does nothing.
   await until(() => seen().includes("I am app-7"), "app-7's agent");
-  press("C-q");
+  press("C-\\");
   await until(() => here().startsWith("▸ ○ app-7"), "the list again");
 });
 
@@ -1381,7 +1410,7 @@ test("Enter on the lead attaches to it", async () => {
   await until(() => here().startsWith("▸ ○ lead"), "the lead's row");
   press("Enter");
   await until(() => seen().includes("I am lead"), "the lead");
-  press("C-q");
+  press("C-\\");
   await until(() => here().startsWith("▸ ○ lead"), "the list on the lead's row");
 });
 
@@ -1401,7 +1430,7 @@ UPDATE threads SET host = 'fake', host_id = 'fake-app-12' WHERE folder = 'app-12
   await until(() => here().startsWith("▸ ● app-12"), "app-12's row");
   // The host has a key of its own to come back, so the list doesn't offer tmux's.
   expect(seen()).toContain("⏎ open  ");
-  expect(seen()).not.toContain("ctrl+q back");
+  expect(seen()).not.toContain("ctrl+\\ back");
   press("Enter");
   await until(() => seen().includes("I am fake-app-12 on fake"), "the host's attach");
   press("Enter");
@@ -1588,7 +1617,7 @@ test("a click on a task selects it, and a second click opens it, as Enter does",
   await until(() => seen().includes("I am app-7"), "app-7's agent");
   // The agent gets the mouse as your terminal would give it: the list's reporting is off.
   expect(mouseOn()).toBe(false);
-  press("C-q");
+  press("C-\\");
   await until(() => here().startsWith("▸ ○ app-7"), "the list on app-7's row");
   expect(mouseOn()).toBe(true);
   type("q");
@@ -1645,7 +1674,7 @@ test("a click on the lead's row opens the lead at once", async () => {
   await open();
   clickOn(lineOf("lead    claude"));
   await until(() => seen().includes("I am lead"), "the lead");
-  press("C-q");
+  press("C-\\");
   await until(() => here().startsWith("▸ ○ lead"), "the list on the lead's row");
 });
 
