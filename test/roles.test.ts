@@ -36,6 +36,20 @@ const asking =
 // with no issue were numbered from t100, and about the sidebar before sc --list, each with what
 // it is told now.
 const leadTasks = [
+  // The lead parks work in Skelcrew's backlog, and creates a tracker issue only when the human
+  // explicitly asks, with their words.
+  [
+    "Run sc start only once the human says yes. File an issue only when the human asks for one.",
+    'Run sc start only once the human says yes. To park work for later, file it in Skelcrew\'s backlog with sc task add. Create an issue in the tracker only when the human explicitly asks for one, such as "file an issue" or "add it to GitHub".',
+  ],
+  [
+    '- sc issue create <repo> "<title>" "<body>" creates an issue in your repository\'s tracker, such as GitHub, and prints its name, such as app-13. It starts nothing. Create one only when the human asks for it, such as "file an issue" or "add it to GitHub".',
+    '- sc task add <repo> "<title>" "<body>" files the work in Skelcrew\'s backlog, and prints its name, such as app-t104. It starts nothing, and never reaches the tracker. It is kept on the repository\'s remote, so the backlog is the same on every machine. Use it to park work the human wants done later, or when they say "add it to the backlog". Like sc start <repo>, it takes the title and body on stdin too. sc start app-t104 starts it, and sc rm app-t104 deletes it while it hasn\'t started.\n- sc issue create <repo> "<title>" "<body>" --asked-file asked.txt creates an issue in your repository\'s tracker, such as GitHub, and prints its name, such as app-13. It starts nothing. Create one only when the human explicitly asks for an issue, such as "file an issue" or "add it to GitHub". Write their words exactly as they wrote them to a file in your own folder, such as asked.txt, with your file-writing tool, never with the shell, then add --asked-file asked.txt. Without the human\'s words, Skelcrew refuses it.',
+  ],
+  [
+    "",
+    " Work in the backlog that never started has no thread or PR: sc rm deletes it, on every machine.",
+  ],
   // Needs you came to mean the human must act to unblock a thread. The lead marks a thread
   // when only the human can, and clears the mark.
   [
@@ -49,7 +63,7 @@ const leadTasks = [
   ],
   [
     "- sc issue ls lists open issues, and sc ps lists threads, with their status, whether they need the human, and each one's PR, CI and review, such as #242, failed and changes r3.",
-    "- sc ls lists open issues and the work on each, one row each. Each row says what is happening, such as waiting · #242 · CI failed · changes r3, and whether it needs the human. sc ls --all adds work that ended. sc ps lists threads, with the same columns.",
+    "- sc ls lists open issues, the work parked in the backlog and the work on each, one row each. Each row says what is happening, such as waiting · #242 · CI failed · changes r3, and whether it needs the human. sc ls --all adds work that ended. sc ps lists threads, with the same columns.",
   ],
   [
     "- sc pr show app-13, or a PR's number such as sc pr show 242, shows a PR: its state, branch, thread, checks, latest review and description, with the log of each failed check. Use it to see why CI failed or what a review asked for.",
@@ -112,6 +126,8 @@ const tellingTheLead =
 const triage =
   "- Each thread runs a flow, which sets its stages and its rounds of review. When the approved .agents/ has flows other than default, pick one for each thread you start or propose, and add --flow <name> to sc start, such as sc start app-13 --flow <name>. Read the flows where the end of these instructions says, not .agents/flows/ in the clone, which may hold changes the human hasn't approved. Whenever you pick a flow other than default, tell the human which and why, such as \"I'll run this on quick, as it is a one-line fix.\" A thread keeps its flow to the end, but before its builder first submits you can switch it with sc start app-12 --flow <name>. If that flow builds with another role, sc start refuses, as that is another agent: run sc rm app-12, then sc start app-12 --flow <name>.\n";
 const labelTriage = " Pick its flow as for any thread.";
+const noReviewFlows =
+  "A flow with no review: stage skips Skelcrew's reviewer: the builder's submit goes straight to CI, and the PR is ready once CI passes. Pick one only for a change too small to need a review, such as docs, wording or a trivial config change, never for code that can break something. Always tell the human when you pick one, and that nobody will review it. ";
 
 // What the lead's file added with limits.threads: a start over the limit waits in a queue.
 const queue =
@@ -168,6 +184,8 @@ Bring such a question, and any you can't answer, to the human in this chat, nami
 test("the lead and builder files hold the instructions the code gave, but for what was added since", () => {
   // The digests of src/agents/prompts/lead.md and builder.md before they moved.
   let lead = builtInRole("lead").instructions;
+  expect(lead).toContain(noReviewFlows);
+  lead = lead.replace(noReviewFlows, "");
   expect(lead).toContain(waiting);
   expect(lead).toContain(settling);
   expect(lead).toContain(restarted);

@@ -12,6 +12,7 @@ import { failedLog, forgeOf, trackerOf } from "../plugins/ask.ts";
 import { needsInstall } from "../plugins/repository.ts";
 import { errorText } from "../say.ts";
 import { filled, fitted, removeControlCodes } from "../screen/look.ts";
+import { backlogOf, filedTask } from "./backlog.ts";
 import { type Item, openTasks, ownTask, prOf, threadTask } from "./copy.ts";
 import { reviewCheck } from "./decide.ts";
 import { messagesWaiting } from "./messages.ts";
@@ -78,7 +79,7 @@ function tabClosed(db: Database, r: { owner: string; repo: string }): boolean {
 // A thread as sc ps shows it, with the short title the lead gave it, if any, and its whole
 // title, which an old row may lack. `queued` says its review waits for a place. `pr`, `prUrl`
 // and `checks` are null without a PR, and `review` without a forge, where sc ps leaves those
-// columns empty. `checks` is what the PR's CI says, without Skelcrew's own check. `review` is
+// columns empty, unless its flow has no review stage, which it then says. `checks` is what the PR's CI says, without Skelcrew's own check. `review` is
 // where Skelcrew's reviewer stands: its round, and when it was asked for or ended, as an ISO
 // time. `waiting` is how many messages wait to be typed into its builder. `merge` is its armed
 // merge, with what it waits on and whether it merges without Skelcrew's approval rather than when
@@ -97,7 +98,7 @@ export const ThreadRow = z.object({
   checks: z.enum(["passed", "failed", "running", "none", "no CI"]).nullable(),
   review: z
     .object({
-      state: z.enum(["approved", "changes", "reviewing", "failed", "none"]),
+      state: z.enum(["approved", "changes", "reviewing", "failed", "not reviewed", "none"]),
       round: z.number().nullable(),
       at: z.string().nullable(),
     })
@@ -140,6 +141,9 @@ function reviewOf(thread: Thread): NonNullable<ThreadRow["review"]> {
   const at = thread.review_at === null ? null : new Date(thread.review_at).toISOString();
   const live = thread.status === "working" || thread.status === "waiting";
   if (live && (thread.submitting !== null || thread.reviewing !== null)) {
+    // A submit its flow doesn't review has no round, and no review to fail: it says it isn't
+    // reviewed, while its status says it needs you when its push or check failed.
+    if (thread.verdict === "not reviewed") return { state: "not reviewed", round: null, at };
     const state = roundRunning(thread.folder) ? "reviewing" : "failed";
     return { state, round: thread.rounds + 1, at };
   }
@@ -150,6 +154,7 @@ function reviewOf(thread: Thread): NonNullable<ThreadRow["review"]> {
     changes: "changes",
     failed: "failed",
     "timed out": "failed",
+    "not reviewed": "not reviewed",
   } as const;
   return { state: states[thread.verdict], round: thread.review_round, at };
 }
@@ -174,7 +179,9 @@ function threadRow(db: Database, thread: Thread, forge: boolean): ThreadRow {
     pr,
     prUrl: copy?.link ?? null,
     checks: pr === null ? null : ciOf(thread, copy),
-    review: forge ? reviewOf(thread) : null,
+    // Without a forge sc ps shows no review, but a task its flow doesn't review says so, as it
+    // is ready on its branch with nobody having looked at it.
+    review: forge || thread.verdict === "not reviewed" ? reviewOf(thread) : null,
     waiting: messagesWaiting(db, thread),
     merge:
       thread.merge_plan === null
@@ -231,7 +238,8 @@ export type TaskRow = z.infer<typeof TaskRow>;
 const issueId = (id: string) => (/^\d+$/.test(id) ? `#${id}` : id);
 
 // Returns the tasks of every repository, or of one, for sc ls: each task with a thread, newest
-// first, then each open issue with none, newest first, across all the repositories asked for.
+// first, then each open issue with none and each task of the backlog, newest first, across all
+// the repositories asked for.
 // They come from Skelcrew's database and its copy of the tracker, so the tracker isn't asked.
 // A task whose work goes on, a failed thread's included, shows the title it started with, as its
 // builder and reviewer see it, however the issue was edited since. Text from the tracker and the
@@ -289,7 +297,23 @@ export function listTasks(db: Database, repository?: string): TaskRow[] {
         };
         return { created: item.created, task };
       });
-    return { worked, waiting };
+    // The backlog's tasks wait beside the issues, by when they were filed. Starting one takes
+    // it out of the backlog, so none has a thread.
+    const filed = backlogOf(db, r.owner, r.repo).map((t) => {
+      const task: TaskRow = {
+        task: taskName(r.name, t.task),
+        stage: "issue",
+        title: removeControlCodes(t.title),
+        short: null,
+        issue: null,
+        thread: null,
+        pr: null,
+        checks: null,
+        review: null,
+      };
+      return { created: t.created, task };
+    });
+    return { worked, waiting: [...waiting, ...filed] };
   });
   // A thread's rowid grows as threads start, across repositories. Issues sort by when the tracker
   // made them, and the sort keeps each repository's own order, newest first, for the same time.
@@ -330,6 +354,7 @@ export type PrPage = z.infer<typeof PrPage>;
 // review stands, with a forge or without one. `prPage` is its PR from Skelcrew's copy, or null once the copy no longer has
 // it, as after a merge. `merge` is its armed merge with what it waits on, such as `merges without
 // approval · waiting on its checks`, or null with none, as the list's rows leave that out.
+// `filed` is who filed a task of the backlog and when, as an ISO time, or null for any other.
 export const TaskView = z.object({
   task: z.string(),
   stage: Stage,
@@ -348,6 +373,7 @@ export const TaskView = z.object({
   review: ThreadRow.shape.review,
   prPage: PrPage.nullable(),
   merge: z.string().nullable(),
+  filed: z.object({ by: z.string(), at: z.string() }).nullable().default(null),
 });
 export type TaskView = z.infer<typeof TaskView>;
 
@@ -450,21 +476,23 @@ export async function showTask(
   // still holds its task until it starts over, so it shows the words it started with, though
   // without the lead's messages, which starting over leaves behind. A done thread shows its open
   // issue's latest words, or else what it saved as it started.
+  // A task of the backlog has neither a thread nor an issue, and shows the words it was filed with.
   const thread = threadOn(db, `${owner}/${repo}`, task);
   const issue = openTasks(db, owner, repo).find((item) => item.id === task);
-  if (!thread && !issue) throw new Error(`there is no task ${taskName(name, task)}`);
+  const filed = thread ? null : filedTask(db, owner, repo, task);
+  if (!thread && !issue && !filed) throw new Error(`there is no task ${taskName(name, task)}`);
   const current = thread && thread.status !== "done" && thread.status !== "failed";
   const described =
     thread && (thread.status !== "done" || !issue)
       ? threadTask(db, current ? thread : { ...thread, updates: [] })
-      : { title: issue?.title ?? "", body: issue?.body ?? "" };
+      : (filed ?? { title: issue?.title ?? "", body: issue?.body ?? "" });
   // Its issue, unless it is a task of Skelcrew's own, such as t1.
   const own = ownTask(task);
   const row = thread && threadRow(db, thread, forge);
   const pr = row?.pr ?? null;
   return {
-    task: taskName(name, task),
-    stage: taskStage(thread, issue !== undefined),
+    task: `${taskName(name, task)}`,
+    stage: taskStage(thread, issue !== undefined || filed !== null),
     title: removeControlCodes(described.title),
     issue: own ? null : { id: issueId(task), link: thread?.issue_link ?? issue?.link ?? null },
     threads: row
@@ -483,6 +511,7 @@ export async function showTask(
     review: thread && reviewOf(thread),
     prPage: pr === null ? null : await prPageOf(db, repository, pr),
     merge: thread ? mergeShown(thread) : null,
+    filed: filed && { by: removeControlCodes(filed.by), at: filed.created },
   };
 }
 
@@ -698,6 +727,19 @@ export function printTask(task: TaskView, json: boolean): void {
   const facts = [
     ["Stage", task.stage],
     ["Issue", issue ?? "none"],
+    // Who filed a task of the backlog, and the day, as a person reads it.
+    ...(task.filed
+      ? [
+          [
+            "Filed",
+            `by ${task.filed.by} on ${new Date(task.filed.at).toLocaleDateString("en-GB", {
+              day: "numeric",
+              month: "long",
+              year: "numeric",
+            })}`,
+          ],
+        ]
+      : []),
     // Each thread on a line of its own.
     ...(threads.length === 0
       ? [["Thread", "none"]]

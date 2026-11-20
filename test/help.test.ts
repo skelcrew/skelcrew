@@ -227,10 +227,11 @@ test("the help says how a task with no issue is named, and that names are typed 
 });
 
 // The issue commands replaced the task commands, which are gone with no alias.
-test("sc task is no longer a command", () => {
+// sc task only files tasks in the backlog: sc ls and sc show list and show them.
+test("sc task takes only add", () => {
   const ran = skel(["task", "ls"]);
   expect(ran.code).not.toBe(0);
-  expect(ran.err).toContain("that isn't a Skelcrew command");
+  expect(ran.err).toContain("sc task was given arguments it doesn't take");
 });
 
 // The lead names each thread it starts for the sidebar, and you can too.

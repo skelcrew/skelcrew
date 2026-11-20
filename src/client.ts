@@ -92,10 +92,30 @@ export async function askForTask(which: {
 
 // Has the daemon create a task in the repository's tracker, such as a GitHub issue, for sc
 // issue create, and returns the task's name, such as app-13. The daemon asks the tracker, since
-// agents never hold its login.
-export async function createTask(repository: string, title: string, body: string): Promise<string> {
-  const reply = await request({ command: "task create", repo: repository, title, body });
+// agents never hold its login. `asked` is the human's words asking for it, which a lead gives.
+export async function createTask(
+  repository: string,
+  title: string,
+  body: string,
+  asked?: string,
+): Promise<string> {
+  const reply = await request({
+    command: "task create",
+    repo: repository,
+    title,
+    body,
+    ...(asked === undefined ? {} : { asked }),
+  });
   return checkReply(z.object({ task: z.string() }), reply).task;
+}
+
+// Has the daemon file a task in the repository's backlog, for sc task add, and returns its name,
+// such as app-t104. The daemon keeps it on the repository's remote, so every machine shows it.
+// `already` says the backlog held the same task, as filed by an earlier try, and nothing was
+// filed again.
+export async function fileTask(repository: string, title: string, body: string) {
+  const reply = await request({ command: "task add", repo: repository, title, body });
+  return checkReply(z.object({ task: z.string(), already: z.boolean().default(false) }), reply);
 }
 
 // Has the daemon start a thread on a task, for sc start, and returns what it did, in a
@@ -173,7 +193,8 @@ export async function planMerge(
 // Asks the daemon which thread and PR sc merge names, with its title, when the thread started,
 // what it says of a merge already armed, and what to say about its changes to .agents/, so it can
 // ask you about it before arming, and arm only that. For a merge without approval, also the PR's
-// head it would pin and what the review still asks.
+// head it would pin and what the review still asks. `ready` says what a merge when ready waits
+// for, such as "it's approved and green".
 export async function previewMerge(which: {
   repo?: string;
   task?: string;
@@ -191,6 +212,7 @@ export async function previewMerge(which: {
       head: z.string().nullable(),
       asks: z.string(),
       agents: z.string(),
+      ready: z.string(),
     }),
     reply,
   );
@@ -237,6 +259,7 @@ export async function previewRemoval(repository: string, task: string) {
 
 // Has the daemon remove a thread, for sc rm, with the reason its PR's comment gives, and
 // returns the thread's name and the ID of the issue it worked on, or null when it had none.
+// `unfiled` says it was a task of the backlog that never started, which is now gone.
 // The daemon answers once the PR is closed and the clone removed.
 export async function removeOn(repository: string, task: string, reason?: string) {
   const reply = await request({
@@ -245,7 +268,12 @@ export async function removeOn(repository: string, task: string, reason?: string
     task,
     ...(reason ? { reason } : {}),
   });
-  return checkReply(z.object({ removed: z.string(), issue: z.string().nullable() }), reply);
+  const removed = z.object({
+    removed: z.string(),
+    issue: z.string().nullable(),
+    unfiled: z.boolean().default(false),
+  });
+  return checkReply(removed, reply);
 }
 
 // Has the daemon start a round for sc submit, run by a builder in its sandbox, and returns

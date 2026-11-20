@@ -4,6 +4,7 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -2528,22 +2529,62 @@ exec ${bwrap} "$@"`,
       expect(thread().merge_asked).toBe(words);
     }, 90_000);
 
+    // A forge shows a review's verdict, such as GitHub's "Approved.", so a task whose flow has no
+    // review stage gets no record on the PR: nobody approved it. The merge still goes, at the
+    // commit last submitted, once CI is green.
+    test("a merge when ready of a task its flow didn't review posts no record on the PR", async () => {
+      await approvedApp12();
+      // The merge goes by the verdict saved on the task, as a no-review flow's submit saves it.
+      const db = new Database(join(data(), "skelcrew.db"));
+      db.run("PRAGMA busy_timeout = 5000");
+      db.run("UPDATE tasks SET verdict = 'not reviewed', review_round = NULL WHERE task = 12");
+      db.close();
+      // Nobody will approve it, so neither the question nor the answer says so.
+      const said = await runSkelInTerminal(
+        socket,
+        env(),
+        ["merge", "--when-ready", "app-12"],
+        "Merge #7 (APP-12 Add export) when its checks pass?",
+        "y",
+      );
+      expect(said).toContain(
+        "Merging #7 as soon as its checks pass. sc merge --cancel APP-12 stops it.",
+      );
+      await until(() =>
+        leadTyped().includes(
+          "Merging #7 (APP-12) as soon as its checks pass, as you asked at your terminal.",
+        ),
+      );
+      expect(leadTyped()).not.toContain("approved and green");
+      const head = pushed();
+      pr({ head, reviews: [], checks: [approved, check(5, "passed")] });
+      await until(() => thread().status === "done");
+      expect(merges()[0]).toMatchObject({ pr: 7, commit: head });
+      const records = asked(plugin).filter(
+        (q) => q.ask === "review" && String(q.body).startsWith("Merging"),
+      );
+      expect(records).toEqual([]);
+    }, 90_000);
+
     test("an armed merge waits on a new push and failing CI, then merges the approved head", async () => {
       await approvedApp12();
       await arm();
       const head = pushed();
       expect(head).toMatch(/^[0-9a-f]{40}$/);
-      // A push nobody reviewed is never merged, and the lead hears it waits, once a round.
+      // A push nobody reviewed is never merged. A review is what it waits on, so the lead hears
+      // nothing.
       pr({ head: "b".repeat(40), reviews: [skelReview], checks: [approved] });
       await until(() => thread().merge_waits === "a review of its newest commit");
-      await until(() =>
-        leadTyped().includes(
-          "Still merging #7 (APP-12) once it's approved and green, waiting on a review of its newest commit.",
-        ),
-      );
-      // Failing CI waits too.
+      await morePolls();
+      expect(leadTyped()).not.toContain("Still merging");
+      // Failing CI waits on the builder, so the lead hears it, once a round.
       pr({ head, reviews: [skelReview], checks: [approved, check(5, "failed")] });
       await until(() => thread().merge_waits === "its failing checks to be fixed");
+      await until(() =>
+        leadTyped().includes(
+          "Still merging #7 (APP-12) once it's approved and green, waiting on its failing checks to be fixed.",
+        ),
+      );
       await morePolls();
       expect(merges()).toEqual([]);
       expect(thread().merge_plan).toBe("armed");
@@ -2922,6 +2963,59 @@ echo '{"verdict":"changes","body":"Not yet.","findings":["Handle an empty file",
       await morePolls();
       return head;
     };
+    // Waiting on an approval, a builder's round being pushed or a review running needs nobody,
+    // so the lead hears nothing, however many rounds it takes. Each phase is held open through
+    // polls, so the merge is checked while it is under way.
+    test("an armed merge sends the lead no note while its builder resubmits and its review runs", async () => {
+      // The PR shows no CI, so the next round's review starts at once rather than waiting for
+      // CI's first check on its commit.
+      await changesApp12([]);
+      await arm();
+      await until(() => thread().merge_waits === "an approval");
+      await morePolls();
+      expect(leadTyped()).not.toContain("Still merging");
+      // The forge holds the builder's push while a file is there, so the round stays submitting.
+      const holdPush = join(home, "hold-push");
+      const heldPush = join(home, "held-push");
+      const hook = join(home, "github", "simon", "app.git", "hooks", "pre-receive");
+      writeFileSync(
+        hook,
+        `#!/bin/sh\ntouch '${heldPush}'\nwhile [ -e '${holdPush}' ]; do sleep 0.1; done\n`,
+      );
+      chmodSync(hook, 0o755);
+      writeFileSync(holdPush, "");
+      // The review's pending check is held too, so the review stays running once it starts.
+      writeFileSync(join(plugin, "hold-status-pending"), "");
+      submitRound2();
+      await until(() => existsSync(heldPush));
+      await until(() => thread().merge_waits === "its review");
+      await morePolls();
+      expect(thread().submitting).not.toBeNull();
+      expect(leadTyped()).not.toContain("Still merging");
+      // The push goes through, and the review runs, held on its check.
+      rmSync(holdPush);
+      await until(
+        () =>
+          thread().submitting === null &&
+          thread().reviewing !== null &&
+          existsSync(join(plugin, "held-status")),
+      );
+      await morePolls();
+      expect(thread().reviewing).not.toBeNull();
+      expect(thread().merge_waits).toBe("its review");
+      expect(leadTyped()).not.toContain("Still merging");
+      // The reviewer asks for changes again, and the merge waits on an approval, quietly.
+      rmSync(join(plugin, "hold-status-pending"));
+      await until(
+        () => thread().rounds === 2 && thread().submitting === null && thread().reviewing === null,
+        30_000,
+      );
+      await until(() => thread().merge_waits === "an approval");
+      await morePolls();
+      expect(leadTyped()).not.toContain("Still merging");
+      expect(thread().merge_plan).toBe("armed");
+    }, 120_000);
+
     const skipQuestion =
       "Merge #7 (APP-12 Add export) without Skelcrew's approval? CI must still pass. It still asks: 1) Handle an empty file 2) Test the error";
     const skipSaid =

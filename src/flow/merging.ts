@@ -5,10 +5,18 @@
 // itself. Without an armed plan nothing merges by itself.
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
+import { flowRoles } from "../flows.ts";
 import { createTask, editReview, forgeOf, mergePr, postReview, trackerOf } from "../plugins/ask.ts";
 import { errorText } from "../say.ts";
 import { openTasks, prOf } from "./copy.ts";
-import { mergeStuck, mergeWaitsOn, type PullRequest, skipReviewWaitsOn } from "./decide.ts";
+import {
+  mergeNoteFor,
+  mergeWaitsOn,
+  noteRound,
+  type PullRequest,
+  readyWhen,
+  skipReviewWaitsOn,
+} from "./decide.ts";
 import { endThread, removing } from "./events.ts";
 import { noteForLead } from "./messages.ts";
 import { findRepository, repositoryAt } from "./repo.ts";
@@ -67,10 +75,11 @@ export function threadToMerge(
 }
 
 // Returns how a thread's armed merge is said, after "Merging #7", such as "as soon as it's
-// approved and green", for what sc merge says and the lead's notes.
-const mergeWhen = (thread: Pick<Thread, "merge_pinned">) =>
+// approved and green", or for a flow with no review stage "as soon as its checks pass", for what
+// sc merge says and the lead's notes.
+const mergeWhen = (thread: Pick<Thread, "merge_pinned" | "verdict">) =>
   thread.merge_pinned === null
-    ? "as soon as it's approved and green"
+    ? `as soon as ${readyWhen(thread)}`
     : "without Skelcrew's approval once its checks pass";
 
 // Returns what sc merge says of a merge already armed on the thread, and how to stop it, so a
@@ -147,12 +156,19 @@ export function armMerge(
     );
   if (skip && !head)
     throw new Error(`Skelcrew hasn't seen #${thread.pr}'s newest commit yet: ask again shortly`);
+  // A flow with no review stage has no review to skip, even while its submit waits for CI's
+  // first check, which keeps the commit saved as under review.
+  const asUsual = `merge it with m in the list, or sc merge --when-ready ${name}`;
+  if (skip && flowRoles(thread).review === null)
+    throw new Error(
+      `${name}'s flow has no review stage, so there is no review to skip: ${asUsual}`,
+    );
   // Only a review that asks for changes, or still runs, can be skipped. An approved PR merges
   // as usual, and one never reviewed waits for its review.
   if (skip && thread.verdict !== "changes" && thread.reviewing === null)
     throw new Error(
       thread.verdict === "approve"
-        ? `${name} is approved already: merge it with m in the list, or sc merge --when-ready ${name}`
+        ? `${name} is approved already: ${asUsual}`
         : `${name} has no review asking for changes or under way, so there is nothing to skip: wait for its review`,
     );
   const asked = "asked" in how ? how.asked : null;
@@ -164,14 +180,15 @@ export function armMerge(
     merge_asked: asked,
     merge_waits: null,
     merge_noted: null,
+    merge_noted_for: [],
     merge_pinned: head ?? null,
   };
-  const when = mergeWhen(plan);
+  const when = mergeWhen({ ...plan, verdict: thread.verdict });
   // The log keeps your words exactly, line breaks and spaces included. Written as JSON, they
   // still fit on one line of the daemon's log.
   const what = head
     ? `merge #${thread.pr} without Skelcrew's approval at commit ${head.slice(0, 7)}`
-    : `merge #${thread.pr} once it's approved and green`;
+    : `merge #${thread.pr} once ${readyWhen(thread)}`;
   const why =
     asked === null
       ? `you asked to ${what}`
@@ -203,10 +220,11 @@ export function refuseWithoutForge(db: Database, thread: Thread): void {
     );
 }
 
-// Returns your login name on this machine, for the record on the PR of who asked. Bun's
+// Returns your login name on this machine, for the record on the PR of who asked, and of who
+// filed a task in the backlog. Bun's
 // userInfo reads it from USER, which the daemon may run without, as a service does, and then
 // says "unknown", so the system is asked.
-function loginName(): string {
+export function loginName(): string {
   const id = Bun.spawnSync(["id", "-un"], { stdout: "pipe", stderr: "ignore" });
   return (id.success && id.stdout.toString().trim()) || "you";
 }
@@ -222,7 +240,13 @@ export function cancelMerge(db: Database, thread: Thread): string {
     throw new Error(`${name} is merging on its forge right now, so it can't be cancelled`);
   if (thread.pr !== null && prOf(db, thread.owner, thread.repo, thread.pr)?.state === "merged")
     throw new Error(`${name}'s PR has merged already, so it can't be cancelled`);
-  const none = { merge_plan: null, merge_waits: null, merge_noted: null, merge_pinned: null };
+  const none = {
+    merge_plan: null,
+    merge_waits: null,
+    merge_noted: null,
+    merge_noted_for: [],
+    merge_pinned: null,
+  };
   record(db, thread.folder, none, "its armed merge was cancelled");
   return `${name} won't merge by itself. It waits for you to merge it.`;
 }
@@ -267,7 +291,13 @@ export async function mergeIfReady(
   // You asked to merge the commit you saw without approval. A newer one is a change nobody you
   // trust has looked at, so the plan ends, rather than waiting, and the lead hears it.
   if (pinned !== null && pr.state === "open" && pr.head !== null && pr.head !== pinned) {
-    const none = { merge_plan: null, merge_waits: null, merge_noted: null, merge_pinned: null };
+    const none = {
+      merge_plan: null,
+      merge_waits: null,
+      merge_noted: null,
+      merge_noted_for: [],
+      merge_pinned: null,
+    };
     record(db, folder, none, `a push to #${thread.pr} cancelled its merge without approval`);
     noteForLead(
       db,
@@ -288,8 +318,11 @@ export async function mergeIfReady(
     // it gets a record of its own. Skipping the review it keeps the reviewer's last verdict,
     // which a review still running when you asked may have turned to an approval: a record
     // asking for changes would then contradict it, and on a forge that requires an approval,
-    // block the merge you asked for.
+    // block the merge you asked for. A task whose flow has no review stage gets no record: a
+    // forge shows a review's verdict, such as GitHub's "Approved.", which nobody gave, and could
+    // count it toward a required approval. Its log keeps who asked.
     const key = `${thread.merge_id} ${commit}`;
+    const quiet = pinned === null && thread.verdict === "not reviewed";
     // A record the forge took just before the daemon stopped, with nothing saved yet, is found
     // by its marker in the PR's reviews.
     const marker = recordMarker(thread, commit);
@@ -300,7 +333,7 @@ export async function mergeIfReady(
     // acts on the PR and thread as the forge and Skelcrew have them after the record: a check
     // that failed or started, a cancel, a stop, sc rm or a new review while the record was
     // posted all show there, and stop the merge.
-    if (thread.merge_record !== key) {
+    if (thread.merge_record !== key && !quiet) {
       const found = pr.reviews.find((review) => review.text.includes(marker));
       if (found) {
         record(db, folder, { merge_record: key, merge_record_id: found.id });
@@ -370,9 +403,13 @@ export async function mergeIfReady(
   // What it waits on changes only now and then, so the log isn't filled with every poll.
   if (waits !== now.merge_waits)
     record(db, folder, { merge_waits: waits }, `its armed merge waits on ${waits}`);
-  if (mergeStuck(now, waits)) {
-    record(db, folder, { merge_noted: now.review_round });
-    const when = pinned === null ? "once it's approved and green" : "without Skelcrew's approval";
+  const stuck = mergeNoteFor(now, waits);
+  if (stuck !== null) {
+    // The waits already heard are kept for this round only, so a new round hears them again.
+    const round = noteRound(now);
+    const heard = now.merge_noted === round ? now.merge_noted_for : [];
+    record(db, folder, { merge_noted: round, merge_noted_for: [...heard, stuck] });
+    const when = pinned === null ? `once ${readyWhen(now)}` : "without Skelcrew's approval";
     noteForLead(
       db,
       sessions,

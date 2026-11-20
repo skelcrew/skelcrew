@@ -130,18 +130,23 @@ function failedWaits(saved: ReturnType<typeof shownBefore>): void {
   saved.tabs[0] = { ...saved.tabs[0], needYou: 1, colour: "yellow" };
 }
 
-// Adds what sc ps now says each thread needs you for, which the release before tasks didn't
-// say: app-t1's builder asked a question, and app-13 is approved with green checks, waiting for
-// you to merge it.
 // Changes the names of tasks the release before tasks showed, such as app-12, to how Skelcrew
-// shows them now, in uppercase. A session is named by its thread's folder, which stays lowercase.
-const namesInUppercase = (saved: ReturnType<typeof shownBefore>): ReturnType<typeof shownBefore> =>
-  JSON.parse(JSON.stringify(saved), (key, value) =>
+// shows them now, in uppercase. A sidebar row's own part of its task's name, such as t1, is in
+// uppercase too. A session is named by its thread's folder, which stays lowercase.
+function namesInUppercase(saved: ReturnType<typeof shownBefore>): ReturnType<typeof shownBefore> {
+  const now = JSON.parse(JSON.stringify(saved), (key, value) =>
     typeof value === "string" && key !== "session"
       ? value.replace(/\b(?:app|notes)-t?\d+\b/g, (name) => name.toUpperCase())
       : value,
   );
+  for (const screen of now.screen)
+    for (const entry of screen.sidebar) entry.task = entry.task.toUpperCase();
+  return now;
+}
 
+// Adds what sc ps now says each thread needs you for, which the release before tasks didn't
+// say: app-t1's builder asked a question, and app-13 is approved with green checks, waiting for
+// you to merge it.
 function sayWhatFor(saved: ReturnType<typeof shownBefore>): void {
   const words: Record<string, string> = { "app-t1": "question", "app-13": "ready to merge" };
   for (const row of [...saved.ps, ...saved.psNotes])

@@ -162,12 +162,17 @@ function onGitHub(files: Record<string, string>, repo: string, owner = "simon"):
 // Returns a checkout to push more from.
 function addApp(files: Record<string, string> = {}, repo = "app"): string {
   const work = onGitHub(files, repo);
+  knowApp(repo);
+  return work;
+}
+
+// Tells Skelcrew about simon/<repo>, already on the fake GitHub.
+function knowApp(repo = "app"): void {
   const script = `import { openDb } from ${JSON.stringify(source("db.ts"))};
 openDb().run("INSERT INTO repositories (name, owner, repo) VALUES (?, 'simon', ?)", [${JSON.stringify(repo)}, ${JSON.stringify(repo)}]);
 openDb().run("UPDATE repositories SET forge = 'github', claimed = 1, remote = 'https://github.com/' || owner || '/' || repo || '.git'");`;
   const added = Bun.spawnSync([process.execPath, "-e", script], { env: env(), stderr: "pipe" });
   if (!added.success) throw new Error(added.stderr.toString());
-  return work;
 }
 
 // Skelcrew's own clone, which the daemon makes as it starts.
@@ -257,6 +262,42 @@ test("sc issue create creates a task in the repository's tracker and prints its 
     { ask: "create task", repository: "simon/app", title: "Add import", body: "From CSV" },
   ]);
 });
+
+// A lead parks work in the backlog, and creates an issue only when the human explicitly asks,
+// giving their words. The human's own sc issue create needs none.
+test("a lead's sc issue create is refused without the human's words, and goes through with them", async () => {
+  addApp();
+  serve();
+  await untilCloned();
+  // The daemon opens the lead's socket as it opens the repository, as plain sc does.
+  const short = new Bun.CryptoHasher("sha256").update("simon/app").digest("hex").slice(0, 16);
+  const leadSocket = join(home, "run", "skelcrew", "leads", short, "skelcrew.sock");
+  const connection = createConnection(join(home, "run", "skelcrew.sock"));
+  connection.on("error", () => {});
+  connection.write(`${JSON.stringify({ command: "lead", from: "simon/app" })}\n`);
+  await until(() => existsSync(leadSocket));
+  connection.destroy();
+  const lead = { ...env(), SKELCREW_SANDBOX: "1", SKELCREW_SOCKET: leadSocket };
+  const refused = await runSkel(["issue", "create", "app", "Add import", "From CSV"], lead);
+  expect(refused.err).toContain("a lead creates an issue only when the human explicitly asks");
+  expect(refused.err).toContain("sc task add");
+  const words = join(home, "asked.txt");
+  writeFileSync(words, "");
+  const empty = await runSkel(
+    ["issue", "create", "app", "Add import", "From CSV", "--asked-file", words],
+    lead,
+  );
+  expect(empty.err).toContain("is empty");
+  expect(asked(plugin).filter((q) => q.ask === "create task")).toEqual([]);
+  writeFileSync(words, "File an issue for the CSV import.\n");
+  const made = await runSkel(
+    ["issue", "create", "app", "Add import", "From CSV", "--asked-file", words],
+    lead,
+  );
+  expect(made.err).toBe("");
+  expect(made.out).toBe("APP-13\n");
+  expect(asked(plugin).filter((q) => q.ask === "create task")).toHaveLength(1);
+}, 60_000);
 
 // A builder sees only the title and body. A heredoc that failed inside $(...) leaves the
 // body empty while the command still runs, and an issue with no body can't be taken back.
@@ -678,6 +719,7 @@ c.on("data", (d) => process.stdout.write(d));`;
     expect(existsSync(join(home, "issues", "sent"))).toBe(false);
   }, 60_000);
 
+  // The lead gives the human's words for an issue, in a file it writes in its own folder.
   test("the lead runs sc issue create and sc start from its sandbox, but can't trust", async () => {
     addApp();
     const asker = `const c = require("node:net").createConnection(process.env.SKELCREW_SOCKET);
@@ -685,7 +727,7 @@ c.on("connect", () => c.write('{"command":"lead"}\\n'));
 c.on("data", (d) => process.stdout.write(d));`;
     writeFileSync(join(home, "bin", "ask.js"), asker);
     fakeClaude(
-      `{ sc issue create app "Add import" "From CSV"; sc start app-12; sc repo trust simon/other; bun ${join(home, "bin", "ask.js")}; } > out.new 2>&1; mv out.new out`,
+      `{ printf 'File an issue for the CSV import.' > asked.txt; sc issue create app "Add import" "From CSV" --asked-file asked.txt; sc start app-12; sc repo trust simon/other; bun ${join(home, "bin", "ask.js")}; } > out.new 2>&1; mv out.new out`,
       "",
     );
     // Opened before, so the daemon starts app's lead as it starts.
@@ -1386,5 +1428,387 @@ nameRepositories(db);`;
     expect((await skel("start", `${long}-12`)).err).toBe("");
     const folders = [`github-12`, `${long.slice(0, 60)}-12`];
     for (const folder of folders) await until(() => read(join(config(folder), "args")) !== "");
+  }, 60_000);
+});
+
+// Tasks filed in Skelcrew alone, with no issue in a tracker, kept on the repository's remote so
+// every machine shows the same backlog.
+describe("the backlog", () => {
+  // The task's JSON as sc ls --json gives it.
+  const listed = async (name: string) => {
+    const tasks = z.array(z.object({ task: z.string() }).passthrough());
+    return tasks.parse(JSON.parse((await skel("ls", "--json")).out)).find((t) => t.task === name);
+  };
+
+  test("sc task add files a task that sc ls and sc show show, and starts nothing", async () => {
+    const work = addApp();
+    serve();
+    await untilCloned();
+    const filed = await skel("task", "add", "app", "Add export", "As JSON");
+    expect(filed.err).toBe("");
+    expect(filed.out).toBe("Filed APP-T100 in the backlog. sc start APP-T100 starts it.\n");
+    // Its words and stdin, as sc start <repo> takes them.
+    const piped = await runSkel(["task", "add", "app"], env(), "# Add notes\n\nAs text\n");
+    expect(piped.out).toBe("Filed APP-T101 in the backlog. sc start APP-T101 starts it.\n");
+    // The same task filed again on purpose is a task of its own.
+    const again = await skel("task", "add", "app", "Add export", "As JSON");
+    expect(again.out).toBe("Filed APP-T102 in the backlog. sc start APP-T102 starts it.\n");
+    // On the remote, under hidden refs, never as a branch, and never in the tracker.
+    const refs = git(work, "ls-remote", "origin");
+    expect(refs).toContain("refs/skelcrew/tasks/t100");
+    expect(refs).toContain("refs/skelcrew/names/t100");
+    expect(git(work, "ls-remote", "--heads", "origin")).not.toContain("t100");
+    expect(asked(plugin).filter((q) => q.ask === "create task")).toEqual([]);
+    expect(await listed("APP-T100")).toEqual({
+      task: "APP-T100",
+      stage: "issue",
+      title: "Add export",
+      short: null,
+      issue: null,
+      thread: null,
+      pr: null,
+      checks: null,
+      review: null,
+    });
+    const shown = await skel("show", "APP-T101");
+    expect(shown.err).toBe("");
+    expect(shown.out).toStartWith("APP-T101  Add notes\nStage   issue\nIssue   none\nFiled   by ");
+    expect(shown.out).toContain("\nDescription\nAs text\n");
+    expect(thread()).toEqual({});
+    // A description is all a builder sees besides its title.
+    expect((await skel("task", "add", "app", "Add import", " ")).code).not.toBe(0);
+  }, 60_000);
+
+  // A second machine is this one with nothing of its own left: a new database and clone. All it
+  // shares with the first is the remote.
+  test("a task filed on one machine shows on another, through the remote, and starts there", async () => {
+    addApp();
+    const first = serve();
+    await untilCloned();
+    expect((await skel("task", "add", "app", "Add export", "As JSON")).err).toBe("");
+    await stop(first);
+    rmSync(data(), { recursive: true, force: true });
+    knowApp();
+    serve();
+    await untilCloned();
+    await until(async () => (await listed("APP-T100")) !== undefined);
+    expect(await listed("APP-T100")).toMatchObject({ title: "Add export", stage: "issue" });
+    const started = await skel("start", "APP-T100");
+    expect(started.err).toBe("");
+    expect(started.out).toBe("Started APP-T100.\n");
+    expect(thread()).toMatchObject({ task: "t100", title: "Add export", body: "As JSON" });
+    // Started, it leaves the backlog on the remote, so no other machine starts it too.
+    expect(git(join(home, "work", "simon", "app"), "ls-remote", "origin")).not.toContain(
+      "refs/skelcrew/tasks/t100",
+    );
+    expect(await listed("APP-T100")).toMatchObject({ thread: expect.anything() });
+  }, 60_000);
+
+  // The remote refuses to let the task go, as when another machine started it a moment before.
+  // The start is refused, and the task stays in the backlog, with no thread left behind.
+  test("a start the remote refuses keeps the task in the backlog and records no thread", async () => {
+    const work = addApp();
+    serve();
+    await untilCloned();
+    await skel("task", "add", "app", "Add export", "As JSON");
+    writeFileSync(
+      join(home, "bin", "git"),
+      `#!/bin/sh\ncase "$*" in *push*":refs/skelcrew/tasks/"*) echo refused >&2; exit 1 ;; esac\nexec ${Bun.which("git") ?? "git"} "$@"\n`,
+      { mode: 0o755 },
+    );
+    const refused = await skel("start", "APP-T100");
+    expect(refused.err).toContain("APP-T100 was started or removed on another machine");
+    expect(thread()).toEqual({});
+    expect(git(work, "ls-remote", "origin")).toContain("refs/skelcrew/tasks/t100");
+    expect(await listed("APP-T100")).toMatchObject({ title: "Add export", thread: null });
+  }, 60_000);
+
+  // Leaves the remote as a start on some machine leaves it when a stop cuts it short: the task
+  // moved off the backlog onto a claim of its start. Returns the claim's commit.
+  const cutStart = (work: string, name: string) => {
+    git(work, "fetch", "-q", "origin", `refs/skelcrew/tasks/${name}`);
+    const commit = git(work, "rev-parse", "FETCH_HEAD").trim();
+    git(
+      work,
+      "push",
+      "-q",
+      "--atomic",
+      "origin",
+      `${commit}:refs/skelcrew/started/${name}`,
+      `:refs/skelcrew/tasks/${name}`,
+    );
+    return commit;
+  };
+
+  // Writes to this machine's database while its daemon is stopped.
+  const write = (sql: string) => {
+    const db = new Database(join(data(), "skelcrew.db"));
+    db.run("PRAGMA busy_timeout = 5000");
+    db.run(sql);
+    db.close();
+  };
+
+  // A stop after this machine claimed the start, but before its thread was recorded, puts the
+  // task back in the backlog, so it is never lost.
+  test("a start of this machine's cut short before its thread puts the task back", async () => {
+    const work = addApp();
+    const first = serve();
+    await untilCloned();
+    await skel("task", "add", "app", "Add export", "As JSON");
+    await stop(first);
+    const commit = cutStart(work, "t100");
+    write(`INSERT INTO backlog_starts (owner, repo, task, started_commit)
+      VALUES ('simon', 'app', 't100', '${commit}')`);
+    serve();
+    await until(() => !git(work, "ls-remote", "origin").includes("refs/skelcrew/started/t100"));
+    expect(git(work, "ls-remote", "origin")).toContain("refs/skelcrew/tasks/t100");
+    await until(async () => (await listed("APP-T100")) !== undefined);
+    expect(await listed("APP-T100")).toMatchObject({ title: "Add export", thread: null });
+  }, 60_000);
+
+  // A stop after the thread was recorded leaves only the claim to remove. Another machine's claim,
+  // which this machine never noted, is that machine's to finish, so it stays, and neither task
+  // shows in this machine's backlog.
+  test("a claim whose thread is recorded here goes, and another machine's claim stays", async () => {
+    const work = addApp();
+    const first = serve();
+    await untilCloned();
+    await skel("task", "add", "app", "Add export", "As JSON");
+    await skel("task", "add", "app", "Add import", "From CSV");
+    await stop(first);
+    cutStart(work, "t100");
+    cutStart(work, "t101");
+    write(threadSql({ task: "t100", title: "Add export", body: "As JSON", status: "stopped" }));
+    serve();
+    await until(() => !git(work, "ls-remote", "origin").includes("refs/skelcrew/started/t100"));
+    expect(git(work, "ls-remote", "origin")).toContain("refs/skelcrew/started/t101");
+    expect(await listed("APP-T100")).toMatchObject({ thread: { status: "stopped" } });
+    expect(await listed("APP-T101")).toBeUndefined();
+  }, 60_000);
+
+  // The remote takes the push that claims the start, and the connection drops before git hears
+  // so. The claim is this machine's, so the start goes on.
+  test("a start whose claim reached the remote though git said it failed goes on", async () => {
+    const work = addApp();
+    serve();
+    await untilCloned();
+    await skel("task", "add", "app", "Add export", "As JSON");
+    writeFileSync(
+      join(home, "bin", "git"),
+      `#!/bin/sh\ncase "$*" in *":refs/skelcrew/started/"*) ${Bun.which("git") ?? "git"} "$@"; echo "connection lost" >&2; exit 1 ;; esac\nexec ${Bun.which("git") ?? "git"} "$@"\n`,
+      { mode: 0o755 },
+    );
+    const started = await skel("start", "APP-T100");
+    expect(started.err).toBe("");
+    expect(started.out).toBe("Started APP-T100.\n");
+    expect(thread()).toMatchObject({ task: "t100", title: "Add export" });
+    const refs = git(work, "ls-remote", "origin");
+    expect(refs).not.toContain("refs/skelcrew/tasks/t100");
+    expect(refs).not.toContain("refs/skelcrew/started/t100");
+  }, 60_000);
+
+  // A refresh reads the backlog, and sc rm removes a task before the refresh writes what it read.
+  // The refresh must not bring the task back. The refresh is the one filing another task runs,
+  // so no poll mends the copy before the test looks.
+  test("a refresh that overlaps sc rm doesn't bring the task back", async () => {
+    addApp();
+    serve();
+    await untilCloned();
+    await skel("task", "add", "app", "Add export", "As JSON");
+    // Each fetch of the backlog waits, once it has read the remote, while the file hold is there.
+    const real = Bun.which("git") ?? "git";
+    writeFileSync(
+      join(home, "bin", "git"),
+      `#!/bin/sh\ncase "$*" in *"refs/skelcrew/tasks/*"*) ${real} "$@"; code=$?
+  if [ -e "$HOME/hold" ]; then touch "$HOME/held"; while [ -e "$HOME/hold" ] && [ -d "$HOME" ]; do sleep 0.05; done; fi
+  exit $code ;; esac\nexec ${real} "$@"\n`,
+      { mode: 0o755 },
+    );
+    writeFileSync(join(home, "hold"), "");
+    const added = skel("task", "add", "app", "Add import", "From CSV");
+    await until(() => existsSync(join(home, "held")));
+    const removed = skel("rm", "APP-T100");
+    await Bun.sleep(500);
+    rmSync(join(home, "hold"));
+    expect((await added).err).toBe("");
+    expect((await removed).out).toBe("Removed APP-T100 from the backlog.\n");
+    expect(await listed("APP-T100")).toBeUndefined();
+    expect(await listed("APP-T101")).toMatchObject({ title: "Add import" });
+  }, 60_000);
+
+  // The remote takes the push that files the task, and the connection drops before git hears
+  // so. The claim is this machine's, so the task is filed once, under that name.
+  test("a filing whose push reached the remote though git said it failed files the task once", async () => {
+    const work = addApp();
+    serve();
+    await untilCloned();
+    writeFileSync(
+      join(home, "bin", "git"),
+      `#!/bin/sh\ncase "$*" in *push*":refs/skelcrew/tasks/"*) ${Bun.which("git") ?? "git"} "$@"; echo "connection lost" >&2; exit 1 ;; esac\nexec ${Bun.which("git") ?? "git"} "$@"\n`,
+      { mode: 0o755 },
+    );
+    const filed = await skel("task", "add", "app", "Add export", "As JSON");
+    expect(filed.err).toBe("");
+    expect(filed.out).toBe("Filed APP-T100 in the backlog. sc start APP-T100 starts it.\n");
+    const refs = git(work, "ls-remote", "origin", "refs/skelcrew/tasks/*");
+    expect(refs).toContain("refs/skelcrew/tasks/t100");
+    expect(refs).not.toContain("refs/skelcrew/tasks/t101");
+  }, 60_000);
+
+  // A description given on stdin can be longer than the system lets one argument be, as
+  // sc start <repo> takes it, so filing and starting never pass it as one.
+  test("a task with a description too long for one argument is filed and starts", async () => {
+    addApp();
+    serve();
+    await untilCloned();
+    const body = `${"Export every row as JSON. ".repeat(8000)}\n`;
+    const filed = await runSkel(["task", "add", "app"], env(), `Add export\n\n${body}`);
+    expect(filed.err).toBe("");
+    expect(filed.out).toBe("Filed APP-T100 in the backlog. sc start APP-T100 starts it.\n");
+    expect((await skel("start", "APP-T100")).out).toBe("Started APP-T100.\n");
+    expect(thread()).toMatchObject({ task: "t100", title: "Add export", body });
+  }, 60_000);
+
+  // The remote takes the push that files the task, then can't be reached at all, so Skelcrew
+  // can't tell it took it. Running sc task add again once the remote is back files nothing twice.
+  test("sc task add again after a filing nobody could confirm files the task once", async () => {
+    const work = addApp();
+    serve();
+    await untilCloned();
+    const real = Bun.which("git") ?? "git";
+    writeFileSync(
+      join(home, "bin", "git"),
+      `#!/bin/sh
+case "$*" in *push*":refs/skelcrew/tasks/"*) ${real} "$@"; touch "$HOME/down"; exit 1 ;; esac
+if [ -e "$HOME/down" ]; then case "$*" in *ls-remote*|*fetch*) echo "unreachable" >&2; exit 1 ;; esac; fi
+exec ${real} "$@"
+`,
+      { mode: 0o755 },
+    );
+    const failed = await skel("task", "add", "app", "Add export", "As JSON");
+    expect(failed.err).toContain("run the same sc task add again once it can be reached");
+    // While the remote is out of reach, nothing is filed.
+    const meanwhile = await skel("task", "add", "app", "Add export", "As JSON");
+    expect(meanwhile.err).toContain("run the same sc task add again once it can be reached");
+    rmSync(join(home, "down"));
+    const again = await skel("task", "add", "app", "Add export", "As JSON");
+    expect(again.err).toBe("");
+    expect(again.out).toBe(
+      "APP-T100 already holds this task in the backlog, so nothing more was filed. sc start APP-T100 starts it.\n",
+    );
+    const refs = git(work, "ls-remote", "origin", "refs/skelcrew/tasks/*");
+    expect(refs).toContain("refs/skelcrew/tasks/t100");
+    expect(refs).not.toContain("refs/skelcrew/tasks/t101");
+    // That try is settled, so the same task filed again on purpose is a task of its own.
+    rmSync(join(home, "bin", "git"));
+    const twice = await skel("task", "add", "app", "Add export", "As JSON");
+    expect(twice.out).toBe("Filed APP-T101 in the backlog. sc start APP-T101 starts it.\n");
+  }, 60_000);
+
+  // The remote takes the push that files the task and the answer is lost. Then the first look at
+  // the name's claim fails, while the remote answers again after. The claim must not be taken for
+  // another machine's, which would file the task again under the next name.
+  test("a filing whose claim can't be looked up once is never filed again under another name", async () => {
+    const work = addApp();
+    serve();
+    await untilCloned();
+    const real = Bun.which("git") ?? "git";
+    writeFileSync(
+      join(home, "bin", "git"),
+      `#!/bin/sh
+case "$*" in *push*":refs/skelcrew/tasks/"*) ${real} "$@"; touch "$HOME/flaky"; exit 1 ;; esac
+case "$*" in *"ls-remote "*" refs/skelcrew/names/t1"[0-9][0-9]) if [ -e "$HOME/flaky" ]; then rm "$HOME/flaky"; exit 1; fi ;; esac
+exec ${real} "$@"
+`,
+      { mode: 0o755 },
+    );
+    const failed = await skel("task", "add", "app", "Add export", "As JSON");
+    expect(failed.err).toContain("run the same sc task add again once it can be reached");
+    rmSync(join(home, "bin", "git"));
+    const again = await skel("task", "add", "app", "Add export", "As JSON");
+    expect(again.out).toStartWith("APP-T100 already holds this task");
+    expect(git(work, "ls-remote", "origin", "refs/skelcrew/tasks/*")).not.toContain("t101");
+  }, 60_000);
+
+  // Two filings at once whose answers are both lost each keep a note of their own, so each is
+  // settled by its own retry, and neither is filed twice.
+  test("two filings at once whose answers are lost are each filed once", async () => {
+    const work = addApp();
+    serve();
+    await untilCloned();
+    const real = Bun.which("git") ?? "git";
+    writeFileSync(
+      join(home, "bin", "git"),
+      `#!/bin/sh
+case "$*" in *push*":refs/skelcrew/tasks/"*) ${real} "$@"; exit 1 ;; esac
+case "$*" in *"ls-remote "*" refs/skelcrew/names/t1"[0-9][0-9]) exit 1 ;; esac
+exec ${real} "$@"
+`,
+      { mode: 0o755 },
+    );
+    const both = await Promise.all([
+      skel("task", "add", "app", "Add export", "As JSON"),
+      skel("task", "add", "app", "Add import", "From CSV"),
+    ]);
+    for (const run of both) expect(run.err).toContain("run the same sc task add again");
+    rmSync(join(home, "bin", "git"));
+    const exported = await skel("task", "add", "app", "Add export", "As JSON");
+    const imported = await skel("task", "add", "app", "Add import", "From CSV");
+    expect([exported.out, imported.out].every((out) => out.includes("already holds"))).toBe(true);
+    const refs = git(work, "ls-remote", "origin", "refs/skelcrew/tasks/*").trim().split("\n");
+    expect(refs).toHaveLength(2);
+  }, 60_000);
+
+  // A start's claim reaches the remote, then neither its answer nor a look at the remote comes
+  // back. Started again before any refresh settles it, the earlier claim is found and goes on, so
+  // the task is neither lost nor hidden behind a claim nobody owns.
+  test("a start retried after its claim's outcome was lost goes on from that claim", async () => {
+    const work = addApp();
+    serve();
+    await untilCloned();
+    await skel("task", "add", "app", "Add export", "As JSON");
+    const real = Bun.which("git") ?? "git";
+    // down: the remote can't be read at all. nofetch: only the backlog's fetch fails, so no
+    // refresh settles the start before the retry does.
+    writeFileSync(
+      join(home, "bin", "git"),
+      `#!/bin/sh
+case "$*" in *push*":refs/skelcrew/started/"*) ${real} "$@"; touch "$HOME/down" "$HOME/nofetch"; exit 1 ;; esac
+if [ -e "$HOME/down" ]; then case "$*" in *ls-remote*|*fetch*) exit 1 ;; esac; fi
+if [ -e "$HOME/nofetch" ]; then case "$*" in *fetch*refs/skelcrew/*) exit 1 ;; esac; fi
+exec ${real} "$@"
+`,
+      { mode: 0o755 },
+    );
+    const failed = await skel("start", "APP-T100");
+    expect(failed.err).toContain("APP-T100");
+    expect(thread()).toEqual({});
+    rmSync(join(home, "down"));
+    const again = await skel("start", "APP-T100");
+    expect(again.err).toBe("");
+    expect(again.out).toBe("Started APP-T100.\n");
+    expect(thread()).toMatchObject({ task: "t100", title: "Add export", body: "As JSON" });
+    const refs = git(work, "ls-remote", "origin");
+    expect(refs).not.toContain("refs/skelcrew/started/t100");
+    expect(refs).not.toContain("refs/skelcrew/tasks/t100");
+  }, 60_000);
+
+  test("sc rm deletes a task that never started, here and on the remote, and keeps its name", async () => {
+    const work = addApp();
+    serve();
+    await untilCloned();
+    await skel("task", "add", "app", "Add export", "As JSON");
+    const removed = await skel("rm", "APP-T100");
+    expect(removed.err).toBe("");
+    expect(removed.out).toBe("Removed APP-T100 from the backlog.\n");
+    expect(git(work, "ls-remote", "origin")).not.toContain("refs/skelcrew/tasks/t100");
+    // Its words are on no ref left: the name's claim holds none of them.
+    git(work, "fetch", "-q", "origin", "+refs/skelcrew/*:refs/skelcrew/*");
+    expect(git(work, "log", "--format=%B", "--glob=refs/skelcrew/*")).not.toContain("As JSON");
+    expect(await listed("APP-T100")).toBeUndefined();
+    expect((await skel("show", "APP-T100")).err).toBe("Skelcrew: there is no task APP-T100\n");
+    // The name stays claimed, so it never names other work.
+    const next = await skel("task", "add", "app", "Add import", "From CSV");
+    expect(next.out).toBe("Filed APP-T101 in the backlog. sc start APP-T101 starts it.\n");
   }, 60_000);
 });

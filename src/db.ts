@@ -3,6 +3,7 @@ import { Database } from "bun:sqlite";
 import { appendFileSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
+import { stuckWait } from "./flow/decide.ts";
 import { dataDir, dbLogFile, threadsDir } from "./paths.ts";
 
 // `name` is the repository's name in Skelcrew. `owner` and `repo` are its name on its forge, or
@@ -69,6 +70,59 @@ function flagFailedReviews(db: Database): void {
   db.run(`UPDATE threads SET review_failed = 1, needs_you = 0 WHERE needs_you = 1 AND ${where}`);
 }
 
+// Saves which wait the lead heard of each armed merge in the round it was last noted, once, as
+// the column that keeps the waits heard is added. The release before kept only that round, and
+// went on saving new waits after its note, so the wait saved now may be one the lead never heard.
+// The thread's log has the thread as it was at each change: the wait it held when the round was
+// first saved is the one the note was about. Without a log, nothing counts as heard, as the lead
+// hearing a wait twice beats never hearing of it.
+function fillMergeNoted(db: Database): void {
+  const armed = db
+    .query("SELECT rowid, folder, merge_noted FROM threads WHERE merge_noted IS NOT NULL")
+    .all();
+  const rows = z.array(
+    z.object({ rowid: z.number(), folder: z.string(), merge_noted: z.number() }),
+  );
+  for (const row of rows.parse(armed)) {
+    const heard = heardInLog(row.folder, row.merge_noted);
+    if (heard !== null)
+      db.run("UPDATE threads SET merge_noted_for = ? WHERE rowid = ?", [
+        JSON.stringify([heard]),
+        row.rowid,
+      ]);
+  }
+}
+
+// Returns how the wait the lead last heard of in `round` starts, from the thread's log, or null
+// when the log doesn't say or it was a wait that needs nobody.
+function heardInLog(folder: string, round: number): string | null {
+  let text: string;
+  try {
+    text = readFileSync(join(threadsDir(), `${folder}.log`), "utf8");
+  } catch {
+    return null;
+  }
+  // Each line is the thread as it was then. A line cut short by a crash is skipped. The round
+  // can be saved, cleared by a plan armed again, and saved again, so the last time it was
+  // saved counts.
+  const Line = z.object({ merge_noted: z.number().nullable(), merge_waits: z.string().nullable() });
+  let heard: string | null = null;
+  let before: number | null = null;
+  for (const line of text.split("\n")) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    const thread = Line.safeParse(parsed);
+    if (!thread.success) continue;
+    if (thread.data.merge_noted === round && before !== round) heard = thread.data.merge_waits;
+    before = thread.data.merge_noted;
+  }
+  return heard === null ? null : stuckWait(heard);
+}
+
 // A thread's own columns past the first few: what belongs to its agent. `submitted` is whether
 // the builder ran sc submit in its current turn, `told_lead` whether it ran sc tell lead in it, and `turn_ended` whether it ended a turn without
 // one since, which waits on the lead. It is null on a thread an earlier release saved, until the
@@ -85,7 +139,9 @@ function flagFailedReviews(db: Database): void {
 // who armed it and when, for the PR's record. `merge_asked` is your words, exactly, when you
 // asked the lead to arm it, so the plan itself shows what let it merge, and null when you armed
 // it at your terminal. `merge_waits` is what an armed merge waits on, as the last poll
-// found, and `merge_noted` the review round the lead last heard it still waits after.
+// found, `merge_noted` the review round the lead last heard it still waits after, or on a flow
+// with no review stage when the submit it heard of was marked not reviewed, and
+// `merge_noted_for` the waits it heard then.
 // `merge_pinned` is the PR's head when you asked to merge it without Skelcrew's approval, and
 // null for a merge when ready: only that commit merges, so a push after you asked cancels it.
 // `merge_record` is the plan and commit whose record Skelcrew posted on the PR, and
@@ -127,6 +183,7 @@ const threadColumns = {
   merge_asked: "TEXT",
   merge_waits: "TEXT",
   merge_noted: "INTEGER",
+  merge_noted_for: "TEXT",
   merge_pinned: "TEXT",
   merge_record: "TEXT",
   merge_record_id: "TEXT",
@@ -530,6 +587,7 @@ function prepareTables(db: Database): void {
     if (!hasColumn(db, "threads", column)) {
       db.run(`ALTER TABLE threads ADD COLUMN ${column} ${type}`);
       gainsCiShown ||= column === "ci_shown";
+      if (column === "merge_noted_for" && !fresh) fillMergeNoted(db);
     }
   if (!fresh && reviewsFlagged) flagFailedReviews(db);
   // A new database starts with tasks. One from an earlier release waits for its daemon to move
@@ -563,6 +621,43 @@ function prepareTables(db: Database): void {
     created TEXT NOT NULL,
     item TEXT NOT NULL,
     PRIMARY KEY (owner, repo, kind, id)
+  )`);
+  // The daemon's copy of each repository's backlog: the tasks filed with sc task add, which its
+  // remote keeps, so the list reads them without asking the remote. `filed_commit` is the commit
+  // the remote keeps each one at.
+  db.run(`CREATE TABLE IF NOT EXISTS backlog (
+    owner TEXT NOT NULL,
+    repo TEXT NOT NULL,
+    task TEXT NOT NULL,
+    title TEXT NOT NULL,
+    body TEXT NOT NULL,
+    created TEXT NOT NULL,
+    by TEXT NOT NULL,
+    filed_commit TEXT NOT NULL,
+    PRIMARY KEY (owner, repo, task)
+  )`);
+  // The tries to file a task in the backlog whose outcome this machine hasn't heard yet: the name
+  // each claimed, at which commit, with the task's title and description. A push the remote took
+  // can fail on its way back, and the same task given again finds its try here, so it is filed
+  // once, while a task filed twice on purpose, whose tries were all heard, is filed twice.
+  db.run(`CREATE TABLE IF NOT EXISTS filing_tries (
+    owner TEXT NOT NULL,
+    repo TEXT NOT NULL,
+    task TEXT NOT NULL,
+    claim_commit TEXT NOT NULL,
+    title TEXT NOT NULL,
+    body TEXT NOT NULL,
+    PRIMARY KEY (owner, repo, claim_commit)
+  )`);
+  // The starts of backlog tasks this machine claimed on the remote and hasn't recorded a thread
+  // for yet, each by the commit of its claim. A start a stop cut short is put back in the
+  // backlog from here, while another machine's claim, which this table never holds, is left be.
+  db.run(`CREATE TABLE IF NOT EXISTS backlog_starts (
+    owner TEXT NOT NULL,
+    repo TEXT NOT NULL,
+    task TEXT NOT NULL,
+    started_commit TEXT NOT NULL,
+    PRIMARY KEY (owner, repo, task)
   )`);
   // Notes for a repository's lead that aren't about a thread needing you, such as a thread
   // started from a tracker, kept until they are typed in, since the lead may not be running.

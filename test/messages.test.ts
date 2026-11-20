@@ -27,12 +27,15 @@ afterEach(() => {
 // set, as homedir() keeps the HOME this process started with. `again` runs it on the database a
 // run before left, as a daemon starting again would. `env` adds to the process's environment.
 // Each deliverAllWaiting the code awaits is one whole attempt, as the daemon makes every few
-// seconds. caughtUp() waits until a stand-in builder has read everything typed into it.
-function run(body: string, again = false, env: Record<string, string> = {}): string {
+// seconds. caughtUp() waits until a stand-in builder has read everything typed into it. `first`
+// runs before Skelcrew's modules load, so it can stand in for one of them.
+function run(body: string, again = false, env: Record<string, string> = {}, first = ""): string {
   const setup = `db.run(\`INSERT INTO repositories (name, owner, repo) VALUES ('app', 'simon', 'app');
 ${threadSql({ task: "12", status: "waiting" })}\`);`;
-  const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
-import { queueMessage, deliverAllWaiting, deliverMessages } from ${JSON.stringify(source("flow/messages.ts"))};
+  // Imported once `first` has run, as a static import would load before it.
+  const code = `${first}
+const { openDb } = await import(${JSON.stringify(source("db.ts"))});
+const { queueMessage, deliverAllWaiting, deliverMessages } = await import(${JSON.stringify(source("flow/messages.ts"))});
 const db = openDb();
 const tmux = ${JSON.stringify(socket)};
 let acks = 0;
@@ -283,6 +286,84 @@ console.log(JSON.stringify({ left: db.query("SELECT 1 FROM messages").all().leng
   const received = readFileSync(join(home, "received.txt"), "utf8");
   expect(received.split("Use v2.").length - 1).toBe(1);
 });
+
+// The builder can ask you a question while typing looks at its screen, which takes seconds.
+// Typing the message would answer the question, so it waits until the question is over. The
+// question comes during the look before typing starts, and during the look typing takes just
+// before it pastes. The builder's screen is read as always, but the read named by `reads` holds
+// the look until the question has been asked.
+for (const [when, reads] of [
+  ["before typing starts", 1],
+  ["just before the paste", 4],
+] as const)
+  test(`a question asked during the look ${when} holds the message until it is over`, () => {
+    // A stand-in builder, idle at Claude Code's prompt below a reply quoting its busy mark, so
+    // each look reads its screen three times. It keeps each key as it comes.
+    writeFileSync(
+      join(home, "builder.sh"),
+      `#!/bin/sh\nprintf '\\033[?2004h'\nstty raw -echo\nprintf '● It shows "esc to interrupt".\\r\\n\\r\\n❯ '\nexec cat > received.txt\n`,
+      { mode: 0o755 },
+    );
+    // Stands in for reading a screen before Skelcrew's modules load, so typing uses it.
+    const holding = `import { mock } from "bun:test";
+const sessionsPath = ${JSON.stringify(source("agents/sessions.ts"))};
+const sessions = await import(sessionsPath);
+// Kept before the stand-in takes its place, as mock.module changes the module in place.
+const read = sessions.readSession;
+// Each read of the builder's screen is counted, and the one the test waits for holds its look
+// until the question has been asked.
+let reads = 0;
+const held = Promise.withResolvers();
+const asked = Promise.withResolvers();
+const readSession = async (host, name) => {
+  const screen = await read(host, name);
+  if (name === "app-12" && ++reads === ${reads}) {
+    held.resolve();
+    await asked.promise;
+  }
+  return screen;
+};
+mock.module(sessionsPath, () => ({ ...sessions, readSession }));`;
+    const seen = run(
+      `
+import { readFileSync, existsSync } from "node:fs";
+const { questionAsked, questionClosed } = await import(${JSON.stringify(source("flow/status.ts"))});
+const received = ${JSON.stringify(join(home, "received.txt"))};
+const got = () => (existsSync(received) ? readFileSync(received, "utf8") : "");
+const count = () => db.query("SELECT 1 FROM messages").all().length;
+Bun.spawnSync(["tmux", "-L", tmux, "new-session", "-d", "-s", "app-12", "-c", ${JSON.stringify(home)}, ${JSON.stringify(join(home, "builder.sh"))}]);
+await Bun.sleep(300);
+queueMessage(db, tmux, "app-12", { sender: "lead", text: "Use JSON.", said: "Use JSON.", typed_in: [] });
+// A builder that never starts, or a screen never read that often, fails here instead of hanging.
+const late = setTimeout(() => {
+  console.error(\`typing read the builder's screen \${reads} times, never ${reads}\`);
+  process.exit(1);
+}, 20_000);
+await held.promise;
+clearTimeout(late);
+questionAsked(db, tmux, "app-12");
+asked.resolve();
+// The typing under way ends, then a later try finds the question still open.
+await deliverMessages(db, tmux, "app-12");
+await deliverAllWaiting(db, tmux);
+await caughtUp();
+const during = { typed: got().includes("Use JSON."), waiting: count() };
+questionClosed(db, "app-12");
+for (let i = 0; i < 100 && count() > 0; i++) {
+  await deliverAllWaiting(db, tmux);
+  await Bun.sleep(50);
+}
+await caughtUp();
+console.log(JSON.stringify({ during, after: { typed: got().includes("Use JSON."), waiting: count() } }));`,
+      false,
+      {},
+      holding,
+    );
+    expect(JSON.parse(seen)).toEqual({
+      during: { typed: false, waiting: 1 },
+      after: { typed: true, waiting: 0 },
+    });
+  });
 
 // The builder can ask you a question between a message's paste and its Enter. The Enter would
 // answer it, so the message is left at the prompt, still waiting, and sent once the question is

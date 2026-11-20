@@ -233,6 +233,13 @@ function workingSince(): number | null {
   return z.object({ working_since: z.number().nullable() }).parse(row).working_since;
 }
 
+// What app-12's builder shows on its screen now.
+const builderScreen = () =>
+  Bun.spawnSync(["tmux", "-L", socket, "capture-pane", "-p", "-t", "=app-12:"], {
+    stdout: "pipe",
+    stderr: "pipe",
+  }).stdout.toString();
+
 // app-12's row in Skelcrew's database.
 function thread(): Record<string, unknown> {
   const db = new Database(join(data(), "skelcrew.db"));
@@ -798,22 +805,50 @@ describe.skipIf(insideSandbox)("needs you", () => {
     await until(() => thread().turn_ended === 0);
   }, 60_000);
 
-  // The builder can ask you a question after Skelcrew found it idle and before the paste. The
-  // message would then answer the question for you, so it waits until the question is over.
+  // The builder can ask you a question while typing is under way. Typing the message would
+  // answer the question for you, so it waits until the question is over. A tmux on the
+  // daemon's PATH makes the builder look busy at the moment typing readies its paste into it,
+  // which typing does once the screen looked idle. Typing then keeps checking the screen for
+  // it to look idle again, for up to 10 seconds, and the question comes meanwhile.
   test("a lead's message isn't typed in once the builder asks a question while typing waits", async () => {
     addApp();
     await startApp12();
-    // Each look at its screen now takes a couple of seconds, so typing waits a while.
-    writeFileSync(join(builder(), "quoting"), "");
-    await Bun.sleep(500);
-    const lead = { SKELCREW_SANDBOX: "1", SKELCREW_SOCKET: leadSocket() };
-    expect((await skel(["tell", "app-12", "Use JSON."], lead)).err).toBe("");
+    const armed = join(home, "armed");
+    const waits = join(home, "typing-waits");
+    const tmux = Bun.which("tmux") ?? "tmux";
+    script(
+      "tmux",
+      `case "$*" in *"send-keys -X -t =app-12: cancel"*)
+  if [ -e "${armed}" ]; then
+    rm "${armed}"; touch "${join(builder(), "busy")}"
+    for i in $(seq 100); do
+      "${tmux}" -L "${socket}" capture-pane -p -t =app-12: | grep -q "esc to interrupt" && break
+      sleep 0.1
+    done
+    touch "${waits}"
+  fi ;;
+esac
+exec "${tmux}" "$@"`,
+    );
+    writeFileSync(armed, "");
+    expect((await asLead(["tell", "app-12", "Use JSON."])).err).toBe("");
+    await until(() => existsSync(waits));
     await hook("ask");
     expect(thread().asking).toBe(1);
-    await Bun.sleep(8000);
-    expect(read(join(builder(), "typed"))).not.toContain("Use JSON.");
+    // The question's screen looks idle to typing.
+    rmSync(join(builder(), "busy"));
+    await until(() => builderScreen().includes("❯"));
+    // The message is made 11 minutes old, so the next try to type it tells the lead why it still
+    // waits. That note shows a try ended while the question was open, and kept the message.
     const db = new Database(join(data(), "skelcrew.db"));
     db.run("PRAGMA busy_timeout = 5000");
+    db.run("UPDATE messages SET at = at - 11 * 60000");
+    await until(() =>
+      read(join(lead(), "typed")).includes(
+        "APP-12's builder hasn't got your message after 10 minutes: it is asking the human a question.",
+      ),
+    );
+    expect(read(join(builder(), "typed"))).not.toContain("Use JSON.");
     const waiting = db.query("SELECT said FROM messages").all();
     db.close();
     expect(waiting).toEqual([{ said: "Use JSON." }]);

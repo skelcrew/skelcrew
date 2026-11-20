@@ -147,6 +147,78 @@ test("a task approved past the round limit is under Ready, not needing you", () 
   expect(ready).toMatchObject({ count: 1, needYou: 0 });
 });
 
+// A task whose flow has no review stage is never called approved: its word says it wasn't
+// reviewed, while it waits on CI and once it is ready, and m merges the commit last submitted.
+test("a task on a flow with no review shows not reviewed, and merges at its last submit", () => {
+  sql(
+    "UPDATE tasks SET verdict = 'not reviewed', review_round = NULL, flow = 'noreview' WHERE task = '14';",
+  );
+  const row = rows().find((candidate) => candidate.name === "APP-14");
+  expect(row).toMatchObject({ part: "ready", says: "not reviewed", needsYou: false });
+  expect(row?.merge && "ask" in row.merge ? row.merge.request : null).toMatchObject({
+    command: "merge",
+    pr: 41,
+    commit: approved,
+  });
+  expect(shown("14")).toContain("\nReview  not reviewed\n");
+  // A push Skelcrew didn't make is never merged here.
+  const moved = { head: "f00d", checks: passed };
+  sql(itemSql("app", "pr", 41, "Fix the export header", "2026-11-06T10:00:00Z", moved));
+  expect(rows().find((candidate) => candidate.name === "APP-14")?.merge).toEqual({
+    refused: "app#41 has a newer commit than the one submitted: wait for its builder to submit it",
+  });
+  // Waiting on CI, it is under Checks.
+  sql(`UPDATE threads SET needs_you = 0 WHERE folder = 'app-14';
+UPDATE tasks SET checks = 'pending', ci_passed = 0 WHERE task = '14';`);
+  expect(rows().find((candidate) => candidate.name === "APP-14")).toMatchObject({
+    part: "checks",
+    says: "checks",
+  });
+});
+
+// A submit on a flow with no review stage whose push or check failed has no review round to
+// have failed, so sc ps, sc ls and sc show say it isn't reviewed. Like a failed review, the
+// lead hears of it and can run it again, so it doesn't need you.
+test("a failed submit on a flow with no review shows as not reviewed, never a failed round", () => {
+  sql(`UPDATE threads SET review_failed = 1, needs_you = 0 WHERE folder = 'app-14';
+UPDATE tasks SET verdict = 'not reviewed', review_round = NULL, flow = 'noreview',
+  submitting = 'Round 2' WHERE task = '14';`);
+  const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
+import { listTasks, listThreads, printTasks, printThreads } from ${JSON.stringify(source("flow/list.ts"))};
+const db = openDb();
+printThreads(listThreads(db, "app"), false);
+printTasks(listTasks(db, "app"), false);`;
+  const run = Bun.spawnSync([process.execPath, "-e", code], { env: env(), stderr: "pipe" });
+  if (!run.success) throw new Error(run.stderr.toString());
+  const lines = run.stdout
+    .toString()
+    .split("\n")
+    .filter((line) => line.includes("APP-14"));
+  expect(lines).toHaveLength(2);
+  for (const line of lines) {
+    expect(line).toContain("not reviewed");
+    expect(line).not.toContain("failed");
+  }
+  expect(shown("14")).toContain("\nReview  not reviewed\n");
+  expect(rows().find((row) => row.name === "APP-14")?.says).toBe("submit failed");
+});
+
+// sc ps shows no review in a repository with no forge, but a task its flow didn't review is
+// ready on its branch with nobody having looked at it, so it says so.
+test("sc ps says not reviewed for a task on a flow with no review, in a repository with no forge", () => {
+  sql(`${threadSql({ repo: "site", task: "5", status: "waiting", needs_you: 1, verdict: "not reviewed", flow: "noreview" })}
+${threadSql({ repo: "site", task: "6", status: "waiting", needs_you: 1, verdict: "approve", review_round: 1 })}`);
+  const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
+import { listThreads } from ${JSON.stringify(source("flow/list.ts"))};
+console.log(JSON.stringify(listThreads(openDb(), "site")));`;
+  const run = Bun.spawnSync([process.execPath, "-e", code], { env: env(), stderr: "pipe" });
+  if (!run.success) throw new Error(run.stderr.toString());
+  const threads: { thread: string; review: unknown }[] = JSON.parse(run.stdout.toString());
+  const review = (name: string) => threads.find((t) => t.thread === name)?.review;
+  expect(review("SITE-5")).toEqual({ state: "not reviewed", round: null, at: null });
+  expect(review("SITE-6")).toBeNull();
+});
+
 test("each stage's heading counts its tasks and those that need you, open or closed", () => {
   sql("UPDATE threads SET asking = 1 WHERE folder = 'app-14';");
   expect(stageHeadings(rows(), new Set<ListStage>(["building"]))).toEqual([
@@ -261,6 +333,26 @@ test("an issue whose work ended is back under Backlog, to start again", () => {
       .filter((row) => row.part === "backlog")
       .map((row) => row.name),
   ).toEqual(["APP-31", "APP-7"]);
+});
+
+// A task filed in Skelcrew's backlog waits beside the issues, by when it was filed, and Enter asks
+// to start it as it does an issue.
+test("a task in Skelcrew's backlog shows under Backlog beside the issues, newest first", () => {
+  sql(`INSERT INTO backlog (owner, repo, task, title, body, created, by, filed_commit)
+  VALUES ('simon', 'app', 't104', 'Add export', 'As JSON', '2026-11-07T10:00:00.000Z', 'simon', 'c1'),
+    ('simon', 'app', 't105', 'Add import', 'From CSV', '2026-11-01T10:00:00.000Z', 'simon', 'c2');`);
+  const backlog = rows().filter((row) => row.part === "backlog");
+  expect(backlog.map((row) => [row.name, row.title, row.when])).toEqual([
+    ["APP-T104", "Add export", "7 Nov"],
+    ["APP-31", "Export as CSV", "5 Nov"],
+    ["APP-T105", "Add import", "1 Nov"],
+  ]);
+  expect(backlog[0]?.start).toEqual({
+    ask: "Start APP-T104? y/n",
+    working: "Starting APP-T104…",
+    request: { command: "start", repo: "simon/app", task: "t104" },
+  });
+  expect(shown("t104")).toContain("Filed   by simon on 7 November 2026");
 });
 
 // Returns SQL for open issues from 100 on, each a day older than the one before.
@@ -1213,6 +1305,20 @@ test("Ctrl-\\ in every form leaves a question open, and y then answers it", asyn
   expect(seen()).toContain("Start APP-31? y/n");
   type("y");
   await until(() => asked.includes("start simon/app 31"), "the start");
+});
+
+// s starts a task not started yet as Enter does there, and the bottom line offers it.
+test("s asks to start a task in Backlog, and y starts it", async () => {
+  sql(`INSERT INTO backlog (owner, repo, task, title, body, created, by, filed_commit)
+  VALUES ('simon', 'app', 't104', 'Add export', 'As JSON', '2026-11-07T10:00:00.000Z', 'simon', 'c1');`);
+  await open();
+  type("1");
+  await until(() => here().startsWith("▸ ○ APP-T104"), "the backlog task's row");
+  expect(seen()).toContain("s start");
+  type("s");
+  await until(() => seen().includes("Start APP-T104? y/n"), "the question");
+  type("y");
+  await until(() => asked.includes("start simon/app t104"), "the start");
 });
 
 // Nothing on an agent's screen is Skelcrew's, so the title says how to come back, and the one
