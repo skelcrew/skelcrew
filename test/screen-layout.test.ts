@@ -282,8 +282,10 @@ test("above the sidebar it says Skelcrew, in white, and the checkout's commit wh
   expect(header).toContain("38;5;231m");
 });
 
-// git gives a longer commit in a repository with many, or with core.abbrev set, and the header
-// has room for 44 columns after the name. Words around the commit give way, never the commit.
+// git gives a longer commit in a repository with many, or with core.abbrev set. In a terminal
+// wide enough for the sidebar's widest, 58 columns, the header has room for 44 columns after the
+// name. Words around the commit give way, never the commit.
+const roomy = 210;
 test.each([
   ["a6bfe6f", " M src/main.ts", "a6bfe6f* (checkout, * = uncommitted changes)"],
   ["a6bfe6fe12", " M src/main.ts", "checkout a6bfe6fe12+changes"],
@@ -297,9 +299,9 @@ test.each([
   ],
 ])("commit %p with changes %p shows above the sidebar as %p", async (commit, changes, shown) => {
   checkoutAt(commit, changes);
-  open("lead");
+  open("lead", "one", "xterm-256color", String(roomy));
   await ready("lead");
-  const above = () => (seen().split("\n")[0] ?? "").slice(0, sidebar - 1).trimEnd();
+  const above = () => (seen().split("\n")[0] ?? "").slice(0, sidebarFor(roomy) - 1).trimEnd();
   await until(() => above() === `  Skelcrew ${shown}`, "the header");
 });
 
