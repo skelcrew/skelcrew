@@ -1456,3 +1456,64 @@ test("an agent can't set up a machine", () => {
   expect(said.toString()).toContain("only for your own terminal");
   expect(calls()).toBe("");
 });
+
+test("a file dropped onto the server's screen is sent to the agent it shows, and the paste says where", async () => {
+  // The screen there reads one line, as an agent would, once it knows the name the laptop gave it.
+  // The server's tmux says the screen shows the agent whose folder is ~/agent.
+  mkdirSync(join(home, "server", ".local", "bin"), { recursive: true });
+  writeFileSync(
+    join(home, "server", ".local", "bin", "sc"),
+    `#!/bin/sh\necho "$SKELCREW_SCREEN_NAME" > screen-name\nIFS= read -r line\nprintf '%s\\n' "$line" > got\n`,
+    { mode: 0o755 },
+  );
+  writeFileSync(
+    join(home, "serverbin", "tmux"),
+    `#!/bin/sh\necho "tmux $*" >> "${join(home, "calls")}"\necho "$HOME/agent"\n`,
+    { mode: 0o755 },
+  );
+  const shot = join(home, "Screen Shot.png");
+  writeFileSync(shot, "pixels");
+  const run = Bun.spawn([process.execPath, laptop.main, "--remote", "simon@workbox"], {
+    cwd: home,
+    env: { PATH: `${join(home, "bin")}:/usr/bin:/bin`, HOME: home, TMPDIR: join(home, "tmp") },
+    terminal: {},
+  });
+  const named = join(home, "server", "screen-name");
+  for (let waited = 0; !existsSync(named) && waited < 100; waited++) await Bun.sleep(50);
+  run.terminal?.write(`\x1b[200~${shot.replaceAll(" ", "\\ ")}\x1b[201~\r`);
+  await run.exited;
+  run.terminal?.close();
+  const screen = readFileSync(named, "utf8").trim();
+  expect(screen).toMatch(/^screen-\w+$/);
+  expect(calls()).toContain(`tmux -L skelcrew-screen show -qv -t =${screen}: @agent-folder`);
+  const got = readFileSync(join(home, "server", "got"), "utf8").trim();
+  const agent = join(home, "server", "agent", ".skelcrew-drops");
+  expect(got.startsWith(`\x1b[200~${agent}/`)).toBe(true);
+  expect(got.endsWith("/Screen\\ Shot.png\x1b[201~")).toBe(true);
+  const copy = got.slice("\x1b[200~".length, -"\x1b[201~".length).replaceAll("\\ ", " ");
+  expect(readFileSync(copy, "utf8")).toBe("pixels");
+  expect(readFileSync(join(agent, ".gitignore"), "utf8")).toBe("*\n");
+});
+
+test("a text paste reaches the server's screen as it was", async () => {
+  mkdirSync(join(home, "server", ".local", "bin"), { recursive: true });
+  writeFileSync(
+    join(home, "server", ".local", "bin", "sc"),
+    `#!/bin/sh\ntouch ready\nIFS= read -r line\nprintf '%s\\n' "$line" > got\n`,
+    { mode: 0o755 },
+  );
+  const run = Bun.spawn([process.execPath, laptop.main, "--remote", "simon@workbox"], {
+    cwd: home,
+    env: { PATH: `${join(home, "bin")}:/usr/bin:/bin`, HOME: home, TMPDIR: join(home, "tmp") },
+    terminal: {},
+  });
+  const ready = join(home, "server", "ready");
+  for (let waited = 0; !existsSync(ready) && waited < 100; waited++) await Bun.sleep(50);
+  run.terminal?.write("\x1b[200~/missing.png and text\x1b[201~\r");
+  await run.exited;
+  run.terminal?.close();
+  expect(readFileSync(join(home, "server", "got"), "utf8")).toBe(
+    "\x1b[200~/missing.png and text\x1b[201~\n",
+  );
+  expect(calls()).not.toContain("tmux");
+});
