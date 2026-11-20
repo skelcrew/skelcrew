@@ -1,7 +1,7 @@
 // The screen and the agents it shows: switching between them, the keys that reach them,
 // scrolling back and copying their text, several terminals, and your terminal's title.
 import { afterEach, beforeEach, expect, setDefaultTimeout, test } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { startSession, stillRunning } from "../src/agents/sessions.ts";
 import { tmuxIsAtLeast } from "../src/agents/tmux.ts";
@@ -184,6 +184,36 @@ test("Ctrl-\\ leaves the whole screen too, and ends no agent", async () => {
   await until(() => seen().includes(leaving), "the line that says what happened");
   expect(tmux(agents, "has-session", "-t", "=lead").ok).toBe(true);
 });
+
+// The sidebar, the footer and other terminals ask the screen's server things all the time. tmux
+// 3.6 could crash when one of those commands ended just as a terminal left, and every terminal
+// on the server lost its screen. Eight loops of commands make that moment common: leaving by
+// detaching crashed the server in every one of six runs. So each key leaves twice while they
+// run, and a second terminal must keep its screen throughout.
+test("leaving never takes the screen away from another terminal, however busy the server", async () => {
+  open("app-7", "two");
+  await ready("app-7", "two");
+  const asking = `while tmux -L ${screen} -f /dev/null list-clients >/dev/null 2>&1; do :; done`;
+  const busy = Array.from({ length: 8 }, () =>
+    Bun.spawn(["sh", "-c", asking], { env: { ...env(), TMUX: "" } }),
+  );
+  try {
+    for (const key of ["M-q", "C-q", "C-\\", "M-q", "C-q", "C-\\"]) {
+      open("lead", "one");
+      await ready("lead", "one");
+      press(key, "one");
+      await until(() => seen("one").includes(leaving), `${key} to leave`, "one");
+      expect(seen("one")).not.toContain("server exited unexpectedly");
+      expect(screenSessions()).toHaveLength(1);
+      expect(seen("two")).toContain("I am app-7");
+      tmux(terminal, "kill-session", "-t", "=one");
+      rmSync(join(home, "left-one"));
+    }
+  } finally {
+    for (const one of busy) one.kill();
+    await Promise.all(busy.map((one) => one.exited));
+  }
+}, 60_000);
 
 // Replaces the lead with an agent that asks for extended keys, says its name, and logs every
 // byte it reads to lead.keys. Like Claude Code, it asks only when TERM_PROGRAM says it runs in
