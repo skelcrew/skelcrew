@@ -1156,7 +1156,21 @@ describe.skipIf(insideSandbox)("with a lead per repository", () => {
     await untilAnswers();
     await open("app");
     await open("web");
+    // Files you dropped onto the lead go with it.
+    const dropped = join(
+      home,
+      ".local",
+      "share",
+      "skelcrew",
+      "leads",
+      "simon",
+      "app",
+      ".skelcrew-drops",
+    );
+    mkdirSync(join(dropped, "one"), { recursive: true });
+    writeFileSync(join(dropped, "one", "shot.png"), "pixels");
     expect(removeRepo("app")).toBe("");
+    expect(existsSync(dropped)).toBe(false);
     expect(hasLead(leadName("app"))).toBe(false);
     expect(hasLead(leadName("web"))).toBe(true);
   });
