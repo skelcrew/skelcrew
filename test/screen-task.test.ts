@@ -43,14 +43,31 @@ const typingTo = () =>
 // test's home: `show` shows the task's details, and `attach` attaches to its builder, both by the
 // row's name alone, and prints why it couldn't, if it couldn't.
 function onRow(action: "show" | "attach", name: string): string {
-  const code = `import { attachTask, showTask } from ${JSON.stringify(source("screen/task.ts"))};
+  const run = Bun.spawnSync([process.execPath, "-e", rowCode(action, name)], {
+    env: env(),
+    stderr: "pipe",
+  });
+  if (!run.success) throw new Error(run.stderr.toString());
+  return run.stdout.toString().trim();
+}
+
+// The script onRow runs.
+function rowCode(action: "show" | "attach", name: string): string {
+  return `import { attachTask, showTask } from ${JSON.stringify(source("screen/task.ts"))};
 const agents = ${JSON.stringify(agents)};
 const session = ${JSON.stringify(session())};
 if (${JSON.stringify(action)} === "show") showTask(agents, session, "simon/app", ${JSON.stringify(name)});
 else console.log((await attachTask(agents, session, "simon/app", ${JSON.stringify(name)})) ?? "");`;
-  const run = Bun.spawnSync([process.execPath, "-e", code], { env: env(), stderr: "pipe" });
-  if (!run.success) throw new Error(run.stderr.toString());
-  return run.stdout.toString().trim();
+}
+
+// Does what onRow does without waiting for it, and gives what it printed once it ends.
+async function onRowLater(action: "show" | "attach", name: string): Promise<string> {
+  const run = Bun.spawn([process.execPath, "-e", rowCode(action, name)], {
+    env: env(),
+    stderr: "pipe",
+  });
+  if ((await run.exited) !== 0) throw new Error(await new Response(run.stderr).text());
+  return (await new Response(run.stdout).text()).trim();
 }
 
 // Opens the screen on the lead, then moves the right side to app-7's details.
@@ -165,4 +182,29 @@ UPDATE threads SET host = 'fake', host_id = 'fake-app-7' WHERE folder = 'app-7'`
   }
   // Only the line that ended it reached the host, and no Ctrl-\.
   expect(read("host.typed")).toBe("bye");
+});
+
+// The host takes two seconds to list its sessions, which it must to find a builder whose ID
+// Skelcrew hasn't saved. You move to app-12 meanwhile.
+test("Enter on a builder whose host answers late does nothing once you moved to another row", async () => {
+  const plugin = join(home, "plugin-slow");
+  mkdirSync(plugin, { recursive: true });
+  writeFileSync(join(plugin, "attach.sh"), `echo attached > ${join(home, "host.typed")}\n`);
+  writeFileSync(join(plugin, "session.sh"), `cat > /dev/null; sleep 2; echo '{"sessions":[]}'\n`);
+  writeFileSync(
+    join(plugin, "skelcrew-plugin.yaml"),
+    "name: slow\nversion: 0.1.0\nskelcrew: 0.1.0\nabout: A host\nkind: runtime\nprovides: [sessions]\nsession: [sh, session.sh]\nattach: [sh, attach.sh]\n",
+  );
+  sql(`INSERT INTO plugins (name, folder) VALUES ('slow', '${plugin}');
+UPDATE threads SET host = 'slow', host_id = NULL WHERE folder = 'app-7'`);
+  await onApp7();
+  const entered = onRowLater("attach", "app-7");
+  await Bun.sleep(500);
+  onRow("show", "app-12");
+  expect(await entered).toBe("");
+  await until(() => right().includes("I am app-12"), "app-12's details");
+  await Bun.sleep(500);
+  expect(right()).toContain("I am app-12");
+  expect(typingTo()).toBe("0");
+  expect(read("host.typed")).toBe("");
 });

@@ -1,6 +1,7 @@
 // The screen's right side on a task's row: the task's details with its builder's screen live
 // under them, read-only, as the list's details pane shows them. Enter attaches to the builder
 // there instead, and Ctrl-\ or the builder ending comes back to the details.
+import { attachUntilEnded } from "../agents/sessions.ts";
 import { respawnPane, screenSocket, screenTmux } from "../agents/tmux.ts";
 import { openDb } from "../db.ts";
 import { builderSession, readThread } from "../flow/thread.ts";
@@ -32,7 +33,8 @@ export function showTask(agents: string, session: string, repository: string, na
 // builder's session host, and moves your typing there. Once the attachment ends, by Ctrl-\ or
 // by the builder ending, even one on tmux whose session stays with its last screen, the right
 // side shows the task's details again and your typing goes back to the sidebar. Returns why it
-// couldn't attach, such as a builder that isn't running, or null once attached.
+// couldn't attach, such as a builder that isn't running, or null once attached or when you moved
+// to another row before it could.
 export async function attachTask(
   agents: string,
   session: string,
@@ -45,6 +47,12 @@ export async function attachTask(
   if (!row) return `${name} is no longer in the list`;
   if (row.session === null || !row.running)
     return `${name}'s builder isn't running: sc start ${name} brings it back`;
+  // The right pane's process, so a move to another row while the host answers is seen: each
+  // move starts the pane again.
+  const pane = `=${session}:.1`;
+  const paneProcess = () =>
+    screenTmux(agents, ["display-message", "-p", "-t", pane, "#{pane_pid}"]).out.trim();
+  const before = paneProcess();
   let attach: string[];
   try {
     const { host, id } = await builderSession(db, agents, readThread(db, row.session));
@@ -55,23 +63,18 @@ export async function attachTask(
       `tmux -L ${quoteForSh(screenSocket(agents))} select-pane -t ${quoteForSh(`=${session}:.0`)}`,
       `exec ${detailsCommand(agents, repository, row.name).map(quoteForSh).join(" ")}`,
     ].join("; ");
-    // On tmux, a builder that exits leaves its session behind with its last screen, and the
-    // client would stay on it. So while attached, a watcher looks every half second, and
-    // detaches this pane's own client, by its terminal, once the builder's pane is dead or gone.
-    // The watcher ends with the attachment. TMUX must go, or tmux refuses to attach from inside
-    // tmux.
-    const client = 'tmux -L "$1" -f /dev/null';
-    const watch = `while [ "$(${client} display-message -p -t "=$2:" '#{pane_dead}' 2>/dev/null)" = 0 ]; do sleep 0.5; done; ${client} detach-client -t "$t" 2>/dev/null`;
-    const onTmux = `unset TMUX; t=$(tty); (${watch}) & w=$!; ${client} attach -t "=$2"; kill $w 2>/dev/null`;
     attach =
       typeof host === "string"
-        ? ["sh", "-c", `${onTmux}; ${back}`, "sh", host, id]
+        ? attachUntilEnded(host, id, back)
         : ["sh", "-c", `${attachOnHostLine(host, id)}; ${back}`];
   } catch (error) {
     return errorText(error);
   }
-  respawnPane(agents, `=${session}:.1`, attach);
-  screenTmux(agents, ["select-pane", "-t", `=${session}:.1`]);
+  // A plugin's host can take seconds to say which session is the builder. If you moved to
+  // another row meanwhile, the right side shows that row now, and the old Enter does nothing.
+  if (paneProcess() !== before) return null;
+  respawnPane(agents, pane, attach);
+  screenTmux(agents, ["select-pane", "-t", pane]);
   return null;
 }
 
