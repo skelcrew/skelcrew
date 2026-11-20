@@ -458,15 +458,15 @@ test("two machines starting threads at once never take one name", async () => {
   const names = (await Promise.all(runs.map(namesFrom))).flat();
   expect(names).toHaveLength(6);
   expect(new Set(names).size).toBe(6);
-  expect(names.every((name) => /^app-t10[0-5]$/.test(name))).toBe(true);
+  expect(names.every((name) => /^APP-T10[0-5]$/.test(name))).toBe(true);
 }, 60_000);
 
 // A claimed name stays claimed once its branch is gone, such as once its PR merged.
 test("a name stays taken on another machine once claimed", async () => {
   const { remote, homes } = twoMachines();
   const [laptop = "", lapdog = ""] = homes;
-  expect(await namesFrom(startOn(laptop, remote, ["One"]))).toEqual(["app-t100"]);
-  expect(await namesFrom(startOn(lapdog, remote, ["Two"]))).toEqual(["app-t101"]);
+  expect(await namesFrom(startOn(laptop, remote, ["One"]))).toEqual(["APP-T100"]);
+  expect(await namesFrom(startOn(lapdog, remote, ["Two"]))).toEqual(["APP-T101"]);
 }, 60_000);
 
 // Threads named before Skelcrew claimed names on the remote, such as app-t25, were never claimed,
@@ -478,14 +478,14 @@ test("a new thread takes t100, or the next number above every one claimed or hel
   const { remote, homes } = twoMachines();
   const [laptop = "", lapdog = ""] = homes;
   const old = `db.run("INSERT INTO tasks (owner, repo, task) VALUES ('simon', 'app', 't25')");`;
-  expect(await namesFrom(startOn(laptop, remote, ["One"], old))).toEqual(["app-t100"]);
+  expect(await namesFrom(startOn(laptop, remote, ["One"], old))).toEqual(["APP-T100"]);
   const work = join(home, "work");
   for (const claim of ["t150", "wr140"])
     Bun.spawnSync(["git", "-C", work, "push", "-q", remote, `HEAD:refs/skelcrew/names/${claim}`]);
   const held = `db.run("INSERT INTO tasks (owner, repo, task) VALUES ('simon', 'app', 't170')");`;
   expect(await namesFrom(startOn(lapdog, remote, ["Two", "Three"], held))).toEqual([
-    "app-t171",
-    "app-t172",
+    "APP-T171",
+    "APP-T172",
   ]);
 }, 60_000);
 
@@ -521,7 +521,7 @@ db.run("DELETE FROM repositories");`;
   while (!said.includes("read\n")) said += decoder.decode((await out.read()).value);
   // The lapdog holds t170, so it claims t171.
   const held = `db.run("INSERT INTO tasks (owner, repo, task) VALUES ('simon', 'app', 't170')");`;
-  expect(await namesFrom(startOn(lapdog, remote, ["One"], held))).toEqual(["app-t171"]);
+  expect(await namesFrom(startOn(lapdog, remote, ["One"], held))).toEqual(["APP-T171"]);
   writeFileSync(ready, "");
   while (true) {
     const { value, done } = await out.read();
@@ -531,7 +531,7 @@ db.run("DELETE FROM repositories");`;
   expect(await new Response(run.stderr).text()).toBe("");
   expect(said).toBe("read\nfalse\n");
   // The laptop's next thread reads again and goes above the lapdog's.
-  expect(await namesFrom(startOn(laptop, remote, ["Two"]))).toEqual(["app-t172"]);
+  expect(await namesFrom(startOn(laptop, remote, ["Two"]))).toEqual(["APP-T172"]);
 }, 60_000);
 
 // The daemon of the release that named threads by the machine's code can still be running as a
@@ -593,7 +593,7 @@ exec ${Bun.which("git") ?? "git"} "$@"
     };
     writeFileSync(join(forge, "claims.json"), JSON.stringify({ [before]: answer }));
     const run = startOn(laptop, before, ["One"], `db.run("UPDATE repositories SET claimed = 0");`);
-    expect(await namesFrom(run)).toEqual(["app-t100"]);
+    expect(await namesFrom(run)).toEqual(["APP-T100"]);
     const claims = Bun.spawnSync(["git", "ls-remote", remote, "refs/skelcrew/names/*"]);
     expect(claims.stdout.toString()).toContain("refs/skelcrew/names/t100");
   },
@@ -632,7 +632,7 @@ ${check}`,
   expect(err).toBe("");
   // Making the clone logs that the repository is empty first.
   const [name = "", result = ""] = out.trim().split("\n").slice(-2);
-  expect(name).toBe("app-t100");
+  expect(name).toBe("APP-T100");
   expect(JSON.parse(result)).toEqual([
     true,
     "simon/app has no commits yet, so a thread has nothing to start from. Push a first commit, then start it again.",
@@ -646,7 +646,7 @@ ${check}`,
 test("an issue whose ID has the shape of Skelcrew's own is left out of the copy", async () => {
   const { remote, homes } = twoMachines();
   const [laptop = ""] = homes;
-  expect(await namesFrom(startOn(laptop, remote, ["One"]))).toEqual(["app-t100"]);
+  expect(await namesFrom(startOn(laptop, remote, ["One"]))).toEqual(["APP-T100"]);
   const issue = (id: string) => ({
     kind: "task",
     id,
@@ -693,7 +693,7 @@ test("a thread named by a machine's code keeps its name", async () => {
   const [laptop = ""] = homes;
   const old = threadSql({ task: "wr4", status: "working", title: "Old" });
   const before = `db.run(${JSON.stringify(old)});`;
-  expect(await namesFrom(startOn(laptop, remote, ["One"], before))).toEqual(["app-t100"]);
+  expect(await namesFrom(startOn(laptop, remote, ["One"], before))).toEqual(["APP-T100"]);
   const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
 import { findThread } from ${JSON.stringify(source("flow/thread.ts"))};
 const db = openDb();
@@ -747,7 +747,7 @@ console.log(JSON.stringify({ before, after, rows: rows.map((row) => row.name) })
   const { before, after, rows } = JSON.parse(run.stdout.toString());
   expect(before[0]).toMatchObject({ folder: "app-12", seen: '["review-1"]', pr: 7 });
   expect(after).toEqual(before);
-  expect(rows).toEqual(["lead", "app-12"]);
+  expect(rows).toEqual(["lead", "APP-12"]);
 });
 
 // The daemon fills in each older task's issue link from Skelcrew's copy of the tracker as it

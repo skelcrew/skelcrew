@@ -421,7 +421,7 @@ describe.skipIf(insideSandbox)("sc submit", () => {
       30_000,
     );
 
-    expect(read(join(builder(), "submitted"))).toContain("Submitted app-12 for review.");
+    expect(read(join(builder(), "submitted"))).toContain("Submitted APP-12 for review.");
     expect(pushedRound()).toBe("2");
     const pr = opened();
     expect(pr).toMatchObject({
@@ -874,11 +874,11 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
     // title is given as without --flow, and the thread still needs you.
     const short = await skel(["start", "app-12", "--flow", "default", "--short", "Export"]);
     expect(short.err).toBe("");
-    expect(short.out).toBe('Gave app-12 the short title "Export".\n');
+    expect(short.out).toBe('Gave APP-12 the short title "Export".\n');
     expect(thread()).toMatchObject({ needs_you: 1, rounds: 2 });
     const started = await skel(["start", "app-12", "--flow", "default"]);
     expect(started.err).toBe("");
-    expect(started.out).toContain("app-12 goes on");
+    expect(started.out).toContain("APP-12 goes on");
     await until(() => read(join(builder(), "typed")).includes("Second problem."), 30_000);
     await until(() => finished("success").length === 1, 30_000);
     await until(() => read(join(data(), "threads", "app-12.log")).includes("waits on CI"));
@@ -938,7 +938,7 @@ done`,
     );
     chmodSync(hook, 0o755);
     const said =
-      "app-12's push was refused: it changes .github/workflows/ci.yml, which Skelcrew can't push. Undo that change, or a person must make it.";
+      "APP-12's push was refused: it changes .github/workflows/ci.yml, which Skelcrew can't push. Undo that change, or a person must make it.";
     await startApp12();
     // The note reaches the lead a piece at a time, so the test waits for all of it.
     await until(() => read(join(lead(), "typed")).includes(said), 30_000);
@@ -958,7 +958,7 @@ done`,
     await until(() => thread().review_failed === 1, 30_000);
     // The note reaches the lead a piece at a time, so the test waits for all of it.
     const said =
-      "app-12's review failed: codex exited with 1: stream disconnected before completion. sc review app-12 runs it again.";
+      "APP-12's review failed: codex exited with 1: stream disconnected before completion. sc review APP-12 runs it again.";
     await until(() => read(join(lead(), "typed")).includes(said));
     expect(read(join(lead(), "typed"))).not.toContain("Add export");
   }, 60_000);
@@ -1066,7 +1066,7 @@ done`,
     await until(() => finished("success").length === 1, 30_000);
     expect(read(join(codexHome(), "sessions", "count")).trim()).toBe("2");
     const log = read(join(data(), "threads", "app-12.log"));
-    expect(log).toContain("app-12's review timed out after 0.1m; retrying");
+    expect(log).toContain("APP-12's review timed out after 0.1m; retrying");
     await until(() =>
       read(join(lead(), "typed")).includes("app-12's review timed out after 0.1m; retrying"),
     );
@@ -1088,10 +1088,10 @@ done`,
     expect(reviews()).toEqual([]);
     await until(() =>
       read(join(lead(), "typed")).includes(
-        "app-12: its review timed out twice (0.1m). sc review app-12 runs it again.",
+        "APP-12: its review timed out twice (0.1m). sc review APP-12 runs it again.",
       ),
     );
-    expect(read(join(lead(), "typed"))).toContain("app-12's review timed out after 0.1m; retrying");
+    expect(read(join(lead(), "typed"))).toContain("APP-12's review timed out after 0.1m; retrying");
     expect(read(join(codexHome(), "sessions", "count")).trim()).toBe("2");
   }, 60_000);
 
@@ -1448,7 +1448,7 @@ done`,
     await until(() => app13().review_failed === 1, longWait);
     expect(app13().queued).toBeNull();
     expect((await skel(["ps", "app", "--json"])).out).toContain(
-      '"thread":"app-13","short":null,"title":"Add import","status":"waiting","needsYou":false,"needsYouFor":null,"queued":false',
+      '"thread":"APP-13","short":null,"title":"Add import","status":"waiting","needsYou":false,"needsYouFor":null,"queued":false',
     );
   }, 120_000);
 
@@ -1760,7 +1760,7 @@ describe.skipIf(insideSandbox)("sc review", () => {
     const again = await skel(["review", "app-12"]);
     expect(again.err).toBe("");
     expect(again.code).toBe(0);
-    expect(again.out).toContain("app-12");
+    expect(again.out).toContain("APP-12");
     await until(() => finished("success").length === 1, 45_000);
     expect(
       statuses()
@@ -1845,11 +1845,11 @@ describe.skipIf(insideSandbox)("sc review", () => {
     await until(() => read(join(builder(), "args")) !== "");
     const early = await skel(["review", "app-12"]);
     expect(early.code).not.toBe(0);
-    expect(early.err).toContain("app-12 has no submitted commit to review yet");
+    expect(early.err).toContain("APP-12 has no submitted commit to review yet");
     setThread("status = 'done'");
     const done = await skel(["review", "app-12"]);
     expect(done.code).not.toBe(0);
-    expect(done.err).toContain("app-12 is done");
+    expect(done.err).toContain("APP-12 is done");
     expect(statuses()).toEqual([]);
   }, 60_000);
 
@@ -1862,17 +1862,17 @@ describe.skipIf(insideSandbox)("sc review", () => {
     const fromLead = await skel(["review", "app-12"], { SKELCREW_SOCKET: leadSocketPath() });
     expect(fromLead.code).not.toBe(0);
     expect(fromLead.err).toContain(
-      "a review of app-12's last commit is already waiting or running",
+      "a review of APP-12's last commit is already waiting or running",
     );
     // Refused only as already running, so the builder may ask for its own thread.
     const fromBuilder = await skel(["review", "app-12"], { SKELCREW_SOCKET: builderSocket() });
     expect(fromBuilder.code).not.toBe(0);
     expect(fromBuilder.err).toContain(
-      "a review of app-12's last commit is already waiting or running",
+      "a review of APP-12's last commit is already waiting or running",
     );
     const another = await skel(["review", "app-13"], { SKELCREW_SOCKET: builderSocket() });
     expect(another.code).not.toBe(0);
-    expect(another.err).toContain("you may ask for a review of app-12 only");
+    expect(another.err).toContain("you may ask for a review of APP-12 only");
   }, 60_000);
 
   test("a newer sc submit cancels a review asked for again", async () => {
@@ -1888,7 +1888,7 @@ describe.skipIf(insideSandbox)("sc review", () => {
     writeFileSync(join(plugin, "hold-status-pending"), "");
     expect((await skel(["review", "app-12"], { SKELCREW_SOCKET: leadSocketPath() })).err).toBe("");
     const twice = await skel(["review", "app-12"]);
-    expect(twice.err).toContain("a review of app-12's last commit is already waiting or running");
+    expect(twice.err).toContain("a review of APP-12's last commit is already waiting or running");
     rmSync(join(plugin, "hold-status-pending"));
     await until(() => existsSync(join(codexHome(), "sessions", "prompt-2")), 30_000);
     writeFileSync(join(clone(), "change"), "newer\n");
@@ -1950,7 +1950,7 @@ await serve(${JSON.stringify(socket)}, 200);`;
     expect(create.err).toContain("app has no tracker");
     const started = await skel(["start", "app", "Add export", "As JSON"]);
     expect(started.err).toBe("");
-    expect(started.out).toBe(`Started app-t100.\n`);
+    expect(started.out).toBe(`Started APP-T100.\n`);
     const log = () => read(join(data(), "threads", `app-t100.log`));
     await until(
       () => log().includes(`app-t100 is ready on branch skelcrew/t100-add-export`),
@@ -1983,7 +1983,7 @@ await serve(${JSON.stringify(socket)}, 200);`;
     expect(row()).toMatchObject({ status: "done" });
     await until(() =>
       read(join(lead(), "typed")).includes(
-        `app-t100 is done: its branch skelcrew/t100-add-export merged into main`,
+        `APP-T100 is done: its branch skelcrew/t100-add-export merged into main`,
       ),
     );
   }, 60_000);
@@ -2100,7 +2100,7 @@ await serve(${JSON.stringify(socket)}, 200);`;
     const removed = await skel(["rm", `app-t100`]);
     expect(removed.err).toBe("");
     // A thread with no issue has nothing that stays open, so the message names none.
-    expect(removed.out).toBe(`Removed app-t100. sc start app-t100 starts it over.\n`);
+    expect(removed.out).toBe(`Removed app-t100. sc start APP-T100 starts it over.\n`);
     expect(git(bare, "branch", "--list", `skelcrew/t100-add-export`)).not.toBe("");
     expect(existsSync(join(data(), "threads", `app-t100`))).toBe(false);
   }, 60_000);
@@ -2154,8 +2154,8 @@ await serve(${JSON.stringify(socket)}, 200);`;
       // Only the first review runs. sc ps and the sidebar say the others wait.
       expect(reviewsRun()).toBe(1);
       const listed = (await skel(["ps"])).out;
-      expect(listed).toMatch(/app-t101 .*queued for review/);
-      expect(listed).toMatch(/app-t102 .*queued for review/);
+      expect(listed).toMatch(/APP-T101 .*queued for review/);
+      expect(listed).toMatch(/APP-T102 .*queued for review/);
       // As each ends, the one that came next starts.
       letGo(1);
       await until(() => prompt(2) !== "", 30_000);
@@ -2180,12 +2180,12 @@ await serve(${JSON.stringify(socket)}, 200);`;
       await start("Second");
       await until(() => queued(`app-t101`), 30_000);
       expect((await skel(["stop", `app-t101`])).err).toBe("");
-      expect((await skel(["ps"])).out).toMatch(/app-t101 .* stopped/);
+      expect((await skel(["ps"])).out).toMatch(/APP-T101 .* stopped/);
       letGo(1);
       await until(() => ready(`app-t100`), 30_000);
       await Bun.sleep(1500);
       expect(reviewsRun()).toBe(1);
-      expect((await skel(["ps"])).out).toMatch(/app-t101 .* stopped/);
+      expect((await skel(["ps"])).out).toMatch(/APP-T101 .* stopped/);
     }, 60_000);
 
     test("after a restart, the review that was running goes first, and the one that waited waits again", async () => {
@@ -2301,10 +2301,10 @@ await serve(${JSON.stringify(socket)}, 200);`;
       socket,
       env(),
       ["rm", `app-t100`, "wrong approach"],
-      `Remove app-t100? This deletes its branch and clone. [y/N]`,
+      `Remove APP-T100? This deletes its branch and clone. [y/N]`,
       "y",
     );
-    expect(removed).toContain(`Removed app-t100.`);
+    expect(removed).toContain(`Removed APP-T100.`);
     expect(onRemote()).toBe(false);
     expect(existsSync(join(data(), "threads", `app-t100`))).toBe(false);
     expect(log()).toContain("wrong approach");
@@ -2316,7 +2316,7 @@ await serve(${JSON.stringify(socket)}, 200);`;
     const refs = () => git(join(data(), "repos", "simon", "app"), "for-each-ref", "refs/skelcrew/");
     expect(refs()).toContain("refs/skelcrew/threads/");
     const before = log().split(ready).length;
-    expect((await skel(["start", `app-t100`])).out).toBe(`Started app-t100.\n`);
+    expect((await skel(["start", `APP-T100`])).out).toBe(`Started app-t100.\n`);
     await until(() => log().split(ready).length > before, longWait);
     expect(log()).not.toContain("was deleted");
     expect(onRemote()).toBe(true);
@@ -2354,8 +2354,8 @@ exec "${realGit}" "$@"`,
     );
     const before = log().split(ready).length;
     const starts = await Promise.all([skel(["start", `app-t100`]), skel(["start", `app-t100`])]);
-    expect(starts.map((s) => s.out).filter((out) => out === `Started app-t100.\n`)).toHaveLength(1);
-    expect(starts.map((s) => s.err).join("")).toContain(`app-t100 has a thread already`);
+    expect(starts.map((s) => s.out).filter((out) => out === `Started APP-T100.\n`)).toHaveLength(1);
+    expect(starts.map((s) => s.err).join("")).toContain(`APP-T100 has a thread already`);
     await until(() => log().split(ready).length > before, 30_000);
     // You merge the new thread's branch, and Skelcrew sees it.
     const work = join(home, "work", "app");
@@ -2405,7 +2405,7 @@ done`,
     writeFileSync(join(home, "go"), "");
     const removed = await removing;
     expect(removed.err).toBe("");
-    expect(removed.out).toContain(`Removed app-t100.`);
+    expect(removed.out).toContain(`Removed APP-T100.`);
     expect(log()).not.toContain("was deleted");
     expect(log()).toContain('"why":"removed: ended the thread"');
   }, 60_000);

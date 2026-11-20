@@ -48,6 +48,7 @@ import {
   repositoryOf,
   sessionTitle,
   Thread,
+  taskName,
   threadName,
 } from "./thread.ts";
 
@@ -207,7 +208,7 @@ async function recordThread(
       throw new Error(
         tracked
           ? `there is no open issue ${task} in ${name}`
-          : `${name} has no tracker, and no thread ${name}-${task}: start one with sc start ${name} "<title>" "<body>"`,
+          : `${name} has no tracker, and no thread ${taskName(name, task)}: start one with sc start ${name} "<title>" "<body>"`,
       );
   }
   // The branch is named by the task and a short form of its title, so you can tell branches
@@ -248,7 +249,7 @@ async function recordThread(
       const { ok, said } = await git("update-ref", "-d", ref);
       if (!ok)
         throw new Error(
-          `couldn't start ${name}-${task} over, as Skelcrew couldn't delete ${ref}: ${said}`,
+          `couldn't start ${taskName(name, task)} over, as Skelcrew couldn't delete ${ref}: ${said}`,
         );
     }
   // Check again for a thread and record the new one in one transaction, so a failed or done
@@ -258,7 +259,7 @@ async function recordThread(
       db.query(`SELECT * FROM task_threads ${where}`).get(owner, repo, task),
     );
     if (before && before.status !== "failed" && before.status !== "done")
-      throw new Error(`${name}-${task} has a thread already`);
+      throw new Error(`${taskName(name, task)} has a thread already`);
     // Counted in the same transaction as the thread is recorded, so two starts can't both take
     // the last place.
     const queued = joinsQueue(db, repository);
@@ -620,7 +621,8 @@ export function startOnHost(
     const labels: Labels = {
       repository,
       role: "builder",
-      task: threadName(db, thread),
+      // A label names the task as Skelcrew stores it, in lowercase, as it finds the builder by it.
+      task: threadName(db, thread).toLowerCase(),
       ...(title ? { title } : {}),
     };
     // The host is saved before the session starts, so a daemon that stops in between finds the

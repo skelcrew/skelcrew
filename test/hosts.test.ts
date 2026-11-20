@@ -812,7 +812,7 @@ console.log(await stop);
 console.log(readThread(db, "app-12").status);`,
     { host: "fake", host_id: "fake-app-12" },
   );
-  expect(said).toBe("simon/app-12 is done already\ndone\n");
+  expect(said).toBe("SIMON/APP-12 is done already\ndone\n");
 }, 40_000);
 
 // A host that can't be reached as the daemon starts may still run the builder, so the daemon asks

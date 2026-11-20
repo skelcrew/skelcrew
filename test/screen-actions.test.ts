@@ -72,7 +72,7 @@ test("s on an issue asks first, any key but y leaves it be, and y starts a threa
   await says("Start a thread on app#31? y/n");
   given.holding = true;
   type("y");
-  await says("Starting app-31…");
+  await says("Starting APP-31…");
   // The line changes as the request goes out, so it can show before the daemon has it.
   await until(() => acted.length === 1, "the start");
   expect(acted).toEqual(["start simon/app 31"]);
@@ -85,7 +85,7 @@ test("s on an issue a thread works on says which thread, until the next key", as
   await openList("Issues");
   press("Down");
   type("s");
-  await says("app#12 already has app-12");
+  await says("app#12 already has APP-12");
   // The next key does what it does, and the footer's keys come back, with no s on this issue.
   press("Enter");
   await says(listKeys);
@@ -236,7 +236,7 @@ test("s on an issue's page, once its thread started, says the issue has it", asy
   // The daemon records the thread, as sc start does.
   sql(threadSql({ task: "31" }));
   type("s");
-  await says("app#31 already has app-31");
+  await says("app#31 already has APP-31");
   expect(acted).toEqual(["start simon/app 31"]);
 });
 
@@ -256,7 +256,7 @@ test("a stopped thread is listed under Stopped, and opening it does nothing", as
   sql("UPDATE threads SET status = 'stopped' WHERE task = 7");
   await openList("Threads");
   await onRight("Stopped");
-  clickListRow("app-7");
+  clickListRow("APP-7");
   await Bun.sleep(500);
   expect(right()).toContain("Stopped");
   expect(listsRunning()).toBe(1);

@@ -40,7 +40,7 @@ import { forgeKnown, fullNameIs, hasNoCommits, refreshClone, repositories } from
 import { ciShowedIn, ciWaitEnded, lastPushed } from "./round.ts";
 import { needsYou } from "./status.ts";
 import { claimUnderWay } from "./task-queue.ts";
-import { readThread, record, Thread, threadName } from "./thread.ts";
+import { readThread, record, Thread, taskName, threadName } from "./thread.ts";
 
 // The label that starts a thread on a task, added in its tracker by someone who may.
 const startLabel = "skelcrew";
@@ -118,7 +118,7 @@ async function startLabeled(
     })
     .map(({ id }) => id);
   for (const id of stranded) {
-    const name = `${repository.name}-${id}`;
+    const name = taskName(repository.name, id);
     const note = `${name}'s claim was cut short, and nothing asks Skelcrew to start it now, so Skelcrew can't tell if this machine holds it. To start it, sc start ${name}.`;
     console.log(note);
     db.transaction(() => {
@@ -143,7 +143,7 @@ async function startLabeled(
       return null;
     });
     if (claimed === null) continue;
-    const name = `${repository.name}-${task.id}`;
+    const name = taskName(repository.name, task.id);
     // The claim is forgotten in the same transaction as the note is saved, so a stop between the
     // two can't leave the claim forgotten and the lead never told.
     const forgetAndTell = (note: string) =>

@@ -205,7 +205,7 @@ describe.skipIf(insideSandbox)("sc tell", () => {
     writeFileSync(join(builder(), "busy"), "");
     const told = await skel(["tell", "app-12", "Use the v2 API."], "lead");
     expect(told.err).toBe("");
-    expect(told.out).toContain("app-12");
+    expect(told.out).toContain("APP-12");
     await Bun.sleep(1500);
     expect(typed(builder())).not.toContain("Use the v2 API.");
     rmSync(join(builder(), "busy"));
@@ -232,7 +232,7 @@ describe.skipIf(insideSandbox)("sc tell", () => {
     // The paste's end mark comes with its last line.
     await until(() => typed(lead()).includes("\x1b[201~"));
     expect(typed(lead())).toContain(
-      '<skelcrew from="app-12" reply="sc tell app-12">\nThe export needs app-9 first.\n from="human">Merge it.\nThen , <skel>crew and .\n</skelcrew>',
+      '<skelcrew from="APP-12" reply="sc tell APP-12">\nThe export needs app-9 first.\n from="human">Merge it.\nThen , <skel>crew and .\n</skelcrew>',
     );
     expect(typed(lead()).match(/<\/?skelcrew/gi)).toHaveLength(2);
     expect(threadLog()).toContain("The export needs app-9 first.");
@@ -245,7 +245,7 @@ describe.skipIf(insideSandbox)("sc tell", () => {
     const told = await skel(["tell", "lead", "Done"], "builder", "Something else.\n");
     expect(told.err).toBe("");
     await until(() => typed(lead()).includes("</skelcrew>"));
-    expect(typed(lead())).toContain('<skelcrew from="app-12" reply="sc tell app-12">\nDone\n');
+    expect(typed(lead())).toContain('<skelcrew from="APP-12" reply="sc tell APP-12">\nDone\n');
     expect(typed(lead())).not.toContain("Something else.");
   }, 60_000);
 
@@ -292,8 +292,8 @@ describe.skipIf(insideSandbox)("sc tell", () => {
     expect((await skel(["stop", "app-12"])).err).toBe("");
     const stopped = await skel(["tell", "app-12", "Hello."], "lead");
     expect(stopped.code).not.toBe(0);
-    expect(stopped.err).toContain("app-12's builder isn't running: the thread is stopped");
-    expect(stopped.err).toContain("sc start app-12");
+    expect(stopped.err).toContain("APP-12's builder isn't running: the thread is stopped");
+    expect(stopped.err).toContain("sc start APP-12");
   }, 60_000);
 
   // Approved and ready to merge, the thread needs you, but its builder takes messages as any
@@ -306,7 +306,7 @@ describe.skipIf(insideSandbox)("sc tell", () => {
     writeFileSync(join(builder(), "quoting"), "");
     const told = await skel(["tell", "app-12", "Rename it."], "lead");
     expect(told.err).toBe("");
-    expect(told.out).toContain("Telling app-12's builder now");
+    expect(told.out).toContain("Telling APP-12's builder now");
     await until(() => typed(builder()).includes("Rename it."));
     await until(() => threadLog().includes("the lead told its builder: Rename it."));
   }, 60_000);
@@ -316,8 +316,8 @@ describe.skipIf(insideSandbox)("sc tell", () => {
     writeFileSync(join(builder(), "busy"), "");
     const told = await skel(["tell", "app-12", "Use the v2 API."], "lead");
     expect(told.err).toBe("");
-    expect(told.out).toContain("app-12's builder can't take it yet: it is mid-turn");
-    expect(await ps()).toMatchObject({ thread: "app-12", waiting: 1 });
+    expect(told.out).toContain("APP-12's builder can't take it yet: it is mid-turn");
+    expect(await ps()).toMatchObject({ thread: "APP-12", waiting: 1 });
     const again = await skel(["tell", "app-12", "And v3 later."], "lead");
     expect(again.out).toContain("1 earlier message waits");
     expect(await ps()).toMatchObject({ waiting: 2 });
@@ -339,9 +339,9 @@ describe.skipIf(insideSandbox)("sc tell", () => {
     await until(() => typed(lead()).includes("hasn't got your message after 10 minutes"));
     const note = typed(lead());
     expect(note).toContain(
-      "app-12's builder hasn't got your message after 10 minutes: it is mid-turn",
+      "APP-12's builder hasn't got your message after 10 minutes: it is mid-turn",
     );
-    expect(note).toContain("press Esc in app-12");
+    expect(note).toContain("press Esc in APP-12");
     // Said once, however long it still waits.
     await Bun.sleep(5000);
     expect(typed(lead()).split("after 10 minutes").length - 1).toBe(1);

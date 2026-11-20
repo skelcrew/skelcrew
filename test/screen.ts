@@ -371,7 +371,7 @@ export async function openIssue(width = "120"): Promise<void> {
   await openList("Issues", width);
   press("Enter");
   await onRight("line 1 of the description");
-  await until(() => right().split("\n")[0]?.includes("app-31") ?? false, "the strip");
+  await until(() => right().split("\n")[0]?.includes("APP-31") ?? false, "the strip");
 }
 // How many of the processes under the screen's tmux server run a list.
 export const listsRunning = () => {

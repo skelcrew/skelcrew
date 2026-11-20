@@ -75,11 +75,11 @@ ${threadSql({ task: "12" })}`;
     [
       "Not started",
       [
-        ["○", "app-31", "Add CSV export"],
-        ["○", "app-9", "Old thing"],
+        ["○", "APP-31", "Add CSV export"],
+        ["○", "APP-9", "Old thing"],
       ],
     ],
-    ["Started", [["◐", "app-12", "Fix login", "working"]]],
+    ["Started", [["◐", "APP-12", "Fix login", "working"]]],
   ]);
 });
 
@@ -94,12 +94,12 @@ ${threadSql({ task: "14", status: "stopped" })}`;
   const { issues } = after(sql);
   // A stopped thread still holds its issue, so the issue has started.
   expect(shape(issues)).toEqual([
-    ["Not started", [["○", "app-13", "Fix logout"]]],
+    ["Not started", [["○", "APP-13", "Fix logout"]]],
     [
       "Started",
       [
-        ["●", "app-12", "Fix login", "approved"],
-        ["◐", "app-14", "Fix signup", "stopped"],
+        ["●", "APP-12", "Fix login", "approved"],
+        ["◐", "APP-14", "Fix signup", "stopped"],
       ],
     ],
   ]);
@@ -230,11 +230,11 @@ ${threadSql({ task: "13", status: "stopped" })}`;
     {
       key: "s",
       ask: "Start a thread on app#31? y/n",
-      working: "Starting app-31…",
+      working: "Starting APP-31…",
       request: { command: "start", repo: "simon/app", task: "31" },
     },
-    { key: "s", refused: "app#12 already has app-12" },
-    { key: "s", refused: "app#13 already has app-13" },
+    { key: "s", refused: "app#12 already has APP-12" },
+    { key: "s", refused: "app#13 already has APP-13" },
   ]);
 });
 
@@ -325,19 +325,19 @@ ${threadSql({ task: "17", status: "waiting", title: "Done", needs_you: 1, verdic
     [
       "Needs you",
       [
-        ["●", "app-16", "Stuck", "error", "claude", "#16", ""],
-        ["●", "app-t1", "Tidy up", "question", "claude", "", "12 Nov"],
+        ["●", "APP-16", "Stuck", "error", "claude", "#16", ""],
+        ["●", "APP-T1", "Tidy up", "question", "claude", "", "12 Nov"],
       ],
     ],
     // An approved thread waits only for your merge, so it is ready rather than needing you.
-    ["Ready to merge", [["●", "app-17", "Done", "approved", "claude", "#17", ""]]],
-    ["Working", [["○", "app-12", "Fix login", "working", "codex", "#12 #31", "14:32"]]],
+    ["Ready to merge", [["●", "APP-17", "Done", "approved", "claude", "#17", ""]]],
+    ["Working", [["○", "APP-12", "Fix login", "working", "codex", "#12 #31", "14:32"]]],
     // A thread that failed waits for the lead to start it again, as a stopped one does.
     [
       "Stopped",
       [
-        ["○", "app-15", "Broke", "failed", "claude", "#15", ""],
-        ["○", "app-13", "Old", "stopped", "claude", "#13", "2 Nov"],
+        ["○", "APP-15", "Broke", "failed", "claude", "#15", ""],
+        ["○", "APP-13", "Old", "stopped", "claude", "#13", "2 Nov"],
       ],
     ],
   ]);
@@ -364,16 +364,16 @@ ${threadSql({ task: "13", status: "failed", merge_plan: "armed", merge_waits: "i
 ${threadSql({ task: "14", status: "waiting", merge_plan: "armed" })}`;
   const rows = after(sql).threads.flatMap((group) => group.rows);
   expect(rows.map((row) => [row.name, row.ends.at(-1)?.[0]])).toEqual([
-    ["app-14", "merges when ready"],
-    ["app-12", "merges when ready · waiting on its checks"],
-    ["app-13", "merges when ready · waiting on its thread, which failed"],
+    ["APP-14", "merges when ready"],
+    ["APP-12", "merges when ready · waiting on its checks"],
+    ["APP-13", "merges when ready · waiting on its thread, which failed"],
   ]);
 });
 
 test("while a review runs, a thread's harness is its reviewer's", () => {
   const sql = `${repository} ${threadSql({ task: "12", status: "waiting", harness: "claude", reviewing: "abc", reviewer: "codex" })}`;
   expect(shape(after(sql).threads)[0]?.[1]).toEqual([
-    ["○", "app-12", "", "reviewing", "codex", "#12", ""],
+    ["○", "APP-12", "", "reviewing", "codex", "#12", ""],
   ]);
 });
 
@@ -383,7 +383,7 @@ ${itemSql("app", "pr", 31, "Waiting", "2026-11-01T10:00:00Z")}
 ${threadSql({ task: "12", status: "waiting", pr: 31, harness: "claude", reviewing: "abc", reviewer: "codex", queued: 5 })}`;
   const { threads, prs } = after(sql);
   expect(shape(threads)[0]?.[1]).toEqual([
-    ["○", "app-12", "", "queued for review", "codex", "#12 #31", ""],
+    ["○", "APP-12", "", "queued for review", "codex", "#12 #31", ""],
   ]);
   expect(shape(prs)[0]?.[1]).toEqual([["◐", "app#31", "Waiting", "queued for review"]]);
 });
@@ -656,7 +656,7 @@ console.log(JSON.stringify({ rows, issues, page, seen, updates, broken, review_p
   expect(run.stderr.toString()).toBe("");
   const read = JSON.parse(run.stdout.toString());
   expect(read).toMatchObject({
-    rows: ["lead", "app-15", "app-12"],
+    rows: ["lead", "APP-15", "APP-12"],
     issues: ["Good"],
     page: "Good",
     seen: null,

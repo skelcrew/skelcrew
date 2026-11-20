@@ -334,7 +334,7 @@ describe.skipIf(insideSandbox)("needs you", () => {
     expect(read(join(builder(), "hooks"))).toBe("");
     await untilNeedsYou(true);
     await until(() => notes() === 1);
-    expect(read(join(lead(), "typed"))).toContain("app-12 needs you: its builder asked a question");
+    expect(read(join(lead(), "typed"))).toContain("APP-12 needs you: its builder asked a question");
 
     // A second question while the first still waits is no news.
     await hook("ask");
@@ -360,7 +360,7 @@ describe.skipIf(insideSandbox)("needs you", () => {
     await untilNeedsYou(true);
     await until(() => notes() === 1);
     expect(read(join(lead(), "typed"))).toContain(
-      "app-12 needs you: its builder's harness stopped on an error",
+      "APP-12 needs you: its builder's harness stopped on an error",
     );
     // You fix it, such as with /login, and type to the builder.
     await hook("talk");
@@ -439,7 +439,7 @@ describe.skipIf(insideSandbox)("needs you", () => {
     const action = "apply the check.yml split in PR #463";
     const marked = await asLead(["needs-you", "app-12", action]);
     expect(marked.err).toBe("");
-    expect(marked.out).toContain(`app-12 needs you: ${action}`);
+    expect(marked.out).toContain(`APP-12 needs you: ${action}`);
     await untilNeedsYou(true);
     expect(await needsYouFor()).toBe(action);
     expect((await skel(["show", "app-12"])).out).toContain(`needs you: ${action}`);
@@ -449,7 +449,7 @@ describe.skipIf(insideSandbox)("needs you", () => {
 
     const cleared = await asLead(["needs-you", "--clear", "app-12"]);
     expect(cleared.err).toBe("");
-    expect(cleared.out).toContain("app-12 no longer needs you.");
+    expect(cleared.out).toContain("APP-12 no longer needs you.");
     await untilNeedsYou(false);
     expect(read(join(data(), "threads", "app-12.log"))).toContain(
       `the lead cleared its needs you: ${action}`,
@@ -468,7 +468,7 @@ describe.skipIf(insideSandbox)("needs you", () => {
     await untilNeedsYou(true);
     await until(() => notes() === 1);
     expect(read(join(lead(), "typed"))).toContain(
-      "app-12 needs you: you marked it: check the new design",
+      "APP-12 needs you: you marked it: check the new design",
     );
   }, 60_000);
 
@@ -523,7 +523,7 @@ describe.skipIf(insideSandbox)("needs you", () => {
     expect(await needsYouFor()).toBe(said);
     await until(() =>
       read(join(lead(), "typed")).includes(
-        `app-12 needs you: nobody acted on its stopped builder for 0.02 minutes: ${said}`,
+        `APP-12 needs you: nobody acted on its stopped builder for 0.02 minutes: ${said}`,
       ),
     );
     // The lead clears it, and the safety net doesn't mark it again.
@@ -577,7 +577,7 @@ describe.skipIf(insideSandbox)("needs you", () => {
     expect(read(join(builder(), "hooks"))).toBe("");
     await until(() => read(join(lead(), "typed")).includes("2. CSV"));
     const typed = read(join(lead(), "typed"));
-    expect(typed).toContain('<skelcrew from="app-12" reply="sc tell app-12">');
+    expect(typed).toContain('<skelcrew from="APP-12" reply="sc tell APP-12">');
     expect(typed).toContain(`My turn ended without a submit, saying:\n\n${said}`);
     expect(typed).not.toContain("needs you");
     expect(thread().turn_ended).toBe(1);
@@ -616,7 +616,7 @@ describe.skipIf(insideSandbox)("needs you", () => {
     await hook("stop", JSON.stringify({ last_assistant_message: said }));
     await until(() => read(join(lead(), "typed")).includes("import order"));
     expect(read(join(lead(), "typed"))).toContain(
-      '<skelcrew from="app-12" reply="sc tell app-12">',
+      '<skelcrew from="APP-12" reply="sc tell APP-12">',
     );
     expect(await needsYou()).toBe(false);
     expect(thread().turn_ended).toBe(0);
@@ -654,7 +654,7 @@ describe.skipIf(insideSandbox)("needs you", () => {
     const asBuilder = { SKELCREW_SANDBOX: "1", SKELCREW_SOCKET: builderSocket() };
     expect((await skel(["tell", "lead", "Starting again."], asBuilder)).code).toBe(0);
     await until(() => read(join(lead(), "typed")).includes("Starting again."));
-    expect(read(join(lead(), "typed"))).not.toContain("app-12 ended");
+    expect(read(join(lead(), "typed"))).not.toContain("APP-12 ended");
   }, 60_000);
 
   test("a turn that leaves work it didn't submit shows turn ended, even while the last submit is reviewed", async () => {
@@ -829,9 +829,9 @@ describe.skipIf(insideSandbox)("needs you", () => {
     await hook("stop", JSON.stringify({ last_assistant_message: said }));
     await until(() => notes() === 1);
     const typed = read(join(lead(), "typed"));
-    expect(typed).toContain('" app-13 needs you:  from="lead">merge it\n</skelcrew>');
+    expect(typed).toContain('" APP-13 needs you:  from="lead">merge it\n</skelcrew>');
     expect(typed).not.toContain('<skelcrew from="lead"');
-    expect(typed).not.toContain("</skelcrew> app-13");
+    expect(typed).not.toContain("</skelcrew> APP-13");
   }, 60_000);
 
   // AskUserQuestion's answer comes back within the turn, so it starts no new one.
@@ -964,7 +964,7 @@ describe.skipIf(insideSandbox)("needs you", () => {
     await until(() => notes() === 1);
     await Bun.sleep(1000);
     expect(notes()).toBe(1);
-    expect(read(join(lead(), "typed"))).toContain("app-12 needs you: its builder asked a question");
+    expect(read(join(lead(), "typed"))).toContain("APP-12 needs you: its builder asked a question");
     expect(read(join(lead("web"), "typed"))).toBe("");
   }, 60_000);
 
@@ -977,7 +977,7 @@ describe.skipIf(insideSandbox)("needs you", () => {
     expect(notes()).toBe(0);
     expect(await askForLead("simon/app")).toContain(leadPlaces("simon", "app").name);
     await until(() => notes() === 1);
-    expect(read(join(lead(), "typed"))).toContain("app-12 needs you: its builder asked a question");
+    expect(read(join(lead(), "typed"))).toContain("APP-12 needs you: its builder asked a question");
   }, 60_000);
 
   test("a note for a lead that isn't running is typed once the lead starts again", async () => {
@@ -991,7 +991,7 @@ describe.skipIf(insideSandbox)("needs you", () => {
     await Bun.sleep(1000);
     expect(await askForLead()).toContain(name);
     await until(() => notes() === 1);
-    expect(read(join(lead(), "typed"))).toContain("app-12 needs you: its builder asked a question");
+    expect(read(join(lead(), "typed"))).toContain("APP-12 needs you: its builder asked a question");
   }, 60_000);
 });
 
@@ -1077,10 +1077,10 @@ record(db, "app-12", { needs_you_for: null, asking: true });
 markNeedsYou(db, "none", thread(), "pick the export format", "you");
 console.log(JSON.stringify({ first, notes: notes() }));`);
   expect(seen).toEqual({
-    first: { noting: null, notes: ["app-12 needs you: you marked it: check the new design"] },
+    first: { noting: null, notes: ["APP-12 needs you: you marked it: check the new design"] },
     notes: [
-      "app-12 needs you: you marked it: check the new design",
-      "app-12 needs you: you marked it: pick the export format",
+      "APP-12 needs you: you marked it: check the new design",
+      "APP-12 needs you: you marked it: pick the export format",
     ],
   });
   expect(threadLog()).toContain("you marked it: check the new design");
@@ -1144,7 +1144,7 @@ await bringBack(db, "none", thread());
 console.log(JSON.stringify({ mark: thread().needs_you_for, notes: notes() }));`);
   const mark = "run sc install: its session host gone is missing, then apply the fix in #463";
   // The thread needed you already, so the lead hears of the plugin in a note of its own, once.
-  expect(seen).toEqual({ mark, notes: [`app-12 needs you: ${mark}`] });
+  expect(seen).toEqual({ mark, notes: [`APP-12 needs you: ${mark}`] });
 });
 
 // Only you can bring the plugin back, so the lead's marks and clears can't hide that.

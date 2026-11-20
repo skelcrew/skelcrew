@@ -1551,7 +1551,7 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
     // A thread that is done isn't polled again. Its repository still is, for labeled issues.
     await morePolls();
     expect(asked(plugin).at(-1)).toMatchObject({ ask: "changed", prs: [] });
-    expect(leadTyped().split("app-12 is done").length - 1).toBe(1);
+    expect(leadTyped().split("APP-12 is done").length - 1).toBe(1);
   }, 60_000);
 
   // m on the screen's list of PRs asks on your socket. The lead's and builders' sockets refuse it,
@@ -1670,7 +1670,7 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
     // nothing.
     const question = "Remove app-12? This closes PR #7 and deletes its branch and clone. [y/N]";
     const kept = await runSkelInTerminal(socket, env(), ["rm", "app-12"], question, "n");
-    expect(kept).toContain("Skelcrew didn't remove app-12.");
+    expect(kept).toContain("Skelcrew didn't remove APP-12.");
     expect(asked(plugin).filter((q) => q.ask === "close pr")).toEqual([]);
     expect(thread().status).toBe("waiting");
     expect(fakeBuilders()).toHaveLength(1);
@@ -1686,7 +1686,7 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
     );
     expect(fromLead.stderr.toString()).toBe("");
     expect(fromLead.stdout.toString()).toBe(
-      "Removed app-12. Issue #12 stays open, and sc start app-12 starts it over.\n",
+      "Removed app-12. Issue #12 stays open, and sc start APP-12 starts it over.\n",
     );
     expect(asked(plugin).filter((q) => q.ask === "close pr")).toEqual([
       {
@@ -1717,11 +1717,11 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
       env: env(),
       stderr: "pipe",
     });
-    expect(again.stderr.toString()).toContain("app-12 is done already");
+    expect(again.stderr.toString()).toContain("APP-12 is done already");
     // The lead removed it itself, so it hears nothing of it: not even the closed PR a poll sees.
     await morePolls();
     const leadTyped = () => read(join(data(), "claude", leadName, "typed"));
-    expect(leadTyped()).not.toContain("app-12 ended");
+    expect(leadTyped()).not.toContain("APP-12 ended");
     // The forge deletes the branch as it closes the PR, which the fake plugin leaves to the test.
     git(join(home, "github", "simon", "app.git"), "branch", "-D", branch);
 
@@ -1733,10 +1733,10 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
       stdout: "pipe",
     });
     expect(started.stderr.toString()).toBe("");
-    expect(started.stdout.toString()).toBe("Started app-12.\n");
+    expect(started.stdout.toString()).toBe("Started APP-12.\n");
     await until(() => thread().pr === 7 && thread().submitting === null, 30_000);
     const removed = await runSkelInTerminal(socket, env(), ["rm", "app-12"], question, "y");
-    expect(removed).toContain("Removed app-12.");
+    expect(removed).toContain("Removed APP-12.");
     expect(
       asked(plugin)
         .filter((q) => q.ask === "close pr")
@@ -1751,7 +1751,7 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
     expect(thread().status).toBe("done");
     // Removed by you, it is news to the lead.
     await until(() => leadTyped().includes("app-12 ended: you removed it, closing #7"));
-    expect(leadTyped().split("app-12 ended").length - 1).toBe(1);
+    expect(leadTyped().split("APP-12 ended").length - 1).toBe(1);
   }, 60_000);
 
   // A forge answers what changed since the last poll, and nothing changes on the PR while
@@ -1814,7 +1814,7 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
       stderr: "pipe",
     });
     expect(started.stderr.toString()).toBe("");
-    expect(started.stdout.toString()).toBe("Started app-12.\n");
+    expect(started.stdout.toString()).toBe("Started APP-12.\n");
     expect(thread()).toMatchObject({ task: 12, status: "working", base: "next" });
   }, 60_000);
 
@@ -1839,7 +1839,7 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
     await Bun.sleep(2000);
     rmSync(hold);
     expect(await new Response(started.stderr).text()).toBe("");
-    expect(await new Response(started.stdout).text()).toBe("Started app-12.\n");
+    expect(await new Response(started.stdout).text()).toBe("Started APP-12.\n");
     await started.exited;
     expect(thread()).toMatchObject({ task: 12, status: "working", base: "next" });
   }, 30_000);
@@ -1887,7 +1887,7 @@ echo "Not logged in"; exit 1`,
     await morePolls();
     expect(thread().status).toBe("failed");
     expect(took()).toHaveLength(1);
-    expect(lead().split("started app-12").length - 1).toBe(1);
+    expect(lead().split("started APP-12").length - 1).toBe(1);
   }, 60_000);
 
   test("a labeled task whose claim the tracker grants starts a thread", async () => {
@@ -1941,7 +1941,7 @@ echo "Not logged in"; exit 1`,
     expect(claims()).toEqual([]);
     changes([issue12(true)]);
     await until(() => thread().task === 12);
-    expect(listed()).toMatchObject([{ task: "app-12", issue: "#12", stage: "working" }]);
+    expect(listed()).toMatchObject([{ task: "APP-12", issue: "#12", stage: "working" }]);
     expect(thread().issue_link).toBe("https://github.com/simon/app/issues/12");
     // A task from a label runs the default flow, unless the lead switches it.
     expect(thread().flow).toBe("default");
@@ -1958,7 +1958,7 @@ echo "Not logged in"; exit 1`,
     // Approved with every check green, it waits for you to merge.
     pr({ labeled: true, reviews: [skelReview], checks: [approved, check(900, "passed")] });
     await until(() => thread().needs_you === 1);
-    expect(listed()).toMatchObject([{ task: "app-12", issue: "#12", stage: "ready for review" }]);
+    expect(listed()).toMatchObject([{ task: "APP-12", issue: "#12", stage: "ready for review" }]);
     // Merged, the task is too, and you stay assigned. The tracker then closes the issue.
     pr({
       labeled: true,
@@ -1970,10 +1970,10 @@ echo "Not logged in"; exit 1`,
     // A merged task leaves the list at once, though its issue is still open, and only --all
     // shows it.
     expect(listed()).toEqual([]);
-    expect(listed("--all")).toMatchObject([{ task: "app-12", issue: "#12", stage: "merged" }]);
+    expect(listed("--all")).toMatchObject([{ task: "APP-12", issue: "#12", stage: "merged" }]);
     changes([taskItem("12", "Add export", { state: "closed", labels: ["skelcrew"] })]);
     await until(() => listed("--all")[0]?.issue === null);
-    expect(listed("--all")).toMatchObject([{ task: "app-12", stage: "merged" }]);
+    expect(listed("--all")).toMatchObject([{ task: "APP-12", stage: "merged" }]);
     expect(assigns()).toEqual([assignOn]);
   }, 60_000);
 
@@ -1991,7 +1991,7 @@ echo "Not logged in"; exit 1`,
       stderr: "pipe",
     });
     expect(started.stderr.toString()).toBe("");
-    expect(started.stdout.toString()).toBe("Started app-12.\n");
+    expect(started.stdout.toString()).toBe("Started APP-12.\n");
     expect(thread()).toMatchObject({ task: 12, status: "working" });
     await until(() => took().length === 2);
     expect(took()).toEqual([claim12, claim12]);
@@ -2294,7 +2294,7 @@ exec ${bwrap} "$@"`,
         "y",
       );
       expect(said).toContain(
-        "Merging #7 as soon as it's approved and green. sc merge --cancel app-12 stops it.",
+        "Merging #7 as soon as it's approved and green. sc merge --cancel APP-12 stops it.",
       );
       return said;
     };
@@ -2342,7 +2342,7 @@ exec ${bwrap} "$@"`,
         `${question} It changes .agents/ (roles, flows or skills): the changes wait for sc repo trust. [y/N]`,
         "n",
       );
-      expect(warned).toContain("Not merging: app-12 waits for you to merge it.");
+      expect(warned).toContain("Not merging: APP-12 waits for you to merge it.");
     });
 
     test("n arms nothing, y arms it, and no agent or script without a terminal can", async () => {
@@ -2354,7 +2354,7 @@ exec ${bwrap} "$@"`,
         question,
         "n",
       );
-      expect(kept).toContain("Not merging: app-12 waits for you to merge it.");
+      expect(kept).toContain("Not merging: APP-12 waits for you to merge it.");
       expect(thread().merge_plan).toBeNull();
       // Only y arms it: any other answer, even Y or yes, arms nothing.
       for (const other of ["Y", "yes", "maybe"]) {
@@ -2373,7 +2373,7 @@ exec ${bwrap} "$@"`,
       const started = Number(thread().started);
       const changed = {
         error:
-          "app-12 changed since you said y, so it won't merge by itself: run sc merge --when-ready app-12 again",
+          "APP-12 changed since you said y, so it won't merge by itself: run sc merge --when-ready APP-12 again",
       };
       const arming = { command: "merge when ready", repo: "app", task: "12" };
       expect(await askOn(yours, arming)).toEqual(changed);
@@ -2400,7 +2400,7 @@ exec ${bwrap} "$@"`,
       expect(thread().merge_plan).toBeNull();
 
       expect(await arm()).toContain(
-        "Merging #7 as soon as it's approved and green. sc merge --cancel app-12 stops it.",
+        "Merging #7 as soon as it's approved and green. sc merge --cancel APP-12 stops it.",
       );
       expect(thread()).toMatchObject({ merge_plan: "armed", merge_by: login() });
       // Asked again, it asks nothing, so no "no" can sound like it stopped the merge.
@@ -2408,7 +2408,7 @@ exec ${bwrap} "$@"`,
         socket,
         env(),
         ["merge", "--when-ready", "app-12"],
-        "Already merging #7 as soon as it's approved and green. sc merge --cancel app-12 stops it.",
+        "Already merging #7 as soon as it's approved and green. sc merge --cancel APP-12 stops it.",
         "n",
       );
       expect(again).not.toContain(question);
@@ -2426,7 +2426,7 @@ exec ${bwrap} "$@"`,
         () => askOn(yours, { ...arming, seen: { pr: 7, started } }),
       );
       expect(meanwhile).toContain(
-        "Already merging #7 as soon as it's approved and green. sc merge --cancel app-12 stops it.",
+        "Already merging #7 as soon as it's approved and green. sc merge --cancel APP-12 stops it.",
       );
       expect(meanwhile).not.toContain("Not merging");
       expect(thread().merge_plan).toBe("armed");
@@ -2439,7 +2439,7 @@ exec ${bwrap} "$@"`,
       expect(ps.stdout.toString()).toContain("merges when ready");
       await until(() =>
         leadTyped().includes(
-          "Merging #7 (app-12) as soon as it's approved and green, as you asked at your terminal. sc merge --cancel app-12 stops it.",
+          "Merging #7 (APP-12) as soon as it's approved and green, as you asked at your terminal. sc merge --cancel APP-12 stops it.",
         ),
       );
     }, 60_000);
@@ -2488,7 +2488,7 @@ exec ${bwrap} "$@"`,
       const armed = asLead();
       expect(armed.stderr.toString()).toBe("");
       expect(armed.stdout.toString()).toContain(
-        "Merging #7 as soon as it's approved and green. sc merge --cancel app-12 stops it.",
+        "Merging #7 as soon as it's approved and green. sc merge --cancel APP-12 stops it.",
       );
       // The plan keeps your words exactly, as what let it merge.
       expect(thread()).toMatchObject({
@@ -2538,7 +2538,7 @@ exec ${bwrap} "$@"`,
       await until(() => thread().merge_waits === "a review of its newest commit");
       await until(() =>
         leadTyped().includes(
-          "Still merging #7 (app-12) once it's approved and green, waiting on a review of its newest commit.",
+          "Still merging #7 (APP-12) once it's approved and green, waiting on a review of its newest commit.",
         ),
       );
       // Failing CI waits too.
@@ -2614,7 +2614,7 @@ exec ${bwrap} "$@"`,
           repo: "app",
           task: "12",
         }),
-      ).toEqual({ error: "app-12 is merging on its forge right now, so it can't be cancelled" });
+      ).toEqual({ error: "APP-12 is merging on its forge right now, so it can't be cancelled" });
       rmSync(join(plugin, "hold-merge-pr"));
       await until(() => thread().status === "done" && !existsSync(clone()));
       await until(() =>
@@ -2923,9 +2923,9 @@ echo '{"verdict":"changes","body":"Not yet.","findings":["Handle an empty file",
       return head;
     };
     const skipQuestion =
-      "Merge #7 (app-12 Add export) without Skelcrew's approval? CI must still pass. It still asks: 1) Handle an empty file 2) Test the error";
+      "Merge #7 (APP-12 Add export) without Skelcrew's approval? CI must still pass. It still asks: 1) Handle an empty file 2) Test the error";
     const skipSaid =
-      "Merging #7 without Skelcrew's approval once its checks pass. sc merge --cancel app-12 stops it.";
+      "Merging #7 without Skelcrew's approval once its checks pass. sc merge --cancel APP-12 stops it.";
 
     test("a merge without approval pins the head you saw, waits for checks, and a push cancels it", async () => {
       const head = await changesApp12();
@@ -2936,7 +2936,7 @@ echo '{"verdict":"changes","body":"Not yet.","findings":["Handle an empty file",
         skipQuestion,
         "n",
       );
-      expect(no).toContain("Not merging: app-12 waits for you to merge it.");
+      expect(no).toContain("Not merging: APP-12 waits for you to merge it.");
       expect(thread().merge_plan).toBeNull();
       // Only the head you saw is pinned: a y to any other commit is refused.
       const yours = join(home, "run", "skelcrew.sock");
@@ -2946,7 +2946,7 @@ echo '{"verdict":"changes","body":"Not yet.","findings":["Handle an empty file",
         await askOn(yours, { ...arming, seen: { pr: 7, started, head: "e".repeat(40) } }),
       ).toEqual({
         error:
-          "app-12 changed since you said y, so it won't merge by itself: run sc merge --skip-review app-12 again",
+          "APP-12 changed since you said y, so it won't merge by itself: run sc merge --skip-review APP-12 again",
       });
       // Builders never can, and the lead needs your leave.
       expect(await askOn(builderSocket(), arming)).toEqual({
@@ -2973,7 +2973,7 @@ echo '{"verdict":"changes","body":"Not yet.","findings":["Handle an empty file",
       expect(ps.stdout.toString()).toContain("merges without approval");
       await until(() =>
         leadTyped().includes(
-          "Merging #7 (app-12) without Skelcrew's approval once its checks pass, as you asked at your terminal. sc merge --cancel app-12 stops it.",
+          "Merging #7 (APP-12) without Skelcrew's approval once its checks pass, as you asked at your terminal. sc merge --cancel APP-12 stops it.",
         ),
       );
       // A push after you asked cancels it, even with CI green, and the lead hears it.
@@ -2982,7 +2982,7 @@ echo '{"verdict":"changes","body":"Not yet.","findings":["Handle an empty file",
       expect(thread().merge_pinned).toBeNull();
       await until(() =>
         leadTyped().includes(
-          "#7 (app-12) got a new commit after the human asked to merge it without Skelcrew's approval, so it won't merge. Ask them again if they still want it.",
+          "#7 (APP-12) got a new commit after the human asked to merge it without Skelcrew's approval, so it won't merge. Ask them again if they still want it.",
         ),
       );
       await morePolls();
@@ -3065,7 +3065,7 @@ echo '{"verdict":"changes","body":"Not yet.","findings":["Handle an empty file",
       expect(String(edits[0]?.body)).toEndWith(marker);
       await until(() =>
         leadTyped().includes(
-          "app-12 is done: #7 merged into main without Skelcrew's approval, as the human asked. Its open findings are in #13.",
+          "APP-12 is done: #7 merged into main without Skelcrew's approval, as the human asked. Its open findings are in #13.",
         ),
       );
       await morePolls();
@@ -3228,7 +3228,7 @@ echo '{"verdict":"approve","body":"Ready.","findings":[]}' > "$out"`,
       await until(() => thread().status === "done");
       await until(() =>
         leadTyped().includes(
-          "app-12 is done: #7 merged into main without Skelcrew's approval, as the human asked. Its open findings are in #13.",
+          "APP-12 is done: #7 merged into main without Skelcrew's approval, as the human asked. Its open findings are in #13.",
         ),
       );
       await morePolls();
@@ -3256,7 +3256,7 @@ echo '{"verdict":"approve","body":"Ready.","findings":[]}' > "$out"`,
       };
       expect(await askOn(join(home, "run", "skelcrew.sock"), request)).toEqual({
         error:
-          "app-12 is approved already: merge it with m in the list, or sc merge --when-ready app-12",
+          "APP-12 is approved already: merge it with m in the list, or sc merge --when-ready APP-12",
       });
       expect(thread().merge_plan).toBeNull();
     }, 60_000);

@@ -78,10 +78,10 @@ test("landing on an entry shows its list across the right side, in groups, with 
   await onRight("Not started");
   const lines = right().split("\n");
   const at = (text: string) => lines.findIndex((line) => line.includes(text));
-  expect(at("Not started")).toBeLessThan(at("app-31"));
-  expect(at("app-31")).toBeLessThan(at("Started"));
-  expect(lines[at("app-12")]).toContain("◐ app-12  Fix login");
-  expect(lines[at("app-12")]?.trimEnd()).toEndWith("working");
+  expect(at("Not started")).toBeLessThan(at("APP-31"));
+  expect(at("APP-31")).toBeLessThan(at("Started"));
+  expect(lines[at("APP-12")]).toContain("◐ APP-12  Fix login");
+  expect(lines[at("APP-12")]?.trimEnd()).toEndWith("working");
   expect(right()).not.toContain("I am lead");
   await until(() => !tabRow().includes("Add CSV"), "no strip");
   expect(tabRow()).toMatch(/app$/);
@@ -102,7 +102,7 @@ test("Up and Down move in the list, and Enter opens the issue's page, which fill
   await onRight("line 1 of the description");
   expect(right()).toContain("← back");
   expect(right()).toContain("Author");
-  await until(() => tabRow().endsWith("app-31  Add CSV export"), "the strip");
+  await until(() => tabRow().endsWith("APP-31  Add CSV export"), "the strip");
   // The sidebar stays on the entry.
   expect(selected()).toContain("Issues");
 });
@@ -185,10 +185,10 @@ test("a click on a row opens it, and a click on its entry goes back to the list"
 test("Enter on a thread in the list of threads shows its agent, and the sidebar moves to its row", async () => {
   await openList("Threads");
   await onRight("Working");
-  expect(right()).toContain("app-12");
+  expect(right()).toContain("APP-12");
   press("Enter");
   await until(() => seen().includes("I am app-12"), "the agent");
-  await until(() => selected() === "○ 12 app-12", "the sidebar to follow");
+  await until(() => selected() === "○ 12 APP-12", "the sidebar to follow");
   type("from the list\r");
   await until(() => read("app-12.typed").includes("from the list"), "what you typed");
 });
@@ -222,7 +222,7 @@ test("Alt-Shift-Down and Alt-Shift-Up jump between the lead, the entries and ACT
   press("M-S-Down");
   await onRight("Not started");
   press("M-S-Down");
-  await until(() => selected() === "○ 12 app-12", "the first row of ACTIVE");
+  await until(() => selected() === "○ 12 APP-12", "the first row of ACTIVE");
   await until(() => seen().includes("I am app-12"), "its agent");
   press("M-S-Up");
   await onRight("Not started");
@@ -255,7 +255,7 @@ test("keys pressed together when leaving a list all count, however slowly the cl
   type("\x1b[1;3B\x1b[1;3B");
   await until(() => seen().includes("I am app-7"), "the second row's agent");
   await Bun.sleep(1200);
-  expect(selected()).toBe("○ 7 app-7");
+  expect(selected()).toBe("○ 7 APP-7");
   expect(seen()).toContain("I am app-7");
 });
 

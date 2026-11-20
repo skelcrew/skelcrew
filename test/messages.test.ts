@@ -69,7 +69,7 @@ console.log(JSON.stringify(db.query("SELECT text FROM notes").all()));`);
   const texts: { text: string }[] = JSON.parse(notes);
   expect(texts).toHaveLength(1);
   expect(texts[0]?.text).toContain(
-    "app-12's builder hasn't got your message after 10 minutes: its builder isn't running",
+    "APP-12's builder hasn't got your message after 10 minutes: its builder isn't running",
   );
   // Esc can't help a builder that isn't running, so the note doesn't suggest it.
   expect(texts[0]?.text).not.toContain("Esc");
@@ -119,7 +119,7 @@ console.log(JSON.stringify({ before, noted: noted(), needsYou: thread.needs_you,
   expect(JSON.parse(seen)).toEqual({
     before: 0,
     noted: [
-      "app-12's builder isn't running, so a message waits for it. sc stop app-12, then sc start app-12, brings it back.",
+      "APP-12's builder isn't running, so a message waits for it. sc stop APP-12, then sc start APP-12, brings it back.",
     ],
     needsYou: false,
     telling: "Fix it.",

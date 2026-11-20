@@ -53,7 +53,7 @@ A repository's `.agents/` tells agents how to work, so Skelcrew shows it and ask
 | `sc stop <thread>` | Ends a thread's agent and keeps its clone, branch and PR. |
 | `sc merge --when-ready <thread>` | Merges the PR once it is approved and green. `--cancel` disarms it. |
 
-A task is named after its issue, such as `app-12`. In the screen, Alt+Q quits and the agents run on. From an agent opened in the list or with `sc attach`, Ctrl+\ steps back. `sc --help` lists every command and key.
+A task is named after its issue, such as `APP-12`. In the screen, Alt+Q quits and the agents run on. From an agent opened in the list or with `sc attach`, Ctrl+\ steps back. `sc --help` lists every command and key.
 
 ## On a server
 

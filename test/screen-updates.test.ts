@@ -122,10 +122,10 @@ test("a row that moves out of view as the list changes is scrolled back into vie
   );
   sql(many.join("\n"));
   await openList("Issues");
-  await onRight("app-139");
+  await onRight("APP-139");
   // The issue you are on gets a thread, which moves it under Started, far below.
   sql(threadSql({ task: "139" }));
-  await until(() => right().includes("Started") && right().includes("app-139"), "the row in view");
+  await until(() => right().includes("Started") && right().includes("APP-139"), "the row in view");
   press("Enter");
   await onRight("← back");
   expect(right()).toContain("Issue 139");
@@ -147,7 +147,7 @@ test("a list scrolled with the wheel stays where you put it as it reads the copy
   for (let i = 0; i < 4; i++) wheel(65);
   // Four notches reach the list's end, where app-124 is the first issue. The first notch alone
   // already hides app-139, and the last moves fewer lines, so the wait is for the end.
-  await until(() => !right().includes("app-125"), "the list to scroll to its end");
+  await until(() => !right().includes("APP-125"), "the list to scroll to its end");
   const scrolled = right();
   await twoRefreshes();
   expect(right()).toBe(scrolled);
@@ -191,7 +191,7 @@ test("the wheel over an agent still scrolls it after a list came and went", asyn
   await ready("app-5");
   clickRow("Issues");
   await onRight("Not started");
-  clickRow("app-5");
+  clickRow("APP-5");
   await until(() => seen().includes("I am app-5"), "the agent");
   wheel(64);
   await until(() => !seen().includes("I am app-5"), "the agent's history");
@@ -251,7 +251,7 @@ test("with nothing working, an open screen sends your terminal nothing at all", 
   await untilQuiet(written);
   expect(readFileSync(written, "utf8")).toBe("");
   const rows = seen().split("\n");
-  const row = rows.findIndex((line) => line.includes("app-12"));
+  const row = rows.findIndex((line) => line.includes("APP-12"));
   expect(rows[row + 1]?.split("│")[0]?.trim()).toBe("waiting · claude");
 }, 90_000);
 

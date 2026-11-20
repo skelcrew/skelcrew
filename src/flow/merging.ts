@@ -14,7 +14,15 @@ import { noteForLead } from "./messages.ts";
 import { findRepository, repositoryAt } from "./repo.ts";
 import { lastPushed } from "./round.ts";
 import { limitWaits, openFindings } from "./status.ts";
-import { readThread, record, repositoryOf, Thread, threadName, threadOn } from "./thread.ts";
+import {
+  readThread,
+  record,
+  repositoryOf,
+  Thread,
+  taskName,
+  threadName,
+  threadOn,
+} from "./thread.ts";
 
 // Returns the thread sc merge names: by its task, such as app-12, or by its PR's
 // number in the repository `repo` names, or else the one of the checkout sc ran in, `from`.
@@ -36,7 +44,7 @@ export function threadToMerge(
         : undefined;
   if (!repository)
     throw new Error(
-      "name the thread, such as app-12, or run sc merge in a checkout of its repository",
+      "name the thread, such as APP-12, or run sc merge in a checkout of its repository",
     );
   const { owner, repo, name } = repository;
   // A PR's number names the thread that opened it, the newest one should a task have had two.
@@ -51,9 +59,9 @@ export function threadToMerge(
     if (!thread) throw new Error(`Skelcrew has no thread with PR #${which.pr} in ${name}`);
   } else if (which.task !== undefined) {
     thread = threadOn(db, `${owner}/${repo}`, which.task);
-    if (!thread) throw new Error(`there is no thread ${name}-${which.task}`);
+    if (!thread) throw new Error(`there is no thread ${taskName(name, which.task)}`);
   }
-  if (!thread) throw new Error("name the thread, such as app-12, or its PR, such as #7");
+  if (!thread) throw new Error("name the thread, such as APP-12, or its PR, such as #7");
   if (thread.status === "done") throw new Error(`${threadName(db, thread)} is done already`);
   return thread;
 }

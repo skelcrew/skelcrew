@@ -20,7 +20,7 @@ import { agentsSaid } from "../flow/merging.ts";
 import { findRepository } from "../flow/repo.ts";
 import type { DaemonRequest } from "../flow/requests.ts";
 import { ListStage, listStage } from "../flow/stage.ts";
-import { Thread } from "../flow/thread.ts";
+import { Thread, taskName } from "../flow/thread.ts";
 import { forgeOf } from "../plugins/ask.ts";
 import { changedAt, roundLimit as settingsRoundLimit } from "../screen/lists.ts";
 import { removeControlCodes } from "../screen/look.ts";
@@ -147,7 +147,7 @@ function taskRow(
   stage: ListStage,
   now: number,
 ): Row {
-  const name = `${repoName}-${thread.task}`;
+  const name = taskName(repoName, thread.task);
   const shown = shownOf(thread, roundLimit(thread), now);
   // An ended thread shows no state: its word is whether it merged, and its mark is quiet.
   const ended = stage === "done";
@@ -275,7 +275,7 @@ export function listRows(db: Database, open: Open, now: number): Row[] {
       : [taskRow(db, open, repository.name, thread, saved, stage, now)];
   });
   const waiting = issues
-    .map((issue) => ({ issue, name: `${repository.name}-${issue.id}` }))
+    .map((issue) => ({ issue, name: taskName(repository.name, issue.id) }))
     .filter(({ name }) => !tasks.some((row) => row.name === name))
     .map(({ issue, name }): Row => {
       const updated = Date.parse(issue.updated);
@@ -309,7 +309,7 @@ export function listRows(db: Database, open: Open, now: number): Row[] {
   // it after.
   const changedOf = (row: Row) => {
     const thread = threads.find(
-      ({ thread: candidate }) => `${repository.name}-${candidate.task}` === row.name,
+      ({ thread: candidate }) => taskName(repository.name, candidate.task) === row.name,
     )?.thread;
     return thread?.changed ?? thread?.started ?? 0;
   };

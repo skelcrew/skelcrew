@@ -1198,14 +1198,14 @@ console.log(JSON.stringify(sidebarRows(db, ["lead", "app-12"], () => 3, ${now}, 
   test("THREADS has only active threads, newest first, and no stopped or done one", () => {
     const statuses = ["working", "stopped", "waiting", "stopped", "failed", "done"];
     const sql = `${repository} ${statuses.map((status, i) => threadSql({ task: String(i + 1), status })).join("\n")}`;
-    expect(rowsAfter(sql, 0).map((row) => row.name)).toEqual(["lead", "app-5", "app-3", "app-1"]);
+    expect(rowsAfter(sql, 0).map((row) => row.name)).toEqual(["lead", "APP-5", "APP-3", "APP-1"]);
   });
 
   test("a working thread shows how long ago it started, and the lead shows no time", () => {
     expect(listed(shown({}, hours(2)))).toEqual([
       "  ◆ lead",
       "    running · claude",
-      "  ○ 12 app-12",
+      "  ○ 12 APP-12",
       "    claude · 2h",
       "    working",
     ]);
@@ -1232,12 +1232,12 @@ console.log(JSON.stringify(sidebarRows(db, ["lead", "app-12"], () => 3, ${now}, 
   // its row: the sidebar must go on drawing whatever the agent left in its folder.
   test("a working thread's row stands when its conversation is missing, empty, half-written or nonsense", () => {
     const rows = (row: Record<string, string | null>) => listed(shown(row, 0)).slice(2);
-    const plainRow = ["  ○ 12 app-12", "    claude · <1m", "    working"];
+    const plainRow = ["  ○ 12 APP-12", "    claude · <1m", "    working"];
     // No session yet, then a session whose file isn't there yet, on either harness.
     expect(rows({ session: null })).toEqual(plainRow);
     expect(rows({ session: "s1" })).toEqual(plainRow);
     expect(rows({ session: "s1", harness: "codex" })).toEqual([
-      "  ○ 12 app-12",
+      "  ○ 12 APP-12",
       "    codex · <1m",
       "    working",
     ]);

@@ -112,6 +112,7 @@ import {
   readThread,
   record,
   type Thread,
+  taskName,
   threadName,
   threadOn,
 } from "./thread.ts";
@@ -511,7 +512,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         const repository = findRepository(db, request.repo);
         const task = await createTask(db, repository, request.title, request.body);
         saveItems(db, repository.owner, repository.repo, [task], []);
-        return { task: `${repository.name}-${task.id}` };
+        return { task: taskName(repository.name, task.id) };
       }
       case "review": {
         // A builder may ask only for its own thread, such as when you ask on its pull request

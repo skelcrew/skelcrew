@@ -267,13 +267,16 @@ export async function builderSession(
     return { host, id: thread.host_id ?? thread.folder };
   // The builder's task label is its thread's name when it started: its repository's short name
   // or, once another repository shares that, its owner and name, then its task's ID. Either is
-  // matched whole, so task 12 never takes the builder of task other-12.
-  const names = [`${thread.repo}-${thread.task}`, `${fullNameOf(thread)}-${thread.task}`];
+  // matched whole, so task 12 never takes the builder of task other-12. The case is ignored, as
+  // a label is lowercase while a builder started before held its repository's name as it was.
+  const names = [`${thread.repo}-${thread.task}`, `${fullNameOf(thread)}-${thread.task}`].map(
+    (name) => name.toLowerCase(),
+  );
   const found = (await listSessions(host)).find(
     ({ labels }) =>
       labels?.role === "builder" &&
       labels.repository === fullNameOf(thread) &&
-      names.includes(labels.task ?? ""),
+      names.includes(labels.task?.toLowerCase() ?? ""),
   );
   if (!found) return { host, id: thread.folder };
   const now = record(db, thread.folder, { host_id: found.name }, "found its builder on its host");
@@ -456,7 +459,12 @@ export function sessionTitle(db: Database, thread: Thread): string | null {
 // The renames under way of each thread's builder, by its folder, each settling once it is over.
 const renaming = new Map<string, Promise<void>>();
 
-// Returns the thread's name, such as app-12, for replies. It uses the repository's name
+// Returns a task's name as people read it: its repository's name and its task's ID, in
+// uppercase as Linear shows its issues, such as APP-12 or APP-T103. Skelcrew stores and matches
+// names in lowercase, and a name is typed in any case, so only what people read changes.
+export const taskName = (repository: string, task: string) => `${repository}-${task}`.toUpperCase();
+
+// Returns the thread's name, such as APP-12, for replies. It uses the repository's name
 // now, which can gain its owner since the thread started, or owner/name once Skelcrew no longer
 // has the repository.
 export function threadName(db: Database, thread: Thread): string {
@@ -464,7 +472,7 @@ export function threadName(db: Database, thread: Thread): string {
     .query("SELECT name FROM repositories WHERE owner = ? AND repo = ?")
     .get(thread.owner, thread.repo);
   const name = z.object({ name: z.string() }).nullable().parse(row)?.name ?? fullNameOf(thread);
-  return `${name}-${thread.task}`;
+  return taskName(name, thread.task);
 }
 
 // Returns the thread named repo-task, such as app-12, or null when the task has none. Throws
@@ -481,7 +489,7 @@ export function threadOn(db: Database, repository: string, task: string): Thread
 // Returns the thread named repo-task, such as app-12, and throws when there is none.
 export function findThread(db: Database, repository: string, task: string): Thread {
   const thread = threadOn(db, repository, task);
-  if (!thread) throw new Error(`there is no thread ${repository}-${task}`);
+  if (!thread) throw new Error(`there is no thread ${taskName(repository, task)}`);
   return thread;
 }
 

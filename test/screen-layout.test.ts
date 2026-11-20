@@ -63,9 +63,9 @@ test("resizing the terminal resizes the agent and keeps the sidebar narrow", asy
   expect(widths).toEqual(["38", "111", "150"]);
   // A terminal shorter than the list keeps the row you are looking at in view.
   toSecondThread();
-  await until(() => selected() === "○ 7 app-7", "app-7");
+  await until(() => selected() === "○ 7 APP-7", "APP-7");
   tmux(terminal, "resize-window", "-t", "=one:", "-x", "150", "-y", "6");
-  await until(() => selected() === "○ 7 app-7", "the sidebar to scroll");
+  await until(() => selected() === "○ 7 APP-7", "the sidebar to scroll");
 });
 
 // The columns at the sidebar's edge, on each line of a screen `height` rows high above the
@@ -179,12 +179,12 @@ test("the strip ends the top row, and the agent's height stays as you switch", a
   await ready("lead");
   const height = readFileSync(join(home, "lead.size"), "utf8");
   toSecondThread();
-  const line = "app-7  Fix the login  #34  checks passing  round 2 · codex · changes";
+  const line = "APP-7  Fix the login  #34  checks passing  round 2 · codex · changes";
   await until(() => tabRow().endsWith(line), "the strip");
   expect(seen()).not.toContain("A test is missing.");
   expect(readFileSync(join(home, "app-7.size"), "utf8")).toBe(height);
   press("M-Up");
-  await until(() => tabRow().endsWith("app-12"), "app-12's strip");
+  await until(() => tabRow().endsWith("APP-12"), "APP-12's strip");
   expect(readFileSync(join(home, "app-12.size"), "utf8")).toBe(height);
 });
 
@@ -232,7 +232,7 @@ test("under a list or page the footer adds ? keys, and s or m while the row can 
   await openIssue();
   expect(footer()).toBe(startKeys);
   press("Left");
-  await until(() => !tabRow().includes("app-31"), "the strip to go");
+  await until(() => !tabRow().includes("APP-31"), "the strip to go");
   expect(footer()).toBe(startKeys);
   // app#12 has a thread already, so it can't be started.
   press("Down");
@@ -258,7 +258,7 @@ test("the header, the tabs and the strip share one row, and the agent starts rig
   const lines = seen().split("\n");
   // Skelcrew above the sidebar, its edge, and the tab above the agent, then the strip.
   expect(lines[0]?.trimEnd()).toMatch(
-    /^ {2}Skelcrew v[\d.]+ +│ {3}app +app-7 {2}Fix the login {2}#34$/,
+    /^ {2}Skelcrew v[\d.]+ +│ {3}app +APP-7 {2}Fix the login {2}#34$/,
   );
   // The open tab's grey starts where the agent's text does, with its name two columns in.
   expect(lines[0]?.indexOf("app")).toBe((lines[1]?.indexOf("I am") ?? 0) + 2);
@@ -315,10 +315,10 @@ test("the sidebar's edge runs from the top row down to the footer, at every widt
 test("a thread's strip follows it as it changes", async () => {
   open("app-7");
   await ready("app-7");
-  await until(() => tabRow().endsWith("app-7"), "the strip");
+  await until(() => tabRow().endsWith("APP-7"), "the strip");
   sql(`UPDATE tasks SET review_round = 1, reviewed_by = 'codex', verdict = 'approve',
     review_line = 'Looks right.' WHERE task = 7`);
-  await until(() => seen().includes("app-7  round 1 · codex · approved"), "the review");
+  await until(() => seen().includes("APP-7  round 1 · codex · approved"), "the review");
 });
 
 test("what a title says is shown, never run or read as a format", async () => {
@@ -403,7 +403,7 @@ test("? on a list shows the keys in columns across the screen above the footer, 
   // The sidebar and the right side are that many rows shorter, and nothing is drawn over them.
   expect(rightHeight()).toBe(height - keysShown().length - 1);
   expect(right()).toContain("↑↓ move");
-  expect(right()).toContain("app-31");
+  expect(right()).toContain("APP-31");
   type("?");
   await until(() => !keysOpen(), "the list of keys to hide");
   expect(rightHeight()).toBe(height);
@@ -461,7 +461,7 @@ test("a click on ? keys in the footer shows the keys, and a click on them hides 
   await until(keysOpen, "the list of keys again");
   click(x, 30);
   await until(() => !keysOpen(), "the list of keys to hide again");
-  expect(right()).toContain("app-31");
+  expect(right()).toContain("APP-31");
 });
 
 test("the list of keys has the same keys as sc --help, in the same order", async () => {

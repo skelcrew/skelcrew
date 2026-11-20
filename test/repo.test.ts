@@ -455,7 +455,7 @@ ${threadSql({ task: "9", status: "done" })}`);
   const refused = await skel(["repo", "rm", "app"]);
   expect(refused.code).toBe(1);
   expect(refused.err).toBe(
-    "Skelcrew: app has live threads: app-12, app-15, app-16. Stop them first.\n",
+    "Skelcrew: app has live threads: APP-12, APP-15, APP-16. Stop them first.\n",
   );
   expect(existsSync(clone("simon/app"))).toBe(true);
   db.run("UPDATE threads SET status = 'done' WHERE task = 12");
