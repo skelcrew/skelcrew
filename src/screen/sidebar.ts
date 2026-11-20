@@ -110,9 +110,9 @@ export async function runSidebar(
     return ["sh", "-c", `${line}; ${told}; ${leadLine()}`];
   };
   // The agents running on a plugin's host, builders by their thread's folder and the open lead by
-  // its name, with the line that attaches to each, as the last look at the hosts found them. The look runs in the background, one at a
+  // its name, as the last look at the hosts found them. The look runs in the background, one at a
   // time, as a host can be slow, and the sidebar never waits on it.
-  let hosted = new Map<string, string>();
+  let hosted = new Set<string>();
   let lookingAtHosts = false;
   const lookAtHosts = () => {
     if (lookingAtHosts) return;
@@ -172,7 +172,7 @@ export async function runSidebar(
     // tmux first, then the tabs: the daemon closes a tab before it ends the lead's session, so
     // a lead found gone here with its tab still read as open has crashed.
     const found = doing("asking tmux for the agents' sessions", () => listTmuxSessions(agents));
-    const running = [...found.flatMap((one) => (one.running ? [one.name] : [])), ...hosted.keys()];
+    const running = [...found.flatMap((one) => (one.running ? [one.name] : [])), ...hosted];
     lookAtHosts();
     const exited = doing("asking tmux whether the lead exited", () =>
       exitedCleanly(agents, open.lead),
@@ -275,14 +275,13 @@ export async function runSidebar(
     // a client still attaching, a new client starts on the agent. Otherwise the client switches.
     // A builder on a plugin's host runs that host's attach in the pane, and the lead comes back
     // once you leave it, as after a tmux session. So does a lead on a plugin's host, which no
-    // tmux client can switch to. The lead is reached as the database says it runs now, not as the
-    // host's last list found it, which can lag behind a lead that moved, or be kept while the host
-    // fails to answer.
+    // tmux client can switch to. Both are reached where the database says they run now: the
+    // host's last list only says whether they run, as it can lag behind an agent that moved.
     const entry = entries.find((candidate) => entryPlace(candidate.entry) === next);
     const fullName = `${open.owner}/${open.repo}`;
-    const onHost = next === open.lead ? undefined : hosted.get(next);
+    const onHost = next !== open.lead && hosted.has(next) ? builderLine(db, next) : null;
     if (entry) respawnRight(paneCommand(agents, session, entry.entry, where, fullName));
-    else if (onHost !== undefined) respawnRight(hostThenLead(next, onHost), next);
+    else if (onHost !== null) respawnRight(hostThenLead(next, onHost), next);
     else if (
       isEntry(shown) ||
       shownSession(agents, tty) === null ||
@@ -360,8 +359,19 @@ export async function runSidebar(
   process.exit(0);
 }
 
-// Returns the agents running on a plugin's host, each with the line that attaches to it, for the
-// sidebar: builders by their thread's folder, and the open repository's lead by its name, so a
+// Returns the line that attaches to the builder of the thread in `folder` on its plugin's host,
+// made from the host and session the database gives now. A look at the hosts can be slow, and
+// the builder may have a new session by the time it answers, so its line is made only as you
+// pick it. Null for a builder on tmux, or whose plugin is gone.
+function builderLine(db: ReturnType<typeof openDb>, folder: string): string | null {
+  const thread = liveThreads(db).find((one) => one.folder === folder);
+  if (!thread || thread.host === null || thread.host === "tmux" || thread.host_id === null)
+    return null;
+  const host = pluginHost(db, thread.host);
+  return host && attachOnHostLine(host, thread.host_id);
+}
+
+// Returns the agents running on a plugin's host, for the sidebar: builders by their thread's folder, and the open repository's lead by its name, so a
 // lead there that ends is noticed and brought back, as one on tmux is. Each host is asked once
 // for all its agents. A host that fails to answer keeps whether `before`, the last look, found
 // each agent running: a host can fail for a moment, and its agents' rows would otherwise show as
@@ -369,9 +379,9 @@ export async function runSidebar(
 async function hostedAgents(
   db: ReturnType<typeof openDb>,
   open: Open,
-  before: Map<string, string>,
-): Promise<Map<string, string>> {
-  const found = new Map<string, string>();
+  before: Set<string>,
+): Promise<Set<string>> {
+  const found = new Set<string>();
   // Each agent on a plugin's host: what the sidebar knows it by, its host and its ID there.
   const agents = liveThreads(db).flatMap((thread) =>
     thread.host !== null && thread.host !== "tmux" && thread.host_id !== null
@@ -389,11 +399,8 @@ async function hostedAgents(
     const listed = await listSessions(host).catch(() => null);
     for (const agent of agents) {
       if (agent.host !== name) continue;
-      // Only whether it ran is kept. The line is made from the host and session the agent has
-      // now, so a builder given a new session meanwhile is never reached through its old one.
       const kept = listed === null && before.has(agent.key);
-      if (kept || listed?.some((one) => one.name === agent.id && one.running))
-        found.set(agent.key, attachOnHostLine(host, agent.id));
+      if (kept || listed?.some((one) => one.name === agent.id && one.running)) found.add(agent.key);
     }
   }
   return found;
