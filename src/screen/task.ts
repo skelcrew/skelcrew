@@ -73,8 +73,15 @@ export async function attachTask(
   // A plugin's host can take seconds to say which session is the builder. If you moved to
   // another row meanwhile, the right side shows that row now, and the old Enter does nothing.
   if (paneProcess() !== before) return null;
-  respawnPane(agents, pane, attach);
+  // Your typing moves to the right side before the attachment starts, not after: an attachment
+  // that ends at once, such as a host's attach that fails, moves it back to the sidebar as it
+  // ends, and that must come last. A pane that couldn't start leaves your typing on the sidebar.
   screenTmux(agents, ["select-pane", "-t", pane]);
+  const started = screenTmux(agents, ["respawn-pane", "-k", "-t", pane, "--", ...attach]);
+  if (!started.ok) {
+    screenTmux(agents, ["select-pane", "-t", `=${session}:.0`]);
+    return `${name}'s builder couldn't be shown: ${started.err}`;
+  }
   return null;
 }
 

@@ -208,3 +208,23 @@ UPDATE threads SET host = 'slow', host_id = NULL WHERE folder = 'app-7'`);
   expect(typingTo()).toBe("0");
   expect(read("host.typed")).toBe("");
 });
+
+// The host's attach fails at once, so its end comes right after Enter.
+test("an attachment that ends at once leaves your typing on the sidebar", async () => {
+  const plugin = join(home, "plugin-broken");
+  mkdirSync(plugin, { recursive: true });
+  writeFileSync(join(plugin, "attach.sh"), "exit 1\n");
+  writeFileSync(
+    join(plugin, "skelcrew-plugin.yaml"),
+    "name: broken\nversion: 0.1.0\nskelcrew: 0.1.0\nabout: A host\nkind: runtime\nprovides: [sessions]\nsession: [sh, session.sh]\nattach: [sh, attach.sh]\n",
+  );
+  sql(`INSERT INTO plugins (name, folder) VALUES ('broken', '${plugin}');
+UPDATE threads SET host = 'broken', host_id = 'broken-app-7' WHERE folder = 'app-7'`);
+  await onApp7();
+  for (let time = 0; time < 5; time++) {
+    expect(onRow("attach", "app-7")).toBe("");
+    await Bun.sleep(300);
+    expect(typingTo()).toBe("0");
+    expect(right()).toContain("Login redirect");
+  }
+});
