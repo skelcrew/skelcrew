@@ -467,7 +467,7 @@ export const runDir = () => join(home, "run", "skelcrew");
 export const leadSocket = () => join(runDir(), "leads", hashed("simon/app"), "skelcrew.sock");
 export const builderSocket = () => join(runDir(), "threads", hashed("app-12"), "skelcrew.sock");
 // Where the question starts: what it says of .agents/ follows, as a poll last saw the PR.
-export const question = "Merge #7 (app-12 Add export) when it's approved and green?";
+export const question = "Merge #7 (APP-12 Add export) when it's approved and green?";
 export const notLet =
   "the human turned off your arming merges: ask them to run sc merge --when-ready in their own terminal, or to turn it on with lead: { can_merge: true } in ~/.config/skelcrew/config.yaml";
 // Writes your config with `lead`, your line for whether the lead may arm merges, or none.
@@ -489,7 +489,7 @@ export const arm = async () => {
     "y",
   );
   expect(said).toContain(
-    "Merging #7 as soon as it's approved and green. sc merge --cancel app-12 stops it.",
+    "Merging #7 as soon as it's approved and green. sc merge --cancel APP-12 stops it.",
   );
   return said;
 };
@@ -528,6 +528,6 @@ echo '{"verdict":"changes","body":"Not yet.","findings":["Handle an empty file",
 };
 
 export const skipQuestion =
-  "Merge #7 (app-12 Add export) without Skelcrew's approval? CI must still pass. It still asks: 1) Handle an empty file 2) Test the error";
+  "Merge #7 (APP-12 Add export) without Skelcrew's approval? CI must still pass. It still asks: 1) Handle an empty file 2) Test the error";
 export const skipSaid =
-  "Merging #7 without Skelcrew's approval once its checks pass. sc merge --cancel app-12 stops it.";
+  "Merging #7 without Skelcrew's approval once its checks pass. sc merge --cancel APP-12 stops it.";

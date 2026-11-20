@@ -249,7 +249,7 @@ attach: ["true"]
   const script = `import { openDb } from ${JSON.stringify(source("db.ts"))};
 import { record } from ${JSON.stringify(source("flow/thread.ts"))};
 import { forgetStatus, keepState } from ${JSON.stringify(source("flow/status.ts"))};
-import { builderSession, readThread } from ${JSON.stringify(source("flow/thread.ts"))};
+import { builderSession, readThread, renameBuilders } from ${JSON.stringify(source("flow/thread.ts"))};
 import { endThread, removeThread, stopThread } from ${JSON.stringify(source("flow/events.ts"))};
 import { noticeIdleScreens } from ${JSON.stringify(source("flow/status.ts"))};
 import { wakeAfterLimit } from ${JSON.stringify(source("flow/limits.ts"))};
@@ -823,7 +823,7 @@ console.log(await stop);
 console.log(readThread(db, "app-12").status);`,
     { host: "fake", host_id: "fake-app-12" },
   );
-  expect(said).toBe("simon/app-12 is done already\ndone\n");
+  expect(said).toBe("SIMON/APP-12 is done already\ndone\n");
 }, 40_000);
 
 // A host that can't be reached as the daemon starts may still run the builder, so the daemon asks
@@ -1155,14 +1155,15 @@ process.exit(0);`,
   );
 }, 40_000);
 
-// The last is a row from before Skelcrew saved a thread's title, which takes the issue's from
-// Skelcrew's copy of the tracker.
+// The title starts with the task's name as people read it, for a host's own apps to name the
+// session by. Skelcrew has no row for the repository here, so the name holds its owner. The last is a row from before Skelcrew saved a thread's title, which takes the
+// issue's from Skelcrew's copy of the tracker.
 for (const [short, title, saved] of [
-  ["login redirect", "login redirect", "Fix the login redirect"],
-  [null, "Fix the login redirect", "Fix the login redirect"],
-  [null, "Fix the login redirect", null],
+  ["login redirect", "SIMON/APP-12 login redirect", "Fix the login redirect"],
+  [null, "SIMON/APP-12 Fix the login redirect", "Fix the login redirect"],
+  [null, "SIMON/APP-12 Fix the login redirect", null],
 ] as const)
-  test(`a builder's session is labelled with its short title, else its full title: ${title}, saved ${saved}`, () => {
+  test(`a builder's session is labelled with its name and short title, else its full title: ${title}, saved ${saved}`, () => {
     const fake = join(home, ".config", "skelcrew", "plugins", "fake");
     const labels = runWithFakeHost(
       "sessions",
@@ -1192,7 +1193,9 @@ await Bun.sleep(1000);`,
     .map((line) => JSON.parse(line))
     .filter((question) => question.ask === "rename");
   // Only the change of title renames it, not every change to the thread.
-  expect(renames).toEqual([{ ask: "rename", id: "fake-app-12", title: "login redirect" }]);
+  expect(renames).toEqual([
+    { ask: "rename", id: "fake-app-12", title: "SIMON/APP-12 login redirect" },
+  ]);
 }, 40_000);
 
 test("a short title given while the host starts the builder still reaches the host", () => {
@@ -1216,7 +1219,9 @@ process.exit(0);`,
     .split("\n")
     .map((line) => JSON.parse(line))
     .filter((question) => question.ask === "rename");
-  expect(renames).toEqual([{ ask: "rename", id: "fake-app-12", title: "login redirect" }]);
+  expect(renames).toEqual([
+    { ask: "rename", id: "fake-app-12", title: "SIMON/APP-12 login redirect" },
+  ]);
 }, 40_000);
 
 test("renames reach the host one at a time, and the last says the latest title", () => {
@@ -1241,7 +1246,7 @@ process.exit(0);`,
     { host: "fake", host_id: "fake-app-12", title: "Fix the login redirect" },
   );
   // The second waited for the first to finish, so the host ends on the latest title.
-  expect(said).toBe("1\nfirst second\n");
+  expect(said).toBe("1\nSIMON/APP-12 first SIMON/APP-12 second\n");
 }, 40_000);
 
 test("a rename the host does but answers with nothing counts as done", () => {
@@ -1256,8 +1261,25 @@ process.exit(0);`,
     { host: "fake", host_id: "fake-app-12", title: "Fix the login redirect" },
   );
   const labels = readFileSync(join(fake, "sessions", "fake-app-12", "labels.json"), "utf8");
-  expect(JSON.parse(labels).title).toBe("login redirect");
+  expect(JSON.parse(labels).title).toBe("SIMON/APP-12 login redirect");
   expect(said).not.toContain("couldn't rename");
+}, 40_000);
+
+// A builder started by a release before, whose title has no task's name, keeps running with its
+// ID saved. The daemon's start renames it, so the host's own apps show its name.
+test("a running builder is renamed by its title as it is now as the daemon starts", () => {
+  const fake = join(home, ".config", "skelcrew", "plugins", "fake");
+  runWithFakeHost(
+    "sessions",
+    `const host = (await builderSession(db, "unused", readThread(db, "app-12"))).host;
+await startSession(host, "app-12", { folder: ${JSON.stringify(home)}, command: ["sleep", "30"], env: {}, labels: { repository: "simon/app", role: "builder", task: "app-12", title: "Fix the login redirect" } });
+renameBuilders(db);
+await Bun.sleep(1000);
+process.exit(0);`,
+    { host: "fake", host_id: "fake-app-12", title: "Fix the login redirect" },
+  );
+  const labels = readFileSync(join(fake, "sessions", "fake-app-12", "labels.json"), "utf8");
+  expect(JSON.parse(labels).title).toBe("SIMON/APP-12 Fix the login redirect");
 }, 40_000);
 
 test("a builder found on its host after a restart is renamed if its title changed meanwhile", () => {
@@ -1274,7 +1296,7 @@ process.exit(0);`,
     { host: "fake", host_id: null, title: "Fix the login redirect" },
   );
   const labels = readFileSync(join(fake, "sessions", "fake-app-12", "labels.json"), "utf8");
-  expect(JSON.parse(labels).title).toBe("login redirect");
+  expect(JSON.parse(labels).title).toBe("SIMON/APP-12 login redirect");
 }, 40_000);
 
 // Starts simon/app's lead on the fake host, with `config` as your config.yaml and `row` as more

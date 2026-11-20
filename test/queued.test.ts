@@ -214,13 +214,13 @@ async function serveApp(): Promise<void> {
 test("a start over limits.threads waits as queued, and starts in order once a builder ends", async () => {
   addApp();
   await serveApp();
-  expect(await sc("start", "app-12")).toContain("app-12 is queued");
-  expect(await sc("start", "app-13")).toContain("app-13 is queued");
+  expect(await sc("start", "APP-12")).toContain("APP-12 is queued");
+  expect(await sc("start", "APP-13")).toContain("APP-13 is queued");
   // Starting it again keeps its place, rather than queueing it twice.
-  expect(await sc("start", "app-12")).toContain("app-12 is queued");
+  expect(await sc("start", "APP-12")).toContain("APP-12 is queued");
   // Queued is a task at work, in stage working, whose thread waits for a builder.
   const tasks = JSON.parse(await sc("ls", "app", "--json"));
-  const app12 = tasks.find((row: { task: string }) => row.task === "app-12");
+  const app12 = tasks.find((row: { task: string }) => row.task === "APP-12");
   expect(app12).toMatchObject({ stage: "working", thread: { status: "queued" } });
   expect(await sc("ps", "app")).toContain("queued");
   // Nothing starts while app-11's builder works.
@@ -258,16 +258,16 @@ test("sc rm takes a task out of the queue, back to its issue, and it never start
   await serveApp();
   await sc("start", "app-12");
   await sc("start", "app-13");
-  expect(await sc("rm", "app-12")).toContain("Removed app-12");
+  expect(await sc("rm", "APP-12")).toContain("Removed APP-12");
   const tasks = JSON.parse(await sc("ls", "app", "--json"));
-  const app12 = tasks.find((row: { task: string }) => row.task === "app-12");
+  const app12 = tasks.find((row: { task: string }) => row.task === "APP-12");
   expect(app12).toMatchObject({ stage: "issue", thread: { status: "done" } });
   await sc("rm", "app-11");
   await until(() => statuses()["app-13"] === "failed");
   expect(statuses()["app-12"]).toBe("done");
   expect(leftQueue("app-12")).toHaveLength(0);
   // Started again, it joins the queue afresh.
-  expect(await sc("start", "app-12")).toContain("Started app-12");
+  expect(await sc("start", "app-12")).toContain("Started APP-12");
 }, 60_000);
 
 test("a labelled issue is claimed once as it joins the queue, after a restart too", async () => {
@@ -297,8 +297,8 @@ test("a labelled issue is claimed once as it joins the queue, after a restart to
   expect(statuses()).toEqual(bothQueued);
   // The lead is told of each one queued. A note is typed until the lead has it, so one the
   // restart caught while typing can be typed again: the claims above show nothing queued twice.
-  expect(leadHears()).toContain("queued app-12 from github");
-  expect(leadHears()).toContain("queued app-13 from github");
+  expect(leadHears()).toContain("queued APP-12 from github");
+  expect(leadHears()).toContain("queued APP-13 from github");
 }, 60_000);
 
 test("sc start of a stopped task over the limit waits as queued, and is brought back in its turn", async () => {
@@ -308,7 +308,7 @@ test("sc start of a stopped task over the limit waits as queued, and is brought 
 openDb().exec(${JSON.stringify(stopped)});`;
   Bun.spawnSync([process.execPath, "-e", code], { env: env() });
   await serveApp();
-  expect(await sc("start", "app-12")).toContain("app-12 is queued");
+  expect(await sc("start", "APP-12")).toContain("APP-12 is queued");
   expect(statuses()["app-12"]).toBe("queued");
   await sc("rm", "app-11");
   await until(() => statuses()["app-12"] === "failed");
@@ -339,7 +339,7 @@ test("a queued sc start leaves the queue only once its claim is made, across a r
   const failing = join(plugin, "fail-took");
   writeFileSync(failing, "network is down");
   const said = await sc("start", "app-12");
-  expect(said).toContain("app-12 is queued");
+  expect(said).toContain("APP-12 is queued");
   expect(said).toContain("couldn't claim its issue yet");
   // A place frees up, but the task owes its claim, so it waits, after a restart too.
   await stopDaemon();
@@ -364,7 +364,7 @@ openDb().run("INSERT INTO claims (owner, repo, task) VALUES ('simon', 'app', '12
   Bun.spawnSync([process.execPath, "-e", cut], { env: env() });
   answer(plugin, "took", { took: false });
   await serveApp();
-  await until(() => leadHears().includes("app-12's claim was cut short"));
+  await until(() => leadHears().includes("APP-12's claim was cut short"));
   const polls = () => asked(plugin).filter((q) => q.ask === "changed").length;
   const before = polls();
   await until(() => polls() >= before + 3);
@@ -372,8 +372,8 @@ openDb().run("INSERT INTO claims (owner, repo, task) VALUES ('simon', 'app', '12
   // Each issue was asked about once, and only 12's claim may be this machine's.
   const claims = asked(plugin).filter((q) => q.ask === "took");
   expect(claims.map((q) => q.task).sort()).toEqual(["12", "13"]);
-  expect(leadHears()).toContain("If no other machine works on it, sc start app-12.");
-  expect(leadHears()).not.toContain("app-13's claim");
+  expect(leadHears()).toContain("If no other machine works on it, sc start APP-12.");
+  expect(leadHears()).not.toContain("APP-13's claim");
 }, 60_000);
 
 test("a task that still owes its claim holds back the tasks that joined after it", async () => {
@@ -408,7 +408,7 @@ test("a labelled issue that can't start after its claim is told to the lead, not
   );
   await serveApp();
   await until(() =>
-    leadHears().includes("couldn't start app-12 from its label; once fixed, sc start app-12"),
+    leadHears().includes("couldn't start APP-12 from its label; once fixed, sc start APP-12"),
   );
   expect(statuses()["app-12"]).toBeUndefined();
 }, 60_000);
@@ -423,13 +423,13 @@ test("a queued task whose issue another machine claimed while its claim failed l
   answer(plugin, "took", { took: false });
   rmSync(failing);
   await until(() => statuses()["app-12"] === "done");
-  expect(leadHears()).toContain("app-12 left the queue: its issue was claimed");
+  expect(leadHears()).toContain("APP-12 left the queue: its issue was claimed");
   // A place frees up, and app-12 never starts.
   await sc("rm", "app-11");
   await queueLooked();
   expect(leftQueue("app-12")).toHaveLength(0);
   const tasks = JSON.parse(await sc("ls", "app", "--json"));
-  expect(tasks.find((row: { task: string }) => row.task === "app-12")).toMatchObject({
+  expect(tasks.find((row: { task: string }) => row.task === "APP-12")).toMatchObject({
     stage: "issue",
   });
 }, 60_000);
@@ -462,9 +462,9 @@ test("sc rm while a queued sc start waits for its claim leaves the issue unassig
   writeFileSync(hold, "");
   const starting = sc("start", "app-12");
   await until(() => asked(plugin).some((q) => q.ask === "took"));
-  expect(await sc("rm", "app-12")).toContain("Removed app-12");
+  expect(await sc("rm", "APP-12")).toContain("Removed APP-12");
   rmSync(hold);
-  expect(await starting).toContain("app-12 is queued");
+  expect(await starting).toContain("APP-12 is queued");
   // sc start's work with the tracker comes after its answer, so a few polls give it time.
   const polls = () => asked(plugin).filter((q) => q.ask === "changed").length;
   const before = polls();
@@ -481,8 +481,8 @@ test("a claim the engine's stop cut short is told to the lead, though its label 
 openDb().run("INSERT INTO claims (owner, repo, task) VALUES ('simon', 'app', '12')");`;
   Bun.spawnSync([process.execPath, "-e", cut], { env: env() });
   await serveApp();
-  await until(() => leadHears().includes("app-12's claim was cut short"));
-  expect(leadHears()).toContain("sc start app-12");
+  await until(() => leadHears().includes("APP-12's claim was cut short"));
+  expect(leadHears()).toContain("sc start APP-12");
   expect(claimsSaved()).toBe(0);
   expect(statuses()).toEqual({ "app-11": "working" });
   // Nothing claims the issue now that nobody asks for it.
@@ -503,7 +503,7 @@ test("a task removed and started again while its claim was asked makes a claim o
   await until(() => claims() === 2);
   rmSync(hold);
   await first;
-  expect(await again).toContain("app-12 is queued");
+  expect(await again).toContain("APP-12 is queued");
   await sc("rm", "app-11");
   await until(() => statuses()["app-12"] === "failed");
   expect(leftQueue("app-12")).toHaveLength(1);
@@ -523,8 +523,8 @@ test("a claim the engine's stop cut short after sc rm is told to the lead, not f
   expect(claimsSaved()).toBe(1);
   rmSync(hold);
   await serveApp();
-  await until(() => leadHears().includes("app-12's claim was cut short"));
-  expect(leadHears()).toContain("sc start app-12");
+  await until(() => leadHears().includes("APP-12's claim was cut short"));
+  expect(leadHears()).toContain("sc start APP-12");
   expect(claimsSaved()).toBe(0);
   expect(statuses()["app-12"]).toBe("done");
 }, 60_000);

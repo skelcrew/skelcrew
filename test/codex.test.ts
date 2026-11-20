@@ -215,7 +215,7 @@ openDb().run("UPDATE repositories SET forge = 'github', claimed = 1, remote = 'h
 // What sc ps --json shows you about app-12.
 async function app12(): Promise<{ status: string; needsYou: boolean } | undefined> {
   const ps = await skel(["ps", "--json"]);
-  return JSON.parse(ps.out).find((t: { thread: string }) => t.thread === "app-12");
+  return JSON.parse(ps.out).find((t: { thread: string }) => t.thread === "APP-12");
 }
 
 // The line the fake builder adds to its file ran once it has done each step.

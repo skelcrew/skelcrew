@@ -31,7 +31,7 @@ function inOrder(folder: string, failed: string, work: () => Promise<void>): voi
 // Skelcrew took it, but starts the thread whatever the answer. A thread with no issue, such as
 // app-t1, or in a repository with no tracker, has nothing to assign.
 export function assignIssue(db: Database, thread: Thread, claim: boolean): void {
-  inOrder(thread.folder, `couldn't assign you ${thread.folder}'s issue`, async () => {
+  inOrder(thread.folder, `couldn't assign you ${threadName(db, thread)}'s issue`, async () => {
     const repository = repositoryOf(db, thread);
     if (ownTask(thread.task) || trackerOf(db, repository) === null) return;
     const name = threadName(db, thread);
@@ -48,9 +48,11 @@ export function assignIssue(db: Database, thread: Thread, claim: boolean): void 
 
 // Takes you off the thread's issue, but only if Skelcrew assigned you, so an issue that was
 // yours before stays yours. Whether it did is read once the work before it is done, as an
-// assignment still under way may set it.
+// assignment still under way may set it. A failure is logged by the thread's name, as people read
+// it, which is read now, while its row is surely there.
 export function unassignIssue(db: Database, folder: string): void {
-  inOrder(folder, `couldn't take you off ${folder}'s issue`, async () => {
+  const name = threadName(db, readThread(db, folder));
+  inOrder(folder, `couldn't take you off ${name}'s issue`, async () => {
     const thread = readThread(db, folder);
     if (!thread.assigned) return;
     await assignTask(db, repositoryOf(db, thread), thread.task, false);

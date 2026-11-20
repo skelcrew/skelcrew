@@ -16,7 +16,7 @@ Before you compare your branch with its base branch or merge it, such as main, r
 
 If the reviewer asks for changes, Skelcrew types the review into this session: fix what it asks, commit, and run sc submit again.
 
-If the human asks for another review of your last submitted commit, run sc review with your thread's name, such as sc review app-12.
+If the human asks for another review of your last submitted commit, run sc review with your thread's name, such as sc review APP-12.
 
 Come back to the human only for new scope, missing access, or a decision that is theirs. Decide everything else yourself.
 

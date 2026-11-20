@@ -40,7 +40,7 @@ describe.skipIf(insideSandbox)("needs you", () => {
     expect(read(join(builder(), "hooks"))).toBe("");
     await until(() => read(join(lead(), "typed")).includes("2. CSV"));
     const typed = read(join(lead(), "typed"));
-    expect(typed).toContain('<skelcrew from="app-12" reply="sc tell app-12">');
+    expect(typed).toContain('<skelcrew from="APP-12" reply="sc tell APP-12">');
     expect(typed).toContain(`My turn ended without a submit, saying:\n\n${said}`);
     expect(typed).not.toContain("needs you");
     expect(thread().turn_ended).toBe(1);
@@ -79,7 +79,7 @@ describe.skipIf(insideSandbox)("needs you", () => {
     await hook("stop", JSON.stringify({ last_assistant_message: said }));
     await until(() => read(join(lead(), "typed")).includes("import order"));
     expect(read(join(lead(), "typed"))).toContain(
-      '<skelcrew from="app-12" reply="sc tell app-12">',
+      '<skelcrew from="APP-12" reply="sc tell APP-12">',
     );
     expect(await needsYou()).toBe(false);
     expect(thread().turn_ended).toBe(0);
@@ -117,7 +117,7 @@ describe.skipIf(insideSandbox)("needs you", () => {
     const asBuilder = { SKELCREW_SANDBOX: "1", SKELCREW_SOCKET: builderSocket() };
     expect((await skel(["tell", "lead", "Starting again."], asBuilder)).code).toBe(0);
     await until(() => read(join(lead(), "typed")).includes("Starting again."));
-    expect(read(join(lead(), "typed"))).not.toContain("app-12 ended");
+    expect(read(join(lead(), "typed"))).not.toContain("APP-12 ended");
   }, 60_000);
 
   test("a turn that leaves work it didn't submit shows turn ended, even while the last submit is reviewed", async () => {

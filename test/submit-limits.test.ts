@@ -53,7 +53,7 @@ describe.skipIf(insideSandbox)("sc submit", () => {
     expect(reviews()).toHaveLength(3);
     expect(thread()).toMatchObject({ status: "waiting", needs_you: 1, rounds: 3 });
     await until(() =>
-      read(join(lead(), "typed")).includes("app-12 needs you: changes asked for after 2 rounds"),
+      read(join(lead(), "typed")).includes("APP-12 needs you: changes asked for after 2 rounds"),
     );
   }, 90_000);
 
@@ -70,11 +70,11 @@ describe.skipIf(insideSandbox)("sc submit", () => {
     // title is given as without --flow, and the thread still needs you.
     const short = await skel(["start", "app-12", "--flow", "default", "--short", "Export"]);
     expect(short.err).toBe("");
-    expect(short.out).toBe('Gave app-12 the short title "Export".\n');
+    expect(short.out).toBe('Gave APP-12 the short title "Export".\n');
     expect(thread()).toMatchObject({ needs_you: 1, rounds: 2 });
     const started = await skel(["start", "app-12", "--flow", "default"]);
     expect(started.err).toBe("");
-    expect(started.out).toContain("app-12 goes on");
+    expect(started.out).toContain("APP-12 goes on");
     await until(() => read(join(builder(), "typed")).includes("Second problem."), 30_000);
     await until(() => finished("success").length === 1, 30_000);
     await until(() => read(join(data(), "threads", "app-12.log")).includes("waits on CI"));
@@ -134,7 +134,7 @@ done`,
     );
     chmodSync(hook, 0o755);
     const said =
-      "app-12's push was refused: it changes .github/workflows/ci.yml, which Skelcrew can't push. Undo that change, or a person must make it.";
+      "APP-12's push was refused: it changes .github/workflows/ci.yml, which Skelcrew can't push. Undo that change, or a person must make it.";
     await startApp12();
     // The note reaches the lead a piece at a time, so the test waits for all of it.
     await until(() => read(join(lead(), "typed")).includes(said), 30_000);
@@ -154,7 +154,7 @@ done`,
     await until(() => thread().review_failed === 1, 30_000);
     // The note reaches the lead a piece at a time, so the test waits for all of it.
     const said =
-      "app-12's review failed: codex exited with 1: stream disconnected before completion. sc review app-12 runs it again.";
+      "APP-12's review failed: codex exited with 1: stream disconnected before completion. sc review APP-12 runs it again.";
     await until(() => read(join(lead(), "typed")).includes(said));
     expect(read(join(lead(), "typed"))).not.toContain("Add export");
   }, 60_000);
@@ -262,9 +262,9 @@ done`,
     await until(() => finished("success").length === 1, 30_000);
     expect(read(join(codexHome(), "sessions", "count")).trim()).toBe("2");
     const log = read(join(data(), "threads", "app-12.log"));
-    expect(log).toContain("app-12's review timed out after 0.1m; retrying");
+    expect(log).toContain("APP-12's review timed out after 0.1m; retrying");
     await until(() =>
-      read(join(lead(), "typed")).includes("app-12's review timed out after 0.1m; retrying"),
+      read(join(lead(), "typed")).includes("APP-12's review timed out after 0.1m; retrying"),
     );
     await untilReviewSaved();
     expect(thread()).toMatchObject({ needs_you: 0, verdict: "approve" });
@@ -286,10 +286,10 @@ done`,
     expect(reviews()).toEqual([]);
     await until(() =>
       read(join(lead(), "typed")).includes(
-        "app-12: its review timed out twice (0.1m). sc review app-12 runs it again.",
+        "APP-12: its review timed out twice (0.1m). sc review APP-12 runs it again.",
       ),
     );
-    expect(read(join(lead(), "typed"))).toContain("app-12's review timed out after 0.1m; retrying");
+    expect(read(join(lead(), "typed"))).toContain("APP-12's review timed out after 0.1m; retrying");
     expect(read(join(codexHome(), "sessions", "count")).trim()).toBe("2");
   }, 60_000);
 

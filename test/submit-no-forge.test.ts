@@ -64,10 +64,10 @@ await serve(${JSON.stringify(socket)}, 200);`;
     expect(create.err).toContain("app has no tracker");
     const started = await skel(["start", "app", "Add export", "As JSON"]);
     expect(started.err).toBe("");
-    expect(started.out).toBe(`Started app-t100.\n`);
+    expect(started.out).toBe(`Started APP-T100.\n`);
     const log = () => read(join(data(), "threads", `app-t100.log`));
     await until(
-      () => log().includes(`app-t100 is ready on branch skelcrew/t100-add-export`),
+      () => log().includes(`APP-T100 is ready on branch skelcrew/t100-add-export`),
       30_000,
     );
     expect(git(bare, "show", `skelcrew/t100-add-export:change`)).toBe("1");
@@ -97,7 +97,7 @@ await serve(${JSON.stringify(socket)}, 200);`;
     expect(row()).toMatchObject({ status: "done" });
     await until(() =>
       read(join(lead(), "typed")).includes(
-        `app-t100 is done: its branch skelcrew/t100-add-export merged into main`,
+        `APP-T100 is done: its branch skelcrew/t100-add-export merged into main`,
       ),
     );
   }, 60_000);
@@ -117,7 +117,7 @@ await serve(${JSON.stringify(socket)}, 200);`;
     expect(started.err).toBe("");
     const log = () => read(join(data(), "threads", `app-t100.log`));
     await until(
-      () => log().includes(`app-t100 is ready on branch skelcrew/t100-add-export`),
+      () => log().includes(`APP-T100 is ready on branch skelcrew/t100-add-export`),
       30_000,
     );
     // Someone else pushes to the thread's branch.
@@ -152,7 +152,7 @@ await serve(${JSON.stringify(socket)}, 200);`;
     expect(started.err).toBe("");
     const log = () => read(join(data(), "threads", `app-t100.log`));
     await until(
-      () => log().includes(`app-t100 is ready on branch skelcrew/t100-add-export`),
+      () => log().includes(`APP-T100 is ready on branch skelcrew/t100-add-export`),
       30_000,
     );
     // The remote goes out of reach, and someone else's push moves the thread's branch there.
@@ -214,7 +214,7 @@ await serve(${JSON.stringify(socket)}, 200);`;
     const removed = await skel(["rm", `app-t100`]);
     expect(removed.err).toBe("");
     // A thread with no issue has nothing that stays open, so the message names none.
-    expect(removed.out).toBe(`Removed app-t100. sc start app-t100 starts it over.\n`);
+    expect(removed.out).toBe(`Removed APP-T100. sc start APP-T100 starts it over.\n`);
     expect(git(bare, "branch", "--list", `skelcrew/t100-add-export`)).not.toBe("");
     expect(existsSync(join(data(), "threads", `app-t100`))).toBe(false);
   }, 60_000);
@@ -248,7 +248,9 @@ await serve(${JSON.stringify(socket)}, 200);`;
     };
     const queued = (folder: string) => row(folder).queued !== null;
     const ready = (folder: string) =>
-      read(join(data(), "threads", `${folder}.log`)).includes(`${folder} is ready on branch`);
+      read(join(data(), "threads", `${folder}.log`)).includes(
+        `${folder.toUpperCase()} is ready on branch`,
+      );
     // Starts a thread on what you said, whose builder submits at once.
     const start = async (title: string) =>
       expect((await skel(["start", "app", title, "Do it"])).err).toBe("");
@@ -268,8 +270,8 @@ await serve(${JSON.stringify(socket)}, 200);`;
       // Only the first review runs. sc ps and the sidebar say the others wait.
       expect(reviewsRun()).toBe(1);
       const listed = (await skel(["ps"])).out;
-      expect(listed).toMatch(/app-t101 .*queued for review/);
-      expect(listed).toMatch(/app-t102 .*queued for review/);
+      expect(listed).toMatch(/APP-T101 .*queued for review/);
+      expect(listed).toMatch(/APP-T102 .*queued for review/);
       // As each ends, the one that came next starts.
       letGo(1);
       await until(() => prompt(2) !== "", 30_000);
@@ -294,12 +296,12 @@ await serve(${JSON.stringify(socket)}, 200);`;
       await start("Second");
       await until(() => queued(`app-t101`), 30_000);
       expect((await skel(["stop", `app-t101`])).err).toBe("");
-      expect((await skel(["ps"])).out).toMatch(/app-t101 .* stopped/);
+      expect((await skel(["ps"])).out).toMatch(/APP-T101 .* stopped/);
       letGo(1);
       await until(() => ready(`app-t100`), 30_000);
       await Bun.sleep(1500);
       expect(reviewsRun()).toBe(1);
-      expect((await skel(["ps"])).out).toMatch(/app-t101 .* stopped/);
+      expect((await skel(["ps"])).out).toMatch(/APP-T101 .* stopped/);
     }, 60_000);
 
     test("after a restart, the review that was running goes first, and the one that waited waits again", async () => {
@@ -405,7 +407,7 @@ await serve(${JSON.stringify(socket)}, 200);`;
     await untilCloned(longWait);
     expect((await skel(["start", "app", "Add export", "As JSON"])).err).toBe("");
     const log = () => read(join(data(), "threads", `app-t100.log`));
-    const ready = `app-t100 is ready on branch skelcrew/t100-add-export`;
+    const ready = `APP-T100 is ready on branch skelcrew/t100-add-export`;
     await until(() => log().includes(ready), longWait);
     const onRemote = () => git(bare, "branch", "--list", `skelcrew/t100-add-export`) !== "";
     expect(onRemote()).toBe(true);
@@ -415,10 +417,10 @@ await serve(${JSON.stringify(socket)}, 200);`;
       socket,
       env(),
       ["rm", `app-t100`, "wrong approach"],
-      `Remove app-t100? This deletes its branch and clone. [y/N]`,
+      `Remove APP-T100? This deletes its branch and clone. [y/N]`,
       "y",
     );
-    expect(removed).toContain(`Removed app-t100.`);
+    expect(removed).toContain(`Removed APP-T100.`);
     expect(onRemote()).toBe(false);
     expect(existsSync(join(data(), "threads", `app-t100`))).toBe(false);
     expect(log()).toContain("wrong approach");
@@ -430,7 +432,7 @@ await serve(${JSON.stringify(socket)}, 200);`;
     const refs = () => git(join(data(), "repos", "simon", "app"), "for-each-ref", "refs/skelcrew/");
     expect(refs()).toContain("refs/skelcrew/threads/");
     const before = log().split(ready).length;
-    expect((await skel(["start", `app-t100`])).out).toBe(`Started app-t100.\n`);
+    expect((await skel(["start", `APP-T100`])).out).toBe(`Started APP-T100.\n`);
     await until(() => log().split(ready).length > before, longWait);
     expect(log()).not.toContain("was deleted");
     expect(onRemote()).toBe(true);
@@ -448,7 +450,7 @@ await serve(${JSON.stringify(socket)}, 200);`;
     await untilCloned();
     expect((await skel(["start", "app", "Add export", "As JSON"])).err).toBe("");
     const log = () => read(join(data(), "threads", `app-t100.log`));
-    const ready = `app-t100 is ready on branch skelcrew/t100-add-export`;
+    const ready = `APP-T100 is ready on branch skelcrew/t100-add-export`;
     await until(() => log().includes(ready), 30_000);
     expect((await skel(["rm", `app-t100`])).err).toBe("");
     const realGit = Bun.which("git");
@@ -468,8 +470,8 @@ exec "${realGit}" "$@"`,
     );
     const before = log().split(ready).length;
     const starts = await Promise.all([skel(["start", `app-t100`]), skel(["start", `app-t100`])]);
-    expect(starts.map((s) => s.out).filter((out) => out === `Started app-t100.\n`)).toHaveLength(1);
-    expect(starts.map((s) => s.err).join("")).toContain(`app-t100 has a thread already`);
+    expect(starts.map((s) => s.out).filter((out) => out === `Started APP-T100.\n`)).toHaveLength(1);
+    expect(starts.map((s) => s.err).join("")).toContain(`APP-T100 has a thread already`);
     await until(() => log().split(ready).length > before, 30_000);
     // You merge the new thread's branch, and Skelcrew sees it.
     const work = join(home, "work", "app");
@@ -495,7 +497,7 @@ exec "${realGit}" "$@"`,
     expect((await skel(["start", "app", "Add export", "As JSON"])).err).toBe("");
     const log = () => read(join(data(), "threads", `app-t100.log`));
     await until(
-      () => log().includes(`app-t100 is ready on branch skelcrew/t100-add-export`),
+      () => log().includes(`APP-T100 is ready on branch skelcrew/t100-add-export`),
       30_000,
     );
     const hook = join(bare, "hooks", "post-receive");
@@ -519,7 +521,7 @@ done`,
     writeFileSync(join(home, "go"), "");
     const removed = await removing;
     expect(removed.err).toBe("");
-    expect(removed.out).toContain(`Removed app-t100.`);
+    expect(removed.out).toContain(`Removed APP-T100.`);
     expect(log()).not.toContain("was deleted");
     expect(log()).toContain('"why":"removed: ended the thread"');
   }, 60_000);

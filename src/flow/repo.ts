@@ -47,6 +47,7 @@ import { readSettings, type Settings } from "../settings.ts";
 import { refreshBacklog } from "./backlog.ts";
 import { checkPush, cloneRepository, headCommit, remoteEmpty, updateClone } from "./git.ts";
 import { leadOf, leadSession } from "./lead.ts";
+import { renameBuilders, taskName } from "./thread.ts";
 
 // What sc says outside any repository while Skelcrew has none yet, so you know where to run it.
 export const noRepositories = "Skelcrew has no repositories yet. Run sc in a checkout of one.";
@@ -426,6 +427,7 @@ async function bringIn(db: Database, details: RepositoryDetails): Promise<void> 
     [owner, repo, fullName, repository.forge, remote, authorOf(claimed)],
   );
   nameRepositories(db);
+  await renameBuilders(db);
   const added = repositories(db).find((r) => r.owner === owner && r.repo === repo);
   askAboutAgents(repository, added?.name ?? fullName);
 }
@@ -788,7 +790,7 @@ export async function removeRepo(name: string, sessions: string): Promise<void> 
       "SELECT task FROM threads WHERE owner = ? AND repo = ? AND status IN ('queued', 'working', 'waiting') ORDER BY task",
     )
     .all(found.owner, found.repo)
-    .map((row) => `${name}-${z.object({ task: z.coerce.string() }).parse(row).task}`);
+    .map((row) => taskName(name, z.object({ task: z.coerce.string() }).parse(row).task));
   if (live.length > 0)
     throw new Error(`${name} has live threads: ${live.join(", ")}. Stop them first.`);
   // A lead on a plugin no longer installed may still run there, using the clone, and removing
@@ -831,6 +833,7 @@ export async function removeRepo(name: string, sessions: string): Promise<void> 
   db.run("DELETE FROM repositories WHERE owner = ? AND repo = ?", [found.owner, found.repo]);
   forgetAgents(found);
   nameRepositories(db);
+  await renameBuilders(db);
   const trusted = trustLines().filter((line) => line !== "" && line !== fullName);
   if (existsSync(trustFile()))
     writeFileSync(trustFile(), trusted.map((line) => `${line}\n`).join(""));

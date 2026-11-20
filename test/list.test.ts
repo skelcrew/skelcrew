@@ -127,17 +127,17 @@ test("the lead comes first, then what needs you, then each stage's tasks", () =>
     row.when,
   ]);
   // The approved task first on its own, so a failure says in one line where it went and why.
-  const ready = shown.find(([, , name]) => name === "app-14");
+  const ready = shown.find(([, , name]) => name === "APP-14");
   expect(ready?.join(" | ")).toBe(
-    "needs you | ready | app-14 | Fix the export header | ready to merge | #41 | ",
+    "needs you | ready | APP-14 | Fix the export header | ready to merge | #41 | ",
   );
   expect(shown).toEqual([
     ["lead", "lead", "lead", "claude", "running", "", ""],
-    ["needs you", "building", "app-12", "Rate limit the API", "question", "", "14:58"],
-    ["needs you", "ready", "app-14", "Fix the export header", "ready to merge", "#41", ""],
-    ["backlog", "backlog", "app-31", "Export as CSV", "", "", "5 Nov"],
-    ["building", "building", "app-9", "Old work", "stopped", "", "14:59"],
-    ["building", "building", "app-7", "Login redirect", "working", "", "14:55"],
+    ["needs you", "building", "APP-12", "Rate limit the API", "question", "", "14:58"],
+    ["needs you", "ready", "APP-14", "Fix the export header", "ready to merge", "#41", ""],
+    ["backlog", "backlog", "APP-31", "Export as CSV", "", "", "5 Nov"],
+    ["building", "building", "APP-9", "Old work", "stopped", "", "14:59"],
+    ["building", "building", "APP-7", "Login redirect", "working", "", "14:55"],
   ]);
 });
 
@@ -145,7 +145,7 @@ test("the lead comes first, then what needs you, then each stage's tasks", () =>
 // question on an approved task still reaches its builder, and offers no merge.
 test("an approved task whose builder asks a question shows under Needs you, still in Ready", () => {
   sql("UPDATE threads SET asking = 1 WHERE folder = 'app-14';");
-  const row = rows().find((candidate) => candidate.name === "app-14");
+  const row = rows().find((candidate) => candidate.name === "APP-14");
   expect(row).toMatchObject({
     section: "needs you",
     part: "ready",
@@ -160,7 +160,7 @@ test("an approved task whose builder asks a question shows under Needs you, stil
 // puts the task under Needs you, where a closed stage can't hide it.
 test("a task marked with an action that reads like a state's word shows under Needs you", () => {
   sql("UPDATE threads SET needs_you = 1, needs_you_for = 'review failed' WHERE folder = 'app-9';");
-  const row = rows().find((candidate) => candidate.name === "app-9");
+  const row = rows().find((candidate) => candidate.name === "APP-9");
   expect(row).toMatchObject({ section: "needs you", says: "review failed", needsYou: true });
   expect(row?.mark).toEqual({ sign: "●", colour: "yellow" });
 });
@@ -169,7 +169,7 @@ test("a task marked with an action that reads like a state's word shows under Ne
 // Ready, saying approved.
 test("an approved task with a merge armed shows under Ready, not Needs you", () => {
   sql("UPDATE threads SET merge_plan = 'armed' WHERE folder = 'app-14';");
-  const row = rows().find((candidate) => candidate.name === "app-14");
+  const row = rows().find((candidate) => candidate.name === "APP-14");
   expect(row).toMatchObject({ section: "ready", part: "ready", says: "approved" });
 });
 
@@ -179,7 +179,7 @@ test("a task on a flow with no review shows not reviewed, and merges at its last
   sql(
     "UPDATE tasks SET verdict = 'not reviewed', review_round = NULL, flow = 'noreview' WHERE task = '14';",
   );
-  const row = rows().find((candidate) => candidate.name === "app-14");
+  const row = rows().find((candidate) => candidate.name === "APP-14");
   // It waits on you to merge it, so it is under Needs you, saying so and that nobody reviewed it.
   expect(row).toMatchObject({
     section: "needs you",
@@ -191,7 +191,7 @@ test("a task on a flow with no review shows not reviewed, and merges at its last
   const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
 import { sidebarRows } from ${JSON.stringify(source("screen/rows.ts"))};
 const open = { owner: "simon", repo: "app", lead: "lead" };
-const found = sidebarRows(openDb(), [], () => 3, ${now}, open).find((r) => r.name === "app-14");
+const found = sidebarRows(openDb(), [], () => 3, ${now}, open).find((r) => r.name === "APP-14");
 console.log(found?.word);`;
   const sidebar = Bun.spawnSync([process.execPath, "-e", code], { env: env(), stderr: "pipe" });
   expect(sidebar.stdout.toString().trim()).toBe("ready to merge, not reviewed");
@@ -204,13 +204,13 @@ console.log(found?.word);`;
   // A push Skelcrew didn't make is never merged here.
   const moved = { head: "f00d", checks: passed };
   sql(itemSql("app", "pr", 41, "Fix the export header", "2026-11-06T10:00:00Z", moved));
-  expect(rows().find((candidate) => candidate.name === "app-14")?.merge).toEqual({
+  expect(rows().find((candidate) => candidate.name === "APP-14")?.merge).toEqual({
     refused: "app#41 has a newer commit than the one submitted: wait for its builder to submit it",
   });
   // Waiting on CI, it is under Checks.
   sql(`UPDATE threads SET needs_you = 0 WHERE folder = 'app-14';
 UPDATE tasks SET checks = 'pending', ci_passed = 0 WHERE task = '14';`);
-  expect(rows().find((candidate) => candidate.name === "app-14")).toMatchObject({
+  expect(rows().find((candidate) => candidate.name === "APP-14")).toMatchObject({
     part: "checks",
     says: "checks",
   });
@@ -233,14 +233,14 @@ printTasks(listTasks(db, "app"), false);`;
   const lines = run.stdout
     .toString()
     .split("\n")
-    .filter((line) => line.includes("app-14"));
+    .filter((line) => line.includes("APP-14"));
   expect(lines).toHaveLength(2);
   for (const line of lines) {
     expect(line).toContain("not reviewed");
     expect(line).not.toContain("failed");
   }
   expect(shown("14")).toContain("\nReview  not reviewed\n");
-  expect(rows().find((row) => row.name === "app-14")?.says).toBe("submit failed");
+  expect(rows().find((row) => row.name === "APP-14")?.says).toBe("submit failed");
 });
 
 // sc ps shows no review in a repository with no forge, but a task its flow didn't review is
@@ -255,15 +255,15 @@ console.log(JSON.stringify(listThreads(openDb(), "site")));`;
   if (!run.success) throw new Error(run.stderr.toString());
   const threads: { thread: string; review: unknown }[] = JSON.parse(run.stdout.toString());
   const review = (name: string) => threads.find((t) => t.thread === name)?.review;
-  expect(review("site-5")).toEqual({ state: "not reviewed", round: null, at: null });
-  expect(review("site-6")).toBeNull();
+  expect(review("SITE-5")).toEqual({ state: "not reviewed", round: null, at: null });
+  expect(review("SITE-6")).toBeNull();
 });
 
 // The default flow gives 3 rounds of changes, so 4 is past the limit. A review run again after it
 // approved, so the task is ready to merge, and the round limit no longer needs you.
 test("a task approved past the round limit waits on you to merge, not on the limit", () => {
   sql("UPDATE tasks SET rounds = 4 WHERE task = '14';");
-  const row = rows().find((candidate) => candidate.name === "app-14");
+  const row = rows().find((candidate) => candidate.name === "APP-14");
   expect(row).toMatchObject({ section: "needs you", says: "ready to merge", needsYou: false });
 });
 
@@ -292,7 +292,7 @@ console.log(prOf(db, "simon", "app", 41) === null ? "dropped" : "kept");`;
   const run = Bun.spawnSync([process.execPath, "-e", code], { env: env(), stderr: "pipe" });
   expect(run.stderr.toString()).toBe("");
   expect(run.stdout.toString()).toBe("dropped\n");
-  expect(rows().find((row) => row.name === "app-14")).toMatchObject({
+  expect(rows().find((row) => row.name === "APP-14")).toMatchObject({
     part: "done",
     link: "https://github.com/simon/app/pull/41",
   });
@@ -304,25 +304,25 @@ test("a task with no PR this attempt opens no saved link from an earlier one", (
   sql(
     `UPDATE tasks SET pr = NULL, pr_link = 'https://github.com/simon/app/pull/1' WHERE task = '14';`,
   );
-  expect(rows().find((row) => row.name === "app-14")?.link).toBeNull();
+  expect(rows().find((row) => row.name === "APP-14")?.link).toBeNull();
 });
 
 // A task that changed lately is what you are likely to look for, whenever it started.
 test("within a section the task that changed last comes first", () => {
   sql(`UPDATE threads SET changed = ${now - 30_000} WHERE folder = 'app-7';`);
   const building = rows().filter((row) => row.section === "building");
-  expect(building.map((row) => row.name)).toEqual(["app-7", "app-9"]);
+  expect(building.map((row) => row.name)).toEqual(["APP-7", "APP-9"]);
   sql(`UPDATE threads SET changed = ${now - 10_000} WHERE folder = 'app-14';`);
   const needing = rows().filter((row) => row.section === "needs you");
-  expect(needing.map((row) => row.name)).toEqual(["app-14", "app-12"]);
+  expect(needing.map((row) => row.name)).toEqual(["APP-14", "APP-12"]);
 });
 
 test("tasks under review and waiting on checks show in their own stages", () => {
   sql(`${threadSql({ task: "15", title: "Under review", status: "waiting", reviewing: "abc", pr: 45 })}
 ${threadSql({ task: "16", title: "Approved", status: "waiting", verdict: "approve", checks: "pending", pr: 46 })}`);
   const shown = rows().map((row) => [row.part, row.name, row.says]);
-  expect(shown).toContainEqual(["reviewing", "app-15", "reviewing"]);
-  expect(shown).toContainEqual(["checks", "app-16", "checks"]);
+  expect(shown).toContainEqual(["reviewing", "APP-15", "reviewing"]);
+  expect(shown).toContainEqual(["checks", "APP-16", "checks"]);
 });
 
 // The clock is 15:00 on 19 November. Ended tasks are saved as merged or closed, each with when
@@ -345,8 +345,8 @@ test("Done shows the tasks that ended today, or the last ten when fewer ended to
   sql(`${ended(100, 3, 1)}\n${ended(200, 12, 24)}`);
   const done = () => rows().filter((row) => row.part === "done");
   expect(done().map((row) => row.name)).toEqual([
-    ...["app-100", "app-101", "app-102"],
-    ...["app-200", "app-201", "app-202", "app-203", "app-204", "app-205", "app-206"],
+    ...["APP-100", "APP-101", "APP-102"],
+    ...["APP-200", "APP-201", "APP-202", "APP-203", "APP-204", "APP-205", "APP-206"],
   ]);
   expect(done()[0]).toMatchObject({
     says: "merged",
@@ -364,15 +364,15 @@ test("Done shows the tasks that ended today, or the last ten when fewer ended to
   expect(done().every((row) => /^\d\d:\d\d$/.test(row.when))).toBe(true);
   // Each takes one line: its mark, name and title, then when it ended, lined up.
   const lines = drawn(0, 40, 80, ["done"]).map((line) => line.trimEnd());
-  expect(lines).toContain("   ○ app-100  Ended 100  14:00");
-  expect(lines).toContain("   ○ app-308  Ended 308  03:00");
+  expect(lines).toContain("   ○ APP-100  Ended 100  14:00");
+  expect(lines).toContain("   ○ APP-308  Ended 308  03:00");
 });
 
 // A row stays short enough to read across: a merge when ready or messages waiting are for sc show.
 test("a row says one short word, with no merge when ready or messages waiting after it", () => {
   sql(`UPDATE threads SET merge_plan = 'armed', merge_waits = 'its checks' WHERE folder = 'app-7';
 INSERT INTO messages (folder, sender, text, said, at) VALUES ('app-7', 'lead', 'one', 'one', 0);`);
-  const row = rows().find((candidate) => candidate.name === "app-7");
+  const row = rows().find((candidate) => candidate.name === "APP-7");
   expect(row).toMatchObject({ says: "working", pr: "", when: "14:55" });
 });
 
@@ -383,7 +383,7 @@ test("an issue whose work ended is back under Backlog, to start again", () => {
     rows()
       .filter((row) => row.part === "backlog")
       .map((row) => row.name),
-  ).toEqual(["app-31", "app-7"]);
+  ).toEqual(["APP-31", "APP-7"]);
 });
 
 // A task filed in Skelcrew's backlog waits beside the issues, by when it was filed, and Enter asks
@@ -394,13 +394,13 @@ test("a task in Skelcrew's backlog shows under Backlog beside the issues, newest
     ('simon', 'app', 't105', 'Add import', 'From CSV', '2026-11-01T10:00:00.000Z', 'simon', 'c2');`);
   const backlog = rows().filter((row) => row.part === "backlog");
   expect(backlog.map((row) => [row.name, row.title, row.when])).toEqual([
-    ["app-t104", "Add export", "7 Nov"],
-    ["app-31", "Export as CSV", "5 Nov"],
-    ["app-t105", "Add import", "1 Nov"],
+    ["APP-T104", "Add export", "7 Nov"],
+    ["APP-31", "Export as CSV", "5 Nov"],
+    ["APP-T105", "Add import", "1 Nov"],
   ]);
   expect(backlog[0]?.start).toEqual({
-    ask: "Start app-t104? y/n",
-    working: "Starting app-t104…",
+    ask: "Start APP-T104? y/n",
+    working: "Starting APP-T104…",
     request: { command: "start", repo: "simon/app", task: "t104" },
   });
   expect(shown("t104")).toContain("Filed   by simon on 7 November 2026");
@@ -424,7 +424,7 @@ test("Backlog shows its newest ten issues, then a row for the rest, and every on
   const all = rows();
   const cut = cutBacklog(all, false).filter((row) => row.part === "backlog");
   expect(cut.map((row) => row.name)).toEqual([
-    ...Array.from({ length: 10 }, (_, i) => `app-${100 + i}`),
+    ...Array.from({ length: 10 }, (_, i) => `APP-${100 + i}`),
     "3 more",
   ]);
   expect(cut.at(-1)).toMatchObject({ more: 3, start: null, session: null });
@@ -433,7 +433,7 @@ test("Backlog shows its newest ten issues, then a row for the rest, and every on
   expect(sectionHeadings(all, new Set())[1]).toMatchObject({ section: "backlog", count: 13 });
   // Asked for, Backlog is whole. One of ten or fewer always is.
   expect(cutBacklog(all, true)).toEqual(all);
-  const few = all.filter((row) => row.part !== "backlog" || row.name < "app-105");
+  const few = all.filter((row) => row.part !== "backlog" || row.name < "APP-105");
   expect(cutBacklog(few, false)).toEqual(few);
   // It takes one line, under the issues.
   const shown = cutBacklog(all, false).filter((row) => ["lead", "backlog"].includes(row.part));
@@ -445,8 +445,8 @@ test("Backlog shows its newest ten issues, then a row for the rest, and every on
 test("Enter asks to start an issue, and m to merge a ready task at the commit you saw", () => {
   const [issue] = rows().filter((row) => row.part === "backlog");
   expect(issue?.start).toEqual({
-    ask: "Start app-31? y/n",
-    working: "Starting app-31…",
+    ask: "Start APP-31? y/n",
+    working: "Starting APP-31…",
     request: { command: "start", repo: "simon/app", task: "31" },
   });
   const [ready] = rows().filter((row) => row.part === "ready");
@@ -457,7 +457,7 @@ test("Enter asks to start an issue, and m to merge a ready task at the commit yo
   });
   expect(ready?.link).toBe("https://github.com/simon/app/pull/41");
   // A working task has nothing to merge.
-  expect(rows().find((row) => row.name === "app-7")?.merge).toBeNull();
+  expect(rows().find((row) => row.name === "APP-7")?.merge).toBeNull();
 });
 
 // Merging approves no change to .agents/, so the question says when the approved commit makes one,
@@ -465,7 +465,7 @@ test("Enter asks to start an issue, and m to merge a ready task at the commit yo
 // no change: a PR retargeted at another base can bring other changes with the same head.
 test("m's question says when the PR changes .agents/, or that Skelcrew hasn't checked yet", () => {
   const ask = () => {
-    const merge = rows().find((row) => row.name === "app-14")?.merge;
+    const merge = rows().find((row) => row.name === "APP-14")?.merge;
     return merge && "ask" in merge ? merge.ask : "";
   };
   sql("UPDATE pr_agents SET changed = 1 WHERE pr = '41';");
@@ -504,16 +504,16 @@ ${itemSql("app", "pr", task + 100, `PR ${task}`, "2026-11-06T10:00:00Z", { head:
 // An approval from before Skelcrew saved its commit can't say which commit it stands for.
 test("an approval with no saved commit can't be merged here, and says so", () => {
   sql("UPDATE tasks SET reviewed_commit = NULL WHERE task = '14';");
-  const merge = rows().find((row) => row.name === "app-14")?.merge;
+  const merge = rows().find((row) => row.name === "APP-14")?.merge;
   expect(merge).toEqual({
     refused:
-      "app#41's approval has no commit saved: merge it on the forge, or run sc review app-14",
+      "app#41's approval has no commit saved: merge it on the forge, or run sc review APP-14",
   });
 });
 
 test("a ready task whose forge sent no head commit can't be merged here, and says why", () => {
   sql(itemSql("app", "pr", 41, "Fix the export header", "2026-11-06T10:00:00Z"));
-  expect(rows().find((row) => row.name === "app-14")?.merge).toEqual({
+  expect(rows().find((row) => row.name === "APP-14")?.merge).toEqual({
     refused: "app#41 needs a newer forge plugin to merge here: run sc plugin update",
   });
 });
@@ -523,12 +523,12 @@ test("a ready task whose forge sent no head commit can't be merged here, and say
 test("a ready task whose PR moved past the approved commit, or whose checks there failed, can't be merged", () => {
   const moved = { head: "f00d", checks: [{ name: "test", id: "1", state: "passed" }] };
   sql(itemSql("app", "pr", 41, "Fix the export header", "2026-11-06T10:00:00Z", moved));
-  expect(rows().find((row) => row.name === "app-14")?.merge).toEqual({
+  expect(rows().find((row) => row.name === "APP-14")?.merge).toEqual({
     refused: "app#41 has a newer commit than the one approved: wait for its review",
   });
   const failed = { head: approved, checks: [{ name: "test", id: "1", state: "failed" }] };
   sql(itemSql("app", "pr", 41, "Fix the export header", "2026-11-06T10:00:00Z", failed));
-  expect(rows().find((row) => row.name === "app-14")?.merge).toEqual({
+  expect(rows().find((row) => row.name === "APP-14")?.merge).toEqual({
     refused: "app#41's checks haven't passed on the approved commit yet",
   });
 });
@@ -539,7 +539,7 @@ test("a ready task whose PR moved past the approved commit, or whose checks ther
 test("a ready task whose approved head has no checks yet can't be merged, unless no CI runs on it", () => {
   const unchecked = { head: approved, checks: [] };
   sql(itemSql("app", "pr", 41, "Fix the export header", "2026-11-06T10:00:00Z", unchecked));
-  const row = () => rows().find((r) => r.name === "app-14");
+  const row = () => rows().find((r) => r.name === "APP-14");
   expect(row()?.merge).toEqual({
     refused: "app#41's checks haven't passed on the approved commit yet",
   });
@@ -563,7 +563,7 @@ test("a ready task whose approved head has no checks yet can't be merged, unless
 test("a forge's base branch reaches the merge question without its control codes", () => {
   const base = { head: approved, checks: passed, base: "main\x1b]0;evil\x07" };
   sql(itemSql("app", "pr", 41, "Fix the export header", "2026-11-06T10:00:00Z", base));
-  const merge = rows().find((row) => row.name === "app-14")?.merge;
+  const merge = rows().find((row) => row.name === "APP-14")?.merge;
   // No poll has looked at the PR with this base, so the question says so too.
   expect(merge && "ask" in merge ? merge.ask : "").toBe(
     "Merge app#41 into main ]0;evil ? Skelcrew hasn't checked yet whether it changes .agents/. y/n",
@@ -592,8 +592,8 @@ test("a row knows whether its agent runs, and the lead says what its hooks last 
     colour: "yellow",
     running: true,
   });
-  expect(running.find((row) => row.name === "app-7")?.running).toBe(true);
-  expect(running.find((row) => row.name === "app-9")?.running).toBe(false);
+  expect(running.find((row) => row.name === "APP-7")?.running).toBe(true);
+  expect(running.find((row) => row.name === "APP-9")?.running).toBe(false);
   sql("UPDATE repositories SET tab_closed = 1 WHERE repo = 'app';");
   expect(rows().find((row) => row.name === "lead")).toMatchObject({
     says: "stopped",
@@ -605,9 +605,9 @@ test("a row knows whether its agent runs, and the lead says what its hooks last 
 // Ctrl-\ comes back only from tmux, so the list offers it only where Enter attaches there.
 test("a row knows whether Enter attaches to its agent on tmux", () => {
   const onTmux = () => Object.fromEntries(rows().map((row) => [row.name, row.tmux]));
-  expect(onTmux()).toMatchObject({ lead: true, "app-7": true, "app-14": false, "app-31": false });
+  expect(onTmux()).toMatchObject({ lead: true, "APP-7": true, "APP-14": false, "APP-31": false });
   sql("UPDATE threads SET host = 'fake' WHERE folder = 'app-7';");
-  expect(onTmux()["app-7"]).toBe(false);
+  expect(onTmux()["APP-7"]).toBe(false);
 });
 
 // The notice of a release installed in the background comes from the database too, never from a
@@ -635,9 +635,9 @@ test("the list printed without a terminal has every task, however many are at wo
 await runList("skel-test-${process.pid}-none", "simon/app");`;
   const run = Bun.spawnSync([process.execPath, "-e", code], { env: env(), stderr: "pipe" });
   const printed = run.stdout.toString();
-  for (let task = 50; task < 80; task += 1) expect(printed).toContain(`app-${task}  Task ${task}`);
-  expect(printed).toContain("app-14  Fix the export header");
-  expect(printed).toContain("app-31  Export as CSV");
+  for (let task = 50; task < 80; task += 1) expect(printed).toContain(`APP-${task}  Task ${task}`);
+  expect(printed).toContain("APP-14  Fix the export header");
+  expect(printed).toContain("APP-31  Export as CSV");
 });
 
 // The list reads no settings file, so it knows a thread is past its round limit from the changes
@@ -646,7 +646,7 @@ test("a task past its round limit says so, from the changes its review held", ()
   sql(
     "UPDATE tasks SET rounds = 4, held = 'Rename it.' WHERE task = '7'; UPDATE threads SET needs_you = 1, status = 'waiting' WHERE folder = 'app-7';",
   );
-  expect(rows().find((row) => row.name === "app-7")?.says).toBe("round limit");
+  expect(rows().find((row) => row.name === "APP-7")?.says).toBe("round limit");
 });
 
 // sc submit past the round limit drops the held changes and starts a review, and the thread
@@ -665,7 +665,7 @@ test("a review running past the round limit is under Reviewing, and says round l
       pr: 42,
     }),
   );
-  expect(rows().find((row) => row.name === "app-42")).toMatchObject({
+  expect(rows().find((row) => row.name === "APP-42")).toMatchObject({
     part: "reviewing",
     says: "round limit",
     needsYou: true,
@@ -687,7 +687,7 @@ test("a review within the round limit that needs you for another reason never sa
       pr: 44,
     }),
   );
-  const row = rows().find((candidate) => candidate.name === "app-44");
+  const row = rows().find((candidate) => candidate.name === "APP-44");
   expect(row?.part).toBe("reviewing");
   expect(row?.says).not.toBe("round limit");
 });
@@ -709,7 +709,7 @@ test("changes held at the round limit say round limit under Building, never chec
       pr: 43,
     }),
   );
-  expect(rows().find((row) => row.name === "app-43")).toMatchObject({
+  expect(rows().find((row) => row.name === "APP-43")).toMatchObject({
     part: "building",
     says: "round limit",
     checks: "CI passed",
@@ -730,7 +730,7 @@ test("the rows come from the database alone, with no tmux and no settings file",
     join(home, ".local", "share", "skelcrew", "repos", "simon", "app", "skelcrew.yaml"),
     "max_rounds: [not a number\n",
   );
-  expect(rows(bin).map((row) => row.name)).toContain("app-14");
+  expect(rows(bin).map((row) => row.name)).toContain("APP-14");
   expect(read(join(home, "calls"))).toBe("");
 });
 
@@ -774,16 +774,16 @@ test("every section has its heading with its count, only open ones show rows, an
     "     running",
     "",
     "   Needs you 2",
-    " ▸ ● app-12  Rate limit the API",
+    " ▸ ● APP-12  Rate limit the API",
     "     question · 14:58",
-    "   ● app-14  Fix the export header",
+    "   ● APP-14  Fix the export header",
     "     ready to merge · #41 · CI passed",
     "",
     " 1 Backlog   1",
     " 2 Building  2",
-    "   ○ app-9   Old work",
+    "   ○ APP-9   Old work",
     "     stopped · 14:59",
-    "   ○ app-7   Login redirect",
+    "   ○ APP-7   Login redirect",
     "     working · 14:55",
     "",
     " 3 Reviewing 0",
@@ -804,7 +804,7 @@ test("an open section shows its rows, and its heading is bright while a closed o
   expect(lines.slice(5, 15).map((line) => line.trimEnd())).toEqual([
     "   Needs you 2",
     " 1 Backlog   1",
-    " ▸ ○ app-31  Export as CSV  5 Nov",
+    " ▸ ○ APP-31  Export as CSV  5 Nov",
     "",
     " 2 Building  2",
     " 3 Reviewing 0",
@@ -929,15 +929,15 @@ test("each line drawn says what a click on it reaches", () => {
   expect(at("running")).toEqual({ row: 0 });
   expect(at("Backlog")).toEqual({ section: "backlog" });
   expect(at("Ready")).toEqual({ section: "ready" });
-  expect(at("app-7")).toEqual({ row: shown.findIndex((row) => row.name === "app-7") });
-  expect(at("working · 14:55")).toEqual(at("app-7"));
+  expect(at("APP-7")).toEqual({ row: shown.findIndex((row) => row.name === "APP-7") });
+  expect(at("working · 14:55")).toEqual(at("APP-7"));
   expect(targets[0]).toBeNull();
   expect(targets.at(-1)).toBeNull();
 });
 
 test("a row's word is in its colour, its step and what follows it are dim, and its title is plain", () => {
   const all = rows().map((row) =>
-    row.name === "app-7"
+    row.name === "APP-7"
       ? { ...row, step: "Editing rows.ts", pr: "#40", checks: "CI running" }
       : row,
   );
@@ -945,9 +945,9 @@ test("a row's word is in its colour, its step and what follows it are dim, and i
   const headings = sectionHeadings(all, new Set<Section>(["building"]));
   const size = { width: 80, height: 24 };
   const { lines } = drawList(shown, headings, 1, 0, frame, size);
-  const at = lines.findIndex((line) => line.includes("app-7"));
+  const at = lines.findIndex((line) => line.includes("APP-7"));
   expect(lines.slice(at, at + 3)).toEqual([
-    "   \x1b[1m○\x1b[22;39m app-7   Login redirect",
+    "   \x1b[1m○\x1b[22;39m APP-7   Login redirect",
     "     \x1b[1mworking\x1b[22;39m\x1b[90m · Editing rows.ts · #40 · CI running · 14:55\x1b[22;39m",
     "",
   ]);
@@ -959,9 +959,9 @@ test("a row as wide as the terminal stops short of its last column, cutting only
   sql(`UPDATE tasks SET title = '${long}' WHERE task = '7';`);
   for (const width of [60, 61, 80]) {
     const lines = drawnWith(1, frame, { width, height: 24 }).map((line) => Bun.stripANSI(line));
-    const row = lines.find((line) => line.includes("app-7")) ?? "";
+    const row = lines.find((line) => line.includes("APP-7")) ?? "";
     expect(Bun.stringWidth(row)).toBe(width - 1);
-    expect(row).toContain("app-7   A title");
+    expect(row).toContain("APP-7   A title");
     expect(row).toEndWith("…");
   }
 });
@@ -1048,11 +1048,11 @@ test("a list taller than the terminal scrolls its stages, and its edges say what
     "     running",
     "",
     " ↑ 11 more   Needs you 2   Backlog 1   Building 12",
-    "   ○ app-57  Task 57",
+    "   ○ APP-57  Task 57",
     "     working · 14:43",
-    "   ○ app-58  Task 58",
+    "   ○ APP-58  Task 58",
     "     working · 14:42",
-    " ▸ ○ app-59  Task 59",
+    " ▸ ○ APP-59  Task 59",
     "     working · 14:41",
     " 3 Reviewing  0",
     " ↓ Checks 0   Ready 0   Done 0",
@@ -1065,9 +1065,9 @@ test("on the lead, the list starts at Needs you, with what is below at the botto
   expect(lines.slice(5, 11)).toEqual([
     "",
     "   Needs you 2",
-    "   ● app-12  Rate limit the API",
+    "   ● APP-12  Rate limit the API",
     "     question · 14:58",
-    "   ● app-14  Fix the export header",
+    "   ● APP-14  Fix the export header",
     " ↓ 3 more   Backlog 1   Building 2   Reviewing 0   Checks 0   Ready 0   Done 0",
   ]);
 });
@@ -1089,12 +1089,12 @@ ${threadSql({ task: "17", title: "Approved too", status: "waiting", verdict: "ap
   const top = at(16, 4);
   expect(top.slice(5, 14)).toEqual([
     " ↑ 1 more in Needs you   Needs you 2",
-    "   ● app-14  Fix the export header",
+    "   ● APP-14  Fix the export header",
     "     ready to merge · #41 · CI passed",
     " 1 Backlog   1",
-    "   ○ app-31  Export as CSV  5 Nov",
+    "   ○ APP-31  Export as CSV  5 Nov",
     " 2 Building  8",
-    " ▸ ○ app-9   Old work",
+    " ▸ ○ APP-9   Old work",
     "     stopped · 14:59",
     " ↓ 10 more   Reviewing 1   Checks 2   Ready 0   Done 0",
   ]);
@@ -1103,12 +1103,12 @@ ${threadSql({ task: "17", title: "Approved too", status: "waiting", verdict: "ap
   const bottom = at(16, 14);
   expect(bottom.slice(5, 14)).toEqual([
     " ↑ 11 more   Needs you 2   Backlog 1   Building 8   Reviewing 1",
-    "   ○ app-15  Under review",
+    "   ○ APP-15  Under review",
     "     reviewing · #45",
     " 4 Checks    2",
-    "   ○ app-17  Approved too",
+    "   ○ APP-17  Approved too",
     "     checks · #47 · CI running",
-    " ▸ ○ app-16  Approved",
+    " ▸ ○ APP-16  Approved",
     "     checks · #46 · CI running",
     " ↓ Ready 0   Done 0",
   ]);
@@ -1129,13 +1129,13 @@ test("a terminal too short for every heading still shows the row you are on", ()
   expect(lines).toHaveLength(9);
   expect(lines[2]).toMatch(/^ {3}○ lead/);
   expect(lines.slice(5, 7).map((line) => line.trim())).toEqual([
-    "▸ ○ app-59  Task 59",
+    "▸ ○ APP-59  Task 59",
     "working · 14:41",
   ]);
   // Eight leave one: the first line of the row you are on, with its ▸.
   const fewer = drawn(14, 8, 80, ["needs you", "building"]);
   expect(fewer.filter((line) => line.includes("▸"))).toEqual([
-    expect.stringMatching(/^ ▸ ○ app-59 +Task 59 *$/),
+    expect.stringMatching(/^ ▸ ○ APP-59 +Task 59 *$/),
   ]);
 });
 
@@ -1263,7 +1263,7 @@ test("the list opens on the first task that needs you, and q leaves it with ever
   await open();
   expect(seen()).toContain(" Skelcrew ");
   expect(seen()).toContain("site •1");
-  expect(here()).toStartWith("▸ ● app-12");
+  expect(here()).toStartWith("▸ ● APP-12");
   type("q");
   await until(() => read(join(home, "left")) === "left", "the list to leave");
   expect(seen()).toContain("Your agents keep running. Run sc --list to come back.");
@@ -1277,19 +1277,19 @@ test("a task moves into Needs you and back as its mark comes and goes, and you s
   expect(seen()).toContain(" Needs you 2");
   // From app-12 down past app-14 and app-9 to app-7, under Building.
   for (const _ of [1, 2, 3]) press("Down");
-  await until(() => here().startsWith("▸ ○ app-7"), "app-7");
+  await until(() => here().startsWith("▸ ○ APP-7"), "APP-7");
   sql(
     `UPDATE threads SET needs_you = 1, needs_you_for = 'apply the split', changed = ${now} WHERE folder = 'app-7';`,
   );
   await until(() => seen().includes(" Needs you 3"), "app-7 under Needs you");
-  expect(here()).toStartWith("▸ ● app-7");
+  expect(here()).toStartWith("▸ ● APP-7");
   expect(below()).toStartWith("apply the split");
   // It is first under Needs you, as the one that changed last, right under its heading.
   const lines = seen().split("\n");
-  expect(lines[lines.findIndex((line) => line.includes("Needs you")) + 1]).toContain("app-7");
+  expect(lines[lines.findIndex((line) => line.includes("Needs you")) + 1]).toContain("APP-7");
   sql("UPDATE threads SET needs_you = 0, needs_you_for = NULL WHERE folder = 'app-7';");
   await until(() => seen().includes(" Needs you 2"), "app-7 back under Building");
-  expect(here()).toStartWith("▸ ○ app-7");
+  expect(here()).toStartWith("▸ ○ APP-7");
   expect(below()).toStartWith("working");
 });
 
@@ -1309,10 +1309,10 @@ test("a task leaving Needs you for a closed stage opens it, and you stay on it",
     }),
   );
   await open();
-  await until(() => here().startsWith("▸ ● app-15"), "app-15 first under Needs you");
-  expect(seen()).not.toContain("○ app-15");
+  await until(() => here().startsWith("▸ ● APP-15"), "APP-15 first under Needs you");
+  expect(seen()).not.toContain("○ APP-15");
   sql("UPDATE threads SET needs_you = 0, needs_you_for = NULL WHERE folder = 'app-15';");
-  await until(() => here().startsWith("▸ ○ app-15"), "app-15 under Reviewing");
+  await until(() => here().startsWith("▸ ○ APP-15"), "APP-15 under Reviewing");
   expect(below()).toStartWith("reviewing");
   const lines = seen().split("\n");
   expect(lines[lines.findIndex((line) => line.includes("▸")) - 1]).toMatch(/^ 3 Reviewing/);
@@ -1321,7 +1321,7 @@ test("a task leaving Needs you for a closed stage opens it, and you stay on it",
 // Leaving gives the terminal back, so a key that came with q must never act after it.
 test("a key that comes with q in one read does nothing once the list has left", async () => {
   await open();
-  await until(() => here().startsWith("▸ ● app-12"), "app-12's row");
+  await until(() => here().startsWith("▸ ● APP-12"), "APP-12's row");
   type("q\r");
   await until(() => read(join(home, "left")) === "left", "the list to leave");
   await Bun.sleep(500);
@@ -1336,9 +1336,9 @@ for (const [key, name] of [
   test(`${name} leaves the list while a question is open, and answers nothing`, async () => {
     await open();
     type("1");
-    await until(() => here().startsWith("▸ ○ app-31"), "the issue's row");
+    await until(() => here().startsWith("▸ ○ APP-31"), "the issue's row");
     press("Enter");
-    await until(() => seen().includes("Start app-31? y/n"), "the question");
+    await until(() => seen().includes("Start APP-31? y/n"), "the question");
     type(key);
     await until(() => read(join(home, "left")) === "left", "the list to leave");
     expect(asked.filter((line) => line.startsWith("start"))).toEqual([]);
@@ -1347,7 +1347,7 @@ for (const [key, name] of [
 test("Enter attaches to the builder, every key reaches it, and Ctrl-\\ comes back on the same row", async () => {
   await open();
   for (const _ of [1, 2, 3]) press("Down");
-  await until(() => here().startsWith("▸ ○ app-7"), "app-7's row");
+  await until(() => here().startsWith("▸ ○ APP-7"), "APP-7's row");
   press("Enter");
   await until(() => seen().includes("I am app-7"), "app-7's agent");
   // q and m are the list's keys, but the agent has the keyboard now.
@@ -1356,7 +1356,7 @@ test("Enter attaches to the builder, every key reaches it, and Ctrl-\\ comes bac
   await until(() => read(join(home, "app-7.typed")) === "q m hello\n", "what was typed");
   press("C-\\");
   await until(() => seen().includes("q/esc quit"), "the list again");
-  expect(here()).toStartWith("▸ ○ app-7");
+  expect(here()).toStartWith("▸ ○ APP-7");
   expect(read(join(home, "left"))).toBe("");
 });
 
@@ -1378,23 +1378,24 @@ const sendBytes = async (bytes: string[], split: boolean) => {
 
 // You may have scrolled an agent back, which puts its session in tmux's copy mode, where keys
 // have a table of their own. Ctrl-\ must leave from there too, and never reach the agent. The
-// lead stands in for Claude Code and app-7 for Codex.
+// lead stands in for Claude Code and app-7 for Codex. Each has its session's name and the name
+// its row shows.
 for (const [form, bytes] of Object.entries(back))
-  for (const [agent, arrows, mark] of [
-    ["app-7", ["Down", "Down", "Down"], "○"],
-    ["lead", ["Up", "Up", "Up"], "○"],
+  for (const [agent, shown, arrows, mark] of [
+    ["app-7", "APP-7", ["Down", "Down", "Down"], "○"],
+    ["lead", "lead", ["Up", "Up", "Up"], "○"],
   ] as const)
     test(`Ctrl-\\ as ${form} comes back from ${agent} on its row, in pieces or scrolled back`, async () => {
       await open();
       for (const arrow of arrows) press(arrow);
-      await until(() => here().startsWith(`▸ ${mark} ${agent}`), `${agent}'s row`);
+      await until(() => here().startsWith(`▸ ${mark} ${shown}`), `${agent}'s row`);
       for (const way of ["whole", "in pieces", "scrolled back"]) {
         press("Enter");
         await until(() => seen().includes(`I am ${agent}`), agent);
         if (way === "scrolled back")
           Bun.spawnSync(["tmux", "-L", agents, "copy-mode", "-t", `=${agent}:`]);
         await sendBytes(bytes, way === "in pieces");
-        await until(() => here().startsWith(`▸ ${mark} ${agent}`), `the list again, ${way}`);
+        await until(() => here().startsWith(`▸ ${mark} ${shown}`), `the list again, ${way}`);
       }
       // A line typed now shows the agent got nothing of the keys that left it.
       press("Enter");
@@ -1411,7 +1412,7 @@ for (const [form, bytes] of Object.entries(back))
 test("Ctrl-Q no longer comes back from an agent", async () => {
   await open();
   for (const _ of [1, 2, 3]) press("Down");
-  await until(() => here().startsWith("▸ ○ app-7"), "app-7's row");
+  await until(() => here().startsWith("▸ ○ APP-7"), "APP-7's row");
   press("Enter");
   await until(() => seen().includes("I am app-7"), "app-7's agent");
   press("C-q");
@@ -1419,7 +1420,7 @@ test("Ctrl-Q no longer comes back from an agent", async () => {
   expect(seen()).toContain("I am app-7");
   expect(seen()).not.toContain("q/esc quit");
   press("C-\\");
-  await until(() => here().startsWith("▸ ○ app-7"), "the list again");
+  await until(() => here().startsWith("▸ ○ APP-7"), "the list again");
 });
 
 // Ctrl-\ pressed once too often lands on the list, in whatever form your terminal sends it, and
@@ -1434,7 +1435,7 @@ test("Ctrl-\\ in every form, Alt-Q and Ctrl-Q do nothing on the list", async () 
   press("M-q");
   press("C-q");
   await Bun.sleep(500);
-  expect(here()).toStartWith("▸ ● app-12");
+  expect(here()).toStartWith("▸ ● APP-12");
   expect(read(join(home, "left"))).toBe("");
 });
 
@@ -1443,12 +1444,12 @@ test("Ctrl-\\ in every form, Alt-Q and Ctrl-Q do nothing on the list", async () 
 test("Ctrl-\\ in every form leaves a question open, and y then answers it", async () => {
   await open();
   type("1");
-  await until(() => here().startsWith("▸ ○ app-31"), "the issue's row");
+  await until(() => here().startsWith("▸ ○ APP-31"), "the issue's row");
   press("Enter");
-  await until(() => seen().includes("Start app-31? y/n"), "the question");
+  await until(() => seen().includes("Start APP-31? y/n"), "the question");
   for (const bytes of Object.values(back)) await sendBytes(bytes, true);
   await Bun.sleep(300);
-  expect(seen()).toContain("Start app-31? y/n");
+  expect(seen()).toContain("Start APP-31? y/n");
   type("y");
   await until(() => asked.includes("start simon/app 31"), "the start");
 });
@@ -1459,10 +1460,10 @@ test("s asks to start a task in Backlog, and y starts it", async () => {
   VALUES ('simon', 'app', 't104', 'Add export', 'As JSON', '2026-11-07T10:00:00.000Z', 'simon', 'c1');`);
   await open();
   type("1");
-  await until(() => here().startsWith("▸ ○ app-t104"), "the backlog task's row");
+  await until(() => here().startsWith("▸ ○ APP-T104"), "the backlog task's row");
   expect(seen()).toContain("s start");
   type("s");
-  await until(() => seen().includes("Start app-t104? y/n"), "the question");
+  await until(() => seen().includes("Start APP-T104? y/n"), "the question");
   type("y");
   await until(() => asked.includes("start simon/app t104"), "the start");
 });
@@ -1477,7 +1478,7 @@ test("while attached the title names the agent and the key back, and the list sh
   tmux("select-pane", "-t", "=one:", "-T", "my shell");
   press("Enter");
   await until(() => seen().includes("I am app-12"), "app-12's agent");
-  await until(() => title() === "app-12 · ctrl+\\ back\n", "the title");
+  await until(() => title() === "APP-12 · ctrl+\\ back\n", "the title");
   press("C-\\");
   await until(() => seen().includes("q/esc quit"), "the list again");
   await until(() => title() === "my shell\n", "the title you had");
@@ -1486,13 +1487,13 @@ test("while attached the title names the agent and the key back, and the list sh
 test("an agent that ends while you are attached brings you back to the list, on its row", async () => {
   await open();
   for (const _ of [1, 2, 3]) press("Down");
-  await until(() => here().startsWith("▸ ○ app-7"), "app-7's row");
+  await until(() => here().startsWith("▸ ○ APP-7"), "APP-7's row");
   press("Enter");
   await until(() => seen().includes("I am app-7"), "app-7's agent");
   type("bye");
   press("Enter");
   await until(() => seen().includes("q/esc quit"), "the list again");
-  expect(here()).toStartWith("▸ ○ app-7");
+  expect(here()).toStartWith("▸ ○ APP-7");
   expect(read(join(home, "left"))).toBe("");
 });
 
@@ -1500,7 +1501,7 @@ test("an agent that ends while you are attached brings you back to the list, on 
 test("keys that come with Enter reach the agent, not the list", async () => {
   await open();
   for (const _ of [1, 2, 3]) press("Down");
-  await until(() => here().startsWith("▸ ○ app-7"), "app-7's row");
+  await until(() => here().startsWith("▸ ○ APP-7"), "APP-7's row");
   // q and m would leave the list or merge, were the list to read them.
   type("\rq m now\r");
   await until(() => read(join(home, "app-7.typed")) === "q m now\n", "what was typed");
@@ -1509,7 +1510,7 @@ test("keys that come with Enter reach the agent, not the list", async () => {
   // screen: pressed earlier, it would land on the list, where it does nothing.
   await until(() => seen().includes("I am app-7"), "app-7's agent");
   press("C-\\");
-  await until(() => here().startsWith("▸ ○ app-7"), "the list again");
+  await until(() => here().startsWith("▸ ○ APP-7"), "the list again");
 });
 
 // You may have the agent open in a terminal of your own too, which isn't the list's to close.
@@ -1530,7 +1531,7 @@ test("an agent that ends detaches only the list's own client", async () => {
     Bun.spawnSync(["tmux", "-L", agents, "list-clients", "-F", "#S"]).stdout.toString().trim();
   await until(() => clients() === "app-7", "the other client");
   for (const _ of [1, 2, 3]) press("Down");
-  await until(() => here().startsWith("▸ ○ app-7"), "app-7's row");
+  await until(() => here().startsWith("▸ ○ APP-7"), "APP-7's row");
   press("Enter");
   await until(() => clients() === "app-7\napp-7", "both clients");
   type("bye");
@@ -1547,11 +1548,11 @@ test("an arrow whose escape sequence comes in two pieces still moves, and never 
   type("\x1b[");
   await Bun.sleep(40);
   type("B");
-  await until(() => here().startsWith("▸ ● app-14"), "the row below");
+  await until(() => here().startsWith("▸ ● APP-14"), "the row below");
   type("\x1b");
   await Bun.sleep(40);
   type("[A");
-  await until(() => here().startsWith("▸ ● app-12"), "the row above");
+  await until(() => here().startsWith("▸ ● APP-12"), "the row above");
   await Bun.sleep(300);
   expect(read(join(home, "left"))).toBe("");
 });
@@ -1571,7 +1572,7 @@ test("keys the list doesn't read, and a terminal's answers, never leave it", asy
   type("\x1b[?1;2;4c\x1b[>84;0;0c\x1bP>|tmux 3.6\x1b\\");
   press("Down");
   press("Down");
-  await until(() => here().startsWith("▸ ○ app-9"), "the row below");
+  await until(() => here().startsWith("▸ ○ APP-9"), "the row below");
   await Bun.sleep(300);
   expect(read(join(home, "left"))).toBe("");
   expect(seen()).not.toContain("y/n");
@@ -1581,14 +1582,14 @@ test("keys the list doesn't read, and a terminal's answers, never leave it", asy
 test("Esc with a question open answers no and stays, and a second Esc leaves", async () => {
   await open();
   type("1");
-  await until(() => here().startsWith("▸ ○ app-31"), "the issue's row");
+  await until(() => here().startsWith("▸ ○ APP-31"), "the issue's row");
   press("Enter");
-  await until(() => seen().includes("Start app-31? y/n"), "the question");
+  await until(() => seen().includes("Start APP-31? y/n"), "the question");
   type("\x1b");
   await until(() => !seen().includes("y/n"), "the question to close");
   await Bun.sleep(300);
   expect(read(join(home, "left"))).toBe("");
-  expect(here()).toStartWith("▸ ○ app-31");
+  expect(here()).toStartWith("▸ ○ APP-31");
   expect(asked.filter((line) => line.startsWith("start"))).toEqual([]);
   type("\x1b");
   await until(() => read(join(home, "left")) === "left", "the list to leave");
@@ -1606,21 +1607,21 @@ UPDATE threads SET merge_plan = 'armed' WHERE folder = 'app-14';`);
 
 test("the number keys open and close the stages, which stay so in another repository", async () => {
   await open();
-  expect(seen()).not.toContain("app-31");
+  expect(seen()).not.toContain("APP-31");
   type("1");
-  await until(() => seen().includes("○ app-31"), "Backlog's rows");
+  await until(() => seen().includes("○ APP-31"), "Backlog's rows");
   // Opening a stage moves you to its first row, so it shows wherever the list had scrolled.
-  await until(() => here().startsWith("▸ ○ app-31"), "the issue's row");
+  await until(() => here().startsWith("▸ ○ APP-31"), "the issue's row");
   type("2");
-  await until(() => !seen().includes("app-7"), "Building closed");
-  expect(seen()).toContain("○ app-31");
+  await until(() => !seen().includes("APP-7"), "Building closed");
+  expect(seen()).toContain("○ APP-31");
   press("Tab");
   // The open repository's tab has no badge, so another's shows only while it is open.
   await until(() => seen().includes(" app •"), "site's list");
   press("Tab");
   await until(() => seen().includes(" site •1"), "app's list again");
-  expect(seen()).toContain("○ app-31");
-  expect(seen()).not.toContain("app-7");
+  expect(seen()).toContain("○ APP-31");
+  expect(seen()).not.toContain("APP-7");
 });
 
 test("a forge's refusal shows as words, its control codes never reaching your terminal", async () => {
@@ -1628,7 +1629,7 @@ test("a forge's refusal shows as words, its control codes never reaching your te
   await open();
   // app-14 waits on you to merge it, under Needs you, right below app-12.
   press("Down");
-  await until(() => here().startsWith("▸ ● app-14"), "the ready row");
+  await until(() => here().startsWith("▸ ● APP-14"), "the ready row");
   type("m");
   await until(() => seen().includes("y/n"), "the question");
   type("y");
@@ -1660,9 +1661,9 @@ UPDATE tasks SET merged = 1 WHERE task = '14';
 DELETE FROM items WHERE kind = 'pr';`);
   await open();
   type("6");
-  await until(() => here().startsWith("▸ ○ app-14"), "the done row");
+  await until(() => here().startsWith("▸ ○ APP-14"), "the done row");
   press("Enter");
-  await until(() => seen().includes("app-14's PR #41 has no link saved"), "what Enter says");
+  await until(() => seen().includes("APP-14's PR #41 has no link saved"), "what Enter says");
 });
 
 test("Enter on the lead attaches to it", async () => {
@@ -1688,7 +1689,7 @@ test("Enter on a builder on a plugin's host attaches to it through that host", a
   sql(`INSERT INTO plugins (name, folder) VALUES ('fake', '${plugin}');
 UPDATE threads SET host = 'fake', host_id = 'fake-app-12' WHERE folder = 'app-12'`);
   await open();
-  await until(() => here().startsWith("▸ ● app-12"), "app-12's row");
+  await until(() => here().startsWith("▸ ● APP-12"), "APP-12's row");
   // The host has a key of its own to come back, so the list doesn't offer tmux's.
   expect(seen()).toContain("⏎ open  ");
   expect(seen()).not.toContain("ctrl+\\ back");
@@ -1696,7 +1697,7 @@ UPDATE threads SET host = 'fake', host_id = 'fake-app-12' WHERE folder = 'app-12
   await until(() => seen().includes("I am fake-app-12 on fake"), "the host's attach");
   press("Enter");
   await until(() => seen().includes("q/esc quit"), "the list again");
-  expect(here()).toStartWith("▸ ● app-12");
+  expect(here()).toStartWith("▸ ● APP-12");
   expect(read(join(home, "left"))).toBe("");
 });
 
@@ -1704,10 +1705,10 @@ test("Enter on a builder that isn't running says so, and attaches to nothing", a
   await open();
   press("Down");
   press("Down");
-  await until(() => here().startsWith("▸ ○ app-9"), "app-9's row");
+  await until(() => here().startsWith("▸ ○ APP-9"), "APP-9's row");
   press("Enter");
   await until(
-    () => seen().includes("app-9's builder isn't running: sc start app-9 brings it back"),
+    () => seen().includes("APP-9's builder isn't running: sc start APP-9 brings it back"),
     "why it can't attach",
   );
 });
@@ -1715,14 +1716,14 @@ test("Enter on a builder that isn't running says so, and attaches to nothing", a
 test("Enter on an issue asks first: any key but y starts nothing, and y starts it", async () => {
   await open();
   type("1");
-  await until(() => here().startsWith("▸ ○ app-31"), "the issue's row");
+  await until(() => here().startsWith("▸ ○ APP-31"), "the issue's row");
   press("Enter");
-  await until(() => seen().includes("Start app-31? y/n"), "the question");
+  await until(() => seen().includes("Start APP-31? y/n"), "the question");
   type("n");
   await until(() => seen().includes("q/esc quit"), "the keys again");
   expect(asked.filter((line) => line.startsWith("start"))).toEqual([]);
   press("Enter");
-  await until(() => seen().includes("Start app-31? y/n"), "the question again");
+  await until(() => seen().includes("Start APP-31? y/n"), "the question again");
   type("y");
   await until(() => asked.includes("start simon/app 31"), "the start");
 });
@@ -1731,11 +1732,11 @@ test("Enter on an issue asks first: any key but y starts nothing, and y starts i
 test("keys that come with Enter on an issue are dropped, so they can't answer its question", async () => {
   await open();
   type("1");
-  await until(() => here().startsWith("▸ ○ app-31"), "the issue's row");
+  await until(() => here().startsWith("▸ ○ APP-31"), "the issue's row");
   type("\ryq");
-  await until(() => seen().includes("Start app-31? y/n"), "the question");
+  await until(() => seen().includes("Start APP-31? y/n"), "the question");
   await Bun.sleep(300);
-  expect(seen()).toContain("Start app-31? y/n");
+  expect(seen()).toContain("Start APP-31? y/n");
   expect(asked.filter((line) => line.startsWith("start"))).toEqual([]);
   expect(read(join(home, "left"))).toBe("");
   type("y");
@@ -1746,7 +1747,7 @@ test("a y that comes with m in one read can't answer the merge question", async 
   await open();
   // app-14 waits on you to merge it, under Needs you, right below app-12.
   press("Down");
-  await until(() => here().startsWith("▸ ● app-14"), "the ready row");
+  await until(() => here().startsWith("▸ ● APP-14"), "the ready row");
   type("my");
   await until(() => seen().includes("Merge app#41 into main? y/n"), "the question");
   await Bun.sleep(300);
@@ -1762,7 +1763,7 @@ test("a merge whose checks failed while its question was open merges nothing, an
   await open();
   // app-14 waits on you to merge it, under Needs you, right below app-12.
   press("Down");
-  await until(() => here().startsWith("▸ ● app-14"), "the ready row");
+  await until(() => here().startsWith("▸ ● APP-14"), "the ready row");
   type("m");
   await until(() => seen().includes("Merge app#41 into main? y/n"), "the question");
   const failed = { head: approved, checks: [{ name: "test", id: "1", state: "failed" }] };
@@ -1779,7 +1780,7 @@ test("m on a task ready for review asks first, and y merges it at the commit you
   await open();
   // app-14 waits on you to merge it, under Needs you, right below app-12.
   press("Down");
-  await until(() => here().startsWith("▸ ● app-14"), "the ready row");
+  await until(() => here().startsWith("▸ ● APP-14"), "the ready row");
   expect(seen()).toContain("m merge");
   type("m");
   await until(() => seen().includes("Merge app#41 into main? y/n"), "the question");
@@ -1790,7 +1791,7 @@ test("m on a task ready for review asks first, and y merges it at the commit you
 test("Tab moves to the next repository and has the daemon open it, without reopening a closed tab", async () => {
   await open();
   press("Tab");
-  await until(() => seen().includes("site-3"), "site's list");
+  await until(() => seen().includes("SITE-3"), "site's list");
   await until(() => asked.includes("open simon/site from a tab"), "site opened");
 });
 
@@ -1798,8 +1799,8 @@ test("Tab moves to the next repository and has the daemon open it, without reope
 // sends them, each way round from the last to the first and back.
 test("Shift-Tab and Alt-Shift-Left go back a repository, Alt-Shift-Right on, wrapping round", async () => {
   await open();
-  const onSite = () => seen().includes("site-3");
-  const onApp = () => seen().includes("app-12");
+  const onSite = () => seen().includes("SITE-3");
+  const onApp = () => seen().includes("APP-12");
   // app is the first tab, so back from it wraps round to site, the last.
   press("BTab");
   await until(onSite, "site, back from app");
@@ -1832,11 +1833,11 @@ test("Enter on Backlog's last row shows every issue", async () => {
   sql(issuesSql(12));
   await open();
   type("1");
-  await until(() => here().startsWith("▸ ○ app-100"), "Backlog's first issue");
+  await until(() => here().startsWith("▸ ○ APP-100"), "Backlog's first issue");
   for (const _ of Array.from({ length: 10 })) press("Down");
   await until(() => here().startsWith("▸ … 3 more"), "the row for the rest");
   press("Enter");
-  await until(() => seen().includes("app-111"), "every issue");
+  await until(() => seen().includes("APP-111"), "every issue");
   expect(seen()).not.toContain("… 3 more");
 });
 
@@ -1850,9 +1851,9 @@ test("opening a stage with its key brings its heading and first rows into view",
 UPDATE threads SET merge_plan = 'armed' WHERE folder = 'app-14';`);
   await open();
   for (const _ of Array.from({ length: 15 })) press("Down");
-  await until(() => here().startsWith("▸ ○ app-61"), "Building's last task");
+  await until(() => here().startsWith("▸ ○ APP-61"), "Building's last task");
   type("5");
-  await until(() => here().startsWith("▸ ○ app-14"), "Ready's first task");
+  await until(() => here().startsWith("▸ ○ APP-14"), "Ready's first task");
   const lines = seen()
     .split("\n")
     .map((line) => line.trimEnd());
@@ -1876,16 +1877,16 @@ const mouseOn = () =>
 test("a click on a task selects it, and a second click opens it, as Enter does", async () => {
   await open();
   expect(mouseOn()).toBe(true);
-  clickOn(lineOf("app-7"));
-  await until(() => here().startsWith("▸ ○ app-7"), "app-7 selected");
+  clickOn(lineOf("APP-7"));
+  await until(() => here().startsWith("▸ ○ APP-7"), "APP-7 selected");
   expect(seen()).not.toContain("I am app-7");
   // Its second line is part of its row too.
-  clickOn(lineOf("app-7") + 1);
+  clickOn(lineOf("APP-7") + 1);
   await until(() => seen().includes("I am app-7"), "app-7's agent");
   // The agent gets the mouse as your terminal would give it: the list's reporting is off.
   expect(mouseOn()).toBe(false);
   press("C-\\");
-  await until(() => here().startsWith("▸ ○ app-7"), "the list on app-7's row");
+  await until(() => here().startsWith("▸ ○ APP-7"), "the list on APP-7's row");
   expect(mouseOn()).toBe(true);
   type("q");
   await until(() => read(join(home, "left")) === "left", "the list to leave");
@@ -1897,13 +1898,13 @@ test("a click on a task selects it, and a second click opens it, as Enter does",
 test("a click that asks a question isn't answered by its button's release", async () => {
   await open();
   clickOn(lineOf("Backlog"));
-  await until(() => here().startsWith("▸ ○ app-31"), "Backlog open, on its issue");
-  const line = lineOf("app-31");
+  await until(() => here().startsWith("▸ ○ APP-31"), "Backlog open, on its issue");
+  const line = lineOf("APP-31");
   type(`\x1b[<0;10;${line}M`);
-  await until(() => seen().includes("Start app-31? y/n"), "the question");
+  await until(() => seen().includes("Start APP-31? y/n"), "the question");
   type(`\x1b[<0;10;${line}m`);
   await Bun.sleep(300);
-  expect(seen()).toContain("Start app-31? y/n");
+  expect(seen()).toContain("Start APP-31? y/n");
   type("y");
   await until(() => asked.includes("start simon/app 31"), "the start");
 });
@@ -1912,9 +1913,9 @@ test("a click that asks a question isn't answered by its button's release", asyn
 // list's, and never reach the agent's prompt as text.
 test("a click that attaches types no mouse report into the agent", async () => {
   await open();
-  clickOn(lineOf("app-7"));
-  await until(() => here().startsWith("▸ ○ app-7"), "app-7 selected");
-  const line = lineOf("app-7");
+  clickOn(lineOf("APP-7"));
+  await until(() => here().startsWith("▸ ○ APP-7"), "APP-7 selected");
+  const line = lineOf("APP-7");
   type(`\x1b[<0;10;${line}M\x1b[<0;10;${line}m\x1b[<65;10;3M\x1b[<0;10;${line}M`);
   await until(() => seen().includes("I am app-7"), "app-7's agent");
   type("hello");
@@ -1936,7 +1937,7 @@ UPDATE threads SET merge_plan = 'armed' WHERE folder = 'app-14';`);
       .find((line) => line.startsWith(" ↓")) ?? "";
   await until(() => edge().includes("Ready 1"), "Ready pinned at the bottom edge");
   type(`\x1b[<0;${edge().indexOf("Ready") + 2};${lineOf(" ↓")}M`);
-  await until(() => here().startsWith("▸ ○ app-14"), "Ready open, on its task");
+  await until(() => here().startsWith("▸ ○ APP-14"), "Ready open, on its task");
 });
 
 test("a click on the lead's row opens the lead at once", async () => {
@@ -1952,22 +1953,22 @@ test("a click on a stage's heading opens or closes it, and the wheel moves a row
   // Needs you has no key to open it again, so a click on its heading leaves it open.
   clickOn(lineOf("Needs you"));
   await Bun.sleep(300);
-  expect(seen()).toContain("● app-12");
+  expect(seen()).toContain("● APP-12");
   clickOn(lineOf("Backlog"));
-  await until(() => here().startsWith("▸ ○ app-31"), "Backlog open, on its issue");
+  await until(() => here().startsWith("▸ ○ APP-31"), "Backlog open, on its issue");
   clickOn(lineOf("Building"));
-  await until(() => !seen().includes("app-7"), "Building closed");
+  await until(() => !seen().includes("APP-7"), "Building closed");
   clickOn(lineOf("Building"));
-  await until(() => seen().includes("app-7"), "Building open again");
+  await until(() => seen().includes("APP-7"), "Building open again");
   // The wheel down, then up, as SGR reports it, with the pointer anywhere.
-  await until(() => here().startsWith("▸ ○ app-9"), "Building's first task");
+  await until(() => here().startsWith("▸ ○ APP-9"), "Building's first task");
   type("\x1b[<65;10;3M");
-  await until(() => here().startsWith("▸ ○ app-7"), "a row down");
+  await until(() => here().startsWith("▸ ○ APP-7"), "a row down");
   type("\x1b[<64;10;3M");
-  await until(() => here().startsWith("▸ ○ app-9"), "a row up");
+  await until(() => here().startsWith("▸ ○ APP-9"), "a row up");
   // A click on a blank line reaches nothing.
   clickOn(2);
-  expect(here()).toStartWith("▸ ○ app-9");
+  expect(here()).toStartWith("▸ ○ APP-9");
 });
 
 // A Skelcrew run from a checkout names its commit, read from git as the engine reads it, and says
@@ -1991,9 +1992,9 @@ test("a click on a repository's tab opens it, and a click elsewhere does nothing
   expect(top).toMatch(/^ Skelcrew .+? {3}app {4}site •1$/);
   type(`\x1b[<0;${top.indexOf("site") + 1};2M`);
   type(`\x1b[<0;${top.indexOf("site") + 1};1M\x1b[<0;${top.indexOf("site") + 1};1m`);
-  await until(() => seen().includes("site-3"), "site's list");
+  await until(() => seen().includes("SITE-3"), "site's list");
   // It opens on site's task that needs you, as the list does on any repository.
-  expect(here()).toStartWith("▸ ● site-3");
+  expect(here()).toStartWith("▸ ● SITE-3");
   await until(() => asked.includes("open simon/site from a tab"), "site opened");
 });
 
@@ -2021,7 +2022,7 @@ test("the pane follows the row you are on, is empty on the lead's, and never ask
 UPDATE tasks SET review_post = '{"pr":41,"id":"9","verdict":"approve","findings":["Name the limit","Test the header"]}' WHERE task = '14';
 ${itemSql("app", "pr", 41, "Fix the export header", "2026-11-06T10:00:00Z", { head: approved, checks: [...passed, { name: "build", id: "2", state: "failed" }] })}`);
   await open({ width: wide });
-  expect(here()).toStartWith("▸ ● app-12");
+  expect(here()).toStartWith("▸ ● APP-12");
   await until(() => paneSeen()[0] === "Rate limit the API", "app-12's details");
   expect(paneSeen().slice(0, 7)).toEqual([
     "Rate limit the API",
@@ -2045,7 +2046,7 @@ ${itemSql("app", "pr", 41, "Fix the export header", "2026-11-06T10:00:00Z", { he
   await until(() => paneSeen().every((line) => line === ""), "an empty pane");
   press("Down");
   press("Down");
-  await until(() => here().startsWith("▸ ● app-14"), "app-14's row");
+  await until(() => here().startsWith("▸ ● APP-14"), "APP-14's row");
   await until(() => paneSeen()[0] === "Fix the export header", "app-14's details");
   expect(paneSeen()).toContain("PR    #41  https://github.com/simon/app/pull/41");
   expect(paneSeen()).toContain("CI failed:  test ✓  build ✗");
@@ -2074,10 +2075,10 @@ test("the pane shows only while the terminal is wide enough, and the keys do the
   await until(() => paneSeen()[0] === "Rate limit the API", "the pane");
   press("Down");
   press("Down");
-  await until(() => here().startsWith("▸ ○ app-9"), "app-9's row");
+  await until(() => here().startsWith("▸ ○ APP-9"), "APP-9's row");
   tmux("resize-window", "-t", "=one:", "-x", "100");
   await until(() => !seen().includes(" │ "), "no pane");
-  expect(here()).toStartWith("▸ ○ app-9");
+  expect(here()).toStartWith("▸ ○ APP-9");
 });
 
 // A thread's log holds the thread as it was at each change, so its events are where it changed.
@@ -2229,11 +2230,11 @@ test("a tmux slow to capture an agent's screen never holds up the keys", async (
   // Each read of app-12's screen takes 3 seconds. The moves meanwhile still show at once.
   const start = performance.now();
   press("Down");
-  await until(() => here().startsWith("▸ ● app-14"), "app-14's row");
+  await until(() => here().startsWith("▸ ● APP-14"), "APP-14's row");
   press("Up");
-  await until(() => here().startsWith("▸ ● app-12"), "app-12's row");
+  await until(() => here().startsWith("▸ ● APP-12"), "APP-12's row");
   press("Down");
-  await until(() => here().startsWith("▸ ● app-14"), "app-14's row");
+  await until(() => here().startsWith("▸ ● APP-14"), "APP-14's row");
   expect(performance.now() - start).toBeLessThan(1000);
   // Its screen shows once tmux answers. Then app-9 has no agent to read, and the read under way
   // ends, as the test started it.
@@ -2241,7 +2242,7 @@ test("a tmux slow to capture an agent's screen never holds up the keys", async (
   await until(() => liveSeen().includes("I am app-12"), "app-12's screen");
   press("Down");
   press("Down");
-  await until(() => here().startsWith("▸ ○ app-9"), "app-9's row");
+  await until(() => here().startsWith("▸ ○ APP-9"), "APP-9's row");
   const reads = slowReads("started");
   await slowReadsEnded(reads);
 });
@@ -2260,16 +2261,16 @@ test("the live view reads only while the list shows with its pane", async () => 
   // On a row with no agent running, there is nothing to read.
   press("Down");
   press("Down");
-  await until(() => here().startsWith("▸ ○ app-9"), "app-9's row");
+  await until(() => here().startsWith("▸ ○ APP-9"), "APP-9's row");
   expect(await noReads(reads)).toBe(true);
   // While you are attached to an agent, the list isn't showing.
   press("Down");
-  await until(() => here().startsWith("▸ ○ app-7"), "app-7's row");
+  await until(() => here().startsWith("▸ ○ APP-7"), "APP-7's row");
   press("Enter");
   await until(() => seen().includes("I am app-7"), "app-7's agent");
   expect(await noReads(reads)).toBe(true);
   press("C-\\");
-  await until(() => here().startsWith("▸ ○ app-7"), "the list again");
+  await until(() => here().startsWith("▸ ○ APP-7"), "the list again");
   const back = reads();
   await until(() => reads() > back, "reads again");
   // In a terminal too narrow for the pane, nothing is read.
@@ -2290,10 +2291,10 @@ test("the list stays quick to move while the live view reads", async () => {
   await until(() => liveSeen().includes("I am app-12"), "app-12's screen");
   const took: number[] = [];
   for (const [key, row] of [
-    ["Down", "app-14"],
-    ["Down", "app-9"],
-    ["Up", "app-14"],
-    ["Up", "app-12"],
+    ["Down", "APP-14"],
+    ["Down", "APP-9"],
+    ["Up", "APP-14"],
+    ["Up", "APP-12"],
   ] as const) {
     const start = performance.now();
     press(key);
@@ -2341,7 +2342,7 @@ test("a host slow to read an agent's screen never holds up the keys", async () =
   press("Down");
   const start = performance.now();
   for (const _ of [1, 2, 3]) press("Down");
-  await until(() => here().startsWith("▸ ○ app-7"), "app-7's row");
+  await until(() => here().startsWith("▸ ○ APP-7"), "APP-7's row");
   const reads = slowReads("started");
   expect(performance.now() - start).toBeLessThan(1000);
   // The read under way ends with the host's answer, which the test waits for, as it started it.
@@ -2358,7 +2359,7 @@ test("a read that answers after the list left draws nothing over your terminal",
   // A read starts at once on coming back to app-12, and q leaves while it is under way.
   press("Down");
   press("Up");
-  await until(() => here().startsWith("▸ ● app-12"), "app-12's row");
+  await until(() => here().startsWith("▸ ● APP-12"), "APP-12's row");
   type("q");
   await until(() => read(join(home, "left")) === "left", "the list to leave");
   const reads = slowReads("started");
@@ -2383,9 +2384,9 @@ test("a read under way when you move away and back is dropped, as you moved sinc
   // the move takes 3 seconds, so for 3 seconds from the move the screen stays as it was.
   const moved = performance.now();
   press("Down");
-  await until(() => here().startsWith("▸ ● app-14"), "app-14's row");
+  await until(() => here().startsWith("▸ ● APP-14"), "APP-14's row");
   press("Up");
-  await until(() => here().startsWith("▸ ● app-12"), "app-12's row");
+  await until(() => here().startsWith("▸ ● APP-12"), "APP-12's row");
   const before = screen();
   while (performance.now() - moved < 3000) {
     expect(screen()).toBe(before);
@@ -2395,7 +2396,7 @@ test("a read under way when you move away and back is dropped, as you moved sinc
   // starts again, and waits for the one under way to end, as it started it.
   await until(() => screen() !== before, "a newer screen");
   press("Down");
-  await until(() => here().startsWith("▸ ● app-14"), "app-14's row");
+  await until(() => here().startsWith("▸ ● APP-14"), "APP-14's row");
   const reads = slowReads("started");
   await slowReadsEnded(reads);
 });
@@ -2410,7 +2411,7 @@ test("a slow read of the row you left never holds up the live view of the row yo
   // Coming back to app-12 starts a read of 3 seconds. app-7, three rows on, is read at once.
   press("Down");
   press("Up");
-  await until(() => here().startsWith("▸ ● app-12"), "app-12's row");
+  await until(() => here().startsWith("▸ ● APP-12"), "APP-12's row");
   const start = performance.now();
   for (const _ of [1, 2, 3]) press("Down");
   await until(() => liveSeen().includes("I am app-7"), "app-7's screen");

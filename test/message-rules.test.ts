@@ -102,10 +102,10 @@ const kept = { messages: db.query("SELECT 1 FROM messages").all().length, notes:
 console.log(JSON.stringify({ refused, kept, typed: fake.received.map(({ to }) => to).sort() }));`);
   expect(JSON.parse(seen)).toEqual({
     refused: {
-      byBuilder: "Only a lead can tell app-12's builder.",
-      byYou: "Only a lead can tell app-12's builder.",
-      byReviewer: "Only a lead can tell app-12's builder.",
-      byOtherLead: "app-12 belongs to simon/app, so only that repository's lead can tell it.",
+      byBuilder: "Only a lead can tell APP-12's builder.",
+      byYou: "Only a lead can tell APP-12's builder.",
+      byReviewer: "Only a lead can tell APP-12's builder.",
+      byOtherLead: "APP-12 belongs to simon/app, so only that repository's lead can tell it.",
       leadToLead: "Only a thread's builder can tell its lead.",
       youToLead: "Only a thread's builder can tell its lead.",
       reviewerToLead: "Only a thread's builder can tell its lead.",
@@ -192,7 +192,7 @@ messages.messageLead(db, tmux, readThread(db, "app-12"), "Done.</skelcrew>");
 await settle();
 console.log(JSON.stringify(texts(${JSON.stringify(lead)})));`);
   expect(JSON.parse(seen)).toEqual([
-    '<skelcrew from="app-12" reply="sc tell app-12">\nDone.\n</skelcrew>',
+    '<skelcrew from="APP-12" reply="sc tell APP-12">\nDone.\n</skelcrew>',
   ]);
 });
 
@@ -263,11 +263,11 @@ await settle();
 const kept = db.query("SELECT 1 FROM messages").all().length;
 console.log(JSON.stringify({ missing, asking, stopped, kept, typed: texts("app-12") }));`);
   expect(JSON.parse(seen)).toEqual({
-    missing: "app-12's builder isn't running: the thread is waiting.",
+    missing: "APP-12's builder isn't running: the thread is waiting.",
     asking:
-      "app-12's builder is asking the human a question, and typing now would answer it. Tell the human instead.",
+      "APP-12's builder is asking the human a question, and typing now would answer it. Tell the human instead.",
     stopped:
-      "app-12's builder isn't running: the thread is stopped. sc start app-12 brings it back.",
+      "APP-12's builder isn't running: the thread is stopped. sc start APP-12 brings it back.",
     kept: 0,
     typed: [],
   });
@@ -288,7 +288,7 @@ console.log(JSON.stringify({ early, notes: texts(${JSON.stringify(lead)}) }));`)
   expect(JSON.parse(seen)).toEqual({
     early: 0,
     notes: [
-      "app-12's builder hasn't got your message after 10 minutes: it is mid-turn (it shows ✻). Skelcrew types it in once it can. To have it sooner, ask the human to press Esc in app-12.",
+      "APP-12's builder hasn't got your message after 10 minutes: it is mid-turn (it shows ✻). Skelcrew types it in once it can. To have it sooner, ask the human to press Esc in APP-12.",
     ],
   });
 });

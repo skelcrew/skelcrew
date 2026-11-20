@@ -16,6 +16,7 @@ import {
   remoteRef,
   startedRef,
 } from "./git.ts";
+import { taskName } from "./thread.ts";
 
 // A task in the backlog: its name, such as t104, its title and description, when it was filed,
 // as an ISO time so it sorts beside the tracker's issues, and by whom, such as simon or simon via
@@ -155,7 +156,9 @@ function readKept(repository: Repository, name: string, commit: string, text: st
     const kept = Kept.parse(JSON.parse(text));
     if (/^t\d+$/.test(name)) return { task: name, commit, ...kept };
   } catch {}
-  console.log(`left out ${repository.name}-${name} from its backlog: Skelcrew can't read it`);
+  console.log(
+    `left out ${taskName(repository.name, name)} from its backlog: Skelcrew can't read it`,
+  );
   return null;
 }
 
@@ -206,7 +209,9 @@ async function refreshInTurn(db: Database, repository: Repository, folder: strin
         if (kept) tasks.push(kept);
       }
     } catch (error) {
-      console.log(`couldn't finish starting ${repository.name}-${name}: ${errorText(error)}`);
+      console.log(
+        `couldn't finish starting ${taskName(repository.name, name)}: ${errorText(error)}`,
+      );
     }
   }
   // One transaction, so no reader sees the backlog half refreshed. A start this machine noted
@@ -257,7 +262,7 @@ export function startFiled<T>(
     const { owner, repo } = repository;
     const where = "WHERE owner = ? AND repo = ? AND task = ?";
     const task = filedTask(db, owner, repo, name);
-    if (!task) throw new Error(`${repository.name}-${name} is no longer in the backlog`);
+    if (!task) throw new Error(`${taskName(repository.name, name)} is no longer in the backlog`);
     // An earlier start of this task whose outcome nobody heard left its note. It is settled
     // first, never replaced: with its claim on the remote, that start won, and this one goes on
     // from it. With none, the note goes. With no answer, the note stays and the start is refused,
@@ -271,7 +276,7 @@ export function startFiled<T>(
     if (earlier) {
       const holds = await remoteRef(db, repository, startedRef(name)).catch((error) => {
         throw new Error(
-          `Skelcrew can't tell whether its earlier start of ${repository.name}-${name} reached the remote, so it starts nothing: ${errorText(error)}`,
+          `Skelcrew can't tell whether its earlier start of ${taskName(repository.name, name)} reached the remote, so it starts nothing: ${errorText(error)}`,
         );
       });
       won = holds === earlier.started_commit;
@@ -304,7 +309,7 @@ export function startFiled<T>(
         if (holds !== claim) {
           if (holds !== null) db.run(`DELETE FROM backlog_starts ${where}`, [owner, repo, name]);
           throw new Error(
-            `${repository.name}-${name} was started or removed on another machine, or its remote can't be reached: ${errorText(error)}`,
+            `${taskName(repository.name, name)} was started or removed on another machine, or its remote can't be reached: ${errorText(error)}`,
           );
         }
       }
@@ -325,13 +330,15 @@ export function startFiled<T>(
       ])
         .then(() => db.run(`DELETE FROM backlog_starts ${where}`, [owner, repo, name]))
         .catch((failed) =>
-          console.log(`couldn't put ${repository.name}-${name} back: ${errorText(failed)}`),
+          console.log(`couldn't put ${taskName(repository.name, name)} back: ${errorText(failed)}`),
         );
       throw error;
     }
     // A claim that can't be removed now is removed by the next refresh.
     await moveRefs(db, repository, folder, [endClaim(name, commit)]).catch((error) =>
-      console.log(`couldn't finish starting ${repository.name}-${name}: ${errorText(error)}`),
+      console.log(
+        `couldn't finish starting ${taskName(repository.name, name)}: ${errorText(error)}`,
+      ),
     );
     return recorded;
   });
@@ -350,12 +357,12 @@ export function unfileTask(
   return inTurn(repository, async () => {
     const { owner, repo } = repository;
     const task = filedTask(db, owner, repo, name);
-    if (!task) throw new Error(`${repository.name}-${name} is no longer in the backlog`);
+    if (!task) throw new Error(`${taskName(repository.name, name)} is no longer in the backlog`);
     try {
       await moveRefs(db, repository, folder, [{ ref: filedRef(name), was: task.commit, now: "" }]);
     } catch (error) {
       throw new Error(
-        `${repository.name}-${name} was started or removed on another machine, or its remote can't be reached: ${errorText(error)}`,
+        `${taskName(repository.name, name)} was started or removed on another machine, or its remote can't be reached: ${errorText(error)}`,
       );
     }
     db.run("DELETE FROM backlog WHERE owner = ? AND repo = ? AND task = ?", [owner, repo, name]);
