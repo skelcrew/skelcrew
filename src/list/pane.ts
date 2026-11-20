@@ -133,7 +133,8 @@ const tightenings = [
 ] as const;
 
 // Returns the details of a task as lines `width` columns wide at most, from the top: its full
-// title, its issue's and PR's links, its stage and word, its CI with each check, its armed merge,
+// title, its issue's and PR's links, its stage and word, what it waits on when it is up next,
+// its CI with each check, its armed merge,
 // its review round with the verdict and the findings in short, its description folded after a
 // few lines, and its recent events. Each part is left out where the task has none. `tight` is how
 // many of the tightenings apply, such as 2 for a description and findings of one line each.
@@ -166,8 +167,11 @@ function detailLines(row: Row, details: Details, width: number, tight = 0): stri
     return [start, ...folded(link, width).map((piece) => linked(link, piece))];
   });
   // The stage and the row's word, in its colour, such as `Building · question`, or cut without
-  // its colours when too wide.
-  const stage = row.part === "lead" ? "" : sectionNames[row.part];
+  // its colours when too wide. A task up next says so, as its section says more than its stage.
+  // Then what it waits on, such as `3rd in line: 4 of 4 builders busy`, wrapped whole, as the
+  // reason the queue is held, or the command that brings a paused task back, comes last.
+  const stage =
+    row.part === "lead" ? "" : sectionNames[row.section === "up next" ? "up next" : row.part];
   const word = row.says ? ` · ${row.says}` : "";
   const staged =
     Bun.stringWidth(`${stage}${word}`) <= width
@@ -231,7 +235,7 @@ function detailLines(row: Row, details: Details, width: number, tight = 0): stri
   // Returns the parts that have something, with a blank line between each.
   const parts = [
     [...title, ...links],
-    [staged, ...ci, ...merge, ...rounds, ...found],
+    [staged, ...(row.waits ? folded(row.waits, width) : []), ...ci, ...merge, ...rounds, ...found],
     described,
     happened,
   ].filter((part) => part.length > 0);

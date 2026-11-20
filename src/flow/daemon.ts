@@ -116,6 +116,7 @@ import {
   joinsQueue,
   joinTime,
   leaveQueue,
+  moveInQueue,
   queuedText,
 } from "./task-queue.ts";
 import {
@@ -600,6 +601,8 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         await stopThread(db, sessions, thread);
         return { stopped: name };
       }
+      case "queue move":
+        return { said: moveInQueue(db, findThread(db, request.repo, request.task), request.by) };
       // Both act only on a builder that runs: one that ended leaves its last screen behind,
       // which would read as what it shows now.
       case "peek": {

@@ -166,8 +166,18 @@ export async function startNew(
 // Has the daemon start a thread on an issue or merge a PR, for s or m on the screen's lists
 // and pages, which hold the request ready. Throws the daemon's error, such as the forge's
 // reason for refusing a merge. Only your own socket takes a merge, so no agent can merge.
-export async function startOrMerge(asked: DaemonRequest): Promise<void> {
-  await request(asked);
+// Returns what the daemon said of a start, such as that the task waits in the queue, or null.
+export async function startOrMerge(asked: DaemonRequest): Promise<string | null> {
+  const reply = await request(asked);
+  const started = z.object({ started: z.string() }).safeParse(reply);
+  return started.success ? started.data.started : null;
+}
+
+// Has the daemon move a queued task one place earlier, by -1, or later, by 1, as a key in the
+// list asks, and returns what to say, such as `app-13 starts next`.
+export async function moveQueued(repo: string, task: string, by: -1 | 1): Promise<string> {
+  const reply = await request({ command: "queue move", repo, task, by });
+  return checkReply(z.object({ said: z.string() }), reply).said;
 }
 
 // Has the daemon arm a merge, when ready or without Skelcrew's approval, or cancel one, for sc

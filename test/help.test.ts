@@ -144,14 +144,15 @@ test("the help lists the screen's keys, anywhere first, then lists, then pages",
 });
 
 // s and m work on a list and on the page opened from it, so they come after the other keys
-// for lists and before those for pages.
-test("the help lists s to start a thread on an issue and m to merge a PR, after the keys for lists", () => {
+// for lists and before those for pages. Shift with an arrow reorders the queue in Up next.
+test("the help lists s to start or queue an issue, m to merge a PR and shift to reorder the queue", () => {
   const out = skel(["--help"]).out;
   const keys = out.slice(out.indexOf("\nKEYS\n"), out.indexOf("\nEXAMPLES\n"));
   const order = ["enter/→ ", "s ", "m ", "← "].map((key) => keys.indexOf(`\n  ${key}`));
   expect(order.every((at) => at > 0)).toBe(true);
   expect([...order].sort((a, b) => a - b)).toEqual(order);
-  expect(keys).toMatch(/\n {2}s +start a thread on an issue\n/);
+  expect(keys).toMatch(/\n {2}s +start or queue an issue\n/);
+  expect(keys).toMatch(/\n {2}shift \+ ↑\/↓ +reorder the queue\n/);
   expect(keys).toMatch(/\n {2}m +merge a ready PR\n/);
 });
 

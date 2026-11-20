@@ -173,6 +173,8 @@ test("what is left fills the live view from the bottom up", async () => {
     link: null,
     branch: "skelcrew/12",
     more: 0,
+    place: null,
+    waits: "",
   };
   const details = {
     view: {

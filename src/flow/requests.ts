@@ -84,6 +84,13 @@ export const DaemonRequest = z.discriminatedUnion("command", [
     repo: z.string(),
     task: TaskId,
   }),
+  // Moves a queued task one place earlier, by -1, or later, by 1, as a key in the list does.
+  z.object({
+    command: z.literal("queue move"),
+    repo: z.string(),
+    task: TaskId,
+    by: z.union([z.literal(-1), z.literal(1)]),
+  }),
   z.object({
     command: z.literal("peek"),
     repo: z.string(),
@@ -189,7 +196,8 @@ export type DaemonRequest = z.infer<typeof DaemonRequest>;
 // terminal. A builder may tell only its repository's lead, never another thread, and may ask for a
 // review of its own thread only. You and a lead may look at a builder's screen and stop its turn,
 // but a builder may not, as it has only its own. You type to a builder yourself in the sidebar, so
-// you have no tell. Merging is yours alone: no agent may merge, as merging stays a human's choice.
+// you have no tell. Which queued task starts next is yours alone, as you set it in the list.
+// Merging is yours alone: no agent may merge, as merging stays a human's choice.
 // A lead may arm a merge, when ready or without Skelcrew's approval, only while your config lets it,
 // which the daemon checks at each one, and only when you ask it to. The lead may cancel one, which
 // is always safe. Builders and reviewers can't. Only you and the lead may mark a thread as
@@ -216,6 +224,7 @@ export const allowed = {
     "start new",
     "review",
     "stop",
+    "queue move",
     "peek",
     "interrupt",
     "rm preview",

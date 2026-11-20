@@ -52,27 +52,28 @@ setDefaultTimeout(20_000);
 beforeEach(startTest);
 afterEach(endTest);
 
-test("shows the lead, then Needs you and the stages, beside the agent", async () => {
+test("shows the lead, then Needs you, Up next and the stages, beside the agent", async () => {
   open("lead");
   await ready("lead");
   const lines = seen().split("\n");
   const left = (y: number) => lines[y]?.slice(0, sidebar - 1).trimEnd();
-  // The lead is at the top of the sidebar, below a blank line, then a blank line, Needs you and
-  // the six stages, with only Building open.
+  // The lead is at the top of the sidebar, below a blank line, then a blank line, Needs you, Up
+  // next and the six stages, with only Building open.
   expect(left(1)).toBe("");
   expect(lines[1]).toContain("I am lead");
   expect(left(2)).toMatch(/^ ▸ ○ lead\b/);
   expect(left(3)).toBe("     running");
   expect(left(4)).toBe("");
   expect(left(5)).toBe("   Needs you 0");
-  expect(left(6)).toBe(" 1 Backlog   0");
-  expect(left(7)).toBe(" 2 Building  2");
-  expect(left(8)).toMatch(/^ {3}○ APP-12/);
-  expect(left(9)).toMatch(/^ {5}working/);
-  expect(left(10)).toMatch(/^ {3}○ APP-7/);
-  expect(left(12)).toBe("");
-  expect(left(13)).toBe(" 3 Reviewing 0");
-  expect(left(16)).toBe(" 6 Done      1");
+  expect(left(6)).toBe("   Up next   0");
+  expect(left(7)).toBe(" 1 Backlog   0");
+  expect(left(8)).toBe(" 2 Building  2");
+  expect(left(9)).toMatch(/^ {3}○ APP-12/);
+  expect(left(10)).toMatch(/^ {5}working/);
+  expect(left(11)).toMatch(/^ {3}○ APP-7/);
+  expect(left(13)).toBe("");
+  expect(left(14)).toBe(" 3 Reviewing 0");
+  expect(left(17)).toBe(" 6 Done      1");
   expect(selected()).toMatch(/^▸ ○ lead\b/);
   // Nothing of the screen is left in agents' sessions: each stays one pane.
   const panes = tmux(agents, "list-panes", "-a", "-F", "#{session_name}").out.trim().split("\n");
