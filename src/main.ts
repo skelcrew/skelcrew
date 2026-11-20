@@ -433,9 +433,10 @@ async function agentCommand(args: string[]): Promise<void> {
   usage(command);
 }
 
-// Prints the threads, or one repository's, for sc ps. Below them goes a line for each repository
-// that needs you to run sc install, as its tasks can't start until then. --json gives the threads
-// alone, as tools read them.
+// Prints the threads, or one repository's, for sc ps. Below them goes a line for each check slot
+// taken, saying who holds it and for how long, then one for each repository that needs you to
+// run sc install, as its tasks can't start until then. --json gives the threads alone, as tools
+// read them.
 async function psCommand(args: string[], json: boolean): Promise<void> {
   const { askForRepositories, askForThreads } = await import("./client.ts");
   const { printThreads } = await import("./flow/list.ts");
@@ -444,9 +445,19 @@ async function psCommand(args: string[], json: boolean): Promise<void> {
   // What is left is ps and, at most, a repository.
   const rest = args.filter((word) => word !== "--all");
   if (rest.length > 2) usage("ps");
-  const rows = await askForThreads(rest[1]);
-  printThreads(all ? rows : rows.filter((row) => row.status !== "done"), json);
+  const { threads, slots } = await askForThreads(rest[1]);
+  printThreads(all ? threads : threads.filter((row) => row.status !== "done"), json);
   if (json) return;
+  // Who holds each check slot, so a check that waits in line long shows what it waits on.
+  if (slots.length > 0) console.log("");
+  for (const { holder, since } of slots) {
+    const minutes = Math.floor((Date.now() - since) / 60_000);
+    const held = minutes === 0 ? "less than a minute" : `${minutes} min`;
+    // A holder starts the line, and "another repository" is one too.
+    const who =
+      holder === "you" ? "You hold" : `${holder.charAt(0).toUpperCase()}${holder.slice(1)} holds`;
+    console.log(`${who} a check slot, for ${held}.`);
+  }
   const waiting = (await askForRepositories()).filter(
     (r) => r.installWaiting && (rest[1] === undefined || [r.name, r.repository].includes(rest[1])),
   );
@@ -684,10 +695,12 @@ async function checkCommand(args: string[]): Promise<void> {
   // whole group. The shell closes its own copy once the watcher
   // has it, so the suite keeps your input, and only the watcher reads the pipe.
   const watched = `(cat <&4 >/dev/null; kill -KILL 0) & exec 4<&-; ${slot.test.join(" && ")}`;
-  // The shell gets the connection too, as its descriptor 3, so the daemon frees the slot only
-  // once the last process of the suite has ended, not when sc check does.
+  // The connection to the daemon stays with sc check, as Bun hands a child only the descriptors
+  // it names. So the slot is freed when sc check ends, even when a process the suite started,
+  // such as a tmux server, keeps running in a session of its own: holding the connection, it
+  // would keep the slot for as long as the sandbox lives.
   const run = Bun.spawn(["sh", "-c", watched], {
-    stdio: ["inherit", "inherit", "inherit", slot.fd ?? "ignore", "pipe"],
+    stdio: ["inherit", "inherit", "inherit", "ignore", "pipe"],
     detached: true,
   });
   // A daemon that restarts meanwhile forgets the slot, and the suite finishes on its own.

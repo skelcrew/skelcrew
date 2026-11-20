@@ -63,11 +63,15 @@ export async function namesRepository(word: string): Promise<boolean> {
   return checkReply(z.object({ named: z.boolean() }), reply).named;
 }
 
-// Asks the daemon for the threads, or one repository's, for sc ps. The daemon answers, as
-// the lead's sandbox hides Skelcrew's database.
-export async function askForThreads(repository?: string): Promise<ThreadRow[]> {
+// Asks the daemon for the threads, or one repository's, for sc ps, with who holds each check
+// slot taken now and since when. The daemon answers, as the lead's sandbox hides Skelcrew's
+// database, and only it counts the slots.
+export async function askForThreads(
+  repository?: string,
+): Promise<{ threads: ThreadRow[]; slots: { holder: string; since: number }[] }> {
   const reply = await request({ command: "ps", ...(repository ? { repo: repository } : {}) });
-  return checkReply(z.object({ threads: z.array(ThreadRow) }), reply).threads;
+  const Slot = z.object({ holder: z.string(), since: z.number() });
+  return checkReply(z.object({ threads: z.array(ThreadRow), slots: z.array(Slot) }), reply);
 }
 
 // Asks the daemon for the tasks of every repository, or of one, for sc ls.
@@ -295,16 +299,14 @@ export async function submitForReview(summary: string): Promise<string> {
 }
 
 // Waits for one of the machine's check slots, for sc check, and returns the repository's test
-// commands and the connection's file descriptor, when Bun gives it. The daemon keeps the slot
-// while the connection stays open: in this process, and in any process the descriptor is handed
-// to. `queued` is told the caller's place in
-// line when it has to wait. `from` is the remote of the checkout you ran it in; an agent's own
+// commands. The daemon keeps the slot while the connection stays open, so until this process
+// ends. `queued` is told the caller's place in line when it has to wait. `from` is the remote of the checkout you ran it in; an agent's own
 // socket names its repository instead. Throws with the daemon's error, such as when no test
 // command is configured, or when nothing answers.
 export function takeCheckSlot(given: {
   queued: (place: number) => void;
   from?: string | undefined;
-}): Promise<{ test: string[]; fd: number | undefined }> {
+}): Promise<{ test: string[] }> {
   const { queued, from } = given;
   const Line = z.union([
     z.object({ queued: z.number() }),
@@ -335,12 +337,7 @@ export function takeCheckSlot(given: {
           fail(new Error(line.data.error));
         } else {
           answered = true;
-          // Node's socket keeps its descriptor on a field it doesn't publish, so it is read
-          // and checked here, and a Bun without it gives none.
-          const handle: unknown = Reflect.get(connection, "_handle");
-          const read = z.object({ fd: z.number().int().nonnegative() }).safeParse(handle);
-          const fd = read.success ? read.data.fd : undefined;
-          done({ test: line.data.test, fd });
+          done({ test: line.data.test });
         }
       }
     });

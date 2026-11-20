@@ -178,6 +178,89 @@ test("a process the suite detaches is outside the check: it neither ends with sc
   for (const folder of [a, b]) process.kill(Number(read(join(folder, "child"))), "SIGKILL");
 }, 60_000);
 
+test("a server the suite leaves running, such as tmux, doesn't hold the slot once sc check ends", async () => {
+  // tmux keeps every descriptor its caller had open and moves into a session of its own, so it
+  // outlives the suite and its process group. It runs on a socket of this test's own.
+  const leftover = `${socket}-leftover`;
+  const start = `tmux -L ${leftover} -f /dev/null new-session -d 'sleep 60'`;
+  config(`limits: { checks: 1 }\ntest: ${JSON.stringify([start, ...suite])}\n`);
+  await serve();
+  const [a, b] = ["a", "b"].map((name) => checkout(name));
+  if (!a || !b) throw new Error("no checkouts");
+  try {
+    const first = check(a);
+    await until(() => log().includes("start a"));
+    writeFileSync(join(a, "done"), "");
+    expect((await first.ended).code).toBe(0);
+    // The leftover server runs on, and the next check starts without waiting in line.
+    const alive = Bun.spawnSync(["tmux", "-L", leftover, "has-session"], {
+      env: env(),
+    });
+    expect(alive.success).toBe(true);
+    const second = check(b);
+    await until(() => log().includes("start b"));
+    expect(second.said.out).not.toContain("in line");
+    writeFileSync(join(b, "done"), "");
+    expect((await second.ended).code).toBe(0);
+  } finally {
+    Bun.spawnSync(["tmux", "-L", leftover, "kill-server"], { env: env() });
+  }
+}, 60_000);
+
+test("a review cancelled while its check runs ends the suite and frees the slot", async () => {
+  await serve();
+  const [a, b] = ["a", "b"].map((name) => checkout(name));
+  if (!a || !b) throw new Error("no checkouts");
+  // A reviewer runs sc check in a process group of its own, and a cancelled review kills the
+  // whole group at once.
+  const reviewer = Bun.spawn(
+    ["sh", "-c", `${JSON.stringify(process.execPath)} "$0" check`, source("main.ts")],
+    {
+      cwd: a,
+      env: env(),
+      stdout: "ignore",
+      stderr: "ignore",
+      detached: true,
+    },
+  );
+  await until(() => log().includes("start a") && suiteRuns(a));
+  const second = check(b);
+  await until(() => second.said.out.includes("number 1 in line"));
+  process.kill(-reviewer.pid, "SIGKILL");
+  await reviewer.exited;
+  await until(() => !suiteRuns(a));
+  await until(() => log().includes("start b"));
+  writeFileSync(join(b, "done"), "");
+  expect((await second.ended).code).toBe(0);
+  expect(log()).toBe("start a\nstart b\nend b\n");
+}, 60_000);
+
+test("sc ps says who holds a check slot, naming only that it is another repository's for one asked about", async () => {
+  // Skelcrew also has simon/other, whose sc ps must not name who holds a slot in simon/app.
+  const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
+openDb().run("INSERT INTO repositories (name, owner, repo, remote) VALUES ('other', 'simon', 'other', 'https://example.com/simon/other.git')");`;
+  const added = Bun.spawnSync([process.execPath, "-e", code], { env: env(), stderr: "pipe" });
+  if (!added.success) throw new Error(added.stderr.toString());
+  await serve();
+  const folder = checkout("a");
+  const ps = (...words: string[]) =>
+    Bun.spawnSync([process.execPath, source("main.ts"), "ps", ...words], {
+      env: env(),
+      stdout: "pipe",
+    }).stdout.toString();
+  const running = check(folder);
+  try {
+    await until(() => log().includes("start a"));
+    expect(ps()).toContain("You hold a check slot, for less than a minute.");
+    expect(ps("app")).toContain("You hold a check slot");
+    expect(ps("other")).toContain("Another repository holds a check slot");
+  } finally {
+    writeFileSync(join(folder, "done"), "");
+  }
+  expect((await running.ended).code).toBe(0);
+  await until(() => !ps().includes("check slot"));
+}, 60_000);
+
 test("a daemon restart frees the slots, and a suite running then finishes on its own", async () => {
   const before = await serve();
   const [a, b] = ["a", "b"].map((name) => checkout(name));
