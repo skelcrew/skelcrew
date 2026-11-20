@@ -330,6 +330,8 @@ test("Alt-Q leaves the whole screen, ends no agent, and says so", async () => {
     expect(tmux(agents, "has-session", "-t", `=${name}`).ok).toBe(true);
   expect(tmux(agents, "list-clients", "-F", "#{client_tty}").out).toBe("");
   await until(() => seen().includes(leaving), "the line that says what happened");
+  // tmux's own [exited] reads like something went wrong, so it is cleared.
+  expect(seen()).not.toContain("[exited]");
 });
 
 // A Mac terminal that doesn't send Option as Alt can't press Alt-Q, so Ctrl-Q leaves too.

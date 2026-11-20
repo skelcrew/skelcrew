@@ -89,11 +89,13 @@ beforeEach(async () => {
   bwrapVersion("0.11.1");
   // Only there to be found: you run claude setup-token yourself.
   fake("claude", "exit 0");
-  // The service runs the fake daemon, whose process id is 1, once started.
+  // The service runs the fake daemon, whose process id is 1, once started. Enabling it says
+  // what systemd linked, as the real one does, which setup keeps to itself.
   fake(
     "systemctl",
     `case "$*" in
-  "--user start skelcrew"|"--user enable --now skelcrew") : > "$HOME/started" ;;
+  "--user start skelcrew") : > "$HOME/started" ;;
+  "--user enable --now skelcrew") : > "$HOME/started"; echo "Created symlink '$HOME/.config/systemd/user/default.target.wants/skelcrew.service'" >&2 ;;
   "--user show -p MainPID --value skelcrew") test -e "$HOME/started" && echo 1 || echo 0 ;;
 esac`,
   );
@@ -287,10 +289,12 @@ test("sc up --bg refuses before the first run, and says to run sc", async () => 
 });
 
 test("installs no service when systemctl fails, so the next sc tries again", async () => {
-  fake("systemctl", "exit 1");
+  fake("systemctl", 'echo "Failed to connect to bus" >&2; exit 1');
   const run = await skel("sk-ant-oat01-good\n");
   expect(run.code).toBe(1);
-  expect(run.err).toContain("systemctl");
+  // What systemctl said, kept back while it worked, is shown once it fails.
+  expect(run.err).toContain("systemctl --user daemon-reload failed");
+  expect(run.err).toContain("Failed to connect to bus");
   expect(existsSync(unit())).toBe(false);
 });
 
