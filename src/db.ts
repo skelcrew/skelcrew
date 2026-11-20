@@ -621,22 +621,35 @@ function prepareTables(db: Database): void {
   // nothing the next time.
   const herdrTag = /<(?=\s*\/?\s*hc\b)/i;
   const Saved = z.array(z.object({ id: z.number(), text: z.string() }));
-  for (const table of ["notes", "messages"]) {
-    const which = table === "notes" ? "wrapped = 1" : "sender = 'lead'";
-    for (const { id, text } of Saved.parse(
-      db.query(`SELECT id, text FROM ${table} WHERE ${which}`).all(),
-    )) {
-      const escaped = text
-        .replace(
-          /\n<(asked|brief)>\n([\s\S]*?)\n<\/\1>(?=\n)/g,
-          (element, tag: string, said: string) =>
-            herdrTag.test(said)
-              ? `\n<${tag} escaped="yes">\n${said.replaceAll("&", "&amp;").replaceAll("<", "&lt;")}\n</${tag}>`
-              : element,
-        )
-        .replace(new RegExp(herdrTag.source, "gi"), "&lt;");
-      if (escaped !== text) db.run(`UPDATE ${table} SET text = ? WHERE id = ?`, [escaped, id]);
-    }
+  for (const { id, text } of Saved.parse(
+    db.query("SELECT id, text FROM notes WHERE wrapped = 1").all(),
+  )) {
+    const escaped = text
+      .replace(
+        /\n<(asked|brief)>\n([\s\S]*?)\n<\/\1>(?=\n)/g,
+        (element, tag: string, said: string) =>
+          herdrTag.test(said)
+            ? `\n<${tag} escaped="yes">\n${said.replaceAll("&", "&amp;").replaceAll("<", "&lt;")}\n</${tag}>`
+            : element,
+      )
+      .replace(new RegExp(herdrTag.source, "gi"), "&lt;");
+    if (escaped !== text) db.run("UPDATE notes SET text = ? WHERE id = ?", [escaped, id]);
+  }
+  // A builder's waiting messages are saved escaped too: the < that starts a herdr tag in the
+  // lead's, wrapped by Skelcrew, and that of any herdr, skelcrew, asked or brief tag in Skelcrew's
+  // or the review's, which quote people. One the older Skelcrew pasted at the builder's prompt,
+  // left there for a question, sits there unescaped. So escaping it also forgets it was pasted:
+  // Skelcrew then waits on that draft as on a person's and never presses Enter on it, and the
+  // escaped text goes in once the draft is gone.
+  const Waiting = z.array(z.object({ id: z.number(), sender: z.string(), text: z.string() }));
+  for (const { id, sender, text } of Waiting.parse(
+    db.query("SELECT id, sender, text FROM messages").all(),
+  )) {
+    const tag =
+      sender === "lead" ? herdrTag.source : /<(?=\s*\/?\s*(?:skelcrew|asked|brief|hc\b))/.source;
+    const escaped = text.replace(new RegExp(tag, "gi"), "&lt;");
+    if (escaped !== text)
+      db.run("UPDATE messages SET text = ?, pasted = 0 WHERE id = ?", [escaped, id]);
   }
   // For each open PR in Skelcrew's copy, the head commit and base branch a poll last looked at
   // and whether the PR's changes there touch .agents/, so the merge confirms say so while reading

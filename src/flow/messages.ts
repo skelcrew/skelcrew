@@ -141,7 +141,11 @@ export function queueMessage(
   folder: string,
   message: Pick<Message, "sender" | "text" | "said" | "typed_in">,
 ): void {
-  const { sender, text, said, typed_in } = message;
+  const { sender, said, typed_in } = message;
+  // Only the lead's message is wrapped by Skelcrew, so its tags are its own. Skelcrew's and the
+  // review's quote people and agents, such as a PR comment, so any tag in them is escaped. It is
+  // saved escaped, so a draft pasted from it is known for Skelcrew's own after a restart.
+  const text = sender === "lead" ? message.text : tagsEscaped(message.text);
   const query = db.query("SELECT * FROM messages WHERE folder = ? AND sender = ? AND text = ?");
   const same = sender === "lead" ? null : Message.nullable().parse(query.get(folder, sender, text));
   if (same === null)
@@ -169,7 +173,7 @@ export function queueMessage(
 function afterTyped(db: Database, folder: string, message: Message): void {
   const thread = readThread(db, folder);
   if (message.sender === "review") {
-    if (thread.telling === message.text)
+    if (thread.telling !== null && tagsEscaped(thread.telling) === message.text)
       record(db, folder, { telling: null }, "typed the review into the builder");
     return;
   }
@@ -266,10 +270,7 @@ async function typeWaiting(
     const pasted = () => db.run("UPDATE messages SET pasted = 1 WHERE id = ?", [message.id]);
     const waitsFor = { timeout: 10_000, signal, unsent, pasted };
     typing.id = message.id;
-    // Only the lead's message is wrapped by Skelcrew, so its tags are its own. Skelcrew's and the
-    // review's quote people and agents, such as a PR comment, so any tag in them is escaped.
-    const text = message.sender === "lead" ? message.text : tagsEscaped(message.text);
-    const typed = await deliver(host, id, marks, text, waitsFor).finally(() => {
+    const typed = await deliver(host, id, marks, message.text, waitsFor).finally(() => {
       typing.id = null;
     });
     if (typed !== "typed") return;
