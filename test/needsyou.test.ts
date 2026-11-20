@@ -521,6 +521,23 @@ describe.skipIf(insideSandbox)("needs you", () => {
     expect(await needsYou()).toBe(false);
   }, 60_000);
 
+  // The lead acted as it told the builder, though the message waits until the builder can take it.
+  test("the lead's reply stops the safety net while it still waits to be typed in", async () => {
+    graceMinutes(0.05);
+    addApp();
+    await startApp12();
+    await hook("stop", JSON.stringify({ last_assistant_message: "Delete the old exports?" }));
+    await until(() => thread().turn_ended === 1);
+    // The builder looks busy, so the reply waits.
+    writeFileSync(join(builder(), "busy"), "");
+    const told = await asLead(["tell", "app-12", "Yes, delete them."]);
+    expect(told.out).toContain("can't take it yet");
+    expect(thread().ended_at).toBe(null);
+    await Bun.sleep(4000);
+    expect(await needsYou()).toBe(false);
+    expect(read(join(builder(), "typed"))).not.toContain("Yes, delete them.");
+  }, 60_000);
+
   test("telling or clearing a stopped builder in time keeps the safety net from marking it", async () => {
     graceMinutes(0.05);
     addApp();
@@ -1064,6 +1081,18 @@ console.log(JSON.stringify({ before, after }));`);
     after: { needsYou: false, word: "round limit", decided: true },
   });
   expect(threadLog()).toContain("the lead cleared its needs you: the round limit");
+});
+
+// Marking a thread past its round limit is the lead's decision about it, so once you type to the
+// builder and the mark clears, the round limit doesn't need you again.
+test("marking a thread past its round limit decides it, so clearing the mark leaves it decided", () => {
+  const seen = inProcess(`
+record(db, "app-12", { status: "waiting", needs_you: true, rounds: 4, verdict: "changes", held: "Fix it." });
+markNeedsYou(db, "none", thread(), "say whether to go on past the limit", "lead");
+const decided = thread().limit_decided;
+questionAnswered(db, "app-12", "Go on.");
+console.log(JSON.stringify({ decided, needsYou: needsYou(thread()) }));`);
+  expect(seen).toEqual({ decided: true, needsYou: false });
 });
 
 test("a new submit clears the mark", () => {

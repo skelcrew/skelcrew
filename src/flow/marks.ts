@@ -22,6 +22,8 @@ export function markOf(status: Status, word: string): Mark {
   if (status === "error") return { sign: "●", colour: "red" };
   if (word === "review failed" || word === "review timed out") return { sign: "○", colour: "red" };
   if (status === "ready") return { sign: "●", colour: "green" };
+  // Approved with a merge armed, it merges by itself, so it is good news that waits on nobody.
+  if (word === "approved") return { sign: "○", colour: "green" };
   if (status === "needs you") return { sign: "●", colour: "yellow" };
   const waits = word === "reviewing" || word === "queued for review" || word.startsWith("limit");
   if (waits) return { sign: "○", colour: "dim" };
@@ -40,8 +42,8 @@ export function shownOf(thread: Thread, maxRounds: number, now = Date.now()): Sh
 // decision, an answer, or something that went wrong. An approved thread is ready, not this.
 export const needsDecision = (mark: Mark) => mark.sign === "●" && mark.colour !== "green";
 
-// Returns whether a mark says the thread is approved and ready to merge.
-export const readyToMerge = (mark: Mark) => mark.colour === "green";
+// Returns whether a mark says the thread is approved and waits for you to merge it.
+export const readyToMerge = (mark: Mark) => mark.sign === "●" && mark.colour === "green";
 
 // A repository's badge: how many of its threads need you, in red when any of them went wrong
 // and yellow otherwise, and how many are ready to merge, in green.

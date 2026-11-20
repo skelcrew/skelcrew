@@ -508,7 +508,7 @@ The lead answers a question itself when the answer follows from what you already
 **What Skelcrew marks itself**, by the same rule:
 
 - **Ready to merge.** An approved thread with green checks and no merge armed waits on you to merge it, as **Merge when ready** says. One with a merge armed merges by itself, so it doesn't.
-- **The round limit**, while nobody has decided, as step 7 of **The flow** says. A merge you armed, `sc start` to go on, or the lead or you marking or clearing the thread decides it, and the thread follows that decision. Cleared, it still shows `round limit`, without needing you, until the next review, which asks again.
+- **The round limit**, while nobody has decided, as step 7 of **The flow** says. A merge you armed, `sc start` to go on, or the lead or you marking or clearing the thread decides it, and the thread follows that decision. Cleared or marked, it no longer needs you for the limit, so a mark that clears later doesn't bring the limit back. Cleared, it still shows `round limit`, without needing you, until the next review, which asks again.
 - **A question** asked with the harness's question tool, and **a harness error**, as below.
 - **A missing session host plugin**, which only `sc install` brings back, as **Sessions** says.
 
@@ -520,7 +520,7 @@ A builder that asks with its harness's question tool anyway, such as a custom ro
 
 **A turn that ends without submitting** goes to the lead, not to you: the builder may have written its question as plain text, be stuck, or have only replied. The thread shows `turn ended`, and doesn't need you. The harness's `Stop` hook tells Skelcrew when a turn ends. A turn whose builder ran `sc submit` or `sc review` in it waits on its review, not on you, but not one in which the lead or you asked for the review. A turn that ends while an `AskUserQuestion` is open, or on an error, adds nothing. A turn typed in by Skelcrew, such as a review's changes or a message, is like any other. One exception: a turn that leaves no new work, nothing uncommitted and no commit after the last one submitted, waits on that submit while it is still reviewed, waits on CI or is approved. Such a turn most likely only answered a message, so it doesn't show `turn ended`. Either way, its last message, up to 2000 characters, goes to the lead as a message from the builder, who answers it or brings a question in it to you. A turn in which the builder told the lead something with `sc tell lead` sends nothing more at its end, as the lead already has its words. Bringing a builder back with `sc start`, or the engine starting, ends no turn. Esc flags nothing, as you are looking at the builder anyway.
 
-**The safety net.** A builder that stopped without submitting, and that nobody acted on for `needs_you.grace_minutes`, 5 by default, needs you, with its last message as the mark, cut to one line, so nothing waits unseen while the lead is busy or misses it. The lead gets the note that it needs you, as for any thread. Typing to the builder, the lead telling it something, a new submit, or the lead or you marking or clearing the thread is acting on it, and stops the wait.
+**The safety net.** A builder that stopped without submitting, and that nobody acted on for `needs_you.grace_minutes`, 5 by default, needs you, with its last message as the mark, cut to one line, so nothing waits unseen while the lead is busy or misses it. The lead gets the note that it needs you, as for any thread. Typing to the builder, the lead telling it something, from the moment the lead sends it, a new submit, or the lead or you marking or clearing the thread is acting on it, and stops the wait.
 
 The builder's words reach the lead with `<skelcrew` and `</skelcrew>` removed, so they never pass for Skelcrew's. Whatever is typed into the builder next clears `turn ended` or a question: what you type, or a message from the lead.
 
@@ -813,12 +813,12 @@ A task in Building, Reviewing, Checks or Ready takes two lines, so what it does 
 | `waiting` | The builder waits, with no review under way, no approval and no changes asked for |
 | `changes` | The reviewer asked for changes, and the builder hasn't picked them up yet |
 | `limit · 13:59` | The builder or the review waits for its harness's usage limit to reset |
-| `approved` | Ready to merge |
+| `approved` | Ready to merge. With a merge armed it merges by itself, so its mark is hollow and it doesn't count as ready |
 | `question` | The builder asked with its harness's question tool |
 | `turn ended` | The builder ended its turn without submitting, and its last message went to the lead |
 | `error` | The builder's harness stopped on an error |
 | `round limit` | Review hit its round limit. It needs you until you or the lead decide, as **Needs you** says |
-| the action, such as `apply the check.yml split in PR #463` | The lead, you or the safety net marked the thread as needing you, with what you must do |
+| the action, such as `apply the check.yml split in PR #463` | The lead, you or the safety net marked the thread as needing you, with what you must do. It shows on a queued, failed or stopped thread too, and only a question or an error comes before it |
 | `review failed`, `review timed out` | The review couldn't run, or ran past its time limit twice. The lead can run it again, so it doesn't need you |
 | `failed`, `stopped` | As the thread's status says |
 

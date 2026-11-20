@@ -1,7 +1,7 @@
 // The status module's five words: what a host shows for each thread's builder, from the same
 // fields as its word in the sidebar.
 import { expect, test } from "bun:test";
-import { shownOf } from "../src/flow/marks.ts";
+import { readyToMerge, shownOf } from "../src/flow/marks.ts";
 import { statusOf, threadWord } from "../src/flow/status.ts";
 import type { Thread } from "../src/flow/thread.ts";
 
@@ -153,7 +153,7 @@ test("the round limit needs you only until a merge is armed or its mark is clear
 });
 
 // An armed merge merges an approved, green thread itself, so you have nothing to do.
-test("an approved thread with a merge armed is ready, and doesn't need you", () => {
+test("an approved thread with a merge armed waits, hollow, and isn't counted as ready", () => {
   const ready = {
     status: "waiting",
     needs_you: true,
@@ -162,8 +162,23 @@ test("an approved thread with a merge armed is ready, and doesn't need you", () 
     ci_passed: true,
     merge_plan: "armed",
   } as const;
-  expect(status(ready)).toBe("ready");
-  expect(shownOf({ ...state, ...ready }, 3).mark).toEqual({ sign: "●", colour: "green" });
+  expect(status(ready)).toBe("idle");
+  const mark = shownOf({ ...state, ...ready }, 3).mark;
+  expect(mark).toEqual({ sign: "○", colour: "green" });
+  expect(readyToMerge(mark)).toBe(false);
+  expect(threadWord({ ...state, ...ready }, 3)).toBe("approved");
+  // Without the merge armed, it waits on you to merge it.
+  expect(status({ ...ready, merge_plan: null })).toBe("ready");
+});
+
+// The lead or you may mark a thread whatever its status, and the word must say what to do.
+test("a mark on a queued, failed or stopped thread still says what to do", () => {
+  for (const status of ["queued", "failed", "stopped"] as const)
+    expect(threadWord({ ...state, status, needs_you_for: "approve the new design" }, 3)).toBe(
+      "approve the new design",
+    );
+  // A done thread's end clears its mark, so it never shows one.
+  expect(threadWord({ ...state, status: "done", needs_you_for: "approve it" }, 3)).toBe("done");
 });
 
 // Its last message went to the lead, who brings a real question to you.

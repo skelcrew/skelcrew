@@ -116,7 +116,8 @@ export const readyToMerge = (thread: Thread) =>
 export function statusOf(thread: Thread, maxRounds: number, now = Date.now()): Status {
   const word = threadWord(thread, maxRounds, now);
   if (thread.status === "failed" || word === "error") return "error";
-  if (word === "approved") return "ready";
+  // An approved thread with a merge armed merges by itself, so it waits rather than on you.
+  if (word === "approved") return thread.merge_plan === "armed" ? "idle" : "ready";
   if (needsYou(thread)) return "needs you";
   if (thread.erred && thread.limited) return "idle";
   if (thread.status !== "working" && thread.status !== "waiting") return "idle";
@@ -404,6 +405,14 @@ export function reportStatuses(db: Database): void {
 // that needs you comes before a limit, which only waits.
 export function threadWord(thread: Thread, maxRounds: number, now = Date.now()): string {
   const { status, verdict } = thread;
+  // A mark says in words what you must do, so it goes before what Skelcrew knows by itself, even
+  // on a thread that is queued, failed or stopped, which the lead or you may mark too. Only a
+  // question or an error the builder stopped on comes first, as you must answer it before
+  // anything. A done thread has no mark, as its end clears it.
+  const live = status === "working" || status === "waiting";
+  const builderFirst = live && (thread.asking || (thread.erred && !thread.limited));
+  if (thread.needs_you_for !== null && status !== "done" && !builderFirst)
+    return thread.needs_you_for;
   // A thread that is queued, failed, stopped or is done says just that. Otherwise a question from
   // its builder comes first, then its harness stopping on an error, then why it needs you, then
   // what it is doing.
@@ -412,8 +421,6 @@ export function threadWord(thread: Thread, maxRounds: number, now = Date.now()):
   const underWay = thread.submitting !== null || thread.reviewing !== null;
   if (thread.asking) return "question";
   if (thread.erred && !thread.limited) return "error";
-  // A mark says in words what you must do, so it goes before what Skelcrew knows by itself.
-  if (thread.needs_you_for !== null) return thread.needs_you_for;
   // The round limit and an approval say what you must do next, so they come before any other
   // reason the thread needs you. Changes held past the limit say so too after something else,
   // such as a conflict, cleared the thread's need of you: the task still waits on sc start, and
@@ -551,18 +558,20 @@ export function markNeedsYou(
   const who = by === "lead" ? "the lead" : "you";
   if (thread.status === "done") throw new Error(`${threadName(db, thread)} is done already`);
   const acted = { ended_at: null, ended_said: null };
+  // Marking or clearing a thread past its round limit is a decision about it. The round limit's
+  // word shows only once the mark is gone, so it is asked of the thread without.
+  const limit = needsYouFor({ ...thread, needs_you_for: null }) === "round limit";
+  const decision = limit ? { limit_decided: true } : {};
   if (reason !== null) {
     const action = oneLine(reason);
     if (action === "") throw new Error("say what the human must do to unblock the thread");
     const quiet = by === "lead" && !needsYou(thread) ? { noting: null } : {};
-    const change = { needs_you_for: action, ...acted, ...quiet };
+    const change = { needs_you_for: action, ...acted, ...decision, ...quiet };
     const marked = record(db, thread.folder, change, `${who} marked it: ${action}`);
     typeLeadNotes(db, sessions);
     return marked;
   }
-  // The round limit's word shows only once the mark is gone, so it is asked of the thread without.
-  const limit = needsYouFor({ ...thread, needs_you_for: null }) === "round limit";
-  const change = { needs_you_for: null, ...acted, ...(limit ? { limit_decided: true } : {}) };
+  const change = { needs_you_for: null, ...acted, ...decision };
   const what = thread.needs_you_for ?? (limit ? "the round limit" : "nothing");
   return record(db, thread.folder, change, `${who} cleared its needs you: ${what}`);
 }
