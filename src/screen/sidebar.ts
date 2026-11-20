@@ -156,7 +156,7 @@ export async function runSidebar(
   const lookAtHosts = () => {
     if (lookingAtHosts) return;
     lookingAtHosts = true;
-    hostedAgents(db, open, hosted)
+    hostedAgents(db, open)
       .then((found) => {
         hosted = found;
       })
@@ -596,14 +596,10 @@ export async function runSidebar(
 
 // Returns the agents running on a plugin's host, for the sidebar: builders by their thread's
 // folder, and the open repository's lead by its name, so a lead there that ends is noticed and
-// brought back, as one on tmux is. Each host is asked once for all its agents. A host that fails
-// to answer keeps whether `before`, the last look, found each agent running: a host can fail for
-// a moment, and its agents' rows would otherwise show as stopped.
-async function hostedAgents(
-  db: ReturnType<typeof openDb>,
-  open: Open,
-  before: Set<string>,
-): Promise<Set<string>> {
+// brought back, as one on tmux is. Each host is asked once for all its agents. While a host fails
+// to answer, whether its agents run is unknown, and each counts as running: a host can fail for a
+// moment, even before it ever answered, and a lead there must not be taken for crashed.
+async function hostedAgents(db: ReturnType<typeof openDb>, open: Open): Promise<Set<string>> {
   const found = new Set<string>();
   // Each agent on a plugin's host: what the sidebar knows it by, its host and its ID there.
   const agents = liveThreads(db).flatMap((thread) =>
@@ -622,8 +618,8 @@ async function hostedAgents(
     const listed = await listSessions(host).catch(() => null);
     for (const agent of agents) {
       if (agent.host !== name) continue;
-      const kept = listed === null && before.has(agent.key);
-      if (kept || listed?.some((one) => one.name === agent.id && one.running)) found.add(agent.key);
+      if (listed === null || listed.some((one) => one.name === agent.id && one.running))
+        found.add(agent.key);
     }
   }
   return found;
