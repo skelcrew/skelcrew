@@ -423,11 +423,12 @@ export async function runList(agents: string, repository: string): Promise<void>
   };
 
   // Moves you one row up, by -1, or down, by 1, staying among the rows. The live view reads the
-  // new row's agent at once, rather than at its next look.
+  // new row's agent at once, rather than at its next look. That read isn't waited on, as a
+  // runtime plugin's host can take many seconds to answer, and the keys after it must not wait.
   const move = (by: 1 | -1) => {
     here = Math.min(Math.max(here + by, 0), rows.length - 1);
     draw();
-    return look();
+    void look();
   };
 
   // Acts on the mouse, by what was drawn where it was pressed. The left button on a repository's
@@ -485,6 +486,8 @@ export async function runList(agents: string, repository: string): Promise<void>
     reading = true;
     const shown = await readLive(db, agents, row);
     reading = false;
+    // You may have left while the host answered, and the terminal is then your shell's again.
+    if (left) return;
     if (live?.name === row.name && Bun.deepEquals(live.shown, shown)) return;
     live = { name: row.name, shown };
     draw();

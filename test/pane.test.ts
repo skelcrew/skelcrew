@@ -136,11 +136,55 @@ test("a task with no running agent says so, and a row that isn't a task has an e
   expect(plain(drawPane(lead, null, null, 50, 30))).toEqual(Array(30).fill(""));
 });
 
-test("in a short pane the details give way, so the live view keeps a few lines", () => {
+// A terminal 24 lines tall leaves the pane 22. The details are what the pane is for, so they keep
+// their room, and the live view has what is left.
+test("in a short pane the details show whole, and the live view has what is left", () => {
   const screen = Array.from({ length: 20 }, (_, i) => `line ${i}`).join("\n");
-  const lines = plain(drawPane(row, details, { screen }, 50, 14));
-  expect(lines).toHaveLength(14);
-  expect(lines.slice(-5)).toEqual(["line 15", "line 16", "line 17", "line 18", "line 19"]);
+  const lines = plain(drawPane(row, details, { screen }, 50, 22));
+  expect(lines).toHaveLength(22);
+  expect(lines).toContain("minute. Clients over it get a 429 with a…");
+  expect(lines).toContain("13:40 submitted · 13:52 reviewed · 14:02 submitted");
+  // What is left under the line shows the bottom of the agent's screen.
+  const live = lines.slice(lines.indexOf("─".repeat(50)) + 1);
+  expect(live.length).toBeGreaterThan(0);
+  expect(live).toEqual(
+    Array.from({ length: live.length }, (_, i) => `line ${20 - live.length + i}`),
+  );
+  const stopped = plain(drawPane(row, details, { note: "Builder not running" }, 50, 22));
+  expect(stopped).toContain("13:40 submitted · 13:52 reviewed · 14:02 submitted");
+  expect(stopped).toContain("Builder not running");
+});
+
+test("a long title and long links show whole, and every check shows however many there are", () => {
+  const checks = ["test", "lint", "build", "typecheck", "e2e on linux", "e2e on macos"].map(
+    (name, i) => ({ name, state: i === 5 ? ("failed" as const) : ("passed" as const), log: null }),
+  );
+  const link = "https://github.com/a-long-organisation/a-long-repository-name/pull/12345";
+  const page = details.view.prPage;
+  if (!page) throw new Error("the details have a PR");
+  const long: Details = {
+    ...details,
+    view: {
+      ...details.view,
+      title: "Rate limit the public API per user, so one client can never starve all the others",
+      prPage: { ...page, checks, link },
+    },
+  };
+  const lines = plain(drawPane(row, long, null, 40, 40));
+  expect(lines.slice(0, 7)).toEqual([
+    "Rate limit the public API per user, so",
+    "one client can never starve all the",
+    "others",
+    "issue #42  https://github.com/acme/app/issues/42".slice(0, 9),
+    "https://github.com/acme/app/issues/42",
+    "PR    #43",
+    "https://github.com/a-long-organisation/a",
+  ]);
+  expect(lines[7]).toBe("-long-repository-name/pull/12345");
+  expect(lines).toContain("CI running:  test ✓  lint ✓  build ✓");
+  expect(lines).toContain("typecheck ✓  e2e on linux ✓");
+  expect(lines).toContain("e2e on macos ✗");
+  for (const line of lines) expect(Bun.stringWidth(line)).toBeLessThanOrEqual(40);
 });
 
 // What the list shows besides its rows.

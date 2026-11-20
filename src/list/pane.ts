@@ -12,18 +12,14 @@ import type { Row } from "./rows.ts";
 export type Live = { screen: string } | { note: string };
 
 // How many lines the description shows before it is folded, how many findings show, and how many
-// lines the title and the events take at most, so the details stay a compact block on top.
+// lines the events take at most, so the details stay a compact block on top.
 const descriptionLines = 3;
 const findingsShown = 3;
-const titleLines = 2;
 const eventLines = 2;
 
-// The fewest lines the live view keeps under the details, which give way to it.
-const liveLeast = 5;
-
 // Returns text wrapped at word breaks to `width` columns, at most `most` lines, the last one
-// ending in … when there was more.
-function folded(text: string, width: number, most: number): string[] {
+// ending in … when there was more. A word wider than the pane, such as a link, is broken.
+function folded(text: string, width: number, most = Number.POSITIVE_INFINITY): string[] {
   if (width <= 0) return [];
   const lines = Bun.wrapAnsi(text, width, { hard: true }).split("\n");
   if (lines.length <= most) return lines;
@@ -49,6 +45,22 @@ const reviewWords: Record<NonNullable<TaskView["review"]>["state"], string> = {
   failed: "review failed",
 };
 
+// Returns items as lines `width` columns wide at most, as many on each line as fit, with two
+// spaces between them, so none is left out. Each item is its plain text and how it shows, in
+// colour. An item wider than a line alone is cut, without its colours.
+function packed(items: { plain: string; shown: string }[], width: number): string[] {
+  const lines: { plain: string; shown: string }[] = [];
+  for (const item of items) {
+    const last = lines.at(-1);
+    if (last && Bun.stringWidth(`${last.plain}  ${item.plain}`) <= width) {
+      last.plain += `  ${item.plain}`;
+      last.shown += `  ${item.shown}`;
+    } else if (Bun.stringWidth(item.plain) <= width) lines.push({ ...item });
+    else lines.push({ plain: fitted(item.plain, width), shown: fitted(item.plain, width) });
+  }
+  return lines.map((line) => line.shown);
+}
+
 // Returns the details of a task as lines `width` columns wide at most, from the top: its full
 // title, its issue's and PR's links, its stage and word, its CI with each check, its armed merge,
 // its review round with the verdict and the findings in short, its description folded after a
@@ -56,13 +68,17 @@ const reviewWords: Record<NonNullable<TaskView["review"]>["state"], string> = {
 function detailLines(row: Row, details: Details, width: number): string[] {
   const { view, findings, events } = details;
   const cut = (text: string) => fitted(text, width);
-  const title = folded(view.title, width, titleLines).map((line) => paint(bright, line));
-  // The links, each after a dim label, lined up.
+  const title = folded(view.title, width).map((line) => paint(bright, line));
+  // The links, each after a dim label and its number, lined up. A link too long for that line
+  // goes on the lines after, broken where it reaches the edge, so it can always be read whole.
   const issue = view.issue ? [["issue", view.issue.id, view.issue.link ?? ""]] : [];
   const pr = view.pr === null ? [] : [["PR", `#${view.pr}`, view.prPage?.link ?? ""]];
-  const links = [...issue, ...pr].map(([label = "", id = "", link = ""]) => {
-    const plain = cut(`${label.padEnd(6)}${id}  ${link}`.trimEnd());
-    return `${paint(grey, plain.slice(0, 6))}${plain.slice(6)}`;
+  const links = [...issue, ...pr].flatMap(([label = "", id = "", link = ""]) => {
+    const named = cut(`${label.padEnd(6)}${id}`);
+    const start = `${paint(grey, named.slice(0, 6))}${named.slice(6)}`;
+    if (!link) return [start];
+    if (Bun.stringWidth(`${named}  ${link}`) <= width) return [`${start}  ${link}`];
+    return [start, ...folded(link, width)];
   });
   // The stage and the row's word, in its colour, such as `Building · question`, or cut without
   // its colours when too wide.
@@ -72,17 +88,21 @@ function detailLines(row: Row, details: Details, width: number): string[] {
     Bun.stringWidth(`${stage}${word}`) <= width
       ? `${paint(bright, stage)}${paint(markColours[row.colour], word)}`
       : cut(`${stage}${word}`);
-  // CI as a whole, then each check with its mark, or in words, without colours, when the marks
-  // don't fit.
+  // CI as a whole, then each check with its mark, going on over as many lines as they need.
   const page = view.prPage;
-  const ci: string[] = [];
-  if (page) {
-    const summary = `CI ${page.ci}${page.checks.length ? ":" : ""}`;
-    const marked = page.checks.map((check) => `${check.name} ${checkMarks[check.state]}`);
-    const line = [summary, ...marked].join("  ");
-    const worded = [summary, ...page.checks.map((check) => `${check.name} ${check.state}`)];
-    ci.push(Bun.stringWidth(line) <= width ? line : cut(worded.join("  ")));
-  }
+  const summary = page ? `CI ${page.ci}${page.checks.length ? ":" : ""}` : "";
+  const ci = page
+    ? packed(
+        [
+          { plain: summary, shown: summary },
+          ...page.checks.map((check) => ({
+            plain: `${check.name} ${Bun.stripANSI(checkMarks[check.state])}`,
+            shown: `${check.name} ${checkMarks[check.state]}`,
+          })),
+        ],
+        width,
+      )
+    : [];
   const merge = view.merge === null ? [] : [cut(view.merge)];
   // The review's round and verdict, then what it found, each finding on one line.
   const review = view.review;
@@ -130,6 +150,7 @@ function keepColours(line: string): string {
 // prompt. Each line is cut on the right rather than wrapped, so a line of the agent's stays one
 // line, and it ends by resetting colours, so none reaches the line after it.
 function screenLines(screen: string, width: number, count: number): string[] {
+  if (count <= 0) return [];
   const lines = screen.replace(/\n$/, "").split("\n").map(keepColours);
   while (lines.length > 0 && Bun.stripANSI(lines.at(-1) ?? "").trim() === "") lines.pop();
   return lines.slice(-count).map((line) => `${Bun.sliceAnsi(line, 0, width)}\x1b[0m`);
@@ -137,8 +158,9 @@ function screenLines(screen: string, width: number, count: number): string[] {
 
 // Returns the pane for the row you are on as exactly `height` lines, each `width` columns wide at
 // most. On a row that isn't a task, such as the lead's, it is empty. Otherwise the task's details
-// come first, then a dim line, then its agent's live screen filling the rest, or the line that
-// says why there is none. The details give way to the live view when the pane is short.
+// come first, whole, then a dim line, then its agent's live screen filling the rest, or the line
+// that says why there is none. In a pane too short for both, the details keep their room, and
+// the live view shows only what is left.
 export function drawPane(
   row: Row | undefined,
   details: Details | null,
@@ -148,7 +170,7 @@ export function drawPane(
 ): string[] {
   const blank = (count: number) => Array.from({ length: Math.max(count, 0) }, () => "");
   if (!row || details === null) return blank(height);
-  const top = detailLines(row, details, width).slice(0, Math.max(height - liveLeast - 2, 0));
+  const top = detailLines(row, details, width).slice(0, height);
   if (live === null) return [...top, ...blank(height - top.length)].slice(0, height);
   const rule = paint(grey, "─".repeat(width));
   const room = height - top.length - 2;

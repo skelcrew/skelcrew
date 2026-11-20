@@ -1048,15 +1048,18 @@ const type = (text: string) => tmux("send-keys", "-t", "=one:", "-l", text);
 
 // Opens the list of app in a terminal of its own, 100 columns wide unless `width` says, with the
 // agents app-7, app-12 and the lead running. app-12 prints `says` first. `bin` is a folder of
-// programs the list finds before the real ones. The terminal logs when the list returned.
+// programs the list finds before the real ones. The terminal logs when the list returned, and its
+// program waits `linger` milliseconds after that before it ends.
 async function open({
   width = 100,
   bin = "",
   says = "",
+  linger = 0,
 }: {
   width?: number;
   bin?: string;
   says?: string;
+  linger?: number;
 } = {}): Promise<void> {
   daemon();
   agent("lead", { repository: "simon/app", role: "lead" });
@@ -1068,6 +1071,7 @@ async function open({
     `import { runList } from ${JSON.stringify(source("list/list.ts"))};
 await runList(${JSON.stringify(agents)}, "simon/app");
 await Bun.write(${JSON.stringify(join(home, "left"))}, "left");
+await Bun.sleep(${linger});
 process.exit(0);`,
   );
   const path = bin ? `PATH=${bin}:${process.env.PATH ?? ""}` : "";
@@ -1956,4 +1960,60 @@ test("the list stays quick to move while the live view reads", async () => {
   }
   // Each move shows within a fifth of a second, waits for the terminal included.
   expect(Math.max(...took)).toBeLessThan(200);
+});
+
+// Puts app-12's builder on a runtime plugin's host whose read of a screen takes 3 seconds, as a
+// host on a slow machine can. Each read gives a screen of its own, so each one is drawn.
+function slowHost(): void {
+  const plugin = join(home, "plugin-slow");
+  mkdirSync(plugin, { recursive: true });
+  writeFileSync(
+    join(plugin, "session.sh"),
+    `read -r question
+case "$question" in *'"read"'*) sleep 3; printf '{"screen":"slow screen %s"}\\n' "$(date +%s%N)" ;; esac
+`,
+  );
+  writeFileSync(
+    join(plugin, "skelcrew-plugin.yaml"),
+    "name: slow\nversion: 0.1.0\nskelcrew: 0.1.0\nabout: A host\nkind: runtime\nprovides: [sessions]\nsession: [sh, session.sh]\nattach: [sh, session.sh]\n",
+  );
+  sql(`INSERT INTO plugins (name, folder) VALUES ('slow', '${plugin}');
+UPDATE threads SET host = 'slow', host_id = 'slow-app-12' WHERE folder = 'app-12'`);
+}
+
+test("a host slow to read an agent's screen never holds up the keys", async () => {
+  slowHost();
+  await open({ width: wide });
+  await until(
+    () => liveSeen().some((line) => line.startsWith("slow screen")),
+    "the slow host's screen",
+  );
+  // Each move onto app-12 starts a read of 3 seconds. The moves after it still show at once.
+  press("Up");
+  press("Down");
+  const start = performance.now();
+  press("Down");
+  press("Down");
+  await until(() => here().startsWith("▸ ○ app-7"), "app-7's row");
+  expect(performance.now() - start).toBeLessThan(1000);
+  // The read under way ends with the host's answer, which the test waits for, as it started it.
+  await Bun.sleep(3500);
+});
+
+test("a read that answers after the list left draws nothing over your terminal", async () => {
+  slowHost();
+  await open({ width: wide, linger: 5000 });
+  await until(
+    () => liveSeen().some((line) => line.startsWith("slow screen")),
+    "the slow host's screen",
+  );
+  // A read starts at once on coming back to app-12, and q leaves while it is under way.
+  press("Down");
+  press("Up");
+  await until(() => here().startsWith("▸ ● app-12"), "app-12's row");
+  type("q");
+  await until(() => read(join(home, "left")) === "left", "the list to leave");
+  await Bun.sleep(3500);
+  expect(seen()).toContain("Your agents keep running.");
+  expect(seen()).not.toContain("q/esc quit");
 });
