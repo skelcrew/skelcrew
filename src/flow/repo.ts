@@ -686,7 +686,10 @@ export async function initRepo(sessions: string): Promise<boolean> {
   // .agents/ counts too: tracked files there you deleted come back as sc init writes it, and the
   // commit would take the deletions and the new files alike.
   const dirty = ["skelcrew.yaml", "skelcrew.lock", ".agents/"].filter(
-    (path) => gitIn(root, ["status", "--porcelain", "--", path]).said !== "",
+    // Untracked files are always listed, whatever status.showUntrackedFiles says, as a file of
+    // yours that git doesn't track yet holds changes of yours all the same.
+    (path) =>
+      gitIn(root, ["status", "--porcelain", "--untracked-files=all", "--", path]).said !== "",
   );
   if (!hasConfig) writeFileSync(file, starterConfig, { flag: "wx" });
   // The forge's plugin is installed before the repository comes in, so it can claim the remote.

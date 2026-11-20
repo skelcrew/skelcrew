@@ -1207,6 +1207,22 @@ test("init with other changes staged asks nothing and leaves the commit to you",
   expect(git(checkout, "status", "--porcelain")).toBe("A  notes.txt\n");
 });
 
+// An untracked skelcrew.yaml is yours, even where git is set to hide untracked files, so the
+// plugin sc init adds to it doesn't take its lines into a commit.
+test("init asks nothing when a file it edits is yours and untracked, even with untracked files hidden", async () => {
+  const checkout = onGitHub("simon/app", "WRITE");
+  githubInstalledAsYours();
+  git(checkout, "config", "status.showUntrackedFiles", "no");
+  writeFileSync(join(checkout, "skelcrew.yaml"), "# Mine, never committed.\nsetup: [make]\n");
+  const run = await initAtTerminal(checkout, "y\n");
+  expect(run.code).toBe(0);
+  expect(run.out).not.toContain("now? [Y/n]");
+  expect(run.out).toContain(
+    "skelcrew.yaml had changes of yours already, which the commit would take too, so Skelcrew leaves it to you.",
+  );
+  expect(git(checkout, "log", "-1", "--format=%s")).toBe("start\n");
+});
+
 // Tracked files in .agents/ you deleted come back as sc init writes .agents/ again, and its commit
 // would take your deletions too, so it asks nothing.
 test("init asks nothing when .agents/ had tracked files you deleted", async () => {
