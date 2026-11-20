@@ -76,7 +76,7 @@ Plugins bring in work and change where agents run. They run as you, so Skelcrew 
 | `sc plugins` | Lists your plugins, and what `sc install` would change. |
 | `sc install` | Installs the plugins the files name, after asking. |
 
-Agents run in tmux by default. As an option, herdr can host them through its runtime plugin, `skelcrew/skelcrew-herdr`: add it with `sc add -g`, then set `session: herdr` in your `config.yaml`.
+Agents run in tmux by default. As an option, herdr can host them through its runtime plugin, `skelcrew/skelcrew-herdr`: add it with `sc add -g skelcrew/skelcrew-herdr`, then set `session: herdr` in your `config.yaml`.
 
 ## How it works
 
