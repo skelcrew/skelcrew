@@ -248,7 +248,9 @@ await serve(${JSON.stringify(socket)}, 200);`;
     };
     const queued = (folder: string) => row(folder).queued !== null;
     const ready = (folder: string) =>
-      read(join(data(), "threads", `${folder}.log`)).includes(`${folder} is ready on branch`);
+      read(join(data(), "threads", `${folder}.log`)).includes(
+        `${folder.toUpperCase()} is ready on branch`,
+      );
     // Starts a thread on what you said, whose builder submits at once.
     const start = async (title: string) =>
       expect((await skel(["start", "app", title, "Do it"])).err).toBe("");
