@@ -524,6 +524,75 @@ function usageLimit(error: string, now: number): { reset: number | null } | null
   return { reset: again === undefined ? null : resetTime(again, now) };
 }
 
+// Returns the line where Codex's own input area starts on its screen, given as its lines with
+// their colours, or null when it isn't found, such as after an update that redrew it. The area
+// is a shaded box: a shaded blank line, its › prompt with what is typed under it, blank lines
+// included, and a shaded blank line, then one or two indented footer lines in dim text, ending
+// the screen.
+// Earlier messages in the output are shaded and start with › too, but Codex's output after one
+// starts with •. Anything else shows whole, as a wrong cut could hide the agent's output.
+function inputStart(screen: string[]): number | null {
+  const lines = screen.map((line) => Bun.stripANSI(line));
+  const looks = styles(screen);
+  const shaded = (at: number) => looks[at]?.shaded ?? false;
+  const blank = (line: string | undefined) => line !== undefined && line.trim() === "";
+  // A line of the box with nothing on it but its shade.
+  const padding = (at: number) => blank(lines[at]) && shaded(at);
+  const at = lines.findLastIndex((line) => line.startsWith("›"));
+  if (at < 1 || !shaded(at) || !padding(at - 1)) return null;
+  if (lines.slice(at + 1).some((line) => line.startsWith("•"))) return null;
+  // The box goes on while its lines are shaded, through what is typed, blank lines in it
+  // included, and ends with a shaded blank line.
+  let end = at + 1;
+  while (end < screen.length && shaded(end)) end++;
+  if (end - 1 === at || !padding(end - 1)) return null;
+  const footer = lines.flatMap((line, i) => (i >= end && !blank(line) ? [i] : []));
+  const dim = footer.every((i) => lines[i]?.startsWith("  ") && looks[i]?.dim);
+  return footer.length >= 1 && footer.length <= 2 && dim ? at - 1 : null;
+}
+
+// Returns how each line of a screen is styled: whether a background colour shows on it, as on
+// Codex's input box, and whether all its text is dim, as its footer is. A style set on one line
+// goes on over the lines after it until reset, as a terminal shows it, and tmux can capture a
+// screen that way. Only what a line draws counts, spaces included, so a line that resets the
+// background before drawing anything isn't shaded.
+function styles(screen: string[]): { shaded: boolean; dim: boolean }[] {
+  const esc = "\x1b";
+  // The background and dimness set now, carried from line to line.
+  let background = false;
+  let dimNow = false;
+  return screen.map((line) => {
+    let shaded = false;
+    let dim = true;
+    for (const part of line.split(new RegExp(`(${esc}\\[[0-9;:]*m)`))) {
+      const sgr = new RegExp(`^${esc}\\[([0-9;:]*)m$`).exec(part);
+      if (!sgr) {
+        // Text shown while dim is off makes the line not dim, spaces aside.
+        if (part.trim() !== "" && !dimNow) dim = false;
+        if (part !== "" && background) shaded = true;
+        continue;
+      }
+      // A colour from a palette or in red, green and blue takes numbers of its own after 38, 48
+      // or 58: with colons, such as 48:2::10:20:0, all in one parameter, and with semicolons,
+      // such as 38;5;2, in the parameters after it, which are skipped. Neither is read as codes
+      // of its own, so a 0 in a colour never resets.
+      const parameters = (sgr[1] ?? "").split(";");
+      for (let at = 0; at < parameters.length; at++) {
+        const parameter = parameters[at] ?? "";
+        const code = Number(parameter.split(":")[0] ?? "");
+        if (code === 48 || (code >= 40 && code <= 47) || (code >= 100 && code <= 107))
+          background = true;
+        if (code === 0 || code === 49) background = false;
+        if (code === 2) dimNow = true;
+        if (code === 0 || code === 22) dimNow = false;
+        const extended = code === 38 || code === 48 || code === 58;
+        if (extended && !parameter.includes(":")) at += parameters[at + 1] === "2" ? 4 : 2;
+      }
+    }
+    return { shaded, dim };
+  });
+}
+
 // Codex as Skelcrew knows it. While a turn runs it shows "esc to interrupt". Its empty input
 // always shows "› Ask Codex to do anything", even mid-turn, so that whole line is its prompt:
 // a line holding only › never shows. codex exec reads CODEX_API_KEY: given only
@@ -541,6 +610,7 @@ export const codex = {
   saved: savedConversation,
   conversation: conversationFile,
   progress: readProgress,
+  inputStart,
   review: reviewCommand,
   answer: readAnswer,
   failure: reportedError,

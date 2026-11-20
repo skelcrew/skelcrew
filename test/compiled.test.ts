@@ -169,12 +169,12 @@ test("the screen's panes run the single file itself, with no checkout to find", 
   const screen = JSON.stringify(source("screen/screen.ts"));
   writeFileSync(
     entry,
-    `import { skelcrewCommand } from ${screen};\nconsole.log(JSON.stringify(skelcrewCommand("details", "a", "simon/app", "app-12")));`,
+    `import { skelcrewCommand } from ${screen};\nconsole.log(JSON.stringify(skelcrewCommand("details", "a", "simon/app", "app-12", "strip")));`,
   );
   const file = join(home, "panes", "skel");
   compile(entry, file);
   const said = Bun.spawnSync([file]).stdout.toString();
-  expect(JSON.parse(said)).toEqual([file, "details", "a", "simon/app", "app-12"]);
+  expect(JSON.parse(said)).toEqual([file, "details", "a", "simon/app", "app-12", "strip"]);
 });
 
 describe("a release setting up a server", () => {

@@ -1,0 +1,10 @@
+• Done.
+
+[48;5;236m                                                           [49m
+[48;5;236m› typed words                                              [49m
+[48;5;236m  more words
+                                                           [49m
+
+  [2m100% context left[0m
+
+

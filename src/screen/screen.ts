@@ -6,23 +6,27 @@ import { applyConfig, attachCommand } from "../agents/sessions.ts";
 import { envWithoutTmux, screenSocket, tmuxIsAtLeast } from "../agents/tmux.ts";
 import { openDb } from "../db.ts";
 import { leadOf } from "../flow/lead.ts";
+import { listShare, listWidth } from "../list/layout.ts";
 import { attachOnHostLine, pluginHost } from "../plugins/runtime.ts";
 import { windowTitle } from "../say.ts";
 import { mainFile, singleFile } from "../version.ts";
 
-// How wide the sidebar is, with the line it draws at its edge: wide enough that a task's two lines
-// usually fit whole, such as `working · Editing rows.ts · #40 · CI passed · 14:31`. On a terminal
-// too narrow for it beside half the terminal, it narrows to what the right side leaves, as the
-// lead or an agent there must stay usable.
-export const sidebarWidth = 58;
-
-// Returns how wide the sidebar is in a terminal `width` columns wide: its own width, or less so the
-// right side keeps at least half, past the border between them.
-export const sidebarFor = (width: number) => Math.min(sidebarWidth, Math.floor((width - 1) / 2));
+// Returns how wide the sidebar is, with the line it draws at its edge, in a terminal `width`
+// columns wide: as wide as sc --list's list, as both show the same rows. On a terminal too narrow
+// for that beside half the terminal, it narrows to what the right side leaves, as the lead or an
+// agent there must stay usable.
+export const sidebarFor = (width: number) =>
+  Math.min(listWidth(width), Math.floor((width - 1) / 2));
 
 // The same width as a tmux format, which tmux works out itself on each resize, from the window's
-// width.
-const sidebarFormat = `#{?#{e|<:#{window_width},${2 * sidebarWidth + 1}},#{e|/:#{e|-:#{window_width},1},2},${sidebarWidth}}`;
+// width. Its steps are those of the two functions above, from the narrowest terminal up.
+const { percent, least, most } = listShare;
+const share = `#{e|/:#{e|*:#{window_width},${percent}},100}`;
+const sidebarFormat = [
+  `#{?#{e|<:#{window_width},${2 * least + 1}},#{e|/:#{e|-:#{window_width},1},2},`,
+  `#{?#{e|<:${share},${least}},${least},`,
+  `#{?#{e|>:${share},${most}},${most},${share}}}}`,
+].join("");
 
 // A word in the command of a right side attached to a builder. The screen's tmux finds it there,
 // so Ctrl-\ ends only that attachment, never the lead or a task's details.

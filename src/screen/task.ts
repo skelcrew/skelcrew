@@ -15,15 +15,23 @@ import { errorText } from "../say.ts";
 import { attachedMark, skelcrewCommand } from "./screen.ts";
 
 // Returns the command that runs a task's details in the screen's right pane, by the task's row
-// name, such as app-12, in the repository named by its owner/name.
-const detailsCommand = (agents: string, repository: string, name: string) =>
-  skelcrewCommand("details", agents, repository, name);
+// name, such as app-12, in the repository named by its owner/name. `full` shows its builder's
+// whole screen rather than its last few lines.
+const detailsCommand = (agents: string, repository: string, name: string, full: boolean) =>
+  skelcrewCommand("details", agents, repository, name, full ? "full" : "strip");
 
 // Shows a task's details and its builder's live screen on the right side of the screen whose
-// session is named, by the task's row name, such as app-12. What you type stays with the
-// sidebar, so the list's keys work and nothing reaches the builder.
-export function showTask(agents: string, session: string, repository: string, name: string): void {
-  respawnPane(agents, `=${session}:.1`, detailsCommand(agents, repository, name));
+// session is named, by the task's row name, such as app-12: its last few lines, or its whole
+// screen when `full`. What you type stays with the sidebar, so the list's keys work and nothing
+// reaches the builder.
+export function showTask(
+  agents: string,
+  session: string,
+  repository: string,
+  name: string,
+  full: boolean,
+): void {
+  respawnPane(agents, `=${session}:.1`, detailsCommand(agents, repository, name, full));
   screenTmux(agents, ["select-pane", "-t", `=${session}:.0`]);
 }
 
@@ -34,12 +42,13 @@ export function showTask(agents: string, session: string, repository: string, na
 // by the builder ending, even one on tmux whose session stays with its last screen, the right
 // side shows the task's details again and your typing goes back to the sidebar. Returns why it
 // couldn't attach, such as a builder that isn't running, or null once attached or when you moved
-// to another row before it could.
+// to another row before it could. The details come back as `full` says.
 export async function attachTask(
   agents: string,
   session: string,
   repository: string,
   name: string,
+  full: boolean,
 ): Promise<string | null> {
   const db = openDb();
   const [owner = "", repo = ""] = repository.split("/");
@@ -61,7 +70,7 @@ export async function attachTask(
     const back = [
       `: ${attachedMark}`,
       `tmux -L ${quoteForSh(screenSocket(agents))} select-pane -t ${quoteForSh(`=${session}:.0`)}`,
-      `exec ${detailsCommand(agents, repository, row.name).map(quoteForSh).join(" ")}`,
+      `exec ${detailsCommand(agents, repository, row.name, full).map(quoteForSh).join(" ")}`,
     ].join("; ");
     attach =
       typeof host === "string"
@@ -86,13 +95,15 @@ export async function attachTask(
 }
 
 // Runs a task's details in the screen's right pane until the pane is replaced, by the task's row
-// name in the repository named by its owner/name. It reads the task again each second and its
+// name in the repository named by its owner/name, with its builder's whole screen when `full`, or
+// its last few lines. It reads the task again each second and its
 // builder's screen 4 times a second, as the list's pane does, and writes only when what shows
 // changed. It reads no keys: the sidebar has your typing while this shows.
 export async function runTaskDetails(
   agents: string,
   repository: string,
   name: string,
+  full: boolean,
 ): Promise<void> {
   const db = openDb();
   const [owner = "", repo = ""] = repository.split("/");
@@ -108,7 +119,7 @@ export async function runTaskDetails(
     const width = process.stdout.columns || 80;
     const height = process.stdout.rows || 24;
     const note = row ? liveNote(row) : null;
-    const lines = drawPane(row, details, note === null ? live : { note }, width, height);
+    const lines = drawPane(row, details, note === null ? live : { note }, width, height, full);
     const text = `\x1b[?25l\x1b[H${lines.map((line) => `${line}\x1b[K`).join("\r\n")}\x1b[J`;
     if (text === lastFrame) return;
     lastFrame = text;
