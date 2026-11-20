@@ -33,14 +33,18 @@ const config = [
   // All of tmux's own keys go: its default mouse keys pull a drag or the wheel into copy mode,
   // which would swallow your typing, and its prefix belongs to the agents' server. Alt-Q
   // here, not there, leaves the whole screen. Ctrl-Q does too, though nothing shows it, for a
-  // Mac terminal that doesn't send Option as Alt. So does Ctrl-\, the agents' server's key to
-  // detach: left to reach it, it would detach the agent's pane and leave it empty.
+  // Mac terminal that doesn't send Option as Alt. Ctrl-\ does nothing here: it only leaves an
+  // agent opened alone, back to where you came from. It stays bound, to an empty command, as
+  // left to reach the agents' server it would detach the agent's pane and leave it empty.
+  // Each key that leaves ends your terminal's session rather than detaching from it. tmux 3.6
+  // crashed about one time in five when a detach met another command, such as the sidebar's,
+  // ending at that moment, and every terminal on the server lost its screen.
   ["set", "-g", "prefix", "None"],
   ["set", "-g", "prefix2", "None"],
   ["unbind", "-a", "-T", "root"],
-  ["bind", "-n", "M-q", "detach-client"],
-  ["bind", "-n", "C-q", "detach-client"],
-  ["bind", "-n", "C-\\", "detach-client"],
+  ["bind", "-n", "M-q", "kill-session"],
+  ["bind", "-n", "C-q", "kill-session"],
+  ["bind", "-n", "C-\\", ""],
   // Keys that arrive faster than a millisecond apart are taken for a paste, and tmux then hands
   // them to the pane you type to rather than act on them. Several Alt keys in one read, as fast
   // typing, key repeat or a slow link bring, would lose all but the first two, and type the rest
@@ -109,8 +113,8 @@ const config = [
     "\x1b[<32;1;1M\x1b[<0;1;1m",
   ],
   ["set", "-g", "mouse", "on"],
-  // Ends a session as its client goes, by Alt-Q or by a terminal or ssh link that drops, and
-  // the server goes with its last session. It would also end a session made detached, so the
+  // Ends a session as its client goes, by a terminal or ssh link that drops, and the server goes
+  // with its last session. It would also end a session made detached, so the
   // session is made attached, in one go.
   ["set", "-g", "destroy-unattached", "on"],
   // xterm-256color, unlike tmux's default, tells the client in the right pane that it may use

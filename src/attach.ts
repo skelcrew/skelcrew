@@ -1,7 +1,7 @@
 // Running the daemon in the background, as sc up --bg does, then showing you a repository's
 // lead or a thread's builder once it runs this Skelcrew's code. Plain sc opens the screen on a
-// lead, sc --list shows the lead's repository as a list, and sc attach opens a builder. sc restart
-// restarts the daemon when you ask.
+// lead, sc --list shows the lead's repository as a list, and sc attach attaches to a builder
+// full screen. sc restart restarts the daemon when you ask.
 import { statSync } from "node:fs";
 import { hostname, userInfo } from "node:os";
 import { z } from "zod";
@@ -224,12 +224,10 @@ export async function attachToLead(
   return true;
 }
 
-// Opens the screen with a thread's builder on the right and its repository's lead in the
-// sidebar, and returns when you leave with Alt-Q. Only you can run it, since it takes over
-// your terminal. It checks the builder is running before it starts the daemon. A builder on a
-// runtime plugin's host is attached through that host instead, full screen, as the screen shows
-// only tmux's sessions. So is a builder whose lead runs on such a host, through tmux, as the
-// screen would wait beside it for a lead that never comes to tmux.
+// Attaches your terminal full screen to a thread's builder, with no sidebar, as Enter does
+// from the list, and returns when you leave it with Ctrl-\ or the builder ends. Only you can
+// run it, since it takes over your terminal. It checks the builder is running before it starts
+// the daemon. A builder on a runtime plugin's host is attached through that host instead.
 export async function attachToThread(
   sessions: string,
   repository: string,
@@ -246,19 +244,6 @@ export async function attachToThread(
   // Its hooks and sc reach the daemon wherever it runs, so the daemon runs first on any host.
   await upInBackground();
   if (typeof host !== "string") return attachOnHost(host, id);
-  // Attaching to a thread opens its repository, as plain sc in a checkout of it would, which
-  // opens its tab again if you closed it by exiting its lead, and starts that lead. It is asked
-  // each time, not only for a tab the database says is closed: a lead you exited a moment ago
-  // reads as open until the daemon's next look, which would then close the tab under the screen
-  // you just opened. The daemon notices the exit first. The builder's screen opens even when
-  // the lead can't start.
-  const fullName = `${thread.owner}/${thread.repo}`;
-  await ask({ command: "lead", from: fullName }, 60_000);
-  const lead = await leadSession(db, sessions, thread.owner, thread.repo);
-  if (lead === null || typeof lead.host !== "string") {
-    const failed = await attachSession(host, id);
-    if (failed) throw new Error(failed);
-    return;
-  }
-  await openScreen(sessions, id, lead.id, fullName);
+  const failed = await attachSession(host, id);
+  if (failed) throw new Error(failed);
 }

@@ -17,7 +17,7 @@ const sections: [string, [string, string][]][] = [
       ["start <repo> < <file>", "The same, with the title on stdin's first line"],
       ["stop <thread>", "End the builder, keeping its clone and PR"],
       ['rm <task> ["<reason>"]', "Close its PR, delete its branch and clone"],
-      ["attach <thread>", "Open that builder, with the sidebar"],
+      ["attach <thread>", "Open that builder full screen. ctrl+\\ detaches on tmux"],
       ["peek <thread>", "What that builder shows now, without attaching"],
       ["interrupt <thread>", "Stop that builder's turn, as Esc does"],
       ["review <task>", "Run the task's last review again"],
