@@ -73,7 +73,7 @@ sc ps             # the threads, with their status and which need you
 sc show app-12    # one task: its threads, PR, checks and review
 ```
 
-Use your task's name where these say `app-12`. The lead and `sc ls` show it: a task from an issue is named after it, such as `app-12`, and one you asked the lead for is named like `app-wr1`. The builder submits each round, and a fresh reviewer reviews it. When the PR is approved and green, merge it on GitHub or with `m` in the list. Or arm it to merge once it is ready:
+Use your task's name where these say `app-12`. The lead and `sc ls` show it: a task from an issue is named after it, such as `app-12`, and one you asked the lead for is named like `app-t100`. The builder submits each round, and a fresh reviewer reviews it. When the PR is approved and green, merge it on GitHub or with `m` in the list. Or arm it to merge once it is ready:
 
 ```sh
 sc merge --when-ready app-12

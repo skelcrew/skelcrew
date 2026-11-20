@@ -386,21 +386,9 @@ console.log(JSON.stringify({
   });
 });
 
-// Threads with no issue are named by a code of the machine's, so two machines working on one
-// repository never both have an app-t4 meaning different work.
-test("a machine's code is two letters from its name, so names from two machines differ", async () => {
-  const { codeOf } = await import("../src/db.ts");
-  expect(codeOf("workbox")).toBe("wr");
-  expect(codeOf("laptop")).toBe("lp");
-  expect(codeOf("simon-laptop")).toBe("sl");
-  expect(codeOf("Simons-MacBook-Pro.local")).toBe("sm");
-  expect(codeOf("aeo")).toBe("ae");
-  expect(codeOf("x")).toBe("xx");
-  expect(codeOf("1234")).toBe("xx");
-});
-
-// A remote two machines share, with a first commit on main, and two machines with the same code,
-// lp, such as laptop and lapdog. Returns the remote and each machine's home.
+// A remote two machines share, with a first commit on main, and two machines, laptop and lapdog.
+// Each has a database from when Skelcrew named threads by a code of the machine's, the same for
+// both, as for laptop and lapdog. Returns the remote and each machine's home.
 function twoMachines(): { remote: string; homes: string[] } {
   const remote = join(home, "app.git");
   const work = join(home, "work");
@@ -462,24 +450,105 @@ async function namesFrom(run: ReturnType<typeof startOn>): Promise<string[]> {
   return JSON.parse(out);
 }
 
-// Two machines with the same code take names from the remote they share, at the same moment.
-test("two machines with the same code starting threads at once never take one name", async () => {
+// Two machines take names from the remote they share, at the same moment.
+test("two machines starting threads at once never take one name", async () => {
   const { remote, homes } = twoMachines();
   const titles = ["One", "Two", "Three"];
   const runs = homes.map((machine) => startOn(machine, remote, titles));
   const names = (await Promise.all(runs.map(namesFrom))).flat();
   expect(names).toHaveLength(6);
   expect(new Set(names).size).toBe(6);
-  expect(names.every((name) => /^app-lp[1-6]$/.test(name))).toBe(true);
+  expect(names.every((name) => /^app-t10[0-5]$/.test(name))).toBe(true);
 }, 60_000);
 
 // A claimed name stays claimed once its branch is gone, such as once its PR merged.
 test("a name stays taken on another machine once claimed", async () => {
   const { remote, homes } = twoMachines();
   const [laptop = "", lapdog = ""] = homes;
-  expect(await namesFrom(startOn(laptop, remote, ["One"]))).toEqual(["app-lp1"]);
-  expect(await namesFrom(startOn(lapdog, remote, ["Two"]))).toEqual(["app-lp2"]);
+  expect(await namesFrom(startOn(laptop, remote, ["One"]))).toEqual(["app-t100"]);
+  expect(await namesFrom(startOn(lapdog, remote, ["Two"]))).toEqual(["app-t101"]);
 }, 60_000);
+
+// Threads named before Skelcrew claimed names on the remote, such as app-t25, were never claimed,
+// and live only in the database of the machine that started them, which may be another one. So
+// numbers start at 100, above all of them, and go on above every claim and every number this
+// machine's tasks hold, claimed or not. Claims of names from a machine's code, such as wr140,
+// don't count.
+test("a new thread takes t100, or the next number above every one claimed or held", async () => {
+  const { remote, homes } = twoMachines();
+  const [laptop = "", lapdog = ""] = homes;
+  const old = `db.run("INSERT INTO tasks (owner, repo, task) VALUES ('simon', 'app', 't25')");`;
+  expect(await namesFrom(startOn(laptop, remote, ["One"], old))).toEqual(["app-t100"]);
+  const work = join(home, "work");
+  for (const claim of ["t150", "wr140"])
+    Bun.spawnSync(["git", "-C", work, "push", "-q", remote, `HEAD:refs/skelcrew/names/${claim}`]);
+  const held = `db.run("INSERT INTO tasks (owner, repo, task) VALUES ('simon', 'app', 't170')");`;
+  expect(await namesFrom(startOn(lapdog, remote, ["Two", "Three"], held))).toEqual([
+    "app-t171",
+    "app-t172",
+  ]);
+}, 60_000);
+
+// A machine reads the claims, then another machine claims a higher name before it pushes. Its
+// claim of a name below that one is refused, so it reads again and names its task above it. Two
+// machines with different histories then never claim out of order, even at once.
+test("a claim made from claims read before another machine's is refused, and the next name goes above", async () => {
+  const { remote, homes } = twoMachines();
+  const [laptop = "", lapdog = ""] = homes;
+  const clone = join(laptop, ".local", "share", "skelcrew", "repos", "simon", "app");
+  Bun.spawnSync(["git", "clone", "-q", remote, clone]);
+  // The laptop reads the claims, and waits for the lapdog's claim before it claims t100.
+  const ready = join(home, "lapdog-claimed");
+  const code = `import { existsSync } from "node:fs";
+import { openDb } from ${JSON.stringify(source("db.ts"))};
+import { claimedNames, claimName } from ${JSON.stringify(source("flow/git.ts"))};
+const db = openDb();
+db.run("INSERT INTO repositories (name, owner, repo, remote) VALUES ('app', 'simon', 'app', ?)", [${JSON.stringify(remote)}]);
+const [repository] = db.query("SELECT * FROM repositories").all();
+const read = await claimedNames(db, repository);
+console.log("read");
+while (!existsSync(${JSON.stringify(ready)})) await Bun.sleep(20);
+console.log(JSON.stringify(await claimName(db, repository, ${JSON.stringify(clone)}, "t100", read.last)));
+db.run("DELETE FROM repositories");`;
+  const run = Bun.spawn([process.execPath, "-e", code], {
+    env: { ...process.env, HOME: laptop },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const out = run.stdout.getReader();
+  const decoder = new TextDecoder();
+  let said = "";
+  while (!said.includes("read\n")) said += decoder.decode((await out.read()).value);
+  // The lapdog holds t170, so it claims t171.
+  const held = `db.run("INSERT INTO tasks (owner, repo, task) VALUES ('simon', 'app', 't170')");`;
+  expect(await namesFrom(startOn(lapdog, remote, ["One"], held))).toEqual(["app-t171"]);
+  writeFileSync(ready, "");
+  while (true) {
+    const { value, done } = await out.read();
+    if (done) break;
+    said += decoder.decode(value);
+  }
+  expect(await new Response(run.stderr).text()).toBe("");
+  expect(said).toBe("read\nfalse\n");
+  // The laptop's next thread reads again and goes above the lapdog's.
+  expect(await namesFrom(startOn(laptop, remote, ["Two"]))).toEqual(["app-t172"]);
+}, 60_000);
+
+// The daemon of the release that named threads by the machine's code can still be running as a
+// newer sc opens the database. It reads the code each time it starts a thread, so the code stays.
+test("a database from when threads were named by the machine's code keeps that code", () => {
+  const { homes } = twoMachines();
+  const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
+const db = openDb();
+console.log(JSON.stringify(db.query("SELECT code FROM machine").all()));`;
+  const run = Bun.spawnSync([process.execPath, "-e", code], {
+    env: { ...process.env, HOME: homes[0] },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect(run.stderr.toString()).toBe("");
+  expect(JSON.parse(run.stdout.toString())).toEqual([{ code: "lp" }]);
+});
 
 // Skelcrew asks a repository's forge once, as it refreshes its clone, and the forge can give
 // another URL to clone from, such as https in place of ssh, as its login works there. A
@@ -524,9 +593,9 @@ exec ${Bun.which("git") ?? "git"} "$@"
     };
     writeFileSync(join(forge, "claims.json"), JSON.stringify({ [before]: answer }));
     const run = startOn(laptop, before, ["One"], `db.run("UPDATE repositories SET claimed = 0");`);
-    expect(await namesFrom(run)).toEqual(["app-lp1"]);
+    expect(await namesFrom(run)).toEqual(["app-t100"]);
     const claims = Bun.spawnSync(["git", "ls-remote", remote, "refs/skelcrew/names/*"]);
-    expect(claims.stdout.toString()).toContain("refs/skelcrew/names/lp1");
+    expect(claims.stdout.toString()).toContain("refs/skelcrew/names/t100");
   },
   60_000,
 );
@@ -563,19 +632,21 @@ ${check}`,
   expect(err).toBe("");
   // Making the clone logs that the repository is empty first.
   const [name = "", result = ""] = out.trim().split("\n").slice(-2);
-  expect(name).toBe("app-lp1");
+  expect(name).toBe("app-t100");
   expect(JSON.parse(result)).toEqual([
     true,
     "simon/app has no commits yet, so a thread has nothing to start from. Push a first commit, then start it again.",
   ]);
 }, 60_000);
 
-// An issue created after a thread with no issue, with the thread's ID, such as lp1, would share
-// its name. The copy of the tracker leaves it out, so app-lp1 stays the thread's alone.
+// An issue created after a thread with no issue, with the thread's ID, such as t100, would share
+// its name. The copy of the tracker leaves it out, so app-t100 stays the thread's alone. So is one
+// shaped like a name from a machine's code, such as wr4, which a thread may still have, and one
+// shaped like either in another case, such as T100, as names are typed in any case.
 test("an issue whose ID has the shape of Skelcrew's own is left out of the copy", async () => {
   const { remote, homes } = twoMachines();
   const [laptop = ""] = homes;
-  expect(await namesFrom(startOn(laptop, remote, ["One"]))).toEqual(["app-lp1"]);
+  expect(await namesFrom(startOn(laptop, remote, ["One"]))).toEqual(["app-t100"]);
   const issue = (id: string) => ({
     kind: "task",
     id,
@@ -593,8 +664,8 @@ test("an issue whose ID has the shape of Skelcrew's own is left out of the copy"
 import { saveItems } from ${JSON.stringify(source("flow/copy.ts"))};
 import { showTask } from ${JSON.stringify(source("flow/list.ts"))};
 const db = openDb();
-saveItems(db, "simon", "app", ${JSON.stringify([issue("lp1"), issue("t4"), issue("t4abc"), issue("12")])}, ["task"]);
-const shown = await showTask(db, { repo: "app", task: "lp1" });
+saveItems(db, "simon", "app", ${JSON.stringify([issue("t100"), issue("T100"), issue("wr4"), issue("t4abc"), issue("12")])}, ["task"]);
+const shown = await showTask(db, { repo: "app", task: "t100" });
 console.log(JSON.stringify({ ids: db.query("SELECT id FROM items ORDER BY id").all(),
   title: shown.title, issue: shown.issue }));`;
   const run = Bun.spawnSync([process.execPath, "-e", code], {
@@ -605,8 +676,9 @@ console.log(JSON.stringify({ ids: db.query("SELECT id FROM items ORDER BY id").a
   expect(run.stderr.toString()).toBe("");
   const lines = run.stdout.toString().trim().split("\n");
   expect(lines.slice(0, -1)).toEqual([
-    "left out issue lp1 of simon/app: Skelcrew names its own tasks like that",
-    "left out issue t4 of simon/app: Skelcrew names its own tasks like that",
+    "left out issue t100 of simon/app: Skelcrew names its own tasks like that",
+    "left out issue T100 of simon/app: Skelcrew names its own tasks like that",
+    "left out issue wr4 of simon/app: Skelcrew names its own tasks like that",
   ]);
   expect(JSON.parse(lines.at(-1) ?? "")).toEqual({
     ids: [{ id: "12" }, { id: "t4abc" }],
@@ -615,17 +687,18 @@ console.log(JSON.stringify({ ids: db.query("SELECT id FROM items ORDER BY id").a
   });
 }, 60_000);
 
-test("a database keeps its code, and t names keep working", async () => {
+// Threads keep the names they started with, such as app-wr4 from a machine's code, until they end.
+test("a thread named by a machine's code keeps its name", async () => {
   const { remote, homes } = twoMachines();
   const [laptop = ""] = homes;
-  const old = threadSql({ task: "t4", status: "done", title: "Old" });
+  const old = threadSql({ task: "wr4", status: "working", title: "Old" });
   const before = `db.run(${JSON.stringify(old)});`;
-  expect(await namesFrom(startOn(laptop, remote, ["One"], before))).toEqual(["app-lp1"]);
+  expect(await namesFrom(startOn(laptop, remote, ["One"], before))).toEqual(["app-t100"]);
   const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
 import { findThread } from ${JSON.stringify(source("flow/thread.ts"))};
 const db = openDb();
-const one = findThread(db, "app", "lp1");
-console.log(JSON.stringify({ old: findThread(db, "app", "t4").folder, branch: one.branch }));`;
+const one = findThread(db, "app", "t100");
+console.log(JSON.stringify({ old: findThread(db, "app", "wr4").folder, branch: one.branch }));`;
   const run = Bun.spawnSync([process.execPath, "-e", code], {
     env: { ...process.env, HOME: laptop },
     stdout: "pipe",
@@ -633,8 +706,8 @@ console.log(JSON.stringify({ old: findThread(db, "app", "t4").folder, branch: on
   });
   expect(run.stderr.toString()).toBe("");
   expect(JSON.parse(run.stdout.toString())).toEqual({
-    old: "app-t4",
-    branch: "skelcrew/lp1-one",
+    old: "app-wr4",
+    branch: "skelcrew/t100-one",
   });
 }, 60_000);
 
