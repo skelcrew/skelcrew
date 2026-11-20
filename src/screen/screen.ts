@@ -10,6 +10,7 @@ import { listShare, listWidth } from "../list/layout.ts";
 import { attachOnHostLine, pluginHost } from "../plugins/runtime.ts";
 import { windowTitle } from "../say.ts";
 import { mainFile, singleFile } from "../version.ts";
+import { agentFolderOption, copyDrops, runWithDrops } from "./drops.ts";
 
 // Returns how wide the sidebar is, with the line it draws at its edge, in a terminal `width`
 // columns wide: as wide as sc --list's list, as both show the same rows. On a terminal too narrow
@@ -31,6 +32,12 @@ const sidebarFormat = [
 // A word in the command of a right side attached to a builder. The screen's tmux finds it there,
 // so Ctrl-\ ends only that attachment, never the lead or a task's details.
 export const attachedMark = "skelcrew-attached";
+
+// Returns the name of the screen's session in one terminal. sc --remote picks the name on your
+// laptop and passes it along, so it can ask which agent shows. Otherwise it is this process's.
+export function screenName(given: string | undefined): string {
+  return given !== undefined && /^screen-[\w-]+$/.test(given) ? given : `screen-${process.pid}`;
+}
 
 // The tmux commands that set up the screen's server. They run each time the screen opens,
 // before its session starts, so a first draw never shows tmux's own look. Your own ~/.tmux.conf
@@ -248,8 +255,8 @@ export async function openScreen(
   if (env.TERM && !knownTerminal(env.TERM)) env.TERM = "xterm-256color";
   // The agents' server may have started under an older Skelcrew, so it gets today's settings.
   applyConfig(agents);
-  // This screen's session, named by this process, and the sidebar that opens on it.
-  const name = `screen-${process.pid}`;
+  // This screen's session, and the sidebar that opens on it.
+  const name = screenName(env.SKELCREW_SCREEN_NAME);
   // The name sc --remote passes along, such as simon@workbox. Empty on this machine.
   const where = env.SKELCREW_REMOTE_NAME ?? "";
   // The title is the session's own: terminals on this server can come from different laptops.
@@ -285,7 +292,16 @@ export async function openScreen(
   const commands = open.flatMap((command) => [...command, ";"]).slice(0, -1);
   const argv = ["tmux", "-L", screenSocket(agents), "-f", "/dev/null", ...commands];
   // tmux runs in your terminal until you leave. Only a screen that couldn't open is an error.
-  const code = await Bun.spawn(argv, { env, stdio: ["inherit", "inherit", "inherit"] }).exited;
+  // Files dropped onto the screen are copied into the folder of the agent your typing goes to,
+  // as the sidebar last said it, and to none while your typing goes to the sidebar.
+  const drop = async (files: string[]) => {
+    const asked = ["show", "-qv", "-t", `=${name}:`, agentFolderOption];
+    const folder = Bun.spawnSync(["tmux", "-L", screenSocket(agents), ...asked], { env })
+      .stdout.toString()
+      .trim();
+    return folder.startsWith("/") ? copyDrops(folder, files) : files.map(() => null);
+  };
+  const code = await runWithDrops(argv, drop, env);
   if (code !== 0) throw new Error(`couldn't open the screen: tmux exited with ${code}`);
   // tmux says [exited] on its way out, straight to your terminal, which reads like something went
   // wrong. Its line is the one above, so it is cleared, and the line saying what happened takes

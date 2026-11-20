@@ -18,7 +18,7 @@ import { openDb } from "../db.ts";
 import { leadOf } from "../flow/lead.ts";
 import { ListStage } from "../flow/stage.ts";
 import { doing, watchForStalls } from "../flow/stall.ts";
-import { liveThreads } from "../flow/thread.ts";
+import { cloneOf, liveThreads } from "../flow/thread.ts";
 import { type Asking, canOpenLinks, openPr, stillOffered } from "../list/actions.ts";
 import { drawRows, enterAttaches, listShare, type Target } from "../list/layout.ts";
 import {
@@ -37,6 +37,7 @@ import { quoteForSh } from "../plugins/plugin.ts";
 import { pluginHost } from "../plugins/runtime.ts";
 import { errorText } from "../say.ts";
 import { shownVersions } from "../version.ts";
+import { agentFolderOption } from "./drops.ts";
 import { agentFooter, tellFooter } from "./footer.ts";
 import { edge, filled, pad, paint, removeControlCodes } from "./look.ts";
 import { leadOnHost } from "./screen.ts";
@@ -248,6 +249,7 @@ export async function runSidebar(
     tty = paneTty(agents, rightPane);
     if (!next.startsWith("details:")) screenTmux(agents, ["select-pane", "-t", rightPane]);
     shown = next;
+    tellAgentFolder(!next.startsWith("details:"));
   };
   // Shows on the right what the row you are on is: the lead's session on the lead's row, and a
   // task's details on any other.
@@ -259,6 +261,27 @@ export async function runSidebar(
   // Returns the session of the agent the right side is about: the lead or an agent shown, or on a
   // task's row its builder, whether its details show or you attached to it.
   const about = () => (isDetails(shown) ? (rows[here]?.session ?? null) : shown);
+
+  // Tells the screen the folder of the agent your typing goes to, or nothing while it goes to the
+  // sidebar, so a file dropped onto the screen is copied where that agent reads it. `typing` says
+  // whether your typing goes to the right side. It is told only when it changed.
+  let toldFolder: string | null = null;
+  const tellAgentFolder = (typing: boolean) => {
+    const agent = typing ? about() : null;
+    let folder = "";
+    try {
+      if (agent === open.lead) folder = leadOf(db, open.owner, open.repo).folder;
+      else {
+        const thread = liveThreads(db).find((one) => one.folder === agent);
+        if (thread) folder = cloneOf(thread);
+      }
+    } catch {
+      // A repository Skelcrew no longer has has no agent to copy to.
+    }
+    if (folder === toldFolder) return;
+    toldFolder = folder;
+    screenTmux(agents, ["set", "-t", `=${session}:`, agentFolderOption, folder]);
+  };
 
   // Returns the harness of the agent in the named session, for what Esc stops: the open lead's,
   // or a builder's, which is Claude Code for one from before Skelcrew saved it. Empty for a
@@ -414,6 +437,9 @@ export async function runSidebar(
     const footer = doing("reading the footer's harness", () =>
       footerText(active.out.trim() !== "0"),
     );
+    doing("telling the screen where dropped files go", () =>
+      tellAgentFolder(active.out.trim() !== "0"),
+    );
     if (footer !== lastFooter) {
       lastFooter = footer;
       doing("drawing the footer", () => tellFooter(agents, session, footer));
@@ -441,6 +467,7 @@ export async function runSidebar(
     paneLead = leadAttach;
     screenTmux(agents, ["select-pane", "-t", rightPane]);
     shown = open.lead;
+    tellAgentFolder(true);
   }
   // Moves to the tab after the open one, by 1, or before it, by -1, each wrapping round.
   const nextRepository = (by: 1 | -1) => {
