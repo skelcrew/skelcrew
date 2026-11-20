@@ -1115,6 +1115,33 @@ test("init adds the forge's plugin to a skelcrew.yaml without changing its other
   );
 });
 
+// Written again, a file written as one map would change on every line, so init leaves it as it
+// is and says which line to add by hand. A lock written so is left the same way.
+test("init leaves a skelcrew.yaml or skelcrew.lock written as one map as it is", async () => {
+  const checkout = onGitHub("simon/app", "WRITE");
+  const commit = githubInstalledAsYours();
+  const yaml = join(checkout, "skelcrew.yaml");
+  const lock = join(checkout, "skelcrew.lock");
+  writeFileSync(yaml, "{setup: [ make ], test: [make test]}\n");
+  const run = await skel(["init"], "", checkout);
+  expect(run.err).toBe("");
+  expect(readFileSync(yaml, "utf8")).toBe("{setup: [ make ], test: [make test]}\n");
+  expect(existsSync(lock)).toBe(false);
+  expect(run.out).toContain(
+    "is written as one map, which Skelcrew leaves as it is. Add plugins: [skelcrew/skelcrew-github] to it by hand.",
+  );
+  writeFileSync(yaml, "setup: [make]\n");
+  const other = `{simon/skelcrew-other: { name: other, version: 1.0.0, commit: ${"b".repeat(40)} }}\n`;
+  writeFileSync(lock, other);
+  const again = await skel(["init"], "", checkout);
+  expect(again.err).toBe("");
+  expect(readFileSync(yaml, "utf8")).toBe("setup: [make]\n");
+  expect(readFileSync(lock, "utf8")).toBe(other);
+  expect(again.out).toContain(
+    `skelcrew.lock is written as one map, which Skelcrew leaves as it is. Add skelcrew/skelcrew-github: {name: github, version: 0.1.0, commit: ${commit}} to it by hand.`,
+  );
+});
+
 // A repository that names its plugins chose them, so init leaves its files as they are.
 test("init leaves a skelcrew.yaml that names plugins as it is", async () => {
   const checkout = onGitHub("simon/app", "WRITE");

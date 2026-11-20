@@ -585,7 +585,9 @@ function addForgePlugin(root: string, remote: string): "named" | "pinned" | null
     }
     if (addRepositoryPlugin(githubPlugin)) return "pinned";
   } catch (error) {
+    // The error says what to do, such as which line to add by hand.
     console.log(`Skelcrew couldn't add ${githubPlugin}: ${errorText(error)}.`);
+    return null;
   }
   console.log(`skelcrew.yaml names no forge plugin yet. sc add ${githubPlugin} adds it.`);
   return null;

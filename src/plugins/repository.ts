@@ -79,8 +79,8 @@ const asWritten = { lineWidth: 0, flowCollectionPadding: false };
 // byte for byte, as it would in the human's commit. A key that isn't there is added as a line at
 // the end of the document. One with an empty value, such as plugins: [] or a bare plugins:, gets
 // the value in its place, on one line.
-// Returns null when neither fits, such as for a file written as one map on one line, or a key
-// with a value already, which the whole file must be written again to change.
+// Returns null when neither fits, such as for a file written as one map, like {setup: [make]}, or
+// a key with a value already, which the whole file must be written again to change.
 function editedInPlace(text: string, key: string, value: unknown): string | null {
   const { contents } = parseDocument(text);
   // A line of ... ends the document, so a new line goes before it, or YAML would refuse the file.
@@ -109,21 +109,25 @@ function editedInPlace(text: string, key: string, value: unknown): string | null
 }
 
 // Returns `text` with `key` set to `value` as editedInPlace changes it, or null when it can't.
-// Only text that reads back with the value set is kept, so a case editedInPlace misses costs the
-// file's spacing, never its meaning.
+// Only text that reads back as the file did with the value set is kept, so a case editedInPlace
+// misses costs the file's spacing, never its meaning.
 function withKey(text: string, key: string, value: unknown): string | null {
   const changed = editedInPlace(text, key, value);
   if (changed === null) return null;
   try {
-    const read = z.record(z.string(), z.unknown()).parse(parse(changed));
-    return isDeepStrictEqual(read[key], value) ? changed : null;
+    const Keys = z.record(z.string(), z.unknown());
+    const before = Keys.parse(parse(text) ?? {});
+    return isDeepStrictEqual(Keys.parse(parse(changed)), { ...before, [key]: value })
+      ? changed
+      : null;
   } catch {
     return null;
   }
 }
 
 // Sets `key` to `value` in the YAML file, keeping its other lines as they are where it can, as
-// withKey does, and its comments otherwise. A file that isn't there yet is started with `start`,
+// withKey does, and its comments otherwise. Throws, naming the line to add by hand, for a file
+// written as one map, which it never changes. A file that isn't there yet is started with `start`,
 // a line on top saying what it is.
 function setKey(file: string, start: string, key: string, value: unknown): void {
   const text = readOr(file, start);
@@ -133,6 +137,13 @@ function setKey(file: string, start: string, key: string, value: unknown): void 
     return;
   }
   const document = parseDocument(text);
+  // Written again, a file written as one map would change on every line, so it is left as it is.
+  if (isMap(document.contents) && document.contents.flow) {
+    const line = stringify({ [key]: value }, { ...asWritten, collectionStyle: "flow" }).trim();
+    throw new Error(
+      `${file} is written as one map, which Skelcrew leaves as it is. Add ${line.slice(1, -1)} to it by hand`,
+    );
+  }
   document.set(key, value);
   writeFileSync(file, document.toString(asWritten));
 }
