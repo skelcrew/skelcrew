@@ -13,10 +13,7 @@ import {
   press,
   read,
   ready,
-  screen,
-  screenSessions,
   startTest,
-  tmux,
   type,
   until,
 } from "./screen.ts";
@@ -34,14 +31,6 @@ function drop(path: string): void {
   press("Enter");
 }
 
-// Waits until the sidebar has told the screen that dropped files go to the agent in `folder`,
-// which it does at its next look after your typing moved.
-const toldFolder = (folder: string) =>
-  until(() => {
-    const session = `=${screenSessions()[0] ?? ""}:`;
-    return tmux(screen, "show", "-qv", "-t", session, "@agent-folder").out.trim() === folder;
-  }, `dropped files to go to ${folder}`);
-
 // Waits for the line the agent got, and returns it.
 async function got(agent: string): Promise<string> {
   await until(() => read(`${agent}.typed`).endsWith("\n"), `${agent} to get the paste`);
@@ -54,7 +43,6 @@ test("a file dropped onto the lead reaches it as a copy in the lead's folder", a
   open("lead");
   await ready("lead");
   // app's lead is the one kept from before, in Skelcrew's folder named lead.
-  await toldFolder(join(skelcrew(), "lead"));
   drop(shot);
   const line = await got("lead");
   expect(line.startsWith(`${join(skelcrew(), "lead", ".skelcrew-drops")}/`)).toBe(true);
@@ -70,7 +58,6 @@ test("a file dropped onto a builder you attached to reaches it in its clone", as
   await ready("lead");
   press("M-S-Down");
   await attachTo("app-12");
-  await toldFolder(join(skelcrew(), "threads", "app-12"));
   drop(notes);
   const line = await got("app-12");
   expect(line.startsWith(`${join(skelcrew(), "threads", "app-12", ".skelcrew-drops")}/`)).toBe(
@@ -88,13 +75,26 @@ test("right after Ctrl-\\ back from a builder, a drop goes to its details, and n
   press("M-S-Down");
   await attachTo("app-12");
   const clone = join(skelcrew(), "threads", "app-12");
-  await toldFolder(clone);
   press("C-\\");
   await until(onDetails, "APP-12's details");
   drop(notes);
   await Bun.sleep(500);
   expect(existsSync(join(clone, ".skelcrew-drops"))).toBe(false);
   expect(read("app-12.typed")).toBe("");
+});
+
+test("a drop right after a key that moves off the lead goes with that move, so nothing is copied", async () => {
+  const notes = join(home, "notes.txt");
+  writeFileSync(notes, "notes");
+  open("lead");
+  await ready("lead");
+  // Alt-Shift-Down moves to APP-12's details, where your typing goes to the sidebar. The drop
+  // comes in the same breath, before the sidebar has acted on the key.
+  type(`\x1b[1;4B\x1b[200~${notes}\x1b[201~`);
+  await until(onDetails, "APP-12's details");
+  await Bun.sleep(500);
+  expect(existsSync(join(skelcrew(), "lead", ".skelcrew-drops"))).toBe(false);
+  expect(read("lead.typed")).toBe("");
 });
 
 test("text pasted onto the screen reaches the agent as it was", async () => {

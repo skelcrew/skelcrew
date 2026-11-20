@@ -3,7 +3,15 @@
 // is on your laptop. So a layer between your terminal and the screen copies each dropped file into
 // the agent's own folder and passes the paste on with the copies' paths. Everything else passes
 // through untouched.
-import { accessSync, constants, copyFileSync, mkdirSync, statSync, writeFileSync } from "node:fs";
+import {
+  accessSync,
+  constants,
+  copyFileSync,
+  mkdirSync,
+  realpathSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { basename, dirname, join } from "node:path";
 
 // The folder inside an agent's folder that holds its dropped files. It ignores itself in git, so
@@ -11,16 +19,22 @@ import { basename, dirname, join } from "node:path";
 // clone at the thread's end, and for a lead with sc repo rm.
 export const dropsFolder = ".skelcrew-drops";
 
-// The screen session's option that holds the folder of the agent the right side is about. The
-// sidebar keeps it.
-export const agentFolderOption = "@agent-folder";
+// How a drop learns which agent's folder its files go to. Keys typed just before the drop, such as
+// Alt-Down to another row, may still be on their way to the sidebar, so asking tmux at once could
+// name the agent you just left. So the layer sends `dropSignal` on, in your typing's stream,
+// right before the paste. It is a right click on the screen's top row, which nothing else uses,
+// and the screen's tmux types `dropAsk` into the sidebar for it, after every key before it. The
+// sidebar then sets `dropAnswerOption` on the screen's session to a count, which changes each
+// time, and the folder of the agent your typing goes to, or nothing while it goes to the sidebar.
+export const dropSignal = "\x1b[<2;1;1M\x1b[<2;1;1m";
+export const dropAsk = "\x1b]skel-drop\x07";
+export const dropAnswerOption = "@drop-answer";
 
-// What tmux shows, for the screen's session, as the folder dropped files go to: the agent's
-// folder while your typing goes to the right side, its pane 1, and nothing while it goes to the
-// sidebar, as on a task's details. tmux works it out at the moment of the drop, so it is never a
-// moment behind where your typing goes. sc --remote asks the server the same, by the screen's
-// name, to send a file from your laptop there.
-export const dropFolderFormat = `#{?#{==:#{pane_index},1},#{${agentFolderOption}},}`;
+// Returns the folder an answer of the sidebar names, or null for none.
+export function answeredFolder(answer: string): string | null {
+  const folder = answer.slice(answer.indexOf(" ") + 1);
+  return folder.startsWith("/") ? folder : null;
+}
 
 // The largest file copied. A paste waits while its files are copied, and over sc --remote while
 // they go up a link that may be slow, so a bigger file would hold up your typing for long. Agents
@@ -123,12 +137,24 @@ export function dropPath(folder: string, file: string): string {
   return join(folder, dropsFolder, unique, basename(file));
 }
 
+// Says whether the agent can read `file` by that path already: a path inside its folder, with no
+// .. in it, that stays inside once every link on the way is followed. A link inside that points
+// out, such as into your home folder, leads where the sandbox hides it, so its file is copied.
+function readableBy(folder: string, file: string): boolean {
+  if (!file.startsWith(`${folder}/`) || file.split("/").includes("..")) return false;
+  try {
+    return realpathSync(file).startsWith(`${realpathSync(folder)}/`);
+  } catch {
+    return false;
+  }
+}
+
 // Copies dropped files into an agent's folder on this machine, and returns each copy's path, in
-// order, or null for a file left as it was. A file already in the agent's folder is left, as the
-// agent reads it there: sc --remote put it there already.
+// order, or null for a file left as it was. A file the agent can read where it is is left, such
+// as one sc --remote sent there already.
 export function copyDrops(folder: string, files: string[]): (string | null)[] {
   return files.map((file) => {
-    if (file.startsWith(`${folder}/`)) return null;
+    if (readableBy(folder, file)) return null;
     try {
       const copy = dropPath(folder, file);
       mkdirSync(dirname(copy), { recursive: true });
@@ -142,12 +168,13 @@ export function copyDrops(folder: string, files: string[]): (string | null)[] {
 }
 
 // Puts dropped files where the agent on screen can read them, and returns each one's new path,
-// in order, or null for one left as it was.
-export type Drop = (files: string[]) => Promise<(string | null)[]>;
+// in order, or null for one left as it was. It calls `ask` to send dropSignal on, once it is
+// ready to see the sidebar's answer change.
+export type Drop = (files: string[], ask: () => void) => Promise<(string | null)[]>;
 
 // Returns the paste's text with each droppable path replaced by its copy's, or null when nothing
 // was copied, so the paste passes on as it came.
-async function rewritten(text: string, drop: Drop): Promise<string | null> {
+async function rewritten(text: string, drop: Drop, ask: () => void): Promise<string | null> {
   const parts = pastedPaths(text);
   if (!parts) return null;
   // Only the files that can be copied go to `drop`, each once, in the order pasted.
@@ -155,7 +182,7 @@ async function rewritten(text: string, drop: Drop): Promise<string | null> {
     part.path !== undefined && droppable(part.path) ? [part.path] : [],
   );
   if (files.length === 0) return null;
-  const copies = await drop(files);
+  const copies = await drop(files, ask);
   const copyOf = new Map(files.map((file, at) => [file, copies[at] ?? null]));
   if (![...copyOf.values()].some((copy) => copy !== null)) return null;
   return parts
@@ -234,7 +261,7 @@ export function pasteFilter(send: (bytes: Uint8Array) => void, drop: Drop) {
       // Paths wait for their files, then whatever came meanwhile follows, in order.
       copying = true;
       const after = rest;
-      rewritten(text, drop)
+      rewritten(text, drop, () => send(Buffer.from(dropSignal)))
         .catch(() => null)
         .then((changed) => {
           const changedPaste = Buffer.concat([begun, Buffer.from(`${changed}\x1b[201~`)]);

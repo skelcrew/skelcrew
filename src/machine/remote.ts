@@ -19,8 +19,9 @@ import { screenSocket } from "../agents/tmux.ts";
 import { sshFolder } from "../paths.ts";
 import { quietly } from "../run.ts";
 import {
+  answeredFolder,
   type Drop,
-  dropFolderFormat,
+  dropAnswerOption,
   dropPath,
   dropsFolder,
   runWithDrops,
@@ -315,22 +316,27 @@ const randomName = () => Math.random().toString(36).slice(2, 10);
 
 // Returns how files dropped onto the server's screen, named `screen`, reach the agent it shows:
 // each is sent over the shared ssh connection into that agent's folder there, where the agent
-// reads it, and its path there is what the paste gives. While your typing goes to the sidebar,
-// nothing is sent. These ssh calls never ask for a password, as your terminal is the screen's.
-// The screen there runs on the tmux server beside Skelcrew's own, skelcrew-screen.
+// reads it, and its path there is what the paste gives. The screen's sidebar there says which
+// agent that is, once it has the keys typed before the drop, as on one machine. While your typing
+// goes to the sidebar, nothing is sent. These ssh calls never ask for a password, as your
+// terminal is the screen's. The screen there runs on the tmux server beside Skelcrew's own,
+// skelcrew-screen.
 function dropOnServer(machine: Machine, screen: string): Drop {
   const quiet = (script: string) => {
     const [ssh = "ssh", ...rest] = machine.shell(script);
     return [ssh, "-o", "BatchMode=yes", ...rest];
   };
-  return async (files) => {
-    const asked = await quietly(
-      quiet(
-        `tmux -L ${screenSocket("skelcrew")} display -p -t =${screen}: ${quoted(dropFolderFormat)}`,
-      ),
-    );
-    const folder = asked.out.trim();
-    if (!asked.ok || !folder.startsWith("/")) return files.map(() => null);
+  const read = `tmux -L ${screenSocket("skelcrew")} display -p -t =${screen}: '#{${dropAnswerOption}}'`;
+  return async (files, ask) => {
+    // The sidebar's last answer, then the drop's question, then a wait there, of up to two
+    // seconds, for the answer to change.
+    const before = await quietly(quiet(read));
+    if (!before.ok) return files.map(() => null);
+    ask();
+    const wait = `b=${quoted(before.out.trim())}; i=0; while [ $i -lt 200 ]; do a=$(${read}); [ "$a" != "$b" ] && { printf '%s\n' "$a"; exit 0; }; sleep 0.01; i=$((i+1)); done; exit 1`;
+    const asked = await quietly(quiet(`sh -c ${quoted(wait)}`));
+    const folder = asked.ok ? answeredFolder(asked.out.trim()) : null;
+    if (folder === null) return files.map(() => null);
     return Promise.all(
       files.map(async (file) => {
         const copy = dropPath(folder, file);

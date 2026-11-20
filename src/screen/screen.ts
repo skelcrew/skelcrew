@@ -10,7 +10,14 @@ import { listShare, listWidth } from "../list/layout.ts";
 import { attachOnHostLine, pluginHost } from "../plugins/runtime.ts";
 import { windowTitle } from "../say.ts";
 import { mainFile, singleFile } from "../version.ts";
-import { copyDrops, dropFolderFormat, runWithDrops } from "./drops.ts";
+import {
+  answeredFolder,
+  copyDrops,
+  type Drop,
+  dropAnswerOption,
+  dropAsk,
+  runWithDrops,
+} from "./drops.ts";
 
 // Returns how wide the sidebar is, with the line it draws at its edge, in a terminal `width`
 // columns wide: as wide as sc --list's list, as both show the same rows. On a terminal too narrow
@@ -117,6 +124,19 @@ const config = [
     "run-shell",
     "-C",
     'send-keys -t :.0 -l "\x1b]skel-tab;#{mouse_status_range}\x07"',
+  ]),
+  // A right click on the top row is how a file dropped onto the screen asks the sidebar which
+  // agent it goes to, after the keys typed before it. tmux names the click by the part of the row
+  // it hit, which is the header's or a tab's, so each name is bound.
+  ...["", "Default", "Left", "Right"].map((part) => [
+    "bind",
+    "-n",
+    `MouseDown3Status${part}`,
+    "send-keys",
+    "-t",
+    ":.0",
+    "-l",
+    dropAsk,
   ]),
   // A click needs its own key: left alone, it reaches only the pane you type to. The wheel
   // goes on to the pane under it, as the agents' server decides what scrolling means.
@@ -293,13 +313,35 @@ export async function openScreen(
   const argv = ["tmux", "-L", screenSocket(agents), "-f", "/dev/null", ...commands];
   // tmux runs in your terminal until you leave. Only a screen that couldn't open is an error.
   // Files dropped onto the screen are copied into the folder of the agent your typing goes to,
-  // and to none while your typing goes to the sidebar, as tmux says at that moment.
-  const drop = async (files: string[]) => {
-    const asked = ["display", "-p", "-t", `=${name}:`, dropFolderFormat];
-    const folder = Bun.spawnSync(["tmux", "-L", screenSocket(agents), ...asked], { env })
+  // once the sidebar answers, and to none while your typing goes to the sidebar. A sidebar that
+  // doesn't answer within two seconds leaves the paste as it came.
+  const answer = () =>
+    Bun.spawnSync(
+      [
+        "tmux",
+        "-L",
+        screenSocket(agents),
+        "display",
+        "-p",
+        "-t",
+        `=${name}:`,
+        `#{${dropAnswerOption}}`,
+      ],
+      { env },
+    )
       .stdout.toString()
       .trim();
-    return folder.startsWith("/") ? copyDrops(folder, files) : files.map(() => null);
+  const drop: Drop = async (files, ask) => {
+    const before = answer();
+    ask();
+    for (let waited = 0; waited < 200; waited++) {
+      await Bun.sleep(10);
+      const now = answer();
+      if (now === before) continue;
+      const folder = answeredFolder(now);
+      return folder === null ? files.map(() => null) : copyDrops(folder, files);
+    }
+    return files.map(() => null);
   };
   const code = await runWithDrops(argv, drop, env);
   if (code !== 0) throw new Error(`couldn't open the screen: tmux exited with ${code}`);

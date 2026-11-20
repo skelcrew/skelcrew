@@ -10,11 +10,18 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { copyDrops, dropsFolder, largestDrop, pasteFilter } from "../src/screen/drops.ts";
+import {
+  copyDrops,
+  dropSignal,
+  dropsFolder,
+  largestDrop,
+  pasteFilter,
+} from "../src/screen/drops.ts";
 
 let home = "";
 let agent = "";
@@ -190,6 +197,35 @@ test("a double-quoted path with an escaped quote in its name is copied", async (
   );
   const copy = out.slice('\x1b[200~"'.length, -'"\x1b[201~'.length).replaceAll('\\"', '"');
   expect(readFileSync(copy, "utf8")).toBe('the text of say "hi".txt');
+});
+
+test("the drop's question goes on after the keys before it and ahead of the paste", async () => {
+  const shot = file("shot.png");
+  const take = pasteFilter(
+    (bytes) => {
+      sent += Buffer.from(bytes).toString();
+    },
+    async (files, ask) => {
+      ask();
+      return copyDrops(agent, files);
+    },
+  );
+  take(Buffer.from(`\x1b[1;4B${pasted(shot)}`));
+  const out = await afterCopies();
+  expect(out.startsWith(`\x1b[1;4B${dropSignal}\x1b[200~${agent}/`)).toBe(true);
+});
+
+test("a link in the agent's folder that leads out, or a path with .., is copied", async () => {
+  const shot = file("shot.png");
+  symlinkSync(shot, join(agent, "out.png"));
+  const take = filter();
+  take(Buffer.from(pasted(join(agent, "out.png"))));
+  const linked = await afterCopies();
+  expect(linked.startsWith(`\x1b[200~${agent}/${dropsFolder}/`)).toBe(true);
+  expect(linked.endsWith("/out.png\x1b[201~")).toBe(true);
+  sent = "";
+  take(Buffer.from(pasted(`${agent}/../shot.png`)));
+  expect((await afterCopies()).startsWith(`\x1b[200~${agent}/${dropsFolder}/`)).toBe(true);
 });
 
 test("a file already in the agent's folder keeps its path", async () => {

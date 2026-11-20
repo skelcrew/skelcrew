@@ -37,7 +37,7 @@ import { quoteForSh } from "../plugins/plugin.ts";
 import { pluginHost } from "../plugins/runtime.ts";
 import { errorText } from "../say.ts";
 import { shownVersions } from "../version.ts";
-import { agentFolderOption } from "./drops.ts";
+import { dropAnswerOption, dropAsk } from "./drops.ts";
 import { agentFooter, tellFooter } from "./footer.ts";
 import { edge, filled, pad, paint, removeControlCodes } from "./look.ts";
 import { leadOnHost } from "./screen.ts";
@@ -249,7 +249,6 @@ export async function runSidebar(
     tty = paneTty(agents, rightPane);
     if (!next.startsWith("details:")) screenTmux(agents, ["select-pane", "-t", rightPane]);
     shown = next;
-    tellAgentFolder();
   };
   // Shows on the right what the row you are on is: the lead's session on the lead's row, and a
   // task's details on any other.
@@ -262,14 +261,15 @@ export async function runSidebar(
   // task's row its builder, whether its details show or you attached to it.
   const about = () => (isDetails(shown) ? (rows[here]?.session ?? null) : shown);
 
-  // Tells the screen the folder of the agent the right side is about, so a file dropped onto the
-  // screen is copied where that agent reads it. It is told as soon as you move, whether or not
-  // you attached yet: the screen copies only while your typing goes to the right side, which it
-  // asks tmux at that moment, so a Ctrl-\ back to the details can't leave a stale folder behind.
-  // It is told only when it changed.
-  let toldFolder: string | null = null;
-  const tellAgentFolder = () => {
-    const agent = about();
+  // Answers a file dropped onto the screen, which asks which agent's folder it goes to: the
+  // folder of the agent your typing goes to now, or nothing while it goes to the sidebar, as on a
+  // task's details. The keys typed before the drop reached the sidebar first, so the answer
+  // follows where they moved you. Each answer starts with a mark of its own, so the screen sees
+  // it change even when the folder stays the same.
+  let answers = 0;
+  const answerDrop = () => {
+    const active = screenTmux(agents, ["display", "-p", "-t", `=${session}:`, "#{pane_index}"]);
+    const agent = active.out.trim() === "1" ? about() : null;
     let folder = "";
     try {
       if (agent === open.lead) folder = leadOf(db, open.owner, open.repo).folder;
@@ -280,9 +280,9 @@ export async function runSidebar(
     } catch {
       // A repository Skelcrew no longer has has no agent to copy to.
     }
-    if (folder === toldFolder) return;
-    toldFolder = folder;
-    screenTmux(agents, ["set", "-t", `=${session}:`, agentFolderOption, folder]);
+    answers++;
+    const answer = `${Date.now()}-${answers} ${folder}`;
+    screenTmux(agents, ["set", "-t", `=${session}:`, dropAnswerOption, answer]);
   };
 
   // Returns the harness of the agent in the named session, for what Esc stops: the open lead's,
@@ -439,7 +439,6 @@ export async function runSidebar(
     const footer = doing("reading the footer's harness", () =>
       footerText(active.out.trim() !== "0"),
     );
-    doing("telling the screen where dropped files go", tellAgentFolder);
     if (footer !== lastFooter) {
       lastFooter = footer;
       doing("drawing the footer", () => tellFooter(agents, session, footer));
@@ -467,7 +466,6 @@ export async function runSidebar(
     paneLead = leadAttach;
     screenTmux(agents, ["select-pane", "-t", rightPane]);
     shown = open.lead;
-    tellAgentFolder();
   }
   // Moves to the tab after the open one, by 1, or before it, by -1, each wrapping round.
   const nextRepository = (by: 1 | -1) => {
@@ -610,6 +608,8 @@ export async function runSidebar(
   // next key, which then does what it does. Nothing acts while the daemon is at work on an
   // answer. s and m work as in the list, and only reach the sidebar on a task's row.
   const press = (key: string) => {
+    // A drop's question is answered whatever else goes on, as the drop waits for it.
+    if (key === dropAsk) return answerDrop();
     if (working) return;
     // A reason shown on the right goes at the next key, which then does what it does.
     if (shown === refused) {
