@@ -1,6 +1,5 @@
 // What a poll of the forge finds on a thread's PR, against a running daemon: checks, comments,
 // conflicts and a branch moved on the forge, and the notices they bring the builder.
-
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";

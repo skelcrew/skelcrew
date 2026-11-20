@@ -1,6 +1,5 @@
 // A merge when ready, against a running daemon: armed only by you, at your own terminal, after
 // a y, it waits for Skelcrew's approval and green checks, then merges the head that was approved.
-
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";

@@ -1,7 +1,6 @@
 // Polling a repository's tracker and forge for events on a thread's PR, against a running
 // daemon: a fake plugin answers the poll from a file the test changes, and a shell script
 // stands in for the builder, keeping what is typed into it.
-
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";

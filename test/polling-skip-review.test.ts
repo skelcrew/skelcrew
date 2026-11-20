@@ -1,6 +1,5 @@
 // A merge without Skelcrew's approval, against a running daemon: it pins the head you saw, waits
 // for its checks, and files the review's findings once it merges.
-
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, rmSync, writeFileSync } from "node:fs";
