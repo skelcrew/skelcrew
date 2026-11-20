@@ -1632,6 +1632,25 @@ describe("the backlog", () => {
     expect(await listed("app-t101")).toMatchObject({ title: "Add import" });
   }, 60_000);
 
+  // The remote takes the push that files the task, and the connection drops before git hears
+  // so. The claim is this machine's, so the task is filed once, under that name.
+  test("a filing whose push reached the remote though git said it failed files the task once", async () => {
+    const work = addApp();
+    serve();
+    await untilCloned();
+    writeFileSync(
+      join(home, "bin", "git"),
+      `#!/bin/sh\ncase "$*" in *":refs/skelcrew/tasks/"*) ${Bun.which("git") ?? "git"} "$@"; echo "connection lost" >&2; exit 1 ;; esac\nexec ${Bun.which("git") ?? "git"} "$@"\n`,
+      { mode: 0o755 },
+    );
+    const filed = await skel("task", "add", "app", "Add export", "As JSON");
+    expect(filed.err).toBe("");
+    expect(filed.out).toBe("Filed app-t100 in the backlog. sc start app-t100 starts it.\n");
+    const refs = git(work, "ls-remote", "origin", "refs/skelcrew/tasks/*");
+    expect(refs).toContain("refs/skelcrew/tasks/t100");
+    expect(refs).not.toContain("refs/skelcrew/tasks/t101");
+  }, 60_000);
+
   test("sc rm deletes a task that never started, here and on the remote, and keeps its name", async () => {
     const work = addApp();
     serve();
