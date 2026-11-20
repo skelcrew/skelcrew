@@ -379,9 +379,9 @@ const hasColumn = (db: Database, table: string, column: string) =>
 // Creates the tables Skelcrew keeps, and adds the columns a database from an earlier release
 // lacks, leaving everything already there as it is.
 function prepareTables(db: Database): void {
-  // An earlier release named threads by a code of the machine's, kept in this table. Names are
-  // the same on every machine now, so the code is gone.
-  db.run("DROP TABLE IF EXISTS machine");
+  // An earlier release named threads by a code of the machine's, kept in a table named machine.
+  // Nothing reads it now, but it stays: that release's daemon can still be running as a newer sc
+  // opens the database, and it reads the code each time it starts a thread.
   db.run(`CREATE TABLE IF NOT EXISTS repositories (
     owner TEXT NOT NULL,
     repo TEXT NOT NULL,

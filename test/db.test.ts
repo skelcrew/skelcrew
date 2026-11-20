@@ -501,19 +501,20 @@ db.run("DELETE FROM repositories");`;
   expect(await namesFrom(startOn(laptop, remote, ["Two"]))).toEqual(["app-t27"]);
 }, 60_000);
 
-// The table that held the machine's code goes, as nothing reads it any more.
-test("a database from when threads were named by the machine's code loses that code", () => {
+// The daemon of the release that named threads by the machine's code can still be running as a
+// newer sc opens the database. It reads the code each time it starts a thread, so the code stays.
+test("a database from when threads were named by the machine's code keeps that code", () => {
   const { homes } = twoMachines();
   const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
 const db = openDb();
-console.log(JSON.stringify(db.query("SELECT name FROM sqlite_master WHERE name = 'machine'").all()));`;
+console.log(JSON.stringify(db.query("SELECT code FROM machine").all()));`;
   const run = Bun.spawnSync([process.execPath, "-e", code], {
     env: { ...process.env, HOME: homes[0] },
     stdout: "pipe",
     stderr: "pipe",
   });
   expect(run.stderr.toString()).toBe("");
-  expect(JSON.parse(run.stdout.toString())).toEqual([]);
+  expect(JSON.parse(run.stdout.toString())).toEqual([{ code: "lp" }]);
 });
 
 // Skelcrew asks a repository's forge once, as it refreshes its clone, and the forge can give
