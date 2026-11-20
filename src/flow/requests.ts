@@ -190,7 +190,7 @@ export type DaemonRequest = z.infer<typeof DaemonRequest>;
 // review of its own thread only. You and a lead may look at a builder's screen and stop its turn,
 // but a builder may not, as it has only its own. You type to a builder yourself in the sidebar, so
 // you have no tell. Merging is yours alone: no agent may merge, as merging stays a human's choice.
-// A lead may arm a merge, when ready or without Skelcrew's approval, only once your config lets it,
+// A lead may arm a merge, when ready or without Skelcrew's approval, only while your config lets it,
 // which the daemon checks at each one, and only when you ask it to. The lead may cancel one, which
 // is always safe. Builders and reviewers can't. Only you and the lead may mark a thread as
 // needing you, or clear it: a builder brings what it needs to the lead. Only a lead may brief another repository's lead, as
