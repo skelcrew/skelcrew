@@ -1,11 +1,12 @@
 // The test runner, scripts/test.ts: a run that goes past its time limit is stopped and fails,
-// in CI it prints how long each test took, and what a run starts never reaches the daemon of the
-// Skelcrew it runs in.
+// in CI it prints how long each test took, CI's shards split the files by those times, and what
+// a run starts never reaches the daemon of the Skelcrew it runs in.
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { timesOfFiles } from "../scripts/shards.ts";
 
 const runner = join(import.meta.dir, "..", "scripts", "test.ts");
 let folder = "";
@@ -104,6 +105,11 @@ test("other", () => {});
   expect(slow.seconds).toBeGreaterThanOrEqual(0.9);
   expect(other.at).toBeGreaterThan(0);
   expect(slow.at).toBeGreaterThan(0);
+  // The same times as one line to paste into test/times.json, which CI's shards are split by.
+  const json = out.split("For test/times.json:\n")[1]?.split("\n")[0] ?? "";
+  const times = timesOfFiles.parse(JSON.parse(json));
+  expect(Object.keys(times).toSorted()).toEqual(["other.test.ts", "slow.test.ts"]);
+  expect(times["other.test.ts"]).toBeGreaterThanOrEqual(1.7);
   // The run's summary page shows the same times, as anyone can read it without the job's log.
   const summary = readFileSync(join(folder, "summary"), "utf8");
   expect(summary).toContain("Time per file:");
@@ -172,6 +178,32 @@ test("late", () => {});
   expect(out).toMatch(/\n +cut off {2}late\.test\.ts\n/);
 });
 
+// CI runs the tests as shards. Each file runs in one shard, and the split follows the times in
+// test/times.json, so the one slow file gets a shard to itself.
+test("the shards split the files by their times, and together run each once", async () => {
+  mkdirSync(join(folder, "test"));
+  const names = ["slow", "a", "b"];
+  for (const name of names)
+    writeFileSync(
+      join(folder, "test", `${name}.test.ts`),
+      `import { appendFileSync } from "node:fs";
+import { test } from "bun:test";
+test("${name}", () => appendFileSync(${JSON.stringify(join(folder, "ran"))}, "${name}\\n"));
+`,
+    );
+  writeFileSync(
+    join(folder, "test", "times.json"),
+    JSON.stringify({ "test/slow.test.ts": 60, "test/a.test.ts": 5, "test/b.test.ts": 5 }),
+  );
+  const ran = () =>
+    readFileSync(join(folder, "ran"), "utf8").split("\n").filter(Boolean).toSorted();
+  expect((await runIn(["--shard=1/2"], false)).code).toBe(0);
+  expect(ran()).toEqual(["slow"]);
+  rmSync(join(folder, "ran"));
+  expect((await runIn(["--shard=2/2"], false)).code).toBe(0);
+  expect(ran()).toEqual(["a", "b"]);
+});
+
 // Stands in for the daemon of the Skelcrew a builder runs in, listening on this socket, and
 // counts what connects to it.
 function outerDaemon(socket: string) {
@@ -196,6 +228,7 @@ test("a nested sc never reaches the outer daemon, whatever the outer variables s
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { timesOfFiles } from "../scripts/shards.ts";
 import { homeEnv, runSkel, source } from ${JSON.stringify(join(import.meta.dir, "harness.ts"))};
 test("submits", async () => {
   const home = mkdtempSync(join(tmpdir(), "nested-"));
