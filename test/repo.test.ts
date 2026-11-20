@@ -1020,6 +1020,35 @@ test("init keeps the pin a skelcrew.lock that is there has for the forge's plugi
   );
 });
 
+// A pin the repository has already must still bring its plugin, or the repository would come in
+// without its forge.
+test("init installs the forge's plugin at the pin a skelcrew.lock that is there has, after asking", async () => {
+  const checkout = onGitHub("simon/app", "WRITE");
+  const commit = publishGitHubPlugin();
+  const lock = `skelcrew/skelcrew-github: {name: github, version: 0.1.0, commit: ${commit}}\n`;
+  writeFileSync(join(checkout, "skelcrew.lock"), lock);
+  const run = await inTerminal([process.execPath, main, "init"], {
+    typed: "y\n",
+    env: {
+      PATH: `${join(home, "bin")}:${process.env.PATH ?? ""}`,
+      HOME: home,
+      XDG_RUNTIME_DIR: join(home, "run"),
+    },
+    cwd: checkout,
+  });
+  expect(run.err).toBe("");
+  expect(run.code).toBe(0);
+  expect(run.out).toContain("Install it? [Y/n]");
+  expect(run.out).toContain("Installed github 0.1.0.");
+  expect(readFileSync(join(checkout, "skelcrew.lock"), "utf8")).toBe(lock);
+  expect(parse(readFileSync(join(checkout, "skelcrew.yaml"), "utf8")).plugins).toEqual([
+    "skelcrew/skelcrew-github",
+  ]);
+  // The forge it installed claimed the remote, so the repository came in with no question.
+  expect(run.out).not.toContain("Do you trust");
+  expect(run.out).toContain("Added simon/app, as app.");
+});
+
 // A skelcrew.lock that pins other plugins keeps them, and gains the forge's pin beside them.
 test("init adds the forge's pin to a skelcrew.lock that is there, keeping its other pins", async () => {
   const checkout = onGitHub("simon/app", "WRITE");

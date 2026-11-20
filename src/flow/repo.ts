@@ -35,7 +35,9 @@ import { SetupNeeded } from "../plugins/plugin.ts";
 import {
   addRepositoryPlugin,
   githubPlugin,
+  installRepositoryPlugins,
   namePlugin,
+  repositoryNeeds,
   repositoryPlugins,
 } from "../plugins/repository.ts";
 import { hostNamed } from "../plugins/runtime.ts";
@@ -567,8 +569,9 @@ const starterConfig = [
 // found from the remote alone: GitHub's plugin for github.com, and none for a host Skelcrew has
 // no plugin for. A skelcrew.yaml that names any plugin already chose them, so it is left alone.
 // A skelcrew.lock that pins the plugin already keeps its pin, which sc add would move to the
-// version installed here: only skelcrew.yaml gains its name. A plugin that can't be added, or
-// that you say no to, is only reported, as the rest of sc init still counts. Returns what it
+// version installed here: only skelcrew.yaml gains its name, and the plugin is installed at that
+// pin as sc install does, after asking, so the repository comes in with its forge. A plugin that
+// can't be added, or that you say no to, is only reported, as the rest of sc init still counts. Returns what it
 // changed: "named" for skelcrew.yaml alone, "pinned" for both files, or null for neither.
 function addForgePlugin(root: string, remote: string): "named" | "pinned" | null {
   if (parseRemote(remote)?.host !== "github.com") return null;
@@ -577,6 +580,7 @@ function addForgePlugin(root: string, remote: string): "named" | "pinned" | null
     if (plugins.length > 0) return null;
     if (lock[githubPlugin]) {
       namePlugin(root, githubPlugin);
+      installPinned();
       return "named";
     }
     if (addRepositoryPlugin(githubPlugin)) return "pinned";
@@ -585,6 +589,19 @@ function addForgePlugin(root: string, remote: string): "named" | "pinned" | null
   }
   console.log(`skelcrew.yaml names no forge plugin yet. sc add ${githubPlugin} adds it.`);
   return null;
+}
+
+// Installs the forge's plugin at the version the checkout's skelcrew.lock pins, as sc install
+// does: a plugin new here, or at another version, is shown and asked about, and one at its pin
+// asks nothing. One left out is only reported, naming sc install, as skelcrew.yaml names it now.
+function installPinned(): void {
+  try {
+    installRepositoryPlugins(repositoryNeeds().filter(({ source }) => source === githubPlugin));
+  } catch (error) {
+    console.log(
+      `Skelcrew couldn't install ${githubPlugin}: ${errorText(error)}. sc install installs it.`,
+    );
+  }
 }
 
 // Returns which of setup: and test: nothing sets yet, so the lead will propose them: neither the
