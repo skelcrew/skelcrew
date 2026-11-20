@@ -233,9 +233,10 @@ function trustFolder(config: string, cwd: string): void {
 // Skips the warning bypass mode shows first in the settings.json of an agent's config
 // folder, keeping all else in the file. Claude Code ignores this setting when it comes only
 // from --settings, and then runs in manual mode, stopping at prompts nobody answers. A `lead`
-// also shows no tips, so the first thing you see in it is the lead's own greeting. Its other
-// notices, such as a login problem, still show. It is written at every start, so a session
-// that began before Skelcrew wrote it gets it too.
+// also shows no tips, so they don't crowd the lead's own greeting. Its notices, such as a login
+// problem, still show. So do its announcements, such as of a new model: Anthropic's servers send
+// them, and no setting turns them off. It is written at every start, so a session that began
+// before Skelcrew wrote it gets it too.
 function writeSettings(config: string, lead = false): void {
   const file = join(config, "settings.json");
   const json = z.looseObject({}).parse(readOwnJson(file));
