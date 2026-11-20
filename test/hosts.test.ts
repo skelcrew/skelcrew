@@ -1256,8 +1256,10 @@ process.exit(0);`,
 // Starts simon/app's lead on the fake host, with `config` as your config.yaml and `row` as more
 // of the repository's columns, and returns the notes then saved for the lead. The fake
 // Claude Code can't run here, so the start may fail after the session began, which the notes
-// outlive. Starting logs a line of its own, so only the last line is read.
-function notesAfterStart(config: string, row = "") {
+// outlive. Starting logs a line of its own, so only the last line is read. With `failFirst`, a
+// first start fails before the session begins, as Claude Code's login is missing, and a second
+// one follows once it is there.
+function notesAfterStart(config: string, row = "", failFirst = false) {
   const fake = join(home, ".config", "skelcrew", "plugins", "fake");
   const said = runWithFakeHost(
     "sessions",
@@ -1266,12 +1268,14 @@ const { cloneDir } = await import(${JSON.stringify(source("paths.ts"))});
 const fs = require("node:fs");
 fs.mkdirSync(${JSON.stringify(fake)}, { recursive: true });
 fs.writeFileSync(${JSON.stringify(join(home, ".config", "skelcrew", "config.yaml"))}, ${JSON.stringify(`harness: claude\nsession: fake\n${config}`)});
-fs.writeFileSync(${JSON.stringify(join(home, ".config", "skelcrew", "claude-token"))}, "sk-ant-oat01-good\\n");
+const token = () => fs.writeFileSync(${JSON.stringify(join(home, ".config", "skelcrew", "claude-token"))}, "sk-ant-oat01-good\\n");
 db.run("INSERT INTO repositories (name, owner, repo, remote, opened${row ? ", lead_session, lead_harness" : ""}) VALUES ('app', 'simon', 'app', '', 1${row})");
 db.run("DELETE FROM threads");
 fs.mkdirSync(cloneDir("simon", "app"), { recursive: true });
 Bun.spawnSync(["git", "init", "-q", cloneDir("simon", "app")]);
 const repository = { name: "app", owner: "simon", repo: "app", forge: null, remote: "" };
+if (${failFirst}) await startLead(db, "unused", repository).catch(() => {});
+token();
 await startLead(db, "unused", repository).catch(() => {});
 console.log(JSON.stringify(db.query("SELECT text FROM notes").all().map((n) => n.text)));`,
     {},
@@ -1294,6 +1298,14 @@ test("a configured repository's first start has the lead ask what to work on", (
   expect(notes[0]).toStartWith("Skelcrew:");
   expect(notes[0]).toContain("what to work on");
   expect(notes[0]).not.toContain("setup");
+}, 20_000);
+
+// The failed start saved the lead's session first, which the next start must not take for an
+// earlier conversation.
+test("a first start that failed before the lead began keeps the opening turn, once", () => {
+  const notes = notesAfterStart("", "", true);
+  expect(notes).toHaveLength(1);
+  expect(notes[0]).toContain("first start");
 }, 20_000);
 
 test("a lead with an earlier conversation gets no opening turn", () => {
