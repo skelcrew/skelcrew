@@ -2967,7 +2967,9 @@ echo '{"verdict":"changes","body":"Not yet.","findings":["Handle an empty file",
     // so the lead hears nothing, however many rounds it takes. Each phase is held open through
     // polls, so the merge is checked while it is under way.
     test("an armed merge sends the lead no note while its builder resubmits and its review runs", async () => {
-      await changesApp12();
+      // The PR shows no CI, so the next round's review starts at once rather than waiting for
+      // CI's first check on its commit.
+      await changesApp12([]);
       await arm();
       await until(() => thread().merge_waits === "an approval");
       await morePolls();
