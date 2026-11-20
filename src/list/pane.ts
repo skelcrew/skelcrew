@@ -43,6 +43,7 @@ const reviewWords: Record<NonNullable<TaskView["review"]>["state"], string> = {
   approved: "approved",
   changes: "changes asked",
   failed: "review failed",
+  "not reviewed": "not reviewed",
 };
 
 // Returns items as lines `width` columns wide at most, as many on each line as fit, with two
