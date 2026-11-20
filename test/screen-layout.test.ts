@@ -291,12 +291,14 @@ test.each([
   ["a6bfe6fe12", " M src/main.ts", "a6bfe6fe12+changes"],
   ["a6bfe6fe12345", "", "a6bfe6fe12345 (checkout)"],
   ["a6bfe6fe1234567890", "", "a6bfe6fe1234567890"],
+  // Too long to show with + changes, it isn't shown at all, rather than look clean.
+  ["a6bfe6fe1234567890", " M src/main.ts", ""],
 ])("commit %p with changes %p shows above the sidebar as %p", async (commit, changes, shown) => {
   checkoutAt(commit, changes);
   open("lead");
   await ready("lead");
   const above = () => (seen().split("\n")[0] ?? "").slice(0, sidebar - 1).trimEnd();
-  await until(() => above() === `  Skelcrew ${shown}`, "the header");
+  await until(() => above() === `  Skelcrew ${shown}`.trimEnd(), "the header");
 });
 
 test("each terminal says where it came from, as they can come from different laptops", async () => {

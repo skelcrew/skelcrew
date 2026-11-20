@@ -58,18 +58,14 @@ export function laptopBuild(): string | null {
 // 6f1c2ab (checkout), with + changes when it held uncommitted changes, then shorter names for
 // the sidebar's header, which has room for only 24 columns. Each shorter one drops words around
 // the commit, never a character of it, as git gives as many as it takes to name one commit, and
-// more in a repository with many. A build with no commit to name, such as a single file nobody
+// more in a repository with many. With changes, + changes always stays, as the commit alone would
+// look like a clean checkout. A build with no commit to name, such as a single file nobody
 // stamped, says so rather than pretending.
 function checkoutNames(build: string | null): string[] {
   if (build === null) return ["(checkout, commit unknown)", "checkout, commit unknown"];
   if (build.endsWith(dirty)) {
     const commit = build.slice(0, -dirty.length);
-    return [
-      `${commit} + changes (checkout)`,
-      `checkout ${commit}+changes`,
-      `${commit}+changes`,
-      commit,
-    ];
+    return [`${commit} + changes (checkout)`, `checkout ${commit}+changes`, `${commit}+changes`];
   }
   return [`${build} (checkout)`, build];
 }
