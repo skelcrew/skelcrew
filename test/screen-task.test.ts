@@ -98,6 +98,18 @@ test("Enter attaches the right side to the builder, and Ctrl-\\ comes back to it
   expect(read("app-7.typed")).toBe("hi\n");
 });
 
+// A builder that exits leaves its session behind, with its last screen.
+test("a builder that exits while attached brings the details back", async () => {
+  await onApp7();
+  onRow("attach", "app-7");
+  await until(() => typingTo() === "1", "typing to move to the builder");
+  const pid = tmux(agents, "display-message", "-p", "-t", "=app-7:", "#{pane_pid}").out.trim();
+  process.kill(Number(pid), "SIGKILL");
+  await until(() => typingTo() === "0", "typing to come back to the sidebar");
+  await until(() => right().includes("Login redirect"), "app-7's details again");
+  expect(tmux(agents, "list-sessions", "-F", "#S").out).toContain("app-7");
+});
+
 test("moving to another row while attached comes back from the builder, and shows that row", async () => {
   await onApp7();
   onRow("attach", "app-7");
