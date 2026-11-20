@@ -715,6 +715,15 @@ test("changes asked for type the body and each finding into the builder, and cou
   );
 });
 
+// Past the round limit only a review that asks for changes needs you again. One that failed is
+// the lead's to run again.
+test("past the round limit, changes need you again, and a failed review doesn't", () => {
+  const changes = { verdict: "changes" as const, body: "Again.", findings: ["No test."] };
+  expect(afterReview(4, changes, 3, null)).toMatchObject({ needsYou: true, tell: null });
+  const failed = { verdict: "failed" as const, body: "no verdict", findings: [] };
+  expect(afterReview(4, failed, 3, null)).toMatchObject({ needsYou: false, rounds: 4 });
+});
+
 // One comment is edited each round, so it says which round and commit it now holds.
 test("Skelcrew's review comment names its round and commit, then the body and findings", () => {
   const review = { body: "CI pending.", findings: ["The export has no test."] };

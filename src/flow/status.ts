@@ -428,8 +428,8 @@ export function reportStatuses(db: Database): void {
 
 // Returns the word for what the thread is doing, given the rounds of changes it may have. Its
 // status and needs you stay as they are: the word only describes them, from what they and the
-// latest review say. Past the limit a thread goes on needing you while its builder submits, so
-// that comes before a round under way. A round that failed keeps its submit or review saved.
+// latest review say. Changes held past the round limit say so before a round under way. A round
+// that failed keeps its submit or review saved.
 // A thread can need you for a reason with no word of its own, such as a builder that couldn't be
 // told about an event. Its word is then "needs you", rather than something untrue. A review or
 // builder waiting out its harness's usage limit says when the limit resets, as this machine's

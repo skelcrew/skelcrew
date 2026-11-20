@@ -21,7 +21,6 @@ import {
   forgetMoves,
   headSeen,
   onlyDocs,
-  pastRoundLimit,
   refusedWorkflow,
   reviewComment,
   whoRunsTheSuite,
@@ -796,11 +795,12 @@ function pushAndReview(
 // it exits.
 export function submitRound(db: Database, sessions: string, folder: string, summary: string): void {
   const thread = readThread(db, folder);
-  const { maxRounds, reviewer } = reviewConfig(thread);
+  const { reviewer } = reviewConfig(thread);
   if (thread.status === "stopped" || stopping.has(folder))
     throw new Error("this thread was stopped, so Skelcrew won't push it");
-  // Past the round limit the thread still needs you, whatever the builder does.
-  const needs_you = pastRoundLimit(thread, maxRounds);
+  // A submit is in flight until its review answers, and waiting on a review never needs you, so
+  // a thread past the round limit needs you for it again only once a review asks for changes.
+  const needs_you = false;
   record(
     db,
     folder,
@@ -1019,9 +1019,9 @@ export function rerunReview(
   const sha = submitting === null ? lastPushed(thread) : null;
   if (submitting === null && sha === null)
     throw new Error(`${name} has no submitted commit to review yet`);
-  const maxRounds = roundLimit(thread);
-  // Past the round limit the thread still needs you, whatever the review says.
-  const needs_you = pastRoundLimit(thread, maxRounds);
+  // The review is in flight until it answers, and waiting on it never needs you, so a thread
+  // past the round limit needs you for it again only once the review asks for changes.
+  const needs_you = false;
   // The commit is saved as under review at once, so a second sc review asked before the
   // check is pending again is refused rather than cancelling this one.
   // A builder that asked for it ends its turn waiting on the review, as after sc submit. Any

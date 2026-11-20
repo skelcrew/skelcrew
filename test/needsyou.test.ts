@@ -490,6 +490,18 @@ describe.skipIf(insideSandbox)("needs you", () => {
     expect(read(join(data(), "threads", "app-12.log"))).toContain("you typed to its builder");
   }, 60_000);
 
+  // Stopping isn't the thing a mark is about, so what you must do stays shown.
+  test("stopping a thread keeps its mark", async () => {
+    addApp();
+    await startApp12();
+    await asLead(["needs-you", "app-12", "apply the check.yml split in PR #463"]);
+    await untilNeedsYou(true);
+    expect((await skel(["stop", "app-12"])).err).toBe("");
+    await until(() => thread().status === "stopped");
+    expect(thread().needs_you_for).toBe("apply the check.yml split in PR #463");
+    expect(await needsYouFor()).toBe("apply the check.yml split in PR #463");
+  }, 60_000);
+
   test("removing a thread ends its mark", async () => {
     addApp();
     await startApp12();
@@ -1167,6 +1179,17 @@ console.log(JSON.stringify({ failed: row("app-12"), past: row("app-13") }));`);
     failed: { needs_you: 0, review_failed: 1 },
     past: { needs_you: 1, review_failed: 0 },
   });
+});
+
+// Waiting on a review never needs you, so a submit past the round limit waits on its review,
+// and only a review that asks for changes again brings the limit back.
+test("a submit past the round limit doesn't need you while it is pushed and reviewed", () => {
+  const seen = inProcess(`
+record(db, "app-12", { status: "waiting", needs_you: true, rounds: 4, verdict: "changes", held: "Fix it." });
+const before = needsYouFor(thread());
+submitRound(db, "none", "app-12", "Round 5");
+console.log(JSON.stringify({ before, needsYou: needsYou(thread()), word: threadWord(thread(), 3) }));`);
+  expect(seen).toEqual({ before: "round limit", needsYou: false, word: "reviewing" });
 });
 
 test("a new submit clears the mark", () => {

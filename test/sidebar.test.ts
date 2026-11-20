@@ -1101,9 +1101,12 @@ test("a round that failed before its review answered reads as a failed review", 
   expect(word({ ...failed, reviewing: "abc" })).toBe("review failed");
 });
 
-test("past the round limit it stays so while the builder submits again", () => {
-  expect(word({ ...needing, rounds: 4, submitting: "the fix" })).toBe("round limit");
-  expect(word({ ...needing, rounds: 4, reviewing: "abc" })).toBe("round limit");
+// A submit past the round limit drops the held changes and waits on its review, which never
+// needs you, so it reads as reviewing until a review asks for changes again.
+test("past the round limit, a submit under way reads as reviewing", () => {
+  const past = { status: "waiting", rounds: 4, verdict: "changes" } satisfies Partial<Thread>;
+  expect(word({ ...past, submitting: "the fix" })).toBe("reviewing");
+  expect(word({ ...past, reviewing: "abc" })).toBe("reviewing");
 });
 
 // A thread past the round limit can still be approved, such as once you rerun its review. The

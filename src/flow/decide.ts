@@ -14,8 +14,9 @@ type Author = PullRequest["comments"][number]["author"];
 // it is neither CI nor a failure for the builder to fix.
 export const reviewCheck = "skelcrew/check";
 
-// Returns whether the thread has used up its rounds of changes. Past that it goes on needing
-// you, whatever its builder does, until you let it go on or its reviewer approves. An approval
+// Returns whether the thread has used up its rounds of changes. Past that a review's changes
+// are held, and the thread needs you until you decide, let it go on, or its reviewer approves.
+// A submit or review under way past it is waited on first, as waiting on a review never needs you. An approval
 // answers the changes the limit held, so an approved thread is ready like any other rather
 // than showing the round limit until it merges.
 export const pastRoundLimit = (thread: Thread, maxRounds: number) =>
@@ -462,13 +463,14 @@ export function afterReview(
   ready: string | null,
 ): Outcome {
   // A review that failed to give a verdict, or timed out, counts no round. The lead hears of it
-  // and can run it again, so it needs you only past the round limit, as before it.
+  // and can run it again, so it doesn't need you, past the round limit too: only a review that
+  // asks for changes there does.
   if (review.verdict === "failed" || review.verdict === "timed out")
     return {
       check: "failure",
       description: review.verdict === "failed" ? "review failed" : "review timed out",
       rounds,
-      needsYou: rounds > maxRounds,
+      needsYou: false,
       status: "waiting",
       tell: null,
       held: null,
