@@ -1,10 +1,18 @@
 // The environment Skelcrew's tests give the processes they start: sc, its daemon and what
 // those start.
 import { expect, test } from "bun:test";
-import { mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
-import { homeEnv, runSkel, startDaemon } from "./harness.ts";
+import { endFakeSessions, homeEnv, runSkel, startDaemon, until } from "./harness.ts";
 
 test("a test's processes keep the temporary folders the test was given, as a sandbox hides /tmp", () => {
   const seen = Bun.spawnSync(["/bin/sh", "-c", 'echo "$TMPDIR|$TMUX_TMPDIR"'], {
@@ -45,5 +53,75 @@ test("refuses to run sc on a socket outside the test's own folder", async () => 
   } finally {
     rmSync(home, { recursive: true, force: true });
     rmSync(other, { recursive: true, force: true });
+  }
+});
+
+// A test's clean-up can find a fake session without a process ID, as its host died before
+// starting it, or with one only half written. Killing that group would kill the test's own worker.
+test("ending the fake host's sessions ends each one's processes, and skips one not yet started", async () => {
+  const settings = mkdtempSync(join(tmpdir(), "skel-harness-host-"));
+  const sessions = join(settings, "sessions");
+  mkdirSync(sessions);
+  try {
+    const run = Bun.spawn(["sleep", "60"], {
+      detached: true,
+      stdio: ["ignore", "ignore", "ignore"],
+    });
+    mkdirSync(join(sessions, "fake-running"));
+    writeFileSync(join(sessions, "fake-running", "pid"), String(run.pid));
+    mkdirSync(join(sessions, "fake-starting"));
+    mkdirSync(join(sessions, "fake-half-written"));
+    writeFileSync(join(sessions, "fake-half-written", "pid"), "");
+    await endFakeSessions(settings);
+    await run.exited;
+    // A process that exited but wasn't reaped has no command.
+    const gone = () => {
+      try {
+        return readFileSync(`/proc/${run.pid}/cmdline`).length === 0;
+      } catch {
+        return true;
+      }
+    };
+    await until(gone, { what: () => "the session's process to end" });
+  } finally {
+    rmSync(settings, { recursive: true, force: true });
+  }
+});
+
+// The fake host runs on after the daemon that asked it has stopped, so it can start a session
+// after a test's clean-up began. That session must still end, or it would outlive its test.
+test("ending the fake host's sessions waits for a session the host is still starting", async () => {
+  const settings = mkdtempSync(join(tmpdir(), "skel-harness-host-"));
+  try {
+    // A slow start, so the clean-up begins before the session's folder exists.
+    writeFileSync(join(settings, "slow-start"), "");
+    const question = { ask: "start", name: "late", labels: {}, env: {}, folder: settings };
+    const host = Bun.spawn([process.execPath, join(import.meta.dir, "fake-host.ts")], {
+      env: { ...process.env, SKELCREW_PLUGIN_CONFIG: settings },
+      stdin: new Blob([JSON.stringify({ ...question, command: ["sleep", "60"] })]),
+      stdout: "ignore",
+      stderr: "ignore",
+      // In a group of its own, as the daemon runs it.
+      detached: true,
+    });
+    await until(() => existsSync(join(settings, "asked")), { what: () => "the host to be asked" });
+    await endFakeSessions(settings);
+    await host.exited;
+    const pid = Number(readFileSync(join(settings, "sessions", "fake-late", "pid"), "utf8"));
+    // The session's group has nothing running once it ended. One that exited but wasn't reaped
+    // runs nothing either.
+    const running = () =>
+      Bun.spawnSync(["ps", "-A", "-o", "pgid=", "-o", "stat="])
+        .stdout.toString()
+        .split("\n")
+        .some((line) => {
+          const [group, state] = line.trim().split(/\s+/);
+          return Number(group) === pid && !state?.startsWith("Z");
+        });
+    const ended = !running();
+    if (!ended) process.kill(-pid, "SIGKILL");
+    expect(ended).toBe(true);
+  } finally {
+    rmSync(settings, { recursive: true, force: true });
   }
 });
