@@ -232,12 +232,16 @@ function trustFolder(config: string, cwd: string): void {
 
 // Skips the warning bypass mode shows first in the settings.json of an agent's config
 // folder, keeping all else in the file. Claude Code ignores this setting when it comes only
-// from --settings, and then runs in manual mode, stopping at prompts nobody answers. It is
-// written at every start, so a session that began before Skelcrew wrote it gets it too.
-function skipBypassWarning(config: string): void {
+// from --settings, and then runs in manual mode, stopping at prompts nobody answers. A `lead`
+// also shows no tips, so they don't crowd the lead's own greeting. Its notices, such as a login
+// problem, still show. So do its announcements, such as of a new model: Anthropic's servers send
+// them, and no setting turns them off. It is written at every start, so a session that began
+// before Skelcrew wrote it gets it too.
+function writeSettings(config: string, lead = false): void {
   const file = join(config, "settings.json");
   const json = z.looseObject({}).parse(readOwnJson(file));
-  writeOwnJson(file, { ...json, skipDangerousModePermissionPrompt: true });
+  const tips = lead ? { spinnerTipsEnabled: false } : {};
+  writeOwnJson(file, { ...json, skipDangerousModePermissionPrompt: true, ...tips });
 }
 
 // Prepares an agent's own config folder and trusted Claude Code settings, then returns its
@@ -322,7 +326,8 @@ function startCommand(given: {
   if (repositories) mounts.push(...everyRepository(repositories));
 
   trustFolder(config, cwd);
-  skipBypassWarning(config);
+  // Only a builder has a thread.
+  writeSettings(config, !thread);
   if (skills) copySkills(skills, join(config, "skills"), home);
   // The instructions go in a file of the session's own, not on the command line. tmux refuses
   // a start command past about 16 KB, and the lead's instructions alone came close.
@@ -393,7 +398,7 @@ function reviewCommand(given: {
   // The review's folder is new and Skelcrew's alone, so the agent can't have left a link there.
   const config = join(folder, "claude");
   mkdirSync(config);
-  skipBypassWarning(config);
+  writeSettings(config);
   if (skills) copySkills(skills, join(config, "skills"), home);
   const env = { CLAUDE_CONFIG_DIR: config, CLAUDE_CODE_OAUTH_TOKEN: token };
   return { command, mounts: [], env, skills: [] };

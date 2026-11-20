@@ -43,7 +43,14 @@ import { ownTask, prOf, saveItems } from "./copy.ts";
 import { readyWhen } from "./decide.ts";
 import { removeThread, removing, stopThread } from "./events.ts";
 import { noCommits } from "./git.ts";
-import { closeExitedLeads, lastOpened, leadOf, openedRepositories, startLead } from "./lead.ts";
+import {
+  closeExitedLeads,
+  lastOpened,
+  leadOf,
+  leadPrompted,
+  openedRepositories,
+  startLead,
+} from "./lead.ts";
 import { restoreLimits, wakeAfterLimit } from "./limits.ts";
 import { listRepositories, listTasks, listThreads, showTask } from "./list.ts";
 import {
@@ -446,7 +453,10 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
     if (state !== null) {
       const lead = leadOfCaller(caller);
       keepState(db, lead ?? callingThread(caller), state);
-      if (lead) return { state };
+      if (lead) {
+        if (request.command === "question answered") leadPrompted(db, lead.owner, lead.repo);
+        return { state };
+      }
     }
     switch (request.command) {
       // sc check holds its connection open while it runs, so answer() hands it to the queue of
