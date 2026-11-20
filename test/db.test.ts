@@ -489,6 +489,51 @@ test("a new thread takes t100, or the next number above every one claimed or hel
   ]);
 }, 60_000);
 
+// A machine reads the claims, then another machine claims a higher name before it pushes. Its
+// claim of a name below that one is refused, so it reads again and names its task above it. Two
+// machines with different histories then never claim out of order, even at once.
+test("a claim made from claims read before another machine's is refused, and the next name goes above", async () => {
+  const { remote, homes } = twoMachines();
+  const [laptop = "", lapdog = ""] = homes;
+  const clone = join(laptop, ".local", "share", "skelcrew", "repos", "simon", "app");
+  Bun.spawnSync(["git", "clone", "-q", remote, clone]);
+  // The laptop reads the claims, and waits for the lapdog's claim before it claims t100.
+  const ready = join(home, "lapdog-claimed");
+  const code = `import { existsSync } from "node:fs";
+import { openDb } from ${JSON.stringify(source("db.ts"))};
+import { claimedNames, claimName } from ${JSON.stringify(source("flow/git.ts"))};
+const db = openDb();
+db.run("INSERT INTO repositories (name, owner, repo, remote) VALUES ('app', 'simon', 'app', ?)", [${JSON.stringify(remote)}]);
+const [repository] = db.query("SELECT * FROM repositories").all();
+const read = await claimedNames(db, repository);
+console.log("read");
+while (!existsSync(${JSON.stringify(ready)})) await Bun.sleep(20);
+console.log(JSON.stringify(await claimName(db, repository, ${JSON.stringify(clone)}, "t100", read.last)));
+db.run("DELETE FROM repositories");`;
+  const run = Bun.spawn([process.execPath, "-e", code], {
+    env: { ...process.env, HOME: laptop },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const out = run.stdout.getReader();
+  const decoder = new TextDecoder();
+  let said = "";
+  while (!said.includes("read\n")) said += decoder.decode((await out.read()).value);
+  // The lapdog holds t170, so it claims t171.
+  const held = `db.run("INSERT INTO tasks (owner, repo, task) VALUES ('simon', 'app', 't170')");`;
+  expect(await namesFrom(startOn(lapdog, remote, ["One"], held))).toEqual(["app-t171"]);
+  writeFileSync(ready, "");
+  while (true) {
+    const { value, done } = await out.read();
+    if (done) break;
+    said += decoder.decode(value);
+  }
+  expect(await new Response(run.stderr).text()).toBe("");
+  expect(said).toBe("read\nfalse\n");
+  // The laptop's next thread reads again and goes above the lapdog's.
+  expect(await namesFrom(startOn(laptop, remote, ["Two"]))).toEqual(["app-t172"]);
+}, 60_000);
+
 // The daemon of the release that named threads by the machine's code can still be running as a
 // newer sc opens the database. It reads the code each time it starts a thread, so the code stays.
 test("a database from when threads were named by the machine's code keeps that code", () => {

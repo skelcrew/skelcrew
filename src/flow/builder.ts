@@ -155,8 +155,8 @@ async function recordThread(
     // A t and the next number after every one claimed on the remote, which every machine sees,
     // and every one this machine's tasks hold. Names from before Skelcrew claimed them, such as
     // t25, were never claimed and live only on the machine that started them, so numbers start
-    // at 100, above all of them. Then claim it on the remote, which only one machine can, trying
-    // the next number while another got there first.
+    // at 100, above all of them. Then claim it on the remote, which only one machine can,
+    // reading the claims again while another machine claimed first.
     const clone = cloneDir(owner, repo);
     // Its clone, which the daemon may still be making, is where the claim is pushed from. The
     // refresh also learns the repository's forge the first time, such as one added before its
@@ -165,16 +165,17 @@ async function recordThread(
     if (!existsSync(clone) || !forgeKnown(db, repository)) await refreshClones(db);
     const current = findRepository(db, given.repo);
     refuseMissingPlugins();
-    const claimed = await claimedNames(db, current);
     const held = db
       .query("SELECT task FROM tasks WHERE owner = ? AND repo = ? AND task GLOB 't[0-9]*'")
       .all(owner, repo)
       .map((row) => z.object({ task: z.string() }).parse(row).task)
       .filter((id) => /^t\d+$/.test(id));
-    const numbers = [...claimed, ...held].map((id) => Number(id.slice(1)));
-    let number = Math.max(99, ...numbers) + 1;
-    while (!(await claimName(db, current, clone, `t${number}`))) number++;
-    task = `t${number}`;
+    while (true) {
+      const claims = await claimedNames(db, current);
+      const numbers = [...claims.names, ...held].map((id) => Number(id.slice(1)));
+      task = `t${Math.max(99, ...numbers) + 1}`;
+      if (await claimName(db, current, clone, task, claims.last)) break;
+    }
     ({ title, body } = given);
     // It has no issue to close. Saved as empty rather than null, which only a task from before
     // Skelcrew kept the line has, so a later issue of the same ID is never closed by its PR.
