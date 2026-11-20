@@ -17,7 +17,7 @@ import {
   stillRunning,
 } from "../agents/sessions.ts";
 import { agentsUnanswered } from "../approved-agents.ts";
-import { checkFlow, graceMinutes, leadMayArmMerges, repositoryCommands } from "../config.ts";
+import { checkFlow, graceMinutes, leadCanMerge, repositoryCommands } from "../config.ts";
 import { finishUpgrade, moveToTasks, moveTurnEnded, openDb, type Repository } from "../db.ts";
 import { flowRoles } from "../flows.ts";
 import { setupDone } from "../machine/setup.ts";
@@ -657,9 +657,9 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
           ready: readyWhen(thread),
         };
       }
-      // You arm one at your terminal, after saying y. A lead arms one
-      // only when you let it in your config, and only with the words you asked it in, which it
-      // gives in a file.
+      // You arm one at your terminal, after saying y. A lead arms one only while your config
+      // lets it, as it does unless you turn it off, and only with the words you asked it in,
+      // which it gives in a file.
       case "merge when ready":
       case "merge skip review": {
         const thread = threadToMerge(db, request);
@@ -669,11 +669,11 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
             throw new Error("--asked-file is the lead's: at your terminal, sc merge asks you y/N");
           return { said: armMerge(db, sessions, thread, { seen: request.seen }, skip) };
         }
-        if (!leadMayArmMerges())
+        if (!leadCanMerge())
           throw new Error(
             skip
-              ? "the human hasn't let you arm a merge: ask them to run sc merge --skip-review in their own terminal"
-              : "the human hasn't let you arm a merge when ready: ask them to run sc merge --when-ready in their own terminal",
+              ? "the human turned off your arming merges: ask them to run sc merge --skip-review in their own terminal, or to turn it on with lead: { can_merge: true } in ~/.config/skelcrew/config.yaml"
+              : "the human turned off your arming merges: ask them to run sc merge --when-ready in their own terminal, or to turn it on with lead: { can_merge: true } in ~/.config/skelcrew/config.yaml",
           );
         if (!request.asked?.trim())
           throw new Error(

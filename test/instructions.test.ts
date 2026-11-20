@@ -307,7 +307,7 @@ test("an empty list is told as configured to none, not as missing", () => {
   );
 });
 
-// Merging stays the human's choice: unless they let it, the lead can't arm a merge when ready,
+// Merging stays the human's choice: once they turn it off, the lead can't arm a merge when ready,
 // only point the human to the command, and may cancel one, which is always safe.
 test("a lead tells the human to arm a merge when ready in their own terminal", () => {
   const told = leadInstructions(
@@ -320,8 +320,12 @@ test("a lead tells the human to arm a merge when ready in their own terminal", (
   expect(told).toContain("You can't merge. Arming a merge when ready is the human's too");
   expect(told).toContain("run sc merge --when-ready APP-12 in their own terminal");
   expect(told).toContain("You may run sc merge --cancel APP-12 when the human asks");
-  expect(told).toContain("The human hasn't let you arm a merge when ready.");
-  expect(told).toContain("run sc merge --skip-review APP-12 in their own terminal");
+  expect(told).toContain("The human turned off your arming merges");
+  expect(told).toContain(
+    "sc merge --skip-review APP-12 there merges it without Skelcrew's approval",
+  );
+  // The one line that turns it back on, so the human hears it when they ask.
+  expect(told).toContain("lead: { can_merge: true } in ~/.config/skelcrew/config.yaml");
   // Briefing another lead takes --asked-file too, so the merges' own use of it is what stays out.
   expect(told).not.toContain("--when-ready APP-12 --asked-file");
   expect(told).not.toContain("--skip-review APP-12 --asked-file");
@@ -355,7 +359,7 @@ test("a lead let arm merges arms one only when the human asks in the conversatio
   );
   expect(told).toContain("Tell the human plainly that it merges without approval");
   expect(told).not.toContain("Armed");
-  expect(told).not.toContain("hasn't let you");
+  expect(told).not.toContain("turned off");
 });
 
 // The human's words can hold anything, so the lead never puts them through its shell: it writes

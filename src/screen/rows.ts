@@ -5,7 +5,7 @@ import type { Database } from "bun:sqlite";
 import { z } from "zod";
 import { noProgress } from "../agents/progress.ts";
 import { leadOf } from "../flow/lead.ts";
-import { type Badge, badgeOf, shownOf } from "../flow/marks.ts";
+import { type Badge, badgeOf, markOf, shownOf } from "../flow/marks.ts";
 import { messagesWaiting, waitingText } from "../flow/messages.ts";
 import type { Status } from "../flow/status.ts";
 import { fullNameOf, Thread, threadName } from "../flow/thread.ts";
@@ -59,6 +59,11 @@ export const onReviewer = (thread: Thread, word: string) =>
 // What the sidebar reads of a thread beyond what its log keeps: when its builder's current
 // stretch of work began. Null before the builder first started.
 const Working = z.object({ working_since: z.number().nullable() });
+
+// Returns whether a row is a thread waiting on you, which the sidebar shows under Needs you: its
+// mark is filled, for a decision, an answer, something gone wrong, or a merge.
+export const waitsOnYou = (row: Row) =>
+  row.status !== null && markOf(row.state, row.word).sign === "●";
 
 // Returns how long ago a thread started, in the fewest letters: <1m, then 5m, 2h, 3d. Rounded
 // down, so the text changes at most once a minute.
@@ -122,7 +127,13 @@ export function sidebarRows(
     ...threads.all(open.owner, open.repo).map((row) => {
       const thread = Thread.parse(row);
       const { review_round: round, reviewer, reviewed_by: by, verdict } = thread;
-      const { word, status } = shownOf(thread, maxRounds(thread), now);
+      // A thread approved and green, with no merge armed, waits on you to merge it, so its word
+      // says that action, as every word under Needs you does. One its flow didn't review says so
+      // after it, so you know nobody looked at it.
+      const shown = shownOf(thread, maxRounds(thread), now);
+      const { status } = shown;
+      const unreviewed = shown.word === "not reviewed" ? ", not reviewed" : "";
+      const word = status === "ready" ? `ready to merge${unreviewed}` : shown.word;
       const working = word === "working";
       const reviewed = word === "reviewing" || word === "queued for review";
       const stepping = working || (reviewed && status === "working");

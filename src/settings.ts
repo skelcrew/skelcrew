@@ -59,8 +59,10 @@ const File = z.looseObject({
   // The reviewer's harness as your config saved it, picked out of the reviewer's lines the same
   // way. One that isn't valid counts as none, so the first run asks for it again.
   your_reviewer: HarnessName.optional().catch(undefined),
-  // Whether you let the lead arm a merge when ready when you ask it to in the conversation,
-  // written as lead: { may_arm_merges: true } and picked out of the lead's lines on reading.
+  // Whether the lead may arm a merge when you ask it to in the conversation, written as
+  // lead: { can_merge: false } and picked out of the lead's lines on reading. may_arm_merges is
+  // its old name, still read so no config breaks, and can_merge wins where a file has both.
+  can_merge: z.boolean().optional(),
   may_arm_merges: z.boolean().optional(),
   // The repositories, by full name, never offered the GitHub plugin again because you said no
   // in one of their checkouts.
@@ -91,8 +93,8 @@ export type Role = { harness: HarnessName; model?: string };
 // your config saved, with no default, so the first run can tell what you haven't picked yet, and
 // `declined` the repositories never offered the GitHub plugin again. `plugins` are your personal
 // plugins. `host` is where new sessions start: tmux, or the name of a runtime plugin that provides
-// sessions. `leadArms` is whether the lead may arm a merge when ready when you ask it to, off
-// unless you turn it on.
+// sessions. `leadCanMerge` is whether the lead may arm a merge when you ask it to, on unless
+// you turn it off.
 export type Settings = {
   lead: Role;
   builder: Role;
@@ -112,7 +114,7 @@ export type Settings = {
   declined: string[];
   plugins: string[];
   host: string;
-  leadArms: boolean;
+  leadCanMerge: boolean;
 };
 type Group = keyof Settings;
 
@@ -137,13 +139,13 @@ const keysOf: Record<Group, Key[]> = {
   declined: ["github_declined"],
   plugins: ["plugins"],
   host: ["session"],
-  leadArms: ["may_arm_merges"],
+  leadCanMerge: ["can_merge", "may_arm_merges"],
 };
 
 // What each file may set. Your harness, model, limits, the reviewer's fallback, a review's time,
 // how long a stopped builder waits before it needs you, the repositories you declined the GitHub plugin for, your personal plugins and the session host
-// fit you, your account and your machine, so a repository can't set them. Letting the lead arm merges grants an agent
-// what is yours, so only you can, never a repository. The tracker belongs to the repository, so your
+// fit you, your account and your machine, so a repository can't set them. Letting the lead merge grants an agent
+// what is yours, so only you can say whether it may, never a repository. The tracker belongs to the repository, so your
 // config doesn't. Setup and test can come from either: yours stand in for a repository you
 // don't want to commit a skelcrew.yaml to.
 const yourKeys: Key[] = [
@@ -161,13 +163,14 @@ const yourKeys: Key[] = [
   "github_declined",
   "plugins",
   "session",
+  "can_merge",
   "may_arm_merges",
 ];
 const repositoryKeys: Key[] = ["max_rounds", "setup", "test", "tracker", "threads"];
 // What an override under repos: may set, besides the harness and model of its roles, which
 // roleOf reads: anything about one repository, from its files or yours, as an override is you
 // differing on purpose there. What is about your machine, such as limits and the session host,
-// stays in your general settings. So does letting the lead arm merges, so no setting for one
+// stays in your general settings. So does letting the lead merge, so no setting for one
 // repository can grant it.
 const overrideKeys: Key[] = [
   "rounds",
@@ -540,9 +543,9 @@ function pick(data: unknown, keys: Key[]): unknown {
   if (data === null || data === undefined) return {};
   if (typeof data !== "object" || Array.isArray(data)) return data;
   // The fallback and your reviewer's harness are written among the reviewer's lines, and
-  // may_arm_merges among the lead's, but each is read on its own. A top-level line of any of
-  // these names counts for nothing.
-  const nested = ["fallback", "your_reviewer", "may_arm_merges", "threads"];
+  // can_merge among the lead's, but each is read on its own. A top-level line of any of these
+  // names counts for nothing.
+  const nested = ["fallback", "your_reviewer", "can_merge", "may_arm_merges", "threads"];
   const picked = Object.fromEntries(
     Object.entries(data).filter(([key]) => !nested.includes(key) && keys.some((k) => k === key)),
   );
@@ -571,8 +574,10 @@ function pick(data: unknown, keys: Key[]): unknown {
     return rest;
   }
   const lead = "lead" in data ? data.lead : undefined;
-  if (keys.includes("may_arm_merges") && typeof lead === "object" && lead !== null)
+  if (keys.includes("can_merge") && isMapping(lead)) {
+    if ("can_merge" in lead) picked.can_merge = lead.can_merge;
     if ("may_arm_merges" in lead) picked.may_arm_merges = lead.may_arm_merges;
+  }
   return picked;
 }
 
@@ -616,6 +621,7 @@ function mergeSettings(layers: File[], roles: Partial<Record<RoleName, Role>>): 
     declined: first((l) => l.github_declined) ?? [],
     plugins: first((l) => l.plugins) ?? [],
     host: first((l) => l.session) ?? "tmux",
-    leadArms: first((l) => l.may_arm_merges) ?? false,
+    // In each layer, can_merge goes over its old name, may_arm_merges.
+    leadCanMerge: first((l) => l.can_merge ?? l.may_arm_merges) ?? true,
   };
 }

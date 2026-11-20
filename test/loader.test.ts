@@ -58,7 +58,7 @@ const all = [
   "declined",
   "plugins",
   "host",
-  "leadArms",
+  "leadCanMerge",
 ];
 const quarter = Math.max(1, Math.floor(availableParallelism() / 4));
 const eighth = Math.max(1, Math.floor(availableParallelism() / 2 / 4));
@@ -77,7 +77,7 @@ test("with no files, every setting is the built-in default", () => {
     declined: [],
     plugins: [],
     host: "tmux",
-    leadArms: false,
+    leadCanMerge: true,
   });
 });
 
@@ -99,7 +99,7 @@ test("your config goes over the built-in defaults", () => {
     declined: [],
     plugins: ["simon/herdr"],
     host: "herdr",
-    leadArms: false,
+    leadCanMerge: true,
   });
 });
 
@@ -123,7 +123,7 @@ test("the repository's skelcrew.yaml goes over your config, key by key", () => {
     declined: [],
     plugins: [],
     host: "tmux",
-    leadArms: false,
+    leadCanMerge: true,
   });
 });
 
@@ -140,10 +140,10 @@ test("a role your config puts on another harness gets your model back when skelc
 test("a file sets only what is its own", () => {
   // Your harness, model, limits and personal plugins fit you, so a repository's lines for them
   // count for nothing. The tracker belongs to the repository, so yours counts for nothing. Only
-  // you can let the lead arm merges, so the repository's line for that counts for nothing too.
+  // you can say whether the lead may merge, so the repository's line for that counts for nothing too.
   files(
     "tracker: linear\n",
-    "harness: codex\nmodel: gpt-6\nlimits: { reviews: 9 }\nplugins: [simon/sneaky]\nsession: rex\nlead: { may_arm_merges: true }\nneeds_you: { grace_minutes: 1 }\n",
+    "harness: codex\nmodel: gpt-6\nlimits: { reviews: 9 }\nplugins: [simon/sneaky]\nsession: rex\nlead: { can_merge: false }\nneeds_you: { grace_minutes: 1 }\n",
   );
   expect(read(all).settings).toEqual({
     lead: { harness: "claude" },
@@ -157,7 +157,7 @@ test("a file sets only what is its own", () => {
     declined: [],
     plugins: [],
     host: "tmux",
-    leadArms: false,
+    leadCanMerge: true,
   });
 });
 
@@ -216,7 +216,7 @@ test("what your config saved reads apart from the defaults", () => {
   files(null, "reviewer: { harness: codex }\n");
   expect(read(["yourHarness", "yourReviewer", "declined"]).settings).toMatchObject({
     declined: [],
-    leadArms: false,
+    leadCanMerge: true,
   });
   expect(read(["yourHarness"]).settings?.yourHarness).toBeUndefined();
   expect(read(["yourReviewer"]).settings?.yourReviewer).toBeUndefined();
