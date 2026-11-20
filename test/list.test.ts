@@ -163,13 +163,21 @@ test("a task on a flow with no review shows not reviewed, and merges at its last
     "UPDATE tasks SET verdict = 'not reviewed', review_round = NULL, flow = 'noreview' WHERE task = '14';",
   );
   const row = rows().find((candidate) => candidate.name === "app-14");
-  // It waits on you to merge it, so it is under Needs you, and still says nobody reviewed it.
+  // It waits on you to merge it, so it is under Needs you, saying so and that nobody reviewed it.
   expect(row).toMatchObject({
     section: "needs you",
     part: "ready",
-    says: "not reviewed",
+    says: "ready to merge, not reviewed",
     needsYou: false,
   });
+  // The sidebar says the same of it.
+  const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
+import { sidebarRows } from ${JSON.stringify(source("screen/rows.ts"))};
+const open = { owner: "simon", repo: "app", lead: "lead" };
+const found = sidebarRows(openDb(), [], () => 3, ${now}, open).find((r) => r.name === "app-14");
+console.log(found?.word);`;
+  const sidebar = Bun.spawnSync([process.execPath, "-e", code], { env: env(), stderr: "pipe" });
+  expect(sidebar.stdout.toString().trim()).toBe("ready to merge, not reviewed");
   expect(row?.merge && "ask" in row.merge ? row.merge.request : null).toMatchObject({
     command: "merge",
     pr: 41,

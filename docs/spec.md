@@ -838,7 +838,8 @@ A task in Needs you, Building, Reviewing, Checks or Ready takes two lines, so wh
 | `limit · 13:59` | The builder or the review waits for its harness's usage limit to reset |
 | `ready to merge` | Approved and green, and waits on you to merge it, so it shows under Needs you |
 | `approved` | Approved and green with a merge armed: it merges by itself, so its mark is hollow, it doesn't count as ready and it stays under Ready |
-| `not reviewed` | Ready to merge, in a flow with no review. It shows under Needs you and keeps this word, so you know nobody reviewed it. With a merge armed it merges by itself and stays under Ready, as `approved` does |
+| `ready to merge, not reviewed` | Green in a flow with no review, and waits on you to merge it, so it shows under Needs you. The word says nobody reviewed it |
+| `not reviewed` | Green in a flow with no review, with a merge armed: it merges by itself and stays under Ready, as `approved` does |
 | `question` | The builder asked with its harness's question tool |
 | `turn ended` | The builder ended its turn without submitting, and its last message went to the lead |
 | `error` | The builder's harness stopped on an error |

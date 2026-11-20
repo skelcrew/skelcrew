@@ -128,12 +128,12 @@ export function sidebarRows(
       const thread = Thread.parse(row);
       const { review_round: round, reviewer, reviewed_by: by, verdict } = thread;
       // A thread approved and green, with no merge armed, waits on you to merge it, so its word
-      // says that action, as every word under Needs you does. One its flow didn't review keeps
-      // saying not reviewed, so you know nobody looked at it.
+      // says that action, as every word under Needs you does. One its flow didn't review says so
+      // after it, so you know nobody looked at it.
       const shown = shownOf(thread, maxRounds(thread), now);
       const { status } = shown;
-      const ready = status === "ready" && shown.word === "approved";
-      const word = ready ? "ready to merge" : shown.word;
+      const unreviewed = shown.word === "not reviewed" ? ", not reviewed" : "";
+      const word = status === "ready" ? `ready to merge${unreviewed}` : shown.word;
       const working = word === "working";
       const reviewed = word === "reviewing" || word === "queued for review";
       const stepping = working || (reviewed && status === "working");

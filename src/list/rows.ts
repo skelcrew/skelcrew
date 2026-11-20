@@ -160,11 +160,12 @@ function taskRow(
   const shown = shownOf(thread, roundLimit(thread), now);
   // An ended thread shows no state: its word is whether it merged, and its mark is quiet.
   // A task approved and green, with no merge armed, waits on you to merge it, so its word says
-  // that action, as every word under Needs you does. One its flow didn't review keeps saying
-  // not reviewed, so you know nobody looked at it before you merge it.
+  // that action, as every word under Needs you does. One its flow didn't review says so after
+  // it, so you know nobody looked at it before you merge it.
   const ended = stage === "done";
   const mark: Mark = ended ? { sign: "○", colour: "dim" } : shown.mark;
-  const live = readyToMerge(mark) && shown.word === "approved" ? "ready to merge" : shown.word;
+  const unreviewed = shown.word === "not reviewed" ? ", not reviewed" : "";
+  const live = readyToMerge(mark) ? `ready to merge${unreviewed}` : shown.word;
   const word = ended ? (thread.merged ? "merged" : "closed") : live;
   const needsYou = needsDecision(mark);
   const ready = stage === "ready" && !needsYou;
