@@ -318,7 +318,7 @@ After that, when the default branch brings an `.agents/` different from the one 
 
 Skelcrew keeps its own clone of every repository it works on, in `~/.local/share/skelcrew/repos/<owner>/<repo>/`, at the latest default branch. A repository comes in only when you add it, in your own terminal: with `sc` in a checkout of it, `sc init`, or `sc repo add`, which takes a checkout's path, its full name on its forge, such as `simon/site`, or nothing for the checkout you are in. After that its short name works everywhere. The lead can't bring one in: it asks you to add it and open it. `sc repo ls` lists them and `sc repo rm <name>` removes Skelcrew's clone.
 
-**Opening a repository.** The repository is the context, as the folder is for `claude` in a terminal. `sc` in a checkout opens that repository, matched by its remote: its split screen, or its list with `sc --list`, as **The list** says. A repository Skelcrew doesn't have yet is added first, so the first `sc` in any clone goes straight to work. A remote that still uses a repository's old name, such as from before a rename, is matched by asking its forge once. Skelcrew remembers the answer and prints the `git remote set-url` that updates the remote. Outside any repository, `sc` opens the repository you opened last. With no repositories yet, it says `Skelcrew has no repositories yet. Run sc in a checkout of one.` In a repository with no remote, `sc` opens nothing, as opening another repository there would look as if Skelcrew had ignored where you are. It says, with each command on a line of its own and a blank line at the end:
+**Opening a repository.** The repository is the context, as the folder is for `claude` in a terminal. `sc` in a checkout opens that repository, matched by its remote: its screen, or its list with `sc --list`, as **The list** says. A repository Skelcrew doesn't have yet is added first, so the first `sc` in any clone goes straight to work. A remote that still uses a repository's old name, such as from before a rename, is matched by asking its forge once. Skelcrew remembers the answer and prints the `git remote set-url` that updates the remote. Outside any repository, `sc` opens the repository you opened last. With no repositories yet, it says `Skelcrew has no repositories yet. Run sc in a checkout of one.` In a repository with no remote, `sc` opens nothing, as opening another repository there would look as if Skelcrew had ignored where you are. It says, with each command on a line of its own and a blank line at the end:
 
 ```
 This git repository has no remote. To add a remote and push it:
@@ -351,7 +351,7 @@ Every command that lists or shows something takes `--json`, for tools. Commands 
 
 | Command | What it does |
 | --- | --- |
-| `sc [--from <owner/repo>]` | Opens the split screen on the lead of the repository you are in, as **The list** says. Runs `sc install` first on a machine that isn't set up, and starts the engine in the background first if it isn't running. |
+| `sc [--from <owner/repo>]` | Opens the screen on the lead of the repository you are in, as **The list** says. Runs `sc install` first on a machine that isn't set up, and starts the engine in the background first if it isn't running. |
 | `sc --list [--from <owner/repo>]` | Shows the list of the repository you are in, and otherwise does what plain `sc` does. |
 | `sc init` | Writes the standard setup: `skelcrew.yaml`, `skelcrew.lock` with the forge's plugin pinned, and `.agents/` from the built-in defaults. Then adds the repository. The lead fills in setup and test. |
 | `sc install` | Makes the machine match the files, as **Installing** says. Safe to run again: with nothing to do, it says so. In a checkout, it covers that repository and your personal files. Outside one, every repository Skelcrew has. |
@@ -367,7 +367,7 @@ Every command that lists or shows something takes `--json`, for tools. Commands 
 | `sc --remote <host> install` | Sends your personal files to the server and runs `sc install` there. On a server with no Skelcrew, asks, then puts Skelcrew there first. |
 | `sc --remote <host> up --bg` | Runs the engine on the server as its background service. |
 | `sc --remote <host> restart` | Restarts the server's engine, with no `ssh` by hand. |
-| `sc --remote <host> [command]` | Runs any command on the server, over `ssh -t`. With no command, opens the server's split screen, and with `--list` its list. |
+| `sc --remote <host> [command]` | Runs any command on the server, over `ssh -t`. With no command, opens the server's screen, and with `--list` its list. |
 | `sc repo add [<path> \| <owner/repo>]` | Adds a repository: the checkout at the path, the one named, or the checkout you are in. Asks whether you trust it when it needs to. |
 | `sc repo ls` | Lists the repositories, with their short names, trackers and forges, and a tracker `skelcrew.yaml` names that isn't installed. |
 | `sc repo rm <name>` | Removes Skelcrew's clone of a repository. Refuses while the repository has live threads, and names them. The lead never needs it, and asks you instead. |
@@ -777,9 +777,9 @@ The engine calls `status` for every change, from wherever it came: a hook, the s
 
 ## The list
 
-Two ways to see a repository exist side by side, until you choose which one stays: the split screen and the list. Plain `sc` opens the split screen: a sidebar of the repository's tasks and a tab for each repository, with the lead beside them, on a tmux server of the screen's own. Picking a thread in the sidebar shows its builder beside it. On the screen, Alt-Q leaves, and Ctrl-\ does nothing. `sc attach` attaches full screen to a builder instead, with no sidebar, as the list's Enter does. On tmux, Ctrl-\ detaches back to your shell. A runtime plugin's host keeps its own key to detach. The sidebar's entries count what waits on you. `Threads` says how many threads need you, in yellow: a mark from the lead, you or the safety net, a question, a harness error, or the round limit, such as `1 needs you · 6`. `PRs` says how many are approved and green, in green, such as `1 ready · 5`. An approved thread is ready, not needing you, so it counts only on `PRs`. A repository with no forge has no `PRs`, so `Threads` says how many branches are ready itself, in green, before how many need you: `1 ready · 2 need you · 6`. The tabs' badges count the same way as the list's. `sc --list` shows the list instead. The rest of this section describes the list.
+Plain `sc` opens the screen: the repository's list as a sidebar on the left, and on the right the lead or the task you are on, as **The screen** says. `sc --list` shows the list alone, full screen, with a details pane beside it. Both show the same rows, stages, words and marks, which this section describes for the list first. `sc attach` attaches full screen to one agent instead, with neither, as the list's Enter does. On tmux, Ctrl-\ detaches back to your shell. A runtime plugin's host keeps its own key to detach.
 
-`sc --list` shows a list, with a details pane beside it for the row you are on. You pick a row, and Skelcrew either attaches you full screen to an agent or does what the row offers. Detaching, with Ctrl-\, brings you back to the list, on the same row. While you are attached on tmux, the terminal's title names the agent and the key back, such as `app-24 · ctrl+\ back`, and the title you had comes back with you. Nothing else of Skelcrew's shows over the agent. On a row Enter attaches on tmux, the bottom line says so before you go, as `⏎ open · ctrl+\ back`. A runtime plugin's host has its own key to come back, and its rows say only `⏎ open`. There is no sidebar, and no tmux server of the screen's own.
+`sc --list` shows a list, with a details pane beside it for the row you are on. You pick a row, and Skelcrew either attaches you full screen to an agent or does what the row offers. Detaching, with Ctrl-\, brings you back to the list, on the same row. While you are attached on tmux, the terminal's title names the agent and the key back, such as `app-24 · ctrl+\ back`, and the title you had comes back with you. Nothing else of Skelcrew's shows over the agent. On a row Enter attaches on tmux, the bottom line says so before you go, as `⏎ open · ctrl+\ back`. A runtime plugin's host has its own key to come back, and its rows say only `⏎ open`. The list needs no tmux server of its own.
 
 ```
  Skelcrew v0.6.0  [ app ]  [ docs ]  [ site •1 ]
@@ -874,13 +874,69 @@ The list reads only Skelcrew's database and its copy of the tracker, so it opens
 
 With herdr as the session host, its own apps show the same agents, labelled and with their state. Skelcrew's list keeps working beside them, and is the only place that merges and answers the lead's requests.
 
+### The screen
+
+Plain `sc` shows the list as a sidebar, on the left of your terminal, and on the right what the row you are on is. It runs on a tmux server of the screen's own, whatever your session host, with one session per open terminal, ended when you leave. Your own `~/.tmux.conf` never applies to it.
+
+```
+ Skelcrew v0.6.0  [ app ]  [ docs ]  [ site •1 ]
+                                                   │ Rate limit the API
+   ● lead    claude                                │ issue #42  github.com/acme/app/issues/42
+     asks you                                      │ PR #43     github.com/acme/app/pull/43
+                                                   │ Building · question
+   Needs you 1                                     │ CI running: test ✓  lint ●  build ●
+ ▸ ● app-t103  Rate limit the API                  │ Round 2 · changes asked
+     question · #43 · CI running · 14:02           │ 13:40 submitted · 13:52 reviewed
+                                                   │ ───────────────────────────────────
+ 1 Backlog   2                                     │ ● Should the limit be per user or per
+ 2 Building  2                                     │   API key?
+   ○ app-24  Login redirect                        │   1. Per user
+     working · Editing rows.ts · #40 · 14:31       │   2. Per API key
+   ○ app-25  Export as CSV                         │
+     working · #44 · CI running · 14:40            │
+ 3 Reviewing 1                                     │
+ 4 Checks    0                                     │
+ 5 Ready     1                                     │
+ 6 Done      4                                     │
+                                                   │
+ alt+↑↓ move  ⏎ open  alt+1-6 stages  alt+q quit   cpu 63%  mem 9/32G
+```
+
+**The sidebar** is the list, as the rest of this section describes it, in a column of its own. Its top line has Skelcrew's version and the repositories' tabs, with their badges, and its bottom line the keys and the machine's load. Under the top line come the lead's row and the requests that wait for your yes. Then comes the `Needs you` section: every task that waits on you, whatever its stage, each in two lines, with the task that changed last first, and its word saying what you must do. A task there shows only there, not also under its stage. It keeps its stage, which decides what Enter and `m` do on it, and goes back under its stage once it no longer needs you, such as when its mark clears. Then come the six stages, Backlog, Building, Reviewing, Checks, Ready and Done, which open and close as in the list. The sidebar is wide enough that a task's two lines usually fit whole, such as `working · Editing rows.ts · #40 · CI passed · 14:31`, and it keeps its width when the terminal is resized. The right side takes the rest.
+
+**The right side** follows the row you are on:
+
+- **On the lead's row**, it is the lead's session, live, and what you type goes to the lead.
+- **On a task's row**, or a request's, it is the details pane, exactly as the list's: the task's details in a compact block, with its agent's screen live under them, read-only, as **The details pane** says. A request's row shows the lead's screen live, read-only, with no details. Nothing you type reaches the agent there, so the list's own keys work.
+- **After Enter on a task** whose Enter attaches in the list, its agent's session takes the right side, attached through its session host, and what you type goes to it. Ctrl-\ comes back to the details and live view, on the same row. Moving to another row comes back too, and shows that row.
+
+Enter on any other row does what it does in the list: on Backlog it asks in the bottom line and starts the task, and on Ready or Done it opens the PR or shows the approved branch.
+
+**A runtime plugin's host** shows its sessions on the screen through its own `attach`, run inside the right side as in any terminal. You get the agent's terminal there, without the host's own sidebars or apps, and you run the host itself, outside `sc`, for all it offers. The screen's tmux takes Ctrl-\ before anything in a pane sees it. So herdr's key to detach, the same key, never reaches herdr's client on the screen, and can never detach it and leave the right side empty. If a host's `attach` ends anyway, the right side goes back to the task's details and live view, or attaches to the lead again on its row.
+
+**Keys.** On the lead's row and on an agent you attached to, your typing goes to the agent, so the screen's own keys there use Alt. Everywhere else, on a task's row or a request's, your typing goes to the sidebar, and the list's keys work without Alt too. Alt-1 to Alt-6 need Option sent as Alt on a Mac, as Alt-Q does, since Option with a digit otherwise types a character, such as `¡`.
+
+| Key | On | What it does |
+| --- | --- | --- |
+| Alt-↑ Alt-↓ | Anywhere | Move one row. Moving off an agent you attached to comes back from it first |
+| Alt-Shift-↑ Alt-Shift-↓ | Anywhere | Move to the first row of the previous or next section: the lead, `Needs you`, or an open stage |
+| Alt-1 to Alt-6 | Anywhere | Open or close Backlog, Building, Reviewing, Checks, Ready or Done, as `1` to `6` do in the list |
+| Alt-Shift-Left, Alt-Shift-Right | Anywhere | The previous or next repository, each wrapping round |
+| Alt-Q, Ctrl-Q | Anywhere | Leaves the screen. Everything keeps running. Ctrl-Q is for a Mac terminal that doesn't send Option as Alt, and isn't shown |
+| Click, wheel | The sidebar | As in the list, wherever your typing goes |
+| Ctrl-\ | An agent you attached to | Comes back to the task's details and live view |
+| Ctrl-\ | Anywhere else | Nothing, so pressing it once too often never leaves the screen, and it never reaches a pane |
+| The list's keys | A task's row or a request's | As in the list: ↑ ↓, `1` to `6`, Enter, `s`, `m`, `y` `n`, Tab and Shift-Tab. `q` does nothing, so text meant for an agent never closes the screen |
+
+Only Alt-Left and Alt-Right without Shift stay the agent's, as some terminals send them to move a word while you type.
+
 ## Remote machines
 
 The engine runs on the same machine as its agents. So `--remote` is only "run `sc` on that machine", over plain `ssh -t`. Everything must work over it: no local display, no browser on the same machine, no clipboard. Logins that need a browser use a code and a link you open on your laptop.
 
 - `sc --remote <host> install` sets the server up. Your personal setup is one setup for all your machines, so a server feels like your laptop. It sends your personal files first: `config.yaml`, your lock file and the agents' Claude Code token. `session:` goes with them, so herdr on the laptop means herdr on the server. A runtime plugin that provides only `machine` is skipped there, as it is used where you run `--remote`. Then it runs `sc install` there. Each plugin's setup and `codex login` run there once, in your terminal, since a sign-in that renews itself cancels the one before, and two machines sharing it would break each other. On a server with no Skelcrew, it asks, then puts Skelcrew there first: the laptop's release, built for that machine and checked against its checksums, or one built from your checkout when you run Skelcrew from one.
 - `sc --remote <host> up --bg` runs the engine there as its background service.
-- `sc --remote <host> <command>` runs `ssh -t <host> sc --from <owner/repo> <command>`, passing the repository you are in on the laptop, so it acts on that repository there. With no command, it opens the server's split screen, and with `--list` its list, where Enter attaches through tmux there.
+- `sc --remote <host> <command>` runs `ssh -t <host> sc --from <owner/repo> <command>`, passing the repository you are in on the laptop, so it acts on that repository there. With no command, it opens the server's screen, and with `--list` its list, where Enter attaches through tmux there.
 
 You send your setup when you change it, as you would run `npm install` after changing `package.json`. A `sc --remote` whose personal lock differs from the server's says so, and names the `install` that fixes it. What runs stays on the machine that runs it: tasks, their clones, the engine and its state. Nothing comes back to the laptop.
 
@@ -934,5 +990,6 @@ A database from an earlier release is moved forward once, when the new engine st
 - A remote protocol of our own (SSH only), teams and permissions
 - Projects: a named context above repositories, with one lead across several of them, its own memory beyond `AGENTS.md`, and tasks across repositories
 - A command of Skelcrew's own to stop the background engine: systemd or launchd's own commands do it
+- An `Up next` section in the screen's sidebar
 
 If something seems missing, ask instead of adding it.
