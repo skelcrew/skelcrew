@@ -2492,11 +2492,14 @@ test("the live view reads only while the list shows with its pane", async () => 
   press("Down");
   await until(() => here().startsWith("▸ ○ APP-9"), "APP-9's row");
   expect(await noReads(reads)).toBe(true);
-  // While you are attached to an agent, the list isn't showing.
+  // While you are attached to an agent, the list isn't showing. A read that began on APP-7's row
+  // just before Enter may still be noted, on a slow machine, so the list must first go a second
+  // without a read: one that went on reading never would. Then it stays without.
   press("Down");
   await until(() => here().startsWith("▸ ○ APP-7"), "APP-7's row");
   press("Enter");
   await until(() => seen().includes("I am app-7"), "app-7's agent");
+  await wait(() => noReads(reads), { what: () => "the reads to stop" });
   expect(await noReads(reads)).toBe(true);
   press("C-\\");
   await until(() => here().startsWith("▸ ○ APP-7"), "the list again");

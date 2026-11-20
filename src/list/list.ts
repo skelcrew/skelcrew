@@ -524,8 +524,10 @@ export async function runList(agents: string, repository: string): Promise<void>
     if (reading.has(row.name) || paneWidth(process.stdout.columns || 80) === 0) return;
     reading.add(row.name);
     const asked = selections;
-    const shown = await readLive(db, agents, row);
+    const shown = await readLive(db, agents, row, () => !attached && !left);
     reading.delete(row.name);
+    // A read the list stopped wanting, as you attached meanwhile, read nothing and shows nothing.
+    if (shown === null) return;
     // You may have left while the host answered, and the terminal is then your shell's again.
     if (left || selections !== asked) return;
     if (live?.name === row.name && Bun.deepEquals(live.shown, shown)) return;
