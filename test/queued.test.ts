@@ -1,7 +1,8 @@
 // The queue of tasks under limits.threads, against a running daemon: a start over the limit
 // waits as queued, and starts in order once a builder ends. A builder already at work is a tmux
 // session of the test's own, and every builder the queue starts stands in for Claude Code
-// failing to start, so each start ends, and frees its place, at once.
+// failing to start, so each start ends, and frees its place, at once. Which task leaves the
+// queue, and when, is tested on the database alone in task-queue.test.ts.
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
@@ -236,23 +237,6 @@ test("a start over limits.threads waits as queued, and starts in order once a bu
   expect(leftQueue("app-13")[0] ?? 0).toBeGreaterThanOrEqual(endedAt("app-12"));
 }, 60_000);
 
-test("a queued task keeps its place after a restart of the engine", async () => {
-  addApp();
-  await serveApp();
-  await sc("start", "app-13");
-  await sc("start", "app-12");
-  await stopDaemon();
-  await serveApp();
-  await queueLooked();
-  expect(statuses()).toEqual({ "app-11": "working", "app-12": "queued", "app-13": "queued" });
-  // app-13 joined first, so it starts first.
-  await sc("rm", "app-11");
-  await until(() => statuses()["app-12"] === "failed");
-  expect(leftQueue("app-13")).toHaveLength(1);
-  expect(leftQueue("app-12")).toHaveLength(1);
-  expect(leftQueue("app-12")[0] ?? 0).toBeGreaterThanOrEqual(endedAt("app-13"));
-}, 60_000);
-
 // Moves app's queued task one place earlier or later, as a key in the list asks the daemon, and
 // returns what the daemon said.
 async function moveQueued(task: string, by: -1 | 1): Promise<string> {
@@ -263,19 +247,16 @@ catch (error) { console.log(String(error)); }`;
   return (await new Response(run.stdout).text()).trim();
 }
 
-test("a task moved earlier in the queue starts first, and keeps its place after a restart", async () => {
+test("a task moved earlier in the queue starts first, and the queue keeps its order after a restart", async () => {
   addApp();
   await serveApp();
   await sc("start", "app-12");
   await sc("start", "app-13");
   expect(await moveQueued("13", -1)).toBe("APP-13 starts next");
-  // Already first, it stays there.
-  expect(await moveQueued("13", -1)).toBe("APP-13 starts next");
-  expect(await moveQueued("12", 1)).toBe("APP-12 is 2nd in line");
-  // A task that isn't queued has no place to move.
-  expect(await moveQueued("11", 1)).toContain("APP-11 isn't queued");
   await stopDaemon();
   await serveApp();
+  await queueLooked();
+  expect(statuses()).toEqual({ "app-11": "working", "app-12": "queued", "app-13": "queued" });
   await sc("rm", "app-11");
   await until(() => statuses()["app-12"] === "failed");
   expect(leftQueue("app-13")).toHaveLength(1);
@@ -344,7 +325,7 @@ openDb().exec(${JSON.stringify(stopped)});`;
   expect(leftQueue("app-12")).toHaveLength(1);
 }, 60_000);
 
-test("a task the engine stopped while it left the queue goes back in its place, and starts once", async () => {
+test("a task the engine stopped while it left the queue goes back in the queue, and starts once", async () => {
   addApp();
   // app-12 left the queue, but the engine stopped before its builder's session was saved.
   const cut = threadSql({ task: "12", title: "Add export", queued_since: 1 });
@@ -352,14 +333,11 @@ test("a task the engine stopped while it left the queue goes back in its place, 
 openDb().exec(${JSON.stringify(cut)});`;
   Bun.spawnSync([process.execPath, "-e", code], { env: env() });
   await serveApp();
-  await sc("start", "app-13");
   await queueLooked();
-  expect(statuses()).toEqual({ "app-11": "working", "app-12": "queued", "app-13": "queued" });
-  // It joined first, so it starts first.
+  expect(statuses()).toEqual({ "app-11": "working", "app-12": "queued" });
   await sc("rm", "app-11");
-  await until(() => statuses()["app-13"] === "failed");
+  await until(() => statuses()["app-12"] === "failed");
   expect(leftQueue("app-12")).toHaveLength(1);
-  expect(leftQueue("app-13")[0] ?? 0).toBeGreaterThanOrEqual(endedAt("app-12"));
 }, 60_000);
 
 test("a queued sc start leaves the queue only once its claim is made, across a restart too", async () => {
@@ -405,28 +383,6 @@ openDb().run("INSERT INTO claims (owner, repo, task) VALUES ('simon', 'app', '12
   expect(leadHears()).not.toContain("APP-13's claim");
 }, 60_000);
 
-test("a task that still owes its claim holds back the tasks that joined after it", async () => {
-  addApp();
-  // app-12 joined first and owes its claim, which the tracker fails. app-13 joined after it.
-  const rows = `${threadSql({ task: "12", title: "Add export", status: "queued", queued_since: 1 })}
-${threadSql({ task: "13", title: "Dark mode", status: "queued", queued_since: 2 })}
-INSERT INTO claims (owner, repo, task) VALUES ('simon', 'app', '12');`;
-  const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
-openDb().exec(${JSON.stringify(rows)});`;
-  Bun.spawnSync([process.execPath, "-e", code], { env: env() });
-  const failing = join(plugin, "fail-took");
-  writeFileSync(failing, "network is down");
-  await serveApp();
-  await sc("rm", "app-11");
-  await queueLooked();
-  expect(statuses()).toMatchObject({ "app-12": "queued", "app-13": "queued" });
-  // Once app-12's claim is made, it starts first, and app-13 after it.
-  rmSync(failing);
-  await until(() => statuses()["app-13"] === "failed");
-  expect(leftQueue("app-12")).toHaveLength(1);
-  expect(leftQueue("app-13")[0] ?? 0).toBeGreaterThanOrEqual(endedAt("app-12"));
-}, 60_000);
-
 test("a labelled issue that can't start after its claim is told to the lead, not dropped", async () => {
   addApp(["12"]);
   answer(plugin, "took", { took: true });
@@ -461,26 +417,6 @@ test("a queued task whose issue another machine claimed while its claim failed l
   expect(tasks.find((row: { task: string }) => row.task === "APP-12")).toMatchObject({
     stage: "issue",
   });
-}, 60_000);
-
-test("a task joins the queue after every task already in it, though the clock went back", async () => {
-  addApp();
-  // app-13 joined the queue at a time later than now, as before the clock was set back.
-  const later = threadSql({
-    task: "13",
-    title: "Dark mode",
-    status: "queued",
-    queued_since: Date.now() + 60_000,
-  });
-  const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
-openDb().exec(${JSON.stringify(later)});`;
-  Bun.spawnSync([process.execPath, "-e", code], { env: env() });
-  await serveApp();
-  await sc("start", "app-12");
-  // app-13 joined first, so it starts first.
-  await sc("rm", "app-11");
-  await until(() => statuses()["app-12"] === "failed");
-  expect(leftQueue("app-12")[0] ?? 0).toBeGreaterThanOrEqual(endedAt("app-13"));
 }, 60_000);
 
 test("sc rm while a queued sc start waits for its claim leaves the issue unassigned", async () => {
