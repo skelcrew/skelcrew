@@ -57,6 +57,25 @@ describe.skipIf(insideSandbox)("needs you", () => {
     expect(await needsYou()).toBe(false);
   }, 60_000);
 
+  // Claude Code's Stop hook lists the background jobs still running. The builder goes on once
+  // its job ends, so the lead hears nothing until a turn ends with nothing left running.
+  test("a turn that ends with a background job running doesn't show turn ended", async () => {
+    addApp();
+    await startApp12();
+    const running = [{ id: "b1", type: "shell", status: "running", description: "bun test" }];
+    const said = "The tests are still running. I'll pick up when they finish.";
+    await hook("stop", JSON.stringify({ last_assistant_message: said, background_tasks: running }));
+    await Bun.sleep(1000);
+    expect(thread().turn_ended).toBe(0);
+    expect(notes()).toBe(0);
+    await hook(
+      "stop",
+      JSON.stringify({ last_assistant_message: "Tests pass.", background_tasks: [] }),
+    );
+    await until(() => thread().turn_ended === 1);
+    await until(() => read(join(lead(), "typed")).includes("Tests pass."));
+  }, 60_000);
+
   test("a turn that ends right after sc submit waits on the review, not on you", async () => {
     addApp();
     await startApp12();

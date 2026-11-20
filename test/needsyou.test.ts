@@ -338,3 +338,54 @@ markForgotten(db, "none", 5, Date.now() + 60 * 60_000);
 console.log(JSON.stringify({ told, cleared: needsYou(thread()), ended: thread().turn_ended }));`);
   expect(seen).toEqual({ told: false, cleared: false, ended: true });
 });
+
+// A builder waiting on its own background job, such as a test run, isn't stopped: its harness
+// starts a turn again once the job ends. So it shows working, the lead hears nothing, and the
+// safety net waits for a turn that ends with nothing left running.
+test("a turn that ends with a background job still running isn't a stopped builder", () => {
+  const seen = inProcess(`
+turnEnded(db, "none", "app-12", { message: "The tests are still running.", background: true });
+markForgotten(db, "none", 5, Date.now() + 60 * 60_000);
+const running = { ended: thread().turn_ended, needsYou: needsYou(thread()), notes: notes() };
+turnEnded(db, "none", "app-12", { message: "The tests failed. Should I skip the slow one?" });
+const stopped = thread().turn_ended;
+markForgotten(db, "none", 5, Date.now() + 60 * 60_000);
+console.log(JSON.stringify({ running, stopped, word: needsYouFor(thread()) }));`);
+  expect(seen).toEqual({
+    running: { ended: false, needsYou: false, notes: [] },
+    stopped: true,
+    word: "The tests failed. Should I skip the slow one?",
+  });
+});
+
+// A builder the lead just told something may wait on purpose, as the lead said, such as for
+// another thread to land. The lead got its reply, so the safety net holds off for 30 minutes
+// from the lead's message, then marks it as usual if nobody acted since.
+test("the safety net holds off for 30 minutes after the lead told the builder something", () => {
+  const seen = inProcess(`
+turnEnded(db, "none", "app-12", { message: "Should I wait for t113?" });
+// The lead's message goes in, and the builder's reply ends its turn.
+const told = Date.now();
+record(db, "app-12", { updates: [{ from: "lead", at: told, text: "Yes, wait for t113." }] });
+questionAnswered(db, "app-12");
+turnEnded(db, "none", "app-12", { message: "I'll merge origin/main once t113 lands." });
+markForgotten(db, "none", 5, told + 29 * 60_000);
+const held = needsYou(thread());
+markForgotten(db, "none", 5, told + 30 * 60_000);
+console.log(JSON.stringify({ held, word: needsYouFor(thread()) }));`);
+  expect(seen).toEqual({ held: false, word: "I'll merge origin/main once t113 lands." });
+});
+
+// The lead can tell a builder mid-turn, and its message waits to go in. A stop before it goes in
+// still holds off from when the lead sent it, as the lead acted already.
+test("a lead's message still waiting to go in holds off the safety net too", () => {
+  const seen = inProcess(`
+const told = Date.now();
+db.run("INSERT INTO messages (folder, sender, text, said, at, typed_in) VALUES ('app-12', 'lead', 'Wait for t113.', 'Wait for t113.', ?, '[]')", [told]);
+turnEnded(db, "none", "app-12", { message: "Still on the export." });
+markForgotten(db, "none", 5, told + 29 * 60_000);
+const held = needsYou(thread());
+markForgotten(db, "none", 5, told + 30 * 60_000);
+console.log(JSON.stringify({ held, word: needsYouFor(thread()) }));`);
+  expect(seen).toEqual({ held: false, word: "Still on the export." });
+});

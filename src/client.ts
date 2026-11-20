@@ -404,12 +404,17 @@ export async function reportQuestion(state: "asked" | "answered" | "closed"): Pr
 // builder stopped without submitting. Input that isn't the hook's is left out, and a terminal
 // isn't read, as it would wait for you. The agent's own socket says which agent. When nothing in
 // the clone the hook runs in is uncommitted, it also sends the commit checked out: a builder that
-// only answered a message while its last submit is reviewed waits on that submit.
+// only answered a message while its last submit is reviewed waits on that submit. Claude Code's
+// hook also lists the background jobs still running, such as a test run the builder waits on.
 export async function reportTurnEnded(): Promise<void> {
-  const Input = z.object({ last_assistant_message: z.string().nullish() });
+  const Input = z.object({
+    last_assistant_message: z.string().nullish(),
+    background_tasks: z.array(z.unknown()).nullish(),
+  });
   const text = process.stdin.isTTY ? "" : await Bun.stdin.text();
   const input = Input.safeParse(parseJson(text));
   const message = input.success ? (input.data.last_assistant_message ?? "").trim() : "";
+  const background = input.success && (input.data.background_tasks ?? []).length > 0;
   // The hook runs in the builder's own clone, inside its sandbox. Untracked files count as work
   // left over, whatever the clone's settings say about showing them. A folder git can't read
   // sends no commit, so the turn counts as new work. git status would take the clone's
@@ -428,6 +433,7 @@ export async function reportTurnEnded(): Promise<void> {
     command: "turn ended",
     ...(message ? { message: shortened(message) } : {}),
     ...(clean ? { head: head.out.trim() } : {}),
+    ...(background ? { background } : {}),
   });
 }
 
