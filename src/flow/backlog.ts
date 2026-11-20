@@ -58,6 +58,48 @@ function inTurn<T>(repository: Repository, work: () => Promise<T>): Promise<T> {
   return run;
 }
 
+// Returns the names of Skelcrew's own tasks this machine holds in the repository, such as t4.
+// Names from a machine's code, such as wr4, are left out, as no claim can match them.
+function heldNames(db: Database, repository: Repository): string[] {
+  return db
+    .query("SELECT task FROM tasks WHERE owner = ? AND repo = ? AND task GLOB 't[0-9]*'")
+    .all(repository.owner, repository.repo)
+    .map((row) => z.object({ task: z.string() }).parse(row).task)
+    .filter((id) => /^t\d+$/.test(id));
+}
+
+// The names this daemon has seen claimed on the remote, as owner/repo/name, so each poll asks the
+// remote only about names it hasn't settled yet, such as a task started since.
+const settled = new Set<string>();
+
+// Claims on the remote, as an old name, each name this machine holds that no claim has yet: a
+// name from before Skelcrew claimed names, such as t25, which lives only here. Every machine then
+// numbers its new tasks above 99, above every old name, where a brand-new repository starts at t1.
+// A name another machine claimed first is settled as it is: a claim doesn't say which machine made
+// it, so it can't be told from this machine's own. That gap is left to a machine whose daemon
+// didn't run between this release and another machine's first task there. Each refresh runs it,
+// and it asks the remote nothing once every name held is settled.
+async function claimOldNames(db: Database, repository: Repository, folder: string) {
+  const key = (name: string) => `${repository.owner}/${repository.repo}/${name}`;
+  let left = heldNames(db, repository).filter((name) => !settled.has(key(name)));
+  while (left.length > 0) {
+    const claims = await claimedNames(db, repository);
+    const known = [...claims.names, ...claims.old];
+    for (const name of left.filter((name) => known.includes(name))) settled.add(key(name));
+    left = left.filter((name) => !known.includes(name));
+    const [name] = left;
+    if (name === undefined) return;
+    // A claim refused because another machine claimed meanwhile is tried again on fresh claims.
+    if (await claimName(db, repository, folder, name, claims.last, undefined, undefined, true)) {
+      settled.add(key(name));
+      left = left.slice(1);
+      console.log(
+        `claimed ${taskName(repository.name, name)}, a name from before Skelcrew claimed names`,
+      );
+    }
+  }
+}
+
 // Claims the next name for one of Skelcrew's own tasks on the remote, from Skelcrew's clone in
 // the folder, and returns it, such as t104. It is a t and the next number after every one claimed
 // on the remote, which every machine sees, and every one this machine's tasks hold. A brand-new
@@ -73,16 +115,14 @@ export async function claimOwnName(
   filed?: string,
   noting?: (task: string, commit: string) => void,
 ): Promise<string> {
-  const { owner, repo } = repository;
-  const held = db
-    .query("SELECT task FROM tasks WHERE owner = ? AND repo = ? AND task GLOB 't[0-9]*'")
-    .all(owner, repo)
-    .map((row) => z.object({ task: z.string() }).parse(row).task)
-    .filter((id) => /^t\d+$/.test(id));
+  const held = heldNames(db, repository);
   while (true) {
     const claims = await claimedNames(db, repository);
-    const numbers = [...claims.names, ...held].map((id) => Number(id.slice(1)));
-    const old = held.some((id) => !claims.names.includes(id));
+    // A repository with old names, claimed or only held here, numbers its new ones above 99, as
+    // another machine may hold old names it hasn't claimed yet.
+    const numbers = [...claims.names, ...claims.old, ...held].map((id) => Number(id.slice(1)));
+    const unclaimed = held.some((id) => !claims.names.includes(id) && !claims.old.includes(id));
+    const old = claims.old.length > 0 || unclaimed;
     const task = `t${Math.max(old ? 99 : 0, ...numbers) + 1}`;
     const note = noting && ((commit: string) => noting(task, commit));
     if (await claimName(db, repository, folder, task, claims.last, filed, note)) return task;
@@ -186,6 +226,10 @@ export function refreshBacklog(
 // Refreshes the backlog for refreshBacklog, in the repository's turn.
 async function refreshInTurn(db: Database, repository: Repository, folder: string) {
   const { owner, repo } = repository;
+  // A failed claim of an old name stops nothing else, and is tried again at the next refresh.
+  await claimOldNames(db, repository, folder).catch((error) =>
+    console.log(`couldn't claim ${repository.name}'s old task names: ${errorText(error)}`),
+  );
   const { filed, started } = await fetchBacklog(db, repository, folder);
   const tasks = filed.flatMap(({ name, commit, text }) => {
     const kept = readKept(repository, name, commit, text);

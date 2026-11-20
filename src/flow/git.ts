@@ -244,10 +244,16 @@ const claimRef = (name: string) => `refs/skelcrew/names/${name}`;
 // "last" is no task's name.
 const lastClaimRef = claimRef("last");
 
+// Where a machine claims a name its tasks had from before Skelcrew claimed names, such as
+// refs/skelcrew/old-names/t25. Apart from the new names' claims, so every machine can tell that
+// the repository has old names, and number its new ones above all of them.
+const oldClaimRef = (name: string) => `refs/skelcrew/old-names/${name}`;
+
 // What the remote holds of Skelcrew's own tasks' names: the names any machine claimed, such as
-// t104, and the commit of the last claim, or "" before any claim moved it. Only the remote is
-// shared between machines, so it is what keeps their names apart.
-export type Claims = { names: string[]; last: string };
+// t104, those claimed as old names, such as t25, and the commit of the last claim, or "" before
+// any claim moved it. Only the remote is shared between machines, so it is what keeps their names
+// apart.
+export type Claims = { names: string[]; old: string[]; last: string };
 
 // Returns the names claimed on the remote and its last claim, as Claims says.
 export async function claimedNames(db: Database, repository: Repository): Promise<Claims> {
@@ -255,6 +261,7 @@ export async function claimedNames(db: Database, repository: Repository): Promis
     "ls-remote",
     repository.remote,
     claimRef("t*"),
+    oldClaimRef("t*"),
     lastClaimRef,
   ]);
   // Each line is a commit, a tab and the ref.
@@ -262,10 +269,12 @@ export async function claimedNames(db: Database, repository: Repository): Promis
   const last = lines.find(([, ref]) => ref === lastClaimRef)?.[0] ?? "";
   // Claims from when names began with a machine's code, such as wr4, don't match the pattern,
   // and a name must go on with digits alone after the t.
-  const names = lines
-    .map(([, ref]) => ref?.slice(claimRef("").length) ?? "")
-    .filter((name) => /^t\d+$/.test(name));
-  return { names, last };
+  const under = (prefix: string) =>
+    lines
+      .filter(([, ref]) => ref?.startsWith(prefix))
+      .map(([, ref]) => ref?.slice(prefix.length) ?? "")
+      .filter((name) => /^t\d+$/.test(name));
+  return { names: under(claimRef("")), old: under(oldClaimRef("")), last };
 }
 
 // Where a task filed in Skelcrew's backlog is kept on the remote, such as
@@ -359,7 +368,8 @@ export async function remoteRef(db: Database, repository: Repository, ref: strin
 // just before the push, so a caller can keep it in case the push's outcome is never heard. `filed`
 // is a task to keep in the backlog under the name, as text. It goes in a commit of its own, which only its ref holds, so
 // removing the task leaves its words on no ref. The same push files it, so a task is never filed
-// without its name, nor a name claimed without its task.
+// without its name, nor a name claimed without its task. With `old`, the name is one from before
+// Skelcrew claimed names, and is claimed as such.
 export async function claimName(
   db: Database,
   repository: Repository,
@@ -368,7 +378,9 @@ export async function claimName(
   last: string,
   filed?: string,
   noting?: (commit: string) => void,
+  old = false,
 ): Promise<boolean> {
+  const ref = old ? oldClaimRef(name) : claimRef(name);
   const commit = await makeCommit(
     db,
     repository,
@@ -378,7 +390,7 @@ export async function claimName(
   // The claim only where it doesn't exist yet, and the last claim only where it is still the one
   // read. Of two machines claiming at once, only the first gets either.
   const moves = [
-    { ref: claimRef(name), was: "", now: commit },
+    { ref, was: "", now: commit },
     { ref: lastClaimRef, was: last, now: commit },
   ];
   if (filed !== undefined) {
@@ -395,14 +407,14 @@ export async function claimName(
     // commit is this machine's, so it counts, and the task isn't filed again under another name.
     // A remote that can't say leaves the outcome unknown, which the caller must hear as the
     // failure it is: taking the claim for another machine's would file the task twice.
-    const holds = await remoteRef(db, repository, claimRef(name)).catch(() => null);
+    const holds = await remoteRef(db, repository, ref).catch(() => null);
     if (holds === null) throw error;
     if (holds === commit) return true;
     // A refusal only means another machine claimed first when the claim is there or the last
     // claim moved. Otherwise the push failed for another reason, such as the remote being out of
     // reach, which the caller must hear.
     const now = await claimedNames(db, repository);
-    if (now.last === last && !now.names.includes(name)) throw error;
+    if (now.last === last && !(old ? now.old : now.names).includes(name)) throw error;
     return false;
   }
 }

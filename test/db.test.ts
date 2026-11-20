@@ -443,11 +443,12 @@ console.log(JSON.stringify(names));`;
   });
 }
 
-// Waits for a process from startOn and returns the names it printed.
+// Waits for a process from startOn and returns the names it printed, on its last line. A line
+// before it is a log line, such as an old name claimed as a start refreshes the backlog.
 async function namesFrom(run: ReturnType<typeof startOn>): Promise<string[]> {
   const [out, err] = [await new Response(run.stdout).text(), await new Response(run.stderr).text()];
   expect(err).toBe("");
-  return JSON.parse(out);
+  return JSON.parse(out.trim().split("\n").at(-1) ?? "");
 }
 
 // Two machines take names from the remote they share, at the same moment.
@@ -487,6 +488,53 @@ test("a machine with an old name takes t100, or the next number above every one 
     "APP-T171",
     "APP-T172",
   ]);
+}, 60_000);
+
+// Runs the daemon's refresh of app's backlog on a machine holding an old name, t3, from before
+// Skelcrew claimed names, then starts a task there titled `title`, if given. Returns what it logged
+// and the names it started.
+async function refreshWithOldName(machine: string, remote: string, title?: string) {
+  const clone = join(machine, ".local", "share", "skelcrew", "repos", "simon", "app");
+  Bun.spawnSync(["git", "clone", "-q", remote, clone]);
+  const before = `db.run("INSERT INTO tasks (owner, repo, task) VALUES ('simon', 'app', 't3')");
+const { refreshBacklog } = await import(${JSON.stringify(source("flow/backlog.ts"))});
+await refreshBacklog(db, db.query("SELECT * FROM repositories").get(), ${JSON.stringify(clone)});`;
+  const run = startOn(machine, remote, title ? [title] : [], before);
+  const [out, err] = [await new Response(run.stdout).text(), await new Response(run.stderr).text()];
+  expect(err).toBe("");
+  const lines = out.trim().split("\n");
+  return { said: lines.slice(0, -1), names: JSON.parse(lines.at(-1) ?? "[]") };
+}
+
+// Old names live only on the machine that has them, so another machine's first task could take
+// one. The daemon claims them as old names as it refreshes the repository, and every machine then
+// numbers above 99, above any machine's old names, claimed or not yet.
+test("a machine claims its old names as it refreshes, so another machine's first task goes above them", async () => {
+  const { remote, homes } = twoMachines();
+  const [laptop = "", lapdog = ""] = homes;
+  const refreshed = await refreshWithOldName(laptop, remote);
+  expect(refreshed.said).toEqual(["claimed APP-T3, a name from before Skelcrew claimed names"]);
+  const claims = Bun.spawnSync(["git", "ls-remote", remote, "refs/skelcrew/*"]).stdout.toString();
+  expect(claims).toContain("refs/skelcrew/old-names/t3");
+  expect(claims).not.toContain("refs/skelcrew/names/t3");
+  expect(await namesFrom(startOn(lapdog, remote, ["One"]))).toEqual(["APP-T100"]);
+}, 60_000);
+
+// A claim doesn't say which machine made it, so an old name another machine claimed first is
+// left as it is: the two tasks share it. This machine's next name still goes above every name.
+test("an old name another machine claimed first is left alone, and the next name goes above it", async () => {
+  const { remote, homes } = twoMachines();
+  const [laptop = "", lapdog = ""] = homes;
+  expect(await namesFrom(startOn(lapdog, remote, ["One", "Two", "Three"]))).toEqual([
+    "APP-T1",
+    "APP-T2",
+    "APP-T3",
+  ]);
+  const refreshed = await refreshWithOldName(laptop, remote, "Four");
+  expect(refreshed.said).toEqual([]);
+  expect(refreshed.names).toEqual(["APP-T4"]);
+  const claims = Bun.spawnSync(["git", "ls-remote", remote, "refs/skelcrew/*"]).stdout.toString();
+  expect(claims).not.toContain("old-names");
 }, 60_000);
 
 // A machine reads the claims, then another machine claims a higher name before it pushes. Its
