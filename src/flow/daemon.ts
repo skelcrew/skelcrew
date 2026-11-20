@@ -536,26 +536,14 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
     }
   };
   // Does again each yes to a lead's request that the last stop of the daemon cut short. One whose
-  // start recorded its thread is only reported, as the thread is now. Doing any other start again
-  // never starts a task twice: one already at work stays as it is, and only gains the short title
-  // or flow asked. The lead hears what doing it again said.
+  // start changed the task already is only reported, with what that start said. Doing any other
+  // again never starts a task twice, and the lead hears what doing it again said.
   const finishAnswers = async () => {
     for (const taken of answeredRequests(db)) {
       try {
         const repository = findRepository(db, `${taken.owner}/${taken.repo}`);
-        if (taken.started && taken.action.kind === "start") {
-          // The yes recorded its task's thread before the stop, so the lead only hears of it,
-          // as the thread is now: still queued, or started.
-          const name = taskName(repository.name, taken.action.task);
-          const thread = threadOn(db, `${taken.owner}/${taken.repo}`, taken.action.task);
-          const status = thread?.status ?? "done";
-          const now =
-            thread && status === "queued"
-              ? queuedText(db, thread)
-              : ["working", "waiting"].includes(status)
-                ? `Started ${name}.`
-                : `Started ${name}, which is ${status} now.`;
-          const text = `Skelcrew stopped partway through the human's yes in the list to your request: ${taken.says} It had done it already: ${now}`;
+        if (taken.outcome !== null) {
+          const text = `Skelcrew stopped partway through the human's yes in the list to your request: ${taken.says} It had done it already: ${taken.outcome}`;
           settle(repository, taken.id, text);
           continue;
         }
@@ -568,11 +556,20 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   // Starts a task, for sc start: brings back a stopped thread, lets one go on past the round
   // limit, switches the flow or short title of one at work, or records a new thread and starts
   // its builder. Returns what to say of it. `yes` is the ID of your yes to a lead's request that
-  // asked for this start, which is kept as started in the step that records the new thread.
+  // asked for this start. Whatever the start changes, the request keeps what it said in the same
+  // step, so a stop of the daemon before the lead hears never has the yes done again.
   const startTask = async (
     request: Extract<DaemonRequest, { command: "start" }>,
     yes?: number,
   ): Promise<{ started: string }> => {
+    // Makes the change and keeps what it said on the yes's request, in one step, then says it.
+    const done = (said: string, change: () => void = () => {}) => {
+      db.transaction(() => {
+        change();
+        if (yes !== undefined) requestStarted(db, yes, said);
+      })();
+      return { started: said };
+    };
     // A thread the task already has is brought back or let past its round limit, with no
     // poll, as nothing new is read from the tracker.
     const before = threadOn(db, request.repo, request.task);
@@ -583,14 +580,18 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
     // already is no switch, so sc start goes on as without one, such as past the round limit.
     const switching = before !== null && request.flow !== undefined && request.flow !== before.flow;
     if (before && atWork && switching && request.flow) {
-      switchFlow(before, request.flow, request.short);
-      return { started: `${threadName(db, before)} now runs the flow ${request.flow}.` };
+      const flow = request.flow;
+      return done(`${threadName(db, before)} now runs the flow ${flow}.`, () =>
+        switchFlow(before, flow, request.short),
+      );
     }
     // A short title for a thread already at work, such as one started from GitHub, only
     // names it for the sidebar. Its builder goes on as it was, and nothing else changes.
     if (before && request.short && atWork) {
-      record(db, before.folder, { short: request.short }, "given a short title");
-      return { started: `Gave ${threadName(db, before)} the short title "${request.short}".` };
+      const short = request.short;
+      return done(`Gave ${threadName(db, before)} the short title "${short}".`, () =>
+        record(db, before.folder, { short }, "given a short title"),
+      );
     }
     // A stopped thread switches to another flow named here as one at work does, before it
     // comes back, and is refused, staying stopped, where switchFlow refuses.
@@ -602,20 +603,29 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       if (joinsQueue(db, before)) {
         const change = { status: "queued" as const, queued_since: joinTime(db) };
         const short = request.short ? { short: request.short } : {};
-        const queued = record(db, before.folder, { ...change, ...short }, "queued");
+        // What it says names its place in the queue, which only the change gives.
+        const said = db.transaction(() => {
+          const queued = record(db, before.folder, { ...change, ...short }, "queued");
+          const text = queuedText(db, queued);
+          if (yes !== undefined) requestStarted(db, yes, text);
+          return text;
+        })();
         assignIssue(db, before, true);
-        return { started: queuedText(db, queued) };
+        return { started: said };
       }
-      resume(before, request.short);
+      const on = switching ? ` on the flow ${request.flow}` : "";
+      // Its builder comes back after the change is kept, as it takes a while.
+      const answer = done(`Started ${name} again${on}: its builder is back where it was.`, () => {
+        void resume(before, request.short);
+      });
       // Its stop took you off its issue, so starting it again puts you back.
       assignIssue(db, before, true);
-      const on = switching ? ` on the flow ${request.flow}` : "";
-      return { started: `Started ${name} again${on}: its builder is back where it was.` };
+      return answer;
     }
-    if (before && choice === "go on") {
-      goOn(db, sessions, before.folder);
-      return { started: `${threadName(db, before)} goes on past the round limit.` };
-    }
+    if (before && choice === "go on")
+      return done(`${threadName(db, before)} goes on past the round limit.`, () =>
+        goOn(db, sessions, before.folder),
+      );
     // Refused before the poll, which only a new thread needs, so a slow or failing remote
     // can't hold up the answer. startThread refuses it again, for a thread started meanwhile.
     // A task already in the queue keeps its place there.
@@ -638,17 +648,22 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       // short title and flow given here still go on that thread, so they aren't lost, as long
       // as its builder hasn't submitted meanwhile.
       const started = threadOn(db, request.repo, request.task);
-      if (!before && started) {
-        if (request.flow && request.flow !== started.flow)
-          switchFlow(started, request.flow, request.short);
-        else if (request.short)
-          record(db, started.folder, { short: request.short }, "given a short title");
-        return { started: `Started ${threadName(db, started)}.` };
-      }
+      if (!before && started)
+        return done(`Started ${threadName(db, started)}.`, () => {
+          if (request.flow && request.flow !== started.flow)
+            switchFlow(started, request.flow, request.short);
+          else if (request.short)
+            record(db, started.folder, { short: request.short }, "given a short title");
+        });
       if (await hasNoCommits(db, repository)) throw new Error(noCommits(repository));
-      // Your yes to a lead's request is kept as started in the step that records the thread.
-      thread = await startThread(db, request, false, () => {
-        if (yes !== undefined) requestStarted(db, yes);
+      // Your yes to a lead's request keeps what the start said in the step that records the
+      // thread: queued, or started.
+      thread = await startThread(db, request, false, (recorded) => {
+        const said =
+          recorded.status === "queued"
+            ? queuedText(db, recorded)
+            : `Started ${threadName(db, recorded)}.`;
+        if (yes !== undefined) requestStarted(db, yes, said);
       });
     } finally {
       startingTasks.delete(key);

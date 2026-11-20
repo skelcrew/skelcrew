@@ -462,7 +462,7 @@ async function restartDuring(hold: { file: "hold-push" | "hold-fetch"; text?: st
   void ask({ command: "answer", repo: "simon/app", id: 1, yes: true });
   await until(() => existsSync(join(home, "held")));
   for (const run of running.splice(0)) await stop(run);
-  const left = onDb((db) => db.query("SELECT action, answered, started FROM lead_requests").all());
+  const left = onDb((db) => db.query("SELECT action, answered, outcome FROM lead_requests").all());
   const threadsLeft = onDb((db) => db.query("SELECT task FROM task_threads").all());
   rmSync(join(home, hold.file));
   serve();
@@ -484,7 +484,7 @@ test("a stop after the push that files a yes's new task starts that task once, f
     {
       action: '{"kind":"start new","title":"CSV export","body":"Add it.","short":"CSV"}',
       answered: expect.any(Number),
-      started: 0,
+      outcome: null,
     },
   ]);
   expect(threads).toEqual([{ task: "t1", short: "CSV" }]);
@@ -503,7 +503,7 @@ test("a stop after a yes's new task is filed starts the task it named, filing no
     {
       action: '{"kind":"start","task":"t1","short":"CSV"}',
       answered: expect.any(Number),
-      started: 0,
+      outcome: null,
     },
   ]);
   expect(threads).toEqual([{ task: "t1", short: "CSV" }]);
@@ -526,7 +526,7 @@ test("a stop after a yes's start recorded its thread tells the lead, starting no
     {
       action: '{"kind":"start","task":"t1","short":"CSV"}',
       answered: expect.any(Number),
-      started: 1,
+      outcome: "Started APP-T1.",
     },
   ]);
   expect(threadsLeft).toEqual([{ task: "t1" }]);
@@ -575,9 +575,9 @@ test("two overlapping yeses for one task each keep their own start across a rest
   writeFileSync(join(home, "hold-push"), "3");
   await until(() => existsSync(join(home, "held-3")));
   for (const run of running.splice(0)) await stop(run);
-  expect(onDb((db) => db.query("SELECT id, started FROM lead_requests").all())).toEqual([
-    { id: 1, started: 1 },
-    { id: 2, started: 0 },
+  expect(onDb((db) => db.query("SELECT id, outcome FROM lead_requests").all())).toEqual([
+    { id: 1, outcome: "Started APP-T1." },
+    { id: 2, outcome: null },
   ]);
   rmSync(join(home, "hold-push"));
   serve();
@@ -594,6 +594,36 @@ test("two overlapping yeses for one task each keep their own start across a rest
     { text: expect.stringContaining(`${partway} It did it again: `) },
   ]);
 }, 60_000);
+
+// A yes whose start changed a task that had a thread, such as one brought back or given a short
+// title, keeps what it said with that change. A restart before the lead heard only tells the lead
+// that, and does nothing again: here the task stays stopped, as a second try would bring it back.
+test("a yes whose start changed its task before a stop is only reported, with what it said", async () => {
+  setUp();
+  addRepository("app");
+  serve();
+  await untilAnswers();
+  for (const run of running.splice(0)) await stop(run);
+  const said = "Started APP-T1 again: its builder is back where it was.";
+  onDb((db) =>
+    db.run(`INSERT INTO lead_requests (owner, repo, action, says, made, answered, outcome) VALUES
+  ('simon', 'app', '{"kind":"start","task":"t1"}', 'Start APP-T1?', 1, 1, '${said}');
+${threadSql({ task: "t1", title: "CSV export", status: "stopped" })}`),
+  );
+  serve();
+  await untilAnswers();
+  await until(() => onDb((db) => db.query("SELECT 1 FROM lead_requests").all()).length === 0);
+  expect(
+    onDb((db) => db.query("SELECT text FROM notes WHERE text LIKE '%request%'").all()),
+  ).toEqual([
+    {
+      text: `Skelcrew stopped partway through the human's yes in the list to your request: Start APP-T1? It had done it already: ${said}`,
+    },
+  ]);
+  expect(onDb((db) => db.query("SELECT status FROM task_threads").all())).toEqual([
+    { status: "stopped" },
+  ]);
+});
 
 // A daemon stopped partway through a yes does it again as it starts, and the lead hears what that
 // said. Here the yes asks for a flow that doesn't exist, so doing it again fails and says why, and

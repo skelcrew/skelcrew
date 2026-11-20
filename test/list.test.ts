@@ -1710,6 +1710,20 @@ test("y and n answer the lead's request you are on, and Enter says to use them",
   expect(asked.filter((line) => line.startsWith("answer"))).toHaveLength(2);
 });
 
+// The details pane on a request's row shows the lead at work, read without attaching, as the
+// request is the lead's.
+test("the details pane on a request of the lead's shows the lead's screen, with no details", async () => {
+  leadRequests();
+  await open({ width: 140 });
+  press("Up");
+  await until(() => here().startsWith("▸ ● Start APP-31"), "the request's row");
+  await until(() => seen().includes("I am lead"), "the lead's screen in the pane");
+  expect(seen()).not.toContain("issue ");
+  type("x");
+  await Bun.sleep(300);
+  expect(read(join(home, "lead.typed"))).toBe("");
+});
+
 // Shift with an arrow moves a queued task in its queue, through the daemon, and the bottom line
 // says its new place. A paused task has no place, so nothing is asked.
 test("shift+up on a queued task moves it earlier in the queue, and the line says its place", async () => {

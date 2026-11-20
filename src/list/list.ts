@@ -28,7 +28,7 @@ import {
   type Target,
   tabAt,
 } from "./layout.ts";
-import { liveNote, readLive } from "./live.ts";
+import { liveNote, readLead, readLive } from "./live.ts";
 import { drawPane, type Live } from "./pane.ts";
 import {
   buildersNote,
@@ -196,11 +196,18 @@ export async function runList(agents: string, repository: string): Promise<void>
   // Returns the details pane's lines for a terminal of this size, or null when it is too narrow
   // for the pane. A task's details are read only when you move onto it or the rows are read again.
   // Its agent's screen is the last one read for this row, or blank until the first read comes.
-  // A row with no agent running says so at once.
+  // A row with no agent running says so at once. A request of the lead's shows the lead's screen,
+  // read-only, with no details.
   const paneFor = (size: { width: number; height: number }) => {
     const beside = paneWidth(size.width);
     if (beside === 0) return null;
     const row = rows[here];
+    if (row?.part === "request") {
+      const note = liveNote(row);
+      const shown =
+        note !== null ? { note } : live?.name === row.name ? live.shown : { screen: "" };
+      return drawPane(row, null, shown, beside, size.height - 2).lines;
+    }
     if (!row || row.task === null) return drawPane(row, null, null, beside, size.height - 2).lines;
     if (details?.name !== row.name)
       details = { name: row.name, read: readDetails(db, open, row.task, Date.now()) };
@@ -548,7 +555,8 @@ export async function runList(agents: string, repository: string): Promise<void>
   const reading = new Set<string>();
   const look = async () => {
     const row = rows[here];
-    if (attached || left || !row || row.task === null || liveNote(row) !== null) return;
+    const agent = row?.task !== null || row?.part === "request";
+    if (attached || left || !row || !agent || liveNote(row) !== null) return;
     if (reading.has(row.name) || paneWidth(process.stdout.columns || 80) === 0) return;
     reading.add(row.name);
     const asked = selections;
@@ -557,7 +565,11 @@ export async function runList(agents: string, repository: string): Promise<void>
     // these can change meanwhile, so it is asked again before the screen is read.
     const wanted = () =>
       !attached && !left && selections === asked && paneWidth(process.stdout.columns || 80) > 0;
-    const shown = await readLive(db, agents, row, wanted);
+    // A request's row shows the lead, read as sc peek reads it.
+    const shown =
+      row.part === "request"
+        ? await readLead(db, agents, open)
+        : await readLive(db, agents, row, wanted);
     reading.delete(row.name);
     // A read the list stopped wanting read nothing and shows nothing, and so is one that came
     // back once it was no longer wanted, such as after you left and the terminal is your shell's.

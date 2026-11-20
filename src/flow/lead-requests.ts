@@ -94,28 +94,28 @@ export function requestAnswered(db: Database, id: number): void {
 }
 
 // Returns the requests you said yes to that a stop of the daemon cut short, with their repository
-// and whether the yes recorded its task's thread already. A no is never left here, as it goes in
-// one step.
+// and what the yes's start said, when it changed the task already, or null. A no is never left
+// here, as it goes in one step.
 export function answeredRequests(
   db: Database,
-): (LeadRequest & { owner: string; repo: string; started: boolean })[] {
+): (LeadRequest & { owner: string; repo: string; outcome: string | null })[] {
   return db
     .query(
-      "SELECT id, owner, repo, action, says, started FROM lead_requests WHERE answered IS NOT NULL",
+      "SELECT id, owner, repo, action, says, outcome FROM lead_requests WHERE answered IS NOT NULL",
     )
     .all()
     .flatMap((row) => {
-      const { owner, repo, started } = z
-        .object({ owner: z.string(), repo: z.string(), started: z.coerce.boolean() })
+      const { owner, repo, outcome } = z
+        .object({ owner: z.string(), repo: z.string(), outcome: z.string().nullable() })
         .parse(row);
-      return readBack(row).map((request) => ({ ...request, owner, repo, started }));
+      return readBack(row).map((request) => ({ ...request, owner, repo, outcome }));
     });
 }
 
-// Keeps that your yes to a request recorded its task's thread, in the step that records it, so
-// a stop of the daemon before the lead hears never has the yes start it again.
-export function requestStarted(db: Database, id: number): void {
-  db.run("UPDATE lead_requests SET started = 1 WHERE id = ?", [id]);
+// Keeps what your yes to a request's start said, such as `Started APP-12.`, in the step that
+// changes the task, so a stop of the daemon before the lead hears never has the yes done again.
+export function requestStarted(db: Database, id: number, outcome: string): void {
+  db.run("UPDATE lead_requests SET outcome = ? WHERE id = ?", [outcome, id]);
 }
 
 // Saves on a request you said yes to the start of the task its yes filed, in place of the new
