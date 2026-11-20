@@ -181,9 +181,17 @@ Builders bring their questions and decisions to you, with sc tell lead or at the
 Always bring the human a builder's question about editing a spec, trust or security, the work's scope or direction, or merging, however clear the answer seems: these are theirs to decide.
 Bring such a question, and any you can't answer, to the human in this chat, naming the thread, and pass their answer on to the builder with sc tell. The human should never have to open a builder to answer it. Frame it for someone who hasn't read the code: the background in plain words, the problem with a concrete example, each option with what it means for the human, and your recommendation with why. Leave out file paths and names from the code unless they help.`;
 
+// Returns the instructions with the names in their examples in lowercase, as they were before
+// names showed in uppercase, such as app-12 for APP-12.
+const namesInLowercase = (text: string) =>
+  text.replace(/\bAPP-T?\d+\b/g, (name) => name.toLowerCase());
+
 test("the lead and builder files hold the instructions the code gave, but for what was added since", () => {
+  // Their examples name tasks in uppercase, as people read them.
+  expect(builtInRole("lead").instructions).not.toMatch(/\bapp-t?\d+\b/);
+  expect(builtInRole("builder").instructions).not.toMatch(/\bapp-t?\d+\b/);
   // The digests of src/agents/prompts/lead.md and builder.md before they moved.
-  let lead = builtInRole("lead").instructions;
+  let lead = namesInLowercase(builtInRole("lead").instructions);
   expect(lead).toContain(noReviewFlows);
   lead = lead.replace(noReviewFlows, "");
   expect(lead).toContain(waiting);
@@ -220,7 +228,7 @@ test("the lead and builder files hold the instructions the code gave, but for wh
     lead,
   );
   expect(sha256(without)).toBe("4a964d29382eddbab5268fa24921ee599fa1bde9bd1eb51341f5bee1cb577837");
-  const builder = builtInRole("builder").instructions;
+  const builder = namesInLowercase(builtInRole("builder").instructions);
   expect(builder).toContain(workflows);
   expect(builder).toContain(builderTests);
   expect(builder).toContain(asking);

@@ -455,6 +455,14 @@ export function renameOnHost(db: Database, folder: string): void {
   });
 }
 
+// Asks the host of each live builder on a plugin's host to rename it by its title as it is now.
+// The daemon does it as it starts: a host keeps a builder's title while it runs, and one started
+// by a release before has a title without its task's name, which herdr's apps would go on
+// showing. A rename of a title that didn't change does nothing a person sees.
+export function renameBuilders(db: Database): void {
+  for (const thread of liveThreads(db)) renameOnHost(db, thread.folder);
+}
+
 // Returns the title a builder's session goes by on its host: its task's name as people read it,
 // then its thread's short title, else the task's title as its builder was given it, such as
 // APP-12 Login redirect. A row from before Skelcrew saved titles takes the title from the copy of

@@ -985,7 +985,7 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
     expect(reviews()).toHaveLength(3);
     expect(thread()).toMatchObject({ status: "waiting", needs_you: 1, rounds: 3 });
     await until(() =>
-      read(join(lead(), "typed")).includes("app-12 needs you: changes asked for after 2 rounds"),
+      read(join(lead(), "typed")).includes("APP-12 needs you: changes asked for after 2 rounds"),
     );
   }, 90_000);
 
@@ -1196,7 +1196,7 @@ done`,
     const log = read(join(data(), "threads", "app-12.log"));
     expect(log).toContain("APP-12's review timed out after 0.1m; retrying");
     await until(() =>
-      read(join(lead(), "typed")).includes("app-12's review timed out after 0.1m; retrying"),
+      read(join(lead(), "typed")).includes("APP-12's review timed out after 0.1m; retrying"),
     );
     await untilReviewSaved();
     expect(thread()).toMatchObject({ needs_you: 0, verdict: "approve" });
@@ -1684,7 +1684,7 @@ done`,
     await until(() => Date.now() > Number(thread().working_since) + 2000);
     Bun.spawnSync(["tmux", "-L", socket, "kill-session", "-t", "=app-12"]);
     await until(
-      () => read(join(lead(), "typed")).includes("app-12's builder isn't running"),
+      () => read(join(lead(), "typed")).includes("APP-12's builder isn't running"),
       30_000,
     );
     expect(thread().needs_you).toBe(0);
@@ -2081,7 +2081,7 @@ await serve(${JSON.stringify(socket)}, 200);`;
     expect(started.out).toBe(`Started APP-T100.\n`);
     const log = () => read(join(data(), "threads", `app-t100.log`));
     await until(
-      () => log().includes(`app-t100 is ready on branch skelcrew/t100-add-export`),
+      () => log().includes(`APP-T100 is ready on branch skelcrew/t100-add-export`),
       30_000,
     );
     expect(git(bare, "show", `skelcrew/t100-add-export:change`)).toBe("1");
@@ -2131,7 +2131,7 @@ await serve(${JSON.stringify(socket)}, 200);`;
     expect(started.err).toBe("");
     const log = () => read(join(data(), "threads", `app-t100.log`));
     await until(
-      () => log().includes(`app-t100 is ready on branch skelcrew/t100-add-export`),
+      () => log().includes(`APP-T100 is ready on branch skelcrew/t100-add-export`),
       30_000,
     );
     // Someone else pushes to the thread's branch.
@@ -2166,7 +2166,7 @@ await serve(${JSON.stringify(socket)}, 200);`;
     expect(started.err).toBe("");
     const log = () => read(join(data(), "threads", `app-t100.log`));
     await until(
-      () => log().includes(`app-t100 is ready on branch skelcrew/t100-add-export`),
+      () => log().includes(`APP-T100 is ready on branch skelcrew/t100-add-export`),
       30_000,
     );
     // The remote goes out of reach, and someone else's push moves the thread's branch there.
@@ -2419,7 +2419,7 @@ await serve(${JSON.stringify(socket)}, 200);`;
     await untilCloned(longWait);
     expect((await skel(["start", "app", "Add export", "As JSON"])).err).toBe("");
     const log = () => read(join(data(), "threads", `app-t100.log`));
-    const ready = `app-t100 is ready on branch skelcrew/t100-add-export`;
+    const ready = `APP-T100 is ready on branch skelcrew/t100-add-export`;
     await until(() => log().includes(ready), longWait);
     const onRemote = () => git(bare, "branch", "--list", `skelcrew/t100-add-export`) !== "";
     expect(onRemote()).toBe(true);
@@ -2462,7 +2462,7 @@ await serve(${JSON.stringify(socket)}, 200);`;
     await untilCloned();
     expect((await skel(["start", "app", "Add export", "As JSON"])).err).toBe("");
     const log = () => read(join(data(), "threads", `app-t100.log`));
-    const ready = `app-t100 is ready on branch skelcrew/t100-add-export`;
+    const ready = `APP-T100 is ready on branch skelcrew/t100-add-export`;
     await until(() => log().includes(ready), 30_000);
     expect((await skel(["rm", `app-t100`])).err).toBe("");
     const realGit = Bun.which("git");
@@ -2509,7 +2509,7 @@ exec "${realGit}" "$@"`,
     expect((await skel(["start", "app", "Add export", "As JSON"])).err).toBe("");
     const log = () => read(join(data(), "threads", `app-t100.log`));
     await until(
-      () => log().includes(`app-t100 is ready on branch skelcrew/t100-add-export`),
+      () => log().includes(`APP-T100 is ready on branch skelcrew/t100-add-export`),
       30_000,
     );
     const hook = join(bare, "hooks", "post-receive");

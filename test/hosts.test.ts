@@ -247,7 +247,7 @@ attach: ["true"]
   const script = `import { openDb } from ${JSON.stringify(source("db.ts"))};
 import { record } from ${JSON.stringify(source("flow/thread.ts"))};
 import { forgetStatus, keepState } from ${JSON.stringify(source("flow/status.ts"))};
-import { builderSession, readThread } from ${JSON.stringify(source("flow/thread.ts"))};
+import { builderSession, readThread, renameBuilders } from ${JSON.stringify(source("flow/thread.ts"))};
 import { endThread, removeThread, stopThread } from ${JSON.stringify(source("flow/events.ts"))};
 import { noticeIdleScreens } from ${JSON.stringify(source("flow/status.ts"))};
 import { wakeAfterLimit } from ${JSON.stringify(source("flow/limits.ts"))};
@@ -1239,6 +1239,23 @@ process.exit(0);`,
   const labels = readFileSync(join(fake, "sessions", "fake-app-12", "labels.json"), "utf8");
   expect(JSON.parse(labels).title).toBe("SIMON/APP-12 login redirect");
   expect(said).not.toContain("couldn't rename");
+}, 40_000);
+
+// A builder started by a release before, whose title has no task's name, keeps running with its
+// ID saved. The daemon's start renames it, so the host's own apps show its name.
+test("a running builder is renamed by its title as it is now as the daemon starts", () => {
+  const fake = join(home, ".config", "skelcrew", "plugins", "fake");
+  runWithFakeHost(
+    "sessions",
+    `const host = (await builderSession(db, "unused", readThread(db, "app-12"))).host;
+await startSession(host, "app-12", { folder: ${JSON.stringify(home)}, command: ["sleep", "30"], env: {}, labels: { repository: "simon/app", role: "builder", task: "app-12", title: "Fix the login redirect" } });
+renameBuilders(db);
+await Bun.sleep(1000);
+process.exit(0);`,
+    { host: "fake", host_id: "fake-app-12", title: "Fix the login redirect" },
+  );
+  const labels = readFileSync(join(fake, "sessions", "fake-app-12", "labels.json"), "utf8");
+  expect(JSON.parse(labels).title).toBe("SIMON/APP-12 Fix the login redirect");
 }, 40_000);
 
 test("a builder found on its host after a restart is renamed if its title changed meanwhile", () => {

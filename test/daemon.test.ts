@@ -657,7 +657,7 @@ describe.skipIf(insideSandbox)("with a lead per repository", () => {
     await until(() => claudeLines().length > 0);
     const [line] = claudeLines();
     expect(line).toContain('--short "<words>"');
-    expect(line).toContain('sc start app-12 --short "Login redirect"');
+    expect(line).toContain('sc start APP-12 --short "Login redirect"');
   });
 
   // A lead an older release started has Claude Code's agent view on. Its live conversation can

@@ -1461,7 +1461,7 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
     pr({ reviews: [skelReview], checks: [approved, check(900, "passed")] });
     await until(() => thread().needs_you === 1);
     expect(handled("1001")).toBe(true);
-    await until(() => read(join(data(), "claude", leadName, "typed")).includes("app-12 needs you"));
+    await until(() => read(join(data(), "claude", leadName, "typed")).includes("APP-12 needs you"));
     expect(read(join(data(), "claude", leadName, "typed"))).toContain("ready to merge");
     // Your own comment wakes the builder; Skelcrew's review, posted by its app, never does.
     // Waiting on you, it is polled every other time: every minute, at 30 seconds a poll. Here
@@ -1548,7 +1548,7 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
     expect(thread().needs_you).toBe(0);
     // The lead hears it is done, so it stops listing the PR as ready to merge.
     const leadTyped = () => read(join(data(), "claude", leadName, "typed"));
-    await until(() => leadTyped().includes("app-12 is done: #7 merged into main"));
+    await until(() => leadTyped().includes("APP-12 is done: #7 merged into main"));
     // A thread that is done isn't polled again. Its repository still is, for labeled issues.
     await morePolls();
     expect(asked(plugin).at(-1)).toMatchObject({ ask: "changed", prs: [] });
@@ -1669,7 +1669,7 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
     const runDir = join(home, "run", "skelcrew");
     // At a terminal, sc rm says what it will do and asks first, and anything but y changes
     // nothing.
-    const question = "Remove app-12? This closes PR #7 and deletes its branch and clone. [y/N]";
+    const question = "Remove APP-12? This closes PR #7 and deletes its branch and clone. [y/N]";
     const kept = await runSkelInTerminal(socket, env(), ["rm", "app-12"], question, "n");
     expect(kept).toContain("Skelcrew didn't remove APP-12.");
     expect(asked(plugin).filter((q) => q.ask === "close pr")).toEqual([]);
@@ -1712,7 +1712,7 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
       env: env(),
     });
     expect(JSON.parse(listed.stdout.toString())).toMatchObject([
-      { task: "app-12", issue: "#12", stage: "issue" },
+      { task: "APP-12", issue: "#12", stage: "issue" },
     ]);
     const again = Bun.spawnSync([process.execPath, main, "rm", "app-12"], {
       env: env(),
@@ -1751,7 +1751,7 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
     });
     expect(thread().status).toBe("done");
     // Removed by you, it is news to the lead.
-    await until(() => leadTyped().includes("app-12 ended: you removed it, closing #7"));
+    await until(() => leadTyped().includes("APP-12 ended: you removed it, closing #7"));
     expect(leadTyped().split("APP-12 ended").length - 1).toBe(1);
   }, 60_000);
 
@@ -1874,7 +1874,7 @@ echo "Not logged in"; exit 1`,
     pr({ labeled: true });
     serve();
     const lead = () => read(join(data(), "claude", leadName, "typed"));
-    await until(() => lead().includes("started app-12 from github: Add export"));
+    await until(() => lead().includes("started APP-12 from github: Add export"));
     const took = () => asked(plugin).filter((q) => q.ask === "took");
     await until(() => took().length > 0);
     expect(took()).toEqual([{ ask: "took", repository: "simon/app", task: "12" }]);
@@ -1926,7 +1926,7 @@ echo "Not logged in"; exit 1`,
     await until(() => listed().length === 1);
     expect(listed()).toEqual([
       {
-        task: "app-12",
+        task: "APP-12",
         stage: "issue",
         title: "Add export",
         short: null,
@@ -2129,7 +2129,7 @@ echo "Not logged in"; exit 1`,
     expect(assigns()).toEqual([assignOn, assignOff]);
     await until(() => thread().assigned === 0);
     const leadTyped = () => read(join(data(), "claude", leadName, "typed"));
-    await until(() => leadTyped().includes("app-12 ended: #7 closed without merging"));
+    await until(() => leadTyped().includes("APP-12 ended: #7 closed without merging"));
   }, 60_000);
 
   // A thread that failed still holds its issue, so you stay assigned, and starting it over
@@ -2279,7 +2279,7 @@ exec ${bwrap} "$@"`,
     const leadSocket = () => join(runDir(), "leads", hashed("simon/app"), "skelcrew.sock");
     const builderSocket = () => join(runDir(), "threads", hashed("app-12"), "skelcrew.sock");
     // Where the question starts: what it says of .agents/ follows, as a poll last saw the PR.
-    const question = "Merge #7 (app-12 Add export) when it's approved and green?";
+    const question = "Merge #7 (APP-12 Add export) when it's approved and green?";
     const notLet =
       "the human hasn't let you arm a merge when ready: ask them to run sc merge --when-ready in their own terminal";
     const merges = () => asked(plugin).filter((q) => q.ask === "merge pr");
@@ -2416,7 +2416,7 @@ exec ${bwrap} "$@"`,
       expect(thread().merge_plan).toBe("armed");
       // Asked for elsewhere while your question is open, a "no" doesn't say it won't merge.
       expect(await askOn(yours, { command: "merge cancel", repo: "app", task: "12" })).toEqual({
-        said: "app-12 won't merge by itself. It waits for you to merge it.",
+        said: "APP-12 won't merge by itself. It waits for you to merge it.",
       });
       const meanwhile = await runSkelInTerminal(
         socket,
@@ -2433,7 +2433,7 @@ exec ${bwrap} "$@"`,
       expect(thread().merge_plan).toBe("armed");
       // A y to an older PR, once a plan is on the thread, reports that plan, not a refusal.
       expect(await askOn(yours, { ...arming, seen: { pr: 8, started } })).toEqual({
-        said: "Already merging #7 as soon as it's approved and green. sc merge --cancel app-12 stops it.",
+        said: "Already merging #7 as soon as it's approved and green. sc merge --cancel APP-12 stops it.",
       });
       // sc ps says so, and the lead hears it, so it knows you asked.
       const ps = Bun.spawnSync([process.execPath, main, "ps"], { env: env(), stdout: "pipe" });
@@ -2503,7 +2503,7 @@ exec ${bwrap} "$@"`,
       const why = `the lead asked to merge #7 once it's approved and green, as the human asked: ${JSON.stringify(words)}`;
       // Each line of the thread's log is JSON, so its quotes are escaped there.
       expect(read(join(data(), "threads", "app-12.log"))).toContain(`"why":${JSON.stringify(why)}`);
-      await until(() => read(daemonLog()).includes(`app-12: ${why}`));
+      await until(() => read(daemonLog()).includes(`APP-12: ${why}`));
       await morePolls();
       expect(leadTyped()).not.toContain("approved and green");
       expect(leadTyped()).not.toContain("HUMAN_WORDS");
@@ -2634,7 +2634,7 @@ exec ${bwrap} "$@"`,
       writeFileSync(join(plugin, "hold-changed"), "");
       await until(() => existsSync(join(plugin, "held-changed")));
       expect(await askOn(join(home, "run", "skelcrew.sock"), cancel)).toEqual({
-        said: "app-12 won't merge by itself. It waits for you to merge it.",
+        said: "APP-12 won't merge by itself. It waits for you to merge it.",
       });
       expect(thread().merge_plan).toBeNull();
       rmSync(join(plugin, "hold-changed"));
@@ -2659,7 +2659,7 @@ exec ${bwrap} "$@"`,
       rmSync(join(plugin, "hold-merge-pr"));
       await until(() => thread().status === "done" && !existsSync(clone()));
       await until(() =>
-        leadTyped().includes("app-12 is done: #7 merged into main when ready, as the human asked"),
+        leadTyped().includes("APP-12 is done: #7 merged into main when ready, as the human asked"),
       );
     }, 90_000);
 
@@ -2870,7 +2870,7 @@ exec ${bwrap} "$@"`,
       await until(() => existsSync(join(plugin, "held-review")));
       const cancel = { command: "merge cancel", repo: "app", task: "12" };
       expect(await askOn(join(home, "run", "skelcrew.sock"), cancel)).toEqual({
-        said: "app-12 won't merge by itself. It waits for you to merge it.",
+        said: "APP-12 won't merge by itself. It waits for you to merge it.",
       });
       rmSync(join(plugin, "hold-review"));
       await morePolls();
@@ -2908,7 +2908,7 @@ exec ${bwrap} "$@"`,
       // The lead may cancel without asking, as cancelling is always safe.
       const cancel = { command: "merge cancel", repo: "app", task: "12" };
       expect(await askOn(leadSocket(), cancel)).toEqual({
-        said: "app-12 won't merge by itself. It waits for you to merge it.",
+        said: "APP-12 won't merge by itself. It waits for you to merge it.",
       });
       expect(thread().merge_plan).toBeNull();
       pr({ head: pushed(), reviews: [skelReview], checks: [approved] });
@@ -3267,7 +3267,7 @@ echo '{"verdict":"approve","body":"Ready.","findings":[]}' > "$out"`,
       expect(merges()).toHaveLength(1);
       const cancel = { command: "merge cancel", repo: "app", task: "12" };
       expect(await askOn(join(home, "run", "skelcrew.sock"), cancel)).toEqual({
-        error: "app-12 is merging on its forge right now, so it can't be cancelled",
+        error: "APP-12 is merging on its forge right now, so it can't be cancelled",
       });
       // A review that ended while the forge took the edit, asking for something else.
       const db = new Database(join(data(), "skelcrew.db"));

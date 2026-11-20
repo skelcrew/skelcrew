@@ -117,6 +117,7 @@ import {
   liveThreads,
   readThread,
   record,
+  renameBuilders,
   type Thread,
   taskName,
   threadName,
@@ -985,6 +986,8 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   }, 2000);
   // A host that shows status hears each builder's as it is now, and each change from here on.
   reportStatuses(db);
+  // A host's own apps show each builder by its title as it is now, such as after an upgrade.
+  renameBuilders(db);
   // Open your socket.
   await open(path, "you");
   console.log(`Listening on ${path}.`);

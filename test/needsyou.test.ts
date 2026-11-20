@@ -183,13 +183,13 @@ openDb().run("UPDATE repositories SET forge = 'github', claimed = 1, remote = 'h
 // What sc ps --json shows you about app-12.
 async function needsYou(): Promise<boolean> {
   const ps = await skel(["ps", "--json"]);
-  return JSON.parse(ps.out).find((t: { thread: string }) => t.thread === "app-12")?.needsYou;
+  return JSON.parse(ps.out).find((t: { thread: string }) => t.thread === "APP-12")?.needsYou;
 }
 
 // What sc ps --json says app-12 needs you for, or null.
 async function needsYouFor(): Promise<string | null> {
   const ps = await skel(["ps", "--json"]);
-  return JSON.parse(ps.out).find((t: { thread: string }) => t.thread === "app-12")?.needsYouFor;
+  return JSON.parse(ps.out).find((t: { thread: string }) => t.thread === "APP-12")?.needsYouFor;
 }
 
 // Runs sc as app's lead does, from its sandbox.
