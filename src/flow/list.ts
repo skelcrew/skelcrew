@@ -347,25 +347,10 @@ const logDeadline = z.coerce
   .parse(process.env.SKELCREW_LOG_WAIT_MS ?? 10_000);
 
 // Returns a PR as its page shows it, from Skelcrew's copy, or null when the copy doesn't have
-// it. It asks the forge only for the logs of failed checks. A log that can't be read, or that
-// the forge takes too long on, says why in its place, so the PR still shows.
-async function prPageOf(db: Database, repository: Repository, number: number) {
+// it. Its checks have no logs: those come from the forge, which showTask asks.
+function prPageOf(db: Database, repository: Repository, number: number): PrPage | null {
   const pr = prOf(db, repository.owner, repository.repo, number);
   if (!pr) return null;
-  // Each CI check, with the end of its log when it failed and has one.
-  const checks = await Promise.all(
-    pr.checks
-      .filter((check) => check.name !== reviewCheck)
-      .map(async (check) => {
-        const log =
-          check.state === "failed" && check.id !== null
-            ? await failedLog(db, repository, check.id, logDeadline).catch(
-                (error) => `(Skelcrew couldn't read its log: ${errorText(error)})`,
-              )
-            : null;
-        return { name: safeText(check.name), state: check.state, log: log && safeText(log) };
-      }),
-  );
   const latest = pr.reviews.at(-1);
   return PrPage.parse({
     title: removeControlCodes(pr.title),
@@ -373,7 +358,11 @@ async function prPageOf(db: Database, repository: Repository, number: number) {
     branch: removeControlCodes(pr.branch),
     base: removeControlCodes(pr.base),
     ci: ciSummary(pr)[0],
-    checks,
+    checks: ciChecks(pr).map((check) => ({
+      name: safeText(check.name),
+      state: check.state,
+      log: null,
+    })),
     review: latest
       ? {
           verdict: removeControlCodes(reviewVerdict(latest)),
@@ -386,23 +375,38 @@ async function prPageOf(db: Database, repository: Repository, number: number) {
   });
 }
 
-// Returns one task for sc show, named by its task, or by its PR's number for sc pr show. It is
-// in the repository `repo` names, or else in the one whose remote is `from`, the checkout sc ran
-// in. A task with a thread still at work, or stopped, is shown as its reviewer gets it, with the
-// lead's messages to the builder after the description, so the lead sees what the builder is
-// judged by. A thread that is done or failed starts over fresh, without them, so they aren't
-// shown then. It reads Skelcrew's database and copy, and asks the forge only for the logs of
-// failed checks. Throws when there is no such task.
-export async function showTask(
-  db: Database,
-  which: {
-    repo?: string | undefined;
-    from?: string | undefined;
-    task?: string | undefined;
-    pr?: number | undefined;
-  },
-): Promise<TaskView> {
-  // Find the repository, then the task, from its PR when a number names it.
+// Returns a PR's CI checks, without Skelcrew's own review check, in the order the copy has them.
+const ciChecks = (pr: Extract<Item, { kind: "pr" }>) =>
+  pr.checks.filter((check) => check.name !== reviewCheck);
+
+// Returns the logs of a PR's CI checks, in the order prPageOf gives its checks: the end of the
+// log of each failed one that has one, as the forge gives it, and null for the rest. A log that
+// can't be read, or that the forge takes too long on, says why in its place, so the PR still
+// shows.
+async function checkLogs(db: Database, repository: Repository, number: number) {
+  const pr = prOf(db, repository.owner, repository.repo, number);
+  return Promise.all(
+    (pr ? ciChecks(pr) : []).map(async (check) => {
+      if (check.state !== "failed" || check.id === null) return null;
+      const log = await failedLog(db, repository, check.id, logDeadline).catch(
+        (error) => `(Skelcrew couldn't read its log: ${errorText(error)})`,
+      );
+      return log && safeText(log);
+    }),
+  );
+}
+
+// What names a task for sc show: its repository, by `repo` or by `from`, the remote of the
+// checkout sc ran in, and the task, or its PR's number for sc pr show.
+type Which = {
+  repo?: string | undefined;
+  from?: string | undefined;
+  task?: string | undefined;
+  pr?: number | undefined;
+};
+
+// Returns the repository a task named for sc show is in. Throws when there is none.
+function repositoryOfTask(db: Database, which: Which): Repository {
   const repository =
     which.repo !== undefined
       ? findRepository(db, which.repo)
@@ -413,6 +417,19 @@ export async function showTask(
     throw new Error(
       "name the PR's task, such as app-12, or run sc pr show in a checkout of its repository",
     );
+  return repository;
+}
+
+// Returns one task as sc show shows it, but without the logs of failed checks, so it reads
+// Skelcrew's database and copy alone and never asks the forge. The list's details pane shows it
+// so. It is named by its task, or by its PR's number for sc pr show. A task with a thread still
+// at work, or stopped, is shown as its reviewer gets it, with the lead's messages to the builder
+// after the description, so the lead sees what the builder is judged by. A thread that is done or
+// failed starts over fresh, without them, so they aren't shown then. Throws when there is no
+// such task.
+export function readTask(db: Database, which: Which): TaskView {
+  // Find the repository, then the task, from its PR when a number names it.
+  const repository = repositoryOfTask(db, which);
   const { owner, repo, name } = repository;
   const forge = forgeOf(db, repository) !== null;
   let task = which.task;
@@ -453,9 +470,19 @@ export async function showTask(
     pr,
     // Reviews run without a forge too, so their state shows here even then.
     review: thread && reviewOf(thread),
-    prPage: pr === null ? null : await prPageOf(db, repository, pr),
+    prPage: pr === null ? null : prPageOf(db, repository, pr),
     merge: thread ? mergeShown(thread) : null,
   };
+}
+
+// Returns one task for sc show, as readTask does, with the end of the log of each failed check.
+// It asks the forge only for those logs. Throws when there is no such task.
+export async function showTask(db: Database, which: Which): Promise<TaskView> {
+  const view = readTask(db, which);
+  if (view.prPage === null || view.pr === null) return view;
+  const logs = await checkLogs(db, repositoryOfTask(db, which), view.pr);
+  const checks = view.prPage.checks.map((check, i) => ({ ...check, log: logs[i] ?? null }));
+  return { ...view, prPage: { ...view.prPage, checks } };
 }
 
 // Prints rows as columns lined up under their headings, with no spaces left at line ends.
