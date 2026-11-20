@@ -8,18 +8,21 @@ import { gitCredentials } from "../plugins/plugin.ts";
 import { quietly } from "../run.ts";
 
 // Runs git with the repository's login and returns what it printed, throwing what git said
-// when it fails. Nobody may be there to type a password, so git fails rather than asks.
+// when it fails. Nobody may be there to type a password, so git fails rather than asks. `input`
+// is what git reads on stdin, such as a long commit message, which an argument can't hold.
 async function git(
   db: Database,
   repository: Repository,
   args: string[],
   env: Record<string, string | undefined> = process.env,
+  input?: string,
 ): Promise<string> {
   // With no forge, git uses your own login, as it would in your terminal.
   const forge = forgeOf(db, repository);
   const login = forge === null ? [] : gitCredentials(db, forge);
   const { out, err, ok } = await quietly(["git", ...login, ...args], {
     env: { ...env, GIT_TERMINAL_PROMPT: "0" },
+    ...(input === undefined ? {} : { stdin: new Blob([input]) }),
   });
   if (!ok) throw new Error(`git ${args.join(" ")} failed: ${err.trim()}`);
   return out.trim();
@@ -297,10 +300,15 @@ export async function makeCommit(
     "tree",
     "/dev/null",
   ]);
-  return git(db, repository, ["-C", folder, "commit-tree", empty, "-m", message], {
-    ...process.env,
-    ...identity,
-  });
+  // The message comes on stdin, as a task's description can be longer than the system lets one
+  // argument be.
+  return git(
+    db,
+    repository,
+    ["-C", folder, "commit-tree", empty],
+    { ...process.env, ...identity },
+    message,
+  );
 }
 
 // Moves refs on the remote in one atomic push from Skelcrew's clone in the folder: each from the

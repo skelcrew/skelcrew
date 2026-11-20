@@ -1651,6 +1651,20 @@ describe("the backlog", () => {
     expect(refs).not.toContain("refs/skelcrew/tasks/t101");
   }, 60_000);
 
+  // A description given on stdin can be longer than the system lets one argument be, as
+  // sc start <repo> takes it, so filing and starting never pass it as one.
+  test("a task with a description too long for one argument is filed and starts", async () => {
+    addApp();
+    serve();
+    await untilCloned();
+    const body = `${"Export every row as JSON. ".repeat(8000)}\n`;
+    const filed = await runSkel(["task", "add", "app"], env(), `Add export\n\n${body}`);
+    expect(filed.err).toBe("");
+    expect(filed.out).toBe("Filed app-t100 in the backlog. sc start app-t100 starts it.\n");
+    expect((await skel("start", "app-t100")).out).toBe("Started app-t100.\n");
+    expect(thread()).toMatchObject({ task: "t100", title: "Add export", body });
+  }, 60_000);
+
   test("sc rm deletes a task that never started, here and on the remote, and keeps its name", async () => {
     const work = addApp();
     serve();
