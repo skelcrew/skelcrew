@@ -15,6 +15,7 @@ import {
   readSession,
   stillRunning,
 } from "../agents/sessions.ts";
+import { agentsUnanswered } from "../approved-agents.ts";
 import { checkFlow, leadMayArmMerges, repositoryCommands } from "../config.ts";
 import { finishUpgrade, moveToTasks, moveTurnEnded, openDb, type Repository } from "../db.ts";
 import { flowRoles } from "../flows.ts";
@@ -455,6 +456,16 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
           throw new Error(
             `${owner}/${repo}'s tab is closed. Run sc in a checkout of it to open it.`,
           );
+        // Plain sc picks no repository itself, so the daemon hands back one whose .agents/ you
+        // never answered for, and sc asks you before its lead starts. Started first, the lead
+        // would run on the built-in roles even after a yes. Only you can approve, in your
+        // terminal. With `from`, sc already asked as it brought the repository in.
+        if (
+          request.from === undefined &&
+          request.asked !== `${owner}/${repo}` &&
+          agentsUnanswered(repository)
+        )
+          return { agents: { owner, repo, name: repository.name } };
         // Opening a repository opens its tab too, if you had closed it by exiting its lead.
         db.run("UPDATE repositories SET opened = ?, tab_closed = 0 WHERE owner = ? AND repo = ?", [
           Date.now(),

@@ -3,6 +3,7 @@
 // lead, sc --list shows the lead's repository as a list, and sc attach opens a builder.
 import { z } from "zod";
 import { agentRuns, attachSession } from "./agents/sessions.ts";
+import { askAboutAgents } from "./approved-agents.ts";
 import { ask } from "./client.ts";
 import { tellOldKeys } from "./config.ts";
 import { openDb } from "./db.ts";
@@ -19,6 +20,7 @@ import { checkoutFolder, git, release, singleFile } from "./version.ts";
 const LeadReply = z.union([
   z.object({ lead: z.string(), repository: z.string() }),
   z.object({ closed: z.literal(true) }),
+  z.object({ agents: z.object({ owner: z.string(), repo: z.string(), name: z.string() }) }),
   z.object({ error: z.string() }),
 ]);
 
@@ -133,7 +135,8 @@ export async function upInBackground(): Promise<boolean> {
 // first. The lead is for `from`, an owner/repo, or else for the repository you opened last.
 // With `tab`, only a repository whose tab is open will do. Returns false, showing nothing, when
 // every tab is closed. Before it shows either, it names once any old keys the opened
-// repository's skelcrew.yaml still uses: only the daemon knows which repository you opened last.
+// repository's skelcrew.yaml still uses, and before its lead starts, asks about an .agents/ you
+// never answered for: only the daemon knows which repository you opened last.
 export async function attachToLead(
   sessions: string,
   list: boolean,
@@ -141,28 +144,44 @@ export async function attachToLead(
   tab = false,
 ): Promise<boolean> {
   // Asking for the lead brings it back if it ended while the daemon kept running. Starting it
-  // takes longer than a status, hence the longer wait.
-  const reply = await ask(
-    { command: "lead", ...(from ? { from } : {}), ...(tab ? { tab } : {}) },
-    15_000,
-  );
-  if (reply === null) throw new Error("the daemon didn't answer: run sc to start it");
-  const lead = LeadReply.safeParse(reply);
-  if (!lead.success)
-    throw new Error("the daemon answered in a way this Skelcrew doesn't understand");
-  if ("error" in lead.data) throw new Error(lead.data.error);
-  if ("closed" in lead.data) return false;
-  tellOldKeys(lead.data.repository);
+  // takes longer than a status, hence the longer wait. The daemon may first hand back the
+  // repository it would open, for you to answer about its .agents/ before its lead starts. sc
+  // then asks again, and the daemon may pick another repository by then, which is asked about
+  // the same way.
+  let asked: string | undefined;
+  let lead: z.infer<typeof LeadReply>;
+  while (true) {
+    const reply = await ask(
+      {
+        command: "lead",
+        ...(from ? { from } : {}),
+        ...(tab ? { tab } : {}),
+        ...(asked ? { asked } : {}),
+      },
+      15_000,
+    );
+    if (reply === null) throw new Error("the daemon didn't answer: run sc to start it");
+    const parsed = LeadReply.safeParse(reply);
+    if (!parsed.success)
+      throw new Error("the daemon answered in a way this Skelcrew doesn't understand");
+    lead = parsed.data;
+    if (!("agents" in lead)) break;
+    askAboutAgents(lead.agents, lead.agents.name);
+    asked = `${lead.agents.owner}/${lead.agents.repo}`;
+  }
+  if ("error" in lead) throw new Error(lead.error);
+  if ("closed" in lead) return false;
+  tellOldKeys(lead.repository);
   if (list) {
-    await runList(sessions, lead.data.repository);
+    await runList(sessions, lead.repository);
     return true;
   }
   // The screen shows only tmux's sessions, so a lead on a runtime plugin's host is attached
   // through that host instead, full screen, as a builder there is.
-  const [owner = "", repo = ""] = lead.data.repository.split("/");
+  const [owner = "", repo = ""] = lead.repository.split("/");
   const on = await leadSession(openDb(), sessions, owner, repo);
   if (on !== null && typeof on.host !== "string") attachOnHost(on.host, on.id);
-  else await openScreen(sessions, lead.data.lead, lead.data.lead, lead.data.repository);
+  else await openScreen(sessions, lead.lead, lead.lead, lead.repository);
   return true;
 }
 

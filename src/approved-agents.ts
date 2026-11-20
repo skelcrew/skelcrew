@@ -71,6 +71,11 @@ export function approvedAgents(place: Place): string | null {
 export const agentsAnswered = (place: Place): boolean =>
   readApprovals()[`${place.owner}/${place.repo}`] !== undefined;
 
+// Returns whether the repository's default branch has an .agents/ you never answered for, so
+// plain sc asks you about it before it opens the repository's lead.
+export const agentsUnanswered = (place: Place): boolean =>
+  !agentsAnswered(place) && agentsOnDefaultBranch(place) !== null;
+
 // Returns whether the .agents/ on the default branch isn't the one you approved, so new tasks
 // keep the approved version and the repository needs you to run sc repo trust.
 export const agentsWaiting = (place: Place): boolean =>

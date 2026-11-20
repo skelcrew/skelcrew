@@ -436,6 +436,9 @@ function prepareTables(db: Database): void {
   // takes a PR with no checks yet for one without CI. `lead_host` is the session host the lead
   // runs on, tmux or a runtime plugin, which it keeps until it ends, and `lead_host_id` its
   // session's ID there. A lead from before hosts runs on tmux, where its ID is its name.
+  // `lead_agents` is the tree of the approved .agents/ the running lead started on, `none` for
+  // the built-in roles, or null for a lead started before Skelcrew kept it, which starts again
+  // on the approved .agents/ the next time it is asked for, if you approved one.
   const repositoryColumns = {
     open_issues: "INTEGER NOT NULL DEFAULT 0",
     open_prs: "INTEGER NOT NULL DEFAULT 0",
@@ -455,6 +458,7 @@ function prepareTables(db: Database): void {
     ci_seen: "INTEGER NOT NULL DEFAULT 0",
     lead_host: "TEXT DEFAULT 'tmux'",
     lead_host_id: "TEXT",
+    lead_agents: "TEXT",
   };
   // Whether repositories gain `ci_seen` now, so it is filled from the copy below.
   const repositoriesSeen = !hasColumn(db, "repositories", "ci_seen");
