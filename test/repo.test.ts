@@ -1174,16 +1174,33 @@ test("init after a no commits nothing, shows the commands, and opens no lead", a
   expect(calls()).not.toContain("daemon lead");
 });
 
-// The commit names the files sc init wrote, so other staged work stays out of it, and staged.
-test("init with other changes staged commits only its own files", async () => {
+// With other work staged, sc init asks nothing and leaves the commit to you. The commit it shows
+// names its files, so following it keeps the staged work out.
+test("init with other changes staged asks nothing and leaves the commit to you", async () => {
   const checkout = onGitHub("simon/app", "WRITE");
   githubInstalledAsYours();
   writeFileSync(join(checkout, "notes.txt"), "mine\n");
   git(checkout, "add", "notes.txt");
   const run = await initAtTerminal(checkout, "y\n");
   expect(run.code).toBe(0);
-  expect(run.out).toContain("Pushed them to main.");
-  expect(git(checkout, "show", "--name-only", "--format=", "HEAD")).not.toContain("notes.txt");
+  expect(run.out).not.toContain("now? [Y/n]");
+  expect(run.out).toEndWith(
+    `Other changes are staged here, so Skelcrew leaves the commit to you. The commit below names its files, so they stay out of it. Skelcrew reads these files from main, so commit and push them there:\n${commands}`,
+  );
+  expect(git(checkout, "log", "-1", "--format=%s")).toBe("start\n");
+  // Run as shown, the commit takes only sc init's files.
+  git(checkout, "add", "skelcrew.yaml", "skelcrew.lock", ".agents");
+  git(
+    checkout,
+    "commit",
+    "-q",
+    "-m",
+    "Set up Skelcrew",
+    "--",
+    "skelcrew.yaml",
+    "skelcrew.lock",
+    ".agents",
+  );
   expect(git(checkout, "status", "--porcelain")).toBe("A  notes.txt\n");
 });
 

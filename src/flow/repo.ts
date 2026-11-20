@@ -751,10 +751,11 @@ function gitIn(root: string, args: string[]): { ok: boolean; said: string } {
 }
 
 // Offers to commit the files sc init wrote, `files`, and push them to the repository's default
-// branch, as Skelcrew's lead and builders read the repository only as it is there. The commit
-// names those files, so nothing else staged joins it. It is offered only on the default branch,
-// where a push brings them straight in, and only when `dirty`, the files sc init edited that had
-// changes of yours already, is empty, as the commit would take those changes too. Otherwise, after
+// branch, as Skelcrew's lead and builders read the repository only as it is there. It is offered
+// only on the default branch, where a push brings them straight in, only while nothing else is
+// staged, so the commit is plainly sc init's alone, and only when `dirty`, the files sc init
+// edited that had changes of yours already, is empty, as the commit would take those changes too.
+// The commit names its files all the same, so nothing else ever joins it. Otherwise, after
 // a no, with no terminal to answer in, or when git fails, it shows the commands to run yourself:
 // on another branch they switch to the default branch first. Returns whether it pushed, once
 // Skelcrew's clone has the files too, so the lead opens on them.
@@ -791,6 +792,10 @@ async function offerPush(
   if (here !== branch)
     return show(
       `You are on ${here || "no branch"}, and Skelcrew reads these files from ${branch}. Once they are there, the lead uses them. To commit and push them there:`,
+    );
+  if (!gitIn(root, ["diff", "--cached", "--quiet"]).ok)
+    return show(
+      `Other changes are staged here, so Skelcrew leaves the commit to you. The commit below names its files, so they stay out of it. ${commitThem}`,
     );
   if (dirty.length > 0)
     return show(
