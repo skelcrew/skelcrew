@@ -248,7 +248,8 @@ export function readSettings<G extends Group>(
   if (repository && groups.some((group) => group === "builder" || group === "reviewer")) {
     const stages = flowRoles(repository);
     runs.builder = stages.build;
-    runs.reviewer = stages.review;
+    // A flow with no review stage runs no reviewer, so the built-in one's settings stand.
+    runs.reviewer = stages.review ?? "reviewer";
   }
   const roles: Partial<Record<RoleName, Role>> = {};
   for (const name of ["lead", "builder", "reviewer"] as const)

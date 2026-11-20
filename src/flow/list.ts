@@ -96,7 +96,7 @@ export const ThreadRow = z.object({
   checks: z.enum(["passed", "failed", "running", "none"]).nullable(),
   review: z
     .object({
-      state: z.enum(["approved", "changes", "reviewing", "failed", "none"]),
+      state: z.enum(["approved", "changes", "reviewing", "failed", "not reviewed", "none"]),
       round: z.number().nullable(),
       at: z.string().nullable(),
     })
@@ -145,6 +145,7 @@ function reviewOf(thread: Thread): NonNullable<ThreadRow["review"]> {
     changes: "changes",
     failed: "failed",
     "timed out": "failed",
+    "not reviewed": "not reviewed",
   } as const;
   return { state: states[thread.verdict], round: thread.review_round, at };
 }

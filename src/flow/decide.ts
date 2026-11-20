@@ -14,12 +14,19 @@ type Author = PullRequest["comments"][number]["author"];
 // it is neither CI nor a failure for the builder to fix.
 export const reviewCheck = "skelcrew/check";
 
+// Returns whether the thread's latest submit may go on to CI and ready: Skelcrew's reviewer
+// approved it, or its flow has no review stage, so it was never reviewed. Everything that
+// waits on an approval waits on this, so a flow without a review never waits on one.
+export const passedReviewStage = (thread: Pick<Thread, "verdict">) =>
+  thread.verdict === "approve" || thread.verdict === "not reviewed";
+
 // Returns whether the thread has used up its rounds of changes. Past that it goes on needing
 // you, whatever its builder does, until you let it go on or its reviewer approves. An approval
 // answers the changes the limit held, so an approved thread is ready like any other rather
-// than showing the round limit until it merges.
+// than showing the round limit until it merges. A flow with no review stage never counts a
+// round, as no review asks for changes.
 export const pastRoundLimit = (thread: Thread, maxRounds: number) =>
-  thread.rounds > maxRounds && thread.verdict !== "approve";
+  thread.rounds > maxRounds && !passedReviewStage(thread);
 
 // What decide says to do with a thread: end it, with the reason for its log and the note for
 // its lead, or tell its builder what is new and change the thread.
@@ -63,7 +70,7 @@ export function ciState(pr: PullRequest): Thread["checks"] {
 }
 
 // Returns whether every check on the PR passed, Skelcrew's own included, which it sets once its
-// reviewer approves. With no CI, that check is the only one. A thread's saved CI state leaves
+// reviewer approves, or as a submit its flow doesn't review is pushed. With no CI, that check is the only one. A thread's saved CI state leaves
 // Skelcrew's check out, so this is what says an approved PR is ready to merge.
 export function allGreen(pr: PullRequest): boolean {
   const approved = pr.checks.some((c) => c.name === reviewCheck && c.state === "passed");
@@ -72,7 +79,8 @@ export function allGreen(pr: PullRequest): boolean {
 
 // Returns what an armed merge when ready still waits on, in words for the thread's row and the
 // lead, such as "an approval", or null once the PR may merge. It merges only at the commit
-// Skelcrew's reviewer approved, `approved`, which must still be the PR's head, with every check
+// Skelcrew's reviewer approved, `approved`, which must still be the PR's head, or for a flow with
+// no review stage the commit last submitted, with every check
 // on it passed, Skelcrew's own there and passed too, and the forge saying it merges cleanly. A
 // PR with no CI check passes only when `repositoryHasCi` is false: no poll ever found CI in the
 // repository. Elsewhere CI may not have started on it yet. A thread that failed or stopped keeps
@@ -87,7 +95,7 @@ export function mergeWaitsOn(
   if (thread.status === "stopped") return "its thread, which is stopped";
   if (pr === null || pr.state !== "open") return "its PR";
   if (thread.submitting !== null || thread.reviewing !== null) return "its review";
-  if (thread.verdict !== "approve") return "an approval";
+  if (!passedReviewStage(thread)) return "an approval";
   // A push Skelcrew didn't review, such as someone else's, is never merged unseen.
   if (approved === null || pr.head !== approved) return "a review of its newest commit";
   if (pr.conflicts || thread.conflicts !== null) return `its conflict with ${pr.base} to be fixed`;
@@ -367,7 +375,10 @@ export function decide(
       conflict,
       moved,
       change: { needs_you: true },
-      why: "approved by Skelcrew's reviewer with every check green, so it is ready to merge",
+      why:
+        thread.verdict === "not reviewed"
+          ? "not reviewed, as its flow has none, with every check green, so it is ready to merge"
+          : "approved by Skelcrew's reviewer with every check green, so it is ready to merge",
     };
   return { seen, tell, notice, typedIn, failed, conflict, moved, change: {}, why: "" };
 }

@@ -5,6 +5,7 @@ import type { Database } from "bun:sqlite";
 import { z } from "zod";
 import { roundLimit as roundLimitOf } from "../config.ts";
 import { type Item, itemAt, openPrs, openTasks, ownTask } from "../flow/copy.ts";
+import { passedReviewStage } from "../flow/decide.ts";
 import { needsDecision, readyToMerge, type Shown, shownOf } from "../flow/marks.ts";
 import { agentsSaid } from "../flow/merging.ts";
 import { repositories } from "../flow/repo.ts";
@@ -101,7 +102,7 @@ function issueGroups(db: Database, open: Open, threads: Known[]): Group[] {
   const name = repositoryName(db, open);
   const rows = openTasks(db, open.owner, open.repo).map((task) => {
     const on = threads.find(({ thread }) => thread.task === task.id);
-    const sign = !on ? "○" : on.word === "approved" ? "●" : "◐";
+    const sign = !on ? "○" : on.word === "approved" || on.word === "not reviewed" ? "●" : "◐";
     const action: Action = on
       ? { key: "s", refused: `${name}#${task.id} already has ${on.name}` }
       : {
@@ -155,9 +156,10 @@ function prGroups(db: Database, open: Open, threads: Known[]): Group[] {
   const name = repositoryName(db, open);
   const rows = openPrs(db, open.owner, open.repo).map((pr) => {
     const on = threads.find(({ thread }) => thread.pr === Number(pr.id));
-    const approved = on ? on.thread.verdict === "approve" : approvedOnForge(pr);
+    // A task whose flow has no review stage counts as approved here, as nothing else waits.
+    const approved = on ? passedReviewStage(on.thread) : approvedOnForge(pr);
     const passing = pr.checks.every((check) => check.state === "passed");
-    const ready = on ? on.word === "approved" : approved && passing;
+    const ready = on ? on.word === "approved" || on.word === "not reviewed" : approved && passing;
     const named = `${name}#${pr.id}`;
     let action: Action;
     if (!ready && !approved) action = { key: "m", refused: `${named} isn't approved yet` };

@@ -146,12 +146,16 @@ export function armMerge(
   if (skip && !head)
     throw new Error(`Skelcrew hasn't seen #${thread.pr}'s newest commit yet: ask again shortly`);
   // Only a review that asks for changes, or still runs, can be skipped. An approved PR merges
-  // as usual, and one never reviewed waits for its review.
+  // as usual, as does one whose flow has no review stage, and one never reviewed waits for its
+  // review.
+  const asUsual = `merge it with m in the list, or sc merge --when-ready ${name}`;
   if (skip && thread.verdict !== "changes" && thread.reviewing === null)
     throw new Error(
       thread.verdict === "approve"
-        ? `${name} is approved already: merge it with m in the list, or sc merge --when-ready ${name}`
-        : `${name} has no review asking for changes or under way, so there is nothing to skip: wait for its review`,
+        ? `${name} is approved already: ${asUsual}`
+        : thread.verdict === "not reviewed"
+          ? `${name}'s flow has no review stage, so there is no review to skip: ${asUsual}`
+          : `${name} has no review asking for changes or under way, so there is nothing to skip: wait for its review`,
     );
   const asked = "asked" in how ? how.asked : null;
   const plan = {

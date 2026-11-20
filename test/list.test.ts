@@ -147,6 +147,35 @@ test("a task approved past the round limit is under Ready, not needing you", () 
   expect(ready).toMatchObject({ count: 1, needYou: 0 });
 });
 
+// A task whose flow has no review stage is never called approved: its word says it wasn't
+// reviewed, while it waits on CI and once it is ready, and m merges the commit last submitted.
+test("a task on a flow with no review shows not reviewed, and merges at its last submit", () => {
+  sql(
+    "UPDATE tasks SET verdict = 'not reviewed', review_round = NULL, flow = 'noreview' WHERE task = '14';",
+  );
+  const row = rows().find((candidate) => candidate.name === "app-14");
+  expect(row).toMatchObject({ part: "ready", says: "not reviewed", needsYou: false });
+  expect(row?.merge && "ask" in row.merge ? row.merge.request : null).toMatchObject({
+    command: "merge",
+    pr: 41,
+    commit: approved,
+  });
+  expect(shown("14")).toContain("\nReview  not reviewed\n");
+  // A push Skelcrew didn't make is never merged here.
+  const moved = { head: "f00d", checks: passed };
+  sql(itemSql("app", "pr", 41, "Fix the export header", "2026-11-06T10:00:00Z", moved));
+  expect(rows().find((candidate) => candidate.name === "app-14")?.merge).toEqual({
+    refused: "app#41 has a newer commit than the one submitted: wait for its builder to submit it",
+  });
+  // Waiting on CI, it is under Checks.
+  sql(`UPDATE threads SET needs_you = 0 WHERE folder = 'app-14';
+UPDATE tasks SET checks = 'pending', ci_passed = 0 WHERE task = '14';`);
+  expect(rows().find((candidate) => candidate.name === "app-14")).toMatchObject({
+    part: "checks",
+    says: "checks",
+  });
+});
+
 test("each stage's heading counts its tasks and those that need you, open or closed", () => {
   sql("UPDATE threads SET asking = 1 WHERE folder = 'app-14';");
   expect(stageHeadings(rows(), new Set<ListStage>(["building"]))).toEqual([

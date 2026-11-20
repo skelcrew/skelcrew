@@ -205,7 +205,9 @@ const reviews = new Queue();
 // daemon's stop cut short, which keeps its place. Changes are typed in only once `builderBack`
 // settles, as a review the daemon brings back can end before the builder's session is there.
 // A commit that only merges the base branch into the last approved one keeps that approval
-// once every CI check on it passed, and no reviewer runs.
+// once every CI check on it passed, and no reviewer runs. A task whose flow has no review stage
+// runs no reviewer either: it waits for CI's first check as a review would, then is marked not
+// reviewed.
 async function reviewRound(
   db: Database,
   sessions: string,
@@ -223,6 +225,7 @@ async function reviewRound(
   const { pr } = thread;
   const hasForge = forgeOf(db, repository) !== null;
   if (hasForge && pr === null) throw new Error("the thread has no pull request to review");
+  const unreviewed = flowRoles(thread).review === null;
   const { reviewer: reviewerRole, fallback, reviewMinutes } = reviewConfig(thread);
   const reviewer = reviewerRole.harness;
   const limit = reviewLimit();
@@ -235,7 +238,10 @@ async function reviewRound(
   // any await, so reviews take their places in the order they are asked for: after a restart
   // the daemon asks for them in their saved order. A failed check fails the round at once,
   // rather than once its turn comes.
-  const pending = setCheck("pending", "Skelcrew's reviewer is reviewing");
+  const pending = setCheck(
+    "pending",
+    unreviewed ? "waiting for CI's first check" : "Skelcrew's reviewer is reviewing",
+  );
   const checkFailed = new AbortController();
   pending.catch(() => checkFailed.abort());
   // CI runs the suite only once a CI check shows on this commit. A forge shows one within
@@ -276,7 +282,8 @@ async function reviewRound(
     // Saved as reviewing, as the review is under way for you, and so a restart brings it back.
     // Its place in the queue only matters once it joins, with `since`.
     const waiting = { reviewing: sha, submitting: null, reviewer, queued: null };
-    record(db, folder, waiting, `waiting for CI's first check before reviewing ${sha}`);
+    const before = unreviewed ? "marking it not reviewed" : "reviewing";
+    record(db, folder, waiting, `waiting for CI's first check on ${sha} before ${before}`);
     const started = Date.now();
     let who = suite(0);
     while (who === "wait") {
@@ -296,6 +303,13 @@ async function reviewRound(
       whoRunsTheSuite({ ...noCi, waited: 0, checkWait, ciWait }) === "reviewer"
     )
       waitedInVain.add(repositoryName);
+  }
+  // A flow with no review stage needed only that wait: ready and a merge when ready wait for it
+  // too, so CI can't be skipped by a check that hasn't shown yet.
+  if (unreviewed) {
+    await pending;
+    await markNotReviewed(db, sessions, folder, sha, signal);
+    return;
   }
   // A builder whose PR fell behind or conflicts with the base branch merges it and submits
   // again. When that is all the commit does, the PR's own change is the one already approved, so
@@ -423,7 +437,7 @@ async function reviewRound(
     given: {
       // The review stage's role, from the task's flow, and its instructions come from the
       // .agents/ the task started with.
-      instructions: repositoryRole(flowRoles(thread).review, thread).instructions,
+      instructions: repositoryRole(flowRoles(thread).review ?? "reviewer", thread).instructions,
       skills: thread,
       commit: sha,
       signal,
@@ -549,6 +563,53 @@ async function actOnVerdict(
   await builderBack;
   if (signal.aborted) return;
   await queueChanges(db, sessions, folder, tell, signal);
+}
+
+// Ends a round whose task's flow has no review stage, once CI's first check had its chance to
+// show. Skelcrew's check goes green, saying it wasn't reviewed, as ready and branch protection
+// both read it. Nothing is posted on the PR: a forge's review carries a verdict, such as
+// GitHub's "Approved.", which would contradict it, and the check already says it. The thread
+// then waits on CI like an approved one, and without a forge it is ready at once. Stops without
+// a word once a newer round cancels it.
+async function markNotReviewed(
+  db: Database,
+  sessions: string,
+  folder: string,
+  sha: string,
+  signal: AbortSignal,
+): Promise<void> {
+  if (signal.aborted) return;
+  const thread = readThread(db, folder);
+  const repository = repositoryOf(db, thread);
+  const hasForge = forgeOf(db, repository) !== null;
+  if (hasForge)
+    await setStatus(db, repository, {
+      commit: sha,
+      state: "success",
+      description: "not reviewed: this flow has no review stage",
+    });
+  if (signal.aborted) return;
+  // Without a forge there is no CI to wait on, so the branch is ready for you at once, as an
+  // approved one is.
+  const ready = hasForge ? null : `${threadName(db, thread)} is ready on branch ${thread.branch}`;
+  const change = {
+    reviewing: null,
+    submitting: null,
+    queued: null,
+    status: "waiting",
+    needs_you: ready !== null,
+    telling: null,
+    held: null,
+    verdict: "not reviewed",
+    reviewed_by: null,
+    review_round: null,
+    review_line: null,
+    reviewed_commit: sha,
+    review_at: Date.now(),
+  } satisfies Partial<Thread>;
+  const why = "not reviewed, as its flow has no review stage";
+  record(db, folder, change, ready === null ? `${why}, so it waits on CI` : `${why}; ${ready}`);
+  typeLeadNotes(db, sessions);
 }
 
 // Puts a review's verdict and findings on the PR as Skelcrew's one review there, so the PR shows

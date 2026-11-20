@@ -134,14 +134,16 @@ export const Thread = z.object({
   // one's once you change your config.
   reviewer: HarnessName.nullable(),
   // The latest finished review: its round, reviewer, verdict and the first line of what it said.
-  // Each one is saved here, so it reaches the thread's log with the rest of the thread.
+  // Each one is saved here, so it reaches the thread's log with the rest of the thread. A task
+  // whose flow has no review stage gets "not reviewed" for each submit, with no round or
+  // reviewer, and goes on to CI as an approval does.
   reviewed_by: HarnessName.nullable(),
   review_round: z.number().nullable(),
-  verdict: z.enum(["approve", "changes", "failed", "timed out"]).nullable(),
+  verdict: z.enum(["approve", "changes", "failed", "timed out", "not reviewed"]).nullable(),
   review_line: z.string().nullable(),
-  // The commit the latest finished review was about, so the list knows which commit an approval
-  // stands for without asking git. Null before the first, and in a row from before Skelcrew kept
-  // it.
+  // The commit the latest finished review was about, or the one submitted without a review, so
+  // the list knows which commit an approval stands for without asking git. Null before the
+  // first, and in a row from before Skelcrew kept it.
   reviewed_commit: z.string().nullable(),
   // When the latest review was asked for, by sc submit or sc review, or ended, in milliseconds
   // since 1970, for sc ps. Null before the first, and in a row from before Skelcrew kept it.

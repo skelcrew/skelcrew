@@ -489,6 +489,55 @@ describe.skipIf(insideSandbox)("sc submit", () => {
     expect(read(join(data(), "threads", "app-12.log"))).toContain("Round 1");
   }, 60_000);
 
+  // A repository's flow without a review: stage, for changes too small to need one, goes from
+  // build straight to CI. Its check says it wasn't reviewed, and the PR stays quiet.
+  test("on a flow with no review stage, a submit runs no reviewer, posts nothing on the PR, and waits on CI", async () => {
+    addApp({ ".agents/flows/noreview.yaml": "build:\n  role: builder\n" });
+    serve();
+    await untilCloned();
+    // Approve the repository's .agents/, as sc repo trust would.
+    const skelClone = join(data(), "repos", "simon", "app");
+    const tree = git(skelClone, "rev-parse", "HEAD:.agents");
+    writeFileSync(
+      join(home, ".config", "skelcrew", "approved-agents.yaml"),
+      `simon/app: ${tree}\n`,
+    );
+    const started = await skel(["start", "app-12", "--flow", "noreview"]);
+    expect(started.err).toBe("");
+    await until(
+      () => read(join(data(), "threads", "app-12.log")).includes("so it waits on CI"),
+      longWait,
+    );
+    expect(read(join(data(), "threads", "app-12.log"))).toContain(
+      "not reviewed, as its flow has no review stage, so it waits on CI",
+    );
+    const sha = pushed();
+    expect(statuses()).toEqual([
+      { sha, state: "pending", description: "waiting for CI's first check" },
+      { sha, state: "success", description: "not reviewed: this flow has no review stage" },
+    ]);
+    expect(opened()).toBeDefined();
+    expect(reviews()).toEqual([]);
+    expect(edits()).toEqual([]);
+    expect(existsSync(join(codexHome(), "sessions", "count"))).toBe(false);
+    expect(thread()).toMatchObject({
+      flow: "noreview",
+      status: "waiting",
+      needs_you: 0,
+      rounds: 0,
+      verdict: "not reviewed",
+      review_round: null,
+      reviewed_by: null,
+      reviewed_commit: sha,
+      reviewing: null,
+      submitting: null,
+    });
+    // The flow is fixed once the builder submitted, as in any flow.
+    expect((await skel(["start", "app-12", "--flow", "default"])).err).toBe(
+      "Skelcrew: app-12 keeps the flow noreview, as its builder has submitted already.\n",
+    );
+  }, 90_000);
+
   // Ready waits on every check, so CI still running is no reason to ask for changes.
   test("a clean diff while CI runs is approved and counts no round", async () => {
     addApp();
