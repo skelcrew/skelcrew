@@ -44,6 +44,7 @@ import { hostNamed } from "../plugins/runtime.ts";
 import { builtInRole } from "../roles.ts";
 import { errorText } from "../say.ts";
 import { readSettings, type Settings } from "../settings.ts";
+import { refreshBacklog } from "./backlog.ts";
 import { checkPush, cloneRepository, headCommit, remoteEmpty, updateClone } from "./git.ts";
 import { leadOf, leadSession } from "./lead.ts";
 
@@ -189,8 +190,9 @@ export async function hasNoCommits(db: Database, repository: Repository): Promis
 }
 
 // Creates Skelcrew's clone of the repository, or brings the one it has up to date, logging
-// when its default branch moves. The lead reads the clone, so a clone whose config holds a
-// credential is deleted rather than left there for it.
+// when its default branch moves, and brings its backlog up to date from the remote. The lead
+// reads the clone, so a clone whose config holds a credential is deleted rather than left there
+// for it.
 async function createOrUpdate(db: Database, repository: Repository): Promise<void> {
   const { owner, repo } = repository;
   // A clone Skelcrew has already is brought up to date in place, and checked again, as the
@@ -201,6 +203,7 @@ async function createOrUpdate(db: Database, repository: Repository): Promise<voi
     const wasEmpty = empty.has(fullName);
     const { before, after } = await updateClone(db, repository, clone, wasEmpty);
     deleteIfCredentials(clone);
+    await refreshBacklog(db, repository, clone);
     // An empty repository is logged once, rather than at every poll, until its first commit.
     if (after === "") {
       if (!wasEmpty) console.log(`${fullName} has no commits yet`);
@@ -232,6 +235,7 @@ async function createOrUpdate(db: Database, repository: Repository): Promise<voi
     console.log(`${owner}/${repo} has no commits yet`);
     empty.add(`${owner}/${repo}`);
   }
+  await refreshBacklog(db, repository, clone);
 }
 
 // Deletes the clone and throws when it holds a credential, so the lead can't read your login.

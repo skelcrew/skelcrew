@@ -263,6 +263,26 @@ test("an issue whose work ended is back under Backlog, to start again", () => {
   ).toEqual(["app-31", "app-7"]);
 });
 
+// A task filed in Skelcrew's backlog waits beside the issues, by when it was filed, and Enter asks
+// to start it as it does an issue.
+test("a task in Skelcrew's backlog shows under Backlog beside the issues, newest first", () => {
+  sql(`INSERT INTO backlog (owner, repo, task, title, body, created, by, filed_commit)
+  VALUES ('simon', 'app', 't104', 'Add export', 'As JSON', '2026-11-07T10:00:00.000Z', 'simon', 'c1'),
+    ('simon', 'app', 't105', 'Add import', 'From CSV', '2026-11-01T10:00:00.000Z', 'simon', 'c2');`);
+  const backlog = rows().filter((row) => row.part === "backlog");
+  expect(backlog.map((row) => [row.name, row.title, row.when])).toEqual([
+    ["app-t104", "Add export", "7 Nov"],
+    ["app-31", "Export as CSV", "5 Nov"],
+    ["app-t105", "Add import", "1 Nov"],
+  ]);
+  expect(backlog[0]?.start).toEqual({
+    ask: "Start app-t104? y/n",
+    working: "Starting app-t104…",
+    request: { command: "start", repo: "simon/app", task: "t104" },
+  });
+  expect(shown("t104")).toContain("Filed   by simon on 7 November 2026");
+});
+
 // Returns SQL for open issues from 100 on, each a day older than the one before.
 const issuesSql = (count: number) =>
   Array.from({ length: count }, (_, i) =>
@@ -1212,6 +1232,20 @@ test("Ctrl-\\ in every form leaves a question open, and y then answers it", asyn
   expect(seen()).toContain("Start app-31? y/n");
   type("y");
   await until(() => asked.includes("start simon/app 31"), "the start");
+});
+
+// s starts a task not started yet as Enter does there, and the bottom line offers it.
+test("s asks to start a task in Backlog, and y starts it", async () => {
+  sql(`INSERT INTO backlog (owner, repo, task, title, body, created, by, filed_commit)
+  VALUES ('simon', 'app', 't104', 'Add export', 'As JSON', '2026-11-07T10:00:00.000Z', 'simon', 'c1');`);
+  await open();
+  type("1");
+  await until(() => here().startsWith("▸ ○ app-t104"), "the backlog task's row");
+  expect(seen()).toContain("s start");
+  type("s");
+  await until(() => seen().includes("Start app-t104? y/n"), "the question");
+  type("y");
+  await until(() => asked.includes("start simon/app t104"), "the start");
 });
 
 // Nothing on an agent's screen is Skelcrew's, so the title says how to come back, and the one

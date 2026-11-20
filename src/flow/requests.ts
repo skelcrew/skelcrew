@@ -44,8 +44,16 @@ export const DaemonRequest = z.discriminatedUnion("command", [
     task: TaskId.optional(),
     pr: z.number().int().positive().optional(),
   }),
+  // `asked` is the human's words asking for the issue, exactly, which a lead must give.
   z.object({
     command: z.literal("task create"),
+    repo: z.string(),
+    title: z.string().min(1),
+    body: TaskBody,
+    asked: z.string().regex(/\S/).optional(),
+  }),
+  z.object({
+    command: z.literal("task add"),
     repo: z.string(),
     title: z.string().min(1),
     body: TaskBody,
@@ -203,6 +211,7 @@ export const allowed = {
     "task ls",
     "task show",
     "task create",
+    "task add",
     "start",
     "start new",
     "review",
@@ -227,6 +236,7 @@ export const allowed = {
     "task ls",
     "task show",
     "task create",
+    "task add",
     "start",
     "start new",
     "review",

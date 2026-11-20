@@ -611,6 +611,7 @@ console.log(threadTask(db, await startThread(db, { repo: "app", task: "3" })).cl
       review: { state: "none", round: null, at: null },
       prPage: null,
       merge: null,
+      filed: null,
     });
     expect(JSON.parse((await skel(["show", "--json", "app-10"])).out)).toMatchObject({
       task: "app-10",
@@ -1025,6 +1026,7 @@ describe("with a forge", () => {
         link: "https://github.com/simon/app/pull/31",
       },
       merge: null,
+      filed: null,
     });
   });
 
