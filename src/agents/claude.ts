@@ -252,6 +252,7 @@ function writeSettings(config: string, lead = false): void {
 // every repository's clone, read-only. Each session keeps its own transcripts. It logs in with
 // Skelcrew's agent token, while your other credentials stay hidden. The repository's skills, from
 // the .agents/ `skills` names, go into the config folder's skills/, where Claude Code finds them.
+// `files` is the placeholder of its dropped files, on a host that hands it some.
 function startCommand(given: {
   name: string;
   socket: string;
@@ -265,6 +266,7 @@ function startCommand(given: {
   resume?: string;
   sessionId?: string;
   skills?: SkillsFrom;
+  files?: string | undefined;
   env?: Record<string, string | undefined>;
 }): { argv: string[]; env: Record<string, string> } {
   const {
@@ -280,6 +282,7 @@ function startCommand(given: {
     resume,
     sessionId,
     skills,
+    files,
     env = process.env,
   } = given;
   // Refuse what would start the wrong agent or write outside Skelcrew's folders.
@@ -373,6 +376,7 @@ function startCommand(given: {
     command,
     // Only a builder has a thread. The lead is what you type into, so it keeps its priority.
     normalPriority: !thread,
+    files,
   });
   return { argv, env: kept };
 }

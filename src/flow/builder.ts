@@ -20,7 +20,7 @@ import { flowRoles } from "../flows.ts";
 import { cloneDir, threadSocket } from "../paths.ts";
 import { trackerOf } from "../plugins/ask.ts";
 import { needsInstall } from "../plugins/repository.ts";
-import { type Host, hostNamed } from "../plugins/runtime.ts";
+import { filesFor, type Host, hostNamed } from "../plugins/runtime.ts";
 import { repositoryRole } from "../roles.ts";
 import { quietly } from "../run.ts";
 import { errorText } from "../say.ts";
@@ -572,6 +572,7 @@ export async function startBuilder(db: Database, sessions: string, thread: Threa
   record(db, thread.folder, { session, harness: harness.name, queued_since: null });
   // Starting the builder starts a stretch of work, which the sidebar times.
   db.run("UPDATE threads SET working_since = ? WHERE folder = ?", [Date.now(), thread.folder]);
+  const files = filesFor(host);
   const { argv, env } = await harness.start({
     name: thread.folder,
     socket: threadSocket(thread.folder),
@@ -595,9 +596,11 @@ export async function startBuilder(db: Database, sessions: string, thread: Threa
     ),
     // Its skills come from the same .agents/ as its role.
     skills: thread,
+    files,
     ...start,
   });
-  await startOnHost(db, thread, { host, name: hostName }, { folder: clone, command: argv, env });
+  const on = { host, name: hostName };
+  await startOnHost(db, thread, on, { folder: clone, command: argv, env, files });
   console.log(`${resume ? "Brought back" : "Started"} the builder of ${threadName(db, thread)}.`);
 }
 
@@ -610,7 +613,12 @@ export function startOnHost(
   db: Database,
   thread: Thread,
   on: { host: Host; name: string },
-  session: { folder: string; command: string[]; env: Record<string, string> },
+  session: {
+    folder: string;
+    command: string[];
+    env: Record<string, string>;
+    files?: string | undefined;
+  },
 ): Promise<void> {
   return inTurn(thread.folder, async (earlier) => {
     await earlier;
