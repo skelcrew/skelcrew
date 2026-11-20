@@ -278,8 +278,9 @@ test("asks its forge nothing and fetches nothing for a repository Skelcrew has",
   expect(existsSync(join(clone("simon/app"), "NEWS"))).toBe(false);
 });
 
+// A step to take, so it goes to stdout, with a blank line around each command.
 const noRemoteLine =
-  "This git repository has no remote. To add a remote and push it:\n\n  git remote add origin <url>\n  git push -u origin HEAD\n\nThen run sc again.\n\n";
+  "This git repository has no remote. To add a remote and push it:\n\n  git remote add origin <url>\n\n  git push -u origin HEAD\n\nThen run sc again.\n";
 
 // With no forge to say you can push to it, Skelcrew can't vouch for what is in it.
 test("asks about a repository no forge claims, and does nothing in one with no origin", async () => {
@@ -291,7 +292,7 @@ test("asks about a repository no forge claims, and does nothing in one with no o
   expect(elsewhere.out).toContain(hint);
   expect(calls()).not.toContain("daemon lead");
   git(checkout, "remote", "remove", "origin");
-  expect(await skel([], "", checkout)).toEqual({ out: "", err: noRemoteLine, code: 1 });
+  expect(await skel([], "", checkout)).toEqual({ out: noRemoteLine, err: "", code: 1 });
   expect(existsSync(clone("simon/app"))).toBe(false);
 });
 
@@ -340,7 +341,7 @@ test("outside a repository and with every tab closed, sc opens nothing and says 
   const loose = join(home, "loose");
   mkdirSync(loose);
   git(loose, "init", "-q");
-  expect(await skel([], "", loose)).toEqual({ out: "", err: noRemoteLine, code: 1 });
+  expect(await skel([], "", loose)).toEqual({ out: noRemoteLine, err: "", code: 1 });
   expect(calls()).not.toContain("screen on");
 });
 
@@ -351,7 +352,7 @@ test("in a repository with no remote, sc opens nothing even with tabs open, and 
   const loose = join(home, "loose");
   mkdirSync(loose);
   git(loose, "init", "-q");
-  expect(await skel([], "", loose)).toEqual({ out: "", err: noRemoteLine, code: 1 });
+  expect(await skel([], "", loose)).toEqual({ out: noRemoteLine, err: "", code: 1 });
   expect(calls()).not.toContain("screen on");
   expect(calls()).not.toContain("daemon lead");
 });
@@ -1204,6 +1205,24 @@ test("init with other changes staged asks nothing and leaves the commit to you",
     ".agents",
   );
   expect(git(checkout, "status", "--porcelain")).toBe("A  notes.txt\n");
+});
+
+// The push would send every commit the branch has that the remote doesn't, so commits of yours
+// not pushed yet keep the offer away.
+test("init asks nothing while the default branch has commits not on the remote", async () => {
+  const checkout = onGitHub("simon/app", "WRITE");
+  githubInstalledAsYours();
+  writeFileSync(join(checkout, "NEWS"), "not yet public\n");
+  git(checkout, "add", "NEWS");
+  git(checkout, "commit", "-q", "-m", "mine");
+  const run = await initAtTerminal(checkout, "y\n");
+  expect(run.code).toBe(0);
+  expect(run.out).not.toContain("now? [Y/n]");
+  expect(run.out).toEndWith(
+    `main here isn't where it is on the remote, so a push would send commits of yours too, and Skelcrew leaves it to you. Skelcrew reads these files from main, so commit and push them there:\n${commands}`,
+  );
+  const bare = join(home, "github", "simon", "app.git");
+  expect(git(bare, "log", "-1", "--format=%s", "main")).toBe("start\n");
 });
 
 // A file sc init edits that had your changes already would bring them into its commit, so it

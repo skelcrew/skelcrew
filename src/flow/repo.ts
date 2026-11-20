@@ -755,8 +755,9 @@ function gitIn(root: string, args: string[]): { ok: boolean; said: string } {
 // only on the default branch, where a push brings them straight in, only while nothing else is
 // staged, so the commit is plainly sc init's alone, and only when `dirty`, the files sc init
 // edited that had changes of yours already, is empty, as the commit would take those changes too.
-// The commit names its files all the same, so nothing else ever joins it. Otherwise, after
-// a no, with no terminal to answer in, or when git fails, it shows the commands to run yourself.
+// The commit names its files all the same, so nothing else ever joins it. Nor is it offered while
+// the branch isn't where the remote has it, as the push would send commits of yours too.
+// Otherwise, after a no, with no terminal to answer in, or when git fails, it shows the commands to run yourself.
 // On another branch they commit and push that branch, to merge into the default branch, as
 // switching to it can fail where it tracks a file sc init wrote here. Returns whether it pushed, once
 // Skelcrew's clone has the files too, so the lead opens on them.
@@ -810,6 +811,15 @@ async function offerPush(
       `${dirty.join(" and ")} had changes of yours already, which the commit would take too, so Skelcrew leaves it to you. ${commitThem}`,
     );
   if (!process.stdin.isTTY) return show(commitThem);
+  // The push takes every commit the branch has that the remote doesn't, so commits of yours not
+  // pushed yet would go out with it. The remote's branch is asked for, as the checkout's own
+  // record of it can be out of date.
+  const remoteHead = gitIn(root, ["ls-remote", "origin", `refs/heads/${branch}`]);
+  const ahead = gitIn(root, ["rev-parse", "HEAD"]).said !== remoteHead.said.split("\t")[0];
+  if (!remoteHead.ok || ahead)
+    return show(
+      `${branch} here isn't where it is on the remote, so a push would send commits of yours too, and Skelcrew leaves it to you. ${commitThem}`,
+    );
   if (!askYes(`Commit and push these files to ${branch} now? [Y/n]`)) return show(commitThem);
   // Each step stops at the first that fails, naming what git said and what is left to run.
   const added = gitIn(root, ["add", "--", ...paths]);
