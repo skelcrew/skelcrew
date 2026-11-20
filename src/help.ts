@@ -1,5 +1,7 @@
 // Skelcrew's help page: what sc --help shows, laid out in sections with skelcrew.dev's amber for
 // the headings, so it reads as help and not as an error.
+
+import { colorful } from "./say.ts";
 import { keys } from "./screen/keys.ts";
 
 // The help page's sections, each a heading and its rows of a command and what it does.
@@ -149,9 +151,4 @@ export function help(color = colorful()): string {
     "",
   );
   return lines.join("\n");
-}
-
-// Returns whether stdout is a terminal that shows color, honoring NO_COLOR.
-export function colorful(): boolean {
-  return Boolean(process.stdout.isTTY) && !process.env.NO_COLOR && process.env.TERM !== "dumb";
 }

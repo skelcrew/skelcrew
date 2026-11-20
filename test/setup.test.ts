@@ -164,7 +164,7 @@ async function skel(
 }
 
 test("takes every step on the first run, and none on the second", async () => {
-  const first = await skel("1\nsk-ant-oat01-good\n");
+  const first = await skel("sk-ant-oat01-good\n");
   expect(first.err).toBe("");
   expect(first.code).toBe(0);
   // Only Skelcrew's own lines: you run claude setup-token yourself, in another terminal.
@@ -172,18 +172,16 @@ test("takes every step on the first run, and none on the second", async () => {
     [
       "Setting up Skelcrew...",
       "",
-      "Choose the coding agent:",
-      "  1) Claude Code",
-      "  2) Codex",
-      "Number: [1] ",
+      "Claude Code detected",
+      "Codex not found",
+      "Agents will run on Claude Code",
+      "",
       "Sign in to Claude. In another terminal, run:",
       "",
       "  claude setup-token",
       "",
       "Then paste the token here.",
       "Token: ",
-      "Codex isn't installed, so reviews run on Claude Code.",
-      "",
       "Skelcrew is set up.",
       "Keeping Skelcrew running after you log out or restart.",
       "Your agents keep running. Run sc to come back.",
@@ -207,7 +205,7 @@ test("takes every step on the first run, and none on the second", async () => {
 });
 
 test("installs the daemon as a systemd user service with lingering, once", async () => {
-  const first = await skel("1\nsk-ant-oat01-good\n");
+  const first = await skel("sk-ant-oat01-good\n");
   expect(first.code).toBe(0);
   const skelBin = join(checkout, "bin", "sc");
   const written = readFileSync(unit(), "utf8");
@@ -290,14 +288,14 @@ test("sc up --bg refuses before the first run, and says to run sc", async () => 
 
 test("installs no service when systemctl fails, so the next sc tries again", async () => {
   fake("systemctl", "exit 1");
-  const run = await skel("1\nsk-ant-oat01-good\n");
+  const run = await skel("sk-ant-oat01-good\n");
   expect(run.code).toBe(1);
   expect(run.err).toContain("systemctl");
   expect(existsSync(unit())).toBe(false);
 });
 
 test("starts the daemon through systemd when it doesn't answer, then attaches to the lead", async () => {
-  await skel("1\nsk-ant-oat01-good\n");
+  await skel("sk-ant-oat01-good\n");
   rmSync(join(home, "started"));
   writeFileSync(join(home, "calls"), "");
   const run = await skel();
@@ -307,7 +305,7 @@ test("starts the daemon through systemd when it doesn't answer, then attaches to
 
 // The daemon watches the builder you attach to, so attaching to a thread brings it up too.
 test("sc attach starts the daemon through systemd when it doesn't answer", async () => {
-  await skel("1\nsk-ant-oat01-good\n");
+  await skel("sk-ant-oat01-good\n");
   rmSync(join(home, "started"));
   const db = `import { openDb } from ${JSON.stringify(join(checkout, "src", "db.ts"))};
 openDb().run(${JSON.stringify(threadSql({ task: "12" }))});`;
@@ -328,7 +326,7 @@ openDb().run(${JSON.stringify(threadSql({ task: "12" }))});`;
 // A builder on a plugin's host still talks to the daemon, through its hooks and sc, so the
 // daemon starts before the host attaches you, as on tmux.
 test("sc attach starts the daemon before attaching to a builder on a plugin's host", async () => {
-  await skel("1\nsk-ant-oat01-good\n");
+  await skel("sk-ant-oat01-good\n");
   rmSync(join(home, "started"));
   // A host whose builder app-12 runs, and whose attach notes that it ran.
   const plugin = join(home, "plugin-fake");
@@ -362,7 +360,7 @@ db.run("INSERT INTO plugins (name, folder) VALUES ('fake', ?)", [${JSON.stringif
 });
 
 test("shows why when the daemon can't start the lead", async () => {
-  await skel("1\nsk-ant-oat01-good\n");
+  await skel("sk-ant-oat01-good\n");
   writeFileSync(join(home, "calls"), "");
   daemon?.close();
   daemon = createServer((connection) =>
@@ -378,7 +376,7 @@ test("shows why when the daemon can't start the lead", async () => {
 });
 
 test("rewrites the service when the PATH it needs moved, without restarting anything", async () => {
-  await skel("1\nsk-ant-oat01-good\n");
+  await skel("sk-ant-oat01-good\n");
   writeFileSync(join(home, "calls"), "");
   const run = await skel("", `${bin}:/opt/bun/bin`);
   expect(run.code).toBe(0);
@@ -388,13 +386,13 @@ test("rewrites the service when the PATH it needs moved, without restarting anyt
 
 test("leaves out PATH folders that won't last, and escapes % for systemd", async () => {
   const path = `${bin}:/code/app/node_modules/.bin:${join(home, "tmp", "bunx-1")}:/opt/50%`;
-  const run = await skel("1\nsk-ant-oat01-good\n", path);
+  const run = await skel("sk-ant-oat01-good\n", path);
   expect(run.code).toBe(0);
   expect(readFileSync(unit(), "utf8")).toContain(`Environment="PATH=${bin}:/opt/50%%"`);
 });
 
 test("refuses a PATH that systemd would read differently", async () => {
-  const run = await skel("1\nsk-ant-oat01-good\n", `${bin}:/opt/a"b`);
+  const run = await skel("sk-ant-oat01-good\n", `${bin}:/opt/a"b`);
   expect(run.code).toBe(1);
   expect(run.err).toContain('/opt/a"b');
   expect(existsSync(unit())).toBe(false);
@@ -405,7 +403,7 @@ test("refuses to install a service that runs sc from a worktree", async () => {
   const worktree = join(home, "code", "skel", ".claude", "worktrees", "12");
   copySkel(worktree);
   writeFileSync(join(worktree, ".git"), "gitdir: ../../../.git/worktrees/12\n");
-  const run = await skel("1\nsk-ant-oat01-good\n", bin, join(worktree, "src", "main.ts"));
+  const run = await skel("sk-ant-oat01-good\n", bin, join(worktree, "src", "main.ts"));
   expect(run.code).toBe(1);
   expect(run.err).toContain("main checkout");
   expect(existsSync(unit())).toBe(false);
@@ -438,7 +436,7 @@ const uid = userInfo().uid;
 
 test("on a Mac, installs the daemon as a launchd agent, with no systemd", async () => {
   asMac();
-  const first = await skelOnMac("1\nsk-ant-oat01-good\n");
+  const first = await skelOnMac("sk-ant-oat01-good\n");
   expect(first.err).toBe("");
   expect(first.code).toBe(0);
   expect(calls()).toContain(`launchctl bootstrap gui/${uid} ${plist()}\n`);
@@ -453,14 +451,14 @@ test("on a Mac, installs the daemon as a launchd agent, with no systemd", async 
 });
 
 test("says nothing about a laptop sleeping, on a Mac or on Linux", async () => {
-  const onLinux = await skel("1\nsk-ant-oat01-good\n");
+  const onLinux = await skel("sk-ant-oat01-good\n");
   expect(onLinux.out).toContain("Skelcrew is set up.\n");
   expect(onLinux.out).not.toContain("sleeps");
   // The Mac's first run starts afresh, as setup doesn't depend on the daemon's service.
   rmSync(config());
   rmSync(token());
   asMac();
-  const onMac = await skelOnMac("1\nsk-ant-oat01-good\n");
+  const onMac = await skelOnMac("sk-ant-oat01-good\n");
   expect(onMac.out).toContain("Skelcrew is set up.\n");
   expect(onMac.out).not.toContain("sleeps");
 });
@@ -468,7 +466,7 @@ test("says nothing about a laptop sleeping, on a Mac or on Linux", async () => {
 test("on a Mac, installs no agent when launchctl fails, so the next sc tries again", async () => {
   asMac();
   fake("launchctl", 'test "$1" = bootout && exit 3; echo "Load failed" >&2; exit 5');
-  const run = await skelOnMac("1\nsk-ant-oat01-good\n");
+  const run = await skelOnMac("sk-ant-oat01-good\n");
   expect(run.code).toBe(1);
   expect(run.err).toContain("Load failed");
   expect(existsSync(plist())).toBe(false);
@@ -476,7 +474,7 @@ test("on a Mac, installs no agent when launchctl fails, so the next sc tries aga
 
 test("on a Mac, starts the daemon through launchd when it doesn't answer", async () => {
   asMac();
-  await skelOnMac("1\nsk-ant-oat01-good\n");
+  await skelOnMac("sk-ant-oat01-good\n");
   rmSync(join(home, "started"));
   writeFileSync(join(home, "calls"), "");
   const run = await skelOnMac();
@@ -498,7 +496,7 @@ test("on a Mac, loads the agent from its file when launchd doesn't have it", asy
     : > "$HOME/started" ;;
 esac`,
   );
-  await skelOnMac("1\nsk-ant-oat01-good\n");
+  await skelOnMac("sk-ant-oat01-good\n");
   rmSync(join(home, "loaded"));
   rmSync(join(home, "started"));
   writeFileSync(join(home, "calls"), "");
@@ -522,7 +520,7 @@ test("on a Mac, loads a changed agent file, so launchd restarts the daemon on it
   print) test -e "$HOME/loaded.plist" && echo "pid = 1" ;;
 esac`,
   );
-  await skelOnMac("1\nsk-ant-oat01-good\n");
+  await skelOnMac("sk-ant-oat01-good\n");
   const older = readFileSync(plist(), "utf8").replace(
     "<string>up</string>",
     "<string>serve</string>",
@@ -551,7 +549,7 @@ test("on a Mac, escapes a PATH for the agent's definition", async () => {
   asMac();
   const odd = join(home, "a&b");
   mkdirSync(odd);
-  await skelOnMac("1\nsk-ant-oat01-good\n", `${bin}:${odd}`);
+  await skelOnMac("sk-ant-oat01-good\n", `${bin}:${odd}`);
   expect(readFileSync(plist(), "utf8")).toContain(`<string>${bin}:${home}/a&amp;b</string>`);
 });
 
@@ -561,11 +559,11 @@ test("on a Mac, says exactly what to install with Homebrew, and runs nothing els
   rmSync(join(bin, "claude"));
   const run = await skelOnMac();
   expect(run.code).toBe(1);
-  expect(run.err).toContain("  brew install tmux\n");
-  expect(run.err).toContain("claude: curl -fsSL https://claude.ai/install.sh | bash");
-  expect(run.err).not.toContain("bwrap");
-  expect(run.err).not.toContain("apt");
-  expect(run.err).not.toContain("brew.sh");
+  expect(run.out).toContain("\n  brew install tmux\n");
+  expect(run.out).toContain("\n  curl -fsSL https://claude.ai/install.sh | bash\n");
+  expect(run.out).not.toContain("bwrap");
+  expect(run.out).not.toContain("apt");
+  expect(run.out).not.toContain("brew.sh");
   expect(existsSync(join(home, "calls"))).toBe(false);
 });
 
@@ -574,8 +572,9 @@ test("on a Mac without Homebrew, says where to get it", async () => {
   rmSync(join(bin, "brew"));
   rmSync(join(bin, "tmux"));
   const run = await skelOnMac();
-  expect(run.err).toContain("https://brew.sh");
-  expect(run.err).toContain("  brew install tmux\n");
+  expect(run.out).toContain(
+    "install:\nHomebrew, for the line below, from https://brew.sh\n\n  brew install tmux\n",
+  );
 });
 
 test("on a Mac, stops when sandbox-exec can't start a sandbox", async () => {
@@ -644,7 +643,7 @@ test("offers the GitHub plugin only in a checkout on github.com, on any run", as
   noGitHubPlugin();
   fakeGitHub();
   publishGitHubPlugin();
-  const outside = await skel("1\nsk-ant-oat01-good\n");
+  const outside = await skel("sk-ant-oat01-good\n");
   expect(outside.code).toBe(0);
   expect(outside.out).not.toContain("GitHub");
   const folder = checkoutWith("app");
@@ -663,14 +662,14 @@ test("a no holds for the repository, in every checkout of it, and another reposi
   fakeGitHub();
   publishGitHubPlugin();
   const app = checkoutWith("app", "git@github.com:simon/app.git");
-  const first = await atTerminal("n\n1\nsk-ant-oat01-good\n", app);
+  const first = await atTerminal("n\nsk-ant-oat01-good\n", app);
   expect(first.code).toBe(0);
   expect(first.out).toContain(offered);
   expect(first.out).toContain(
     "Skelcrew won't ask again for simon/app. To install it: sc add -g skelcrew/skelcrew-github",
   );
   // The offer comes before the first step.
-  expect(first.out.indexOf(offered)).toBeLessThan(first.out.indexOf("Choose the coding agent"));
+  expect(first.out.indexOf(offered)).toBeLessThan(first.out.indexOf("Agents will run on"));
   expect(parse(readFileSync(config(), "utf8"))).toMatchObject({
     harness: "claude",
     github_declined: ["simon/app"],
@@ -697,7 +696,7 @@ test("a no to the offer needs no network, and is saved with GitHub out of reach"
     join(home, ".gitconfig"),
     `[url "file://${home}/nowhere/"]\n\tinsteadOf = https://github.com/\n\tinsteadOf = git@github.com:\n`,
   );
-  await skel("1\nsk-ant-oat01-good\n");
+  await skel("sk-ant-oat01-good\n");
   const app = checkoutWith("app", "git@github.com:simon/app.git");
   const run = await atTerminal("n\n", app);
   expect(run.out).toContain(offered);
@@ -710,7 +709,7 @@ test("over --remote, the offer reads the remote sc brought from your laptop", as
   noGitHubPlugin();
   fakeGitHub();
   publishGitHubPlugin();
-  await skel("1\nsk-ant-oat01-good\n");
+  await skel("sk-ant-oat01-good\n");
   const run = await atTerminal("n\n", home, ["--from", "git@github.com:simon/app.git"]);
   expect(run.out).toContain(offered);
   expect(parse(readFileSync(config(), "utf8")).github_declined).toEqual(["simon/app"]);
@@ -778,7 +777,7 @@ function siteOnGitHub(): string {
 // saying Skelcrew is set up goes straight on to bringing the repository in.
 test("a yes installs the GitHub plugin after the offer and its own question, writes nothing here, and the lead opens", async () => {
   const site = siteOnGitHub();
-  const run = await atTerminal("\n\n1\nsk-ant-oat01-good\n", site);
+  const run = await atTerminal("\n\nsk-ant-oat01-good\n", site);
   expect(run.err).toBe("");
   expect(run.code).toBe(0);
   expect(run.out).toContain(offered);
@@ -797,7 +796,7 @@ test("a yes installs the GitHub plugin after the offer and its own question, wri
 
 test("on a run after setup, a yes installs the plugin and the lead opens, with nothing written here", async () => {
   const site = siteOnGitHub();
-  await skel("1\nsk-ant-oat01-good\n");
+  await skel("sk-ant-oat01-good\n");
   const run = await atTerminal("\n\n", site);
   expect(run.err).toBe("");
   expect(run.out).toStartWith("GitHub detected.");
@@ -812,10 +811,23 @@ test("names each missing tool with what to install, and runs nothing else", asyn
   unlinkSync(join(bin, "claude"));
   const run = await skel();
   expect(run.code).toBe(1);
-  expect(run.err).toStartWith("Skelcrew: Install these first:\n");
-  expect(run.err).toContain("sudo apt install tmux");
-  expect(run.err).toContain("curl -fsSL https://claude.ai/install.sh | bash");
-  expect(run.err).not.toContain("bubblewrap");
+  // Steps to take, not an error: on stdout, with each command on its own line.
+  expect(run.err).toBe("");
+  expect(run.out).toBe(
+    [
+      "Before Skelcrew can start, install:",
+      "",
+      "  sudo apt install tmux",
+      "",
+      "a coding agent, one of:",
+      "",
+      "  curl -fsSL https://claude.ai/install.sh | bash",
+      "  npm install -g @openai/codex",
+      "",
+      "Then run sc again.",
+      "",
+    ].join("\n"),
+  );
   expect(calls()).toBe("");
 });
 
@@ -823,8 +835,7 @@ test("names git when it is missing, as Skelcrew clones and pushes with it", asyn
   unlinkSync(join(bin, "git"));
   const run = await skel();
   expect(run.code).toBe(1);
-  expect(run.err).toStartWith("Skelcrew: Install these first:\n");
-  expect(run.err).toContain("  git: sudo apt install git\n");
+  expect(run.out).toStartWith("Before Skelcrew can start, install:\n\n  sudo apt install git\n\n");
   expect(calls()).toBe("");
 });
 
@@ -833,14 +844,14 @@ test("on a Mac, names git with what Homebrew installs", async () => {
   rmSync(join(bin, "git"));
   const run = await skelOnMac();
   expect(run.code).toBe(1);
-  expect(run.err).toContain("  brew install git\n");
+  expect(run.out).toContain("\n  brew install git\n");
 });
 
 // Reviews look at the thread's clone through an overlay, which bubblewrap has only since 0.11.
 // Ubuntu 24.04's is 0.9, which would pass every other check and fail every review.
 test("refuses a bwrap too old for reviews, before asking anything", async () => {
   bwrapVersion("0.9.0");
-  const run = await skel("1\nsk-ant-oat01-good\n");
+  const run = await skel("sk-ant-oat01-good\n");
   expect(run.code).toBe(1);
   expect(run.err).toBe(
     "Skelcrew: bwrap is 0.9.0 here, and Skelcrew needs 0.11 or newer for its reviews. Ubuntu 26.04 has it.\n",
@@ -890,21 +901,21 @@ const wrongTokens: [string, string][] = [
 ];
 for (const [pasted, why] of wrongTokens) {
   test(`asks again for a token that isn't one from setup-token: ${JSON.stringify(pasted)}`, async () => {
-    const run = await skel(`1\n${pasted}\nsk-ant-oat01-good\n`);
+    const run = await skel(`${pasted}\nsk-ant-oat01-good\n`);
     expect(run.code).toBe(0);
     expect(run.out).toContain(why);
     expect(readFileSync(token(), "utf8").trim()).toBe("sk-ant-oat01-good");
   });
 
   test(`saves no token when the input ends after a wrong one: ${JSON.stringify(pasted)}`, async () => {
-    const run = await skel(`1\n${pasted}\n`);
+    const run = await skel(`${pasted}\n`);
     expect(run.code).toBe(1);
     expect(existsSync(token())).toBe(false);
   });
 }
 
 test("saves no token after Ctrl-D at the token question", async () => {
-  const run = await skel("1\n");
+  const run = await skel("");
   expect(run.code).toBe(1);
   expect(existsSync(token())).toBe(false);
 });
@@ -912,7 +923,7 @@ test("saves no token after Ctrl-D at the token question", async () => {
 test("keeps the other settings in config.yaml", async () => {
   mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
   writeFileSync(config(), "# mine\ncolor: blue\n");
-  const run = await skel("1\nsk-ant-oat01-good\n");
+  const run = await skel("sk-ant-oat01-good\n");
   expect(run.code).toBe(0);
   const saved = readFileSync(config(), "utf8");
   expect(saved).toContain("# mine");
@@ -924,35 +935,37 @@ for (const broken of ["a: b: c\n", "harness: claude\n  - x: [\n"]) {
   test(`refuses a config.yaml that isn't YAML: ${JSON.stringify(broken)}`, async () => {
     mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
     writeFileSync(config(), broken);
-    const run = await skel("1\nsk-ant-oat01-good\n");
+    const run = await skel("sk-ant-oat01-good\n");
     expect(run.code).toBe(1);
     expect(run.err).toContain("config.yaml");
     expect(readFileSync(config(), "utf8")).toBe(broken);
   });
 }
 
-for (const [what, typed] of [
-  ["Ctrl-D", ""],
-  ["another harness", "2\n"],
-]) {
-  test(`saves no harness after ${what} at the harness question`, async () => {
-    const run = await skel(typed);
-    expect(run.code).toBe(1);
-    expect(run.out).toContain("Claude Code");
-    expect(existsSync(config())).toBe(false);
-  });
-}
+test("saves no harness after Ctrl-D at the harness question", async () => {
+  fakeCodex();
+  const run = await skel("");
+  expect(run.code).toBe(1);
+  expect(run.out).toContain("Choose the coding agent:");
+  expect(existsSync(config())).toBe(false);
+});
 
 test("refuses a config.yaml it can't read", async () => {
   mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
   writeFileSync(config(), "harness: [1, 2]\n");
-  const run = await skel("1\nsk-ant-oat01-good\n");
+  const run = await skel("sk-ant-oat01-good\n");
   expect(run.code).toBe(1);
   expect(run.err).toContain("config.yaml");
 });
 
+// With both harnesses installed, the question is a list you move through with the arrow keys,
+// each marked as installed, and Enter takes the one marked, Claude Code at first.
 test("Enter at the harness question picks Claude Code", async () => {
-  const run = await skel("\nsk-ant-oat01-good\n");
+  fakeCodex();
+  const run = await skel("\n\nsk-ant-oat01-good\n");
+  expect(run.out).toContain(
+    "Choose the coding agent:\n› Claude Code  installed\n  Codex        installed\n↑/↓ to move · Enter to choose\n",
+  );
   expect(run.err).toBe("");
   expect(run.code).toBe(0);
   expect(readFileSync(config(), "utf8")).toContain("harness: claude");
@@ -984,7 +997,7 @@ test("asks about reviews again after a first run stopped at that question", asyn
   expect(stopped.out).toContain("Choose the coding agent for reviews:");
   expect(existsSync(unit())).toBe(false);
 
-  const again = await skel("2\n");
+  const again = await skel("\x1b[B\n");
   expect(again.err).toBe("");
   expect(again.code).toBe(0);
   expect(again.out).toContain("Choose the coding agent for reviews:");
@@ -994,7 +1007,7 @@ test("asks about reviews again after a first run stopped at that question", asyn
 
 test("logs the reviewer in to Codex with a login of Skelcrew's own", async () => {
   fakeCodex();
-  const run = await skel("1\n\nsk-ant-oat01-good\n");
+  const run = await skel("\n\nsk-ant-oat01-good\n");
   expect(run.err).toBe("");
   expect(run.code).toBe(0);
   expect(run.out).toContain(
@@ -1042,9 +1055,15 @@ test("at a terminal, Codex signs in on a screen of its own", async () => {
       "40",
       `env -i ${env} TERM=xterm-256color ${process.execPath} ${main()}; echo FINISHED; sleep 5`,
     );
-    await waitFor("Number:");
-    tmux("send-keys", "-t", "setup", "1", "Enter");
-    await waitFor("for a second opinion");
+    // The arrow keys move the mark, which is drawn again in place, and Enter takes it.
+    await waitFor("↑/↓ to move");
+    tmux("send-keys", "-t", "setup", "Down");
+    await waitFor("› Codex");
+    tmux("send-keys", "-t", "setup", "Up");
+    await waitFor("› Claude Code");
+    expect(screen().match(/Choose the coding agent:/g)).toHaveLength(1);
+    tmux("send-keys", "-t", "setup", "Enter");
+    await waitFor("a second opinion");
     tmux("send-keys", "-t", "setup", "Enter");
     await waitFor("Token:");
     tmux("send-keys", "-t", "setup", "sk-ant-oat01-good", "Enter");
@@ -1056,6 +1075,10 @@ test("at a terminal, Codex signs in on a screen of its own", async () => {
     expect(after).toContain("Signed in to Codex.");
     expect(after).not.toContain("CODE-1");
     expect(existsSync(join(codexHome(), "auth.json"))).toBe(true);
+    expect(parse(readFileSync(config(), "utf8"))).toEqual({
+      harness: "claude",
+      roles: { reviewer: { harness: "codex" } },
+    });
   } finally {
     tmux("kill-server");
   }
@@ -1065,22 +1088,24 @@ test("skips the reviewer's login when Skelcrew's Codex login works already", asy
   fakeCodex();
   mkdirSync(codexHome(), { recursive: true });
   writeFileSync(join(codexHome(), "auth.json"), "{}");
-  const run = await skel("1\n\nsk-ant-oat01-good\n");
+  const run = await skel("\n\nsk-ant-oat01-good\n");
   expect(run.code).toBe(0);
   expect(calls()).toContain("codex login status");
   expect(calls()).not.toContain("codex login --device-auth");
 });
 
-test("says reviews run on your harness when Codex isn't installed", async () => {
-  const run = await skel("1\nsk-ant-oat01-good\n");
+test("with only Claude Code installed, asks nothing about harnesses and says agents run on it", async () => {
+  const run = await skel("sk-ant-oat01-good\n");
   expect(run.code).toBe(0);
-  expect(run.out).not.toContain("for reviews");
-  expect(run.out).toContain("\nCodex isn't installed, so reviews run on Claude Code.\n");
+  expect(run.out).not.toContain("Choose");
+  expect(run.out).toContain(
+    "\nClaude Code detected\nCodex not found\nAgents will run on Claude Code\n",
+  );
 });
 
 test("finishes no setup when the reviewer's login fails, so the next sc tries again", async () => {
   fakeCodex("exit 1");
-  const run = await skel("1\n\nsk-ant-oat01-good\n");
+  const run = await skel("\n\nsk-ant-oat01-good\n");
   expect(run.code).toBe(1);
   expect(run.err).toContain("codex login");
   expect(run.out).not.toContain("Signed in to Codex");
@@ -1095,13 +1120,14 @@ test("finishes no setup when the reviewer's login fails, so the next sc tries ag
   expect(existsSync(unit())).toBe(true);
 });
 
-test("on a machine with only Codex, Enter picks it, and its one login serves agents and reviews", async () => {
+test("on a machine with only Codex, it is taken without asking, and its one login serves agents and reviews", async () => {
   unlinkSync(join(bin, "claude"));
   fakeCodex();
   const run = await skel("\n");
   expect(run.err).toBe("");
   expect(run.code).toBe(0);
-  expect(run.out).toContain("2) Codex");
+  expect(run.out).toContain("Claude Code not found\nCodex detected\nAgents will run on Codex\n");
+  expect(run.out).not.toContain("Choose");
   expect(run.out).toContain("\nSign in to Codex. Press Enter to start.\nSigned in to Codex.\n");
   expect(run.out).not.toContain("for reviews");
   expect(run.out).not.toContain("the reviewer");
@@ -1119,7 +1145,7 @@ test("on a machine with only Codex, Enter picks it, and its one login serves age
 
 test("picking Codex for agents and reviews where Claude Code is installed too skips Claude's login", async () => {
   fakeCodex();
-  const run = await skel("2\n2\n");
+  const run = await skel("\x1b[B\n\x1b[B\n");
   expect(run.code).toBe(0);
   expect(readFileSync(config(), "utf8")).toContain("harness: codex");
   expect(run.out).not.toContain("Sign in to Claude");
@@ -1128,12 +1154,12 @@ test("picking Codex for agents and reviews where Claude Code is installed too sk
 
 test("asks which harness reviews, offering the other one first", async () => {
   fakeCodex();
-  const run = await skel("1\n\nsk-ant-oat01-good\n");
+  const run = await skel("\n\nsk-ant-oat01-good\n");
   expect(run.err).toBe("");
   expect(run.code).toBe(0);
   const asked = run.out.slice(run.out.indexOf("Choose the coding agent for reviews:"));
   expect(asked).toStartWith(
-    "Choose the coding agent for reviews:\n  1) Codex, for a second opinion\n  2) Claude Code\n",
+    "Choose the coding agent for reviews:\n› Codex        a second opinion\n  Claude Code\n↑/↓ to move · Enter to choose\n",
   );
   expect(parse(readFileSync(config(), "utf8"))).toEqual({
     harness: "claude",
@@ -1143,7 +1169,7 @@ test("asks which harness reviews, offering the other one first", async () => {
 
 test("reviews on your own harness save nothing more, and need no other login", async () => {
   fakeCodex();
-  const run = await skel("1\n2\nsk-ant-oat01-good\n");
+  const run = await skel("\n\x1b[B\nsk-ant-oat01-good\n");
   expect(run.code).toBe(0);
   expect(parse(readFileSync(config(), "utf8"))).toEqual({ harness: "claude" });
   expect(calls()).not.toContain("codex login --device-auth");
@@ -1154,7 +1180,7 @@ test("reviews on your own harness save nothing more, and need no other login", a
 
 test("Codex agents with Claude Code reviews log in to both", async () => {
   fakeCodex();
-  const run = await skel("2\n\nsk-ant-oat01-good\n");
+  const run = await skel("\x1b[B\n\nsk-ant-oat01-good\n");
   expect(run.err).toBe("");
   expect(run.code).toBe(0);
   expect(run.out).toContain(
@@ -1169,19 +1195,23 @@ test("Codex agents with Claude Code reviews log in to both", async () => {
   expect(calls()).toContain("codex login --device-auth");
 });
 
-test("refuses a harness that isn't installed, saying how to install it", async () => {
-  const run = await skel("2\n");
+test("names only the harness your config saved when it isn't installed", async () => {
+  mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
+  writeFileSync(config(), "harness: codex\n");
+  const run = await skel();
   expect(run.code).toBe(1);
-  expect(run.err).toContain("npm install -g @openai/codex");
-  expect(existsSync(config())).toBe(false);
+  expect(run.out).toContain(
+    "a coding agent:\n\n  npm install -g @openai/codex\n\nThen run sc again.",
+  );
+  expect(run.out).not.toContain("claude.ai");
 });
 
 test("needs Claude Code or Codex, and names how to install either", async () => {
   unlinkSync(join(bin, "claude"));
   const run = await skel();
   expect(run.code).toBe(1);
-  expect(run.err).toContain("curl -fsSL https://claude.ai/install.sh | bash");
-  expect(run.err).toContain("npm install -g @openai/codex");
+  expect(run.out).toContain("curl -fsSL https://claude.ai/install.sh | bash");
+  expect(run.out).toContain("npm install -g @openai/codex");
   expect(calls()).toBe("");
 });
 
@@ -1207,7 +1237,7 @@ const servicePath = () =>
 test("finds the tools your login shell finds, on a first run over ssh", async () => {
   fakeCodex();
   const nvm = onlyLoginShellKnows(["claude", "codex"]);
-  const run = await skel("1\n\nsk-ant-oat01-good\n", bin, main(), home, { SHELL: "/bin/bash" });
+  const run = await skel("\n\nsk-ant-oat01-good\n", bin, main(), home, { SHELL: "/bin/bash" });
   expect(run.err).toBe("");
   expect(run.code).toBe(0);
   expect(readFileSync(config(), "utf8")).toContain("harness: claude");
@@ -1220,7 +1250,7 @@ test("finds the tools your login shell finds, on a first run over ssh", async ()
 test("keeps the login shell's folders in the service when Skelcrew runs over ssh again", async () => {
   fakeCodex();
   const nvm = onlyLoginShellKnows(["claude", "codex"]);
-  await skel("1\n\nsk-ant-oat01-good\n", bin, main(), home, { SHELL: "/bin/bash" });
+  await skel("\n\nsk-ant-oat01-good\n", bin, main(), home, { SHELL: "/bin/bash" });
   writeFileSync(join(home, "calls"), "");
   const run = await skel("", bin, main(), home, { SHELL: "/bin/bash" });
   expect(run.code).toBe(0);
@@ -1238,7 +1268,7 @@ test("over --remote, a machine whose first run isn't done exits with its own cod
 });
 
 test("over --remote, a machine that finished its first run attaches as usual", async () => {
-  await skel("1\nsk-ant-oat01-good\n");
+  await skel("sk-ant-oat01-good\n");
   const run = await skel("", bin, main(), home, { SKELCREW_REMOTE_NAME: "simon@workbox" });
   expect(run.err).toBe("");
   expect(run.code).toBe(0);
@@ -1287,7 +1317,7 @@ function lockFake(version: string, commit = fakeCommit(version)): void {
 }
 
 test("sc install on a machine with nothing to do says so, and changes nothing", async () => {
-  await skel("1\nsk-ant-oat01-good\n");
+  await skel("sk-ant-oat01-good\n");
   writeFileSync(join(home, "calls"), "");
   const run = await install();
   expect(run.err).toBe("");
@@ -1299,7 +1329,7 @@ test("sc install installs your plugins at the version your lock pins after askin
   noGitHubPlugin();
   fakeGitHub();
   publishFake("0.1.0", "0.2.0");
-  await skel("1\nsk-ant-oat01-good\n");
+  await skel("sk-ant-oat01-good\n");
   lockFake("0.1.0");
   writeFileSync(join(home, "calls"), "");
   const first = await install("y\n");
@@ -1334,7 +1364,7 @@ test("sc install removes a plugin from GitHub your files don't name", async () =
   noGitHubPlugin();
   fakeGitHub();
   publishFake("0.1.0");
-  await skel("1\nsk-ant-oat01-good\n");
+  await skel("sk-ant-oat01-good\n");
   lockFake("0.1.0");
   await install("y\n");
   writeFileSync(
@@ -1370,7 +1400,7 @@ test("sc install keeps a plugin a repository uses that your files don't name, an
   noGitHubPlugin();
   fakeGitHub();
   publishFake("0.1.0");
-  await skel("1\nsk-ant-oat01-good\n");
+  await skel("sk-ant-oat01-good\n");
   lockFake("0.1.0");
   await install("y\n");
   const db = new Database(join(home, ".local", "share", "skelcrew", "skelcrew.db"));
@@ -1407,7 +1437,7 @@ test("sc install on a machine with no lock pins nothing, and keeps the plugins r
   publishFake("0.1.0");
   publishPlugin("team", "0.1.0");
   publishPlugin("spare", "0.1.0");
-  await skel("1\nsk-ant-oat01-good\n");
+  await skel("sk-ant-oat01-good\n");
   appendFileSync(
     config(),
     "plugins: [simon/skelcrew-fake, simon/skelcrew-team, simon/skelcrew-spare]\n",
@@ -1457,7 +1487,7 @@ test("sc install with no answer to read installs nothing", async () => {
   noGitHubPlugin();
   fakeGitHub();
   publishFake("0.1.0");
-  await skel("1\nsk-ant-oat01-good\n");
+  await skel("sk-ant-oat01-good\n");
   lockFake("0.1.0");
   const run = await install("");
   expect(run.code).toBe(1);
@@ -1469,7 +1499,7 @@ test("sc install installs the commit your lock pins, even after its tag moved, a
   noGitHubPlugin();
   fakeGitHub();
   publishFake("0.1.0");
-  await skel("1\nsk-ant-oat01-good\n");
+  await skel("sk-ant-oat01-good\n");
   lockFake("0.1.0");
   await install("y\n");
   // The tag moves to a new commit, which your lock doesn't pin, so nothing changes here.
@@ -1508,7 +1538,7 @@ test("a repository sc install can't reach keeps git's error and the lock", async
   noGitHubPlugin();
   fakeGitHub();
   publishFake("0.1.0");
-  await skel("1\nsk-ant-oat01-good\n");
+  await skel("sk-ant-oat01-good\n");
   lockFake("0.1.0");
   const lockBefore = readFileSync(lock(), "utf8");
   const locked = fakeCommit("0.1.0");
@@ -1528,7 +1558,7 @@ test("a locked commit the repository no longer has is refused, and sc update -g 
   noGitHubPlugin();
   fakeGitHub();
   publishFake("0.1.0");
-  await skel("1\nsk-ant-oat01-good\n");
+  await skel("sk-ant-oat01-good\n");
   lockFake("0.1.0", "deadbeef".repeat(5));
   const refused = await install("y\n");
   expect(refused.code).toBe(1);
@@ -1545,7 +1575,7 @@ test("sc update -g moves an installed plugin to its tag's new commit, after aski
   noGitHubPlugin();
   fakeGitHub();
   publishFake("0.1.0");
-  await skel("1\nsk-ant-oat01-good\n");
+  await skel("sk-ant-oat01-good\n");
   lockFake("0.1.0");
   await install("y\n");
   expect((await atTerminal("", home, ["update", "-g", "fake"])).out).toContain(
@@ -1565,7 +1595,7 @@ test("sc install without a terminal installs nothing, even with a yes piped in, 
   fakeGitHub();
   publishFake("0.1.0");
   publishPlugin("bar", "0.1.0");
-  await skel("1\nsk-ant-oat01-good\n");
+  await skel("sk-ant-oat01-good\n");
   lockFake("0.1.0");
   writeFileSync(
     config(),
@@ -1593,7 +1623,7 @@ test("plain sc on a machine set up by an older release installs the plugins your
   noGitHubPlugin();
   fakeGitHub();
   publishFake("0.1.0");
-  await skel("1\nsk-ant-oat01-good\n");
+  await skel("sk-ant-oat01-good\n");
   // The older release left only its own mark, and a release update its note beside it.
   const data = join(home, ".local", "share", "skelcrew");
   rmSync(join(data, "install-done"));
@@ -1677,7 +1707,7 @@ test("on a machine already set up, a declined plugin your files name makes plain
   noGitHubPlugin();
   fakeGitHub();
   publishFake("0.1.0");
-  await skel("1\nsk-ant-oat01-good\n");
+  await skel("sk-ant-oat01-good\n");
   lockFake("0.1.0");
   const declined = await install("n\n");
   expect(declined.out).toContain("Skelcrew didn't install fake.");
@@ -1697,7 +1727,7 @@ test("on a machine already set up, sc install failing for want of a terminal mak
   noGitHubPlugin();
   fakeGitHub();
   publishFake("0.1.0");
-  await skel("1\nsk-ant-oat01-good\n");
+  await skel("sk-ant-oat01-good\n");
   lockFake("0.1.0");
   const failed = await skel("", bin, main(), home, {}, ["install"]);
   expect(failed.code).toBe(1);
@@ -1712,7 +1742,7 @@ test("on a machine already set up, sc install failing for want of a terminal mak
 // install its newest version, isn't made.
 test("in a GitHub checkout, files that name the GitHub plugin skip the offer, and sc install gets the locked commit", async () => {
   const site = siteOnGitHub();
-  await skel("1\nsk-ant-oat01-good\n");
+  await skel("sk-ant-oat01-good\n");
   const plugin = join(home, "github", "skelcrew", "skelcrew-github");
   const locked = git(plugin, "rev-parse", "HEAD");
   // The tag moves on after your lock pinned it.
@@ -1738,7 +1768,7 @@ test("when the forge won't serve the locked commit, sc install takes the tag onl
   noGitHubPlugin();
   fakeGitHub();
   publishFake("0.1.0");
-  await skel("1\nsk-ant-oat01-good\n");
+  await skel("sk-ant-oat01-good\n");
   const real = Bun.which("git") ?? "git";
   unlinkSync(join(bin, "git"));
   writeFileSync(
@@ -1773,7 +1803,7 @@ test("sc install leaves every pin as it is and adds a pin for a plugin your lock
   fakeGitHub();
   publishFake("0.1.0");
   publishPlugin("other", "0.1.0", "0.2.0");
-  await skel("1\nsk-ant-oat01-good\n");
+  await skel("sk-ant-oat01-good\n");
   lockFake("0.1.0");
   writeFileSync(
     config(),
@@ -1818,7 +1848,7 @@ test("sc install in a checkout installs the plugins its skelcrew.lock pins after
   noGitHubPlugin();
   fakeGitHub();
   publishFake("0.1.0", "0.2.0");
-  await skel("1\nsk-ant-oat01-good\n");
+  await skel("sk-ant-oat01-good\n");
   const app = checkoutWith("app", "git@example.com:simon/app.git");
   const locked = fakeCommit("0.1.0");
   // The tag moves on after the repository pinned it.
@@ -1853,7 +1883,7 @@ test("sc install in a checkout asks nothing for a plugin of yours the repository
   noGitHubPlugin();
   fakeGitHub();
   publishFake("0.1.0");
-  await skel("1\nsk-ant-oat01-good\n");
+  await skel("sk-ant-oat01-good\n");
   lockFake("0.1.0");
   expect((await install("y\n")).out).toContain("Installed fake 0.1.0.");
   const app = checkoutWith("app", "git@example.com:simon/app.git");
@@ -1870,7 +1900,7 @@ test("sc install in a checkout that pins a plugin of yours at another version sa
   noGitHubPlugin();
   fakeGitHub();
   publishFake("0.1.0", "0.2.0");
-  await skel("1\nsk-ant-oat01-good\n");
+  await skel("sk-ant-oat01-good\n");
   lockFake("0.1.0");
   expect((await install("y\n")).out).toContain("Installed fake 0.1.0.");
   const app = checkoutWith("app", "git@example.com:simon/app.git");
@@ -1887,7 +1917,7 @@ test("sc install updates a repository's plugin when its skelcrew.lock moves to a
   noGitHubPlugin();
   fakeGitHub();
   publishFake("0.1.0", "0.2.0");
-  await skel("1\nsk-ant-oat01-good\n");
+  await skel("sk-ant-oat01-good\n");
   const app = checkoutWith("app", "git@example.com:simon/app.git");
   repositoryLocksFake(app, "0.1.0");
   expect((await atTerminal("y\n", app, ["install"])).out).toContain("Installed fake 0.1.0.");
@@ -1904,7 +1934,7 @@ test("sc install outside a checkout installs the plugins of every repository Ske
   noGitHubPlugin();
   fakeGitHub();
   publishFake("0.1.0");
-  await skel("1\nsk-ant-oat01-good\n");
+  await skel("sk-ant-oat01-good\n");
   repositoryLocksFake(join(home, ".local", "share", "skelcrew", "repos", "simon", "app"), "0.1.0");
   const run = await install("y\n");
   expect(run.err).toBe("");
@@ -1916,7 +1946,7 @@ test("a changed commit in a repository's skelcrew.lock asks again", async () => 
   noGitHubPlugin();
   fakeGitHub();
   publishFake("0.1.0");
-  await skel("1\nsk-ant-oat01-good\n");
+  await skel("sk-ant-oat01-good\n");
   const app = checkoutWith("app", "git@example.com:simon/app.git");
   repositoryLocksFake(app, "0.1.0");
   await atTerminal("y\n", app, ["install"]);
@@ -1934,7 +1964,7 @@ test("sc install leaves out a plugin a repository names without a pin, and one y
   noGitHubPlugin();
   fakeGitHub();
   publishFake("0.1.0");
-  await skel("1\nsk-ant-oat01-good\n");
+  await skel("sk-ant-oat01-good\n");
   const app = checkoutWith("app", "git@example.com:simon/app.git");
   writeFileSync(join(app, "skelcrew.yaml"), "plugins: [simon/skelcrew-fake]\n");
   const unpinned = await atTerminal("y\n", app, ["install"]);
@@ -1961,7 +1991,7 @@ test("sc install without a terminal installs none of a repository's plugins", as
   noGitHubPlugin();
   fakeGitHub();
   publishFake("0.1.0");
-  await skel("1\nsk-ant-oat01-good\n");
+  await skel("sk-ant-oat01-good\n");
   const app = checkoutWith("app", "git@example.com:simon/app.git");
   repositoryLocksFake(app, "0.1.0");
   const run = await skel("y\n", bin, main(), app, {}, ["install"]);
@@ -1973,7 +2003,7 @@ test("sc install without a terminal installs none of a repository's plugins", as
 // The repository's files decide which GitHub plugin it gets, at the version its lock pins.
 test("in a GitHub checkout whose skelcrew.yaml names the GitHub plugin, sc skips the offer", async () => {
   const site = siteOnGitHub();
-  await skel("1\nsk-ant-oat01-good\n");
+  await skel("sk-ant-oat01-good\n");
   writeFileSync(join(site, "skelcrew.yaml"), "plugins: [skelcrew/skelcrew-github]\n");
   const run = await atTerminal("", site);
   expect(run.out).not.toContain("GitHub detected");
@@ -1985,7 +2015,7 @@ test("sc install leaves a plugin your lock and a repository pin at different com
   noGitHubPlugin();
   fakeGitHub();
   publishFake("0.1.0");
-  await skel("1\nsk-ant-oat01-good\n");
+  await skel("sk-ant-oat01-good\n");
   const yours = fakeCommit("0.1.0");
   lockFake("0.1.0");
   // The repository pins the tag after it moved.
@@ -2027,7 +2057,7 @@ test("sc install refuses a plugin whose manifest names it otherwise than the rep
   noGitHubPlugin();
   fakeGitHub();
   publishFake("0.1.0");
-  await skel("1\nsk-ant-oat01-good\n");
+  await skel("sk-ant-oat01-good\n");
   const app = checkoutWith("app", "git@example.com:simon/app.git");
   repositoryLocksFake(app, "0.1.0");
   const lockText = () => readFileSync(join(app, "skelcrew.lock"), "utf8");
@@ -2050,7 +2080,7 @@ test("sc install refuses a plugin whose manifest names it otherwise than the rep
 
 // A folder plugin has no pin, so a repository naming a path could pick code of its own to run.
 test("sc install refuses a repository that names a plugin by a path", async () => {
-  await skel("1\nsk-ant-oat01-good\n");
+  await skel("sk-ant-oat01-good\n");
   const app = checkoutWith("app", "git@example.com:simon/app.git");
   mkdirSync(join(app, "plugin"));
   writeFileSync(join(app, "skelcrew.yaml"), "plugins: [./plugin]\n");
@@ -2076,7 +2106,7 @@ test("sc install refuses a repository that names a runtime plugin installed as y
   );
   git(plugin, "commit", "-q", "-am", "runtime");
   git(plugin, "tag", "-f", "v0.1.0");
-  await skel("1\nsk-ant-oat01-good\n");
+  await skel("sk-ant-oat01-good\n");
   lockFake("0.1.0");
   await install("y\n");
   expect(existsSync(fakeFolder())).toBe(true);
@@ -2103,7 +2133,7 @@ test("sc install moves a runtime plugin that isn't yours to a pinned version tha
   );
   git(plugin, "commit", "-q", "-am", "runtime");
   git(plugin, "tag", "-f", "v0.1.0");
-  await skel("1\nsk-ant-oat01-good\n");
+  await skel("sk-ant-oat01-good\n");
   lockFake("0.1.0");
   await install("y\n");
   // No longer yours, it is installed here and named by no file of yours.
@@ -2126,7 +2156,7 @@ test("a pin sc install adds for a plugin of yours is checked against the reposit
   noGitHubPlugin();
   fakeGitHub();
   publishFake("0.1.0", "0.2.0");
-  await skel("1\nsk-ant-oat01-good\n");
+  await skel("sk-ant-oat01-good\n");
   appendFileSync(config(), "plugins: [simon/skelcrew-fake]\n");
   repositoryLocksFake(join(home, ".local", "share", "skelcrew", "repos", "simon", "app"), "0.1.0");
   const run = await install("y\ny\n");
@@ -2146,7 +2176,7 @@ test("sc install reads each repository on its own, and fails while one can't be 
   noGitHubPlugin();
   fakeGitHub();
   publishFake("0.1.0");
-  await skel("1\nsk-ant-oat01-good\n");
+  await skel("sk-ant-oat01-good\n");
   lockFake("0.1.0");
   publishFake("0.1.0");
   const repos = join(home, ".local", "share", "skelcrew", "repos", "simon");
@@ -2173,7 +2203,7 @@ test("sc install keeps a plugin a repository's skelcrew.lock pins, though its sk
   noGitHubPlugin();
   fakeGitHub();
   publishFake("0.1.0");
-  await skel("1\nsk-ant-oat01-good\n");
+  await skel("sk-ant-oat01-good\n");
   lockFake("0.1.0");
   await install("y\n");
   cloneEach();
@@ -2196,7 +2226,7 @@ test("sc install keeps every plugin and finishes while a repository's skelcrew.l
   noGitHubPlugin();
   fakeGitHub();
   publishFake("0.1.0");
-  await skel("1\nsk-ant-oat01-good\n");
+  await skel("sk-ant-oat01-good\n");
   lockFake("0.1.0");
   await install("y\n");
   cloneEach();
@@ -2221,7 +2251,7 @@ test("sc install names a repository it can't read even when another one's plugin
   noGitHubPlugin();
   fakeGitHub();
   publishFake("0.1.0");
-  await skel("1\nsk-ant-oat01-good\n");
+  await skel("sk-ant-oat01-good\n");
   const repos = join(home, ".local", "share", "skelcrew", "repos", "simon");
   repositoryLocksFake(join(repos, "app"), "0.1.0");
   const code = `import { openDb } from ${JSON.stringify(join(checkout, "src", "db.ts"))};
@@ -2241,7 +2271,7 @@ test("sc install fails while two repositories pin a plugin at different commits"
   noGitHubPlugin();
   fakeGitHub();
   publishFake("0.1.0");
-  await skel("1\nsk-ant-oat01-good\n");
+  await skel("sk-ant-oat01-good\n");
   const repos = join(home, ".local", "share", "skelcrew", "repos", "simon");
   repositoryLocksFake(join(repos, "app"), "0.1.0");
   publishFake("0.1.0");
