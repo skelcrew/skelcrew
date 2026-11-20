@@ -1882,6 +1882,24 @@ test("sc install in a checkout that pins a plugin of yours at another version sa
   expect(git(fakeFolder(), "rev-parse", "HEAD")).toBe(fakeCommit("0.1.0"));
 });
 
+// The plugin of that name installed here is this very plugin, so moving its pin updates it.
+test("sc install updates a repository's plugin when its skelcrew.lock moves to another version, after asking", async () => {
+  noGitHubPlugin();
+  fakeGitHub();
+  publishFake("0.1.0", "0.2.0");
+  await skel("1\nsk-ant-oat01-good\n");
+  const app = checkoutWith("app", "git@example.com:simon/app.git");
+  repositoryLocksFake(app, "0.1.0");
+  expect((await atTerminal("y\n", app, ["install"])).out).toContain("Installed fake 0.1.0.");
+  repositoryLocksFake(app, "0.2.0");
+  const run = await atTerminal("y\n", app, ["install"]);
+  expect(run.err).toBe("");
+  expect(run.out).not.toContain("installed already");
+  expect(run.out).toContain("Update it? [Y/n]");
+  expect(run.out).toContain("Updated fake from 0.1.0 to 0.2.0.");
+  expect((await atTerminal("", app, ["install"])).out).toContain("Nothing to install");
+});
+
 test("sc install outside a checkout installs the plugins of every repository Skelcrew has, from its clone", async () => {
   noGitHubPlugin();
   fakeGitHub();
