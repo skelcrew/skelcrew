@@ -2053,16 +2053,21 @@ exec ${JSON.stringify(Bun.which("tmux") ?? "tmux")} "$@"
   return bin;
 }
 
-// Waits until every slow read the test started has answered, as slowTmux and slowHost note
-// them. A test ends only then, so no read outlives it.
-async function slowReadsEnded(): Promise<void> {
-  await until(slowReadsDone, "the slow reads to end");
-}
+// How many slow reads slowTmux or slowHost started, or ended, so far.
+const slowReads = (which: "started" | "ended") =>
+  read(join(home, `slow-${which}`)).split("\n").length - 1;
 
-// Reports whether every slow read started so far has answered.
-function slowReadsDone(): boolean {
-  const count = (file: string) => read(join(home, file)).split("\n").length - 1;
-  return count("slow-ended") === count("slow-started");
+// Reports whether the first `count` slow reads have answered, and no read after them is under
+// way. A test counts the reads started once it has reached a state where the read it cares about
+// was surely asked for, so a read that hasn't begun can't pass for one that ended. A read can't
+// start on its own row while another is under way, so a test counts what started rather than
+// expecting a read of its own.
+const slowReadsDone = (count: number) =>
+  count > 0 && slowReads("ended") >= count && slowReads("ended") === slowReads("started");
+
+// Waits until slowReadsDone, so no read outlives the test that started it.
+async function slowReadsEnded(count: number): Promise<void> {
+  await until(() => slowReadsDone(count), "the slow reads to end");
 }
 
 test("a tmux slow to capture an agent's screen never holds up the keys", async () => {
@@ -2083,7 +2088,8 @@ test("a tmux slow to capture an agent's screen never holds up the keys", async (
   await until(() => liveSeen().includes("I am app-12"), "app-12's screen");
   press("Down");
   await until(() => here().startsWith("▸ ○ app-9"), "app-9's row");
-  await slowReadsEnded();
+  const reads = slowReads("started");
+  await slowReadsEnded(reads);
 });
 
 // Returns whether no read came for a second, as the live view reads 4 times a second.
@@ -2182,9 +2188,10 @@ test("a host slow to read an agent's screen never holds up the keys", async () =
   press("Down");
   press("Down");
   await until(() => here().startsWith("▸ ○ app-7"), "app-7's row");
+  const reads = slowReads("started");
   expect(performance.now() - start).toBeLessThan(1000);
   // The read under way ends with the host's answer, which the test waits for, as it started it.
-  await slowReadsEnded();
+  await slowReadsEnded(reads);
 });
 
 test("a read that answers after the list left draws nothing over your terminal", async () => {
@@ -2200,8 +2207,9 @@ test("a read that answers after the list left draws nothing over your terminal",
   await until(() => here().startsWith("▸ ● app-12"), "app-12's row");
   type("q");
   await until(() => read(join(home, "left")) === "left", "the list to leave");
+  const reads = slowReads("started");
   // The list would draw the answer the moment it came, so a moment after it is long enough.
-  await slowReadsEnded();
+  await slowReadsEnded(reads);
   await Bun.sleep(300);
   expect(seen()).toContain("Your agents keep running.");
   expect(seen()).not.toContain("q/esc quit");
@@ -2234,7 +2242,8 @@ test("a read under way when you move away and back is dropped, as you moved sinc
   await until(() => screen() !== before, "a newer screen");
   press("Down");
   await until(() => here().startsWith("▸ ○ app-9"), "app-9's row");
-  await slowReadsEnded();
+  const reads = slowReads("started");
+  await slowReadsEnded(reads);
 });
 
 test("a slow read of the row you left never holds up the live view of the row you are on", async () => {
@@ -2252,6 +2261,7 @@ test("a slow read of the row you left never holds up the live view of the row yo
   press("Down");
   press("Down");
   await until(() => liveSeen().includes("I am app-7"), "app-7's screen");
+  const reads = slowReads("started");
   expect(performance.now() - start).toBeLessThan(1000);
   // When app-12's read answers, app-7's screen stays in sight, never blanked by a screen that
   // isn't its own. The test watches until a moment after the answer, which also waits for the
@@ -2259,7 +2269,7 @@ test("a slow read of the row you left never holds up the live view of the row yo
   let answered = 0;
   while (answered === 0 || performance.now() - answered < 300) {
     expect(liveSeen()).toContain("I am app-7");
-    if (answered === 0 && slowReadsDone()) answered = performance.now();
+    if (answered === 0 && slowReadsDone(reads)) answered = performance.now();
     await Bun.sleep(10);
   }
 });
