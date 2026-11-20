@@ -32,7 +32,7 @@ import {
 import { updateNotice } from "../machine/update.ts";
 import { leadPlaces, screenLogFile } from "../paths.ts";
 import { quoteForSh } from "../plugins/plugin.ts";
-import { attachOnHostLine, pluginHost } from "../plugins/runtime.ts";
+import { pluginHost } from "../plugins/runtime.ts";
 import { errorText } from "../say.ts";
 import { version } from "../version.ts";
 import { agentFooter, tellFooter } from "./footer.ts";
@@ -40,7 +40,7 @@ import { noticeLines } from "./layout.ts";
 import { roundLimit } from "./lists.ts";
 import { edge, filled, paint, removeControlCodes } from "./look.ts";
 import { type Open, repositoryTabs, sidebarRows } from "./rows.ts";
-import { sidebarWidth } from "./screen.ts";
+import { leadOnHost, sidebarWidth } from "./screen.ts";
 import { drawTop } from "./strip.ts";
 import { attachTask, showTask } from "./task.ts";
 
@@ -101,20 +101,6 @@ function repositoryAndLead(db: ReturnType<typeof openDb>, fullName: string): Ope
   }
 }
 
-// Returns the line that attaches to the open repository's lead when it runs on a plugin's host,
-// as the screen can't show it through tmux. Null for a lead on tmux, one whose plugin is gone,
-// and a repository Skelcrew no longer has.
-function leadOnHost(db: ReturnType<typeof openDb>, { owner, repo }: Open): string | null {
-  try {
-    const { host, hostId, name } = leadOf(db, owner, repo);
-    if (host === "tmux") return null;
-    const plugin = pluginHost(db, host);
-    return plugin && attachOnHostLine(plugin, hostId ?? name);
-  } catch {
-    return null;
-  }
-}
-
 // What the right side shows of a task: its details, by the task's name, such as APP-12. Anything
 // else the right side shows is an agent's session, by its name.
 const detailsOf = (name: string) => `details:${name}`;
@@ -123,8 +109,9 @@ const isDetails = (shown: string | null) => shown?.startsWith("details:") ?? fal
 const refused = "refused";
 
 // Runs the sidebar until its pane goes. The session given is its own, on the screen's server,
-// `where` says which remote Skelcrew runs on, if any, for the header above it, and `repository`
-// is the owner/name of the repository it opens on.
+// `where` says which remote Skelcrew runs on, if any, for the header above it, `repository` is
+// the owner/name of the repository it opens on, and `onHost` the line the right pane attaches to
+// its lead's host with, empty for tmux.
 // tmux brings it the Alt keys and clicks, and your typing while a task's details show. It looks
 // again each second, and writes only when something changed, as over a slow link each write costs.
 export async function runSidebar(
@@ -132,6 +119,7 @@ export async function runSidebar(
   session: string,
   where: string,
   repository: string,
+  onHost: string,
 ): Promise<void> {
   // A freeze of the screen leaves nothing behind, as everything the sidebar says is drawn in
   // your terminal. So it logs its own stalls to a file, with the step it was stuck on.
@@ -142,8 +130,11 @@ export async function runSidebar(
   let open = repositoryAndLead(db, repository);
   // How the right pane reaches the open repository's lead: through its plugin's host, by this
   // line, or through tmux when null. It is read again each second, as a lead the daemon is still
-  // starting may land on a plugin's host after the pane began waiting for it.
-  let leadAttach = leadOnHost(db, open);
+  // starting may land on a plugin's host, or move on it, after the pane began waiting for it.
+  // paneLead is the line the right pane runs, as leadAttach was when the pane last started on the
+  // lead, starting as the screen started it.
+  let leadAttach = onHost === "" ? null : onHost;
+  let paneLead = leadAttach;
   // Returns a shell line that shows the open repository's lead, and again whenever it ends or you
   // leave it, as tmux's attach to the lead does.
   const leadLine = () =>
@@ -158,10 +149,9 @@ export async function runSidebar(
     return attachThen(agents, first, leadLine());
   };
   // The agents running on a plugin's host, builders by their thread's folder and the open lead by
-  // its name, with the line that attaches to each, as the last look at the hosts found them. The
-  // look runs in the background, one at a time, as a host can be slow, and the sidebar never
-  // waits on it.
-  let hosted = new Map<string, string>();
+  // its name, as the last look at the hosts found them. The look runs in the background, one at
+  // a time, as a host can be slow, and the sidebar never waits on it.
+  let hosted = new Set<string>();
   let lookingAtHosts = false;
   const lookAtHosts = () => {
     if (lookingAtHosts) return;
@@ -218,23 +208,22 @@ export async function runSidebar(
   // Puts `next` on the right: an agent's session, or a task's details, which leave your typing
   // with the sidebar. A client can switch between agents, but coming from details the pane must
   // run something else, and so must a client still attaching, which can't switch yet. A lead on a
-  // plugin's host runs that host's attach in the pane, as no tmux client can switch to it. A
+  // plugin's host runs that host's attach in the pane, as no tmux client can switch to it, where
+  // the database says it runs now: the host's last list can lag behind a lead that moved. A
   // builder you attached to with Enter still counts as its task's details, which the pane goes
   // back to once you leave it.
   const show = (next: string) => {
     if (next === shown) return;
-    const onHost = hosted.get(next);
     if (next.startsWith("details:"))
       showTask(agents, session, `${open.owner}/${open.repo}`, next.slice("details:".length));
-    else if (onHost !== undefined)
-      respawnPane(agents, rightPane, ["sh", "-c", `${onHost}; ${leadLine()}`]);
     else if (
       isDetails(shown) ||
       shownSession(agents, tty) === null ||
       (next === open.lead && leadAttach !== null)
-    )
+    ) {
       respawnPane(agents, rightPane, paneOn(next));
-    else showSession(agents, tty, next);
+      paneLead = leadAttach;
+    } else showSession(agents, tty, next);
     tty = paneTty(agents, rightPane);
     if (!next.startsWith("details:")) screenTmux(agents, ["select-pane", "-t", rightPane]);
     shown = next;
@@ -305,7 +294,7 @@ export async function runSidebar(
     // tmux first, then the tabs: the daemon closes a tab before it ends the lead's session, so
     // a lead found gone here with its tab still read as open has crashed.
     const found = doing("asking tmux for the agents' sessions", () => listTmuxSessions(agents));
-    running = [...found.flatMap((one) => (one.running ? [one.name] : [])), ...hosted.keys()];
+    running = [...found.flatMap((one) => (one.running ? [one.name] : [])), ...hosted];
     lookAtHosts();
     const exited = doing("asking tmux whether the lead exited", () =>
       exitedCleanly(agents, open.lead),
@@ -330,15 +319,6 @@ export async function runSidebar(
       }
       switchTo(next.fullName);
     }
-    // A lead that moved to or from a plugin's host is shown through its host now.
-    const lead = doing("reading the lead's host", () => leadOnHost(db, open));
-    if (lead !== leadAttach) {
-      leadAttach = lead;
-      if (shown === open.lead) {
-        respawnPane(agents, rightPane, paneOn(open.lead));
-        tty = paneTty(agents, rightPane);
-      }
-    }
     notice = noticeLines(updateNotice(db), size().width);
     // A repository Skelcrew no longer has has no rows, until the sidebar moves off it.
     all = doing("reading the rows", () => {
@@ -358,6 +338,15 @@ export async function runSidebar(
       if (client) shown = client;
       else if (!running.includes(open.lead)) shown = open.lead;
       if (shown === open.lead && rows[here]?.part !== "lead") here = 0;
+    }
+    // A lead that moved to or from a plugin's host, or to another session on it, is shown
+    // through its host now, once the right side shows the lead. This comes once the sidebar knows
+    // what the right side shows, as at the first look it doesn't yet.
+    leadAttach = doing("reading the lead's host", () => leadOnHost(db, open));
+    if (shown === open.lead && paneLead !== leadAttach) {
+      respawnPane(agents, rightPane, paneOn(open.lead));
+      tty = paneTty(agents, rightPane);
+      paneLead = leadAttach;
     }
     // A lead that crashed while you look at it is brought back with its conversation, once,
     // as the daemon does at its start. One you exited closes its tab instead.
@@ -421,6 +410,7 @@ export async function runSidebar(
     asking = null;
     respawnPane(agents, rightPane, paneOn(open.lead));
     tty = paneTty(agents, rightPane);
+    paneLead = leadAttach;
     screenTmux(agents, ["select-pane", "-t", rightPane]);
     shown = open.lead;
   }
@@ -604,15 +594,13 @@ export async function runSidebar(
   process.exit(0);
 }
 
-// Returns the agents running on a plugin's host, each with the line that attaches to it, for the
-// sidebar: builders by their thread's folder, and the open repository's lead by its name, so a
-// lead there that ends is noticed and brought back, as one on tmux is. Each host is asked once
-// for all its agents. A host that fails shows none of them as running.
-async function hostedAgents(
-  db: ReturnType<typeof openDb>,
-  open: Open,
-): Promise<Map<string, string>> {
-  const found = new Map<string, string>();
+// Returns the agents running on a plugin's host, for the sidebar: builders by their thread's
+// folder, and the open repository's lead by its name, so a lead there that ends is noticed and
+// brought back, as one on tmux is. Each host is asked once for all its agents. While a host fails
+// to answer, whether its agents run is unknown, and each counts as running: a host can fail for a
+// moment, even before it ever answered, and a lead there must not be taken for crashed.
+async function hostedAgents(db: ReturnType<typeof openDb>, open: Open): Promise<Set<string>> {
+  const found = new Set<string>();
   // Each agent on a plugin's host: what the sidebar knows it by, its host and its ID there.
   const agents = liveThreads(db).flatMap((thread) =>
     thread.host !== null && thread.host !== "tmux" && thread.host_id !== null
@@ -627,10 +615,12 @@ async function hostedAgents(
   for (const name of new Set(agents.map((agent) => agent.host))) {
     const host = pluginHost(db, name);
     if (host === null) continue;
-    const listed = await listSessions(host).catch(() => []);
-    for (const agent of agents)
-      if (agent.host === name && listed.some((one) => one.name === agent.id && one.running))
-        found.set(agent.key, attachOnHostLine(host, agent.id));
+    const listed = await listSessions(host).catch(() => null);
+    for (const agent of agents) {
+      if (agent.host !== name) continue;
+      if (listed === null || listed.some((one) => one.name === agent.id && one.running))
+        found.add(agent.key);
+    }
   }
   return found;
 }
