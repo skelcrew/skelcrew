@@ -1224,17 +1224,45 @@ test("init asks nothing when a file it edits had changes of yours", async () => 
   expect(git(checkout, "log", "-1", "--format=%s")).toBe("config\n");
 });
 
-// A push from another branch wouldn't reach the default branch, which is all Skelcrew reads.
-test("init on another branch asks nothing and says where the files must go", async () => {
+// A push from another branch wouldn't reach the default branch, and switching there can fail
+// where it tracks a file sc init wrote here. So the commands commit and push this branch, and
+// say to merge it into the default branch.
+test("init on another branch asks nothing, and its commands push that branch to merge", async () => {
   const checkout = onGitHub("simon/app", "WRITE");
   githubInstalledAsYours();
   git(checkout, "switch", "-q", "-c", "setup");
   const run = await initAtTerminal(checkout, "y\n");
   expect(run.code).toBe(0);
   expect(run.out).not.toContain("now? [Y/n]");
-  // The commands start by going to the default branch, where the push brings the files in.
   expect(run.out).toEndWith(
-    `You are on setup, and Skelcrew reads these files from main. Once they are there, the lead uses them. To commit and push them there:\n\n  git switch main\n${commands}`,
+    'You are on setup, and Skelcrew reads these files from main. Once they are there, the lead uses them. To commit and push them:\n\n  git add skelcrew.yaml skelcrew.lock .agents\n\n  git commit -m "Set up Skelcrew" -- skelcrew.yaml skelcrew.lock .agents\n\n  git push origin setup\n\nThen merge setup into main, such as with a pull request, and run sc.\n',
+  );
+  // Followed as shown, the commands need no switch, which could fail where main tracks one of
+  // the files. The push goes straight to the fake GitHub's folder, as the test's git has no
+  // setting that leads github.com there.
+  const bare = join(home, "github", "simon", "app.git");
+  for (const step of [
+    ["add", "skelcrew.yaml", "skelcrew.lock", ".agents"],
+    ["commit", "-q", "-m", "Set up Skelcrew", "--", "skelcrew.yaml", "skelcrew.lock", ".agents"],
+    ["push", "-q", bare, "setup"],
+  ])
+    git(checkout, ...step);
+  expect(git(bare, "ls-tree", "--name-only", "setup")).toContain("skelcrew.yaml");
+});
+
+// With no branch checked out, the commands make one first, so the commit has a branch to push.
+test("init on no branch starts its commands by making one", async () => {
+  const checkout = onGitHub("simon/app", "WRITE");
+  githubInstalledAsYours();
+  git(checkout, "switch", "-q", "--detach");
+  const run = await initAtTerminal(checkout, "y\n");
+  expect(run.code).toBe(0);
+  expect(run.out).toContain(
+    "You are on no branch, and Skelcrew reads these files from main. Once they are there, the lead uses them. To commit and push them:\n\n  git switch -c skelcrew-setup\n\n",
+  );
+  expect(run.out).toContain("  git push origin skelcrew-setup\n");
+  expect(run.out).toEndWith(
+    "Then merge skelcrew-setup into main, such as with a pull request, and run sc.\n",
   );
 });
 

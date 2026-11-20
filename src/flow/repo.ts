@@ -756,8 +756,9 @@ function gitIn(root: string, args: string[]): { ok: boolean; said: string } {
 // staged, so the commit is plainly sc init's alone, and only when `dirty`, the files sc init
 // edited that had changes of yours already, is empty, as the commit would take those changes too.
 // The commit names its files all the same, so nothing else ever joins it. Otherwise, after
-// a no, with no terminal to answer in, or when git fails, it shows the commands to run yourself:
-// on another branch they switch to the default branch first. Returns whether it pushed, once
+// a no, with no terminal to answer in, or when git fails, it shows the commands to run yourself.
+// On another branch they commit and push that branch, to merge into the default branch, as
+// switching to it can fail where it tracks a file sc init wrote here. Returns whether it pushed, once
 // Skelcrew's clone has the files too, so the lead opens on them.
 async function offerPush(
   db: Database,
@@ -772,26 +773,33 @@ async function offerPush(
     "--short",
     "HEAD",
   ]).said;
-  const here = gitIn(root, ["symbolic-ref", "--short", "HEAD"]).said;
+  const head = gitIn(root, ["symbolic-ref", "--short", "HEAD"]);
+  const current = head.ok ? head.said : "";
+  // A checkout on no branch gets one first, which can't fail, so its commit has a branch to push.
+  const here = current || "skelcrew-setup";
   // What to run yourself. The commit names its files, so other staged work stays out of it, and
-  // the push names the default branch, which a branch with no upstream would need anyway.
+  // the push names its branch, which a branch with no upstream would need anyway.
   const commit = `git commit -m "Set up Skelcrew" -- ${paths.join(" ")}`;
-  const push = `git push origin ${branch}`;
+  const push = `git push origin ${here}`;
   const steps = [
-    ...(here === branch ? [] : [`git switch ${branch}`]),
+    ...(current ? [] : [`git switch -c ${here}`]),
     `git add ${paths.join(" ")}`,
     commit,
     push,
   ];
   const show = (why: string, left = steps) => {
     console.log(`${why}\n${toRun(left)}`);
-    console.log("Then run sc.");
+    console.log(
+      here === branch
+        ? "Then run sc."
+        : `Then merge ${here} into ${branch}, such as with a pull request, and run sc.`,
+    );
     return false;
   };
   const commitThem = `Skelcrew reads these files from ${branch}, so commit and push them there:`;
   if (here !== branch)
     return show(
-      `You are on ${here || "no branch"}, and Skelcrew reads these files from ${branch}. Once they are there, the lead uses them. To commit and push them there:`,
+      `You are on ${current || "no branch"}, and Skelcrew reads these files from ${branch}. Once they are there, the lead uses them. To commit and push them:`,
     );
   if (!gitIn(root, ["diff", "--cached", "--quiet"]).ok)
     return show(
