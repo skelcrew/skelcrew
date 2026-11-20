@@ -21,7 +21,7 @@ import {
   forgetMoves,
   headSeen,
   onlyDocs,
-  pastRoundLimit,
+  type PullRequest,
   refusedWorkflow,
   reviewComment,
   whoRunsTheSuite,
@@ -32,7 +32,16 @@ import { endLimit, limitOn, reachLimit, tellOfLimit, waitUntil } from "./limits.
 import { dropOldEvents, noteForLead, queueMessage, typeLeadNotes } from "./messages.ts";
 import { Queue } from "./queue.ts";
 import { type Limited, type Review, review } from "./reviewer.ts";
-import { cloneOf, readThread, record, repositoryOf, Thread, threadName } from "./thread.ts";
+import {
+  cloneOf,
+  hostMissing,
+  markBeforeHost,
+  readThread,
+  record,
+  repositoryOf,
+  Thread,
+  threadName,
+} from "./thread.ts";
 
 // Runs git in Skelcrew's own clone and returns what it printed, throwing with its error when it
 // fails.
@@ -168,6 +177,52 @@ const ciWait = z.coerce
 // reviewers then run the suite as well, until a check shows on one of the repository's PRs.
 const waitedInVain = new Set<string>();
 
+// Takes the repository, as owner/repo, out of those whose reviews wait no more for a first
+// check, as a poll found a CI check on one of its PRs. Its reviews and merges then make the
+// full wait again, even once that PR closed, so a PR with workflows isn't taken for one no CI
+// runs on before its first check could start.
+export function ciShowedIn(repository: string): void {
+  waitedInVain.delete(repository);
+}
+
+// When the wait for CI's first check began on each commit, by owner/repo and commit. A review
+// that waits for CI starts it, so its approval finds it ended. A docs-only review waits for no
+// CI, so the first poll after its approval starts it instead. Kept in memory, so a restart
+// during the wait starts it again and no PR waits forever.
+const ciWaitSince = new Map<string, number>();
+
+// Returns whether the commit has GitHub workflows, read from Skelcrew's clone, which fetched it,
+// never from the builder's, which the builder controls. A commit Skelcrew can't read has none.
+function setsUpCi(skelcrewClone: string, sha: string): boolean {
+  const ls = ["git", "-C", skelcrewClone, "ls-tree", sha, "--", ".github/workflows"];
+  const listed = Bun.spawnSync(ls, { stdout: "pipe", stderr: "ignore" });
+  return listed.success && listed.stdout.toString().trim() !== "";
+}
+
+// Returns whether the wait for CI's first check on the head of `pr`, the thread's PR, has ended:
+// a CI check showed, or none came in time, so no CI runs on this commit, such as a docs-only one
+// CI skips with a paths filter. It is the wait a review makes before it joins the queue, by the
+// same rules and limits. Polls ask it so an approved PR with no CI check still gets ready and
+// merges when ready, rather than waiting on CI that never comes.
+export function ciWaitEnded(db: Database, thread: Thread, pr: PullRequest): boolean {
+  if (pr.head === null) return false;
+  const key = `${thread.owner}/${thread.repo} ${pr.head}`;
+  const since = ciWaitSince.get(key) ?? Date.now();
+  ciWaitSince.set(key, since);
+  const who = whoRunsTheSuite({
+    own: pr,
+    commit: pr.head,
+    prs: openPrs(db, thread.owner, thread.repo),
+    setsUpCi: setsUpCi(cloneDir(thread.owner, thread.repo), pr.head),
+    waitedInVain: waitedInVain.has(`${thread.owner}/${thread.repo}`),
+    waited: Date.now() - since,
+    checkWait,
+    ciWait,
+  });
+  if (who !== "wait") ciWaitSince.delete(key);
+  return who !== "wait";
+}
+
 // Returns what tells the reviewer CI's result for the commit, from Skelcrew's copy of the
 // thread's PR, which each poll brings up to date. The end of each failed check's log comes from
 // the forge, once per check, so a review that reads the result again doesn't ask again. A log
@@ -256,9 +311,7 @@ async function reviewRound(
   // commit is read from Skelcrew's clone, which fetched it, never from the builder's, which the
   // builder controls. It is read at once, so the review still joins before any await when it
   // doesn't wait, and a commit Skelcrew can't read sets nothing up.
-  const ls = ["git", "-C", skelcrewClone, "ls-tree", sha, "--"];
-  const listed = Bun.spawnSync([...ls, ".github/workflows"], { stdout: "pipe", stderr: "ignore" });
-  const setsUpCi = listed.success && listed.stdout.toString().trim() !== "";
+  const workflows = setsUpCi(skelcrewClone, sha);
   // A change to docs and Markdown alone is tested by no one, as CI skips it and no code
   // changed, so its review waits for no CI. The files are those changed since the base branch,
   // which the push fetched into the thread's own ref in Skelcrew's clone. The review asks
@@ -273,7 +326,7 @@ async function reviewRound(
       own,
       commit: sha,
       prs,
-      setsUpCi,
+      setsUpCi: workflows,
       waitedInVain: inVain,
       waited,
       checkWait,
@@ -290,6 +343,7 @@ async function reviewRound(
     const before = unreviewed ? "marking it not reviewed" : "reviewing";
     record(db, folder, waiting, `waiting for CI's first check on ${sha} before ${before}`);
     const started = Date.now();
+    ciWaitSince.set(`${repositoryName} ${sha}`, started);
     let who = suite(0);
     while (who === "wait") {
       await Bun.sleep(5_000);
@@ -542,14 +596,18 @@ async function actOnVerdict(
   // A newer submit, or sc stop, may have cancelled the round meanwhile, and the thread is then
   // its to change.
   if (signal.aborted) return;
-  // Save the outcome, tell the lead if the thread now needs you, and type any changes into
-  // the builder.
+  // Save the outcome, tell the lead if the thread now needs you or its review failed, and type
+  // any changes into the builder.
   const { rounds, needsYou, status, tell, held } = outcome;
+  const failed = verdict.verdict === "failed" || verdict.verdict === "timed out";
+  // A new review asks anew about the round limit, so a decision about the last one ends.
   const change = {
     reviewing: null,
     submitting: null,
     rounds,
     needs_you: needsYou,
+    review_failed: failed,
+    limit_decided: false,
     status,
     telling: tell,
     held,
@@ -561,6 +619,15 @@ async function actOnVerdict(
     review_at: Date.now(),
   };
   record(db, folder, change, outcome.why);
+  // A review that failed doesn't need you: the lead hears of it, with the error the harness
+  // gave, and can run it again, or mark the thread if only you can fix what stops it.
+  if (failed) {
+    const name = threadName(db, thread);
+    const said =
+      verdict.verdict === "failed" ? `'s review failed: ${verdict.body}` : `: ${verdict.body}`;
+    const line = `${name}${said}`.replace(/\s+/g, " ").slice(0, 200);
+    noteForLead(db, sessions, repository, `${line}. sc review ${name} runs it again.`);
+  }
   typeLeadNotes(db, sessions);
   if (!tell) return;
   // The changes are saved, so a builder that never comes back, which ends the round, keeps them
@@ -786,21 +853,29 @@ function trackRound(
   pushed: Promise<unknown>,
   rest: Promise<void>,
 ): void {
-  // A failure of a round no newer one replaced leaves the thread needing you, so it never
-  // sits waiting on a review that will never come.
+  // A failure of a round no newer one replaced shows as a failed review, and the lead hears of
+  // it, so it never sits waiting on a review that will never come.
   const done = rest.catch((error) => {
     if (cancel.signal.aborted) return;
     const why = errorText(error);
     // A review not yet typed in stays saved, so starting the daemon again can type it. A review
     // that waited in the queue left it with the failure, so it no longer counts as queued.
     const change = {
-      needs_you: true,
+      review_failed: true,
       status: "waiting",
       queued: null,
       ...notHeld,
       review_at: Date.now(),
     } satisfies Partial<Thread>;
-    record(db, folder, change, `the round failed: ${why}`);
+    const thread = record(db, folder, change, `the round failed: ${why}`);
+    const name = threadName(db, thread);
+    const line = `${name}'s round failed: ${why}`.replace(/\s+/g, " ").slice(0, 200);
+    noteForLead(
+      db,
+      sessions,
+      repositoryOf(db, thread),
+      `${line}. sc review ${name} runs it again.`,
+    );
     typeLeadNotes(db, sessions);
   });
   const round = { cancel, pushed, done, ended: false };
@@ -841,25 +916,31 @@ function pushAndReview(
 // it exits.
 export function submitRound(db: Database, sessions: string, folder: string, summary: string): void {
   const thread = readThread(db, folder);
-  const { maxRounds, reviewer } = reviewConfig(thread);
+  const { reviewer } = reviewConfig(thread);
   // A flow with no review stage saves its verdict as the submit starts, so the thread waits on
   // checks from then on, rather than showing a review no reviewer will run.
   const unreviewed = flowRoles(thread).review === null;
   if (thread.status === "stopped" || stopping.has(folder))
     throw new Error("this thread was stopped, so Skelcrew won't push it");
-  // Past the round limit the thread still needs you, whatever the builder does.
-  const needs_you = pastRoundLimit(thread, maxRounds);
+  // A submit is in flight until its review answers, and waiting on a review never needs you, so
+  // a thread past the round limit needs you for it again only once a review asks for changes.
+  const needs_you = false;
   record(
     db,
     folder,
     {
       status: "waiting",
       needs_you,
+      review_failed: false,
+      // A new submit is the thing a mark for you is most often about, such as a fix, so it
+      // clears the mark. The lead marks it again if you still need to act.
+      needs_you_for: null,
       // A turn that ends after this waits on the review, not on you. An earlier turn that
       // ended without a submit no longer does either: the builder can go on with nothing
       // typed in, such as when a command it left running finishes.
       submitted: true,
       turn_ended: false,
+      ended_at: null,
       submitting: summary,
       // A review of the older commit that waited for a place no longer does.
       queued: null,
@@ -1063,9 +1144,9 @@ export function rerunReview(
   const sha = submitting === null ? lastPushed(thread) : null;
   if (submitting === null && sha === null)
     throw new Error(`${name} has no submitted commit to review yet`);
-  const maxRounds = roundLimit(thread);
-  // Past the round limit the thread still needs you, whatever the review says.
-  const needs_you = pastRoundLimit(thread, maxRounds);
+  // The review is in flight until it answers, and waiting on it never needs you, so a thread
+  // past the round limit needs you for it again only once the review asks for changes.
+  const needs_you = false;
   // The commit is saved as under review at once, so a second sc review asked before the
   // check is pending again is refused rather than cancelling this one.
   // A builder that asked for it ends its turn waiting on the review, as after sc submit. Any
@@ -1075,6 +1156,7 @@ export function rerunReview(
   const change = {
     status: "waiting",
     needs_you,
+    review_failed: false,
     turn_ended: false,
     ...(byBuilder ? { submitted: true } : {}),
     telling: null,
@@ -1152,8 +1234,18 @@ export function resumeRound(
 // zero again, so it no longer needs you for them, and types the changes of the review that
 // reached the limit into the builder, as a round within the limit would have.
 export function goOn(db: Database, sessions: string, folder: string): void {
-  const { held } = readThread(db, folder);
-  const change = { rounds: 0, needs_you: false, held: null, telling: held };
+  const { held, host, needs_you_for } = readThread(db, folder);
+  // Letting it go on is your or the lead's decision, so it ends a mark for you too. But not the
+  // instruction to bring back a missing host plugin, which only you can do.
+  const hostGone = host !== null && markBeforeHost(host, needs_you_for) !== undefined;
+  const change = {
+    rounds: 0,
+    needs_you: false,
+    needs_you_for: hostGone ? hostMissing(host) : null,
+    review_failed: false,
+    held: null,
+    telling: held,
+  };
   record(
     db,
     folder,

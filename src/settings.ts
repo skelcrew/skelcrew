@@ -52,6 +52,7 @@ const File = z.looseObject({
   test: z.array(z.string()).optional(),
   tracker: z.string().nullish(),
   review: z.looseObject({ timeout_minutes: z.number().positive().optional() }).optional(),
+  needs_you: z.looseObject({ grace_minutes: z.number().positive().optional() }).optional(),
   // Written as reviewer: { fallback: codex }, and picked out of the reviewer's lines on reading,
   // so a bad one stops only a thread, not the lead.
   fallback: HarnessName.optional(),
@@ -85,7 +86,8 @@ export type Role = { harness: HarnessName; model?: string };
 // test suite. Each is missing when no file names it, and an empty list when a file says on purpose
 // that the repository needs none. `fallback` is the harness reviews run on
 // while the reviewer's own waits out its usage limit, and `reviewMinutes` how long a review may
-// run before it is ended. `yourHarness` and `yourReviewer` are the harnesses
+// run before it is ended. `graceMinutes` is how long a builder that stopped without submitting
+// waits for someone to act before it needs you. `yourHarness` and `yourReviewer` are the harnesses
 // your config saved, with no default, so the first run can tell what you haven't picked yet, and
 // `declined` the repositories never offered the GitHub plugin again. `plugins` are your personal
 // plugins. `host` is where new sessions start: tmux, or the name of a runtime plugin that provides
@@ -104,6 +106,7 @@ export type Settings = {
   tracker: string | undefined;
   fallback: HarnessName | undefined;
   reviewMinutes: number;
+  graceMinutes: number;
   yourHarness: HarnessName | undefined;
   yourReviewer: HarnessName | undefined;
   declined: string[];
@@ -128,6 +131,7 @@ const keysOf: Record<Group, Key[]> = {
   tracker: ["tracker"],
   fallback: ["fallback"],
   reviewMinutes: ["review"],
+  graceMinutes: ["needs_you"],
   yourHarness: ["harness"],
   yourReviewer: ["your_reviewer"],
   declined: ["github_declined"],
@@ -137,7 +141,7 @@ const keysOf: Record<Group, Key[]> = {
 };
 
 // What each file may set. Your harness, model, limits, the reviewer's fallback, a review's time,
-// the repositories you declined the GitHub plugin for, your personal plugins and the session host
+// how long a stopped builder waits before it needs you, the repositories you declined the GitHub plugin for, your personal plugins and the session host
 // fit you, your account and your machine, so a repository can't set them. Letting the lead arm merges grants an agent
 // what is yours, so only you can, never a repository. The tracker belongs to the repository, so your
 // config doesn't. Setup and test can come from either: yours stand in for a repository you
@@ -151,6 +155,7 @@ const yourKeys: Key[] = [
   "test",
   "limits",
   "review",
+  "needs_you",
   "fallback",
   "your_reviewer",
   "github_declined",
@@ -187,6 +192,7 @@ function builtInDefaults(): {
   reviews: number;
   checks: number;
   reviewMinutes: number;
+  graceMinutes: number;
 } {
   return {
     harness: "claude",
@@ -194,6 +200,7 @@ function builtInDefaults(): {
     reviews: Math.max(1, Math.floor(availableParallelism() / 4)),
     checks: Math.max(1, Math.floor(availableParallelism() / 2 / 4)),
     reviewMinutes: 30,
+    graceMinutes: 5,
   };
 }
 
@@ -603,6 +610,7 @@ function mergeSettings(layers: File[], roles: Partial<Record<RoleName, Role>>): 
     tracker: first((l) => l.tracker),
     fallback: first((l) => l.fallback),
     reviewMinutes: first((l) => l.review?.timeout_minutes) ?? defaults.reviewMinutes,
+    graceMinutes: first((l) => l.needs_you?.grace_minutes) ?? defaults.graceMinutes,
     yourHarness: layers.at(-1)?.harness,
     yourReviewer: first((l) => l.your_reviewer),
     declined: first((l) => l.github_declined) ?? [],

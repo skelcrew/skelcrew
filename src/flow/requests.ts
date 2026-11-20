@@ -131,6 +131,14 @@ export const DaemonRequest = z.discriminatedUnion("command", [
       .optional(),
     asked: z.string().optional(),
   }),
+  // Marks a thread as needing you, with the action you must take, or with a null `reason`, clears
+  // its mark.
+  z.object({
+    command: z.literal("needs you"),
+    repo: z.string(),
+    task: TaskId,
+    reason: z.string().regex(/\S/).nullable(),
+  }),
   z.object({ command: z.literal("tell lead"), text: z.string().min(1) }),
   // A lead's brief for another repository's lead. `to` names that repository. It isn't `repo`,
   // which every other request a lead makes must name as its own. `asked` is the human's words,
@@ -146,7 +154,8 @@ export const DaemonRequest = z.discriminatedUnion("command", [
   // test command it runs. An agent's own socket names its repository instead.
   z.object({ command: z.literal("check"), from: z.string().optional() }),
   z.object({ command: z.literal("question asked") }),
-  z.object({ command: z.literal("question answered") }),
+  // `prompt` is what was typed into the agent, when its harness says.
+  z.object({ command: z.literal("question answered"), prompt: z.string().optional() }),
   z.object({ command: z.literal("question closed") }),
   // `head` is the commit the builder's clone has checked out, sent only when nothing in it is
   // left uncommitted, and `message` the builder's last message, when the harness gives it.
@@ -175,7 +184,8 @@ export type DaemonRequest = z.infer<typeof DaemonRequest>;
 // you have no tell. Merging is yours alone: no agent may merge, as merging stays a human's choice.
 // A lead may arm a merge, when ready or without Skelcrew's approval, only once your config lets it,
 // which the daemon checks at each one, and only when you ask it to. The lead may cancel one, which
-// is always safe. Builders and reviewers can't. Only a lead may brief another repository's lead, as
+// is always safe. Builders and reviewers can't. Only you and the lead may mark a thread as
+// needing you, or clear it: a builder brings what it needs to the lead. Only a lead may brief another repository's lead, as
 // each lead plans its own repository's work.
 export type Caller =
   | "you"
@@ -206,6 +216,7 @@ export const allowed = {
     "merge when ready",
     "merge skip review",
     "merge cancel",
+    "needs you",
     "check",
   ],
   lead: [
@@ -227,6 +238,7 @@ export const allowed = {
     "merge when ready",
     "merge skip review",
     "merge cancel",
+    "needs you",
     "tell",
     "brief lead",
     "question asked",

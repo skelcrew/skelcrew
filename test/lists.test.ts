@@ -151,12 +151,13 @@ ${threadSql({ task: "16", pr: 37, asking: 1 })}`;
     ],
   ]);
   // A PR from a thread takes its colour when the thread's mark is filled: green when approved,
-  // yellow when it needs you, and red when it failed or hit an error. It is plain otherwise.
+  // yellow when it needs you, and red when it hit an error. It is plain otherwise, a thread that
+  // failed included, as the lead starts it again.
   expect(prs[0]?.rows.map((row) => row.mark[1])).toEqual([null, "38;5;120"]);
   expect(prs[1]?.rows.map((row) => row.mark[1])).toEqual([
     "38;5;221",
     "38;5;210",
-    "38;5;210",
+    null,
     null,
     null,
   ]);
@@ -345,7 +346,7 @@ ${threadSql({ task: "14", pr: 33, review_round: 1, verdict: "changes" })}`;
   ]);
 });
 
-test("threads come as needs you, ready to merge, working, then stopped, with all ACTIVE hasn't room for", () => {
+test("threads come as needs you, ready to merge, working, then stopped or failed, with all ACTIVE hasn't room for", () => {
   const today = new Date(2026, 10, 13, 16, 0).getTime();
   const at = (day: number, hour: number) => new Date(2026, 10, day, hour, 32).getTime();
   const sql = `${repository}
@@ -362,18 +363,24 @@ ${threadSql({ task: "17", status: "waiting", title: "Done", needs_you: 1, verdic
       "Needs you",
       [
         ["●", "app-16", "Stuck", "error", "claude", "#16", ""],
-        ["●", "app-15", "Broke", "failed", "claude", "#15", ""],
         ["●", "app-t1", "Tidy up", "question", "claude", "", "12 Nov"],
       ],
     ],
     // An approved thread waits only for your merge, so it is ready rather than needing you.
     ["Ready to merge", [["●", "app-17", "Done", "approved", "claude", "#17", ""]]],
     ["Working", [["○", "app-12", "Fix login", "working", "codex", "#12 #31", "14:32"]]],
-    ["Stopped", [["○", "app-13", "Old", "stopped", "claude", "#13", "2 Nov"]]],
+    // A thread that failed waits for the lead to start it again, as a stopped one does.
+    [
+      "Stopped",
+      [
+        ["○", "app-15", "Broke", "failed", "claude", "#15", ""],
+        ["○", "app-13", "Old", "stopped", "claude", "#13", "2 Nov"],
+      ],
+    ],
   ]);
   // Each mark and word has its colour in ACTIVE: bright while its builder works, and dim once
   // it stopped.
-  const colours = ["38;5;210", "38;5;210", "38;5;221", "38;5;120", "1", "90"];
+  const colours = ["38;5;210", "38;5;221", "38;5;120", "1", "38;5;210", "90"];
   expect(threads.flatMap((g) => g.rows.map((row) => row.mark[1]))).toEqual(colours);
   expect(threads.flatMap((g) => g.rows.map((row) => row.ends[0]?.[1]))).toEqual(colours);
   expect(threads.flatMap((g) => g.rows.map((row) => row.dim))).toEqual([
@@ -384,7 +391,7 @@ ${threadSql({ task: "17", status: "waiting", title: "Done", needs_you: 1, verdic
     false,
     true,
   ]);
-  expect(threads[0]?.rows[2]?.session).toBe("app-t1");
+  expect(threads[0]?.rows[1]?.session).toBe("app-t1");
 });
 
 test("a thread with a merge when ready says so last, with what it waits on", () => {
@@ -394,9 +401,9 @@ ${threadSql({ task: "13", status: "failed", merge_plan: "armed", merge_waits: "i
 ${threadSql({ task: "14", status: "waiting", merge_plan: "armed" })}`;
   const rows = after(sql).threads.flatMap((group) => group.rows);
   expect(rows.map((row) => [row.name, row.ends.at(-1)?.[0]])).toEqual([
-    ["app-13", "merges when ready · waiting on its thread, which failed"],
     ["app-14", "merges when ready"],
     ["app-12", "merges when ready · waiting on its checks"],
+    ["app-13", "merges when ready · waiting on its thread, which failed"],
   ]);
 });
 
@@ -464,9 +471,10 @@ test("each entry is there with nothing open, so the threads below never move", (
   ]);
 });
 
-test("more than one thread need you, and failed ones count with them", () => {
+// The lead hears why a thread failed and can start it again, so it doesn't count.
+test("a thread that needs you counts, and a failed one doesn't", () => {
   const sql = `${repository} ${threadSql({ task: "12", status: "waiting", needs_you: 1 })} ${threadSql({ task: "13", status: "failed" })}`;
-  expect(after(sql).entries[1]?.notes).toEqual([["2 need you", "38;5;221"]]);
+  expect(after(sql).entries[1]?.notes).toEqual([["1 needs you", "38;5;221"]]);
 });
 
 test("with no forge, Threads says how many are ready before how many need you", () => {

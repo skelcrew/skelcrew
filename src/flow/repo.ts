@@ -12,7 +12,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { stringify } from "yaml";
+import { parse, stringify } from "yaml";
 import { z } from "zod";
 import { refuseCredentials } from "../agents/sandbox.ts";
 import { endSession, exitedCleanly, stopSession } from "../agents/sessions.ts";
@@ -24,7 +24,7 @@ import {
   checkoutAgents,
   forgetAgents,
 } from "../approved-agents.ts";
-import { agentRole } from "../config.ts";
+import { agentRole, repositoryCommands } from "../config.ts";
 import { nameRepositories, openDb, Repository } from "../db.ts";
 import { builtInFlowText } from "../flows.ts";
 import { originHere, parseRemote } from "../machine/origin.ts";
@@ -32,9 +32,18 @@ import { cloneDir, configDir, dataDir } from "../paths.ts";
 import { askWhichForge, type Claimed } from "../plugins/ask.ts";
 import { setUpPlugin } from "../plugins/install.ts";
 import { SetupNeeded } from "../plugins/plugin.ts";
+import {
+  addRepositoryPlugin,
+  githubPlugin,
+  installRepositoryPlugins,
+  namePlugin,
+  repositoryNeeds,
+  repositoryPlugins,
+} from "../plugins/repository.ts";
 import { hostNamed } from "../plugins/runtime.ts";
 import { builtInRole } from "../roles.ts";
 import { errorText } from "../say.ts";
+import { readSettings, type Settings } from "../settings.ts";
 import { checkPush, cloneRepository, headCommit, remoteEmpty, updateClone } from "./git.ts";
 import { leadOf, leadSession } from "./lead.ts";
 
@@ -83,13 +92,20 @@ const remoteIs = (r: Repository, url: string) => {
   );
 };
 
-// Returns the repository a word names, by its name in Skelcrew, its owner/name in any case, or
-// its remote URL, or none. sc start asks it first, as a repository's name can end like a task's,
-// such as api-v2.
+// Returns the repository a word names, by its name in Skelcrew or its owner/name, each in any
+// case, or its remote URL, or none. So a task's name typed in any case, such as APP-12, finds
+// its repository. Skelcrew gives repositories names that differ by more than case, but a
+// database from before can hold two, such as App and app. A word that names both is refused,
+// saying how to name one, so a command never acts on the other's task. sc start asks it first,
+// as a repository's name can end like a task's, such as api-v2.
 export function repositoryNamed(db: Database, given: string): Repository | undefined {
-  return repositories(db).find(
-    (r) => r.name === given || fullNameIs(r, given) || remoteIs(r, given),
-  );
+  const all = repositories(db);
+  const named = all.filter((r) => r.name.toLowerCase() === given.toLowerCase());
+  if (named.length > 1)
+    throw new Error(
+      `${given} names more than one repository: ${named.map((r) => `${r.owner}/${r.repo}`).join(", ")}. Name one by its owner/name.`,
+    );
+  return named[0] ?? all.find((r) => fullNameIs(r, given) || remoteIs(r, given));
 }
 
 // Returns the repository a command names, as repositoryNamed reads it. Throws when Skelcrew has
@@ -540,17 +556,82 @@ export async function addRepo(given: string | undefined, sessions: string): Prom
 const yamlValue = (value: string) => stringify(value).trim();
 
 // The starter skelcrew.yaml: a line saying the file is shared and never holds a secret, and
-// setup and test as commented examples, as Skelcrew never guesses them. It names no tracker, so a
-// repository on GitHub keeps its issues as tasks, and shows tracker: none commented out, so you
-// can find how to turn that off.
+// setup and test as commented examples, as Skelcrew never guesses them: the lead proposes them. It
+// names no tracker, so a repository on GitHub keeps its issues as tasks, and shows tracker: none
+// commented out, so you can find how to turn that off. The limit on builders is commented out
+// too, as most repositories need none. sc init adds the forge's plugin below.
 const starterConfig = [
   "# Shared with everyone who works on this repository. Never put a secret here.",
   "# setup: [bun install]",
   "# test: [bun test]",
   "# Keeps this repository on git alone, with no tracker.",
   "# tracker: none",
+  "# At most this many builders at once in this repository.",
+  "# limits: { threads: 4 }",
   "",
 ].join("\n");
+
+// Names the forge's plugin under plugins: in the checkout's skelcrew.yaml and pins it in its
+// skelcrew.lock, as sc add does, so every repository has the same standard setup. The forge is
+// found from the remote alone: GitHub's plugin for github.com, and none for a host Skelcrew has
+// no plugin for. A skelcrew.yaml that names any plugin already chose them, so it is left alone.
+// A skelcrew.lock that pins the plugin already keeps its pin, which sc add would move to the
+// version installed here: only skelcrew.yaml gains its name, and the plugin is installed at that
+// pin as sc install does, after asking, so the repository comes in with its forge. A plugin that
+// can't be added, or that you say no to, is only reported, as the rest of sc init still counts. Returns what it
+// changed: "named" for skelcrew.yaml alone, "pinned" for both files, or null for neither.
+function addForgePlugin(root: string, remote: string): "named" | "pinned" | null {
+  if (parseRemote(remote)?.host !== "github.com") return null;
+  try {
+    const { plugins, lock } = repositoryPlugins(root);
+    if (plugins.length > 0) return null;
+    if (lock[githubPlugin]) {
+      namePlugin(root, githubPlugin);
+      installPinned();
+      return "named";
+    }
+    if (addRepositoryPlugin(githubPlugin)) return "pinned";
+  } catch (error) {
+    // The error says what to do, such as which line to add by hand.
+    console.log(`Skelcrew couldn't add ${githubPlugin}: ${errorText(error)}.`);
+    return null;
+  }
+  console.log(`skelcrew.yaml names no forge plugin yet. sc add ${githubPlugin} adds it.`);
+  return null;
+}
+
+// Installs the forge's plugin at the version the checkout's skelcrew.lock pins, as sc install
+// does: a plugin new here, or at another version, is shown and asked about, and one at its pin
+// asks nothing. One left out is only reported, naming sc install, as skelcrew.yaml names it now.
+function installPinned(): void {
+  try {
+    installRepositoryPlugins(repositoryNeeds().filter(({ source }) => source === githubPlugin));
+  } catch (error) {
+    console.log(
+      `Skelcrew couldn't install ${githubPlugin}: ${errorText(error)}. sc install installs it.`,
+    );
+  }
+}
+
+// Returns which of setup: and test: nothing sets yet, so the lead will propose them: neither the
+// checkout's skelcrew.yaml, which may not be pushed yet, nor what the lead is told, which also
+// counts your override for the repository and your own config. A file that can't be read sets
+// nothing here, as the lead is told the same.
+function missingCommands(root: string, repository: Repository | undefined): string[] {
+  let told: Pick<Settings, "setup" | "test"> = { setup: undefined, test: undefined };
+  try {
+    told = repository ? repositoryCommands(repository) : readSettings(["setup", "test"]);
+  } catch {}
+  let here: unknown = null;
+  try {
+    here = parse(readFileSync(join(root, "skelcrew.yaml"), "utf8"));
+  } catch {}
+  const Commands = z.object({ setup: z.array(z.string()), test: z.array(z.string()) }).partial();
+  const checkout = Commands.catch({}).parse(here ?? {});
+  return (["setup", "test"] as const)
+    .filter((key) => told[key] === undefined && checkout[key] === undefined)
+    .map((key) => `${key}:`);
+}
 
 // Writes the built-in .agents/ into the checkout at `root`, which has none: the three roles,
 // each with your harness and model as its frontmatter, so the repository works the same for a
@@ -579,9 +660,11 @@ export function checkoutTop(): string | null {
   return top.success ? top.stdout.toString().trim() : null;
 }
 
-// Sets up the checkout you are in for Skelcrew, for sc init: writes the starter skelcrew.yaml and
-// the built-in .agents/ at its top, leaving either as it is when there, then adds the repository
-// as sc repo add does. The .agents/ it writes holds only the built-in defaults, so it is approved
+// Sets up the checkout you are in for Skelcrew, for sc init, with the standard setup every
+// repository shares: writes the starter skelcrew.yaml and the built-in .agents/ at its top,
+// leaving either as it is when there, names the forge's plugin and pins it in skelcrew.lock, then
+// adds the repository as sc repo add does. Setup and test stay commented examples, which the lead
+// proposes before anything else. The .agents/ it writes holds only the built-in defaults, so it is approved
 // as written, unless you already answered for the repository's .agents/: that answer stands, so
 // sc init on an old branch never swaps the roles new tasks start on. One that was there is shown
 // and asked about, as it may differ from the default branch. Stops
@@ -605,7 +688,14 @@ export async function initRepo(sessions: string): Promise<void> {
   const file = join(root, "skelcrew.yaml");
   const hasConfig = lstatSync(file, { throwIfNoEntry: false }) !== undefined;
   if (!hasConfig) writeFileSync(file, starterConfig, { flag: "wx" });
-  else console.log("skelcrew.yaml is there already, so Skelcrew left it as it is.");
+  // The forge's plugin is installed before the repository comes in, so it can claim the remote.
+  const forge = addForgePlugin(root, remote);
+  if (hasConfig)
+    console.log(
+      forge === null
+        ? "skelcrew.yaml is there already, so Skelcrew left it as it is."
+        : `skelcrew.yaml is there already, so Skelcrew only added ${githubPlugin} to its plugins.`,
+    );
   const hasAgents = lstatSync(join(root, ".agents"), { throwIfNoEntry: false }) !== undefined;
   if (!hasAgents) writeAgents(root);
   else console.log(".agents/ is there already, so Skelcrew left it as it is.");
@@ -640,13 +730,22 @@ export async function initRepo(sessions: string): Promise<void> {
     else if (!isNew || current !== agentsOnDefaultBranch(added))
       askAboutAgents(added, added.name, current);
   }
-  // Say what was written and when Skelcrew will read it.
-  const wrote = [hasConfig ? null : "skelcrew.yaml", hasAgents ? null : ".agents/"].filter(
-    (name) => name !== null,
-  );
+  // Say what was written or changed and when Skelcrew will read it.
+  const wrote = [
+    hasConfig && forge === null ? null : "skelcrew.yaml",
+    forge === "pinned" ? "skelcrew.lock" : null,
+    hasAgents ? null : ".agents/",
+  ].filter((name) => name !== null);
+  const many = wrote.length > 1;
   if (wrote.length > 0)
     console.log(
-      `Wrote ${wrote.join(" and ")}. ${wrote.length > 1 ? "They count" : "It counts"} once you commit and push ${wrote.length > 1 ? "them" : "it"} to the default branch.`,
+      `Wrote ${wrote.slice(0, -1).join(", ")}${many ? " and " : ""}${wrote.at(-1)}. ${many ? "They count" : "It counts"} once you commit and push ${many ? "them" : "it"} to the default branch.`,
+    );
+  // The lead finishes the standard setup, as only it reads the repository with you.
+  const missing = missingCommands(root, added);
+  if (missing.length > 0)
+    console.log(
+      `${missing.join(" and ")} ${missing.length > 1 ? "aren't" : "isn't"} filled in yet. Before anything else, the lead will propose a thread that fills ${missing.length > 1 ? "them" : "it"} in from what the repository's CI runs.`,
     );
 }
 

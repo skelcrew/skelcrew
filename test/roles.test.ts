@@ -21,9 +21,10 @@ const waiting =
   " When the builder can't take it yet, sc tell says why, and sc ps counts the messages still waiting. If one still waits after 10 minutes, Skelcrew tells you why. When the builder is mid-turn, you may ask the human to press Esc in that thread if it shouldn't finish its turn first.";
 
 // What the lead's and builder's files added once Skelcrew stopped guessing a repository's setup
-// and test commands: the lead settles them with the human, and a builder with none asks the lead.
+// and test commands: the lead's first proposal is a thread that fills them in, and a builder with
+// none asks the lead.
 const settling =
-  "\nEvery builder sets up and tests your repository with the same commands, under setup: and test: in its skelcrew.yaml, or in the human's own config.yaml. Skelcrew never guesses them. The end of these instructions says which were configured, in either file, when this session started. You can't read the human's config, so go by that, and by the skelcrew.yaml in the clone for any added since. Before you start the first thread in your repository, settle any that is missing. Find it out by reading the repository: its package files, its Makefile, its CI workflow, which shows what the project really runs, and its README. Propose only the missing ones to the human in plain words, such as \"Builders will set up with bun install and test with bun run check, as CI does. Shall I add that to skelcrew.yaml?\" On a yes, start a small thread that adds them to the repository's skelcrew.yaml, a normal PR the human merges. Until then, a builder that needs them asks you. Later, a repository the human only drops into will be able to keep them under repos: in the human's own config instead.\n";
+  "\nEvery builder sets up and tests your repository with the same commands, under setup: and test: in its skelcrew.yaml, or in the human's own config.yaml. Skelcrew never guesses them. The end of these instructions says which were configured, in either file, when this session started. A line that is only a comment, as sc init writes them, isn't configured. You can't read the human's config, so go by that, and by the skelcrew.yaml in the clone for any added since. While either is missing, the repository's standard setup isn't finished, and your first proposal, before anything else, is a thread that finishes it. Find the commands out by reading the repository: its CI workflow above all, which shows what the project really runs, its package files, its Makefile and its README. Propose only the missing ones to the human in plain words, such as \"Builders will set up with bun install and test with bun run check, as CI does. Shall I start a thread that fills that in?\" On a yes, start a small thread that fills in only the missing ones in the repository's skelcrew.yaml itself, as real lines rather than comments, and leaves a command that is configured as it is. Tell it to also fill in anything else sc init left as a comment that the repository clearly needs, such as limits: when its CI can run only a few builds at once. It is a normal PR the human merges. Until then, a builder that needs a command asks you. Later, a repository the human only drops into will be able to keep them under repos: in the human's own config instead.\n";
 // What the lead's file added once a lead came back after a restart without its conversation:
 // it looks at Skelcrew's state before anything else.
 const restarted =
@@ -32,13 +33,19 @@ const asking =
   "\nUse the setup and test commands named at the end of these instructions, as every builder of the repository uses the same ones. If one you need isn't configured, never make one up: ask the lead which to use with sc tell lead, and wait for its answer. That counts as blocked.\n";
 
 // What the lead was told about issues, threads and PRs before sc ls and sc show, before threads
-// with no issue were named by their machine's code, and about the sidebar before sc --list, each
-// with what it is told now.
+// with no issue were numbered from t100, and about the sidebar before sc --list, each with what
+// it is told now.
 const leadTasks = [
-  ["prints its name, such as app-t1.", "prints its name, such as app-wr1."],
+  // Needs you came to mean the human must act to unblock a thread. The lead marks a thread
+  // when only the human can, and clears the mark.
+  [
+    'When a thread starts needing the human, Skelcrew types a one line note into this session, such as "app-12 needs you: its builder asked a question". It comes from Skelcrew, not the human. Tell the human plainly what the thread needs.',
+    '"Needs you" means the human must act to unblock a thread. When only the human can unblock one, such as a change only a person can push, mark it with sc needs-you app-12 "<the action, written for the human>", such as sc needs-you app-12 "apply the check.yml split in PR #463". Never mark one you can unblock yourself, or one that only waits on its review, CI or the queue. Skelcrew marks the facts it sees itself: a question asked in the builder\'s session, a harness error, the round limit before anyone decided, an approved thread with no merge armed, and a builder whose session host plugin is missing. A review or round that failed, or a builder that isn\'t running while messages wait for it, comes to you as a note instead: run the review again with sc review app-12, or bring the builder back with sc stop app-12 and sc start app-12. Once the human has acted, or you have decided it doesn\'t need them, run sc needs-you --clear app-12. Clearing a thread past its round limit is your decision that the human needn\'t decide it: run sc start app-12 instead when it should go on. A mark also clears when the human types to the builder, when it submits again, and when its PR merges or closes.\n\nA builder that stopped without submitting, and that nobody acts on for a few minutes, needs the human by itself, with its last message as the mark, so nothing waits unseen while you are busy. Answering it with sc tell, or marking or clearing it, is acting on it.\n\nWhen a thread starts needing the human, Skelcrew types a one line note into this session, such as "app-12 needs you: its builder asked a question". It comes from Skelcrew, not the human, and doesn\'t come for a mark you set yourself. Tell the human plainly what the thread needs.',
+  ],
+  ["prints its name, such as app-t1.", "prints its name, such as app-t100."],
   [
     "such as app-t1, has nothing that stays open, and sc start app-t1 starts it over.",
-    "such as app-wr1, has nothing that stays open, and sc start app-wr1 starts it over.",
+    "such as app-t100, has nothing that stays open, and sc start app-t100 starts it over.",
   ],
   [
     "- sc issue ls lists open issues, and sc ps lists threads, with their status, whether they need the human, and each one's PR, CI and review, such as #242, failed and changes r3.",
@@ -135,7 +142,7 @@ const herdr =
 // what it is told now.
 const askingBefore =
   "To ask the human, use your harness's tool for asking questions, such as AskUserQuestion, if it has one. Otherwise end your turn with the question. ";
-const askingTheLead = `Ask the lead, never the human in this session: run sc tell lead "<text>" with your question or the decision you need, and its options. The human talks to the lead and doesn't watch this session. The lead answers what the human already decided, and brings the rest to them. Never use your harness's tool for asking questions, such as AskUserQuestion, as the human would have to open this session to answer it. Once you asked, end your turn and wait for the answer, unless you have other work meanwhile.
+const askingTheLead = `Whenever you need something, such as an answer, a decision or something only a person can do, ask the lead, never the human in this session: run sc tell lead "<text>" with what you need, and its options. The lead decides whether the human must act, and tells them. The human talks to the lead and doesn't watch this session. The lead answers what the human already decided, and brings the rest to them. Never use your harness's tool for asking questions, such as AskUserQuestion, as the human would have to open this session to answer it. Once you asked, end your turn and wait for the answer, unless you have other work meanwhile.
 
 Write a question so the human could answer it without reading the code, as the lead may pass it on as it is:
 - Background, in plain words: what you are building and where the question comes up.

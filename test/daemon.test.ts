@@ -502,6 +502,7 @@ const stoppedApp1 = {
   title: null,
   status: "stopped",
   needsYou: false,
+  needsYouFor: null,
   queued: false,
   branch: "skelcrew/x",
   pr: null,

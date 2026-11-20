@@ -21,6 +21,8 @@ const sections: [string, [string, string][]][] = [
       ["peek <thread>", "What that builder shows now, without attaching"],
       ["interrupt <thread>", "Stop that builder's turn, as Esc does"],
       ["review <task>", "Run the task's last review again"],
+      ['needs-you <thread> "<action>"', "Mark it as waiting on you, saying what to do"],
+      ["needs-you --clear <thread>", "Take that mark off"],
       ["merge --when-ready <thread> | <#pr>", "Merge it once it is approved and green"],
       [
         "merge --skip-review <thread> | <#pr>",
@@ -41,7 +43,7 @@ const sections: [string, [string, string][]][] = [
   [
     "REPOSITORIES",
     [
-      ["init", "Write skelcrew.yaml and .agents/ here and add this repository"],
+      ["init", "Write skelcrew.yaml, skelcrew.lock and .agents/ here and add this repository"],
       ["repo add [<path> | <url> | <owner/repo>]", "Add a repository, this one by default"],
       ["repo ls", "Repositories Skelcrew works on"],
       ["repo rm <name>", "Remove Skelcrew's clone of one"],
@@ -138,9 +140,11 @@ export function help(color = colorful()): string {
   lines.push("", heading("EXAMPLES"), ...examples.map((example) => `  ${dim("%")} ${example}`));
   lines.push(
     "",
-    dim("  A task is named after its issue, such as app-12, and its thread after"),
-    dim("  its task and role, app-12/builder, or app-12 for short. --remote keeps"),
-    dim("  Skelcrew on the other side up to date with yours, after asking. See skelcrew.dev."),
+    dim("  A task is named after its issue, such as app-12, or, started with no issue,"),
+    dim("  by a t and a number, such as app-t100. Its thread is named after its task and"),
+    dim("  role, app-12/builder, or app-12 for short. Type a name in any case: APP-T100"),
+    dim("  is app-t100. --remote keeps Skelcrew on the other side up to date with yours,"),
+    dim("  after asking. See skelcrew.dev."),
     "",
   );
   return lines.join("\n");

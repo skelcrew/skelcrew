@@ -17,7 +17,6 @@ import {
 } from "../agents/sessions.ts";
 import { approvedAgents } from "../approved-agents.ts";
 import { agentRole, checkFlow, repositoryCommands, roundLimit, sessionHost } from "../config.ts";
-import { machineCode } from "../db.ts";
 import { flowRoles } from "../flows.ts";
 import { cloneDir, threadSocket } from "../paths.ts";
 import { trackerOf } from "../plugins/ask.ts";
@@ -32,7 +31,7 @@ import { pastRoundLimit } from "./decide.ts";
 import { claimedNames, claimName, fetchBranch } from "./git.ts";
 import { dropEndNotes, noteForLead, typeLeadNotes } from "./messages.ts";
 import { findRepository, forgeAuthor, forgeKnown, refreshClones } from "./repo.ts";
-import { forgetStatus } from "./status.ts";
+import { forgetStatus, needsYou } from "./status.ts";
 import { joinsQueue, joinTime } from "./task-queue.ts";
 import {
   builderHarness,
@@ -40,7 +39,9 @@ import {
   cloneOf,
   folderName,
   hostGone,
+  hostMissing,
   log,
+  markBeforeHost,
   readThread,
   record,
   renameOnHost,
@@ -74,9 +75,9 @@ export function statusOnceBack(stopped: Thread): "waiting" | "working" {
 
 // Records a new thread and returns it. Its task is either one of the tracker's, with its title
 // and body from Skelcrew's copy, which sc start brings up to date first, or a given title and
-// body. A given one becomes a task of the repository's own, named by the machine's code and a
-// number, such as wr1, wr2 and on. That works with a tracker too, so you can start work without
-// filing it. Refuses a task the copy doesn't have open. Refuses a task that has a thread already, unless that thread failed or is done,
+// body. A given one becomes a task of the repository's own, named by a t and a number, such as
+// t100, t101 and on, the same on every machine. That works with a tracker too, so you can start
+// work without filing it. Refuses a task the copy doesn't have open. Refuses a task that has a thread already, unless that thread failed or is done,
 // such as after sc rm: then it starts over in the same folder. It only records the thread,
 // since the lead waits on the answer. Setting up its clone and starting its builder come
 // after, and can take minutes. `given` is a start request, so its `repo` is the repository's
@@ -153,10 +154,11 @@ async function recordThread(
   let issueLink: string | null = null;
   let closes: string | null = null;
   if ("title" in given) {
-    // The next number after those this machine's code already holds: by its threads, and by the
-    // remote's claims, which other machines with the same code see too. Then claim it on the
-    // remote, which only one machine can, trying the next number while another got there first.
-    const code = machineCode(db);
+    // A t and the next number after every one claimed on the remote, which every machine sees,
+    // and every one this machine's tasks hold. Names from before Skelcrew claimed them, such as
+    // t25, were never claimed and live only on the machine that started them, so numbers start
+    // at 100, above all of them. Then claim it on the remote, which only one machine can,
+    // reading the claims again while another machine claimed first.
     const clone = cloneDir(owner, repo);
     // Its clone, which the daemon may still be making, is where the claim is pushed from. The
     // refresh also learns the repository's forge the first time, such as one added before its
@@ -165,17 +167,17 @@ async function recordThread(
     if (!existsSync(clone) || !forgeKnown(db, repository)) await refreshClones(db);
     const current = findRepository(db, given.repo);
     refuseMissingPlugins();
-    const claimed = await claimedNames(db, current, code);
-    const started = db
-      .query("SELECT task FROM threads WHERE owner = ? AND repo = ? AND task GLOB ?")
-      .all(owner, repo, `${code}[0-9]*`)
-      .map((row) => z.object({ task: z.string() }).parse(row).task);
-    const numbers = [...claimed, ...started].map((id) =>
-      Number(id.slice(code.length).match(/^\d+/)?.[0] ?? 0),
-    );
-    let number = Math.max(0, ...numbers) + 1;
-    while (!(await claimName(db, current, clone, `${code}${number}`))) number++;
-    task = `${code}${number}`;
+    const held = db
+      .query("SELECT task FROM tasks WHERE owner = ? AND repo = ? AND task GLOB 't[0-9]*'")
+      .all(owner, repo)
+      .map((row) => z.object({ task: z.string() }).parse(row).task)
+      .filter((id) => /^t\d+$/.test(id));
+    while (true) {
+      const claims = await claimedNames(db, current);
+      const numbers = [...claims.names, ...held].map((id) => Number(id.slice(1)));
+      task = `t${Math.max(99, ...numbers) + 1}`;
+      if (await claimName(db, current, clone, task, claims.last)) break;
+    }
     ({ title, body } = given);
     // It has no issue to close. Saved as empty rather than null, which only a task from before
     // Skelcrew kept the line has, so a later issue of the same ID is never closed by its PR.
@@ -305,7 +307,8 @@ async function recordThread(
       verdict: null,
       review_line: null,
       reviewed_commit: null,
-      ci_seen: false,
+      no_ci: null,
+      ci_shown: [],
       review_at: null,
       harness: null,
       short: given.short ?? null,
@@ -334,6 +337,11 @@ async function recordThread(
       merge_record: null,
       merge_record_id: null,
       merge_followup: null,
+      needs_you_for: null,
+      limit_decided: false,
+      ended_at: null,
+      ended_said: null,
+      review_failed: false,
       agents,
       flow,
       review_post: null,
@@ -685,10 +693,35 @@ export async function bringBack(db: Database, sessions: string, thread: Thread):
   // A builder you stopped has no host left to look on.
   if (thread.host !== null) {
     if (hostNamed(db, sessions, thread.host) === null) {
-      record(db, thread.folder, { needs_you: true }, hostGone(thread));
+      // A thread marked already, such as after a restart while the plugin stays gone, keeps
+      // the mark it had after the instruction.
+      const had = markBeforeHost(thread.host, thread.needs_you_for);
+      const mark = hostMissing(thread.host, had === undefined ? thread.needs_you_for : had);
+      // A thread that needed you already brings the lead no note that it starts to, so the lead
+      // is told of the plugin itself, once, as the mark first asks for it.
+      if (needsYou(thread) && had === undefined)
+        noteForLead(
+          db,
+          sessions,
+          thread,
+          `${threadName(db, thread)} needs you: ${mark}`,
+          null,
+          true,
+        );
+      record(db, thread.folder, { needs_you_for: mark }, hostGone(thread));
       typeLeadNotes(db, sessions);
       return;
     }
+    // The plugin is back, such as after sc install, so the mark that asked for it goes, and any
+    // mark the thread had before comes back.
+    const before = markBeforeHost(thread.host, thread.needs_you_for);
+    if (before !== undefined)
+      record(
+        db,
+        thread.folder,
+        { needs_you_for: before },
+        `its session host ${thread.host} is back`,
+      );
     let told = false;
     while (true) {
       try {

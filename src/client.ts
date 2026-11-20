@@ -123,7 +123,7 @@ export async function startOn(
 }
 
 // Has the daemon start a thread on a title and body, for sc start in a repository with no
-// tracker, and returns what it did, in a sentence naming the thread, such as app-wr1. `short` is
+// tracker, and returns what it did, in a sentence naming the thread, such as app-t1. `short` is
 // its short title for the sidebar, and `flow` the flow it runs.
 export async function startNew(
   repository: string,
@@ -203,6 +203,14 @@ export async function previewMerge(which: {
 export async function stopOn(repository: string, task: string): Promise<string> {
   const reply = await request({ command: "stop", repo: repository, task });
   return checkReply(z.object({ stopped: z.string() }), reply).stopped;
+}
+
+// Has the daemon mark a thread as needing you with `reason`, the action you must take, or clear
+// its mark with null, for sc needs-you. Returns the thread's name and whether it still needs you,
+// as Skelcrew can see other reasons itself, such as a question.
+export async function markNeedsYou(repository: string, task: string, reason: string | null) {
+  const reply = await request({ command: "needs you", repo: repository, task, reason });
+  return checkReply(z.object({ thread: z.string(), needsYou: z.boolean() }), reply);
 }
 
 // Asks the daemon what a thread's builder shows now, for sc peek, and returns the thread's
@@ -341,10 +349,18 @@ export async function reviewAgain(repository: string, task: string): Promise<str
 // Tells the daemon, for an agent's hook, about its question: asked, so a builder's thread
 // needs you, or closed, as AskUserQuestion returned its answer within the same turn. Answered is
 // sent whenever something is typed into the agent. It starts a new turn, and for a builder ends
-// any question or error. The agent's own socket tells the daemon which agent it is. The daemon
-// answers at once, as Claude Code waits on its hooks.
+// any question or error. With answered, the hook's input on stdin holds what was typed, which
+// the daemon needs to tell a person's typing from its own messages. Input that isn't the hook's
+// is left out, and a terminal isn't read, as it would wait for you. The agent's own socket tells
+// the daemon which agent it is. The daemon answers at once, as Claude Code waits on its hooks.
 export async function reportQuestion(state: "asked" | "answered" | "closed"): Promise<void> {
-  await request({ command: `question ${state}` });
+  if (state !== "answered") return void (await request({ command: `question ${state}` }));
+  const text = process.stdin.isTTY ? "" : await Bun.stdin.text();
+  const input = z.object({ prompt: z.string() }).safeParse(parseJson(text));
+  await request({
+    command: "question answered",
+    ...(input.success ? { prompt: input.data.prompt } : {}),
+  });
 }
 
 // Tells the daemon, for an agent's Stop hook, that it ended its turn, so it shows idle. The

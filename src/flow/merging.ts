@@ -8,9 +8,8 @@ import { z } from "zod";
 import { flowRoles } from "../flows.ts";
 import { createTask, editReview, forgeOf, mergePr, postReview, trackerOf } from "../plugins/ask.ts";
 import { errorText } from "../say.ts";
-import { openPrs, openTasks, prOf } from "./copy.ts";
+import { openTasks, prOf } from "./copy.ts";
 import {
-  ciState,
   mergeStuck,
   mergeWaitsOn,
   noteRound,
@@ -22,7 +21,7 @@ import { endThread, removing } from "./events.ts";
 import { noteForLead } from "./messages.ts";
 import { findRepository, repositoryAt } from "./repo.ts";
 import { lastPushed } from "./round.ts";
-import { openFindings } from "./status.ts";
+import { limitWaits, openFindings } from "./status.ts";
 import { readThread, record, repositoryOf, Thread, threadName, threadOn } from "./thread.ts";
 
 // Returns the thread sc merge names: by its task, such as app-12, or by its PR's
@@ -59,7 +58,7 @@ export function threadToMerge(
     thread = Thread.nullable().parse(row);
     if (!thread) throw new Error(`Skelcrew has no thread with PR #${which.pr} in ${name}`);
   } else if (which.task !== undefined) {
-    thread = threadOn(db, name, which.task);
+    thread = threadOn(db, `${owner}/${repo}`, which.task);
     if (!thread) throw new Error(`there is no thread ${name}-${which.task}`);
   }
   if (!thread) throw new Error("name the thread, such as app-12, or its PR, such as #7");
@@ -185,7 +184,10 @@ export function armMerge(
     asked === null
       ? `you asked to ${what}`
       : `the lead asked to ${what}, as the human asked: ${JSON.stringify(asked)}`;
-  record(db, thread.folder, plan, why);
+  // Arming it past the round limit is your decision about the limit, which stays made though the
+  // plan later ends, such as when a push cancels it, until the next review asks again.
+  const decided = limitWaits(thread) ? { limit_decided: true } : {};
+  record(db, thread.folder, { ...plan, ...decided }, why);
   console.log(`${name}: ${why}`);
   // The lead can't see your terminal, so it hears of a merge you asked for there. One it asked
   // for itself it already told you about.
@@ -284,11 +286,7 @@ export async function mergeIfReady(
     return;
   }
   const commit = pinned ?? lastPushed(thread);
-  const hasCi = repositoryHasCi(db, thread);
-  let waits =
-    pinned === null
-      ? mergeWaitsOn(thread, pr, commit, hasCi)
-      : skipReviewWaitsOn(thread, pr, hasCi);
+  let waits = pinned === null ? mergeWaitsOn(thread, pr, commit) : skipReviewWaitsOn(thread, pr);
   if (waits === null && commit !== null && thread.pr !== null) {
     const repository = repositoryOf(db, thread);
     // The PR records who asked, with a review on the commit it merges, the call every forge
@@ -393,18 +391,6 @@ export async function mergeIfReady(
       `Still merging #${now.pr} (${name}) ${when}, waiting on ${waits}.`,
     );
   }
-}
-
-// Returns whether a poll ever found CI in the thread's repository, so that both merges wait for
-// CI's checks on a PR that has none yet. The repository keeps it once any of its PRs showed CI,
-// so a PR that closed since still counts. Its tasks' PRs and the open PRs in Skelcrew's copy
-// count too, for a database from before the repository kept it, until its next poll.
-function repositoryHasCi(db: Database, thread: Thread): boolean {
-  const seen = db
-    .query(`SELECT 1 FROM repositories WHERE owner = ?1 AND repo = ?2 AND ci_seen = 1
-      UNION SELECT 1 FROM tasks WHERE owner = ?1 AND repo = ?2 AND ci_seen = 1 LIMIT 1`)
-    .get(thread.owner, thread.repo);
-  return seen !== null || openPrs(db, thread.owner, thread.repo).some((pr) => ciState(pr) !== null);
 }
 
 // Returns the hidden marker in a merge's record on the PR, naming its plan and commit, so the

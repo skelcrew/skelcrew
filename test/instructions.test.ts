@@ -136,7 +136,7 @@ test("a builder is told each command that isn't configured, and asks the lead ra
 // open it to answer.
 test("a builder asks the lead, not the human in its session, with background, options and a recommendation", () => {
   const told = builderInstructions(instructions, { setup: undefined, test: undefined });
-  expect(told).toContain("Ask the lead, never the human in this session: run sc tell lead");
+  expect(told).toContain("ask the lead, never the human in this session: run sc tell lead");
   expect(told).toContain(
     "Never use your harness's tool for asking questions, such as AskUserQuestion",
   );
@@ -198,7 +198,17 @@ test("a lead is told its repository and each setup and test command, or that non
     },
     false,
   );
-  expect(told).toContain("Before you start the first thread in your repository");
+  // A repository whose setup and test are missing gets them first, as real lines in its
+  // skelcrew.yaml, from a thread the lead proposes before anything else.
+  expect(told).toContain(
+    "your first proposal, before anything else, is a thread that finishes it.",
+  );
+  expect(told).toContain(
+    "A line that is only a comment, as sc init writes them, isn't configured.",
+  );
+  expect(told).toContain(
+    "fills in only the missing ones in the repository's skelcrew.yaml itself, as real lines rather than comments, and leaves a command that is configured as it is.",
+  );
   expect(told).toContain(
     "\nYou are the lead of simon/app. Skelcrew's clone of it is at /clones/simon/app.\n",
   );

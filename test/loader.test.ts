@@ -52,6 +52,7 @@ const all = [
   "tracker",
   "fallback",
   "reviewMinutes",
+  "graceMinutes",
   "yourHarness",
   "yourReviewer",
   "declined",
@@ -72,6 +73,7 @@ test("with no files, every setting is the built-in default", () => {
     reviews: quarter,
     checks: eighth,
     reviewMinutes: 30,
+    graceMinutes: 5,
     declined: [],
     plugins: [],
     host: "tmux",
@@ -92,6 +94,7 @@ test("your config goes over the built-in defaults", () => {
     reviews: 2,
     checks: eighth,
     reviewMinutes: 30,
+    graceMinutes: 5,
     yourHarness: "codex",
     declined: [],
     plugins: ["simon/herdr"],
@@ -115,6 +118,7 @@ test("the repository's skelcrew.yaml goes over your config, key by key", () => {
     setup: ["make"],
     tracker: "none",
     reviewMinutes: 30,
+    graceMinutes: 5,
     yourHarness: "claude",
     declined: [],
     plugins: [],
@@ -139,7 +143,7 @@ test("a file sets only what is its own", () => {
   // you can let the lead arm merges, so the repository's line for that counts for nothing too.
   files(
     "tracker: linear\n",
-    "harness: codex\nmodel: gpt-6\nlimits: { reviews: 9 }\nplugins: [simon/sneaky]\nsession: rex\nlead: { may_arm_merges: true }\n",
+    "harness: codex\nmodel: gpt-6\nlimits: { reviews: 9 }\nplugins: [simon/sneaky]\nsession: rex\nlead: { may_arm_merges: true }\nneeds_you: { grace_minutes: 1 }\n",
   );
   expect(read(all).settings).toEqual({
     lead: { harness: "claude" },
@@ -149,11 +153,18 @@ test("a file sets only what is its own", () => {
     reviews: quarter,
     checks: eighth,
     reviewMinutes: 30,
+    graceMinutes: 5,
     declined: [],
     plugins: [],
     host: "tmux",
     leadArms: false,
   });
+});
+
+// How soon you want to hear of a builder nobody acted on is yours, so only your config sets it.
+test("your config sets how long a stopped builder waits before it needs you", () => {
+  files("needs_you: { grace_minutes: 10 }\n", "");
+  expect(read(["graceMinutes"]).settings).toMatchObject({ graceMinutes: 10 });
 });
 
 test("only the settings asked for are checked, and a bad one names its file", () => {
