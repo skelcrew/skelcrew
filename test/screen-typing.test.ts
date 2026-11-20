@@ -118,6 +118,28 @@ test("Alt-Right gives your typing back to the lead, and digits then reach it", a
   expect(isOpen("6 Done")).toBe(false);
 });
 
+// A task's details are only to look at, so Alt-Right there does nothing, and your typing stays
+// kept in the sidebar after you move back to the lead.
+test("Alt-Right on a task's details leaves your typing in the sidebar, onto the lead's row too", async () => {
+  open("lead");
+  await ready("lead");
+  press("M-Left");
+  await until(typingToSidebar, "the sidebar to take your typing");
+  press("M-S-Down");
+  await until(() => selected().includes("APP-12") && onDetails(), "APP-12's details");
+  press("M-Right");
+  await Bun.sleep(300);
+  expect(typingToSidebar()).toBe(true);
+  press("M-S-Up");
+  await until(onLead, "the lead's row");
+  await Bun.sleep(300);
+  expect(typingToSidebar()).toBe(true);
+  type("3");
+  await until(() => seen().includes(" 3 Reviewing 0"), "Reviewing");
+  await Bun.sleep(300);
+  expect(read("lead.typed")).toBe("");
+});
+
 // A Mac terminal often sends Option-Left and Option-Right as Esc b and Esc f.
 test("Esc b and Esc f move your typing as Alt-Left and Alt-Right do, and never reach the agent", async () => {
   open("lead");

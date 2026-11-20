@@ -275,9 +275,9 @@ export async function runSidebar(
     shown = next;
   };
   // Gives your typing to the right side, if it shows an agent: the lead, or a builder you
-  // attached to. A task's details are only to look at, so there it stays in the sidebar.
+  // attached to. A task's details are only to look at, so there it does nothing, and your typing
+  // stays kept in the sidebar as you move on, even onto the lead's row.
   const toRight = () => {
-    held = false;
     const command = screenTmux(agents, [
       "display",
       "-p",
@@ -285,8 +285,9 @@ export async function runSidebar(
       rightPane,
       "#{pane_start_command}",
     ]).out;
-    if (shown === open.lead || command.includes(attachedMark))
-      screenTmux(agents, ["select-pane", "-t", rightPane]);
+    if (shown !== open.lead && !command.includes(attachedMark)) return;
+    held = false;
+    screenTmux(agents, ["select-pane", "-t", rightPane]);
   };
   // Shows on the right what the row you are on is: the lead's session on the lead's row, and a
   // task's details on any other.
