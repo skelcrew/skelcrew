@@ -722,6 +722,26 @@ export function dropEndNotes(db: Database, folder: string): void {
   db.run("DELETE FROM notes WHERE ended = ?", [folder]);
 }
 
+// Drops the notes still waiting for a repository's lead whose text starts with `start`, and
+// cancels the typing of any under way. A host with its own transport may hold one handed to it
+// already, waiting for the lead to be idle: cancelling ends the host's command, so it types
+// nothing after. The rest of what was being typed goes in on the next pass without them.
+export function dropLeadNotes(
+  db: Database,
+  repository: { owner: string; repo: string },
+  start: string,
+): void {
+  const { owner, repo } = repository;
+  const sql = "SELECT id FROM notes WHERE owner = ? AND repo = ? AND substr(text, 1, ?) = ?";
+  const ids = z
+    .array(z.object({ id: z.number() }))
+    .parse(db.query(sql).all(owner, repo, start.length, start));
+  for (const { id } of ids) {
+    typingNote.get(id)?.abort();
+    db.run("DELETE FROM notes WHERE id = ?", [id]);
+  }
+}
+
 // The note typing under way for each repository's lead, by its owner/name.
 const noteTyping = new Map<string, Promise<void>>();
 

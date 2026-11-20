@@ -1259,19 +1259,21 @@ process.exit(0);`,
 // last note goes in, so what was typed before it is all there is. With `failFirst`, a first
 // start fails before the session begins, as Claude Code's login is missing, and a second one
 // follows once it is there. With `spokeFirst`, the human has a draft at the lead's prompt as it
-// starts, which holds Skelcrew's typing, and sends it, as the lead's hook reports.
+// starts, which holds Skelcrew's typing, and sends it, as the lead's hook reports. With
+// `transport`, the host carries the text itself, and holds the opening handed to it while the
+// lead looks busy, as the human is busy there.
 function typedAfterStart(
   config: string,
-  { row = "", failFirst = false, spokeFirst = false } = {},
+  { row = "", failFirst = false, spokeFirst = false, transport = false } = {},
 ): string {
   const fake = join(home, ".config", "skelcrew", "plugins", "fake");
   const typed = join(home, "typed.txt");
   const draft = join(home, "draft");
   if (spokeFirst) writeFileSync(draft, "");
-  const { prompt } = claude.marks;
+  const { prompt, busy } = claude.marks;
   const lead = `#!/bin/sh
 if [ -e ${draft} ]; then
-  echo "${prompt} hi"
+  echo "${transport ? `Thinking (${busy})` : `${prompt} hi`}"
   while [ -e ${draft} ]; do sleep 0.1; done
   printf '\\033[2J'
 fi
@@ -1282,7 +1284,7 @@ cat >> ${typed}
   for (const sandbox of ["bwrap", "sandbox-exec"])
     writeFileSync(join(home, "bin", sandbox), lead, { mode: 0o755 });
   runWithFakeHost(
-    "sessions",
+    transport ? "sessions, transport" : "sessions",
     `const { leadPrompted, startLead } = await import(${JSON.stringify(source("flow/lead.ts"))});
 const { noteForLead } = await import(${JSON.stringify(source("flow/messages.ts"))});
 const { cloneDir } = await import(${JSON.stringify(source("paths.ts"))});
@@ -1300,6 +1302,11 @@ token();
 await startLead(db, "unused", repository);
 if (${spokeFirst}) {
   await Bun.sleep(1500);
+  // The host has been handed the opening, and holds it.
+  if (${transport}) {
+    const asked = ${JSON.stringify(join(fake, "asked"))};
+    for (let i = 0; i < 300 && !fs.readFileSync(asked, "utf8").includes('"ask":"deliver"'); i++) await Bun.sleep(50);
+  }
   leadPrompted(db, "simon", "app");
   fs.rmSync(${JSON.stringify(draft)});
 }
@@ -1348,4 +1355,14 @@ test("a human who speaks before the opening turn goes in gets no opening turn", 
   const typed = typedAfterStart("", { spokeFirst: true });
   expect(typed).toContain("last note");
   expect(typed).not.toContain("first start");
+}, 30_000);
+
+// A host with its own transport may hold the opening already, waiting for the lead to be idle,
+// and would type it in after the human's words.
+test("a human who speaks first cancels an opening the host's transport already holds", () => {
+  const typed = typedAfterStart("", { spokeFirst: true, transport: true });
+  expect(typed).toContain("last note");
+  expect(typed).not.toContain("first start");
+  const asked = readFileSync(join(home, ".config", "skelcrew", "plugins", "fake", "asked"), "utf8");
+  expect(asked).toContain("Skelcrew: this is your first start");
 }, 30_000);

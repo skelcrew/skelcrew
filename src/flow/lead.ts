@@ -25,7 +25,7 @@ import { type Host, hostNamed } from "../plugins/runtime.ts";
 import { builtInRole, repositoryRole } from "../roles.ts";
 import { errorText } from "../say.ts";
 import type { Settings } from "../settings.ts";
-import { noteForLead, typeLeadNotes } from "./messages.ts";
+import { dropLeadNotes, noteForLead, typeLeadNotes } from "./messages.ts";
 import { refreshClones } from "./repo.ts";
 import { forgetStatus, reportLeadStatus } from "./status.ts";
 
@@ -351,14 +351,10 @@ function openingNote({ setup, test }: Pick<Settings, "setup" | "test">): string 
 // the human has a draft at its prompt. Once the human has spoken first, it would have the lead
 // greet them again, or propose the setup out of turn. Every paste of Skelcrew's carries each note
 // still waiting, so anything typed while this one waits came from the human. A paste of the note
-// itself reports it too, after it was typed, so dropping it then changes nothing.
+// itself reports it too, after it was typed, so dropping it then changes nothing. One being
+// typed is cancelled, even one a host's own transport already holds.
 export function leadPrompted(db: Database, owner: string, repo: string): void {
-  db.run("DELETE FROM notes WHERE owner = ? AND repo = ? AND substr(text, 1, ?) = ?", [
-    owner,
-    repo,
-    opening.length,
-    opening,
-  ]);
+  dropLeadNotes(db, { owner, repo }, opening);
 }
 
 // Closes the tab of each repository whose lead you exited, such as with /exit, and ends its
