@@ -106,12 +106,13 @@ export function readDetails(db: Database, open: Open, task: string, now: number)
     return null;
   }
   const thread = threadOn(db, repository, task);
-  // The findings are those of Skelcrew's review on this PR, as one opened again after sc rm has
+  // The findings are those the latest review saved, posted or not. A task from before Skelcrew
+  // saved them has those of its review posted on this PR, as one opened again after sc rm has
   // none yet.
   const post = thread?.review_post;
-  const findings =
-    post && post.pr === thread.pr
-      ? post.findings.map((finding) => removeControlCodes(finding))
-      : [];
+  const posted = post && post.pr === thread.pr ? post.findings : [];
+  const findings = (thread?.review_findings ?? posted).map((finding) =>
+    removeControlCodes(finding),
+  );
   return { view, findings, events: thread ? eventsOf(thread.folder, now) : [] };
 }

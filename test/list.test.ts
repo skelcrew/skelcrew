@@ -1790,6 +1790,18 @@ ${itemSql("app", "pr", 41, "Fix the export header", "2026-11-06T10:00:00Z", { he
   expect(pluginAsked(join(home, ".config", "skelcrew", "plugins", "github"))).toEqual([]);
 });
 
+// A review in a repository with no forge, or one whose posting failed, has no review on a PR,
+// and its findings are still the task's.
+test("the pane shows the latest review's findings though it was never posted", async () => {
+  sql(`UPDATE tasks SET review_round = 1, verdict = 'changes',
+  review_findings = '["Name the limit","Test the header"]' WHERE task = '12'`);
+  await open({ width: wide });
+  await until(() => paneSeen()[0] === "Rate limit the API", "app-12's details");
+  expect(paneSeen()).toContain("Round 1 · changes asked");
+  expect(paneSeen()).toContain("  - Name the limit");
+  expect(paneSeen()).toContain("  - Test the header");
+});
+
 test("the pane shows only while the terminal is wide enough, and the keys do the same", async () => {
   await open();
   expect(seen()).not.toContain(" │ ");
@@ -2027,6 +2039,7 @@ test("a slow read of the row you left never holds up the live view of the row yo
   );
   // Coming back to app-12 starts a read of 3 seconds. app-7, two rows on, is read at once.
   press("Down");
+  const back = performance.now();
   press("Up");
   await until(() => here().startsWith("▸ ● app-12"), "app-12's row");
   const start = performance.now();
@@ -2034,6 +2047,11 @@ test("a slow read of the row you left never holds up the live view of the row yo
   press("Down");
   await until(() => liveSeen().includes("I am app-7"), "app-7's screen");
   expect(performance.now() - start).toBeLessThan(1000);
-  // The read under way ends with the host's answer, which the test waits for, as it started it.
-  await Bun.sleep(3500);
+  // When app-12's read answers, app-7's screen stays in sight, never blanked by a screen that
+  // isn't its own. The test watches until well after the answer, which also waits for the read
+  // it started to end.
+  while (performance.now() - back < 4000) {
+    expect(liveSeen()).toContain("I am app-7");
+    await Bun.sleep(10);
+  }
 });

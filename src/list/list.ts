@@ -477,8 +477,8 @@ export async function runList(agents: string, repository: string): Promise<void>
   // when it changed, as a quiet agent's screen mostly hasn't. It reads only while the list shows
   // with its pane, never while you are attached to an agent or once you left. Each row has one
   // read at a time, so a slow host never piles reads up, and a slow read of a row you left never
-  // holds up the row you moved to. A read that comes back after you moved on is kept for its own
-  // row.
+  // holds up the row you moved to. A read that comes back after you moved on is dropped, so it
+  // never takes the place of the screen of the row you are on.
   const reading = new Set<string>();
   const look = async () => {
     const row = rows[here];
@@ -488,7 +488,7 @@ export async function runList(agents: string, repository: string): Promise<void>
     const shown = await readLive(db, agents, row);
     reading.delete(row.name);
     // You may have left while the host answered, and the terminal is then your shell's again.
-    if (left) return;
+    if (left || rows[here]?.name !== row.name) return;
     if (live?.name === row.name && Bun.deepEquals(live.shown, shown)) return;
     live = { name: row.name, shown };
     draw();

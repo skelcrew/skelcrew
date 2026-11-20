@@ -362,6 +362,7 @@ describe.skipIf(insideSandbox)("sc submit", () => {
       reviewed_by: "codex",
       verdict: "changes",
       review_line: "The export has no test.",
+      review_findings: ["\n  The export has no test.\n\nMore detail here."],
     });
     expect(lines.at(-1)).toMatchObject({
       title: "Add export",
@@ -369,6 +370,7 @@ describe.skipIf(insideSandbox)("sc submit", () => {
       reviewed_by: "codex",
       verdict: "approve",
       review_line: "Ready to merge.",
+      review_findings: [],
     });
     // The approved commit is saved with its review, so the list can merge it asking git nothing.
     expect(lines.at(-1)?.reviewed_commit).toBe(pushed());
