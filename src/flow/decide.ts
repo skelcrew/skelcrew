@@ -169,7 +169,9 @@ export function mergeWaitsOn(
       ? "its submit, which failed"
       : "Skelcrew's check, which failed";
   if (waitsOnFirstCheck(thread)) return "its checks";
-  if (thread.submitting !== null || thread.reviewing !== null) return "its review";
+  // A verdict saved but not yet on the forge is still on its way, as Skelcrew's check is.
+  if (thread.submitting !== null || thread.reviewing !== null || thread.posting !== null)
+    return "its review";
   if (!passedReviewStage(thread)) return "an approval";
   // A push Skelcrew didn't review, such as someone else's, is never merged unseen. On a flow with
   // no review stage, nothing reviews it: its builder must submit it, and then it merges.
@@ -202,8 +204,9 @@ export function skipReviewWaitsOn(thread: Thread, pr: PullRequest | null): strin
   // A submit under way pushes a commit you never saw, which then cancels the plan.
   if (thread.submitting !== null) return "its builder's new round";
   // A review still running waits to end, so its findings reach the follow-up issue. Its verdict
-  // then changes nothing.
-  if (thread.reviewing !== null) return "its review";
+  // then changes nothing. One saved but not yet on the PR waits too, as the issue files the
+  // findings of the PR's review.
+  if (thread.reviewing !== null || thread.posting !== null) return "its review";
   if (pr.conflicts || thread.conflicts !== null) return `its conflict with ${pr.base} to be fixed`;
   const ci = ciOf(pr);
   if (ci.some((c) => c.state === "failed" || c.state === "cancelled"))

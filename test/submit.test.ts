@@ -1894,6 +1894,22 @@ done`,
     expect(thread().status).toBe("stopped");
   }, 120_000);
 
+  // A forge that fails to take the verdict fails the round, and the thread shows its review
+  // failed. Each poll tries the post again, so the PR gets the verdict the thread saved without
+  // waiting for a restart, and the review no longer shows as failed.
+  test("a verdict whose post failed is posted again at the next poll", async () => {
+    addApp();
+    verdict(1, "approve", "Ready to merge.");
+    writeFileSync(join(plugin, "fail-review"), "GitHub is down");
+    await startApp12({ every: 1_000 });
+    await until(() => thread().review_failed === 1 && thread().posting !== null, 60_000);
+    expect(finished("success")).toEqual([]);
+    rmSync(join(plugin, "fail-review"));
+    await until(() => finished("success").length === 1, 30_000);
+    await until(() => thread().posting === null && thread().review_failed === 0);
+    expect(reviews().at(-1)?.verdict).toBe("approve");
+  }, 120_000);
+
   // sc stop forgets the round while its approval is still being posted. A review asked for
   // after sc start then waits for that post, so the PR ends on the newer verdict, as the thread
   // does, and the newer review's pending check comes after the older one's.

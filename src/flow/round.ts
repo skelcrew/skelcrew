@@ -736,6 +736,33 @@ function postVerdict(db: Database, folder: string): Promise<void> {
   });
 }
 
+// Tries again to put on the forge a verdict whose post failed, so the PR doesn't keep an older
+// review than the thread says until the daemon starts again. Each poll asks, and a forge that
+// still fails is logged and asked again at the next. A done thread's PR is closed, so it is
+// left alone. A submit or review under way brings a
+// newer verdict, which is posted in its place, so it is left to that round. Once posted, the
+// review no longer shows as failed, unless the verdict itself was a failed review.
+export async function retryPost(db: Database, folder: string): Promise<void> {
+  const quiet = (thread: Thread) =>
+    thread.status !== "done" &&
+    thread.posting !== null &&
+    thread.submitting === null &&
+    thread.reviewing === null &&
+    !roundRunning(folder);
+  if (!quiet(readThread(db, folder))) return;
+  try {
+    await postVerdict(db, folder);
+  } catch (error) {
+    console.log(`${folder}: couldn't put its saved verdict on the forge: ${errorText(error)}`);
+    return;
+  }
+  const thread = readThread(db, folder);
+  if (thread.posting !== null || thread.submitting !== null || thread.reviewing !== null) return;
+  const failed = thread.verdict === "failed" || thread.verdict === "timed out";
+  if (thread.review_failed !== failed)
+    record(db, folder, { review_failed: failed }, "its saved verdict is on the forge now");
+}
+
 // Puts on the forge the verdicts that stopped threads saved but didn't post, as the daemon
 // starts. sc start brings a stopped thread's round back, but until then its PR would show an
 // older review than the thread does. A forge that fails is said in the thread's log, and the
