@@ -14,7 +14,7 @@ import {
   decideBranch,
   forgetMoves,
   labeledToStart,
-  mergeStuck,
+  mergeNoteFor,
   mergeWaitsOn,
   onlyDocs,
   type PullRequest,
@@ -92,6 +92,7 @@ function thread(change: Partial<Thread> = {}): Thread {
     merge_asked: null,
     merge_waits: null,
     merge_noted: null,
+    merge_noted_for: [],
     merge_pinned: null,
     merge_record: null,
     merge_record_id: null,
@@ -971,23 +972,28 @@ test("a merge without approval waits on everything but the reviewer's approval",
   );
 });
 
-test("the lead hears an armed merge still waits once per review round, and only when someone must act", () => {
+test("the lead hears each wait of an armed merge once per review round, and only when someone must act", () => {
   const armed = thread({ merge_plan: "armed", review_round: 2 });
   const conflict = "its conflict with main to be fixed";
-  expect(mergeStuck(armed, conflict)).toBe(true);
-  expect(mergeStuck({ ...armed, merge_noted: 2 }, conflict)).toBe(false);
-  expect(mergeStuck({ ...armed, merge_noted: 1 }, conflict)).toBe(true);
-  expect(mergeStuck({ ...armed, review_round: null }, conflict)).toBe(false);
+  expect(mergeNoteFor(armed, conflict)).toBe("its conflict with");
+  expect(mergeNoteFor({ ...armed, review_round: null }, conflict)).toBeNull();
+  // Heard in this round, it isn't said again. A new round, or another wait, is.
+  const heard = { ...armed, merge_noted: 2, merge_noted_for: ["its conflict with"] };
+  expect(mergeNoteFor(heard, conflict)).toBeNull();
+  expect(mergeNoteFor({ ...heard, review_round: 3 }, conflict)).toBe("its conflict with");
+  expect(mergeNoteFor(heard, "the forge, which refused: Not mergeable")).toBe("the forge, which");
+  // A forge's words change from poll to poll, and are still the same wait.
+  const forge = { ...armed, merge_noted: 2, merge_noted_for: ["the forge, which"] };
+  expect(mergeNoteFor(forge, "the forge, which failed: GitHub is down")).toBeNull();
   // What needs someone: the builder, you, or the forge.
   for (const waits of [
     "its failing checks to be fixed",
     "its thread, which failed",
     "its thread, which is stopped",
     "the forge, which refused: Not mergeable",
-    "the forge, which failed: GitHub is down",
     "a decision past its round limit",
   ])
-    expect(mergeStuck(armed, waits)).toBe(true);
+    expect(mergeNoteFor(armed, waits)).not.toBeNull();
   // What is on its way: a builder working on its round, a review running or to come, checks.
   for (const waits of [
     "an approval",
@@ -998,5 +1004,5 @@ test("the lead hears an armed merge still waits once per review round, and only 
     "its PR",
     null,
   ])
-    expect(mergeStuck(armed, waits)).toBe(false);
+    expect(mergeNoteFor(armed, waits)).toBeNull();
 });

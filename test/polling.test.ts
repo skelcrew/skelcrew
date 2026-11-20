@@ -2925,6 +2925,25 @@ echo '{"verdict":"changes","body":"Not yet.","findings":["Handle an empty file",
       await morePolls();
       return head;
     };
+    // Waiting on an approval, a builder working on its round or a review running needs nobody,
+    // so the lead hears nothing, however many rounds it takes.
+    test("an armed merge sends the lead no note while its builder resubmits and its review runs", async () => {
+      await changesApp12();
+      await arm();
+      await until(() => thread().merge_waits === "an approval");
+      await morePolls();
+      // The builder fixes what it was told and submits, and the reviewer asks for changes again.
+      submitRound2();
+      await until(
+        () => thread().rounds === 2 && thread().submitting === null && thread().reviewing === null,
+        30_000,
+      );
+      await until(() => thread().merge_waits === "an approval");
+      await morePolls();
+      expect(leadTyped()).not.toContain("Still merging");
+      expect(thread().merge_plan).toBe("armed");
+    }, 90_000);
+
     const skipQuestion =
       "Merge #7 (app-12 Add export) without Skelcrew's approval? CI must still pass. It still asks: 1) Handle an empty file 2) Test the error";
     const skipSaid =

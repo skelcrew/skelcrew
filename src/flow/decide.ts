@@ -189,16 +189,21 @@ const stuckWaits = [
   "a decision past its round limit",
 ];
 
-// Returns whether the lead should hear that an armed merge still waits, after a review round
-// ended. Only a wait someone must act on counts: a conflict, failing checks, a thread that failed
-// or stopped, the forge, or the round limit. A builder working on its round, a review running or
-// to come, and checks running are on their way, and a note for them would only repeat each
-// round. The lead hears it once for each review round.
-export const mergeStuck = (thread: Thread, waits: string | null) =>
-  waits !== null &&
-  stuckWaits.some((start) => waits.startsWith(start)) &&
-  thread.review_round !== null &&
-  thread.merge_noted !== thread.review_round;
+// Returns which wait the lead should hear an armed merge is stuck on, after a review round
+// ended, or null for none. Only a wait someone must act on counts: a conflict, failing checks, a
+// thread that failed or stopped, the forge, or the round limit. A builder working on its round, a
+// review running or to come, and checks running are on their way, and a note for them would only
+// repeat each round. The lead hears each wait once per review round, so a second one in the same
+// round, such as the forge refusing once the checks were fixed, still reaches it. What it gives
+// back is how the wait starts, as a forge's own words change from poll to poll.
+export function mergeNoteFor(thread: Thread, waits: string | null): string | null {
+  if (waits === null || thread.review_round === null) return null;
+  const stuck = stuckWaits.find((start) => waits.startsWith(start));
+  if (stuck === undefined) return null;
+  const heard =
+    thread.merge_noted === thread.review_round && thread.merge_noted_for.includes(stuck);
+  return heard ? null : stuck;
+}
 
 // Returns whether a change of these files touches only docs and Markdown: each is under docs/
 // or ends in .md. CI skips such a commit, and so does the reviewer's run of the tests, as no
