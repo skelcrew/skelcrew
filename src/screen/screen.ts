@@ -16,6 +16,7 @@ import {
   type Drop,
   dropAnswerOption,
   dropAsk,
+  dropSignalColumn,
   runWithDrops,
 } from "./drops.ts";
 
@@ -125,18 +126,18 @@ const config = [
     "-C",
     'send-keys -t :.0 -l "\x1b]skel-tab;#{mouse_status_range}\x07"',
   ]),
-  // A right click on the top row is how a file dropped onto the screen asks the sidebar which
-  // agent it goes to, after the keys typed before it. tmux names the click by the part of the row
-  // it hit, which is the header's or a tab's, so each name is bound.
+  // A right click on the top row, at a column past the edge of any real terminal, is how a file
+  // dropped onto the screen asks the sidebar which agent it goes to, after the keys typed before
+  // it. A real right click there does nothing, as before. tmux names the click by the part of the
+  // row it hit, so each name is bound.
   ...["", "Default", "Left", "Right"].map((part) => [
     "bind",
     "-n",
     `MouseDown3Status${part}`,
-    "send-keys",
-    "-t",
-    ":.0",
-    "-l",
-    dropAsk,
+    "if",
+    "-F",
+    `#{==:#{mouse_x},${dropSignalColumn}}`,
+    `send-keys -t :.0 -l "${dropAsk}"`,
   ]),
   // A click needs its own key: left alone, it reaches only the pane you type to. The wheel
   // goes on to the pane under it, as the agents' server decides what scrolling means.

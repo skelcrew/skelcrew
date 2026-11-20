@@ -3,15 +3,8 @@
 // is on your laptop. So a layer between your terminal and the screen copies each dropped file into
 // the agent's own folder and passes the paste on with the copies' paths. Everything else passes
 // through untouched.
-import {
-  accessSync,
-  constants,
-  copyFileSync,
-  mkdirSync,
-  realpathSync,
-  statSync,
-  writeFileSync,
-} from "node:fs";
+import { accessSync, constants, realpathSync, statSync } from "node:fs";
+import { copyFile, mkdir, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 
 // The folder inside an agent's folder that holds its dropped files. It ignores itself in git, so
@@ -22,11 +15,14 @@ export const dropsFolder = ".skelcrew-drops";
 // How a drop learns which agent's folder its files go to. Keys typed just before the drop, such as
 // Alt-Down to another row, may still be on their way to the sidebar, so asking tmux at once could
 // name the agent you just left. So the layer sends `dropSignal` on, in your typing's stream,
-// right before the paste. It is a right click on the screen's top row, which nothing else uses,
-// and the screen's tmux types `dropAsk` into the sidebar for it, after every key before it. The
+// right before the paste. It is a right click on the screen's top row at column 9999, past the
+// edge of any real terminal, so no click of yours can be taken for it, and `dropSignalColumn` is
+// that column as tmux counts it, from 0. The screen's tmux types `dropAsk` into the sidebar for it,
+// after every key before it. The
 // sidebar then sets `dropAnswerOption` on the screen's session to a count, which changes each
 // time, and the folder of the agent your typing goes to, or nothing while it goes to the sidebar.
-export const dropSignal = "\x1b[<2;1;1M\x1b[<2;1;1m";
+export const dropSignal = "\x1b[<2;9999;1M\x1b[<2;9999;1m";
+export const dropSignalColumn = 9998;
 export const dropAsk = "\x1b]skel-drop\x07";
 export const dropAnswerOption = "@drop-answer";
 
@@ -148,19 +144,22 @@ function readableBy(folder: string, file: string): boolean {
 // Copies dropped files into an agent's folder on this machine, and returns each copy's path, in
 // order, or null for a file left as it was. A file the agent can read where it is is left, such
 // as one sc --remote sent there already.
-export function copyDrops(folder: string, files: string[]): (string | null)[] {
-  return files.map((file) => {
-    if (readableBy(folder, file)) return null;
-    try {
-      const copy = dropPath(folder, file);
-      mkdirSync(dirname(copy), { recursive: true });
-      writeFileSync(join(folder, dropsFolder, ".gitignore"), "*\n");
-      copyFileSync(file, copy, constants.COPYFILE_FICLONE);
-      return copy;
-    } catch {
-      return null;
-    }
-  });
+// The copy runs off the main thread, so a big file or a slow disk never holds up the screen.
+export function copyDrops(folder: string, files: string[]): Promise<(string | null)[]> {
+  return Promise.all(
+    files.map(async (file) => {
+      if (readableBy(folder, file)) return null;
+      try {
+        const copy = dropPath(folder, file);
+        await mkdir(dirname(copy), { recursive: true });
+        await writeFile(join(folder, dropsFolder, ".gitignore"), "*\n");
+        await copyFile(file, copy, constants.COPYFILE_FICLONE);
+        return copy;
+      } catch {
+        return null;
+      }
+    }),
+  );
 }
 
 // Where dropped files go: `where` asks the screen which agent's folder your typing goes to, and
@@ -194,17 +193,15 @@ function unfinished(last: string, sent: string): string {
 }
 
 // Returns a function that takes what your terminal sends, in the pieces it arrives in, and hands
-// it to `send`. Everything but a paste goes on at once, byte for byte, even while a drop's files
-// are copied or sent to a server. A paste is held until its end. Text goes on at once, unless an
-// earlier drop is still on its way, which it follows. A paste of paths goes on once its files are
-// copied, with their copies' paths.
+// it to `send`, byte for byte, at once. A paste is held until its end. Text goes on as it came. A
+// paste of paths goes on once its files are copied, with their copies' paths, and everything you
+// send after it waits until then, then follows in order, so Enter pressed right after a drop sends
+// the file's path, never the prompt without it. Only input after a drop waits: before one,
+// nothing does, and your terminal's size is never input.
 //
 // What the filter adds to the stream itself, the drop's question and a paste that waited, goes in
 // only between escape sequences, never inside one you are sending, such as a mouse event split
 // across two reads. After a lone Esc it waits a moment for the rest, as an Esc key has none.
-//
-// Keys that go on while a drop's files are copied can move you to another agent. So when anything
-// went on meanwhile, the filter asks again where the drop goes, and copies again if that changed.
 export function pasteFilter(send: (bytes: Uint8Array) => void, drop: Drop) {
   // The paste read so far, without its start, or null outside one.
   let held: Buffer | null = null;
@@ -214,11 +211,9 @@ export function pasteFilter(send: (bytes: Uint8Array) => void, drop: Drop) {
   // that adds it anyway after a lone Esc.
   const adding: Buffer[] = [];
   let addLater: ReturnType<typeof setTimeout> | null = null;
-  // Whether anything of yours went on since the drop last asked where it goes.
-  let typed = false;
-  // The pastes still on their way, in order, so one never overtakes another.
-  let pastes: Promise<void> = Promise.resolve();
-  let onTheirWay = 0;
+  // Whether a drop's files are on their way, and what you sent meanwhile.
+  let dropping = false;
+  const waiting: Buffer[] = [];
 
   // Sends what is waiting to be added, now that the stream is between sequences.
   const addWaiting = () => {
@@ -238,23 +233,15 @@ export function pasteFilter(send: (bytes: Uint8Array) => void, drop: Drop) {
       addWaiting();
     }, 50);
   };
-  // Sends what you typed on at once.
+  // Sends what you sent on at once.
   const pass = (bytes: Buffer) => {
     send(bytes);
-    typed = true;
     openSequence = unfinished(openSequence, bytes.toString("latin1"));
     if (openSequence === "") addWaiting();
   };
-  // Asks where the drop goes, after everything that went on before.
-  const ask = () => {
-    typed = false;
-    add(Buffer.from(dropSignal));
-  };
 
   // Returns the paste's text with each droppable path replaced by its copy's, or null when
-  // nothing was copied, so the paste goes on as it came. When anything of yours went on while
-  // the files were copied, it asks again, and copies again to an agent you moved to, up to three
-  // times, then leaves the paste as it came.
+  // nothing was copied, so the paste goes on as it came.
   const rewritten = async (text: string): Promise<string | null> => {
     const parts = pastedPaths(text);
     if (!parts) return null;
@@ -263,42 +250,24 @@ export function pasteFilter(send: (bytes: Uint8Array) => void, drop: Drop) {
       part.path !== undefined && droppable(part.path) ? [part.path] : [],
     );
     if (files.length === 0) return null;
-    let folder = await drop.where(ask);
-    for (let tries = 0; folder !== null && tries < 3; tries++) {
-      const copies = await drop.put(folder, files);
-      const now = typed ? await drop.where(ask) : folder;
-      if (now !== folder) {
-        folder = now;
-        continue;
-      }
-      const copyOf = new Map(files.map((file, at) => [file, copies[at] ?? null]));
-      if (![...copyOf.values()].some((copy) => copy !== null)) return null;
-      return parts
-        .map((part) => {
-          const copy = part.path === undefined ? null : copyOf.get(part.path);
-          return copy ? writtenLike(part.written, copy) : part.written;
-        })
-        .join("");
-    }
-    return null;
+    const folder = await drop.where(() => add(Buffer.from(dropSignal)));
+    if (folder === null) return null;
+    const copies = await drop.put(folder, files);
+    const copyOf = new Map(files.map((file, at) => [file, copies[at] ?? null]));
+    if (![...copyOf.values()].some((copy) => copy !== null)) return null;
+    return parts
+      .map((part) => {
+        const copy = part.path === undefined ? null : copyOf.get(part.path);
+        return copy ? writtenLike(part.written, copy) : part.written;
+      })
+      .join("");
   };
 
-  // Sends a whole paste on: text at once, unless another is on its way, and paths once their
-  // files are copied.
-  const paste = (text: string, asCame: Buffer) => {
-    if (onTheirWay === 0 && pastedPaths(text) === null) {
-      pass(asCame);
+  const take = (piece: Uint8Array): void => {
+    if (dropping) {
+      waiting.push(Buffer.from(piece));
       return;
     }
-    onTheirWay++;
-    pastes = pastes.then(async () => {
-      const changed = await rewritten(text).catch(() => null);
-      add(changed === null ? asCame : Buffer.from(`\x1b[200~${changed}\x1b[201~`));
-      onTheirWay--;
-    });
-  };
-
-  return (piece: Uint8Array): void => {
     let rest: Buffer = Buffer.from(piece);
     while (rest.length > 0) {
       // Outside a paste, everything goes on, up to the start of one. A start split across two
@@ -327,12 +296,27 @@ export function pasteFilter(send: (bytes: Uint8Array) => void, drop: Drop) {
       }
       held = null;
       rest = sofar.subarray(end + pasteEnd.length);
-      paste(
-        sofar.subarray(0, end).toString(),
-        Buffer.concat([pasteStart, sofar.subarray(0, end), pasteEnd]),
-      );
+      const text = sofar.subarray(0, end).toString();
+      const asCame = Buffer.concat([pasteStart, sofar.subarray(0, end), pasteEnd]);
+      // Text goes on at once, without waiting on anything.
+      if (pastedPaths(text) === null) {
+        pass(asCame);
+        continue;
+      }
+      // Paths wait for their files, and what came after them waits for the paste.
+      dropping = true;
+      waiting.push(rest);
+      rewritten(text)
+        .catch(() => null)
+        .then((changed) => {
+          add(changed === null ? asCame : Buffer.from(`\x1b[200~${changed}\x1b[201~`));
+          dropping = false;
+          for (const next of waiting.splice(0)) take(next);
+        });
+      return;
     }
   };
+  return take;
 }
 
 // Runs a command, such as the screen's tmux client or ssh, in a terminal of its own between it

@@ -1481,12 +1481,8 @@ test("a file dropped onto the server's screen is sent to the agent it shows, and
   });
   const named = join(home, "server", "screen-name");
   for (let waited = 0; !existsSync(named) && waited < 100; waited++) await Bun.sleep(50);
-  // Keys don't wait for a drop's files, so Enter goes once the copy is there.
-  run.terminal?.write(`\x1b[200~${shot.replaceAll(" ", "\\ ")}\x1b[201~`);
-  const sentTo = join(home, "server", "agent", ".skelcrew-drops");
-  for (let waited = 0; !existsSync(sentTo) && waited < 100; waited++) await Bun.sleep(50);
-  await Bun.sleep(300);
-  run.terminal?.write("\r");
+  // Enter pressed right after the drop waits for its paste.
+  run.terminal?.write(`\x1b[200~${shot.replaceAll(" ", "\\ ")}\x1b[201~\r`);
   await run.exited;
   run.terminal?.close();
   const screen = readFileSync(named, "utf8").trim();
@@ -1496,7 +1492,7 @@ test("a file dropped onto the server's screen is sent to the agent it shows, and
   const got = readFileSync(join(home, "server", "got"), "utf8").trim();
   const agent = join(home, "server", "agent", ".skelcrew-drops");
   // The drop's question, a right click on the top row, goes just ahead of the paste.
-  expect(got.startsWith(`\x1b[<2;1;1M\x1b[<2;1;1m\x1b[200~${agent}/`)).toBe(true);
+  expect(got.startsWith(`\x1b[<2;9999;1M\x1b[<2;9999;1m\x1b[200~${agent}/`)).toBe(true);
   expect(got.endsWith("/Screen\\ Shot.png\x1b[201~")).toBe(true);
   const copy = got
     .slice(got.indexOf("\x1b[200~") + "\x1b[200~".length, -"\x1b[201~".length)

@@ -169,7 +169,7 @@ test("a missing path, a folder, a file you can't read and one too big keep their
   ).toHaveLength(1);
 });
 
-test("a paste split over several reads arrives whole, and keys after it go on at once", async () => {
+test("a paste split over several reads arrives whole, and keys after it follow it", async () => {
   const shot = file("shot.png");
   const take = filter();
   const whole = `x${pasted(shot)}after`;
@@ -178,15 +178,13 @@ test("a paste split over several reads arrives whole, and keys after it go on at
   for (const piece of [whole.slice(0, 9), whole.slice(9, end), whole.slice(end)])
     take(Buffer.from(piece));
   take(Buffer.from("more"));
-  // What you type after the drop doesn't wait for its files.
-  expect(sent).toBe("xaftermore");
   const out = await afterCopies();
   expect(out).toMatch(
-    new RegExp(`^xaftermore\\x1b\\[200~${agent}/${dropsFolder}/[^/]+/shot\\.png\\x1b\\[201~$`),
+    new RegExp(`^x\\x1b\\[200~${agent}/${dropsFolder}/[^/]+/shot\\.png\\x1b\\[201~aftermore$`),
   );
 });
 
-test("keys go on while a drop's files are still being sent, and the paste follows them", async () => {
+test("everything sent after a drop waits for its paste, then follows in order", async () => {
   const shot = file("shot.png");
   let finish: () => void = () => {};
   const take = pasteFilter(
@@ -204,50 +202,30 @@ test("keys go on while a drop's files are still being sent, and the paste follow
         }),
     },
   );
-  take(Buffer.from(pasted(shot)));
-  await Bun.sleep(20);
+  // Enter right after the drop, then an arrow, a turn of the wheel and more typing.
+  take(Buffer.from(`${pasted(shot)}\r`));
   take(Buffer.from("\x1b[A"));
   take(Buffer.from("\x1b[<65;3;4M"));
   take(Buffer.from("q"));
-  expect(sent).toBe(`${dropSignal}\x1b[A\x1b[<65;3;4Mq`);
+  await Bun.sleep(20);
+  expect(sent).toBe(dropSignal);
   finish();
   const out = await sentOn();
-  // Keys went on meanwhile, so it asked again where the drop goes, before the paste.
-  expect(out.startsWith(`${dropSignal}\x1b[A\x1b[<65;3;4Mq${dropSignal}\x1b[200~${agent}/`)).toBe(
-    true,
+  expect(out).toMatch(
+    new RegExp(
+      `^${dropSignal.replaceAll("[", "\\[")}\\x1b\\[200~${agent}/${dropsFolder}/[^/]+/shot\\.png\\x1b\\[201~\\r\\x1b\\[A\\x1b\\[<65;3;4Mq$`,
+    ),
   );
 });
 
-test("a drop whose agent you left while its files were copied is copied again to the new one", async () => {
+test("a copy runs off the screen's way, so nothing waits on it", async () => {
   const shot = file("shot.png");
-  const other = join(home, "other");
-  mkdirSync(other);
-  let asked = 0;
-  const take = pasteFilter(
-    (bytes) => {
-      sent += Buffer.from(bytes).toString();
-    },
-    {
-      where: async (ask) => {
-        ask();
-        return asked++ === 0 ? agent : other;
-      },
-      put: async (folder, files) => {
-        await Bun.sleep(30);
-        return copyDrops(folder, files);
-      },
-    },
-  );
-  take(Buffer.from(pasted(shot)));
-  // Alt-Down while the files are copied moves you to another agent.
-  await Bun.sleep(10);
-  take(Buffer.from("\x1b[1;3B"));
-  // Two copies of 30 milliseconds each.
-  await Bun.sleep(100);
-  const out = await afterCopies();
-  expect(out).toMatch(
-    new RegExp(`^\\x1b\\[1;3B\\x1b\\[200~${other}/${dropsFolder}/[^/]+/shot\\.png\\x1b\\[201~$`),
-  );
+  const copying = copyDrops(agent, [shot]);
+  // Nothing was copied while the call ran: the copy happens while keys, the mouse and resizes
+  // go on.
+  expect(existsSync(join(agent, dropsFolder))).toBe(false);
+  const [copy] = await copying;
+  expect(readFileSync(copy ?? "", "utf8")).toBe("the text of shot.png");
 });
 
 test("a paste's start split anywhere across two reads is still seen, and the question never lands inside it", async () => {
@@ -263,19 +241,19 @@ test("a paste's start split anywhere across two reads is still seen, and the que
     take(Buffer.from(whole.slice(0, cut)));
     take(Buffer.from(whole.slice(cut)));
     const out = await sentOn();
-    expect(out).toMatch(new RegExp(`^x\\x1b\\[200~\\x1b\\[201~y${question}${copied}$`));
+    expect(out).toMatch(new RegExp(`^x\\x1b\\[200~\\x1b\\[201~${question}${copied}y$`));
   }
 });
 
-test("the question waits for a mouse event split across reads to end", async () => {
+test("the question never goes in right after a lone Esc, which more of a sequence may follow", async () => {
   const shot = file("shot.png");
   const take = filter();
+  take(Buffer.from("\x1b"));
   take(Buffer.from(pasted(shot)));
-  take(Buffer.from("\x1b[<0;3"));
-  await Bun.sleep(10);
-  take(Buffer.from(";4M"));
+  await Bun.sleep(20);
+  expect(sent).toBe("\x1b");
   const out = await sentOn();
-  expect(out.startsWith(`\x1b[<0;3;4M${dropSignal}\x1b[200~${agent}/`)).toBe(true);
+  expect(out.startsWith(`\x1b${dropSignal}\x1b[200~${agent}/`)).toBe(true);
 });
 
 test("a double-quoted path with an escaped quote in its name is copied", async () => {
