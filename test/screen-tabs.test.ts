@@ -17,6 +17,8 @@ import {
   home,
   labels,
   leaving,
+  onDetails,
+  onLead,
   open,
   pathNow,
   press,
@@ -61,7 +63,7 @@ test("a tab for each repository runs across the top, with a badge for what needs
   expect(seen()).not.toContain("SITE-8");
 });
 
-test("Alt-Shift-Right and Alt-Shift-Left switch both sides to the repository beside, and open it", async () => {
+test("Alt-Shift-Right and Alt-Shift-Left switch both sides to the repository beside, wrapping round, and open it", async () => {
   addSite();
   daemon();
   open("lead");
@@ -69,16 +71,15 @@ test("Alt-Shift-Right and Alt-Shift-Left switch both sides to the repository bes
   press("M-S-Right");
   await until(() => seen().includes(`I am ${siteLead}`), "site's lead");
   await until(() => seen().includes("SITE-8") && !seen().includes("APP-12"), "site's threads");
-  expect(selected()).toBe("◆ lead");
+  expect(onLead()).toBe(true);
   await until(() => asked.includes("open simon/site from a tab"), "the daemon to open site");
   type("hello\r");
   await until(() => existsSync(join(home, `${siteLead}.typed`)), "the typing");
-  // There is no tab after the last.
+  // After the last tab comes the first, and before the first the last.
   press("M-S-Right");
-  await Bun.sleep(300);
-  expect(seen()).toContain(`I am ${siteLead}`);
-  press("M-S-Left");
   await until(() => seen().includes("I am lead") && seen().includes("APP-12"), "app again");
+  press("M-S-Left");
+  await until(() => seen().includes(`I am ${siteLead}`), "site's lead again");
 });
 
 test("a lead on a plugin's host shows through that host from its tab, and comes back once it ends", async () => {
@@ -103,7 +104,7 @@ UPDATE repositories SET lead_host = 'fake', lead_host_id = 'fake-site-lead' WHER
   await ready("lead");
   press("M-S-Right");
   await until(() => seen().includes("I am fake-site-lead on fake"), "site's lead on its host");
-  await until(() => selected() === "◆ lead", "the sidebar on site's lead");
+  await until(() => onLead(), "the sidebar on site's lead");
   const opened = () => asked.filter((one) => one === "open simon/site from a tab").length;
   await until(() => opened() === 1, "the daemon to open site");
   // Once the sidebar has seen the lead run on its host, a lead that ends there is brought back.
@@ -132,22 +133,22 @@ test("a click on a tab switches to its repository", async () => {
 test("several Alt keys typed together all move, and none is typed into the agent", async () => {
   open("lead");
   await ready("lead");
-  type("\x1b[1;3B\x1b[1;3B\x1b[1;3B\x1b[1;3B");
-  await until(() => seen().includes("I am app-12"), "the first thread, past the three entries");
-  await until(() => selected() === "○ 12 APP-12", "the sidebar to follow");
+  type("\x1b[1;3B\x1b[1;3B");
+  await until(() => selected().includes("APP-7"), "the second task");
+  await until(onDetails, "app-7's details");
   await Bun.sleep(300);
   expect(read("lead.typed")).toBe("");
 });
 
-test("Alt-Shift-Right then Alt-Shift-Down twice, typed together, lands on the new repository's thread", async () => {
+test("Alt-Shift-Right then Alt-Shift-Down, typed together, lands on the new repository's task", async () => {
   addSite();
   agent("site-8");
   daemon();
   open("lead");
   await ready("lead");
-  type("\x1b[1;4C\x1b[1;4B\x1b[1;4B");
-  await until(() => seen().includes("I am site-8"), "site-8");
-  await until(() => selected() === "● 8 SITE-8", "the sidebar to follow");
+  type("\x1b[1;4C\x1b[1;4B");
+  await until(() => selected().includes("SITE-8"), "the sidebar on SITE-8");
+  await until(() => right().includes("I am site-8"), "site-8's details");
   expect(seen()).not.toContain("APP-12");
 });
 

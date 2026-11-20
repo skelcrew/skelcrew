@@ -18,6 +18,7 @@ import type { Subprocess } from "bun";
 import { leadPlaces } from "../src/paths.ts";
 import {
   endFakeSessions,
+  fakeHostCommand,
   insideSandbox,
   read,
   source,
@@ -204,7 +205,7 @@ skelcrew: 0.1.0
 about: A session host for tests
 kind: runtime
 provides: [sessions]
-session: [bun, ${JSON.stringify(join(import.meta.dir, "fake-host.ts"))}]
+session: ${JSON.stringify(fakeHostCommand(join(home, ".config", "skelcrew", "plugins", "fake")))}
 attach: ["true"]
 `,
   );

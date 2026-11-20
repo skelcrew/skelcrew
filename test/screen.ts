@@ -13,7 +13,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import { type Labels, startSession } from "../src/agents/sessions.ts";
 import { sidebarWidth } from "../src/screen/screen.ts";
-import { fakePlugin, itemSql, source, threadSql, until as wait } from "./harness.ts";
+import { fakePlugin, source, threadSql, until as wait } from "./harness.ts";
 
 const dbFile = source("db.ts");
 
@@ -124,7 +124,7 @@ export function noteRefreshes(): void {
 }
 
 // How many refreshes the sidebar has started.
-export const refreshesStarted = () => read("refreshes").split("\n").length - 1;
+const refreshesStarted = () => read("refreshes").split("\n").length - 1;
 
 // Returns once the sidebar has started two refreshes from now. The first reads Skelcrew's copy
 // as it is now, and the second starts only once the first has drawn what it read.
@@ -189,7 +189,7 @@ export function startTest(): void {
   terminal = `${agents}-terminal`;
   // app's lead is the one Skelcrew kept from before, as its session is named lead. It has started,
   // so its row names its harness.
-  // The fake plugin is app's tracker and forge, so its sidebar has ISSUES and PRS.
+  // The fake plugin is app's tracker and forge, so its tasks have issues and PRs.
   fakePlugin(home);
   const clone = join(home, ".local", "share", "skelcrew", "repos", "simon", "app");
   mkdirSync(clone, { recursive: true });
@@ -221,36 +221,44 @@ export function endTest(): void {
   rmSync(home, { recursive: true, force: true });
 }
 
-// Moves from the lead to the first thread that runs, past the entries, or to the one after it.
-export const toFirstThread = () => {
-  press("M-S-Down");
-  press("M-S-Down");
-};
-export const toSecondThread = () => {
-  toFirstThread();
-  press("M-Down");
-};
+// Returns whether the right side shows a task's details, which have a line with its stage and
+// word, such as `Building · working`.
+export const onDetails = () =>
+  /^\s*(Backlog|Building|Reviewing|Checks|Ready|Done)( · .*)?$/m.test(right());
 
-// Waits until the screen shows the agent you opened it on, and the sidebar marks its row. The
-// sidebar marks the row of the session it last saw on the right, and can still be on the lead's
-// while a thread already shows, so a key pressed then moves from the lead. A thread's row can
-// show its title, so this tells only the lead's row from a thread's.
+// Presses Enter on the task you are on, once its details show, as only then does your typing go
+// to the sidebar, and waits until its builder takes the right side, named by its row.
+export async function attachTo(name: string): Promise<void> {
+  await until(onDetails, `the details of ${name}`);
+  press("Enter");
+  await until(() => !onDetails() && seen().includes(`I am ${name}`), `${name} attached`);
+}
+
+// Moves from the lead to the first task under Building, app-12, or to the one after it, app-7,
+// and attaches to its builder, so what you type reaches it.
+export async function toFirstThread(): Promise<void> {
+  press("M-S-Down");
+  await attachTo("app-12");
+}
+export async function toSecondThread(): Promise<void> {
+  press("M-S-Down");
+  press("M-Down");
+  await attachTo("app-7");
+}
+
+// Returns whether the row you are on is the lead's, which alone starts with its mark and lead.
+export const onLead = (window = "one") => /^▸ \S lead\b/.test(selected(window));
+
+// Waits until the screen shows the agent you opened it on, and the sidebar has drawn, on the
+// lead's row, where the screen starts whichever agent it opened on.
 export const ready = (name: string, window = "one") =>
-  until(
-    () => {
-      const row = selected(window);
-      return (
-        seen(window).includes(`I am ${name}`) &&
-        row !== "" &&
-        (name === "lead") === row.endsWith(" lead")
-      );
-    },
-    "the screen",
-    window,
-  );
+  until(() => seen(window).includes(`I am ${name}`) && onLead(window), "the screen", window);
+
+// A column of the terminal over the agent's 21st, past the sidebar and the border beside it.
+export const agentColumn = sidebar + 22;
 
 // The wheel, as a terminal sends it, turned up or down over the agent.
-export const wheel = (button: 64 | 65) => type(`\x1b[<${button};60;5M`);
+export const wheel = (button: 64 | 65) => type(`\x1b[<${button};${agentColumn};5M`);
 
 export const scrolledBack = () => tmux(agents, "list-panes", "-a", "-F", "#{pane_in_mode}").out;
 
@@ -258,35 +266,6 @@ export const scrolledBack = () => tmux(agents, "list-panes", "-a", "-F", "#{pane
 // screen fewer than 30 rows high names its own last row.
 export const footer = (row = 29) =>
   (seen().split("\n")[row] ?? "").replace(/ +cpu \d+% {2}mem [\d.]+\/\d+G *$/, "").trimEnd();
-
-// What the footer says under a list or page: the keys you need most and ? keys, then s or m on a
-// row that can be started or merged.
-export const listKeys = "  ⌥↑↓ move  ⌥Q quit  ? keys";
-export const startKeys = `${listKeys}  s start`;
-
-// Puts two open issues and a PR in Skelcrew's copy, as a poll would, with what their pages say.
-export const openOnGitHub = () =>
-  sql(`${itemSql("app", "task", 31, "Add CSV export", "2026-11-05T10:00:00Z", {
-    author: { login: "ana", bot: false, you: false },
-    labels: ["skelcrew"],
-    body: Array.from({ length: 80 }, (_, i) => `line ${i + 1} of the description`).join("\n"),
-  })}
-${itemSql("app", "task", 12, "Fix login", "2026-11-04T10:00:00Z", { author: { login: "ana", bot: false, you: false } })}
-${itemSql("app", "pr", 34, "Bump deps", "2026-11-05T10:00:00Z", {
-  body: "All of them.",
-  branch: "skelcrew/12",
-  checks: [{ name: "test", id: "1", state: "passed" }],
-  reviews: [
-    {
-      id: "1",
-      text: "**Approved.**\n\nFine.",
-      author: { login: "codex", bot: false, you: false },
-      verdict: "commented",
-      lines: [],
-    },
-  ],
-})}
-UPDATE repositories SET open_issues = 2, open_prs = 1;`);
 
 // Stands in for the daemon on the test's own socket: it logs each repository asked to open,
 // saying when a tab asked, which must never open a tab you closed, and answers with nothing to
@@ -330,54 +309,9 @@ export function daemon(): void {
   standIn = createServer(answer).listen(join(home, "run", "skelcrew.sock"));
 }
 
-export const issueUrl = "https://github.com/simon/app/issues/31";
-
-// Clicks a row of the sidebar, found by what it says.
-export function clickRow(text: string): void {
-  const y = seen()
-    .split("\n")
-    .findIndex((line) => line.slice(0, sidebar).includes(text));
-  click(6, y + 1);
-}
 // What the right side shows, without the sidebar.
 export const right = () =>
   seen()
     .split("\n")
     .map((line) => line.slice(sidebar + 1))
     .join("\n");
-// Clicks a row of the list on the right, found by what it says.
-export function clickListRow(text: string): void {
-  const y = right()
-    .split("\n")
-    .findIndex((line) => line.includes(text));
-  click(sidebar + 8, y + 1);
-}
-// Waits for text on the right.
-export const onRight = (text: string) =>
-  until(() => right().includes(text), `the right side to say ${text}`);
-// Opens the screen on the lead with issues and PRs open, and lands on an entry's list.
-export async function openList(entry: "Issues" | "Threads" | "PRs", width = "120"): Promise<void> {
-  openOnGitHub();
-  open("lead", "one", "xterm-256color", width);
-  await ready("lead");
-  await until(() => /Issues +\d/.test(seen()), "the entries");
-  clickRow(entry === "Threads" ? "    Threads" : entry);
-  await onRight("↑↓ move");
-}
-// Opens the issue's page, from its list. The list's pane draws the page, then the sidebar, told
-// by that pane, names it in the strip a moment later, so this waits for both. Otherwise what a
-// test reads first could change on its own while it looks.
-export async function openIssue(width = "120"): Promise<void> {
-  await openList("Issues", width);
-  press("Enter");
-  await onRight("line 1 of the description");
-  await until(() => right().split("\n")[0]?.includes("APP-31") ?? false, "the strip");
-}
-// How many of the processes under the screen's tmux server run a list.
-export const listsRunning = () => {
-  const panes = tmux(screen, "list-panes", "-a", "-F", "#{pane_pid}").out.trim().split("\n");
-  return panes.filter((pid) => {
-    const about = Bun.spawnSync(["ps", "-o", "args=", "-p", pid], { stdout: "pipe" });
-    return about.stdout.toString().includes(" list ");
-  }).length;
-};

@@ -2145,19 +2145,43 @@ exec ${JSON.stringify(Bun.which("tmux") ?? "tmux")} "$@"
 }
 
 // A tmux whose capture of a screen takes 3 seconds, as a busy or stalled tmux server can, which
-// does all else at once.
+// does all else at once. Each slow capture notes its start and end, for slowReadsEnded.
 function slowTmux(): string {
   const bin = join(home, "slow-bin");
   mkdirSync(bin, { recursive: true });
   writeFileSync(
     join(bin, "tmux"),
     `#!/bin/sh
-case "$*" in *"capture-pane -p -e"*) sleep 3 ;; esac
+case "$*" in *"capture-pane -p -e"*)
+  echo >> ${JSON.stringify(join(home, "slow-started"))}
+  sleep 3
+  ${JSON.stringify(Bun.which("tmux") ?? "tmux")} "$@"
+  code=$?
+  echo >> ${JSON.stringify(join(home, "slow-ended"))}
+  exit $code ;;
+esac
 exec ${JSON.stringify(Bun.which("tmux") ?? "tmux")} "$@"
 `,
     { mode: 0o755 },
   );
   return bin;
+}
+
+// How many slow reads slowTmux or slowHost started, or ended, so far.
+const slowReads = (which: "started" | "ended") =>
+  read(join(home, `slow-${which}`)).split("\n").length - 1;
+
+// Reports whether the first `count` slow reads have answered, and no read after them is under
+// way. A test counts the reads started once it has reached a state where the read it cares about
+// was surely asked for, so a read that hasn't begun can't pass for one that ended. A read can't
+// start on its own row while another is under way, so a test counts what started rather than
+// expecting a read of its own.
+const slowReadsDone = (count: number) =>
+  count > 0 && slowReads("ended") >= count && slowReads("ended") === slowReads("started");
+
+// Waits until slowReadsDone, so no read outlives the test that started it.
+async function slowReadsEnded(count: number): Promise<void> {
+  await until(() => slowReadsDone(count), "the slow reads to end");
 }
 
 test("a tmux slow to capture an agent's screen never holds up the keys", async () => {
@@ -2179,7 +2203,8 @@ test("a tmux slow to capture an agent's screen never holds up the keys", async (
   press("Down");
   press("Down");
   await until(() => here().startsWith("▸ ○ APP-9"), "APP-9's row");
-  await Bun.sleep(3500);
+  const reads = slowReads("started");
+  await slowReadsEnded(reads);
 });
 
 // Returns whether no read came for a second, as the live view reads 4 times a second.
@@ -2241,14 +2266,20 @@ test("the list stays quick to move while the live view reads", async () => {
 });
 
 // Puts app-12's builder on a runtime plugin's host whose read of a screen takes 3 seconds, as a
-// host on a slow machine can. Each read gives a screen of its own, so each one is drawn.
+// host on a slow machine can. Each read gives a screen of its own, so each one is drawn, and
+// notes its start and end, for slowReadsEnded.
 function slowHost(): void {
   const plugin = join(home, "plugin-slow");
   mkdirSync(plugin, { recursive: true });
   writeFileSync(
     join(plugin, "session.sh"),
     `read -r question
-case "$question" in *'"read"'*) sleep 3; printf '{"screen":"slow screen %s"}\\n' "$(date +%s%N)" ;; esac
+case "$question" in *'"read"'*)
+  echo >> ${JSON.stringify(join(home, "slow-started"))}
+  sleep 3
+  printf '{"screen":"slow screen %s"}\\n' "$(date +%s%N)"
+  echo >> ${JSON.stringify(join(home, "slow-ended"))} ;;
+esac
 `,
   );
   writeFileSync(
@@ -2272,9 +2303,10 @@ test("a host slow to read an agent's screen never holds up the keys", async () =
   const start = performance.now();
   for (const _ of [1, 2, 3]) press("Down");
   await until(() => here().startsWith("▸ ○ APP-7"), "APP-7's row");
+  const reads = slowReads("started");
   expect(performance.now() - start).toBeLessThan(1000);
   // The read under way ends with the host's answer, which the test waits for, as it started it.
-  await Bun.sleep(3500);
+  await slowReadsEnded(reads);
 });
 
 test("a read that answers after the list left draws nothing over your terminal", async () => {
@@ -2290,7 +2322,10 @@ test("a read that answers after the list left draws nothing over your terminal",
   await until(() => here().startsWith("▸ ● APP-12"), "APP-12's row");
   type("q");
   await until(() => read(join(home, "left")) === "left", "the list to leave");
-  await Bun.sleep(3500);
+  const reads = slowReads("started");
+  // The list would draw the answer the moment it came, so a moment after it is long enough.
+  await slowReadsEnded(reads);
+  await Bun.sleep(300);
   expect(seen()).toContain("Your agents keep running.");
   expect(seen()).not.toContain("q/esc quit");
 });
@@ -2322,7 +2357,8 @@ test("a read under way when you move away and back is dropped, as you moved sinc
   await until(() => screen() !== before, "a newer screen");
   press("Down");
   await until(() => here().startsWith("▸ ● APP-14"), "APP-14's row");
-  await Bun.sleep(3500);
+  const reads = slowReads("started");
+  await slowReadsEnded(reads);
 });
 
 test("a slow read of the row you left never holds up the live view of the row you are on", async () => {
@@ -2334,18 +2370,20 @@ test("a slow read of the row you left never holds up the live view of the row yo
   );
   // Coming back to app-12 starts a read of 3 seconds. app-7, three rows on, is read at once.
   press("Down");
-  const back = performance.now();
   press("Up");
   await until(() => here().startsWith("▸ ● APP-12"), "APP-12's row");
   const start = performance.now();
   for (const _ of [1, 2, 3]) press("Down");
   await until(() => liveSeen().includes("I am app-7"), "app-7's screen");
+  const reads = slowReads("started");
   expect(performance.now() - start).toBeLessThan(1000);
   // When app-12's read answers, app-7's screen stays in sight, never blanked by a screen that
-  // isn't its own. The test watches until well after the answer, which also waits for the read
-  // it started to end.
-  while (performance.now() - back < 4000) {
+  // isn't its own. The test watches until a moment after the answer, which also waits for the
+  // read it started to end.
+  let answered = 0;
+  while (answered === 0 || performance.now() - answered < 300) {
     expect(liveSeen()).toContain("I am app-7");
+    if (answered === 0 && slowReadsDone(reads)) answered = performance.now();
     await Bun.sleep(10);
   }
 });

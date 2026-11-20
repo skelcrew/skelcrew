@@ -28,7 +28,14 @@ import {
 } from "../src/agents/sessions.ts";
 import { deliver, forQuestion, idle, whyBusy } from "../src/agents/transport.ts";
 import type { PluginHost } from "../src/plugins/runtime.ts";
-import { endFakeSessions, homeEnv, source, threadSql, until as wait } from "./harness.ts";
+import {
+  endFakeSessions,
+  fakeHostCommand,
+  homeEnv,
+  source,
+  threadSql,
+  until as wait,
+} from "./harness.ts";
 
 const moment = 100;
 let home = "";
@@ -55,7 +62,7 @@ afterEach(async () => {
 const host = (own: { transport?: boolean; status?: boolean } = {}): PluginHost => ({
   plugin: name,
   folder: home,
-  session: ["bun", join(import.meta.dir, "fake-host.ts")],
+  session: fakeHostCommand(settings()),
   attach: ["true"],
   transport: own.transport ?? false,
   status: own.status ?? false,
@@ -235,7 +242,7 @@ skelcrew: 0.1.0
 about: A session host for tests
 kind: runtime
 provides: [${provides}]
-session: [bun, ${JSON.stringify(join(import.meta.dir, "fake-host.ts"))}]
+session: ${JSON.stringify(fakeHostCommand(join(home, ".config", "skelcrew", "plugins", "fake")))}
 attach: ["true"]
 `,
   );
@@ -701,11 +708,20 @@ for await (const chunk of Bun.stdin.stream()) {
   const said = runWithFakeHost(
     "sessions",
     `const fs = require("node:fs");
-const host = (await builderSession(db, "unused", readThread(db, "app-12"))).host;
+const { host, id } = await builderSession(db, "unused", readThread(db, "app-12"));
 const labels = { repository: "simon/app", role: "builder", task: "app-12" };
 await startSession(host, "app-12", { folder: ${JSON.stringify(home)}, command: [process.execPath, ${JSON.stringify(agent)}], env: { PATH: process.env.PATH }, labels });
 const typed = () => fs.existsSync(${JSON.stringify(received)}) ? fs.readFileSync(${JSON.stringify(received)}, "utf8") : "";
 const row = () => db.query("SELECT COUNT(*) AS n, MAX(pasted) AS pasted FROM messages").get();
+// An agent still starting takes no message, so the first attempt would type nothing at all.
+// The fake host has no screen to read until the agent first draws one.
+const { readSession } = await import(${JSON.stringify(source("agents/sessions.ts"))});
+const prompted = async () => (await readSession(host, id).catch(() => "")).includes(${JSON.stringify(claude.marks.prompt)});
+const deadline = Date.now() + 15_000;
+while (!(await prompted())) {
+  if (Date.now() > deadline) throw new Error("the agent never showed its prompt");
+  await Bun.sleep(20);
+}
 db.run("INSERT INTO messages (folder, sender, text, said, at, typed_in) VALUES ('app-12', 'lead', 'hello', 'hello', 0, '[]')");
 // The host fails the next keys it is asked to press, which is the message's Enter.
 fs.writeFileSync(${JSON.stringify(join(fake, "fail-keys"))}, "");

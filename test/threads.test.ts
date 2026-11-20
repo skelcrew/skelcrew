@@ -14,6 +14,7 @@ import {
   answer,
   asked,
   endFakeSessions,
+  fakeHostCommand,
   fakePlugin,
   git,
   homeEnv,
@@ -220,7 +221,7 @@ skelcrew: 0.1.0
 about: A session host for tests
 kind: runtime
 provides: [${provides}]
-session: [bun, ${JSON.stringify(join(import.meta.dir, "fake-host.ts"))}]
+session: ${JSON.stringify(fakeHostCommand(join(home, ".config", "skelcrew", "plugins", "fake")))}
 attach: ["true"]
 `,
   );
@@ -721,6 +722,7 @@ c.on("data", (d) => process.stdout.write(d));`;
     );
     // Opened before, so the daemon starts app's lead as it starts.
     const db = new Database(join(data(), "skelcrew.db"));
+    db.run("PRAGMA busy_timeout = 5000");
     db.run("UPDATE repositories SET opened = 1");
     db.close();
     serve();
@@ -758,6 +760,7 @@ c.on("data", (d) => process.stdout.write(d));`;
     mkdirSync(victim, { recursive: true });
     writeFileSync(join(victim, "keep"), "mine\n");
     const db = new Database(join(data(), "skelcrew.db"));
+    db.run("PRAGMA busy_timeout = 5000");
     db.run(threadSql({ task: "12", folder: "../victim", status: "failed" }));
     db.close();
     serve();
@@ -783,6 +786,7 @@ c.on("data", (d) => process.stdout.write(d));`;
     addApp();
     // Opened before, so the daemon starts app's lead, whose socket the stop comes from.
     const db = new Database(join(data(), "skelcrew.db"));
+    db.run("PRAGMA busy_timeout = 5000");
     db.run("UPDATE repositories SET opened = 1");
     db.close();
     const first = serve();
@@ -902,6 +906,7 @@ c.on("data", (d) => process.stdout.write(d));`;
     expect((await skel("needs-you", "app-12", "check the design")).err).toBe("");
     await stop(first);
     const db = new Database(join(data(), "skelcrew.db"));
+    db.run("PRAGMA busy_timeout = 5000");
     db.run("DELETE FROM plugins WHERE name = 'fake'");
     db.close();
     const second = serve();
@@ -1005,6 +1010,7 @@ nameRepositories(db);`;
     const session = String(thread().session);
     await stop(first);
     const db = new Database(join(data(), "skelcrew.db"));
+    db.run("PRAGMA busy_timeout = 5000");
     const updates = [{ from: "lead", at: Date.UTC(2026, 10, 16, 9, 30), text: "Keep CSV too." }];
     db.run("UPDATE tasks SET updates = ?", [JSON.stringify(updates)]);
     db.close();
@@ -1244,6 +1250,7 @@ nameRepositories(db);`;
     expect(issue.err).toBe("");
     expect(issue.out).toBe("Started APP-12.\n");
     const db = new Database(join(data(), "skelcrew.db"));
+    db.run("PRAGMA busy_timeout = 5000");
     const shorts = db.query("SELECT task, short FROM tasks ORDER BY task").all();
     db.close();
     expect(shorts).toEqual([
