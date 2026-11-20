@@ -49,6 +49,10 @@ test("Codex's input box and footer are cut, idle, at work or with a long message
   const long = agentOutput("codex", await screen("codex-long.txt"));
   expect(bottom(long, 1)).toEqual(["• Working (42s • esc to interrupt)"]);
   expect(long).not.toContain("every file in src");
+  // A message with a blank line in it is cut whole, its lines after the blank one too.
+  const paragraphs = agentOutput("codex", await screen("codex-blank.txt"));
+  expect(bottom(paragraphs, 1)).toEqual(["• Working (42s • esc to interrupt)"]);
+  expect(paragraphs).not.toContain("what a builder is");
   // A box whose empty prompt says other words is still found by its shape.
   const reworded = (await screen("codex-idle.txt")).replace("Ask Codex to do anything", "Ask away");
   expect(bottom(agentOutput("codex", reworded), 1)).toEqual(["• Edited src/api/limit.ts (+12 -0)"]);
