@@ -70,22 +70,57 @@ function flagFailedReviews(db: Database): void {
   db.run(`UPDATE threads SET review_failed = 1, needs_you = 0 WHERE needs_you = 1 AND ${where}`);
 }
 
-// Counts the wait an armed merge last saved as heard by the lead in the round it last noted, once,
-// as the column that keeps the waits heard is added. The release before kept only that round,
-// and its note was about the wait it saved then, so without this the lead hears it again.
+// Saves which wait the lead heard of each armed merge in the round it was last noted, once, as
+// the column that keeps the waits heard is added. The release before kept only that round, and
+// went on saving new waits after its note, so the wait saved now may be one the lead never heard.
+// The thread's log has the thread as it was at each change: the wait it held when the round was
+// first saved is the one the note was about. Without a log, nothing counts as heard, as the lead
+// hearing a wait twice beats never hearing of it.
 function fillMergeNoted(db: Database): void {
   const armed = db
-    .query("SELECT rowid, merge_waits FROM threads WHERE merge_noted IS NOT NULL")
+    .query("SELECT rowid, folder, merge_noted FROM threads WHERE merge_noted IS NOT NULL")
     .all();
-  const rows = z.array(z.object({ rowid: z.number(), merge_waits: z.string().nullable() }));
+  const rows = z.array(
+    z.object({ rowid: z.number(), folder: z.string(), merge_noted: z.number() }),
+  );
   for (const row of rows.parse(armed)) {
-    const heard = row.merge_waits === null ? null : stuckWait(row.merge_waits);
+    const heard = heardInLog(row.folder, row.merge_noted);
     if (heard !== null)
       db.run("UPDATE threads SET merge_noted_for = ? WHERE rowid = ?", [
         JSON.stringify([heard]),
         row.rowid,
       ]);
   }
+}
+
+// Returns how the wait the lead last heard of in `round` starts, from the thread's log, or null
+// when the log doesn't say or it was a wait that needs nobody.
+function heardInLog(folder: string, round: number): string | null {
+  let text: string;
+  try {
+    text = readFileSync(join(threadsDir(), `${folder}.log`), "utf8");
+  } catch {
+    return null;
+  }
+  // Each line is the thread as it was then. A line cut short by a crash is skipped. The round
+  // can be saved, cleared by a plan armed again, and saved again, so the last time it was
+  // saved counts.
+  const Line = z.object({ merge_noted: z.number().nullable(), merge_waits: z.string().nullable() });
+  let heard: string | null = null;
+  let before: number | null = null;
+  for (const line of text.split("\n")) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    const thread = Line.safeParse(parsed);
+    if (!thread.success) continue;
+    if (thread.data.merge_noted === round && before !== round) heard = thread.data.merge_waits;
+    before = thread.data.merge_noted;
+  }
+  return heard === null ? null : stuckWait(heard);
 }
 
 // A thread's own columns past the first few: what belongs to its agent. `submitted` is whether

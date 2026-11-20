@@ -777,42 +777,77 @@ console.log(JSON.stringify({ ...db.query("SELECT issue_link, closes FROM tasks")
   );
 });
 
-// A merge armed before Skelcrew kept which waits the lead heard in a round kept only the round.
-// The wait it last saved is the one the lead heard, so the upgrade counts it as heard, and the
-// lead isn't told it again in that round.
-test("an armed merge the lead heard about before the upgrade isn't noted again in that round", () => {
+// A merge armed before Skelcrew kept which waits the lead heard in a round kept only the round,
+// and went on saving new waits after its note. The thread's log says which wait the note was
+// about, so the upgrade counts only that one as heard: the lead isn't told it twice, and still
+// hears of a wait that came after.
+test("an armed merge noted before the upgrade counts only the wait its log shows the lead heard", () => {
   const data = join(home, ".local", "share", "skelcrew");
-  mkdirSync(data, { recursive: true });
-  const code = `import { Database } from "bun:sqlite";
-import { openDb } from ${JSON.stringify(source("db.ts"))};
+  const threads = join(data, "threads");
+  mkdirSync(threads, { recursive: true });
+  const conflict = "its conflict with main to be fixed";
+  // Each line of a thread's log is the thread as it was then.
+  const logged = (folder: string, states: [number | null, string | null][]) =>
+    writeFileSync(
+      join(threads, `${folder}.log`),
+      `${states.map(([noted, waits]) => JSON.stringify({ merge_noted: noted, merge_waits: waits })).join("\n")}\n{"cut short`,
+    );
+  // app-12's lead heard of the conflict in round 2.
+  logged("app-12", [
+    [null, null],
+    [null, conflict],
+    [2, conflict],
+  ]);
+  // app-13's lead heard it waited on an approval, and the conflict came later in the round.
+  logged("app-13", [
+    [null, "an approval"],
+    [2, "an approval"],
+    [2, conflict],
+  ]);
+  // app-14's conflict was heard in round 1, then cleared by a plan armed again, and its new
+  // plan's note in round 2 was about failing checks.
+  logged("app-14", [
+    [1, conflict],
+    [null, null],
+    [2, "its failing checks to be fixed"],
+    [2, conflict],
+  ]);
+  // app-15 has no log.
+  const armed = (task: string) =>
+    threadSql({
+      task,
+      status: "waiting",
+      review_round: 2,
+      merge_plan: "armed",
+      merge_noted: 2,
+      merge_waits: conflict,
+    });
+  const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
 import { readThread } from ${JSON.stringify(source("flow/thread.ts"))};
 import { mergeNoteFor } from ${JSON.stringify(source("flow/decide.ts"))};
-const path = process.argv[1];
 // The earlier release's database: the same, without the new column.
 const old = openDb();
 old.run(\`INSERT INTO repositories (name, owner, repo) VALUES ('app', 'simon', 'app');
-${threadSql({ task: "12", status: "waiting", review_round: 2, merge_plan: "armed", merge_noted: 2, merge_waits: "its conflict with main to be fixed" })}
-${threadSql({ task: "13", status: "waiting", review_round: 2, merge_plan: "armed", merge_noted: 1, merge_waits: "its failing checks to be fixed" })}\`);
+${["12", "13", "14", "15"].map(armed).join("\n")}\`);
 old.run("DROP VIEW task_threads");
 old.run("ALTER TABLE threads DROP COLUMN merge_noted_for");
 old.close();
 const db = openDb();
-const heard = readThread(db, "app-12");
-const earlier = readThread(db, "app-13");
-console.log(JSON.stringify({
-  heard: heard.merge_noted_for,
-  again: mergeNoteFor(heard, heard.merge_waits),
-  earlier: mergeNoteFor(earlier, earlier.merge_waits),
-}));`;
-  const run = Bun.spawnSync([process.execPath, "-e", code, join(data, "skelcrew.db")], {
+const said = Object.fromEntries(["app-12", "app-13", "app-14", "app-15"].map((folder) => {
+  const thread = readThread(db, folder);
+  return [folder, mergeNoteFor(thread, thread.merge_waits)];
+}));
+console.log(JSON.stringify(said));`;
+  const run = Bun.spawnSync([process.execPath, "-e", code], {
     env: { ...process.env, HOME: home },
     stdout: "pipe",
     stderr: "pipe",
   });
   expect(run.stderr.toString()).toBe("");
   expect(JSON.parse(run.stdout.toString())).toEqual({
-    heard: ["its conflict with"],
-    again: null,
-    earlier: "its failing checks",
+    "app-12": null,
+    "app-13": "its conflict with",
+    "app-14": "its conflict with",
+    "app-15": "its conflict with",
   });
 });
