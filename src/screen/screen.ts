@@ -33,14 +33,15 @@ const config = [
   // All of tmux's own keys go: its default mouse keys pull a drag or the wheel into copy mode,
   // which would swallow your typing, and its prefix belongs to the agents' server. Alt-Q
   // here, not there, leaves the whole screen. Ctrl-Q does too, though nothing shows it, for a
-  // Mac terminal that doesn't send Option as Alt. So does Ctrl-\, the agents' server's key to
-  // detach: left to reach it, it would detach the agent's pane and leave it empty.
+  // Mac terminal that doesn't send Option as Alt. Ctrl-\ does nothing here: it only leaves an
+  // agent opened alone, back to where you came from. It stays bound, to an empty command, as
+  // left to reach the agents' server it would detach the agent's pane and leave it empty.
   ["set", "-g", "prefix", "None"],
   ["set", "-g", "prefix2", "None"],
   ["unbind", "-a", "-T", "root"],
   ["bind", "-n", "M-q", "detach-client"],
   ["bind", "-n", "C-q", "detach-client"],
-  ["bind", "-n", "C-\\", "detach-client"],
+  ["bind", "-n", "C-\\", ""],
   // Keys that arrive faster than a millisecond apart are taken for a paste, and tmux then hands
   // them to the pane you type to rather than act on them. Several Alt keys in one read, as fast
   // typing, key repeat or a slow link bring, would lose all but the first two, and type the rest

@@ -313,6 +313,7 @@ test("other typing on a list or page goes nowhere, and the agent never gets it",
   type("not for anyone\r");
   press("C-c");
   press("C-z");
+  press("C-\\");
   await Bun.sleep(300);
   expect(right()).toBe(before);
   press("M-S-Up");

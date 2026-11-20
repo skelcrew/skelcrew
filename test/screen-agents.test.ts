@@ -174,15 +174,18 @@ test("Ctrl-Q still leaves, though nothing shows it", async () => {
   await until(() => seen().includes(leaving), "the line that says what happened");
 });
 
-// Ctrl-\ is the agents' server's key to detach. Were it to reach that server, it would detach the
-// agent's pane and leave it empty, so the screen takes it and leaves, as it does on herdr.
-test("Ctrl-\\ leaves the whole screen too, and ends no agent", async () => {
+// Ctrl-\ only leaves an agent opened alone. Were it to reach the agents' server, it would detach
+// the agent's pane and leave it empty, so the screen takes it and does nothing.
+test("Ctrl-\\ leaves neither the screen nor the agent", async () => {
   open("lead");
   await ready("lead");
   press("C-\\");
-  await until(() => existsSync(join(home, "left-one")), "Skelcrew to return");
-  await until(() => seen().includes(leaving), "the line that says what happened");
-  expect(tmux(agents, "has-session", "-t", "=lead").ok).toBe(true);
+  await Bun.sleep(300);
+  expect(existsSync(join(home, "left-one"))).toBe(false);
+  expect(seen()).toContain("I am lead");
+  expect(tmux(agents, "list-clients", "-F", "#{client_tty}").out).not.toBe("");
+  type("hello\r");
+  await until(() => existsSync(join(home, "lead.typed")), "the typing");
 });
 
 // Replaces the lead with an agent that asks for extended keys, says its name, and logs every

@@ -38,7 +38,7 @@ It sends your settings and plugins there and sets the machine up. Then `sc --rem
 | `sc` | Opens the lead of the repository you are in. |
 | `sc init` | Writes `skelcrew.yaml` and `.agents/` from the built-in defaults in a checkout, and adds the repository. |
 | `sc ps` | Lists threads, with their status and which need you. |
-| `sc attach <thread>` | Opens a thread's builder. Ctrl-Q detaches. |
+| `sc attach <thread>` | Opens a thread's builder. Ctrl-\\ detaches. |
 | `sc stop <thread>` | Ends a thread and keeps its branch and PR. |
 | `sc --remote <host> install` | Sets up a server to run Skelcrew, with your settings and plugins. |
 | `sc --remote <host>` | Connects to Skelcrew on that server. |
