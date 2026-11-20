@@ -362,7 +362,8 @@ describe.skipIf(insideSandbox)("sc submit", () => {
       reviewed_by: "codex",
       verdict: "changes",
       review_line: "The export has no test.",
-      review_findings: ["\n  The export has no test.\n\nMore detail here."],
+      // The reviewer's findings are trimmed as Skelcrew reads them.
+      review_findings: ["The export has no test.\n\nMore detail here."],
     });
     expect(lines.at(-1)).toMatchObject({
       title: "Add export",
