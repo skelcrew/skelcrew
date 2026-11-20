@@ -129,6 +129,19 @@ export async function runSidebar(
   let tabs = repositoryTabs(db, roundLimit);
   const rightPane = `=${session}:.1`;
   let tty = paneTty(agents, rightPane);
+  // The lead the right pane comes back to, as leadAttach was when it started, and the builder on
+  // a plugin's host whose attach it runs, if any. No tmux client names that builder, and its
+  // host's list can leave it out for a moment, so it shows until its attach says it ended.
+  let paneLead = leadAttach;
+  let builderOnHost: string | null = null;
+  // Runs `command` in the right pane in place of what ran there, for `builder` when it is the
+  // attach to a builder on a plugin's host.
+  const respawnRight = (command: string[], builder: string | null = null) => {
+    respawnPane(agents, rightPane, command);
+    tty = paneTty(agents, rightPane);
+    paneLead = leadAttach;
+    builderOnHost = builder;
+  };
   let rows: Row[] = [];
   let entries: EntryCount[] = [];
   // What is on the right: a session, or an entry's place while its list or a page from it shows.
@@ -188,30 +201,23 @@ export async function runSidebar(
     rows = doing("reading the rows", () => sidebarRows(db, running, roundLimit, Date.now(), open));
     entries = doing("counting the lists", () => entryCounts(db, open));
     // An agent can end and its client move to the lead by itself, so the session shown is asked
-    // of tmux, unless a list shows. With no client on the right, an agent on a plugin's host
-    // shows, which no tmux client names, or the lead does. So while the agent shown still runs,
-    // it stays. Once it has ended, the right side came back to the lead, or waits for it, such
-    // as after a builder ended while its lead was gone.
+    // of tmux, unless a list shows. With no client on the right, a builder on a plugin's host
+    // shows until its attach ends, or the lead does. A tmux agent shown that still runs is
+    // attaching, and stays. Once it has ended, the right side came back to the lead, or waits
+    // for it, such as after a builder ended while its lead was gone.
     if (!isEntry(shown)) {
       const client = doing("asking tmux which agent shows", () => shownSession(agents, tty));
       if (client) shown = client;
-      else if (shown === null || !running.includes(shown)) shown = open.lead;
+      else if (shown === null || (shown !== builderOnHost && !running.includes(shown)))
+        shown = open.lead;
     }
     // A lead that moved to or from a plugin's host, or to another session on it, is shown
-    // through its host now. This comes once the sidebar knows what the right side shows, as at
-    // the first look it doesn't yet, and the lead may have moved since the screen started it.
-    const lead = doing("reading the lead's host", () => leadOnHost(db, open));
-    // An agent shown in place of the lead comes back to the lead once it ends, so it is attached
-    // again too, to come back to where the lead is now.
-    if (lead !== leadAttach) {
-      leadAttach = lead;
-      if (shown !== null && !isEntry(shown)) {
-        const onHost = hosted.get(shown);
-        const builder = onHost !== undefined && shown !== open.lead;
-        respawnPane(agents, rightPane, builder ? hostThenLead(shown, onHost) : paneOn(shown));
-        tty = paneTty(agents, rightPane);
-      }
-    }
+    // through its host now, once the right side shows the lead. An agent shown in its place is
+    // left alone, as restarting it would cut off what you type, and the right side comes back
+    // to where the lead is now once it ends. This comes once the sidebar knows what the right
+    // side shows, as at the first look it doesn't yet.
+    leadAttach = doing("reading the lead's host", () => leadOnHost(db, open));
+    if (shown === open.lead && paneLead !== leadAttach) respawnRight(paneOn(open.lead));
     // A lead that crashed while you look at it is brought back with its conversation, once,
     // as the daemon does at its start. One you exited closes its tab instead.
     if (running.includes(open.lead)) asked = null;
@@ -275,19 +281,15 @@ export async function runSidebar(
     const entry = entries.find((candidate) => entryPlace(candidate.entry) === next);
     const fullName = `${open.owner}/${open.repo}`;
     const onHost = next === open.lead ? undefined : hosted.get(next);
-    if (entry)
-      respawnPane(agents, rightPane, paneCommand(agents, session, entry.entry, where, fullName));
-    else if (onHost !== undefined) {
-      respawnPane(agents, rightPane, hostThenLead(next, onHost));
-      tty = paneTty(agents, rightPane);
-    } else if (
+    if (entry) respawnRight(paneCommand(agents, session, entry.entry, where, fullName));
+    else if (onHost !== undefined) respawnRight(hostThenLead(next, onHost), next);
+    else if (
       isEntry(shown) ||
       shownSession(agents, tty) === null ||
       (next === open.lead && leadAttach !== null)
-    ) {
-      respawnPane(agents, rightPane, paneOn(next));
-      tty = paneTty(agents, rightPane);
-    } else showSession(agents, tty, next);
+    )
+      respawnRight(paneOn(next));
+    else showSession(agents, tty, next);
     page = null;
     shown = next;
   };
@@ -302,8 +304,7 @@ export async function runSidebar(
     // its own host, and no list shows.
     openRepository(fullName, true);
     asked = open.lead;
-    respawnPane(agents, rightPane, paneOn(open.lead));
-    tty = paneTty(agents, rightPane);
+    respawnRight(paneOn(open.lead));
     page = null;
     shown = open.lead;
   }
@@ -323,7 +324,10 @@ export async function runSidebar(
       if (said === "skel-back") {
         // A builder's attach on a plugin's host ended, and the lead shows in its place. One you
         // already moved away from changes nothing.
-        if (shown === about) shown = open.lead;
+        if (shown === about && builderOnHost === about) {
+          shown = open.lead;
+          builderOnHost = null;
+        }
       } else if (said === "skel-page") {
         // The list on the right opened a page, or went back from one.
         page = about ? pageRow(db, open, about) : null;

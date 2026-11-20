@@ -367,6 +367,50 @@ UPDATE repositories SET lead_host = 'fake', lead_host_id = 'fake-lead-1' WHERE r
   await until(() => right().includes("I am fake-lead-2 on fake"), "the lead where it went");
 });
 
+// A builder on a plugin's host shows on the right until its attach ends, whatever the host's list
+// says meanwhile: a list can leave it out for a moment. A lead that moves on its host meanwhile
+// never restarts the builder's attach, which would cut off what you type. Once the attach ends,
+// the right side shows the lead where it went.
+test("a builder on a plugin's host stays until its attach ends, and a lead that moves leaves it be", async () => {
+  tmux(agents, "kill-session", "-t", "=lead");
+  tmux(agents, "kill-session", "-t", "=app-12");
+  const plugin = join(home, "plugin-fake");
+  mkdirSync(plugin, { recursive: true });
+  writeFileSync(
+    join(plugin, "session.sh"),
+    `read -r question; echo >> listed; builder=',{"id":"fake-app-12","running":true,"labels":null}'; [ -e omit ] && builder=; echo "{\\"sessions\\":[{\\"id\\":\\"fake-lead-1\\",\\"running\\":true,\\"labels\\":null},{\\"id\\":\\"fake-lead-2\\",\\"running\\":true,\\"labels\\":null}$builder]}"\n`,
+  );
+  // The builder's attach counts its starts and ends at Enter, the lead's never ends.
+  writeFileSync(
+    join(plugin, "attach.sh"),
+    'echo "I am $1 on fake"; [ "$1" = fake-app-12 ] || exec sleep 300; echo >> builder; read -r line\n',
+  );
+  writeFileSync(
+    join(plugin, "skelcrew-plugin.yaml"),
+    "name: fake\nversion: 0.1.0\nskelcrew: 0.1.0\nabout: A host\nkind: runtime\nprovides: [sessions]\nsession: [sh, session.sh]\nattach: [sh, attach.sh]\n",
+  );
+  sql(`INSERT INTO plugins (name, folder) VALUES ('fake', '${plugin}');
+UPDATE repositories SET lead_host = 'fake', lead_host_id = 'fake-lead-1' WHERE repo = 'app';
+UPDATE threads SET host = 'fake', host_id = 'fake-app-12' WHERE folder = 'app-12'`);
+  open("lead");
+  await until(() => seen().includes("I am fake-lead-1 on fake"), "the lead through its host");
+  const looks = () => read(join("plugin-fake", "listed")).split("\n").length;
+  await until(() => looks() > 2, "the sidebar to ask the host");
+  toFirstThread();
+  await until(() => seen().includes("I am fake-app-12 on fake"), "the builder's attach");
+  await until(() => selected().includes("app-12"), "the sidebar to follow");
+  writeFileSync(join(plugin, "omit"), "");
+  sql("UPDATE repositories SET lead_host_id = 'fake-lead-2' WHERE repo = 'app'");
+  const omitted = looks();
+  await until(() => looks() > omitted + 2, "the sidebar to ask the host again");
+  await Bun.sleep(1200);
+  expect(selected()).toContain("app-12");
+  expect(read(join("plugin-fake", "builder"))).toBe("\n");
+  type("\r");
+  await until(() => right().includes("I am fake-lead-2 on fake"), "the lead where it went");
+  await until(() => selected() === "◆ lead", "the lead's row");
+});
+
 test("a screen opened on an agent starts on it, marked in the sidebar", async () => {
   open("app-7");
   await ready("app-7");
