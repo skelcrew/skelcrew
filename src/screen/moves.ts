@@ -2,17 +2,17 @@
 // or the row at a line. It reads nothing, so it can be tested without a terminal.
 import { entryPlace, layout, type Size } from "./layout.ts";
 import type { EntryCount } from "./lists.ts";
-import type { Row } from "./rows.ts";
+import { type Row, waitsOnYou } from "./rows.ts";
 
 // A row you can move to, by its place: a session, or an entry's place. `open` says whether
 // anything could show on the right.
 type Stop = { place: string; open: boolean };
 
 // Returns what you can move to, part by part, top to bottom: the lead, the entries, then every
-// thread, as ACTIVE scrolls to keep you in view. The entries count only while the sidebar has
-// room to show them.
+// thread under Needs you, then every one under Active, as the threads scroll to keep you in
+// view. The entries count only while the sidebar has room to show them.
 function stops(rows: Row[], entries: EntryCount[], shown: string | null, size: Size): Stop[][] {
-  // The lead and every row of ACTIVE are stops, open only while their agent runs. The lead has
+  // The lead and every thread are stops, open only while their agent runs. The lead has
   // no status of its own. An entry always has its list to show.
   const lines = layout(rows, entries, shown, size);
   const seen = entries
@@ -22,7 +22,8 @@ function stops(rows: Row[], entries: EntryCount[], shown: string | null, size: S
   return [
     rows.filter((row) => row.status === null).map(stop),
     seen.map((place) => ({ place, open: true })),
-    rows.filter((row) => row.status !== null).map(stop),
+    rows.filter(waitsOnYou).map(stop),
+    rows.filter((row) => row.status !== null && !waitsOnYou(row)).map(stop),
   ];
 }
 
@@ -47,8 +48,8 @@ export function nextRow(
 }
 
 // Returns the first row of the part before or after the one you are in, for Alt-Shift-Up and
-// Alt-Shift-Down: the lead, the entries or ACTIVE. It returns null past the first and last. A
-// part with nothing to land on is passed over.
+// Alt-Shift-Down: the lead, the entries, Needs you or Active. It returns null past the first and
+// last. A part with nothing to land on is passed over.
 export function nextList(
   rows: Row[],
   entries: EntryCount[],

@@ -4,7 +4,7 @@
 import type { TaskView } from "../flow/list.ts";
 import { bright, fitted, green, grey, markColours, paint, red, yellow } from "../screen/look.ts";
 import type { Details } from "./details.ts";
-import { stageNames } from "./layout.ts";
+import { sectionNames } from "./layout.ts";
 import type { Row } from "./rows.ts";
 
 // The live view's part of the pane: the agent's screen as its session host gave it, colours
@@ -124,7 +124,7 @@ function detailLines(row: Row, details: Details, width: number, tight = 0): stri
   });
   // The stage and the row's word, in its colour, such as `Building · question`, or cut without
   // its colours when too wide.
-  const stage = row.part === "lead" ? "" : stageNames[row.part];
+  const stage = row.part === "lead" ? "" : sectionNames[row.part];
   const word = row.says ? ` · ${row.says}` : "";
   const staged =
     Bun.stringWidth(`${stage}${word}`) <= width
