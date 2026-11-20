@@ -681,7 +681,7 @@ export async function initRepo(sessions: string): Promise<boolean> {
   const file = join(root, "skelcrew.yaml");
   const hasConfig = lstatSync(file, { throwIfNoEntry: false }) !== undefined;
   // Read before anything is written: changes of yours to a file sc init edits would ride along in
-  // the commit it offers, so they keep it from offering.
+  // the commit it offers, so they keep it from offering. Only the files it then wrote count.
   const yours = gitIn(root, ["status", "--porcelain", "--", "skelcrew.yaml", "skelcrew.lock"]);
   const dirty = yours.said
     .split("\n")
@@ -741,7 +741,9 @@ export async function initRepo(sessions: string): Promise<boolean> {
   if (wrote.length === 0) return false;
   const many = wrote.length > 1;
   console.log(`\nWrote ${wrote.slice(0, -1).join(", ")}${many ? " and " : ""}${wrote.at(-1)}.`);
-  return added !== undefined && (await offerPush(openDb(), root, wrote, dirty, added));
+  // A file of yours that sc init left as it was stays out of its commit, changes and all.
+  const touched = dirty.filter((path) => wrote.includes(path));
+  return added !== undefined && (await offerPush(openDb(), root, wrote, touched, added));
 }
 
 // Runs git in the checkout at `root` and returns whether it worked, with what it said.

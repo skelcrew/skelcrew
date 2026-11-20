@@ -1207,6 +1207,25 @@ test("init with other changes staged asks nothing and leaves the commit to you",
   expect(git(checkout, "status", "--porcelain")).toBe("A  notes.txt\n");
 });
 
+// A file of yours sc init doesn't change stays out of its commit, so its changes don't keep the
+// offer away.
+test("init offers its commit when only a file it left alone has changes of yours", async () => {
+  const checkout = onGitHub("simon/app", "WRITE");
+  githubInstalledAsYours();
+  const config = "plugins:\n  - skelcrew/skelcrew-github\n";
+  writeFileSync(join(checkout, "skelcrew.yaml"), config);
+  git(checkout, "add", "skelcrew.yaml");
+  git(checkout, "commit", "-q", "-m", "config");
+  git(checkout, "push", "-q", join(home, "github", "simon", "app.git"), "main");
+  writeFileSync(join(checkout, "skelcrew.yaml"), `${config}setup: [make]\n`);
+  const run = await initAtTerminal(checkout, "y\n");
+  expect(run.code).toBe(0);
+  expect(run.out).toContain(
+    "Wrote .agents/.\nCommit and push these files to main now? [Y/n] Pushed them to main.\n",
+  );
+  expect(git(checkout, "status", "--porcelain")).toBe(" M skelcrew.yaml\n");
+});
+
 // The push would send every commit the branch has that the remote doesn't, so commits of yours
 // not pushed yet keep the offer away.
 test("init asks nothing while the default branch has commits not on the remote", async () => {
