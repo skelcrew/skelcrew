@@ -533,48 +533,60 @@ function usageLimit(error: string, now: number): { reset: number | null } | null
 // starts with •. Anything else shows whole, as a wrong cut could hide the agent's output.
 function inputStart(screen: string[]): number | null {
   const lines = screen.map((line) => Bun.stripANSI(line));
+  const looks = styles(screen);
+  const shaded = (at: number) => looks[at]?.shaded ?? false;
   const blank = (line: string | undefined) => line !== undefined && line.trim() === "";
   // A line of the box with nothing on it but its shade.
-  const padding = (at: number) => blank(lines[at]) && styled(screen[at] ?? "").shaded;
+  const padding = (at: number) => blank(lines[at]) && shaded(at);
   const at = lines.findLastIndex((line) => line.startsWith("›"));
-  if (at < 1 || !styled(screen[at] ?? "").shaded || !padding(at - 1)) return null;
+  if (at < 1 || !shaded(at) || !padding(at - 1)) return null;
   if (lines.slice(at + 1).some((line) => line.startsWith("•"))) return null;
   // The box goes on while its lines are shaded, through what is typed, blank lines in it
   // included, and ends with a shaded blank line.
   let end = at + 1;
-  while (end < screen.length && styled(screen[end] ?? "").shaded) end++;
+  while (end < screen.length && shaded(end)) end++;
   if (end - 1 === at || !padding(end - 1)) return null;
-  const footer = screen.slice(end).filter((line) => !blank(Bun.stripANSI(line)));
-  const dim = footer.every((line) => line.startsWith("  ") && styled(line).dim);
+  const footer = lines.flatMap((line, i) => (i >= end && !blank(line) ? [i] : []));
+  const dim = footer.every((i) => lines[i]?.startsWith("  ") && looks[i]?.dim);
   return footer.length >= 1 && footer.length <= 2 && dim ? at - 1 : null;
 }
 
-// Returns how a line of a screen is styled: whether it sets a background colour anywhere, as
-// Codex's input box has, and whether all its text is dim, as its footer is. A colour from a
-// palette or in red, green and blue takes numbers of its own after 38, 48 or 58, such as 38;5;2
-// for a foreground, so those are skipped rather than read as codes of their own.
-function styled(line: string): { shaded: boolean; dim: boolean } {
-  let shaded = false;
-  let dim = true;
-  let dimNow = false;
+// Returns how each line of a screen is styled: whether a background colour shows on it, as on
+// Codex's input box, and whether all its text is dim, as its footer is. A style set on one line
+// goes on over the lines after it until reset, as a terminal shows it, and tmux can capture a
+// screen that way. A colour from a palette or in red, green and blue takes numbers of its own
+// after 38, 48 or 58, such as 38;5;2 for a foreground, so those are skipped rather than read as
+// codes of their own.
+function styles(screen: string[]): { shaded: boolean; dim: boolean }[] {
   const esc = "\x1b";
-  for (const part of line.split(new RegExp(`(${esc}\\[[0-9;:]*m)`))) {
-    const sgr = new RegExp(`^${esc}\\[([0-9;:]*)m$`).exec(part);
-    if (!sgr) {
-      // Text shown while dim is off makes the line not dim, spaces aside.
-      if (part.trim() !== "" && !dimNow) dim = false;
-      continue;
+  // The background and dimness set now, carried from line to line.
+  let background = false;
+  let dimNow = false;
+  return screen.map((line) => {
+    let shaded = background;
+    let dim = true;
+    for (const part of line.split(new RegExp(`(${esc}\\[[0-9;:]*m)`))) {
+      const sgr = new RegExp(`^${esc}\\[([0-9;:]*)m$`).exec(part);
+      if (!sgr) {
+        // Text shown while dim is off makes the line not dim, spaces aside.
+        if (part.trim() !== "" && !dimNow) dim = false;
+        continue;
+      }
+      const numbers = (sgr[1] ?? "").split(/[;:]/).map(Number);
+      for (let at = 0; at < numbers.length; at++) {
+        const code = numbers[at] ?? 0;
+        if (code === 48 || (code >= 40 && code <= 47) || (code >= 100 && code <= 107)) {
+          background = true;
+          shaded = true;
+        }
+        if (code === 0 || code === 49) background = false;
+        if (code === 2) dimNow = true;
+        if (code === 0 || code === 22) dimNow = false;
+        if (code === 38 || code === 48 || code === 58) at += numbers[at + 1] === 2 ? 4 : 2;
+      }
     }
-    const numbers = (sgr[1] ?? "").split(/[;:]/).map(Number);
-    for (let at = 0; at < numbers.length; at++) {
-      const code = numbers[at] ?? 0;
-      if (code === 48 || (code >= 40 && code <= 47) || (code >= 100 && code <= 107)) shaded = true;
-      if (code === 2) dimNow = true;
-      if (code === 0 || code === 22) dimNow = false;
-      if (code === 38 || code === 48 || code === 58) at += numbers[at + 1] === 2 ? 4 : 2;
-    }
-  }
-  return { shaded, dim };
+    return { shaded, dim };
+  });
 }
 
 // Codex as Skelcrew knows it. While a turn runs it shows "esc to interrupt". Its empty input

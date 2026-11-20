@@ -53,6 +53,20 @@ test("Codex's input box and footer are cut, idle, at work or with a long message
   const paragraphs = agentOutput("codex", await screen("codex-blank.txt"));
   expect(bottom(paragraphs, 1)).toEqual(["• Working (42s • esc to interrupt)"]);
   expect(paragraphs).not.toContain("what a builder is");
+  // tmux can set the box's shade once and carry it over the lines after, as a terminal shows it.
+  const once = [
+    "• Done.",
+    "",
+    "\x1b[48;5;236m                    ",
+    "› Ask Codex to do anything",
+    "                    \x1b[49m",
+    "",
+    "  \x1b[2m100% context left\x1b[0m",
+  ].join("\n");
+  expect(bottom(agentOutput("codex", once), 1)).toEqual(["• Done."]);
+  // A screen as tmux captured it, the shade on the box's last line carried from the line above.
+  const carried = agentOutput("codex", await screen("codex-carried.txt"));
+  expect(bottom(carried, 1)).toEqual(["• Done."]);
   // A box whose empty prompt says other words is still found by its shape.
   const reworded = (await screen("codex-idle.txt")).replace("Ask Codex to do anything", "Ask away");
   expect(bottom(agentOutput("codex", reworded), 1)).toEqual(["• Edited src/api/limit.ts (+12 -0)"]);
