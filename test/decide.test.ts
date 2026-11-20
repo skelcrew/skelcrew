@@ -273,7 +273,8 @@ test("a thread that already needs you isn't marked again", () => {
 
 test("your comment is typed into the builder, even past the round limit", () => {
   const comments = [comment(50, you, "Rename it to exportJson.")];
-  const decision = acted(thread({ rounds: 4, needs_you: true }), pr({ comments }));
+  const past = thread({ rounds: 4, needs_you: true, verdict: "changes" });
+  const decision = acted(past, pr({ comments }));
   expect(decision.tell).toEqual([expect.stringContaining("Rename it to exportJson.")]);
   expect(decision.tell[0]).toContain("simon");
   expect(decision.seen).toEqual(["50"]);
@@ -291,6 +292,16 @@ test("an event past the round limit doesn't need you while a submit or review is
     const moved = decideBranch({ ...past, pr: null, seen: [] }, "f00d", { ...given, moved: true });
     expect(moved?.change).toMatchObject({ needs_you: false });
   }
+});
+
+// A review that failed past the round limit is the lead's to run again, so a comment after it
+// doesn't bring the limit back. Only a review asking for changes does.
+test("an event past the round limit after a failed review doesn't need you", () => {
+  const comments = [comment(50, you, "Rename it to exportJson.")];
+  const failed = thread({ rounds: 4, verdict: "failed", review_failed: true });
+  expect(acted(failed, pr({ comments })).change).toMatchObject({ needs_you: false });
+  const changes = thread({ rounds: 4, verdict: "changes" });
+  expect(acted(changes, pr({ comments })).change).toMatchObject({ needs_you: true });
 });
 
 // On a public repository anyone can comment, and what is typed into the builder steers it.

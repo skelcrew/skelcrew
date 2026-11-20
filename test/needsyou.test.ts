@@ -1020,7 +1020,7 @@ test("only an agent's hooks can say it is asking you a question, stopped, or sto
 function inProcess(body: string): Record<string, unknown> {
   const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
 import { markForgotten, markNeedsYou, needsYou, needsYouFor, questionAnswered, threadWord, turnEnded } from ${JSON.stringify(source("flow/status.ts"))};
-import { submitRound } from ${JSON.stringify(source("flow/round.ts"))};
+import { goOn, submitRound } from ${JSON.stringify(source("flow/round.ts"))};
 import { readThread, record } from ${JSON.stringify(source("flow/thread.ts"))};
 import { bringBack } from ${JSON.stringify(source("flow/builder.ts"))};
 import { armMerge, cancelMerge } from ${JSON.stringify(source("flow/merging.ts"))};
@@ -1190,6 +1190,18 @@ const before = needsYouFor(thread());
 submitRound(db, "none", "app-12", "Round 5");
 console.log(JSON.stringify({ before, needsYou: needsYou(thread()), word: threadWord(thread(), 3) }));`);
   expect(seen).toEqual({ before: "round limit", needsYou: false, word: "reviewing" });
+});
+
+// Going on past the round limit is a decision, but bringing back a missing host plugin is still
+// yours to do, so its instruction stays.
+test("going on past the round limit keeps the instruction to bring back a missing host plugin", () => {
+  const seen = inProcess(`
+record(db, "app-12", { status: "waiting", needs_you: true, rounds: 4, verdict: "changes", session: "s", host: "gone", host_id: "gone-app-12" });
+markNeedsYou(db, "none", thread(), "say whether to go on", "lead");
+await bringBack(db, "none", thread());
+goOn(db, "none", "app-12");
+console.log(JSON.stringify({ mark: thread().needs_you_for, rounds: thread().rounds }));`);
+  expect(seen).toEqual({ mark: "run sc install: its session host gone is missing", rounds: 0 });
 });
 
 test("a new submit clears the mark", () => {

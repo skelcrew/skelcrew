@@ -23,9 +23,13 @@ export const pastRoundLimit = (thread: Thread, maxRounds: number) =>
   thread.rounds > maxRounds && thread.verdict !== "approve";
 
 // Returns whether the round limit makes the thread need you as an event sets its builder working:
-// past the limit, with no submit or review under way, as waiting on a review never needs you.
+// past the limit, with the last review asking for changes and no submit or review under way, as
+// waiting on a review never needs you, and a review that failed is the lead's to run again.
 const limitNeedsYou = (thread: Thread, maxRounds: number) =>
-  pastRoundLimit(thread, maxRounds) && thread.submitting === null && thread.reviewing === null;
+  pastRoundLimit(thread, maxRounds) &&
+  thread.verdict === "changes" &&
+  thread.submitting === null &&
+  thread.reviewing === null;
 
 // What decide says to do with a thread: end it, with the reason for its log and the note for
 // its lead, or tell its builder what is new and change the thread.

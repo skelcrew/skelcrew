@@ -31,7 +31,16 @@ import { endLimit, limitOn, reachLimit, tellOfLimit, waitUntil } from "./limits.
 import { dropOldEvents, noteForLead, queueMessage, typeLeadNotes } from "./messages.ts";
 import { Queue } from "./queue.ts";
 import { type Limited, type Review, review } from "./reviewer.ts";
-import { cloneOf, readThread, record, repositoryOf, Thread, threadName } from "./thread.ts";
+import {
+  cloneOf,
+  hostMissing,
+  markBeforeHost,
+  readThread,
+  record,
+  repositoryOf,
+  Thread,
+  threadName,
+} from "./thread.ts";
 
 // Runs git in Skelcrew's own clone and returns what it printed, throwing with its error when it
 // fails.
@@ -1109,12 +1118,14 @@ export function resumeRound(
 // zero again, so it no longer needs you for them, and types the changes of the review that
 // reached the limit into the builder, as a round within the limit would have.
 export function goOn(db: Database, sessions: string, folder: string): void {
-  const { held } = readThread(db, folder);
-  // Letting it go on is your or the lead's decision, so it ends a mark for you too.
+  const { held, host, needs_you_for } = readThread(db, folder);
+  // Letting it go on is your or the lead's decision, so it ends a mark for you too. But not the
+  // instruction to bring back a missing host plugin, which only you can do.
+  const hostGone = host !== null && markBeforeHost(host, needs_you_for) !== undefined;
   const change = {
     rounds: 0,
     needs_you: false,
-    needs_you_for: null,
+    needs_you_for: hostGone ? hostMissing(host) : null,
     review_failed: false,
     held: null,
     telling: held,
