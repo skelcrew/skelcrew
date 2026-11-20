@@ -279,14 +279,18 @@ test("above the sidebar it says Skelcrew, in white, and the checkout's commit wh
 });
 
 // git gives a longer commit in a repository with many, or with core.abbrev set, and the header
-// has room for 24 columns after the name. Words around the commit give way, never the commit.
+// has room for 44 columns after the name. Words around the commit give way, never the commit.
 test.each([
-  ["a6bfe6f", " M src/main.ts", "checkout a6bfe6f+changes"],
-  ["a6bfe6fe12", " M src/main.ts", "a6bfe6fe12+changes"],
-  ["a6bfe6fe12345", "", "a6bfe6fe12345 (checkout)"],
-  ["a6bfe6fe1234567890", "", "a6bfe6fe1234567890"],
+  ["a6bfe6f", " M src/main.ts", "a6bfe6f* (checkout, * = uncommitted changes)"],
+  ["a6bfe6fe12", " M src/main.ts", "checkout a6bfe6fe12+changes"],
+  ["a6bfe6fe1234567890", "", "a6bfe6fe1234567890 (checkout)"],
+  ["a6bfe6fe1234567890a6bfe6fe1234567890abcd", "", "a6bfe6fe1234567890a6bfe6fe1234567890abcd"],
   // Too long to show with +changes, it keeps a * for them, rather than look clean.
-  ["a6bfe6fe1234567890", " M src/main.ts", "a6bfe6fe1234567890*"],
+  [
+    "a6bfe6fe1234567890a6bfe6fe1234567890abcd",
+    " M src/main.ts",
+    "a6bfe6fe1234567890a6bfe6fe1234567890abcd*",
+  ],
 ])("commit %p with changes %p shows above the sidebar as %p", async (commit, changes, shown) => {
   checkoutAt(commit, changes);
   open("lead");

@@ -205,7 +205,7 @@ test("a narrow sidebar shows the longest name of the version that fits", () => {
   expect(above({ versions }, wide).trimEnd()).toBe(
     "  Skelcrew 6f1c2ab* (checkout, * = uncommitted changes)",
   );
-  // The sidebar's usual width of 38 columns.
+  // A sidebar 38 columns wide.
   const usual = { left: 39, width: 99 };
   expect(above({ versions }, usual).trimEnd()).toBe("  Skelcrew checkout 6f1c2ab+changes");
   expect(above({ versions }, { left: 38, width: 99 }).trimEnd()).toBe("  Skelcrew");
