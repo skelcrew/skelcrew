@@ -4,7 +4,7 @@
 // test starts a stand-in builder on that socket. test/message-rules.test.ts checks each rule against a
 // fake transport instead.
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import { fakePlugin, source, threadSql } from "./harness.ts";
@@ -284,43 +284,66 @@ console.log(JSON.stringify({ left: db.query("SELECT 1 FROM messages").all().leng
   expect(received.split("Use v2.").length - 1).toBe(1);
 });
 
-// The builder can ask you a question while typing still looks at its screen, which takes a
-// while. Typing the message would answer the question, so it waits until the question is over.
-test("a question asked while typing looks at the builder's screen holds the message until it is over", () => {
-  // A stand-in builder, idle at Claude Code's prompt, keeping each key as it comes.
-  writeFileSync(
-    join(home, "builder.sh"),
-    "#!/bin/sh\nprintf '\\033[?2004h'\nstty raw -echo\nprintf '❯ '\nexec cat > received.txt\n",
-    { mode: 0o755 },
-  );
-  const seen = run(`
+// The builder can ask you a question while typing looks at its screen, which takes seconds.
+// Typing the message would answer the question, so it waits until the question is over. The
+// question comes during the look before typing starts, and during the look typing takes just
+// before it pastes. A tmux on the PATH notes each read of the builder's screen, so the test
+// knows a look is under way.
+for (const [when, reads] of [
+  ["before typing starts", 1],
+  ["just before the paste", 4],
+] as const)
+  test(`a question asked during the look ${when} holds the message until it is over`, () => {
+    // A stand-in builder, idle at Claude Code's prompt below a reply quoting its busy mark, so
+    // each look watches the mark a while. It keeps each key as it comes.
+    writeFileSync(
+      join(home, "builder.sh"),
+      `#!/bin/sh\nprintf '\\033[?2004h'\nstty raw -echo\nprintf '● It shows "esc to interrupt".\\r\\n\\r\\n❯ '\nexec cat > received.txt\n`,
+      { mode: 0o755 },
+    );
+    mkdirSync(join(home, "bin"));
+    writeFileSync(
+      join(home, "bin", "tmux"),
+      `#!/bin/sh\ncase "$*" in *capture-pane*=app-12:*) echo >> "$HOME/reads" ;; esac\nexec ${Bun.which("tmux")} "$@"\n`,
+      { mode: 0o755 },
+    );
+    const seen = run(
+      `
 import { readFileSync, existsSync } from "node:fs";
 import { questionAsked, questionClosed } from ${JSON.stringify(source("flow/status.ts"))};
 const received = ${JSON.stringify(join(home, "received.txt"))};
 const got = () => (existsSync(received) ? readFileSync(received, "utf8") : "");
 const count = () => db.query("SELECT 1 FROM messages").all().length;
+const readsFile = ${JSON.stringify(join(home, "reads"))};
+const reads = () => (existsSync(readsFile) ? readFileSync(readsFile, "utf8").length : 0);
 Bun.spawnSync(["tmux", "-L", tmux, "new-session", "-d", "-s", "app-12", "-c", ${JSON.stringify(home)}, ${JSON.stringify(join(home, "builder.sh"))}]);
 await Bun.sleep(300);
 queueMessage(db, tmux, "app-12", { sender: "lead", text: "Use JSON.", said: "Use JSON.", typed_in: [] });
-// Typing has started and is looking at the builder's screen when its hook says it asks.
+// Each read is followed by a wait of at least half a second, and this looks every few
+// milliseconds, so the look is still under way when the builder's hook says it asks.
+while (reads() < ${reads} && !got().includes("Use JSON.")) await Bun.sleep(5);
+const lookUnderWay = reads() === ${reads};
 questionAsked(db, tmux, "app-12");
 // The typing under way ends, then a later try finds the question still open.
 await deliverMessages(db, tmux, "app-12");
 await deliverAllWaiting(db, tmux);
 await caughtUp();
-const during = { typed: got().includes("Use JSON."), waiting: count() };
+const during = { lookUnderWay, typed: got().includes("Use JSON."), waiting: count() };
 questionClosed(db, "app-12");
 for (let i = 0; i < 100 && count() > 0; i++) {
   await deliverAllWaiting(db, tmux);
   await Bun.sleep(50);
 }
 await caughtUp();
-console.log(JSON.stringify({ during, after: { typed: got().includes("Use JSON."), waiting: count() } }));`);
-  expect(JSON.parse(seen)).toEqual({
-    during: { typed: false, waiting: 1 },
-    after: { typed: true, waiting: 0 },
+console.log(JSON.stringify({ during, after: { typed: got().includes("Use JSON."), waiting: count() } }));`,
+      false,
+      { PATH: `${join(home, "bin")}:${process.env.PATH ?? ""}` },
+    );
+    expect(JSON.parse(seen)).toEqual({
+      during: { lookUnderWay: true, typed: false, waiting: 1 },
+      after: { typed: true, waiting: 0 },
+    });
   });
-});
 
 // The builder can ask you a question between a message's paste and its Enter. The Enter would
 // answer it, so the message is left at the prompt, still waiting, and sent once the question is
