@@ -104,7 +104,7 @@ function repositoryAndLead(db: ReturnType<typeof openDb>, fullName: string): Ope
   }
 }
 
-// What the right side shows of a task: its details, by the task's name, such as app-12. Anything
+// What the right side shows of a task: its details, by the task's name, such as APP-12. Anything
 // else the right side shows is an agent's session, by its name.
 const detailsOf = (name: string) => `details:${name}`;
 const isDetails = (shown: string | null) => shown?.startsWith("details:") ?? false;

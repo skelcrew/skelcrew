@@ -507,7 +507,7 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
     pr({ reviews: [skelReview], checks: [approved, check(900, "passed")] });
     await until(() => thread().needs_you === 1);
     expect(handled("1001")).toBe(true);
-    await until(() => read(join(data(), "claude", leadName, "typed")).includes("app-12 needs you"));
+    await until(() => read(join(data(), "claude", leadName, "typed")).includes("APP-12 needs you"));
     expect(read(join(data(), "claude", leadName, "typed"))).toContain("ready to merge");
     // Your own comment wakes the builder; Skelcrew's review, posted by its app, never does.
     // Waiting on you, it is polled every other time: every minute, at 30 seconds a poll. Here

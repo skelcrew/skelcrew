@@ -48,6 +48,7 @@ import {
   repositoryOf,
   sessionTitle,
   Thread,
+  taskName,
   threadName,
 } from "./thread.ts";
 
@@ -201,7 +202,7 @@ async function recordThread(
       throw new Error(
         tracked
           ? `there is no open issue ${task} in ${name}`
-          : `${name} has no tracker, and no thread ${name}-${task}: start one with sc start ${name} "<title>" "<body>"`,
+          : `${name} has no tracker, and no thread ${taskName(name, task)}: start one with sc start ${name} "<title>" "<body>"`,
       );
   }
   // The branch is named by the task and a short form of its title, so you can tell branches
@@ -242,7 +243,7 @@ async function recordThread(
       const { ok, said } = await git("update-ref", "-d", ref);
       if (!ok)
         throw new Error(
-          `couldn't start ${name}-${task} over, as Skelcrew couldn't delete ${ref}: ${said}`,
+          `couldn't start ${taskName(name, task)} over, as Skelcrew couldn't delete ${ref}: ${said}`,
         );
     }
   // Check again for a thread and record the new one in one transaction, so a failed or done
@@ -252,7 +253,7 @@ async function recordThread(
       db.query(`SELECT * FROM task_threads ${where}`).get(owner, repo, task),
     );
     if (before && before.status !== "failed" && before.status !== "done")
-      throw new Error(`${name}-${task} has a thread already`);
+      throw new Error(`${taskName(name, task)} has a thread already`);
     // Counted in the same transaction as the thread is recorded, so two starts can't both take
     // the last place.
     const queued = joinsQueue(db, repository);
@@ -597,7 +598,7 @@ export async function startBuilder(db: Database, sessions: string, thread: Threa
     ...start,
   });
   await startOnHost(db, thread, { host, name: hostName }, { folder: clone, command: argv, env });
-  console.log(`${resume ? "Brought back" : "Started"} the builder of ${thread.folder}.`);
+  console.log(`${resume ? "Brought back" : "Started"} the builder of ${threadName(db, thread)}.`);
 }
 
 // Starts the thread's builder in a session of its own on the host, running `command`, then
@@ -622,8 +623,9 @@ export function startOnHost(
     const labels: Labels = {
       repository,
       role: "builder",
-      task: threadName(db, thread),
-      ...(title ? { title } : {}),
+      // A label names the task as Skelcrew stores it, in lowercase, as it finds the builder by it.
+      task: threadName(db, thread).toLowerCase(),
+      title,
     };
     // The host is saved before the session starts, so a daemon that stops in between finds the
     // builder there by its labels, rather than starting it again elsewhere.
@@ -762,11 +764,11 @@ export function failThread(db: Database, sessions: string, thread: Thread, error
   const why = errorText(error);
   const { status } = readThread(db, thread.folder);
   if (status === "stopped" || status === "done") {
-    console.log(`${thread.folder} stays ${status}: ${why}`);
+    console.log(`${threadName(db, thread)} stays ${status}: ${why}`);
     return;
   }
   record(db, thread.folder, { status: "failed" }, why);
-  console.log(`${thread.folder} failed: ${why}`);
+  console.log(`${threadName(db, thread)} failed: ${why}`);
   // Every note to the lead is one line, as an error's text may not be. It names the thread's
   // folder as one that ended, so starting the thread over drops it, should it still wait: the
   // lead would otherwise ask you to start a thread that already runs again.

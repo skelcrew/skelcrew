@@ -70,13 +70,13 @@ Watch it from another terminal:
 ```sh
 sc --list         # the repository as a list. Enter opens an agent, Ctrl+\ comes back
 sc ps             # the threads, with their status and which need you
-sc show app-12    # one task: its threads, PR, checks and review
+sc show APP-12    # one task: its threads, PR, checks and review
 ```
 
-Use your task's name where these say `app-12`. The lead and `sc ls` show it: a task from an issue is named after it, such as `app-12`, and one you asked the lead for is named like `app-t100`. The builder submits each round, and a fresh reviewer reviews it. When the PR is approved and green, merge it on GitHub or with `m` in the list. Or arm it to merge once it is ready:
+Use your task's name where these say `APP-12`. The lead and `sc ls` show it: a task from an issue is named after it, such as `APP-12`, and one you asked the lead for is named like `APP-T100`. The builder submits each round, and a fresh reviewer reviews it. When the PR is approved and green, merge it on GitHub or with `m` in the list. Or arm it to merge once it is ready:
 
 ```sh
-sc merge --when-ready app-12
+sc merge --when-ready APP-12
 ```
 
 Or ask the lead, such as "merge it when it's ready". It still waits for the approval and green CI. To stop the lead arming merges, put `lead: { can_merge: false }` in `~/.config/skelcrew/config.yaml`.

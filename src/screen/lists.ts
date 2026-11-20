@@ -11,7 +11,7 @@ import { agentsSaid } from "../flow/merging.ts";
 import { repositories } from "../flow/repo.ts";
 import type { DaemonRequest } from "../flow/requests.ts";
 import { mergeShown } from "../flow/status.ts";
-import { Thread, threadName } from "../flow/thread.ts";
+import { Thread, taskName, threadName } from "../flow/thread.ts";
 import { forgeOf, trackerOf } from "../plugins/ask.ts";
 import { green, grey, markColours, yellow } from "./look.ts";
 import { type Open, onReviewer } from "./rows.ts";
@@ -108,12 +108,12 @@ function issueGroups(db: Database, open: Open, threads: Known[]): Group[] {
       : {
           key: "s",
           ask: `Start a thread on ${name}#${task.id}? y/n`,
-          working: `Starting ${name}-${task.id}…`,
+          working: `Starting ${taskName(name, task.id)}…`,
           request: { command: "start", repo: `${open.owner}/${open.repo}`, task: task.id },
         };
     const row: ListRow = {
       mark: [sign, null],
-      name: `${name}-${task.id}`,
+      name: taskName(name, task.id),
       title: task.title,
       ends: on ? [wordEnd(on)] : [],
       link: task.link,
@@ -350,5 +350,6 @@ export function pageRow(
   const item = itemAt(db, link);
   if (!item) return null;
   const name = repositoryName(db, open);
-  return { name: `${name}${item.kind === "task" ? "-" : "#"}${item.id}`, title: item.title };
+  const shown = item.kind === "task" ? taskName(name, item.id) : `${name}#${item.id}`;
+  return { name: shown, title: item.title };
 }

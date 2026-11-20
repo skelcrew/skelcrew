@@ -130,6 +130,20 @@ function failedWaits(saved: ReturnType<typeof shownBefore>): void {
   saved.tabs[0] = { ...saved.tabs[0], needYou: 1, colour: "yellow" };
 }
 
+// Changes the names of tasks the release before tasks showed, such as app-12, to how Skelcrew
+// shows them now, in uppercase. A sidebar row's own part of its task's name, such as t1, is in
+// uppercase too. A session is named by its thread's folder, which stays lowercase.
+function namesInUppercase(saved: ReturnType<typeof shownBefore>): ReturnType<typeof shownBefore> {
+  const now = JSON.parse(JSON.stringify(saved), (key, value) =>
+    typeof value === "string" && key !== "session"
+      ? value.replace(/\b(?:app|notes)-t?\d+\b/g, (name) => name.toUpperCase())
+      : value,
+  );
+  for (const screen of now.screen)
+    for (const entry of screen.sidebar) entry.task = entry.task.toUpperCase();
+  return now;
+}
+
 // Adds what sc ps and the sidebar now say each thread needs you for, which the release before
 // tasks didn't say: app-t1's builder asked a question, and app-13 is approved with green checks,
 // waiting for you to merge it.
@@ -166,13 +180,14 @@ openDb().run("INSERT INTO pr_agents (owner, repo, pr, head, base, changed) VALUE
   turnEndedWaits(shownThen);
   failedWaits(shownThen);
   sayWhatFor(shownThen);
+  const shownNow = namesInUppercase(shownThen);
   // That release didn't read .agents/ or plugins:, and neither repository has either, so none
   // waits for you.
-  for (const row of shownThen.repositories) {
+  for (const row of shownNow.repositories) {
     row.agentsWaiting = false;
     row.installWaiting = false;
   }
-  const { issues, show, prs, ...saved } = shownThen;
+  const { issues, show, prs, ...saved } = shownNow;
   const before = JSON.parse(run(showAll));
   const { ls, show: shown, ...same } = before;
   expect(same).toEqual(saved);
@@ -202,22 +217,22 @@ openDb().run("INSERT INTO pr_agents (owner, repo, pr, head, base, changed) VALUE
   // Each task has its stage. app-13 is approved with its checks green, the stopped and failed
   // threads keep their tasks working, and app-16's issue closed with no merge Skelcrew saw.
   const stages = {
-    "app-12": "working",
-    "app-13": "ready for review",
-    "app-14": "working",
-    "app-15": "working",
-    "app-16": "closed",
-    "app-17": "issue",
-    "app-t1": "working",
-    "notes-t1": "working",
-    "notes-t2": "working",
+    "APP-12": "working",
+    "APP-13": "ready for review",
+    "APP-14": "working",
+    "APP-15": "working",
+    "APP-16": "closed",
+    "APP-17": "issue",
+    "APP-T1": "working",
+    "NOTES-T1": "working",
+    "NOTES-T2": "working",
   };
   expect(
     Object.fromEntries(ls.map((row: Task & { stage: string }) => [row.task, row.stage])),
   ).toEqual(stages);
   for (const [name, stage] of Object.entries(stages)) expect(named(name)).toMatchObject({ stage });
   // A task whose issue closed and whose PR left the copy still shows, from what it saved.
-  expect(named("app-16")).toMatchObject({ pr: 42, prPage: null });
+  expect(named("APP-16")).toMatchObject({ pr: 42, prPage: null });
   // Each thread has its task, and a copy of the database from before waits beside it.
   const db = new Database(dbFile(), { readonly: true });
   db.run("PRAGMA busy_timeout = 5000");

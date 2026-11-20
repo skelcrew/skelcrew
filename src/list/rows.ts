@@ -22,7 +22,7 @@ import { agentsSaid } from "../flow/merging.ts";
 import { findRepository } from "../flow/repo.ts";
 import type { DaemonRequest } from "../flow/requests.ts";
 import { ListStage, listStage } from "../flow/stage.ts";
-import { Thread } from "../flow/thread.ts";
+import { Thread, taskName } from "../flow/thread.ts";
 import { forgeOf } from "../plugins/ask.ts";
 import { changedAt, roundLimit as settingsRoundLimit } from "../screen/lists.ts";
 import { removeControlCodes } from "../screen/look.ts";
@@ -159,7 +159,7 @@ function taskRow(
   stage: ListStage,
   now: number,
 ): Row {
-  const name = `${repoName}-${thread.task}`;
+  const name = taskName(repoName, thread.task);
   const shown = shownOf(thread, roundLimit(thread), now);
   // An ended thread shows no state: its word is whether it merged, and its mark is quiet.
   // A task approved and green, with no merge armed, waits on you to merge it, so its word says
@@ -303,7 +303,7 @@ export function listRows(db: Database, open: Open, now: number): Row[] {
   });
   // Returns the row of a task not started yet, which Enter asks to start, as sc start does.
   const notStarted = (task: string, title: string, changed: number): Row => {
-    const name = `${repository.name}-${task}`;
+    const name = taskName(repository.name, task);
     return {
       part: "backlog",
       section: "backlog",
@@ -335,7 +335,7 @@ export function listRows(db: Database, open: Open, now: number): Row[] {
   // The open issues no thread works on, and the tasks filed in the backlog, newest first.
   const waiting = [
     ...issues
-      .filter((issue) => !tasks.some((row) => row.name === `${repository.name}-${issue.id}`))
+      .filter((issue) => !tasks.some((row) => row.name === taskName(repository.name, issue.id)))
       .map((issue) => ({
         created: issue.created,
         row: notStarted(issue.id, issue.title, Date.parse(issue.updated)),
@@ -351,7 +351,7 @@ export function listRows(db: Database, open: Open, now: number): Row[] {
   // it after.
   const changedOf = (row: Row) => {
     const thread = threads.find(
-      ({ thread: candidate }) => `${repository.name}-${candidate.task}` === row.name,
+      ({ thread: candidate }) => taskName(repository.name, candidate.task) === row.name,
     )?.thread;
     return thread?.changed ?? thread?.started ?? 0;
   };
