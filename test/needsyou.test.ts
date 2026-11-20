@@ -1018,8 +1018,10 @@ const db = openDb();
 db.run(\`INSERT INTO repositories (name, owner, repo) VALUES ('app', 'simon', 'app');
 ${threadSql({ task: "12", status: "working" })}\`);
 const thread = () => readThread(db, "app-12");
-// The note for the lead that the thread started needing you, kept until it is typed in.
+// The note for the lead that the thread started needing you, kept until it is typed in, and the
+// other notes kept for the lead.
 const noting = () => thread().noting;
+const notes = () => db.query("SELECT text FROM notes ORDER BY id").all().map((n) => n.text);
 ${body}
 process.exit(0);`;
   const done = Bun.spawnSync([process.execPath, "-e", code], {
@@ -1057,8 +1059,18 @@ console.log(JSON.stringify({ marked, cleared: needsYou(thread()) }));`);
 test("your mark tells the lead, as the lead can't see your terminal", () => {
   const seen = inProcess(`
 markNeedsYou(db, "none", thread(), "check the new design", "you");
-console.log(JSON.stringify({ noting: noting() }));`);
-  expect(seen.noting).toBe("you marked it: check the new design");
+const first = { noting: noting(), notes: notes() };
+// A thread that needed you already, such as at its round limit, still brings the lead a note.
+record(db, "app-12", { needs_you_for: null, asking: true });
+markNeedsYou(db, "none", thread(), "pick the export format", "you");
+console.log(JSON.stringify({ first, notes: notes() }));`);
+  expect(seen).toEqual({
+    first: { noting: null, notes: ["app-12 needs you: you marked it: check the new design"] },
+    notes: [
+      "app-12 needs you: you marked it: check the new design",
+      "app-12 needs you: you marked it: pick the export format",
+    ],
+  });
   expect(threadLog()).toContain("you marked it: check the new design");
 });
 
@@ -1225,6 +1237,20 @@ turnEnded(db, "none", "app-12", { message: "I started on the next part." });
 markForgotten(db, "none", 5, Date.now() + 60 * 60_000);
 console.log(JSON.stringify({ turnEnded: thread().turn_ended, ended: thread().ended_at, needsYou: needsYou(thread()) }));`);
   expect(seen).toEqual({ turnEnded: true, ended: null, needsYou: false });
+});
+
+// A submit still being pushed is on its way, so the builder stopping meanwhile waits on it.
+test("the safety net doesn't start while the last submit is still being pushed", () => {
+  const seen = inProcess(`
+record(db, "app-12", { status: "waiting", submitting: "Round 2" });
+turnEnded(db, "none", "app-12", { message: "Pushed it." });
+markForgotten(db, "none", 5, Date.now() + 60 * 60_000);
+const pushing = { ended: thread().ended_at, needsYou: needsYou(thread()) };
+// A round that failed keeps its submit saved, but is on its way no longer.
+record(db, "app-12", { turn_ended: false, review_failed: true });
+turnEnded(db, "none", "app-12", { message: "It failed." });
+console.log(JSON.stringify({ pushing, failed: thread().ended_at !== null }));`);
+  expect(seen).toEqual({ pushing: { ended: null, needsYou: false }, failed: true });
 });
 
 // A thread ready to merge is seen already, so a builder's reply there marks nothing.

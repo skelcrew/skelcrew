@@ -13,7 +13,13 @@ import { errorText } from "../say.ts";
 import { pastRoundLimit } from "./decide.ts";
 import { leadOf } from "./lead.ts";
 import { clockTime, endWake, wakeAfterLimit } from "./limits.ts";
-import { messageLead, stopDelivering, typedBySkelcrew, typeLeadNotes } from "./messages.ts";
+import {
+  messageLead,
+  noteForLead,
+  stopDelivering,
+  typedBySkelcrew,
+  typeLeadNotes,
+} from "./messages.ts";
 import type { DaemonRequest } from "./requests.ts";
 import { lastPushed } from "./round.ts";
 import {
@@ -106,6 +112,12 @@ const submitStands = (thread: Thread) =>
     thread.checks !== "failing" &&
     thread.conflicts === null &&
     thread.telling === null);
+
+// Returns whether the thread's last submit is still on its way without its builder, for the safety
+// net: being pushed, reviewed, or approved and waiting on CI. A round that failed is no longer on
+// its way, though it keeps its submit or review saved.
+const inFlight = (thread: Thread) =>
+  !thread.review_failed && (thread.submitting !== null || submitStands(thread));
 
 // Returns whether the thread waits for you to merge it: Skelcrew's reviewer approved its latest
 // round, with no newer one under way, and the latest poll found every check on its PR green,
@@ -520,7 +532,7 @@ export function turnEnded(
   // if nobody acts on it. Only with nothing in flight: while the last submit is still reviewed or
   // waits on CI, the builder's words went to the lead, and waiting on those never needs you.
   if (!thread.turn_ended) {
-    const timed = submitStands(thread)
+    const timed = inFlight(thread)
       ? {}
       : { ended_at: Date.now(), ended_said: ended.message ?? null };
     record(db, folder, { turn_ended: true, ...timed }, "its builder stopped without submitting");
@@ -554,7 +566,7 @@ export function markForgotten(
   // A submit that went in meanwhile, still reviewed or waiting on CI, is in flight too, so its
   // wait ends as well.
   const threads = rows.map((row) => Thread.parse(row));
-  const seenOrInFlight = (thread: Thread) => needsYou(thread) || submitStands(thread);
+  const seenOrInFlight = (thread: Thread) => needsYou(thread) || inFlight(thread);
   for (const thread of threads.filter(seenOrInFlight))
     record(db, thread.folder, { ended_at: null, ended_said: null });
   const forgotten = threads.filter((thread) => !seenOrInFlight(thread));
@@ -605,9 +617,16 @@ export function markNeedsYou(
     const said = oneLine(reason);
     if (said === "") throw new Error("say what the human must do to unblock the thread");
     const action = hostStillGone ? hostMissing(host, said) : said;
-    const quiet = by === "lead" && !needsYou(thread) ? { noting: null } : {};
+    // The lead set it, so it needs no note. Yours always brings the lead one, even when the thread
+    // needed you already, such as at its round limit, so the note that it starts needing you is
+    // left out rather than said twice.
+    const quiet = needsYou(thread) ? {} : { noting: null };
     const change = { needs_you_for: action, ...acted, ...decision, ...quiet };
     const marked = record(db, thread.folder, change, `${who} marked it: ${action}`);
+    if (by === "you") {
+      const line = `${threadName(db, marked)} needs you: you marked it: ${action}`;
+      noteForLead(db, sessions, marked, line, null, true);
+    }
     typeLeadNotes(db, sessions);
     return marked;
   }
