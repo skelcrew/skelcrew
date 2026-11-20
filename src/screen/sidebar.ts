@@ -23,13 +23,13 @@ import { type Asking, canOpenLinks, openPr, stillOffered } from "../list/actions
 import { drawRows, enterAttaches, listShare, type Target } from "../list/layout.ts";
 import {
   buildersNote,
-  cutBacklog,
   listRows,
   type Question,
   type Row,
   repositoryTabs,
   type Section,
   sectionHeadings,
+  shownRows,
 } from "../list/rows.ts";
 import { updateNotice } from "../machine/update.ts";
 import { leadPlaces, screenLogFile } from "../paths.ts";
@@ -38,8 +38,8 @@ import { pluginHost } from "../plugins/runtime.ts";
 import { errorText } from "../say.ts";
 import { shownVersions } from "../version.ts";
 import { agentFooter, tellFooter } from "./footer.ts";
-import { edge, filled, pad, paint, removeControlCodes } from "./look.ts";
-import { leadOnHost } from "./screen.ts";
+import { filled, lightGrey, pad, paint, removeControlCodes } from "./look.ts";
+import { attachedMark, leadOnHost } from "./screen.ts";
 import { attachTask, showTask } from "./task.ts";
 import { drawTop } from "./top.ts";
 
@@ -60,13 +60,20 @@ const keyPattern = new RegExp(
   ].join("|"),
   "g",
 );
+// The keys the screen's tmux sends the sidebar from anywhere: Alt with an arrow or a digit, a
+// click, and a message such as a click on a tab. Any other key was typed into the sidebar.
+const altPattern = new RegExp(`^${esc}(\\[1;[34][A-D]|[1-6]|\\[<|\\])`);
 // A press of the mouse, with its button, column and line, counted from 1. A release ends in m,
 // and does nothing.
 const clickPattern = new RegExp(`^${esc}\\[<(\\d+);(\\d+);(\\d+)M$`);
 // The keys the sidebar acts on, by what they do. The Alt ones come from the screen's tmux, from
-// anywhere. The plain ones come only while the right side shows a task's details, as your typing
-// then goes to the sidebar. Alt with a digit and the digit alone open or close a stage.
+// anywhere. The plain ones come only while your typing goes to the sidebar. Alt with a digit and
+// the digit alone open or close a stage. Alt-Left and Alt-Right move your typing between the
+// sides, and the screen's tmux sends them here for Esc b and Esc f too, which a Mac sends for
+// Option-Left and Option-Right.
 const keyNames: Record<string, string> = {
+  "\x1b[1;3D": "to sidebar",
+  "\x1b[1;3C": "to right",
   "\x1b[1;3A": "up",
   "\x1b[1;3B": "down",
   "\x1b[A": "up",
@@ -85,17 +92,26 @@ const keyNames: Record<string, string> = {
   "\n": "enter",
 };
 
-// The keys the footer shows on a task's row, where your typing goes to the sidebar: Enter, as
-// attach where it attaches to the builder, o to show the agent's whole screen or its last lines,
-// the stages' numbers, Shift with an arrow only on a queued task in Up next, which it moves in
-// the queue, and s or m only where the row can be started, or queued, or merged.
-function taskFooter(row: Row): string {
+// The keys the footer shows while your typing goes to the sidebar, where the list's keys work
+// without Alt. Enter says what it does on the row: to the lead on the lead's row, open/close on a
+// stage's heading, none on the heading of Needs you or Up next, which never close, attach where it
+// attaches to the builder, and open elsewhere. o shows the agent's whole screen or its last lines,
+// Shift with an arrow moves a queued task in Up next, and s or m show only where the row can be
+// started, or queued, or merged. `attached` names the agent you attached to on the right, which
+// Alt-Right gives your typing back to, or is null.
+function sidebarFooter(row: Row, attached: string | null): string {
+  if (row.part === "lead") return "↑↓ move  ⏎ or ⌥→ to lead  1-6 stages  ⌥Q quit";
+  if (row.part === "heading") {
+    const fixed = row.section === "needs you" || row.section === "up next";
+    return `↑↓ move${fixed ? "" : "  ⏎ open/close"}  1-6 stages  ⌥Q quit`;
+  }
   const output = row.task ? " · o output" : "";
   const reorder = row.section === "up next" && row.place !== null ? "  ⇧↑↓ reorder" : "";
   const start = row.start ? (row.start.queues ? "  s queue" : "  s start") : "";
   const merge = row.merge && "ask" in row.merge ? "  m merge" : "";
   const enter = enterAttaches(row) ? "⏎ attach" : "⏎ open";
-  return `⌥↑↓ move  ${enter}${output}  1-6 stages${reorder}${start}${merge}  ⌥Q quit`;
+  const back = attached ? `  ⌥→ to ${attached}` : "";
+  return `↑↓ move  ${enter}${output}  1-6 stages${reorder}${start}${merge}${back}  ⌥Q quit`;
 }
 
 // Returns the repository open in the sidebar, given its owner/name, with its lead's session.
@@ -198,6 +214,15 @@ export async function runSidebar(
   // Whether a task's details show its agent's whole screen, rather than its last few lines. It
   // stays as you move, as it is how you like the right side.
   let fullOutput = false;
+  // Whether you keep your typing in the sidebar yourself, by Alt-Left or by any plain key there.
+  // Moving then leaves it there, even onto the lead's row, so a digit or an arrow never lands in
+  // an agent. Enter on the lead's row, Alt-Right or a click on the lead gives it back. With Alt
+  // keys alone, typing follows the row: the lead's row types to the lead.
+  let held = false;
+  // Where your typing went at the last look, and whether the right side shows an agent you
+  // attached to, which the sidebar draws and the footer says.
+  let typingRight = true;
+  let attachedRight = false;
   // What the footer says in place of its keys until the next key, the question it asks, and
   // whether the daemon is at work on an answer.
   let said: string | null = null;
@@ -246,8 +271,22 @@ export async function runSidebar(
       paneLead = leadAttach;
     } else showSession(agents, tty, next);
     tty = paneTty(agents, rightPane);
-    if (!next.startsWith("details:")) screenTmux(agents, ["select-pane", "-t", rightPane]);
+    if (!next.startsWith("details:") && !held) screenTmux(agents, ["select-pane", "-t", rightPane]);
     shown = next;
+  };
+  // Gives your typing to the right side, if it shows an agent: the lead, or a builder you
+  // attached to. A task's details are only to look at, so there it stays in the sidebar.
+  const toRight = () => {
+    held = false;
+    const command = screenTmux(agents, [
+      "display",
+      "-p",
+      "-t",
+      rightPane,
+      "#{pane_start_command}",
+    ]).out;
+    if (shown === open.lead || command.includes(attachedMark))
+      screenTmux(agents, ["select-pane", "-t", rightPane]);
   };
   // Shows on the right what the row you are on is: the lead's session on the lead's row, and a
   // task's details on any other.
@@ -275,26 +314,30 @@ export async function runSidebar(
     return thread ? (thread.harness ?? "claude") : "";
   };
 
-  // Returns what the footer says now: a line said or a question asked, the keys for a task's row
-  // while your typing goes to the sidebar, or while it goes to an agent the keys you need most
-  // and what Esc stops. `typing` says whether your typing goes to the right side.
-  const footerText = (typing: boolean) => {
+  // Returns what the footer says now: a line said or a question asked, the keys for the row
+  // while your typing goes to the sidebar, or while it goes to an agent which one it is, the keys
+  // you need most and what Esc stops.
+  const footerText = () => {
     if (said ?? asking) return said ?? asking?.question.ask ?? "";
     const row = rows[here];
-    if (!typing && row) return taskFooter(row);
-    return agentFooter(harnessOf(about()));
+    if (!typingRight && row) return sidebarFooter(row, attachedRight ? row.name : null);
+    const name = shown === open.lead ? "lead" : (row?.name ?? "");
+    return agentFooter(name, harnessOf(about()));
   };
 
   // Draws the sidebar, the notice above the rest, only when it changed. Every line ends with the
-  // sidebar's edge in the pane's last column, and a column before it is left blank.
+  // sidebar's edge in the pane's last column, and a column before it is left blank. The row you
+  // are on is lit while your typing goes to the sidebar, and only outlined while it goes to the
+  // right side.
   const draw = () => {
     const { width, height } = size();
     const headings = sectionHeadings(all, opened, builders);
-    const drawn = drawRows(rows, headings, here, top, Math.max(width - 2, 1), height - 1);
+    const room = Math.max(width - 2, 1);
+    const drawn = drawRows(rows, headings, here, top, room, height - 1, !typingRight);
     top = drawn.top;
     targets = [...notice.map((): Target => null), null, ...drawn.targets];
     const lines = ["", ...drawn.lines].map(
-      (line) => `${filled(line, Math.max(width - 1, 0))}${paint(edge, "│")}`,
+      (line) => `${filled(line, Math.max(width - 1, 0))}${divider(typingRight)}`,
     );
     const frame = [...notice, ...lines].join("\n");
     if (frame === lastFrame) return;
@@ -315,9 +358,7 @@ export async function runSidebar(
     const before = rows[here]?.section;
     const moved = all.find((row) => row.name === name);
     if (moved && moved.section !== before && moved.section !== "lead") opened.add(moved.section);
-    rows = cutBacklog(all, wholeBacklog).filter(
-      (row) => row.section === "lead" || opened.has(row.section),
-    );
+    rows = shownRows(all, opened, wholeBacklog);
     const at = name === undefined ? -1 : rows.findIndex((row) => row.name === name);
     here = at >= 0 ? at : Math.max(Math.min(here, rows.length - 1), 0);
     if (name !== undefined && rows[here]?.name !== name) follow();
@@ -354,7 +395,18 @@ export async function runSidebar(
       }
       switchTo(next.fullName);
     }
-    notice = noticeLines(updateNotice(db), size().width);
+    // Your typing goes to the right side while its pane is the active one, such as on the lead's
+    // row or once you attached to a builder, and to the sidebar otherwise. It is asked before
+    // anything is drawn, as the sidebar and the top row show it. The mark in the pane's command
+    // says it shows a builder you attached to.
+    const [active = "", ...command] = doing("asking tmux where your typing goes", () =>
+      screenTmux(agents, ["display", "-p", "-t", rightPane, "#{pane_active} #{pane_start_command}"])
+        .out.trim()
+        .split(" "),
+    );
+    typingRight = active === "1";
+    attachedRight = command.join(" ").includes(attachedMark);
+    notice = noticeLines(updateNotice(db), size().width, typingRight);
     // A repository Skelcrew no longer has has no rows, until the sidebar moves off it.
     all = doing("reading the rows", () => {
       try {
@@ -400,20 +452,20 @@ export async function runSidebar(
     // The header and the tabs go to tmux's status line, and only when they changed.
     const width = doing("asking tmux the agent's width", () => paneWidth(agents, rightPane));
     const left = size().width + 1;
-    const look = { tabs, open: `${open.owner}/${open.repo}`, where, versions: shownVersions() };
+    const look = {
+      tabs,
+      open: `${open.owner}/${open.repo}`,
+      where,
+      versions: shownVersions(),
+      typingRight,
+    };
     const top = drawTop(look, { left, width });
     if (top !== lastTop) {
       lastTop = top;
       doing("drawing the top row", () => showTop(agents, session, top));
     }
-    // The footer, also only when it changed. Your typing goes to the right side while its pane
-    // is the active one, such as once you attached to a builder, and to the sidebar otherwise.
-    const active = doing("asking tmux where your typing goes", () =>
-      screenTmux(agents, ["display", "-p", "-t", `=${session}:`, "#{pane_index}"]),
-    );
-    const footer = doing("reading the footer's harness", () =>
-      footerText(active.out.trim() !== "0"),
-    );
+    // The footer, also only when it changed.
+    const footer = doing("reading the footer's harness", footerText);
     if (footer !== lastFooter) {
       lastFooter = footer;
       doing("drawing the footer", () => tellFooter(agents, session, footer));
@@ -439,7 +491,7 @@ export async function runSidebar(
     respawnPane(agents, rightPane, paneOn(open.lead));
     tty = paneTty(agents, rightPane);
     paneLead = leadAttach;
-    screenTmux(agents, ["select-pane", "-t", rightPane]);
+    if (!held) screenTmux(agents, ["select-pane", "-t", rightPane]);
     shown = open.lead;
   }
   // Moves to the tab after the open one, by 1, or before it, by -1, each wrapping round.
@@ -458,25 +510,30 @@ export async function runSidebar(
     follow();
   };
   // Moves to the first row of the section before or after yours: the lead, Needs you, or an
-  // open stage with rows. Past the first and the last there is nowhere to go.
+  // open stage with rows, past the headings. Past the first and the last there is nowhere to go.
   const jump = (by: 1 | -1) => {
     const starts = rows.flatMap((row, at) =>
-      at === 0 || row.section !== rows[at - 1]?.section ? [at] : [],
+      at === 0 || (row.part !== "heading" && rows[at - 1]?.part === "heading") ? [at] : [],
     );
-    const mine = starts.filter((at) => at <= here).at(-1) ?? 0;
+    const onHeading = rows[here]?.part === "heading";
+    const mine = onHeading ? here : (starts.filter((at) => at <= here).at(-1) ?? 0);
     const next =
       by === 1 ? starts.find((at) => at > here) : starts.filter((at) => at < mine).at(-1);
     if (next !== undefined) moveTo(next);
   };
   // Opens or closes a stage. Needs you and Up next never close, as they are where you must look.
-  // Opening one moves you to its first row, so its heading and first rows show.
+  // Opening one moves you to its first row, so its heading and first rows show. Closing the one
+  // you are in moves you to its heading, as your row hides.
   const toggle = (section: Section) => {
     if (section === "needs you" || section === "up next") return;
-    if (opened.delete(section)) return reshow();
-    opened.add(section);
+    const inside = rows[here]?.section === section;
+    const closing = opened.delete(section);
+    if (!closing) opened.add(section);
     reshow();
-    const first = rows.findIndex((row) => row.section === section);
-    if (first >= 0) moveTo(first);
+    const first = rows.findIndex(
+      (row) => row.section === section && (closing || row.part !== "heading"),
+    );
+    if (first >= 0 && (inside || !closing)) moveTo(first);
   };
 
   // Has the daemon start or merge once you said y, saying so meanwhile. A start says what the
@@ -529,13 +586,18 @@ export async function runSidebar(
     shown = refused;
   };
 
-  // Opens the row you are on, as Enter does in the list. On a task at work, the builder takes
-  // the right side and your typing, until Ctrl-\ brings back its details, or the right side says
-  // why it can't. Up next says what the task waits on. Backlog asks to start the task, and the `… more` row shows every issue. Ready and Done open the PR, or copy its link. A ready task
-  // whose builder needs you reaches the builder instead, so one Enter reaches what it waits on.
+  // Opens the row you are on, as Enter does in the list. On the lead's row it gives your typing
+  // to the lead, and on a heading it opens or closes its stage. On a task at work, the builder
+  // takes the right side and your typing, until Ctrl-\ brings back its details, or the right side
+  // says why it can't. Up next says what the task waits on. Backlog asks to start the task, and
+  // the `… more` row shows every issue. Ready and Done open the PR, or copy its link. A ready
+  // task whose builder needs you reaches the builder instead, so one Enter reaches what it waits
+  // on.
   const enter = () => {
     const row = rows[here];
-    if (!row || row.part === "lead") return;
+    if (!row) return;
+    if (row.part === "lead") return toRight();
+    if (row.part === "heading" && row.section !== "lead") return toggle(row.section);
     if (row.more > 0) {
       wholeBacklog = true;
       return reshow();
@@ -552,8 +614,10 @@ export async function runSidebar(
     const atWork = row.part !== "ready" && row.part !== "done";
     if ((atWork || row.needsYou) && row.session) {
       const repository = `${open.owner}/${open.repo}`;
+      held = false;
       void attachTask(agents, session, repository, row.name, fullOutput).then((failed) => {
         if (failed !== null) refuse(row.name, failed);
+        refresh();
       });
       return;
     }
@@ -561,9 +625,9 @@ export async function runSidebar(
   };
 
   // Acts on a press of the mouse at a column and line, counted from 1. A click on the lead moves
-  // to it, so the right side shows the lead, ready to type to. A click on a task moves to it, and
-  // a second click on it opens it as Enter does. A click on a stage's heading, or its name pinned
-  // at an edge, opens or closes it. The wheel moves one row up or down.
+  // to it, so the right side shows the lead, and gives the lead your typing. A click on a task
+  // moves to it, and a second click on it opens it as Enter does. A click on a stage's heading, or
+  // its name pinned at an edge, opens or closes it. The wheel moves one row up or down.
   const click = (button: string, column: number, line: number) => {
     if (button === "64") return moveTo(here - 1);
     if (button === "65") return moveTo(here + 1);
@@ -575,7 +639,11 @@ export async function runSidebar(
       const pinned = target.pinned.find((span) => span.from <= column && column <= span.to);
       return pinned && toggle(pinned.section);
     }
-    if (target.row === here && rows[here]?.part !== "lead") return enter();
+    if (rows[target.row]?.part === "lead") {
+      moveTo(target.row);
+      return toRight();
+    }
+    if (target.row === here) return enter();
     moveTo(target.row);
   };
 
@@ -602,6 +670,15 @@ export async function runSidebar(
       return;
     }
     said = null;
+    // A plain key reaches the sidebar only while it has your typing, and keeps it there as you
+    // move. Alt keys, clicks and tabs clicked come through the screen's tmux from anywhere.
+    if (!altPattern.test(key)) held = true;
+    if (name === "to sidebar") {
+      held = true;
+      screenTmux(agents, ["select-pane", "-t", `=${session}:.0`]);
+      return;
+    }
+    if (name === "to right") return toRight();
     const row = rows[here];
     if (name === "up" || name === "down") return moveTo(here + (name === "up" ? -1 : 1));
     if ((name === "earlier" || name === "later") && row)
@@ -657,10 +734,16 @@ export async function runSidebar(
   process.exit(0);
 }
 
+// Returns the sidebar's edge, the line between the two sides, which leans to the side your typing
+// goes to, and is lit there: to the right side while `typingRight`, and to the sidebar otherwise.
+// It is the last column of every line of the sidebar.
+const divider = (typingRight: boolean) => paint(lightGrey, typingRight ? "▕" : "▏");
+
 // Returns the lines that go above the rest of the sidebar for a notice, such as a release installed
 // in the background, or none without one. Cut at words to fit a sidebar `width` columns wide, and
-// parted from what follows by a blank line. Each fills the pane and ends with the sidebar's edge.
-function noticeLines(notice: string, width: number): string[] {
+// parted from what follows by a blank line. Each fills the pane and ends with the sidebar's edge,
+// which leans as `typingRight` says.
+function noticeLines(notice: string, width: number, typingRight: boolean): string[] {
   if (!notice) return [];
   const room = Math.max(width - 1 - 2 * pad.length, 1);
   // A word goes on the last line while it fits, and starts a new one when it doesn't. A word
@@ -674,7 +757,7 @@ function noticeLines(notice: string, width: number): string[] {
   }
   // Each line is padded, a blank one follows, and all of them end at the sidebar's edge.
   return [...lines.map((line) => `${pad}${line}`), ""].map(
-    (line) => `${filled(line, width - 1)}${paint(edge, "│")}`,
+    (line) => `${filled(line, width - 1)}${divider(typingRight)}`,
   );
 }
 

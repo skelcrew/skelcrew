@@ -43,6 +43,7 @@ import {
   toFirstThread,
   toSecondThread,
   type,
+  typingToSidebar,
   until,
   wheel,
 } from "./screen.ts";
@@ -61,7 +62,7 @@ test("shows the lead, then Needs you, Up next and the stages, beside the agent",
   // next and the six stages, with only Building open.
   expect(left(1)).toBe("");
   expect(lines[1]).toContain("I am lead");
-  expect(left(2)).toMatch(/^ ▸ ○ lead\b/);
+  expect(left(2)).toMatch(/^ ▹ ○ lead\b/);
   expect(left(3)).toBe("     running");
   expect(left(4)).toBe("");
   expect(left(5)).toBe("   Needs you 0");
@@ -74,7 +75,7 @@ test("shows the lead, then Needs you, Up next and the stages, beside the agent",
   expect(left(13)).toBe("");
   expect(left(14)).toBe(" 3 Reviewing 0");
   expect(left(17)).toBe(" 6 Done      1");
-  expect(selected()).toMatch(/^▸ ○ lead\b/);
+  expect(selected()).toMatch(/^▹ ○ lead\b/);
   // Nothing of the screen is left in agents' sessions: each stays one pane.
   const panes = tmux(agents, "list-panes", "-a", "-F", "#{session_name}").out.trim().split("\n");
   expect(panes.sort()).toEqual(["app-12", "app-7", "lead"]);
@@ -302,7 +303,7 @@ test("the screen starts on the lead's row, even while a task needs you", async (
   open("lead");
   await ready("lead");
   await until(() => seen().includes("● APP-12"), "APP-12 under Needs you");
-  expect(selected()).toMatch(/^▸ ○ lead\b/);
+  expect(selected()).toMatch(/^▹ ○ lead\b/);
 });
 
 test("updates on its own, with needs you in the sidebar", async () => {
@@ -314,7 +315,7 @@ test("updates on its own, with needs you in the sidebar", async () => {
   expect(seen()).toContain("● APP-12");
   expect(seen()).toContain("Needs you 1");
   // Its tab says so too, as other repositories' tabs would.
-  expect(seen().split("\n")[0]?.trimEnd()).toMatch(/^ {2}Skelcrew .*│ {3}app •1$/);
+  expect(seen().split("\n")[0]?.trimEnd()).toMatch(/^ {2}Skelcrew .*▕ {3}app •1$/);
   sql("UPDATE threads SET status = 'done' WHERE task = 7");
   await until(() => !seen().includes("APP-7"), "the done thread to go");
 });
@@ -423,28 +424,30 @@ test("Shift+Enter reaches the agent as a key of its own, through both tmux serve
   expect(read("lead.keys")).toBe(`a${shiftEnter}b\r`);
 });
 
-// Mac terminals send Option-Left and Option-Right as Esc b and Esc f, and other terminals send
-// Alt-Left and Alt-Right. All four move by word in a prompt, so they must reach the agent and
-// leave the screen where it is, whether or not your terminal sends extended keys. The agent asks
-// for extended keys, as Claude Code and Codex do, so Esc b and Esc f reach it as Alt-B and Alt-F
-// in the form it asked for.
+// Mac terminals often send Option-Left and Option-Right as Esc b and Esc f, and other terminals
+// send Alt-Left and Alt-Right. The screen takes all four, from a terminal that sends extended keys
+// or not, to move your typing between the sidebar and the agent, so none reaches the agent,
+// though the agent asks for extended keys, as Claude Code and Codex do.
 for (const extended of [false, true])
-  test(`the keys that move by word reach the agent, from a terminal ${extended ? "with" : "without"} extended keys`, async () => {
+  test(`the keys that move by word move your typing instead, from a terminal ${extended ? "with" : "without"} extended keys`, async () => {
     given.extendedKeys = extended;
     keyLoggingLead();
     open("lead");
     await ready("lead");
-    // Each goes alone, as from a hand.
-    for (const word of ["\x1bb", "\x1bf", "\x1b[1;3D", "\x1b[1;3C"]) {
+    // Each goes alone, as from a hand, once the one before has moved your typing.
+    for (const [word, toSidebar] of [
+      ["\x1bb", true],
+      ["\x1bf", false],
+      ["\x1b[1;3D", true],
+      ["\x1b[1;3C", false],
+    ] as const) {
       type(word);
-      await Bun.sleep(100);
+      await until(() => typingToSidebar() === toSidebar, `${JSON.stringify(word)} to move`);
     }
     press("Enter");
     await until(() => read("lead.keys").endsWith("\r"), "the Enter");
-    // tmux before 3.5 has only the xterm form of an extended key.
-    const alt = (code: number) => (tmuxIsAtLeast(3, 5) ? `\x1b[${code};3u` : `\x1b[27;3;${code}~`);
-    expect(read("lead.keys")).toBe(`${alt(98)}${alt(102)}\x1b[1;3D\x1b[1;3C\r`);
-    expect(selected()).toMatch(/^▸ ○ lead\b/);
+    expect(read("lead.keys")).toBe("\r");
+    expect(selected()).toMatch(/^▹ ○ lead\b/);
     expect(seen()).toContain("I am lead");
   });
 
@@ -553,8 +556,8 @@ test("Ctrl-Q and switching still work while scrolled back", async () => {
   await ready("output");
   wheel(64);
   await until(() => !seen().includes("I am output"), "the scrollback");
-  press("M-Down");
-  await until(() => selected().includes("APP-12"), "the next row");
+  press("M-S-Down");
+  await until(() => selected().includes("APP-12"), "the first task");
   press("C-q");
   await until(() => existsSync(join(home, "left-one")), "Skelcrew to return");
 });
@@ -758,7 +761,7 @@ test("two terminals each get their own session, and leaving one leaves the other
   open("lead", "two");
   await ready("lead", "two");
   expect(screenSessions()).toHaveLength(2);
-  press("M-Down", "two");
+  press("M-S-Down", "two");
   await until(() => selected("two").includes("APP-12"), "the second to switch", "two");
   expect(onLead("one")).toBe(true);
   press("C-q", "one");

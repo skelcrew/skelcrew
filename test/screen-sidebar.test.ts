@@ -37,7 +37,7 @@ const left = () =>
 const isOpen = (heading: string) => {
   const lines = left();
   const at = lines.findIndex((line) => line.includes(heading));
-  return at >= 0 && /^ [▸ ] \S/.test(lines[at + 1] ?? "");
+  return at >= 0 && /^ [▸▹ ] \S/.test(lines[at + 1] ?? "");
 };
 
 test("Alt-1 to Alt-6 open and close the stages from the lead's row, and the lead gets nothing", async () => {

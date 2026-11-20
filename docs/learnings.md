@@ -389,6 +389,9 @@ Skelcrew no longer supports Sprites itself. These are for the Sprite machine plu
   through nested tmux and through `sprite exec --tty`, and tmux knows them as `M-S-Up` and
   `M-S-Down`. Alt-Left and Alt-Right move by word in Claude Code's input, and Alt with a digit
   types a character on a Mac, so neither is free.
+- **Mac terminals often send Option-Left and Option-Right as `Esc b` and `Esc f`**, where others
+  send `ESC[1;3D` and `ESC[1;3C`. tmux reads the first two as M-b and M-f, not as M-Left and
+  M-Right, so a key meant for Alt-Left must be bound under both names.
 - **Bun doesn't keep a signal it inherits as ignored.** `trap "" INT; exec bun ...` still dies
   on Ctrl-C. Until a program makes its terminal raw, Ctrl-C can end it, so a pane that must
   stay needs `remain-on-exit`. `respawn-pane -k` starts a dead pane again.

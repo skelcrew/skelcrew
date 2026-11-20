@@ -100,19 +100,23 @@ const sections: [string, [string, string][]][] = [
       ["--version", "Which release of Skelcrew this is"],
     ],
   ],
-  // The screen's keys, in words, read as "alt + q to quit, agents run on". Those that work
-  // anywhere come first, then those for a task's row, where the list's keys work without Alt.
-  // Ctrl-Q leaves too, but isn't listed: it is there for a Mac terminal that doesn't send Option
-  // as Alt.
+  // The screen's keys, in words, read as "alt + q to quit, agents run on". Alt + ← and → move
+  // your typing between the sidebar and the agent, which a Mac needs, as there Option with a digit
+  // types a character. Those that work anywhere come first, then those for the sidebar, where the
+  // list's keys work without Alt. Ctrl-Q leaves too, but isn't listed: it is there for a Mac
+  // terminal that doesn't send Option as Alt.
   [
     "KEYS",
     [
+      ["alt + ←", "type to the sidebar, from the lead or an agent"],
+      ["alt + →", "type to the lead or the agent again"],
       ["alt + ↑/↓", "move one row"],
       ["alt + shift + ↑/↓", "jump to the next or previous section"],
       ["alt + 1-6", "open or close a stage"],
       ["alt + shift + ←/→", "switch repository"],
       ["alt + q", "quit, agents run on"],
-      ["enter", "open a task's row, or attach to its agent"],
+      ["↑/↓, 1-6", "in the sidebar: move, open or close a stage"],
+      ["enter", "open the row you are on: the lead, a task or a stage"],
       ["ctrl + \\", "come back from an agent you attached to"],
       ["shift + ↑/↓", "move a queued task in up next"],
       ["s", "start or queue a task in the backlog"],

@@ -82,8 +82,15 @@ const config = [
   ["set", "-g", "assume-paste-time", "0"],
   // Alt-Up and Alt-Down, with or without Shift, Alt-Shift-Left and Alt-Shift-Right, and Alt-1 to
   // Alt-6, which open and close the stages, go to the sidebar, in pane 0, without moving your
-  // typing from the agent. Plain Alt-Left and Alt-Right stay the agent's, as some terminals send
-  // them to move a word while you type.
+  // typing from the agent. Alt-Left and Alt-Right go there too, and the sidebar moves your typing
+  // to itself or back to the agent. They move a word in an agent's prompt, but on a Mac they are
+  // the only way to the sidebar, as Option with a digit types a character. A Mac terminal often
+  // sends Option-Left and Option-Right as Esc b and Esc f, which tmux reads as Alt-B and Alt-F, so
+  // those are taken too, and reach the sidebar as Alt-Left and Alt-Right.
+  ["bind", "-n", "M-Left", "send-keys", "-t", ":.0", "M-Left"],
+  ["bind", "-n", "M-Right", "send-keys", "-t", ":.0", "M-Right"],
+  ["bind", "-n", "M-b", "send-keys", "-t", ":.0", "M-Left"],
+  ["bind", "-n", "M-f", "send-keys", "-t", ":.0", "M-Right"],
   ["bind", "-n", "M-Up", "send-keys", "-t", ":.0", "M-Up"],
   ["bind", "-n", "M-Down", "send-keys", "-t", ":.0", "M-Down"],
   ["bind", "-n", "M-S-Up", "send-keys", "-t", ":.0", "M-S-Up"],

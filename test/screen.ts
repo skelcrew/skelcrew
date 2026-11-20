@@ -60,19 +60,24 @@ const sidebarNow = (window = "one") =>
   sidebarFor(Number(tmux(terminal, "display", "-p", "-t", `=${window}:`, "#{window_width}").out));
 // The top row as you see it: Skelcrew above the sidebar, then the tabs above the right side.
 export const tabRow = () => (seen().split("\n")[0] ?? "").trimEnd();
-// The row you are looking at, as the name line with the grey background shows it, below the
-// status line, where the open tab has the same grey, and left of the sidebar's edge. Empty until
-// the sidebar has drawn one.
+// The row you are looking at, as the sidebar shows it: the line it starts with ▸, lit while your
+// typing goes to the sidebar, or the outline ▹ while it goes to the right side, or a heading with
+// the grey background. Below the status line, where the open tab has the same grey, and left of
+// the sidebar's edge. Empty until the sidebar has drawn one.
 export function selected(window = "one"): string {
   const colours = tmux(terminal, "capture-pane", "-p", "-e", "-t", `=${window}:`).out;
-  const line = colours
-    .split("\n")
-    .slice(1)
-    .find((text) => (text.split(/[│┤]/)[0] ?? "").includes("48;5;238"));
+  const width = sidebarNow(window) - 1;
+  const lines = colours.split("\n").slice(1);
+  const line = lines.find((text) => {
+    const plain = Bun.stripANSI(text).slice(0, width).trim();
+    return /^[▸▹] /.test(plain) || (text.split(/[▏▕]/)[0] ?? "").includes("48;5;238");
+  });
   return Bun.stripANSI(line ?? "")
-    .slice(0, sidebarNow(window) - 1)
+    .slice(0, width)
     .trim();
 }
+// Returns whether your typing goes to the sidebar, as the row you are on is lit there with ▸.
+export const typingToSidebar = (window = "one") => selected(window).startsWith("▸");
 export const screenSessions = () =>
   tmux(screen, "list-sessions", "-F", "#{session_name}").out.trim().split("\n").filter(Boolean);
 
@@ -250,7 +255,7 @@ export async function toSecondThread(): Promise<void> {
 }
 
 // Returns whether the row you are on is the lead's, which alone starts with its mark and lead.
-export const onLead = (window = "one") => /^▸ \S lead\b/.test(selected(window));
+export const onLead = (window = "one") => /^[▸▹] \S lead\b/.test(selected(window));
 
 // Waits until the screen shows the agent you opened it on, and the sidebar has drawn, on the
 // lead's row, where the screen starts whichever agent it opened on.

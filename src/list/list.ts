@@ -32,7 +32,6 @@ import { liveNote, readLive } from "./live.ts";
 import { drawPane, type Live } from "./pane.ts";
 import {
   buildersNote,
-  cutBacklog,
   listRows,
   type Open,
   type Question,
@@ -41,6 +40,7 @@ import {
   type Section,
   sectionHeadings,
   sections,
+  shownRows,
 } from "./rows.ts";
 
 // The keys the list reads, as your terminal sends them. Arrows come in either of the two forms a
@@ -137,10 +137,7 @@ export async function runList(agents: string, repository: string): Promise<void>
   let builders = "";
   const opened = new Set<Section>(["needs you", "up next", "building"]);
   let wholeBacklog = false;
-  const showing = () =>
-    cutBacklog(all, wholeBacklog).filter(
-      (row) => row.section === "lead" || opened.has(row.section),
-    );
+  const showing = () => shownRows(all, opened, wholeBacklog);
   let here = -1;
   let top = 0;
   // What a click on each line of the screen reaches, as it was last drawn.
@@ -249,7 +246,7 @@ export async function runList(agents: string, repository: string): Promise<void>
     if (moved && moved.section !== before && moved.section !== "lead") opened.add(moved.section);
     rows = showing();
     const at = name === undefined ? -1 : rows.findIndex((row) => row.name === name);
-    const needing = rows.findIndex((row) => row.section === "needs you");
+    const needing = rows.findIndex((row) => row.section === "needs you" && row.part !== "heading");
     if (at >= 0) here = at;
     else if (here < 0) here = Math.max(needing, 0);
     else here = Math.min(here, rows.length - 1);
@@ -359,13 +356,14 @@ export async function runList(agents: string, repository: string): Promise<void>
     refresh();
   };
 
-  // Opens a row with Enter: attaches to the lead, starting it first when it isn't running, or to
-  // the builder of a task at work. Says what a task up next waits on. Asks before starting an
-  // issue. Opens the PR of a task ready
-  // for review or ended, or copies its link, or without a forge says which branch waits for you.
-  // A ready task whose builder needs you, such as for a question, attaches to the builder, so one
-  // Enter reaches what it waits on.
+  // Opens a row with Enter: opens or closes a stage on its heading, attaches to the lead,
+  // starting it first when it isn't running, or to the builder of a task at work. Says what a task
+  // up next waits on. Asks before starting an issue. Opens the PR of a task ready for review or
+  // ended, or copies its link, or without a forge says which branch waits for you. A ready task
+  // whose builder needs you, such as for a question, attaches to the builder, so one Enter
+  // reaches what it waits on.
   const openRow = async (row: Row) => {
+    if (row.part === "heading" && row.section !== "lead") return toggleSection(row.section);
     // The daemon starts the lead first if it isn't running, such as one you exited or one that
     // crashed, as only it knows. The list reads only the database, which can't tell a crash.
     if (row.part === "lead" && row.session) {
@@ -428,17 +426,21 @@ export async function runList(agents: string, repository: string): Promise<void>
     if (tabs.length > 1 && next) goTo(next.fullName);
   };
 
-  // Opens or closes a section, as a stage's number key or a click on its heading does. Opening
-  // one moves you to its first row, so the list scrolls to show it, rather than open it out of
-  // sight. Needs you and Up next are always open: they have no key, so once closed nothing but a
-  // click would bring back what waits, so a click on their heading does nothing.
+  // Opens or closes a section, as a stage's number key, Enter on its heading or a click on it
+  // does. Opening one moves you to its first row, so the list scrolls to show it, rather than open
+  // it out of sight. Closing the one you are in moves you to its heading, as your row hides. Needs
+  // you and Up next are always open: they have no key, so once closed nothing but a click would
+  // bring back what waits, so a click on their heading does nothing.
   const toggleSection = (section: Section) => {
     if (section === "needs you" || section === "up next") return draw();
-    if (opened.delete(section)) return reshow();
-    opened.add(section);
+    const inside = rows[here]?.section === section;
+    const closing = opened.delete(section);
+    if (!closing) opened.add(section);
     reshow();
-    const first = rows.findIndex((candidate) => candidate.section === section);
-    if (first >= 0) here = first;
+    const first = rows.findIndex(
+      (candidate) => candidate.section === section && (closing || candidate.part !== "heading"),
+    );
+    if (first >= 0 && (inside || !closing)) here = first;
     return draw();
   };
 

@@ -43,7 +43,8 @@ type Action = Question | { refused: string };
 export type Section = "needs you" | "up next" | ListStage;
 export const sections: Section[] = ["needs you", "up next", ...ListStage.options];
 
-// One row of the list. `part` is where it is: the lead, or the stage of its task. `section` is
+// One row of the list. `part` is where it is: the lead, the stage of its task, or a section's
+// heading, which you can stand on too, so Enter there opens or closes it. `section` is
 // the section it shows under: Needs you while the task waits on you, Up next while it is queued
 // or paused, its stage otherwise. Its mark is a sign and the colour that says what kind of state it is in, `says` is its short word, in
 // `colour`, and `step` what its builder is doing, such as `Editing rows.ts`. Then dim its PR,
@@ -61,7 +62,7 @@ export const sections: Section[] = ["needs you", "up next", ...ListStage.options
 // what a queued or paused task waits on, such as `3rd in line: 4 of 4 builders busy`, for the
 // details pane, and is empty on every other row.
 export type Row = {
-  part: "lead" | ListStage;
+  part: "lead" | "heading" | ListStage;
   section: "lead" | Section;
   name: string;
   task: string | null;
@@ -516,34 +517,65 @@ export function cutBacklog(rows: Row[], whole: boolean): Row[] {
   if (whole || rest <= 0) return rows;
   const hidden = new Set(backlog.slice(backlogShown));
   const more: Row = {
+    ...emptyRow,
     part: "backlog",
     section: "backlog",
     name: `${rest} more`,
-    task: null,
-    title: "",
     mark: { sign: "…", colour: "dim" },
-    says: "",
-    colour: "dim",
-    step: "",
-    pr: "",
-    checks: "",
-    when: "",
-    needsYou: false,
-    session: null,
-    running: false,
-    tmux: false,
-    start: null,
-    merge: null,
-    link: null,
-    branch: null,
     more: rest,
-    place: null,
-    waits: "",
   };
   // The `… more` row goes where the first issue it stands for was, so it ends Backlog.
   return rows.flatMap((row) =>
     row === backlog[backlogShown] ? [more] : hidden.has(row) ? [] : [row],
   );
+}
+
+// What a row that isn't a task has: no title, word, agent or action.
+const emptyRow: Row = {
+  part: "lead",
+  section: "lead",
+  name: "",
+  task: null,
+  title: "",
+  mark: { sign: "", colour: "dim" },
+  says: "",
+  colour: "dim",
+  step: "",
+  pr: "",
+  checks: "",
+  when: "",
+  needsYou: false,
+  session: null,
+  running: false,
+  tmux: false,
+  start: null,
+  merge: null,
+  link: null,
+  branch: null,
+  more: 0,
+  place: null,
+  waits: "",
+};
+
+// Returns the rows the list shows, in the order it shows them: the lead's, then each section's
+// heading, with an open section's rows under it. Backlog is cut as cutBacklog says, unless
+// `wholeBacklog`. A heading is a row of its own, so the arrows stop on it, and Enter there opens or
+// closes its section, as a click does. Its name is no task's, nor the `… more` row's.
+export function shownRows(all: Row[], opened: Set<Section>, wholeBacklog: boolean): Row[] {
+  const cut = cutBacklog(all, wholeBacklog);
+  const heading = (section: Section): Row => ({
+    ...emptyRow,
+    part: "heading",
+    section,
+    name: `heading ${section}`,
+  });
+  return [
+    ...cut.filter((row) => row.section === "lead"),
+    ...sections.flatMap((section) => [
+      heading(section),
+      ...(opened.has(section) ? cut.filter((row) => row.section === section) : []),
+    ]),
+  ];
 }
 
 // A section's heading: its section, how many tasks it has, whether it is open, which shows its
