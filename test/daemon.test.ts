@@ -413,9 +413,11 @@ test("writes down the full commit and checkout it started from", async () => {
 });
 
 // Puts a stand-in for git first on the daemon's PATH, which runs the real one, but can hold the
-// daemon at a moment of a yes to a new task: after the push that files it, while `hold-push` is
-// in the home folder, or at the first fetch after that push, while `hold-fetch` is. It leaves
-// `held` there once it holds, and lets go once the file that holds it goes.
+// daemon partway through a yes to a new task: after the push numbered in `hold-push`, counted
+// from 1, while that file is in the home folder, or at the first fetch after the first push,
+// while `hold-fetch` is. The yes's first push files the task, and as it starts the task, its
+// second takes the task from the backlog and its third, after its thread is recorded, ends that
+// claim. It leaves `held` there once it holds, and lets go once the file that holds it goes.
 function holdGit(): void {
   const real = Bun.which("git") ?? "git";
   const holdWhile = (file: string) =>
@@ -424,8 +426,12 @@ function holdGit(): void {
     join(home, "bin", "git"),
     `#!/bin/sh
 case " $* " in
-  *" push "*) ${real} "$@"; code=$?; touch "$HOME/pushed"; [ -e "$HOME/hold-push" ] && { ${holdWhile("hold-push")}; }; exit $code ;;
-  *" fetch "*) [ -e "$HOME/pushed" ] && [ -e "$HOME/hold-fetch" ] && { ${holdWhile("hold-fetch")}; } ;;
+  *" push "*)
+    ${real} "$@"; code=$?
+    n=$(( $(cat "$HOME/pushes" 2>/dev/null || echo 0) + 1 )); echo $n > "$HOME/pushes"
+    [ "$(cat "$HOME/hold-push" 2>/dev/null)" = "$n" ] && { ${holdWhile("hold-push")}; }
+    exit $code ;;
+  *" fetch "*) [ -e "$HOME/pushes" ] && [ -e "$HOME/hold-fetch" ] && { ${holdWhile("hold-fetch")}; } ;;
 esac
 exec ${real} "$@"
 `,
@@ -433,10 +439,10 @@ exec ${real} "$@"
   );
 }
 
-// Says yes to a new task the lead asked for, has git hold the daemon at `hold`, stops the daemon
-// there, as a crash or a restart would, then starts it again. Returns the request as the stop
-// left it, then what the daemon kept of the task once it is back.
-async function restartDuring(hold: "hold-push" | "hold-fetch") {
+// Says yes to a new task the lead asked for, has git hold the daemon as `hold` says, stops the
+// daemon there, as a crash or a restart would, then starts it again. Returns the request and the
+// task's threads as the stop left them, then what the daemon kept of the task once it is back.
+async function restartDuring(hold: { file: "hold-push" | "hold-fetch"; text?: string }) {
   setUp();
   addRepository("app");
   holdGit();
@@ -448,12 +454,13 @@ async function restartDuring(hold: "hold-push" | "hold-fetch") {
   ('simon', 'app', '{"kind":"start new","title":"CSV export","body":"Add it.","short":"CSV"}',
     'Start a new task: CSV export?', 1)`),
   );
-  writeFileSync(join(home, hold), "");
+  writeFileSync(join(home, hold.file), hold.text ?? "");
   void ask({ command: "answer", repo: "simon/app", id: 1, yes: true });
   await until(() => existsSync(join(home, "held")));
   for (const run of running.splice(0)) await stop(run);
-  const left = onDb((db) => db.query("SELECT action, answered FROM lead_requests").all());
-  rmSync(join(home, hold));
+  const left = onDb((db) => db.query("SELECT action, answered, started FROM lead_requests").all());
+  const threadsLeft = onDb((db) => db.query("SELECT task FROM task_threads").all());
+  rmSync(join(home, hold.file));
   serve();
   await untilAnswers();
   await until(() => onDb((db) => db.query("SELECT 1 FROM lead_requests").all()).length === 0);
@@ -462,17 +469,18 @@ async function restartDuring(hold: "hold-push" | "hold-fetch") {
   );
   const backlog = onDb((db) => db.query("SELECT task FROM backlog").all());
   const notes = onDb((db) => db.query("SELECT text FROM notes WHERE text LIKE '%request%'").all());
-  return { left, threads, backlog, notes };
+  return { left, threadsLeft, threads, backlog, notes };
 }
 
 // The push that files the task went through, but the daemon stopped before it heard. Its filing's
 // note finds the task again, so the yes starts it, and files nothing more.
 test("a stop after the push that files a yes's new task starts that task once, filing no second", async () => {
-  const { left, threads, backlog, notes } = await restartDuring("hold-push");
+  const { left, threads, backlog, notes } = await restartDuring({ file: "hold-push", text: "1" });
   expect(left).toEqual([
     {
       action: '{"kind":"start new","title":"CSV export","body":"Add it.","short":"CSV"}',
       answered: expect.any(Number),
+      started: 0,
     },
   ]);
   expect(threads).toEqual([{ task: "t1", short: "CSV" }]);
@@ -486,15 +494,45 @@ test("a stop after the push that files a yes's new task starts that task once, f
 
 // The task was filed and the request names it, but the daemon stopped before it started it.
 test("a stop after a yes's new task is filed starts the task it named, filing no second", async () => {
-  const { left, threads, backlog, notes } = await restartDuring("hold-fetch");
+  const { left, threads, backlog, notes } = await restartDuring({ file: "hold-fetch" });
   expect(left).toEqual([
-    { action: '{"kind":"start","task":"t1","short":"CSV"}', answered: expect.any(Number) },
+    {
+      action: '{"kind":"start","task":"t1","short":"CSV"}',
+      answered: expect.any(Number),
+      started: 0,
+    },
   ]);
   expect(threads).toEqual([{ task: "t1", short: "CSV" }]);
   expect(backlog).toEqual([]);
   expect(notes).toEqual([
     {
       text: "Skelcrew stopped partway through the human's yes in the list to your request: Start a new task: CSV export? It did it again: Started APP-T1.",
+    },
+  ]);
+}, 60_000);
+
+// The yes's start recorded the task's thread, but the daemon stopped before the lead heard. The
+// request says it started, so the restart only tells the lead, and starts nothing again.
+test("a stop after a yes's start recorded its thread tells the lead, starting nothing again", async () => {
+  const { left, threadsLeft, threads, backlog, notes } = await restartDuring({
+    file: "hold-push",
+    text: "3",
+  });
+  expect(left).toEqual([
+    {
+      action: '{"kind":"start","task":"t1","short":"CSV"}',
+      answered: expect.any(Number),
+      started: 1,
+    },
+  ]);
+  expect(threadsLeft).toEqual([{ task: "t1" }]);
+  expect(threads).toEqual([{ task: "t1", short: "CSV" }]);
+  expect(backlog).toEqual([]);
+  expect(notes).toEqual([
+    {
+      text: expect.stringMatching(
+        /^Skelcrew stopped partway through the human's yes in the list to your request: Start a new task: CSV export\? It had done it already: Started APP-T1\b/,
+      ),
     },
   ]);
 }, 60_000);

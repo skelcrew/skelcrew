@@ -58,6 +58,7 @@ import {
   nameFiledTask,
   refuseRequest,
   requestAnswered,
+  requestStarted,
   saveRequest,
 } from "./lead-requests.ts";
 import { restoreLimits, wakeAfterLimit } from "./limits.ts";
@@ -467,6 +468,9 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       failThread(db, sessions, thread, error);
     }
   };
+  // The yes to a lead's request whose start runs now, by the task's owner/repo#task, which the
+  // start marks as it records the thread.
+  const yesStarting = new Map<string, number>();
   // Tells the lead what came of your answer to its request, and deletes the request, in one step.
   // So a stop of the daemon leaves either both done, or the request, which answeredRequests finds
   // again.
@@ -525,7 +529,11 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         ...(short ? { short } : {}),
         ...(flow ? { flow } : {}),
       };
-      const { started } = z.object({ started: z.string() }).parse(await handle(start, "you"));
+      // The start marks the request as it records the thread, as the start case says.
+      const key = `${owner}/${repo}#${task}`;
+      yesStarting.set(key, taken.id);
+      const reply = await handle(start, "you").finally(() => yesStarting.delete(key));
+      const { started } = z.object({ started: z.string() }).parse(reply);
       settle(repository, taken.id, `${yes} ${started}`);
       return started;
     } catch (error) {
@@ -533,13 +541,31 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       throw error;
     }
   };
-  // Does again each yes to a lead's request that the last stop of the daemon cut short. Doing a
-  // start again never starts a task twice: one already at work stays as it is, and only gains
-  // the short title or flow asked. The lead hears what doing it again said.
+  // Does again each yes to a lead's request that the last stop of the daemon cut short. One whose
+  // start recorded its thread is only reported, as the thread is now. Doing any other start again
+  // never starts a task twice: one already at work stays as it is, and only gains the short title
+  // or flow asked. The lead hears what doing it again said.
   const finishAnswers = async () => {
     for (const taken of answeredRequests(db)) {
       try {
-        await doYes(findRepository(db, `${taken.owner}/${taken.repo}`), taken, true);
+        const repository = findRepository(db, `${taken.owner}/${taken.repo}`);
+        if (taken.started && taken.action.kind === "start") {
+          // The yes recorded its task's thread before the stop, so the lead only hears of it,
+          // as the thread is now: still queued, or started.
+          const name = taskName(repository.name, taken.action.task);
+          const thread = threadOn(db, `${taken.owner}/${taken.repo}`, taken.action.task);
+          const status = thread?.status ?? "done";
+          const now =
+            thread && status === "queued"
+              ? queuedText(db, thread)
+              : ["working", "waiting"].includes(status)
+                ? `Started ${name}.`
+                : `Started ${name}, which is ${status} now.`;
+          const text = `Skelcrew stopped partway through the human's yes in the list to your request: ${taken.says} It had done it already: ${now}`;
+          settle(repository, taken.id, text);
+          continue;
+        }
+        await doYes(repository, taken, true);
       } catch (error) {
         console.log(`couldn't finish the answer to a lead's request: ${errorText(error)}`);
       }
@@ -978,7 +1004,11 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
             return { started: `Started ${threadName(db, started)}.` };
           }
           if (await hasNoCommits(db, repository)) throw new Error(noCommits(repository));
-          thread = await startThread(db, request);
+          // Your yes to a lead's request is kept as started in the step that records the thread.
+          thread = await startThread(db, request, false, () => {
+            const yes = yesStarting.get(key);
+            if (yes !== undefined) requestStarted(db, yes);
+          });
         } finally {
           startingTasks.delete(key);
         }

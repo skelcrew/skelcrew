@@ -92,7 +92,9 @@ export function statusOnceBack(stopped: Thread): "waiting" | "working" {
 // the claim is made.
 // Starts go one at a time: a start over first deletes the old thread's refs, and a second
 // start of the same task, running alongside, could delete the refs of the thread the first
-// just started. One at a time, the second finds that thread and is refused.
+// just started. One at a time, the second finds that thread and is refused. `recorded` is told
+// the thread in the same step that records it, so a caller can keep that it started, such as
+// your yes to a lead's request, before a stop of the daemon could lose it.
 export function startThread(
   db: Database,
   given:
@@ -111,8 +113,9 @@ export function startThread(
         flow?: string | undefined;
       },
   claimed = false,
+  recorded: (thread: Thread) => void = () => {},
 ): Promise<Thread> {
-  const start = startsBefore.then(() => recordThread(db, given, claimed));
+  const start = startsBefore.then(() => recordThread(db, given, claimed, recorded));
   // A start that fails holds up none after it.
   startsBefore = start.catch(() => {});
   return start;
@@ -126,6 +129,7 @@ async function recordThread(
   db: Database,
   given: Parameters<typeof startThread>[1],
   claimed: boolean,
+  recorded: (thread: Thread) => void,
 ): Promise<Thread> {
   // Find the repository and whether a tracker holds its tasks, which decides where a named
   // task's title and body come from.
@@ -399,6 +403,7 @@ async function recordThread(
     else if (queued && tracked && !ownTask(task))
       db.run("INSERT OR IGNORE INTO claims (owner, repo, task) VALUES (?, ?, ?)", claims);
     log(db, thread);
+    recorded(thread);
     return thread;
   });
   // A task from the backlog is taken off it for every machine around the thread's record, so it
