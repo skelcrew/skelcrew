@@ -613,15 +613,28 @@ function prepareTables(db: Database): void {
   )`);
   // A lead's message to a builder, and a builder's message or a brief to a lead, are typed in as
   // Skelcrew wrapped them. One saved before herdr's <hc> tags were removed from inside can still
-  // hold one, so the < that starts it is written &lt;. Skelcrew's wrapper holds no such tag, and
-  // escaped text no longer matches, so this changes nothing the next time.
+  // hold one, so it is escaped. A brief's plain <asked> or <brief> element with one is escaped
+  // whole and marked escaped="yes", as a new brief's is, so the lead reads back the exact words:
+  // & as &amp; and < as &lt;. Such an element held no tag or control character of Skelcrew's,
+  // which escaped it then. Anywhere else, only the < that starts the tag is written &lt;.
+  // Skelcrew's wrapper holds no such tag, and escaped text no longer matches, so this changes
+  // nothing the next time.
+  const herdrTag = /<(?=\s*\/?\s*hc\b)/i;
   const Saved = z.array(z.object({ id: z.number(), text: z.string() }));
   for (const table of ["notes", "messages"]) {
     const which = table === "notes" ? "wrapped = 1" : "sender = 'lead'";
     for (const { id, text } of Saved.parse(
       db.query(`SELECT id, text FROM ${table} WHERE ${which}`).all(),
     )) {
-      const escaped = text.replace(/<(?=\s*\/?\s*hc\b)/gi, "&lt;");
+      const escaped = text
+        .replace(
+          /\n<(asked|brief)>\n([\s\S]*?)\n<\/\1>(?=\n)/g,
+          (element, tag: string, said: string) =>
+            herdrTag.test(said)
+              ? `\n<${tag} escaped="yes">\n${said.replaceAll("&", "&amp;").replaceAll("<", "&lt;")}\n</${tag}>`
+              : element,
+        )
+        .replace(new RegExp(herdrTag.source, "gi"), "&lt;");
       if (escaped !== text) db.run(`UPDATE ${table} SET text = ? WHERE id = ?`, [escaped, id]);
     }
   }
