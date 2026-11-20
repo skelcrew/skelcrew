@@ -137,6 +137,10 @@ export function mergeWaitsOn(
   if (thread.status === "stopped") return "its thread, which is stopped";
   if (pr === null || pr.state !== "open") return "its PR";
   if (thread.submitting !== null || thread.reviewing !== null) return "its review";
+  // Changes the round limit held never reach the builder, so no new round comes until someone
+  // lets it go on with sc start. Arming the merge decided the limit, but doesn't do that.
+  if (thread.verdict !== "approve" && thread.held !== null)
+    return "its builder to be let past the round limit";
   if (thread.verdict !== "approve") return "an approval";
   // A push Skelcrew didn't review, such as someone else's, is never merged unseen.
   if (approved === null || pr.head !== approved) return "a review of its newest commit";
@@ -183,6 +187,7 @@ const stuckWaits = [
   "its failing checks",
   "its thread, which",
   "the forge, which",
+  "its builder to be let past the round limit",
 ];
 
 // Returns how a wait that needs someone starts, which names it whatever its details, or null for
@@ -192,11 +197,11 @@ export const stuckWait = (waits: string): string | null =>
 
 // Returns which wait the lead should hear an armed merge is stuck on, after a review round
 // ended, or null for none. Only a wait someone must act on counts: a conflict, failing checks, a
-// thread that failed or stopped, or the forge. The round limit isn't one, as an armed merge
-// already decided it. A builder working on its round, a review running or to come, and checks
-// running are on their way, and a note for them would only repeat each round. The lead hears each wait once per review round, so a second one in the same
-// round, such as the forge refusing once the checks were fixed, still reaches it. What it gives
-// back is how the wait starts, as a forge's own words change from poll to poll.
+// thread that failed or stopped, the forge, or changes held by the round limit. A builder working
+// on its round, a review running or to come, and checks running are on their way, and a note for
+// them would only repeat each round. The lead hears each wait once per review round, so a second
+// one in the same round, such as the forge refusing once the checks were fixed, still reaches it.
+// What it gives back is how the wait starts, as a forge's own words change from poll to poll.
 export function mergeNoteFor(thread: Thread, waits: string | null): string | null {
   if (waits === null || thread.review_round === null) return null;
   const stuck = stuckWait(waits);

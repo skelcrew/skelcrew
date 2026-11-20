@@ -898,9 +898,12 @@ test("a merge when ready waits until the approved head is green and merges clean
     "a review of its newest commit",
   );
   expect(mergeWaitsOn({ ...ready, verdict: "changes" }, green, head)).toBe("an approval");
-  // Changes held by the round limit wait on an approval too: arming the merge decided the limit.
-  expect(mergeWaitsOn({ ...ready, verdict: "changes", held: "Fix it" }, green, head)).toBe(
-    "an approval",
+  // Changes held by the round limit never reach the builder, so the merge waits on someone
+  // letting it go on, whether or not arming the merge decided the limit.
+  const held = { ...ready, verdict: "changes" as const, held: "Fix it" };
+  expect(mergeWaitsOn(held, green, head)).toBe("its builder to be let past the round limit");
+  expect(mergeWaitsOn({ ...held, limit_decided: true }, green, head)).toBe(
+    "its builder to be let past the round limit",
   );
   // A conflict or a failing check needs the builder, and running checks only time.
   expect(mergeWaitsOn(ready, pr({ ...green, conflicts: true }), head)).toBe(
@@ -991,6 +994,7 @@ test("the lead hears each wait of an armed merge once per review round, and only
     "its thread, which failed",
     "its thread, which is stopped",
     "the forge, which refused: Not mergeable",
+    "its builder to be let past the round limit",
   ])
     expect(mergeNoteFor(armed, waits)).not.toBeNull();
   // What is on its way: a builder working on its round, a review running or to come, checks.
