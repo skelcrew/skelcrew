@@ -71,19 +71,29 @@ export const sectionNames: Record<Section, string> = {
   done: "Done",
 };
 
-// Returns the keys the bottom line offers on a row: Enter always, with Ctrl-\, which comes back,
-// on a row whose agent Enter attaches to on tmux, or as showing every issue on Backlog's `… more`
-// row, the numbers that open and close the stages, s only on a task it can start, m only on a
+// Returns the keys the bottom line offers on a row: Enter always, as attach on a row whose agent
+// it attaches to, with Ctrl-\, which comes back, when that is on tmux, or as showing every issue
+// on Backlog's `… more` row, the numbers that open and close the stages, s only on a task it can start, m only on a
 // task it can merge, o on a task while the details pane shows, to show its agent's whole screen
 // or only the last lines, and Tab and Alt-Shift with an arrow only with another repository to go
 // to. A runtime plugin's host has its own key to come back, so its rows don't offer Ctrl-\.
 export function keysFor(row: Row | undefined, tabs: number, pane = false): string {
-  const enter = row?.more ? "⏎ show all" : row?.tmux ? "⏎ open · ctrl+\\ back" : "⏎ open";
+  const back = row?.tmux ? " · ctrl+\\ back" : "";
+  const enter = row?.more ? "⏎ show all" : row && enterAttaches(row) ? `⏎ attach${back}` : "⏎ open";
   const open = pane && row?.task ? `${enter} · o output` : enter;
   const merge = row?.merge && "ask" in row.merge ? ["m merge"] : [];
   const start = row?.start ? ["s start"] : [];
   const tab = tabs > 1 ? ["⇥/alt+shift+←→ repository"] : [];
   return ["↑↓ move", open, "1-6 stages", ...start, ...merge, ...tab, "q/esc quit"].join("  ");
+}
+
+// Returns whether Enter on a row attaches to its agent: the lead, or a task's builder while it is
+// at work, or once it is ready but needs you. On Backlog it starts the task, and on Ready or Done
+// it opens the PR.
+export function enterAttaches(row: Row): boolean {
+  if (row.part === "lead") return true;
+  const atWork = row.part !== "ready" && row.part !== "done";
+  return (atWork || row.needsYou) && row.session !== null;
 }
 
 // The widest section name, so every heading's count starts in the same column.

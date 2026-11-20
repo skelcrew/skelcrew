@@ -130,6 +130,15 @@ test("the details take the list's look: bold title, dim labels, verdicts in colo
   expect(line("13:40 submitted · 13:52 reviewed · 14:02 submitted")).toStartWith(`${esc}[90m`);
 });
 
+test("a link with control characters in it never reaches your terminal as codes", () => {
+  const bad = "https://github.com/acme/app/issues/42\x07\x1b]2;owned\x07";
+  const issue = { id: "#42", link: bad };
+  const drawn = drawPane(row, { ...details, view: { ...details.view, issue } }, null, 50, 30);
+  const text = drawn.join("\n");
+  expect(text).not.toContain("\x07");
+  expect(text).not.toContain("\x1b]2;");
+});
+
 test("an approved review and passed CI show green, a failed one red", () => {
   const page = details.view.prPage;
   if (!page) throw new Error("the details have a PR");

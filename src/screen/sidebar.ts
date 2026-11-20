@@ -20,7 +20,7 @@ import { ListStage } from "../flow/stage.ts";
 import { doing, watchForStalls } from "../flow/stall.ts";
 import { liveThreads } from "../flow/thread.ts";
 import { type Asking, canOpenLinks, openPr, stillOffered } from "../list/actions.ts";
-import { drawRows, listShare, type Target } from "../list/layout.ts";
+import { drawRows, enterAttaches, listShare, type Target } from "../list/layout.ts";
 import {
   cutBacklog,
   listRows,
@@ -81,14 +81,15 @@ const keyNames: Record<string, string> = {
   "\n": "enter",
 };
 
-// The keys the footer shows on a task's row, where your typing goes to the sidebar: Enter, o to
-// show the agent's whole screen or its last lines, the stages' numbers, and s or m only where the
-// row can be started or merged.
+// The keys the footer shows on a task's row, where your typing goes to the sidebar: Enter, as
+// attach where it attaches to the builder, o to show the agent's whole screen or its last lines,
+// the stages' numbers, and s or m only where the row can be started or merged.
 function taskFooter(row: Row): string {
   const output = row.task ? " · o output" : "";
   const start = row.start ? "  s start" : "";
   const merge = row.merge && "ask" in row.merge ? "  m merge" : "";
-  return `⌥↑↓ move  ⏎ open${output}  1-6 stages${start}${merge}  ⌥Q quit`;
+  const enter = enterAttaches(row) ? "⏎ attach" : "⏎ open";
+  return `⌥↑↓ move  ${enter}${output}  1-6 stages${start}${merge}  ⌥Q quit`;
 }
 
 // Returns the repository open in the sidebar, given its owner/name, with its lead's session.

@@ -105,7 +105,7 @@ test("o on a task's row shows its builder's whole screen and back, and Enter sti
   press("M-Down");
   await until(() => right().includes("Login redirect"), "app-7's details");
   await until(() => right().includes("I am app-7"), "app-7's screen");
-  expect(footer()).toContain("⏎ open · o output");
+  expect(footer()).toContain("⏎ attach · o output");
   for (const line of ["one", "two", "three", "four"])
     tmux(agents, "send-keys", "-t", "=app-7:", "-l", `${line}\r`);
   // By default only the last three lines of the builder's screen show.

@@ -11,6 +11,7 @@ import {
   markColours,
   paint,
   red,
+  removeControlCodes,
   yellow,
 } from "../screen/look.ts";
 import type { Details } from "./details.ts";
@@ -65,7 +66,8 @@ const reviewColours: Record<NonNullable<TaskView["review"]>["state"], string> = 
 };
 
 // Returns text that opens `url` when clicked in a terminal that supports links, and shows as the
-// text alone in one that doesn't. A link broken over lines is a link on each of them.
+// text alone in one that doesn't. A link broken over lines is a link on each of them. The link
+// comes from the forge or the tracker, so its control codes were taken out before it got here.
 const linked = (url: string, text: string) => `\x1b]8;;${url}\x1b\\${text}\x1b]8;;\x1b\\`;
 
 // What each state of a review says on the pane's round line.
@@ -149,7 +151,10 @@ function detailLines(row: Row, details: Details, width: number, tight = 0): stri
   // A PR that left the forge's copy, such as a merged one, still has the link saved on its row.
   const prLink = view.prPage?.link ?? row.link ?? "";
   const pr = view.pr === null ? [] : [["PR", `#${view.pr}`, prLink]];
-  const links = [...issue, ...pr].flatMap(([label = "", id = "", link = ""]) => {
+  const links = [...issue, ...pr].flatMap(([label = "", id = "", given = ""]) => {
+    // A link holding control codes could end the terminal link early and send your terminal
+    // codes of its own, so they go, as spaces.
+    const link = removeControlCodes(given);
     const named = cut(`${label.padEnd(6)}${id}`);
     const start = `${paint(grey, named.slice(0, 6))}${named.slice(6)}`;
     if (!link) return [start];

@@ -779,7 +779,7 @@ The engine calls `status` for every change, from wherever it came: a hook, the s
 
 Plain `sc` opens the screen: the repository's list as a sidebar on the left, and on the right the lead or the task you are on, as **The screen** says. `sc --list` shows the list alone, full screen, with a details pane beside it. Both show the same rows, stages, words and marks, which this section describes for the list first. `sc attach` attaches full screen to one agent instead, with neither, as the list's Enter does. On tmux, Ctrl-\ detaches back to your shell. A runtime plugin's host keeps its own key to detach.
 
-`sc --list` shows a list, with a details pane beside it for the row you are on. You pick a row, and Skelcrew either attaches you full screen to an agent or does what the row offers. Detaching, with Ctrl-\, brings you back to the list, on the same row. While you are attached on tmux, the terminal's title names the agent and the key back, such as `app-24 · ctrl+\ back`, and the title you had comes back with you. Nothing else of Skelcrew's shows over the agent. On a row Enter attaches on tmux, the bottom line says so before you go, as `⏎ open · ctrl+\ back`. A runtime plugin's host has its own key to come back, and its rows say only `⏎ open`. The list needs no tmux server of its own.
+`sc --list` shows a list, with a details pane beside it for the row you are on. You pick a row, and Skelcrew either attaches you full screen to an agent or does what the row offers. Detaching, with Ctrl-\, brings you back to the list, on the same row. While you are attached on tmux, the terminal's title names the agent and the key back, such as `app-24 · ctrl+\ back`, and the title you had comes back with you. Nothing else of Skelcrew's shows over the agent. On a row where Enter attaches, the bottom line says so before you go, as `⏎ attach`, with `· ctrl+\ back` on tmux. A runtime plugin's host has its own key to come back, and its rows say only `⏎ attach`. Elsewhere Enter says `⏎ open`. The list needs no tmux server of its own.
 
 ```
  Skelcrew v0.6.0  [ app ]  [ docs ]  [ site •1 ]
@@ -860,7 +860,7 @@ The marks: a filled `●` needs you or is ready, a hollow `○` doesn't. Green i
 | `s` | Backlog | The same as Enter there: asks, then starts the issue or the task of the backlog |
 | Enter | Building, Reviewing, Checks | Attaches full screen to the task's builder, through its session host. Detaching returns to the list, on the same row |
 | Enter | Ready, Done | Opens the PR in your browser, or copies its link, as OSC 52, when Skelcrew runs on a server. Without a forge the bottom line shows the approved branch, such as `app-t103 is ready on branch skelcrew/t103-fix-login`. A ready task whose builder needs you attaches to the builder instead, so one Enter reaches what it waits on |
-| `o` | A task, while the details pane shows | Shows the agent's whole screen in the pane, or only its last 3 lines again. The bottom line offers it beside Enter, as `⏎ open · o output` |
+| `o` | A task, while the details pane shows | Shows the agent's whole screen in the pane, or only its last 3 lines again. The bottom line offers it beside Enter, as `⏎ attach · o output` |
 | `m` | Ready | Asks `Merge app#41 into main? y/n`, then merges it on the forge. Not offered without a forge, where the line says so, nor while its builder needs you. If the forge refuses, the line says why |
 | `y` `n` | A request from the lead | Answers it |
 | Click | A task | Moves to it. A second click on it, or a double click, does what Enter does |
