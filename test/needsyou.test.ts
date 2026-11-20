@@ -805,10 +805,9 @@ describe.skipIf(insideSandbox)("needs you", () => {
     await until(() => thread().turn_ended === 0);
   }, 60_000);
 
-  // The builder can ask you a question after Skelcrew found it idle and before the paste. The
-  // message would then answer the question for you, so it waits until the question is over.
-  // Claude Code shows its busy line until the question's hook has run, so the lead's message
-  // waits from before the question. The question's screen then looks idle to typing.
+  // The builder can ask you a question while the lead's message waits for it. Typing it in would
+  // answer the question for you, so it waits until the question is over. Claude Code shows its
+  // busy line until the question's hook has run, so the message waits from before the question.
   test("a lead's message isn't typed in once the builder asks a question while typing waits", async () => {
     addApp();
     await startApp12();
@@ -818,13 +817,20 @@ describe.skipIf(insideSandbox)("needs you", () => {
     expect(told.out).toContain("can't take it yet");
     await hook("ask");
     expect(thread().asking).toBe(1);
-    // Each look at its screen now takes a couple of seconds, and finds it ready.
-    writeFileSync(join(builder(), "quoting"), "");
+    // The question's screen looks idle to typing.
     rmSync(join(builder(), "busy"));
     await until(() => builderScreen().includes("❯"));
-    expect(read(join(builder(), "typed"))).not.toContain("Use JSON.");
+    // The message is made 11 minutes old, so the next try to type it tells the lead why it still
+    // waits. That note shows a try ended while the question was open, and kept the message.
     const db = new Database(join(data(), "skelcrew.db"));
     db.run("PRAGMA busy_timeout = 5000");
+    db.run("UPDATE messages SET at = at - 11 * 60000");
+    await until(() =>
+      read(join(lead(), "typed")).includes(
+        "app-12's builder hasn't got your message after 10 minutes: it is asking the human a question.",
+      ),
+    );
+    expect(read(join(builder(), "typed"))).not.toContain("Use JSON.");
     const waiting = db.query("SELECT said FROM messages").all();
     db.close();
     expect(waiting).toEqual([{ said: "Use JSON." }]);
