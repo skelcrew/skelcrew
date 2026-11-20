@@ -2,16 +2,19 @@
 // scrolling back and copying their text, several terminals, and your terminal's title.
 import { afterEach, beforeEach, expect, setDefaultTimeout, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:net";
 import { join } from "node:path";
 import { startSession, stillRunning } from "../src/agents/sessions.ts";
 import { tmuxIsAtLeast } from "../src/agents/tmux.ts";
-import { threadSql } from "./harness.ts";
+import { source, threadSql } from "./harness.ts";
 import {
   agent,
   agentColumn,
   agents,
+  asked,
   attachTo,
   click,
+  daemon,
   endTest,
   env,
   given,
@@ -138,6 +141,159 @@ UPDATE threads SET host = 'fake', host_id = 'fake-app-12' WHERE folder = 'app-12
   press("Enter");
   await until(() => seen().includes("I am fake-app-12 on fake"), "the host's attach");
   await until(() => selected().includes("app-12"), "the sidebar to follow");
+});
+
+// Writes a fake runtime plugin named fake into the test's home and records it, whose host lists
+// the sessions `listed` names as running, failing while a file named failing is there, and runs
+// `attach` as its attach. Returns the plugin's folder, and how many times the host was asked.
+function fakeHost(listed: string[], attach: string) {
+  tmux(agents, "kill-session", "-t", "=lead");
+  const plugin = join(home, "plugin-fake");
+  mkdirSync(plugin, { recursive: true });
+  const sessions = listed.map((id) => ({ id, running: true, labels: null }));
+  writeFileSync(
+    join(plugin, "session.sh"),
+    `read -r question; echo >> listed; [ -e failing ] && exit 1; echo '${JSON.stringify({ sessions })}'\n`,
+  );
+  writeFileSync(join(plugin, "attach.sh"), attach);
+  writeFileSync(
+    join(plugin, "skelcrew-plugin.yaml"),
+    "name: fake\nversion: 0.1.0\nskelcrew: 0.1.0\nabout: A host\nkind: runtime\nprovides: [sessions]\nsession: [sh, session.sh]\nattach: [sh, attach.sh]\n",
+  );
+  sql(`INSERT INTO plugins (name, folder) VALUES ('fake', '${plugin}')`);
+  const looks = () => read(join("plugin-fake", "listed")).split("\n").length;
+  return { plugin, looks };
+}
+
+// Plain sc opens the screen whatever the session host. A lead on a runtime plugin's host shows on
+// the right through the host's own attach, here a script that keeps every byte typed into it and
+// ends at each one. Ctrl-\\ is herdr's key to detach, so it, and Ctrl-4 which sends the same
+// byte, must never reach the host's attach, which would leave the right side empty. An attach
+// that ends anyway is started again.
+test("a lead on a plugin's host shows on the right from the start, and never gets Ctrl-\\", async () => {
+  given.extendedKeys = true;
+  const { plugin } = fakeHost(
+    ["fake-lead"],
+    'echo >> attached; stty raw -echo; echo "I am $1 on fake"; dd bs=1 count=1 >> typed 2>/dev/null\n',
+  );
+  sql("UPDATE repositories SET lead_host = 'fake', lead_host_id = 'fake-lead' WHERE repo = 'app'");
+  open("lead");
+  await until(() => seen().includes("I am fake-lead on fake"), "the lead through its host");
+  expect(seen()).not.toContain("Waiting for the lead");
+  const attached = () => read(join("plugin-fake", "attached")).length;
+  expect(attached()).toBe(1);
+  press("C-\\");
+  press("C-4");
+  type("\x1c");
+  type("x");
+  await until(() => attached() === 2, "the host's attach to start again");
+  type("y");
+  await until(() => attached() === 3, "the host's attach to start again");
+  expect(readFileSync(join(plugin, "typed"), "utf8")).toBe("xy");
+  expect(existsSync(join(home, "left-one"))).toBe(false);
+});
+
+// The right side and the sidebar each learn the lead's host as they start, the sidebar a moment
+// later. The daemon can give the lead a new session on its host in that moment, as this host's
+// attach does the first time it runs. The sidebar must still see that the right side shows the
+// old one, and attach it to the new one.
+test("a lead that moves on its host while the screen opens is shown where it went", async () => {
+  const move = join(home, "move.ts");
+  writeFileSync(
+    move,
+    `import { openDb } from ${JSON.stringify(source("db.ts"))};
+openDb().run("UPDATE repositories SET lead_host_id = 'fake-lead-2' WHERE repo = 'app'");`,
+  );
+  fakeHost(
+    ["fake-lead-2"],
+    `[ -e moved ] || { touch moved; ${process.execPath} ${move}; }; echo "I am $1 on fake"; exec sleep 300\n`,
+  );
+  sql(
+    "UPDATE repositories SET lead_host = 'fake', lead_host_id = 'fake-lead-1' WHERE repo = 'app'",
+  );
+  open("lead");
+  await until(() => seen().includes("I am fake-lead-2 on fake"), "the lead where it went");
+});
+
+// The host's list can lag behind the lead, or fail. A lead that moved on its host meanwhile is
+// still shown where it went when you come back to its row.
+test("coming back to a lead that moved on its host while its host fails to answer shows where it went", async () => {
+  const { plugin, looks } = fakeHost(["fake-lead-1"], 'echo "I am $1 on fake"; exec sleep 300\n');
+  sql(
+    "UPDATE repositories SET lead_host = 'fake', lead_host_id = 'fake-lead-1' WHERE repo = 'app'",
+  );
+  open("lead");
+  await until(() => seen().includes("I am fake-lead-1 on fake"), "the lead through its host");
+  await until(() => looks() > 2, "the sidebar to ask the host");
+  press("M-S-Down");
+  await until(onDetails, "app-12's details");
+  writeFileSync(join(plugin, "failing"), "");
+  sql("UPDATE repositories SET lead_host_id = 'fake-lead-2' WHERE repo = 'app'");
+  // The sidebar looks each second.
+  await Bun.sleep(2500);
+  press("M-S-Up");
+  await until(() => onLead(), "the lead's row");
+  await until(() => right().includes("I am fake-lead-2 on fake"), "the lead where it went");
+});
+
+// A host can fail to answer for a moment. A lead on it that ran when last seen still counts as
+// running, so the sidebar doesn't take it for crashed and ask the daemon to bring it back.
+test("a lead on a plugin's host isn't brought back while its host fails to answer", async () => {
+  daemon();
+  const { plugin, looks } = fakeHost(["fake-lead"], 'echo "I am $1 on fake"; exec sleep 300\n');
+  sql("UPDATE repositories SET lead_host = 'fake', lead_host_id = 'fake-lead' WHERE repo = 'app'");
+  open("lead");
+  await until(() => seen().includes("I am fake-lead on fake"), "the lead through its host");
+  await until(() => looks() > 2, "the sidebar to ask the host");
+  writeFileSync(join(plugin, "failing"), "");
+  const failed = looks();
+  await until(() => looks() > failed + 2, "the sidebar to ask the failing host");
+  expect(asked).toEqual([]);
+});
+
+// Plain sc opens the screen for a lead on a plugin's host too, through the same code plain sc
+// runs, with a stand-in daemon that hands it the lead. The host's attach here swallows every key,
+// as a host whose own key to detach never arrives would. Alt-Q and Ctrl-Q, the screen's keys,
+// still leave, as tmux takes them before the host's attach sees them.
+for (const key of ["M-q", "C-q"])
+  test(`plain sc on a lead on a plugin's host opens the screen, and ${key} leaves it`, async () => {
+    fakeHost(["fake-lead"], 'stty raw -echo; echo "I am $1 on fake"; exec cat >/dev/null\n');
+    sql(
+      "UPDATE repositories SET lead_host = 'fake', lead_host_id = 'fake-lead' WHERE repo = 'app'",
+    );
+    mkdirSync(join(home, "run"), { recursive: true, mode: 0o700 });
+    const daemon = createServer((connection) =>
+      connection.on("data", () => connection.end('{"lead":"lead","repository":"simon/app"}\n')),
+    ).listen(join(home, "run", "skelcrew.sock"));
+    try {
+      const script = join(home, "plain-sc.ts");
+      writeFileSync(
+        script,
+        `import { attachToLead } from ${JSON.stringify(source("attach.ts"))};
+await attachToLead(${JSON.stringify(agents)}, false);
+await Bun.write(${JSON.stringify(join(home, "left-one"))}, "left");`,
+      );
+      const command = `TERM=xterm-256color ${process.execPath} ${script}; sleep 300`;
+      tmux(terminal, "new-session", "-d", "-s", "one", "-x", "120", "-y", "30", command);
+      await until(() => seen().includes("I am fake-lead on fake") && onLead(), "the screen");
+      press(key);
+      await until(() => existsSync(join(home, "left-one")), "the screen to leave");
+    } finally {
+      daemon.close();
+    }
+  });
+
+// A host that fails to answer from the moment the screen opens hasn't said its lead ended, so
+// the sidebar doesn't take it for crashed and ask the daemon to bring it back.
+test("a lead on a plugin's host whose host fails from the start isn't brought back", async () => {
+  daemon();
+  const { plugin, looks } = fakeHost(["fake-lead"], 'echo "I am $1 on fake"; exec sleep 300\n');
+  writeFileSync(join(plugin, "failing"), "");
+  sql("UPDATE repositories SET lead_host = 'fake', lead_host_id = 'fake-lead' WHERE repo = 'app'");
+  open("lead");
+  await until(() => seen().includes("I am fake-lead on fake"), "the lead through its host");
+  await until(() => looks() > 3, "the sidebar to ask the failing host");
+  expect(asked).toEqual([]);
 });
 
 test("the screen starts on the lead's row, even while a task needs you", async () => {
@@ -729,7 +885,7 @@ test("without a terminal it fails, and leaves no session or server behind", asyn
   writeFileSync(
     script,
     `import { openScreen } from ${JSON.stringify(screenFile)};
-await openScreen(${JSON.stringify(agents)}, "lead");`,
+await openScreen(${JSON.stringify(agents)}, "lead", "lead", "simon/app");`,
   );
   const run = Bun.spawnSync([process.execPath, script], {
     env: { ...env(), TMUX: "" },

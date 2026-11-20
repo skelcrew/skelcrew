@@ -10,7 +10,6 @@ import { askAboutAgents } from "./approved-agents.ts";
 import { ask } from "./client.ts";
 import { tellOldKeys } from "./config.ts";
 import { openDb } from "./db.ts";
-import { leadSession } from "./flow/lead.ts";
 import { builderSession, findThread } from "./flow/thread.ts";
 import { runList } from "./list/list.ts";
 import { installService, restartDaemon, servicePid, startDaemon } from "./machine/service.ts";
@@ -215,12 +214,9 @@ export async function attachToLead(
     await runList(sessions, lead.repository);
     return true;
   }
-  // The screen shows only tmux's sessions, so a lead on a runtime plugin's host is attached
-  // through that host instead, full screen, as a builder there is.
-  const [owner = "", repo = ""] = lead.repository.split("/");
-  const on = await leadSession(openDb(), sessions, owner, repo);
-  if (on !== null && typeof on.host !== "string") attachOnHost(on.host, on.id);
-  else await openScreen(sessions, lead.lead, lead.lead, lead.repository);
+  // The screen opens on any session host: a lead on a runtime plugin's host shows on its right
+  // through that host's own attach.
+  await openScreen(sessions, lead.lead, lead.lead, lead.repository);
   return true;
 }
 

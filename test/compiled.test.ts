@@ -153,7 +153,7 @@ openDb().run("INSERT INTO repositories (name, owner, repo) VALUES ('app', 'simon
       "-h",
       "-t",
       "=one:",
-      `${env} ${file} sidebar ${agents} one '' simon/app`,
+      `${env} ${file} sidebar ${agents} one '' simon/app ''`,
     );
     const header = () => tmux("show", "-v", "-t", "=one:", "status-format[0]").stdout.toString();
     for (let tries = 0; tries < 100 && !header().includes("Skelcrew"); tries++)
