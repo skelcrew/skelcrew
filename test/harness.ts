@@ -196,8 +196,8 @@ export async function runSkel(args: string[], env: Record<string, string>, input
 export async function endFakeSessions(settings: string): Promise<void> {
   // The calls still running, by the IDs they noted. A call that ended took its note away. One
   // that was killed left it, so its process is looked for too. A call notes itself only once
-  // Bun has started it, so the calls not yet noted are found too, by the settings folder
-  // Skelcrew hands each call.
+  // Bun has started it, so the calls not yet noted are found too, by the settings folder in
+  // their command.
   const calls = join(settings, "running-calls");
   const running = () =>
     [...(existsSync(calls) ? readdirSync(calls) : []).map(Number), ...hostCallsOf(settings)].filter(
@@ -227,27 +227,27 @@ export async function endFakeSessions(settings: string): Promise<void> {
   }
 }
 
-// Returns the IDs of the fake host's calls running with these settings, noted or not: each runs
-// fake-host.ts with SKELCREW_PLUGIN_CONFIG naming its settings folder, which is the test's own.
-// A session the host started runs from a shell that inherits that variable, so the script's name
-// tells a call from a session. It reads /proc, so elsewhere it finds none, and the notes alone
-// count.
+// The command a runtime plugin's manifest gives to run the fake host with these settings. The
+// settings folder, the test's own, goes as an argument the host ignores, so a test's clean-up
+// can find its calls with ps, on Linux and macOS alike, even before a call has noted itself.
+export const fakeHostCommand = (settings: string) => [
+  "bun",
+  join(import.meta.dir, "fake-host.ts"),
+  settings,
+];
+
+// Returns the IDs of the fake host's calls running with these settings, noted or not, as
+// fakeHostCommand starts them. A session the host started runs another command, so it never
+// counts.
 function hostCallsOf(settings: string): number[] {
-  if (!existsSync("/proc")) return [];
-  const wanted = `SKELCREW_PLUGIN_CONFIG=${settings}`;
-  return readdirSync("/proc")
-    .filter((name) => /^\d+$/.test(name))
-    .filter((pid) => {
-      try {
-        const command = readFileSync(`/proc/${pid}/cmdline`, "utf8");
-        if (!command.includes("fake-host.ts")) return false;
-        return readFileSync(`/proc/${pid}/environ`, "utf8").split("\0").includes(wanted);
-      } catch {
-        // A process that ended meanwhile, or one of another user's.
-        return false;
-      }
-    })
-    .map(Number);
+  const listed = Bun.spawnSync(["ps", "-A", "-ww", "-o", "pid=", "-o", "args="]);
+  const call = `${fakeHostCommand(settings).slice(1).join(" ")}`;
+  return listed.stdout
+    .toString()
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.endsWith(call))
+    .map((line) => Number(line.split(/\s+/)[0]));
 }
 
 // Installs the fake tracker and forge as a plugin named `name`, doing `jobs`, for a test with

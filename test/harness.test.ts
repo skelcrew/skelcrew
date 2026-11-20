@@ -14,7 +14,14 @@ import {
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import type { Subprocess } from "bun";
-import { endFakeSessions, homeEnv, runSkel, startDaemon, until } from "./harness.ts";
+import {
+  endFakeSessions,
+  fakeHostCommand,
+  homeEnv,
+  runSkel,
+  startDaemon,
+  until,
+} from "./harness.ts";
 
 // Reports whether the process group of the fake host's session `id` still runs something. A
 // process that exited but wasn't reaped runs nothing. A session with no process ID never started.
@@ -132,7 +139,7 @@ test("ending the fake host's sessions waits for a session the host is still star
     // A slow start, so the clean-up begins before the session's folder exists.
     writeFileSync(join(settings, "slow-start"), "");
     const question = { ask: "start", name: "late", labels: {}, env: {}, folder: settings };
-    host = Bun.spawn([process.execPath, join(import.meta.dir, "fake-host.ts")], {
+    host = Bun.spawn([process.execPath, ...fakeHostCommand(settings).slice(1)], {
       env: { ...process.env, SKELCREW_PLUGIN_CONFIG: settings },
       stdin: new Blob([JSON.stringify({ ...question, command: ["sleep", "60"] })]),
       stdout: "ignore",
@@ -163,7 +170,7 @@ test("ending the fake host's sessions waits for a call that hasn't noted itself 
   let host: Subprocess | undefined;
   try {
     const question = { ask: "start", name: "early", labels: {}, env: {}, folder: settings };
-    host = Bun.spawn([process.execPath, join(import.meta.dir, "fake-host.ts")], {
+    host = Bun.spawn([process.execPath, ...fakeHostCommand(settings).slice(1)], {
       env: { ...process.env, SKELCREW_PLUGIN_CONFIG: settings },
       stdin: new Blob([JSON.stringify({ ...question, command: ["sleep", "60"] })]),
       stdout: "ignore",

@@ -9,7 +9,8 @@
 // garble-<question> it answers that question with nothing, with fail-<question> it fails it
 // once, with slow-<question> it takes two seconds over it, and with hold-<question> it holds it
 // from a given time on. With a file lose-start, it starts the
-// next session but fails before saying its ID.
+// next session but fails before saying its ID. Its one argument, its settings folder, is only
+// there so a test's clean-up can find its calls with ps.
 import {
   appendFileSync,
   existsSync,

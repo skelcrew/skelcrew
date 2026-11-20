@@ -28,7 +28,14 @@ import {
 } from "../src/agents/sessions.ts";
 import { deliver, forQuestion, idle, whyBusy } from "../src/agents/transport.ts";
 import type { PluginHost } from "../src/plugins/runtime.ts";
-import { endFakeSessions, homeEnv, source, threadSql, until as wait } from "./harness.ts";
+import {
+  endFakeSessions,
+  fakeHostCommand,
+  homeEnv,
+  source,
+  threadSql,
+  until as wait,
+} from "./harness.ts";
 
 const moment = 100;
 let home = "";
@@ -55,7 +62,7 @@ afterEach(async () => {
 const host = (own: { transport?: boolean; status?: boolean } = {}): PluginHost => ({
   plugin: name,
   folder: home,
-  session: ["bun", join(import.meta.dir, "fake-host.ts")],
+  session: fakeHostCommand(settings()),
   attach: ["true"],
   transport: own.transport ?? false,
   status: own.status ?? false,
@@ -235,7 +242,7 @@ skelcrew: 0.1.0
 about: A session host for tests
 kind: runtime
 provides: [${provides}]
-session: [bun, ${JSON.stringify(join(import.meta.dir, "fake-host.ts"))}]
+session: ${JSON.stringify(fakeHostCommand(join(home, ".config", "skelcrew", "plugins", "fake")))}
 attach: ["true"]
 `,
   );

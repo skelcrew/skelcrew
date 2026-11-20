@@ -14,6 +14,7 @@ import {
   answer,
   asked,
   endFakeSessions,
+  fakeHostCommand,
   fakePlugin,
   git,
   homeEnv,
@@ -220,7 +221,7 @@ skelcrew: 0.1.0
 about: A session host for tests
 kind: runtime
 provides: [${provides}]
-session: [bun, ${JSON.stringify(join(import.meta.dir, "fake-host.ts"))}]
+session: ${JSON.stringify(fakeHostCommand(join(home, ".config", "skelcrew", "plugins", "fake")))}
 attach: ["true"]
 `,
   );
