@@ -1010,6 +1010,9 @@ function inProcess(body: string): Record<string, unknown> {
 import { markForgotten, markNeedsYou, needsYou, needsYouFor, questionAnswered, threadWord, turnEnded } from ${JSON.stringify(source("flow/status.ts"))};
 import { submitRound } from ${JSON.stringify(source("flow/round.ts"))};
 import { readThread, record } from ${JSON.stringify(source("flow/thread.ts"))};
+import { bringBack } from ${JSON.stringify(source("flow/builder.ts"))};
+import { cloneDir } from ${JSON.stringify(source("paths.ts"))};
+import { mkdirSync } from "node:fs";
 const db = openDb();
 db.run(\`INSERT INTO repositories (name, owner, repo) VALUES ('app', 'simon', 'app');
 ${threadSql({ task: "12", status: "working" })}\`);
@@ -1095,6 +1098,30 @@ console.log(JSON.stringify({ decided, needsYou: needsYou(thread()) }));`);
   expect(seen).toEqual({ decided: true, needsYou: false });
 });
 
+// A question open past the round limit hides the limit's word, but marking or clearing the
+// thread still decides the limit, so it doesn't come back once the question is answered.
+test("clearing a thread past its round limit decides it, though a question was open too", () => {
+  const seen = inProcess(`
+record(db, "app-12", { status: "waiting", needs_you: true, rounds: 4, verdict: "changes", held: "Fix it.", asking: true });
+markNeedsYou(db, "none", thread(), null, "lead");
+questionAnswered(db, "app-12", "Go on.");
+console.log(JSON.stringify({ decided: thread().limit_decided, needsYou: needsYou(thread()) }));`);
+  expect(seen).toEqual({ decided: true, needsYou: false });
+});
+
+// The lead's own mark is still owed once you install the plugin, so the instruction goes first
+// and keeps it, however often the engine starts while the plugin is gone.
+test("a missing host plugin puts its instruction before the lead's mark, once", () => {
+  const seen = inProcess(`
+record(db, "app-12", { session: "s", host: "gone", host_id: "gone-app-12", needs_you_for: "apply the fix in #463" });
+await bringBack(db, "none", thread());
+await bringBack(db, "none", thread());
+console.log(JSON.stringify({ mark: thread().needs_you_for }));`);
+  expect(seen).toEqual({
+    mark: "run sc install: its session host gone is missing, then apply the fix in #463",
+  });
+});
+
 test("a new submit clears the mark", () => {
   const seen = inProcess(`
 markNeedsYou(db, "none", thread(), "say which format", "lead");
@@ -1119,6 +1146,36 @@ console.log(JSON.stringify({ early, word: needsYouFor(thread()), noting: noting(
     word: "Should I delete the old exports?",
     noting: "nobody acted on its stopped builder for 5 minutes: Should I delete the old exports?",
   });
+});
+
+// Its words, such as that it needs something only you can do, went to the lead, who may miss
+// them, though the thread waits on its submit.
+test("the safety net times a turn that only replied while its submit is reviewed", () => {
+  const seen = inProcess(`
+const clone = cloneDir("simon", "app");
+mkdirSync(clone, { recursive: true });
+const git = (...args) => Bun.spawnSync(["git", "-C", clone, "-c", "user.name=t", "-c", "user.email=t@t", ...args]).stdout.toString().trim();
+git("init", "-q");
+git("commit", "-q", "--allow-empty", "-m", "round 1");
+git("update-ref", "refs/skelcrew/threads/app-12", "HEAD");
+const head = git("rev-parse", "HEAD");
+record(db, "app-12", { status: "waiting", reviewing: head });
+turnEnded(db, "none", "app-12", { head, message: "Only a person can push the workflow change." });
+const ended = thread().ended_at;
+markForgotten(db, "none", 5, ended + 5 * 60_000);
+console.log(JSON.stringify({ turnEnded: thread().turn_ended, word: needsYouFor(thread()) }));`);
+  expect(seen).toEqual({ turnEnded: false, word: "Only a person can push the workflow change." });
+});
+
+// A thread ready to merge is seen already, so a builder's reply there marks nothing.
+test("the safety net leaves a thread that already needs you as it is", () => {
+  const seen = inProcess(`
+record(db, "app-12", { asking: true });
+turnEnded(db, "none", "app-12", { message: "Thanks." });
+record(db, "app-12", { ended_at: Date.now(), ended_said: "Thanks." });
+markForgotten(db, "none", 5, Date.now() + 60 * 60_000);
+console.log(JSON.stringify({ mark: thread().needs_you_for, ended: thread().ended_at }));`);
+  expect(seen).toEqual({ mark: null, ended: null });
 });
 
 test("telling the builder or clearing it in time keeps the safety net from marking it", () => {

@@ -279,8 +279,20 @@ export async function builderSession(
 }
 
 // Returns the mark of a thread whose builder's session host plugin is missing, which only you can
-// bring back, saying what to do.
-export const hostMissing = (host: string) => `run sc install: its session host ${host} is missing`;
+// bring back, saying what to do. A mark the thread had already follows it, so it isn't lost.
+export const hostMissing = (host: string, had: string | null = null) => {
+  const install = `run sc install: its session host ${host} is missing`;
+  return had === null ? install : `${install}, then ${had}`;
+};
+
+// Returns the mark a thread had before its host plugin went missing, once the plugin is back,
+// or undefined when its mark isn't the one hostMissing gave.
+export function markBeforeHost(host: string, mark: string | null): string | null | undefined {
+  const install = hostMissing(host);
+  if (mark === install) return null;
+  if (mark?.startsWith(`${install}, then `)) return mark.slice(install.length + ", then ".length);
+  return undefined;
+}
 
 // Returns why a thread's builder can't be reached when its host plugin is gone.
 export const hostGone = (thread: Thread) =>

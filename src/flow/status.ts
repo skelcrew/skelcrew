@@ -120,6 +120,8 @@ export const readyToMerge = (thread: Thread) =>
 // works. Before its first hook, a working thread works, and one waiting on its review idles.
 export function statusOf(thread: Thread, maxRounds: number, now = Date.now()): Status {
   const word = threadWord(thread, maxRounds, now);
+  // A mark shown as the word is an action for you, even on a thread that failed.
+  if (thread.needs_you_for !== null && word === thread.needs_you_for) return "needs you";
   if (thread.status === "failed" || word === "error") return "error";
   // An approved thread with a merge armed merges by itself, so it waits rather than on you.
   if (word === "approved") return thread.merge_plan === "armed" ? "idle" : "ready";
@@ -493,20 +495,23 @@ export function turnEnded(
   if (readThread(db, folder).told_lead) record(db, folder, { told_lead: false });
   if (!endedWithoutSubmit(thread)) return;
   const unchanged = ended.head !== undefined && ended.head === lastPushed(thread);
+  // The safety net times the wait from here, and marks the thread with what the builder said
+  // if nobody acts on it. A turn that only replied while its submit stands is timed too: its
+  // words, such as that it needs something only you can do, went to the lead, who may miss them.
+  const timed =
+    thread.ended_at === null ? { ended_at: Date.now(), ended_said: ended.message ?? null } : {};
   if (waitsOnSubmit(thread, unchanged)) {
     // A comment on an approved PR set the thread working. The builder only answered it, so the
     // thread waits on its approved submit again, and the next poll can find it ready to merge.
     // A review under way sets the status itself once it ends.
+    const replied = "its builder only replied, so it waits on CI";
     if (thread.status === "working" && thread.reviewing === null)
-      record(db, folder, { status: "waiting" }, "its builder only replied, so it waits on CI");
+      record(db, folder, { status: "waiting", ...timed }, replied);
+    else record(db, folder, timed);
     return;
   }
-  // The safety net times the wait from here, and marks the thread with what the builder said
-  // if nobody acts on it.
-  if (!thread.turn_ended) {
-    const stopped = { turn_ended: true, ended_at: Date.now(), ended_said: ended.message ?? null };
-    record(db, folder, stopped, "its builder stopped without submitting");
-  }
+  if (!thread.turn_ended)
+    record(db, folder, { turn_ended: true, ...timed }, "its builder stopped without submitting");
 }
 
 // How much of a builder's last message the safety net keeps as the reason the thread needs you,
@@ -528,17 +533,23 @@ export function markForgotten(
   const since = now - graceMinutes * 60_000;
   const rows = db
     .query(
-      "SELECT * FROM task_threads WHERE turn_ended = 1 AND ended_at IS NOT NULL AND ended_at <= ? AND needs_you_for IS NULL AND status IN ('working', 'waiting')",
+      "SELECT * FROM task_threads WHERE ended_at IS NOT NULL AND ended_at <= ? AND needs_you_for IS NULL AND status IN ('working', 'waiting')",
     )
     .all(since);
-  for (const thread of rows.map((row) => Thread.parse(row))) {
+  // A thread that already needs you, such as one ready to merge, is seen already. Its wait ends,
+  // so a builder's reply doesn't mark it once that need is over.
+  const threads = rows.map((row) => Thread.parse(row));
+  for (const thread of threads.filter(needsYou))
+    record(db, thread.folder, { ended_at: null, ended_said: null });
+  const forgotten = threads.filter((thread) => !needsYou(thread));
+  for (const thread of forgotten) {
     const said = oneLine(thread.ended_said ?? "");
     const reason = said === "" ? "its builder stopped" : cut(said, saidLength);
     const minutes = `${graceMinutes} minute${graceMinutes === 1 ? "" : "s"}`;
     const why = `nobody acted on its stopped builder for ${minutes}: ${reason}`;
     record(db, thread.folder, { needs_you_for: reason, ended_at: null, ended_said: null }, why);
   }
-  if (rows.length > 0) typeLeadNotes(db, sessions);
+  if (forgotten.length > 0) typeLeadNotes(db, sessions);
 }
 
 // Returns text from an agent as one line, safe to show as a thread's word: line breaks and
@@ -566,8 +577,10 @@ export function markNeedsYou(
   if (thread.status === "done") throw new Error(`${threadName(db, thread)} is done already`);
   const acted = { ended_at: null, ended_said: null };
   // Marking or clearing a thread past its round limit is a decision about it. The round limit's
-  // word shows only once the mark is gone, so it is asked of the thread without.
-  const limit = needsYouFor({ ...thread, needs_you_for: null }) === "round limit";
+  // word shows only once the mark, a question and an error are gone, so it is asked of the
+  // thread without them.
+  const without = { ...thread, needs_you_for: null, asking: false, erred: false };
+  const limit = needsYouFor(without) === "round limit";
   const decision = limit ? { limit_decided: true } : {};
   if (reason !== null) {
     const action = oneLine(reason);
@@ -658,7 +671,8 @@ export function questionAnswered(db: Database, folder: string, prompt?: string):
   endWake(folder);
   if (thread.asking) record(db, folder, over, "its builder's question is over");
   else if (thread.erred) record(db, folder, over, "its builder was typed to after its error");
-  else if (thread.submitted || thread.told_lead || thread.turn_ended) record(db, folder, over);
+  else if (thread.submitted || thread.told_lead || thread.turn_ended || thread.ended_at !== null)
+    record(db, folder, over);
 }
 
 // Returns what a thread's row in the list of threads says of its armed merge, when ready or over

@@ -870,14 +870,18 @@ c.on("data", (d) => process.stdout.write(d));`;
     await untilCloned();
     await skel("start", "app-12");
     await until(() => thread().host_id === "fake-app-12");
+    // The lead had marked it, which stays owed through the plugin's absence.
+    expect((await skel("needs-you", "app-12", "check the design")).err).toBe("");
     await stop(first);
     const db = new Database(join(data(), "skelcrew.db"));
     db.run("DELETE FROM plugins WHERE name = 'fake'");
     db.close();
     const second = serve();
-    // Only you can bring the plugin back, so its mark says what to do.
+    // Only you can bring the plugin back, so its mark says what to do first.
     await until(
-      () => thread().needs_you_for === "run sc install: its session host fake is missing",
+      () =>
+        thread().needs_you_for ===
+        "run sc install: its session host fake is missing, then check the design",
     );
     expect(String(thread().noting)).toContain("session host fake isn't installed any more");
     expect(thread().host).toBe("fake");
@@ -886,10 +890,8 @@ c.on("data", (d) => process.stdout.write(d));`;
     await stop(second);
     fakeHost("sessions");
     serve();
-    await until(() => thread().needs_you_for === null);
-    expect(read(join(data(), "threads", "app-12.log"))).toContain(
-      "its session host fake is back, which cleared its mark: run sc install: its session host fake is missing",
-    );
+    await until(() => thread().needs_you_for === "check the design");
+    expect(read(join(data(), "threads", "app-12.log"))).toContain("its session host fake is back");
   }, 60_000);
 
   // One broken plugin must never keep the daemon from starting: every other thread comes back.

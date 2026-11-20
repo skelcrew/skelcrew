@@ -42,6 +42,7 @@ import {
   hostGone,
   hostMissing,
   log,
+  markBeforeHost,
   readThread,
   record,
   renameOnHost,
@@ -691,13 +692,24 @@ export async function bringBack(db: Database, sessions: string, thread: Thread):
   // A builder you stopped has no host left to look on.
   if (thread.host !== null) {
     if (hostNamed(db, sessions, thread.host) === null) {
-      record(db, thread.folder, { needs_you_for: hostMissing(thread.host) }, hostGone(thread));
+      // A thread marked already, such as after a restart while the plugin stays gone, keeps
+      // the mark it had after the instruction.
+      const had = markBeforeHost(thread.host, thread.needs_you_for);
+      const mark = hostMissing(thread.host, had === undefined ? thread.needs_you_for : had);
+      record(db, thread.folder, { needs_you_for: mark }, hostGone(thread));
       typeLeadNotes(db, sessions);
       return;
     }
-    // The plugin is back, such as after sc install, so the mark that asked for it goes.
-    if (thread.needs_you_for === hostMissing(thread.host))
-      record(db, thread.folder, { needs_you_for: null }, `its session host ${thread.host} is back`);
+    // The plugin is back, such as after sc install, so the mark that asked for it goes, and any
+    // mark the thread had before comes back.
+    const before = markBeforeHost(thread.host, thread.needs_you_for);
+    if (before !== undefined)
+      record(
+        db,
+        thread.folder,
+        { needs_you_for: before },
+        `its session host ${thread.host} is back`,
+      );
     let told = false;
     while (true) {
       try {

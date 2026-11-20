@@ -177,6 +177,8 @@ test("a mark on a queued, failed or stopped thread still says what to do", () =>
     expect(threadWord({ ...state, status, needs_you_for: "approve the new design" }, 3)).toBe(
       "approve the new design",
     );
+  // The host shows a marked thread as needing you, even one that failed.
+  expect(status({ status: "failed", needs_you_for: "approve the new design" })).toBe("needs you");
   // A done thread's end clears its mark, so it never shows one.
   expect(threadWord({ ...state, status: "done", needs_you_for: "approve it" }, 3)).toBe("done");
 });
