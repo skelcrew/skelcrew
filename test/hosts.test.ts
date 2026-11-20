@@ -1254,16 +1254,22 @@ process.exit(0);`,
 }, 40_000);
 
 // Starts simon/app's lead on the fake host, with `config` as your config.yaml and `row` as more
-// of the repository's columns, and returns the notes then saved for the lead. The fake
-// Claude Code can't run here, so the start may fail after the session began, which the notes
-// outlive. Starting logs a line of its own, so only the last line is read. With `failFirst`, a
-// first start fails before the session begins, as Claude Code's login is missing, and a second
-// one follows once it is there.
-function notesAfterStart(config: string, row = "", failFirst = false) {
+// of the repository's columns, and returns what Skelcrew typed into it. A stand-in on PATH for
+// the sandbox shows Claude Code's prompt and keeps what is typed. Once the lead started, a
+// last note goes in, so what was typed before it is all there is. With `failFirst`, a first
+// start fails before the session begins, as Claude Code's login is missing, and a second one
+// follows once it is there.
+function typedAfterStart(config: string, row = "", failFirst = false): string {
   const fake = join(home, ".config", "skelcrew", "plugins", "fake");
-  const said = runWithFakeHost(
+  const typed = join(home, "typed.txt");
+  const lead = `#!/bin/sh\necho "${claude.marks.prompt}"\ncat >> ${typed}\n`;
+  mkdirSync(join(home, "bin"), { recursive: true });
+  for (const sandbox of ["bwrap", "sandbox-exec"])
+    writeFileSync(join(home, "bin", sandbox), lead, { mode: 0o755 });
+  runWithFakeHost(
     "sessions",
     `const { startLead } = await import(${JSON.stringify(source("flow/lead.ts"))});
+const { noteForLead } = await import(${JSON.stringify(source("flow/messages.ts"))});
 const { cloneDir } = await import(${JSON.stringify(source("paths.ts"))});
 const fs = require("node:fs");
 fs.mkdirSync(${JSON.stringify(fake)}, { recursive: true });
@@ -1276,39 +1282,40 @@ Bun.spawnSync(["git", "init", "-q", cloneDir("simon", "app")]);
 const repository = { name: "app", owner: "simon", repo: "app", forge: null, remote: "" };
 if (${failFirst}) await startLead(db, "unused", repository).catch(() => {});
 token();
-await startLead(db, "unused", repository).catch(() => {});
-console.log(JSON.stringify(db.query("SELECT text FROM notes").all().map((n) => n.text)));`,
+await startLead(db, "unused", repository);
+noteForLead(db, "unused", repository, "last note");
+const typed = () => (fs.existsSync(${JSON.stringify(typed)}) ? fs.readFileSync(${JSON.stringify(typed)}, "utf8") : "");
+for (let i = 0; i < 300 && !typed().includes("last note"); i++) await Bun.sleep(50);
+process.exit(0);`,
     {},
   );
-  return JSON.parse(said.trim().split("\n").at(-1) ?? "");
+  return readFileSync(typed, "utf8");
 }
 
 // A new human sees only the harness's banner until they speak, and shouldn't have to know to.
 test("a lead's first start brings it Skelcrew's opening turn, proposing to finish the setup", () => {
-  const notes = notesAfterStart("");
-  expect(notes).toHaveLength(1);
-  expect(notes[0]).toStartWith("Skelcrew:");
-  expect(notes[0]).toContain("first start");
-  expect(notes[0]).toContain("finishes the setup");
-}, 20_000);
+  const typed = typedAfterStart("");
+  expect(typed).toContain("Skelcrew: this is your first start");
+  expect(typed).toContain("finishes the setup");
+  expect(typed).toContain("last note");
+}, 30_000);
 
 test("a configured repository's first start has the lead ask what to work on", () => {
-  const notes = notesAfterStart("setup: [bun install]\ntest: [bun test]\n");
-  expect(notes).toHaveLength(1);
-  expect(notes[0]).toStartWith("Skelcrew:");
-  expect(notes[0]).toContain("what to work on");
-  expect(notes[0]).not.toContain("setup");
-}, 20_000);
+  const typed = typedAfterStart("setup: [bun install]\ntest: [bun test]\n");
+  expect(typed).toContain("Skelcrew: this is your first start");
+  expect(typed).toContain("what to work on");
+  expect(typed).not.toContain("finishes the setup");
+}, 30_000);
 
 // The failed start saved the lead's session first, which the next start must not take for an
 // earlier conversation.
 test("a first start that failed before the lead began keeps the opening turn, once", () => {
-  const notes = notesAfterStart("", "", true);
-  expect(notes).toHaveLength(1);
-  expect(notes[0]).toContain("first start");
-}, 20_000);
+  const typed = typedAfterStart("", "", true);
+  expect(typed.split("Skelcrew: this is your first start")).toHaveLength(2);
+}, 30_000);
 
 test("a lead with an earlier conversation gets no opening turn", () => {
-  const notes = notesAfterStart("", ", '6f1c2a8e-3b4d-4e5f-8a9b-0c1d2e3f4a5b', 'claude'");
-  expect(notes).toEqual([]);
-}, 20_000);
+  const typed = typedAfterStart("", ", '6f1c2a8e-3b4d-4e5f-8a9b-0c1d2e3f4a5b', 'claude'");
+  expect(typed).toContain("last note");
+  expect(typed).not.toContain("first start");
+}, 30_000);
