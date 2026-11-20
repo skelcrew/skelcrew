@@ -2,7 +2,17 @@
 // task's details at the top and its agent at work, live, below them. It reads nothing, so what
 // it shows can be tested without a terminal.
 import type { TaskView } from "../flow/list.ts";
-import { bright, fitted, green, grey, markColours, paint, red, yellow } from "../screen/look.ts";
+import {
+  bright,
+  fitted,
+  green,
+  grey,
+  lightGrey,
+  markColours,
+  paint,
+  red,
+  yellow,
+} from "../screen/look.ts";
 import type { Details } from "./details.ts";
 import { sectionNames } from "./layout.ts";
 import type { Row } from "./rows.ts";
@@ -36,6 +46,28 @@ const checkMarks: Record<NonNullable<TaskView["prPage"]>["checks"][number]["stat
   cancelled: paint(grey, "–"),
 };
 
+// The colour CI's verdict as a whole takes, as the list shows it.
+const ciColours: Record<NonNullable<TaskView["prPage"]>["ci"], string> = {
+  passed: green,
+  running: yellow,
+  failed: red,
+  none: grey,
+};
+
+// The colour each state of a review takes on the pane's round line, as the list shows it.
+const reviewColours: Record<NonNullable<TaskView["review"]>["state"], string> = {
+  none: grey,
+  reviewing: yellow,
+  approved: green,
+  changes: yellow,
+  failed: red,
+  "not reviewed": grey,
+};
+
+// Returns text that opens `url` when clicked in a terminal that supports links, and shows as the
+// text alone in one that doesn't. A link broken over lines is a link on each of them.
+const linked = (url: string, text: string) => `\x1b]8;;${url}\x1b\\${text}\x1b]8;;\x1b\\`;
+
 // What each state of a review says on the pane's round line.
 const reviewWords: Record<NonNullable<TaskView["review"]>["state"], string> = {
   none: "",
@@ -66,7 +98,7 @@ function packed(items: { plain: string; shown: string }[], width: number): strin
 // two spaces between them, and a dim count of those left out, such as `… 59 more`, so the line
 // says how many there are in all. One too narrow even for the count alone is cut.
 function oneLine(
-  heading: string,
+  heading: { plain: string; shown: string },
   items: { plain: string; shown: string }[],
   width: number,
 ): string {
@@ -74,13 +106,15 @@ function oneLine(
     const shown = items.slice(0, kept);
     const left = items.length - kept;
     const more = left > 0 ? [`… ${left} more`] : [];
-    const plain = [heading, ...shown.map((item) => item.plain), ...more].join("  ");
+    const plain = [heading.plain, ...shown.map((item) => item.plain), ...more].join("  ");
     if (Bun.stringWidth(plain) <= width)
-      return [heading, ...shown.map((item) => item.shown), ...more.map((m) => paint(grey, m))].join(
-        "  ",
-      );
+      return [
+        heading.shown,
+        ...shown.map((item) => item.shown),
+        ...more.map((m) => paint(grey, m)),
+      ].join("  ");
   }
-  return fitted([heading, `… ${items.length} more`].join("  "), width);
+  return fitted([heading.plain, `… ${items.length} more`].join("  "), width);
 }
 
 // The steps the details take to fit a short pane, each on top of those before it. The parts that
@@ -108,8 +142,9 @@ function detailLines(row: Row, details: Details, width: number, tight = 0): stri
   const title = folded(view.title, width, tightened("title") ? 1 : undefined).map((line) =>
     paint(bright, line),
   );
-  // The links, each after a dim label and its number, lined up. A link too long for that line
-  // goes on the lines after, broken where it reaches the edge, so it can always be read whole.
+  // The links, each after a dim label and its number, lined up, and each one a terminal link. A
+  // link too long for that line goes on the lines after, broken where it reaches the edge, so it
+  // can always be read whole.
   const issue = view.issue ? [["issue", view.issue.id, view.issue.link ?? ""]] : [];
   // A PR that left the forge's copy, such as a merged one, still has the link saved on its row.
   const prLink = view.prPage?.link ?? row.link ?? "";
@@ -118,9 +153,12 @@ function detailLines(row: Row, details: Details, width: number, tight = 0): stri
     const named = cut(`${label.padEnd(6)}${id}`);
     const start = `${paint(grey, named.slice(0, 6))}${named.slice(6)}`;
     if (!link) return [start];
-    if (Bun.stringWidth(`${named}  ${link}`) <= width) return [`${start}  ${link}`];
-    if (tightened("links")) return [`${start}${cut(`${named}  ${link}`).slice(named.length)}`];
-    return [start, ...folded(link, width)];
+    if (Bun.stringWidth(`${named}  ${link}`) <= width) return [`${start}  ${linked(link, link)}`];
+    if (tightened("links")) {
+      const after = cut(`${named}  ${link}`).slice(named.length);
+      return [`${start}  ${linked(link, after.slice(2))}`];
+    }
+    return [start, ...folded(link, width).map((piece) => linked(link, piece))];
   });
   // The stage and the row's word, in its colour, such as `Building · question`, or cut without
   // its colours when too wide.
@@ -130,11 +168,16 @@ function detailLines(row: Row, details: Details, width: number, tight = 0): stri
     Bun.stringWidth(`${stage}${word}`) <= width
       ? `${paint(bright, stage)}${paint(markColours[row.colour], word)}`
       : cut(`${stage}${word}`);
-  // CI as a whole, then each check with its mark, going on over as many lines as they need. When
+  // CI as a whole, its verdict in colour after a dim label, then each check with its mark, going on
+  // over as many lines as they need. When
   // tightened to one line, failed checks come first, so they stay in sight, and the line ends
   // with how many checks it left out.
   const page = view.prPage;
-  const summary = page ? `CI ${page.ci}${page.checks.length ? ":" : ""}` : "";
+  const colon = page?.checks.length ? ":" : "";
+  const summary = {
+    plain: page ? `CI ${page.ci}${colon}` : "",
+    shown: page ? `${paint(grey, "CI")} ${paint(ciColours[page.ci], page.ci)}${colon}` : "",
+  };
   const order = { failed: 0, running: 1, cancelled: 2, passed: 3 };
   const checks = tightened("checks")
     ? [...(page?.checks ?? [])].sort((a, b) => order[a.state] - order[b.state])
@@ -149,23 +192,31 @@ function detailLines(row: Row, details: Details, width: number, tight = 0): stri
     ? []
     : tightened("checks")
       ? [oneLine(summary, items, width)]
-      : packed([{ plain: summary, shown: summary }, ...items], width);
+      : packed([summary, ...items], width);
   const merge = view.merge === null ? [] : [cut(view.merge)];
-  // The review's round and verdict, then what it found, each finding on one line.
+  // The review's round, dim, and its verdict in colour, then what it found, each finding on one
+  // line.
   const review = view.review;
   const said = review && review.state !== "none" ? reviewWords[review.state] : "";
   const round = typeof review?.round === "number" ? `Round ${review.round} · ` : "";
-  const rounds = said ? [cut(`${round}${said}`)] : [];
+  const roundShown =
+    review && Bun.stringWidth(`${round}${said}`) <= width
+      ? `${round ? paint(grey, round) : ""}${paint(reviewColours[review.state], said)}`
+      : cut(`${round}${said}`);
+  const rounds = said ? [roundShown] : [];
   const shownFindings = tightened("findings") ? 1 : findingsShown;
   const more = findings.length - shownFindings;
   const found = [
     ...findings.slice(0, shownFindings).map((finding) => cut(`  - ${finding}`)),
     ...(more > 0 ? [paint(grey, cut(`  … ${more} more`))] : []),
   ];
-  // The description, as one paragraph, so its blank lines don't take the pane's few lines.
+  // The description, dimmer than the rest, as one paragraph, so its blank lines don't take the
+  // pane's few lines.
   const body = view.body.replace(/\s+/g, " ").trim();
   const described = body
-    ? folded(body, width, tightened("description") ? 1 : descriptionLines)
+    ? folded(body, width, tightened("description") ? 1 : descriptionLines).map((line) =>
+        paint(lightGrey, line),
+      )
     : [];
   const happened = events.length
     ? folded(events.join(" · "), width, tightened("events") ? 1 : eventLines).map((line) =>

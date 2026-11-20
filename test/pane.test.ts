@@ -106,6 +106,59 @@ test("the pane shows the task's details from the top, then its agent's screen be
   for (const line of lines) expect(Bun.stringWidth(line)).toBeLessThanOrEqual(50);
 });
 
+test("the details take the list's look: bold title, dim labels, verdicts in colour, links", () => {
+  const lines = drawPane(row, details, null, 50, 30);
+  const esc = "\x1b";
+  // Returns the line that reads `text` once its colours are taken off.
+  const line = (text: string) => lines.find((drawn) => Bun.stripANSI(drawn).trimEnd() === text);
+  expect(line("Rate limit the API")).toBe(`${esc}[1mRate limit the API${esc}[22;39m`);
+  // Each link is a terminal link to itself, after a dim label.
+  const issue = "https://github.com/acme/app/issues/42";
+  expect(line(`issue #42  ${issue}`)).toBe(
+    `${esc}[90missue ${esc}[22;39m#42  ${esc}]8;;${issue}${esc}\\${issue}${esc}]8;;${esc}\\`,
+  );
+  // CI and the review say their verdicts in the list's colours, with each check's mark.
+  const yellow = `${esc}[38;5;221m`;
+  expect(line("CI running:  test ✓  lint ●  build ✗")).toBe(
+    `${esc}[90mCI${esc}[22;39m ${yellow}running${esc}[22;39m:  test ${esc}[38;5;120m✓${esc}[22;39m  lint ${yellow}●${esc}[22;39m  build ${esc}[38;5;210m✗${esc}[22;39m`,
+  );
+  expect(line("Round 2 · changes asked")).toBe(
+    `${esc}[90mRound 2 · ${esc}[22;39m${yellow}changes asked${esc}[22;39m`,
+  );
+  // The description is dimmer than the rest, and the events dimmer still.
+  expect(line("client can't starve the others. It resets each")).toStartWith(`${esc}[38;5;250m`);
+  expect(line("13:40 submitted · 13:52 reviewed · 14:02 submitted")).toStartWith(`${esc}[90m`);
+});
+
+test("an approved review and passed CI show green, a failed one red", () => {
+  const page = details.view.prPage;
+  if (!page) throw new Error("the details have a PR");
+  const green = "\x1b[38;5;120m";
+  const red = "\x1b[38;5;210m";
+  const passed: Details = {
+    ...details,
+    view: {
+      ...details.view,
+      review: { state: "approved", round: 3, at: null },
+      prPage: { ...page, ci: "passed", checks: [] },
+    },
+  };
+  const drawn = drawPane(row, passed, null, 50, 30);
+  expect(drawn).toContain(`\x1b[90mCI${"\x1b[22;39m"} ${green}passed\x1b[22;39m`);
+  expect(drawn.find((line) => line.includes("approved"))).toContain(`${green}approved`);
+  const failed: Details = {
+    ...details,
+    view: {
+      ...details.view,
+      review: { state: "failed", round: 3, at: null },
+      prPage: { ...page, ci: "failed", checks: [] },
+    },
+  };
+  const redLines = drawPane(row, failed, null, 50, 30);
+  expect(redLines).toContain(`\x1b[90mCI${"\x1b[22;39m"} ${red}failed\x1b[22;39m`);
+  expect(redLines.find((line) => line.includes("review failed"))).toContain(`${red}review failed`);
+});
+
 test("the live view shows the bottom of the screen, colours kept and long lines cut", () => {
   const screen = [
     ...Array.from({ length: 40 }, (_, i) => `line ${i}`),
@@ -126,8 +179,8 @@ test("the live view shows the bottom of the screen, colours kept and long lines 
   const red = live.find((line) => line.includes("red words")) ?? "";
   expect(red).toStartWith("\x1b[31mred words");
   expect(red).toEndWith("\x1b[0m");
-  expect(lines.join("")).not.toContain("\x1b]8");
-  expect(lines.join("")).not.toContain("\x1b[2J");
+  expect(live.join("")).not.toContain("\x1b]8");
+  expect(live.join("")).not.toContain("\x1b[2J");
   for (const line of lines) expect(Bun.stringWidth(line)).toBeLessThanOrEqual(40);
 });
 
