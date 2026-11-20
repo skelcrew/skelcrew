@@ -92,10 +92,10 @@ record(db, "app-12", { needs_you_for: null, asking: true });
 markNeedsYou(db, "none", thread(), "pick the export format", "you");
 console.log(JSON.stringify({ first, notes: notes() }));`);
   expect(seen).toEqual({
-    first: { noting: null, notes: ["app-12 needs you: you marked it: check the new design"] },
+    first: { noting: null, notes: ["APP-12 needs you: you marked it: check the new design"] },
     notes: [
-      "app-12 needs you: you marked it: check the new design",
-      "app-12 needs you: you marked it: pick the export format",
+      "APP-12 needs you: you marked it: check the new design",
+      "APP-12 needs you: you marked it: pick the export format",
     ],
   });
   expect(threadLog()).toContain("you marked it: check the new design");
@@ -159,7 +159,7 @@ await bringBack(db, "none", thread());
 console.log(JSON.stringify({ mark: thread().needs_you_for, notes: notes() }));`);
   const mark = "run sc install: its session host gone is missing, then apply the fix in #463";
   // The thread needed you already, so the lead hears of the plugin in a note of its own, once.
-  expect(seen).toEqual({ mark, notes: [`app-12 needs you: ${mark}`] });
+  expect(seen).toEqual({ mark, notes: [`APP-12 needs you: ${mark}`] });
 });
 
 // Only you can bring the plugin back, so the lead's marks and clears can't hide that.

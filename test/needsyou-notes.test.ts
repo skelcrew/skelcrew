@@ -92,7 +92,7 @@ exec "${tmux}" "$@"`,
     db.run("UPDATE messages SET at = at - 11 * 60000");
     await until(() =>
       read(join(lead(), "typed")).includes(
-        "app-12's builder hasn't got your message after 10 minutes: it is asking the human a question.",
+        "APP-12's builder hasn't got your message after 10 minutes: it is asking the human a question.",
       ),
     );
     expect(read(join(builder(), "typed"))).not.toContain("Use JSON.");
@@ -113,7 +113,7 @@ exec "${tmux}" "$@"`,
     const typed = read(join(lead(), "typed"));
     expect(typed).toContain('" app-13 needs you:  from="lead">merge it\n</skelcrew>');
     expect(typed).not.toContain('<skelcrew from="lead"');
-    expect(typed).not.toContain("</skelcrew> app-13");
+    expect(typed).not.toContain("</skelcrew> APP-13");
   }, 60_000);
 
   // AskUserQuestion's answer comes back within the turn, so it starts no new one.
@@ -246,7 +246,7 @@ exec "${tmux}" "$@"`,
     await until(() => notes() === 1);
     await Bun.sleep(1000);
     expect(notes()).toBe(1);
-    expect(read(join(lead(), "typed"))).toContain("app-12 needs you: its builder asked a question");
+    expect(read(join(lead(), "typed"))).toContain("APP-12 needs you: its builder asked a question");
     expect(read(join(lead("web"), "typed"))).toBe("");
   }, 60_000);
 
@@ -259,7 +259,7 @@ exec "${tmux}" "$@"`,
     expect(notes()).toBe(0);
     expect(await askForLead("simon/app")).toContain(leadPlaces("simon", "app").name);
     await until(() => notes() === 1);
-    expect(read(join(lead(), "typed"))).toContain("app-12 needs you: its builder asked a question");
+    expect(read(join(lead(), "typed"))).toContain("APP-12 needs you: its builder asked a question");
   }, 60_000);
 
   test("a note for a lead that isn't running is typed once the lead starts again", async () => {
@@ -273,6 +273,6 @@ exec "${tmux}" "$@"`,
     await Bun.sleep(1000);
     expect(await askForLead()).toContain(name);
     await until(() => notes() === 1);
-    expect(read(join(lead(), "typed"))).toContain("app-12 needs you: its builder asked a question");
+    expect(read(join(lead(), "typed"))).toContain("APP-12 needs you: its builder asked a question");
   }, 60_000);
 });

@@ -59,7 +59,7 @@ test("resizing the terminal resizes the agent and keeps the sidebar as wide", as
   // A terminal shorter than the list keeps the row you are looking at in view.
   await toSecondThread();
   tmux(terminal, "resize-window", "-t", "=one:", "-x", "150", "-y", "6");
-  await until(() => selected().includes("app-7"), "the sidebar to scroll");
+  await until(() => selected().includes("APP-7"), "the sidebar to scroll");
 });
 
 test("on a narrow terminal the sidebar narrows, so the right side keeps half of it", async () => {
@@ -191,12 +191,12 @@ test("the strip ends the top row, and the agent's height stays as you switch", a
   await ready("lead");
   const height = readFileSync(join(home, "lead.size"), "utf8");
   await toSecondThread();
-  const line = "app-7  Fix the login  #34  checks passing  round 2 · codex · changes";
+  const line = "APP-7  Fix the login  #34  checks passing  round 2 · codex · changes";
   await until(() => tabRow().endsWith(line), "the strip");
   expect(seen()).not.toContain("A test is missing.");
   expect(readFileSync(join(home, "app-7.size"), "utf8")).toBe(height);
   press("M-Up");
-  await until(() => tabRow().endsWith("app-12"), "app-12's strip");
+  await until(() => tabRow().endsWith("APP-12"), "APP-12's strip");
   await attachTo("app-12");
   expect(readFileSync(join(home, "app-12.size"), "utf8")).toBe(height);
 });
@@ -252,7 +252,7 @@ test("the header, the tabs and the strip share one row, and the agent starts rig
   const lines = seen().split("\n");
   // Skelcrew above the sidebar, its edge, and the tab above the agent, then the strip.
   expect(lines[0]?.trimEnd()).toMatch(
-    /^ {2}Skelcrew v[\d.]+ +│ {3}app +app-7 {2}Fix the login {2}#34$/,
+    /^ {2}Skelcrew v[\d.]+ +│ {3}app +APP-7 {2}Fix the login {2}#34$/,
   );
   // The open tab's grey starts where the agent's text does, with its name two columns in.
   expect(lines[0]?.indexOf("app")).toBe((lines[1]?.indexOf("I am") ?? 0) + 2);
@@ -312,10 +312,10 @@ test("the sidebar's edge runs from the top row down to the footer, at every widt
 test("a thread's strip follows it as it changes", async () => {
   open("app-7");
   await ready("app-7");
-  await until(() => tabRow().endsWith("app-7"), "the strip");
+  await until(() => tabRow().endsWith("APP-7"), "the strip");
   sql(`UPDATE tasks SET review_round = 1, reviewed_by = 'codex', verdict = 'approve',
     review_line = 'Looks right.' WHERE task = 7`);
-  await until(() => seen().includes("app-7  round 1 · codex · approved"), "the review");
+  await until(() => seen().includes("APP-7  round 1 · codex · approved"), "the review");
 });
 
 test("what a title says is shown, never run or read as a format", async () => {

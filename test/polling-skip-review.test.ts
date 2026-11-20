@@ -56,7 +56,7 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
         skipQuestion,
         "n",
       );
-      expect(no).toContain("Not merging: app-12 waits for you to merge it.");
+      expect(no).toContain("Not merging: APP-12 waits for you to merge it.");
       expect(thread().merge_plan).toBeNull();
       // Only the head you saw is pinned: a y to any other commit is refused.
       const yours = join(home, "run", "skelcrew.sock");
@@ -66,7 +66,7 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
         await askOn(yours, { ...arming, seen: { pr: 7, started, head: "e".repeat(40) } }),
       ).toEqual({
         error:
-          "app-12 changed since you said y, so it won't merge by itself: run sc merge --skip-review app-12 again",
+          "APP-12 changed since you said y, so it won't merge by itself: run sc merge --skip-review APP-12 again",
       });
       // Builders never can, and the lead can't once you turn that off.
       leadMerging("lead: { can_merge: false }\n");
@@ -94,7 +94,7 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
       expect(ps.stdout.toString()).toContain("merges without approval");
       await until(() =>
         leadTyped().includes(
-          "Merging #7 (app-12) without Skelcrew's approval once its checks pass, as you asked at your terminal. sc merge --cancel app-12 stops it.",
+          "Merging #7 (APP-12) without Skelcrew's approval once its checks pass, as you asked at your terminal. sc merge --cancel APP-12 stops it.",
         ),
       );
       // A push after you asked cancels it, even with CI green, and the lead hears it.
@@ -103,7 +103,7 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
       expect(thread().merge_pinned).toBeNull();
       await until(() =>
         leadTyped().includes(
-          "#7 (app-12) got a new commit after the human asked to merge it without Skelcrew's approval, so it won't merge. Ask them again if they still want it.",
+          "#7 (APP-12) got a new commit after the human asked to merge it without Skelcrew's approval, so it won't merge. Ask them again if they still want it.",
         ),
       );
       await morePolls();
@@ -187,7 +187,7 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
       expect(String(edits[0]?.body)).toEndWith(marker);
       await until(() =>
         leadTyped().includes(
-          "app-12 is done: #7 merged into main without Skelcrew's approval, as the human asked. Its open findings are in #13.",
+          "APP-12 is done: #7 merged into main without Skelcrew's approval, as the human asked. Its open findings are in #13.",
         ),
       );
       await morePolls();
@@ -295,7 +295,7 @@ echo '{"verdict":"approve","body":"Ready.","findings":[]}' > "$out"`,
       expect(merges()).toHaveLength(1);
       const cancel = { command: "merge cancel", repo: "app", task: "12" };
       expect(await askOn(join(home, "run", "skelcrew.sock"), cancel)).toEqual({
-        error: "app-12 is merging on its forge right now, so it can't be cancelled",
+        error: "APP-12 is merging on its forge right now, so it can't be cancelled",
       });
       // A review that ended while the forge took the edit, asking for something else.
       const db = new Database(join(data(), "skelcrew.db"));
@@ -350,7 +350,7 @@ echo '{"verdict":"approve","body":"Ready.","findings":[]}' > "$out"`,
       await until(() => thread().status === "done");
       await until(() =>
         leadTyped().includes(
-          "app-12 is done: #7 merged into main without Skelcrew's approval, as the human asked. Its open findings are in #13.",
+          "APP-12 is done: #7 merged into main without Skelcrew's approval, as the human asked. Its open findings are in #13.",
         ),
       );
       await morePolls();
@@ -378,7 +378,7 @@ echo '{"verdict":"approve","body":"Ready.","findings":[]}' > "$out"`,
       };
       expect(await askOn(join(home, "run", "skelcrew.sock"), request)).toEqual({
         error:
-          "app-12 is approved already: merge it with m in the list, or sc merge --when-ready app-12",
+          "APP-12 is approved already: merge it with m in the list, or sc merge --when-ready APP-12",
       });
       expect(thread().merge_plan).toBeNull();
     }, 60_000);

@@ -49,7 +49,7 @@ test("Alt-1 to Alt-6 open and close the stages from the lead's row, and the lead
   await until(() => !isOpen("2 Building"), "Building to close");
   // Opening a stage moves you to its first row, whose details show on the right.
   press("M-6");
-  await until(() => isOpen("6 Done") && selected().includes("app-3"), "Done to open on app-3");
+  await until(() => isOpen("6 Done") && selected().includes("APP-3"), "Done to open on APP-3");
   await until(onDetails, "app-3's details");
   await Bun.sleep(300);
   expect(read("lead.typed")).toBe("");
@@ -59,7 +59,7 @@ test("on a task's row plain 1 to 6 open and close the stages, and no agent gets 
   open("lead");
   await ready("lead");
   press("M-S-Down");
-  await until(() => selected().includes("app-12") && onDetails(), "app-12's details");
+  await until(() => selected().includes("APP-12") && onDetails(), "APP-12's details");
   type("6");
   await until(() => isOpen("6 Done"), "Done to open");
   type("6");
@@ -92,11 +92,11 @@ test("Alt-Shift-Down and Alt-Shift-Up move between the lead, Needs you and the o
   await ready("lead");
   await until(() => isOpen("Needs you 1"), "app-12 under Needs you");
   press("M-S-Down");
-  await until(() => selected().includes("app-12"), "Needs you's first row");
+  await until(() => selected().includes("APP-12"), "Needs you's first row");
   press("M-S-Down");
-  await until(() => selected().includes("app-7"), "Building's first row");
+  await until(() => selected().includes("APP-7"), "Building's first row");
   press("M-S-Up");
-  await until(() => selected().includes("app-12"), "back to Needs you");
+  await until(() => selected().includes("APP-12"), "back to Needs you");
   press("M-S-Up");
   await until(() => onLead(), "back to the lead");
   await until(() => seen().includes("I am lead"), "the lead on the right");
@@ -108,14 +108,14 @@ test("s on a task in Backlog asks in the footer, any key but y leaves it be, and
   open("lead");
   await ready("lead");
   press("M-1");
-  await until(() => selected().includes("app-31"), "app-31 in Backlog");
+  await until(() => selected().includes("APP-31"), "APP-31 in Backlog");
   await until(onDetails, "app-31's details");
   type("s");
-  await until(() => footer().includes("Start app-31? y/n"), "the question");
+  await until(() => footer().includes("Start APP-31? y/n"), "the question");
   type("n");
-  await until(() => !footer().includes("Start app-31?"), "the question to go");
+  await until(() => !footer().includes("Start APP-31?"), "the question to go");
   type("s");
-  await until(() => footer().includes("Start app-31? y/n"), "the question again");
+  await until(() => footer().includes("Start APP-31? y/n"), "the question again");
   type("y");
   await until(() => acted.includes("start simon/app 31"), "the daemon to start app-31");
 });

@@ -295,7 +295,7 @@ describe.skipIf(insideSandbox)("briefs between leads", () => {
     expect(typed(webLead())).toContain(
       `<skelcrew from="app:lead" reply="sc tell lead app" asked="yes">\n<asked>\nHave web's lead add the CSV export.\nKeep it small.\n\n</asked>\n<brief>\nAdd a CSV export to the reports page.`,
     );
-    expect(read(join(webLead(), "acted")).split("\n")[1]).toContain("web-");
+    expect(read(join(webLead(), "acted")).split("\n")[1]).toContain("WEB-");
     const threads: unknown = JSON.parse((await skel(["ps", "--json"], "web's lead")).out);
     expect(threads).toEqual([expect.objectContaining({ title: "CSV export" })]);
     // A brief waits while web's lead is busy. One that would close its tag early, and pass the
