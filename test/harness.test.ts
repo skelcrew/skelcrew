@@ -1,7 +1,15 @@
 // The environment Skelcrew's tests give the processes they start: sc, its daemon and what
 // those start.
 import { expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { endFakeSessions, homeEnv, runSkel, startDaemon, until } from "./harness.ts";
@@ -48,10 +56,12 @@ test("refuses to run sc on a socket outside the test's own folder", async () => 
   }
 });
 
-// A test's clean-up can find a fake session whose process ID isn't written yet, such as one the
-// daemon was starting as the test ended. Killing that group would kill the test's own worker.
+// A test's clean-up can find a fake session without a process ID, as its host died before
+// starting it, or with one only half written. Killing that group would kill the test's own worker.
 test("ending the fake host's sessions ends each one's processes, and skips one not yet started", async () => {
-  const sessions = mkdtempSync(join(tmpdir(), "skel-harness-sessions-"));
+  const settings = mkdtempSync(join(tmpdir(), "skel-harness-host-"));
+  const sessions = join(settings, "sessions");
+  mkdirSync(sessions);
   try {
     const run = Bun.spawn(["sleep", "60"], {
       detached: true,
@@ -62,7 +72,7 @@ test("ending the fake host's sessions ends each one's processes, and skips one n
     mkdirSync(join(sessions, "fake-starting"));
     mkdirSync(join(sessions, "fake-half-written"));
     writeFileSync(join(sessions, "fake-half-written", "pid"), "");
-    await endFakeSessions(sessions);
+    await endFakeSessions(settings);
     await run.exited;
     // A process that exited but wasn't reaped has no command.
     const gone = () => {
@@ -74,29 +84,44 @@ test("ending the fake host's sessions ends each one's processes, and skips one n
     };
     await until(gone, { what: () => "the session's process to end" });
   } finally {
-    rmSync(sessions, { recursive: true, force: true });
+    rmSync(settings, { recursive: true, force: true });
   }
 });
 
-// The fake host starts a session's process before it writes the process's ID, so clean-up can
-// run in between. That session must still end, or it would outlive its test.
-test("ending the fake host's sessions waits for an ID the host is about to write", async () => {
-  const sessions = mkdtempSync(join(tmpdir(), "skel-harness-sessions-"));
+// The fake host runs on after the daemon that asked it has stopped, so it can start a session
+// after a test's clean-up began. That session must still end, or it would outlive its test.
+test("ending the fake host's sessions waits for a session the host is still starting", async () => {
+  const settings = mkdtempSync(join(tmpdir(), "skel-harness-host-"));
   try {
-    const run = Bun.spawn(["sleep", "60"], {
+    // A slow start, so the clean-up begins before the session's folder exists.
+    writeFileSync(join(settings, "slow-start"), "");
+    const question = { ask: "start", name: "late", labels: {}, env: {}, folder: settings };
+    const host = Bun.spawn([process.execPath, join(import.meta.dir, "fake-host.ts")], {
+      env: { ...process.env, SKELCREW_PLUGIN_CONFIG: settings },
+      stdin: new Blob([JSON.stringify({ ...question, command: ["sleep", "60"] })]),
+      stdout: "ignore",
+      stderr: "ignore",
+      // In a group of its own, as the daemon runs it.
       detached: true,
-      stdio: ["ignore", "ignore", "ignore"],
     });
-    mkdirSync(join(sessions, "fake-starting"));
-    setTimeout(() => writeFileSync(join(sessions, "fake-starting", "pid"), String(run.pid)), 300);
-    await endFakeSessions(sessions);
-    const ended = await Promise.race([
-      run.exited.then(() => true),
-      Bun.sleep(5000).then(() => false),
-    ]);
-    if (!ended) run.kill("SIGKILL");
+    await until(() => existsSync(join(settings, "asked")), { what: () => "the host to be asked" });
+    await endFakeSessions(settings);
+    await host.exited;
+    const pid = Number(readFileSync(join(settings, "sessions", "fake-late", "pid"), "utf8"));
+    // The session's group has nothing running once it ended. One that exited but wasn't reaped
+    // runs nothing either.
+    const running = () =>
+      Bun.spawnSync(["ps", "-A", "-o", "pgid=", "-o", "stat="])
+        .stdout.toString()
+        .split("\n")
+        .some((line) => {
+          const [group, state] = line.trim().split(/\s+/);
+          return Number(group) === pid && !state?.startsWith("Z");
+        });
+    const ended = !running();
+    if (!ended) process.kill(-pid, "SIGKILL");
     expect(ended).toBe(true);
   } finally {
-    rmSync(sessions, { recursive: true, force: true });
+    rmSync(settings, { recursive: true, force: true });
   }
 });

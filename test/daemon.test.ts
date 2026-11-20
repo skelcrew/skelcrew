@@ -78,8 +78,7 @@ afterEach(async () => {
     await serve.exited;
   }
   // Each session the fake host started ends with the test, by its process group.
-  const hosted = join(fakeHostSettings(), "sessions");
-  await endFakeSessions(hosted);
+  await endFakeSessions(fakeHostSettings());
   Bun.spawnSync(["tmux", "-L", socket, "kill-server"], { stderr: "pipe" });
   // tmux leaves the socket file behind after kill-server.
   const folder = join(process.env.TMUX_TMPDIR ?? "/tmp", `tmux-${userInfo().uid}`);

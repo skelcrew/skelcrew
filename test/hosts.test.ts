@@ -46,8 +46,7 @@ afterEach(async () => {
   // Each session's process group ends with the test, whatever it left running, on the host
   // this process asks and on the one a process of the test's own home asks.
   const fake = join(home, ".config", "skelcrew", "plugins", "fake");
-  for (const sessions of [join(settings(), "sessions"), join(fake, "sessions")])
-    await endFakeSessions(sessions);
+  for (const host of [settings(), fake]) await endFakeSessions(host);
   rmSync(settings(), { recursive: true, force: true });
   rmSync(home, { recursive: true, force: true });
 });
