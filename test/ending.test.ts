@@ -1,13 +1,10 @@
 // Ending a thread, run against a database of the test's own, with no daemon, tracker or forge.
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
-import { hostname, tmpdir, userInfo } from "node:os";
+import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
-import { codeOf } from "../src/db.ts";
 import { source } from "./harness.ts";
 
-// This machine's code, which names the thread started with no issue, such as app-wr1.
-const own = codeOf(hostname());
 let home = "";
 // The test's own tmux socket, never Skelcrew's. Only a test that starts a lead runs a server on it.
 let socket = "";
@@ -37,7 +34,7 @@ test("a late end leaves a thread that started over alone", () => {
     withThread(`// Another end finishes the thread, and it starts over in the same folder, with a clone.
 record(db, thread.folder, { status: "done" }, "ended by another end");
 await Bun.sleep(5);
-const fresh = await startThread(db, { repo: "app", task: "${own}1" });
+const fresh = await startThread(db, { repo: "app", task: "t100" });
 mkdirSync(cloneOf(fresh), { recursive: true });
 // The late end, holding the thread as it was.
 await endThread(db, socket, thread, "PR #7 was merged", "is done: #7 merged into main");
@@ -57,13 +54,13 @@ failThread(db, socket, thread, new Error("its setup command failed"));
 console.log = print;
 const held = db.query("SELECT text FROM notes").all().map((note) => note.text);
 await Bun.sleep(5);
-await startThread(db, { repo: "app", task: "${own}1" });
+await startThread(db, { repo: "app", task: "t100" });
 const notes = db.query("SELECT text FROM notes").all();
 console.log(JSON.stringify({ held, notes }));`);
-  expect(seen).toEqual({ held: [`app-${own}1 failed: its setup command failed`], notes: [] });
+  expect(seen).toEqual({ held: [`app-t100 failed: its setup command failed`], notes: [] });
 });
 
-// Runs a script against the test's own home, with a thread app-wr1, by this machine's code, started on a repository with
+// Runs a script against the test's own home, with a thread app-t100 started on a repository with
 // no tracker or forge, and returns what it printed as JSON. The script has db, thread, the
 // imports below, and socket, the test's tmux socket, where no lead runs unless the script starts one.
 function withThread(body: string): unknown {
@@ -109,7 +106,7 @@ test("an end whose note can't be saved leaves the thread for the next end", () =
     withThread(`db.run("CREATE TRIGGER fail_notes BEFORE INSERT ON notes BEGIN SELECT RAISE(ABORT, 'disk full'); END");
 // How many times the thread's log says it ended.
 const { readFileSync } = await import("node:fs");
-const ends = () => readFileSync(${JSON.stringify(join(home, ".local", "share", "skelcrew", "threads", `app-${own}1.log`))}, "utf8").split("ended the thread").length - 1;
+const ends = () => readFileSync(${JSON.stringify(join(home, ".local", "share", "skelcrew", "threads", `app-t100.log`))}, "utf8").split("ended the thread").length - 1;
 mkdirSync(cloneOf(thread), { recursive: true });
 const failed = await endThread(db, socket, thread, "PR #7 was merged", "is done: #7 merged into main").then(() => "", (error) => String(error));
 const after = { status: readThread(db, thread.folder).status, logged: ends(), clone: existsSync(cloneOf(thread)) };
@@ -123,7 +120,7 @@ console.log(JSON.stringify({ failed, after, status: readThread(db, thread.folder
     status: "done",
     logged: 1,
     clone: false,
-    notes: [{ text: `app-${own}1 is done: #7 merged into main` }],
+    notes: [{ text: `app-t100 is done: #7 merged into main` }],
   });
 });
 
@@ -131,19 +128,20 @@ console.log(JSON.stringify({ failed, after, status: readThread(db, thread.folder
 // the note would name the new thread, and the lead would drop it, so it goes when the thread
 // starts over. Other notes for the lead stay.
 test("a thread starting over drops the note that its old self ended", () => {
-  const seen = withThread(`noteForLead(db, socket, thread, "started app-t2 from github: Fix login");
+  const seen =
+    withThread(`noteForLead(db, socket, thread, "started app-t101 from github: Fix login");
 await endThread(db, socket, thread, "PR #7 was merged", "is done: #7 merged into main");
 const queued = db.query("SELECT text FROM notes ORDER BY id").all();
 await Bun.sleep(5);
-await startThread(db, { repo: "app", task: "${own}1" });
+await startThread(db, { repo: "app", task: "t100" });
 const notes = db.query("SELECT text FROM notes ORDER BY id").all();
 console.log(JSON.stringify({ queued, notes }));`);
   expect(seen).toEqual({
     queued: [
-      { text: "started app-t2 from github: Fix login" },
-      { text: `app-${own}1 is done: #7 merged into main` },
+      { text: "started app-t101 from github: Fix login" },
+      { text: `app-t100 is done: #7 merged into main` },
     ],
-    notes: [{ text: "started app-t2 from github: Fix login" }],
+    notes: [{ text: "started app-t101 from github: Fix login" }],
   });
 });
 
@@ -162,14 +160,14 @@ const until = async (done) => { for (let i = 0; i < 400 && !done(); i++) await B
 const tmux = (...args) => Bun.spawnSync(["tmux", "-L", socket, "-f", "/dev/null", ...args]);
 tmux("new-session", "-d", "-s", leadPlaces("simon", "app").name, "-x", "100", "-y", "30", "sh", "-c", ${JSON.stringify(lead)});
 // Each note sent, with its Enter after its paste, which the terminal hands on as a new line.
-const sent = () => typedSoFar().split("app-${own}1 is done: #7 merged into main\\x1b[201~\\n").length - 1;
+const sent = () => typedSoFar().split("app-t100 is done: #7 merged into main\\x1b[201~\\n").length - 1;
 try {
   await endThread(db, socket, thread, "PR #7 was merged", "is done: #7 merged into main");
   const first = db.query("SELECT id FROM notes").get().id;
   // The end note is pasted, and its Enter comes a moment later.
-  const pasted = await until(() => typedSoFar().includes("app-${own}1 is done"));
+  const pasted = await until(() => typedSoFar().includes("app-t100 is done"));
   await Bun.sleep(5);
-  const fresh = await startThread(db, { repo: "app", task: "${own}1" });
+  const fresh = await startThread(db, { repo: "app", task: "t100" });
   await endThread(db, socket, fresh, "PR #7 was merged", "is done: #7 merged into main");
   const second = db.query("SELECT id FROM notes").get()?.id;
   // Both are sent, so nothing is left typing once tmux ends.
@@ -185,9 +183,9 @@ try {
 // attempt with no PR yet, so the earlier attempt's link must go with its PR.
 test("a task started over keeps no PR link from its earlier attempt", () => {
   const seen = withThread(`record(db, thread.folder, { status: "done" }, "ended");
-db.run("UPDATE tasks SET pr = 7, pr_link = 'https://github.com/simon/app/pull/7' WHERE task = '${own}1'");
-await startThread(db, { repo: "app", task: "${own}1" });
-console.log(JSON.stringify(db.query("SELECT pr, pr_link FROM tasks WHERE task = '${own}1'").get()));`);
+db.run("UPDATE tasks SET pr = 7, pr_link = 'https://github.com/simon/app/pull/7' WHERE task = 't100'");
+await startThread(db, { repo: "app", task: "t100" });
+console.log(JSON.stringify(db.query("SELECT pr, pr_link FROM tasks WHERE task = 't100'").get()));`);
   expect(seen).toEqual({ pr: null, pr_link: null });
 });
 
@@ -201,10 +199,10 @@ record(db, thread.folder, { status: "done" }, "ended");
 // The old thread pushed, and its push ref is locked, as by a git command still running.
 const git = (...args) => Bun.spawnSync(["git", "-C", ${JSON.stringify(clone)}, "-c", "user.name=t", "-c", "user.email=t@t", ...args]);
 git("commit", "-q", "--allow-empty", "-m", "pushed");
-git("update-ref", "refs/skelcrew/threads/app-${own}1", "HEAD");
-writeFileSync(${JSON.stringify(join(clone, ".git", "refs", "skelcrew", "threads", `app-${own}1.lock`))}, "");
-const refused = await startThread(db, { repo: "app", task: "${own}1" }).then(() => "", (error) => String(error));
-console.log(JSON.stringify({ refused: refused.includes("couldn't start app-${own}1 over"), status: readThread(db, thread.folder).status, started: readThread(db, thread.folder).started === thread.started }));`);
+git("update-ref", "refs/skelcrew/threads/app-t100", "HEAD");
+writeFileSync(${JSON.stringify(join(clone, ".git", "refs", "skelcrew", "threads", `app-t100.lock`))}, "");
+const refused = await startThread(db, { repo: "app", task: "t100" }).then(() => "", (error) => String(error));
+console.log(JSON.stringify({ refused: refused.includes("couldn't start app-t100 over"), status: readThread(db, thread.folder).status, started: readThread(db, thread.folder).started === thread.started }));`);
   expect(seen).toEqual({ refused: true, status: "done", started: true });
 });
 
@@ -216,7 +214,7 @@ test("a failed thread starts over when Skelcrew has no clone of its repository",
 record(db, thread.folder, { status: "failed" }, "couldn't clone");
 rmSync(${JSON.stringify(join(home, ".local", "share", "skelcrew", "repos", "simon", "app"))}, { recursive: true });
 await Bun.sleep(5);
-const fresh = await startThread(db, { repo: "app", task: "${own}1" });
+const fresh = await startThread(db, { repo: "app", task: "t100" });
 console.log(JSON.stringify({ status: readThread(db, fresh.folder).status, new: fresh.started !== thread.started }));`);
   expect(seen).toEqual({ status: "working", new: true });
 });

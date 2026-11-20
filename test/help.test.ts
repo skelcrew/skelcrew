@@ -218,6 +218,14 @@ test("the help lists the issue commands in a section of their own, and names tas
   for (const command of ["show", "rm", "review"]) expect(out).toContain(`  ${command} <task>`);
 });
 
+// A task with no issue has a name of Skelcrew's, and names are typed in any case, which only the
+// help tells someone new.
+test("the help says how a task with no issue is named, and that names are typed in any case", () => {
+  const out = skel(["--help"]).out.replace(/\s+/g, " ");
+  expect(out).toContain("started with no issue, by a t and a number, such as app-t100.");
+  expect(out).toContain("Type a name in any case: APP-T100 is app-t100.");
+});
+
 // The issue commands replaced the task commands, which are gone with no alias.
 test("sc task is no longer a command", () => {
   const ran = skel(["task", "ls"]);
