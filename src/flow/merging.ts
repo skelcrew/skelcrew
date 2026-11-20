@@ -13,6 +13,7 @@ import {
   ciState,
   mergeStuck,
   mergeWaitsOn,
+  noteRound,
   type PullRequest,
   readyWhen,
   skipReviewWaitsOn,
@@ -383,7 +384,7 @@ export async function mergeIfReady(
   if (waits !== now.merge_waits)
     record(db, folder, { merge_waits: waits }, `its armed merge waits on ${waits}`);
   if (mergeStuck(now, waits)) {
-    record(db, folder, { merge_noted: now.review_round });
+    record(db, folder, { merge_noted: noteRound(now) });
     const when = pinned === null ? `once ${readyWhen(now)}` : "without Skelcrew's approval";
     noteForLead(
       db,

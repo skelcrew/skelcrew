@@ -188,7 +188,8 @@ export const Thread = z.object({
   // A merge you armed, or null with none, and then nothing merges by itself. A merge when ready
   // merges the PR once it is approved and green, and one skipping the review, with `merge_pinned`,
   // once CI is green at the commit you saw. Who armed it and when, what it waits on
-  // as the last poll found, and the review round the lead last heard it still waits after.
+  // as the last poll found, and the review round the lead last heard it still waits after,
+  // or on a flow with no review stage when the submit it heard of was marked not reviewed.
   merge_plan: z.enum(["armed"]).nullable(),
   // The armed plan's own ID, new each time it is armed, so a plan cancelled and armed again is
   // never taken for the one before.

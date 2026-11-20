@@ -4,6 +4,7 @@ import { expect, test } from "bun:test";
 import {
   type Check,
   decide,
+  mergeStuck,
   mergeWaitsOn,
   type PullRequest,
   pastRoundLimit,
@@ -163,6 +164,34 @@ test("a submit its flow doesn't review waits on checks while it is pushed and wa
   // A reviewed flow's round under way still shows its review.
   expect(threadWord(thread({ verdict: null, reviewing: head }), 3)).toBe("reviewing");
   expect(listStage(thread({ verdict: null, reviewing: head }), true)).toBe("reviewing");
+});
+
+// A round on such a flow fails on its push or on setting Skelcrew's check, never on a review.
+test("a failed submit on a flow with no review says what failed, never review failed", () => {
+  const failedPush = thread({ needs_you: true, submitting: "Round 1" });
+  expect(threadWord(failedPush, 3)).toBe("push failed");
+  expect(shownOf(failedPush, 3).mark).toEqual({ sign: "●", colour: "red" });
+  const failedCheck = thread({ needs_you: true, reviewing: head });
+  expect(threadWord(failedCheck, 3)).toBe("check failed");
+  expect(shownOf(failedCheck, 3).mark).toEqual({ sign: "●", colour: "red" });
+  // A reviewed flow's failed round is still a review that failed.
+  expect(threadWord(thread({ verdict: null, needs_you: true, reviewing: head }), 3)).toBe(
+    "review failed",
+  );
+});
+
+// Such a flow has no review rounds, so the lead's note of a stuck merge goes once for each submit
+// marked not reviewed.
+test("an armed merge on a flow with no review tells the lead when it is stuck, once a submit", () => {
+  const armed = thread({ merge_plan: "armed", review_at: 1000 });
+  const stuck = "the forge, which refused: Pull Request is not mergeable";
+  expect(mergeStuck(armed, stuck)).toBe(true);
+  expect(mergeStuck(armed, "its conflict with main to be fixed")).toBe(true);
+  expect(mergeStuck(armed, "its failing checks to be fixed")).toBe(true);
+  expect(mergeStuck(armed, "its checks")).toBe(false);
+  // Told once for this submit, it waits for the next one.
+  expect(mergeStuck({ ...armed, merge_noted: 1000 }, stuck)).toBe(false);
+  expect(mergeStuck({ ...armed, merge_noted: 1000, review_at: 2000 }, stuck)).toBe(true);
 });
 
 // What sc merge --when-ready says, and the lead's notes, follow the flow.

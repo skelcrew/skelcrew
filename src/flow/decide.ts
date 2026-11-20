@@ -151,15 +151,22 @@ export function skipReviewWaitsOn(
   return null;
 }
 
+// Returns what the lead's note of a stuck merge is counted by, so it hears once for each: the
+// review round, or on a flow with no review stage, which has no rounds, when its last submit was
+// marked not reviewed. Null before either.
+export const noteRound = (thread: Thread) =>
+  thread.verdict === "not reviewed" ? thread.review_at : thread.review_round;
+
 // Returns whether the lead should hear that an armed merge still waits, after a review round
-// ended. A review or checks still running are on their way, so only a wait that needs someone
-// to act counts, and the lead hears it once for each review round.
+// ended, or a submit its flow doesn't review was marked so. A review or checks still running are
+// on their way, so only a wait that needs someone to act counts, and the lead hears it once for
+// each round or submit.
 export const mergeStuck = (thread: Thread, waits: string | null) =>
   waits !== null &&
   waits !== "its review" &&
   waits !== "its checks" &&
-  thread.review_round !== null &&
-  thread.merge_noted !== thread.review_round;
+  noteRound(thread) !== null &&
+  thread.merge_noted !== noteRound(thread);
 
 // Returns whether a change of these files touches only docs and Markdown: each is under docs/
 // or ends in .md. CI skips such a commit, and so does the reviewer's run of the tests, as no
