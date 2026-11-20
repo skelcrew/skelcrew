@@ -754,15 +754,16 @@ function postVerdict(db: Database, folder: string): Promise<string | null> {
 // review than the thread says until the daemon starts again. Each poll asks, and a forge that
 // still fails is logged and asked again at the next. A done thread's PR is closed, so it is
 // left alone. A submit or review under way brings a newer verdict, which is posted in its place,
-// so it is left to that round.
+// so it is left to that round. A round that only waits to type its changes in, such as for a
+// builder still starting, doesn't hold it up: posts take their turns one at a time, and one
+// already done leaves nothing to post.
 export async function retryPost(db: Database, folder: string): Promise<void> {
   const thread = readThread(db, folder);
   const quiet =
     thread.status !== "done" &&
     thread.posting !== null &&
     thread.submitting === null &&
-    thread.reviewing === null &&
-    !roundRunning(folder);
+    thread.reviewing === null;
   if (!quiet) return;
   const failed = await postVerdict(db, folder);
   if (failed !== null)
