@@ -222,13 +222,13 @@ function layoutBelowBlank(
   const needing = threads.filter(waitsOnYou);
   const rest = threads.filter((row) => !waitsOnYou(row));
   const divider = { text: paint(edge, "─".repeat(Math.max(width, 0))), joins: true };
-  // Each heading has a blank line under it. The first stays above the threads as they scroll.
-  // Active after Needs you scrolls with the threads, with a blank line above it too.
+  // Each heading has a blank line under it. With one group, its heading stays above the threads
+  // as they scroll. With both, each heading scrolls with its own rows, so a row of Active never
+  // shows under a pinned Needs you heading, which would say it waits on you. Active's heading
+  // then has a blank line above it too.
   const headingOf = (name: string) => [{ text: paint(grey, `${pad}${name}`) }, { text: "" }];
-  const first =
-    needing.length > 0 ? headingOf("Needs you") : rest.length > 0 ? headingOf("Active") : [];
-  const second =
-    needing.length > 0 && rest.length > 0 ? [{ text: "" }, ...headingOf("Active")] : [];
+  const both = needing.length > 0 && rest.length > 0;
+  const first = both ? [] : headingOf(needing.length > 0 ? "Needs you" : "Active");
   const top: Line[] = [
     ...lead,
     ...(lead.length > 0 && entries.length > 0 ? [divider] : []),
@@ -239,7 +239,7 @@ function layoutBelowBlank(
       const line = { text: entryLine(entry, place === shown, width), place };
       return i === 0 ? [line] : [{ text: "" }, line];
     }),
-    ...(first.length > 0 ? [divider, ...first] : []),
+    ...(threads.length > 0 ? [divider, ...first] : []),
   ];
   // Too short for all of that and the row you are on, or a row when you are on none of them:
   // the lead and the threads alone.
@@ -247,15 +247,18 @@ function layoutBelowBlank(
   const left = size.height - top.length;
   const needed = threads.length > 0 ? rowHeight(threads[Math.max(shownThread, 0)]) : 0;
   if (left < needed) return scrolled(blocks, here, size.height);
-  // Active's heading is a block of its own among the threads, so the row you are on past it
-  // is one block further down.
-  const threadBlocks = [
-    ...needing.map(linesOf),
-    ...(second.length > 0 ? [second] : []),
-    ...rest.map(linesOf),
-  ];
+  // With both groups, each heading is a block of its own among the threads, so the row you are
+  // on is one block further down under Needs you, and two under Active.
+  const threadBlocks = both
+    ? [
+        headingOf("Needs you"),
+        ...needing.map(linesOf),
+        [{ text: "" }, ...headingOf("Active")],
+        ...rest.map(linesOf),
+      ]
+    : threads.map(linesOf);
   const at = Math.max(shownThread, 0);
-  const shownBlock = second.length > 0 && at >= needing.length ? at + 1 : at;
+  const shownBlock = !both ? at : at < needing.length ? at + 1 : at + 2;
   return [...top, ...scrolled(threadBlocks, shownBlock, left)];
 }
 

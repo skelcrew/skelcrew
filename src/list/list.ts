@@ -181,10 +181,14 @@ export async function runList(agents: string, repository: string): Promise<void>
 
   // Shows the rows of the open sections again, keeping you on the same row by its name, or at
   // the same place when it went. So a task that starts or stops needing you moves between Needs
-  // you and its stage with you still on it. The first time, you start on the first task under
-  // Needs you, so one Enter reaches it, or else on the lead.
+  // you and its stage with you still on it: a section it moves into that is closed opens, as
+  // otherwise its row would leave the list under you. The first time, you start on the first
+  // task under Needs you, so one Enter reaches it, or else on the lead.
   const reshow = () => {
     const name = rows[here]?.name;
+    const before = rows[here]?.section;
+    const moved = all.find((row) => row.name === name);
+    if (moved && moved.section !== before && moved.section !== "lead") opened.add(moved.section);
     rows = showing();
     const at = name === undefined ? -1 : rows.findIndex((row) => row.name === name);
     const needing = rows.findIndex((row) => row.section === "needs you");

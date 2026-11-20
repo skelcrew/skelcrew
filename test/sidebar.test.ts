@@ -784,6 +784,26 @@ test("a thread that needs you shows under Needs you, above Active, and goes back
   ).toContain("app-2");
 });
 
+// Each heading scrolls with its rows, so a row of Active never shows under Needs you's heading.
+test("scrolled down to Active, no row shows under the Needs you heading", () => {
+  const asking = thread("app-1", { status: "waiting", word: "question", state: "needs you" });
+  const rows = [lead, asking, ...[2, 3, 4, 5].map((n) => thread(`app-${n}`))];
+  const short = { width: sidebarWidth, height: 12 };
+  const lines = read(draw(rows, "app-5", short)).map((line) => line.trimEnd());
+  expect(lines).not.toContain("  Needs you");
+  expect(
+    selected(draw(rows, "app-5", short))
+      .map(plain)
+      .join(""),
+  ).toContain("app-5");
+  // At the top, both headings show, each over its own rows.
+  const full = read(draw(rows, "app-1", { width: sidebarWidth, height: 30 }));
+  const needs = full.indexOf("  Needs you");
+  const active = full.findIndex((line) => line.trimEnd() === "  Active");
+  expect(full.slice(needs, active).join("\n")).toContain("app-1");
+  expect(full.slice(needs, active).join("\n")).not.toContain("app-2");
+});
+
 test("moving from an agent that isn't listed goes to the lead", () => {
   expect(stepped([lead, thread("app-1")], "gone", 1)).toBe("lead");
 });

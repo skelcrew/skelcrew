@@ -1148,6 +1148,31 @@ test("a task moves into Needs you and back as its mark comes and goes, and you s
   expect(below()).toStartWith("working");
 });
 
+// Reviewing is closed when the list starts, so a task that leaves Needs you for it opens it,
+// rather than leave the list from under you.
+test("a task leaving Needs you for a closed stage opens it, and you stay on it", async () => {
+  sql(
+    threadSql({
+      task: "15",
+      title: "Under review",
+      status: "waiting",
+      reviewing: "abc",
+      pr: 45,
+      needs_you: 1,
+      needs_you_for: "apply the split",
+      changed: now,
+    }),
+  );
+  await open();
+  await until(() => here().startsWith("▸ ● app-15"), "app-15 first under Needs you");
+  expect(seen()).not.toContain("○ app-15");
+  sql("UPDATE threads SET needs_you = 0, needs_you_for = NULL WHERE folder = 'app-15';");
+  await until(() => here().startsWith("▸ ○ app-15"), "app-15 under Reviewing");
+  expect(below()).toStartWith("reviewing");
+  const lines = seen().split("\n");
+  expect(lines[lines.findIndex((line) => line.includes("▸")) - 1]).toMatch(/^ 3 Reviewing/);
+});
+
 // Leaving gives the terminal back, so a key that came with q must never act after it.
 test("a key that comes with q in one read does nothing once the list has left", async () => {
   await open();
