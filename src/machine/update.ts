@@ -73,9 +73,9 @@ export async function installLatest(
     await Bun.write(staged, bytes);
     chmodSync(staged, 0o755);
     // Starting it proves it runs on this machine, and its version line gives the release
-    // for the note.
+    // for the note. A release may name Skelcrew with a capital or without, so either installs.
     const started = await quietly([staged, "--version"]);
-    const version = started.out.match(/^skelcrew (\d+\.\d+\.\d+)$/m)?.[1];
+    const version = started.out.match(/^[Ss]kelcrew (\d+\.\d+\.\d+)$/m)?.[1];
     if (!started.ok || !version)
       throw new Error(
         `the latest release won't start here, so it wasn't installed: ${started.said}`,

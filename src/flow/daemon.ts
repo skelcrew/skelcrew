@@ -125,7 +125,9 @@ import {
   liveThreads,
   readThread,
   record,
+  renameBuilders,
   type Thread,
+  taskName,
   threadName,
   threadOn,
 } from "./thread.ts";
@@ -167,12 +169,12 @@ const builderOf = (caller: Caller): Thread | null =>
 const leadOfCaller = (caller: Caller) =>
   caller !== "you" && "lead" in caller ? caller.lead : null;
 
-// Returns a task of the repository's backlog, with its name, such as app-t104, or null when the
+// Returns a task of the repository's backlog, with its name, such as APP-T104, or null when the
 // backlog has no task of that ID or a thread works on it, for sc rm.
 function filedOn(db: Database, repository: string, task: string) {
   const { owner, repo, name } = findRepository(db, repository);
   const filed = threadOn(db, repository, task) ? null : filedTask(db, owner, repo, task);
-  return filed && { ...filed, name: `${name}-${filed.task}` };
+  return filed && { ...filed, name: taskName(name, filed.task) };
 }
 
 // Returns the thread whose builder is calling, for the requests only a builder may make.
@@ -558,7 +560,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         }
         const task = await createTask(db, repository, request.title, request.body);
         saveItems(db, repository.owner, repository.repo, [task], []);
-        return { task: `${repository.name}-${task.id}` };
+        return { task: taskName(repository.name, task.id) };
       }
       // Files a task in the backlog, from Skelcrew's clone, which the daemon may still be making
       // or may not yet know the forge of, whose login pushes the task to the remote.
@@ -581,7 +583,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         // shows it at once and sc start finds the commit it needs. One that fails only waits
         // for the next poll: the task is filed already.
         await refreshClone(db, current).catch((error) => console.log(errorText(error)));
-        return { task: `${repository.name}-${task}`, already };
+        return { task: taskName(repository.name, task), already };
       }
       case "review": {
         // A builder may ask only for its own thread, such as when you ask on its pull request
@@ -1008,6 +1010,8 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   }, look);
   // A host that shows status hears each builder's as it is now, and each change from here on.
   reportStatuses(db);
+  // A host's own apps show each builder by its title as it is now, such as after an upgrade.
+  renameBuilders(db);
   // Open your socket.
   await open(path, "you");
   console.log(`Listening on ${path}.`);

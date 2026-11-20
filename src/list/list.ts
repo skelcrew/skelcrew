@@ -16,7 +16,7 @@ import { attachOnHost, type Host } from "../plugins/runtime.ts";
 import { errorText } from "../say.ts";
 import { cpuBusy, cpuSample, loadText, memoryInUse, readMemory } from "../screen/load.ts";
 import { grey, paint, removeControlCodes } from "../screen/look.ts";
-import { version } from "../version.ts";
+import { shownVersions } from "../version.ts";
 import { type Asking, canOpenLinks, openPr, stillOffered } from "./actions.ts";
 import { type Details, readDetails } from "./details.ts";
 import {
@@ -154,6 +154,8 @@ export async function runList(agents: string, repository: string): Promise<void>
   // the last screen read of its agent, by the name of the row it was read for.
   let details: { name: string; read: Details | null } | null = null;
   let live: { name: string; shown: Live } | null = null;
+  // Whether the details pane shows its agent's whole screen, rather than its last few lines.
+  let fullOutput = false;
   // How many times the row you are on changed, and the row it last was, so a read of the live
   // view knows when you moved while it waited, though you came back to the same row since.
   let selections = 0;
@@ -174,7 +176,15 @@ export async function runList(agents: string, repository: string): Promise<void>
     const tabs = repositoryTabs(db, open);
     const name = tabs.find((tab) => tab.fullName === `${open.owner}/${open.repo}`)?.name ?? "";
     const notice = updateNotice(db);
-    return { version, where, name, tabs, notice, bottom: bottom(tabs.length), load: shownLoad };
+    return {
+      versions: shownVersions(),
+      where,
+      name,
+      tabs,
+      notice,
+      bottom: bottom(tabs.length),
+      load: shownLoad,
+    };
   };
 
   // Returns the details pane's lines for a terminal of this size, or null when it is too narrow
@@ -190,7 +200,7 @@ export async function runList(agents: string, repository: string): Promise<void>
       details = { name: row.name, read: readDetails(db, open, row.task, Date.now()) };
     const note = liveNote(row);
     const shown = note !== null ? { note } : live?.name === row.name ? live.shown : { screen: "" };
-    return drawPane(row, details.read, shown, beside, size.height - 2);
+    return drawPane(row, details.read, shown, beside, size.height - 2, fullOutput);
   };
 
   // Draws what shows, filling the terminal, only when it changed.
@@ -204,7 +214,11 @@ export async function runList(agents: string, repository: string): Promise<void>
     // What the bottom line says can come from outside, such as a forge's reason for refusing a
     // merge, so its control codes never reach your terminal.
     const bottom = (tabs: number) =>
-      removeControlCodes(said ?? asking?.question.ask ?? keysFor(rows[here], tabs));
+      removeControlCodes(
+        said ??
+          asking?.question.ask ??
+          keysFor(rows[here], tabs, paneWidth(process.stdout.columns || 80) > 0),
+      );
     const size = { width: process.stdout.columns || 80, height: process.stdout.rows || 24 };
     const drawn = drawList(
       rows,
@@ -553,6 +567,12 @@ export async function runList(agents: string, repository: string): Promise<void>
     const stage = ListStage.options[Number(key) - 1];
     if (/^[1-6]$/.test(key) && stage) return toggleSection(stage);
     if (key === "enter" && row) return openRow(row);
+    // o shows the agent's whole screen in the details pane, or only its last lines again. It
+    // stays as you move, as it is how you like the pane.
+    if (key === "o" && row?.task && paneWidth(process.stdout.columns || 80) > 0) {
+      fullOutput = !fullOutput;
+      return draw();
+    }
     // s starts a task not started yet, an issue or one of the backlog, as Enter does there. With
     // every builder busy, its question says it queues the task instead.
     if (key === "s" && row?.part === "backlog" && row.start) {

@@ -153,7 +153,7 @@ describe.skipIf(insideSandbox)("sc submit", () => {
       30_000,
     );
 
-    expect(read(join(builder(), "submitted"))).toContain("Submitted app-12 for review.");
+    expect(read(join(builder(), "submitted"))).toContain("Submitted APP-12 for review.");
     expect(pushedRound()).toBe("2");
     const pr = opened();
     expect(pr).toMatchObject({
@@ -253,7 +253,7 @@ describe.skipIf(insideSandbox)("sc submit", () => {
     });
     // The flow is fixed once the builder submitted, as in any flow.
     expect((await skel(["start", "app-12", "--flow", "default"])).err).toBe(
-      "Skelcrew: app-12 keeps the flow noreview, as its builder has submitted already.\n",
+      "Skelcrew: APP-12 keeps the flow noreview, as its builder has submitted already.\n",
     );
     // There is no review to skip, so a merge skipping it is refused, once the PR's head shows.
     answer(plugin, "changed", {
@@ -272,7 +272,7 @@ describe.skipIf(insideSandbox)("sc submit", () => {
       "y",
     );
     expect(skipped).toContain(
-      "app-12's flow has no review stage, so there is no review to skip: merge it with m in the list, or sc merge --when-ready app-12",
+      "APP-12's flow has no review stage, so there is no review to skip: merge it with m in the list, or sc merge --when-ready APP-12",
     );
     expect(thread().merge_plan).toBeNull();
   }, 90_000);

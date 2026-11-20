@@ -112,12 +112,12 @@ test("sc --version from a checkout says so, with its commit", () => {
     const clean = skel(["--version"], { PATH: path });
     expect(clean).toEqual({
       code: 0,
-      out: "skelcrew from a checkout, at commit 39939b0\n",
+      out: "Skelcrew 39939b0 (checkout)\n",
       err: "",
     });
     git(" M src/main.ts");
     expect(skel(["--version"], { PATH: path }).out).toBe(
-      "skelcrew from a checkout, at commit 39939b0 with uncommitted changes\n",
+      "Skelcrew 39939b0* (checkout, * = uncommitted changes)\n",
     );
   } finally {
     rmSync(home, { recursive: true, force: true });
@@ -127,7 +127,7 @@ test("sc --version from a checkout says so, with its commit", () => {
 test("sc --version answers on a server whose Skelcrew differs from the laptop's", () => {
   const seen = skel(["--version"], { SKELCREW_LAPTOP_BUILD: "other", SKELCREW_REMOTE_NAME: "x" });
   expect(seen.code).toBe(0);
-  expect(seen.out).toStartWith("skelcrew ");
+  expect(seen.out).toStartWith("Skelcrew ");
 });
 
 // The screen's keys, in words, as the list of keys shows them.
@@ -195,7 +195,7 @@ test("sc runs from a checkout whose folder it may read files in but not list, as
       },
     });
     expect(run.stderr.toString()).toBe("");
-    expect(run.stdout.toString()).toStartWith("skelcrew ");
+    expect(run.stdout.toString()).toStartWith("Skelcrew ");
   } finally {
     chmodSync(checkout, 0o755);
     rmSync(checkout, { recursive: true, force: true });
@@ -219,12 +219,12 @@ test("the help lists the issue commands in a section of their own, and names tas
   for (const command of ["show", "rm", "review"]) expect(out).toContain(`  ${command} <task>`);
 });
 
-// A task with no issue has a name of Skelcrew's, and names are typed in any case, which only the
-// help tells someone new.
+// A task with no issue has a name of Skelcrew's, names show in uppercase and are typed in any
+// case, which only the help tells someone new.
 test("the help says how a task with no issue is named, and that names are typed in any case", () => {
   const out = skel(["--help"]).out.replace(/\s+/g, " ");
-  expect(out).toContain("started with no issue, by a t and a number, such as app-t100.");
-  expect(out).toContain("Type a name in any case: APP-T100 is app-t100.");
+  expect(out).toContain("started with no issue, by a T and a number, such as APP-T100.");
+  expect(out).toContain("Type a name in any case: app-t100 is APP-T100.");
 });
 
 // The issue commands replaced the task commands, which are gone with no alias.

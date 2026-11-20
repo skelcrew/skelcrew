@@ -18,11 +18,12 @@ import {
 } from "../screen/look.ts";
 import type { Heading, Row, Section, Tab } from "./rows.ts";
 
-// What the list shows besides its rows: the version of Skelcrew running here, where it runs on a
-// remote, or empty on this machine, the open repository's name, every repository's tab, the
-// notice of a release waiting for a restart, or empty, the bottom line's text, and the load.
+// What the list shows besides its rows: the names of the version of Skelcrew running here,
+// longest first, such as v0.4.2 or 6f1c2ab (checkout), where it runs on a remote, or empty on this machine, the open repository's
+// name, every repository's tab, the notice of a release waiting for a restart, or empty, the
+// bottom line's text, and the load.
 export type Frame = {
-  version: string;
+  versions: string[];
   where: string;
   name: string;
   tabs: Tab[];
@@ -34,19 +35,30 @@ export type Frame = {
 // The size of your terminal.
 export type Size = { width: number; height: number };
 
-// The fewest columns the list keeps beside the pane, the fewest the pane takes, and the line
-// between them. A terminal narrower than both side by side shows no pane.
-const listLeast = 70;
-const paneLeast = 40;
+// How wide the list is, in its own window or as the screen's sidebar: a little over a quarter of
+// the terminal, so the pane or the right side has the room for the agent at work. It never gets
+// narrower than a row's name, short title and word need, nor wider than a task's two lines do,
+// such as `working · Editing rows.ts · #40 · CI passed · 14:31`.
+export const listShare = { percent: 28, least: 40, most: 58 };
+
+// Returns how many columns the list takes in a terminal `width` columns wide.
+export const listWidth = (width: number) =>
+  Math.min(
+    Math.max(Math.floor((width * listShare.percent) / 100), listShare.least),
+    listShare.most,
+  );
+
+// The narrowest terminal that shows the pane, and the line between the pane and the list. On a
+// narrower one the list keeps the whole width, as the agent's lines would show too cut to read.
+const paneFrom = 114;
 export const paneEdge = " │ ";
 
 // Returns how many columns the pane takes in a terminal `width` columns wide, or 0 when it is too
-// narrow for the list and the pane side by side. The pane takes a little under half, as the list
-// needs room for its titles and the pane for the agent's screen.
+// narrow for the list and the pane side by side. The pane takes what the list leaves, past the
+// terminal's last column, which is never drawn in.
 export function paneWidth(width: number): number {
-  const edge = paneEdge.length;
-  if (width - 1 < listLeast + edge + paneLeast) return 0;
-  return Math.max(Math.floor((width - 1) * 0.45), paneLeast);
+  if (width < paneFrom) return 0;
+  return width - 1 - listWidth(width) - paneEdge.length;
 }
 
 // The name of each section, as its heading shows it, which the pane also shows of a row's stage.
@@ -61,15 +73,18 @@ export const sectionNames: Record<Section, string> = {
   done: "Done",
 };
 
-// Returns the keys the bottom line offers on a row: Enter always, with Ctrl-\, which comes back,
-// on a row whose agent Enter attaches to on tmux, or as showing every issue on Backlog's `… more`
-// row, the numbers that open and close the stages, Shift with an arrow only on a queued task in
-// Up next, which it moves in the queue, s only on a task it can start, m only on a task it can
-// merge, and Tab and
-// Alt-Shift with an arrow only with another repository to go to. A runtime plugin's host has its
-// own key to come back, so its rows don't offer Ctrl-\.
-export function keysFor(row: Row | undefined, tabs: number): string {
-  const open = row?.more ? "⏎ show all" : row?.tmux ? "⏎ open · ctrl+\\ back" : "⏎ open";
+// Returns the keys the bottom line offers on a row: Enter always, as attach on a row whose agent
+// it attaches to, with Ctrl-\, which comes back, when that is on tmux, or as showing every issue
+// on Backlog's `… more` row, the numbers that open and close the stages, Shift with an arrow
+// only on a queued task in Up next, which it moves in the queue, s only on a task it can start,
+// m only on a task it can merge, o on a task while the details pane shows, to show its agent's
+// whole screen or only the last lines, and Tab and Alt-Shift with an arrow only with another
+// repository to go to. A runtime plugin's host has its own key to come back, so its rows don't
+// offer Ctrl-\.
+export function keysFor(row: Row | undefined, tabs: number, pane = false): string {
+  const back = row?.tmux ? " · ctrl+\\ back" : "";
+  const enter = row?.more ? "⏎ show all" : row && enterAttaches(row) ? `⏎ attach${back}` : "⏎ open";
+  const open = pane && row?.task ? `${enter} · o output` : enter;
   const merge = row?.merge && "ask" in row.merge ? ["m merge"] : [];
   const start = row?.start ? [row.start.queues ? "s queue" : "s start"] : [];
   const reorder = row?.section === "up next" && row.place !== null ? ["shift+↑↓ reorder"] : [];
@@ -77,6 +92,16 @@ export function keysFor(row: Row | undefined, tabs: number): string {
   return ["↑↓ move", open, "1-6 stages", ...reorder, ...start, ...merge, ...tab, "q/esc quit"].join(
     "  ",
   );
+}
+
+// Returns whether Enter on a row attaches to its agent: the lead, or a task's builder while it is
+// at work, or once it is ready but needs you. On Backlog it starts the task, on Up next it says
+// what the task waits on, as no builder runs for it yet, and on Ready or Done it opens the PR.
+export function enterAttaches(row: Row): boolean {
+  if (row.part === "lead") return true;
+  if (row.section === "up next") return false;
+  const atWork = row.part !== "ready" && row.part !== "done";
+  return (atWork || row.needsYou) && row.session !== null;
 }
 
 // The widest section name, so every heading's count starts in the same column.
@@ -116,19 +141,13 @@ export type TabSpan = { from: number; to: number; fullName: string };
 const openTab = "48;5;238";
 const otherTab = "48;5;236";
 
-// Returns the top line and where each repository's tab is on it. Skelcrew in bold and its
-// version and where it runs, dim, then every repository's tab, in order, left to right. The open
+// Returns the top line and where each repository's tab is on it. Skelcrew in bold and the
+// longest name of its version that fits and where it runs, dim, then every repository's tab, in order, left to right. The open
 // one is white on a lighter grey. Each other one has a yellow dot and how many of its threads
 // need you, or red when one went wrong, then a green dot and how many wait for you to merge. They
 // are counted apart, so a finished task is never told twice. Another repository's tab that
 // doesn't fit beside the open one's is left out.
 function topParts(frame: Frame, width: number): { line: string; spans: TabSpan[] } {
-  const place = frame.where ? ` on ${frame.where}` : "";
-  const plain = ` Skelcrew v${frame.version}${place}`;
-  if (Bun.stringWidth(plain) > width) return { line: fitted(plain, width), spans: [] };
-  let line = ` ${paint(bright, "Skelcrew")} ${paint(grey, `v${frame.version}${place}`)}`;
-  let used = Bun.stringWidth(plain);
-  const spans: TabSpan[] = [];
   // Each tab's text, with a space either side inside its background.
   const laid = frame.tabs.map((tab) => {
     const open = tab.name === frame.name;
@@ -139,10 +158,27 @@ function topParts(frame: Frame, width: number): { line: string; spans: TabSpan[]
     const text = ` ${[tab.name, ...badges.map(({ badge }) => badge)].join(" ")} `;
     return { tab, open, badges, size: Bun.stringWidth(text) };
   });
+  // Words around a checkout's commit give way before the line is cut, so it keeps the whole
+  // commit when it can, and where it runs gives way before each of them. They give way for the open
+  // repository's tab too, so it keeps showing.
+  const openSize = laid.find(({ open }) => open)?.size ?? 0;
+  const where = frame.where ? ` on ${frame.where}` : "";
+  const named = frame.versions.flatMap((name) => [`${name}${where}`, name]);
+  const room = (name: string, more: number) => Bun.stringWidth(` Skelcrew ${name}`) + more <= width;
+  const about =
+    named.find((name) => room(name, openSize ? 2 + openSize : 0)) ??
+    named.find((name) => room(name, 0)) ??
+    named.at(-1) ??
+    "";
+  const plain = ` Skelcrew ${about}`;
+  if (Bun.stringWidth(plain) > width) return { line: fitted(plain, width), spans: [] };
+  let line = ` ${paint(bright, "Skelcrew")} ${paint(grey, about)}`;
+  let used = Bun.stringWidth(plain);
+  const spans: TabSpan[] = [];
   // The open repository's tab always keeps its room, so you can always tell which one shows.
   // Other tabs that don't fit beside it are left out. Each tab has a space between it and the
   // next.
-  let kept = laid.find(({ open }) => open)?.size ?? 0;
+  let kept = openSize;
   for (const { tab, open, badges, size } of laid) {
     if (open) kept = 0;
     else if (used + 2 + size + (kept ? 2 + kept : 0) > width) continue;

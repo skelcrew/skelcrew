@@ -21,7 +21,7 @@ import { findRepository, noRepositories, repositories, repositoryAt } from "./re
 import { roundRunning } from "./round.ts";
 import { Stage, taskStage } from "./stage.ts";
 import { mergeShown, needsYou, needsYouFor } from "./status.ts";
-import { queuedForReview, Thread, threadName, threadOn } from "./thread.ts";
+import { queuedForReview, Thread, taskName, threadName, threadOn } from "./thread.ts";
 
 // A repository as sc repo ls shows it. `missing` is a tracker its skelcrew.yaml names that
 // isn't installed, so it has none until you install that plugin. `agentsWaiting` says its
@@ -262,7 +262,7 @@ export function listTasks(db: Database, repository?: string): TaskRow[] {
       const issue = open.find((item) => item.id === thread.task);
       const latest = thread.status === "done" ? issue?.title : undefined;
       const task: TaskRow = {
-        task: `${r.name}-${thread.task}`,
+        task: taskName(r.name, thread.task),
         stage: taskStage(thread, issue !== undefined),
         title: removeControlCodes(latest ?? thread.title ?? issue?.title ?? ""),
         short: row.short,
@@ -285,7 +285,7 @@ export function listTasks(db: Database, repository?: string): TaskRow[] {
       .filter((item) => !worked.some((w) => w.id === item.id))
       .map((item) => {
         const task: TaskRow = {
-          task: `${r.name}-${item.id}`,
+          task: taskName(r.name, item.id),
           stage: "issue",
           title: removeControlCodes(item.title),
           short: null,
@@ -301,7 +301,7 @@ export function listTasks(db: Database, repository?: string): TaskRow[] {
     // it out of the backlog, so none has a thread.
     const filed = backlogOf(db, r.owner, r.repo).map((t) => {
       const task: TaskRow = {
-        task: `${r.name}-${t.task}`,
+        task: taskName(r.name, t.task),
         stage: "issue",
         title: removeControlCodes(t.title),
         short: null,
@@ -462,7 +462,7 @@ function repositoryOfTask(db: Database, which: Which): Repository {
         : undefined;
   if (!repository)
     throw new Error(
-      "name the PR's task, such as app-12, or run sc pr show in a checkout of its repository",
+      "name the PR's task, such as APP-12, or run sc pr show in a checkout of its repository",
     );
   return repository;
 }
@@ -488,7 +488,7 @@ export function readTask(db: Database, which: Which): TaskView {
     task = z.object({ task: z.coerce.string() }).nullable().parse(row)?.task;
     if (task === undefined) throw new Error(`Skelcrew has no task with PR #${which.pr} in ${name}`);
   }
-  if (task === undefined) throw new Error("sc show needs a task, such as app-12");
+  if (task === undefined) throw new Error("sc show needs a task, such as APP-12");
   // The task's description: as its reviewer gets it while its thread is current. A failed thread
   // still holds its task until it starts over, so it shows the words it started with, though
   // without the lead's messages, which starting over leaves behind. A done thread shows its open
@@ -497,7 +497,7 @@ export function readTask(db: Database, which: Which): TaskView {
   const thread = threadOn(db, `${owner}/${repo}`, task);
   const issue = openTasks(db, owner, repo).find((item) => item.id === task);
   const filed = thread ? null : filedTask(db, owner, repo, task);
-  if (!thread && !issue && !filed) throw new Error(`there is no task ${name}-${task}`);
+  if (!thread && !issue && !filed) throw new Error(`there is no task ${taskName(name, task)}`);
   const current = thread && thread.status !== "done" && thread.status !== "failed";
   const described =
     thread && (thread.status !== "done" || !issue)
@@ -508,14 +508,14 @@ export function readTask(db: Database, which: Which): TaskView {
   const row = thread && threadRow(db, thread, forge);
   const pr = row?.pr ?? null;
   return {
-    task: `${name}-${task}`,
+    task: `${taskName(name, task)}`,
     stage: taskStage(thread, issue !== undefined || filed !== null),
     title: removeControlCodes(described.title),
     issue: own ? null : { id: issueId(task), link: thread?.issue_link ?? issue?.link ?? null },
     threads: row
       ? [
           {
-            thread: `${name}-${task}/builder`,
+            thread: `${taskName(name, task)}/builder`,
             status: row.status,
             needsYou: row.needsYou,
             needsYouFor: row.needsYouFor,

@@ -71,7 +71,7 @@ test("the wheel over an agent still scrolls it after a task's details came and w
   open("lead");
   await ready("lead");
   press("M-S-Down");
-  await until(() => selected().includes("app-5"), "app-5's row");
+  await until(() => selected().includes("APP-5"), "APP-5's row");
   await attachTo("app-5");
   wheel(64);
   await until(() => !seen().includes("I am app-5"), "the agent's history");

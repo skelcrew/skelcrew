@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, expect, setDefaultTimeout, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import checkout from "../package.json";
+import { sidebarFor } from "../src/screen/screen.ts";
 import {
   attachTo,
   click,
@@ -43,23 +43,23 @@ afterEach(endTest);
 // The widths of the sidebar, the right side and the footer, as tmux has them.
 const widths = () => tmux(screen, "list-panes", "-a", "-F", "#{pane_width}").out.trim().split("\n");
 
-test("resizing the terminal resizes the agent and keeps the sidebar as wide", async () => {
+test("resizing the terminal resizes the agent, and the sidebar with the list's rule", async () => {
   open("lead");
   await ready("lead");
   await until(
-    () => readFileSync(join(home, "lead.size"), "utf8") === "26 61\n",
+    () => readFileSync(join(home, "lead.size"), "utf8") === "26 79\n",
     "the agent's size",
   );
   tmux(terminal, "resize-window", "-t", "=one:", "-x", "150", "-y", "40");
   await until(
-    () => readFileSync(join(home, "lead.size"), "utf8") === "36 91\n",
+    () => readFileSync(join(home, "lead.size"), "utf8") === "36 107\n",
     "the agent to resize",
   );
-  expect(widths()).toEqual(["58", "91", "150"]);
+  expect(widths()).toEqual(["42", "107", "150"]);
   // A terminal shorter than the list keeps the row you are looking at in view.
   await toSecondThread();
   tmux(terminal, "resize-window", "-t", "=one:", "-x", "150", "-y", "6");
-  await until(() => selected().includes("app-7"), "the sidebar to scroll");
+  await until(() => selected().includes("APP-7"), "the sidebar to scroll");
 });
 
 test("on a narrow terminal the sidebar narrows, so the right side keeps half of it", async () => {
@@ -68,8 +68,8 @@ test("on a narrow terminal the sidebar narrows, so the right side keeps half of 
   await until(() => widths()[0] === "39", "the sidebar to take what is left");
   expect(widths()).toEqual(["39", "40", "80"]);
   tmux(terminal, "resize-window", "-t", "=one:", "-x", "100", "-y", "30");
-  await until(() => widths()[0] === "49", "the sidebar to widen with the terminal");
-  expect(widths()).toEqual(["49", "50", "100"]);
+  await until(() => widths()[0] === "40", "the sidebar to widen with the terminal");
+  expect(widths()).toEqual(["40", "59", "100"]);
   // Every line keeps its edge, at the sidebar's new width.
   await until(() => edge(30, 100).every((columns) => columns === "│ "), "the sidebar's edge");
 });
@@ -77,9 +77,9 @@ test("on a narrow terminal the sidebar narrows, so the right side keeps half of 
 // The columns at the sidebar's edge, on each line of a screen `height` rows high above the
 // footer, its line and the gap tmux leaves above them: the sidebar's line, where the lines between
 // lists join it, then tmux's border. Blank past the end of a line that holds nothing else.
-// The sidebar is `sidebar` columns wide, or narrower on a terminal `width` columns wide, so the
+// The sidebar is as wide as the list on a terminal `width` columns wide, or narrower, so the
 // right side keeps half of it.
-const sidebarAt = (width: number) => Math.min(sidebar, Math.floor((width - 1) / 2));
+const sidebarAt = sidebarFor;
 const edge = (height: number, width = 120) =>
   seen()
     .split("\n")
@@ -191,12 +191,12 @@ test("the strip ends the top row, and the agent's height stays as you switch", a
   await ready("lead");
   const height = readFileSync(join(home, "lead.size"), "utf8");
   await toSecondThread();
-  const line = "app-7  Fix the login  #34  checks passing  round 2 · codex · changes";
+  const line = "APP-7  Fix the login  #34  checks passing  round 2 · codex · changes";
   await until(() => tabRow().endsWith(line), "the strip");
   expect(seen()).not.toContain("A test is missing.");
   expect(readFileSync(join(home, "app-7.size"), "utf8")).toBe(height);
   press("M-Up");
-  await until(() => tabRow().endsWith("app-12"), "app-12's strip");
+  await until(() => tabRow().endsWith("APP-12"), "APP-12's strip");
   await attachTo("app-12");
   expect(readFileSync(join(home, "app-12.size"), "utf8")).toBe(height);
 });
@@ -212,7 +212,10 @@ test("the footer runs across the screen under a thin line, with move and quit, t
   await until(() => footer() === lead, "the lead's footer");
   expect(aboveFooter()).toBe("─".repeat(120));
   press("M-S-Down");
-  await until(() => footer() === "  ⌥↑↓ move  ⏎ open  1-6 stages  ⌥Q quit", "a task's footer");
+  await until(
+    () => footer() === "  ⌥↑↓ move  ⏎ attach · o output  1-6 stages  ⌥Q quit",
+    "a task's footer",
+  );
   press("M-Down");
   await attachTo("app-7");
   await until(() => footer() === "  ⌥↑↓ move  ⌥Q quit  Esc stops codex", "app-7's footer");
@@ -251,37 +254,70 @@ test("the header, the tabs and the strip share one row, and the agent starts rig
   await until(() => seen().includes("#34"), "the strip");
   const lines = seen().split("\n");
   // Skelcrew above the sidebar, its edge, and the tab above the agent, then the strip.
-  expect(lines[0]?.trimEnd()).toMatch(
-    /^ {2}Skelcrew v[\d.]+ +│ {3}app +app-7 {2}Fix the login {2}#34$/,
-  );
+  expect(lines[0]?.trimEnd()).toMatch(/^ {2}Skelcrew .*│ {3}app +APP-7 {2}Fix the login {2}#34$/);
   // The open tab's grey starts where the agent's text does, with its name two columns in.
   expect(lines[0]?.indexOf("app")).toBe((lines[1]?.indexOf("I am") ?? 0) + 2);
   expect(lines[1]).toContain("I am app-7");
 });
 
-test("above the sidebar it says Skelcrew, in white, and the checkout's version when no laptop sent you here", async () => {
+// Puts a git ahead of the real one that says the checkout is at `commit`, with `changes` not
+// committed, and is the real one for everything else.
+function checkoutAt(commit: string, changes = ""): void {
+  const real = Bun.which("git") ?? "git";
+  mkdirSync(join(home, "checkout"));
+  const answers = `case "$*" in *"rev-parse --short HEAD"*) echo ${commit};; *"status --porcelain"*) echo "${changes}";; *) exec ${real} "$@";; esac`;
+  writeFileSync(join(home, "checkout", "git"), `#!/bin/sh\n${answers}\n`, { mode: 0o755 });
+  given.before = `PATH=${join(home, "checkout")}:$PATH `;
+}
+
+test("above the sidebar it says Skelcrew, in white, and the checkout's commit when no laptop sent you here", async () => {
+  checkoutAt("6f1c2ab");
   open("lead");
   await ready("lead");
   const above = () => (seen().split("\n")[0] ?? "").slice(0, sidebar - 1).trimEnd();
-  await until(() => above() === `  Skelcrew v${checkout.version}`, "the header");
+  await until(() => above() === "  Skelcrew 6f1c2ab (checkout)", "the header");
   const colours = tmux(terminal, "capture-pane", "-p", "-e", "-t", "=one:").out;
   const header = colours.split("\n")[0];
   expect(header).toContain("\x1b[1m");
   expect(header).toContain("38;5;231m");
 });
 
+// git gives a longer commit in a repository with many, or with core.abbrev set. In a terminal
+// wide enough for the sidebar's widest, 58 columns, the header has room for 44 columns after the
+// name. Words around the commit give way, never the commit.
+const roomy = 210;
+test.each([
+  ["a6bfe6f", " M src/main.ts", "a6bfe6f* (checkout, * = uncommitted changes)"],
+  ["a6bfe6fe12", " M src/main.ts", "checkout a6bfe6fe12+changes"],
+  ["a6bfe6fe1234567890", "", "a6bfe6fe1234567890 (checkout)"],
+  ["a6bfe6fe1234567890a6bfe6fe1234567890abcd", "", "a6bfe6fe1234567890a6bfe6fe1234567890abcd"],
+  // Too long to show with +changes, it keeps a * for them, rather than look clean.
+  [
+    "a6bfe6fe1234567890a6bfe6fe1234567890abcd",
+    " M src/main.ts",
+    "a6bfe6fe1234567890a6bfe6fe1234567890abcd*",
+  ],
+])("commit %p with changes %p shows above the sidebar as %p", async (commit, changes, shown) => {
+  checkoutAt(commit, changes);
+  open("lead", "one", "xterm-256color", String(roomy));
+  await ready("lead");
+  const above = () => (seen().split("\n")[0] ?? "").slice(0, sidebarFor(roomy) - 1).trimEnd();
+  await until(() => above() === `  Skelcrew ${shown}`, "the header");
+});
+
 test("each terminal says where it came from, as they can come from different laptops", async () => {
+  checkoutAt("6f1c2ab");
   open("lead", "one", "xterm-256color", "120", "simon@workbox");
   await ready("lead");
   open("lead", "two");
   await ready("lead", "two");
   const place = (window: string) => (seen(window).split("\n")[0] ?? "").slice(0, sidebar - 1);
   await until(
-    () => place("one").startsWith(`  Skelcrew v${checkout.version} · simon@`),
+    () => place("one").startsWith("  Skelcrew 6f1c2ab (checkout) · s"),
     "the first place",
   );
   await until(
-    () => place("two").trimEnd() === `  Skelcrew v${checkout.version}`,
+    () => place("two").trimEnd() === "  Skelcrew 6f1c2ab (checkout)",
     "the second header",
     "two",
   );
@@ -312,10 +348,10 @@ test("the sidebar's edge runs from the top row down to the footer, at every widt
 test("a thread's strip follows it as it changes", async () => {
   open("app-7");
   await ready("app-7");
-  await until(() => tabRow().endsWith("app-7"), "the strip");
+  await until(() => tabRow().endsWith("APP-7"), "the strip");
   sql(`UPDATE tasks SET review_round = 1, reviewed_by = 'codex', verdict = 'approve',
     review_line = 'Looks right.' WHERE task = 7`);
-  await until(() => seen().includes("app-7  round 1 · codex · approved"), "the review");
+  await until(() => seen().includes("APP-7  round 1 · codex · approved"), "the review");
 });
 
 test("what a title says is shown, never run or read as a format", async () => {

@@ -78,7 +78,7 @@ const details: Details = {
 const plain = (lines: string[]) => lines.map((line) => Bun.stripANSI(line).trimEnd());
 
 test("the pane shows the task's details from the top, then its agent's screen below a line", () => {
-  const lines = drawPane(row, details, { screen: "I am app-12\n› \n\n\n" }, 50, 30);
+  const lines = drawPane(row, details, { screen: "I am app-12\n› \n\n\n" }, 50, 30, true);
   expect(lines).toHaveLength(30);
   expect(plain(lines).slice(0, 23)).toEqual([
     "Rate limit the API",
@@ -108,6 +108,83 @@ test("the pane shows the task's details from the top, then its agent's screen be
   for (const line of lines) expect(Bun.stringWidth(line)).toBeLessThanOrEqual(50);
 });
 
+test("the details take the list's look: bold title, dim labels, verdicts in colour, links", () => {
+  const lines = drawPane(row, details, null, 50, 30);
+  const esc = "\x1b";
+  // Returns the line that reads `text` once its colours are taken off.
+  const line = (text: string) => lines.find((drawn) => Bun.stripANSI(drawn).trimEnd() === text);
+  expect(line("Rate limit the API")).toBe(`${esc}[1mRate limit the API${esc}[22;39m`);
+  // Each link is a terminal link to itself, after a dim label.
+  const issue = "https://github.com/acme/app/issues/42";
+  expect(line(`issue #42  ${issue}`)).toBe(
+    `${esc}[90missue ${esc}[22;39m#42  ${esc}]8;;${issue}${esc}\\${issue}${esc}]8;;${esc}\\`,
+  );
+  // CI and the review say their verdicts in the list's colours, with each check's mark.
+  const yellow = `${esc}[38;5;221m`;
+  expect(line("CI running:  test ✓  lint ●  build ✗")).toBe(
+    `${esc}[90mCI${esc}[22;39m ${yellow}running${esc}[22;39m:  test ${esc}[38;5;120m✓${esc}[22;39m  lint ${yellow}●${esc}[22;39m  build ${esc}[38;5;210m✗${esc}[22;39m`,
+  );
+  expect(line("Round 2 · changes asked")).toBe(
+    `${esc}[90mRound 2 · ${esc}[22;39m${yellow}changes asked${esc}[22;39m`,
+  );
+  // The description is dimmer than the rest, and the events dimmer still.
+  expect(line("client can't starve the others. It resets each")).toStartWith(`${esc}[38;5;250m`);
+  expect(line("13:40 submitted · 13:52 reviewed · 14:02 submitted")).toStartWith(`${esc}[90m`);
+});
+
+test("a link with control characters in it never reaches your terminal as codes", () => {
+  const bad = "https://github.com/acme/app/issues/42\x07\x1b]2;owned\x07";
+  const issue = { id: "#42", link: bad };
+  const drawn = drawPane(row, { ...details, view: { ...details.view, issue } }, null, 50, 30);
+  const text = drawn.join("\n");
+  expect(text).not.toContain("\x07");
+  expect(text).not.toContain("\x1b]2;");
+});
+
+test("an approved review and passed CI show green, a failed one red", () => {
+  const page = details.view.prPage;
+  if (!page) throw new Error("the details have a PR");
+  const green = "\x1b[38;5;120m";
+  const red = "\x1b[38;5;210m";
+  const passed: Details = {
+    ...details,
+    view: {
+      ...details.view,
+      review: { state: "approved", round: 3, at: null },
+      prPage: { ...page, ci: "passed", checks: [] },
+    },
+  };
+  const drawn = drawPane(row, passed, null, 50, 30);
+  expect(drawn).toContain(`\x1b[90mCI${"\x1b[22;39m"} ${green}passed\x1b[22;39m`);
+  expect(drawn.find((line) => line.includes("approved"))).toContain(`${green}approved`);
+  const failed: Details = {
+    ...details,
+    view: {
+      ...details.view,
+      review: { state: "failed", round: 3, at: null },
+      prPage: { ...page, ci: "failed", checks: [] },
+    },
+  };
+  const redLines = drawPane(row, failed, null, 50, 30);
+  expect(redLines).toContain(`\x1b[90mCI${"\x1b[22;39m"} ${red}failed\x1b[22;39m`);
+  expect(redLines.find((line) => line.includes("review failed"))).toContain(`${red}review failed`);
+});
+
+test("by default the live view is a strip of the agent's last three lines, the details above it", () => {
+  const screen = ["line 1", "", "line 2", "line 3", "", "line 4", "", "› ", "", ""].join("\n");
+  const lines = plain(drawPane(row, details, { screen }, 50, 30));
+  expect(lines).toHaveLength(30);
+  // The details come whole, then the line over the strip, then the last three lines with text.
+  const rule = lines.indexOf("─".repeat(50));
+  expect(lines.slice(0, rule)).toEqual(plain(drawPane(row, details, null, 50, 30)).slice(0, rule));
+  expect(lines.slice(rule + 1, rule + 4)).toEqual(["line 3", "line 4", "›"]);
+  expect(lines.slice(rule + 4)).toEqual(Array(30 - rule - 4).fill(""));
+  // In a short pane, the details tighten so the strip keeps its three lines.
+  const short = plain(drawPane(row, details, { screen }, 50, 12));
+  expect(short.slice(-4)).toEqual(["─".repeat(50), "line 3", "line 4", "›"]);
+  expect(short[0]).toBe("Rate limit the API");
+});
+
 test("the live view shows the bottom of the screen, colours kept and long lines cut", () => {
   const screen = [
     ...Array.from({ length: 40 }, (_, i) => `line ${i}`),
@@ -117,7 +194,7 @@ test("the live view shows the bottom of the screen, colours kept and long lines 
     "",
     "",
   ].join("\n");
-  const lines = drawPane(row, details, { screen }, 40, 30);
+  const lines = drawPane(row, details, { screen }, 40, 30, true);
   const live = lines.slice(lines.findIndex((line) => line.includes("───")) + 1);
   expect(plain(live).slice(-3)).toEqual([
     "line 39",
@@ -128,8 +205,8 @@ test("the live view shows the bottom of the screen, colours kept and long lines 
   const red = live.find((line) => line.includes("red words")) ?? "";
   expect(red).toStartWith("\x1b[31mred words");
   expect(red).toEndWith("\x1b[0m");
-  expect(lines.join("")).not.toContain("\x1b]8");
-  expect(lines.join("")).not.toContain("\x1b[2J");
+  expect(live.join("")).not.toContain("\x1b]8");
+  expect(live.join("")).not.toContain("\x1b[2J");
   for (const line of lines) expect(Bun.stringWidth(line)).toBeLessThanOrEqual(40);
 });
 
@@ -143,7 +220,7 @@ test("a colour set on one line of the screen goes on over the lines after it unt
     "still blue\x1b[m",
     "plain again",
   ].join("\n");
-  const lines = drawPane(row, details, { screen }, 50, 30);
+  const lines = drawPane(row, details, { screen }, 50, 30, true);
   const live = lines.slice(lines.findIndex((line) => line.includes("───")) + 1);
   const at = (text: string) => live.find((line) => Bun.stripANSI(line) === text) ?? "";
   // The green set above the part shown still colours the lines shown.
@@ -169,7 +246,7 @@ test("a task with no running agent says so, and a row that isn't a task has an e
 // their room, and the live view has what is left.
 test("in a short pane the details show whole, and the live view has what is left", () => {
   const screen = Array.from({ length: 20 }, (_, i) => `line ${i}`).join("\n");
-  const lines = plain(drawPane(row, details, { screen }, 50, 22));
+  const lines = plain(drawPane(row, details, { screen }, 50, 22, true));
   expect(lines).toHaveLength(22);
   expect(lines).toContain("minute. Clients over it get a 429 with a…");
   expect(lines).toContain("13:40 submitted · 13:52 reviewed · 14:02 submitted");
@@ -218,7 +295,7 @@ test("a long title and long links show whole, and every check shows however many
 
 // What the list shows besides its rows.
 const frame: Frame = {
-  version: "0.6.0",
+  versions: ["0.6.0"],
   where: "",
   name: "app",
   tabs: [{ name: "app", fullName: "simon/app", needYou: 0, colour: "yellow", ready: 0 }],
@@ -226,6 +303,20 @@ const frame: Frame = {
   bottom: "↑↓ move",
   load: "cpu 12%",
 };
+
+test("the list takes a little over a quarter of the terminal, and the pane the rest", () => {
+  // Returns how wide the list's rows are beside the pane, past the line between them.
+  const list = (width: number) => width - 1 - paneWidth(width) - 3;
+  expect(list(200)).toBe(56);
+  // On a terminal not that wide, the list keeps room for a row's name, short title and word.
+  expect(list(120)).toBe(40);
+  expect(paneWidth(120)).toBe(76);
+  // On a very wide one, it stops at what a task's two lines need, and the pane takes the rest.
+  expect(list(300)).toBe(58);
+  // A terminal too narrow for both shows no pane.
+  expect(paneWidth(113)).toBe(0);
+  expect(paneWidth(114)).toBe(70);
+});
 
 test("the pane shows beside the list only in a terminal wide enough for both", () => {
   expect(paneWidth(100)).toBe(0);
@@ -262,7 +353,7 @@ test("details too tall for the pane tighten so every part shows, and the live vi
     view: { ...details.view, title: "A title ".repeat(40), prPage: { ...page, checks } },
   };
   const screen = "first\nsecond\nthird";
-  const lines = plain(drawPane(row, tall, { screen }, 50, 22));
+  const lines = plain(drawPane(row, tall, { screen }, 50, 22, true));
   expect(lines).toHaveLength(22);
   expect(lines[0]).toEndWith("…");
   expect(lines).toContain("issue #42  https://github.com/acme/app/issues/42");

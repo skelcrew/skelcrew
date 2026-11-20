@@ -120,15 +120,13 @@ test("says which release it is, or which commit a build from a checkout came fro
     return Bun.spawnSync([file, "--version"]).stdout.toString();
   };
   expect(said("0.4.2")).toBe("skelcrew 0.4.2\n");
-  expect(said("39939b0")).toBe("skelcrew from a checkout, at commit 39939b0\n");
-  expect(said("39939b0-dirty")).toBe(
-    "skelcrew from a checkout, at commit 39939b0 with uncommitted changes\n",
-  );
+  expect(said("39939b0")).toBe("Skelcrew 39939b0 (checkout)\n");
+  expect(said("39939b0-dirty")).toBe("Skelcrew 39939b0* (checkout, * = uncommitted changes)\n");
 });
 
 test("a build nobody stamped doesn't pretend to know what it is", () => {
   expect(Bun.spawnSync([skel, "--version"]).stdout.toString()).toBe(
-    "skelcrew from a checkout, at an unknown commit\n",
+    "Skelcrew (checkout, commit unknown)\n",
   );
 });
 

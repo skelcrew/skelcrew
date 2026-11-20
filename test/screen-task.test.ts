@@ -9,6 +9,7 @@ import {
   daemon,
   endTest,
   env,
+  footer,
   home,
   open,
   press,
@@ -59,8 +60,9 @@ function rowCode(action: "show" | "attach", name: string): string {
   return `import { attachTask, showTask } from ${JSON.stringify(source("screen/task.ts"))};
 const agents = ${JSON.stringify(agents)};
 const session = ${JSON.stringify(session())};
-if (${JSON.stringify(action)} === "show") showTask(agents, session, "simon/app", ${JSON.stringify(name)});
-else console.log((await attachTask(agents, session, "simon/app", ${JSON.stringify(name)})) ?? "");`;
+const name = ${JSON.stringify(name)};
+if (${JSON.stringify(action)} === "show") showTask(agents, session, "simon/app", name, true);
+else console.log((await attachTask(agents, session, "simon/app", name, true)) ?? "");`;
 }
 
 // Does what onRow does without waiting for it, and gives what it printed once it ends.
@@ -78,7 +80,7 @@ async function onApp7(): Promise<void> {
   sql("UPDATE tasks SET title = 'Login redirect' WHERE task = '7'");
   open("lead");
   await ready("lead");
-  onRow("show", "app-7");
+  onRow("show", "APP-7");
   await until(() => right().includes("Login redirect"), "app-7's details");
 }
 
@@ -95,9 +97,34 @@ test("a task's row shows its details with its builder live under them, and typin
   expect(read("app-7.typed")).toBe("first line\n");
 });
 
+test("o on a task's row shows its builder's whole screen and back, and Enter still attaches", async () => {
+  sql("UPDATE tasks SET title = 'Login redirect' WHERE task = '7'");
+  open("lead");
+  await ready("lead");
+  press("M-S-Down");
+  press("M-Down");
+  await until(() => right().includes("Login redirect"), "app-7's details");
+  await until(() => right().includes("I am app-7"), "app-7's screen");
+  expect(footer()).toContain("⏎ attach · o output");
+  for (const line of ["one", "two", "three", "four"])
+    tmux(agents, "send-keys", "-t", "=app-7:", "-l", `${line}\r`);
+  // By default only the last three lines of the builder's screen show.
+  await until(() => right().includes("four") && !right().includes("I am app-7"), "the strip");
+  expect(right()).not.toContain("one");
+  type("o");
+  await until(() => right().includes("I am app-7") && right().includes("four"), "the whole screen");
+  type("o");
+  await until(() => !right().includes("I am app-7"), "the strip again");
+  // Enter still attaches to the builder.
+  press("Enter");
+  await until(() => typingTo() === "1", "typing to move to the builder");
+  type("hi\r");
+  await until(() => read("app-7.typed").endsWith("four\nhi\n"), "what was typed");
+});
+
 test("Enter attaches the right side to the builder, and Ctrl-\\ comes back to its details", async () => {
   await onApp7();
-  expect(onRow("attach", "app-7")).toBe("");
+  expect(onRow("attach", "APP-7")).toBe("");
   await until(() => typingTo() === "1", "typing to move to the builder");
   type("hi\r");
   await until(() => read("app-7.typed") === "hi\n", "what was typed");
@@ -115,7 +142,7 @@ test("Enter attaches the right side to the builder, and Ctrl-\\ comes back to it
 // A builder that exits leaves its session behind, with its last screen.
 test("a builder that exits while attached brings the details back", async () => {
   await onApp7();
-  onRow("attach", "app-7");
+  onRow("attach", "APP-7");
   await until(() => typingTo() === "1", "typing to move to the builder");
   const pid = tmux(agents, "display-message", "-p", "-t", "=app-7:", "#{pane_pid}").out.trim();
   process.kill(Number(pid), "SIGKILL");
@@ -142,16 +169,16 @@ test("a builder that exits just before Enter attaches brings the details back", 
     () => tmux(agents, "display-message", "-p", "-t", "=app-7:", "#{pane_dead}").out.trim() === "1",
     "app-7's pane to die",
   );
-  expect(onRow("attach", "app-7", folder)).toBe("");
+  expect(onRow("attach", "APP-7", folder)).toBe("");
   await until(() => right().includes("Login redirect"), "app-7's details again");
   await until(() => typingTo() === "0", "typing to come back to the sidebar");
 });
 
 test("moving to another row while attached comes back from the builder, and shows that row", async () => {
   await onApp7();
-  onRow("attach", "app-7");
+  onRow("attach", "APP-7");
   await until(() => typingTo() === "1", "typing to move to the builder");
-  onRow("show", "app-12");
+  onRow("show", "APP-12");
   await until(() => right().includes("I am app-12"), "app-12's details");
   expect(typingTo()).toBe("0");
   expect(tmux(agents, "list-clients").out).not.toContain("app-7");
@@ -163,7 +190,7 @@ test("Ctrl-\\ on the lead or a task's details does nothing", async () => {
   press("C-\\");
   type("on the lead\r");
   await until(() => read("lead.typed") === "on the lead\n", "what reached the lead");
-  onRow("show", "app-7");
+  onRow("show", "APP-7");
   await until(() => right().includes("I am app-7"), "app-7's details");
   press("C-\\");
   await Bun.sleep(500);
@@ -174,11 +201,11 @@ test("Enter on a task whose builder isn't running, or that went, says so, and at
   sql("UPDATE threads SET status = 'stopped' WHERE folder = 'app-7'");
   await onApp7();
   expect(right()).toContain("Builder not running");
-  expect(onRow("attach", "app-7")).toBe(
-    "app-7's builder isn't running: sc start app-7 brings it back",
+  expect(onRow("attach", "APP-7")).toBe(
+    "APP-7's builder isn't running: sc start APP-7 brings it back",
   );
   // A row removed a moment before Enter is read as it is now, and has nothing to attach to.
-  expect(onRow("attach", "app-99")).toBe("app-99 is no longer in the list");
+  expect(onRow("attach", "APP-99")).toBe("APP-99 is no longer in the list");
   expect(typingTo()).toBe("0");
 });
 
@@ -198,7 +225,7 @@ test("a builder on a plugin's host attaches through its attach, never gets Ctrl-
 UPDATE threads SET host = 'fake', host_id = 'fake-app-7' WHERE folder = 'app-7'`);
   await onApp7();
   for (const leave of ["Ctrl-\\", "its end"]) {
-    expect(onRow("attach", "app-7")).toBe("");
+    expect(onRow("attach", "APP-7")).toBe("");
     await until(() => right().includes("I am fake-app-7 on fake"), "the host's attach");
     expect(typingTo()).toBe("1");
     if (leave === "Ctrl-\\") press("C-\\");
@@ -224,9 +251,9 @@ test("Enter on a builder whose host answers late does nothing once you moved to 
   sql(`INSERT INTO plugins (name, folder) VALUES ('slow', '${plugin}');
 UPDATE threads SET host = 'slow', host_id = NULL WHERE folder = 'app-7'`);
   await onApp7();
-  const entered = onRowLater("attach", "app-7");
+  const entered = onRowLater("attach", "APP-7");
   await Bun.sleep(500);
-  onRow("show", "app-12");
+  onRow("show", "APP-12");
   expect(await entered).toBe("");
   await until(() => right().includes("I am app-12"), "app-12's details");
   await Bun.sleep(500);
@@ -248,7 +275,7 @@ test("an attachment that ends at once leaves your typing on the sidebar", async 
 UPDATE threads SET host = 'broken', host_id = 'broken-app-7' WHERE folder = 'app-7'`);
   await onApp7();
   for (let time = 0; time < 5; time++) {
-    expect(onRow("attach", "app-7")).toBe("");
+    expect(onRow("attach", "APP-7")).toBe("");
     // Once the attachment ended, its shell moves your typing back, then becomes the details,
     // which take a moment to start and draw on a busy machine.
     await until(() => right().includes("Login redirect"), "the details again");

@@ -20,7 +20,7 @@ import { ListStage } from "../flow/stage.ts";
 import { doing, watchForStalls } from "../flow/stall.ts";
 import { liveThreads } from "../flow/thread.ts";
 import { type Asking, canOpenLinks, openPr, stillOffered } from "../list/actions.ts";
-import { drawRows, type Target } from "../list/layout.ts";
+import { drawRows, enterAttaches, listShare, type Target } from "../list/layout.ts";
 import {
   buildersNote,
   cutBacklog,
@@ -35,13 +35,13 @@ import { leadPlaces, screenLogFile } from "../paths.ts";
 import { quoteForSh } from "../plugins/plugin.ts";
 import { pluginHost } from "../plugins/runtime.ts";
 import { errorText } from "../say.ts";
-import { version } from "../version.ts";
+import { shownVersions } from "../version.ts";
 import { agentFooter, tellFooter } from "./footer.ts";
 import { noticeLines } from "./layout.ts";
 import { roundLimit } from "./lists.ts";
 import { edge, filled, paint, removeControlCodes } from "./look.ts";
 import { type Open, repositoryTabs, sidebarRows } from "./rows.ts";
-import { leadOnHost, sidebarWidth } from "./screen.ts";
+import { leadOnHost } from "./screen.ts";
 import { drawTop } from "./strip.ts";
 import { attachTask, showTask } from "./task.ts";
 
@@ -84,14 +84,17 @@ const keyNames: Record<string, string> = {
   "\n": "enter",
 };
 
-// The keys the footer shows on a task's row, where your typing goes to the sidebar: Enter, the
-// stages' numbers, Shift with an arrow only on a queued task in Up next, which it moves in the
-// queue, and s or m only where the row can be started, or queued, or merged.
+// The keys the footer shows on a task's row, where your typing goes to the sidebar: Enter, as
+// attach where it attaches to the builder, o to show the agent's whole screen or its last lines,
+// the stages' numbers, Shift with an arrow only on a queued task in Up next, which it moves in
+// the queue, and s or m only where the row can be started, or queued, or merged.
 function taskFooter(row: Row): string {
+  const output = row.task ? " · o output" : "";
   const reorder = row.section === "up next" && row.place !== null ? "  ⇧↑↓ reorder" : "";
   const start = row.start ? (row.start.queues ? "  s queue" : "  s start") : "";
   const merge = row.merge && "ask" in row.merge ? "  m merge" : "";
-  return `⌥↑↓ move  ⏎ open  1-6 stages${reorder}${start}${merge}  ⌥Q quit`;
+  const enter = enterAttaches(row) ? "⏎ attach" : "⏎ open";
+  return `⌥↑↓ move  ${enter}${output}  1-6 stages${reorder}${start}${merge}  ⌥Q quit`;
 }
 
 // Returns the repository open in the sidebar, given its owner/name, with its lead's session.
@@ -106,7 +109,7 @@ function repositoryAndLead(db: ReturnType<typeof openDb>, fullName: string): Ope
   }
 }
 
-// What the right side shows of a task: its details, by the task's name, such as app-12. Anything
+// What the right side shows of a task: its details, by the task's name, such as APP-12. Anything
 // else the right side shows is an agent's session, by its name.
 const detailsOf = (name: string) => `details:${name}`;
 const isDetails = (shown: string | null) => shown?.startsWith("details:") ?? false;
@@ -191,6 +194,9 @@ export async function runSidebar(
   let running: string[] = [];
   // What is on the right: an agent's session, or a task's details, by detailsOf.
   let shown: string | null = null;
+  // Whether a task's details show its agent's whole screen, rather than its last few lines. It
+  // stays as you move, as it is how you like the right side.
+  let fullOutput = false;
   // What the footer says in place of its keys until the next key, the question it asks, and
   // whether the daemon is at work on an answer.
   let said: string | null = null;
@@ -209,7 +215,7 @@ export async function runSidebar(
   const canOpen = canOpenLinks(where);
   // Returns the size the rest has now, as the terminal can change it at any time.
   const size = () => ({
-    width: process.stdout.columns || sidebarWidth,
+    width: process.stdout.columns || listShare.most,
     height: (process.stdout.rows || 24) - notice.length,
   });
 
@@ -223,7 +229,13 @@ export async function runSidebar(
   const show = (next: string) => {
     if (next === shown) return;
     if (next.startsWith("details:"))
-      showTask(agents, session, `${open.owner}/${open.repo}`, next.slice("details:".length));
+      showTask(
+        agents,
+        session,
+        `${open.owner}/${open.repo}`,
+        next.slice("details:".length),
+        fullOutput,
+      );
     else if (
       isDetails(shown) ||
       shownSession(agents, tty) === null ||
@@ -384,7 +396,7 @@ export async function runSidebar(
       tabs,
       open: fullName,
       where,
-      version,
+      versions: shownVersions(),
     };
     const strip = drawTop(look, { left, width });
     if (strip !== lastStrip) {
@@ -538,7 +550,8 @@ export async function runSidebar(
     }
     const atWork = row.part !== "ready" && row.part !== "done";
     if ((atWork || row.needsYou) && row.session) {
-      void attachTask(agents, session, `${open.owner}/${open.repo}`, row.name).then((failed) => {
+      const repository = `${open.owner}/${open.repo}`;
+      void attachTask(agents, session, repository, row.name, fullOutput).then((failed) => {
         if (failed !== null) refuse(row.name, failed);
       });
       return;
@@ -607,6 +620,13 @@ export async function runSidebar(
     const stage = /^[1-6]$/.test(bare) ? ListStage.options[Number(bare) - 1] : undefined;
     if (stage) return toggle(stage);
     if (name === "enter") return enter();
+    // o shows the agent's whole screen on the right, or only its last lines again, by starting
+    // the details again that way.
+    if (key === "o" && row?.task && isDetails(shown)) {
+      fullOutput = !fullOutput;
+      shown = null;
+      return follow();
+    }
     if (key === "s" && row?.part === "backlog" && row.start)
       asking = { question: row.start, row: row.name, merge: false };
     else if (key === "m" && row?.merge) {

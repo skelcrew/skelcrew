@@ -302,19 +302,22 @@ export async function builderSession(
     return { host, id: thread.host_id ?? thread.folder };
   // The builder's task label is its thread's name when it started: its repository's short name
   // or, once another repository shares that, its owner and name, then its task's ID. Either is
-  // matched whole, so task 12 never takes the builder of task other-12.
-  const names = [`${thread.repo}-${thread.task}`, `${fullNameOf(thread)}-${thread.task}`];
+  // matched whole, so task 12 never takes the builder of task other-12. The case is ignored, as
+  // a label is lowercase while a builder started before held its repository's name as it was.
+  const names = [`${thread.repo}-${thread.task}`, `${fullNameOf(thread)}-${thread.task}`].map(
+    (name) => name.toLowerCase(),
+  );
   const found = (await listSessions(host)).find(
     ({ labels }) =>
       labels?.role === "builder" &&
       labels.repository === fullNameOf(thread) &&
-      names.includes(labels.task ?? ""),
+      names.includes(labels.task?.toLowerCase() ?? ""),
   );
   if (!found) return { host, id: thread.folder };
   const now = record(db, thread.folder, { host_id: found.name }, "found its builder on its host");
   // A short title given while its ID was unknown found nothing to rename, so its labels may
-  // still name it by the old title.
-  if (found.labels?.title !== (sessionTitle(db, now) ?? undefined)) renameOnHost(db, thread.folder);
+  // still name it by the old title, or by a title from before it held the task's name.
+  if (found.labels?.title !== sessionTitle(db, now)) renameOnHost(db, thread.folder);
   return { host, id: found.name };
 }
 
@@ -460,17 +463,20 @@ export function record(
 // here. It doesn't wait for the host, and a host that fails, such as an older plugin that
 // doesn't know the question, only costs the new name, so it is logged. Each rename waits for
 // the one before on the same session and sends the title as it is then, so two quick changes
-// can't reach the host out of order and leave it on the older title.
-export function renameOnHost(db: Database, folder: string): void {
+// can't reach the host out of order and leave it on the older title. It gives back a promise
+// that settles once the host answered, for a command that ends before it would.
+export function renameOnHost(db: Database, folder: string): Promise<void> {
   const previous = renaming.get(folder) ?? Promise.resolve();
   const sent = previous.then(async () => {
     const thread = readThread(db, folder);
     if (thread.host === null || thread.host === "tmux" || thread.host_id === null) return;
     const host = pluginHost(db, thread.host);
     const title = sessionTitle(db, thread);
-    if (host === null || !title) return;
+    if (host === null) return;
     await renameSession(host, thread.host_id, title).catch((error) =>
-      console.log(`couldn't rename ${folder} on ${host.plugin}: ${errorText(error)}`),
+      console.log(
+        `couldn't rename ${threadName(db, thread)} on ${host.plugin}: ${errorText(error)}`,
+      ),
     );
   });
   // A thread gone by then, which readThread throws for, has nothing to rename.
@@ -479,19 +485,39 @@ export function renameOnHost(db: Database, folder: string): void {
   settled.then(() => {
     if (renaming.get(folder) === settled) renaming.delete(folder);
   });
+  return settled;
 }
 
-// Returns the title a builder's session goes by on its host: its thread's short title, else the
-// task's title as its builder was given it, which a row from before Skelcrew saved titles takes
-// from the copy of the tracker. Null when it has neither.
-export function sessionTitle(db: Database, thread: Thread): string | null {
-  return thread.short || threadTask(db, thread).title || null;
+// Asks the host of each live builder on a plugin's host to rename it by its title as it is now,
+// and settles once every host answered. A host keeps a builder's title while it runs, and the
+// title holds the task's name, so it goes stale twice: a builder started by a release before has
+// no name in it, and a repository added or removed can give another its owner or take it away,
+// such as app-12 becoming simon/app-12. So the daemon does it as it starts, and sc repo does
+// after it names the repositories again. A rename of a title that didn't change does nothing a
+// person sees.
+export async function renameBuilders(db: Database): Promise<void> {
+  await Promise.all(liveThreads(db).map((thread) => renameOnHost(db, thread.folder)));
+}
+
+// Returns the title a builder's session goes by on its host: its task's name as people read it,
+// then its thread's short title, else the task's title as its builder was given it, such as
+// APP-12 Login redirect. A row from before Skelcrew saved titles takes the title from the copy of
+// the tracker. A host's own apps, such as herdr's, name the session by it, and its labels and
+// session name stay lowercase, as Skelcrew finds the builder by them.
+export function sessionTitle(db: Database, thread: Thread): string {
+  const title = thread.short || threadTask(db, thread).title;
+  return title ? `${threadName(db, thread)} ${title}` : threadName(db, thread);
 }
 
 // The renames under way of each thread's builder, by its folder, each settling once it is over.
 const renaming = new Map<string, Promise<void>>();
 
-// Returns the thread's name, such as app-12, for replies. It uses the repository's name
+// Returns a task's name as people read it: its repository's name and its task's ID, in
+// uppercase as Linear shows its issues, such as APP-12 or APP-T103. Skelcrew stores and matches
+// names in lowercase, and a name is typed in any case, so only what people read changes.
+export const taskName = (repository: string, task: string) => `${repository}-${task}`.toUpperCase();
+
+// Returns the thread's name, such as APP-12, for replies. It uses the repository's name
 // now, which can gain its owner since the thread started, or owner/name once Skelcrew no longer
 // has the repository.
 export function threadName(db: Database, thread: Thread): string {
@@ -499,7 +525,7 @@ export function threadName(db: Database, thread: Thread): string {
     .query("SELECT name FROM repositories WHERE owner = ? AND repo = ?")
     .get(thread.owner, thread.repo);
   const name = z.object({ name: z.string() }).nullable().parse(row)?.name ?? fullNameOf(thread);
-  return `${name}-${thread.task}`;
+  return taskName(name, thread.task);
 }
 
 // Returns the thread named repo-task, such as app-12, or null when the task has none. Throws
@@ -516,7 +542,7 @@ export function threadOn(db: Database, repository: string, task: string): Thread
 // Returns the thread named repo-task, such as app-12, and throws when there is none.
 export function findThread(db: Database, repository: string, task: string): Thread {
   const thread = threadOn(db, repository, task);
-  if (!thread) throw new Error(`there is no thread ${repository}-${task}`);
+  if (!thread) throw new Error(`there is no thread ${taskName(repository, task)}`);
   return thread;
 }
 

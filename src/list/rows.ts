@@ -24,7 +24,7 @@ import { findRepository } from "../flow/repo.ts";
 import type { DaemonRequest } from "../flow/requests.ts";
 import { ListStage, listStage } from "../flow/stage.ts";
 import { counted, ordinal } from "../flow/task-queue.ts";
-import { Thread } from "../flow/thread.ts";
+import { Thread, taskName } from "../flow/thread.ts";
 import { forgeOf } from "../plugins/ask.ts";
 import { changedAt, roundLimit as settingsRoundLimit } from "../screen/lists.ts";
 import { removeControlCodes } from "../screen/look.ts";
@@ -171,7 +171,7 @@ function taskRow(
   stage: ListStage,
   now: number,
 ): Row {
-  const name = `${repoName}-${thread.task}`;
+  const name = taskName(repoName, thread.task);
   const shown = shownOf(thread, roundLimit(thread), now);
   // An ended thread shows no state: its word is whether it merged, and its mark is quiet.
   // A task approved and green, with no merge armed, waits on you to merge it, so its word says
@@ -365,7 +365,7 @@ export function listRows(db: Database, open: Open, now: number): Row[] {
   const held = queue.findIndex((thread) => claimed.has(thread.task));
   const holder = queue[held];
   const claim = holder
-    ? `${repository.name}-${holder.task} waits for its issue's claim to reach the tracker`
+    ? `${taskName(repository.name, holder.task)} waits for its issue's claim to reach the tracker`
     : "";
   // Returns what the task at a place in the queue, counted from 0, waits on.
   const waitsOn = (at: number) => (holder && at >= held ? claim : busy);
@@ -373,8 +373,8 @@ export function listRows(db: Database, open: Open, now: number): Row[] {
   // what it waits on, under Needs you too. Up next's rows say it in their word as well. One
   // under Needs you keeps its word, as it says what you must do.
   for (const row of tasks) {
-    const thread = threads.find(({ thread: t }) => `${repository.name}-${t.task}` === row.name);
-    const at = queue.findIndex((queued) => `${repository.name}-${queued.task}` === row.name);
+    const thread = threads.find(({ thread: t }) => taskName(repository.name, t.task) === row.name);
+    const at = queue.findIndex((queued) => taskName(repository.name, queued.task) === row.name);
     if (at >= 0) {
       row.place = at + 1;
       row.waits = `${at === 0 ? "Starts next" : `${ordinal(at + 1)} in line`}: ${waitsOn(at)}`;
@@ -394,7 +394,7 @@ export function listRows(db: Database, open: Open, now: number): Row[] {
     builders.limit !== null && (builders.queued > 0 || builders.running >= builders.limit);
   // Returns the row of a task not started yet, which Enter asks to start, as sc start does.
   const notStarted = (task: string, title: string, changed: number): Row => {
-    const name = `${repository.name}-${task}`;
+    const name = taskName(repository.name, task);
     const after = builders.queued > 0 ? ` after the ${builders.queued} queued` : "";
     return {
       part: "backlog",
@@ -437,7 +437,7 @@ export function listRows(db: Database, open: Open, now: number): Row[] {
   // The open issues no thread works on, and the tasks filed in the backlog, newest first.
   const waiting = [
     ...issues
-      .filter((issue) => !tasks.some((row) => row.name === `${repository.name}-${issue.id}`))
+      .filter((issue) => !tasks.some((row) => row.name === taskName(repository.name, issue.id)))
       .map((issue) => ({
         created: issue.created,
         row: notStarted(issue.id, issue.title, Date.parse(issue.updated)),
@@ -453,7 +453,7 @@ export function listRows(db: Database, open: Open, now: number): Row[] {
   // it after.
   const changedOf = (row: Row) => {
     const thread = threads.find(
-      ({ thread: candidate }) => `${repository.name}-${candidate.task}` === row.name,
+      ({ thread: candidate }) => taskName(repository.name, candidate.task) === row.name,
     )?.thread;
     return thread?.changed ?? thread?.started ?? 0;
   };
@@ -468,7 +468,7 @@ export function listRows(db: Database, open: Open, now: number): Row[] {
   // Up next has the queued tasks by their place, then the paused ones, the newest task first.
   // A paused thread's last change can come from a poll, such as its CI, so it orders nothing.
   const startedOf = (row: Row) =>
-    threads.find(({ thread }) => `${repository.name}-${thread.task}` === row.name)?.thread
+    threads.find(({ thread }) => taskName(repository.name, thread.task) === row.name)?.thread
       .started ?? 0;
   const upNext = tasks
     .filter((row) => row.section === "up next")
