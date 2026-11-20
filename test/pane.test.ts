@@ -413,6 +413,10 @@ test("details taller than the pane scroll, say there is more below, and leave th
   expect(end.scroll).toBe(whole.length - 18);
   expect(plain(end.lines).slice(0, 18)).toEqual(whole.slice(-18));
   expect(plain(end.lines).slice(18)).toEqual(lines.slice(18));
+  // With room for a single line, it shows the details, a line each way you scroll.
+  const tiny = (scroll: number) =>
+    plain(drawPane(row, tall, { screen }, 50, 5, false, scroll).lines)[0];
+  expect([0, 1, 2].map(tiny)).toEqual(whole.slice(0, 3));
   // Scrolled above their top, they start at it.
   expect(drawPane(row, tall, { screen }, 50, 22, false, -5).scroll).toBe(0);
   const stopped = plain(drawPane(row, tall, { note: "Builder not running" }, 50, 22).lines);

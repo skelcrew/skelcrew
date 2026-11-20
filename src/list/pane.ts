@@ -262,7 +262,8 @@ export type Pane = { lines: string[]; scroll: number; room: number };
 // `full`, as much of its screen as fills the rest. The details take what they need, but always
 // leave the live view its lines, and while it shows the whole screen they take half the pane at
 // most. Details taller than their room scroll, `scroll` lines down from their top, and a dim
-// `↓ more` on their last line says there is more below. The live view stays where it is.
+// `↓ more` on their last line says there is more below, unless they have only that line. The
+// live view stays where it is.
 export function drawPane(
   row: Row | undefined,
   details: Details | null,
@@ -287,7 +288,8 @@ export function drawPane(
   const all = detailLines(row, details, width);
   const farthest = Math.max(all.length - room, 0);
   const at = Math.min(Math.max(scroll, 0), farthest);
-  const more = room > 0 && at < farthest ? [paint(grey, fitted("↓ more", width))] : [];
+  // With a single line of room, it shows the details rather than say there are more.
+  const more = room > 1 && at < farthest ? [paint(grey, fitted("↓ more", width))] : [];
   const top = [...all.slice(at, at + room - more.length), ...more];
   const drawn = (lines: string[]) => ({ lines: lines.slice(0, height), scroll: at, room });
   if (live === null) return drawn([...top, ...blank(height - top.length)]);

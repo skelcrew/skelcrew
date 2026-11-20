@@ -56,6 +56,10 @@ test("Claude Code's tip under its busy line is cut, and the busy line stays", as
   // Output that ends right on the input area, with no blank line between, stays whole.
   const touching = idle.replace(/\n\n(.*─{3,})/, "\n⏺ Done.\n$1");
   expect(bottom(agentOutput("claude", touching), 2)).toEqual(["  ⎿  Added 12 lines", "⏺ Done."]);
+  // So does indented output there, such as code, which isn't pushed to the right edge.
+  const code = `${" ".repeat(12)}return limit;`;
+  const indented = idle.replace(/\n\n(.*─{3,})/, `\n${code}\n$1`);
+  expect(bottom(agentOutput("claude", indented), 1)).toEqual([code]);
 });
 
 test("Codex's input box and footer are cut, idle, at work or with a long message typed", async () => {

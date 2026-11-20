@@ -473,10 +473,14 @@ function inputStart(screen: string[]): number | null {
   // The busy line: a spinner, a word ending in …, then how long the turn has run, in brackets,
   // such as `✻ Forging… (2m 13s · ↓ 3.4k tokens · esc to interrupt)`.
   const busy = (line: string) => /^\S \S+… \(/.test(line);
-  // A notice right on the input area is pushed to the right edge, far past the indent of any
-  // output.
+  // A notice right on the input area is pushed to the right edge: it starts past the middle of
+  // the rule and ends a column or two short of its end, as Claude Code leaves a margin there.
+  // Indented output, such as code, starts nearer the left and rarely ends right at the edge.
   let start = at - 1;
-  if (/^ {10,}\S/.test(lines[start - 1] ?? "")) start--;
+  const edge = Bun.stringWidth((lines[start] ?? "").trimEnd());
+  const notice = (lines[start - 1] ?? "").trimEnd();
+  const padding = notice.length - notice.trimStart().length;
+  if (notice.trim() !== "" && padding * 2 >= edge && Bun.stringWidth(notice) >= edge - 3) start--;
   // Under the busy line, everything is Claude Code's, its tip included, indented or blank. With
   // no busy line above them, indented lines are the agent's output, such as a tool's result.
   let under = start - 1;
