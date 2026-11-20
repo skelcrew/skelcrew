@@ -414,10 +414,11 @@ test("writes down the full commit and checkout it started from", async () => {
 
 // Puts a stand-in for git first on the daemon's PATH, which runs the real one, but can hold the
 // daemon partway through a yes to a new task: after the push numbered in `hold-push`, counted
-// from 1, while that file is in the home folder, or at the first fetch after the first push,
-// while `hold-fetch` is. The yes's first push files the task, and as it starts the task, its
+// from 1, while that file holds that number, or at the first fetch after the first push, while
+// `hold-fetch` is there. The yes's first push files the task, and as it starts the task, its
 // second takes the task from the backlog and its third, after its thread is recorded, ends that
-// claim. It leaves `held` there once it holds, and lets go once the file that holds it goes.
+// claim. It leaves `held` there once it holds, and `held-<n>` once it holds after push n, and
+// lets go once the file that holds it goes or names another push.
 function holdGit(): void {
   const real = Bun.which("git") ?? "git";
   const holdWhile = (file: string) =>
@@ -429,7 +430,10 @@ case " $* " in
   *" push "*)
     ${real} "$@"; code=$?
     n=$(( $(cat "$HOME/pushes" 2>/dev/null || echo 0) + 1 )); echo $n > "$HOME/pushes"
-    [ "$(cat "$HOME/hold-push" 2>/dev/null)" = "$n" ] && { ${holdWhile("hold-push")}; }
+    if [ "$(cat "$HOME/hold-push" 2>/dev/null)" = "$n" ]; then
+      touch "$HOME/held" "$HOME/held-$n"
+      while [ "$(cat "$HOME/hold-push" 2>/dev/null)" = "$n" ]; do sleep 0.1; done
+    fi
     exit $code ;;
   *" fetch "*) [ -e "$HOME/pushes" ] && [ -e "$HOME/hold-fetch" ] && { ${holdWhile("hold-fetch")}; } ;;
 esac
@@ -534,6 +538,60 @@ test("a stop after a yes's start recorded its thread tells the lead, starting no
         /^Skelcrew stopped partway through the human's yes in the list to your request: Start a new task: CSV export\? It had done it already: Started APP-T1\b/,
       ),
     },
+  ]);
+}, 60_000);
+
+// Two yeses to start the same task can overlap. Each start marks only its own request, so after
+// a stop the one that recorded the thread is only reported, and the other, which never started
+// anything, is done again and told why it can't start.
+test("two overlapping yeses for one task each keep their own start across a restart", async () => {
+  setUp();
+  addRepository("app");
+  holdGit();
+  serve();
+  await untilAnswers();
+  await until(() => existsSync(join(home, ".local", "share", "skelcrew", "repos", "simon", "app")));
+  // The first push files t1 in the backlog. Starting it, the second takes it from the backlog
+  // and the third, once its thread is recorded, ends that claim.
+  expect(
+    await ask({ command: "task add", repo: "app", title: "CSV export", body: "Add it." }),
+  ).toEqual({ task: "APP-T1", already: false });
+  onDb((db) =>
+    db.run(`INSERT INTO lead_requests (owner, repo, action, says, made) VALUES
+  ('simon', 'app', '{"kind":"start","task":"t1"}', 'Start APP-T1 CSV export?', 1),
+  ('simon', 'app', '{"kind":"start","task":"t1","short":"CSV"}', 'Start APP-T1 CSV export?', 2)`),
+  );
+  // The first yes's start is held before its thread is recorded while the second yes comes in,
+  // then held again once the thread is recorded, and the daemon stops there.
+  writeFileSync(join(home, "hold-push"), "2");
+  void ask({ command: "answer", repo: "simon/app", id: 1, yes: true });
+  await until(() => existsSync(join(home, "held-2")));
+  void ask({ command: "answer", repo: "simon/app", id: 2, yes: true });
+  await until(
+    () =>
+      onDb((db) => db.query("SELECT 1 FROM lead_requests WHERE answered IS NOT NULL").all())
+        .length === 2,
+  );
+  writeFileSync(join(home, "hold-push"), "3");
+  await until(() => existsSync(join(home, "held-3")));
+  for (const run of running.splice(0)) await stop(run);
+  expect(onDb((db) => db.query("SELECT id, started FROM lead_requests").all())).toEqual([
+    { id: 1, started: 1 },
+    { id: 2, started: 0 },
+  ]);
+  rmSync(join(home, "hold-push"));
+  serve();
+  await untilAnswers();
+  await until(() => onDb((db) => db.query("SELECT 1 FROM lead_requests").all()).length === 0);
+  expect(onDb((db) => db.query("SELECT task FROM task_threads").all())).toEqual([{ task: "t1" }]);
+  const notes = onDb((db) =>
+    db.query("SELECT text FROM notes WHERE text LIKE '%request%' ORDER BY id").all(),
+  );
+  const partway =
+    "Skelcrew stopped partway through the human's yes in the list to your request: Start APP-T1 CSV export?";
+  expect(notes).toEqual([
+    { text: expect.stringContaining(`${partway} It had done it already: Started APP-T1`) },
+    { text: expect.stringContaining(`${partway} It did it again: `) },
   ]);
 }, 60_000);
 
