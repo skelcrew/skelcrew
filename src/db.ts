@@ -397,13 +397,20 @@ export function finishUpgrade(db: Database): void {
 // PR's head showed CI. Otherwise a check seen before the upgrade that has vanished by the first
 // poll after it would let the wait for CI's first check end with none, and a merge go ahead as
 // if no CI ran. CI showed when the task's saved checks say so, when the release before kept that
-// it once did, or when Skelcrew's copy of its PR has a check besides Skelcrew's own. Which
+// it once did, on the task or, from before tasks, on one of its threads, or when Skelcrew's copy
+// of its PR has a check besides Skelcrew's own. Which
 // commit it showed on can't be told, so every commit that may be the PR's head again is kept:
 // its head in the copy, the one its reviewer approved, which a merge when ready merges, and the
 // one a merge without approval pinned on any of its threads. An item that isn't JSON is read
 // as none.
 function markCiShown(db: Database): void {
-  const seen = hasColumn(db, "tasks", "ci_seen") ? "OR tasks.ci_seen = 1" : "";
+  // Moving threads onto tasks leaves `ci_seen` behind on the threads, as tasks no longer have it.
+  const onTask = hasColumn(db, "tasks", "ci_seen") ? "OR tasks.ci_seen = 1" : "";
+  const onThread = hasColumn(db, "threads", "ci_seen")
+    ? `OR EXISTS (SELECT 1 FROM threads th WHERE th.owner = tasks.owner AND th.repo = tasks.repo
+        AND th.task = tasks.task AND th.ci_seen = 1)`
+    : "";
+  const seen = `${onTask} ${onThread}`;
   const copy = `FROM items i WHERE i.owner = tasks.owner AND i.repo = tasks.repo AND i.kind = 'pr'
     AND i.id = CAST(tasks.pr AS TEXT) AND json_valid(i.item)`;
   // A commit that isn't known is left out, as null names no commit, and one that is both is

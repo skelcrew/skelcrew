@@ -297,6 +297,18 @@ console.log(JSON.stringify(db.query("SELECT task, ci_shown FROM tasks WHERE repo
     { task: 14, ci_shown: null },
     { task: 16, ci_shown: "[]" },
   ]);
+  // From before tasks, by a release that kept on each thread whether its PR ever showed CI.
+  // app-16's checks vanished and its PR left the copy, but its thread kept that it showed CI,
+  // at the commit its reviewer approved.
+  oldDatabase();
+  const before = new Database(dbFile());
+  before.run("ALTER TABLE threads ADD COLUMN ci_seen INTEGER NOT NULL DEFAULT 0");
+  before.run("ALTER TABLE threads ADD COLUMN reviewed_commit TEXT");
+  before.run(
+    "UPDATE threads SET checks = NULL, ci_seen = 1, reviewed_commit = 'aa11' WHERE task = 16",
+  );
+  before.close();
+  expect(JSON.parse(run(shown))).toContainEqual({ task: 16, ci_shown: '["aa11"]' });
   // From a release with tasks, which kept whether a PR ever showed CI. app-12's saved checks are
   // gone, yet its PR in the copy shows CI. Its reviewer approved another commit, which the PR's
   // head may go back to, so both are kept. app-13's PR left the copy, but the release kept that
