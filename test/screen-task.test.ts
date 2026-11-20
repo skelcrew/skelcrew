@@ -22,6 +22,7 @@ import {
   tmux,
   type,
   until,
+  wheel,
 } from "./screen.ts";
 
 // Longer than the waits below, so a test that fails says what it waited for.
@@ -120,6 +121,41 @@ test("o on a task's row shows its builder's whole screen and back, and Enter sti
   await until(() => typingTo() === "1", "typing to move to the builder");
   type("hi\r");
   await until(() => read("app-7.typed").endsWith("four\nhi\n"), "what was typed");
+});
+
+test("a long description scrolls on the right by Page Down, Page Up and the wheel, the strip staying put", async () => {
+  const paragraphs = Array.from({ length: 30 }, (_, i) => `Paragraph ${i + 1}.`).join("\n\n");
+  sql(`UPDATE tasks SET title = 'Login redirect', body = '${paragraphs}' WHERE task = '7'`);
+  open("lead");
+  await ready("lead");
+  press("M-S-Down");
+  press("M-Down");
+  await until(() => right().includes("Login redirect"), "app-7's details");
+  await until(() => right().includes("I am app-7"), "app-7's screen");
+  expect(footer()).toContain("o output · pgup/pgdn scroll");
+  // Returns the right side's lines, and the one the line over the strip is on.
+  const lines = () => right().split("\n");
+  const rule = () => lines().findIndex((line) => line.startsWith("───"));
+  const at = rule();
+  expect(lines()[at - 1]).toBe("↓ more".padEnd(lines()[at - 1]?.length ?? 0));
+  // Page Down shows the details further down, and the strip stays where it was.
+  press("NPage");
+  await until(() => !right().includes("Login redirect"), "the details scrolled");
+  expect(rule()).toBe(at);
+  expect(right()).toContain("I am app-7");
+  // The wheel over the right side scrolls back up, and Page Up to the top.
+  const scrolled = lines()[0];
+  wheel(64);
+  await until(() => lines()[0] !== scrolled, "the wheel to scroll up");
+  press("PPage");
+  await until(() => right().includes("Login redirect"), "the top again");
+  // Another row starts at the top of its details, and so does coming back.
+  press("NPage");
+  await until(() => !right().includes("Login redirect"), "the details scrolled");
+  press("M-Up");
+  await until(() => !right().includes("Paragraph"), "the row above");
+  press("M-Down");
+  await until(() => right().includes("Login redirect"), "app-7's details from the top");
 });
 
 test("Enter attaches the right side to the builder, and Ctrl-\\ comes back to its details", async () => {

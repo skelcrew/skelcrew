@@ -2363,6 +2363,44 @@ test("o shows the agent's whole screen in the pane and back, and Enter still att
   await until(() => seen().includes("q/esc quit"), "the list again");
 });
 
+// app-12's description is far taller than the pane: 30 short paragraphs, the last one ending it.
+const paragraphs = Array.from({ length: 30 }, (_, i) => `Paragraph ${i + 1}.`).join("\n\n");
+
+test("a long description scrolls in the pane by Page Down, Page Up and the wheel, the strip staying put", async () => {
+  sql(`UPDATE tasks SET body = '${paragraphs}' WHERE task = '12'`);
+  await open({ width: wide, says: "step one\\nstep two\\n" });
+  await until(() => paneSeen()[0] === "Rate limit the API", "app-12's details");
+  await until(() => liveSeen().includes("I am app-12"), "app-12's screen");
+  expect(seen()).toContain("o output · pgup/pgdn scroll");
+  // The details fill the pane down to the strip, their last line saying there is more.
+  const strip = liveSeen();
+  const rule = paneSeen().findIndex((line) => line.startsWith("───"));
+  expect(paneSeen()[rule - 1]).toBe("↓ more");
+  // Page Down shows the details further down, and the strip stays under them, as it was.
+  press("NPage");
+  await until(() => paneSeen()[0]?.startsWith("Paragraph") ?? false, "the details scrolled");
+  expect(paneSeen().findIndex((line) => line.startsWith("───"))).toBe(rule);
+  expect(liveSeen()).toEqual(strip);
+  // At the end, the last paragraph shows, with nothing more below.
+  for (const _ of [1, 2, 3]) press("NPage");
+  await until(() => paneSeen()[rule - 1] === "Paragraph 30.", "the end of the description");
+  // The wheel over the pane scrolls it back, a few lines each turn, and Page Up a page, while
+  // you stay on the same row.
+  const atEnd = paneSeen()[0];
+  type(`\x1b[<64;${wide - 10};5M`);
+  await until(() => paneSeen()[0] !== atEnd, "the wheel to scroll up");
+  expect(here()).toStartWith("▸ ● APP-12");
+  for (const _ of [1, 2, 3, 4]) press("PPage");
+  await until(() => paneSeen()[0] === "Rate limit the API", "the top again");
+  // Another row starts at the top of its details, and so does coming back.
+  press("NPage");
+  await until(() => paneSeen()[0] !== "Rate limit the API", "the details scrolled");
+  press("Down");
+  await until(() => paneSeen()[0] === "Fix the export header", "app-14's details from the top");
+  press("Up");
+  await until(() => paneSeen()[0] === "Rate limit the API", "app-12's details from the top");
+});
+
 test("the pane shows only while the terminal is wide enough, and the keys do the same", async () => {
   await open();
   expect(seen()).not.toContain(" │ ");

@@ -90,13 +90,15 @@ const keyNames: Record<string, string> = {
   "\x1b[Z": "previous repository",
   "\r": "enter",
   "\n": "enter",
+  "\x1b[5~": "page up",
+  "\x1b[6~": "page down",
 };
 
 // The keys the footer shows while your typing goes to the sidebar, where the list's keys work
 // without Alt. Enter says what it does on the row: to the lead on the lead's row, open/close on a
 // stage's heading, none on the heading of Needs you or Up next, which never close, attach where it
 // attaches to the builder, and open elsewhere. o shows the agent's whole screen or its last lines,
-// Shift with an arrow moves a queued task in Up next, and s or m show only where the row can be
+// Page Up and Page Down scroll the details, Shift with an arrow moves a queued task in Up next, and s or m show only where the row can be
 // started, or queued, or merged. `attached` names the agent you attached to on the right, which
 // Alt-Right gives your typing back to, or is null.
 function sidebarFooter(row: Row, attached: string | null): string {
@@ -105,7 +107,7 @@ function sidebarFooter(row: Row, attached: string | null): string {
     const fixed = row.section === "needs you" || row.section === "up next";
     return `↑↓ move${fixed ? "" : "  ⏎ open/close"}  1-6 stages  ⌥Q quit`;
   }
-  const output = row.task ? " · o output" : "";
+  const output = row.task ? " · o output · pgup/pgdn scroll" : "";
   const reorder = row.section === "up next" && row.place !== null ? "  ⇧↑↓ reorder" : "";
   const start = row.start ? (row.start.queues ? "  s queue" : "  s start") : "";
   const merge = row.merge && "ask" in row.merge ? "  m merge" : "";
@@ -709,6 +711,12 @@ export async function runSidebar(
       fullOutput = !fullOutput;
       shown = null;
       return follow();
+    }
+    // Page Up and Page Down scroll the details on the right, which run in a pane of their own,
+    // so they are handed on to it.
+    if ((name === "page up" || name === "page down") && row?.task && isDetails(shown)) {
+      screenTmux(agents, ["send-keys", "-t", rightPane, name === "page up" ? "PPage" : "NPage"]);
+      return;
     }
     if (key === "s" && row?.part === "backlog" && row.start)
       asking = { question: row.start, row: row.name, merge: false };

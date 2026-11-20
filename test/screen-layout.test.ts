@@ -213,7 +213,7 @@ test("the footer runs across the screen under a thin line, with where you type, 
   expect(aboveFooter()).toBe("─".repeat(120));
   press("M-S-Down");
   await until(
-    () => footer() === "  ↑↓ move  ⏎ attach · o output  1-6 stages  ⌥Q quit",
+    () => footer() === "  ↑↓ move  ⏎ attach · o output · pgup/pgdn scroll  1-6 stages  ⌥Q quit",
     "a task's footer",
   );
   press("M-Down");
