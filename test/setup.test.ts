@@ -1847,6 +1847,41 @@ test("sc install in a checkout installs the plugins its skelcrew.lock pins after
   expect(readFileSync(config(), "utf8")).not.toContain("plugins");
 });
 
+// A plugin of yours that a repository pins at the very version installed is already there, so
+// sc install has nothing to do for it.
+test("sc install in a checkout asks nothing for a plugin of yours the repository pins at the version installed", async () => {
+  noGitHubPlugin();
+  fakeGitHub();
+  publishFake("0.1.0");
+  await skel("1\nsk-ant-oat01-good\n");
+  lockFake("0.1.0");
+  expect((await install("y\n")).out).toContain("Installed fake 0.1.0.");
+  const app = checkoutWith("app", "git@example.com:simon/app.git");
+  repositoryLocksFake(app, "0.1.0");
+  cloneEach();
+  const run = await atTerminal("", app, ["install"]);
+  expect(run.err).toBe("");
+  expect(run.out).toBe("Nothing to install: this machine has everything your files ask for.\n");
+});
+
+// A machine holds one version of a plugin, so a repository pinning another version than yours
+// leaves yours as it is and says why.
+test("sc install in a checkout that pins a plugin of yours at another version says the pins disagree", async () => {
+  noGitHubPlugin();
+  fakeGitHub();
+  publishFake("0.1.0", "0.2.0");
+  await skel("1\nsk-ant-oat01-good\n");
+  lockFake("0.1.0");
+  expect((await install("y\n")).out).toContain("Installed fake 0.1.0.");
+  const app = checkoutWith("app", "git@example.com:simon/app.git");
+  repositoryLocksFake(app, "0.2.0");
+  cloneEach();
+  const run = await atTerminal("", app, ["install"]);
+  expect(`${run.out}${run.err}`).not.toContain("installed already");
+  expect(run.out).toContain("simon/skelcrew-fake is pinned at");
+  expect(git(fakeFolder(), "rev-parse", "HEAD")).toBe(fakeCommit("0.1.0"));
+});
+
 test("sc install outside a checkout installs the plugins of every repository Skelcrew has, from its clone", async () => {
   noGitHubPlugin();
   fakeGitHub();
