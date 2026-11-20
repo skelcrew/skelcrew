@@ -1,8 +1,8 @@
 // The rows of the list: what `sc` shows of one repository, read from Skelcrew's database and its
 // copy of the tracker, never the tracker itself, as the list reads them again each second. Its
-// lead, then its tasks by stage: Backlog, Building, Reviewing, Checks, Ready and Done, with how
-// many each has and how many of those need you. Also a tab for each repository, with how many of
-// its threads need you.
+// lead, then its tasks by section: Needs you, then the stages Backlog, Building, Reviewing,
+// Checks, Ready and Done, with how many each has. Also a tab for each repository, with how many
+// of its threads need you.
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
 import { backlogOf } from "../flow/backlog.ts";
@@ -15,6 +15,7 @@ import {
   type Colour,
   type Mark,
   needsDecision,
+  readyToMerge,
   shownOf,
 } from "../flow/marks.ts";
 import { agentsSaid } from "../flow/merging.ts";
@@ -34,8 +35,13 @@ export type Question = { ask: string; working: string; request: DaemonRequest };
 // forge plugin is too old to merge.
 type Action = Question | { refused: string };
 
-// One row of the list. `part` is where it is: the lead, or the stage of its task. Its mark is a
-// sign and the colour that says what kind of state it is in, `says` is its short word, in
+// The sections of the list, in the order it shows them: Needs you, then each stage.
+export type Section = "needs you" | ListStage;
+export const sections: Section[] = ["needs you", ...ListStage.options];
+
+// One row of the list. `part` is where it is: the lead, or the stage of its task. `section` is
+// the section it shows under: Needs you while the task waits on you, its stage otherwise. Its
+// mark is a sign and the colour that says what kind of state it is in, `says` is its short word, in
 // `colour`, and `step` what its builder is doing, such as `Editing rows.ts`. Then dim its PR,
 // such as `#41`, its CI, such as `CI passed`, and when it last changed, such as `14:31`. Each is
 // empty where it has none. `needsYou` is whether it waits on you for something other than a
@@ -48,6 +54,7 @@ type Action = Question | { refused: string };
 // a cut Backlog, which Enter shows, and 0 on every other row.
 export type Row = {
   part: "lead" | ListStage;
+  section: "lead" | Section;
   name: string;
   title: string;
   mark: { sign: string; colour: Colour };
@@ -108,6 +115,7 @@ function leadRow(db: Database, open: Open): Row {
   const word = !runs ? "stopped" : asking ? "asks you" : (state ?? "running");
   return {
     part: "lead",
+    section: "lead",
     name: "lead",
     title: lead.harness ?? "",
     mark: asking ? { sign: "●", colour: "yellow" } : { sign: "○", colour: runs ? "bright" : "dim" },
@@ -151,9 +159,12 @@ function taskRow(
   const name = `${repoName}-${thread.task}`;
   const shown = shownOf(thread, roundLimit(thread), now);
   // An ended thread shows no state: its word is whether it merged, and its mark is quiet.
+  // A task approved and green, with no merge armed, waits on you to merge it, so its word says
+  // that action, as every word under Needs you does.
   const ended = stage === "done";
-  const word = ended ? (thread.merged ? "merged" : "closed") : shown.word;
   const mark: Mark = ended ? { sign: "○", colour: "dim" } : shown.mark;
+  const live = readyToMerge(mark) ? "ready to merge" : shown.word;
+  const word = ended ? (thread.merged ? "merged" : "closed") : live;
   const needsYou = needsDecision(mark);
   const ready = stage === "ready" && !needsYou;
   const pr = thread.pr === null ? "" : `#${thread.pr}`;
@@ -214,6 +225,8 @@ function taskRow(
   const runs = thread.status === "working" || thread.status === "waiting";
   return {
     part: stage,
+    // A filled mark waits on you: a decision, an answer, something gone wrong, or a merge.
+    section: mark.sign === "●" ? "needs you" : stage,
     name,
     title: removeControlCodes(thread.short ?? thread.title ?? ""),
     mark,
@@ -249,9 +262,10 @@ const ciWords: Record<NonNullable<Thread["checks"]>, string> = {
 const doneShown = 10;
 
 // Returns the repository's rows as the database has them now, at a moment in milliseconds: its
-// lead, then its tasks in the order of their stages. Backlog has its open issues no thread works
-// on and the tasks filed in its backlog, newest first. Each other stage has those that need you
-// first, so the list reaches them fastest, and within each, the one that changed last first.
+// lead, then its tasks in the order of their sections. Needs you comes first, so the list
+// reaches what waits on you fastest. Backlog has its open issues no thread works on and the
+// tasks filed in its backlog, newest first. Needs you and each other stage have the one that
+// changed last first.
 // Done has the tasks that ended today, latest first, or the last ten when fewer ended today, so
 // an old repository's history never fills the list. It reads the database, and a working
 // builder's conversation file for its step, as the sidebar does, never tmux, so the list opens
@@ -280,6 +294,7 @@ export function listRows(db: Database, open: Open, now: number): Row[] {
     const name = `${repository.name}-${task}`;
     return {
       part: "backlog",
+      section: "backlog",
       name,
       title: removeControlCodes(title),
       mark: { sign: "○", colour: "dim" },
@@ -332,15 +347,12 @@ export function listRows(db: Database, open: Open, now: number): Row[] {
     .filter((row) => row.part === "done")
     .sort((a, b) => changedOf(b) - changedOf(a))
     .filter((row, at) => at < doneShown || new Date(changedOf(row)).toDateString() === today);
-  // Returns a stage's live tasks, those that need you first, each part latest change first.
-  const live = (stage: ListStage) => {
-    const ours = tasks
-      .filter((row) => row.part === stage)
-      .sort((a, b) => changedOf(b) - changedOf(a));
-    return [...ours.filter((row) => row.needsYou), ...ours.filter((row) => !row.needsYou)];
-  };
+  // Returns a section's live tasks, the one that changed last first.
+  const live = (section: Section) =>
+    tasks.filter((row) => row.section === section).sort((a, b) => changedOf(b) - changedOf(a));
   return [
     leadRow(db, open),
+    ...live("needs you"),
     ...waiting,
     ...live("building"),
     ...live("reviewing"),
@@ -362,6 +374,7 @@ export function cutBacklog(rows: Row[], whole: boolean): Row[] {
   const hidden = new Set(backlog.slice(backlogShown));
   const more: Row = {
     part: "backlog",
+    section: "backlog",
     name: `${rest} more`,
     title: "",
     mark: { sign: "…", colour: "dim" },
@@ -387,17 +400,16 @@ export function cutBacklog(rows: Row[], whole: boolean): Row[] {
   );
 }
 
-// A stage's heading: its stage, how many tasks it has and how many of them need you, and
-// whether it is open, which shows its rows.
-export type Heading = { stage: ListStage; count: number; needYou: number; open: boolean };
+// A section's heading: its section, how many tasks it has, and whether it is open, which shows
+// its rows.
+export type Heading = { section: Section; count: number; open: boolean };
 
-// Returns the heading of every stage, in order, from all the rows, whether their stage is open
-// or not, given the stages that are open.
-export function stageHeadings(rows: Row[], opened: Set<ListStage>): Heading[] {
-  return ListStage.options.map((stage) => {
-    const ours = rows.filter((row) => row.part === stage);
-    const needYou = ours.filter((row) => row.needsYou).length;
-    return { stage, count: ours.length, needYou, open: opened.has(stage) };
+// Returns the heading of every section, in order, from all the rows, whether their section is
+// open or not, given the sections that are open.
+export function sectionHeadings(rows: Row[], opened: Set<Section>): Heading[] {
+  return sections.map((section) => {
+    const count = rows.filter((row) => row.section === section).length;
+    return { section, count, open: opened.has(section) };
   });
 }
 

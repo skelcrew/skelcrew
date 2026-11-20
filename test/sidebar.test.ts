@@ -176,11 +176,12 @@ test("a thread with messages waiting for its builder says how many on its row", 
   expect(listed(draw(rows, "lead", { width: sidebarWidth, height: 14 }))).toEqual([
     "  ◆ lead",
     "    running · claude",
+    "  Needs you",
+    "  ● 13 app-13",
+    "    approved · 2 messages waiting …",
     "  ○ 12 app-12",
     "    claude",
     "    1 message waiting",
-    "  ● 13 app-13",
-    "    approved · 2 messages waiting …",
   ]);
 });
 
@@ -735,6 +736,52 @@ test("Alt-Up and Alt-Down move one row, stop at the ends, and skip agents that a
   expect(stepped(rows, "app-3", -1)).toBe("app-1");
   expect(stepped(rows, "lead", -1)).toBeNull();
   expect(stepped(rows, "app-3", 1)).toBeNull();
+});
+
+// A thread waiting on you is above the rest, under a heading of its own, so it is reached first.
+// Once it no longer waits on you it is back under Active, and the row you look at stays yours.
+test("a thread that needs you shows under Needs you, above Active, and goes back once it doesn't", () => {
+  const asking = thread("app-2", { status: "waiting", word: "question", state: "needs you" });
+  const rows = [lead, thread("app-1"), asking, thread("app-3")];
+  const tall = { width: sidebarWidth, height: 24 };
+  const lines = read(draw(rows, "app-2", tall)).filter((line) => line && line !== rule);
+  expect(lines.slice(2).map((line) => line.trimEnd())).toEqual([
+    "  Needs you",
+    "  ● 2 app-2",
+    "    question · claude",
+    "  Active",
+    "  ○ 1 app-1",
+    "    claude",
+    "    working",
+    "  ○ 3 app-3",
+    "    claude",
+    "    working",
+  ]);
+  expect(
+    selected(draw(rows, "app-2", tall))
+      .map(plain)
+      .join(""),
+  ).toContain("app-2");
+  // Moves and clicks follow the order shown.
+  expect(stepped(rows, "lead", 1)).toBe("app-2");
+  expect(stepped(rows, "app-2", 1)).toBe("app-1");
+  expect(stepped(rows, "app-3", -1)).toBe("app-1");
+  expect(picked(rows, "lead", tall, 6)).toBe("app-2");
+  // Answered, it is back under Active in its place, and still the row you look at.
+  const answered = [lead, thread("app-1"), thread("app-2"), thread("app-3")];
+  const after = read(draw(answered, "app-2", tall)).filter((line) => line && line !== rule);
+  expect(after).not.toContain("  Needs you");
+  expect(after.slice(2, 6).map((line) => line.trimEnd())).toEqual([
+    "  Active",
+    "  ○ 1 app-1",
+    "    claude",
+    "    working",
+  ]);
+  expect(
+    selected(draw(answered, "app-2", tall))
+      .map(plain)
+      .join(""),
+  ).toContain("app-2");
 });
 
 test("moving from an agent that isn't listed goes to the lead", () => {
