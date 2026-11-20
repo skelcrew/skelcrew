@@ -25,7 +25,7 @@ import { repositoryRole } from "../roles.ts";
 import { quietly } from "../run.ts";
 import { errorText } from "../say.ts";
 import type { Settings } from "../settings.ts";
-import { claimOwnName, type Filed, filedTask, starting, unfileTask } from "./backlog.ts";
+import { claimOwnName, type Filed, filedTask, startFiled } from "./backlog.ts";
 import { ownTask, taskOf, threadTask } from "./copy.ts";
 import { pastRoundLimit } from "./decide.ts";
 import { fetchBranch } from "./git.ts";
@@ -153,7 +153,7 @@ async function recordThread(
   // from the tracker has.
   let issueLink: string | null = null;
   let closes: string | null = null;
-  // The task of the backlog it starts, which leaves the backlog once the thread is recorded.
+  // The task of the backlog it starts, which leaves the backlog as the thread is recorded.
   let fromBacklog: Filed | null = null;
   if ("title" in given) {
     // A name of Skelcrew's own, claimed on the remote, from its clone, which the daemon may
@@ -187,7 +187,7 @@ async function recordThread(
       issueLink = found.link;
       closes = found.closes;
     } else if (filed && !had) {
-      // A task from the backlog leaves it once its thread is recorded, below.
+      // A task from the backlog leaves it as its thread is recorded, below.
       fromBacklog = filed;
       ({ title, body } = filed);
       closes = "";
@@ -247,7 +247,7 @@ async function recordThread(
     }
   // Check again for a thread and record the new one in one transaction, so a failed or done
   // thread's row is never removed without the new one taking its place.
-  const recorded = db.transaction(() => {
+  const record = db.transaction(() => {
     const before = Thread.nullable().parse(
       db.query(`SELECT * FROM task_threads ${where}`).get(owner, repo, task),
     );
@@ -395,28 +395,11 @@ async function recordThread(
       db.run("INSERT OR IGNORE INTO claims (owner, repo, task) VALUES (?, ?, ?)", claims);
     log(db, thread);
     return thread;
-  })();
-  // A task from the backlog leaves it for every machine only once its thread holds its words, so
-  // a stop or a failure in between never loses it. Should another machine have started or removed
-  // it meanwhile, the thread is taken back out, as it never started, so no task runs twice. A
-  // stop between the two leaves it on the remote, which the next refresh of the backlog takes off.
-  // Marked as starting before anything waits, so no refresh of the backlog sees the thread first.
-  const key = `${owner}/${repo}/${task}`;
-  if (fromBacklog) {
-    starting.add(key);
-    try {
-      await unfileTask(db, repository, cloneDir(owner, repo), fromBacklog);
-    } catch (error) {
-      db.transaction(() => {
-        db.run(`DELETE FROM threads ${where}`, [owner, repo, task]);
-        db.run(`DELETE FROM tasks ${where}`, [owner, repo, task]);
-      })();
-      throw error;
-    } finally {
-      starting.delete(key);
-    }
-  }
-  return recorded;
+  });
+  // A task from the backlog is taken off it for every machine around the thread's record, so it
+  // never starts twice and is never lost, as startFiled says.
+  if (fromBacklog) return startFiled(db, repository, cloneDir(owner, repo), fromBacklog, record);
+  return record();
 }
 
 // Runs a command and waits for it, throwing with the end of its output when it fails, so a

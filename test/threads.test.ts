@@ -1519,21 +1519,67 @@ describe("the backlog", () => {
     expect(await listed("app-t100")).toMatchObject({ title: "Add export", thread: null });
   }, 60_000);
 
-  // A stop between recording a start's thread and taking its task off the remote leaves the task
-  // there. The next refresh of the backlog takes it off, so no other machine starts it too.
-  test("a task this machine started, left on the remote by a stop, comes off at the next refresh", async () => {
+  // Leaves the remote as a start on some machine leaves it when a stop cuts it short: the task
+  // moved off the backlog onto a claim of its start. Returns the claim's commit.
+  const cutStart = (work: string, name: string) => {
+    git(work, "fetch", "-q", "origin", `refs/skelcrew/tasks/${name}`);
+    const commit = git(work, "rev-parse", "FETCH_HEAD").trim();
+    git(
+      work,
+      "push",
+      "-q",
+      "--atomic",
+      "origin",
+      `${commit}:refs/skelcrew/started/${name}`,
+      `:refs/skelcrew/tasks/${name}`,
+    );
+    return commit;
+  };
+
+  // Writes to this machine's database while its daemon is stopped.
+  const write = (sql: string) => {
+    const db = new Database(join(data(), "skelcrew.db"));
+    db.run("PRAGMA busy_timeout = 5000");
+    db.run(sql);
+    db.close();
+  };
+
+  // A stop after this machine claimed the start, but before its thread was recorded, puts the
+  // task back in the backlog, so it is never lost.
+  test("a start of this machine's cut short before its thread puts the task back", async () => {
     const work = addApp();
     const first = serve();
     await untilCloned();
     await skel("task", "add", "app", "Add export", "As JSON");
     await stop(first);
-    const db = new Database(join(data(), "skelcrew.db"));
-    db.run("PRAGMA busy_timeout = 5000");
-    db.run(threadSql({ task: "t100", title: "Add export", body: "As JSON", status: "stopped" }));
-    db.close();
+    const commit = cutStart(work, "t100");
+    write(`INSERT INTO backlog_starts (owner, repo, task, started_commit)
+      VALUES ('simon', 'app', 't100', '${commit}')`);
     serve();
-    await until(() => !git(work, "ls-remote", "origin").includes("refs/skelcrew/tasks/t100"));
+    await until(() => !git(work, "ls-remote", "origin").includes("refs/skelcrew/started/t100"));
+    expect(git(work, "ls-remote", "origin")).toContain("refs/skelcrew/tasks/t100");
+    await until(async () => (await listed("app-t100")) !== undefined);
+    expect(await listed("app-t100")).toMatchObject({ title: "Add export", thread: null });
+  }, 60_000);
+
+  // A stop after the thread was recorded leaves only the claim to remove. Another machine's claim,
+  // which this machine never noted, is that machine's to finish, so it stays, and neither task
+  // shows in this machine's backlog.
+  test("a claim whose thread is recorded here goes, and another machine's claim stays", async () => {
+    const work = addApp();
+    const first = serve();
+    await untilCloned();
+    await skel("task", "add", "app", "Add export", "As JSON");
+    await skel("task", "add", "app", "Add import", "From CSV");
+    await stop(first);
+    cutStart(work, "t100");
+    cutStart(work, "t101");
+    write(threadSql({ task: "t100", title: "Add export", body: "As JSON", status: "stopped" }));
+    serve();
+    await until(() => !git(work, "ls-remote", "origin").includes("refs/skelcrew/started/t100"));
+    expect(git(work, "ls-remote", "origin")).toContain("refs/skelcrew/started/t101");
     expect(await listed("app-t100")).toMatchObject({ thread: { status: "stopped" } });
+    expect(await listed("app-t101")).toBeUndefined();
   }, 60_000);
 
   test("sc rm deletes a task that never started, here and on the remote, and keeps its name", async () => {
@@ -1545,6 +1591,9 @@ describe("the backlog", () => {
     expect(removed.err).toBe("");
     expect(removed.out).toBe("Removed app-t100 from the backlog.\n");
     expect(git(work, "ls-remote", "origin")).not.toContain("refs/skelcrew/tasks/t100");
+    // Its words are on no ref left: the name's claim holds none of them.
+    git(work, "fetch", "-q", "origin", "+refs/skelcrew/*:refs/skelcrew/*");
+    expect(git(work, "log", "--format=%B", "--glob=refs/skelcrew/*")).not.toContain("As JSON");
     expect(await listed("app-t100")).toBeUndefined();
     expect((await skel("show", "app-t100")).err).toBe("Skelcrew: there is no task app-t100\n");
     // The name stays claimed, so it never names other work.

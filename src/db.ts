@@ -546,6 +546,16 @@ function prepareTables(db: Database): void {
     filed_commit TEXT NOT NULL,
     PRIMARY KEY (owner, repo, task)
   )`);
+  // The starts of backlog tasks this machine claimed on the remote and hasn't recorded a thread
+  // for yet, each by the commit of its claim. A start a stop cut short is put back in the
+  // backlog from here, while another machine's claim, which this table never holds, is left be.
+  db.run(`CREATE TABLE IF NOT EXISTS backlog_starts (
+    owner TEXT NOT NULL,
+    repo TEXT NOT NULL,
+    task TEXT NOT NULL,
+    started_commit TEXT NOT NULL,
+    PRIMARY KEY (owner, repo, task)
+  )`);
   // Notes for a repository's lead that aren't about a thread needing you, such as a thread
   // started from a tracker, kept until they are typed in, since the lead may not be running.
   // A note's ID is never used twice, which AUTOINCREMENT makes so: without it, SQLite gives a
