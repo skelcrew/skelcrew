@@ -2037,6 +2037,36 @@ test("a read that answers after the list left draws nothing over your terminal",
   expect(seen()).not.toContain("q/esc quit");
 });
 
+test("a read under way when you move away and back is dropped, as you moved since it was asked", async () => {
+  slowHost();
+  await open({ width: wide });
+  const screen = () => liveSeen().find((line) => line.startsWith("slow screen")) ?? "";
+  await until(() => screen() !== "", "the slow host's screen");
+  // A new screen shows as a read ends, and the next read starts within a quarter of a second,
+  // so a second on it is surely under way, answering 2 seconds or so after the move.
+  const first = screen();
+  await until(() => screen() !== first, "the next screen");
+  await Bun.sleep(1000);
+  // Moving away and back while that read is under way: its answer is dropped. A read asked after
+  // the move takes 3 seconds, so for 3 seconds from the move the screen stays as it was.
+  const moved = performance.now();
+  press("Down");
+  await until(() => here().startsWith("▸ ○ app-9"), "app-9's row");
+  press("Up");
+  await until(() => here().startsWith("▸ ● app-12"), "app-12's row");
+  const before = screen();
+  while (performance.now() - moved < 3000) {
+    expect(screen()).toBe(before);
+    await Bun.sleep(20);
+  }
+  // A read asked after the move shows. Then the test moves to a row with no agent, so no read
+  // starts again, and waits for the one under way to end, as it started it.
+  await until(() => screen() !== before, "a newer screen");
+  press("Down");
+  await until(() => here().startsWith("▸ ○ app-9"), "app-9's row");
+  await Bun.sleep(3500);
+});
+
 test("a slow read of the row you left never holds up the live view of the row you are on", async () => {
   slowHost();
   await open({ width: wide });

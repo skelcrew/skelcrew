@@ -61,6 +61,27 @@ function packed(items: { plain: string; shown: string }[], width: number): strin
   return lines.map((line) => line.shown);
 }
 
+// Returns a heading and as many items as fit after it on one line `width` columns wide, with
+// two spaces between them, and a dim count of those left out, such as `… 59 more`, so the line
+// says how many there are in all. One too narrow even for the count alone is cut.
+function oneLine(
+  heading: string,
+  items: { plain: string; shown: string }[],
+  width: number,
+): string {
+  for (let kept = items.length; kept >= 0; kept--) {
+    const shown = items.slice(0, kept);
+    const left = items.length - kept;
+    const more = left > 0 ? [`… ${left} more`] : [];
+    const plain = [heading, ...shown.map((item) => item.plain), ...more].join("  ");
+    if (Bun.stringWidth(plain) <= width)
+      return [heading, ...shown.map((item) => item.shown), ...more.map((m) => paint(grey, m))].join(
+        "  ",
+      );
+  }
+  return fitted([heading, `… ${items.length} more`].join("  "), width);
+}
+
 // The steps the details take to fit a short pane, each on top of those before it. The parts that
 // matter least to see at a glance give way first, and every part keeps at least one line, so
 // none goes out of sight.
@@ -109,32 +130,25 @@ function detailLines(row: Row, details: Details, width: number, tight = 0): stri
       ? `${paint(bright, stage)}${paint(markColours[row.colour], word)}`
       : cut(`${stage}${word}`);
   // CI as a whole, then each check with its mark, going on over as many lines as they need. When
-  // tightened to one line, failed checks come first, so they stay in sight.
+  // tightened to one line, failed checks come first, so they stay in sight, and the line ends
+  // with how many checks it left out.
   const page = view.prPage;
   const summary = page ? `CI ${page.ci}${page.checks.length ? ":" : ""}` : "";
   const order = { failed: 0, running: 1, cancelled: 2, passed: 3 };
   const checks = tightened("checks")
     ? [...(page?.checks ?? [])].sort((a, b) => order[a.state] - order[b.state])
     : (page?.checks ?? []);
-  const packedChecks = page
-    ? packed(
-        [
-          { plain: summary, shown: summary },
-          ...checks.map((check) => ({
-            plain: `${check.name} ${Bun.stripANSI(checkMarks[check.state])}`,
-            shown: `${check.name} ${checkMarks[check.state]}`,
-          })),
-        ],
-        width,
-      )
+  const items = page
+    ? checks.map((check) => ({
+        plain: `${check.name} ${Bun.stripANSI(checkMarks[check.state])}`,
+        shown: `${check.name} ${checkMarks[check.state]}`,
+      }))
     : [];
-  const ci =
-    tightened("checks") && packedChecks.length > 1
-      ? [
-          ...packedChecks.slice(0, 1),
-          paint(grey, cut(`  … ${packedChecks.length - 1} more lines of checks`)),
-        ]
-      : packedChecks;
+  const ci = !page
+    ? []
+    : tightened("checks")
+      ? [oneLine(summary, items, width)]
+      : packed([{ plain: summary, shown: summary }, ...items], width);
   const merge = view.merge === null ? [] : [cut(view.merge)];
   // The review's round and verdict, then what it found, each finding on one line.
   const review = view.review;

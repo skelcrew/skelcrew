@@ -241,8 +241,12 @@ test("details too tall for the pane tighten so every part shows, and the live vi
   expect(lines).toContain("issue #42  https://github.com/acme/app/issues/42");
   expect(lines).toContain("Building · question");
   // The failed check comes first, so it stays in sight.
-  expect(lines).toContainEqual(expect.stringMatching(/^CI running: {2}check-50 ✗/));
-  expect(lines).toContainEqual(expect.stringMatching(/^ {2}… \d+ more lines of checks$/));
+  // The checks take one line, which ends with how many checks it leaves out of the 60.
+  const ci = lines.find((line) => line.startsWith("CI running:")) ?? "";
+  expect(ci).toStartWith("CI running:  check-50 ✗  check-0 ✓");
+  const shown = ci.split("  ").filter((item) => item.startsWith("check-")).length;
+  expect(ci).toEndWith(`  … ${60 - shown} more`);
+  expect(lines.indexOf(ci) + 1).toBe(lines.indexOf("Round 2 · changes asked"));
   expect(lines).toContain("Round 2 · changes asked");
   expect(lines).toContain("  - The limit resets per process, not per user");
   expect(lines).toContain("Add a limit per user to the public API, so one…");
