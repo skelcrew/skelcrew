@@ -13,6 +13,10 @@ import type { Entry } from "./lists.ts";
 // each.
 export const sidebarWidth = 38;
 
+// A word in the command of a right side attached to a builder. The screen's tmux finds it there,
+// so Ctrl-\ ends only that attachment, never the lead or a task's details.
+export const attachedMark = "skelcrew-attached";
+
 // The tmux commands that set up the screen's server. They run each time the screen opens,
 // before its session starts, so a first draw never shows tmux's own look. Your own ~/.tmux.conf
 // never applies.
@@ -33,9 +37,11 @@ const config = [
   // All of tmux's own keys go: its default mouse keys pull a drag or the wheel into copy mode,
   // which would swallow your typing, and its prefix belongs to the agents' server. Alt-Q
   // here, not there, leaves the whole screen. Ctrl-Q does too, though nothing shows it, for a
-  // Mac terminal that doesn't send Option as Alt. Ctrl-\ does nothing here: it only leaves an
-  // agent opened alone, back to where you came from. It stays bound, to an empty command, as
-  // left to reach the agents' server it would detach the agent's pane and leave it empty.
+  // Mac terminal that doesn't send Option as Alt. Ctrl-\ never reaches a pane: left to reach the
+  // agents' server or a host's own client, it would detach it and leave the right side empty. On
+  // a builder you attached to on the right side, it ends that attachment instead, found by the
+  // mark in the pane's command, and the pane goes back to the task's details. Anywhere else it
+  // does nothing.
   // Each key that leaves ends your terminal's session rather than detaching from it. tmux 3.6
   // crashed about one time in five when a detach met another command, such as the sidebar's,
   // ending at that moment, and every terminal on the server lost its screen.
@@ -44,7 +50,15 @@ const config = [
   ["unbind", "-a", "-T", "root"],
   ["bind", "-n", "M-q", "kill-session"],
   ["bind", "-n", "C-q", "kill-session"],
-  ["bind", "-n", "C-\\", ""],
+  [
+    "bind",
+    "-n",
+    "C-\\",
+    "if",
+    "-F",
+    `#{m:*${attachedMark}*,#{pane_start_command}}`,
+    "run-shell 'pkill -P #{pane_pid}'",
+  ],
   // Keys that arrive faster than a millisecond apart are taken for a paste, and tmux then hands
   // them to the pane you type to rather than act on them. Several Alt keys in one read, as fast
   // typing, key repeat or a slow link bring, would lose all but the first two, and type the rest
@@ -147,7 +161,7 @@ const config = [
 
 // Returns a command that runs this same Skelcrew with the given words. A Skelcrew built as a
 // single file runs itself. Otherwise Bun runs this checkout's main file.
-function skelcrewCommand(...words: string[]): string[] {
+export function skelcrewCommand(...words: string[]): string[] {
   const checkout = singleFile ? [] : [mainFile];
   return [process.execPath, ...checkout, ...words];
 }

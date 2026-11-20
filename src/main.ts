@@ -211,8 +211,8 @@ async function machineCommand(args: string[]): Promise<void> {
   usage(command);
 }
 
-// Runs a part of the screen: the sidebar, a list and its pages on the right, or the footer
-// across the bottom. The screen starts these, not people, so usage leaves them out.
+// Runs a part of the screen: the sidebar, a list and its pages or a task's details on the right,
+// or the footer across the bottom. The screen starts these, not people, so usage leaves them out.
 async function screenCommand(args: string[]): Promise<void> {
   const [command, ...rest] = args;
   const { runPane } = await import("./screen/pane.ts");
@@ -244,6 +244,14 @@ async function screenCommand(args: string[]): Promise<void> {
       repository
     ) {
       await runPane(agents, session, entry, where, repository);
+      return;
+    }
+  }
+  if (command === "details" && rest.length === 3) {
+    const [agents, repository, name] = rest;
+    if (agents && repository && name) {
+      const { runTaskDetails } = await import("./screen/task.ts");
+      await runTaskDetails(agents, repository, name);
       return;
     }
   }
@@ -905,10 +913,10 @@ async function runCommand(args: string[]): Promise<void> {
     console.log(versionLine());
     return;
   }
-  // Sidebars, lists and footers skip the out-of-date check. The Skelcrew that started
+  // Sidebars, lists, footers and the details of a task skip the out-of-date check. The Skelcrew that started
   // them already passed it, and tmux may hand them another laptop's build, which would make them
   // refuse.
-  const onScreen = command === "sidebar" || command === "list" || command === "footer";
+  const onScreen = ["sidebar", "list", "footer", "details"].includes(command ?? "");
   // On a remote, refuse to run until the machine is set up, with the exit code that lets the
   // laptop offer to finish it. This comes before the build check, since its answer would copy
   // Skelcrew there, and --remote must ask before setting a machine up. Sidebars,
@@ -976,6 +984,7 @@ async function runCommand(args: string[]): Promise<void> {
     case "sidebar":
     case "list":
     case "footer":
+    case "details":
       return screenCommand(words);
     case "repo":
     case "init":
