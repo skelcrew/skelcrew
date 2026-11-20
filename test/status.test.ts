@@ -84,6 +84,7 @@ const state: Thread = {
   flow: "default",
   review_post: null,
   posting: null,
+  review_findings: null,
   queued_since: null,
 };
 const status = (more: Partial<Thread>) => statusOf({ ...state, ...more }, 3);

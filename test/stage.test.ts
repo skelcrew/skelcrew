@@ -83,6 +83,7 @@ const working: Thread = {
   flow: "default",
   review_post: null,
   posting: null,
+  review_findings: null,
   queued_since: null,
 };
 const thread = (more: Partial<Thread>) => ({ ...working, ...more });

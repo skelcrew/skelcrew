@@ -616,6 +616,7 @@ async function actOnVerdict(
     verdict: verdict.verdict,
     review_line: verdict.body.trim().split("\n")[0]?.slice(0, 200) ?? "",
     reviewed_commit: sha,
+    review_findings: "findings" in verdict ? verdict.findings : [],
     review_at: Date.now(),
     posting,
   };
