@@ -1159,14 +1159,14 @@ case "$*" in
 *has-session*) test -e "$HOME/sessions/$session" ;;
 *display-message*) grep -q dead "$HOME/sessions/$session" && echo 1 || echo 0 ;;
 *capture-pane*) echo "Claude Code exited" ;;
-*" new-session "*) exit 0 ;;
+*" attach "*) exit 0 ;;
 *) exit 1 ;;
 esac`,
     );
   });
   const calls = () => read(join(home, "calls"));
 
-  test("opens the screen on the builder's session, named when the thread started", async () => {
+  test("attaches full screen to the builder's session, named when the thread started", async () => {
     writeFileSync(join(home, "sessions", "site-7"), "");
     sql("UPDATE repositories SET name = 'web' WHERE repo = 'site'");
     // Attaching makes sure the daemon runs, so one answers here, as a daemon would.
@@ -1177,26 +1177,9 @@ esac`,
     const attached = await skel(["attach", "web-7"]).finally(() => daemon.close());
     expect(attached.err).toBe("");
     expect(attached.code).toBe(0);
-    expect(calls()).toContain("tmux -L skelcrew-screen -f /dev/null");
-    expect(calls()).toMatch(/new-session .* skelcrew site-7 lead-site-[a-p]+ ;/);
-  });
-
-  // A lead you exited a moment ago still reads as open until the daemon's next look, which
-  // would then close the tab under the screen you just opened. So attaching always has the
-  // daemon open the repository, which notices the exit first.
-  test("has the daemon open the thread's repository, even one whose tab reads as open", async () => {
-    writeFileSync(join(home, "sessions", "site-7"), "");
-    const requests: unknown[] = [];
-    const daemon = createServer((connection) =>
-      connection.on("data", (data) => {
-        requests.push(JSON.parse(data.toString()));
-        connection.end('{"running":true,"pid":1}\n');
-      }),
-    );
-    await new Promise<void>((done) => daemon.listen(join(home, "run", "skelcrew.sock"), done));
-    const attached = await skel(["attach", "site-7"]).finally(() => daemon.close());
-    expect(attached.err).toBe("");
-    expect(requests).toContainEqual({ command: "lead", from: "simon/site" });
+    expect(calls()).toContain("tmux -L skelcrew -f /dev/null attach -t =site-7");
+    // There is no sidebar: the screen's own tmux server never starts.
+    expect(calls()).not.toContain("skelcrew-screen");
   });
 
   test("says when there is no such thread", async () => {
@@ -1204,7 +1187,7 @@ esac`,
     expect(missing.code).not.toBe(0);
     expect(missing.err).toBe("Skelcrew: there is no thread app-99\n");
     expect((await skel(["attach", "web-1"])).err).toContain("no repository named web");
-    expect(calls()).not.toContain("new-session");
+    expect(calls()).not.toContain(" attach ");
   });
 
   test("says when the builder isn't running, and what state its thread is in", async () => {
@@ -1214,7 +1197,7 @@ esac`,
     expect(dead.err).toBe("Skelcrew: app-12's builder isn't running: the thread is working\n");
     const gone = await skel(["attach", "app-9"]);
     expect(gone.err).toBe("Skelcrew: app-9's builder isn't running: the thread is failed\n");
-    expect(calls()).not.toContain("new-session");
+    expect(calls()).not.toContain(" attach ");
   });
 
   test("refuses inside Skelcrew's sandbox, since it takes over your terminal", async () => {

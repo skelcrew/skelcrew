@@ -132,7 +132,7 @@ UPDATE threads SET host = 'fake', host_id = 'fake-app-12' WHERE folder = 'app-12
   await until(() => selected().includes("app-12"), "the sidebar to follow");
 });
 
-test("sc attach's screen starts on the agent it names, marked in the sidebar", async () => {
+test("a screen opened on an agent starts on it, marked in the sidebar", async () => {
   open("app-7");
   await ready("app-7");
   expect(selected()).toBe("○ 7 app-7");
