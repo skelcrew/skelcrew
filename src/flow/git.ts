@@ -393,7 +393,11 @@ export async function claimName(
   } catch (error) {
     // A push can reach the remote and fail only on its way back. A claim at this attempt's own
     // commit is this machine's, so it counts, and the task isn't filed again under another name.
-    if ((await remoteRef(db, repository, claimRef(name)).catch(() => "")) === commit) return true;
+    // A remote that can't say leaves the outcome unknown, which the caller must hear as the
+    // failure it is: taking the claim for another machine's would file the task twice.
+    const holds = await remoteRef(db, repository, claimRef(name)).catch(() => null);
+    if (holds === null) throw error;
+    if (holds === commit) return true;
     // A refusal only means another machine claimed first when the claim is there or the last
     // claim moved. Otherwise the push failed for another reason, such as the remote being out of
     // reach, which the caller must hear.

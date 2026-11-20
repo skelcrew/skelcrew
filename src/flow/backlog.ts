@@ -91,47 +91,51 @@ export async function claimOwnName(
 // machine. The daemon's copy has it once the clone's next refresh reads it back.
 //
 // The remote can take the push and then be out of reach before Skelcrew learns it did, so the
-// filing fails though the task may be filed. Each try is noted before its push and forgotten once
-// its outcome is known, so only such a try keeps its note. The same task given again then settles
-// it first: with its claim on the remote, it was filed, and `already` says so with its name. A
-// task filed twice on purpose has no note, and is filed again. Throws when a note can't be
-// settled, as the remote can't be asked.
-export async function fileTask(
+// filing fails though the task may be filed. Each try is noted, by its own claim's commit, before
+// its push, and forgotten once its outcome is known, so only such a try keeps its note. The same
+// task given again then settles it first: with its claim on the remote, it was filed, and
+// `already` says so with its name. A task filed twice on purpose has no note, and is filed again.
+// Filings run in the repository's turn, so two at once never settle the same note. Throws when a
+// note can't be settled, as the remote can't be asked.
+export function fileTask(
   db: Database,
   repository: Repository,
   folder: string,
   given: { title: string; body: string; by: string },
 ): Promise<{ task: string; already: boolean }> {
-  const { owner, repo } = repository;
-  const same = "WHERE owner = ? AND repo = ? AND title = ? AND body = ?";
-  const notes = db
-    .query(`SELECT task, claim_commit FROM filing_tries ${same}`)
-    .all(owner, repo, given.title, given.body)
-    .map((row) => z.object({ task: z.string(), claim_commit: z.string() }).parse(row));
-  for (const note of notes) {
-    const holds = await claimedAt(db, repository, note.task);
-    db.run("DELETE FROM filing_tries WHERE owner = ? AND repo = ? AND task = ?", [
-      owner,
-      repo,
-      note.task,
-    ]);
-    if (holds === note.claim_commit) return { task: note.task, already: true };
-  }
-  const kept = { ...given, created: new Date().toISOString() };
-  const tried: string[] = [];
-  const note = (task: string, commit: string) => {
-    tried.push(task);
-    db.run(
-      `INSERT OR REPLACE INTO filing_tries (owner, repo, task, claim_commit, title, body)
-        VALUES (?, ?, ?, ?, ?, ?)`,
-      [owner, repo, task, commit, given.title, given.body],
-    );
-  };
-  const task = await claimOwnName(db, repository, folder, JSON.stringify(kept), note);
-  // Every try's outcome is known now: lost to another machine, or this one.
-  for (const t of tried)
-    db.run("DELETE FROM filing_tries WHERE owner = ? AND repo = ? AND task = ?", [owner, repo, t]);
-  return { task, already: false };
+  return inTurn(repository, async () => {
+    const { owner, repo } = repository;
+    const forget = (commit: string) =>
+      db.run("DELETE FROM filing_tries WHERE owner = ? AND repo = ? AND claim_commit = ?", [
+        owner,
+        repo,
+        commit,
+      ]);
+    const notes = db
+      .query(`SELECT task, claim_commit FROM filing_tries
+        WHERE owner = ? AND repo = ? AND title = ? AND body = ?`)
+      .all(owner, repo, given.title, given.body)
+      .map((row) => z.object({ task: z.string(), claim_commit: z.string() }).parse(row));
+    for (const note of notes) {
+      const holds = await claimedAt(db, repository, note.task);
+      forget(note.claim_commit);
+      if (holds === note.claim_commit) return { task: note.task, already: true };
+    }
+    const kept = { ...given, created: new Date().toISOString() };
+    const tried: string[] = [];
+    const note = (task: string, commit: string) => {
+      tried.push(commit);
+      db.run(
+        `INSERT INTO filing_tries (owner, repo, task, claim_commit, title, body)
+          VALUES (?, ?, ?, ?, ?, ?)`,
+        [owner, repo, task, commit, given.title, given.body],
+      );
+    };
+    const task = await claimOwnName(db, repository, folder, JSON.stringify(kept), note);
+    // Every try's outcome is known now: lost to another machine, or this one.
+    for (const commit of tried) forget(commit);
+    return { task, already: false };
+  });
 }
 
 // Writes tasks into the daemon's copy of the repository's backlog, over any of the same name.

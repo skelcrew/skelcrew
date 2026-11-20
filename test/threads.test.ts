@@ -1704,6 +1704,60 @@ exec ${real} "$@"
     expect(twice.out).toBe("Filed app-t101 in the backlog. sc start app-t101 starts it.\n");
   }, 60_000);
 
+  // The remote takes the push that files the task and the answer is lost. Then the first look at
+  // the name's claim fails, while the remote answers again after. The claim must not be taken for
+  // another machine's, which would file the task again under the next name.
+  test("a filing whose claim can't be looked up once is never filed again under another name", async () => {
+    const work = addApp();
+    serve();
+    await untilCloned();
+    const real = Bun.which("git") ?? "git";
+    writeFileSync(
+      join(home, "bin", "git"),
+      `#!/bin/sh
+case "$*" in *push*":refs/skelcrew/tasks/"*) ${real} "$@"; touch "$HOME/flaky"; exit 1 ;; esac
+case "$*" in *"ls-remote "*" refs/skelcrew/names/t1"[0-9][0-9]) if [ -e "$HOME/flaky" ]; then rm "$HOME/flaky"; exit 1; fi ;; esac
+exec ${real} "$@"
+`,
+      { mode: 0o755 },
+    );
+    const failed = await skel("task", "add", "app", "Add export", "As JSON");
+    expect(failed.err).toContain("run the same sc task add again once it can be reached");
+    rmSync(join(home, "bin", "git"));
+    const again = await skel("task", "add", "app", "Add export", "As JSON");
+    expect(again.out).toStartWith("app-t100 already holds this task");
+    expect(git(work, "ls-remote", "origin", "refs/skelcrew/tasks/*")).not.toContain("t101");
+  }, 60_000);
+
+  // Two filings at once whose answers are both lost each keep a note of their own, so each is
+  // settled by its own retry, and neither is filed twice.
+  test("two filings at once whose answers are lost are each filed once", async () => {
+    const work = addApp();
+    serve();
+    await untilCloned();
+    const real = Bun.which("git") ?? "git";
+    writeFileSync(
+      join(home, "bin", "git"),
+      `#!/bin/sh
+case "$*" in *push*":refs/skelcrew/tasks/"*) ${real} "$@"; exit 1 ;; esac
+case "$*" in *"ls-remote "*" refs/skelcrew/names/t1"[0-9][0-9]) exit 1 ;; esac
+exec ${real} "$@"
+`,
+      { mode: 0o755 },
+    );
+    const both = await Promise.all([
+      skel("task", "add", "app", "Add export", "As JSON"),
+      skel("task", "add", "app", "Add import", "From CSV"),
+    ]);
+    for (const run of both) expect(run.err).toContain("run the same sc task add again");
+    rmSync(join(home, "bin", "git"));
+    const exported = await skel("task", "add", "app", "Add export", "As JSON");
+    const imported = await skel("task", "add", "app", "Add import", "From CSV");
+    expect([exported.out, imported.out].every((out) => out.includes("already holds"))).toBe(true);
+    const refs = git(work, "ls-remote", "origin", "refs/skelcrew/tasks/*").trim().split("\n");
+    expect(refs).toHaveLength(2);
+  }, 60_000);
+
   test("sc rm deletes a task that never started, here and on the remote, and keeps its name", async () => {
     const work = addApp();
     serve();

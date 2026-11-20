@@ -557,7 +557,7 @@ function prepareTables(db: Database): void {
     claim_commit TEXT NOT NULL,
     title TEXT NOT NULL,
     body TEXT NOT NULL,
-    PRIMARY KEY (owner, repo, task)
+    PRIMARY KEY (owner, repo, claim_commit)
   )`);
   // The starts of backlog tasks this machine claimed on the remote and hasn't recorded a thread
   // for yet, each by the commit of its claim. A start a stop cut short is put back in the
