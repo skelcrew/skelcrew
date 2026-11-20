@@ -344,8 +344,10 @@ Every command that lists or shows something takes `--json`, for tools. Commands 
 | `sc plugins` | Lists the plugins the files ask for and the machine has, with their versions, their kind and what each provides, and any that `sc install` would change. |
 | `sc up` | Runs the engine in the foreground, with a readable log, until Ctrl-C. |
 | `sc up --bg` | Runs the engine as the background service, under systemd or launchd, and returns. |
+| `sc restart` | Restarts the engine's service, under systemd or launchd, and prints one line once the new engine answers, such as `Restarted the engine on simon@workbox. Agents kept running.` Agents keep running. An engine run in a terminal with `sc up` isn't restarted: `sc restart` asks you to stop it, and starts no service beside it. |
 | `sc --remote <host> install` | Sends your personal files to the server and runs `sc install` there. On a server with no Skelcrew, asks, then puts Skelcrew there first. |
 | `sc --remote <host> up --bg` | Runs the engine on the server as its background service. |
+| `sc --remote <host> restart` | Restarts the server's engine, with no `ssh` by hand. |
 | `sc --remote <host> [command]` | Runs any command on the server, over `ssh -t`. With no command, opens the server's split screen, and with `--list` its list. |
 | `sc repo add [<path> \| <owner/repo>]` | Adds a repository: the checkout at the path, the one named, or the checkout you are in. Asks whether you trust it when it needs to. |
 | `sc repo ls` | Lists the repositories, with their short names, trackers and forges, and a tracker `skelcrew.yaml` names that isn't installed. |

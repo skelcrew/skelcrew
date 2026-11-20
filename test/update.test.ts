@@ -1,6 +1,6 @@
 // Updates: a release of Skelcrew installing a newer one in the background, from a fake release
-// server, the sidebar's notice that it waits for a restart, and Skelcrew restarting the daemon on
-// the new release before you attach.
+// server, the sidebar's notice that it waits for a restart, Skelcrew restarting the daemon on
+// the new release before you attach, and sc restart restarting it when you ask.
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import {
@@ -13,7 +13,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir, userInfo } from "node:os";
+import { hostname, tmpdir, userInfo } from "node:os";
 import { dirname, join } from "node:path";
 import type { Subprocess } from "bun";
 import { git, homeEnv, source, until, writeScript } from "./harness.ts";
@@ -187,15 +187,20 @@ const daemonLog = () =>
 // launchctl restarted it. In a process of its own, as one in the test's process got no answer
 // while the test waited on Skelcrew, and on Bun.listen, as a node:net server refused connections
 // for a moment after it said it was listening.
-async function daemon(before: object, after: object): Promise<void> {
+async function daemon(
+  before: object,
+  after: object,
+  { service = 1, restarts = true } = {},
+): Promise<void> {
   const managers: [string, string][] = [
     ["systemctl", "--user restart skelcrew"],
     ["launchctl", `kickstart -k gui/${userInfo().uid}/dev.skelcrew.daemon`],
   ];
-  // The service runs the daemon whose process id is 1. Asking so isn't noted with the calls.
+  // The service runs the daemon whose process id is `service`, or none for 0. Asking so isn't
+  // noted with the calls.
   const asked: Record<string, string> = {
-    systemctl: 'test "$2" = show && echo 1 && exit 0',
-    launchctl: 'test "$1" = print && echo "pid = 1" && exit 0',
+    systemctl: `test "$2" = show && echo ${service} && exit 0`,
+    launchctl: `test "$1" = print && echo "pid = ${service}" && exit 0`,
   };
   for (const [name, restart] of managers)
     writeScript(
@@ -204,18 +209,28 @@ async function daemon(before: object, after: object): Promise<void> {
       `${asked[name]}\necho "${name} $*" >> "$HOME/calls"\ntest "$*" = "${restart}" && touch "$HOME/restarted"\nexit 0`,
     );
   const socket = join(home, "run", "skelcrew.sock");
+  const restarted = join(home, "restarted");
   // The socket's file comes a moment before it takes connections.
   const ready = join(home, "listening");
-  const code = `import { existsSync } from "node:fs";
-Bun.listen({
-  unix: ${JSON.stringify(socket)},
-  socket: {
-    data(connection) {
-      const runs = existsSync(${JSON.stringify(join(home, "restarted"))}) ? ${JSON.stringify(after)} : ${JSON.stringify(before)};
-      connection.end(JSON.stringify({ running: true, pid: 1, ...runs }) + "\\n");
-    },
+  // Once restarted, it makes its socket again, as a new daemon would, unless `restarts` is false:
+  // then it stands for a daemon that keeps running, such as one in a terminal.
+  const code = `import { existsSync, rmSync } from "node:fs";
+const answer = {
+  data(connection) {
+    const runs = existsSync(${JSON.stringify(restarted)}) ? ${JSON.stringify(after)} : ${JSON.stringify(before)};
+    connection.end(JSON.stringify({ running: true, pid: 1, ...runs }) + "\\n");
   },
-});
+};
+let server = Bun.listen({ unix: ${JSON.stringify(socket)}, socket: answer });
+if (${restarts}) {
+  const timer = setInterval(() => {
+    if (!existsSync(${JSON.stringify(restarted)})) return;
+    clearInterval(timer);
+    server.stop(true);
+    rmSync(${JSON.stringify(socket)}, { force: true });
+    server = Bun.listen({ unix: ${JSON.stringify(socket)}, socket: answer });
+  }, 20);
+}
 await Bun.write(${JSON.stringify(ready)}, "");`;
   running.push(Bun.spawn([process.execPath, "-e", code], { stdout: "ignore", stderr: "ignore" }));
   await until(() => existsSync(ready));
@@ -305,6 +320,110 @@ test("says where to look when the daemon doesn't come back on the new release", 
   expect(done.err).toContain("within 2 seconds");
   expect(done.err).toContain(daemonLog());
 }, 60_000);
+
+// Runs sc restart as you would in your terminal, and returns what it printed, its exit code and
+// what the service manager was asked. You are simon, which Bun reads from USER. `more` adds to
+// its environment.
+async function restart(more: Record<string, string> = {}) {
+  const run = Bun.spawn([process.execPath, source("main.ts"), "restart"], {
+    env: { ...env(), USER: "simon", ...more },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [out, err, code] = await Promise.all([
+    new Response(run.stdout).text(),
+    new Response(run.stderr).text(),
+    run.exited,
+  ]);
+  const calls = existsSync(join(home, "calls")) ? readFileSync(join(home, "calls"), "utf8") : "";
+  return { out, err, code, calls };
+}
+
+test("sc restart restarts the engine's service and says so once the new one answers", async () => {
+  await daemon({}, {});
+  const done = await restart();
+  expect(done.err).toBe("");
+  expect(done.code).toBe(0);
+  expect(done.calls).toBe(restartCall);
+  expect(done.out).toBe(`Restarted the engine on simon@${hostname()}. Agents kept running.\n`);
+});
+
+// The service manager can't restart an engine you run in a terminal, and one it started beside
+// it would fail on the lock.
+test("sc restart asks you to stop an engine run in a terminal, and starts no service", async () => {
+  await daemon({ pid: 2 }, {});
+  const done = await restart();
+  expect(done.code).toBe(1);
+  expect(done.err).toContain("sc up");
+  expect(done.err).toContain("Ctrl-C");
+  expect(done.calls).toBe("");
+});
+
+// The old engine still answering counts as not back.
+test("sc restart says where to look when no new engine answers", async () => {
+  await daemon({}, {}, { restarts: false });
+  const done = await restart({ SKELCREW_RESTART_WAIT_MS: "2000" });
+  expect(done.code).toBe(1);
+  expect(done.err).toContain("within 2 seconds");
+  expect(done.err).toContain(daemonLog());
+}, 60_000);
+
+// An engine of an older release reports no process id. One that answers while the service runs
+// none runs in a terminal.
+test("sc restart asks you to stop an older engine run in a terminal, with no service running", async () => {
+  await daemon({ pid: 0 }, {}, { service: 0 });
+  const done = await restart();
+  expect(done.code).toBe(1);
+  expect(done.err).toContain("Ctrl-C");
+  expect(done.calls).toBe("");
+});
+
+// The service can run an older installed Skelcrew than this sc, whose new engine reports no id
+// either.
+test("sc restart restarts an older engine the service runs, which reports no process id", async () => {
+  await daemon({ pid: 0 }, { pid: 0 });
+  const done = await restart();
+  expect(done.err).toBe("");
+  expect(done.code).toBe(0);
+  expect(done.calls).toBe(restartCall);
+});
+
+// The service manager can run a process of its own beside an older engine in a terminal, such
+// as one retrying on the lock. The old engine keeps answering on its old socket.
+test("sc restart doesn't take an older engine in a terminal for the new one", async () => {
+  await daemon({ pid: 0 }, { pid: 0 }, { restarts: false });
+  const done = await restart({ SKELCREW_RESTART_WAIT_MS: "2000" });
+  expect(done.code).toBe(1);
+  expect(done.err).toContain("within 2 seconds");
+  expect(done.err).toContain("Ctrl-C");
+}, 60_000);
+
+// --remote runs the command on a server, where Skelcrew can't tell that an agent asked, so agents
+// can't run any command there.
+test("sc --remote is only for your own terminal, not for agents", async () => {
+  const run = Bun.spawn(
+    [process.execPath, source("main.ts"), "--remote", "simon@workbox", "restart"],
+    {
+      env: { ...env(), SKELCREW_SANDBOX: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    },
+  );
+  const [err, code] = await Promise.all([new Response(run.stderr).text(), run.exited]);
+  expect(code).toBe(1);
+  expect(err).toBe(
+    "Skelcrew: running sc on a server is only for your own terminal, not for agents\n",
+  );
+});
+
+test("sc restart is only for your own terminal, not for agents", async () => {
+  const done = await restart({ SKELCREW_SANDBOX: "1" });
+  expect(done.code).toBe(1);
+  expect(done.err).toBe(
+    "Skelcrew: restarting the engine is only for your own terminal, not for agents\n",
+  );
+  expect(done.calls).toBe("");
+});
 
 // Runs sc stamped with `build` on a server, as --remote from a laptop on `laptop` runs it. The
 // server has a home of its own with a finished first run, since Skelcrew there says it isn't set
