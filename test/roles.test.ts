@@ -31,9 +31,15 @@ const restarted =
 const asking =
   "\nUse the setup and test commands named at the end of these instructions, as every builder of the repository uses the same ones. If one you need isn't configured, never make one up: ask the lead which to use with sc tell lead, and wait for its answer. That counts as blocked.\n";
 
-// What the lead was told about issues, threads and PRs before sc ls and sc show, and about the
-// sidebar before sc --list, each with what it is told now.
+// What the lead was told about issues, threads and PRs before sc ls and sc show, before threads
+// with no issue were numbered from t100, and about the sidebar before sc --list, each with what
+// it is told now.
 const leadTasks = [
+  ["prints its name, such as app-t1.", "prints its name, such as app-t100."],
+  [
+    "such as app-t1, has nothing that stays open, and sc start app-t1 starts it over.",
+    "such as app-t100, has nothing that stays open, and sc start app-t100 starts it over.",
+  ],
   [
     "- sc issue ls lists open issues, and sc ps lists threads, with their status, whether they need the human, and each one's PR, CI and review, such as #242, failed and changes r3.",
     "- sc ls lists open issues and the work on each, one row each. Each row says what is happening, such as waiting · #242 · CI failed · changes r3, and whether it needs the human. sc ls --all adds work that ended. sc ps lists threads, with the same columns.",

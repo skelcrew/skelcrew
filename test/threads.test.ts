@@ -328,7 +328,7 @@ test("sc start <repo> refuses --from, with the task as words or on stdin, and st
   // A description that says "--from" is the task's own words, so that task starts.
   const described = await skel("start", "app", "Document the option", "--from");
   expect(described.err).toBe("");
-  expect(described.out).toBe(`Started app-t1.\n`);
+  expect(described.out).toBe(`Started app-t100.\n`);
   expect(thread()).toMatchObject({ title: "Document the option", body: "--from" });
 });
 
@@ -342,13 +342,13 @@ test("sc start <repo> takes a repository whose name ends like a task, by any of 
   await untilAnswers();
   const byName = await runSkel(["start", "skelcrew-herdr-v2"], env(), "# Add export\n\nAs JSON\n");
   expect(byName.err).toBe("");
-  expect(byName.out).toBe(`Started skelcrew-herdr-v2-t1.\n`);
+  expect(byName.out).toBe(`Started skelcrew-herdr-v2-t100.\n`);
   const byFullName = await skel("start", "simon/skelcrew-herdr-v2", "Add import", "From CSV");
   expect(byFullName.err).toBe("");
-  expect(byFullName.out).toBe(`Started skelcrew-herdr-v2-t2.\n`);
+  expect(byFullName.out).toBe(`Started skelcrew-herdr-v2-t101.\n`);
   const byUrl = await skel("start", "https://github.com/simon/skelcrew-herdr-v2", "Add a", "B");
   expect(byUrl.err).toBe("");
-  expect(byUrl.out).toBe(`Started skelcrew-herdr-v2-t3.\n`);
+  expect(byUrl.out).toBe(`Started skelcrew-herdr-v2-t102.\n`);
   // A task of that repository still splits at its last dash.
   const task = await skel("start", "skelcrew-herdr-v2-12");
   expect(task.err).toBe("");
@@ -454,18 +454,18 @@ test("sc start --flow runs a task on a flow file of the repository, and refuses 
   await untilApproved();
   const quick = await skel("start", "app", "Fix typo", "In the README", "--flow", "quick");
   expect(quick.err).toBe("");
-  expect(quick.out).toBe(`Started app-t1.\n`);
-  expect(flows()).toEqual([{ task: `t1`, flow: "quick" }]);
+  expect(quick.out).toBe(`Started app-t100.\n`);
+  expect(flows()).toEqual([{ task: `t100`, flow: "quick" }]);
   const missing = await skel("start", "app-12", "--flow", "slow");
   expect(missing.err).toBe("Skelcrew: app has no flow slow. Its flows are default, quick.\n");
   // A flow's name can't reach outside .agents/flows/.
   expect((await skel("start", "app-12", "--flow", "../x")).code).not.toBe(0);
   expect((await skel("start", "app-12", "--flow")).code).not.toBe(0);
   // Without --flow, a task runs default.
-  expect((await skel("start", "app", "Add notes", "As text")).out).toBe(`Started app-t2.\n`);
+  expect((await skel("start", "app", "Add notes", "As text")).out).toBe(`Started app-t101.\n`);
   expect(flows()).toEqual([
-    { task: `t1`, flow: "quick" },
-    { task: `t2`, flow: "default" },
+    { task: `t100`, flow: "quick" },
+    { task: `t101`, flow: "default" },
   ]);
 });
 
@@ -1106,10 +1106,10 @@ nameRepositories(db);`;
     await untilAnswers();
     const run = await skel("start", "app", "Add export", "As JSON");
     expect(run.err).toBe("");
-    expect(run.out).toBe(`Started app-t1.\n`);
-    await until(() => read(join(config(`app-t1`), "args")) !== "");
-    expect(read(join(config(`app-t1`), "args"))).toContain("Add export\n\nAs JSON");
-    expect(thread()).toMatchObject({ task: `t1`, title: "Add export", body: "As JSON" });
+    expect(run.out).toBe(`Started app-t100.\n`);
+    await until(() => read(join(config(`app-t100`), "args")) !== "");
+    expect(read(join(config(`app-t100`), "args"))).toContain("Add export\n\nAs JSON");
+    expect(thread()).toMatchObject({ task: `t100`, title: "Add export", body: "As JSON" });
     expect(asked(plugin).filter((q) => q.ask === "create task")).toEqual([]);
   }, 60_000);
 
@@ -1121,8 +1121,8 @@ nameRepositories(db);`;
     await untilAnswers();
     const run = await skel("start", "app", "--fast", "Make the build quicker");
     expect(run.err).toBe("");
-    await until(() => read(join(config(`app-t1`), "args")) !== "");
-    expect(read(join(config(`app-t1`), "args"))).toEndWith(
+    await until(() => read(join(config(`app-t100`), "args")) !== "");
+    expect(read(join(config(`app-t100`), "args"))).toEndWith(
       "\n--\n--fast\n\nMake the build quicker\n",
     );
   }, 60_000);
@@ -1135,9 +1135,9 @@ nameRepositories(db);`;
     const task = '# Add export\n\n\nAs JSON, with "quotes" and $HOME.\nAnd dates.\n';
     const run = await runSkel(["start", "app"], env(), task);
     expect(run.err).toBe("");
-    expect(run.out).toBe(`Started app-t1.\n`);
+    expect(run.out).toBe(`Started app-t100.\n`);
     expect(thread()).toMatchObject({
-      task: `t1`,
+      task: `t100`,
       title: "Add export",
       body: 'As JSON, with "quotes" and $HOME.\nAnd dates.\n',
     });
@@ -1147,30 +1147,30 @@ nameRepositories(db);`;
   // thread on the remote, so this one takes the next number and claims it.
   test("sc start on what you said skips a name another machine claimed, and claims its own", async () => {
     const work = addApp();
-    git(work, "push", "-q", "origin", `main:refs/skelcrew/names/t1`);
+    git(work, "push", "-q", "origin", `main:refs/skelcrew/names/t100`);
     serve();
     await untilCloned();
     const run = await skel("start", "app", "Add export", "As JSON");
     expect(run.err).toBe("");
-    expect(run.out).toBe(`Started app-t2.\n`);
-    expect(thread()).toMatchObject({ task: `t2`, branch: `skelcrew/t2-add-export` });
+    expect(run.out).toBe(`Started app-t101.\n`);
+    expect(thread()).toMatchObject({ task: `t101`, branch: `skelcrew/t101-add-export` });
     const claims = git(work, "ls-remote", "origin", "refs/skelcrew/names/*");
-    expect(claims).toContain(`refs/skelcrew/names/t2`);
+    expect(claims).toContain(`refs/skelcrew/names/t101`);
   }, 60_000);
 
-  // An issue with the shape of Skelcrew's own ID, such as t1, would share its name with a thread
+  // An issue with the shape of Skelcrew's own ID, such as t100, would share its name with a thread
   // started with no issue. Skelcrew leaves it out, so the name stays the thread's.
   test("an issue whose ID has the shape of Skelcrew's own is left out", async () => {
     addApp();
-    known.push(taskItem(`t1`, "Add import", { body: "From CSV" }));
+    known.push(taskItem(`t100`, "Add import", { body: "From CSV" }));
     answer(plugin, "changed", { items: known, next: null });
     serve();
     await untilCloned();
-    const refused = await skel("start", `app-t1`);
-    expect(refused.err).toContain(`there is no open issue t1 in app`);
+    const refused = await skel("start", `app-t100`);
+    expect(refused.err).toContain(`there is no open issue t100 in app`);
     const run = await skel("start", "app", "Add export", "As JSON");
-    expect(run.out).toBe(`Started app-t1.\n`);
-    expect(thread()).toMatchObject({ task: `t1`, title: "Add export" });
+    expect(run.out).toBe(`Started app-t100.\n`);
+    expect(thread()).toMatchObject({ task: `t100`, title: "Add export" });
   }, 60_000);
 
   // The lead names each thread it starts in two or three words, for the sidebar's row.
@@ -1180,15 +1180,15 @@ nameRepositories(db);`;
     await untilCloned();
     const named = await skel("start", "app", "Add export", "As JSON", "--short", "JSON export");
     expect(named.err).toBe("");
-    expect(named.out).toBe(`Started app-t1.\n`);
-    expect(thread()).toMatchObject({ task: `t1`, title: "Add export", short: "JSON export" });
+    expect(named.out).toBe(`Started app-t100.\n`);
+    expect(thread()).toMatchObject({ task: `t100`, title: "Add export", short: "JSON export" });
     const piped = await runSkel(
       ["start", "app", "--short", "Notes"],
       env(),
       "Add notes\n\nAs text",
     );
     expect(piped.err).toBe("");
-    expect(piped.out).toBe(`Started app-t2.\n`);
+    expect(piped.out).toBe(`Started app-t101.\n`);
     const issue = await skel("start", "app-12", "--short", "Export");
     expect(issue.err).toBe("");
     expect(issue.out).toBe("Started app-12.\n");
@@ -1197,8 +1197,8 @@ nameRepositories(db);`;
     db.close();
     expect(shorts).toEqual([
       { task: 12, short: "Export" },
-      { task: `t1`, short: "JSON export" },
-      { task: `t2`, short: "Notes" },
+      { task: `t100`, short: "JSON export" },
+      { task: `t101`, short: "Notes" },
     ]);
     expect((await skel("start", "app-12", "--short", " ")).code).not.toBe(0);
     expect((await skel("start", "app-12", "--short")).code).not.toBe(0);

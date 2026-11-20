@@ -28,7 +28,6 @@ import { checkoutFolder, git, release, singleFile } from "../version.ts";
 import { assignIssue } from "./assign.ts";
 import {
   bringBack,
-  claimOldNames,
   endEarlierBuilder,
   failThread,
   setUpThread,
@@ -921,21 +920,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   // answered meanwhile, as the socket is open.
   await Promise.all(openedRepositories(db).map((repository) => bringBackLead(repository, null)));
   // A lead keeps its clone current as it starts, and a repository with no lead needs it too.
-  // Then each repository's names from before Skelcrew claimed them go on its remote, from its
-  // clone, so another machine never gives a new task one of them.
-  refreshClones(db)
-    .then(() =>
-      Promise.all(
-        repositories(db)
-          .filter((r) => existsSync(cloneDir(r.owner, r.repo)))
-          .map((r) =>
-            claimOldNames(db, r).catch((error) =>
-              console.log(`couldn't claim ${r.name}'s old names: ${errorText(error)}`),
-            ),
-          ),
-      ),
-    )
-    .catch((error) => console.log(errorText(error)));
+  refreshClones(db).catch((error) => console.log(errorText(error)));
   // Notes the daemon's stop kept from the leads.
   typeLeadNotes(db, sessions);
   // Bring back each thread's builder, without waiting on it, and carry on the round it was in.

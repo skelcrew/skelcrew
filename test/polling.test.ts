@@ -2159,12 +2159,12 @@ echo "Not logged in"; exit 1`,
     );
     expect(started.stderr.toString()).toBe("");
     await until(() => thread().status === "waiting", 30_000);
-    Bun.spawnSync([process.execPath, main, "stop", `app-t1`], { env: env() });
+    Bun.spawnSync([process.execPath, main, "stop", `app-t100`], { env: env() });
     expect(thread().status).toBe("stopped");
     expect([...claims(), ...assigns()]).toEqual([]);
   }, 60_000);
 
-  // The test above stops the daemon as the review of app-t1's first round starts. bubblewrap
+  // The test above stops the daemon as the review of app-t100's first round starts. bubblewrap
   // starts its sandbox's first process in its own time, and that process only asks to die with
   // bwrap once it runs. A stop that ends bwrap in between leaves it waiting forever on a bwrap
   // that is gone, with bwrap's own command line, and no longer under the daemon. Here bwrap

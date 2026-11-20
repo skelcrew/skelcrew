@@ -3,7 +3,6 @@
 import type { Database } from "bun:sqlite";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { z } from "zod";
 import { harnessNamed } from "../agents/harness.ts";
 import { refuseCredentials, setupCommand } from "../agents/sandbox.ts";
 import {
@@ -17,7 +16,6 @@ import {
 } from "../agents/sessions.ts";
 import { approvedAgents } from "../approved-agents.ts";
 import { agentRole, checkFlow, repositoryCommands, roundLimit, sessionHost } from "../config.ts";
-import type { Repository } from "../db.ts";
 import { flowRoles } from "../flows.ts";
 import { cloneDir, threadSocket } from "../paths.ts";
 import { trackerOf } from "../plugins/ask.ts";
@@ -72,30 +70,10 @@ export function statusOnceBack(stopped: Thread): "waiting" | "working" {
   return waitsOnRound ? "waiting" : "working";
 }
 
-// Claims on the repository's remote each name such as t25 that a task on this machine holds and
-// no machine has claimed, and returns every t name the repository used. Names from before
-// Skelcrew claimed them live only in the database of the machine that started them. Claimed,
-// they keep another machine from giving a new task the same name. The daemon runs it as it
-// starts, so a machine with old names tells the remote before another machine names a task.
-export async function claimOldNames(db: Database, repository: Repository): Promise<string[]> {
-  const { owner, repo } = repository;
-  const claimed = await claimedNames(db, repository);
-  const held = db
-    .query("SELECT task FROM tasks WHERE owner = ? AND repo = ? AND task GLOB 't[0-9]*'")
-    .all(owner, repo)
-    .map((row) => z.object({ task: z.string() }).parse(row).task)
-    .filter((task) => /^t\d+$/.test(task));
-  // One at a time, as each is a push. Another machine claiming one first changes nothing here,
-  // as the name is claimed either way.
-  for (const task of held.filter((name) => !claimed.includes(name)))
-    await claimName(db, repository, cloneDir(owner, repo), task);
-  return [...new Set([...claimed, ...held])];
-}
-
 // Records a new thread and returns it. Its task is either one of the tracker's, with its title
 // and body from Skelcrew's copy, which sc start brings up to date first, or a given title and
 // body. A given one becomes a task of the repository's own, named by a t and a number, such as
-// t26, t27 and on, the same on every machine. That works with a tracker too, so you can start
+// t100, t101 and on, the same on every machine. That works with a tracker too, so you can start
 // work without filing it. Refuses a task the copy doesn't have open. Refuses a task that has a thread already, unless that thread failed or is done,
 // such as after sc rm: then it starts over in the same folder. It only records the thread,
 // since the lead waits on the answer. Setting up its clone and starting its builder come
@@ -173,9 +151,11 @@ async function recordThread(
   let issueLink: string | null = null;
   let closes: string | null = null;
   if ("title" in given) {
-    // A t and the next number after every one this repository used, as claimOldNames gives
-    // them. Then claim it on the remote, which only one machine can, trying the next number while
-    // another got there first.
+    // A t and the next number after every one claimed on the remote, which every machine sees.
+    // Names from before Skelcrew claimed them, such as t25, were never claimed and live only on
+    // the machine that started them, so numbers start at 100, above all of them. Then claim it on
+    // the remote, which only one machine can, trying the next number while another got there
+    // first.
     const clone = cloneDir(owner, repo);
     // Its clone, which the daemon may still be making, is where the claim is pushed from. The
     // refresh also learns the repository's forge the first time, such as one added before its
@@ -184,9 +164,8 @@ async function recordThread(
     if (!existsSync(clone) || !forgeKnown(db, repository)) await refreshClones(db);
     const current = findRepository(db, given.repo);
     refuseMissingPlugins();
-    const used = await claimOldNames(db, current);
-    const numbers = used.map((id) => Number(id.slice(1)));
-    let number = Math.max(0, ...numbers) + 1;
+    const claimed = await claimedNames(db, current);
+    let number = Math.max(99, ...claimed.map((id) => Number(id.slice(1)))) + 1;
     while (!(await claimName(db, current, clone, `t${number}`))) number++;
     task = `t${number}`;
     ({ title, body } = given);
