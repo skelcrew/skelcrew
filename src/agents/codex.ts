@@ -554,7 +554,8 @@ function inputStart(screen: string[]): number | null {
 // Returns how each line of a screen is styled: whether a background colour shows on it, as on
 // Codex's input box, and whether all its text is dim, as its footer is. A style set on one line
 // goes on over the lines after it until reset, as a terminal shows it, and tmux can capture a
-// screen that way. A colour from a palette or in red, green and blue takes numbers of its own
+// screen that way. Only what a line draws counts, spaces included, so a line that resets the
+// background before drawing anything isn't shaded. A colour from a palette or in red, green and blue takes numbers of its own
 // after 38, 48 or 58, such as 38;5;2 for a foreground, so those are skipped rather than read as
 // codes of their own.
 function styles(screen: string[]): { shaded: boolean; dim: boolean }[] {
@@ -563,22 +564,21 @@ function styles(screen: string[]): { shaded: boolean; dim: boolean }[] {
   let background = false;
   let dimNow = false;
   return screen.map((line) => {
-    let shaded = background;
+    let shaded = false;
     let dim = true;
     for (const part of line.split(new RegExp(`(${esc}\\[[0-9;:]*m)`))) {
       const sgr = new RegExp(`^${esc}\\[([0-9;:]*)m$`).exec(part);
       if (!sgr) {
         // Text shown while dim is off makes the line not dim, spaces aside.
         if (part.trim() !== "" && !dimNow) dim = false;
+        if (part !== "" && background) shaded = true;
         continue;
       }
       const numbers = (sgr[1] ?? "").split(/[;:]/).map(Number);
       for (let at = 0; at < numbers.length; at++) {
         const code = numbers[at] ?? 0;
-        if (code === 48 || (code >= 40 && code <= 47) || (code >= 100 && code <= 107)) {
+        if (code === 48 || (code >= 40 && code <= 47) || (code >= 100 && code <= 107))
           background = true;
-          shaded = true;
-        }
         if (code === 0 || code === 49) background = false;
         if (code === 2) dimNow = true;
         if (code === 0 || code === 22) dimNow = false;
