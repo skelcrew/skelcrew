@@ -80,6 +80,11 @@ test("Codex's input box and footer are cut, idle, at work or with a long message
   expect(bottom(agentOutput("codex", resetLate), 1)).toEqual(["• Done."]);
   const footerFirst = [...resetLate.split("\n").slice(0, 5), "\x1b[0m  \x1b[2mcontext\x1b[0m"];
   expect(bottom(agentOutput("codex", footerFirst.join("\n")), 1)).toEqual(["• Done."]);
+  // A shade in red, green and blue with colons, such as 48:2::10:20:0, is one code, carried too.
+  const colons = resetLate.replace("\x1b[48;5;236m", "\x1b[48:2::10:20:0m");
+  expect(bottom(agentOutput("codex", colons), 1)).toEqual(["• Done."]);
+  const colonsWithMore = resetLate.replace("\x1b[48;5;236m", "\x1b[1;48:2::10:20:0;22m");
+  expect(bottom(agentOutput("codex", colonsWithMore), 1)).toEqual(["• Done."]);
   // A box whose empty prompt says other words is still found by its shape.
   const reworded = (await screen("codex-idle.txt")).replace("Ask Codex to do anything", "Ask away");
   expect(bottom(agentOutput("codex", reworded), 1)).toEqual(["• Edited src/api/limit.ts (+12 -0)"]);

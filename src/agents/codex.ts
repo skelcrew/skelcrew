@@ -555,9 +555,7 @@ function inputStart(screen: string[]): number | null {
 // Codex's input box, and whether all its text is dim, as its footer is. A style set on one line
 // goes on over the lines after it until reset, as a terminal shows it, and tmux can capture a
 // screen that way. Only what a line draws counts, spaces included, so a line that resets the
-// background before drawing anything isn't shaded. A colour from a palette or in red, green and blue takes numbers of its own
-// after 38, 48 or 58, such as 38;5;2 for a foreground, so those are skipped rather than read as
-// codes of their own.
+// background before drawing anything isn't shaded.
 function styles(screen: string[]): { shaded: boolean; dim: boolean }[] {
   const esc = "\x1b";
   // The background and dimness set now, carried from line to line.
@@ -574,15 +572,21 @@ function styles(screen: string[]): { shaded: boolean; dim: boolean }[] {
         if (part !== "" && background) shaded = true;
         continue;
       }
-      const numbers = (sgr[1] ?? "").split(/[;:]/).map(Number);
-      for (let at = 0; at < numbers.length; at++) {
-        const code = numbers[at] ?? 0;
+      // A colour from a palette or in red, green and blue takes numbers of its own after 38, 48
+      // or 58: with colons, such as 48:2::10:20:0, all in one parameter, and with semicolons,
+      // such as 38;5;2, in the parameters after it, which are skipped. Neither is read as codes
+      // of its own, so a 0 in a colour never resets.
+      const parameters = (sgr[1] ?? "").split(";");
+      for (let at = 0; at < parameters.length; at++) {
+        const parameter = parameters[at] ?? "";
+        const code = Number(parameter.split(":")[0] ?? "");
         if (code === 48 || (code >= 40 && code <= 47) || (code >= 100 && code <= 107))
           background = true;
         if (code === 0 || code === 49) background = false;
         if (code === 2) dimNow = true;
         if (code === 0 || code === 22) dimNow = false;
-        if (code === 38 || code === 48 || code === 58) at += numbers[at + 1] === 2 ? 4 : 2;
+        const extended = code === 38 || code === 48 || code === 58;
+        if (extended && !parameter.includes(":")) at += parameters[at + 1] === "2" ? 4 : 2;
       }
     }
     return { shaded, dim };
