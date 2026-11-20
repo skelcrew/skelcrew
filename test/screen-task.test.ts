@@ -223,8 +223,9 @@ UPDATE threads SET host = 'broken', host_id = 'broken-app-7' WHERE folder = 'app
   await onApp7();
   for (let time = 0; time < 5; time++) {
     expect(onRow("attach", "app-7")).toBe("");
-    await Bun.sleep(300);
+    // Once the attachment ended, its shell moves your typing back, then becomes the details,
+    // which take a moment to start and draw on a busy machine.
+    await until(() => right().includes("Login redirect"), "the details again");
     expect(typingTo()).toBe("0");
-    expect(right()).toContain("Login redirect");
   }
 });
