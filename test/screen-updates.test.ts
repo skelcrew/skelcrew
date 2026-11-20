@@ -1,33 +1,21 @@
-// Lists and pages that follow Skelcrew's copy as it changes, and what the screen writes to
-// your terminal while nothing changes.
+// What the screen writes to your terminal while nothing changes, and an agent's scrolling after
+// the right side showed something else.
 import { afterEach, beforeEach, expect, setDefaultTimeout, test } from "bun:test";
 import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { stillRunning } from "../src/agents/sessions.ts";
-import { itemSql, threadSql } from "./harness.ts";
+import { threadSql } from "./harness.ts";
 import {
   agent,
-  agents,
-  clickRow,
+  attachTo,
   endTest,
   fixedLoad,
   home,
-  issueUrl,
-  leaving,
-  listsRunning,
   noteRefreshes,
-  onRight,
   open,
-  openIssue,
-  openList,
-  openOnGitHub,
   press,
   ready,
-  refreshesStarted,
-  right,
-  screen,
   seen,
-  sidebar,
+  selected,
   sidebarRefreshedTwice,
   sql,
   startTest,
@@ -77,191 +65,25 @@ async function untilQuiet(written: string): Promise<void> {
   }
 }
 
-// Returns once the list and the sidebar have each read Skelcrew's copy again at least once. The
-// list does so each second, but when nothing changed it writes nothing and asks tmux nothing,
-// so nothing shows that it did: two seconds see it do so twice. The sidebar's refreshes in that
-// time show that the screen wasn't held up meanwhile.
-async function twoRefreshes(): Promise<void> {
-  const before = refreshesStarted();
-  await Bun.sleep(2000);
-  await until(() => refreshesStarted() >= before + 2, "the sidebar to refresh twice");
-}
-
-test("a list or page left open writes nothing", async () => {
-  noteRefreshes();
-  sql("UPDATE threads SET status = 'waiting', changed = 0 WHERE status = 'working'");
-  await openList("Threads");
-  const written = await copyOnceSettled();
-  await twoRefreshes();
-  expect(readFileSync(written, "utf8")).toBe("");
-  clickRow("Issues");
-  await onRight("Not started");
-  press("Enter");
-  await onRight("line 1 of the description");
-  await copyOnceSettled();
-  await twoRefreshes();
-  expect(readFileSync(written, "utf8")).toBe("");
-});
-
-test("a list follows Skelcrew's copy as it changes", async () => {
-  await openList("Issues");
-  sql(itemSql("app", "task", 40, "A new issue", "2026-11-06T10:00:00Z"));
-  await onRight("A new issue");
-  await until(() => /Issues +3/.test(seen()), "the count");
-});
-
-test("a row that moves out of view as the list changes is scrolled back into view", async () => {
-  const many = Array.from({ length: 40 }, (_, n) =>
-    itemSql(
-      "app",
-      "task",
-      100 + n,
-      `Issue ${100 + n}`,
-      `2026-11-06T10:${String(n).padStart(2, "0")}:00Z`,
-    ),
-  );
-  sql(many.join("\n"));
-  await openList("Issues");
-  await onRight("app-139");
-  // The issue you are on gets a thread, which moves it under Started, far below.
-  sql(threadSql({ task: "139" }));
-  await until(() => right().includes("Started") && right().includes("app-139"), "the row in view");
-  press("Enter");
-  await onRight("← back");
-  expect(right()).toContain("Issue 139");
-});
-
-test("a list scrolled with the wheel stays where you put it as it reads the copy again", async () => {
-  const many = Array.from({ length: 40 }, (_, n) =>
-    itemSql(
-      "app",
-      "task",
-      100 + n,
-      `Issue ${100 + n}`,
-      `2026-11-06T10:${String(n).padStart(2, "0")}:00Z`,
-    ),
-  );
-  sql(many.join("\n"));
-  noteRefreshes();
-  await openList("Issues");
-  for (let i = 0; i < 4; i++) wheel(65);
-  // Four notches reach the list's end, where app-124 is the first issue. The first notch alone
-  // already hides app-139, and the last moves fewer lines, so the wait is for the end.
-  await until(() => !right().includes("app-125"), "the list to scroll to its end");
-  const scrolled = right();
-  await twoRefreshes();
-  expect(right()).toBe(scrolled);
-});
-
-// Returns the process running the right pane, which is the list while one shows.
-const rightPane = () =>
-  tmux(screen, "list-panes", "-a", "-F", "#{pane_pid}").out.trim().split("\n").at(-1);
-
-test("clicking the entry of the list you are on doesn't start it again", async () => {
-  await openList("Issues");
-  const list = rightPane();
-  clickRow("Issues");
-  await Bun.sleep(300);
-  expect(rightPane()).toBe(list);
-});
-
-test("a page Skelcrew's copy no longer has says so, and you can still move on", async () => {
-  await openList("Issues");
-  sql("DELETE FROM items WHERE id = '31'");
-  press("Enter");
-  await onRight("Skelcrew has no open issue or PR at this link now");
-  expect(seen()).toContain(`GitHub  ${issueUrl}`);
-  press("M-S-Down");
-  await until(() => seen().includes("I am app-12"), "the thread");
-});
-
-test("a page follows a resize, and the sidebar stays as wide", async () => {
-  await openIssue();
-  tmux(terminal, "resize-window", "-t", "=one:", "-x", "80", "-y", "24");
-  await until(() => seen().split("\n").length <= 25, "the terminal");
-  await onRight("line 1 of the description");
-  expect(tmux(screen, "list-panes", "-a", "-F", "#{pane_width}").out).toContain(`${sidebar}\n`);
-});
-
-test("the wheel over an agent still scrolls it after a list came and went", async () => {
-  openOnGitHub();
+test("the wheel over an agent still scrolls it after a task's details came and went", async () => {
   agent("app-5", "seq 1 200");
   sql(threadSql({ task: "5" }));
-  open("app-5");
-  await ready("app-5");
-  clickRow("Issues");
-  await onRight("Not started");
-  clickRow("app-5");
-  await until(() => seen().includes("I am app-5"), "the agent");
+  open("lead");
+  await ready("lead");
+  press("M-S-Down");
+  await until(() => selected().includes("app-5"), "app-5's row");
+  await attachTo("app-5");
   wheel(64);
   await until(() => !seen().includes("I am app-5"), "the agent's history");
 });
 
-test("Ctrl-Q leaves from a page, and no list is left running", async () => {
-  await openIssue();
-  expect(listsRunning()).toBe(1);
-  const panes = tmux(screen, "list-panes", "-a", "-F", "#{pane_pid}").out.trim().split("\n");
-  press("C-q");
-  await until(() => seen().includes(leaving), "Skelcrew to say goodbye");
-  await until(() => stillRunning(panes.map(Number)).length === 0, "the panes' processes to end");
-});
-
-test("leaving a list for an agent ends the list, and no client is left behind it", async () => {
-  await openIssue();
-  press("M-S-Up");
-  await until(() => seen().includes("I am lead"), "the lead");
-  await until(() => listsRunning() === 0, "the list to end");
-  expect(tmux(agents, "list-clients").out.trim().split("\n")).toHaveLength(1);
-});
-
-test("two terminals can each be on a list of their own", async () => {
-  await openIssue();
-  open("lead", "two");
-  await ready("lead", "two");
-  expect(seen("two")).toContain("I am lead");
-  expect(right()).toContain("line 1 of the description");
-});
-
 test("with nothing working, an open screen sends your terminal nothing at all", async () => {
   noteRefreshes();
-  sql(`UPDATE threads SET status = 'waiting', started = ${Date.now()} WHERE status = 'working'`);
+  sql("UPDATE threads SET status = 'waiting', changed = 0 WHERE status = 'working'");
   open("lead");
   await ready("lead");
-  await until(() => seen().includes("waiting · claude"), "the threads");
+  await until(() => seen().includes("waiting"), "the threads");
   const written = await copyOnceSettled();
-  // The threads started five seconds short of a minute ago, so a time shown on a row would
-  // change during the wait. The sidebar must read that and draw it before the minute. Each try
-  // starts just after a refresh starts, so the next two come about two seconds on. A busy
-  // machine whose refreshes came later tries again with a minute further on, for up to 30 seconds.
-  const deadline = Date.now() + 30_000;
-  let minute = 0;
-  while (Date.now() >= minute) {
-    if (Date.now() > deadline)
-      throw new Error("the sidebar never refreshed twice before the minute");
-    const before = refreshesStarted();
-    await until(() => refreshesStarted() > before, "the sidebar to refresh");
-    minute = Date.now() + 5000;
-    sql(`UPDATE threads SET started = ${minute - 60_000} WHERE status = 'waiting'`);
-    await sidebarRefreshedTwice();
-  }
-  // Past the minute, the sidebar reads the threads again and draws what it read. A time it drew
-  // reaches the copy a moment later.
-  await Bun.sleep(minute - Date.now());
   await sidebarRefreshedTwice();
-  await untilQuiet(written);
   expect(readFileSync(written, "utf8")).toBe("");
-  const rows = seen().split("\n");
-  const row = rows.findIndex((line) => line.includes("app-12"));
-  expect(rows[row + 1]?.split("│")[0]?.trim()).toBe("waiting · claude");
-}, 90_000);
-
-test("a working thread's time moves on by itself, and writes when it does", async () => {
-  sql(`UPDATE threads SET started = ${Date.now() - 58_000} WHERE folder = 'app-12'`);
-  open("lead");
-  await ready("lead");
-  await until(() => seen().includes("claude · <1m"), "the time to start");
-  const written = join(home, "written");
-  tmux(terminal, "pipe-pane", "-O", "-t", "=one:", `cat >> ${written}`);
-  await until(() => seen().includes("claude · 1m"), "the time to move on");
-  await until(() => existsSync(written) && readFileSync(written, "utf8") !== "", "the write");
 });
