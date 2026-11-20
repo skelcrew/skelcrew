@@ -50,6 +50,12 @@ const limitNeedsYou = (thread: Thread, maxRounds: number) =>
   thread.submitting === null &&
   thread.reviewing === null;
 
+// Returns whether a failed round stays failed as an event sets the builder working: a review
+// that failed is over once the builder works again, but a submit its flow doesn't review that
+// failed, to push or to set Skelcrew's check, still sits saved, and nothing retries it until a new
+// submit or sc review. Telling the builder of a comment must not make it look under way again.
+const submitStillFailed = (thread: Thread) => thread.review_failed && waitsOnFirstCheck(thread);
+
 // What decide says to do with a thread: end it, with the reason for its log and the note for
 // its lead, or tell its builder what is new and change the thread.
 export type Decision =
@@ -437,7 +443,7 @@ export function decide(
     const change: Change = {
       status: "working",
       needs_you: limitNeedsYou(thread, given.maxRounds),
-      review_failed: false,
+      review_failed: submitStillFailed(thread),
     };
     const why = `told the builder: ${told.join("; ")}`;
     return { seen, tell, notice, typedIn, failed, conflict, moved, change, why };
@@ -489,7 +495,7 @@ export function decideBranch(
     change: {
       status: "working",
       needs_you: limitNeedsYou(thread, given.maxRounds),
-      review_failed: false,
+      review_failed: submitStillFailed(thread),
     },
     why: `told the builder: ${notice.split(". ")[0]}`,
   };

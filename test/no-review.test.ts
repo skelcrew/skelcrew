@@ -195,6 +195,27 @@ test("a failed submit on a flow with no review says what failed, never review fa
   );
 });
 
+// Telling the builder of a comment sets it working, but retries nothing: a failed submit stays
+// failed until a new submit or sc review, so its word and an armed merge keep saying so.
+test("a comment on the PR leaves a failed submit on a flow with no review failed", () => {
+  const you = { login: "simon", bot: false, you: true, push: true };
+  const commented = pr({ comments: [{ id: "c1", author: you, text: "Also fix the title." }] });
+  for (const under of [{ submitting: "Round 1" }, { reviewing: head }]) {
+    const failed = thread({ ...under, review_failed: true });
+    const decision = decide(failed, commented, { maxRounds: 3, moved: false });
+    if ("end" in decision) throw new Error("the thread ended");
+    expect(decision.tell).toHaveLength(1);
+    expect(decision.change).toMatchObject({ status: "working", review_failed: true });
+    const after = { ...failed, ...decision.change };
+    expect(threadWord(after, 3)).toMatch(/^(submit|check) failed$/);
+  }
+  // A review that failed is over once the builder works again, as before.
+  const review = thread({ verdict: "failed", review_failed: true });
+  const decision = decide(review, commented, { maxRounds: 3, moved: false });
+  if ("end" in decision) throw new Error("the thread ended");
+  expect(decision.change).toMatchObject({ review_failed: false });
+});
+
 // Such a flow has no review rounds, so the lead's note of a stuck merge goes once for each submit
 // marked not reviewed.
 test("an armed merge on a flow with no review tells the lead when it is stuck, once a submit", () => {
