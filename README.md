@@ -31,25 +31,23 @@ It ends with `Skelcrew is set up.` Running it again changes nothing that is done
 
 ### 2. Set up a repository
 
-Go to a checkout of one of your GitHub repositories and run `sc init`.
+Go to a checkout of one of your GitHub repositories, switch to its default branch, such as `main`, and run `sc init` there.
 
 ```sh
 cd ~/code/app
+git switch main
 sc init
 ```
 
 It writes `skelcrew.yaml`, `skelcrew.lock` with the GitHub plugin pinned, and `.agents/`, which holds the roles and flow agents follow. Say yes when it offers the GitHub plugin, `skelcrew/skelcrew-github`. The plugin signs you in to GitHub and installs Skelcrew's GitHub App on the repository, so Skelcrew acts on GitHub as `skelcrew[bot]`, never as you.
 
-The files count once they are on the default branch, so commit and push them there, such as `main`:
+The files count once they are on the default branch, so commit and push them:
 
 ```sh
-git switch main
 git add skelcrew.yaml skelcrew.lock .agents
 git commit -m "Set up Skelcrew"
 git push
 ```
-
-If your default branch takes changes only through a pull request, push a branch with them and merge its PR instead.
 
 ### 3. Open the lead
 
