@@ -1252,3 +1252,51 @@ process.exit(0);`,
   const labels = readFileSync(join(fake, "sessions", "fake-app-12", "labels.json"), "utf8");
   expect(JSON.parse(labels).title).toBe("login redirect");
 }, 40_000);
+
+// Starts simon/app's lead on the fake host, with `config` as your config.yaml and `row` as more
+// of the repository's columns, and returns the notes then saved for the lead. The fake
+// Claude Code can't run here, so the start may fail after the session began, which the notes
+// outlive. Starting logs a line of its own, so only the last line is read.
+function notesAfterStart(config: string, row = "") {
+  const fake = join(home, ".config", "skelcrew", "plugins", "fake");
+  const said = runWithFakeHost(
+    "sessions",
+    `const { startLead } = await import(${JSON.stringify(source("flow/lead.ts"))});
+const { cloneDir } = await import(${JSON.stringify(source("paths.ts"))});
+const fs = require("node:fs");
+fs.mkdirSync(${JSON.stringify(fake)}, { recursive: true });
+fs.writeFileSync(${JSON.stringify(join(home, ".config", "skelcrew", "config.yaml"))}, ${JSON.stringify(`harness: claude\nsession: fake\n${config}`)});
+fs.writeFileSync(${JSON.stringify(join(home, ".config", "skelcrew", "claude-token"))}, "sk-ant-oat01-good\\n");
+db.run("INSERT INTO repositories (name, owner, repo, remote, opened${row ? ", lead_session, lead_harness" : ""}) VALUES ('app', 'simon', 'app', '', 1${row})");
+db.run("DELETE FROM threads");
+fs.mkdirSync(cloneDir("simon", "app"), { recursive: true });
+Bun.spawnSync(["git", "init", "-q", cloneDir("simon", "app")]);
+const repository = { name: "app", owner: "simon", repo: "app", forge: null, remote: "" };
+await startLead(db, "unused", repository).catch(() => {});
+console.log(JSON.stringify(db.query("SELECT text FROM notes").all().map((n) => n.text)));`,
+    {},
+  );
+  return JSON.parse(said.trim().split("\n").at(-1) ?? "");
+}
+
+// A new human sees only the harness's banner until they speak, and shouldn't have to know to.
+test("a lead's first start brings it Skelcrew's opening turn, proposing to finish the setup", () => {
+  const notes = notesAfterStart("");
+  expect(notes).toHaveLength(1);
+  expect(notes[0]).toStartWith("Skelcrew:");
+  expect(notes[0]).toContain("first start");
+  expect(notes[0]).toContain("finishes the setup");
+}, 20_000);
+
+test("a configured repository's first start has the lead ask what to work on", () => {
+  const notes = notesAfterStart("setup: [bun install]\ntest: [bun test]\n");
+  expect(notes).toHaveLength(1);
+  expect(notes[0]).toStartWith("Skelcrew:");
+  expect(notes[0]).toContain("what to work on");
+  expect(notes[0]).not.toContain("setup");
+}, 20_000);
+
+test("a lead with an earlier conversation gets no opening turn", () => {
+  const notes = notesAfterStart("", ", '6f1c2a8e-3b4d-4e5f-8a9b-0c1d2e3f4a5b', 'claude'");
+  expect(notes).toEqual([]);
+}, 20_000);

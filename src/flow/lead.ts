@@ -25,6 +25,7 @@ import { type Host, hostNamed } from "../plugins/runtime.ts";
 import { builtInRole, repositoryRole } from "../roles.ts";
 import { errorText } from "../say.ts";
 import type { Settings } from "../settings.ts";
+import { noteForLead } from "./messages.ts";
 import { refreshClones } from "./repo.ts";
 import { forgetStatus, reportLeadStatus } from "./status.ts";
 
@@ -304,6 +305,12 @@ export async function startLead(
     await endSession(host, id);
     throw new Error(`${owner}/${repo} was closed or removed while its lead started`);
   }
+  // A lead with no earlier conversation would sit silent until the human spoke, and a new user
+  // shouldn't have to know to speak first. So its first start brings it an opening turn, typed in
+  // once it is ready. A lead that exits at once, such as on a login problem, finds the note
+  // still saved when it starts again.
+  if (stored === null)
+    noteForLead(db, sessions, repository, openingNote(repositoryCommands(repository)));
   // A host that shows status hears it afresh, as a session starting under an ID it had before
   // has shown nothing yet.
   forgetStatus(hostName, id);
@@ -317,6 +324,18 @@ export async function startLead(
     `${resume ? "Brought back" : "Started"} ${owner}/${repo}'s lead, session ${session}${lost}.`,
   );
   await checkAgentStarted(host, id, "lead");
+}
+
+// Returns the note that gives a lead its opening turn on its first start: greet the human, then
+// propose the thread that finishes the setup while setup or test is missing, or else say what it
+// can do and ask what to work on. It starts with "Skelcrew:", so the lead takes it for
+// Skelcrew's, not the human's words.
+function openingNote({ setup, test }: Pick<Settings, "setup" | "test">): string {
+  const then =
+    setup === undefined || test === undefined
+      ? "Then, as your instructions say, propose the thread that finishes the setup."
+      : "Then say in a line what you can do here, and ask what to work on.";
+  return `Skelcrew: this is your first start, and the human hasn't written anything yet. Greet them in a line or two. ${then}`;
 }
 
 // Closes the tab of each repository whose lead you exited, such as with /exit, and ends its
