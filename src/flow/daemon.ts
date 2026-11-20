@@ -38,7 +38,7 @@ import {
 } from "./builder.ts";
 import { holdCheckSlot } from "./checks.ts";
 import { ownTask, prOf, saveItems } from "./copy.ts";
-import { removeThread, stopThread } from "./events.ts";
+import { removeThread, removing, stopThread } from "./events.ts";
 import { noCommits } from "./git.ts";
 import { closeExitedLeads, lastOpened, leadOf, openedRepositories, startLead } from "./lead.ts";
 import { restoreLimits, wakeAfterLimit } from "./limits.ts";
@@ -68,6 +68,7 @@ import {
   refreshClones,
   repositories,
   repositoryAt,
+  repositoryNamed,
 } from "./repo.ts";
 import { allowed, type Caller, DaemonRequest, parseJson } from "./requests.ts";
 import { killReviewers } from "./reviewer.ts";
@@ -92,6 +93,15 @@ import {
   turnEnded,
   turnFailed,
 } from "./status.ts";
+import {
+  backToQueue,
+  claimOwed,
+  claimQueued,
+  joinsQueue,
+  joinTime,
+  leaveQueue,
+  queuedText,
+} from "./task-queue.ts";
 import {
   builderSession,
   findThread,
@@ -387,7 +397,12 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   // given with it is saved with it.
   const resume = async (stopped: Thread, short?: string) => {
     const change = { status: statusOnceBack(stopped), ...(short ? { short } : {}) };
-    const thread = record(db, stopped.folder, change, "started again");
+    await comeBack(record(db, stopped.folder, change, "started again"));
+  };
+  // Brings back the builder of a thread that was stopped, now that its status says it works or
+  // waits again, and carries on its round. Marks the thread failed, with the reason, when the
+  // builder can't start.
+  const comeBack = async (thread: Thread) => {
     try {
       await listenFor(thread);
       await bringBack(db, sessions, thread);
@@ -471,6 +486,9 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         const own = leadRepository && `${leadRepository.owner}/${leadRepository.repo}`;
         return { repositories: own ? all.filter((r) => r.repository === own) : all };
       }
+      // Says only yes or no, so a lead learns no other repository's name from it.
+      case "repo named":
+        return { named: repositoryNamed(db, request.word) !== undefined };
       case "ps":
         return { threads: listThreads(db, request.repo) };
       case "task ls":
@@ -667,7 +685,9 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         // A thread the task already has is brought back or let past its round limit, with no
         // poll, as nothing new is read from the tracker.
         const before = threadOn(db, request.repo, request.task);
-        const atWork = before !== null && ["working", "waiting"].includes(before.status);
+        // A task in the queue counts as at work: its short title and flow can change while it
+        // waits.
+        const atWork = before !== null && ["working", "waiting", "queued"].includes(before.status);
         // Another flow for a thread at work switches it, as switchFlow allows. The flow it runs
         // already is no switch, so sc start goes on as without one, such as past the round limit.
         const switching =
@@ -689,6 +709,14 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         const choice = startChoice(before);
         if (before && choice === "bring back") {
           const name = threadName(db, before);
+          // Over the limit, it waits its turn in the queue, and comes back then.
+          if (joinsQueue(db, before)) {
+            const change = { status: "queued" as const, queued_since: joinTime(db) };
+            const short = request.short ? { short: request.short } : {};
+            const queued = record(db, before.folder, { ...change, ...short }, "queued");
+            assignIssue(db, before, true);
+            return { started: queuedText(db, queued) };
+          }
           resume(before, request.short);
           // Its stop took you off its issue, so starting it again puts you back.
           assignIssue(db, before, true);
@@ -701,6 +729,8 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         }
         // Refused before the poll, which only a new thread needs, so a slow or failing remote
         // can't hold up the answer. startThread refuses it again, for a thread started meanwhile.
+        // A task already in the queue keeps its place there.
+        if (before?.status === "queued") return { started: queuedText(db, before) };
         if (before && before.status !== "failed" && before.status !== "done")
           throw new Error(`${threadName(db, before)} has a thread already`);
         // The task's title and body come from Skelcrew's copy, brought up to date first. Meanwhile
@@ -731,6 +761,23 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         } finally {
           startingTasks.delete(key);
         }
+        // An issue that joined the queue owes its claim, saved with it, and is claimed now, so
+        // sc start can say whether the tracker has it. Until it does, the task can't leave the
+        // queue, so another machine's label can't start it here and there too. A claim that
+        // fails is asked for again.
+        if (thread.status === "queued") {
+          const owed = await claimQueued(db, sessions, thread, false).then(
+            () => "",
+            (error) =>
+              ` Skelcrew couldn't claim its issue yet, and tries again before it starts: ${errorText(error)}`,
+          );
+          // sc rm may have taken the task out of the queue while the tracker answered, and
+          // taken you off its issue: assigning you now would put you back on a task nobody runs.
+          const now = readThread(db, thread.folder);
+          if (now.status === "queued" && now.started === thread.started)
+            assignIssue(db, thread, false);
+          return { started: `${queuedText(db, thread)}${owed}` };
+        }
         // Not waited on: an agent's command must answer quickly, and setup can take minutes.
         // The claim and assignment wait on the tracker, and change only what it shows.
         assignIssue(db, thread, true);
@@ -741,6 +788,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         const repository = findRepository(db, request.repo);
         if (await hasNoCommits(db, repository)) throw new Error(noCommits(repository));
         const thread = await startThread(db, request);
+        if (thread.status === "queued") return { started: queuedText(db, thread) };
         setUpAndStart(thread);
         return { started: `Started ${threadName(db, thread)}.` };
       }
@@ -805,6 +853,9 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   restoreLimits(db);
   // A freeze leaves nothing else in the log, so the daemon logs its own stalls.
   watchForStalls("The daemon");
+  // A task that left the queue but whose builder's start the stop cut short goes back to it
+  // first, as it can't be brought back.
+  backToQueue(db);
   // Taken before any request comes in, so a thread started meanwhile, still setting up,
   // isn't taken for one whose setup the daemon's stop cut short.
   const before = liveThreads(db);
@@ -883,6 +934,24 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   // Type the messages waiting for builders as soon as each can take them, looking every two
   // seconds, as a builder becomes idle with no word to the daemon, such as after Esc.
   setInterval(() => deliverAllWaiting(db, sessions), 2000);
+  // Start the tasks whose turn came in the queue of limits.threads, now and every two seconds
+  // from here on, as a builder ends in many ways, and a limit raised in a file frees places too.
+  // Only after the threads above were brought back, so a task leaving the queue now is never
+  // also taken for one whose setup the daemon's stop cut short. A thread sc rm is removing stays
+  // queued, so it never starts while it is being removed, as does one that still owes its claim,
+  // which is asked for again each time.
+  const startFromQueue = () => {
+    try {
+      claimOwed(db, sessions);
+      for (const thread of leaveQueue(db, removing))
+        if (thread.session === null) setUpAndStart(thread);
+        else comeBack(thread);
+    } catch (error) {
+      console.log(`couldn't start tasks from the queue: ${errorText(error)}`);
+    }
+  };
+  startFromQueue();
+  setInterval(() => doing("starting tasks from the queue", startFromQueue), 2000);
   // Start polling, which also lets any sc start waiting on it go ahead, and keep Skelcrew itself
   // up to date.
   polling.resolve(pollRepositories(db, sessions, every, setUpAndStart, startingTasks));

@@ -33,6 +33,7 @@ import { claimedNames, claimName, fetchBranch } from "./git.ts";
 import { dropEndNotes, noteForLead, typeLeadNotes } from "./messages.ts";
 import { findRepository, forgeAuthor, forgeKnown, refreshClones } from "./repo.ts";
 import { forgetStatus } from "./status.ts";
+import { joinsQueue, joinTime } from "./task-queue.ts";
 import {
   builderHarness,
   builderSession,
@@ -82,7 +83,11 @@ export function statusOnceBack(stopped: Thread): "waiting" | "working" {
 // name in Skelcrew or its owner/name, its `short` the short title the lead gave, if any, and
 // its `flow` the flow the lead picked, `default` when none. A flow checkFlow refuses, such as one
 // the .agents/ you approved doesn't have or one with a bad round limit, refuses the start, from
-// sc start or a label alike, before any work begins.
+// sc start or a label alike, before any work begins. A start over the repository's limits.threads
+// records the thread as queued, to start once its turn comes in the queue, and the caller starts
+// nothing for it now. A task of the tracker that joins the queue is saved as owing its claim,
+// unless `claimed` says the label's start claimed it already, and leaves the queue only once
+// the claim is made.
 // Starts go one at a time: a start over first deletes the old thread's refs, and a second
 // start of the same task, running alongside, could delete the refs of the thread the first
 // just started. One at a time, the second finds that thread and is refused.
@@ -103,8 +108,9 @@ export function startThread(
         short?: string | undefined;
         flow?: string | undefined;
       },
+  claimed = false,
 ): Promise<Thread> {
-  const start = startsBefore.then(() => recordThread(db, given));
+  const start = startsBefore.then(() => recordThread(db, given, claimed));
   // A start that fails holds up none after it.
   startsBefore = start.catch(() => {});
   return start;
@@ -117,6 +123,7 @@ let startsBefore: Promise<unknown> = Promise.resolve();
 async function recordThread(
   db: Database,
   given: Parameters<typeof startThread>[1],
+  claimed: boolean,
 ): Promise<Thread> {
   // Find the repository and whether a tracker holds its tasks, which decides where a named
   // task's title and body come from.
@@ -250,6 +257,9 @@ async function recordThread(
     );
     if (before && before.status !== "failed" && before.status !== "done")
       throw new Error(`${name}-${task} has a thread already`);
+    // Counted in the same transaction as the thread is recorded, so two starts can't both take
+    // the last place.
+    const queued = joinsQueue(db, repository);
     const thread: Thread = {
       owner,
       repo,
@@ -258,7 +268,7 @@ async function recordThread(
       folder: before?.folder ?? freeFolder(`${folderName(name)}-${task}`),
       branch: slug ? `skelcrew/${task}-${slug}` : `skelcrew/${task}`,
       base: "from" in given ? (given.from ?? null) : null,
-      status: "working",
+      status: queued ? "queued" : "working",
       session: null,
       rounds: 0,
       pr: null,
@@ -327,6 +337,7 @@ async function recordThread(
       agents,
       flow,
       review_post: null,
+      queued_since: queued ? joinTime(db) : null,
     };
     // A failed or done thread's row gives way to the new one, and messages that waited for its
     // builder go with it, as they were about the old work. Its task starts afresh too, with no
@@ -356,8 +367,9 @@ async function recordThread(
     );
     db.run(
       `INSERT OR REPLACE INTO tasks
-        (owner, repo, task, title, body, short, assigned, seen, issue_link, closes, agents, flow)
-        VALUES (?, ?, ?, ?, ?, ?, ?, '[]', ?, ?, ?, ?)`,
+        (owner, repo, task, title, body, short, assigned, seen, issue_link, closes, agents, flow,
+          queued_since)
+        VALUES (?, ?, ?, ?, ?, ?, ?, '[]', ?, ?, ?, ?, ?)`,
       [
         owner,
         repo,
@@ -370,8 +382,16 @@ async function recordThread(
         closes,
         thread.agents,
         thread.flow,
+        thread.queued_since,
       ],
     );
+    // Saved with the thread, so a restart can't start it before its claim is made. A claim the
+    // label's start made is forgotten here, with the thread recorded, so a stop between the two
+    // can't leave it to be taken for one cut short.
+    const claims = [owner, repo, task];
+    if (claimed) db.run("DELETE FROM claims WHERE owner = ? AND repo = ? AND task = ?", claims);
+    else if (queued && tracked && !ownTask(task))
+      db.run("INSERT OR IGNORE INTO claims (owner, repo, task) VALUES (?, ?, ?)", claims);
     log(db, thread);
     return thread;
   })();
@@ -536,7 +556,9 @@ export async function startBuilder(db: Database, sessions: string, thread: Threa
     const { title, body } = threadTask(db, thread);
     start = { sessionId: session, prompt: body ? `${title}\n\n${body}` : title };
   }
-  record(db, thread.folder, { session, harness: harness.name });
+  // Once its session is saved, a restart brings the builder back, so a thread that came from
+  // the queue of limits.threads no longer needs its place there.
+  record(db, thread.folder, { session, harness: harness.name, queued_since: null });
   // Starting the builder starts a stretch of work, which the sidebar times.
   db.run("UPDATE threads SET working_since = ? WHERE folder = ?", [Date.now(), thread.folder]);
   const { argv, env } = await harness.start({

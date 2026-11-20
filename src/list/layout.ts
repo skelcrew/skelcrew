@@ -44,12 +44,12 @@ const stageNames: Record<ListStage, string> = {
   done: "Done",
 };
 
-// Returns the keys the bottom line offers on a row: Enter always, with Ctrl-Q, which comes back,
+// Returns the keys the bottom line offers on a row: Enter always, with Ctrl-\, which comes back,
 // on a row whose agent Enter attaches to on tmux, the numbers that open and close the stages, m
 // only on a task it can merge, and Tab only with another repository to go to. A runtime plugin's
-// host has its own key to come back, so its rows don't offer Ctrl-Q.
+// host has its own key to come back, so its rows don't offer Ctrl-\.
 export function keysFor(row: Row | undefined, tabs: number): string {
-  const open = row?.tmux ? "⏎ open · ctrl+q back" : "⏎ open";
+  const open = row?.tmux ? "⏎ open · ctrl+\\ back" : "⏎ open";
   const merge = row?.merge && "ask" in row.merge ? ["m merge"] : [];
   const tab = tabs > 1 ? ["⇥ repository"] : [];
   return ["↑↓ move", open, "1-6 stages", ...merge, ...tab, "q/esc quit"].join("  ");

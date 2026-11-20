@@ -306,13 +306,13 @@ test("the wheel, Up and Down scroll a page and stop at both ends", async () => {
   await onRight("Author");
 });
 
+// Ctrl-\ isn't typed here: it leaves the whole screen, as it leaves an agent everywhere.
 test("other typing on a list or page goes nowhere, and the agent never gets it", async () => {
   await openIssue();
   const before = right();
   type("not for anyone\r");
   press("C-c");
   press("C-z");
-  press("C-\\");
   await Bun.sleep(300);
   expect(right()).toBe(before);
   press("M-S-Up");

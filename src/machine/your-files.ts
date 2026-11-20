@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { configFile, yourConfigDocument } from "../config.ts";
 import { openDb } from "../db.ts";
 import { claudeTokenFile, configDir, dataDir } from "../paths.ts";
-import { type Lock, lockText, readLock, yourLock, yourPlugins } from "../plugins/lock.ts";
+import { type Lock, lockText, readLock, yourPlugins } from "../plugins/lock.ts";
 import { installedPlugins, reachesOnlyMachines, readManifest } from "../plugins/plugin.ts";
 
 // Returns the database when this machine has one. Opening it would make one, and a laptop that
@@ -72,12 +72,9 @@ export function lockDiffers(): boolean {
 // token you don't have is null, so the server's copy goes too, and an old sign-in never stays in
 // use there. A laptop with no config.yaml has no setup, and gets an empty list, so each server
 // keeps its own. A plugin only the laptop uses is taken out of plugins: and the lock, so sc install
-// there doesn't install it. A laptop set up before the lock gets its lock first, written from the
-// plugins it has, so a server set up the same way gets the same pins and installs nothing.
+// there doesn't install it.
 export function yourFiles(): { name: string; text: string | null }[] {
   if (!setupHere()) return [];
-  const db = dbHere();
-  if (db) yourLock(db);
   const skipped = laptopOnly();
   // Your config as it is, or with only plugins: changed, so its comments and layout stay.
   const named = yourPlugins();

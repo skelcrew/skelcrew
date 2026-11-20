@@ -1200,10 +1200,9 @@ test("install leaves out a plugin that only reaches machines, from your config a
   expect(readFileSync(join(home, ".config", "skelcrew", "skelcrew.lock"), "utf8")).toContain("box");
 });
 
-// A server set up by sc remote add has the laptop's plugins at the laptop's versions, and no
-// lock. The laptop pins its plugins as they are and sends those pins, so sc install there finds
-// each plugin already at its pin and installs nothing.
-test("install from a laptop set up before the lock pins its plugins as they are and sends the pins", async () => {
+// Only a lock makes a plugin yours, so a laptop with none sends an empty one and its config as it
+// is, and pins nothing from the plugins it has.
+test("install from a laptop with no lock sends an empty lock, pinning nothing", async () => {
   const config = join(home, ".config", "skelcrew");
   mkdirSync(config, { recursive: true });
   writeFileSync(join(config, "config.yaml"), "harness: codex\n");
@@ -1213,14 +1212,6 @@ test("install from a laptop set up before the lock pins its plugins as they are 
     join(fake, "skelcrew-plugin.yaml"),
     "name: fake\nversion: 0.3.0\nskelcrew: 0.1.0\nabout: Tracks.\nkind: io\nprovides: [tracker]\ncall: [./call]\n",
   );
-  const git = (...args: string[]) =>
-    Bun.spawnSync(["git", "-C", fake, "-c", "user.name=t", "-c", "user.email=t", ...args], {
-      stdout: "pipe",
-    });
-  git("init", "-q");
-  git("add", ".");
-  git("commit", "-q", "-m", "fake");
-  const commit = git("rev-parse", "HEAD").stdout.toString().trim();
   const data = join(home, ".local", "share", "skelcrew");
   mkdirSync(data, { recursive: true });
   const db = new Database(join(data, "skelcrew.db"));
@@ -1231,10 +1222,11 @@ test("install from a laptop set up before the lock pins its plugins as they are 
   const run = await skel(["--remote", "simon@workbox", "install"]);
   expect(run.code).toBe(0);
   const there = join(home, "server", ".config", "skelcrew");
-  expect(readFileSync(join(there, "config.yaml"), "utf8")).toContain("- simon/skelcrew-fake");
-  expect(readFileSync(join(there, "skelcrew.lock"), "utf8")).toContain(
-    `simon/skelcrew-fake:\n  name: fake\n  version: 0.3.0\n  commit: ${commit}\n`,
+  expect(readFileSync(join(there, "config.yaml"), "utf8")).toBe("harness: codex\n");
+  expect(readFileSync(join(there, "skelcrew.lock"), "utf8")).toBe(
+    "# Your personal plugins at their exact versions, written by Skelcrew. sc install installs them.\n",
   );
+  expect(existsSync(join(config, "skelcrew.lock"))).toBe(false);
 });
 
 // Makes the server run this checkout's real Skelcrew, set up with Codex, with the plugin fake

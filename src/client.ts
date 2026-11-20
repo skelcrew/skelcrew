@@ -56,6 +56,13 @@ export async function askForRepositories(): Promise<RepositoryRow[]> {
   return checkReply(z.object({ repositories: z.array(RepositoryRow) }), reply).repositories;
 }
 
+// Asks the daemon whether a word, such as api-v2, names a repository Skelcrew has, by its name,
+// owner/name or URL. sc start needs it, as such a name also reads like a task of api.
+export async function namesRepository(word: string): Promise<boolean> {
+  const reply = await request({ command: "repo named", word });
+  return checkReply(z.object({ named: z.boolean() }), reply).named;
+}
+
 // Asks the daemon for the threads, or one repository's, for sc ps. The daemon answers, as
 // the lead's sandbox hides Skelcrew's database.
 export async function askForThreads(repository?: string): Promise<ThreadRow[]> {

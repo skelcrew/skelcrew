@@ -133,7 +133,9 @@ const threadColumns = {
 // agents keep, or null for the built-in roles. `flow` is the flow the task runs from start to end,
 // `default` unless it was started with another. `pr_link` is the link to the task's PR, saved from
 // Skelcrew's copy of the forge while the PR is in it, so the list can still open the PR of a task
-// that ended, once the copy has dropped it.
+// that ended, once the copy has dropped it. `queued_since` is when the task last joined the queue
+// of limits.threads, which goes first come first served, kept until its builder's session is
+// saved.
 export const taskColumns = {
   title: "TEXT",
   body: "TEXT",
@@ -171,6 +173,7 @@ export const taskColumns = {
   agents: "TEXT",
   flow: "TEXT NOT NULL DEFAULT 'default'",
   pr_link: "TEXT",
+  queued_since: "INTEGER",
 };
 
 // Marks each done task merged when its thread's log says its work ended by a merge, for tasks
@@ -625,6 +628,17 @@ function prepareTables(db: Database): void {
   )`);
   // The reviews Skelcrew posted with your gh login, before its forge posted them as its own app.
   db.run("DROP TABLE IF EXISTS posted");
+  // The claims Skelcrew asked a tracker for, to start a labelled issue, whose outcome it doesn't
+  // know yet: saved before it asks, and gone once the task is recorded or the tracker said no.
+  // One still here after a stop of the engine or a failed ask may have been granted to this
+  // machine, though the tracker now says the issue is taken. A task sc start put in the queue of
+  // limits.threads has one too, until its claim is made, and can't leave the queue before.
+  db.run(`CREATE TABLE IF NOT EXISTS claims (
+    owner TEXT NOT NULL,
+    repo TEXT NOT NULL,
+    task TEXT NOT NULL,
+    PRIMARY KEY (owner, repo, task)
+  )`);
   // Each harness's usage limit holding reviews: until when, the reset time it gave, the tries
   // in a row that met it with none, and the repositories whose leads were told, as JSON.
   db.run(`CREATE TABLE IF NOT EXISTS limits (
