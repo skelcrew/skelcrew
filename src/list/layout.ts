@@ -118,11 +118,11 @@ function topParts(frame: Frame, width: number): { line: string; spans: TabSpan[]
     return { tab, open, badges, size: Bun.stringWidth(text) };
   });
   // Words around a checkout's commit give way before the line is cut, so it keeps the whole
-  // commit when it can, and where it runs gives way before them. They give way for the open
+  // commit when it can, and where it runs gives way before each of them. They give way for the open
   // repository's tab too, so it keeps showing.
   const openSize = laid.find(({ open }) => open)?.size ?? 0;
   const where = frame.where ? ` on ${frame.where}` : "";
-  const named = [where, ""].flatMap((place) => frame.versions.map((name) => `${name}${place}`));
+  const named = frame.versions.flatMap((name) => [`${name}${where}`, name]);
   const room = (name: string, more: number) => Bun.stringWidth(` Skelcrew ${name}`) + more <= width;
   const about =
     named.find((name) => room(name, openSize ? 2 + openSize : 0)) ??

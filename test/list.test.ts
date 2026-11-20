@@ -975,6 +975,10 @@ test("a narrow list shows a shorter name of the version, keeping the whole commi
   const far = { ...shown, where: "simon@a-long-server-name.example.com" };
   const remote = Bun.stripANSI(drawnWith(0, far, { width: 36, height: 20 })[0] ?? "").trimEnd();
   expect(remote).toBe(" Skelcrew checkout 6f1c2ab+changes");
+  // A clean checkout keeps (checkout) over the place, so it never looks like a release.
+  const clean = { ...far, versions: ["6f1c2ab (checkout)", "6f1c2ab"], where: "workbox" };
+  const cleanTop = Bun.stripANSI(drawnWith(0, clean, { width: 30, height: 20 })[0] ?? "");
+  expect(cleanTop.trimEnd()).toBe(" Skelcrew 6f1c2ab (checkout)");
 });
 
 test("a list taller than the terminal scrolls its stages, and its edges say what is hidden", () => {
