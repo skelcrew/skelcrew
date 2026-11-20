@@ -70,12 +70,15 @@ export function allGreen(pr: PullRequest): boolean {
 // Returns what an armed merge when ready still waits on, in words for the thread's row and the
 // lead, such as "an approval", or null once the PR may merge. It merges only at the commit
 // Skelcrew's reviewer approved, `approved`, which must still be the PR's head, with every check
-// on it passed, Skelcrew's own there and passed too, and the forge saying it merges cleanly. A thread that
-// failed or stopped keeps its plan, and says so, as starting it again carries the plan on.
+// on it passed, Skelcrew's own there and passed too, and the forge saying it merges cleanly. A
+// PR with no CI check passes only when `repositoryHasCi` is false: no poll ever found CI in the
+// repository. Elsewhere CI may not have started on it yet. A thread that failed or stopped keeps
+// its plan, and says so, as starting it again carries the plan on.
 export function mergeWaitsOn(
   thread: Thread,
   pr: PullRequest | null,
   approved: string | null,
+  repositoryHasCi: boolean,
 ): string | null {
   if (thread.status === "failed") return "its thread, which failed";
   if (thread.status === "stopped") return "its thread, which is stopped";
@@ -91,6 +94,36 @@ export function mergeWaitsOn(
   // Skelcrew's own check carries the review's verdict, so a PR the forge shows without it yet
   // waits for it rather than counting as green.
   if (!pr.checks.some((c) => c.name === reviewCheck)) return "its checks";
+  if (ciOf(pr).length === 0 && repositoryHasCi) return "its checks";
+  return null;
+}
+
+// Returns what a merge without Skelcrew's approval still waits on, in the same words as a merge
+// when ready, or null once the PR may merge. Only the reviewer's approval is skipped: its review
+// may ask for changes, and Skelcrew's own check, which carries that verdict, is left out. A review
+// still running is waited for, so its findings are known before the merge. CI must still pass,
+// and the PR merge cleanly. With the review skipped, CI is all that guards the merge, so a PR with
+// no CI check passes only when `repositoryHasCi` is false, as for a merge when ready. Whether the head is still the one you
+// saw is the caller's, as a push cancels the plan rather than waits.
+export function skipReviewWaitsOn(
+  thread: Thread,
+  pr: PullRequest | null,
+  repositoryHasCi: boolean,
+): string | null {
+  if (thread.status === "failed") return "its thread, which failed";
+  if (thread.status === "stopped") return "its thread, which is stopped";
+  if (pr === null || pr.state !== "open") return "its PR";
+  // A submit under way pushes a commit you never saw, which then cancels the plan.
+  if (thread.submitting !== null) return "its builder's new round";
+  // A review still running waits to end, so its findings reach the follow-up issue. Its verdict
+  // then changes nothing.
+  if (thread.reviewing !== null) return "its review";
+  if (pr.conflicts || thread.conflicts !== null) return `its conflict with ${pr.base} to be fixed`;
+  const ci = ciOf(pr);
+  if (ci.some((c) => c.state === "failed" || c.state === "cancelled"))
+    return "its failing checks to be fixed";
+  if (ci.some((c) => c.state !== "passed")) return "its checks";
+  if (ci.length === 0 && repositoryHasCi) return "its checks";
   return null;
 }
 

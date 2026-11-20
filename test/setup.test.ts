@@ -7,6 +7,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   renameSync,
@@ -1314,8 +1315,21 @@ test("sc install installs your plugins at the version your lock pins after askin
   expect(readFileSync(lock(), "utf8")).toBe(lockBefore);
 });
 
+// Makes Skelcrew's clone folder of each repository it has, as the daemon does once it clones
+// them, so sc install can tell what each one needs.
+function cloneEach(): void {
+  const db = new Database(join(home, ".local", "share", "skelcrew", "skelcrew.db"));
+  const rows = db.query<{ owner: string; repo: string }, []>(
+    "SELECT owner, repo FROM repositories",
+  );
+  for (const { owner, repo } of rows.all())
+    mkdirSync(join(home, ".local", "share", "skelcrew", "repos", owner, repo), { recursive: true });
+  db.close();
+}
+
 // Such as when your files come from a laptop where you removed it: the files say what this
-// machine runs, so a plugin they don't name goes, with its settings and tokens.
+// machine runs, so a plugin they don't name goes, with its settings and tokens. While a
+// repository's clone isn't there, what it needs can't be told, so nothing goes until it is.
 test("sc install removes a plugin from GitHub your files don't name", async () => {
   noGitHubPlugin();
   fakeGitHub();
@@ -1329,6 +1343,16 @@ test("sc install removes a plugin from GitHub your files don't name", async () =
   );
   writeFileSync(lock(), "");
   expect((await skel("", bin, main(), home, {}, ["plugins"])).out).toBe(
+    "fake 0.1.0 io: tracker. sc install keeps it, as Skelcrew's clone of app isn't there yet.\n",
+  );
+  const early = await install();
+  expect(early.code).toBe(0);
+  expect(early.out).toContain(
+    "Skelcrew kept fake, which your files don't name, as Skelcrew's clone of app isn't there yet.",
+  );
+  expect(existsSync(join(home, ".local", "share", "skelcrew", "plugins", "fake"))).toBe(true);
+  cloneEach();
+  expect((await skel("", bin, main(), home, {}, ["plugins"])).out).toBe(
     "fake 0.1.0 io: tracker. sc install removes it.\n",
   );
   const run = await install();
@@ -1340,9 +1364,9 @@ test("sc install removes a plugin from GitHub your files don't name", async () =
   );
 });
 
-// A plugin a repository uses as its forge, and so its tracker, can't go, so the machine doesn't count as set up, and
-// sc --remote <host> install fails rather than say it matched your files.
-test("sc install fails when a plugin your files don't name can't be removed", async () => {
+// A plugin a repository uses as its forge, and so its tracker, is never removed: the repository
+// would lose its tasks and PRs. Your files stay as they are, as only you make a plugin yours.
+test("sc install keeps a plugin a repository uses that your files don't name, and leaves your files", async () => {
   noGitHubPlugin();
   fakeGitHub();
   publishFake("0.1.0");
@@ -1354,20 +1378,79 @@ test("sc install fails when a plugin your files don't name can't be removed", as
     "INSERT INTO repositories (owner, repo, name, forge) VALUES ('simon', 'other', 'other', 'fake')",
   );
   db.close();
+  cloneEach();
   writeFileSync(
     config(),
     readFileSync(config(), "utf8").replace("plugins: [simon/skelcrew-fake]", "plugins: []"),
   );
   writeFileSync(lock(), "");
+  const configBefore = readFileSync(config(), "utf8");
+  expect((await skel("", bin, main(), home, {}, ["plugins"])).out).toBe(
+    "fake 0.1.0 io: tracker. sc install keeps it, as it is the tracker of other.\n",
+  );
+  writeFileSync(join(home, "calls"), "");
   const run = await install();
-  expect(run.code).toBe(1);
-  expect(run.out).toContain(
-    "Skelcrew couldn't remove fake: fake is the tracker of other, so Skelcrew keeps it.",
-  );
-  expect(run.out).toContain(
-    "Skelcrew isn't set up yet, as this machine still has fake, which your files don't name.",
-  );
+  expect(run.err).toBe("");
+  expect(run.code).toBe(0);
+  expect(run.out).toBe("Nothing to install: this machine has everything your files ask for.\n");
+  expect(calls()).toBe("");
   expect(existsSync(join(home, ".local", "share", "skelcrew", "plugins", "fake"))).toBe(true);
+  expect(readFileSync(config(), "utf8")).toBe(configBefore);
+  expect(readFileSync(lock(), "utf8")).toBe("");
+});
+
+// Only a lock makes a plugin yours, so a machine with none pins nothing. A plugin a repository
+// uses is still kept: as its tracker or forge, or as one its skelcrew.yaml names.
+test("sc install on a machine with no lock pins nothing, and keeps the plugins repositories use", async () => {
+  noGitHubPlugin();
+  fakeGitHub();
+  publishFake("0.1.0");
+  publishPlugin("team", "0.1.0");
+  publishPlugin("spare", "0.1.0");
+  await skel("1\nsk-ant-oat01-good\n");
+  appendFileSync(
+    config(),
+    "plugins: [simon/skelcrew-fake, simon/skelcrew-team, simon/skelcrew-spare]\n",
+  );
+  await install("y\ny\ny\n");
+  const db = new Database(join(home, ".local", "share", "skelcrew", "skelcrew.db"));
+  db.run(
+    "INSERT INTO repositories (owner, repo, name, forge) VALUES ('simon', 'other', 'other', 'fake')",
+  );
+  db.close();
+  cloneEach();
+  // The repository's own files, in Skelcrew's clone of it, name team at the commit installed.
+  const clone = join(home, ".local", "share", "skelcrew", "repos", "simon", "other");
+  const team = git(join(home, "github", "simon", "skelcrew-team"), "rev-parse", "v0.1.0^{commit}");
+  writeFileSync(join(clone, "skelcrew.yaml"), "plugins: [simon/skelcrew-team]\n");
+  writeFileSync(
+    join(clone, "skelcrew.lock"),
+    `simon/skelcrew-team: { name: team, version: 0.1.0, commit: ${team} }\n`,
+  );
+  rmSync(lock());
+  writeFileSync(config(), readFileSync(config(), "utf8").replace(/plugins: .*\n/, ""));
+  const configBefore = readFileSync(config(), "utf8");
+  expect((await skel("", bin, main(), home, {}, ["plugins"])).out).toBe(
+    [
+      "fake 0.1.0 io: tracker. sc install keeps it, as it is the tracker of other.",
+      "spare 0.1.0 io: tracker. sc install removes it.",
+      "team 0.1.0 io: tracker",
+      "",
+    ].join("\n"),
+  );
+  writeFileSync(join(home, "calls"), "");
+  const run = await install();
+  expect(run.err).toBe("");
+  expect(run.code).toBe(0);
+  expect(run.out).toContain("Removed spare, with its settings and tokens.");
+  expect(run.out).not.toContain("Removed fake");
+  expect(run.out).not.toContain("Removed team");
+  expect(calls()).toBe("");
+  const plugins = join(home, ".local", "share", "skelcrew", "plugins");
+  expect(readdirSync(plugins).sort()).toEqual(["fake", "team"]);
+  expect(readFileSync(config(), "utf8")).toBe(configBefore);
+  // Removing spare took it out of a lock, which leaves one that pins nothing.
+  expect(parse(readFileSync(lock(), "utf8"))).toBeNull();
 });
 
 test("sc install with no answer to read installs nothing", async () => {
@@ -1754,6 +1837,7 @@ test("sc install in a checkout installs the plugins its skelcrew.lock pins after
   expect(readFileSync(config(), "utf8")).not.toContain("plugins");
   expect(existsSync(lock()) ? readFileSync(lock(), "utf8") : "").not.toContain("fake");
   writeFileSync(join(home, "calls"), "");
+  cloneEach();
   const second = await atTerminal("", app, ["install"]);
   expect(second.err).toBe("");
   expect(second.out).toBe("Nothing to install: this machine has everything your files ask for.\n");
@@ -2005,7 +2089,7 @@ test("a pin sc install adds for a plugin of yours is checked against the reposit
 });
 
 // A broken file in one repository can't hide another repository's pin that disagrees with yours.
-test("sc install reads each repository on its own, and stays unfinished while one can't be read", async () => {
+test("sc install reads each repository on its own, and fails while one can't be read", async () => {
   noGitHubPlugin();
   fakeGitHub();
   publishFake("0.1.0");
@@ -2024,10 +2108,59 @@ openDb().run("INSERT INTO repositories (name, owner, repo) VALUES ('site', 'simo
   expect(run.out).toContain("simon/skelcrew-fake is pinned at");
   expect(run.out).not.toContain("Install it?");
   expect(existsSync(fakeFolder())).toBe(false);
-  expect(run.out).toContain("Skelcrew isn't set up yet, as it can't read the plugins of site:");
+  expect(run.out).toContain("Skelcrew can't read the plugins of site:");
   expect(run.out).toContain("must be owner/repo");
-  expect(run.err).toContain("some repositories' plugins can't be read, as said above");
+  // Unfinished for the pins that disagree, which plain sc says again.
   expect(existsSync(join(home, ".local", "share", "skelcrew", "install-done"))).toBe(false);
+});
+
+// A plugin only a repository's skelcrew.lock pins, with no line in its skelcrew.yaml, is stale,
+// but removing it would lose its settings and tokens, so it stays.
+test("sc install keeps a plugin a repository's skelcrew.lock pins, though its skelcrew.yaml doesn't name it", async () => {
+  noGitHubPlugin();
+  fakeGitHub();
+  publishFake("0.1.0");
+  await skel("1\nsk-ant-oat01-good\n");
+  lockFake("0.1.0");
+  await install("y\n");
+  cloneEach();
+  const clone = join(home, ".local", "share", "skelcrew", "repos", "simon", "app");
+  repositoryLocksFake(clone, "0.1.0");
+  writeFileSync(join(clone, "skelcrew.yaml"), "");
+  writeFileSync(config(), readFileSync(config(), "utf8").replace(/plugins: .*\n/, ""));
+  writeFileSync(lock(), "");
+  expect((await skel("", bin, main(), home, {}, ["plugins"])).out).toBe("fake 0.1.0 io: tracker\n");
+  const run = await install();
+  expect(run.err).toBe("");
+  expect(run.code).toBe(0);
+  expect(run.out).not.toContain("Removed");
+  expect(existsSync(fakeFolder())).toBe(true);
+});
+
+// A repository whose files can't be read, even one that names no plugin, stops nothing else:
+// every plugin stays, the machine is set up, and sc install fails, so a script can tell.
+test("sc install keeps every plugin and finishes while a repository's skelcrew.lock can't be read", async () => {
+  noGitHubPlugin();
+  fakeGitHub();
+  publishFake("0.1.0");
+  await skel("1\nsk-ant-oat01-good\n");
+  lockFake("0.1.0");
+  await install("y\n");
+  cloneEach();
+  const clone = join(home, ".local", "share", "skelcrew", "repos", "simon", "app");
+  writeFileSync(join(clone, "skelcrew.lock"), "simon/skelcrew-fake: [\n");
+  writeFileSync(config(), readFileSync(config(), "utf8").replace(/plugins: .*\n/, ""));
+  writeFileSync(lock(), "");
+  const run = await install();
+  expect(run.err).toBe("");
+  expect(run.code).toBe(1);
+  expect(run.out).toContain(
+    "Skelcrew kept fake, which your files don't name, as Skelcrew can't read the plugins of app:",
+  );
+  expect(run.out).toContain("Skelcrew can't read the plugins of app:");
+  expect(run.out).not.toContain("Removed");
+  expect(existsSync(fakeFolder())).toBe(true);
+  expect(existsSync(join(home, ".local", "share", "skelcrew", "install-done"))).toBe(true);
 });
 
 // A failure in another repository's install, such as for want of a terminal, can't hide it.
@@ -2046,7 +2179,7 @@ openDb().run("INSERT INTO repositories (name, owner, repo) VALUES ('site', 'simo
   const run = await skel("y\n", bin, main(), home, {}, ["install"]);
   expect(run.code).toBe(1);
   expect(run.err).toContain("Skelcrew left out simon/skelcrew-fake");
-  expect(run.out).toContain("Skelcrew isn't set up yet, as it can't read the plugins of site:");
+  expect(run.out).toContain("Skelcrew can't read the plugins of site:");
 });
 
 // The machine is set up, but a repository's plugin left out by pins that disagree still fails

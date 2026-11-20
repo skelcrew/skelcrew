@@ -732,22 +732,17 @@ test("sc plugins says what sc install would change", async () => {
   );
 });
 
-// A machine set up before the lock existed keeps its plugins as they are.
-test("plugins installed before the lock are written into it as they are, asking nothing", async () => {
+// Only a lock makes a plugin yours, so a machine with none gets none written from the plugins it
+// has, and sc install removes those no repository uses.
+test("a machine with no lock gets none written from its plugins", async () => {
   publish("skelcrew/skelcrew-fake", "0.1.0");
   await skel(["add", "-g", "skelcrew/skelcrew-fake"], "y\n");
   rmSync(yourLockFile());
   rmSync(yourConfig());
   const listed = await skel(["plugins"]);
-  expect(listed.out).toBe("fake 0.1.0 io: tracker, forge\n");
-  expect(readFileSync(yourConfig(), "utf8")).toBe("plugins:\n  - skelcrew/skelcrew-fake\n");
-  expect(parse(readFileSync(yourLockFile(), "utf8"))).toEqual({
-    "skelcrew/skelcrew-fake": {
-      name: "fake",
-      version: "0.1.0",
-      commit: tagCommit("skelcrew/skelcrew-fake", "0.1.0"),
-    },
-  });
+  expect(listed.out).toBe("fake 0.1.0 io: tracker, forge. sc install removes it.\n");
+  expect(existsSync(yourConfig())).toBe(false);
+  expect(existsSync(yourLockFile())).toBe(false);
 });
 
 test("sc remove and update without -g refuse, as a repository's plugins can't be removed or updated yet", async () => {
@@ -793,7 +788,7 @@ test("sc add without -g names the plugin in the checkout's skelcrew.yaml and pin
   });
   // It is the repository's, never yours.
   expect(existsSync(yourConfig())).toBe(false);
-  expect(readFileSync(yourLockFile(), "utf8")).not.toContain("fake");
+  expect(existsSync(yourLockFile())).toBe(false);
   // Adding it again changes nothing, and asks nothing.
   const again = await skel(["add", "skelcrew/skelcrew-fake"], "", "", {}, app, false);
   expect(again.err).toBe("");
@@ -891,79 +886,6 @@ test("sc update -g at the newest version pins it in your lock, so sc install doe
   expect((await skel(["plugins"])).out).toBe("fake 0.2.0 io: tracker, forge\n");
 });
 
-// Such as a config copied from another machine, with a plugin this one doesn't have yet.
-test("the move into a lock adds this machine's plugins to the ones your config names already", async () => {
-  publish("skelcrew/skelcrew-fake", "0.1.0");
-  await skel(["add", "-g", "skelcrew/skelcrew-fake"], "y\n");
-  rmSync(yourLockFile());
-  writeFileSync(yourConfig(), "plugins: [skelcrew/skelcrew-new]\n");
-  await skel(["plugins"]);
-  expect(parse(readFileSync(yourConfig(), "utf8")).plugins).toEqual([
-    "skelcrew/skelcrew-new",
-    "skelcrew/skelcrew-fake",
-  ]);
-  expect(Object.keys(parse(readFileSync(yourLockFile(), "utf8")))).toEqual([
-    "skelcrew/skelcrew-fake",
-  ]);
-  // A plugin your config names already isn't named twice.
-  rmSync(yourLockFile());
-  writeFileSync(yourConfig(), "plugins: [skelcrew/skelcrew-fake, skelcrew/skelcrew-new]\n");
-  await skel(["plugins"]);
-  expect(readFileSync(yourConfig(), "utf8")).toBe(
-    "plugins: [skelcrew/skelcrew-fake, skelcrew/skelcrew-new]\n",
-  );
-});
-
-// A plugin whose folder can't be read stays in your config, so your setup still carries it.
-test("the move into a lock pins what it can read, and names in your config and reports the rest", async () => {
-  publish("skelcrew/skelcrew-fake", "0.1.0");
-  await skel(["add", "-g", "skelcrew/skelcrew-fake"], "y\n");
-  const db = new Database(join(home, ".local", "share", "skelcrew", "skelcrew.db"));
-  db.run(
-    "INSERT INTO plugins (name, folder, source) VALUES ('other', '/nowhere', 'skelcrew/skelcrew-other')",
-  );
-  db.close();
-  rmSync(yourLockFile());
-  rmSync(yourConfig());
-  const run = await skel(["update", "-g", "fake"]);
-  expect(run.out).toContain(
-    "Skelcrew couldn't pin other from skelcrew/skelcrew-other in your lock: /nowhere has no skelcrew-plugin.yaml, so it isn't a plugin. To install it again, pinned: sc remove -g other, then sc add -g skelcrew/skelcrew-other\n",
-  );
-  expect(parse(readFileSync(yourConfig(), "utf8")).plugins).toEqual([
-    "skelcrew/skelcrew-fake",
-    "skelcrew/skelcrew-other",
-  ]);
-  expect(Object.keys(parse(readFileSync(yourLockFile(), "utf8")))).toEqual([
-    "skelcrew/skelcrew-fake",
-  ]);
-});
-
-// The lock's file marks the move done, so it is written only once your config has its plugins.
-test("the move into a lock tries again after your config couldn't be read or written", async () => {
-  publish("skelcrew/skelcrew-fake", "0.1.0");
-  await skel(["add", "-g", "skelcrew/skelcrew-fake"], "y\n");
-  rmSync(yourLockFile());
-  writeFileSync(yourConfig(), "plugins: [\n");
-  const unread = await skel(["plugins"]);
-  expect(unread.code).toBe(1);
-  expect(unread.err).toContain("isn't valid YAML");
-  expect(existsSync(yourLockFile())).toBe(false);
-  writeFileSync(yourConfig(), "harness: claude\n");
-  chmodSync(yourConfig(), 0o444);
-  const unwritten = await skel(["plugins"]);
-  expect(unwritten.code).toBe(1);
-  expect(existsSync(yourLockFile())).toBe(false);
-  chmodSync(yourConfig(), 0o644);
-  const done = await skel(["plugins"]);
-  expect(done.err).toBe("");
-  expect(readFileSync(yourConfig(), "utf8")).toBe(
-    "harness: claude\nplugins:\n  - skelcrew/skelcrew-fake\n",
-  );
-  expect(Object.keys(parse(readFileSync(yourLockFile(), "utf8")))).toEqual([
-    "skelcrew/skelcrew-fake",
-  ]);
-});
-
 // Such as when a release's tag was deleted: the newest tag left is what update moves to.
 test("sc update -g moves a plugin newer than every tag back to the newest one, after asking", async () => {
   publish("skelcrew/skelcrew-fake", "0.1.0", "0.2.0");
@@ -1031,13 +953,12 @@ test("when your files can't be written, sc remove -g leaves the plugin installed
   expect(existsSync(settings("fake"))).toBe(false);
 });
 
-// On a machine set up before the lock, the move into one comes first, so it can't name the
-// plugin again after it was taken out.
+// A machine with no lock yet has nothing pinned to take out, only the line in your config.
 test("sc remove -g on a machine with no lock yet takes the plugin out of your config", async () => {
   publish("skelcrew/skelcrew-fake", "0.1.0");
   await skel(["add", "-g", "skelcrew/skelcrew-fake"], "y\n");
   rmSync(yourLockFile());
-  writeFileSync(yourConfig(), "harness: claude\n");
+  writeFileSync(yourConfig(), "harness: claude\nplugins: [skelcrew/skelcrew-fake]\n");
   const removed = await skel(["remove", "-g", "fake"]);
   expect(removed.err).toBe("");
   expect(parse(readFileSync(yourConfig(), "utf8"))).toEqual({ harness: "claude", plugins: [] });
@@ -1193,6 +1114,25 @@ test("sc remove -g keeps a plugin a repository still names installed, with its s
   expect(readFileSync(yourLockFile(), "utf8")).not.toContain("fake");
   expect(existsSync(join(plugins(), "fake", "0.1.0"))).toBe(true);
   expect(existsSync(join(settings("fake"), "token"))).toBe(true);
+});
+
+// One repository's broken lock can't hide every other plugin: sc plugins still lists them all, and
+// says sc install keeps them, as what that repository needs can't be told.
+test("sc plugins lists every plugin while a repository's skelcrew.lock isn't valid", async () => {
+  publish("skelcrew/skelcrew-fake", "0.1.0");
+  await skel(["add", "-g", "skelcrew/skelcrew-fake"], "y\n");
+  writeFileSync(yourConfig(), "plugins: []\n");
+  const db = new Database(join(home, ".local", "share", "skelcrew", "skelcrew.db"));
+  db.run("INSERT INTO repositories (owner, repo, name) VALUES ('simon', 'app', 'app')");
+  db.close();
+  const clone = join(home, ".local", "share", "skelcrew", "repos", "simon", "app");
+  mkdirSync(clone, { recursive: true });
+  writeFileSync(join(clone, "skelcrew.lock"), "skelcrew/skelcrew-fake: [\n");
+  const listed = await skel(["plugins"]);
+  expect(listed.err).toBe("");
+  expect(listed.out).toStartWith(
+    "fake 0.1.0 io: tracker, forge. sc install keeps it, as Skelcrew can't read the plugins of app:",
+  );
 });
 
 // sc install leaves a plugin whose pins disagree as it is, so sc plugins says that, not a move.

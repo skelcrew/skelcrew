@@ -335,6 +335,33 @@ test("sc start <repo> refuses --from, with the task as words or on stdin, and st
   expect(thread()).toMatchObject({ title: "Document the option", body: "--from" });
 });
 
+// A repository's name can end like a task's, as skelcrew-herdr-v2 does, even beside one named
+// skelcrew-herdr. sc start reads a word that names a repository as that repository, and only
+// splits the others into a repository and a task.
+test("sc start <repo> takes a repository whose name ends like a task, by any of its names", async () => {
+  addApp({}, "skelcrew-herdr");
+  addApp({}, "skelcrew-herdr-v2");
+  serve();
+  await untilAnswers();
+  const byName = await runSkel(["start", "skelcrew-herdr-v2"], env(), "# Add export\n\nAs JSON\n");
+  expect(byName.err).toBe("");
+  expect(byName.out).toBe(`Started skelcrew-herdr-v2-${own}1.\n`);
+  const byFullName = await skel("start", "simon/skelcrew-herdr-v2", "Add import", "From CSV");
+  expect(byFullName.err).toBe("");
+  expect(byFullName.out).toBe(`Started skelcrew-herdr-v2-${own}2.\n`);
+  const byUrl = await skel("start", "https://github.com/simon/skelcrew-herdr-v2", "Add a", "B");
+  expect(byUrl.err).toBe("");
+  expect(byUrl.out).toBe(`Started skelcrew-herdr-v2-${own}3.\n`);
+  // A task of that repository still splits at its last dash.
+  const task = await skel("start", "skelcrew-herdr-v2-12");
+  expect(task.err).toBe("");
+  expect(task.out).toBe("Started skelcrew-herdr-v2-12.\n");
+  // And a task of the other repository is still a task.
+  const other = await skel("start", "skelcrew-herdr-12");
+  expect(other.err).toBe("");
+  expect(other.out).toBe("Started skelcrew-herdr-12.\n");
+});
+
 test("more data on a connection doesn't run its request again", async () => {
   addApp();
   serve();

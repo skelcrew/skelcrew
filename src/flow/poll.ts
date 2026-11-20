@@ -32,8 +32,8 @@ import {
 } from "./decide.ts";
 import { endThread, removing, tellBuilder, tellingEvents } from "./events.ts";
 import { fetchCommit, fetchInto, onRemote } from "./git.ts";
-import { approvedFlowsTold, leadOf } from "./lead.ts";
-import { mergeIfReady } from "./merging.ts";
+import { approvedFlowsTold, leadSession } from "./lead.ts";
+import { finishSkippedMerge, mergeIfReady } from "./merging.ts";
 import { briefsNote, noteForLead, skelcrewNoteForLead, typeLeadNotes } from "./messages.ts";
 import { forgeKnown, fullNameIs, hasNoCommits, refreshClone, repositories } from "./repo.ts";
 import { lastPushed } from "./round.ts";
@@ -232,7 +232,11 @@ async function actOnPr(
     // A merge leaves you assigned, as the closed issue's record of who did it. Asked before
     // the thread ends, so an sc start that starts it over once it is done assigns you after.
     if (pr.state === "closed") unassignIssue(db, folder);
-    await endThread(db, sessions, thread, decision.end, decision.note, pr.state === "merged");
+    // A merge without approval the forge did before the daemon could finish it, such as across
+    // a restart, still gets its record edited and its findings filed, with its own note.
+    const skipped = pr.state === "merged" ? await finishSkippedMerge(db, thread, pr) : null;
+    const note = skipped ?? decision.note;
+    await endThread(db, sessions, thread, decision.end, note, pr.state === "merged");
   }
   // Left unhandled, so a stopped thread's events reach its builder once it starts again.
   else if (thread.status === "stopped" || tellingEvents.has(folder) || stale) return;
@@ -421,7 +425,8 @@ async function tellRunningLead(
     .get(repository.owner, repository.repo);
   const known = z.object({ told: z.coerce.boolean() }).nullable().parse(row);
   if (known === null || known.told) return;
-  if (!(await hasSession(sessions, leadOf(db, repository.owner, repository.repo).name))) return;
+  const lead = await leadSession(db, sessions, repository.owner, repository.repo);
+  if (lead === null || !(await hasSession(lead.host, lead.id))) return;
   db.run(`UPDATE repositories SET ${told} = 1 ${where}`, [repository.owner, repository.repo]);
   skelcrewNoteForLead(db, sessions, repository, text);
 }
@@ -466,7 +471,15 @@ async function pollRepository(
         ...(jobs.includes("forge") ? ["pr" as const] : []),
       ];
       const items = answer.items.filter((item) => kinds.includes(item.kind));
-      saveItems(db, owner, repo, items, next === null ? kinds : []);
+      // The repository keeps that CI ran on one of its PRs, as that PR may close before a merge
+      // asks, and a merge must wait for CI's checks wherever CI has run. It is saved with the
+      // copy, in one transaction, so a daemon that stops between the two never keeps the PR
+      // without the repository's mark, which the next poll could drop with the closed PR.
+      db.transaction(() => {
+        saveItems(db, owner, repo, items, next === null ? kinds : []);
+        if (items.some((item) => item.kind === "pr" && ciState(item) !== null))
+          db.run("UPDATE repositories SET ci_seen = 1 WHERE owner = ? AND repo = ?", [owner, repo]);
+      })();
       nexts.set(plugin, answer.next);
     }
   } finally {
