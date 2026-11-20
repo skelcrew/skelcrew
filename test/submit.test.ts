@@ -347,6 +347,16 @@ async function startApp12(daemon: Daemon = {}) {
   expect((await skel(["start", "app-12"])).err).toBe("");
 }
 
+// Starts the daemon, approves app's .agents/ as sc repo trust would, and starts app-12 on its
+// flow noreview, which has no review stage.
+async function startNoReview(daemon: Daemon = {}) {
+  serve(daemon);
+  await untilCloned();
+  const tree = git(join(data(), "repos", "simon", "app"), "rev-parse", "HEAD:.agents");
+  writeFileSync(join(home, ".config", "skelcrew", "approved-agents.yaml"), `simon/app: ${tree}\n`);
+  expect((await skel(["start", "app-12", "--flow", "noreview"])).err).toBe("");
+}
+
 // bubblewrap can't start inside Skelcrew's own sandbox, so only there builders can't start.
 describe.skipIf(insideSandbox)("sc submit", () => {
   test("each review's round, reviewer, verdict and first line go in the thread's log, and the task's title too", async () => {
@@ -493,17 +503,7 @@ describe.skipIf(insideSandbox)("sc submit", () => {
   // build straight to CI. Its check says it wasn't reviewed, and the PR stays quiet.
   test("on a flow with no review stage, a submit runs no reviewer, posts nothing on the PR, and waits on CI", async () => {
     addApp({ ".agents/flows/noreview.yaml": "build:\n  role: builder\n" });
-    serve();
-    await untilCloned();
-    // Approve the repository's .agents/, as sc repo trust would.
-    const skelClone = join(data(), "repos", "simon", "app");
-    const tree = git(skelClone, "rev-parse", "HEAD:.agents");
-    writeFileSync(
-      join(home, ".config", "skelcrew", "approved-agents.yaml"),
-      `simon/app: ${tree}\n`,
-    );
-    const started = await skel(["start", "app-12", "--flow", "noreview"]);
-    expect(started.err).toBe("");
+    await startNoReview({ every: 1_000 });
     await until(
       () => read(join(data(), "threads", "app-12.log")).includes("so it waits on CI"),
       longWait,
@@ -536,6 +536,46 @@ describe.skipIf(insideSandbox)("sc submit", () => {
     expect((await skel(["start", "app-12", "--flow", "default"])).err).toBe(
       "Skelcrew: app-12 keeps the flow noreview, as its builder has submitted already.\n",
     );
+    // There is no review to skip, so a merge skipping it is refused, once the PR's head shows.
+    answer(plugin, "changed", {
+      items: [
+        taskItem("12", "Add export", { body: "As JSON" }),
+        prItem("7", "Add export", { branch: "skelcrew/12-add-export", head: sha }),
+      ],
+      next: null,
+    });
+    await until(() => copiedPr().includes(sha));
+    const skipped = await runSkelInTerminal(
+      socket,
+      env(),
+      ["merge", "--skip-review", "app-12"],
+      "without Skelcrew's approval?",
+      "y",
+    );
+    expect(skipped).toContain(
+      "app-12's flow has no review stage, so there is no review to skip: merge it with m in the list, or sc merge --when-ready app-12",
+    );
+    expect(thread().merge_plan).toBeNull();
+  }, 90_000);
+
+  // Docs are what such a flow is for, and no reviewer will look at them, so the wait for CI's
+  // first check is all that keeps the PR from being ready before CI ran.
+  test("on a flow with no review stage, a change to docs alone still waits for CI's first check", async () => {
+    addApp({
+      ".agents/flows/noreview.yaml": "build:\n  role: builder\n",
+      ".github/workflows/ci.yml": "on: pull_request\n",
+    });
+    mkdirSync(builder(), { recursive: true });
+    writeFileSync(join(builder(), "docs-only"), "");
+    await startNoReview({ env: { SKELCREW_CI_WAIT_MS: "3000" } });
+    await until(
+      () => read(join(data(), "threads", "app-12.log")).includes("so it waits on CI"),
+      longWait,
+    );
+    expect(read(join(data(), "threads", "app-12.log"))).toContain(
+      `waiting for CI's first check on ${pushed()} before marking it not reviewed`,
+    );
+    expect(existsSync(join(codexHome(), "sessions", "count"))).toBe(false);
   }, 90_000);
 
   // Ready waits on every check, so CI still running is no reason to ask for changes.

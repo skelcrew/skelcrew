@@ -5,6 +5,7 @@
 // itself. Without an armed plan nothing merges by itself.
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
+import { flowRoles } from "../flows.ts";
 import { createTask, editReview, forgeOf, mergePr, postReview, trackerOf } from "../plugins/ask.ts";
 import { errorText } from "../say.ts";
 import { openPrs, openTasks, prOf } from "./copy.ts";
@@ -145,17 +146,20 @@ export function armMerge(
     );
   if (skip && !head)
     throw new Error(`Skelcrew hasn't seen #${thread.pr}'s newest commit yet: ask again shortly`);
-  // Only a review that asks for changes, or still runs, can be skipped. An approved PR merges
-  // as usual, as does one whose flow has no review stage, and one never reviewed waits for its
-  // review.
+  // A flow with no review stage has no review to skip, even while its submit waits for CI's
+  // first check, which keeps the commit saved as under review.
   const asUsual = `merge it with m in the list, or sc merge --when-ready ${name}`;
+  if (skip && flowRoles(thread).review === null)
+    throw new Error(
+      `${name}'s flow has no review stage, so there is no review to skip: ${asUsual}`,
+    );
+  // Only a review that asks for changes, or still runs, can be skipped. An approved PR merges
+  // as usual, and one never reviewed waits for its review.
   if (skip && thread.verdict !== "changes" && thread.reviewing === null)
     throw new Error(
       thread.verdict === "approve"
         ? `${name} is approved already: ${asUsual}`
-        : thread.verdict === "not reviewed"
-          ? `${name}'s flow has no review stage, so there is no review to skip: ${asUsual}`
-          : `${name} has no review asking for changes or under way, so there is nothing to skip: wait for its review`,
+        : `${name} has no review asking for changes or under way, so there is nothing to skip: wait for its review`,
     );
   const asked = "asked" in how ? how.asked : null;
   const plan = {
@@ -291,8 +295,11 @@ export async function mergeIfReady(
     // it gets a record of its own. Skipping the review it keeps the reviewer's last verdict,
     // which a review still running when you asked may have turned to an approval: a record
     // asking for changes would then contradict it, and on a forge that requires an approval,
-    // block the merge you asked for.
+    // block the merge you asked for. A task whose flow has no review stage gets no record: a
+    // forge shows a review's verdict, such as GitHub's "Approved.", which nobody gave, and could
+    // count it toward a required approval. Its log keeps who asked.
     const key = `${thread.merge_id} ${commit}`;
+    const quiet = pinned === null && thread.verdict === "not reviewed";
     // A record the forge took just before the daemon stopped, with nothing saved yet, is found
     // by its marker in the PR's reviews.
     const marker = recordMarker(thread, commit);
@@ -303,7 +310,7 @@ export async function mergeIfReady(
     // acts on the PR and thread as the forge and Skelcrew have them after the record: a check
     // that failed or started, a cancel, a stop, sc rm or a new review while the record was
     // posted all show there, and stop the merge.
-    if (thread.merge_record !== key) {
+    if (thread.merge_record !== key && !quiet) {
       const found = pr.reviews.find((review) => review.text.includes(marker));
       if (found) {
         record(db, folder, { merge_record: key, merge_record_id: found.id });

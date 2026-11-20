@@ -278,7 +278,9 @@ async function reviewRound(
     };
     return whoRunsTheSuite(given);
   };
-  if (pr !== null && !docsOnly && suite(0) === "wait") {
+  // A flow with no review stage waits on docs too: no reviewer will look at them, and its check
+  // goes green next, so the wait is all that keeps CI from being skipped.
+  if (pr !== null && (!docsOnly || unreviewed) && suite(0) === "wait") {
     // Saved as reviewing, as the review is under way for you, and so a restart brings it back.
     // Its place in the queue only matters once it joins, with `since`.
     const waiting = { reviewing: sha, submitting: null, reviewer, queued: null };
