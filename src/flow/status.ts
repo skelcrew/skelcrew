@@ -518,25 +518,23 @@ export function turnEnded(
   if (readThread(db, folder).told_lead) record(db, folder, { told_lead: false });
   if (!endedWithoutSubmit(thread)) return;
   const unchanged = ended.head !== undefined && ended.head === lastPushed(thread);
+  // The safety net's wait starts here, and it marks the thread with what the builder said if
+  // nobody acts on it. While the last submit is still pushed, reviewed or waits on CI, the wait
+  // only starts once that is over, as the safety net keeps putting its start off meanwhile.
+  const timed =
+    thread.ended_at === null ? { ended_at: Date.now(), ended_said: ended.message ?? null } : {};
   if (waitsOnSubmit(thread, unchanged)) {
     // A comment on an approved PR set the thread working. The builder only answered it, so the
     // thread waits on its approved submit again, and the next poll can find it ready to merge.
-    // A review under way sets the status itself once it ends. Waiting on a review or CI never
-    // needs you, so the safety net doesn't start: the builder's words went to the lead, who marks
-    // the thread when only you can act.
+    // A review under way sets the status itself once it ends.
+    const replied = "its builder only replied, so it waits on CI";
     if (thread.status === "working" && thread.reviewing === null)
-      record(db, folder, { status: "waiting" }, "its builder only replied, so it waits on CI");
+      record(db, folder, { status: "waiting", ...timed }, replied);
+    else record(db, folder, timed);
     return;
   }
-  // The safety net times the wait from here, and marks the thread with what the builder said
-  // if nobody acts on it. Only with nothing in flight: while the last submit is still reviewed or
-  // waits on CI, the builder's words went to the lead, and waiting on those never needs you.
-  if (!thread.turn_ended) {
-    const timed = inFlight(thread)
-      ? {}
-      : { ended_at: Date.now(), ended_said: ended.message ?? null };
+  if (!thread.turn_ended)
     record(db, folder, { turn_ended: true, ...timed }, "its builder stopped without submitting");
-  }
 }
 
 // How much of a builder's last message the safety net keeps as the reason the thread needs you,
@@ -544,8 +542,9 @@ export function turnEnded(
 const saidLength = 200;
 
 // The safety net: marks each thread whose builder ended its turn without submitting, and that
-// nobody acted on for `graceMinutes`, as needing you, with what the builder said last as the
-// reason. The lead hears of it when the builder stops, but may be busy or miss it, and nothing
+// nobody acted on for `graceMinutes` with nothing in flight, as needing you, with what the
+// builder said last as the reason. Waiting on a submit being pushed, reviewed or on CI never needs
+// you, so meanwhile the wait's start is put off to now, and it counts from once that is over. The lead hears of it when the builder stops, but may be busy or miss it, and nothing
 // should wait unseen. Typing to the builder, a new submit, or the lead marking or clearing the
 // thread is acting on it. The lead gets a note, as for any thread that starts needing you. The
 // daemon runs it every few seconds.
@@ -558,18 +557,21 @@ export function markForgotten(
   const since = now - graceMinutes * 60_000;
   const rows = db
     .query(
-      "SELECT * FROM task_threads WHERE ended_at IS NOT NULL AND ended_at <= ? AND needs_you_for IS NULL AND status IN ('working', 'waiting')",
+      "SELECT * FROM task_threads WHERE ended_at IS NOT NULL AND needs_you_for IS NULL AND status IN ('working', 'waiting')",
     )
-    .all(since);
+    .all();
+  const threads = rows.map((row) => Thread.parse(row));
   // A thread that already needs you, such as one ready to merge, is seen already. Its wait ends,
   // so a builder's reply doesn't mark it once that need is over.
-  // A submit that went in meanwhile, still reviewed or waiting on CI, is in flight too, so its
-  // wait ends as well.
-  const threads = rows.map((row) => Thread.parse(row));
-  const seenOrInFlight = (thread: Thread) => needsYou(thread) || inFlight(thread);
-  for (const thread of threads.filter(seenOrInFlight))
+  for (const thread of threads.filter(needsYou))
     record(db, thread.folder, { ended_at: null, ended_said: null });
-  const forgotten = threads.filter((thread) => !seenOrInFlight(thread));
+  // Not logged, as it changes every few seconds while the submit is on its way.
+  const waiting = threads.filter((thread) => !needsYou(thread));
+  for (const thread of waiting.filter(inFlight))
+    db.run("UPDATE threads SET ended_at = ? WHERE folder = ?", [now, thread.folder]);
+  const forgotten = waiting.filter(
+    (thread) => !inFlight(thread) && (thread.ended_at ?? now) <= since,
+  );
   for (const thread of forgotten) {
     const said = oneLine(thread.ended_said ?? "");
     const reason = said === "" ? "its builder stopped" : cut(said, saidLength);

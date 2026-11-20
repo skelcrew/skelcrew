@@ -1197,8 +1197,8 @@ console.log(JSON.stringify({ early, word: needsYouFor(thread()), noting: noting(
 
 // Waiting on a review or CI never needs you. The builder's words went to the lead, which marks
 // the thread when only you can act, so the safety net is only for a builder with nothing in
-// flight.
-test("the safety net doesn't start for a turn that only replied while its submit is reviewed", () => {
+// flight. Its wait starts once the review is over, if nobody acted by then.
+test("the safety net waits out a review a turn that only replied ended during, then starts", () => {
   const seen = inProcess(`
 const clone = cloneDir("simon", "app");
 mkdirSync(clone, { recursive: true });
@@ -1209,9 +1209,20 @@ git("update-ref", "refs/skelcrew/threads/app-12", "HEAD");
 const head = git("rev-parse", "HEAD");
 record(db, "app-12", { status: "waiting", reviewing: head });
 turnEnded(db, "none", "app-12", { head, message: "Only a person can push the workflow change." });
-markForgotten(db, "none", 5, Date.now() + 60 * 60_000);
-console.log(JSON.stringify({ ended: thread().ended_at, needsYou: needsYou(thread()) }));`);
-  expect(seen).toEqual({ ended: null, needsYou: false });
+const hour = Date.now() + 60 * 60_000;
+markForgotten(db, "none", 5, hour);
+const reviewed = needsYou(thread());
+// The review fails an hour later, and leaves the builder stopped with nothing in flight.
+record(db, "app-12", { reviewing: null, verdict: "failed", review_failed: true });
+markForgotten(db, "none", 5, hour + 4 * 60_000);
+const early = needsYou(thread());
+markForgotten(db, "none", 5, hour + 5 * 60_000);
+console.log(JSON.stringify({ reviewed, early, word: needsYouFor(thread()) }));`);
+  expect(seen).toEqual({
+    reviewed: false,
+    early: false,
+    word: "Only a person can push the workflow change.",
+  });
 });
 
 // Arming a merge past the round limit is your decision, which a plan that ends later, such as
@@ -1229,28 +1240,29 @@ console.log(JSON.stringify({ before, decided, after: needsYou(thread()) }));`);
 });
 
 // A turn that left work it didn't submit shows turn ended, but its last submit is still reviewed,
-// so nothing waits on you yet.
-test("the safety net doesn't start while the last submit is reviewed, even with work left over", () => {
+// so nothing waits on you yet, however long the review takes.
+test("the safety net doesn't mark while the last submit is reviewed, even with work left over", () => {
   const seen = inProcess(`
 record(db, "app-12", { status: "waiting", reviewing: "abc" });
 turnEnded(db, "none", "app-12", { message: "I started on the next part." });
 markForgotten(db, "none", 5, Date.now() + 60 * 60_000);
-console.log(JSON.stringify({ turnEnded: thread().turn_ended, ended: thread().ended_at, needsYou: needsYou(thread()) }));`);
-  expect(seen).toEqual({ turnEnded: true, ended: null, needsYou: false });
+console.log(JSON.stringify({ turnEnded: thread().turn_ended, needsYou: needsYou(thread()) }));`);
+  expect(seen).toEqual({ turnEnded: true, needsYou: false });
 });
 
 // A submit still being pushed is on its way, so the builder stopping meanwhile waits on it.
-test("the safety net doesn't start while the last submit is still being pushed", () => {
+test("the safety net doesn't mark while the last submit is still being pushed, until its round fails", () => {
   const seen = inProcess(`
 record(db, "app-12", { status: "waiting", submitting: "Round 2" });
 turnEnded(db, "none", "app-12", { message: "Pushed it." });
-markForgotten(db, "none", 5, Date.now() + 60 * 60_000);
-const pushing = { ended: thread().ended_at, needsYou: needsYou(thread()) };
+const hour = Date.now() + 60 * 60_000;
+markForgotten(db, "none", 5, hour);
+const pushing = needsYou(thread());
 // A round that failed keeps its submit saved, but is on its way no longer.
-record(db, "app-12", { turn_ended: false, review_failed: true });
-turnEnded(db, "none", "app-12", { message: "It failed." });
-console.log(JSON.stringify({ pushing, failed: thread().ended_at !== null }));`);
-  expect(seen).toEqual({ pushing: { ended: null, needsYou: false }, failed: true });
+record(db, "app-12", { review_failed: true });
+markForgotten(db, "none", 5, hour + 5 * 60_000);
+console.log(JSON.stringify({ pushing, word: needsYouFor(thread()) }));`);
+  expect(seen).toEqual({ pushing: false, word: "Pushed it." });
 });
 
 // A thread ready to merge is seen already, so a builder's reply there marks nothing.
