@@ -16,7 +16,18 @@ import { errorText } from "../say.ts";
 import { cpuBusy, cpuSample, loadText, memoryInUse, readMemory } from "../screen/load.ts";
 import { grey, paint, removeControlCodes } from "../screen/look.ts";
 import { version } from "../version.ts";
-import { drawList, type Frame, keysFor, type Target, tabAt } from "./layout.ts";
+import { type Details, readDetails } from "./details.ts";
+import {
+  drawList,
+  type Frame,
+  keysFor,
+  paneEdge,
+  paneWidth,
+  type Target,
+  tabAt,
+} from "./layout.ts";
+import { liveNote, readLive } from "./live.ts";
+import { drawPane, type Live } from "./pane.ts";
 import {
   cutBacklog,
   hasForge,
@@ -98,8 +109,9 @@ const back = new Set(["\x1c", "\x1b[92;5u", "\x1b[27;5;92~"]);
 // Runs the list in your terminal for the repository named by its owner/name, until you press q,
 // then says your agents keep running.
 // `agents` is the sessions' tmux server. It looks again each second, and writes only when what
-// shows changed, as over a slow link each write costs. The load at the end of the bottom line is
-// read every 5 seconds. Tests pin it with SKELCREW_FIXED_LOAD, which Skelcrew itself never sets,
+// shows changed, as over a slow link each write costs. In a terminal wide enough, the details pane
+// beside the list shows the row you are on, and reads its agent's screen several times a second
+// for its live view. The load at the end of the bottom line is read every 5 seconds. Tests pin it with SKELCREW_FIXED_LOAD, which Skelcrew itself never sets,
 // so a quiet list writes nothing at all.
 export async function runList(agents: string, repository: string): Promise<void> {
   const db = openDb();
@@ -127,6 +139,10 @@ export async function runList(agents: string, repository: string): Promise<void>
   let asking: { question: Question; row: string; merge: boolean } | null = null;
   let working = false;
   let attached = false;
+  // The details of the row you are on, by its name, read again with the rows each second, and
+  // the last screen read of its agent, by the name of the row it was read for.
+  let details: { name: string; read: Details | null } | null = null;
+  let live: { name: string; shown: Live } | null = null;
   let lastFrame = "";
   // Keys your terminal sent that the list hasn't acted on yet, oldest first, and the start of an
   // escape sequence whose end hasn't come yet.
@@ -151,6 +167,22 @@ export async function runList(agents: string, repository: string): Promise<void>
     return { version, where, name, tabs, notice, bottom: bottom(tabs.length), load: shownLoad };
   };
 
+  // Returns the details pane's lines for a terminal of this size, or null when it is too narrow
+  // for the pane. A task's details are read only when you move onto it or the rows are read again.
+  // Its agent's screen is the last one read for this row, or blank until the first read comes.
+  // A row with no agent running says so at once.
+  const paneFor = (size: { width: number; height: number }) => {
+    const beside = paneWidth(size.width);
+    if (beside === 0) return null;
+    const row = rows[here];
+    if (!row || row.task === null) return drawPane(row, null, null, beside, size.height - 2);
+    if (details?.name !== row.name)
+      details = { name: row.name, read: readDetails(db, open, row.task, Date.now()) };
+    const note = liveNote(row);
+    const shown = note !== null ? { note } : live?.name === row.name ? live.shown : { screen: "" };
+    return drawPane(row, details.read, shown, beside, size.height - 2);
+  };
+
   // Draws what shows, filling the terminal, only when it changed.
   const draw = () => {
     if (attached) return;
@@ -166,6 +198,7 @@ export async function runList(agents: string, repository: string): Promise<void>
       top,
       frameWith(bottom, load),
       size,
+      paneFor(size),
     );
     top = drawn.top;
     targets = drawn.targets;
@@ -192,6 +225,7 @@ export async function runList(agents: string, repository: string): Promise<void>
   // Reads the rows again, from the database as it is now.
   const refresh = () => {
     if (attached) return;
+    details = null;
     all = listRows(db, open, Date.now());
     reshow();
   };
@@ -388,10 +422,12 @@ export async function runList(agents: string, repository: string): Promise<void>
     return draw();
   };
 
-  // Moves you one row up, by -1, or down, by 1, staying among the rows.
+  // Moves you one row up, by -1, or down, by 1, staying among the rows. The live view reads the
+  // new row's agent at once, rather than at its next look.
   const move = (by: 1 | -1) => {
     here = Math.min(Math.max(here + by, 0), rows.length - 1);
-    return draw();
+    draw();
+    return look();
   };
 
   // Acts on the mouse, by what was drawn where it was pressed. The left button on a repository's
@@ -414,6 +450,10 @@ export async function runList(agents: string, repository: string): Promise<void>
       );
       return tab ? goTo(tab) : draw();
     }
+    // The pane beside the list is only to look at, so a click on it reaches nothing.
+    const width = process.stdout.columns || 80;
+    const beside = paneWidth(width);
+    if (beside > 0 && Number(column) > width - 1 - beside - paneEdge.length) return draw();
     const target = targets[Number(line) - 1] ?? null;
     if (target === null) return draw();
     if ("stage" in target) return toggleStage(target.stage);
@@ -430,6 +470,24 @@ export async function runList(agents: string, repository: string): Promise<void>
     }
     here = target.row;
     return draw();
+  };
+
+  // Reads the screen of the agent on the row you are on, for the pane's live view, and draws it
+  // when it changed, as a quiet agent's screen mostly hasn't. It reads only while the list shows
+  // with its pane, never while you are attached to an agent or once you left, and one read at a
+  // time, so a slow host never piles reads up. A read that comes back after you moved on is kept
+  // for its own row.
+  let reading = false;
+  const look = async () => {
+    const row = rows[here];
+    if (attached || left || reading || !row || row.task === null || liveNote(row) !== null) return;
+    if (paneWidth(process.stdout.columns || 80) === 0) return;
+    reading = true;
+    const shown = await readLive(db, agents, row);
+    reading = false;
+    if (live?.name === row.name && Bun.deepEquals(live.shown, shown)) return;
+    live = { name: row.name, shown };
+    draw();
   };
 
   // Acts on one key. A question takes only y and n, and anything else is a no, Esc included. A
@@ -537,6 +595,9 @@ export async function runList(agents: string, repository: string): Promise<void>
     draw();
   });
   const looks = setInterval(refresh, 1000);
+  // The live view reads 4 times a second, so the agent's screen looks live, and each read costs
+  // only a capture of its screen.
+  const watching = setInterval(look, 250);
   // Reads the load every 5 seconds, unless a test pinned it.
   const loads = setInterval(() => {
     if (fixed) return;
@@ -556,6 +617,7 @@ export async function runList(agents: string, repository: string): Promise<void>
   });
   clearInterval(looks);
   clearInterval(loads);
+  clearInterval(watching);
   process.stdin.pause();
   giveBack();
   // Plain sc opens the split screen, so the way back to the list names --list.

@@ -457,12 +457,14 @@ export async function renameSession(host: PluginHost, id: string, title: string)
 }
 
 // Returns the screen the agent in the named session shows now, as text, such as to see whether
-// it is ready for a message. Throws when the session is gone.
-export async function readSession(host: Host, name: string): Promise<string> {
+// it is ready for a message. With `colours`, tmux keeps the screen's colours as escape codes, for
+// the list's live view of the agent. A runtime plugin's host gives its screen as it reads it.
+// Throws when the session is gone.
+export async function readSession(host: Host, name: string, colours = false): Promise<string> {
   if (typeof host !== "string")
     return (await askHost(host, { ask: "read", id: name }, z.object({ screen: z.string() })))
       .screen;
-  return mustTmux(host, ["capture-pane", "-p", "-t", `=${name}:`]);
+  return mustTmux(host, ["capture-pane", "-p", ...(colours ? ["-e"] : []), "-t", `=${name}:`]);
 }
 
 // Types text into the agent in the named session as if from your keyboard, keys such as Enter

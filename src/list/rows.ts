@@ -44,10 +44,12 @@ type Action = Question | { refused: string };
 // and `merge` what m does on a task ready for review. `link` is its PR's, which Enter opens, and
 // `branch` the branch a task that is ready without a forge waits on. Each is null where it
 // doesn't apply. `more` is how many issues the row stands for on the `… more` row at the end of
-// a cut Backlog, which Enter shows, and 0 on every other row.
+// a cut Backlog, which Enter shows, and 0 on every other row. `task` is the task's ID, such as 12,
+// which the details pane reads it by, or null on a row that isn't a task.
 export type Row = {
   part: "lead" | ListStage;
   name: string;
+  task: string | null;
   title: string;
   mark: { sign: string; colour: Colour };
   says: string;
@@ -108,6 +110,7 @@ function leadRow(db: Database, open: Open): Row {
   return {
     part: "lead",
     name: "lead",
+    task: null,
     title: lead.harness ?? "",
     mark: asking ? { sign: "●", colour: "yellow" } : { sign: "○", colour: runs ? "bright" : "dim" },
     says: word,
@@ -214,6 +217,7 @@ function taskRow(
   return {
     part: stage,
     name,
+    task: thread.task,
     title: removeControlCodes(thread.short ?? thread.title ?? ""),
     mark,
     says: word,
@@ -282,6 +286,7 @@ export function listRows(db: Database, open: Open, now: number): Row[] {
       return {
         part: "backlog",
         name,
+        task: issue.id,
         title: removeControlCodes(issue.title),
         mark: { sign: "○", colour: "dim" },
         says: "",
@@ -349,6 +354,7 @@ export function cutBacklog(rows: Row[], whole: boolean): Row[] {
   const more: Row = {
     part: "backlog",
     name: `${rest} more`,
+    task: null,
     title: "",
     mark: { sign: "…", colour: "dim" },
     says: "",
