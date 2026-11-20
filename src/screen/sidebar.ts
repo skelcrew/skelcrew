@@ -269,10 +269,12 @@ export async function runSidebar(
     // a client still attaching, a new client starts on the agent. Otherwise the client switches.
     // A builder on a plugin's host runs that host's attach in the pane, and the lead comes back
     // once you leave it, as after a tmux session. So does a lead on a plugin's host, which no
-    // tmux client can switch to.
+    // tmux client can switch to. The lead is reached as the database says it runs now, not as the
+    // host's last list found it, which can lag behind a lead that moved, or be kept while the host
+    // fails to answer.
     const entry = entries.find((candidate) => entryPlace(candidate.entry) === next);
     const fullName = `${open.owner}/${open.repo}`;
-    const onHost = hosted.get(next);
+    const onHost = next === open.lead ? undefined : hosted.get(next);
     if (entry)
       respawnPane(agents, rightPane, paneCommand(agents, session, entry.entry, where, fullName));
     else if (onHost !== undefined) {

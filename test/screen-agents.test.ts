@@ -10,6 +10,7 @@ import {
   agent,
   agents,
   click,
+  clickRow,
   endTest,
   env,
   given,
@@ -331,6 +332,39 @@ UPDATE threads SET host = 'fake', host_id = 'fake-app-12' WHERE folder = 'app-12
   type("\r");
   await until(() => right().includes("I am fake-lead on fake"), "the lead again");
   await until(() => selected() === "◆ lead", "the lead's row");
+});
+
+// The host's list can lag behind the lead, or fail. A lead that moved on its host meanwhile is
+// still shown where it went when you pick its row.
+test("picking a lead that moved on its host while its host fails to answer shows where it went", async () => {
+  tmux(agents, "kill-session", "-t", "=lead");
+  const plugin = join(home, "plugin-fake");
+  mkdirSync(plugin, { recursive: true });
+  writeFileSync(
+    join(plugin, "session.sh"),
+    `read -r question; echo >> listed; [ -e failing ] && exit 1; echo '{"sessions":[{"id":"fake-lead-1","running":true,"labels":null}]}'\n`,
+  );
+  writeFileSync(join(plugin, "attach.sh"), 'echo "I am $1 on fake"; exec sleep 300\n');
+  writeFileSync(
+    join(plugin, "skelcrew-plugin.yaml"),
+    "name: fake\nversion: 0.1.0\nskelcrew: 0.1.0\nabout: A host\nkind: runtime\nprovides: [sessions]\nsession: [sh, session.sh]\nattach: [sh, attach.sh]\n",
+  );
+  sql(`INSERT INTO plugins (name, folder) VALUES ('fake', '${plugin}');
+UPDATE repositories SET lead_host = 'fake', lead_host_id = 'fake-lead-1' WHERE repo = 'app'`);
+  open("lead");
+  await until(() => seen().includes("I am fake-lead-1 on fake"), "the lead through its host");
+  const looks = () => read(join("plugin-fake", "listed")).split("\n").length;
+  await until(() => looks() > 2, "the sidebar to ask the host");
+  toFirstThread();
+  await until(() => seen().includes("I am app-12"), "app-12");
+  await until(() => selected() === "○ 12 app-12", "the sidebar to follow");
+  writeFileSync(join(plugin, "failing"), "");
+  sql("UPDATE repositories SET lead_host_id = 'fake-lead-2' WHERE repo = 'app'");
+  // The sidebar looks each second.
+  await Bun.sleep(2500);
+  clickRow("lead");
+  await until(() => selected() === "◆ lead", "the lead's row");
+  await until(() => right().includes("I am fake-lead-2 on fake"), "the lead where it went");
 });
 
 test("a screen opened on an agent starts on it, marked in the sidebar", async () => {
