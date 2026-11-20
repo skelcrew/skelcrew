@@ -33,7 +33,8 @@ export const githubPlugin = "skelcrew/skelcrew-github";
 const Source = z
   .string()
   .regex(/^\w[\w.-]*\/[\w.-]+$/, "must be owner/repo, such as skelcrew/skelcrew-github");
-const Shared = z.looseObject({ plugins: z.array(Source).optional() });
+// A bare plugins: is YAML's null, which names none, as a missing line does.
+const Shared = z.looseObject({ plugins: z.array(Source).nullish() });
 
 // Throws when `file` is there but isn't a plain file. A repository's files are someone else's
 // writing, and a link in them could point Skelcrew at any file of yours.
@@ -75,7 +76,8 @@ const asWritten = { lineWidth: 0, flowCollectionPadding: false };
 
 // Returns `text` with `key` set to `value`, changing only where it goes, so every other line stays
 // byte for byte, as it would in the human's commit. A key that isn't there is added as a line at
-// the end of the document. One with an empty list, such as plugins: [], gets the value in its place, on one line.
+// the end of the document. One with an empty value, such as plugins: [] or a bare plugins:, gets
+// the value in its place, on one line.
 // Returns null when neither fits, such as for a file written as one map on one line, or a key
 // with a value already, which the whole file must be written again to change.
 function withKey(text: string, key: string, value: unknown): string | null {
@@ -93,10 +95,14 @@ function withKey(text: string, key: string, value: unknown): string | null {
   const pair = contents.items.find((item) => isScalar(item.key) && item.key.value === key);
   if (!pair) return added();
   const empty = pair.value;
-  if (!isSeq(empty) || !empty.range || empty.items.length > 0) return null;
+  const blank = isScalar(empty) && empty.value === null;
+  const emptyList = isSeq(empty) && empty.items.length === 0;
+  if (!(blank || emptyList) || !empty.range) return null;
   const [start, end] = empty.range;
+  // A bare key has its empty value right after the colon, which needs a space.
+  const space = text[start - 1] === ":" ? " " : "";
   const flow = stringify(value, { ...asWritten, collectionStyle: "flow" }).trim();
-  return `${text.slice(0, start)}${flow}${text.slice(end)}`;
+  return `${text.slice(0, start)}${space}${flow}${text.slice(end)}`;
 }
 
 // Sets `key` to `value` in the YAML file, keeping its other lines as they are where it can, as
