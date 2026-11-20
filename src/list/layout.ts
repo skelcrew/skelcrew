@@ -18,12 +18,12 @@ import {
 } from "../screen/look.ts";
 import type { Heading, Row, Tab } from "./rows.ts";
 
-// What the list shows besides its rows: the version of Skelcrew running here, such as v0.4.2 or
-// 6f1c2ab (checkout), where it runs on a remote, or empty on this machine, the open repository's
+// What the list shows besides its rows: the names of the version of Skelcrew running here,
+// longest first, such as v0.4.2 or 6f1c2ab (checkout), where it runs on a remote, or empty on this machine, the open repository's
 // name, every repository's tab, the notice of a release waiting for a restart, or empty, the
 // bottom line's text, and the load.
 export type Frame = {
-  version: string;
+  versions: string[];
   where: string;
   name: string;
   tabs: Tab[];
@@ -100,17 +100,22 @@ export type TabSpan = { from: number; to: number; fullName: string };
 const openTab = "48;5;238";
 const otherTab = "48;5;236";
 
-// Returns the top line and where each repository's tab is on it. Skelcrew in bold and its
-// version and where it runs, dim, then every repository's tab, in order, left to right. The open
+// Returns the top line and where each repository's tab is on it. Skelcrew in bold and the
+// longest name of its version that fits and where it runs, dim, then every repository's tab, in order, left to right. The open
 // one is white on a lighter grey. Each other one has a yellow dot and how many of its threads
 // need you, or red when one went wrong, then a green dot and how many wait for you to merge. They
 // are counted apart, so a finished task is never told twice. Another repository's tab that
 // doesn't fit beside the open one's is left out.
 function topParts(frame: Frame, width: number): { line: string; spans: TabSpan[] } {
   const place = frame.where ? ` on ${frame.where}` : "";
-  const plain = ` Skelcrew ${frame.version}${place}`;
+  // Words around a checkout's commit give way before the line is cut, so it keeps the whole
+  // commit when it can.
+  const named = (name: string) => ` Skelcrew ${name}${place}`;
+  const fits = (name: string) => Bun.stringWidth(named(name)) <= width;
+  const version = frame.versions.find(fits) ?? frame.versions.at(-1) ?? "";
+  const plain = named(version);
   if (Bun.stringWidth(plain) > width) return { line: fitted(plain, width), spans: [] };
-  let line = ` ${paint(bright, "Skelcrew")} ${paint(grey, `${frame.version}${place}`)}`;
+  let line = ` ${paint(bright, "Skelcrew")} ${paint(grey, `${version}${place}`)}`;
   let used = Bun.stringWidth(plain);
   const spans: TabSpan[] = [];
   // Each tab's text, with a space either side inside its background.

@@ -693,7 +693,7 @@ test("the rows come from the database alone, with no tmux and no settings file",
 
 // The list as drawn, given its rows, at 80 columns and 20 lines.
 const frame = {
-  version: "v0.6.0",
+  versions: ["v0.6.0"],
   where: "",
   name: "app",
   tabs: [
@@ -952,6 +952,17 @@ test("the open repository's tab shows when other tabs don't fit", () => {
   expect(Bun.stripANSI(top)).toBe(" Skelcrew v0.6.0   alpha    app ");
   expect(top).toContain("\x1b[48;5;238m \x1b[1;38;5;231mapp");
   expect(tabAt({ ...frame, tabs }, 40, 30)).toBe("simon/app");
+});
+
+// A narrow list shows the longest name of the version that fits, so words around a checkout's
+// commit give way before the commit is cut.
+test("a narrow list shows a shorter name of the version, keeping the whole commit", () => {
+  const versions = ["6f1c2ab* (checkout, * = uncommitted changes)", "checkout 6f1c2ab+changes"];
+  const shown = { ...frame, versions, tabs: [] };
+  const top = (width: number) =>
+    Bun.stripANSI(drawnWith(0, shown, { width, height: 20 })[0] ?? "").trimEnd();
+  expect(top(80)).toBe(" Skelcrew 6f1c2ab* (checkout, * = uncommitted changes)");
+  expect(top(40)).toBe(" Skelcrew checkout 6f1c2ab+changes");
 });
 
 test("a list taller than the terminal scrolls its stages, and its edges say what is hidden", () => {

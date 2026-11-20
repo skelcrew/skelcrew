@@ -169,7 +169,7 @@ export async function runList(agents: string, repository: string): Promise<void>
     const name = tabs.find((tab) => tab.fullName === `${open.owner}/${open.repo}`)?.name ?? "";
     const notice = updateNotice(db);
     return {
-      version: shownVersions()[0] ?? "",
+      versions: shownVersions(),
       where,
       name,
       tabs,
