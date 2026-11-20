@@ -654,6 +654,10 @@ function prepareTables(db: Database): void {
     body TEXT NOT NULL,
     PRIMARY KEY (owner, repo, claim_commit)
   )`);
+  // A try made for your yes to a lead's request names the request, so only that request's yes,
+  // done again, finds it, never another filing of the same words.
+  if (!db.query("SELECT 1 FROM pragma_table_info('filing_tries') WHERE name = 'request'").get())
+    db.run("ALTER TABLE filing_tries ADD COLUMN request INTEGER");
   // The starts of backlog tasks this machine claimed on the remote and hasn't recorded a thread
   // for yet, each by the commit of its claim. A start a stop cut short is put back in the
   // backlog from here, while another machine's claim, which this table never holds, is left be.

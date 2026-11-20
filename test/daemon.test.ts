@@ -662,6 +662,45 @@ test("a yes to a new task in a repository with no commits files nothing, and say
   ]);
 });
 
+// Two requests can ask for the same new task in the same words. A stop after the second yes's
+// filing pushed, before it heard, leaves a note of that try, which is the second request's alone:
+// done again after the restart, the first yes files a task of its own, never the second's, and
+// each yes starts the task it filed.
+test("identical new-task yeses each find only their own filing across a restart", async () => {
+  setUp();
+  addRepository("app");
+  holdGit();
+  serve();
+  await untilAnswers();
+  await until(() => existsSync(join(home, ".local", "share", "skelcrew", "repos", "simon", "app")));
+  const action = '{"kind":"start new","title":"CSV export","body":"Add it."}';
+  onDb((db) =>
+    db.run(`INSERT INTO lead_requests (owner, repo, action, says, made) VALUES
+  ('simon', 'app', '${action}', 'First CSV export?', 1),
+  ('simon', 'app', '${action}', 'Second CSV export?', 2)`),
+  );
+  writeFileSync(join(home, "hold-push"), "1");
+  void ask({ command: "answer", repo: "simon/app", id: 2, yes: true });
+  await until(() => existsSync(join(home, "held-1")));
+  for (const run of running.splice(0)) await stop(run);
+  // The first yes was cut short too, before it filed anything, and is done again first.
+  onDb((db) => db.run("UPDATE lead_requests SET answered = 1 WHERE id = 1"));
+  rmSync(join(home, "hold-push"));
+  serve();
+  await untilAnswers();
+  await until(() => onDb((db) => db.query("SELECT 1 FROM lead_requests").all()).length === 0);
+  const tasks = onDb((db) => db.query("SELECT task FROM task_threads ORDER BY task").all());
+  expect(tasks).toEqual([{ task: "t1" }, { task: "t2" }]);
+  expect(onDb((db) => db.query("SELECT task FROM backlog").all())).toEqual([]);
+  const notes = onDb((db) => db.query("SELECT text FROM notes WHERE text LIKE '%request%'").all());
+  const said = (says: string, task: string) =>
+    `Skelcrew stopped partway through the human's yes in the list to your request: ${says} It did it again: Started ${task}.`;
+  expect(notes).toEqual([
+    { text: said("First CSV export?", "APP-T2") },
+    { text: said("Second CSV export?", "APP-T1") },
+  ]);
+}, 60_000);
+
 // A daemon stopped partway through a yes does it again as it starts, and the lead hears what that
 // said. Here the yes asks for a flow that doesn't exist, so doing it again fails and says why, and
 // the task stays as it was.

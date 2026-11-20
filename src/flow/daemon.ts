@@ -513,7 +513,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         const options = { ...(short ? { short } : {}), ...(flow ? { flow } : {}) };
         const named = (task: string) =>
           nameFiledTask(db, taken.id, { kind: "start", task, ...options });
-        const filing = { title, body, by };
+        const filing = { title, body, by, request: taken.id };
         const current = findRepository(db, `${owner}/${repo}`);
         const { task } = await fileTask(db, current, clone, filing, named);
         action = { kind: "start", task, ...options };
