@@ -2,7 +2,7 @@
 // in CI it prints how long each test took, and what a run starts never reaches the daemon of the
 // Skelcrew it runs in.
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -40,10 +40,13 @@ test("hangs", () => new Promise(() => {}), 600_000);
 
 // Runs scripts/test.ts on the given test files in the test's folder, as CI runs it when `ci`,
 // and gives back what it printed and its exit code. The folder has no bunfig.toml, so the run
-// loads no preload of Skelcrew's.
+// loads no preload of Skelcrew's. In CI, the run's summary page is the file `summary` in it.
 async function runIn(files: string[], ci: boolean, limit = "") {
   const env: Record<string, string> = { PATH: process.env.PATH ?? "", HOME: folder };
-  if (ci) env.GITHUB_ACTIONS = "true";
+  if (ci) {
+    env.GITHUB_ACTIONS = "true";
+    env.GITHUB_STEP_SUMMARY = join(folder, "summary");
+  }
   if (limit) env.SKELCREW_TESTS_LIMIT = limit;
   const run = Bun.spawn([process.execPath, runner, ...files], {
     cwd: folder,
@@ -101,9 +104,15 @@ test("other", () => {});
   expect(slow.seconds).toBeGreaterThanOrEqual(0.9);
   expect(other.at).toBeGreaterThan(0);
   expect(slow.at).toBeGreaterThan(0);
+  // The run's summary page shows the same times, as anyone can read it without the job's log.
+  const summary = readFileSync(join(folder, "summary"), "utf8");
+  expect(summary).toContain("Time per file:");
+  expect(summary).toContain("slow.test.ts  takes a while");
+  rmSync(join(folder, "summary"));
   const local = await runIn(files, false);
   expect(local.code).toBe(0);
   expect(local.out).not.toContain("slowest");
+  expect(existsSync(join(folder, "summary"))).toBe(false);
 });
 
 // A run stopped at its limit is the one whose times matter most.

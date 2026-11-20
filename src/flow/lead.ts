@@ -35,21 +35,24 @@ const LeadRow = z.object({
   kept_lead: z.coerce.boolean(),
   lead_host: z.string().nullable(),
   lead_host_id: z.string().nullable(),
+  lead_agents: z.string().nullable(),
 });
 
 // Returns a repository's lead: where it lives, as leadPlaces gives it, the session ID of its
 // conversation, and the harness it started on, both null before it first started. Also the
-// session host it runs on, and its session's ID there, null until the host gave one. A lead
+// session host it runs on, and its session's ID there, null until the host gave one, and the
+// approved .agents/ it started on, as the database keeps it. A lead
 // that started before Skelcrew saved its harness ran on Claude Code, the only one then, and one
 // from before hosts runs on tmux. Throws when Skelcrew doesn't have the repository.
 export function leadOf(db: Database, owner: string, repo: string) {
   const row = db
     .query(
-      "SELECT lead_session, lead_harness, kept_lead, lead_host, lead_host_id FROM repositories WHERE owner = ? AND repo = ?",
+      "SELECT lead_session, lead_harness, kept_lead, lead_host, lead_host_id, lead_agents FROM repositories WHERE owner = ? AND repo = ?",
     )
     .get(owner, repo);
   if (!row) throw new Error(`Skelcrew doesn't have ${owner}/${repo}`);
-  const { lead_session, lead_harness, kept_lead, lead_host, lead_host_id } = LeadRow.parse(row);
+  const { lead_session, lead_harness, kept_lead, lead_host, lead_host_id, lead_agents } =
+    LeadRow.parse(row);
   const harness = lead_harness ?? (lead_session === null ? null : "claude");
   return {
     ...leadPlaces(owner, repo, kept_lead),
@@ -57,6 +60,7 @@ export function leadOf(db: Database, owner: string, repo: string) {
     harness,
     host: lead_host ?? "tmux",
     hostId: lead_host_id,
+    agents: lead_agents,
   };
 }
 
@@ -180,7 +184,9 @@ export function approvedFlowsTold(clone: string): string {
 // is gone. Codex picks its own id, and its module finds the conversation it saved. A lead keeps
 // the session host it started on while it runs, and starts on the host your config names now,
 // as builders do. Throws when that host isn't installed, or when the plugin the lead ran on is
-// gone, as the lead may still run there and a second one would share its conversation.
+// gone, as the lead may still run there and a second one would share its conversation. A lead
+// running on another .agents/ than the one you approved now starts again on it, keeping its
+// conversation, as a lead reads its instructions only as it starts.
 export async function startLead(
   db: Database,
   sessions: string,
@@ -196,14 +202,24 @@ export async function startLead(
   // A lead still running is kept. One on tmux started by a release before leads stayed on a
   // clean exit is given that setting now, or exiting it would end its session and never close
   // its tab. One whose harness ended leaves its screen behind, which is logged before its
-  // session is ended to make room for the new one.
+  // session is ended to make room for the new one. One that started on another .agents/ than
+  // you approved now, such as the built-in roles before you said yes, ends too and starts again
+  // on it. So does a lead from before Skelcrew kept what it started on, once, while you have
+  // approved an .agents/ it may not run on. With none approved it runs on the built-in roles
+  // already, and is left running, as upgrading Skelcrew shouldn't stop a lead's work.
+  const approved = approvedAgents(repository) ?? "none";
   if (await hasSession(before.host, before.id)) {
     const failed = await failedScreen(before.host, before.id);
-    if (failed === null) {
+    const older = lead.agents === null ? approved !== "none" : lead.agents !== approved;
+    if (failed === null && !older) {
       if (typeof before.host === "string") keepOnExit(before.host, before.id);
       return;
     }
-    console.log(`${owner}/${repo}'s lead had ended:\n${failed}`);
+    console.log(
+      failed === null
+        ? `${owner}/${repo}'s lead starts again on the .agents/ you approved.`
+        : `${owner}/${repo}'s lead had ended:\n${failed}`,
+    );
     await endSession(before.host, before.id);
   }
   const hostName = sessionHost();
@@ -228,8 +244,8 @@ export async function startLead(
   // The host is saved before the session starts too, so a daemon that stops in between finds the
   // lead there by its labels.
   db.run(
-    "UPDATE repositories SET lead_session = ?, lead_harness = ?, lead_host = ?, lead_host_id = NULL WHERE owner = ? AND repo = ?",
-    [session, harness.name, hostName, owner, repo],
+    "UPDATE repositories SET lead_session = ?, lead_harness = ?, lead_host = ?, lead_host_id = NULL, lead_agents = ? WHERE owner = ? AND repo = ?",
+    [session, harness.name, hostName, approved, owner, repo],
   );
   // The lead reads the flows you approved at their ref, and starts with today's instructions, so
   // it needs no note of them, nor of briefing another lead.
