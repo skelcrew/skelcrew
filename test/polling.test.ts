@@ -4,6 +4,7 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -2925,15 +2926,47 @@ echo '{"verdict":"changes","body":"Not yet.","findings":["Handle an empty file",
       await morePolls();
       return head;
     };
-    // Waiting on an approval, a builder working on its round or a review running needs nobody,
-    // so the lead hears nothing, however many rounds it takes.
+    // Waiting on an approval, a builder's round being pushed or a review running needs nobody,
+    // so the lead hears nothing, however many rounds it takes. Each phase is held open through
+    // polls, so the merge is checked while it is under way.
     test("an armed merge sends the lead no note while its builder resubmits and its review runs", async () => {
       await changesApp12();
       await arm();
       await until(() => thread().merge_waits === "an approval");
       await morePolls();
-      // The builder fixes what it was told and submits, and the reviewer asks for changes again.
+      expect(leadTyped()).not.toContain("Still merging");
+      // The forge holds the builder's push while a file is there, so the round stays submitting.
+      const holdPush = join(home, "hold-push");
+      const heldPush = join(home, "held-push");
+      const hook = join(home, "github", "simon", "app.git", "hooks", "pre-receive");
+      writeFileSync(
+        hook,
+        `#!/bin/sh\ntouch '${heldPush}'\nwhile [ -e '${holdPush}' ]; do sleep 0.1; done\n`,
+      );
+      chmodSync(hook, 0o755);
+      writeFileSync(holdPush, "");
+      // The review's pending check is held too, so the review stays running once it starts.
+      writeFileSync(join(plugin, "hold-status-pending"), "");
       submitRound2();
+      await until(() => existsSync(heldPush));
+      await until(() => thread().merge_waits === "its review");
+      await morePolls();
+      expect(thread().submitting).not.toBeNull();
+      expect(leadTyped()).not.toContain("Still merging");
+      // The push goes through, and the review runs, held on its check.
+      rmSync(holdPush);
+      await until(
+        () =>
+          thread().submitting === null &&
+          thread().reviewing !== null &&
+          existsSync(join(plugin, "held-status")),
+      );
+      await morePolls();
+      expect(thread().reviewing).not.toBeNull();
+      expect(thread().merge_waits).toBe("its review");
+      expect(leadTyped()).not.toContain("Still merging");
+      // The reviewer asks for changes again, and the merge waits on an approval, quietly.
+      rmSync(join(plugin, "hold-status-pending"));
       await until(
         () => thread().rounds === 2 && thread().submitting === null && thread().reviewing === null,
         30_000,
@@ -2942,7 +2975,7 @@ echo '{"verdict":"changes","body":"Not yet.","findings":["Handle an empty file",
       await morePolls();
       expect(leadTyped()).not.toContain("Still merging");
       expect(thread().merge_plan).toBe("armed");
-    }, 90_000);
+    }, 120_000);
 
     const skipQuestion =
       "Merge #7 (app-12 Add export) without Skelcrew's approval? CI must still pass. It still asks: 1) Handle an empty file 2) Test the error";

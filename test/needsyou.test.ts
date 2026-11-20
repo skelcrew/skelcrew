@@ -1025,7 +1025,6 @@ import { readThread, record } from ${JSON.stringify(source("flow/thread.ts"))};
 import { bringBack } from ${JSON.stringify(source("flow/builder.ts"))};
 import { armMerge, cancelMerge } from ${JSON.stringify(source("flow/merging.ts"))};
 import { cloneDir } from ${JSON.stringify(source("paths.ts"))};
-import { mergeWaitsOn } from ${JSON.stringify(source("flow/decide.ts"))};
 import { mkdirSync } from "node:fs";
 const db = openDb();
 db.run(\`INSERT INTO repositories (name, owner, repo) VALUES ('app', 'simon', 'app');
@@ -1262,27 +1261,17 @@ console.log(JSON.stringify({ reviewed, early, word: needsYouFor(thread()) }));`)
 });
 
 // Arming a merge past the round limit is your decision, which a plan that ends later, such as
-// one you cancel, doesn't undo. The plan then waits on an approval, not on that decision, so the
-// lead is never asked for a decision already made.
+// one you cancel, doesn't undo.
 test("arming a merge past the round limit decides it, after the plan ends too", () => {
   const seen = inProcess(`
 db.run("UPDATE repositories SET forge = 'github'");
 record(db, "app-12", { status: "waiting", needs_you: true, rounds: 4, verdict: "changes", held: "Fix it.", pr: 7 });
 const before = needsYou(thread());
-const open = { state: "open", head: null, checks: [], conflicts: false, base: "main" };
-const undecided = mergeWaitsOn(thread(), open, null);
 armMerge(db, "none", thread(), { asked: "merge app-12 when it's ready" }, false);
 const decided = thread().limit_decided;
-const waits = mergeWaitsOn(thread(), open, null);
 cancelMerge(db, thread());
-console.log(JSON.stringify({ before, undecided, decided, waits, after: needsYou(thread()) }));`);
-  expect(seen).toEqual({
-    before: true,
-    undecided: "a decision past its round limit",
-    decided: true,
-    waits: "an approval",
-    after: false,
-  });
+console.log(JSON.stringify({ before, decided, after: needsYou(thread()) }));`);
+  expect(seen).toEqual({ before: true, decided: true, after: false });
 });
 
 // A turn that left work it didn't submit shows turn ended, but its last submit is still reviewed,
