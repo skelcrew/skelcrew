@@ -13,7 +13,7 @@ import { builderProgress, tokenText } from "./progress.ts";
 
 // One row of the sidebar, with what the strip says of the agent too. The lead has no status of
 // its own, and a row's age is empty unless it shows a running time. `task` is the thread's name
-// without its repository's, such as 12 or t5, and `short` the short title the lead gave it, which
+// without its repository's, in uppercase as names show, such as 12 or T5, and `short` the short title the lead gave it, which
 // its row shows in place of its title. `harness` names whoever has the thread now, its reviewer
 // while a review runs, and `agentHarness` the agent itself, which Esc stops. A working thread
 // also has its builder's `tokens`, as text, its `step`, what it is doing, and its `plan`, how
@@ -132,7 +132,7 @@ export function sidebarRows(
       const progress = stepping ? builderProgress(thread, now) : noProgress;
       return {
         name: threadName(db, thread),
-        task: thread.task,
+        task: thread.task.toUpperCase(),
         session: thread.folder,
         status: thread.status,
         state: status,

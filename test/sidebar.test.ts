@@ -43,7 +43,7 @@ const lead: Row = {
 const thread = (name: string, more: Partial<Row> = {}): Row => ({
   ...row,
   name,
-  task: name.split("-").at(-1) ?? "",
+  task: (name.split("-").at(-1) ?? "").toUpperCase(),
   session: name,
   status: "working",
   word: "working",
@@ -96,7 +96,7 @@ test("a working thread has three lines: its name and title, harness, time and to
   expect(listed(draw(rows, "lead", { width: sidebarWidth, height: 14 }))).toEqual([
     "  ◆ lead",
     "    running · claude",
-    "  ○ t5 Shift+Enter fix",
+    "  ○ T5 Shift+Enter fix",
     "    claude · 12m · 48k tok",
     "    Run the sidebar tests",
     "  ○ 7 Add docs",
@@ -1187,6 +1187,11 @@ console.log(JSON.stringify(sidebarRows(db, ["lead", "app-12"], () => 3, ${now}, 
       "  ◆ lead",
       "    running · codex",
     ]);
+  });
+
+  // A task with no issue shows its own part of its name in uppercase, as every name shows.
+  test("a task with no issue shows its number in uppercase", () => {
+    expect(listed(shown({ task: "t5" }, 0))).toContain("  ○ T5 APP-T5");
   });
 
   test("a thread shows the harness its builder runs on, and Claude Code for one from before", () => {
