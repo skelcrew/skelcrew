@@ -9,6 +9,7 @@ import {
   daemon,
   endTest,
   env,
+  footer,
   home,
   open,
   press,
@@ -59,8 +60,9 @@ function rowCode(action: "show" | "attach", name: string): string {
   return `import { attachTask, showTask } from ${JSON.stringify(source("screen/task.ts"))};
 const agents = ${JSON.stringify(agents)};
 const session = ${JSON.stringify(session())};
-if (${JSON.stringify(action)} === "show") showTask(agents, session, "simon/app", ${JSON.stringify(name)});
-else console.log((await attachTask(agents, session, "simon/app", ${JSON.stringify(name)})) ?? "");`;
+const name = ${JSON.stringify(name)};
+if (${JSON.stringify(action)} === "show") showTask(agents, session, "simon/app", name, true);
+else console.log((await attachTask(agents, session, "simon/app", name, true)) ?? "");`;
 }
 
 // Does what onRow does without waiting for it, and gives what it printed once it ends.
@@ -93,6 +95,31 @@ test("a task's row shows its details with its builder live under them, and typin
   type("hello\r");
   await Bun.sleep(500);
   expect(read("app-7.typed")).toBe("first line\n");
+});
+
+test("o on a task's row shows its builder's whole screen and back, and Enter still attaches", async () => {
+  sql("UPDATE tasks SET title = 'Login redirect' WHERE task = '7'");
+  open("lead");
+  await ready("lead");
+  press("M-S-Down");
+  press("M-Down");
+  await until(() => right().includes("Login redirect"), "app-7's details");
+  await until(() => right().includes("I am app-7"), "app-7's screen");
+  expect(footer()).toContain("⏎ attach · o output");
+  for (const line of ["one", "two", "three", "four"])
+    tmux(agents, "send-keys", "-t", "=app-7:", "-l", `${line}\r`);
+  // By default only the last three lines of the builder's screen show.
+  await until(() => right().includes("four") && !right().includes("I am app-7"), "the strip");
+  expect(right()).not.toContain("one");
+  type("o");
+  await until(() => right().includes("I am app-7") && right().includes("four"), "the whole screen");
+  type("o");
+  await until(() => !right().includes("I am app-7"), "the strip again");
+  // Enter still attaches to the builder.
+  press("Enter");
+  await until(() => typingTo() === "1", "typing to move to the builder");
+  type("hi\r");
+  await until(() => read("app-7.typed").endsWith("four\nhi\n"), "what was typed");
 });
 
 test("Enter attaches the right side to the builder, and Ctrl-\\ comes back to its details", async () => {

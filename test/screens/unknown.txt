@@ -1,0 +1,11 @@
+dev@box:~/code/app$ bun test
+bun test v1.3.2
+
+test/limit.test.ts:
+✓ resets each minute [2.10ms]
+✓ answers 429 over the limit [1.02ms]
+
+ 2 pass
+ 0 fail
+Ran 2 tests across 1 file. [31.00ms]
+dev@box:~/code/app$ 

@@ -449,6 +449,25 @@ function usageLimit(error: string, now: number): { reset: number | null } | null
   return { reset: resets === undefined ? null : resetTime(resets, now) };
 }
 
+// Returns the line where Claude Code's own input area starts on its screen, given as its lines
+// with their colours, or null when it isn't found, such as after an update that redrew it. The
+// area is a rule, the ❯ prompt with what is typed indented under it, a closing rule, and at most
+// two indented status lines, ending the screen. A past message quoted in the output also starts
+// with ❯, and the agent may print a box like this one itself, so anything after it shows whole.
+function inputStart(screen: string[]): number | null {
+  const lines = screen.map((line) => Bun.stripANSI(line));
+  const rule = (line: string) => /^─{3,}/.test(line.trim());
+  const at = lines.findLastIndex((line) => line.startsWith("❯"));
+  if (at < 1 || !rule(lines[at - 1] ?? "")) return null;
+  // What is typed goes on, indented, until the closing rule.
+  let end = at + 1;
+  while (lines[end]?.startsWith(" ") && !rule(lines[end] ?? "")) end++;
+  if (!rule(lines[end] ?? "")) return null;
+  const status = lines.slice(end + 1).filter((line) => line.trim() !== "");
+  const indented = status.every((line) => line.startsWith(" ") && !rule(line));
+  return status.length <= 2 && indented ? at - 1 : null;
+}
+
 // Claude Code as Skelcrew knows it. While a turn runs it shows "esc to interrupt". It is ready for
 // a message once that is gone and a line holding only its ❯ prompt shows. `keys` are the API key
 // variables let into the sandbox, for those who use a key rather than a login. The first run
@@ -464,6 +483,7 @@ export const claude = {
   saved: savedConversation,
   conversation: conversationFile,
   progress: readProgress,
+  inputStart,
   review: reviewCommand,
   answer: parseAnswer,
   failure: reportedError,

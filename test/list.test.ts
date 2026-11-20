@@ -1472,7 +1472,7 @@ test("s asks to start a task in Backlog, and y starts it", async () => {
 // you had comes back with you.
 test("while attached the title names the agent and the key back, and the list shows the key", async () => {
   await open();
-  expect(seen()).toContain("⏎ open · ctrl+\\ back");
+  expect(seen()).toContain("⏎ attach · ctrl+\\ back");
   const title = () =>
     tmux("display-message", "-p", "-t", "=one:", "#{pane_title}").stdout.toString();
   tmux("select-pane", "-t", "=one:", "-T", "my shell");
@@ -1691,7 +1691,7 @@ UPDATE threads SET host = 'fake', host_id = 'fake-app-12' WHERE folder = 'app-12
   await open();
   await until(() => here().startsWith("▸ ● APP-12"), "APP-12's row");
   // The host has a key of its own to come back, so the list doesn't offer tmux's.
-  expect(seen()).toContain("⏎ open  ");
+  expect(seen()).toContain("⏎ attach  ");
   expect(seen()).not.toContain("ctrl+\\ back");
   press("Enter");
   await until(() => seen().includes("I am fake-app-12 on fake"), "the host's attach");
@@ -2066,6 +2066,36 @@ test("the pane shows the latest review's findings though it was never posted", a
   expect(paneSeen()).toContain("Round 1 · changes asked");
   expect(paneSeen()).toContain("  - Name the limit");
   expect(paneSeen()).toContain("  - Test the header");
+});
+
+test("o shows the agent's whole screen in the pane and back, and Enter still attaches", async () => {
+  await open({ width: wide, says: "step one\\nstep two\\nstep three\\nstep four\\n" });
+  // By default the pane shows a strip of the agent's last three lines under the details.
+  await until(() => liveSeen().includes("I am app-12"), "app-12's screen");
+  expect(liveSeen().filter((line) => line !== "")).toEqual([
+    "step three",
+    "step four",
+    "I am app-12",
+  ]);
+  expect(seen()).toContain("⏎ attach · ctrl+\\ back · o output");
+  type("o");
+  await until(() => liveSeen().includes("step one"), "the whole screen");
+  expect(liveSeen().slice(0, 5)).toContain("step two");
+  // It stays as you move, and o brings the strip back.
+  press("Down");
+  await until(() => here().startsWith("▸ ● APP-14"), "APP-14's row");
+  press("Up");
+  await until(() => liveSeen().includes("step one"), "the whole screen on app-12 again");
+  type("o");
+  await until(() => !liveSeen().includes("step one"), "the strip again");
+  // Enter still attaches to the builder.
+  press("Enter");
+  await until(() => !seen().includes("q/esc quit"), "app-12's agent");
+  type("hello");
+  press("Enter");
+  await until(() => read(join(home, "app-12.typed")) === "hello\n", "what was typed");
+  press("C-\\");
+  await until(() => seen().includes("q/esc quit"), "the list again");
 });
 
 test("the pane shows only while the terminal is wide enough, and the keys do the same", async () => {

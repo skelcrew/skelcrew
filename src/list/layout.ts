@@ -35,19 +35,30 @@ export type Frame = {
 // The size of your terminal.
 export type Size = { width: number; height: number };
 
-// The fewest columns the list keeps beside the pane, the fewest the pane takes, and the line
-// between them. A terminal narrower than both side by side shows no pane.
-const listLeast = 70;
-const paneLeast = 40;
+// How wide the list is, in its own window or as the screen's sidebar: a little over a quarter of
+// the terminal, so the pane or the right side has the room for the agent at work. It never gets
+// narrower than a row's name, short title and word need, nor wider than a task's two lines do,
+// such as `working · Editing rows.ts · #40 · CI passed · 14:31`.
+export const listShare = { percent: 28, least: 40, most: 58 };
+
+// Returns how many columns the list takes in a terminal `width` columns wide.
+export const listWidth = (width: number) =>
+  Math.min(
+    Math.max(Math.floor((width * listShare.percent) / 100), listShare.least),
+    listShare.most,
+  );
+
+// The narrowest terminal that shows the pane, and the line between the pane and the list. On a
+// narrower one the list keeps the whole width, as the agent's lines would show too cut to read.
+const paneFrom = 114;
 export const paneEdge = " │ ";
 
 // Returns how many columns the pane takes in a terminal `width` columns wide, or 0 when it is too
-// narrow for the list and the pane side by side. The pane takes a little under half, as the list
-// needs room for its titles and the pane for the agent's screen.
+// narrow for the list and the pane side by side. The pane takes what the list leaves, past the
+// terminal's last column, which is never drawn in.
 export function paneWidth(width: number): number {
-  const edge = paneEdge.length;
-  if (width - 1 < listLeast + edge + paneLeast) return 0;
-  return Math.max(Math.floor((width - 1) * 0.45), paneLeast);
+  if (width < paneFrom) return 0;
+  return width - 1 - listWidth(width) - paneEdge.length;
 }
 
 // The name of each section, as its heading shows it, which the pane also shows of a row's stage.
@@ -61,18 +72,29 @@ export const sectionNames: Record<Section, string> = {
   done: "Done",
 };
 
-// Returns the keys the bottom line offers on a row: Enter always, with Ctrl-\, which comes back,
-// on a row whose agent Enter attaches to on tmux, or as showing every issue on Backlog's `… more`
-// row, the numbers that open and close the stages, s only on a task it can start, m only on a
-// task it can merge, and Tab and
-// Alt-Shift with an arrow only with another repository to go to. A runtime plugin's host has its
-// own key to come back, so its rows don't offer Ctrl-\.
-export function keysFor(row: Row | undefined, tabs: number): string {
-  const open = row?.more ? "⏎ show all" : row?.tmux ? "⏎ open · ctrl+\\ back" : "⏎ open";
+// Returns the keys the bottom line offers on a row: Enter always, as attach on a row whose agent
+// it attaches to, with Ctrl-\, which comes back, when that is on tmux, or as showing every issue
+// on Backlog's `… more` row, the numbers that open and close the stages, s only on a task it can start, m only on a
+// task it can merge, o on a task while the details pane shows, to show its agent's whole screen
+// or only the last lines, and Tab and Alt-Shift with an arrow only with another repository to go
+// to. A runtime plugin's host has its own key to come back, so its rows don't offer Ctrl-\.
+export function keysFor(row: Row | undefined, tabs: number, pane = false): string {
+  const back = row?.tmux ? " · ctrl+\\ back" : "";
+  const enter = row?.more ? "⏎ show all" : row && enterAttaches(row) ? `⏎ attach${back}` : "⏎ open";
+  const open = pane && row?.task ? `${enter} · o output` : enter;
   const merge = row?.merge && "ask" in row.merge ? ["m merge"] : [];
   const start = row?.start ? ["s start"] : [];
   const tab = tabs > 1 ? ["⇥/alt+shift+←→ repository"] : [];
   return ["↑↓ move", open, "1-6 stages", ...start, ...merge, ...tab, "q/esc quit"].join("  ");
+}
+
+// Returns whether Enter on a row attaches to its agent: the lead, or a task's builder while it is
+// at work, or once it is ready but needs you. On Backlog it starts the task, and on Ready or Done
+// it opens the PR.
+export function enterAttaches(row: Row): boolean {
+  if (row.part === "lead") return true;
+  const atWork = row.part !== "ready" && row.part !== "done";
+  return (atWork || row.needsYou) && row.session !== null;
 }
 
 // The widest section name, so every heading's count starts in the same column.
