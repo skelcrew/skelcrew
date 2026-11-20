@@ -168,6 +168,18 @@ const endedAt = (folder: string) =>
     logOf(folder).find((line) => line.status !== "working" && line.status !== "queued")?.at ?? "",
   );
 
+// Returns when the thread's task last joined the queue, in milliseconds.
+function joinedAt(folder: string): number {
+  const db = new Database(join(data(), "skelcrew.db"));
+  db.run("PRAGMA busy_timeout = 5000");
+  try {
+    const row = db.query("SELECT queued_since FROM task_threads WHERE folder = ?").get(folder);
+    return Number(Object.values(Object(row))[0]);
+  } finally {
+    db.close();
+  }
+}
+
 // Returns how many claims Skelcrew has saved, whose outcome it doesn't know yet.
 function claimsSaved(): number {
   const db = new Database(join(data(), "skelcrew.db"));
@@ -383,6 +395,28 @@ openDb().run("INSERT INTO claims (owner, repo, task) VALUES ('simon', 'app', '12
   expect(leadHears()).not.toContain("APP-13's claim");
 }, 60_000);
 
+test("a task that still owes its claim holds back the tasks that joined after it", async () => {
+  addApp();
+  // app-12 joined first and owes its claim, which the tracker fails. app-13 joined after it.
+  const rows = `${threadSql({ task: "12", title: "Add export", status: "queued", queued_since: 1 })}
+${threadSql({ task: "13", title: "Dark mode", status: "queued", queued_since: 2 })}
+INSERT INTO claims (owner, repo, task) VALUES ('simon', 'app', '12');`;
+  const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
+openDb().exec(${JSON.stringify(rows)});`;
+  Bun.spawnSync([process.execPath, "-e", code], { env: env() });
+  const failing = join(plugin, "fail-took");
+  writeFileSync(failing, "network is down");
+  await serveApp();
+  await sc("rm", "app-11");
+  await queueLooked();
+  expect(statuses()).toMatchObject({ "app-12": "queued", "app-13": "queued" });
+  // Once app-12's claim is made, it starts first, and app-13 after it.
+  rmSync(failing);
+  await until(() => statuses()["app-13"] === "failed");
+  expect(leftQueue("app-12")).toHaveLength(1);
+  expect(leftQueue("app-13")[0] ?? 0).toBeGreaterThanOrEqual(endedAt("app-12"));
+}, 60_000);
+
 test("a labelled issue that can't start after its claim is told to the lead, not dropped", async () => {
   addApp(["12"]);
   answer(plugin, "took", { took: true });
@@ -417,6 +451,20 @@ test("a queued task whose issue another machine claimed while its claim failed l
   expect(tasks.find((row: { task: string }) => row.task === "APP-12")).toMatchObject({
     stage: "issue",
   });
+}, 60_000);
+
+// Which task goes first by these times is tested on the database alone. Here a start through
+// the engine saves its own.
+test("a task joins the queue after every task already in it, though the clock went back", async () => {
+  addApp();
+  // app-13 joined the queue at a time later than now, as before the clock was set back.
+  const later = Date.now() + 60_000;
+  const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
+openDb().exec(${JSON.stringify(threadSql({ task: "13", title: "Dark mode", status: "queued", queued_since: later }))});`;
+  Bun.spawnSync([process.execPath, "-e", code], { env: env() });
+  await serveApp();
+  expect(await sc("start", "app-12")).toContain("APP-12 is queued");
+  expect(joinedAt("app-12")).toBeGreaterThan(later);
 }, 60_000);
 
 test("sc rm while a queued sc start waits for its claim leaves the issue unassigned", async () => {
