@@ -24,7 +24,7 @@ sc install
 Then it asks:
 
 - **The coding agent**, the harness agents run on.
-- **The coding agent for reviews.** With both installed, it offers the other one first, as a second model sees what the first one misses.
+- **The coding agent for reviews**, only when both are installed. It offers the other one first, as a second model sees what the first one misses. With one installed, reviews run on it.
 - **A sign-in for Skelcrew's agents.** For Claude Code, you run `claude setup-token` in another terminal and paste the token. Codex gets a login of Skelcrew's own, apart from yours.
 
 It ends with `Skelcrew is set up.` Running it again changes nothing that is done.
@@ -40,13 +40,16 @@ sc init
 
 It writes `skelcrew.yaml`, `skelcrew.lock` with the GitHub plugin pinned, and `.agents/`, which holds the roles and flow agents follow. Say yes when it offers the GitHub plugin, `skelcrew/skelcrew-github`. The plugin signs you in to GitHub and installs Skelcrew's GitHub App on the repository, so Skelcrew acts on GitHub as `skelcrew[bot]`, never as you.
 
-The files count once they are on the default branch, so commit and push them:
+The files count once they are on the default branch, so commit and push them there, such as `main`:
 
 ```sh
+git switch main
 git add skelcrew.yaml skelcrew.lock .agents
 git commit -m "Set up Skelcrew"
 git push
 ```
+
+If your default branch takes changes only through a pull request, push a branch with them and merge its PR instead.
 
 ### 3. Open the lead
 
