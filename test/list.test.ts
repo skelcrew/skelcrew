@@ -176,6 +176,32 @@ UPDATE tasks SET checks = 'pending', ci_passed = 0 WHERE task = '14';`);
   });
 });
 
+// A submit on a flow with no review stage whose push or check failed has no review round to
+// have failed, so sc ps, sc ls and sc show say it isn't reviewed, and its thread needs you.
+test("a failed submit on a flow with no review shows as not reviewed, never a failed round", () => {
+  sql(`UPDATE threads SET needs_you = 1 WHERE folder = 'app-14';
+UPDATE tasks SET verdict = 'not reviewed', review_round = NULL, flow = 'noreview',
+  submitting = 'Round 2' WHERE task = '14';`);
+  const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
+import { listTasks, listThreads, printTasks, printThreads } from ${JSON.stringify(source("flow/list.ts"))};
+const db = openDb();
+printThreads(listThreads(db, "app"), false);
+printTasks(listTasks(db, "app"), false);`;
+  const run = Bun.spawnSync([process.execPath, "-e", code], { env: env(), stderr: "pipe" });
+  if (!run.success) throw new Error(run.stderr.toString());
+  const lines = run.stdout
+    .toString()
+    .split("\n")
+    .filter((line) => line.includes("app-14"));
+  expect(lines).toHaveLength(2);
+  for (const line of lines) {
+    expect(line).toContain("not reviewed");
+    expect(line).not.toContain("failed");
+  }
+  expect(shown("14")).toContain("\nReview  not reviewed\n");
+  expect(rows().find((row) => row.name === "app-14")?.says).toBe("push failed");
+});
+
 // sc ps shows no review in a repository with no forge, but a task its flow didn't review is
 // ready on its branch with nobody having looked at it, so it says so.
 test("sc ps says not reviewed for a task on a flow with no review, in a repository with no forge", () => {

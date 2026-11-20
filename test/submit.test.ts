@@ -558,6 +558,26 @@ describe.skipIf(insideSandbox)("sc submit", () => {
     expect(thread().merge_plan).toBeNull();
   }, 90_000);
 
+  // The push went through before Skelcrew's check failed, so the thread says its check failed,
+  // never its push. Here no CI shows anywhere, so the submit doesn't wait for a first check.
+  test("on a flow with no review stage, a check that can't be set fails the round as a check, not a push", async () => {
+    addApp({ ".agents/flows/noreview.yaml": "build:\n  role: builder\n" });
+    writeFileSync(join(plugin, "fail-status"), "GitHub is down");
+    await startNoReview();
+    await until(() => thread().needs_you === 1, longWait);
+    expect(thread()).toMatchObject({
+      verdict: "not reviewed",
+      submitting: null,
+      reviewing: pushed(),
+      needs_you: 1,
+    });
+    expect(read(join(data(), "threads", "app-12.log"))).toContain("the round failed");
+    // Only the pending check was tried: the round stopped once the forge refused it.
+    expect(statuses()).toEqual([
+      { sha: pushed(), state: "pending", description: "waiting for CI's first check" },
+    ]);
+  }, 90_000);
+
   // Docs are what such a flow is for, and no reviewer will look at them, so the wait for CI's
   // first check is all that keeps the PR from being ready before CI ran.
   test("on a flow with no review stage, a change to docs alone still waits for CI's first check", async () => {

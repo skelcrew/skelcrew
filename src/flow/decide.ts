@@ -106,6 +106,10 @@ export function mergeWaitsOn(
   if (thread.status === "failed") return "its thread, which failed";
   if (thread.status === "stopped") return "its thread, which is stopped";
   if (pr === null || pr.state !== "open") return "its PR";
+  // A submit its flow doesn't review waits on checks, until its push or Skelcrew's check fails,
+  // which needs someone to act.
+  if (waitsOnFirstCheck(thread) && thread.needs_you)
+    return thread.submitting !== null ? "its push, which failed" : "Skelcrew's check, which failed";
   if (waitsOnFirstCheck(thread)) return "its checks";
   if (thread.submitting !== null || thread.reviewing !== null) return "its review";
   if (!passedReviewStage(thread)) return "an approval";

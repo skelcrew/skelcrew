@@ -189,6 +189,14 @@ test("an armed merge on a flow with no review tells the lead when it is stuck, o
   expect(mergeStuck(armed, "its conflict with main to be fixed")).toBe(true);
   expect(mergeStuck(armed, "its failing checks to be fixed")).toBe(true);
   expect(mergeStuck(armed, "its checks")).toBe(false);
+  // A push or check that failed waits on someone, so the lead hears of it, while one still under
+  // way only waits on checks.
+  const failedPush = thread({ ...armed, needs_you: true, submitting: "Round 2" });
+  expect(mergeWaitsOn(failedPush, pr(), head, true)).toBe("its push, which failed");
+  expect(mergeStuck(failedPush, "its push, which failed")).toBe(true);
+  const failedCheck = thread({ ...armed, needs_you: true, reviewing: "b".repeat(40) });
+  expect(mergeWaitsOn(failedCheck, pr(), head, true)).toBe("Skelcrew's check, which failed");
+  expect(mergeStuck(failedCheck, "Skelcrew's check, which failed")).toBe(true);
   // Told once for this submit, it waits for the next one.
   expect(mergeStuck({ ...armed, merge_noted: 1000 }, stuck)).toBe(false);
   expect(mergeStuck({ ...armed, merge_noted: 1000, review_at: 2000 }, stuck)).toBe(true);

@@ -234,6 +234,9 @@ async function reviewRound(
   const setCheck = async (state: "pending" | "success" | "failure", description: string) => {
     if (hasForge) await setStatus(db, repository, { commit: sha, state, description });
   };
+  // A flow with no review stage saves its pushed commit at once, before any check is set, so a
+  // check that fails from here on is told as one, never as a failed push.
+  if (unreviewed) record(db, folder, { reviewing: sha, submitting: null, queued: null });
   // Show the review under way on the PR while it joins the queue of reviews. It joins before
   // any await, so reviews take their places in the order they are asked for: after a restart
   // the daemon asks for them in their saved order. A failed check fails the round at once,
