@@ -65,28 +65,40 @@ export function repositoryPlugins(folder: string): { plugins: string[]; lock: Lo
   return { plugins: shared.data.plugins ?? [], lock: readLockAt(lockFile) ?? {} };
 }
 
-// Names `source` under plugins: in the skelcrew.yaml in `folder`, and pins it in its
-// skelcrew.lock. Both files are changed in place, so their comments and other lines stay. A file
-// that isn't there yet is started with a line on top saying what it is.
-function nameAndPin(folder: string, source: string, locked: Locked): void {
+// Returns the text of a file in a repository, or `start` for one that isn't there yet.
+const readOr = (file: string, start: string) =>
+  lstatSync(file, { throwIfNoEntry: false }) ? readFileSync(file, "utf8") : start;
+
+// With no line width, a long line, such as a pin on one line, isn't folded, and a list written on
+// one line keeps its brackets tight, as people write them.
+const asWritten = { lineWidth: 0, flowCollectionPadding: false };
+
+// Names `source` under plugins: in the skelcrew.yaml in `folder`, unless it is there already. The
+// file is changed in place, so its comments and other lines stay. A file that isn't there yet is
+// started with a line on top saying what it is. sc init uses it alone for a plugin the
+// repository's skelcrew.lock pins already, whose pin it keeps.
+export function namePlugin(folder: string, source: string): void {
   const yamlFile = join(folder, "skelcrew.yaml");
-  const lockFile = join(folder, "skelcrew.lock");
   const { plugins } = repositoryPlugins(folder);
-  const read = (file: string, start: string) =>
-    lstatSync(file, { throwIfNoEntry: false }) ? readFileSync(file, "utf8") : start;
+  if (plugins.includes(source)) return;
   const shared = parseDocument(
-    read(
+    readOr(
       yamlFile,
       "# Shared with everyone who works on this repository. Never put a secret here.\n",
     ),
   );
-  if (!plugins.includes(source)) shared.set("plugins", [...plugins, source]);
-  const lock = parseDocument(read(lockFile, "# Written by sc add and sc update. Commit it.\n"));
+  shared.set("plugins", [...plugins, source]);
+  writeFileSync(yamlFile, shared.toString(asWritten));
+}
+
+// Names `source` under plugins: in the skelcrew.yaml in `folder`, and pins it in its
+// skelcrew.lock. The lock is changed in place too, so its other pins and comments stay.
+function nameAndPin(folder: string, source: string, locked: Locked): void {
+  const lockFile = join(folder, "skelcrew.lock");
+  namePlugin(folder, source);
+  const lock = parseDocument(readOr(lockFile, "# Written by sc add and sc update. Commit it.\n"));
   lock.set(source, locked);
-  // With no line width, a long line, such as a pin on one line, isn't folded, and a list
-  // written on one line keeps its brackets tight, as people write them.
-  writeFileSync(yamlFile, shared.toString({ lineWidth: 0, flowCollectionPadding: false }));
-  writeFileSync(lockFile, lock.toString({ lineWidth: 0, flowCollectionPadding: false }));
+  writeFileSync(lockFile, lock.toString(asWritten));
 }
 
 // Adds a plugin to the repository you are in, for sc add without -g: installs it after asking,

@@ -24,7 +24,7 @@ import {
   checkoutAgents,
   forgetAgents,
 } from "../approved-agents.ts";
-import { agentRole } from "../config.ts";
+import { agentRole, repositoryCommands } from "../config.ts";
 import { nameRepositories, openDb, Repository } from "../db.ts";
 import { builtInFlowText } from "../flows.ts";
 import { originHere, parseRemote } from "../machine/origin.ts";
@@ -32,10 +32,16 @@ import { cloneDir, configDir, dataDir } from "../paths.ts";
 import { askWhichForge, type Claimed } from "../plugins/ask.ts";
 import { setUpPlugin } from "../plugins/install.ts";
 import { SetupNeeded } from "../plugins/plugin.ts";
-import { addRepositoryPlugin, githubPlugin, repositoryPlugins } from "../plugins/repository.ts";
+import {
+  addRepositoryPlugin,
+  githubPlugin,
+  namePlugin,
+  repositoryPlugins,
+} from "../plugins/repository.ts";
 import { hostNamed } from "../plugins/runtime.ts";
 import { builtInRole } from "../roles.ts";
 import { errorText } from "../say.ts";
+import { readSettings, type Settings } from "../settings.ts";
 import { checkPush, cloneRepository, headCommit, remoteEmpty, updateClone } from "./git.ts";
 import { leadOf, leadSession } from "./lead.ts";
 
@@ -560,13 +566,20 @@ const starterConfig = [
 // skelcrew.lock, as sc add does, so every repository has the same standard setup. The forge is
 // found from the remote alone: GitHub's plugin for github.com, and none for a host Skelcrew has
 // no plugin for. A skelcrew.yaml that names any plugin already chose them, so it is left alone.
-// A plugin that can't be added, or that you say no to, is only reported, as the rest of sc init
-// still counts. Returns the plugin it added, or null.
-function addForgePlugin(root: string, remote: string): string | null {
+// A skelcrew.lock that pins the plugin already keeps its pin, which sc add would move to the
+// version installed here: only skelcrew.yaml gains its name. A plugin that can't be added, or
+// that you say no to, is only reported, as the rest of sc init still counts. Returns what it
+// changed: "named" for skelcrew.yaml alone, "pinned" for both files, or null for neither.
+function addForgePlugin(root: string, remote: string): "named" | "pinned" | null {
   if (parseRemote(remote)?.host !== "github.com") return null;
   try {
-    if (repositoryPlugins(root).plugins.length > 0) return null;
-    if (addRepositoryPlugin(githubPlugin)) return githubPlugin;
+    const { plugins, lock } = repositoryPlugins(root);
+    if (plugins.length > 0) return null;
+    if (lock[githubPlugin]) {
+      namePlugin(root, githubPlugin);
+      return "named";
+    }
+    if (addRepositoryPlugin(githubPlugin)) return "pinned";
   } catch (error) {
     console.log(`Skelcrew couldn't add ${githubPlugin}: ${errorText(error)}.`);
   }
@@ -574,16 +587,24 @@ function addForgePlugin(root: string, remote: string): string | null {
   return null;
 }
 
-// Reports whether the skelcrew.yaml in `root` sets both setup and test. A file that can't be read
-// sets neither.
-function setupFilledIn(root: string): boolean {
+// Returns which of setup: and test: nothing sets yet, so the lead will propose them: neither the
+// checkout's skelcrew.yaml, which may not be pushed yet, nor what the lead is told, which also
+// counts your override for the repository and your own config. A file that can't be read sets
+// nothing here, as the lead is told the same.
+function missingCommands(root: string, repository: Repository | undefined): string[] {
+  let told: Pick<Settings, "setup" | "test"> = { setup: undefined, test: undefined };
   try {
-    const read = parse(readFileSync(join(root, "skelcrew.yaml"), "utf8"));
-    return z.object({ setup: z.array(z.string()), test: z.array(z.string()) }).safeParse(read)
-      .success;
-  } catch {
-    return false;
-  }
+    told = repository ? repositoryCommands(repository) : readSettings(["setup", "test"]);
+  } catch {}
+  let here: unknown = null;
+  try {
+    here = parse(readFileSync(join(root, "skelcrew.yaml"), "utf8"));
+  } catch {}
+  const Commands = z.object({ setup: z.array(z.string()), test: z.array(z.string()) }).partial();
+  const checkout = Commands.catch({}).parse(here ?? {});
+  return (["setup", "test"] as const)
+    .filter((key) => told[key] === undefined && checkout[key] === undefined)
+    .map((key) => `${key}:`);
 }
 
 // Writes the built-in .agents/ into the checkout at `root`, which has none: the three roles,
@@ -647,7 +668,7 @@ export async function initRepo(sessions: string): Promise<void> {
     console.log(
       forge === null
         ? "skelcrew.yaml is there already, so Skelcrew left it as it is."
-        : `skelcrew.yaml is there already, so Skelcrew only added ${forge} to its plugins.`,
+        : `skelcrew.yaml is there already, so Skelcrew only added ${githubPlugin} to its plugins.`,
     );
   const hasAgents = lstatSync(join(root, ".agents"), { throwIfNoEntry: false }) !== undefined;
   if (!hasAgents) writeAgents(root);
@@ -683,10 +704,10 @@ export async function initRepo(sessions: string): Promise<void> {
     else if (!isNew || current !== agentsOnDefaultBranch(added))
       askAboutAgents(added, added.name, current);
   }
-  // Say what was written and when Skelcrew will read it.
+  // Say what was written or changed and when Skelcrew will read it.
   const wrote = [
-    hasConfig ? null : "skelcrew.yaml",
-    forge === null ? null : "skelcrew.lock",
+    hasConfig && forge === null ? null : "skelcrew.yaml",
+    forge === "pinned" ? "skelcrew.lock" : null,
     hasAgents ? null : ".agents/",
   ].filter((name) => name !== null);
   const many = wrote.length > 1;
@@ -695,9 +716,10 @@ export async function initRepo(sessions: string): Promise<void> {
       `Wrote ${wrote.slice(0, -1).join(", ")}${many ? " and " : ""}${wrote.at(-1)}. ${many ? "They count" : "It counts"} once you commit and push ${many ? "them" : "it"} to the default branch.`,
     );
   // The lead finishes the standard setup, as only it reads the repository with you.
-  if (!setupFilledIn(root))
+  const missing = missingCommands(root, added);
+  if (missing.length > 0)
     console.log(
-      "setup: and test: are only examples yet. Before anything else, the lead will propose a thread that fills them in from what the repository's CI runs.",
+      `${missing.join(" and ")} ${missing.length > 1 ? "aren't" : "isn't"} filled in yet. Before anything else, the lead will propose a thread that fills ${missing.length > 1 ? "them" : "it"} in from what the repository's CI runs.`,
     );
 }
 

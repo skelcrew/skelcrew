@@ -258,7 +258,7 @@ Skelcrew ships its defaults as the same files, inside Skelcrew: a `skelcrew.yaml
 - **your harness and model** for each role, as real lines, so the repository works the same for a teammate;
 - no tracker line, so a repository on GitHub keeps its issues, with a commented `# tracker: none` to show how to work from git alone.
 
-It leaves any file that already exists as it is, with one exception: a `skelcrew.yaml` whose `plugins:` names none still gains the forge's plugin and its pin, and `sc init` says so. In a checkout that already has an `.agents/`, it writes nothing into it, then shows what is in it and asks you to approve it, as **Trust** says. It ends by saying the files count once you commit and push them to the default branch, and, while setup and test aren't filled in, that the lead will propose them before anything else. It stops outside a git repository, and when the repository has no remote. Only you can run it.
+It leaves any file that already exists as it is, with one exception: a `skelcrew.yaml` whose `plugins:` names none still gains the forge's plugin, and `sc init` says so. A `skelcrew.lock` that is there gains the plugin's pin beside its others, or keeps the pin it has for it. In a checkout that already has an `.agents/`, it writes nothing into it, then shows what is in it and asks you to approve it, as **Trust** says. It ends by naming the files it wrote or changed, which count once you commit and push them to the default branch. For each of setup and test that neither the checkout's `skelcrew.yaml` nor anything else the lead is told sets, it says the lead will propose it before anything else. It stops outside a git repository, and when the repository has no remote. Only you can run it.
 
 ### Which wins
 

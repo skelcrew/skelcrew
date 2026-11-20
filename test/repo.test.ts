@@ -901,7 +901,7 @@ plugins:
     "Wrote skelcrew.yaml, skelcrew.lock and .agents/. They count once you commit and push them to the default branch.",
   );
   expect(run.out).toContain(
-    "setup: and test: are only examples yet. Before anything else, the lead will propose a thread that fills them in from what the repository's CI runs.",
+    "setup: and test: aren't filled in yet. Before anything else, the lead will propose a thread that fills them in from what the repository's CI runs.",
   );
 });
 
@@ -992,9 +992,65 @@ test("init keeps a skelcrew.yaml that is there, adding only the forge's plugin, 
     "skelcrew.yaml is there already, so Skelcrew only added skelcrew/skelcrew-github to its plugins.",
   );
   expect(run.out).toContain(
-    "Wrote skelcrew.lock and .agents/. They count once you commit and push them to the default branch.",
+    "Wrote skelcrew.yaml, skelcrew.lock and .agents/. They count once you commit and push them to the default branch.",
+  );
+  expect(run.out).toContain(
+    "test: isn't filled in yet. Before anything else, the lead will propose a thread that fills it in from what the repository's CI runs.",
   );
   expect(run.out).toContain("Added simon/app, as app.");
+});
+
+// sc add would move a pin to the version installed here, so a pin the repository has already
+// stays as it is, and only skelcrew.yaml gains the plugin's name.
+test("init keeps the pin a skelcrew.lock that is there has for the forge's plugin", async () => {
+  const checkout = onGitHub("simon/app", "WRITE");
+  githubInstalledAsYours();
+  writeFileSync(join(checkout, "skelcrew.yaml"), "setup: [make]\n");
+  const lock = `# Ours.\nskelcrew/skelcrew-github: { name: github, version: 0.0.9, commit: ${"a".repeat(40)} }\n`;
+  writeFileSync(join(checkout, "skelcrew.lock"), lock);
+  mkdirSync(join(checkout, ".agents"));
+  const run = await skel(["init"], "", checkout);
+  expect(run.err).toBe("");
+  expect(readFileSync(join(checkout, "skelcrew.lock"), "utf8")).toBe(lock);
+  expect(readFileSync(join(checkout, "skelcrew.yaml"), "utf8")).toBe(
+    "setup: [make]\nplugins:\n  - skelcrew/skelcrew-github\n",
+  );
+  expect(run.out).toContain(
+    "Wrote skelcrew.yaml. It counts once you commit and push it to the default branch.",
+  );
+});
+
+// A skelcrew.lock that pins other plugins keeps them, and gains the forge's pin beside them.
+test("init adds the forge's pin to a skelcrew.lock that is there, keeping its other pins", async () => {
+  const checkout = onGitHub("simon/app", "WRITE");
+  const commit = githubInstalledAsYours();
+  const other = `simon/skelcrew-other: {name: other, version: 1.0.0, commit: ${"b".repeat(40)}}\n`;
+  writeFileSync(join(checkout, "skelcrew.lock"), `# Ours.\n${other}`);
+  expect((await skel(["init"], "", checkout)).err).toBe("");
+  const lock = readFileSync(join(checkout, "skelcrew.lock"), "utf8");
+  expect(lock).toStartWith(`# Ours.\n${other}`);
+  expect(parse(lock)["skelcrew/skelcrew-github"]).toEqual({
+    name: "github",
+    version: "0.1.0",
+    commit,
+  });
+});
+
+// The lead is told setup and test from your own config too, so sc init promises only the ones
+// nothing sets.
+test("init says the lead will propose only what neither the repository nor your config sets", async () => {
+  githubInstalledAsYours();
+  const config = join(home, ".config", "skelcrew", "config.yaml");
+  writeFileSync(config, "harness: claude\nsetup: [make]\n");
+  const one = await skel(["init"], "", onGitHub("simon/app", "WRITE"));
+  expect(one.err).toBe("");
+  expect(one.out).toContain(
+    "test: isn't filled in yet. Before anything else, the lead will propose a thread that fills it in from what the repository's CI runs.",
+  );
+  writeFileSync(config, "harness: claude\nsetup: [make]\ntest: [make test]\n");
+  const both = await skel(["init"], "", onGitHub("simon/web", "WRITE"));
+  expect(both.err).toBe("");
+  expect(both.out).not.toContain("filled in");
 });
 
 // A repository that names its plugins chose them, so init leaves its files as they are.
@@ -1010,7 +1066,7 @@ test("init leaves a skelcrew.yaml that names plugins as it is", async () => {
   expect(existsSync(join(checkout, "skelcrew.lock"))).toBe(false);
   expect(run.out).toContain("skelcrew.yaml is there already, so Skelcrew left it as it is.");
   // Setup and test are filled in already, so the lead has nothing to propose.
-  expect(run.out).not.toContain("setup: and test:");
+  expect(run.out).not.toContain("filled in");
 });
 
 // Being able to push isn't having read what a teammate wrote in .agents/, so init writes nothing
