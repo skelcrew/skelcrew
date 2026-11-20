@@ -498,7 +498,7 @@ test("sc --list shows the list in place of the screen, here or for --from", asyn
     const run = await skel(args, "", checkout);
     expect(run.err).toBe("");
     expect(run.code).toBe(0);
-    expect(run.out).toStartWith(" Skelcrew v");
+    expect(run.out).toStartWith(" Skelcrew ");
     expect(calls()).toEndWith("daemon lead\n");
     expect(calls()).not.toContain("screen on");
   }

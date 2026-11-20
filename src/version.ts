@@ -56,13 +56,15 @@ export function laptopBuild(): string | null {
 
 // Returns how a build from a checkout is named after "Skelcrew": its commit, such as
 // 6f1c2ab (checkout), with + changes when it held uncommitted changes, then a shorter name that
-// says the same, for the sidebar's header, which has room for only 24 columns. A build with no
-// commit to name, such as a single file nobody stamped, says so rather than pretending.
+// says the same, for the sidebar's header, which has room for only 24 columns. The short name
+// keeps seven characters of the commit, as git gives more in a repository with many commits,
+// and the name would no longer fit. A build with no commit to name, such as a single file nobody
+// stamped, says so rather than pretending.
 function checkoutNames(build: string | null): string[] {
   if (build === null) return ["(checkout, commit unknown)", "checkout, commit unknown"];
   if (build.endsWith(dirty)) {
     const commit = build.slice(0, -dirty.length);
-    return [`${commit} + changes (checkout)`, `checkout ${commit}+changes`];
+    return [`${commit} + changes (checkout)`, `checkout ${commit.slice(0, 7)}+changes`];
   }
   return [`${build} (checkout)`];
 }
@@ -83,7 +85,8 @@ export function shownVersions(): string[] {
 // from a checkout and its commit, so nobody reports a bug against a release they don't have.
 export function versionLine(): string {
   // installLatest and the release workflow read a release back from this line, so its shape
-  // matters.
+  // matters. The workflow checks for this lowercase skelcrew, so it stays until the workflow
+  // changes with it.
   if (release) return `skelcrew ${release}`;
   return `Skelcrew ${checkoutNames(built ?? laptopBuild())[0]}`;
 }
