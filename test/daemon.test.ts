@@ -813,7 +813,8 @@ describe.skipIf(insideSandbox)("with a lead per repository", () => {
   });
 
   // A lead from before Skelcrew kept the .agents/ each lead started on has none recorded. It may
-  // run on instructions you have changed since, so it starts again too.
+  // run on instructions you have changed since, so it starts again once you approved an .agents/,
+  // and is left running before.
   test("a lead with no record of its .agents/ starts again on the approved one, with its conversation", async () => {
     setUp();
     const clone = addRepository("app");
@@ -833,6 +834,14 @@ describe.skipIf(insideSandbox)("with a lead per repository", () => {
     await stop(first);
     expect(hasLead()).toBe(true);
     onDb((db) => db.run("UPDATE repositories SET lead_agents = NULL WHERE repo = 'app'"));
+    // With nothing approved, the next daemon leaves it running. Opening it waits for the
+    // daemon's start to bring back its leads first.
+    const second = serve();
+    await untilAnswers();
+    expect(await open()).toEqual({ lead: leadName(), repository: "simon/app" });
+    expect(claudeLines()).toHaveLength(1);
+    await stop(second);
+    expect(hasLead()).toBe(true);
     const tree = Bun.spawnSync(["git", "-C", clone, "rev-parse", "HEAD:.agents"]).stdout;
     writeFileSync(
       join(home, ".config", "skelcrew", "approved-agents.yaml"),
