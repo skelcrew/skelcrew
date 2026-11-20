@@ -263,7 +263,8 @@ export type Pane = { lines: string[]; scroll: number; room: number };
 // leave the live view its lines, and while it shows the whole screen they take half the pane at
 // most. Details taller than their room scroll, `scroll` lines down from their top, and a dim
 // `↓ more` on their last line says there is more below, unless they have only that line. The
-// live view stays where it is.
+// strip always sits at the bottom of the pane, whatever the details' length, so it never moves
+// as they change or scroll.
 export function drawPane(
   row: Row | undefined,
   details: Details | null,
@@ -293,7 +294,9 @@ export function drawPane(
   const top = [...all.slice(at, at + room - more.length), ...more];
   const drawn = (lines: string[]) => ({ lines: lines.slice(0, height), scroll: at, room });
   if (live === null) return drawn([...top, ...blank(height - top.length)]);
-  const gap = height - top.length > least ? [""] : [];
+  // Blank lines push the strip down to the bottom. The whole screen fills the rest anyway, so
+  // over it one blank line parts it from the details, when there is room.
+  const gap = full ? (height - top.length > least ? [""] : []) : blank(room - top.length);
   const rule = paint(grey, "─".repeat(width));
   const left = height - top.length - gap.length - 1;
   const shown = full ? left : Math.min(left, stripLines);

@@ -80,7 +80,7 @@ const plain = (lines: string[]) => lines.map((line) => Bun.stripANSI(line).trimE
 test("the pane shows the task's details from the top, then its agent's screen below a line", () => {
   const lines = drawPane(row, details, { screen: "I am app-12\n› \n\n\n" }, 50, 30).lines;
   expect(lines).toHaveLength(30);
-  expect(plain(lines).slice(0, 26)).toEqual([
+  expect(plain(lines)).toEqual([
     "Rate limit the API",
     "issue #42  https://github.com/acme/app/issues/42",
     "PR    #43  https://github.com/acme/app/pull/43",
@@ -102,13 +102,23 @@ test("the pane shows the task's details from the top, then its agent's screen be
     "",
     "13:40 submitted · 13:52 reviewed · 14:02 submitted",
     "",
+    "",
+    "",
+    "",
+    "",
+    "",
     "─".repeat(50),
     "I am app-12",
     "›",
     "",
-    "",
   ]);
   for (const line of lines) expect(Bun.stringWidth(line)).toBeLessThanOrEqual(50);
+  // Shorter details leave the strip at the bottom all the same, and so does a builder not running.
+  const brief: Details = { ...details, findings: [], view: { ...details.view, body: "" } };
+  const short = plain(drawPane(row, brief, { screen: "I am app-12\n› \n" }, 50, 30).lines);
+  expect(short.slice(26)).toEqual(plain(lines).slice(26));
+  const stopped = plain(drawPane(row, brief, { note: "Builder not running" }, 50, 30).lines);
+  expect(stopped.slice(26, 28)).toEqual(["─".repeat(50), "Builder not running"]);
 });
 
 test("the details take the list's look: bold title, dim labels, verdicts in colour, links", () => {
