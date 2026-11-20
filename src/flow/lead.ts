@@ -25,6 +25,7 @@ import { type Host, hostNamed } from "../plugins/runtime.ts";
 import { builtInRole, repositoryRole } from "../roles.ts";
 import { errorText } from "../say.ts";
 import type { Settings } from "../settings.ts";
+import { dropLeadNotes, noteForLead, typeLeadNotes } from "./messages.ts";
 import { refreshClones } from "./repo.ts";
 import { forgetStatus, reportLeadStatus } from "./status.ts";
 
@@ -242,11 +243,19 @@ export async function startLead(
   const resume = stored === null ? null : harness.saved(lead.name, lead.folder, stored);
   const session = resume ?? crypto.randomUUID();
   // The host is saved before the session starts too, so a daemon that stops in between finds the
-  // lead there by its labels.
-  db.run(
-    "UPDATE repositories SET lead_session = ?, lead_harness = ?, lead_host = ?, lead_host_id = NULL, lead_agents = ? WHERE owner = ? AND repo = ?",
-    [session, harness.name, hostName, approved, owner, repo],
-  );
+  // lead there by its labels. A lead with no earlier conversation would sit silent until the
+  // human spoke, and a new user shouldn't have to know to speak first. So its first start also
+  // saves it an opening turn, in the same transaction: once the session is saved, a start that
+  // fails or a daemon that stops would leave the next start taking it for an earlier
+  // conversation. Saved notes wait until the lead runs.
+  db.transaction(() => {
+    db.run(
+      "UPDATE repositories SET lead_session = ?, lead_harness = ?, lead_host = ?, lead_host_id = NULL, lead_agents = ? WHERE owner = ? AND repo = ?",
+      [session, harness.name, hostName, approved, owner, repo],
+    );
+    if (stored === null)
+      noteForLead(db, sessions, repository, openingNote(repositoryCommands(repository)));
+  })();
   // The lead reads the flows you approved at their ref, and starts with today's instructions, so
   // it needs no note of them, nor of briefing another lead.
   markApproved(repository);
@@ -304,6 +313,9 @@ export async function startLead(
     await endSession(host, id);
     throw new Error(`${owner}/${repo} was closed or removed while its lead started`);
   }
+  // The opening note saved above, and any other that waited while the lead wasn't running, go
+  // in once the lead is ready.
+  typeLeadNotes(db, sessions);
   // A host that shows status hears it afresh, as a session starting under an ID it had before
   // has shown nothing yet.
   forgetStatus(hostName, id);
@@ -317,6 +329,32 @@ export async function startLead(
     `${resume ? "Brought back" : "Started"} ${owner}/${repo}'s lead, session ${session}${lost}.`,
   );
   await checkAgentStarted(host, id, "lead");
+}
+
+// How the note that gives a lead its opening turn starts, which marks it as Skelcrew's, not the
+// human's words, and finds it again while it waits.
+const opening = "Skelcrew: this is your first start";
+
+// Returns the note that gives a lead its opening turn on its first start: greet the human, then
+// propose the thread that finishes the setup while setup or test is missing, or else say what it
+// can do and ask what to work on.
+function openingNote({ setup, test }: Pick<Settings, "setup" | "test">): string {
+  const then =
+    setup === undefined || test === undefined
+      ? "Then, as your instructions say, propose the thread that finishes the setup."
+      : "Then say in a line what you can do here, and ask what to work on.";
+  return `${opening}, and the human hasn't written anything yet. Greet them in a line or two. ${then}`;
+}
+
+// Drops a lead's opening note while it still waits, as its harness reports something typed at
+// its prompt. The note says the human hasn't written yet, and waits while the lead is busy or
+// the human has a draft at its prompt. Once the human has spoken first, it would have the lead
+// greet them again, or propose the setup out of turn. Every paste of Skelcrew's carries each note
+// still waiting, so anything typed while this one waits came from the human. A paste of the note
+// itself reports it too, after it was typed, so dropping it then changes nothing. One being
+// typed is cancelled, even one a host's own transport already holds.
+export function leadPrompted(db: Database, owner: string, repo: string): void {
+  dropLeadNotes(db, { owner, repo }, opening);
 }
 
 // Closes the tab of each repository whose lead you exited, such as with /exit, and ends its
