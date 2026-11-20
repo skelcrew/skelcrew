@@ -835,8 +835,9 @@ async function needsYouCommand(args: string[]): Promise<void> {
 }
 
 // Types a message from the lead into a builder, from a builder into the lead, or from a lead
-// into another repository's lead, as sc tell lead <repo> "<text>". A brief can be long, so with
-// - as its text it comes on stdin instead, which needs no shell quoting. A builder's sc tell lead
+// into another repository's lead, as sc tell lead <repo> "<text>". A brief or a message to a
+// builder can be long, so with - as its text it comes on stdin instead, which needs no shell
+// quoting. Without that, a lead's - would reach the builder as the message. A builder's sc tell lead
 // "<text>" has one word after lead, so only a second word makes a brief, and a builder's message
 // never waits on stdin. --asked-file gives the human's words with a brief, in a file the lead
 // wrote, as sc merge --when-ready takes them. The daemon decides who may tell whom, from the
@@ -882,7 +883,9 @@ async function tellCommand(args: string[]): Promise<void> {
     return;
   }
   if (task && text && rest.length === 0) {
-    console.log(await tellOn(...task, text));
+    const message = text === "-" ? await Bun.stdin.text() : text;
+    if (!message.trim()) throw new Error(`sc tell ${to} needs the message, as words or on stdin`);
+    console.log(await tellOn(...task, message));
     return;
   }
   usage(command);

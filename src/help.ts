@@ -84,8 +84,8 @@ const sections: [string, [string, string][]][] = [
       ['submit "<summary>"', "Hand in a round for review, as a builder"],
       ["check", "Run the repository's tests once a check slot is free"],
       ['tell lead "<text>"', "Type a message into its repository's lead, as a builder"],
-      ['tell <thread> "<text>"', "Type a message into its builder, as the lead"],
-      ['tell lead <repo> "<text>"', "Type a brief into another repository's lead, as a lead"],
+      ['tell <thread> "<text>" | -', "Type a message into its builder, as the lead, - for stdin"],
+      ['tell lead <repo> "<text>" | -', "Type a brief into another repository's lead, - for stdin"],
     ],
   ],
   [
