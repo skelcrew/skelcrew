@@ -5,7 +5,7 @@ import { appendFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import { HarnessName, harnessNamed } from "../agents/harness.ts";
-import { listSessions, renameSession } from "../agents/sessions.ts";
+import { listSessions, renameSession, unknownQuestion } from "../agents/sessions.ts";
 import { savedJson, taskColumns } from "../db.ts";
 import { renamesLogFile, threadsDir } from "../paths.ts";
 import { type Host, hostNamed, pluginHost } from "../plugins/runtime.ts";
@@ -460,39 +460,43 @@ export function record(
 
 // Tells the builder's host the thread's title, when the host is a plugin, so its own apps stop
 // showing an old one. A builder on tmux needs nothing, as Skelcrew's list reads the title from
-// here. It doesn't wait for the host. A host whose first rename fails, such as an older plugin
-// that doesn't know the question, is taken to have none, and isn't asked again until Skelcrew
-// restarts. A host that renamed before and fails later only costs that new name. Both go to
-// a log file, never your terminal, as sc repo add renames too. Each rename waits for
-// the one before on the same session and sends the title as it is then, so two quick changes
-// can't reach the host out of order and leave it on the older title. It gives back a promise
-// that settles once the host answered, for a command that ends before it would.
+// here. It doesn't wait for the host. A host that doesn't know the question, such as an older
+// plugin, isn't asked again until Skelcrew restarts. Any other failure only costs that new name,
+// and the next title is still sent. Both go to a log file, never your terminal, as sc repo add
+// renames too. Each rename waits for the one before on the same session and sends the title as
+// it is then, so two quick changes can't reach the host out of order and leave it on the older
+// title. It gives back a promise that settles once the host answered, for a command that ends
+// before it would.
 export function renameOnHost(db: Database, folder: string): Promise<void> {
   const previous = renaming.get(folder) ?? Promise.resolve();
   const sent = previous.then(async () => {
     const thread = readThread(db, folder);
     if (thread.host === null || thread.host === "tmux" || thread.host_id === null) return;
     const host = pluginHost(db, thread.host);
+    if (host === null) return;
+    const { plugin } = host;
+    // Until a host has renamed once, its renames go one at a time, so a host that doesn't know
+    // the question is asked once, not once per builder. Nothing waits between the last look and
+    // claiming the turn, so two can't both take it.
+    while (firstRenames.has(plugin)) await firstRenames.get(plugin);
+    if (canRename.get(plugin) === false) return;
     const title = sessionTitle(db, thread);
-    if (host === null || canRename.get(host.plugin) === false) return;
-    try {
-      await renameSession(host, thread.host_id, title);
-      canRename.set(host.plugin, true);
-    } catch (error) {
-      // Renames of several builders go out at once, so only the first to fail on a host that
-      // never renamed says it, and the rest fail quietly.
-      const known = canRename.get(host.plugin);
-      if (known === false) return;
-      const why =
-        known === undefined
-          ? `${host.plugin} can't rename sessions, so Skelcrew stops asking it: ${errorText(error)}`
-          : `couldn't rename ${threadName(db, thread)} on ${host.plugin}: ${errorText(error)}`;
-      if (known === undefined) canRename.set(host.plugin, false);
-      // A log that can't be written, such as on a full disk, costs only the line.
-      try {
-        appendFileSync(renamesLogFile(), `${new Date().toISOString()} ${why}\n`);
-      } catch {}
-    }
+    const asked = renameSession(host, thread.host_id, title).then(
+      () => canRename.set(plugin, true),
+      async (error) => {
+        if (await unknownQuestion(host, "rename", error)) {
+          canRename.set(plugin, false);
+          logRename(
+            `${plugin} can't rename sessions, so Skelcrew stops asking it: ${errorText(error)}`,
+          );
+        } else
+          logRename(`couldn't rename ${threadName(db, thread)} on ${plugin}: ${errorText(error)}`);
+      },
+    );
+    const turn = asked.then(() => {});
+    if (!canRename.has(plugin)) firstRenames.set(plugin, turn);
+    await turn;
+    if (firstRenames.get(plugin) === turn) firstRenames.delete(plugin);
   });
   // A thread gone by then, which readThread throws for, has nothing to rename.
   const settled = sent.catch(() => {});
@@ -503,9 +507,20 @@ export function renameOnHost(db: Database, folder: string): Promise<void> {
   return settled;
 }
 
-// Whether each plugin's host has renamed a session, by the plugin's name: true once one rename
-// worked, false once its first failed, and unset before it was asked.
+// Writes a line about a rename to the renames' log. One that can't be written, such as on a
+// full disk, costs only the line.
+function logRename(line: string): void {
+  try {
+    appendFileSync(renamesLogFile(), `${new Date().toISOString()} ${line}\n`);
+  } catch {}
+}
+
+// Whether each plugin's host can rename sessions, by the plugin's name: true once one rename
+// worked, false once it showed it doesn't know the question, and unset before either.
 const canRename = new Map<string, boolean>();
+
+// The rename under way on each plugin's host that hasn't renamed yet, by the plugin's name.
+const firstRenames = new Map<string, Promise<void>>();
 
 // Asks the host of each live builder on a plugin's host to rename it by its title as it is now,
 // and settles once every host answered. A host keeps a builder's title while it runs, and the

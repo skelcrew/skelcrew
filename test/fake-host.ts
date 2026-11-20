@@ -182,10 +182,10 @@ if (from > 0) {
 }
 // With a file slow-<question>, it takes two seconds over that question, as a slow host would.
 if (existsSync(join(dir, `slow-${question.ask}`))) await Bun.sleep(2000);
-// With a file unknown-<question>, it fails that question every time, as an older plugin does
-// that doesn't know it, such as herdr's before it could rename.
-if (existsSync(join(dir, `unknown-${question.ask}`))) {
-  console.error(`✖ Invalid discriminator value. Expected 'start' | 'list'; → at ask`);
+// A question it doesn't know, or one with a file unknown-<question>, as an older plugin that
+// doesn't know it, such as herdr's before it could rename, fails every time.
+if (!answers[question.ask] || existsSync(join(dir, `unknown-${question.ask}`))) {
+  console.error(`✖ Invalid value '${question.ask}'. Expected 'start' | 'list'; → at ask`);
   process.exit(1);
 }
 // With a file fail-<question>, it fails that question once, as a host down for a moment would.

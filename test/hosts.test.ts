@@ -1265,19 +1265,22 @@ process.exit(0);`,
   expect(said).not.toContain("couldn't rename");
 }, 40_000);
 
-test("a host that can't rename is asked once, and nothing about it reaches your terminal", () => {
+test("a host that doesn't know rename is asked once for all its builders, and says nothing", () => {
   const fake = join(home, ".config", "skelcrew", "plugins", "fake");
+  const labels = (task: string) =>
+    `{ repository: "simon/app", role: "builder", task: "app-${task}", title: "Fix ${task}" }`;
   const said = runWithFakeHost(
     "sessions",
-    `const host = (await builderSession(db, "unused", readThread(db, "app-12"))).host;
-await startSession(host, "app-12", { folder: ${JSON.stringify(home)}, command: ["sleep", "30"], env: {}, labels: { repository: "simon/app", role: "builder", task: "app-12", title: "Fix the login redirect" } });
+    `db.exec(${JSON.stringify(threadSql({ task: "13", session: "s", host: "fake", host_id: "fake-app-13", title: "Fix 13" }))});
+const host = (await builderSession(db, "unused", readThread(db, "app-12"))).host;
+await startSession(host, "app-12", { folder: ${JSON.stringify(home)}, command: ["sleep", "30"], env: {}, labels: ${labels("12")} });
+await startSession(host, "app-13", { folder: ${JSON.stringify(home)}, command: ["sleep", "30"], env: {}, labels: ${labels("13")} });
 require("node:fs").writeFileSync(${JSON.stringify(join(fake, "unknown-rename"))}, "");
 await renameBuilders(db);
-await renameBuilders(db);
 record(db, "app-12", { short: "login redirect" });
-await Bun.sleep(1000);
+await renameBuilders(db);
 process.exit(0);`,
-    { host: "fake", host_id: "fake-app-12", title: "Fix the login redirect" },
+    { host: "fake", host_id: "fake-app-12", title: "Fix 12" },
   );
   const renames = readFileSync(join(fake, "asked"), "utf8")
     .trim()
@@ -1285,15 +1288,17 @@ process.exit(0);`,
     .filter((line) => JSON.parse(line).ask === "rename");
   expect(renames).toHaveLength(1);
   expect(said).toBe("");
+  const logged = readFileSync(join(home, ".local", "share", "skelcrew", "renames.log"), "utf8");
+  expect(logged.trim().split("\n")).toHaveLength(1);
+  expect(logged).toContain("fake can't rename sessions");
 }, 40_000);
 
-test("a rename that fails after one worked goes to the log, and the next is still asked", () => {
+test("a rename that fails for another reason goes to the log, and the next is still asked", () => {
   const fake = join(home, ".config", "skelcrew", "plugins", "fake");
   const said = runWithFakeHost(
     "sessions",
     `const host = (await builderSession(db, "unused", readThread(db, "app-12"))).host;
 await startSession(host, "app-12", { folder: ${JSON.stringify(home)}, command: ["sleep", "30"], env: {}, labels: { repository: "simon/app", role: "builder", task: "app-12", title: "Fix the login redirect" } });
-await renameBuilders(db);
 require("node:fs").writeFileSync(${JSON.stringify(join(fake, "fail-rename"))}, "");
 record(db, "app-12", { short: "first" });
 await renameBuilders(db);
