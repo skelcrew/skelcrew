@@ -218,13 +218,14 @@ test("the pane shows beside the list only in a terminal wide enough for both", (
   for (const line of lines) expect(Bun.stringWidth(line)).toBeLessThanOrEqual(139);
 });
 
-// Details far taller than the pane, from a long title, many findings and many checks.
-test("details too tall for the pane end in …, and the live view keeps its lines", () => {
+// Details far taller than the pane, from a long title, a long description, many findings and many
+// checks, one of them failed.
+test("details too tall for the pane tighten so every part shows, and the live view keeps its lines", () => {
   const page = details.view.prPage;
   if (!page) throw new Error("the details have a PR");
-  const checks = Array.from({ length: 30 }, (_, i) => ({
+  const checks = Array.from({ length: 60 }, (_, i) => ({
     name: `check-${i}`,
-    state: "passed" as const,
+    state: i === 50 ? ("failed" as const) : ("passed" as const),
     log: null,
   }));
   const tall: Details = {
@@ -234,7 +235,41 @@ test("details too tall for the pane end in …, and the live view keeps its line
   const screen = "first\nsecond\nthird";
   const lines = plain(drawPane(row, tall, { screen }, 50, 22));
   expect(lines).toHaveLength(22);
-  expect(lines.slice(-4)).toEqual(["…", "─".repeat(50), "second", "third"]);
+  expect(lines[0]).toEndWith("…");
+  expect(lines).toContain("issue #42  https://github.com/acme/app/issues/42");
+  expect(lines).toContain("Building · question");
+  // The failed check comes first, so it stays in sight.
+  expect(lines).toContainEqual(expect.stringMatching(/^CI running: {2}check-50 ✗/));
+  expect(lines).toContainEqual(expect.stringMatching(/^ {2}… \d+ more lines of checks$/));
+  expect(lines).toContain("Round 2 · changes asked");
+  expect(lines).toContain("  - The limit resets per process, not per user");
+  expect(lines).toContain("Add a limit per user to the public API, so one…");
+  expect(lines).toContain("13:40 submitted · 13:52 reviewed · 14:02 submitted");
+  // Under the line, the agent's screen has at least two lines.
+  const rule = lines.indexOf("─".repeat(50));
+  expect(rule).toBeGreaterThan(0);
+  expect(rule).toBeLessThanOrEqual(22 - 3);
+  expect(
+    lines
+      .slice(rule + 1)
+      .filter(Boolean)
+      .slice(-2),
+  ).toEqual(["second", "third"]);
   const stopped = plain(drawPane(row, tall, { note: "Builder not running" }, 50, 22));
-  expect(stopped.slice(-4)).toEqual(["…", "─".repeat(50), "Builder not running", ""]);
+  expect(stopped).toContain("Builder not running");
+  expect(stopped).toContain("13:40 submitted · 13:52 reviewed · 14:02 submitted");
+});
+
+// A merged PR can leave the forge's copy, and its row keeps the link saved for it.
+test("a PR no longer in the forge's copy shows the link saved on its row", () => {
+  const done: Row = {
+    ...row,
+    part: "done",
+    says: "merged",
+    link: "https://github.com/acme/app/pull/43",
+  };
+  const gone: Details = { ...details, view: { ...details.view, prPage: null } };
+  expect(plain(drawPane(done, gone, null, 50, 30))).toContain(
+    "PR    #43  https://github.com/acme/app/pull/43",
+  );
 });
