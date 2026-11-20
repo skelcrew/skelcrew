@@ -297,7 +297,8 @@ console.log(JSON.stringify(db.query("SELECT task, ci_shown FROM tasks WHERE repo
     { task: 14, ci_shown: null },
   ]);
   // From a release with tasks, which kept whether a PR ever showed CI. app-12's saved checks are
-  // gone, yet its PR in the copy shows CI. app-13's PR left the copy, but the release kept that
+  // gone, yet its PR in the copy shows CI. Its reviewer approved another commit, which the PR's
+  // head may go back to, so both are kept. app-13's PR left the copy, but the release kept that
   // it showed CI, at the commit its reviewer approved. app-14 has no PR.
   earlierTasks();
   const earlier = new Database(dbFile());
@@ -306,10 +307,11 @@ console.log(JSON.stringify(db.query("SELECT task, ci_shown FROM tasks WHERE repo
   earlier.run("ALTER TABLE tasks ADD COLUMN reviewed_commit TEXT");
   earlier.run("UPDATE tasks SET checks = NULL WHERE repo = 'app'");
   earlier.run("UPDATE tasks SET ci_seen = 1, reviewed_commit = 'def456' WHERE task = 13");
+  earlier.run("UPDATE tasks SET reviewed_commit = 'fed789' WHERE task = 12");
   earlier.run("DELETE FROM items WHERE kind = 'pr' AND id = '41'");
   earlier.close();
   expect(JSON.parse(run(shown))).toEqual([
-    { task: 12, ci_shown: '["abc123"]' },
+    { task: 12, ci_shown: '["abc123","fed789"]' },
     { task: 13, ci_shown: '["def456"]' },
     { task: 14, ci_shown: null },
   ]);

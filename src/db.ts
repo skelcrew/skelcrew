@@ -397,17 +397,19 @@ export function finishUpgrade(db: Database): void {
 // PR's head showed CI. Otherwise a check seen before the upgrade that has vanished by the first
 // poll after it would let the wait for CI's first check end with none, and a merge go ahead as
 // if no CI ran. CI showed when the task's saved checks say so, when the release before kept that
-// it once did, or when Skelcrew's copy of its PR has a check besides Skelcrew's own. The commit
-// is the PR's head in the copy, else the one its reviewer approved, which a merge when ready
-// merges. An item that isn't JSON is read as none.
+// it once did, or when Skelcrew's copy of its PR has a check besides Skelcrew's own. Which
+// commit it showed on can't be told, so both commits that may be the PR's head again are kept:
+// its head in the copy, and the one its reviewer approved, which a merge when ready merges. An
+// item that isn't JSON is read as none.
 function markCiShown(db: Database): void {
   const seen = hasColumn(db, "tasks", "ci_seen") ? "OR tasks.ci_seen = 1" : "";
   const copy = `FROM items i WHERE i.owner = tasks.owner AND i.repo = tasks.repo AND i.kind = 'pr'
     AND i.id = CAST(tasks.pr AS TEXT) AND json_valid(i.item)`;
-  // A task whose commit isn't known keeps none, as a list holding null names no commit.
-  db.run(`UPDATE tasks SET ci_shown = (SELECT json_array(commit_id) FROM (SELECT COALESCE(
-      (SELECT json_extract(i.item, '$.head') ${copy}), tasks.reviewed_commit) AS commit_id)
-      WHERE commit_id IS NOT NULL)
+  // A commit that isn't known is left out, as null names no commit, and one that is both is
+  // kept once.
+  db.run(`UPDATE tasks SET ci_shown = (SELECT json_group_array(commit_id) FROM (
+      SELECT (SELECT json_extract(i.item, '$.head') ${copy}) AS commit_id
+      UNION SELECT tasks.reviewed_commit) WHERE commit_id IS NOT NULL)
     WHERE ci_shown IS NULL AND pr IS NOT NULL AND (checks IS NOT NULL ${seen}
       OR EXISTS (SELECT 1 ${copy} AND EXISTS (SELECT 1 FROM json_each(i.item, '$.checks') c
         WHERE json_extract(c.value, '$.name') IS NOT 'skelcrew/check')))`);
