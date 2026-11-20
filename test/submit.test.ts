@@ -578,6 +578,23 @@ describe.skipIf(insideSandbox)("sc submit", () => {
     ]);
   }, 90_000);
 
+  // The push went through, but the forge couldn't open the PR: the submit failed, as the lead
+  // hears with the forge's own words, and no check is set on a commit with no PR.
+  test("on a flow with no review stage, a PR the forge can't open fails the submit, with the forge's error", async () => {
+    addApp({ ".agents/flows/noreview.yaml": "build:\n  role: builder\n" });
+    writeFileSync(join(plugin, "fail-open-pr"), "Base branch was modified");
+    await startNoReview();
+    await until(() => thread().needs_you === 1, longWait);
+    expect(thread()).toMatchObject({
+      verdict: "not reviewed",
+      submitting: "Round 1",
+      pr: null,
+      needs_you: 1,
+    });
+    expect(read(join(data(), "threads", "app-12.log"))).toContain("Base branch was modified");
+    expect(statuses()).toEqual([]);
+  }, 90_000);
+
   // Docs are what such a flow is for, and no reviewer will look at them, so the wait for CI's
   // first check is all that keeps the PR from being ready before CI ran.
   test("on a flow with no review stage, a change to docs alone still waits for CI's first check", async () => {

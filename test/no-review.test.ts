@@ -169,7 +169,7 @@ test("a submit its flow doesn't review waits on checks while it is pushed and wa
 // A round on such a flow fails on its push or on setting Skelcrew's check, never on a review.
 test("a failed submit on a flow with no review says what failed, never review failed", () => {
   const failedPush = thread({ needs_you: true, submitting: "Round 1" });
-  expect(threadWord(failedPush, 3)).toBe("push failed");
+  expect(threadWord(failedPush, 3)).toBe("submit failed");
   expect(shownOf(failedPush, 3).mark).toEqual({ sign: "●", colour: "red" });
   const failedCheck = thread({ needs_you: true, reviewing: head });
   expect(threadWord(failedCheck, 3)).toBe("check failed");
@@ -192,8 +192,8 @@ test("an armed merge on a flow with no review tells the lead when it is stuck, o
   // A push or check that failed waits on someone, so the lead hears of it, while one still under
   // way only waits on checks.
   const failedPush = thread({ ...armed, needs_you: true, submitting: "Round 2" });
-  expect(mergeWaitsOn(failedPush, pr(), head, true)).toBe("its push, which failed");
-  expect(mergeStuck(failedPush, "its push, which failed")).toBe(true);
+  expect(mergeWaitsOn(failedPush, pr(), head, true)).toBe("its submit, which failed");
+  expect(mergeStuck(failedPush, "its submit, which failed")).toBe(true);
   const failedCheck = thread({ ...armed, needs_you: true, reviewing: "b".repeat(40) });
   expect(mergeWaitsOn(failedCheck, pr(), head, true)).toBe("Skelcrew's check, which failed");
   expect(mergeStuck(failedCheck, "Skelcrew's check, which failed")).toBe(true);

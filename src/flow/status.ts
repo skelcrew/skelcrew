@@ -398,10 +398,11 @@ export function threadWord(thread: Thread, maxRounds: number, now = Date.now()):
   // A task whose flow has no review stage is never called approved, as nobody reviewed it.
   if (readyToMerge(thread)) return verdict === "not reviewed" ? "not reviewed" : "approved";
   if (thread.needs_you && verdict === "timed out" && !underWay) return "review timed out";
-  // A round on a flow with no review stage fails on its push or on setting Skelcrew's check,
-  // never on a review, so it says which.
+  // A round on a flow with no review stage fails on its submit, pushing it or opening its PR,
+  // or on setting Skelcrew's check once it is pushed, never on a review, so it says which. The
+  // note to the lead gives the error itself, such as the forge's.
   if (thread.needs_you && waitsOnFirstCheck(thread))
-    return thread.submitting !== null ? "push failed" : "check failed";
+    return thread.submitting !== null ? "submit failed" : "check failed";
   if (thread.needs_you) return failed ? "review failed" : "needs you";
   // Not needing you: a builder that stopped without submitting waits on the lead, who got its
   // last message. Its word doesn't claim a question, as it may be only a reply.

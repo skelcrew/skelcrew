@@ -199,7 +199,7 @@ printTasks(listTasks(db, "app"), false);`;
     expect(line).not.toContain("failed");
   }
   expect(shown("14")).toContain("\nReview  not reviewed\n");
-  expect(rows().find((row) => row.name === "app-14")?.says).toBe("push failed");
+  expect(rows().find((row) => row.name === "app-14")?.says).toBe("submit failed");
 });
 
 // sc ps shows no review in a repository with no forge, but a task its flow didn't review is
