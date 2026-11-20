@@ -246,6 +246,10 @@ export const Thread = z.object({
   // opened again after sc rm gets a review of its own. One Skelcrew can't read counts as none,
   // and the next review is posted anew.
   review_post: savedJson("tasks.review_post", ReviewPost.nullable(), null),
+  // What the latest finished review found, one finding each, kept whether or not it was posted,
+  // such as with no forge or when posting failed. None for a review that approved or failed, and
+  // null on a task from before Skelcrew kept it.
+  review_findings: savedJson("tasks.review_findings", z.array(z.string()).nullable(), null),
   // When the task last joined the queue of limits.threads, in milliseconds since 1970. The queue
   // goes in this order, after a restart too. Kept once the task leaves the queue, until its
   // builder's session is saved, so a restart before then puts it back in its place.

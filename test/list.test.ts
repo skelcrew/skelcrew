@@ -9,9 +9,17 @@ import { join } from "node:path";
 import { z } from "zod";
 import { type Labels, startSession } from "../src/agents/sessions.ts";
 import type { ListStage } from "../src/flow/stage.ts";
-import { drawList, keysFor, tabAt } from "../src/list/layout.ts";
+import { drawList, keysFor, paneWidth, tabAt } from "../src/list/layout.ts";
 import { cutBacklog, type Row, stageHeadings } from "../src/list/rows.ts";
-import { fakePlugin, itemSql, read, source, threadSql, until as wait } from "./harness.ts";
+import {
+  fakePlugin,
+  itemSql,
+  asked as pluginAsked,
+  read,
+  source,
+  threadSql,
+  until as wait,
+} from "./harness.ts";
 
 // Longer than the waits below, so a test that fails says what it waited for.
 setDefaultTimeout(20_000);
@@ -1087,17 +1095,18 @@ function daemon(): void {
 
 // Starts an agent that says its name and logs each line you type into it. It fails when told bye,
 // which leaves its session behind with its last screen. It asks for extended keys as Claude Code
-// does, with CSI > 4;2 m, or `asks` as given.
+// does, with CSI > 4;2 m, or `asks` as given. It prints `says` first, as printf takes it.
 const asClaude = "\\033[>4;2m";
 // Codex asks as Claude Code does, and pushes kitty's keyboard flags too.
 const asCodex = "\\033[>4;2m\\033[>1u";
-function agent(name: string, labels: Labels, asks = asClaude): void {
+function agent(name: string, labels: Labels, asks = asClaude, says = ""): void {
   const script = join(home, `${name}.sh`);
   writeFileSync(
     script,
     `#!/bin/sh
 cd ${JSON.stringify(home)}
 printf '${asks}'
+printf '${says}'
 echo "I am ${name}"
 while test -d ${JSON.stringify(home)}; do
   read -r line && echo "$line" >> ${name}.typed
@@ -1136,24 +1145,38 @@ const until = (done: () => boolean, what: string) =>
 const press = (key: string) => tmux("send-keys", "-t", "=one:", key);
 const type = (text: string) => tmux("send-keys", "-t", "=one:", "-l", text);
 
-// Opens the list of app in a terminal of its own, 100 columns wide, with the agents app-7,
-// app-12 and the lead running. The terminal logs when the list returned.
-async function open(): Promise<void> {
+// Opens the list of app in a terminal of its own, 100 columns wide unless `width` says, with the
+// agents app-7, app-12 and the lead running. app-12 prints `says` first. `bin` is a folder of
+// programs the list finds before the real ones. The terminal logs when the list returned, and its
+// program waits `linger` milliseconds after that before it ends.
+async function open({
+  width = 100,
+  bin = "",
+  says = "",
+  linger = 0,
+}: {
+  width?: number;
+  bin?: string;
+  says?: string;
+  linger?: number;
+} = {}): Promise<void> {
   daemon();
   agent("lead", { repository: "simon/app", role: "lead" });
   agent("app-7", { repository: "simon/app", role: "builder", task: "app-7" }, asCodex);
-  agent("app-12", { repository: "simon/app", role: "builder", task: "app-12" });
+  agent("app-12", { repository: "simon/app", role: "builder", task: "app-12" }, asClaude, says);
   const script = join(home, "open.ts");
   writeFileSync(
     script,
     `import { runList } from ${JSON.stringify(source("list/list.ts"))};
 await runList(${JSON.stringify(agents)}, "simon/app");
 await Bun.write(${JSON.stringify(join(home, "left"))}, "left");
+await Bun.sleep(${linger});
 process.exit(0);`,
   );
-  const vars = `HOME=${home} XDG_RUNTIME_DIR=${join(home, "run")} SKELCREW_FIXED_LOAD='cpu 12%'`;
+  const path = bin ? `PATH=${bin}:${process.env.PATH ?? ""}` : "";
+  const vars = `HOME=${home} XDG_RUNTIME_DIR=${join(home, "run")} SKELCREW_FIXED_LOAD='cpu 12%' ${path}`;
   const command = `${vars} TERM=xterm-256color ${process.execPath} ${script}; sleep 300`;
-  tmux("new-session", "-d", "-s", "one", "-x", "100", "-y", "24", command);
+  tmux("new-session", "-d", "-s", "one", "-x", String(width), "-y", "24", command);
   await until(() => seen().includes("q/esc quit"), "the list");
 }
 
@@ -1822,4 +1845,393 @@ test("a click on a repository's tab opens it, and a click elsewhere does nothing
   // It opens on site's task that needs you, as the list does on any repository.
   expect(here()).toStartWith("▸ ● site-3");
   await until(() => asked.includes("open simon/site from a tab"), "site opened");
+});
+
+// The details pane, in a terminal 140 columns wide, which has room for it beside the list.
+const wide = 140;
+// What the pane shows, as the part of each line right of its edge, between the top line and the
+// bottom one.
+const paneSeen = () => {
+  const from = wide - 1 - paneWidth(wide);
+  return seen()
+    .split("\n")
+    .slice(1, 23)
+    .map((line) => line.slice(from).trimEnd());
+};
+// Returns the pane's lines from the line under the one between the details and the agent's screen.
+const liveSeen = () => {
+  const lines = paneSeen();
+  return lines.slice(lines.findIndex((line) => line.startsWith("───")) + 1);
+};
+
+// app-12 asks a question and has an issue's link. app-14's PR has a check that failed, whose log
+// sc show would ask the forge for, and Skelcrew's review on it found two things.
+test("the pane follows the row you are on, is empty on the lead's, and never asks the forge", async () => {
+  sql(`UPDATE tasks SET issue_link = 'https://github.com/simon/app/issues/12', body = 'Limit each client.' WHERE task = '12';
+UPDATE tasks SET review_post = '{"pr":41,"id":"9","verdict":"approve","findings":["Name the limit","Test the header"]}' WHERE task = '14';
+${itemSql("app", "pr", 41, "Fix the export header", "2026-11-06T10:00:00Z", { head: approved, checks: [...passed, { name: "build", id: "2", state: "failed" }] })}`);
+  await open({ width: wide });
+  expect(here()).toStartWith("▸ ● app-12");
+  await until(() => paneSeen()[0] === "Rate limit the API", "app-12's details");
+  expect(paneSeen().slice(0, 7)).toEqual([
+    "Rate limit the API",
+    "issue #12  https://github.com/simon/app/issues/12",
+    "",
+    "Building · question",
+    "",
+    "Limit each client.",
+    "",
+  ]);
+  // Its agent runs, so its screen shows below.
+  await until(() => liveSeen().includes("I am app-12"), "app-12's screen");
+  press("Down");
+  await until(() => paneSeen()[0] === "Old work", "app-9's details");
+  expect(liveSeen()[0]).toBe("Builder not running");
+  // The lead's row isn't a task, so the pane is empty, its edge alone showing.
+  press("Up");
+  press("Up");
+  await until(() => here().startsWith("▸ ○ lead"), "the lead's row");
+  await until(() => paneSeen().every((line) => line === ""), "an empty pane");
+  type("5");
+  await until(() => here().startsWith("▸ ● app-14"), "app-14's row");
+  await until(() => paneSeen()[0] === "Fix the export header", "app-14's details");
+  expect(paneSeen()).toContain("PR    #41  https://github.com/simon/app/pull/41");
+  expect(paneSeen()).toContain("CI failed:  test ✓  build ✗");
+  expect(paneSeen()).toContain("Round 1 · approved");
+  expect(paneSeen()).toContain("  - Name the limit");
+  // Nothing in the pane asked the forge, not even for the failed check's log.
+  expect(pluginAsked(join(home, ".config", "skelcrew", "plugins", "github"))).toEqual([]);
+});
+
+// A review in a repository with no forge, or one whose posting failed, has no review on a PR,
+// and its findings are still the task's.
+test("the pane shows the latest review's findings though it was never posted", async () => {
+  sql(`UPDATE tasks SET review_round = 1, verdict = 'changes',
+  review_findings = '["Name the limit","Test the header"]' WHERE task = '12'`);
+  await open({ width: wide });
+  await until(() => paneSeen()[0] === "Rate limit the API", "app-12's details");
+  expect(paneSeen()).toContain("Round 1 · changes asked");
+  expect(paneSeen()).toContain("  - Name the limit");
+  expect(paneSeen()).toContain("  - Test the header");
+});
+
+test("the pane shows only while the terminal is wide enough, and the keys do the same", async () => {
+  await open();
+  expect(seen()).not.toContain(" │ ");
+  tmux("resize-window", "-t", "=one:", "-x", String(wide));
+  await until(() => paneSeen()[0] === "Rate limit the API", "the pane");
+  press("Down");
+  await until(() => here().startsWith("▸ ○ app-9"), "app-9's row");
+  tmux("resize-window", "-t", "=one:", "-x", "100");
+  await until(() => !seen().includes(" │ "), "no pane");
+  expect(here()).toStartWith("▸ ○ app-9");
+});
+
+// A thread's log holds the thread as it was at each change, so its events are where it changed.
+test("the pane's events come from the thread's log: started, submitted, reviewed and merged", () => {
+  const at = (minute: number) => new Date(2026, 10, 19, 13, minute).toISOString();
+  const line = (minute: number, change: object) =>
+    JSON.stringify({
+      at: at(minute),
+      status: "working",
+      submitting: null,
+      verdict: null,
+      review_round: null,
+      reviewed_commit: null,
+      merged: false,
+      ...change,
+    });
+  const logs = join(home, ".local", "share", "skelcrew", "threads");
+  mkdirSync(logs, { recursive: true });
+  writeFileSync(
+    join(logs, "app-12.log"),
+    `${[
+      line(0, {}),
+      line(5, { submitting: "Add it" }),
+      line(10, { submitting: "Add it", verdict: "changes", review_round: 1, reviewed_commit: "a" }),
+      line(20, { verdict: "changes", review_round: 1, reviewed_commit: "a" }),
+      line(30, { submitting: "Fix it", verdict: "changes", review_round: 1, reviewed_commit: "a" }),
+      line(40, { verdict: "approve", review_round: 2, reviewed_commit: "b" }),
+      line(50, {
+        verdict: "approve",
+        review_round: 2,
+        reviewed_commit: "b",
+        merged: true,
+        status: "done",
+      }),
+    ].join("\n")}\n`,
+  );
+  const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
+import { readDetails } from ${JSON.stringify(source("list/details.ts"))};
+console.log(JSON.stringify(readDetails(openDb(), { owner: "simon", repo: "app" }, "12", ${now})?.events));`;
+  const run = Bun.spawnSync([process.execPath, "-e", code], { env: env(), stderr: "pipe" });
+  expect(run.stderr.toString()).toBe("");
+  expect(JSON.parse(run.stdout.toString())).toEqual([
+    "13:00 started",
+    "13:05 submitted",
+    "13:10 reviewed",
+    "13:30 submitted",
+    "13:40 reviewed",
+    "13:50 merged",
+  ]);
+});
+
+// app-12's agent prints a line in red, then one wider than the pane, which fits its own screen.
+test("the live view shows the agent's screen as it changes, colours kept and long lines cut", async () => {
+  const long = "0123456789".repeat(7);
+  await open({ width: wide, says: `\\033[31mred words\\033[0m\\n${long}\\n` });
+  await until(() => liveSeen().includes("I am app-12"), "app-12's screen");
+  // The colour reaches your terminal as the agent drew it.
+  const coloured = tmux("capture-pane", "-p", "-e", "-t", "=one:").stdout.toString();
+  expect(coloured).toContain("\x1b[31mred words");
+  // The long line is cut at the pane's right edge, and doesn't wrap onto the next line.
+  const cut = liveSeen().filter((line) => line.includes("0123456789"));
+  expect(cut).toEqual([long.slice(0, paneWidth(wide))]);
+  // What the agent shows next reaches the pane, without its session changing size.
+  const size = () =>
+    Bun.spawnSync([
+      "tmux",
+      "-L",
+      agents,
+      "display",
+      "-p",
+      "-t",
+      "=app-12:",
+      "#{window_width}x#{window_height}",
+    ]).stdout.toString();
+  const before = size();
+  Bun.spawnSync(["tmux", "-L", agents, "send-keys", "-t", "=app-12:", "-l", "hello there"]);
+  await until(
+    () => liveSeen().some((line) => line.endsWith("hello there")),
+    "what the agent shows",
+  );
+  expect(size()).toBe(before);
+  // Keys typed in the list never reach the agent, whose line stays as it was.
+  type("abc");
+  await Bun.sleep(600);
+  expect(liveSeen().some((line) => line.endsWith("hello there"))).toBe(true);
+  expect(seen()).not.toContain("abc");
+});
+
+// A tmux that logs each read of a screen with its colours, as the live view reads, then runs the
+// real one. Returns the folder it is in, for the list's PATH, and a count of the reads so far.
+function countedTmux(): { bin: string; reads: () => number } {
+  const bin = join(home, "bin");
+  const log = join(home, "reads");
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(
+    join(bin, "tmux"),
+    `#!/bin/sh
+case "$*" in *"capture-pane -p -e"*) echo read >> ${JSON.stringify(log)} ;; esac
+exec ${JSON.stringify(Bun.which("tmux") ?? "tmux")} "$@"
+`,
+    { mode: 0o755 },
+  );
+  return { bin, reads: () => read(log).split("\n").filter(Boolean).length };
+}
+
+// A tmux whose capture of a screen takes 3 seconds, as a busy or stalled tmux server can, which
+// does all else at once.
+function slowTmux(): string {
+  const bin = join(home, "slow-bin");
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(
+    join(bin, "tmux"),
+    `#!/bin/sh
+case "$*" in *"capture-pane -p -e"*) sleep 3 ;; esac
+exec ${JSON.stringify(Bun.which("tmux") ?? "tmux")} "$@"
+`,
+    { mode: 0o755 },
+  );
+  return bin;
+}
+
+test("a tmux slow to capture an agent's screen never holds up the keys", async () => {
+  await open({ width: wide, bin: slowTmux() });
+  await until(() => paneSeen()[0] === "Rate limit the API", "app-12's details");
+  // Each read of app-12's screen takes 3 seconds. The moves meanwhile still show at once.
+  const start = performance.now();
+  press("Down");
+  await until(() => here().startsWith("▸ ○ app-9"), "app-9's row");
+  press("Up");
+  await until(() => here().startsWith("▸ ● app-12"), "app-12's row");
+  press("Down");
+  await until(() => here().startsWith("▸ ○ app-9"), "app-9's row");
+  expect(performance.now() - start).toBeLessThan(1000);
+  // Its screen shows once tmux answers. Then app-9 has no agent to read, and the read under way
+  // ends, as the test started it.
+  press("Up");
+  await until(() => liveSeen().includes("I am app-12"), "app-12's screen");
+  press("Down");
+  await until(() => here().startsWith("▸ ○ app-9"), "app-9's row");
+  await Bun.sleep(3500);
+});
+
+// Returns whether no read came for a second, as the live view reads 4 times a second.
+async function noReads(reads: () => number): Promise<boolean> {
+  const before = reads();
+  await Bun.sleep(1000);
+  return reads() === before;
+}
+
+test("the live view reads only while the list shows with its pane", async () => {
+  const { bin, reads } = countedTmux();
+  await open({ width: wide, bin });
+  await until(() => reads() >= 4, "the live view's reads");
+  // On a row with no agent running, there is nothing to read.
+  press("Down");
+  await until(() => here().startsWith("▸ ○ app-9"), "app-9's row");
+  expect(await noReads(reads)).toBe(true);
+  // While you are attached to an agent, the list isn't showing.
+  press("Down");
+  await until(() => here().startsWith("▸ ○ app-7"), "app-7's row");
+  press("Enter");
+  await until(() => seen().includes("I am app-7"), "app-7's agent");
+  expect(await noReads(reads)).toBe(true);
+  press("C-\\");
+  await until(() => here().startsWith("▸ ○ app-7"), "the list again");
+  const back = reads();
+  await until(() => reads() > back, "reads again");
+  // In a terminal too narrow for the pane, nothing is read.
+  tmux("resize-window", "-t", "=one:", "-x", "100");
+  await until(() => !seen().includes(" │ "), "no pane");
+  expect(await noReads(reads)).toBe(true);
+  // Nor once the list has left.
+  tmux("resize-window", "-t", "=one:", "-x", String(wide));
+  await until(() => seen().includes(" │ "), "the pane");
+  type("q");
+  await until(() => read(join(home, "left")) === "left", "the list to leave");
+  expect(await noReads(reads)).toBe(true);
+});
+
+// The live view reads 4 times a second while you move. A move must still show at once.
+test("the list stays quick to move while the live view reads", async () => {
+  await open({ width: wide });
+  await until(() => liveSeen().includes("I am app-12"), "app-12's screen");
+  const took: number[] = [];
+  for (const [key, row] of [
+    ["Down", "app-9"],
+    ["Down", "app-7"],
+    ["Up", "app-9"],
+    ["Up", "app-12"],
+  ] as const) {
+    const start = performance.now();
+    press(key);
+    await until(() => here().includes(row), `${row}'s row`);
+    took.push(performance.now() - start);
+  }
+  // Each move shows within a fifth of a second, waits for the terminal included.
+  expect(Math.max(...took)).toBeLessThan(200);
+});
+
+// Puts app-12's builder on a runtime plugin's host whose read of a screen takes 3 seconds, as a
+// host on a slow machine can. Each read gives a screen of its own, so each one is drawn.
+function slowHost(): void {
+  const plugin = join(home, "plugin-slow");
+  mkdirSync(plugin, { recursive: true });
+  writeFileSync(
+    join(plugin, "session.sh"),
+    `read -r question
+case "$question" in *'"read"'*) sleep 3; printf '{"screen":"slow screen %s"}\\n' "$(date +%s%N)" ;; esac
+`,
+  );
+  writeFileSync(
+    join(plugin, "skelcrew-plugin.yaml"),
+    "name: slow\nversion: 0.1.0\nskelcrew: 0.1.0\nabout: A host\nkind: runtime\nprovides: [sessions]\nsession: [sh, session.sh]\nattach: [sh, session.sh]\n",
+  );
+  sql(`INSERT INTO plugins (name, folder) VALUES ('slow', '${plugin}');
+UPDATE threads SET host = 'slow', host_id = 'slow-app-12' WHERE folder = 'app-12'`);
+}
+
+test("a host slow to read an agent's screen never holds up the keys", async () => {
+  slowHost();
+  await open({ width: wide });
+  await until(
+    () => liveSeen().some((line) => line.startsWith("slow screen")),
+    "the slow host's screen",
+  );
+  // Each move onto app-12 starts a read of 3 seconds. The moves after it still show at once.
+  press("Up");
+  press("Down");
+  const start = performance.now();
+  press("Down");
+  press("Down");
+  await until(() => here().startsWith("▸ ○ app-7"), "app-7's row");
+  expect(performance.now() - start).toBeLessThan(1000);
+  // The read under way ends with the host's answer, which the test waits for, as it started it.
+  await Bun.sleep(3500);
+});
+
+test("a read that answers after the list left draws nothing over your terminal", async () => {
+  slowHost();
+  await open({ width: wide, linger: 5000 });
+  await until(
+    () => liveSeen().some((line) => line.startsWith("slow screen")),
+    "the slow host's screen",
+  );
+  // A read starts at once on coming back to app-12, and q leaves while it is under way.
+  press("Down");
+  press("Up");
+  await until(() => here().startsWith("▸ ● app-12"), "app-12's row");
+  type("q");
+  await until(() => read(join(home, "left")) === "left", "the list to leave");
+  await Bun.sleep(3500);
+  expect(seen()).toContain("Your agents keep running.");
+  expect(seen()).not.toContain("q/esc quit");
+});
+
+test("a read under way when you move away and back is dropped, as you moved since it was asked", async () => {
+  slowHost();
+  await open({ width: wide });
+  const screen = () => liveSeen().find((line) => line.startsWith("slow screen")) ?? "";
+  await until(() => screen() !== "", "the slow host's screen");
+  // A new screen shows as a read ends, and the next read starts within a quarter of a second,
+  // so a second on it is surely under way, answering 2 seconds or so after the move.
+  const first = screen();
+  await until(() => screen() !== first, "the next screen");
+  await Bun.sleep(1000);
+  // Moving away and back while that read is under way: its answer is dropped. A read asked after
+  // the move takes 3 seconds, so for 3 seconds from the move the screen stays as it was.
+  const moved = performance.now();
+  press("Down");
+  await until(() => here().startsWith("▸ ○ app-9"), "app-9's row");
+  press("Up");
+  await until(() => here().startsWith("▸ ● app-12"), "app-12's row");
+  const before = screen();
+  while (performance.now() - moved < 3000) {
+    expect(screen()).toBe(before);
+    await Bun.sleep(20);
+  }
+  // A read asked after the move shows. Then the test moves to a row with no agent, so no read
+  // starts again, and waits for the one under way to end, as it started it.
+  await until(() => screen() !== before, "a newer screen");
+  press("Down");
+  await until(() => here().startsWith("▸ ○ app-9"), "app-9's row");
+  await Bun.sleep(3500);
+});
+
+test("a slow read of the row you left never holds up the live view of the row you are on", async () => {
+  slowHost();
+  await open({ width: wide });
+  await until(
+    () => liveSeen().some((line) => line.startsWith("slow screen")),
+    "the slow host's screen",
+  );
+  // Coming back to app-12 starts a read of 3 seconds. app-7, two rows on, is read at once.
+  press("Down");
+  const back = performance.now();
+  press("Up");
+  await until(() => here().startsWith("▸ ● app-12"), "app-12's row");
+  const start = performance.now();
+  press("Down");
+  press("Down");
+  await until(() => liveSeen().includes("I am app-7"), "app-7's screen");
+  expect(performance.now() - start).toBeLessThan(1000);
+  // When app-12's read answers, app-7's screen stays in sight, never blanked by a screen that
+  // isn't its own. The test watches until well after the answer, which also waits for the read
+  // it started to end.
+  while (performance.now() - back < 4000) {
+    expect(liveSeen()).toContain("I am app-7");
+    await Bun.sleep(10);
+  }
 });
