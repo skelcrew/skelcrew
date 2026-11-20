@@ -39,18 +39,19 @@ test("a long message typed into Claude Code is cut with its prompt, over all its
   expect(bottom(long, 1)).toEqual([expect.stringContaining("tmux focus-events off")]);
 });
 
-test("Codex's input box and footer are cut while its input is empty, idle or at work", async () => {
+test("Codex's input box and footer are cut, idle, at work or with a long message typed", async () => {
   const idle = agentOutput("codex", await screen("codex-idle.txt"));
   expect(bottom(idle, 1)).toEqual(["• Edited src/api/limit.ts (+12 -0)"]);
   const busy = agentOutput("codex", await screen("codex-busy.txt"));
   expect(bottom(busy, 1)).toEqual(["• Working (42s • esc to interrupt)"]);
   expect(busy).toContain("› Rate limit the API per user");
   expect(busy).not.toContain("context left");
-});
-
-test("Codex with a message typed shows whole, as its box then looks like an earlier message", async () => {
-  const long = await screen("codex-long.txt");
-  expect(agentOutput("codex", long)).toBe(long);
+  const long = agentOutput("codex", await screen("codex-long.txt"));
+  expect(bottom(long, 1)).toEqual(["• Working (42s • esc to interrupt)"]);
+  expect(long).not.toContain("every file in src");
+  // A box whose empty prompt says other words is still found by its shape.
+  const reworded = (await screen("codex-idle.txt")).replace("Ask Codex to do anything", "Ask away");
+  expect(bottom(agentOutput("codex", reworded), 1)).toEqual(["• Edited src/api/limit.ts (+12 -0)"]);
 });
 
 test("a screen whose input area isn't found shows whole", async () => {
@@ -76,10 +77,19 @@ test("a screen whose input area isn't found shows whole", async () => {
   const bare = ["› Rate limit the API per user", "", "Working on it.", "Done."].join("\n");
   expect(agentOutput("codex", bare)).toBe(bare);
   // An earlier message in Codex's output, shaded as its box is, with blank and indented lines
-  // under it, isn't its input box, such as when an update changed the box.
+  // under it, isn't its input box, such as when an update changed the box: the box's footer is
+  // dim, and Codex's output after a message starts with •.
   const shade = (text: string) => `\x1b[48;5;236m${text}\x1b[49m`;
+  const dim = (text: string) => `\x1b[2m${text}\x1b[22m`;
   const earlier = ["", shade("› previous request"), "", "  result line", "", "  Ask Codex"];
   expect(agentOutput("codex", earlier.join("\n"))).toBe(earlier.join("\n"));
+  const answered = ["", shade("› previous request"), "", "• Done.", "", `  ${dim("Ask Codex")}`];
+  expect(agentOutput("codex", answered.join("\n"))).toBe(answered.join("\n"));
+  // A message not shaded, or a footer with a colour such as 38;5;2 rather than dim, isn't either.
+  const plain = ["", "› previous request", "", `  ${dim("100% context left")}`];
+  expect(agentOutput("codex", plain.join("\n"))).toBe(plain.join("\n"));
+  const green = ["", shade("› previous request"), "", "  \x1b[38;5;2mresult\x1b[39m"];
+  expect(agentOutput("codex", green.join("\n"))).toBe(green.join("\n"));
   // Claude Code's box quoted in its output, with more output after it, isn't its input box, which
   // ends the screen.
   const rule = "─".repeat(40);
