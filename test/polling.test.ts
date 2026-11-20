@@ -2284,7 +2284,13 @@ exec ${bwrap} "$@"`,
     // Where the question starts: what it says of .agents/ follows, as a poll last saw the PR.
     const question = "Merge #7 (app-12 Add export) when it's approved and green?";
     const notLet =
-      "the human hasn't let you arm a merge when ready: ask them to run sc merge --when-ready in their own terminal";
+      "the human turned off your arming merges: ask them to run sc merge --when-ready in their own terminal, or to turn it on with lead: { can_merge: true } in ~/.config/skelcrew/config.yaml";
+    // Writes your config with `lead`, your line for whether the lead may arm merges, or none.
+    const leadMerging = (lead: string) =>
+      writeFileSync(
+        join(home, ".config", "skelcrew", "config.yaml"),
+        `harness: claude\nreviewer: { harness: codex }\n${lead}`,
+      );
     const merges = () => asked(plugin).filter((q) => q.ask === "merge pr");
     const leadTyped = () => read(join(data(), "claude", leadName, "typed"));
     // Arms a new plan, and checks sc said so. A plan still armed, such as after a cancel that
@@ -2394,7 +2400,9 @@ exec ${bwrap} "$@"`,
         stderr: "pipe",
       });
       expect(piped.stderr.toString()).toContain("run it at your own terminal");
-      // The builder's socket doesn't take it at all, and the lead's refuses it unless you let it.
+      // The builder's socket doesn't take it at all, and the lead's refuses it once you turn
+      // that off.
+      leadMerging("lead: { can_merge: false }\n");
       const request = { command: "merge when ready", repo: "app", task: "12" };
       const unknown = { error: "the daemon doesn't know that request" };
       expect(await askOn(leadSocket(), { ...request, asked: "merge it" })).toEqual({
@@ -2448,9 +2456,9 @@ exec ${bwrap} "$@"`,
       );
     }, 60_000);
 
-    // You let the lead arm merges in your own config. It then arms one with your words, and
-    // nothing else changes: the merge still waits for the approved head to be green.
-    test("a lead you let arm merges arms one with your words, and builders still can't", async () => {
+    // The lead may arm merges unless your own config turns it off. It arms one with your words,
+    // and nothing else changes: the merge still waits for the approved head to be green.
+    test("a lead arms a merge with your words unless you turn it off, and builders still can't", async () => {
       await approvedApp12();
       // Your words as you wrote them: over lines, with a double space, quotes, what a shell would
       // run, and lines that were once heredoc delimiters.
@@ -2465,12 +2473,13 @@ exec ${bwrap} "$@"`,
           [process.execPath, main, "merge", "--when-ready", "#7", "--asked-file", file],
           { env: { ...env(), SKELCREW_SOCKET: leadSocket() }, stdout: "pipe", stderr: "pipe" },
         );
-      // Off by default: the lead is refused, and nothing is armed.
+      // Turned off, the lead is refused, and nothing is armed.
+      leadMerging("lead: { can_merge: false }\n");
       expect(asLead().stderr.toString()).toContain(notLet);
       expect(thread().merge_plan).toBeNull();
 
-      const config = join(home, ".config", "skelcrew", "config.yaml");
-      writeFileSync(config, `${read(config)}lead: { may_arm_merges: true }\n`);
+      // With no line, it is on.
+      leadMerging("");
       // Builders stay refused, the lead must give your words, and --asked-file is never yours.
       const request = { command: "merge when ready", repo: "app", task: "12", asked: words };
       expect(await askOn(builderSocket(), request)).toEqual({
@@ -3050,13 +3059,14 @@ echo '{"verdict":"changes","body":"Not yet.","findings":["Handle an empty file",
         error:
           "app-12 changed since you said y, so it won't merge by itself: run sc merge --skip-review app-12 again",
       });
-      // Builders never can, and the lead needs your leave.
+      // Builders never can, and the lead can't once you turn that off.
+      leadMerging("lead: { can_merge: false }\n");
       expect(await askOn(builderSocket(), arming)).toEqual({
         error: "the daemon doesn't know that request",
       });
       expect(await askOn(leadSocket(), { ...arming, asked: "force merge it" })).toEqual({
         error:
-          "the human hasn't let you arm a merge: ask them to run sc merge --skip-review in their own terminal",
+          "the human turned off your arming merges: ask them to run sc merge --skip-review in their own terminal, or to turn it on with lead: { can_merge: true } in ~/.config/skelcrew/config.yaml",
       });
       expect(thread().merge_plan).toBeNull();
 
@@ -3091,7 +3101,7 @@ echo '{"verdict":"changes","body":"Not yet.","findings":["Handle an empty file",
       expect(merges()).toEqual([]);
     }, 90_000);
 
-    test("a lead you let arm merges merges without approval with your words, and files its findings once", async () => {
+    test("a lead merges without approval with your words, and files its findings once", async () => {
       const head = await changesApp12();
       const words = "Force merge #7, the edge cases\ncan wait.";
       const file = join(home, "asked.txt");
@@ -3101,10 +3111,11 @@ echo '{"verdict":"changes","body":"Not yet.","findings":["Handle an empty file",
           [process.execPath, main, "merge", "--skip-review", "#7", "--asked-file", file],
           { env: { ...env(), SKELCREW_SOCKET: leadSocket() }, stdout: "pipe", stderr: "pipe" },
         );
-      expect(asLead().stderr.toString()).toContain("the human hasn't let you arm a merge");
+      leadMerging("lead: { can_merge: false }\n");
+      expect(asLead().stderr.toString()).toContain("the human turned off your arming merges");
       expect(thread().merge_plan).toBeNull();
-      const config = join(home, ".config", "skelcrew", "config.yaml");
-      writeFileSync(config, `${read(config)}lead: { may_arm_merges: true }\n`);
+      // The setting's old name still turns it on.
+      leadMerging("lead: { may_arm_merges: true }\n");
       expect(
         await askOn(leadSocket(), { command: "merge skip review", repo: "app", task: "12" }),
       ).toEqual({
