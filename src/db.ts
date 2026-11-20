@@ -398,9 +398,10 @@ export function finishUpgrade(db: Database): void {
 // poll after it would let the wait for CI's first check end with none, and a merge go ahead as
 // if no CI ran. CI showed when the task's saved checks say so, when the release before kept that
 // it once did, or when Skelcrew's copy of its PR has a check besides Skelcrew's own. Which
-// commit it showed on can't be told, so both commits that may be the PR's head again are kept:
-// its head in the copy, and the one its reviewer approved, which a merge when ready merges. An
-// item that isn't JSON is read as none.
+// commit it showed on can't be told, so every commit that may be the PR's head again is kept:
+// its head in the copy, the one its reviewer approved, which a merge when ready merges, and the
+// one a merge without approval pinned on any of its threads. An item that isn't JSON is read
+// as none.
 function markCiShown(db: Database): void {
   const seen = hasColumn(db, "tasks", "ci_seen") ? "OR tasks.ci_seen = 1" : "";
   const copy = `FROM items i WHERE i.owner = tasks.owner AND i.repo = tasks.repo AND i.kind = 'pr'
@@ -409,7 +410,10 @@ function markCiShown(db: Database): void {
   // kept once.
   db.run(`UPDATE tasks SET ci_shown = (SELECT json_group_array(commit_id) FROM (
       SELECT (SELECT json_extract(i.item, '$.head') ${copy}) AS commit_id
-      UNION SELECT tasks.reviewed_commit) WHERE commit_id IS NOT NULL)
+      UNION SELECT tasks.reviewed_commit
+      UNION SELECT th.merge_pinned FROM threads th
+        WHERE th.owner = tasks.owner AND th.repo = tasks.repo AND th.task = tasks.task)
+      WHERE commit_id IS NOT NULL)
     WHERE ci_shown IS NULL AND pr IS NOT NULL AND (checks IS NOT NULL ${seen}
       OR EXISTS (SELECT 1 ${copy} AND EXISTS (SELECT 1 FROM json_each(i.item, '$.checks') c
         WHERE json_extract(c.value, '$.name') IS NOT 'skelcrew/check')))`);
