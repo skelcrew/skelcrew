@@ -176,6 +176,22 @@ UPDATE tasks SET checks = 'pending', ci_passed = 0 WHERE task = '14';`);
   });
 });
 
+// sc ps shows no review in a repository with no forge, but a task its flow didn't review is
+// ready on its branch with nobody having looked at it, so it says so.
+test("sc ps says not reviewed for a task on a flow with no review, in a repository with no forge", () => {
+  sql(`${threadSql({ repo: "site", task: "5", status: "waiting", needs_you: 1, verdict: "not reviewed", flow: "noreview" })}
+${threadSql({ repo: "site", task: "6", status: "waiting", needs_you: 1, verdict: "approve", review_round: 1 })}`);
+  const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
+import { listThreads } from ${JSON.stringify(source("flow/list.ts"))};
+console.log(JSON.stringify(listThreads(openDb(), "site")));`;
+  const run = Bun.spawnSync([process.execPath, "-e", code], { env: env(), stderr: "pipe" });
+  if (!run.success) throw new Error(run.stderr.toString());
+  const threads: { thread: string; review: unknown }[] = JSON.parse(run.stdout.toString());
+  const review = (name: string) => threads.find((t) => t.thread === name)?.review;
+  expect(review("site-5")).toEqual({ state: "not reviewed", round: null, at: null });
+  expect(review("site-6")).toBeNull();
+});
+
 test("each stage's heading counts its tasks and those that need you, open or closed", () => {
   sql("UPDATE threads SET asking = 1 WHERE folder = 'app-14';");
   expect(stageHeadings(rows(), new Set<ListStage>(["building"]))).toEqual([

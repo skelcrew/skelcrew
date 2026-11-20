@@ -151,7 +151,10 @@ function approvedOnForge(pr: Extract<Item, { kind: "pr" }>): boolean {
 // thread that is only working or waiting leaves the mark plain. A PR from a thread ends with its word,
 // and one with no thread with its author.
 // m merges a PR ready to merge, at the head commit the forge last sent, which is the one you saw
-// approved. On any other PR it says what the PR waits on: an approval, or its checks.
+// approved. On any other PR it says what the PR waits on: an approval, or its checks. A PR from a
+// thread merges only while that head is the commit Skelcrew's reviewer approved, or for a flow
+// with no review stage the one last submitted: the thread's word can lag behind a push someone
+// else made, which nobody has seen.
 function prGroups(db: Database, open: Open, threads: Known[]): Group[] {
   const name = repositoryName(db, open);
   const rows = openPrs(db, open.owner, open.repo).map((pr) => {
@@ -170,7 +173,15 @@ function prGroups(db: Database, open: Open, threads: Known[]): Group[] {
         key: "m",
         refused: `${named} needs a newer forge plugin to merge here: run sc update -g`,
       };
-    else
+    else if (on && on.thread.reviewed_commit === null)
+      action = {
+        key: "m",
+        refused: `${named}'s approval has no commit saved: merge it on the forge, or run sc review ${on.name}`,
+      };
+    else if (on && on.thread.reviewed_commit !== pr.head) {
+      const which = on.thread.verdict === "not reviewed" ? "submitted" : "approved";
+      action = { key: "m", refused: `${named} has a newer commit than the one ${which}` };
+    } else
       action = {
         key: "m",
         ask: [

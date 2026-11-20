@@ -250,7 +250,7 @@ ${itemSql("app", "pr", 34, "Fix logout", "2026-11-07T10:00:00Z", { ...head, revi
 ${itemSql("app", "pr", 35, "Fix signup", "2026-11-08T10:00:00Z", { ...passing, ...head })}
 ${itemSql("app", "pr", 36, "Fix export", "2026-11-09T10:00:00Z", head)}
 ${itemSql("app", "pr", 37, "Fix import", "2026-11-10T10:00:00Z", head)}
-${threadSql({ task: "12", status: "waiting", pr: 31, needs_you: 1, ci_passed: 1, verdict: "approve", review_round: 1 })}
+${threadSql({ task: "12", status: "waiting", pr: 31, needs_you: 1, ci_passed: 1, verdict: "approve", review_round: 1, reviewed_commit: "c".repeat(40) })}
 ${threadSql({ task: "13", status: "waiting", pr: 36, verdict: "approve", review_round: 1 })}
 ${threadSql({ task: "14", pr: 37, review_round: 1, verdict: "changes" })}
 INSERT INTO pr_agents (owner, repo, pr, head, base, changed) VALUES
@@ -280,6 +280,43 @@ INSERT INTO pr_agents (owner, repo, pr, head, base, changed) VALUES
     { key: "m", refused: "app#35 isn't approved yet" },
     { key: "m", refused: "app#34's checks haven't passed yet" },
   ]);
+});
+
+// A thread's word can lag behind a push someone else made to its PR, so m merges a PR from a
+// thread only at the commit its reviewer approved, or for a flow with no review stage the one
+// last submitted, and never one nobody saw.
+test("m on a thread's PR merges only the commit approved or last submitted", () => {
+  const ready = { status: "waiting", needs_you: 1, ci_passed: 1, checks: "passing" };
+  const head = { ...passing, head: "c".repeat(40) };
+  const sql = `${repository}
+${itemSql("app", "pr", 31, "Fix typo", "2026-11-04T10:00:00Z", head)}
+${itemSql("app", "pr", 32, "Fix wording", "2026-11-05T10:00:00Z", head)}
+${itemSql("app", "pr", 33, "Fix login", "2026-11-06T10:00:00Z", head)}
+${itemSql("app", "pr", 34, "Fix logout", "2026-11-07T10:00:00Z", head)}
+${threadSql({ task: "12", ...ready, pr: 31, verdict: "not reviewed", reviewed_commit: "c".repeat(40) })}
+${threadSql({ task: "13", ...ready, pr: 32, verdict: "not reviewed", reviewed_commit: "d".repeat(40) })}
+${threadSql({ task: "14", ...ready, pr: 33, verdict: "approve", review_round: 1, reviewed_commit: "d".repeat(40) })}
+${threadSql({ task: "15", ...ready, pr: 34, verdict: "approve", review_round: 1 })}`;
+  const { prs } = after(sql);
+  const byName = Object.fromEntries(
+    prs.flatMap((g) => g.rows).map((row) => [row.name, row.action]),
+  );
+  expect(byName["app#31"]).toMatchObject({
+    request: { command: "merge", pr: 31, commit: "c".repeat(40) },
+  });
+  expect(byName["app#32"]).toEqual({
+    key: "m",
+    refused: "app#32 has a newer commit than the one submitted",
+  });
+  expect(byName["app#33"]).toEqual({
+    key: "m",
+    refused: "app#33 has a newer commit than the one approved",
+  });
+  expect(byName["app#34"]).toEqual({
+    key: "m",
+    refused:
+      "app#34's approval has no commit saved: merge it on the forge, or run sc review app-15",
+  });
 });
 
 test("a thread's row has nothing for s or m to do", () => {
