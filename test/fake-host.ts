@@ -22,6 +22,13 @@ import {
 import { join } from "node:path";
 
 const dir = process.env.SKELCREW_PLUGIN_CONFIG ?? "";
+// Each call notes its process ID in `running-calls` while it runs. A call outlives the daemon
+// that made it, so a test's clean-up waits for those still running, as one may be starting a
+// session.
+const call = join(dir, "running-calls", String(process.pid));
+mkdirSync(join(dir, "running-calls"), { recursive: true });
+writeFileSync(call, "");
+process.on("exit", () => rmSync(call, { force: true }));
 const question = JSON.parse(await Bun.stdin.text());
 appendFileSync(join(dir, "asked"), `${JSON.stringify(question)}\n`);
 const sessions = join(dir, "sessions");
