@@ -511,14 +511,26 @@ export function questionAsked(db: Database, sessions: string, folder: string): v
 // submit in that turn shows as turn ended, and its last message goes to the lead, who brings a
 // question in it to you. One that told the lead in that turn with sc tell lead sends nothing
 // more, as the lead already has its words. A turn with no new work while the last submit is
-// still on its way waits on that submit instead.
+// still on its way waits on that submit instead. A turn that ends with a background job still
+// running, such as a test run, isn't a stop: the harness starts a turn again once the job ends.
 export function turnEnded(
   db: Database,
   sessions: string,
   folder: string,
-  ended: { head?: string | undefined; message?: string | undefined },
+  ended: {
+    head?: string | undefined;
+    message?: string | undefined;
+    background?: boolean | undefined;
+  },
 ): void {
   const thread = readThread(db, folder);
+  // The builder still works, so it shows working, the lead hears nothing yet, and the safety
+  // net doesn't wait on it. The turn after the job ends is the one judged.
+  if (ended.background) {
+    const working = { turn_ended: false, ended_at: null, ended_said: null, told_lead: false };
+    record(db, folder, working);
+    return;
+  }
   // The lead reads the builder's own words, as a message from it, so a question need not end
   // in a question mark to reach you. A harness that gave none still says the turn ended.
   const said = ended.message ? `, saying:\n\n${ended.message}` : ".";
@@ -548,6 +560,11 @@ export function turnEnded(
     record(db, folder, { turn_ended: true, ...timed }, "its builder stopped without submitting");
 }
 
+// How long the safety net holds off after the lead told a builder something. The builder's
+// reply ends a turn without a submit, often to wait as the lead said, such as for another thread
+// to land. The lead has the reply, so the net only catches one it forgot after this long.
+const leadHold = 30 * 60_000;
+
 // How much of a builder's last message the safety net keeps as the reason the thread needs you,
 // so the word stays one line.
 const saidLength = 200;
@@ -555,10 +572,12 @@ const saidLength = 200;
 // The safety net: marks each thread whose builder ended its turn without submitting, and that
 // nobody acted on for `graceMinutes` with nothing in flight, as needing you, with what the
 // builder said last as the reason. Waiting on a submit being pushed, reviewed or on CI never needs
-// you, so meanwhile the wait's start is put off to now, and it counts from once that is over. The lead hears of it when the builder stops, but may be busy or miss it, and nothing
-// should wait unseen. Typing to the builder, a new submit, or the lead marking or clearing the
-// thread is acting on it. The lead gets a note, as for any thread that starts needing you. The
-// daemon runs it every few seconds.
+// you, so meanwhile the wait's start is put off to now, and it counts from once that is over.
+// The lead hears of it when the builder stops, but may be busy or miss it, and nothing should
+// wait unseen. Typing to the builder, a new submit, or the lead marking or clearing the thread
+// is acting on it. A builder the lead told something waits at least `leadHold` from that
+// message. The lead gets a note, as for any thread that starts needing you. The daemon runs it
+// every few seconds.
 export function markForgotten(
   db: Database,
   sessions: string,
@@ -580,8 +599,19 @@ export function markForgotten(
   const waiting = threads.filter((thread) => !needsYou(thread));
   for (const thread of waiting.filter(inFlight))
     db.run("UPDATE threads SET ended_at = ? WHERE folder = ?", [now, thread.folder]);
+  // The lead's messages that went in are kept in order, so the last one is the newest. One still
+  // waiting to go in counts from when the lead sent it too: the builder can stop before it goes in.
+  const waitingFromLead = db.query(
+    "SELECT MAX(at) AS at FROM messages WHERE folder = ? AND sender = 'lead'",
+  );
+  const lastTold = (thread: Thread) =>
+    Math.max(
+      thread.updates.at(-1)?.at ?? 0,
+      z.object({ at: z.number().nullable() }).parse(waitingFromLead.get(thread.folder)).at ?? 0,
+    );
+  const leadHeld = (thread: Thread) => lastTold(thread) > now - leadHold;
   const forgotten = waiting.filter(
-    (thread) => !inFlight(thread) && (thread.ended_at ?? now) <= since,
+    (thread) => !inFlight(thread) && (thread.ended_at ?? now) <= since && !leadHeld(thread),
   );
   for (const thread of forgotten) {
     const said = oneLine(thread.ended_said ?? "");
