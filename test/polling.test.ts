@@ -2533,17 +2533,20 @@ exec ${bwrap} "$@"`,
       await arm();
       const head = pushed();
       expect(head).toMatch(/^[0-9a-f]{40}$/);
-      // A push nobody reviewed is never merged, and the lead hears it waits, once a round.
+      // A push nobody reviewed is never merged. A review is what it waits on, so the lead hears
+      // nothing.
       pr({ head: "b".repeat(40), reviews: [skelReview], checks: [approved] });
       await until(() => thread().merge_waits === "a review of its newest commit");
-      await until(() =>
-        leadTyped().includes(
-          "Still merging #7 (app-12) once it's approved and green, waiting on a review of its newest commit.",
-        ),
-      );
-      // Failing CI waits too.
+      await morePolls();
+      expect(leadTyped()).not.toContain("Still merging");
+      // Failing CI waits on the builder, so the lead hears it, once a round.
       pr({ head, reviews: [skelReview], checks: [approved, check(5, "failed")] });
       await until(() => thread().merge_waits === "its failing checks to be fixed");
+      await until(() =>
+        leadTyped().includes(
+          "Still merging #7 (app-12) once it's approved and green, waiting on its failing checks to be fixed.",
+        ),
+      );
       await morePolls();
       expect(merges()).toEqual([]);
       expect(thread().merge_plan).toBe("armed");

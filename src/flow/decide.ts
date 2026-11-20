@@ -137,6 +137,9 @@ export function mergeWaitsOn(
   if (thread.status === "stopped") return "its thread, which is stopped";
   if (pr === null || pr.state !== "open") return "its PR";
   if (thread.submitting !== null || thread.reviewing !== null) return "its review";
+  // Changes the round limit held wait on you to decide, as no review comes until then.
+  if (thread.verdict !== "approve" && thread.held !== null)
+    return "a decision past its round limit";
   if (thread.verdict !== "approve") return "an approval";
   // A push Skelcrew didn't review, such as someone else's, is never merged unseen.
   if (approved === null || pr.head !== approved) return "a review of its newest commit";
@@ -176,13 +179,24 @@ export function skipReviewWaitsOn(thread: Thread, pr: PullRequest | null): strin
   return null;
 }
 
+// How the waits that need someone start, in the words mergeWaitsOn and skipReviewWaitsOn give,
+// and the merge's own words for a forge that failed or refused.
+const stuckWaits = [
+  "its conflict with",
+  "its failing checks",
+  "its thread, which",
+  "the forge, which",
+  "a decision past its round limit",
+];
+
 // Returns whether the lead should hear that an armed merge still waits, after a review round
-// ended. A review or checks still running are on their way, so only a wait that needs someone
-// to act counts, and the lead hears it once for each review round.
+// ended. Only a wait someone must act on counts: a conflict, failing checks, a thread that failed
+// or stopped, the forge, or the round limit. A builder working on its round, a review running or
+// to come, and checks running are on their way, and a note for them would only repeat each
+// round. The lead hears it once for each review round.
 export const mergeStuck = (thread: Thread, waits: string | null) =>
   waits !== null &&
-  waits !== "its review" &&
-  waits !== "its checks" &&
+  stuckWaits.some((start) => waits.startsWith(start)) &&
   thread.review_round !== null &&
   thread.merge_noted !== thread.review_round;
 
