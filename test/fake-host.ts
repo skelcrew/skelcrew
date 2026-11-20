@@ -7,7 +7,8 @@
 // its screen shows Claude Code's busy mark, and types a message in one step, noting it in
 // `delivered`. With a file hang-status, the first status it is given hangs, and with a file
 // garble-<question> it answers that question with nothing, with fail-<question> it fails it
-// once, with slow-<question> it takes two seconds over it, and with hold-<question> it holds it
+// once, with unknown-<question> it fails it every time as an older plugin that doesn't know it,
+// with slow-<question> it takes two seconds over it, and with hold-<question> it holds it
 // from a given time on. With a file lose-start, it starts the
 // next session but fails before saying its ID. Its one argument, its settings folder, is only
 // there so a test's clean-up can find its calls with ps.
@@ -181,6 +182,12 @@ if (from > 0) {
 }
 // With a file slow-<question>, it takes two seconds over that question, as a slow host would.
 if (existsSync(join(dir, `slow-${question.ask}`))) await Bun.sleep(2000);
+// With a file unknown-<question>, it fails that question every time, as an older plugin does
+// that doesn't know it, such as herdr's before it could rename.
+if (existsSync(join(dir, `unknown-${question.ask}`))) {
+  console.error(`✖ Invalid discriminator value. Expected 'start' | 'list'; → at ask`);
+  process.exit(1);
+}
 // With a file fail-<question>, it fails that question once, as a host down for a moment would.
 if (existsSync(join(dir, `fail-${question.ask}`))) {
   rmSync(join(dir, `fail-${question.ask}`));

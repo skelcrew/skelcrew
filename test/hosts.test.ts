@@ -1265,6 +1265,52 @@ process.exit(0);`,
   expect(said).not.toContain("couldn't rename");
 }, 40_000);
 
+test("a host that can't rename is asked once, and nothing about it reaches your terminal", () => {
+  const fake = join(home, ".config", "skelcrew", "plugins", "fake");
+  const said = runWithFakeHost(
+    "sessions",
+    `const host = (await builderSession(db, "unused", readThread(db, "app-12"))).host;
+await startSession(host, "app-12", { folder: ${JSON.stringify(home)}, command: ["sleep", "30"], env: {}, labels: { repository: "simon/app", role: "builder", task: "app-12", title: "Fix the login redirect" } });
+require("node:fs").writeFileSync(${JSON.stringify(join(fake, "unknown-rename"))}, "");
+await renameBuilders(db);
+await renameBuilders(db);
+record(db, "app-12", { short: "login redirect" });
+await Bun.sleep(1000);
+process.exit(0);`,
+    { host: "fake", host_id: "fake-app-12", title: "Fix the login redirect" },
+  );
+  const renames = readFileSync(join(fake, "asked"), "utf8")
+    .trim()
+    .split("\n")
+    .filter((line) => JSON.parse(line).ask === "rename");
+  expect(renames).toHaveLength(1);
+  expect(said).toBe("");
+}, 40_000);
+
+test("a rename that fails after one worked goes to the log, and the next is still asked", () => {
+  const fake = join(home, ".config", "skelcrew", "plugins", "fake");
+  const said = runWithFakeHost(
+    "sessions",
+    `const host = (await builderSession(db, "unused", readThread(db, "app-12"))).host;
+await startSession(host, "app-12", { folder: ${JSON.stringify(home)}, command: ["sleep", "30"], env: {}, labels: { repository: "simon/app", role: "builder", task: "app-12", title: "Fix the login redirect" } });
+await renameBuilders(db);
+require("node:fs").writeFileSync(${JSON.stringify(join(fake, "fail-rename"))}, "");
+record(db, "app-12", { short: "first" });
+await renameBuilders(db);
+record(db, "app-12", { short: "second" });
+await renameBuilders(db);
+process.exit(0);`,
+    { host: "fake", host_id: "fake-app-12", title: "Fix the login redirect" },
+  );
+  expect(said).toBe("");
+  const logged = readFileSync(join(home, ".local", "share", "skelcrew", "renames.log"), "utf8");
+  expect(logged).toContain(
+    "couldn't rename SIMON/APP-12 on fake: fake couldn't rename: the host is down for a moment",
+  );
+  const labels = readFileSync(join(fake, "sessions", "fake-app-12", "labels.json"), "utf8");
+  expect(JSON.parse(labels).title).toBe("SIMON/APP-12 second");
+}, 40_000);
+
 // A builder started by a release before, whose title has no task's name, keeps running with its
 // ID saved. The daemon's start renames it, so the host's own apps show its name.
 test("a running builder is renamed by its title as it is now as the daemon starts", () => {
