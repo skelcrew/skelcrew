@@ -276,10 +276,11 @@ openDb().run("INSERT INTO repositories (name, owner, repo, opened, forge, remote
 const untilCloned = (timeout = 30_000) =>
   until(() => existsSync(join(data(), "repos", "simon", "app", "README")), timeout);
 
-// Waits until the thread no longer holds a review. The forge gets the review's check before
-// the daemon saves the thread, so a test that waited only for the check could read the thread
-// mid-review.
-const untilReviewSaved = () => until(() => thread().reviewing === null);
+// Waits until the thread no longer holds a review, and its verdict is on the PR. The daemon
+// saves the verdict first, then posts it and sets its check, so a test that waited only for
+// one of them could read the other mid-way.
+const untilReviewSaved = () =>
+  until(() => thread().reviewing === null && thread().posting === null);
 
 function thread(): Record<string, unknown> {
   const db = new Database(join(data(), "skelcrew.db"));
@@ -340,6 +341,15 @@ function copiedPr(): string {
 const opened = () => asked(plugin).find((q) => q.ask === "open pr");
 const typedMessages = () => read(join(builder(), "typed")).split("\x1b[201~").length - 1;
 const finished = (state: string) => statuses().filter((s) => s.state === state);
+
+// Starts app-12 again after sc stop, and waits until its builder is back. The round it had
+// carries on only then, so a review asked for before could otherwise start a second time.
+async function startAgain() {
+  rmSync(join(builder(), "args"), { force: true });
+  expect((await skel(["start", "app-12"])).err).toBe("");
+  await until(() => existsSync(join(builder(), "args")), 30_000);
+  await Bun.sleep(1000);
+}
 
 // Starts the daemon, as `serve` does, and app-12 once Skelcrew has cloned app.
 async function startApp12(daemon: Daemon = {}) {
@@ -1216,6 +1226,8 @@ done`,
     await startApp12();
     await until(() => thread().review_failed === 1, 30_000);
     expect(thread()).toMatchObject({ verdict: "timed out", reviewing: null, needs_you: 0 });
+    // The verdict is saved before its check is set.
+    await until(() => finished("failure").length === 1);
     expect(finished("failure")[0]?.description).toBe("review timed out");
     expect(reviews()).toEqual([]);
     await until(() =>
@@ -1645,11 +1657,12 @@ done`,
     await until(() => typedMessages() === 1, 30_000);
     expect(read(join(builder(), "typed"))).toContain("The export has no test.");
     expect(reviews()).toHaveLength(1);
-    expect(
-      statuses()
-        .filter((s) => s.sha === reviewed)
-        .map((s) => s.state),
-    ).toEqual(["pending", "failure"]);
+    // No second review ran, so no pending check came after the verdict's. The stop may cut short
+    // setting the verdict's check, which is then set again, the same.
+    const states = statuses()
+      .filter((s) => s.sha === reviewed)
+      .map((s) => s.state);
+    expect(states.filter((state, n) => state !== states[n - 1])).toEqual(["pending", "failure"]);
     await until(() => thread().telling === null);
     // The review set the thread working again before the builder's turn ended, but that turn
     // had its submit, so the builder never waited on you.
@@ -1975,7 +1988,7 @@ done`,
     await startApp12();
     await until(() => existsSync(join(plugin, "held-review")), 60_000);
     expect((await skel(["stop", "app-12"])).err).toBe("");
-    expect((await skel(["start", "app-12"])).err).toBe("");
+    await startAgain();
     expect((await skel(["review", "app-12"])).err).toBe("");
     expect((await skel(["stop", "app-12"])).err).toBe("");
     rmSync(join(plugin, "hold-review"));
@@ -1995,7 +2008,7 @@ done`,
     await startApp12();
     await until(() => existsSync(join(plugin, "held-review")), 60_000);
     expect((await skel(["stop", "app-12"])).err).toBe("");
-    expect((await skel(["start", "app-12"])).err).toBe("");
+    await startAgain();
     expect((await skel(["review", "app-12"])).err).toBe("");
     await Bun.sleep(2000);
     rmSync(join(plugin, "hold-review"));

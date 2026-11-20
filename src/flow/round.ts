@@ -723,11 +723,22 @@ async function markNotReviewed(
 // the forge, and sc stop forgets the round, so a later round's writes wait here behind it, and
 // an older verdict never lands on the PR after a newer one.
 const forgeWrites = new Map<string, Promise<unknown>>();
+// How many of each thread's writes to the forge are waiting or under way, by folder, so a poll
+// can tell one is.
+const writesUnderWay = new Map<string, number>();
 
 // Runs `write` once every write to the forge the thread asked for before it has ended, failed
 // or not, and returns what it gives.
 function inTurn<T>(folder: string, write: () => Promise<T>): Promise<T> {
-  const mine = (forgeWrites.get(folder) ?? Promise.resolve()).catch(() => {}).then(write);
+  writesUnderWay.set(folder, (writesUnderWay.get(folder) ?? 0) + 1);
+  const mine = (forgeWrites.get(folder) ?? Promise.resolve())
+    .catch(() => {})
+    .then(write)
+    .finally(() => {
+      const left = (writesUnderWay.get(folder) ?? 1) - 1;
+      if (left > 0) writesUnderWay.set(folder, left);
+      else writesUnderWay.delete(folder);
+    });
   forgeWrites.set(folder, mine);
   return mine;
 }
@@ -762,16 +773,18 @@ function postVerdict(db: Database, folder: string): Promise<string | null> {
 // before the stop is found by its marker rather than posted twice. A forge that still fails is
 // logged and asked again at the next. A done thread's PR is closed, so it is
 // left alone. A submit or review under way brings a newer verdict, which is posted in its place,
-// so it is left to that round. A round that only waits to type its changes in, such as for a
-// builder still starting, doesn't hold it up: posts take their turns one at a time, and one
-// already done leaves nothing to post.
+// so it is left to that round. So is a write to the forge still under way, such as the round's
+// own post: waiting behind it would hold up the whole poll, and a post that fails is tried
+// again at the next. A round that only waits to type its changes in, such as for a builder
+// still starting, doesn't hold it up.
 export async function retryPost(db: Database, folder: string): Promise<void> {
   const thread = readThread(db, folder);
   const quiet =
     thread.status !== "done" &&
     thread.posting !== null &&
     thread.submitting === null &&
-    thread.reviewing === null;
+    thread.reviewing === null &&
+    !writesUnderWay.has(folder);
   if (!quiet) return;
   const failed = await postVerdict(db, folder);
   if (failed !== null)
