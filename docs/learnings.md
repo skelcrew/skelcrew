@@ -402,6 +402,19 @@ Skelcrew no longer supports Sprites itself. These are for the Sprite machine plu
   unexpectedly`. A `detach-client` sent from the sidebar crashed it about one time in six. To
   leave from the sidebar, have the server run `kill-session` itself, with `run-shell -d -C`:
   that crashed in none of 32 runs.
+- **Leaving keys must end the session, not detach.** Alt-Q, Ctrl-Q and Ctrl-\ were bound to
+  `detach-client` and hit the crash above. The screen tests that leave with Ctrl-Q failed 9
+  times in 300 runs, eight at once on eight cores. Each failure was the crash: the terminal
+  showed `[server exited unexpectedly]` and the screen's server was gone. tmux then exits with
+  1, so Skelcrew reported that the screen couldn't open. The test waited for Skelcrew to return,
+  which it never did normally. In tmux 3.6's source, the next client to disconnect after a
+  detach runs `server_check_unattached`. That frees the session while the detached client still
+  points at it. `kill-session` goes through `server_destroy_session`, which unhooks every client
+  first. In a plain tmux with two `list-clients`/`list-panes` loops, `detach-client` crashed 16
+  times in 120. `kill-session` crashed in none of 180, and `run-shell -C kill-session`,
+  `run-shell -d 0.5 -C kill-session` and `detach-client -E true` in none of 60 each. A terminal that just closes is safe:
+  killing the outer terminal under the same loops crashed none of 180 times. Its client is
+  gone before the session is freed.
 - **tmux takes keys that arrive together for a paste.** Keys less than `assume-paste-time`
   (1 ms) apart skip key bindings and go to the active pane as text. Three Alt keys in one
   write reached the sidebar as two, and the third was typed into the agent. Set it to 0.
