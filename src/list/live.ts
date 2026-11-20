@@ -31,9 +31,10 @@ export function agentOutput(harness: HarnessName | null, screen: string): string
 // or the line saying why there is none, such as a builder whose session ended a moment ago, or
 // one on a host no longer installed. The screen goes without its harness's input area. `agents`
 // is the sessions' tmux server. Reading never attaches, so the agent's session keeps its size,
-// and nothing typed in the list reaches it. Finding the builder's session can take a moment, and
-// `wanted` is asked again before the screen is read: the list may have attached you to an agent
-// meanwhile, and must read nothing then. Null when it no longer wanted the read.
+// and nothing typed in the list reaches it. Finding the builder's session can take seconds on a
+// host, and `wanted` is asked again before the screen is read: meanwhile the list may have
+// attached you to an agent, moved to another row or hidden its pane, and must read nothing then.
+// Null when it no longer wanted the read.
 export async function readLive(
   db: Database,
   agents: string,

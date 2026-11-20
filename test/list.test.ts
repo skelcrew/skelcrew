@@ -2517,6 +2517,52 @@ test("the live view reads only while the list shows with its pane", async () => 
   expect(await noReads(reads)).toBe(true);
 });
 
+// A host can take seconds to find a builder's session before its screen is read. A read whose
+// row you left, or whose pane went, in that time reads nothing. Here the host's list of sessions
+// takes 2 seconds, and it notes each question it is asked.
+test("a live read that waits on its host reads nothing once you moved or the pane went", async () => {
+  const plugin = join(home, "plugin-slow");
+  const asked = join(home, "slow-host-asked");
+  mkdirSync(plugin, { recursive: true });
+  writeFileSync(
+    join(plugin, "session.sh"),
+    `q=$(cat)
+case "$q" in
+  *'"ask":"list"'*) echo list >> ${JSON.stringify(asked)}; sleep 2; echo '{"sessions":[]}' ;;
+  *'"ask":"read"'*) echo read >> ${JSON.stringify(asked)}; echo '{"screen":"I am app-12 on slow"}' ;;
+  *) echo null ;;
+esac
+`,
+  );
+  writeFileSync(
+    join(plugin, "skelcrew-plugin.yaml"),
+    "name: slow\nversion: 0.1.0\nskelcrew: 0.1.0\nabout: A host\nkind: runtime\nprovides: [sessions]\nsession: [sh, session.sh]\nattach: [sh, session.sh]\n",
+  );
+  sql(`INSERT INTO plugins (name, folder) VALUES ('slow', '${plugin}');
+UPDATE threads SET host = 'slow', host_id = NULL WHERE folder = 'app-12'`);
+  const count = (what: string) =>
+    read(asked)
+      .split("\n")
+      .filter((line) => line === what).length;
+  await open({ width: wide });
+  await until(() => here().startsWith("▸ ● APP-12") && count("list") === 1, "APP-12's lookup");
+  // You move on while the host looks.
+  press("Down");
+  await until(() => here().startsWith("▸ ● APP-14"), "APP-14's row");
+  await Bun.sleep(2500);
+  expect(count("read")).toBe(0);
+  // Back on APP-12, the pane goes while the host looks.
+  press("Up");
+  await until(() => count("list") === 2, "APP-12's second lookup");
+  tmux("resize-window", "-t", "=one:", "-x", "100");
+  await until(() => !seen().includes(" │ "), "no pane");
+  await Bun.sleep(2500);
+  expect(count("read")).toBe(0);
+  // With the pane back and nothing changing, the screen is read.
+  tmux("resize-window", "-t", "=one:", "-x", String(wide));
+  await until(() => liveSeen().includes("I am app-12 on slow"), "app-12's screen");
+});
+
 // The live view reads 4 times a second while you move. A move must still show at once.
 test("the list stays quick to move while the live view reads", async () => {
   await open({ width: wide });
