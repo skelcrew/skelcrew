@@ -51,7 +51,7 @@ import {
   openedRepositories,
   startLead,
 } from "./lead.ts";
-import { saveRequest, takeRequest } from "./lead-requests.ts";
+import { answerAgain, answerRequest, requestAnswered, saveRequest } from "./lead-requests.ts";
 import { restoreLimits, wakeAfterLimit } from "./limits.ts";
 import { listRepositories, listTasks, listThreads, showTask } from "./list.ts";
 import {
@@ -735,10 +735,16 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       case "answer": {
         const repository = findRepository(db, request.repo);
         const { owner, repo } = repository;
-        const taken = takeRequest(db, owner, repo, request.id);
+        const taken = answerRequest(db, owner, repo, request.id);
         if (taken === null) throw new Error("That request was answered already.");
         const { action, says } = taken;
-        const tell = (text: string) => noteForLead(db, sessions, repository, text);
+        // The request goes in the same step that saves the lead's note, so a stop of the daemon
+        // leaves either both or the request, which comes back as its start says.
+        const tell = (text: string) =>
+          db.transaction(() => {
+            requestAnswered(db, taken.id);
+            noteForLead(db, sessions, repository, text);
+          })();
         if (!request.yes) {
           tell(`The human said no in the list to your request: ${says}`);
           return { said: `Told the lead no to: ${says}` };
@@ -1016,6 +1022,8 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   // would overwrite a limit a review met meanwhile and forget when it was met, so a review
   // that started before it could end it by finishing.
   restoreLimits(db);
+  // A request whose answer the last stop cut short waits for your answer again.
+  answerAgain(db);
   // A freeze leaves nothing else in the log, so the daemon logs its own stalls.
   watchForStalls("The daemon");
   // A task that left the queue but whose builder's start the stop cut short goes back to it

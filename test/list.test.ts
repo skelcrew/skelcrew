@@ -150,7 +150,9 @@ function leadRequests(): void {
   ('simon', 'app', '{"kind":"repo add","repository":"simon/site"}', 'Add the repository simon/site?', 2),
   ('simon', 'app', '{"kind":"no such kind"}', 'Unreadable', 3),
   ('simon', 'app', '{"kind":"start new","title":"CSV \\u001b[31mexport","body":"As CSV"}', 'Start a new task: CSV \u001b[31mexport?', 4),
-  ('simon', 'site', '{"kind":"start","task":"3"}', 'Start SITE-3 Docs?', 5);`);
+  ('simon', 'site', '{"kind":"start","task":"3"}', 'Start SITE-3 Docs?', 5);
+INSERT INTO lead_requests (owner, repo, action, says, made, answering) VALUES
+  ('simon', 'app', '{"kind":"start","task":"31"}', 'Being answered?', 6, 1);`);
 }
 
 test("the lead's requests show under the lead, newest first, each by its ID, with no control codes", () => {
@@ -158,7 +160,8 @@ test("the lead's requests show under the lead, newest first, each by its ID, wit
   const shown = rows()
     .filter((row) => row.section === "lead")
     .map((row) => [row.part, row.request, row.title, row.mark.sign, row.mark.colour]);
-  // A request whose action can't be read shows nothing, and another repository's stays there.
+  // A request whose action can't be read shows nothing, nor does one being answered, and another
+  // repository's stays there.
   expect(shown).toEqual([
     ["lead", null, "claude", "○", "bright"],
     ["request", 4, "Start a new task: CSV  [31mexport?", "●", "yellow"],

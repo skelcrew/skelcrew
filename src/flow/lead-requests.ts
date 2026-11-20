@@ -50,12 +50,13 @@ export function saveRequest(
   return says;
 }
 
-// Returns the requests of a repository's lead that wait for your answer, newest first. One whose
-// action can't be read, such as one an older release saved in another shape, is left out.
+// Returns the requests of a repository's lead that wait for your answer, newest first. One you
+// are answering is left out, as is one whose action can't be read, such as one an older release
+// saved in another shape.
 export function requestsOf(db: Database, owner: string, repo: string): LeadRequest[] {
   return db
     .query(
-      "SELECT id, action, says FROM lead_requests WHERE owner = ? AND repo = ? ORDER BY id DESC",
+      "SELECT id, action, says FROM lead_requests WHERE owner = ? AND repo = ? AND answering = 0 ORDER BY id DESC",
     )
     .all(owner, repo)
     .flatMap((row) => {
@@ -65,10 +66,11 @@ export function requestsOf(db: Database, owner: string, repo: string): LeadReque
     });
 }
 
-// Takes a request out of those that wait, as you answer it, and returns it, or null when it is
-// gone already, such as one another list answered a moment before. Taking it in one step means
-// two answers never both act on it.
-export function takeRequest(
+// Marks a request as being answered, as you answer it, and returns it, or null when it was answered
+// already, such as by another list a moment before. Marking it in one step means two answers never
+// both act on it. It stays saved until requestAnswered, so a daemon that stops while a start is
+// under way loses neither the request nor your answer.
+export function answerRequest(
   db: Database,
   owner: string,
   repo: string,
@@ -76,11 +78,22 @@ export function takeRequest(
 ): LeadRequest | null {
   const taken = db
     .query(
-      "DELETE FROM lead_requests WHERE owner = ? AND repo = ? AND id = ? RETURNING id, action, says",
+      "UPDATE lead_requests SET answering = 1 WHERE owner = ? AND repo = ? AND id = ? AND answering = 0 RETURNING id, action, says",
     )
     .get(owner, repo, id);
   if (taken === null) return null;
   const saved = Saved.parse(taken);
   const action = readJson("lead_requests.action", saved.action, LeadAction.nullable(), null);
   return action === null ? null : { id: saved.id, action, says: saved.says };
+}
+
+// Deletes a request once what your answer does is done and the lead's note about it is saved.
+export function requestAnswered(db: Database, id: number): void {
+  db.run("DELETE FROM lead_requests WHERE id = ?", [id]);
+}
+
+// Puts every request whose answer a daemon's stop cut short back among those that wait, as the
+// daemon starts, so you see it again and can answer it again. Its lead never heard that answer.
+export function answerAgain(db: Database): void {
+  db.run("UPDATE lead_requests SET answering = 0 WHERE answering = 1");
 }

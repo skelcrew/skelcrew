@@ -412,6 +412,23 @@ test("writes down the full commit and checkout it started from", async () => {
   expect(readFileSync(file, "utf8")).toBe(`${commit.trim()} ${checkout}\n`);
 });
 
+// A daemon stopped while it started what you said yes to never told the lead, so the request
+// waits for your answer again once the daemon is back.
+test("a request whose answer a stop cut short waits for your answer again", async () => {
+  setUp();
+  serve();
+  await untilAnswers();
+  const answering = `INSERT INTO lead_requests (owner, repo, action, says, made, answering) VALUES
+  ('simon', 'app', '{"kind":"start","task":"12"}', 'Start APP-12?', 1, 1)`;
+  for (const run of running.splice(0)) await stop(run);
+  onDb((db) => db.run(answering));
+  serve();
+  await untilAnswers();
+  expect(onDb((db) => db.query("SELECT answering FROM lead_requests").all())).toEqual([
+    { answering: 0 },
+  ]);
+});
+
 // Asks the daemon to open a repository, as plain sc in a checkout of it does.
 const open = (repo = "app") => ask({ command: "lead", from: `simon/${repo}` });
 
