@@ -160,6 +160,9 @@ function taskRow(
   const ready = stage === "ready" && !needsYou;
   const pr = thread.pr === null ? "" : `#${thread.pr}`;
   const copy = thread.pr === null ? null : prOf(db, open.owner, open.repo, thread.pr);
+  // No CI runs on the PR's head once the wait for CI's first check on it ended with none. Its
+  // checks then count as passed, and the row says "no CI".
+  const noCi = copy !== null && copy.head !== null && thread.no_ci === copy.head;
   const changed = thread.changed ?? thread.started;
   // The step comes from the builder's conversation file, read at most every 10 seconds, and only
   // while it works, as the sidebar reads it.
@@ -187,12 +190,9 @@ function taskRow(
       };
     else if (approved !== copy.head)
       merge = { refused: `${named} has a newer commit than the one approved: wait for its review` };
-    // No checks in the copy is a pass only for a repository whose polls never found CI. Otherwise
-    // CI may not have started on the approved commit yet, or its checks went missing.
-    else if (
-      (ci.length === 0 && (thread.checks !== null || thread.ci_seen)) ||
-      !ci.every((check) => check.state === "passed")
-    )
+    // No checks in the copy is a pass only once the wait for CI's first check on the approved
+    // commit ended with none. Until then CI may not have started on it yet.
+    else if ((ci.length === 0 && !noCi) || !ci.every((check) => check.state === "passed"))
       merge = { refused: `${named}'s checks haven't passed on the approved commit yet` };
     else
       merge = {
@@ -224,7 +224,7 @@ function taskRow(
     colour: mark.colour,
     step,
     pr,
-    checks: thread.checks === null ? "" : ciWords[thread.checks],
+    checks: thread.checks === null ? (noCi ? "no CI" : "") : ciWords[thread.checks],
     when: changed === null ? "" : changedAt(changed, now),
     needsYou,
     session: ended ? null : thread.folder,

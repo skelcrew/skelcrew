@@ -16,7 +16,7 @@ import {
   stillRunning,
 } from "../agents/sessions.ts";
 import { agentsUnanswered } from "../approved-agents.ts";
-import { checkFlow, leadMayArmMerges, repositoryCommands } from "../config.ts";
+import { checkFlow, graceMinutes, leadMayArmMerges, repositoryCommands } from "../config.ts";
 import { finishUpgrade, moveToTasks, moveTurnEnded, openDb, type Repository } from "../db.ts";
 import { flowRoles } from "../flows.ts";
 import { setupDone } from "../machine/setup.ts";
@@ -83,6 +83,9 @@ import {
 import { doing, watchForStalls } from "./stall.ts";
 import {
   keepState,
+  markForgotten,
+  markNeedsYou,
+  needsYou,
   noticeIdleScreens,
   questionAnswered,
   questionAsked,
@@ -624,6 +627,13 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         const thread = findThread(db, request.repo, request.task);
         return { told: await messageBuilder(db, sessions, caller, thread, request.text) };
       }
+      // A lead's request names its own repository only, as limitToOwnRepository checked.
+      case "needs you": {
+        const thread = findThread(db, request.repo, request.task);
+        const by = leadOfCaller(caller) === null ? "you" : "lead";
+        const now = markNeedsYou(db, sessions, thread, request.reason, by);
+        return { thread: threadName(db, now), needsYou: needsYou(now) };
+      }
       case "tell lead":
         messageLead(db, sessions, caller, request.text);
         return { told: "lead" };
@@ -684,7 +694,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         questionClosed(db, callingThread(caller).folder);
         return { asking: false };
       case "question answered":
-        questionAnswered(db, callingThread(caller).folder);
+        questionAnswered(db, callingThread(caller).folder, request.prompt);
         return { asking: false };
       // Esc on Codex flags nothing: you are looking at the builder anyway.
       case "turn interrupted":
@@ -900,6 +910,18 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       doing("looking at the agents' screens", () => noticeIdleScreens(db, sessions));
     } catch (error) {
       console.log(`couldn't look at the agents' screens: ${errorText(error)}`);
+    }
+  }, 2000);
+  // The safety net marks a builder that stopped, and that nobody acted on, as needing you. It
+  // looks every few seconds, reading the wait from your config each time, so a change to it
+  // counts at once.
+  setInterval(() => {
+    try {
+      doing("marking stopped builders nobody acted on", () =>
+        markForgotten(db, sessions, graceMinutes()),
+      );
+    } catch (error) {
+      console.log(`couldn't mark stopped builders nobody acted on: ${errorText(error)}`);
     }
   }, 2000);
   // A host that shows status hears each builder's as it is now, and each change from here on.

@@ -115,6 +115,30 @@ function turnEndedWaits(saved: ReturnType<typeof shownBefore>): void {
   saved.tabs[1].needYou = 0;
 }
 
+// Changes what the release before tasks showed of app-14, whose thread failed, to what Skelcrew
+// shows of it now. It then needed you. The lead now starts it again, so it waits beside the
+// stopped threads, red but hollow, and counts nowhere.
+function failedWaits(saved: ReturnType<typeof shownBefore>): void {
+  const app = saved.screen[0];
+  app.entries[1].notes = [["1 needs you", "38;5;221"]];
+  const [needing, ready, working, stopped] = app.lists[1];
+  const failed = needing.rows.find((row: { name: string }) => row.name === "app-14");
+  failed.mark = ["○", "38;5;210"];
+  needing.rows = needing.rows.filter((row: { name: string }) => row.name !== "app-14");
+  stopped.rows = [...stopped.rows, failed];
+  app.lists[1] = [needing, ready, working, stopped];
+  saved.tabs[0] = { ...saved.tabs[0], needYou: 1, colour: "yellow" };
+}
+
+// Adds what sc ps now says each thread needs you for, which the release before tasks didn't
+// say: app-t1's builder asked a question, and app-13 is approved with green checks, waiting for
+// you to merge it.
+function sayWhatFor(saved: ReturnType<typeof shownBefore>): void {
+  const words: Record<string, string> = { "app-t1": "question", "app-13": "ready to merge" };
+  for (const row of [...saved.ps, ...saved.psNotes])
+    row.needsYouFor = row.needsYou ? (words[row.thread] ?? null) : null;
+}
+
 // Returns the names of the database's tables.
 function tables(file: string): string[] {
   const db = new Database(file, { readonly: true });
@@ -137,6 +161,8 @@ openDb().run("INSERT INTO pr_agents (owner, repo, pr, head, base, changed) VALUE
   // Before the new daemon moves it, sc shows the threads as they are.
   const shownThen = shownBefore();
   turnEndedWaits(shownThen);
+  failedWaits(shownThen);
+  sayWhatFor(shownThen);
   // That release didn't read .agents/ or plugins:, and neither repository has either, so none
   // waits for you.
   for (const row of shownThen.repositories) {
@@ -233,8 +259,7 @@ console.log(JSON.stringify({ rounds, short, status }));`;
 
 // Leaves the database as the first release with tasks did: moved, with a tasks table without
 // the columns added since: whether the work merged, the link to its issue, the line that
-// closes it, whether CI passed after the approval, whether polls ever found CI and the commit
-// the latest review was about.
+// closes it, whether CI passed after the approval and the commit the latest review was about.
 function earlierTasks(): void {
   oldDatabase();
   run(`import { openDb, moveToTasks } from ${JSON.stringify(source("db.ts"))};
@@ -245,7 +270,6 @@ moveToTasks(openDb());`);
   earlier.run("ALTER TABLE tasks DROP COLUMN issue_link");
   earlier.run("ALTER TABLE tasks DROP COLUMN closes");
   earlier.run("ALTER TABLE tasks DROP COLUMN ci_passed");
-  earlier.run("ALTER TABLE tasks DROP COLUMN ci_seen");
   earlier.run("ALTER TABLE tasks DROP COLUMN reviewed_commit");
   earlier.close();
 }
@@ -282,51 +306,57 @@ console.log(JSON.stringify({ approved: stage("app-13"), working: stage("app-15")
   });
 });
 
-// A poll saves a PR's checks as none once they vanish, and polls remember they once found CI
-// only from the release that keeps that. So the upgrade takes saved checks as CI found: a task
-// whose checks then vanish at the first poll after it never reads as a repository without CI.
-test("an upgrade counts saved checks as CI found, which a poll with the checks gone keeps", () => {
-  earlierTasks();
-  const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
-import { readThread, record } from ${JSON.stringify(source("flow/thread.ts"))};
+// A check seen before Skelcrew kept the commit it showed on may vanish by the first poll after
+// the upgrade. The daemon's upgrade saves the PR's head as one CI showed on, so the wait for CI's
+// first check never ends with none there and lets a merge go ahead.
+test("an upgrade saves the head of each PR that showed CI as one CI showed on", () => {
+  const shown = `import { finishUpgrade, moveToTasks, openDb } from ${JSON.stringify(source("db.ts"))};
 const db = openDb();
-const seen = (folder) => readThread(db, folder).ci_seen;
-const before = { approved: seen("app-13"), pending: seen("app-12"), none: seen("app-15") };
-// The first poll finds app-13's checks gone, and saves them as a poll does.
-const thread = readThread(db, "app-13");
-record(db, "app-13", { checks: null, ci_seen: thread.ci_seen || false });
-console.log(JSON.stringify({ before, after: [readThread(db, "app-13").checks, seen("app-13")] }));`;
-  expect(JSON.parse(run(code))).toEqual({
-    before: { approved: true, pending: true, none: false },
-    after: [null, true],
-  });
-});
-
-// A PR that showed CI before the repository kept it may close while the daemon is down, and the
-// first poll after then drops it from the copy. So the upgrade takes CI on a PR in the copy as
-// CI found in its repository, so neither merge reads it as a repository without CI.
-test("an upgrade counts CI on a PR in the copy as the repository's, before a poll drops it", () => {
+moveToTasks(db);
+finishUpgrade(db);
+console.log(JSON.stringify(db.query("SELECT task, ci_shown FROM tasks WHERE repo = 'app' AND task IN (12, 13, 14, 16) ORDER BY task").all()));`;
+  // From before tasks: PRs 40 and 41 had checks saved, at abc123 in Skelcrew's copy.
+  oldDatabase();
+  expect(JSON.parse(run(shown))).toEqual([
+    { task: 12, ci_shown: '["abc123"]' },
+    { task: 13, ci_shown: '["abc123"]' },
+    { task: 14, ci_shown: null },
+    { task: 16, ci_shown: "[]" },
+  ]);
+  // From before tasks, by a release that kept on each thread whether its PR ever showed CI.
+  // app-16's checks vanished and its PR left the copy, but its thread kept that it showed CI,
+  // at the commit its reviewer approved.
+  oldDatabase();
+  const before = new Database(dbFile());
+  before.run("ALTER TABLE threads ADD COLUMN ci_seen INTEGER NOT NULL DEFAULT 0");
+  before.run("ALTER TABLE threads ADD COLUMN reviewed_commit TEXT");
+  before.run(
+    "UPDATE threads SET checks = NULL, ci_seen = 1, reviewed_commit = 'aa11' WHERE task = 16",
+  );
+  before.close();
+  expect(JSON.parse(run(shown))).toContainEqual({ task: 16, ci_shown: '["aa11"]' });
+  // From a release with tasks, which kept whether a PR ever showed CI. app-12's saved checks are
+  // gone, yet its PR in the copy shows CI. Its reviewer approved another commit, which the PR's
+  // head may go back to, so both are kept. app-13's PR left the copy, but the release kept that
+  // it showed CI, at the commit its reviewer approved. app-16's PR left the copy and no commit
+  // was approved, but a merge without approval pinned one. app-14 has no PR.
   earlierTasks();
   const earlier = new Database(dbFile());
-  earlier.run("ALTER TABLE repositories DROP COLUMN ci_seen");
-  earlier.run("DELETE FROM items");
-  const item = (repo: string, id: string, checks: object[]) =>
-    earlier.run(
-      "INSERT INTO items (owner, repo, kind, id, state, created, item) VALUES ('simon', ?, 'pr', ?, 'open', '2026-11-05T10:00:00Z', ?)",
-      [repo, id, JSON.stringify({ id, checks })],
-    );
-  item("app", "50", [{ name: "test", id: "1", state: "passed" }]);
-  // Skelcrew's own check is no CI, and an item that isn't JSON is skipped.
-  item("notes", "51", [{ name: "skelcrew/check", id: null, state: "passed" }]);
-  earlier.run(
-    "INSERT INTO items (owner, repo, kind, id, state, created, item) VALUES ('simon', 'notes', 'pr', '52', 'open', '2026-11-05T10:00:00Z', 'not json')",
-  );
+  earlier.run("ALTER TABLE tasks DROP COLUMN ci_shown");
+  earlier.run("ALTER TABLE tasks ADD COLUMN ci_seen INTEGER NOT NULL DEFAULT 0");
+  earlier.run("ALTER TABLE tasks ADD COLUMN reviewed_commit TEXT");
+  earlier.run("UPDATE tasks SET checks = NULL WHERE repo = 'app'");
+  earlier.run("UPDATE tasks SET ci_seen = 1, reviewed_commit = 'def456' WHERE task = 13");
+  earlier.run("UPDATE tasks SET reviewed_commit = 'fed789' WHERE task = 12");
+  earlier.run("UPDATE tasks SET ci_seen = 1 WHERE task = 16");
+  earlier.run("UPDATE threads SET merge_pinned = '0a1b2c' WHERE task = 16");
+  earlier.run("DELETE FROM items WHERE kind = 'pr' AND id = '41'");
   earlier.close();
-  const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
-console.log(JSON.stringify(openDb().query("SELECT repo, ci_seen FROM repositories ORDER BY repo").all()));`;
-  expect(JSON.parse(run(code))).toEqual([
-    { repo: "app", ci_seen: 1 },
-    { repo: "notes", ci_seen: 0 },
+  expect(JSON.parse(run(shown))).toEqual([
+    { task: 12, ci_shown: '["abc123","fed789"]' },
+    { task: 13, ci_shown: '["def456"]' },
+    { task: 14, ci_shown: null },
+    { task: 16, ci_shown: '["0a1b2c"]' },
   ]);
 });
 

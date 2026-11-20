@@ -21,6 +21,8 @@ const sections: [string, [string, string][]][] = [
       ["peek <thread>", "What that builder shows now, without attaching"],
       ["interrupt <thread>", "Stop that builder's turn, as Esc does"],
       ["review <task>", "Run the task's last review again"],
+      ['needs-you <thread> "<action>"', "Mark it as waiting on you, saying what to do"],
+      ["needs-you --clear <thread>", "Take that mark off"],
       ["merge --when-ready <thread> | <#pr>", "Merge it once it is approved and green"],
       [
         "merge --skip-review <thread> | <#pr>",
