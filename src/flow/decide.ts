@@ -87,9 +87,9 @@ export type Decision =
 // Returns CI's checks, without Skelcrew's own review check, which its rounds look after.
 const ciOf = (pr: PullRequest) => pr.checks.filter((c) => c.name !== reviewCheck);
 
-// Returns what the PR's CI says, for the strip, or null when it has none. One failure is enough
-// to say so, while the rest still run. A cancelled check isn't the builder's to fix, but isn't
-// green either.
+// Returns what the PR's CI says, for sc ps and the list, or null when it has none. One failure
+// is enough to say so, while the rest still run. A cancelled check isn't the builder's to fix,
+// but isn't green either.
 export function ciState(pr: PullRequest): Thread["checks"] {
   const ci = ciOf(pr);
   if (ci.length === 0) return null;

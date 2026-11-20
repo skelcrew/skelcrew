@@ -1,6 +1,6 @@
-// The screen: the sidebar on the left of your terminal, with the agent or list you are looking
-// at on the right, the strip above it and the footer across the bottom. It is a second tmux
-// server, one session per open terminal, ended when you leave.
+// The screen: the sidebar on the left of your terminal, with the lead or the task you are on at
+// the right, the version and the tabs above them and the footer across the bottom. It is a
+// second tmux server, one session per open terminal, ended when you leave.
 import type { Database } from "bun:sqlite";
 import { applyConfig, attachCommand } from "../agents/sessions.ts";
 import { envWithoutTmux, screenSocket, tmuxIsAtLeast } from "../agents/tmux.ts";
@@ -10,7 +10,6 @@ import { listShare, listWidth } from "../list/layout.ts";
 import { attachOnHostLine, pluginHost } from "../plugins/runtime.ts";
 import { windowTitle } from "../say.ts";
 import { mainFile, singleFile } from "../version.ts";
-import type { Entry } from "./lists.ts";
 
 // Returns how wide the sidebar is, with the line it draws at its edge, in a terminal `width`
 // columns wide: as wide as sc --list's list, as both show the same rows. On a terminal too narrow
@@ -38,7 +37,7 @@ export const attachedMark = "skelcrew-attached";
 // never applies.
 const config = [
   // tmux's one status line is at the top, so the agent's height stays the same on every
-  // session. The header, the tabs and the strip share it. It starts empty, as the sidebar fills
+  // session. The header and the tabs share it. It starts empty, as the sidebar fills
   // it in, and has no clock to redraw for.
   ["set", "-g", "status", "on"],
   ["set", "-g", "status-position", "top"],
@@ -113,8 +112,7 @@ const config = [
     'send-keys -t :.0 -l "\x1b]skel-tab;#{mouse_status_range}\x07"',
   ]),
   // A click needs its own key: left alone, it reaches only the pane you type to. The wheel
-  // goes on to the pane under it, as the agents' server decides what scrolling means, and the
-  // footer scrolls the list of keys with it.
+  // goes on to the pane under it, as the agents' server decides what scrolling means.
   ["bind", "-n", "MouseDown1Pane", "send-keys", "-M"],
   ["bind", "-n", "MouseUp1Pane", "send-keys", "-M"],
   ["bind", "-n", "WheelUpPane", "send-keys", "-M"],
@@ -163,16 +161,15 @@ const config = [
   ["set", "-g", "default-terminal", "xterm-256color"],
   // Synchronized output, as on the agents' server, so this server's redraws reach your terminal
   // whole too. Terminal links and the clipboard are turned on for every terminal: left alone,
-  // tmux drops them on the way to a terminal it doesn't recognise, and a row would be plain
-  // text you can't open. set-clipboard on passes a page's copy of its link on to your
-  // terminal, as tmux otherwise keeps a program's copies from it.
+  // tmux drops them on the way to a terminal it doesn't recognise. set-clipboard on passes the
+  // sidebar's copy of a PR's link on to your terminal, as tmux otherwise keeps a program's
+  // copies from it.
   ["set", "-s", "terminal-features[90]", "*:sync:hyperlinks:clipboard:extkeys"],
   ["set", "-s", "set-clipboard", "on"],
   // Extended keys, with the extkeys feature above, let Shift+Enter through as a key of its own,
   // for the agents' server to hand on, instead of as plain Enter, which sends the prompt. tmux
   // asks your terminal for them; Terminal.app can't, and still sends Enter. A modified key
-  // still fires the bindings above, and the sidebar and lists, which don't ask, get keys as
-  // before.
+  // still fires the bindings above, and the sidebar, which doesn't ask, gets keys as before.
   ["set", "-s", "extended-keys", "on"],
   // The footer is a pane of its own. A screen server an older Skelcrew started, still open in
   // another terminal, drew it as tmux's border line, which would add a row under every pane.
@@ -212,18 +209,6 @@ const sidebarCommand = (
   repository: string,
   onHost: string,
 ) => skelcrewCommand("sidebar", agents, session, where, repository, onHost);
-
-// Returns the command for the right pane while it shows an entry's list of the repository named
-// by its owner/name. It gets the agents' server and the screen's session, to tell the sidebar
-// what it opens, and the remote Skelcrew runs on, which decides whether a click on a page's link
-// opens your browser or copies the link.
-export const paneCommand = (
-  agents: string,
-  session: string,
-  entry: Entry,
-  where: string,
-  repository: string,
-) => skelcrewCommand("list", agents, session, entry, where, repository);
 
 // Returns the line for sh that attaches to a repository's lead when it runs on a runtime
 // plugin's host, as the screen's tmux can't reach it. Null for a lead on tmux, one whose plugin
@@ -292,9 +277,8 @@ export async function openScreen(
     ["split-window", "-hbd", "-l", String(sidebarFor(process.stdout.columns || 80)), "--", ...left],
     // The footer goes across the whole width, below both, as the screen's third pane.
     ["split-window", "-vfd", "-l", footerHeight, "--", ...footerCommand(agents, name)],
-    // Ctrl-C reaches a list until it has made its terminal raw, and Bun won't stay ignoring it.
-    // A pane that ended would give the whole screen to the sidebar. A dead one stays in its
-    // place, and moving away starts it again.
+    // A pane that ended, such as one Ctrl-C stopped, would give the whole screen to the
+    // sidebar. A dead one stays in its place, and moving away starts it again.
     ["set", "-p", "-t", ":.1", "remain-on-exit", "on"],
   ];
   // The lone ";" separates tmux commands.

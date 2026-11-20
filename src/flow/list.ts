@@ -15,12 +15,31 @@ import { backlogOf, filedTask } from "./backlog.ts";
 import { type Item, openTasks, ownTask, prOf, threadTask } from "./copy.ts";
 import { reviewCheck } from "./decide.ts";
 import { messagesWaiting } from "./messages.ts";
-import { ciSummary, reviewVerdict } from "./page.ts";
 import { findRepository, noRepositories, repositories, repositoryAt } from "./repo.ts";
 import { roundRunning } from "./round.ts";
 import { Stage, taskStage } from "./stage.ts";
 import { mergeShown, needsYou, needsYouFor } from "./status.ts";
 import { queuedForReview, Thread, taskName, threadName, threadOn } from "./thread.ts";
+
+// Returns what a PR's CI says, for sc ps and sc show. Skelcrew's own check isn't CI, and one
+// failure is enough to say so while the rest still run. A repository with no CI says none.
+function ciSummary(pr: Extract<Item, { kind: "pr" }>): "none" | "passed" | "failed" | "running" {
+  const ci = pr.checks.filter((check) => check.name !== reviewCheck);
+  if (ci.length === 0) return "none";
+  if (ci.every((check) => check.state === "passed")) return "passed";
+  // Anything neither passed nor running, such as failed or cancelled, counts as failed.
+  const failed = ci.some((check) => !["passed", "running"].includes(check.state));
+  return failed ? "failed" : "running";
+}
+
+// Returns what a review's verdict is in words, for sc show. A forge such as GitHub won't let
+// Skelcrew approve its own PR, so Skelcrew's verdict is a comment whose first line says it, such
+// as "**Approved**". For those, that line is the verdict.
+function reviewVerdict(review: Extract<Item, { kind: "pr" }>["reviews"][number]): string {
+  const [first = ""] = review.text.split("\n");
+  const said = review.verdict === "commented" ? first.replaceAll("*", "").trim() : "";
+  return said || review.verdict;
+}
 
 // A repository as sc repo ls shows it. `missing` is a tracker its skelcrew.yaml names that
 // isn't installed, so it has none until you install that plugin. `agentsWaiting` says its
@@ -116,15 +135,15 @@ const ciWords = { passing: "passed", failing: "failed", pending: "running" } as 
 // Returns what a thread's CI says, for sc ps. A working or waiting thread has the word its
 // polls keep, which a submit clears until CI starts on the new commit. Polls pass over any
 // other thread, such as one that failed, while its PR in Skelcrew's copy still changes, so its
-// CI comes from the copy, as on the PR's page, when the copy has it. A PR head whose wait for
-// CI's first check ended with none says "no CI", as its checks count as passed.
+// CI comes from the copy, when the copy has it. A PR head whose wait for CI's first check ended
+// with none says "no CI", as its checks count as passed.
 function ciOf(
   thread: Thread,
   copy: Extract<Item, { kind: "pr" }> | null,
 ): NonNullable<ThreadRow["checks"]> {
   const live = thread.status === "working" || thread.status === "waiting";
   let word: NonNullable<ThreadRow["checks"]> = "none";
-  if (!live && copy) word = ciSummary(copy)[0];
+  if (!live && copy) word = ciSummary(copy);
   else if (thread.checks !== null) word = ciWords[thread.checks];
   const noCi = copy !== null && copy.head !== null && thread.no_ci === copy.head;
   return word === "none" && noCi ? "no CI" : word;
@@ -392,7 +411,7 @@ const logDeadline = z.coerce
   .catch(10_000)
   .parse(process.env.SKELCREW_LOG_WAIT_MS ?? 10_000);
 
-// Returns a PR as its page shows it, from Skelcrew's copy, or null when the copy doesn't have
+// Returns a PR as sc show shows it, from Skelcrew's copy, or null when the copy doesn't have
 // it. Its checks have no logs: those come from the forge, which showTask asks.
 function prPageOf(db: Database, repository: Repository, number: number): PrPage | null {
   const pr = prOf(db, repository.owner, repository.repo, number);
@@ -403,7 +422,7 @@ function prPageOf(db: Database, repository: Repository, number: number): PrPage 
     state: pr.state,
     branch: removeControlCodes(pr.branch),
     base: removeControlCodes(pr.base),
-    ci: ciSummary(pr)[0],
+    ci: ciSummary(pr),
     checks: ciChecks(pr).map((check) => ({
       name: safeText(check.name),
       state: check.state,

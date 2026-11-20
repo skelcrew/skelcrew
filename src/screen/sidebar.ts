@@ -1,8 +1,8 @@
 // The sidebar: the live left pane of the screen, which is the list of the open repository. Its
 // lead is on top, then Needs you and the six stages, as sc --list shows them. The right side
 // follows the row you are on: the lead's session on the lead's row, a task's details on a task's.
-// The sidebar also keeps the top row up to date, with the header, the tabs and the strip, tells
-// the footer what to say, and switches tabs.
+// The sidebar also keeps the top row up to date, with the header and the tabs, tells the footer
+// what to say, and switches tabs.
 import {
   attachCommand,
   attachThen,
@@ -12,7 +12,7 @@ import {
   shownSession,
   showSession,
 } from "../agents/sessions.ts";
-import { paneTty, paneWidth, respawnPane, screenTmux, showStrip } from "../agents/tmux.ts";
+import { paneTty, paneWidth, respawnPane, screenTmux, showTop } from "../agents/tmux.ts";
 import { moveQueued, openRepository, startOrMerge } from "../client.ts";
 import { openDb } from "../db.ts";
 import { leadOf } from "../flow/lead.ts";
@@ -27,6 +27,7 @@ import {
   listRows,
   type Question,
   type Row,
+  repositoryTabs,
   type Section,
   sectionHeadings,
 } from "../list/rows.ts";
@@ -37,13 +38,13 @@ import { pluginHost } from "../plugins/runtime.ts";
 import { errorText } from "../say.ts";
 import { shownVersions } from "../version.ts";
 import { agentFooter, tellFooter } from "./footer.ts";
-import { noticeLines } from "./layout.ts";
-import { roundLimit } from "./lists.ts";
-import { edge, filled, paint, removeControlCodes } from "./look.ts";
-import { type Open, repositoryTabs, sidebarRows } from "./rows.ts";
+import { edge, filled, pad, paint, removeControlCodes } from "./look.ts";
 import { leadOnHost } from "./screen.ts";
-import { drawTop } from "./strip.ts";
 import { attachTask, showTask } from "./task.ts";
+import { drawTop } from "./top.ts";
+
+// The repository open in the sidebar, by its owner and name, and its lead's session.
+type Open = { owner: string; repo: string; lead: string };
 
 // Splits what reaches the sidebar into keys: a message the screen's tmux types in as an OSC, such
 // as a click on a tab, a CSI sequence, such as an arrow or a click, an SS3 one, Alt with a key,
@@ -173,7 +174,7 @@ export async function runSidebar(
         lookingAtHosts = false;
       });
   };
-  let tabs = repositoryTabs(db, roundLimit);
+  let tabs = repositoryTabs(db, null);
   const rightPane = `=${session}:.1`;
   let tty = paneTty(agents, rightPane);
   // The list's rows: every row, those that show, which are the lead's and those of the open
@@ -203,7 +204,7 @@ export async function runSidebar(
   let asking: Asking | null = null;
   let working = false;
   let lastFrame = "";
-  let lastStrip = "";
+  let lastTop = "";
   let lastFooter = "";
   // The notice's lines, above the rest, which has the height that is left.
   let notice: string[] = [];
@@ -259,15 +260,29 @@ export async function runSidebar(
   // task's row its builder, whether its details show or you attached to it.
   const about = () => (isDetails(shown) ? (rows[here]?.session ?? null) : shown);
 
+  // Returns the harness of the agent in the named session, for what Esc stops: the open lead's,
+  // or a builder's, which is Claude Code for one from before Skelcrew saved it. Empty for a
+  // session it can't name, such as a repository Skelcrew no longer has.
+  const harnessOf = (agent: string | null) => {
+    if (agent === open.lead) {
+      try {
+        return leadOf(db, open.owner, open.repo).harness ?? "";
+      } catch {
+        return "";
+      }
+    }
+    const thread = liveThreads(db).find((one) => one.folder === agent);
+    return thread ? (thread.harness ?? "claude") : "";
+  };
+
   // Returns what the footer says now: a line said or a question asked, the keys for a task's row
   // while your typing goes to the sidebar, or while it goes to an agent the keys you need most
   // and what Esc stops. `typing` says whether your typing goes to the right side.
-  const footerText = (agentRows: ReturnType<typeof sidebarRows>, typing: boolean) => {
+  const footerText = (typing: boolean) => {
     if (said ?? asking) return said ?? asking?.question.ask ?? "";
     const row = rows[here];
     if (!typing && row) return taskFooter(row);
-    const agent = agentRows.find((one) => one.session === about());
-    return agentFooter(agent?.agentHarness ?? "");
+    return agentFooter(harnessOf(about()));
   };
 
   // Draws the sidebar, the notice above the rest, only when it changed. Every line ends with the
@@ -320,7 +335,7 @@ export async function runSidebar(
       exitedCleanly(agents, open.lead),
     );
     const before = tabs;
-    tabs = doing("reading the tabs", () => repositoryTabs(db, roundLimit));
+    tabs = doing("reading the tabs", () => repositoryTabs(db, null));
     // A repository you removed, or whose lead you exited, has no tab left. The sidebar moves to
     // the tab that took its place, or the one before when it was last. With no tab left, the
     // screen leaves as Alt-Q does.
@@ -382,40 +397,26 @@ export async function runSidebar(
       asked = open.lead;
       openRepository(`${open.owner}/${open.repo}`, true);
     }
-    // The header, the tabs and the strip go to tmux's status line, and only when they changed.
-    const agentRows = doing("reading the agents' rows", () =>
-      sidebarRows(db, running, roundLimit, Date.now(), open),
-    );
+    // The header and the tabs go to tmux's status line, and only when they changed.
     const width = doing("asking tmux the agent's width", () => paneWidth(agents, rightPane));
     const left = size().width + 1;
-    const fullName = `${open.owner}/${open.repo}`;
-    const look = {
-      rows: agentRows,
-      shown: about(),
-      page: null,
-      tabs,
-      open: fullName,
-      where,
-      versions: shownVersions(),
-    };
-    const strip = drawTop(look, { left, width });
-    if (strip !== lastStrip) {
-      lastStrip = strip;
-      doing("drawing the strip", () => showStrip(agents, session, strip));
+    const look = { tabs, open: `${open.owner}/${open.repo}`, where, versions: shownVersions() };
+    const top = drawTop(look, { left, width });
+    if (top !== lastTop) {
+      lastTop = top;
+      doing("drawing the top row", () => showTop(agents, session, top));
     }
-    // The footer, also only when it changed. The list of keys stays hidden.
-    // Your typing goes to the right side while its pane is the active one, such as once you
-    // attached to a builder, and to the sidebar otherwise.
+    // The footer, also only when it changed. Your typing goes to the right side while its pane
+    // is the active one, such as once you attached to a builder, and to the sidebar otherwise.
     const active = doing("asking tmux where your typing goes", () =>
       screenTmux(agents, ["display", "-p", "-t", `=${session}:`, "#{pane_index}"]),
     );
-    const footer = footerText(agentRows, active.out.trim() !== "0");
+    const footer = doing("reading the footer's harness", () =>
+      footerText(active.out.trim() !== "0"),
+    );
     if (footer !== lastFooter) {
       lastFooter = footer;
-      doing("drawing the footer", () => {
-        tellFooter(agents, session, "keys", "hide");
-        tellFooter(agents, session, "footer", footer);
-      });
+      doing("drawing the footer", () => tellFooter(agents, session, footer));
     }
     draw();
   };
@@ -654,6 +655,27 @@ export async function runSidebar(
   setInterval(refresh, 1000);
   await new Promise((gone) => process.stdin.on("close", gone));
   process.exit(0);
+}
+
+// Returns the lines that go above the rest of the sidebar for a notice, such as a release installed
+// in the background, or none without one. Cut at words to fit a sidebar `width` columns wide, and
+// parted from what follows by a blank line. Each fills the pane and ends with the sidebar's edge.
+function noticeLines(notice: string, width: number): string[] {
+  if (!notice) return [];
+  const room = Math.max(width - 1 - 2 * pad.length, 1);
+  // A word goes on the last line while it fits, and starts a new one when it doesn't. A word
+  // longer than a whole line has one to itself.
+  const lines = [""];
+  for (const word of notice.split(" ")) {
+    const last = lines.length - 1;
+    const longer = lines[last] ? `${lines[last]} ${word}` : word;
+    if (Bun.stringWidth(longer) <= room || !lines[last]) lines[last] = longer;
+    else lines.push(word);
+  }
+  // Each line is padded, a blank one follows, and all of them end at the sidebar's edge.
+  return [...lines.map((line) => `${pad}${line}`), ""].map(
+    (line) => `${filled(line, width - 1)}${paint(edge, "│")}`,
+  );
 }
 
 // Returns the agents running on a plugin's host, for the sidebar: builders by their thread's

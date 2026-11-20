@@ -173,11 +173,13 @@ export const DaemonRequest = z.discriminatedUnion("command", [
   z.object({ command: z.literal("question answered"), prompt: z.string().optional() }),
   z.object({ command: z.literal("question closed") }),
   // `head` is the commit the builder's clone has checked out, sent only when nothing in it is
-  // left uncommitted, and `message` the builder's last message, when the harness gives it.
+  // left uncommitted, `message` the builder's last message, when the harness gives it, and
+  // `background` whether a background job of the builder's, such as a test run, still runs.
   z.object({
     command: z.literal("turn ended"),
     head: z.string().optional(),
     message: z.string().optional(),
+    background: z.boolean().optional(),
   }),
   // `error` is the kind of error Claude Code's StopFailure hook gives, such as rate_limit, and
   // `message` what it said, such as when the limit resets.

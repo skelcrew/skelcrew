@@ -58,12 +58,11 @@ export const seen = (window = "one") =>
 // Returns how wide the sidebar is now, from how wide the terminal is, as a test may resize it.
 const sidebarNow = (window = "one") =>
   sidebarFor(Number(tmux(terminal, "display", "-p", "-t", `=${window}:`, "#{window_width}").out));
-// The top row as you see it: Skelcrew above the sidebar, then the tabs and the strip above the
-// agent.
+// The top row as you see it: Skelcrew above the sidebar, then the tabs above the right side.
 export const tabRow = () => (seen().split("\n")[0] ?? "").trimEnd();
 // The row you are looking at, as the name line with the grey background shows it, below the
-// status line, where the open tab has the same grey, and left of the sidebar's edge, as the
-// row you are on in a list on the right has it too. Empty until the sidebar has drawn one.
+// status line, where the open tab has the same grey, and left of the sidebar's edge. Empty until
+// the sidebar has drawn one.
 export function selected(window = "one"): string {
   const colours = tmux(terminal, "capture-pane", "-p", "-e", "-t", `=${window}:`).out;
   const line = colours

@@ -364,7 +364,8 @@ Skelcrew no longer supports Sprites itself. These are for the Sprite machine plu
   your shell's prompt puts the title back, through Ghostty's shell integration.
 - **tmux reads a status line as a format, and runs what it says.** `#(...)` in `status-format`
   starts a shell command, `#[...]` restyles the line, and `%` goes through strftime. Text from
-  outside, such as an issue's title, needs `#` and `%` doubled, and its control codes removed.
+  outside, such as a repository's name, needs `#` and `%` doubled, and its control codes
+  removed.
 - **`set -t =name` fails with "no such session".** An option's target takes `=name:`.
 - **Every `set` redraws the whole screen.** About 3.9 KB on a 120 by 40 terminal, so set a
   status line only when it changed, and all its lines in one run.
@@ -392,7 +393,7 @@ Skelcrew no longer supports Sprites itself. These are for the Sprite machine plu
   on Ctrl-C. Until a program makes its terminal raw, Ctrl-C can end it, so a pane that must
   stay needs `remain-on-exit`. `respawn-pane -k` starts a dead pane again.
 - **`respawn-pane` gives a pane a new terminal.** Anything that holds its `pane_tty` must read
-  it again. It also resets the pane, so the mouse modes a page asked for go with it.
+  it again. It also resets the pane, so the mouse modes its last program asked for go with it.
 - **tmux 3.6 can crash when a client leaves under `destroy-unattached`.** The server segfaults
   if another client, even a one-off command, disconnects at that moment. The session is
   destroyed while the leaving client still points at it. It needs nothing of Skelcrew's: a plain
@@ -472,15 +473,6 @@ Skelcrew no longer supports Sprites itself. These are for the Sprite machine plu
   `pane-set-clipboard` hook for the agents' own.
 - **Claude Code copies on its own.** Its full-screen drawing selects with the mouse, then copies
   by OSC 52, and also with `pbcopy` on a Mac or `tmux load-buffer` when it finds tmux.
-- **tmux opens no popup larger than the terminal.** `display-popup` with `-h` taller than the
-  terminal says nothing and shows nothing. Its `-w` and `-h` take no formats, so read the
-  client's size first and fit the box to it.
-- **`display-popup` waits for the popup to close.** Run from a program, the command returns
-  only after the popup ends, so a sidebar that waited for it would stop drawing.
-- **A popup swallows a click outside it.** tmux 3.6 hands the popup's program only clicks
-  inside the box. A click elsewhere on the screen does nothing, with or without `-k`.
-- **`capture-pane -e` shows a terminal link with an id tmux made up**, as `ESC]8;id=...;url`.
-  A test that looks for `ESC]8;;url` finds nothing.
 - **Bun's `os.cpus()` reads the times when you first look at them, not when you call it.**
   Keep its result, wait, and read it then, and it holds the times from that moment: the CPU
   figure from two samples read 0%. Seen on Bun 1.3.14 on Linux. Copy the numbers out as you
