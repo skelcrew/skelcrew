@@ -805,16 +805,34 @@ describe.skipIf(insideSandbox)("needs you", () => {
     await until(() => thread().turn_ended === 0);
   }, 60_000);
 
-  // The builder can ask you a question while the lead's message waits for it. Typing it in would
-  // answer the question for you, so it waits until the question is over. Claude Code shows its
-  // busy line until the question's hook has run, so the message waits from before the question.
+  // The builder can ask you a question while typing is under way. Typing the message would
+  // answer the question for you, so it waits until the question is over. A tmux on the
+  // daemon's PATH makes the builder look busy at the moment typing readies its paste into it,
+  // which typing does once the screen looked idle. Typing then keeps checking the screen for
+  // it to look idle again, for up to 10 seconds, and the question comes meanwhile.
   test("a lead's message isn't typed in once the builder asks a question while typing waits", async () => {
     addApp();
     await startApp12();
-    writeFileSync(join(builder(), "busy"), "");
-    await until(() => builderScreen().includes("esc to interrupt"));
-    const told = await asLead(["tell", "app-12", "Use JSON."]);
-    expect(told.out).toContain("can't take it yet");
+    const armed = join(home, "armed");
+    const waits = join(home, "typing-waits");
+    const tmux = Bun.which("tmux") ?? "tmux";
+    script(
+      "tmux",
+      `case "$*" in *"send-keys -X -t =app-12: cancel"*)
+  if [ -e "${armed}" ]; then
+    rm "${armed}"; touch "${join(builder(), "busy")}"
+    for i in $(seq 100); do
+      "${tmux}" -L "${socket}" capture-pane -p -t =app-12: | grep -q "esc to interrupt" && break
+      sleep 0.1
+    done
+    touch "${waits}"
+  fi ;;
+esac
+exec "${tmux}" "$@"`,
+    );
+    writeFileSync(armed, "");
+    expect((await asLead(["tell", "app-12", "Use JSON."])).err).toBe("");
+    await until(() => existsSync(waits));
     await hook("ask");
     expect(thread().asking).toBe(1);
     // The question's screen looks idle to typing.
