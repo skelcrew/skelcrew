@@ -817,7 +817,7 @@ The repository's lead comes first, under the top line, always shown. Its row loo
 
 - **Needs you**: every task that waits on you, whatever its stage, so one row and Enter reach it. Its word is what you must do, such as `question`, `ready to merge` or the action the lead marked it with, as **Needs you** says.
 
-- **Up next**: what waits for a builder. First the tasks queued under `limits.threads`, in the order they will start, numbered, the first marked `starts next`. Then the threads paused with `sc stop`, the one paused last first, as they start only when you `sc start` them. A queued or paused task that needs you shows under Needs you instead.
+- **Up next**: what waits for a builder. First the tasks queued under `limits.threads`, in the order they will start, numbered, the first marked `starts next`. Then the threads paused with `sc stop`, the newest task first, as they start only when you `sc start` them. A queued or paused task that needs you shows under Needs you instead, and its details still say what it waits on.
 - **Backlog**: not started yet. The tracker's open issues Skelcrew knows of that no thread works on, and the tasks in Skelcrew's backlog. The newest 10, then a row such as `… 24 more`, which Enter opens to show them all until you leave the list.
 - **Building**: a builder is working on it, including after the reviewer asked for changes. A thread that failed is here too, as its builder is what must start again.
 - **Reviewing**: a review is running, or queued for a place under `limits.reviews` or for its harness's usage limit. A review that failed or timed out is here too.
@@ -862,7 +862,7 @@ The marks: a filled `●` needs you or is ready, a hollow `○` doesn't. Green i
 | ↑ ↓ | Anywhere | Move one row |
 | `1` to `6` | Anywhere | Open or close Backlog, Building, Reviewing, Checks, Ready or Done |
 | Enter | The lead | Attaches full screen to the lead |
-| Enter | Backlog | Asks `Start app-31? y/n` in the bottom line, then starts the task, as `sc start` does. When every builder `limits.threads` allows is busy, or tasks already wait, it asks `Queue app-31? 4 of 4 builders busy, so it starts after the 3 queued. y/n` instead, and once queued the bottom line says so |
+| Enter | Backlog | Asks `Start app-31? y/n` in the bottom line, then starts the task, as `sc start` does. When every builder `limits.threads` allows is busy, or tasks already wait, it asks `Queue app-31? 4 of 4 builders busy, so it starts after the 3 queued. y/n` instead. Either way, the bottom line then says what happened, such as that the task waits in the queue, which it can also do after `Start`, when a builder took the last place while you were asked |
 | `s` | Backlog | The same as Enter there: asks, then starts or queues the issue or the task of the backlog |
 | Shift-↑ Shift-↓ | A queued task in Up next | Moves it one place earlier or later in the queue, which changes the order the tasks start in, and the bottom line says its place, such as `app-26 starts next`. The engine keeps the order, so a restart keeps it. On a paused task the bottom line says `sc start` brings it back |
 | Enter | Up next | Says in the bottom line what the task waits on, as no builder runs for it yet |

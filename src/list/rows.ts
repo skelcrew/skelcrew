@@ -31,8 +31,8 @@ import { removeControlCodes } from "../screen/look.ts";
 import { builderProgress } from "../screen/progress.ts";
 
 // What y does on a row once its question is answered: the question the bottom line asks, what it
-// says while the daemon works, and the request the daemon gets. `queues` says a yes puts the task
-// in the queue of limits.threads, so the bottom line then keeps what the daemon answered.
+// says while the daemon works, and the request the daemon gets. `queues` says a yes is expected
+// to put the task in the queue of limits.threads, which the key's name says.
 export type Question = { ask: string; working: string; request: DaemonRequest; queues: boolean };
 // What m does on a task ready for review: asks, or says why it can't, such as for a PR whose
 // forge plugin is too old to merge.
@@ -317,7 +317,7 @@ export function buildersNote(db: Database, open: Open): string {
 // Returns the repository's rows as the database has them now, at a moment in milliseconds: its
 // lead, then its tasks in the order of their sections. Needs you comes first, so the list
 // reaches what waits on you fastest. Up next has the queued tasks in the order they start, each
-// with its place, then the paused ones, the one paused last first. Backlog has its open issues
+// with its place, then the paused ones, the newest task first. Backlog has its open issues
 // no thread works on and the tasks filed in its backlog, newest first. Needs you and each other
 // stage have the one that changed last first. Done has the tasks that ended today, latest first,
 // or the last ten when fewer ended today, so an old repository's history never fills the list.
@@ -353,20 +353,23 @@ export function listRows(db: Database, open: Open, now: number): Row[] {
     builders.limit === null
       ? "its repository's limits.threads can't be read"
       : `${builders.running} of ${builders.limit} builders busy`;
-  // A queued or paused task up next says where it is in line, or that it is paused, and the
-  // pane says what it waits on. One that needs you keeps its word, as it says what you must do.
+  // A queued or paused task says where it is in line, or that it is paused, and the pane says
+  // what it waits on, under Needs you too. Up next's rows say it in their word as well. One
+  // under Needs you keeps its word, as it says what you must do.
   for (const row of tasks) {
-    const at = queue.findIndex((thread) => `${repository.name}-${thread.task}` === row.name);
+    const thread = threads.find(({ thread: t }) => `${repository.name}-${t.task}` === row.name);
+    const at = queue.findIndex((queued) => `${repository.name}-${queued.task}` === row.name);
     if (at >= 0) {
       row.place = at + 1;
       row.waits = `${at === 0 ? "Starts next" : `${ordinal(at + 1)} in line`}: ${busy}`;
       if (row.section === "up next")
         row.says = at === 0 ? "starts next" : `${ordinal(at + 1)} in line`;
-    } else if (row.section === "up next") {
+    } else if (thread?.thread.status === "stopped") {
+      row.waits = `Paused with sc stop: sc start ${row.name} brings it back`;
+      if (row.section !== "up next") continue;
       row.says = "paused";
       row.colour = "dim";
       row.mark = { sign: "○", colour: "dim" };
-      row.waits = `Paused with sc stop: sc start ${row.name} brings it back`;
     }
   }
   // A start while every builder is busy, or while tasks already wait, queues the task at the end
@@ -446,10 +449,18 @@ export function listRows(db: Database, open: Open, now: number): Row[] {
   // Returns a section's live tasks, the one that changed last first.
   const live = (section: Section) =>
     tasks.filter((row) => row.section === section).sort((a, b) => changedOf(b) - changedOf(a));
-  // Up next has the queued tasks by their place, then the paused ones.
-  const upNext = live("up next").sort(
-    (a, b) => (a.place ?? Number.POSITIVE_INFINITY) - (b.place ?? Number.POSITIVE_INFINITY),
-  );
+  // Up next has the queued tasks by their place, then the paused ones, the newest task first.
+  // A paused thread's last change can come from a poll, such as its CI, so it orders nothing.
+  const startedOf = (row: Row) =>
+    threads.find(({ thread }) => `${repository.name}-${thread.task}` === row.name)?.thread
+      .started ?? 0;
+  const upNext = tasks
+    .filter((row) => row.section === "up next")
+    .sort(
+      (a, b) =>
+        (a.place ?? Number.POSITIVE_INFINITY) - (b.place ?? Number.POSITIVE_INFINITY) ||
+        startedOf(b) - startedOf(a),
+    );
   return [
     leadRow(db, open),
     ...live("needs you"),

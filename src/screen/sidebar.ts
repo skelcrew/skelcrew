@@ -466,16 +466,16 @@ export async function runSidebar(
     if (first >= 0) moveTo(first);
   };
 
-  // Has the daemon start or merge once you said y, saying so meanwhile. A start that queues the
-  // task says what the daemon answered, so you know it waits. When the daemon or the forge
-  // refuses, the footer says why until the next key.
+  // Has the daemon start or merge once you said y, saying so meanwhile. A start says what the
+  // daemon answered, as a builder can take the last free place while you are asked, and the task
+  // then waits in the queue though the question said it would start. When the daemon or the
+  // forge refuses, the footer says why until the next key.
   const goAhead = async (action: Question) => {
     working = true;
     said = action.working;
     refresh();
     try {
-      const answer = await startOrMerge(action.request);
-      said = action.queues ? answer : null;
+      said = await startOrMerge(action.request);
     } catch (error) {
       said = errorText(error);
     }

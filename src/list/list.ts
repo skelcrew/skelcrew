@@ -329,15 +329,15 @@ export async function runList(agents: string, repository: string): Promise<void>
   };
 
   // Has the daemon start or merge once you said y, saying so meanwhile. The keys come back once
-  // it is done, and the list shows the row move as the database changes. A start that queues the
-  // task says what the daemon answered, so you know it waits. When the daemon or the forge
-  // refuses, the line says why until the next key.
+  // it is done, and the list shows the row move as the database changes. A start says what the
+  // daemon answered, as a builder can take the last free place while you are asked, and the task
+  // then waits in the queue though the question said it would start. When the daemon or the
+  // forge refuses, the line says why until the next key.
   const goAhead = async (action: Question) => {
     working = true;
     say(action.working);
     try {
-      const answer = await startOrMerge(action.request);
-      said = action.queues ? answer : null;
+      said = await startOrMerge(action.request);
     } catch (error) {
       said = errorText(error);
     }

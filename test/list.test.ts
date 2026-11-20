@@ -302,6 +302,37 @@ test("Up next has the queued tasks in the order they start, then the paused ones
   expect(upNext[2]?.mark).toEqual({ sign: "○", colour: "dim" });
 });
 
+// A paused thread's last change can come from a poll, such as its CI, so the newest task comes
+// first, however lately each changed.
+test("Up next has the paused tasks newest first, whenever each last changed", () => {
+  sql(
+    threadSql({
+      task: "22",
+      title: "Newer work",
+      status: "stopped",
+      started: now - 1000,
+      changed: now - 90_000,
+    }),
+  );
+  sql(`UPDATE threads SET started = ${now - 9000} WHERE folder = 'app-9';`);
+  const upNext = rows().filter((row) => row.section === "up next");
+  expect(upNext.map((row) => row.name)).toEqual(["app-22", "app-9"]);
+});
+
+// A paused task that needs you shows under Needs you, with its mark as its word, and its details
+// still say it is paused.
+test("a paused task under Needs you still says what it waits on", () => {
+  sql(
+    `UPDATE threads SET needs_you = 1, needs_you_for = 'check the login' WHERE folder = 'app-9';`,
+  );
+  const row = rows().find((candidate) => candidate.name === "app-9");
+  expect(row).toMatchObject({
+    section: "needs you",
+    says: "check the login",
+    waits: "Paused with sc stop: sc start app-9 brings it back",
+  });
+});
+
 test("with every builder busy, Up next's heading says how full they are, and s queues at the end", () => {
   queueTwo();
   const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
@@ -1529,7 +1560,8 @@ test("Ctrl-\\ in every form leaves a question open, and y then answers it", asyn
   await until(() => asked.includes("start simon/app 31"), "the start");
 });
 
-// s starts a task not started yet as Enter does there, and the bottom line offers it.
+// s starts a task not started yet as Enter does there, and the bottom line offers it, then says
+// what the daemon answered.
 test("s asks to start a task in Backlog, and y starts it", async () => {
   sql(`INSERT INTO backlog (owner, repo, task, title, body, created, by, filed_commit)
   VALUES ('simon', 'app', 't104', 'Add export', 'As JSON', '2026-11-07T10:00:00.000Z', 'simon', 'c1');`);
@@ -1541,6 +1573,8 @@ test("s asks to start a task in Backlog, and y starts it", async () => {
   await until(() => seen().includes("Start app-t104? y/n"), "the question");
   type("y");
   await until(() => asked.includes("start simon/app t104"), "the start");
+  // The line says what the daemon did, as the task could have been queued meanwhile.
+  await until(() => seen().includes("Started."), "the daemon's answer");
 });
 
 // Shift with an arrow moves a queued task in its queue, through the daemon, and the bottom line
