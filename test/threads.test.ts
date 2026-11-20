@@ -1582,6 +1582,56 @@ describe("the backlog", () => {
     expect(await listed("app-t101")).toBeUndefined();
   }, 60_000);
 
+  // The remote takes the push that claims the start, and the connection drops before git hears
+  // so. The claim is this machine's, so the start goes on.
+  test("a start whose claim reached the remote though git said it failed goes on", async () => {
+    const work = addApp();
+    serve();
+    await untilCloned();
+    await skel("task", "add", "app", "Add export", "As JSON");
+    writeFileSync(
+      join(home, "bin", "git"),
+      `#!/bin/sh\ncase "$*" in *":refs/skelcrew/started/"*) ${Bun.which("git") ?? "git"} "$@"; echo "connection lost" >&2; exit 1 ;; esac\nexec ${Bun.which("git") ?? "git"} "$@"\n`,
+      { mode: 0o755 },
+    );
+    const started = await skel("start", "app-t100");
+    expect(started.err).toBe("");
+    expect(started.out).toBe("Started app-t100.\n");
+    expect(thread()).toMatchObject({ task: "t100", title: "Add export" });
+    const refs = git(work, "ls-remote", "origin");
+    expect(refs).not.toContain("refs/skelcrew/tasks/t100");
+    expect(refs).not.toContain("refs/skelcrew/started/t100");
+  }, 60_000);
+
+  // A refresh reads the backlog, and sc rm removes a task before the refresh writes what it read.
+  // The refresh must not bring the task back. The refresh is the one filing another task runs,
+  // so no poll mends the copy before the test looks.
+  test("a refresh that overlaps sc rm doesn't bring the task back", async () => {
+    addApp();
+    serve();
+    await untilCloned();
+    await skel("task", "add", "app", "Add export", "As JSON");
+    // Each fetch of the backlog waits, once it has read the remote, while the file hold is there.
+    const real = Bun.which("git") ?? "git";
+    writeFileSync(
+      join(home, "bin", "git"),
+      `#!/bin/sh\ncase "$*" in *"refs/skelcrew/tasks/*"*) ${real} "$@"; code=$?
+  if [ -e "$HOME/hold" ]; then touch "$HOME/held"; while [ -e "$HOME/hold" ] && [ -d "$HOME" ]; do sleep 0.05; done; fi
+  exit $code ;; esac\nexec ${real} "$@"\n`,
+      { mode: 0o755 },
+    );
+    writeFileSync(join(home, "hold"), "");
+    const added = skel("task", "add", "app", "Add import", "From CSV");
+    await until(() => existsSync(join(home, "held")));
+    const removed = skel("rm", "app-t100");
+    await Bun.sleep(500);
+    rmSync(join(home, "hold"));
+    expect((await added).err).toBe("");
+    expect((await removed).out).toBe("Removed app-t100 from the backlog.\n");
+    expect(await listed("app-t100")).toBeUndefined();
+    expect(await listed("app-t101")).toMatchObject({ title: "Add import" });
+  }, 60_000);
+
   test("sc rm deletes a task that never started, here and on the remote, and keeps its name", async () => {
     const work = addApp();
     serve();

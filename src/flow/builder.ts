@@ -398,7 +398,8 @@ async function recordThread(
   });
   // A task from the backlog is taken off it for every machine around the thread's record, so it
   // never starts twice and is never lost, as startFiled says.
-  if (fromBacklog) return startFiled(db, repository, cloneDir(owner, repo), fromBacklog, record);
+  if (fromBacklog)
+    return startFiled(db, repository, cloneDir(owner, repo), fromBacklog.task, record);
   return record();
 }
 

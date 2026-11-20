@@ -12,6 +12,7 @@ import {
   filedRef,
   makeCommit,
   moveRefs,
+  remoteRef,
   startedRef,
 } from "./git.ts";
 
@@ -36,10 +37,24 @@ const Kept = z.object({
   by: z.string(),
 });
 
-// The tasks of the backlog this machine is starting now, by owner/name/task, from before it
-// claims one on the remote until its thread is recorded and the claim gone. A refresh of the
-// backlog leaves them to their start, which it would otherwise take for one cut short.
-const starting = new Set<string>();
+// The change to each repository's backlog under way or waiting, by owner/name. A refresh, a
+// start and a removal each read the backlog and write it back, so they run one at a time: a
+// refresh that overlapped a start would write back the task it just took out, or take the start
+// for one a stop cut short.
+const turns = new Map<string, Promise<unknown>>();
+
+// Runs `work` on the repository's backlog once the change before it is over, and returns what it
+// gave. The next one waits for it whether it fails or not, and the last leaves no entry behind.
+function inTurn<T>(repository: Repository, work: () => Promise<T>): Promise<T> {
+  const key = `${repository.owner}/${repository.repo}`;
+  const run = (turns.get(key) ?? Promise.resolve()).then(work);
+  const settled = run.catch(() => {});
+  turns.set(key, settled);
+  settled.then(() => {
+    if (turns.get(key) === settled) turns.delete(key);
+  });
+  return run;
+}
 
 // Claims the next name for one of Skelcrew's own tasks on the remote, from Skelcrew's clone in
 // the folder, and returns it, such as t104. It is a t and the next number after every one claimed
@@ -113,11 +128,16 @@ const endClaim = (name: string, commit: string) => ({
 // Skelcrew's clone in the folder. Each refresh of the clone runs it, so a task filed, started or
 // removed on another machine shows here within a poll. It also finishes a start of this
 // machine's that a stop cut short, as startFiled says.
-export async function refreshBacklog(
+export function refreshBacklog(
   db: Database,
   repository: Repository,
   folder: string,
 ): Promise<void> {
+  return inTurn(repository, () => refreshInTurn(db, repository, folder));
+}
+
+// Refreshes the backlog for refreshBacklog, in the repository's turn.
+async function refreshInTurn(db: Database, repository: Repository, folder: string) {
   const { owner, repo } = repository;
   const { filed, started } = await fetchBacklog(db, repository, folder);
   const tasks = filed.flatMap(({ name, commit, text }) => {
@@ -129,7 +149,6 @@ export async function refreshBacklog(
   // neither is another machine's start, which is that machine's to finish.
   const where = "WHERE owner = ? AND repo = ? AND task = ?";
   for (const { name, commit, text } of started) {
-    if (starting.has(`${owner}/${repo}/${name}`)) continue;
     const thread = db.query(`SELECT 1 FROM task_threads ${where}`).get(owner, repo, name);
     const ours = db
       .query(`SELECT 1 FROM backlog_starts ${where} AND started_commit = ?`)
@@ -149,18 +168,17 @@ export async function refreshBacklog(
     }
   }
   // One transaction, so no reader sees the backlog half refreshed. A start this machine noted
-  // that has no claim on the remote now never got it, or was finished above.
-  const claimed = started.map((s) => s.name);
+  // whose claim isn't on the remote now never got it, or was finished above.
   db.transaction(() => {
     db.run("DELETE FROM backlog WHERE owner = ? AND repo = ?", [owner, repo]);
     saveFiled(db, repository, tasks);
     const noted = db
-      .query("SELECT task FROM backlog_starts WHERE owner = ? AND repo = ?")
+      .query("SELECT task, started_commit FROM backlog_starts WHERE owner = ? AND repo = ?")
       .all(owner, repo)
-      .map((row) => z.object({ task: z.string() }).parse(row).task);
-    for (const task of noted)
-      if (!claimed.includes(task) && !starting.has(`${owner}/${repo}/${task}`))
-        db.run(`DELETE FROM backlog_starts ${where}`, [owner, repo, task]);
+      .map((row) => z.object({ task: z.string(), started_commit: z.string() }).parse(row));
+    for (const note of noted)
+      if (!started.some((s) => s.name === note.task && s.commit === note.started_commit))
+        db.run(`DELETE FROM backlog_starts ${where}`, [owner, repo, note.task]);
   })();
 }
 
@@ -184,89 +202,94 @@ export const filedTask = (db: Database, owner: string, repo: string, task: strin
 // refused, and no thread of its is ever recorded. The claim keeps the task's words, and the
 // daemon's database notes it before it is pushed. So a stop at any point loses nothing: the next
 // refresh of the backlog finds the claim, and removes it once the thread is there, or else puts
-// the task back. A thread that can't be recorded puts it back at once.
-export async function startFiled<T>(
+// the task back. A thread that can't be recorded puts it back at once. Throws when the backlog no
+// longer has the task.
+export function startFiled<T>(
   db: Database,
   repository: Repository,
   folder: string,
-  task: Filed,
+  name: string,
   record: () => T,
 ): Promise<T> {
-  const { owner, repo } = repository;
-  const key = `${owner}/${repo}/${task.task}`;
-  const where = "WHERE owner = ? AND repo = ? AND task = ?";
-  starting.add(key);
-  try {
+  return inTurn(repository, async () => {
+    const { owner, repo } = repository;
+    const where = "WHERE owner = ? AND repo = ? AND task = ?";
+    const task = filedTask(db, owner, repo, name);
+    if (!task) throw new Error(`${repository.name}-${name} is no longer in the backlog`);
     // The claim's commit carries the task's words, so it can be put back.
     const kept = { title: task.title, body: task.body, created: task.created, by: task.by };
-    const message = `Skelcrew starts ${task.task}: ${crypto.randomUUID()}\n\n${JSON.stringify(kept)}`;
+    const message = `Skelcrew starts ${name}: ${crypto.randomUUID()}\n\n${JSON.stringify(kept)}`;
     const commit = await makeCommit(db, repository, folder, message);
     db.run(
       "INSERT OR REPLACE INTO backlog_starts (owner, repo, task, started_commit) VALUES (?, ?, ?, ?)",
-      [owner, repo, task.task, commit],
+      [owner, repo, name, commit],
     );
     try {
       await moveRefs(db, repository, folder, [
-        { ref: filedRef(task.task), was: task.commit, now: "" },
-        { ref: startedRef(task.task), was: "", now: commit },
+        { ref: filedRef(name), was: task.commit, now: "" },
+        { ref: startedRef(name), was: "", now: commit },
       ]);
     } catch (error) {
-      db.run(`DELETE FROM backlog_starts ${where}`, [owner, repo, task.task]);
-      throw new Error(
-        `${repository.name}-${task.task} was started or removed on another machine, or its remote can't be reached: ${errorText(error)}`,
-      );
+      // A push can reach the remote and fail only on its way back, so the remote is asked whose
+      // claim it holds. With this one, the start goes on. With none or another's, it never got
+      // it. With no answer, the note stays, and the next refresh settles it either way.
+      const holds = await remoteRef(db, repository, startedRef(name)).catch(() => null);
+      if (holds !== commit) {
+        if (holds !== null) db.run(`DELETE FROM backlog_starts ${where}`, [owner, repo, name]);
+        throw new Error(
+          `${repository.name}-${name} was started or removed on another machine, or its remote can't be reached: ${errorText(error)}`,
+        );
+      }
     }
     // The note goes with the thread, in one transaction, as from then on the thread says this
     // machine started it.
     let recorded: T;
     try {
       recorded = db.transaction(() => {
-        db.run(`DELETE FROM backlog_starts ${where}`, [owner, repo, task.task]);
-        db.run(`DELETE FROM backlog ${where}`, [owner, repo, task.task]);
+        db.run(`DELETE FROM backlog_starts ${where}`, [owner, repo, name]);
+        db.run(`DELETE FROM backlog ${where}`, [owner, repo, name]);
         return record();
       })();
     } catch (error) {
       await moveRefs(db, repository, folder, [
-        { ref: filedRef(task.task), was: "", now: commit },
-        endClaim(task.task, commit),
+        { ref: filedRef(name), was: "", now: commit },
+        endClaim(name, commit),
       ])
-        .then(() => db.run(`DELETE FROM backlog_starts ${where}`, [owner, repo, task.task]))
+        .then(() => db.run(`DELETE FROM backlog_starts ${where}`, [owner, repo, name]))
         .catch((failed) =>
-          console.log(`couldn't put ${repository.name}-${task.task} back: ${errorText(failed)}`),
+          console.log(`couldn't put ${repository.name}-${name} back: ${errorText(failed)}`),
         );
       throw error;
     }
     // A claim that can't be removed now is removed by the next refresh.
-    await moveRefs(db, repository, folder, [endClaim(task.task, commit)]).catch((error) =>
-      console.log(`couldn't finish starting ${repository.name}-${task.task}: ${errorText(error)}`),
+    await moveRefs(db, repository, folder, [endClaim(name, commit)]).catch((error) =>
+      console.log(`couldn't finish starting ${repository.name}-${name}: ${errorText(error)}`),
     );
     return recorded;
-  } finally {
-    starting.delete(key);
-  }
+  });
 }
 
 // Removes a task of the backlog that never started, on its remote from Skelcrew's clone in the
 // folder and in the daemon's copy, for sc rm. Its words were only on its ref, which goes. Its
-// name stays claimed. Throws when another machine started or removed it since this one read it.
-export async function unfileTask(
+// name stays claimed. Throws when the backlog no longer has it, or another machine started or
+// removed it since this one read it.
+export function unfileTask(
   db: Database,
   repository: Repository,
   folder: string,
-  task: Filed,
+  name: string,
 ): Promise<void> {
-  try {
-    await moveRefs(db, repository, folder, [
-      { ref: filedRef(task.task), was: task.commit, now: "" },
-    ]);
-  } catch (error) {
-    throw new Error(
-      `${repository.name}-${task.task} was started or removed on another machine, or its remote can't be reached: ${errorText(error)}`,
-    );
-  }
-  db.run("DELETE FROM backlog WHERE owner = ? AND repo = ? AND task = ?", [
-    repository.owner,
-    repository.repo,
-    task.task,
-  ]);
+  return inTurn(repository, async () => {
+    const { owner, repo } = repository;
+    const task = filedTask(db, owner, repo, name);
+    if (!task) throw new Error(`${repository.name}-${name} is no longer in the backlog`);
+    try {
+      await moveRefs(db, repository, folder, [{ ref: filedRef(name), was: task.commit, now: "" }]);
+    } catch (error) {
+      throw new Error(
+        `${repository.name}-${name} was started or removed on another machine, or its remote can't be reached: ${errorText(error)}`,
+      );
+    }
+    db.run("DELETE FROM backlog WHERE owner = ? AND repo = ? AND task = ?", [owner, repo, name]);
+  });
 }

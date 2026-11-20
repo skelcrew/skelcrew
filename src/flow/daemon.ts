@@ -599,7 +599,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         const filed = filedOn(db, request.repo, request.task);
         if (filed) {
           const repository = findRepository(db, request.repo);
-          await unfileTask(db, repository, cloneDir(repository.owner, repository.repo), filed);
+          await unfileTask(db, repository, cloneDir(repository.owner, repository.repo), filed.task);
           return { removed: filed.name, issue: null, unfiled: true };
         }
         const thread = findThread(db, request.repo, request.task);

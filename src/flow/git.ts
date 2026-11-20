@@ -325,6 +325,18 @@ export async function moveRefs(
   ]);
 }
 
+// Returns the commit a ref is at on the repository's remote, or "" when it has no such ref.
+// Throws when the remote can't be asked.
+export async function remoteRef(db: Database, repository: Repository, ref: string) {
+  const listed = await git(db, repository, ["ls-remote", repository.remote, ref]);
+  return (
+    listed
+      .split("\n")
+      .find((line) => line.endsWith(`\t${ref}`))
+      ?.split("\t")[0] ?? ""
+  );
+}
+
 // Claims a name for one of Skelcrew's own tasks on the remote, from Skelcrew's clone in the
 // folder, and returns whether this machine got it. `last` is the last claim as claimedNames read
 // it. False means another machine claimed this name, or any name, since then: the caller reads
