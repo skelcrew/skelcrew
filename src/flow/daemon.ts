@@ -504,14 +504,15 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         if (!existsSync(clone) || !forgeKnown(db, repository)) await refreshClones(db);
         const { title, body, short, flow } = action;
         const by = `${loginName()} via the lead`;
-        // A filing whose outcome a stop cut short is found again by fileTask, so it files once.
-        const { task } = await fileTask(db, findRepository(db, `${owner}/${repo}`), clone, {
-          title,
-          body,
-          by,
-        });
-        action = { kind: "start", task, ...(short ? { short } : {}), ...(flow ? { flow } : {}) };
-        nameFiledTask(db, taken.id, action);
+        // The request names the task in the step that ends the filing's notes, so a stop leaves
+        // either the notes, which find the filing again, or the name: the task is filed once.
+        const options = { ...(short ? { short } : {}), ...(flow ? { flow } : {}) };
+        const named = (task: string) =>
+          nameFiledTask(db, taken.id, { kind: "start", task, ...options });
+        const filing = { title, body, by };
+        const current = findRepository(db, `${owner}/${repo}`);
+        const { task } = await fileTask(db, current, clone, filing, named);
+        action = { kind: "start", task, ...options };
         // Read back, so the start finds the commit the task is filed at.
         await refreshClone(db, repository).catch((error) => console.log(errorText(error)));
       }

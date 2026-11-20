@@ -139,12 +139,14 @@ export async function claimOwnName(
 // task given again then settles it first: with its claim on the remote, it was filed, and
 // `already` says so with its name. A task filed twice on purpose has no note, and is filed again.
 // Filings run in the repository's turn, so two at once never settle the same note. Throws when a
-// note can't be settled, as the remote can't be asked.
+// note can't be settled, as the remote can't be asked. `filed` is told the task's name in the same
+// step that forgets the notes, so whoever files it keeps the name before a stop could lose both.
 export function fileTask(
   db: Database,
   repository: Repository,
   folder: string,
   given: { title: string; body: string; by: string },
+  filed: (task: string) => void = () => {},
 ): Promise<{ task: string; already: boolean }> {
   return inTurn(repository, async () => {
     const { owner, repo } = repository;
@@ -161,8 +163,12 @@ export function fileTask(
       .map((row) => z.object({ task: z.string(), claim_commit: z.string() }).parse(row));
     for (const note of notes) {
       const holds = await claimedAt(db, repository, note.task);
-      forget(note.claim_commit);
-      if (holds === note.claim_commit) return { task: note.task, already: true };
+      const already = holds === note.claim_commit;
+      db.transaction(() => {
+        forget(note.claim_commit);
+        if (already) filed(note.task);
+      })();
+      if (already) return { task: note.task, already: true };
     }
     const kept = { ...given, created: new Date().toISOString() };
     const tried: string[] = [];
@@ -176,7 +182,10 @@ export function fileTask(
     };
     const task = await claimOwnName(db, repository, folder, JSON.stringify(kept), note);
     // Every try's outcome is known now: lost to another machine, or this one.
-    for (const commit of tried) forget(commit);
+    db.transaction(() => {
+      for (const commit of tried) forget(commit);
+      filed(task);
+    })();
     return { task, already: false };
   });
 }

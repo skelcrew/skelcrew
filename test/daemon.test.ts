@@ -412,6 +412,93 @@ test("writes down the full commit and checkout it started from", async () => {
   expect(readFileSync(file, "utf8")).toBe(`${commit.trim()} ${checkout}\n`);
 });
 
+// Puts a stand-in for git first on the daemon's PATH, which runs the real one, but can hold the
+// daemon at a moment of a yes to a new task: after the push that files it, while `hold-push` is
+// in the home folder, or at the first fetch after that push, while `hold-fetch` is. It leaves
+// `held` there once it holds, and lets go once the file that holds it goes.
+function holdGit(): void {
+  const real = Bun.which("git") ?? "git";
+  const holdWhile = (file: string) =>
+    `touch "$HOME/held"; while [ -e "$HOME/${file}" ]; do sleep 0.1; done`;
+  writeFileSync(
+    join(home, "bin", "git"),
+    `#!/bin/sh
+case " $* " in
+  *" push "*) ${real} "$@"; code=$?; touch "$HOME/pushed"; [ -e "$HOME/hold-push" ] && { ${holdWhile("hold-push")}; }; exit $code ;;
+  *" fetch "*) [ -e "$HOME/pushed" ] && [ -e "$HOME/hold-fetch" ] && { ${holdWhile("hold-fetch")}; } ;;
+esac
+exec ${real} "$@"
+`,
+    { mode: 0o755 },
+  );
+}
+
+// Says yes to a new task the lead asked for, has git hold the daemon at `hold`, stops the daemon
+// there, as a crash or a restart would, then starts it again. Returns the request as the stop
+// left it, then what the daemon kept of the task once it is back.
+async function restartDuring(hold: "hold-push" | "hold-fetch") {
+  setUp();
+  addRepository("app");
+  holdGit();
+  serve();
+  await untilAnswers();
+  await until(() => existsSync(join(home, ".local", "share", "skelcrew", "repos", "simon", "app")));
+  onDb((db) =>
+    db.run(`INSERT INTO lead_requests (owner, repo, action, says, made) VALUES
+  ('simon', 'app', '{"kind":"start new","title":"CSV export","body":"Add it.","short":"CSV"}',
+    'Start a new task: CSV export?', 1)`),
+  );
+  writeFileSync(join(home, hold), "");
+  void ask({ command: "answer", repo: "simon/app", id: 1, yes: true });
+  await until(() => existsSync(join(home, "held")));
+  for (const run of running.splice(0)) await stop(run);
+  const left = onDb((db) => db.query("SELECT action, answered FROM lead_requests").all());
+  rmSync(join(home, hold));
+  serve();
+  await untilAnswers();
+  await until(() => onDb((db) => db.query("SELECT 1 FROM lead_requests").all()).length === 0);
+  const threads = onDb((db) =>
+    db.query("SELECT task, short FROM task_threads WHERE title = 'CSV export'").all(),
+  );
+  const backlog = onDb((db) => db.query("SELECT task FROM backlog").all());
+  const notes = onDb((db) => db.query("SELECT text FROM notes WHERE text LIKE '%request%'").all());
+  return { left, threads, backlog, notes };
+}
+
+// The push that files the task went through, but the daemon stopped before it heard. Its filing's
+// note finds the task again, so the yes starts it, and files nothing more.
+test("a stop after the push that files a yes's new task starts that task once, filing no second", async () => {
+  const { left, threads, backlog, notes } = await restartDuring("hold-push");
+  expect(left).toEqual([
+    {
+      action: '{"kind":"start new","title":"CSV export","body":"Add it.","short":"CSV"}',
+      answered: expect.any(Number),
+    },
+  ]);
+  expect(threads).toEqual([{ task: "t1", short: "CSV" }]);
+  expect(backlog).toEqual([]);
+  expect(notes).toEqual([
+    {
+      text: "Skelcrew stopped partway through the human's yes in the list to your request: Start a new task: CSV export? It did it again: Started APP-T1.",
+    },
+  ]);
+}, 60_000);
+
+// The task was filed and the request names it, but the daemon stopped before it started it.
+test("a stop after a yes's new task is filed starts the task it named, filing no second", async () => {
+  const { left, threads, backlog, notes } = await restartDuring("hold-fetch");
+  expect(left).toEqual([
+    { action: '{"kind":"start","task":"t1","short":"CSV"}', answered: expect.any(Number) },
+  ]);
+  expect(threads).toEqual([{ task: "t1", short: "CSV" }]);
+  expect(backlog).toEqual([]);
+  expect(notes).toEqual([
+    {
+      text: "Skelcrew stopped partway through the human's yes in the list to your request: Start a new task: CSV export? It did it again: Started APP-T1.",
+    },
+  ]);
+}, 60_000);
+
 // A daemon stopped partway through a yes does it again as it starts, and the lead hears what that
 // said. Here the yes asks for a flow that doesn't exist, so doing it again fails and says why, and
 // the task stays as it was.

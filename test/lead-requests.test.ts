@@ -127,14 +127,14 @@ describe.skipIf(insideSandbox)("the lead's requests", () => {
     serve();
     await until(() => existsSync(join(data(), "repos", "simon", "app", "README")));
     expect(await askForLead("simon/app")).toContain(leadPlaces("simon", "app").name);
-    await until(() => threadOf("t100") !== null, 30_000);
-    expect(threadOf("t100")).toMatchObject({ title: "CSV export", body: "Add it.", short: "CSV" });
+    await until(() => threadOf("t1") !== null, 30_000);
+    expect(threadOf("t1")).toMatchObject({ title: "CSV export", body: "Add it.", short: "CSV" });
     await until(() =>
       read(join(lead(), "typed")).includes(
-        "Skelcrew stopped partway through the human's yes in the list to your request: Start a new task: CSV export? It did it again: Started APP-T100.",
+        "Skelcrew stopped partway through the human's yes in the list to your request: Start a new task: CSV export? It did it again: Started APP-T1.",
       ),
     );
-    expect(threadOf("t101")).toBeNull();
+    expect(threadOf("t2")).toBeNull();
   }, 60_000);
 
   test("a yes to a new task starts it with its title, description, short title and flow", async () => {
@@ -146,8 +146,8 @@ describe.skipIf(insideSandbox)("the lead's requests", () => {
     expect(asked.out).toBe(
       "Asked the human in the list: Start a new task: CSV export? Their answer comes to you as a note.\n",
     );
-    expect(await answer(1, true)).toEqual({ said: "Started APP-T100." });
-    expect(threadOf("t100")).toMatchObject({
+    expect(await answer(1, true)).toEqual({ said: "Started APP-T1." });
+    expect(threadOf("t1")).toMatchObject({
       title: "CSV export",
       body: "Add a CSV export.",
       short: "CSV",
@@ -155,7 +155,7 @@ describe.skipIf(insideSandbox)("the lead's requests", () => {
     });
     await until(() =>
       read(join(lead(), "typed")).includes(
-        "The human said yes in the list to your request: Start a new task: CSV export? Started APP-T100.",
+        "The human said yes in the list to your request: Start a new task: CSV export? Started APP-T1.",
       ),
     );
   }, 60_000);
