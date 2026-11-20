@@ -16,6 +16,7 @@ import {
   onLead,
   open,
   press,
+  read,
   ready,
   screen,
   screenSessions,
@@ -321,4 +322,16 @@ test("the footer has only the keys you need most, and a click on it does nothing
   await Bun.sleep(200);
   expect(onLead()).toBe(true);
   expect(footer()).toStartWith("  ⌥↑↓ move  ⌥Q quit");
+});
+
+// ? is text you type to an agent, so no key of the screen's may take it, and Alt-/ is none of
+// the screen's keys either.
+test("Alt-/ is no key of Skelcrew's, and plain ? on the lead reaches the agent", async () => {
+  open("lead");
+  await ready("lead");
+  type("\x1b/");
+  type("?");
+  press("Enter");
+  await until(() => read("lead.typed").includes("?"), "the agent to get ?");
+  expect(onLead()).toBe(true);
 });
