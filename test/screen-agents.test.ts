@@ -283,6 +283,19 @@ await Bun.write(${JSON.stringify(join(home, "left-one"))}, "left");`,
     }
   });
 
+// A host that fails to answer from the moment the screen opens hasn't said its lead ended, so
+// the sidebar doesn't take it for crashed and ask the daemon to bring it back.
+test("a lead on a plugin's host whose host fails from the start isn't brought back", async () => {
+  daemon();
+  const { plugin, looks } = fakeHost(["fake-lead"], 'echo "I am $1 on fake"; exec sleep 300\n');
+  writeFileSync(join(plugin, "failing"), "");
+  sql("UPDATE repositories SET lead_host = 'fake', lead_host_id = 'fake-lead' WHERE repo = 'app'");
+  open("lead");
+  await until(() => seen().includes("I am fake-lead on fake"), "the lead through its host");
+  await until(() => looks() > 3, "the sidebar to ask the failing host");
+  expect(asked).toEqual([]);
+});
+
 test("the screen starts on the lead's row, even while a task needs you", async () => {
   sql("UPDATE threads SET needs_you = 1 WHERE task = 12");
   open("lead");
