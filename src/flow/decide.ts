@@ -5,7 +5,7 @@ import type { Review } from "./reviewer.ts";
 import type { Thread } from "./thread.ts";
 
 // How an event changes the thread's status and its needs you flag.
-type Change = Partial<Pick<Thread, "status" | "needs_you">>;
+type Change = Partial<Pick<Thread, "status" | "needs_you" | "review_failed">>;
 export type PullRequest = Extract<Item, { kind: "pr" }>;
 export type Check = PullRequest["checks"][number];
 type Author = PullRequest["comments"][number]["author"];
@@ -14,12 +14,22 @@ type Author = PullRequest["comments"][number]["author"];
 // it is neither CI nor a failure for the builder to fix.
 export const reviewCheck = "skelcrew/check";
 
-// Returns whether the thread has used up its rounds of changes. Past that it goes on needing
-// you, whatever its builder does, until you let it go on or its reviewer approves. An approval
+// Returns whether the thread has used up its rounds of changes. Past that a review's changes
+// are held, and the thread needs you until you decide, let it go on, or its reviewer approves.
+// A submit or review under way past it is waited on first, as waiting on a review never needs you. An approval
 // answers the changes the limit held, so an approved thread is ready like any other rather
 // than showing the round limit until it merges.
 export const pastRoundLimit = (thread: Thread, maxRounds: number) =>
   thread.rounds > maxRounds && thread.verdict !== "approve";
+
+// Returns whether the round limit makes the thread need you as an event sets its builder working:
+// past the limit, with the last review asking for changes and no submit or review under way, as
+// waiting on a review never needs you, and a review that failed is the lead's to run again.
+const limitNeedsYou = (thread: Thread, maxRounds: number) =>
+  pastRoundLimit(thread, maxRounds) &&
+  thread.verdict === "changes" &&
+  thread.submitting === null &&
+  thread.reviewing === null;
 
 // What decide says to do with a thread: end it, with the reason for its log and the note for
 // its lead, or tell its builder what is new and change the thread.
@@ -386,7 +396,11 @@ export function decide(
       ...[...tell, ...notice].map((t) => t.split("\n")[0]),
     ];
     // Past the round limit the thread still needs you, as the builder's next round would.
-    const change: Change = { status: "working", needs_you: past };
+    const change: Change = {
+      status: "working",
+      needs_you: limitNeedsYou(thread, given.maxRounds),
+      review_failed: false,
+    };
     const why = `told the builder: ${told.join("; ")}`;
     return { seen, tell, notice, typedIn, failed, conflict, moved, change, why };
   }
@@ -431,7 +445,11 @@ export function decideBranch(
     conflict: null,
     moved: head,
     // Past the round limit the thread still needs you, as the builder's next round would.
-    change: { status: "working", needs_you: pastRoundLimit(thread, given.maxRounds) },
+    change: {
+      status: "working",
+      needs_you: limitNeedsYou(thread, given.maxRounds),
+      review_failed: false,
+    },
     why: `told the builder: ${notice.split(". ")[0]}`,
   };
 }
@@ -484,7 +502,7 @@ export function reviewComment(
 // It returns Skelcrew's check to set, the thread's new state, and what to type into the
 // builder, if anything. The builder gets max_rounds rounds of changes. Changes asked for after
 // those are posted but not typed in. They are held until sc start lets the thread go on, and
-// the thread needs you, as after a failed review. With a forge, an approved thread waits on CI,
+// the thread needs you until you or the lead decide. With a forge, an approved thread waits on CI,
 // and polling marks it needs you once every check is green. Without a forge there is no CI, so
 // `ready` is the reason it needs you at once, such as the branch it is ready on.
 export function afterReview(
@@ -493,13 +511,15 @@ export function afterReview(
   maxRounds: number,
   ready: string | null,
 ): Outcome {
-  // A review that failed to give a verdict, or timed out, needs you, and counts no round.
+  // A review that failed to give a verdict, or timed out, counts no round. The lead hears of it
+  // and can run it again, so it doesn't need you, past the round limit too: only a review that
+  // asks for changes there does.
   if (review.verdict === "failed" || review.verdict === "timed out")
     return {
       check: "failure",
       description: review.verdict === "failed" ? "review failed" : "review timed out",
       rounds,
-      needsYou: true,
+      needsYou: false,
       status: "waiting",
       tell: null,
       held: null,

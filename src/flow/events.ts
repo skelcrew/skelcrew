@@ -211,8 +211,10 @@ async function stopNow(
     {
       status: "stopped",
       needs_you: false,
+      review_failed: false,
       asking: false,
       turn_ended: false,
+      ended_at: null,
       erred: false,
       limited: false,
       limit_reset: null,
@@ -265,8 +267,16 @@ export async function endThread(
       const line = `${threadName(db, thread)} ${note}`.replace(/\s+/g, " ").slice(0, 200);
       noteForLead(db, sessions, thread, line, thread.folder);
     }
-    // A merge when ready ends with its thread, so nothing armed outlives it.
-    const ended = { status: "done" as const, needs_you: false, merged, merge_plan: null };
+    // A merge when ready ends with its thread, so nothing armed outlives it, and a mark for you
+    // ends with it, as there is nothing left to act on.
+    const ended = {
+      status: "done" as const,
+      needs_you: false,
+      needs_you_for: null,
+      ended_at: null,
+      merged,
+      merge_plan: null,
+    };
     record(db, thread.folder, ended, `${why}: ended the thread`);
   })();
   // Its clone goes only once the end is saved, so a thread whose end failed keeps it. Nothing

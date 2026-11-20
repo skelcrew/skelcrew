@@ -75,13 +75,14 @@ console.log(JSON.stringify(db.query("SELECT text FROM notes").all()));`);
   expect(texts[0]?.text).not.toContain("Esc");
 });
 
-// The builder may be missing this long, in milliseconds, before the thread needs you, rather
+// The builder may be missing this long, in milliseconds, before the lead hears of it, rather
 // than the ten seconds the daemon gives it.
 const missing = { SKELCREW_MISSING_WAIT_MS: "500" };
 
 // A review's changes wait while the builder is mid-turn, and then its session ends. A session
-// that is gone counts over a screen that last looked busy, so the thread needs you.
-test("a builder whose session ends mid-turn, with a review's changes waiting, makes the thread need you", () => {
+// that is gone counts over a screen that last looked busy, so the lead hears of it. The lead can
+// bring the builder back, so the thread doesn't need you.
+test("a builder whose session ends mid-turn, with a review's changes waiting, is told to the lead", () => {
   // A stand-in builder mid-turn, whose status line redraws as Claude Code's does.
   writeFileSync(
     join(home, "busy.sh"),
@@ -101,58 +102,70 @@ for (let i = 0; i < 4; i++) {
   await deliverAllWaiting(db, tmux);
   await Bun.sleep(200);
 }
-const before = readThread(db, "app-12").needs_you;
+const noted = () => db.query("SELECT text FROM notes").all().map((n) => n.text).filter((t) => t.includes("isn't running"));
+const before = noted().length;
 Bun.spawnSync(["tmux", "-L", tmux, "kill-session", "-t", "=app-12"]);
-for (let i = 0; i < 100 && !readThread(db, "app-12").needs_you; i++) {
+for (let i = 0; i < 100 && noted().length === 0; i++) {
   await deliverAllWaiting(db, tmux);
   await Bun.sleep(50);
 }
+// Looking again tells the lead nothing more.
+await deliverAllWaiting(db, tmux);
 const thread = readThread(db, "app-12");
-console.log(JSON.stringify({ before, after: thread.needs_you, telling: thread.telling }));`,
+console.log(JSON.stringify({ before, noted: noted(), needsYou: thread.needs_you, telling: thread.telling }));`,
     false,
     missing,
   );
-  expect(JSON.parse(seen)).toEqual({ before: false, after: true, telling: "Fix it." });
+  expect(JSON.parse(seen)).toEqual({
+    before: 0,
+    noted: [
+      "app-12's builder isn't running, so a message waits for it. sc stop app-12, then sc start app-12, brings it back.",
+    ],
+    needsYou: false,
+    telling: "Fix it.",
+  });
 }, 40_000);
 
 // A conflict took an approved PR out of ready to merge, and its message waits for a builder
-// that is missing. The thread needs you for that, but its PR still conflicts, so it isn't ready.
-test("a missing builder makes an approved PR that conflicts need you, not ready to merge", () => {
+// that is missing. The lead hears of it, and its PR still conflicts, so it isn't ready.
+test("a missing builder of an approved PR that conflicts is told to the lead, and isn't ready to merge", () => {
   const seen = run(
     `
 import { threadWord } from ${JSON.stringify(source("flow/status.ts"))};
 import { readThread } from ${JSON.stringify(source("flow/thread.ts"))};
 db.run("UPDATE tasks SET verdict = 'approve', checks = 'passing', conflicts = 'main', pr = 7");
 queueMessage(db, tmux, "app-12", { sender: "skelcrew", text: "Merge main.", said: "a conflict", typed_in: [] });
-for (let i = 0; i < 100 && !readThread(db, "app-12").needs_you; i++) {
+const noted = () => db.query("SELECT COUNT(*) AS n FROM notes").get().n;
+for (let i = 0; i < 100 && noted() === 0; i++) {
   await deliverAllWaiting(db, tmux);
   await Bun.sleep(50);
 }
 const thread = readThread(db, "app-12");
-console.log(JSON.stringify({ needsYou: thread.needs_you, word: threadWord(thread, 3) }));`,
+console.log(JSON.stringify({ noted: noted(), needsYou: thread.needs_you, word: threadWord(thread, 3) }));`,
     false,
     missing,
   );
-  expect(JSON.parse(seen)).toEqual({ needsYou: true, word: "needs you" });
+  expect(JSON.parse(seen)).toEqual({ noted: 1, needsYou: false, word: "checks" });
 });
 
 // A failed check was told to the builder of an approved PR, and its message waits for a builder
-// that is missing. While the check fails, the thread needs you but isn't ready to merge, nor its
-// task ready for review.
-test("a missing builder told of a failed check needs you, not ready to merge", () => {
+// that is missing. While the check fails, the lead hears of it, and the thread isn't ready to
+// merge, nor its task ready for review.
+test("a missing builder told of a failed check is told to the lead, and isn't ready to merge", () => {
   const seen = run(`
 import { threadWord } from ${JSON.stringify(source("flow/status.ts"))};
 import { taskStage } from ${JSON.stringify(source("flow/stage.ts"))};
 import { readThread } from ${JSON.stringify(source("flow/thread.ts"))};
 db.run("UPDATE tasks SET verdict = 'approve', checks = 'failing', ci_passed = 0, pr = 7");
 queueMessage(db, tmux, "app-12", { sender: "skelcrew", text: "test failed.", said: "test failed", typed_in: [] });
-for (let i = 0; i < 30 && !readThread(db, "app-12").needs_you; i++) {
+const noted = () => db.query("SELECT COUNT(*) AS n FROM notes").get().n;
+for (let i = 0; i < 30 && noted() === 0; i++) {
   deliverAllWaiting(db, tmux);
   await Bun.sleep(500);
 }
 const thread = readThread(db, "app-12");
-console.log(JSON.stringify({ needsYou: thread.needs_you, word: threadWord(thread, 3), stage: taskStage(thread, true) }));`);
-  expect(JSON.parse(seen)).toEqual({ needsYou: true, word: "needs you", stage: "working" });
+console.log(JSON.stringify({ noted: noted(), needsYou: thread.needs_you, word: threadWord(thread, 3), stage: taskStage(thread, true) }));`);
+  expect(JSON.parse(seen)).toEqual({ noted: 1, needsYou: false, word: "checks", stage: "working" });
 });
 
 test("a new round's drop takes only Skelcrew's notices and the review's changes, not the lead's message or a comment", () => {

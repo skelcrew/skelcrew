@@ -1,7 +1,6 @@
 // Skelcrew's state on this machine: one SQLite file.
 import { Database } from "bun:sqlite";
 import { appendFileSync, mkdirSync, readFileSync, rmSync } from "node:fs";
-import { hostname } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import { dataDir, dbLogFile, threadsDir } from "./paths.ts";
@@ -48,12 +47,26 @@ export const savedJson = <T>(column: string, shape: z.ZodType<T>, empty: T) =>
     .nullable()
     .transform((saved) => (saved === null ? empty : readJson(column, saved, shape, empty)));
 
-// Updates repository names, adding the owner only when repositories share a name.
-// Names are unique in the end, and no row ever takes a name another row still holds.
+// Updates repository names, adding the owner only when repositories share a name, in any case,
+// such as App and app. Names are typed in any case, so two that differ only in case would name
+// both. Names are unique in the end, and no row ever takes a name another row still holds.
 export function nameRepositories(db: Database): void {
   db.run(`UPDATE repositories SET name = CASE
-    WHEN (SELECT COUNT(*) FROM repositories AS other WHERE other.repo = repositories.repo) > 1
+    WHEN (SELECT COUNT(*) FROM repositories AS other
+      WHERE lower(other.repo) = lower(repositories.repo)) > 1
     THEN owner || '/' || repo ELSE repo END`);
+}
+
+// Moves a review that failed or timed out, saved by a release that had it need you, onto its
+// own flag, once, as the column that holds it is added. The lead can run such a review again, so
+// it no longer needs you. One past the round limit, with changes held, still needs you for the
+// limit, and one with a round under way is carried on as the engine starts, so both are left.
+function flagFailedReviews(db: Database): void {
+  const failed = `verdict IN ('failed', 'timed out') AND held IS NULL AND submitting IS NULL AND reviewing IS NULL`;
+  const where = hasTasks(db)
+    ? `(owner, repo, task) IN (SELECT owner, repo, task FROM tasks WHERE ${failed})`
+    : failed;
+  db.run(`UPDATE threads SET review_failed = 1, needs_you = 0 WHERE needs_you = 1 AND ${where}`);
 }
 
 // A thread's own columns past the first few: what belongs to its agent. `submitted` is whether
@@ -78,6 +91,12 @@ export function nameRepositories(db: Database): void {
 // `merge_record` is the plan and commit whose record Skelcrew posted on the PR, and
 // `merge_record_id` that review's ID, so a restart never posts it twice. `merge_followup` is the
 // issue a merge without approval filed its review's open findings in, so it files one only.
+// `needs_you_for` is what you must do for the thread, in words for you, as the lead, you or the
+// safety net marked it, or null with no mark. `limit_decided` is whether the lead or you cleared
+// the round limit's needs you, so it stops needing you for it until the next review.
+// `review_failed` is whether the latest review or round failed, which the lead hears of and
+// can run again. `ended_at` is when its builder ended a turn without submitting and nobody has acted on it
+// since, and `ended_said` what the builder said last then, for the safety net.
 // They are
 // the thread's, so a thread that starts over begins with none. `host` is the session host its
 // builder runs on, tmux or a runtime plugin, and `host_id` the session's ID there, which on tmux
@@ -112,6 +131,11 @@ const threadColumns = {
   merge_record: "TEXT",
   merge_record_id: "TEXT",
   merge_followup: "TEXT",
+  needs_you_for: "TEXT",
+  limit_decided: "INTEGER NOT NULL DEFAULT 0",
+  ended_at: "INTEGER",
+  ended_said: "TEXT",
+  review_failed: "INTEGER NOT NULL DEFAULT 0",
 };
 
 // A task's columns past its repository and ID: what belongs to the work rather than the agent
@@ -124,7 +148,7 @@ const threadColumns = {
 // the task its reviewer checks against. `review_at` is when the latest review was asked for or
 // ended, for sc ps. `merged` is whether the work ended with its changes merged, which tells a
 // task that is done apart from one that was dropped. `issue_link` is the link to the issue the
-// task came from, saved as it starts, and null for a task with no issue, such as wr1. `closes` is
+// task came from, saved as it starts, and null for a task with no issue, such as t1. `closes` is
 // the line a PR's body needs to close that issue on merge, saved as it starts too, so its PR
 // closes it though the tracker or Skelcrew's copy of it changed since. It is empty when there is
 // none, and null only in a row from before Skelcrew kept it. `review_post` is Skelcrew's review
@@ -265,7 +289,7 @@ export const hasTasks = (db: Database) =>
   db.query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'tasks'").get() !== null;
 
 // Creates the tasks table: one row per task, named by its repository and its ID, such as 12 or
-// wr1, as its threads name it.
+// t1, as its threads name it.
 function createTasks(db: Database): void {
   const columns = Object.entries(taskColumns).map(([column, type]) => `${column} ${type}`);
   db.run(`CREATE TABLE tasks (
@@ -354,28 +378,6 @@ export function moveToTasks(db: Database): void {
   }).immediate();
 }
 
-// Returns two lowercase letters from a machine's name, such as wr for workbox or sl for
-// simon-laptop, to name the threads it starts with no issue. Two machines on one repository
-// then mostly name theirs apart, such as app-wr4 and app-sl4. Machines with the same code are
-// kept apart by the claim startThread makes on the remote. A name of several words gives its first
-// two initials. One word gives its first letter and the next consonant after it, which reads
-// more like the word than its second letter does. A name with too few letters pads with x.
-export function codeOf(name: string): string {
-  // The words of the name, without a domain such as .local, which every Mac has.
-  const [first = "", second] =
-    name
-      .toLowerCase()
-      .split(".")[0]
-      ?.match(/[a-z]+/g) ?? [];
-  const next = second?.[0] ?? first.slice(1).match(/[^aeiou]/)?.[0] ?? first.slice(1, 2);
-  return `${first.slice(0, 1)}${next}`.padEnd(2, "x");
-}
-
-// Returns this machine's code, which names the threads it starts with no issue.
-export function machineCode(db: Database): string {
-  return z.object({ code: z.string() }).parse(db.query("SELECT code FROM machine").get()).code;
-}
-
 // Fills in the columns a tasks table from an earlier release gained: each task's issue link and
 // whether its work merged. Any sc run adds the columns, but only the daemon fills them, once it
 // holds the lock that keeps a second daemon out. Filled while the earlier release's daemon still
@@ -433,11 +435,9 @@ const hasColumn = (db: Database, table: string, column: string) =>
 // Creates the tables Skelcrew keeps, and adds the columns a database from an earlier release
 // lacks, leaving everything already there as it is.
 function prepareTables(db: Database): void {
-  // The machine's code, chosen from its name at the first run and kept, so renaming the machine
-  // never renames the threads it starts after.
-  db.run("CREATE TABLE IF NOT EXISTS machine (code TEXT NOT NULL)");
-  if (!db.query("SELECT 1 FROM machine").get())
-    db.run("INSERT INTO machine (code) VALUES (?)", [codeOf(hostname())]);
+  // An earlier release named threads by a code of the machine's, kept in a table named machine.
+  // Nothing reads it now, but it stays: that release's daemon can still be running as a newer sc
+  // opens the database, and it reads the code each time it starts a thread.
   db.run(`CREATE TABLE IF NOT EXISTS repositories (
     owner TEXT NOT NULL,
     repo TEXT NOT NULL,
@@ -525,11 +525,13 @@ function prepareTables(db: Database): void {
   // A database that gains `ci_shown` fills it once its daemon moved its threads onto tasks, as
   // finishUpgrade says.
   let gainsCiShown = false;
+  const reviewsFlagged = !hasColumn(db, "threads", "review_failed");
   for (const [column, type] of Object.entries({ ...threadColumns, ...taskColumns }))
     if (!hasColumn(db, "threads", column)) {
       db.run(`ALTER TABLE threads ADD COLUMN ${column} ${type}`);
       gainsCiShown ||= column === "ci_shown";
     }
+  if (!fresh && reviewsFlagged) flagFailedReviews(db);
   // A new database starts with tasks. One from an earlier release waits for its daemon to move
   // its threads onto tasks, as only the daemon knows no other daemon still writes to it.
   if (fresh) createTasks(db);

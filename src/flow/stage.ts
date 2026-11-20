@@ -41,9 +41,8 @@ export function listStage(thread: Thread | null, issueOpen: boolean): ListStage 
   if (stage === "ready for review") return "ready";
   if (thread === null || thread.status === "failed" || thread.status === "stopped")
     return "building";
-  const reviewFailed = thread.verdict === "failed" || thread.verdict === "timed out";
   const reviewing = thread.submitting !== null || thread.reviewing !== null;
-  if (reviewing || thread.review_limited || (thread.needs_you && reviewFailed)) return "reviewing";
+  if (reviewing || thread.review_limited || thread.review_failed) return "reviewing";
   if (thread.verdict === "approve" && thread.status === "waiting") return "checks";
   return "building";
 }

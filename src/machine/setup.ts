@@ -14,6 +14,7 @@ import {
   cantTell,
   checkoutNames,
   everyNamed,
+  githubPlugin,
   installRepositoryPlugins,
   type Need,
   repositoryNeeds,
@@ -216,9 +217,6 @@ function logInCodex(env: Env, line: string): void {
   if (!ran) throw new Error("codex login didn't finish, so Codex has no login for Skelcrew");
   console.log("Signed in to Codex.");
 }
-
-// The plugin sc offers in a checkout of a GitHub repository.
-const githubPlugin = "skelcrew/skelcrew-github";
 
 // Returns whether a plugin named github is installed, so sc offers it only until it is.
 const hasGitHubPlugin = () => installedPlugins(openDb()).some((p) => p.name === "github");

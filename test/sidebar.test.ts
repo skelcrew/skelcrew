@@ -199,6 +199,7 @@ const psRow = (change: Partial<ThreadRow>): ThreadRow => ({
   title: "Ok",
   status: "working",
   needsYou: false,
+  needsYouFor: null,
   queued: false,
   branch: "skelcrew/9",
   pr: null,
@@ -227,6 +228,28 @@ test("sc ps says how many messages wait for each builder, and --json counts them
   expect(said[1]).toEndWith("1");
   expect(said[2]).toEndWith("yes");
   expect(JSON.parse(said[3] ?? "")).toEqual(rows);
+});
+
+// The lead's mark says what you must do, which can be long, so sc ps cuts it to keep a row in 80
+// columns, and --json gives it whole.
+test("sc ps says what each thread needs you for, cut to fit", () => {
+  const said: string[] = [];
+  const log = spyOn(console, "log").mockImplementation((line: string) => said.push(line));
+  const action = "apply the check.yml split in PR #463, then tell the lead";
+  const rows = [
+    psRow({ thread: "app-9", status: "waiting", needsYou: true, needsYouFor: action }),
+    psRow({ thread: "app-8", status: "waiting", needsYou: true, needsYouFor: "round limit" }),
+  ];
+  try {
+    printThreads(rows, false);
+    printThreads(rows, true);
+  } finally {
+    log.mockRestore();
+  }
+  expect(said[1]).toEndWith("apply the check.yml…");
+  expect(said[2]).toEndWith("round limit");
+  for (const line of said.slice(0, 3)) expect(Bun.stringWidth(line)).toBeLessThanOrEqual(80);
+  expect(JSON.parse(said[3] ?? "")[0].needsYouFor).toBe(action);
 });
 
 // MERGE shows only while a thread has an armed merge, as WAITING does for messages.
@@ -451,7 +474,7 @@ test("the harness is grey, so the titles stand out", () => {
 
 test("a thread that needs you for anything but an approval has a yellow circle and word", () => {
   for (const status of ["working", "waiting"] as const)
-    for (const word of ["question", "round limit", "review timed out", "needs you"]) {
+    for (const word of ["question", "round limit", "needs you", "apply the fix in #463"]) {
       const needing = thread("app-12", { status, state: "needs you", word });
       const screen = draw([lead, needing], "lead", size);
       expect(read(screen).join("\n")).toContain(`  ● 12 app-12\n    ${word} · claude`);
@@ -469,24 +492,21 @@ test("an approved thread is green, as it is good news, though it waits on you to
   }
 });
 
-test("a thread whose harness stopped on an error, or whose review failed, is red, though it needs you", () => {
-  for (const word of ["error", "review failed"]) {
-    const screen = draw(
-      [thread("app-12", { state: word === "error" ? "error" : "needs you", word })],
-      "lead",
-      size,
-    );
-    expect(screen).toContain("\x1b[38;5;210m●");
-    expect(screen).toContain(`\x1b[38;5;210m${word}`);
-    expect(screen).not.toContain("\x1b[38;5;221m");
-  }
+test("a thread whose harness stopped on an error is red and needs you, and one whose review failed is red and hollow", () => {
+  const error = draw([thread("app-12", { state: "error", word: "error" })], "lead", size);
+  expect(error).toContain("\x1b[38;5;210m●");
+  expect(error).toContain("\x1b[38;5;210merror");
+  const failed = draw([thread("app-12", { state: "idle", word: "review failed" })], "lead", size);
+  expect(failed).toContain("\x1b[38;5;210m○");
+  expect(failed).toContain("\x1b[38;5;210mreview failed");
+  for (const screen of [error, failed]) expect(screen).not.toContain("\x1b[38;5;221m");
 });
 
 test("a mark is filled when the thread needs you, and hollow when it doesn't", () => {
   const mark = (more: Partial<Row>) => draw([thread("app-12", more)], "lead", size);
   // A working builder is bright, in the theme's own text in bold, so it reads on any theme.
   expect(mark({ status: "working" })).toContain("\x1b[1m○");
-  expect(mark({ status: "failed", word: "failed" })).toContain("\x1b[38;5;210m●");
+  expect(mark({ status: "failed", word: "failed" })).toContain("\x1b[38;5;210m○");
   for (const word of ["reviewing", "queued for review", "checks", "changes", "limit · 13:59"])
     expect(mark({ status: "waiting", word })).toContain("\x1b[90m○");
   expect(mark({ status: "stopped", word: "stopped" })).toContain("\x1b[90m○");
@@ -517,9 +537,10 @@ test("a mark looks the same whether or not you are on its row", () => {
   expect(colour(markLine("app-12"))).toBe(colour(markLine("lead")));
 });
 
-test("a failed thread is red even while it needs you, as its word says failed", () => {
+// The lead hears why it failed and can start it again, so it doesn't need you.
+test("a failed thread is red and hollow, as its word says failed", () => {
   const screen = draw([thread("app-12", { status: "failed", word: "failed" })], "lead", size);
-  expect(screen).toContain("\x1b[38;5;210m●");
+  expect(screen).toContain("\x1b[38;5;210m○");
   expect(screen).toContain("\x1b[38;5;210mfailed");
   expect(screen).not.toContain("\x1b[38;5;221m");
 });
@@ -589,7 +610,7 @@ test("on the grey, every colour is a fixed light one, as a theme's own can vanis
   expect(on("app-3")).toContain("\x1b[38;5;250mchecks");
   expect(on("app-4")).toContain("\x1b[38;5;120m●");
   expect(on("app-4")).toContain("\x1b[38;5;120mapproved");
-  expect(on("app-5")).toContain("\x1b[38;5;210m●");
+  expect(on("app-5")).toContain("\x1b[38;5;210m○");
   expect(on("app-5")).toContain("\x1b[38;5;210mfailed");
   expect(selected(draw([lead], "lead", size)).join("\n")).toContain("\x1b[38;5;250m◆");
 });
@@ -1003,6 +1024,11 @@ const state: Thread = {
   merge_record: null,
   merge_record_id: null,
   merge_followup: null,
+  needs_you_for: null,
+  limit_decided: false,
+  ended_at: null,
+  ended_said: null,
+  review_failed: false,
   agents: null,
   flow: "default",
   review_post: null,
@@ -1030,7 +1056,7 @@ test("a thread's word says who has it right now", () => {
 test("a newer submit is reviewing, not queued, until its own review waits", () => {
   const waited = { status: "waiting", reviewing: "abc", queued: 5 } satisfies Partial<Thread>;
   expect(word({ ...waited, submitting: "the fix" })).toBe("reviewing");
-  expect(word({ ...waited, needs_you: true })).toBe("review failed");
+  expect(word({ ...waited, review_failed: true })).toBe("review failed");
 });
 
 // A builder that replied to you or the lead and stopped waits on the lead, so it must not hide
@@ -1042,7 +1068,7 @@ test("a builder that stopped without submitting doesn't hide anything that needs
   );
   expect(word({ ...ended, verdict: "changes", rounds: 4, held: "fix" })).toBe("round limit");
   expect(word({ ...ended, verdict: "approve", checks: "failing" })).toBe("needs you");
-  expect(word({ ...ended, verdict: "failed" })).toBe("review failed");
+  expect(word({ ...ended, verdict: "failed", review_failed: true })).toBe("review failed");
   // Alone it says so, without claiming a question, as it may only have replied.
   expect(word({ turn_ended: true })).toBe("turn ended");
 });
@@ -1058,18 +1084,30 @@ test("each reason a thread needs you has its own word", () => {
   expect(word({ ...green, checks: "passing" })).toBe("approved");
   expect(word(green)).toBe("approved");
   expect(word({ ...needing, verdict: "changes", rounds: 4, held: "fix" })).toBe("round limit");
-  expect(word({ ...needing, verdict: "failed" })).toBe("review failed");
-  expect(word({ ...needing, verdict: "timed out" })).toBe("review timed out");
+  expect(word({ asking: true, needs_you_for: "apply the fix in #463" })).toBe("question");
+  expect(word({ needs_you_for: "apply the fix in #463" })).toBe("apply the fix in #463");
+});
+
+// The lead hears of a review that failed and can run it again, so it doesn't need you, but the
+// word says so until the builder works again or a new round starts.
+test("a review that failed or timed out says so, without needing you", () => {
+  const failed = { status: "waiting", review_failed: true } satisfies Partial<Thread>;
+  expect(word({ ...failed, verdict: "failed" })).toBe("review failed");
+  expect(word({ ...failed, verdict: "timed out" })).toBe("review timed out");
 });
 
 test("a round that failed before its review answered reads as a failed review", () => {
-  expect(word({ ...needing, submitting: "the fix" })).toBe("review failed");
-  expect(word({ ...needing, reviewing: "abc" })).toBe("review failed");
+  const failed = { status: "waiting", review_failed: true } satisfies Partial<Thread>;
+  expect(word({ ...failed, submitting: "the fix" })).toBe("review failed");
+  expect(word({ ...failed, reviewing: "abc" })).toBe("review failed");
 });
 
-test("past the round limit it stays so while the builder submits again", () => {
-  expect(word({ ...needing, rounds: 4, submitting: "the fix" })).toBe("round limit");
-  expect(word({ ...needing, rounds: 4, reviewing: "abc" })).toBe("round limit");
+// A submit past the round limit drops the held changes and waits on its review, which never
+// needs you, so it reads as reviewing until a review asks for changes again.
+test("past the round limit, a submit under way reads as reviewing", () => {
+  const past = { status: "waiting", rounds: 4, verdict: "changes" } satisfies Partial<Thread>;
+  expect(word({ ...past, submitting: "the fix" })).toBe("reviewing");
+  expect(word({ ...past, reviewing: "abc" })).toBe("reviewing");
 });
 
 // A thread past the round limit can still be approved, such as once you rerun its review. The
@@ -1310,9 +1348,9 @@ console.log(JSON.stringify(looks.map((row) => [row?.tokens, row?.step])));`;
   });
 
   test("each repository's tab counts what needs you and what is ready apart", () => {
-    // site and app each have a red mark among their yellow ones, docs only a yellow one, and web
-    // an approved thread, which is ready rather than needing you. Threads working, stopped or
-    // done count for neither, nor does one whose turn ended, as it waits on the lead.
+    // app has a red mark, for its harness error, site and docs only yellow ones, and web an
+    // approved thread, which is ready rather than needing you. Threads working, stopped, failed
+    // or done count for neither, nor does one whose turn ended, as each waits on the lead.
     const threads = [
       { repo: "site", task: "1", status: "waiting", needs_you: 1 },
       { repo: "site", task: "2", asking: 1 },
@@ -1344,7 +1382,7 @@ console.log(JSON.stringify(repositoryTabs(db, () => 3)));`;
     expect(JSON.parse(run.stdout.toString())).toEqual([
       { name: "app", fullName: "simon/app", needYou: 1, colour: "red", ready: 0 },
       { name: "docs", fullName: "simon/docs", needYou: 1, colour: "yellow", ready: 0 },
-      { name: "site", fullName: "simon/site", needYou: 3, colour: "red", ready: 0 },
+      { name: "site", fullName: "simon/site", needYou: 2, colour: "yellow", ready: 0 },
       { name: "web", fullName: "simon/web", needYou: 0, colour: "yellow", ready: 1 },
     ]);
   });

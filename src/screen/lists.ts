@@ -229,7 +229,7 @@ function threadGroups(threads: Known[], now: number): Group[] {
     const { thread, word } = open;
     // Only a review is on another harness, held on a usage limit or not, and a thread with no
     // harness saved started before Skelcrew saved it, when builders ran only on Claude Code. A
-    // thread with no issue in the tracker has a task such as wr1.
+    // thread with no issue in the tracker has a task such as t1.
     const harness = onReviewer(thread, word)
       ? (thread.reviewer ?? "")
       : (thread.harness ?? "claude");
@@ -260,7 +260,10 @@ function threadGroups(threads: Known[], now: number): Group[] {
   type Fits = (r: (typeof rows)[number]) => boolean;
   const urgent: Fits = (r) => needsDecision(r.open.mark);
   const ready: Fits = (r) => readyToMerge(r.open.mark);
-  const stopped: Fits = (r) => !urgent(r) && r.open.thread.status === "stopped";
+  // A thread that failed waits for the lead to start it again, as a stopped one waits for sc
+  // start, so the two go together.
+  const stopped: Fits = (r) =>
+    !urgent(r) && (r.open.thread.status === "stopped" || r.open.thread.status === "failed");
   const working: Fits = (r) => !urgent(r) && !ready(r) && !stopped(r);
   return filled([
     { heading: "Needs you", rows: rows.filter(urgent).map((r) => r.row) },
@@ -280,7 +283,7 @@ export function listGroups(db: Database, open: Open, entry: Entry, now: number):
 
 // Returns the sidebar's entries for the open repository, with their counts: Issues when it has a
 // tracker, Threads always, and PRs when it has a forge. Issues has only its count, as an issue
-// never needs you on its own. Threads says how many need you or failed, in yellow, and PRs how
+// never needs you on its own. Threads says how many need you, in yellow, and PRs how
 // many are ready to merge, in green, only when there are any. An approved thread is ready, not
 // needing you, so the same thread is never counted twice. With no forge there are no PRs, so
 // Threads says how many are ready itself, before how many need you.

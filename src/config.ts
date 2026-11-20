@@ -108,6 +108,9 @@ export const threadLimit = (repository: Repository): number | undefined =>
 // Returns how many test suites may run at once through sc check on this machine. Throws when
 // your config isn't valid.
 export const checkLimit = (): number => readSettings(["checks"]).checks;
+// Returns how many minutes a builder that ended its turn without submitting may wait for someone
+// to act before its thread needs you. It is yours, as it is about how soon you want to hear.
+export const graceMinutes = (): number => readSettings(["graceMinutes"]).graceMinutes;
 // Returns the host new sessions start on: tmux, or the name of a runtime plugin. It is yours
 // alone, as how you watch your agents is, so a repository's skelcrew.yaml can't set it.
 export const sessionHost = (): string => readSettings(["host"]).host;

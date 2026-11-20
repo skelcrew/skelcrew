@@ -33,13 +33,16 @@ const agentRefusals: Record<string, string> = {
   "plugin ls": "listing plugins",
 };
 
-// Splits a task's name, such as app-13, or app-wr1 for a thread with no tracker, into its
+// Splits a task's name, such as app-13, or app-t1 for a thread with no tracker, into its
 // repository and task. Gives nothing when the word isn't a task's name. Repository names can
-// hold dashes, so the task is what follows the last one.
+// hold dashes, so the task is what follows the last one. A name may be typed in any case, such
+// as APP-T100. The task comes back lowercase: an ID with letters can only be Skelcrew's own, as
+// the copy of the tracker leaves out issues shaped like one in any case, and Skelcrew keeps its
+// own in lowercase. The daemon finds the repository in any case.
 function splitTaskName(word?: string): [string, string] | undefined {
   // The greedy first group takes every dash but the last.
-  const parts = word?.match(/^(.+)-([a-z]{0,2}\d+)$/);
-  return parts?.[1] && parts[2] ? [parts[1], parts[2]] : undefined;
+  const parts = word?.match(/^(.+)-([a-z]{0,2}\d+)$/i);
+  return parts?.[1] && parts[2] ? [parts[1], parts[2].toLowerCase()] : undefined;
 }
 
 // Splits a thread's name into its repository and task, as splitTaskName does. A thread is its
@@ -48,9 +51,9 @@ function splitTaskName(word?: string): [string, string] | undefined {
 // as a repository named with its owner. Every task's one thread is its builder, so another role
 // is refused, saying so.
 function splitThreadName(word?: string): [string, string] | undefined {
-  const parts = word?.match(/^(.+)\/([a-z]+)$/);
+  const parts = word?.match(/^(.+)\/([a-z]+)$/i);
   const task = splitTaskName(parts?.[1] ?? word);
-  if (task && parts?.[2] && parts[2] !== "builder")
+  if (task && parts?.[2] && parts[2].toLowerCase() !== "builder")
     throw new Error(`${parts[1]} has no ${parts[2]} thread: a task's only thread is its builder`);
   return task;
 }
@@ -104,6 +107,7 @@ function usage(command?: string): never {
     "attach",
     "peek",
     "interrupt",
+    "needs-you",
     "review",
     "submit",
     "check",
@@ -769,6 +773,29 @@ async function threadCommand(args: string[]): Promise<void> {
   usage(command);
 }
 
+// Marks a thread as needing you, with the action you must take, as sc needs-you <thread>
+// "<action>", or clears its mark, as sc needs-you --clear <thread>. The lead runs it when only you
+// can unblock a thread, and you can too. The daemon refuses a builder.
+async function needsYouCommand(args: string[]): Promise<void> {
+  const [command, first, second, ...rest] = args;
+  const { markNeedsYou } = await import("./client.ts");
+  if (first === "--clear" && rest.length === 0) {
+    const thread = splitThreadName(second);
+    if (!thread) usage(command);
+    const { thread: name, needsYou } = await markNeedsYou(...thread, null);
+    console.log(
+      needsYou
+        ? `Cleared ${name}'s mark. It still needs you for something Skelcrew sees itself.`
+        : `${name} no longer needs you.`,
+    );
+    return;
+  }
+  const thread = splitThreadName(first);
+  if (!thread || !second?.trim() || rest.length > 0) usage(command);
+  const { thread: name } = await markNeedsYou(...thread, second.trim());
+  console.log(`${name} needs you: ${second.trim()}. sc needs-you --clear ${name} clears it.`);
+}
+
 // Types a message from the lead into a builder, from a builder into the lead, or from a lead
 // into another repository's lead, as sc tell lead <repo> "<text>". A brief can be long, so with
 // - as its text it comes on stdin instead, which needs no shell quoting. A builder's sc tell lead
@@ -932,6 +959,8 @@ async function runCommand(args: string[]): Promise<void> {
     case "interrupt":
     case "attach":
       return threadCommand(words);
+    case "needs-you":
+      return needsYouCommand(words);
     case "tell":
       return tellCommand(words);
     case "check":

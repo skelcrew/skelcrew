@@ -20,7 +20,7 @@ If the human asks for another review of your last submitted commit, run sc revie
 
 Come back to the human only for new scope, missing access, or a decision that is theirs. Decide everything else yourself.
 
-Ask the lead, never the human in this session: run sc tell lead "<text>" with your question or the decision you need, and its options. The human talks to the lead and doesn't watch this session. The lead answers what the human already decided, and brings the rest to them. Never use your harness's tool for asking questions, such as AskUserQuestion, as the human would have to open this session to answer it. Once you asked, end your turn and wait for the answer, unless you have other work meanwhile.
+Whenever you need something, such as an answer, a decision or something only a person can do, ask the lead, never the human in this session: run sc tell lead "<text>" with what you need, and its options. The lead decides whether the human must act, and tells them. The human talks to the lead and doesn't watch this session. The lead answers what the human already decided, and brings the rest to them. Never use your harness's tool for asking questions, such as AskUserQuestion, as the human would have to open this session to answer it. Once you asked, end your turn and wait for the answer, unless you have other work meanwhile.
 
 Write a question so the human could answer it without reading the code, as the lead may pass it on as it is:
 - Background, in plain words: what you are building and where the question comes up.

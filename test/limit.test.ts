@@ -271,6 +271,11 @@ const thread = (change: Partial<Thread>): Thread => ({
   merge_record: null,
   merge_record_id: null,
   merge_followup: null,
+  needs_you_for: null,
+  limit_decided: false,
+  ended_at: null,
+  ended_said: null,
+  review_failed: false,
   agents: null,
   flow: "default",
   review_post: null,
@@ -309,8 +314,8 @@ test("a thread waiting out a usage limit says until when, is dim, and doesn't ne
   expect(threadWord(thread(builder), 3, now)).toBe("error");
 });
 
-test("a thread that needs you says why, whatever limit it also waits on", () => {
-  const failed = thread({ review_limited: true, needs_you: true, verdict: "failed" });
+test("a thread that needs you, or whose review failed, says why, whatever limit it also waits on", () => {
+  const failed = thread({ review_limited: true, review_failed: true, verdict: "failed" });
   expect(threadWord(failed, 3, now)).toBe("review failed");
   expect(threadWord(thread({ review_limited: true, asking: true }), 3, now)).toBe("question");
 });

@@ -188,6 +188,7 @@ describe("sc ps", () => {
         title: "Add docs",
         status: "waiting",
         needsYou: true,
+        needsYouFor: "needs you",
         queued: false,
         branch: "skelcrew/7",
         pr: null,
@@ -256,6 +257,7 @@ ${threadSql({ task: "3", status: "stopped", title: "Old", reviewing: "abc", queu
         title: null,
         status: "working",
         needsYou: false,
+        needsYouFor: null,
         queued: false,
         branch: "skelcrew/12",
         pr: null,
@@ -401,7 +403,7 @@ UPDATE tasks SET merged = 1 WHERE task = '12'`);
         title: "Send people back to the page they came from after signing in",
         short: null,
         issue: null,
-        thread: { status: "failed", needsYou: false, queued: false },
+        thread: { status: "failed", needsYou: false, needsYouFor: null, queued: false },
         pr: null,
         checks: null,
         review: { state: "none", round: null, at: null },
@@ -412,7 +414,7 @@ UPDATE tasks SET merged = 1 WHERE task = '12'`);
         title: "Add export",
         short: "JSON export",
         issue: "#12",
-        thread: { status: "working", needsYou: false, queued: false },
+        thread: { status: "working", needsYou: false, needsYouFor: null, queued: false },
         pr: null,
         checks: null,
         review: { state: "none", round: null, at: null },
@@ -539,6 +541,37 @@ console.log(threadTask(db, await startThread(db, { repo: "app", task: "3" })).cl
     });
   });
 
+  // A task's name may be typed in any case, such as SITE-7 or App-T4, and finds the same task.
+  test("finds a task named in any case", async () => {
+    sql(threadSql({ task: "t4", status: "done", title: "Rate limit the API" }));
+    serve();
+    await untilAnswers();
+    const shown = await skel(["show", "site-7"]);
+    expect(shown.err).toBe("");
+    expect((await skel(["show", "SITE-7"])).out).toBe(shown.out);
+    expect((await skel(["show", "Site-7"])).out).toBe(shown.out);
+    const own = await skel(["show", "app-t4"]);
+    expect(own.out).toStartWith("app-t4  Rate limit the API\n");
+    expect((await skel(["show", "APP-T4"])).out).toBe(own.out);
+  });
+
+  // Two repositories whose names differ only in case, such as App and app, saved before Skelcrew
+  // named them apart. A name typed in any case would name both, so it is refused, saying how
+  // to name one, and never shows the other's task.
+  test("refuses a name that matches two repositories in different cases", async () => {
+    sql("INSERT INTO repositories (name, owner, repo) VALUES ('App', 'other', 'App')");
+    serve();
+    await untilAnswers();
+    const refused = await skel(["show", "APP-12"]);
+    expect(refused.out).toBe("");
+    expect(refused.err).toContain(
+      "APP names more than one repository: other/App, simon/app. Name one by its owner/name.",
+    );
+    const named = await skel(["show", "simon/app-12"]);
+    expect(named.err).toBe("");
+    expect(named.out).toStartWith("app-12  Add export\n");
+  });
+
   test("shows a task's issue, threads and description", async () => {
     serve();
     await untilAnswers();
@@ -570,7 +603,9 @@ console.log(threadTask(db, await startThread(db, { repo: "app", task: "3" })).cl
       stage: "working",
       title: "Add export",
       issue: { id: "#12", link: "https://github.com/simon/app/issues/12" },
-      threads: [{ thread: "app-12/builder", status: "working", needsYou: false }],
+      threads: [
+        { thread: "app-12/builder", status: "working", needsYou: false, needsYouFor: null },
+      ],
       body: "Export threads as JSON.\n\nKeep it small.",
       pr: null,
       review: { state: "none", round: null, at: null },
@@ -847,6 +882,7 @@ describe("with a forge", () => {
       title: "Add export",
       status: "waiting",
       needsYou: false,
+      needsYouFor: null,
       queued: false,
       branch: "skelcrew/12",
       pr: 31,
@@ -964,7 +1000,9 @@ describe("with a forge", () => {
       stage: "working",
       title: "Add export",
       issue: { id: "#12", link: null },
-      threads: [{ thread: "app-12/builder", status: "waiting", needsYou: false }],
+      threads: [
+        { thread: "app-12/builder", status: "waiting", needsYou: false, needsYouFor: null },
+      ],
       body: "",
       pr: 31,
       review: { state: "changes", round: 3, at: "2025-11-16T11:00:00.000Z" },

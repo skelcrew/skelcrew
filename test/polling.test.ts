@@ -15,10 +15,9 @@ import {
   writeFileSync,
 } from "node:fs";
 import { Socket } from "node:net";
-import { hostname, tmpdir, userInfo } from "node:os";
+import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import type { Subprocess } from "bun";
-import { codeOf } from "../src/db.ts";
 import { leadPlaces } from "../src/paths.ts";
 import {
   answer,
@@ -35,8 +34,6 @@ import {
   writeScript,
 } from "./harness.ts";
 
-// This machine's code, which names the threads sc start begins with no issue, such as app-wr1.
-const own = codeOf(hostname());
 const main = source("main.ts");
 const daemon = source("flow/daemon.ts");
 let home = "";
@@ -2176,12 +2173,12 @@ echo "Not logged in"; exit 1`,
     );
     expect(started.stderr.toString()).toBe("");
     await until(() => thread().status === "waiting", 30_000);
-    Bun.spawnSync([process.execPath, main, "stop", `app-${own}1`], { env: env() });
+    Bun.spawnSync([process.execPath, main, "stop", `app-t100`], { env: env() });
     expect(thread().status).toBe("stopped");
     expect([...claims(), ...assigns()]).toEqual([]);
   }, 60_000);
 
-  // The test above stops the daemon as the review of app-t1's first round starts. bubblewrap
+  // The test above stops the daemon as the review of app-t100's first round starts. bubblewrap
   // starts its sandbox's first process in its own time, and that process only asks to die with
   // bwrap once it runs. A stop that ends bwrap in between leaves it waiting forever on a bwrap
   // that is gone, with bwrap's own command line, and no longer under the daemon. Here bwrap

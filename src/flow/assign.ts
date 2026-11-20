@@ -29,7 +29,7 @@ function inOrder(folder: string, failed: string, work: () => Promise<void>): voi
 // Claims the thread's issue, when `claim` says to, and assigns it to you, then saves that
 // Skelcrew assigned you, when it did. sc start claims as a labeled start does, so the issue shows
 // Skelcrew took it, but starts the thread whatever the answer. A thread with no issue, such as
-// app-wr1, or in a repository with no tracker, has nothing to assign.
+// app-t1, or in a repository with no tracker, has nothing to assign.
 export function assignIssue(db: Database, thread: Thread, claim: boolean): void {
   inOrder(thread.folder, `couldn't assign you ${thread.folder}'s issue`, async () => {
     const repository = repositoryOf(db, thread);

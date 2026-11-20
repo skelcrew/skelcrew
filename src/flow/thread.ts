@@ -41,7 +41,7 @@ export const Thread = z.object({
   owner: z.string(),
   // The repository's name on its forge, or its remote's path, without the owner.
   repo: z.string(),
-  // The task's ID in its tracker, such as 12, or, with no task there, Skelcrew's own, such as wr1.
+  // The task's ID in its tracker, such as 12, or, with no task there, Skelcrew's own, such as t1.
   task: z.coerce.string(),
   folder: z.string(),
   branch: z.string(),
@@ -214,6 +214,22 @@ export const Thread = z.object({
   // The issue a merge without approval filed what its review still asked for in, once filed, so
   // a poll after a restart never files a second one.
   merge_followup: z.string().nullable(),
+  // What you must do for the thread, written for you, when the lead, you or the safety net marked
+  // it as needing you, such as "apply the check.yml split in PR #463". Null with no mark.
+  needs_you_for: z.string().nullable(),
+  // Whether the lead or you decided about the round limit, by clearing its needs you, so the
+  // thread no longer needs you for it. The next review asks again.
+  limit_decided: z.coerce.boolean(),
+  // When the builder ended a turn without submitting, while nobody has acted on it since, and
+  // what it said last then. The safety net marks the thread as needing you once it waited long
+  // enough. Null otherwise.
+  ended_at: z.number().nullable(),
+  ended_said: z.string().nullable(),
+  // Whether the latest review failed or timed out, or its round failed before the review
+  // answered, such as on a push that failed. The lead hears of it and can run the review again,
+  // so it doesn't need you. Anything that sets the builder working again, a new submit or
+  // review, ends it.
+  review_failed: z.coerce.boolean(),
   // The tree of the .agents/ you had approved when the task started, whose roles its agents
   // keep to the end, though you approve another meanwhile. Null for the built-in roles, as
   // every task had before Skelcrew read .agents/.
@@ -265,6 +281,22 @@ export async function builderSession(
   // still name it by the old title.
   if (found.labels?.title !== (sessionTitle(db, now) ?? undefined)) renameOnHost(db, thread.folder);
   return { host, id: found.name };
+}
+
+// Returns the mark of a thread whose builder's session host plugin is missing, which only you can
+// bring back, saying what to do. A mark the thread had already follows it, so it isn't lost.
+export const hostMissing = (host: string, had: string | null = null) => {
+  const install = `run sc install: its session host ${host} is missing`;
+  return had === null ? install : `${install}, then ${had}`;
+};
+
+// Returns the mark a thread had before its host plugin went missing, once the plugin is back,
+// or undefined when its mark isn't the one hostMissing gave.
+export function markBeforeHost(host: string, mark: string | null): string | null | undefined {
+  const install = hostMissing(host);
+  if (mark === install) return null;
+  if (mark?.startsWith(`${install}, then `)) return mark.slice(install.length + ", then ".length);
+  return undefined;
 }
 
 // Returns why a thread's builder can't be reached when its host plugin is gone.
@@ -333,12 +365,14 @@ export function record(
   why?: string,
 ): Thread {
   // Work out the note for the lead. A thread that stops needing you drops its note, and one
-  // that starts needing you keeps why, short enough to type as one line. A thread that already
-  // needed you keeps the note it had, so a later change doesn't hide the first reason.
+  // that starts needing you keeps why, short enough to type as one line, unless the change says
+  // there is none, as for a mark the lead set itself. A thread that already needed you keeps the
+  // note it had, so a later change doesn't hide the first reason.
   const before = readThread(db, folder);
   let { noting } = change;
   if (!needsYou({ ...before, ...change })) noting = null;
-  else if (!needsYou(before)) noting = (why ?? "").replace(/\s+/g, " ").trim().slice(0, 200);
+  else if (!needsYou(before) && noting === undefined)
+    noting = (why ?? "").replace(/\s+/g, " ").trim().slice(0, 200);
   // The column names come from the keys of Thread above, never from outside. The task's fields
   // go on its task, and the rest on the thread. One transaction, so a change is saved whole or
   // not at all.
@@ -373,7 +407,14 @@ export function record(
   // Read the thread back rather than merging the change in memory, so the log and the caller
   // see exactly what the database holds.
   const thread = readThread(db, folder);
-  log(db, thread, why);
+  // A mark that clears says so in the log, whatever cleared it, so the log shows what was cleared,
+  // by whom and why. One cleared on purpose already names it.
+  const old = before.needs_you_for;
+  const cleared =
+    old !== null && thread.needs_you_for === null && !(why ?? "").includes(old)
+      ? `${why ?? "changed"}, which cleared its mark: ${old}`
+      : why;
+  log(db, thread, cleared);
   reportStatus(db, thread);
   if (thread.short !== before.short) renameOnHost(db, folder);
   return thread;

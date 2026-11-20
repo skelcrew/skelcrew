@@ -13,7 +13,7 @@ import { endThread, removing } from "./events.ts";
 import { noteForLead } from "./messages.ts";
 import { findRepository, repositoryAt } from "./repo.ts";
 import { lastPushed } from "./round.ts";
-import { openFindings } from "./status.ts";
+import { limitWaits, openFindings } from "./status.ts";
 import { readThread, record, repositoryOf, Thread, threadName, threadOn } from "./thread.ts";
 
 // Returns the thread sc merge names: by its task, such as app-12, or by its PR's
@@ -50,7 +50,7 @@ export function threadToMerge(
     thread = Thread.nullable().parse(row);
     if (!thread) throw new Error(`Skelcrew has no thread with PR #${which.pr} in ${name}`);
   } else if (which.task !== undefined) {
-    thread = threadOn(db, name, which.task);
+    thread = threadOn(db, `${owner}/${repo}`, which.task);
     if (!thread) throw new Error(`there is no thread ${name}-${which.task}`);
   }
   if (!thread) throw new Error("name the thread, such as app-12, or its PR, such as #7");
@@ -168,7 +168,10 @@ export function armMerge(
     asked === null
       ? `you asked to ${what}`
       : `the lead asked to ${what}, as the human asked: ${JSON.stringify(asked)}`;
-  record(db, thread.folder, plan, why);
+  // Arming it past the round limit is your decision about the limit, which stays made though the
+  // plan later ends, such as when a push cancels it, until the next review asks again.
+  const decided = limitWaits(thread) ? { limit_decided: true } : {};
+  record(db, thread.folder, { ...plan, ...decided }, why);
   console.log(`${name}: ${why}`);
   // The lead can't see your terminal, so it hears of a merge you asked for there. One it asked
   // for itself it already told you about.

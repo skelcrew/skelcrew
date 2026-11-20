@@ -59,8 +59,8 @@ async function fetchRef(
 
 // Returns whether the repository's remote has no refs at all, as one with no commits yet. A
 // remote that can't be listed isn't taken for empty. The names Skelcrew claims for threads with
-// no issue are refs too, made even on an empty remote, but they hold no commit of the
-// repository's, so they don't count.
+// no issue, and its last claim, are refs too, made even on an empty remote, but they hold no
+// commit of the repository's, so they don't count.
 export async function remoteEmpty(db: Database, repository: Repository): Promise<boolean> {
   const listed = await git(db, repository, ["ls-remote", repository.remote]).catch(() => null);
   if (listed === null) return false;
@@ -232,35 +232,51 @@ export async function onRemote(
 }
 
 // Where a name Skelcrew gave one of its own tasks is claimed on the remote, such as
-// refs/skelcrew/names/wr4. Outside refs/heads, so the forge lists no branch for it.
+// refs/skelcrew/names/t104. Outside refs/heads, so the forge lists no branch for it.
 const claimRef = (name: string) => `refs/skelcrew/names/${name}`;
 
-// Returns the names of Skelcrew's own tasks with the machine's code that any machine claimed on
-// the remote, such as wr4. Another machine can have the same code, such as workbox and
-// workstation, and only the remote is shared.
-export async function claimedNames(
-  db: Database,
-  repository: Repository,
-  code: string,
-): Promise<string[]> {
-  const listed = await git(db, repository, ["ls-remote", repository.remote, claimRef(`${code}*`)]);
-  // Each line is a commit, a tab and the ref. The pattern also matches a longer code that starts
-  // with this one, such as wrx4 for wr, so the name must go on with digits alone.
-  return listed
-    .split("\n")
-    .map((line) => line.split("\t")[1]?.slice(claimRef("").length) ?? "")
-    .filter((name) => new RegExp(`^${code}\\d+$`).test(name));
+// The ref every claim moves, in the same push, so claims reach the remote in order: a machine
+// that read the claims before another's claim landed finds this ref moved, and reads again. It
+// sits beside the claims, so it counts as one where they do, such as for an empty remote, and
+// "last" is no task's name.
+const lastClaimRef = claimRef("last");
+
+// What the remote holds of Skelcrew's own tasks' names: the names any machine claimed, such as
+// t104, and the commit of the last claim, or "" before any claim moved it. Only the remote is
+// shared between machines, so it is what keeps their names apart.
+export type Claims = { names: string[]; last: string };
+
+// Returns the names claimed on the remote and its last claim, as Claims says.
+export async function claimedNames(db: Database, repository: Repository): Promise<Claims> {
+  const listed = await git(db, repository, [
+    "ls-remote",
+    repository.remote,
+    claimRef("t*"),
+    lastClaimRef,
+  ]);
+  // Each line is a commit, a tab and the ref.
+  const lines = listed.split("\n").map((line) => line.split("\t"));
+  const last = lines.find(([, ref]) => ref === lastClaimRef)?.[0] ?? "";
+  // Claims from when names began with a machine's code, such as wr4, don't match the pattern,
+  // and a name must go on with digits alone after the t.
+  const names = lines
+    .map(([, ref]) => ref?.slice(claimRef("").length) ?? "")
+    .filter((name) => /^t\d+$/.test(name));
+  return { names, last };
 }
 
 // Claims a name for one of Skelcrew's own tasks on the remote, from Skelcrew's clone in the
-// folder, and returns whether this machine got it. False means another machine claimed it first.
-// The claim is never removed, so no machine gives the name to other work later, even once its
-// branch is gone.
+// folder, and returns whether this machine got it. `last` is the last claim as claimedNames read
+// it. False means another machine claimed this name, or any name, since then: the caller reads
+// the claims again and picks a number above them. So two machines never take one name, and a
+// name is never below one claimed before it. The claim is never removed, so no machine gives
+// the name to other work later, even once its branch is gone.
 export async function claimName(
   db: Database,
   repository: Repository,
   folder: string,
   name: string,
+  last: string,
 ): Promise<boolean> {
   // A commit of the claim's own, of no files, so it works in any clone, even one with no commit
   // yet. Were two machines to push the same commit, git would send nothing for the second and
@@ -285,25 +301,30 @@ export async function claimName(
     ...process.env,
     ...identity,
   });
-  // A lease with nothing after the colon lets the push create the ref only where it doesn't
-  // exist yet. The remote checks that as it takes the push, so of two machines claiming one
-  // name at once, only one gets it.
+  // One atomic push makes the claim and moves the last claim to it. Each lease is checked by the
+  // remote as it takes the push: the claim only where it doesn't exist yet, as nothing follows
+  // its colon, and the last claim only where it is still the one read. Of two machines claiming
+  // at once, only the first gets either.
   try {
     await git(db, repository, [
       "-C",
       folder,
       "push",
       "--quiet",
+      "--atomic",
       `--force-with-lease=${claimRef(name)}:`,
+      `--force-with-lease=${lastClaimRef}:${last}`,
       repository.remote,
       `${commit}:${claimRef(name)}`,
+      `${commit}:${lastClaimRef}`,
     ]);
     return true;
   } catch (error) {
-    // A refusal only means the name is taken when the claim is there. Otherwise the push failed
-    // for another reason, such as the remote being out of reach, which the caller must hear.
-    const listed = await git(db, repository, ["ls-remote", repository.remote, claimRef(name)]);
-    if (listed === "") throw error;
+    // A refusal only means another machine claimed first when the claim is there or the last
+    // claim moved. Otherwise the push failed for another reason, such as the remote being out of
+    // reach, which the caller must hear.
+    const now = await claimedNames(db, repository);
+    if (now.last === last && !now.names.includes(name)) throw error;
     return false;
   }
 }
