@@ -78,6 +78,11 @@ export function nameRepositories(db: Database): void {
 // `merge_record` is the plan and commit whose record Skelcrew posted on the PR, and
 // `merge_record_id` that review's ID, so a restart never posts it twice. `merge_followup` is the
 // issue a merge without approval filed its review's open findings in, so it files one only.
+// `needs_you_for` is what you must do for the thread, in words for you, as the lead, you or the
+// safety net marked it, or null with no mark. `limit_decided` is whether the lead or you cleared
+// the round limit's needs you, so it stops needing you for it until the next review.
+// `ended_at` is when its builder ended a turn without submitting and nobody has acted on it
+// since, and `ended_said` what the builder said last then, for the safety net.
 // They are
 // the thread's, so a thread that starts over begins with none. `host` is the session host its
 // builder runs on, tmux or a runtime plugin, and `host_id` the session's ID there, which on tmux
@@ -112,6 +117,10 @@ const threadColumns = {
   merge_record: "TEXT",
   merge_record_id: "TEXT",
   merge_followup: "TEXT",
+  needs_you_for: "TEXT",
+  limit_decided: "INTEGER NOT NULL DEFAULT 0",
+  ended_at: "INTEGER",
+  ended_said: "TEXT",
 };
 
 // A task's columns past its repository and ID: what belongs to the work rather than the agent

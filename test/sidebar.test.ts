@@ -199,6 +199,7 @@ const psRow = (change: Partial<ThreadRow>): ThreadRow => ({
   title: "Ok",
   status: "working",
   needsYou: false,
+  needsYouFor: null,
   queued: false,
   branch: "skelcrew/9",
   pr: null,
@@ -227,6 +228,28 @@ test("sc ps says how many messages wait for each builder, and --json counts them
   expect(said[1]).toEndWith("1");
   expect(said[2]).toEndWith("yes");
   expect(JSON.parse(said[3] ?? "")).toEqual(rows);
+});
+
+// The lead's mark says what you must do, which can be long, so sc ps cuts it to keep a row in 80
+// columns, and --json gives it whole.
+test("sc ps says what each thread needs you for, cut to fit", () => {
+  const said: string[] = [];
+  const log = spyOn(console, "log").mockImplementation((line: string) => said.push(line));
+  const action = "apply the check.yml split in PR #463, then tell the lead";
+  const rows = [
+    psRow({ thread: "app-9", status: "waiting", needsYou: true, needsYouFor: action }),
+    psRow({ thread: "app-8", status: "waiting", needsYou: true, needsYouFor: "round limit" }),
+  ];
+  try {
+    printThreads(rows, false);
+    printThreads(rows, true);
+  } finally {
+    log.mockRestore();
+  }
+  expect(said[1]).toEndWith("apply the check.yml…");
+  expect(said[2]).toEndWith("round limit");
+  for (const line of said.slice(0, 3)) expect(Bun.stringWidth(line)).toBeLessThanOrEqual(80);
+  expect(JSON.parse(said[3] ?? "")[0].needsYouFor).toBe(action);
 });
 
 // MERGE shows only while a thread has an armed merge, as WAITING does for messages.
@@ -1002,6 +1025,10 @@ const state: Thread = {
   merge_record: null,
   merge_record_id: null,
   merge_followup: null,
+  needs_you_for: null,
+  limit_decided: false,
+  ended_at: null,
+  ended_said: null,
   agents: null,
   flow: "default",
   review_post: null,

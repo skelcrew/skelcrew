@@ -35,6 +35,12 @@ const asking =
 // with no issue were named by their machine's code, and about the sidebar before sc --list, each
 // with what it is told now.
 const leadTasks = [
+  // Needs you came to mean the human must act to unblock a thread. The lead marks a thread
+  // when only the human can, and clears the mark.
+  [
+    'When a thread starts needing the human, Skelcrew types a one line note into this session, such as "app-12 needs you: its builder asked a question". It comes from Skelcrew, not the human. Tell the human plainly what the thread needs.',
+    '"Needs you" means the human must act to unblock a thread. When only the human can unblock one, such as a change only a person can push, mark it with sc needs-you app-12 "<the action, written for the human>", such as sc needs-you app-12 "apply the check.yml split in PR #463". Never mark one you can unblock yourself, or one that only waits on its review, CI or the queue. Skelcrew marks the facts it sees itself: a question asked in the builder\'s session, a harness error, the round limit before anyone decided, and an approved thread with no merge armed. Once the human has acted, or you have decided it doesn\'t need them, run sc needs-you --clear app-12. Clearing a thread past its round limit is your decision that the human needn\'t decide it: run sc start app-12 instead when it should go on. A mark also clears when the human types to the builder, when it submits again, and when its PR merges or closes.\n\nA builder that stopped without submitting, and that nobody acts on for a few minutes, needs the human by itself, with its last message as the mark, so nothing waits unseen while you are busy. Answering it with sc tell, or marking or clearing it, is acting on it.\n\nWhen a thread starts needing the human, Skelcrew types a one line note into this session, such as "app-12 needs you: its builder asked a question". It comes from Skelcrew, not the human, and doesn\'t come for a mark you set yourself. Tell the human plainly what the thread needs.',
+  ],
   ["prints its name, such as app-t1.", "prints its name, such as app-wr1."],
   [
     "such as app-t1, has nothing that stays open, and sc start app-t1 starts it over.",
@@ -133,7 +139,7 @@ const herdr =
 // what it is told now.
 const askingBefore =
   "To ask the human, use your harness's tool for asking questions, such as AskUserQuestion, if it has one. Otherwise end your turn with the question. ";
-const askingTheLead = `Ask the lead, never the human in this session: run sc tell lead "<text>" with your question or the decision you need, and its options. The human talks to the lead and doesn't watch this session. The lead answers what the human already decided, and brings the rest to them. Never use your harness's tool for asking questions, such as AskUserQuestion, as the human would have to open this session to answer it. Once you asked, end your turn and wait for the answer, unless you have other work meanwhile.
+const askingTheLead = `Whenever you need something, such as an answer, a decision or something only a person can do, ask the lead, never the human in this session: run sc tell lead "<text>" with what you need, and its options. The lead decides whether the human must act, and tells them. The human talks to the lead and doesn't watch this session. The lead answers what the human already decided, and brings the rest to them. Never use your harness's tool for asking questions, such as AskUserQuestion, as the human would have to open this session to answer it. Once you asked, end your turn and wait for the answer, unless you have other work meanwhile.
 
 Write a question so the human could answer it without reading the code, as the lead may pass it on as it is:
 - Background, in plain words: what you are building and where the question comes up.

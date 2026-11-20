@@ -856,6 +856,27 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
     expect(thread()).toMatchObject({ status: "waiting", needs_you: 0, rounds: 0 });
   }, 90_000);
 
+  // Clearing it is the lead's or your decision that you have nothing to do. A review after it
+  // asks again, as its changes are held anew.
+  test("past the round limit, clearing its mark stops it needing you, until the next review", async () => {
+    addApp();
+    config("max_rounds: 1\n");
+    verdict(1, "changes", "First problem.");
+    verdict(2, "changes", "Second problem.");
+    verdict(3, "changes", "Third problem.");
+    await startApp12();
+    await until(() => thread().needs_you === 1 && thread().rounds === 2, 45_000);
+    const ps = async () => JSON.parse((await skel(["ps", "--json"])).out)[0];
+    expect(await ps()).toMatchObject({ needsYou: true, needsYouFor: "round limit" });
+    expect((await skel(["needs-you", "--clear", "app-12"])).err).toBe("");
+    expect(await ps()).toMatchObject({ needsYou: false, needsYouFor: null });
+    expect(thread()).toMatchObject({ needs_you: 1, limit_decided: 1 });
+    expect((await skel(["review", "app-12"])).err).toBe("");
+    await until(() => finished("failure").length === 3, 30_000);
+    await until(() => thread().limit_decided === 0);
+    expect(await ps()).toMatchObject({ needsYou: true, needsYouFor: "round limit" });
+  }, 90_000);
+
   test("a review that fails sets the check to review failed, posts nothing, and needs you", async () => {
     addApp();
     await startApp12();

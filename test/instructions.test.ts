@@ -136,7 +136,7 @@ test("a builder is told each command that isn't configured, and asks the lead ra
 // open it to answer.
 test("a builder asks the lead, not the human in its session, with background, options and a recommendation", () => {
   const told = builderInstructions(instructions, { setup: undefined, test: undefined });
-  expect(told).toContain("Ask the lead, never the human in this session: run sc tell lead");
+  expect(told).toContain("ask the lead, never the human in this session: run sc tell lead");
   expect(told).toContain(
     "Never use your harness's tool for asking questions, such as AskUserQuestion",
   );

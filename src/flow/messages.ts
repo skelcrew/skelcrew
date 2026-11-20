@@ -201,6 +201,28 @@ function afterTyped(db: Database, folder: string, message: Message): void {
       );
 }
 
+// What Skelcrew typed into each builder and its harness hasn't reported yet, by the builder's
+// folder, so the hook that reports something typed in can tell Skelcrew's messages from a
+// person's typing. Each text is kept from just before its paste, as the hook can come before
+// the typing returns. Only the last few are kept, so a text whose hook never came, such as one a
+// harness dropped, is forgotten.
+const typedLately = new Map<string, string[]>();
+
+// Remembers that Skelcrew is about to type `text` into the thread's builder.
+function typingIn(folder: string, text: string): void {
+  typedLately.set(folder, [...(typedLately.get(folder) ?? []), text.trim()].slice(-5));
+}
+
+// Returns whether `prompt`, which the builder's harness reports was typed in, is one of the
+// texts Skelcrew typed there, and forgets that one. Anything else was typed by a person.
+export function typedBySkelcrew(folder: string, prompt: string): boolean {
+  const texts = typedLately.get(folder) ?? [];
+  const at = texts.indexOf(prompt.trim());
+  if (at === -1) return false;
+  typedLately.set(folder, texts.toSpliced(at, 1));
+  return true;
+}
+
 // Tells the lead, once per message, that its messages to the thread's builder have waited 10
 // minutes, naming the thread and why. For a builder mid-turn, it says the human can press Esc
 // to end the turn. For any other reason Esc would do nothing, or throw away a question the human
@@ -270,6 +292,7 @@ async function typeWaiting(
     const pasted = () => db.run("UPDATE messages SET pasted = 1 WHERE id = ?", [message.id]);
     const waitsFor = { timeout: 10_000, signal, unsent, pasted };
     typing.id = message.id;
+    typingIn(folder, message.text);
     const typed = await deliver(host, id, marks, message.text, waitsFor).finally(() => {
       typing.id = null;
     });
@@ -422,6 +445,7 @@ export async function typeContinue(
 ) {
   const { marks } = builderHarness(thread);
   const { host, id } = await builderSession(db, sessions, thread);
+  typingIn(thread.folder, "continue");
   return deliver(host, id, marks, "continue", { timeout: 60_000, signal });
 }
 

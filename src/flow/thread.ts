@@ -209,6 +209,17 @@ export const Thread = z.object({
   // The issue a merge without approval filed what its review still asked for in, once filed, so
   // a poll after a restart never files a second one.
   merge_followup: z.string().nullable(),
+  // What you must do for the thread, written for you, when the lead, you or the safety net marked
+  // it as needing you, such as "apply the check.yml split in PR #463". Null with no mark.
+  needs_you_for: z.string().nullable(),
+  // Whether the lead or you decided about the round limit, by clearing its needs you, so the
+  // thread no longer needs you for it. The next review asks again.
+  limit_decided: z.coerce.boolean(),
+  // When the builder ended a turn without submitting, while nobody has acted on it since, and
+  // what it said last then. The safety net marks the thread as needing you once it waited long
+  // enough. Null otherwise.
+  ended_at: z.number().nullable(),
+  ended_said: z.string().nullable(),
   // The tree of the .agents/ you had approved when the task started, whose roles its agents
   // keep to the end, though you approve another meanwhile. Null for the built-in roles, as
   // every task had before Skelcrew read .agents/.
@@ -328,12 +339,14 @@ export function record(
   why?: string,
 ): Thread {
   // Work out the note for the lead. A thread that stops needing you drops its note, and one
-  // that starts needing you keeps why, short enough to type as one line. A thread that already
-  // needed you keeps the note it had, so a later change doesn't hide the first reason.
+  // that starts needing you keeps why, short enough to type as one line, unless the change says
+  // there is none, as for a mark the lead set itself. A thread that already needed you keeps the
+  // note it had, so a later change doesn't hide the first reason.
   const before = readThread(db, folder);
   let { noting } = change;
   if (!needsYou({ ...before, ...change })) noting = null;
-  else if (!needsYou(before)) noting = (why ?? "").replace(/\s+/g, " ").trim().slice(0, 200);
+  else if (!needsYou(before) && noting === undefined)
+    noting = (why ?? "").replace(/\s+/g, " ").trim().slice(0, 200);
   // The column names come from the keys of Thread above, never from outside. The task's fields
   // go on its task, and the rest on the thread. One transaction, so a change is saved whole or
   // not at all.

@@ -526,11 +526,13 @@ async function actOnVerdict(
   // Save the outcome, tell the lead if the thread now needs you, and type any changes into
   // the builder.
   const { rounds, needsYou, status, tell, held } = outcome;
+  // A new review asks anew about the round limit, so a decision about the last one ends.
   const change = {
     reviewing: null,
     submitting: null,
     rounds,
     needs_you: needsYou,
+    limit_decided: false,
     status,
     telling: tell,
     held,
@@ -786,11 +788,15 @@ export function submitRound(db: Database, sessions: string, folder: string, summ
     {
       status: "waiting",
       needs_you,
+      // A new submit is the thing a mark for you is most often about, such as a fix, so it
+      // clears the mark. The lead marks it again if you still need to act.
+      needs_you_for: null,
       // A turn that ends after this waits on the review, not on you. An earlier turn that
       // ended without a submit no longer does either: the builder can go on with nothing
       // typed in, such as when a command it left running finishes.
       submitted: true,
       turn_ended: false,
+      ended_at: null,
       submitting: summary,
       // A review of the older commit that waited for a place no longer does.
       queued: null,
@@ -1083,7 +1089,8 @@ export function resumeRound(
 // reached the limit into the builder, as a round within the limit would have.
 export function goOn(db: Database, sessions: string, folder: string): void {
   const { held } = readThread(db, folder);
-  const change = { rounds: 0, needs_you: false, held: null, telling: held };
+  // Letting it go on is your or the lead's decision, so it ends a mark for you too.
+  const change = { rounds: 0, needs_you: false, needs_you_for: null, held: null, telling: held };
   record(
     db,
     folder,
