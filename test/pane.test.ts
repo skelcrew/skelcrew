@@ -7,9 +7,10 @@ import { drawList, type Frame, paneWidth } from "../src/list/layout.ts";
 import { drawPane } from "../src/list/pane.ts";
 import type { Row } from "../src/list/rows.ts";
 
-// A task at work in Building, whose builder asks a question.
+// A task at work in Building, whose builder asks a question, so it shows under Needs you.
 const row: Row = {
   part: "building",
+  section: "needs you",
   name: "app-12",
   task: "12",
   title: "Rate limit",

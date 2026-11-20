@@ -157,7 +157,14 @@ const Workflow = z.object({
   on: z.object({ push: z.object({ tags: z.array(z.string()) }) }),
   env: z.object({ RELEASES_REPO: z.string() }),
   jobs: z.object({
-    build: z.object({ steps: Steps }),
+    test: z.object({
+      strategy: z.object({
+        "fail-fast": z.boolean(),
+        matrix: z.object({ shard: z.array(z.number()) }),
+      }),
+      steps: Steps,
+    }),
+    build: z.object({ needs: z.string(), steps: Steps }),
     sign: z.object({
       needs: z.string(),
       "runs-on": z.string(),
@@ -172,8 +179,14 @@ const Workflow = z.object({
   }),
 });
 
+// A workflow's test job with every key kept, so two can be compared whole: the runner, the
+// shards, the checkout, the Bun version and every command.
+const TestJob = z.object({ jobs: z.object({ test: z.record(z.string(), z.unknown()) }) });
+
 const workflowText = () => readFileSync(join(root, ".github", "workflows", "release.yml"), "utf8");
 const workflow = () => Workflow.parse(parse(workflowText()));
+const testJob = (file: string) =>
+  TestJob.parse(parse(readFileSync(join(root, ".github", "workflows", file), "utf8"))).jobs.test;
 const runs = (steps: Steps) => steps.flatMap((step) => (step.run ? [step.run] : []));
 const uploads = (steps: Steps) => steps.filter((step) => step.uses?.includes("upload-artifact"));
 
@@ -221,13 +234,29 @@ function sign(script: string, version = "skelcrew 0.4.2") {
   return { code, signing, started: existsSync(join(home, "started")) };
 }
 
-test("the workflow runs on a version tag, checks, builds, signs, then publishes all the files", () => {
+test("the release runs all four test shards, set up as the pull request checks are", () => {
+  const shards = workflow().jobs.test;
+  expect(shards.strategy.matrix.shard).toEqual([1, 2, 3, 4]);
+  expect(shards.strategy["fail-fast"]).toBe(false);
+  // biome-ignore lint/suspicious/noTemplateCurlyInString: GitHub's syntax, not JavaScript's.
+  expect(runs(shards.steps)).toContain("bun scripts/test.ts --shard=${{ matrix.shard }}/4");
+  expect(testJob("release.yml")).toEqual(testJob("check.yml"));
+  const setup = stepRunning(shards.steps, "apt-get install");
+  expect(setup).toContain("tmux bubblewrap");
+  expect(setup).toContain("kernel.apparmor_restrict_unprivileged_userns=0");
+});
+
+test("the workflow runs on a version tag, tests, checks, builds, signs, then publishes all the files", () => {
   const { on, jobs } = workflow();
   expect(on.push.tags).toEqual(["v[0-9]+.[0-9]+.[0-9]+"]);
+  expect(jobs.build.needs).toBe("test");
   const built = runs(jobs.build.steps);
-  const at = (words: string) => built.findIndex((run) => run.includes(words));
-  expect(at("bun run check")).toBeGreaterThan(-1);
-  expect(at("scripts/build-release.ts")).toBeGreaterThan(at("bun run check"));
+  // Whole steps, so a failed lint or typecheck can't be hidden behind a build that runs after it.
+  const lint = built.indexOf("bunx biome ci . && bunx tsc --noEmit");
+  expect(lint).toBeGreaterThan(-1);
+  // biome-ignore lint/suspicious/noTemplateCurlyInString: the shell's syntax, not JavaScript's.
+  const release = built.indexOf('bun scripts/build-release.ts "${GITHUB_REF_NAME#v}"');
+  expect(release).toBeGreaterThan(lint);
   expect(jobs.sign.needs).toBe("build");
   expect(jobs.publish.needs).toBe("sign");
   const published = runs(jobs.publish.steps);
@@ -239,7 +268,7 @@ test("the workflow runs on a version tag, checks, builds, signs, then publishes 
   expect(publish).toContain("--notes-file dist/notes.md");
   expect(publish).toContain("dist/skelcrew-*");
   expect(publish).toContain("dist/SHA256SUMS");
-  const all = [...built, ...runs(jobs.sign.steps), ...published];
+  const all = [...runs(jobs.test.steps), ...built, ...runs(jobs.sign.steps), ...published];
   for (const run of all) expect(Bun.spawnSync(["sh", "-n", "-c", run]).success).toBe(true);
 });
 
