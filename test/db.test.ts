@@ -470,16 +470,35 @@ test("a name stays taken on another machine once claimed", async () => {
 }, 60_000);
 
 // Threads named before Skelcrew claimed names on the remote, such as app-t25, were never claimed,
-// and live only in the database of the machine that started them. A new name is still higher, so
-// it never equals one of them. Claims of names from a machine's code, such as wr4, don't count.
-test("a new thread takes the next t number above those this repository used before", async () => {
+// and live only in the database of the machine that started them. That machine's daemon claims
+// them as it starts. So a new name is higher on any machine, even one that never had them, and
+// never equals one of them. Claims of names from a machine's code, such as wr40, don't count.
+test("a new thread takes the next t number above those this repository used before, on any machine", async () => {
   const { remote, homes } = twoMachines();
   const [laptop = "", lapdog = ""] = homes;
   const work = join(home, "work");
   Bun.spawnSync(["git", "-C", work, "push", "-q", remote, "HEAD:refs/skelcrew/names/wr40"]);
-  const old = `db.run("INSERT INTO tasks (owner, repo, task) VALUES ('simon', 'app', 't25'), ('simon', 'app', 't3')");`;
-  expect(await namesFrom(startOn(laptop, remote, ["One"], old))).toEqual(["app-t26"]);
-  expect(await namesFrom(startOn(lapdog, remote, ["Two"]))).toEqual(["app-t27"]);
+  // The laptop has the old names, and its daemon starts with its clone of the repository.
+  const clone = join(laptop, ".local", "share", "skelcrew", "repos", "simon", "app");
+  Bun.spawnSync(["git", "clone", "-q", remote, clone]);
+  const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
+import { claimOldNames } from ${JSON.stringify(source("flow/builder.ts"))};
+const db = openDb();
+db.run("INSERT INTO repositories (name, owner, repo, remote) VALUES ('app', 'simon', 'app', ?)", [${JSON.stringify(remote)}]);
+db.run("INSERT INTO tasks (owner, repo, task) VALUES ('simon', 'app', 't25'), ('simon', 'app', 't3')");
+const [repository] = db.query("SELECT * FROM repositories").all();
+console.log(JSON.stringify((await claimOldNames(db, repository)).sort()));
+db.run("DELETE FROM repositories");`;
+  const claimed = Bun.spawnSync([process.execPath, "-e", code], {
+    env: { ...process.env, HOME: laptop },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect(claimed.stderr.toString()).toBe("");
+  expect(JSON.parse(claimed.stdout.toString())).toEqual(["t25", "t3"]);
+  // The machine that never had them names its first thread above them, and then the laptop.
+  expect(await namesFrom(startOn(lapdog, remote, ["One"]))).toEqual(["app-t26"]);
+  expect(await namesFrom(startOn(laptop, remote, ["Two"]))).toEqual(["app-t27"]);
 }, 60_000);
 
 // The table that held the machine's code goes, as nothing reads it any more.

@@ -11,7 +11,7 @@ import { ask } from "./client.ts";
 import { tellOldKeys } from "./config.ts";
 import { openDb } from "./db.ts";
 import { leadSession } from "./flow/lead.ts";
-import { builderSession, findThread } from "./flow/thread.ts";
+import { builderSession, findThread, storedTask } from "./flow/thread.ts";
 import { runList } from "./list/list.ts";
 import { installService, restartDaemon, servicePid, startDaemon } from "./machine/service.ts";
 import { daemonSocket } from "./paths.ts";
@@ -234,7 +234,8 @@ export async function attachToThread(
   task: string,
 ): Promise<void> {
   const db = openDb();
-  const thread = findThread(db, repository, task);
+  // The task may be typed in any case, such as APP-T7.
+  const thread = findThread(db, repository, storedTask(db, repository, task));
   const { host, id } = await builderSession(db, sessions, thread);
   // A builder that exited leaves its last screen behind, which would look like it still runs.
   if (!(await agentRuns(host, id)))

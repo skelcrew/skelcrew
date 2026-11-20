@@ -85,18 +85,18 @@ const remoteIs = (r: Repository, url: string) => {
 
 // Returns the repository a word names, by its name in Skelcrew or its owner/name, each in any
 // case, or its remote URL, or none. So a task's name typed in any case, such as APP-12, finds
-// its repository. A name spelled exactly wins, as two owners' repositories, such as App and
-// app, can keep short names that differ only in case. sc start asks it first, as a
-// repository's name can end like a task's, such as api-v2.
+// its repository. Skelcrew gives repositories names that differ by more than case, but a
+// database from before can hold two, such as App and app. A word that names both is refused,
+// saying how to name one, so a command never acts on the other's task. sc start asks it first,
+// as a repository's name can end like a task's, such as api-v2.
 export function repositoryNamed(db: Database, given: string): Repository | undefined {
   const all = repositories(db);
-  return (
-    all.find((r) => r.name === given) ??
-    all.find(
-      (r) =>
-        r.name.toLowerCase() === given.toLowerCase() || fullNameIs(r, given) || remoteIs(r, given),
-    )
-  );
+  const named = all.filter((r) => r.name.toLowerCase() === given.toLowerCase());
+  if (named.length > 1)
+    throw new Error(
+      `${given} names more than one repository: ${named.map((r) => `${r.owner}/${r.repo}`).join(", ")}. Name one by its owner/name.`,
+    );
+  return named[0] ?? all.find((r) => fullNameIs(r, given) || remoteIs(r, given));
 }
 
 // Returns the repository a command names, as repositoryNamed reads it. Throws when Skelcrew has

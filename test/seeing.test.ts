@@ -553,6 +553,34 @@ console.log(threadTask(db, await startThread(db, { repo: "app", task: "3" })).cl
     expect((await skel(["show", "APP-T4"])).out).toBe(own.out);
   });
 
+  // A tracker's ID keeps its case, such as AB12, and is still found typed in another case.
+  test("finds a tracker's task whose ID has letters, typed in any case", async () => {
+    sql(threadSql({ task: "AB12", status: "done", title: "Tidy the menu" }));
+    serve();
+    await untilAnswers();
+    const shown = await skel(["show", "app-AB12"]);
+    expect(shown.out).toStartWith("app-AB12  Tidy the menu\n");
+    expect((await skel(["show", "app-ab12"])).out).toBe(shown.out);
+    expect((await skel(["show", "APP-ab12"])).out).toBe(shown.out);
+  });
+
+  // Two repositories whose names differ only in case, such as App and app, saved before Skelcrew
+  // named them apart. A name typed in any case would name both, so it is refused, saying how
+  // to name one, and never shows the other's task.
+  test("refuses a name that matches two repositories in different cases", async () => {
+    sql("INSERT INTO repositories (name, owner, repo) VALUES ('App', 'other', 'App')");
+    serve();
+    await untilAnswers();
+    const refused = await skel(["show", "APP-12"]);
+    expect(refused.out).toBe("");
+    expect(refused.err).toContain(
+      "APP names more than one repository: other/App, simon/app. Name one by its owner/name.",
+    );
+    const named = await skel(["show", "simon/app-12"]);
+    expect(named.err).toBe("");
+    expect(named.out).toStartWith("app-12  Add export\n");
+  });
+
   test("shows a task's issue, threads and description", async () => {
     serve();
     await untilAnswers();

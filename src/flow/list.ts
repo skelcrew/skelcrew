@@ -429,7 +429,7 @@ export async function showTask(
   // still holds its task until it starts over, so it shows the words it started with, though
   // without the lead's messages, which starting over leaves behind. A done thread shows its open
   // issue's latest words, or else what it saved as it started.
-  const thread = threadOn(db, name, task);
+  const thread = threadOn(db, `${owner}/${repo}`, task);
   const issue = openTasks(db, owner, repo).find((item) => item.id === task);
   if (!thread && !issue) throw new Error(`there is no task ${name}-${task}`);
   const current = thread && thread.status !== "done" && thread.status !== "failed";

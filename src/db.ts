@@ -47,11 +47,13 @@ export const savedJson = <T>(column: string, shape: z.ZodType<T>, empty: T) =>
     .nullable()
     .transform((saved) => (saved === null ? empty : readJson(column, saved, shape, empty)));
 
-// Updates repository names, adding the owner only when repositories share a name.
-// Names are unique in the end, and no row ever takes a name another row still holds.
+// Updates repository names, adding the owner only when repositories share a name, in any case,
+// such as App and app. Names are typed in any case, so two that differ only in case would name
+// both. Names are unique in the end, and no row ever takes a name another row still holds.
 export function nameRepositories(db: Database): void {
   db.run(`UPDATE repositories SET name = CASE
-    WHEN (SELECT COUNT(*) FROM repositories AS other WHERE other.repo = repositories.repo) > 1
+    WHEN (SELECT COUNT(*) FROM repositories AS other
+      WHERE lower(other.repo) = lower(repositories.repo)) > 1
     THEN owner || '/' || repo ELSE repo END`);
 }
 

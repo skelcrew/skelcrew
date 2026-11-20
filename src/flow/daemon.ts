@@ -28,6 +28,7 @@ import { checkoutFolder, git, release, singleFile } from "../version.ts";
 import { assignIssue } from "./assign.ts";
 import {
   bringBack,
+  claimOldNames,
   endEarlierBuilder,
   failThread,
   setUpThread,
@@ -108,6 +109,7 @@ import {
   liveThreads,
   readThread,
   record,
+  storedTask,
   type Thread,
   threadName,
   threadOn,
@@ -431,6 +433,10 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       keepState(db, lead ?? callingThread(caller), state);
       if (lead) return { state };
     }
+    // A task may be named in any case, such as APP-T7, and every command below looks it up as
+    // Skelcrew keeps it.
+    if ("task" in request && request.task !== undefined && "repo" in request && request.repo)
+      request.task = storedTask(db, request.repo, request.task);
     switch (request.command) {
       // sc check holds its connection open while it runs, so answer() hands it to the queue of
       // checks before it gets here.
@@ -915,7 +921,21 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   // answered meanwhile, as the socket is open.
   await Promise.all(openedRepositories(db).map((repository) => bringBackLead(repository, null)));
   // A lead keeps its clone current as it starts, and a repository with no lead needs it too.
-  refreshClones(db).catch((error) => console.log(errorText(error)));
+  // Then each repository's names from before Skelcrew claimed them go on its remote, from its
+  // clone, so another machine never gives a new task one of them.
+  refreshClones(db)
+    .then(() =>
+      Promise.all(
+        repositories(db)
+          .filter((r) => existsSync(cloneDir(r.owner, r.repo)))
+          .map((r) =>
+            claimOldNames(db, r).catch((error) =>
+              console.log(`couldn't claim ${r.name}'s old names: ${errorText(error)}`),
+            ),
+          ),
+      ),
+    )
+    .catch((error) => console.log(errorText(error)));
   // Notes the daemon's stop kept from the leads.
   typeLeadNotes(db, sessions);
   // Bring back each thread's builder, without waiting on it, and carry on the round it was in.
