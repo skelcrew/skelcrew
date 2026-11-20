@@ -608,7 +608,10 @@ describe.skipIf(insideSandbox)("sc submit", () => {
       needs_you: 0,
       review_failed: 1,
     });
-    expect(read(join(data(), "threads", "app-12.log"))).toContain("the round failed");
+    // The log line is written just after the thread is saved, so it is waited for too.
+    const log = () => read(join(data(), "threads", "app-12.log"));
+    await until(() => log().includes("the round failed"), longWait);
+    expect(log()).toContain("the round failed");
     // Only the pending check was tried: the round stopped once the forge refused it.
     expect(statuses()).toEqual([
       { sha: pushed(), state: "pending", description: "waiting for CI's first check" },
