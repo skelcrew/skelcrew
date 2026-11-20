@@ -55,8 +55,9 @@ const config = [
   // Mac terminal that doesn't send Option as Alt. Ctrl-\ never reaches a pane: left to reach the
   // agents' server or a host's own client, it would detach it and leave the right side empty. On
   // a builder you attached to on the right side, it ends that attachment instead, found by the
-  // mark in the pane's command, and the pane goes back to the task's details. Anywhere else it
-  // does nothing. Ctrl-4 does the same: a terminal sending extended keys sends it as a key of its
+  // mark in the right pane's command, and the pane goes back to the task's details. It looks at
+  // the right pane, not the one you type to, so it works with your typing in the sidebar too.
+  // Anywhere else it does nothing. Ctrl-4 does the same: a terminal sending extended keys sends it as a key of its
   // own, which tmux would hand on to the pane as Ctrl-\'s byte.
   // Each key that leaves ends your terminal's session rather than detaching from it. tmux 3.6
   // crashed about one time in five when a detach met another command, such as the sidebar's,
@@ -72,8 +73,10 @@ const config = [
     key,
     "if",
     "-F",
+    "-t",
+    ":.1",
     `#{m:*${attachedMark}*,#{pane_start_command}}`,
-    "run-shell 'pkill -P #{pane_pid}'",
+    "run-shell -t :.1 'pkill -P #{pane_pid}'",
   ]),
   // Keys that arrive faster than a millisecond apart are taken for a paste, and tmux then hands
   // them to the pane you type to rather than act on them. Several Alt keys in one read, as fast

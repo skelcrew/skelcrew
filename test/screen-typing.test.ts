@@ -147,6 +147,20 @@ test("from an agent you attached to, Alt-Left reaches the sidebar and Alt-Right 
   await until(() => read("app-7.typed") === "42\ngo\n", "the typing to reach the builder");
 });
 
+// Ctrl-\ ends the attachment wherever your typing goes, as the agent is still attached on the
+// right side.
+test("Ctrl-\\ comes back from an agent you attached to while your typing is in the sidebar", async () => {
+  open("lead");
+  await ready("lead");
+  await toSecondThread();
+  press("M-Left");
+  await until(typingToSidebar, "the sidebar to take your typing");
+  press("C-\\");
+  await until(onDetails, "app-7's details");
+  expect(selected()).toContain("APP-7");
+  expect(typingToSidebar()).toBe(true);
+});
+
 test("Enter on a stage's heading closes it, keeping you there, and opens it on its first row", async () => {
   open("lead");
   await ready("lead");
