@@ -28,7 +28,7 @@ import { draw, entryPlace, noticeLines, type Size } from "./layout.ts";
 import { type EntryCount, entryCounts, pageRow, roundLimit } from "./lists.ts";
 import { nextList, nextRow, rowAtLine } from "./moves.ts";
 import { type Open, type Row, repositoryTabs, sidebarRows } from "./rows.ts";
-import { paneCommand, sidebarWidth } from "./screen.ts";
+import { leadOnHost, paneCommand, sidebarWidth } from "./screen.ts";
 import { drawTop } from "./strip.ts";
 
 // What the sidebar reads: Alt with an arrow as tmux sends it, 3 without Shift and 4 with it,
@@ -50,20 +50,6 @@ function repositoryAndLead(db: ReturnType<typeof openDb>, fullName: string): Ope
     return { owner, repo, lead: leadOf(db, owner, repo).name };
   } catch {
     return { owner, repo, lead: leadPlaces(owner, repo).name };
-  }
-}
-
-// Returns the line that attaches to the open repository's lead when it runs on a plugin's host,
-// as the screen can't show it through tmux. Null for a lead on tmux, one whose plugin is gone,
-// and a repository Skelcrew no longer has.
-function leadOnHost(db: ReturnType<typeof openDb>, { owner, repo }: Open): string | null {
-  try {
-    const { host, hostId, name } = leadOf(db, owner, repo);
-    if (host === "tmux") return null;
-    const plugin = pluginHost(db, host);
-    return plugin && attachOnHostLine(plugin, hostId ?? name);
-  } catch {
-    return null;
   }
 }
 

@@ -1,8 +1,12 @@
 // The screen: the sidebar on the left of your terminal, with the agent or list you are looking
 // at on the right, the strip above it and the footer across the bottom. It is a second tmux
 // server, one session per open terminal, ended when you leave.
-import { applyConfig, attachCommand } from "../agents/sessions.ts";
+import type { Database } from "bun:sqlite";
+import { applyConfig, attachCommand, attachThen } from "../agents/sessions.ts";
 import { envWithoutTmux, screenSocket, tmuxIsAtLeast } from "../agents/tmux.ts";
+import { openDb } from "../db.ts";
+import { leadOf } from "../flow/lead.ts";
+import { attachOnHostLine, pluginHost } from "../plugins/runtime.ts";
 import { windowTitle } from "../say.ts";
 import { mainFile, singleFile } from "../version.ts";
 import type { Entry } from "./lists.ts";
@@ -35,7 +39,10 @@ const config = [
   // here, not there, leaves the whole screen. Ctrl-Q does too, though nothing shows it, for a
   // Mac terminal that doesn't send Option as Alt. Ctrl-\ does nothing here: it only leaves an
   // agent opened alone, back to where you came from. It stays bound, to an empty command, as
-  // left to reach the agents' server it would detach the agent's pane and leave it empty.
+  // left to reach the agents' server it would detach the agent's pane and leave it empty. It is
+  // also herdr's key to detach, so a runtime plugin's host would leave the right side empty
+  // too. Ctrl-4 goes the same way: a terminal sending extended keys sends it as a key of its
+  // own, which tmux would hand on to the pane as Ctrl-\'s byte.
   // Each key that leaves ends your terminal's session rather than detaching from it. tmux 3.6
   // crashed about one time in five when a detach met another command, such as the sidebar's,
   // ending at that moment, and every terminal on the server lost its screen.
@@ -45,6 +52,7 @@ const config = [
   ["bind", "-n", "M-q", "kill-session"],
   ["bind", "-n", "C-q", "kill-session"],
   ["bind", "-n", "C-\\", ""],
+  ["bind", "-n", "C-4", ""],
   // Keys that arrive faster than a millisecond apart are taken for a paste, and tmux then hands
   // them to the pane you type to rather than act on them. Several Alt keys in one read, as fast
   // typing, key repeat or a slow link bring, would lose all but the first two, and type the rest
@@ -176,6 +184,23 @@ export const paneCommand = (
   repository: string,
 ) => skelcrewCommand("list", agents, session, entry, where, repository);
 
+// Returns the line for sh that attaches to a repository's lead when it runs on a runtime
+// plugin's host, as the screen's tmux can't reach it. Null for a lead on tmux, one whose plugin
+// is gone, and a repository Skelcrew no longer has.
+export function leadOnHost(
+  db: Database,
+  { owner, repo }: { owner: string; repo: string },
+): string | null {
+  try {
+    const { host, hostId, name } = leadOf(db, owner, repo);
+    if (host === "tmux") return null;
+    const plugin = pluginHost(db, host);
+    return plugin && attachOnHostLine(plugin, hostId ?? name);
+  } catch {
+    return null;
+  }
+}
+
 // Opens the screen in your terminal on the named agent session. `lead` is the open repository's
 // lead's session and `repository` its owner/name. It returns when you leave with Alt-Q, and
 // prints that your agents keep running. Each terminal gets a screen session of its own, named
@@ -210,10 +235,22 @@ export async function openScreen(
   // The footer's pane starts as its line and its row, or its row alone where tmux's border above
   // it is a thin line already, and sizes itself from then on.
   const footerHeight = border.length > 0 ? "2" : "1";
+  // The right side shows the session, then the lead once it ends or you leave it. A lead on a
+  // runtime plugin's host is reached through the host's own attach, started again whenever it
+  // ends, as tmux's attach to the lead is.
+  const [owner = "", repo = ""] = repository.split("/");
+  const onHost = leadOnHost(openDb(), { owner, repo });
+  const again = `while :; do ${onHost}; sleep 1; done`;
+  const right =
+    onHost === null
+      ? attachCommand(agents, session, lead)
+      : session === lead
+        ? ["sh", "-c", again]
+        : attachThen(agents, session, again);
   const open = [
     ...config,
     ...border,
-    ["new-session", "-s", name, "--", ...attachCommand(agents, session, lead)],
+    ["new-session", "-s", name, "--", ...right],
     ["set", "set-titles-string", windowTitle(env.SKELCREW_REMOTE_NAME)],
     ["split-window", "-hbd", "-l", String(sidebarWidth), "--", ...left],
     // The footer goes across the whole width, below both, as the screen's third pane.

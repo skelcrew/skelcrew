@@ -132,6 +132,45 @@ UPDATE threads SET host = 'fake', host_id = 'fake-app-12' WHERE folder = 'app-12
   await until(() => selected().includes("app-12"), "the sidebar to follow");
 });
 
+// Plain sc opens the screen whatever the session host. A lead on a runtime plugin's host shows on
+// the right through the host's own attach, here a script that keeps every byte typed into it and
+// ends at each one. Ctrl-\\ is herdr's key to detach, so it, and Ctrl-4 which sends the same
+// byte, must never reach the host's attach, which would leave the right side empty. An attach
+// that ends anyway is started again.
+test("a lead on a plugin's host shows on the right from the start, and never gets Ctrl-\\", async () => {
+  given.extendedKeys = true;
+  const plugin = join(home, "plugin-fake");
+  mkdirSync(plugin, { recursive: true });
+  writeFileSync(
+    join(plugin, "session.sh"),
+    `read -r question; echo '{"sessions":[{"id":"fake-lead","running":true,"labels":null}]}'\n`,
+  );
+  writeFileSync(
+    join(plugin, "attach.sh"),
+    'echo >> attached; stty raw -echo; echo "I am $1 on fake"; dd bs=1 count=1 >> typed 2>/dev/null\n',
+  );
+  writeFileSync(
+    join(plugin, "skelcrew-plugin.yaml"),
+    "name: fake\nversion: 0.1.0\nskelcrew: 0.1.0\nabout: A host\nkind: runtime\nprovides: [sessions]\nsession: [sh, session.sh]\nattach: [sh, attach.sh]\n",
+  );
+  sql(`INSERT INTO plugins (name, folder) VALUES ('fake', '${plugin}');
+UPDATE repositories SET lead_host = 'fake', lead_host_id = 'fake-lead' WHERE repo = 'app'`);
+  open("lead");
+  await until(() => seen().includes("I am fake-lead on fake"), "the lead through its host");
+  expect(seen()).not.toContain("Waiting for the lead");
+  const attached = () => read(join("plugin-fake", "attached")).length;
+  expect(attached()).toBe(1);
+  press("C-\\");
+  press("C-4");
+  type("\x1c");
+  type("x");
+  await until(() => attached() === 2, "the host's attach to start again");
+  type("y");
+  await until(() => attached() === 3, "the host's attach to start again");
+  expect(read(join("plugin-fake", "typed"))).toBe("xy");
+  expect(existsSync(join(home, "left-one"))).toBe(false);
+});
+
 test("a screen opened on an agent starts on it, marked in the sidebar", async () => {
   open("app-7");
   await ready("app-7");
@@ -718,7 +757,7 @@ test("without a terminal it fails, and leaves no session or server behind", asyn
   writeFileSync(
     script,
     `import { openScreen } from ${JSON.stringify(screenFile)};
-await openScreen(${JSON.stringify(agents)}, "lead");`,
+await openScreen(${JSON.stringify(agents)}, "lead", "lead", "simon/app");`,
   );
   const run = Bun.spawnSync([process.execPath, script], {
     env: { ...env(), TMUX: "" },
