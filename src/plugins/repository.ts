@@ -128,8 +128,9 @@ export function addRepositoryPlugin(given: string): boolean {
       } catch {}
     throw error;
   }
+  const pinned = fresh ? "" : ", at the version installed here";
   console.log(
-    `Added ${manifest.name} ${manifest.version} to skelcrew.yaml and skelcrew.lock. They count once you commit and push them.`,
+    `Added ${manifest.name} ${manifest.version} to skelcrew.yaml and skelcrew.lock${pinned}. They count once you commit and push them.`,
   );
   return true;
 }

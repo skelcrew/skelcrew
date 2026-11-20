@@ -336,7 +336,7 @@ Every command that lists or shows something takes `--json`, for tools. Commands 
 | `sc --list [--from <owner/repo>]` | Shows the list of the repository you are in, and otherwise does what plain `sc` does. |
 | `sc init` | Writes `skelcrew.yaml` and `.agents/` from the built-in defaults, and adds the repository. |
 | `sc install` | Makes the machine match the files, as **Installing** says. Safe to run again: with nothing to do, it says so. In a checkout, it covers that repository and your personal files. Outside one, every repository Skelcrew has. |
-| `sc add <plugin>` | Adds a plugin to the repository: `plugins:` in `skelcrew.yaml` and its exact version in `skelcrew.lock`. Then installs it, after asking. |
+| `sc add <plugin>` | Adds a plugin to the repository: `plugins:` in `skelcrew.yaml` and its exact version in `skelcrew.lock`. Then installs it, after asking. A plugin installed here already from the same source, such as one of yours, is pinned at the installed version, asking nothing. Another plugin of the same name is refused, as is one of yours from a folder, which has no version to pin. |
 | `sc add -g <plugin>` | Adds a personal plugin: your `config.yaml` and your own lock file. Then installs it, after asking. |
 | `sc remove [-g] <plugin>` | Takes a plugin out of the files, and removes it from the machine with its settings and tokens once nothing else uses it. Refuses for the tracker or forge of a repository Skelcrew has. |
 | `sc update [-g] [<plugin>]` | Moves a plugin, or all of them, to its newest tag, rewrites the lock, and installs it after asking. |

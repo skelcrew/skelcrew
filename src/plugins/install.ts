@@ -319,10 +319,21 @@ function markUnclaimed(db: Database, manifest: Manifest): void {
     db.run("UPDATE repositories SET claimed = 0 WHERE forge IS NULL");
 }
 
-// Throws when a plugin of that name is installed already, as one name can't be two plugins.
-function refuseInstalled(db: Database, name: string): void {
-  if (installedPlugins(db).some((plugin) => plugin.name === name))
-    throw new Error(`${name} is installed already: run sc update -g ${name}`);
+// Throws when a plugin of that name is installed already, as one name can't be two plugins. For a
+// repository's plugin, `io`, the one installed is never from the same source, as sc add pins that
+// one without installing. So it says what holds the name rather than pointing to sc update -g,
+// which would only update your own copy.
+function refuseInstalled(db: Database, name: string, io: boolean | undefined): void {
+  const here = installedPlugins(db).find((plugin) => plugin.name === name);
+  if (!here) return;
+  if (!io) throw new Error(`${name} is installed already: run sc update -g ${name}`);
+  if (here.source === null)
+    throw new Error(
+      `${name} is installed here from the folder ${here.folder}, which has no version a repository could pin`,
+    );
+  throw new Error(
+    `${name} is installed here from ${here.source}, another plugin with the same name, and one name can't be two plugins`,
+  );
 }
 
 // What installing or updating a plugin may be told. `remote` is the remote of the checkout sc ran
@@ -383,7 +394,7 @@ export function installPlugin(given: string, options: Options = {}): boolean {
   if (isPath) {
     const folder = realpathSync(resolve(given));
     const manifest = readManifest(folder);
-    refuseInstalled(db, manifest.name);
+    refuseInstalled(db, manifest.name, io);
     checkSkelcrewVersion(manifest);
     const answer = confirmPlugin(manifest, folder, "Install");
     if (answer === null) throw unanswered(`installing ${manifest.name}`);
@@ -410,7 +421,7 @@ export function installPlugin(given: string, options: Options = {}): boolean {
   try {
     if (options.skipMachines && reachesOnlyMachines(manifest))
       throw new OnlyReachesMachines(manifest.name);
-    refuseInstalled(db, manifest.name);
+    refuseInstalled(db, manifest.name, io);
     checkSkelcrewVersion(manifest);
     refuseRuntime(manifest, io);
     refuseOtherName(manifest, called);
