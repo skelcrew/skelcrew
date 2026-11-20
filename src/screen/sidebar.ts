@@ -12,7 +12,14 @@ import {
   shownSession,
   showSession,
 } from "../agents/sessions.ts";
-import { paneTty, paneWidth, respawnPane, screenTmux, showStrip } from "../agents/tmux.ts";
+import {
+  paneTty,
+  paneWidth,
+  respawnPane,
+  screenSocket,
+  screenTmux,
+  showStrip,
+} from "../agents/tmux.ts";
 import { openRepository } from "../client.ts";
 import { openDb } from "../db.ts";
 import { leadOf } from "../flow/lead.ts";
@@ -34,10 +41,11 @@ import { drawTop } from "./strip.ts";
 // What the sidebar reads: Alt with an arrow as tmux sends it, 3 without Shift and 4 with it,
 // the left button going down, with its line on screen, and what the screen's tmux and the right
 // pane type into it as an OSC: a click on a tab, with the tab's place in the row, the page now
-// open on the right, or none, and a thread picked in the list of threads.
+// open on the right, or none, a thread picked in the list of threads, and a builder on a
+// plugin's host whose attach on the right ended.
 const esc = "\x1b";
 const input = new RegExp(
-  `${esc}\\[1;([34])([ABCD])|${esc}\\[<0;\\d+;(\\d+)M|${esc}\\](skel-(?:tab|page|thread));([^\x07]*)\x07`,
+  `${esc}\\[1;([34])([ABCD])|${esc}\\[<0;\\d+;(\\d+)M|${esc}\\](skel-(?:tab|page|thread|back));([^\x07]*)\x07`,
   "g",
 );
 
@@ -91,9 +99,16 @@ export async function runSidebar(
     if (first === open.lead) return ["sh", "-c", leadLine()];
     return attachThen(agents, first, leadLine());
   };
-  // Returns the command for the right pane that runs `line`, the attach to a builder on a plugin's
-  // host, then shows the lead once it ends.
-  const hostThenLead = (line: string) => ["sh", "-c", `${line}; ${leadLine()}`];
+  // Returns the command for the right pane that runs `line`, the attach to the builder `name` on a
+  // plugin's host, then shows the lead once it ends. As it ends, it tells the sidebar the right
+  // side is back on the lead: no tmux client names a lead on a plugin's host, and a host that
+  // fails to answer can't say the builder ended, so the sidebar couldn't tell otherwise.
+  const hostThenLead = (name: string, line: string) => {
+    const back = `\x1b]skel-back;${name}\x07`;
+    const tell = ["tmux", "-L", screenSocket(agents), "-f", "/dev/null", "send-keys"];
+    const told = [...tell, "-t", `=${session}:.0`, "-l", back].map(quoteForSh).join(" ");
+    return ["sh", "-c", `${line}; ${told}; ${leadLine()}`];
+  };
   // The agents running on a plugin's host, builders by their thread's folder and the open lead by
   // its name, with the line that attaches to each, as the last look at the hosts found them. The look runs in the background, one at a
   // time, as a host can be slow, and the sidebar never waits on it.
@@ -193,7 +208,7 @@ export async function runSidebar(
       if (shown !== null && !isEntry(shown)) {
         const onHost = hosted.get(shown);
         const builder = onHost !== undefined && shown !== open.lead;
-        respawnPane(agents, rightPane, builder ? hostThenLead(onHost) : paneOn(shown));
+        respawnPane(agents, rightPane, builder ? hostThenLead(shown, onHost) : paneOn(shown));
         tty = paneTty(agents, rightPane);
       }
     }
@@ -261,7 +276,7 @@ export async function runSidebar(
     if (entry)
       respawnPane(agents, rightPane, paneCommand(agents, session, entry.entry, where, fullName));
     else if (onHost !== undefined) {
-      respawnPane(agents, rightPane, hostThenLead(onHost));
+      respawnPane(agents, rightPane, hostThenLead(next, onHost));
       tty = paneTty(agents, rightPane);
     } else if (
       isEntry(shown) ||
@@ -303,7 +318,11 @@ export async function runSidebar(
   // its line, counted from the top, below the notice.
   process.stdin.on("data", (bytes) => {
     for (const [, kind, arrow, y, said, about = ""] of bytes.toString().matchAll(input)) {
-      if (said === "skel-page") {
+      if (said === "skel-back") {
+        // A builder's attach on a plugin's host ended, and the lead shows in its place. One you
+        // already moved away from changes nothing.
+        if (shown === about) shown = open.lead;
+      } else if (said === "skel-page") {
         // The list on the right opened a page, or went back from one.
         page = about ? pageRow(db, open, about) : null;
       } else if (said === "skel-thread") {

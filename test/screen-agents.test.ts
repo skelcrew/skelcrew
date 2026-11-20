@@ -21,6 +21,7 @@ import {
   press,
   read,
   ready,
+  right,
   screen,
   screenFile,
   screenSessions,
@@ -292,6 +293,44 @@ UPDATE threads SET host = 'fake', host_id = 'fake-app-12' WHERE folder = 'app-12
   await Bun.sleep(2500);
   expect(selected()).toContain("app-12");
   expect(seen()).toContain("I am fake-app-12 on fake");
+});
+
+// A host that fails to answer can't say a builder ended. So once the builder's attach on the right
+// ends, the right side is back on the lead, also on a plugin's host, and its row is marked.
+test("a builder's attach that ends while its host fails to answer marks the lead again", async () => {
+  tmux(agents, "kill-session", "-t", "=lead");
+  tmux(agents, "kill-session", "-t", "=app-12");
+  const plugin = join(home, "plugin-fake");
+  mkdirSync(plugin, { recursive: true });
+  writeFileSync(
+    join(plugin, "session.sh"),
+    `read -r question; echo >> listed; [ -e failing ] && exit 1; echo '{"sessions":[{"id":"fake-lead","running":true,"labels":null},{"id":"fake-app-12","running":true,"labels":null}]}'\n`,
+  );
+  // The builder's attach ends at Enter, the lead's never.
+  writeFileSync(
+    join(plugin, "attach.sh"),
+    'echo "I am $1 on fake"; [ "$1" = fake-app-12 ] || exec sleep 300; read -r line\n',
+  );
+  writeFileSync(
+    join(plugin, "skelcrew-plugin.yaml"),
+    "name: fake\nversion: 0.1.0\nskelcrew: 0.1.0\nabout: A host\nkind: runtime\nprovides: [sessions]\nsession: [sh, session.sh]\nattach: [sh, attach.sh]\n",
+  );
+  sql(`INSERT INTO plugins (name, folder) VALUES ('fake', '${plugin}');
+UPDATE repositories SET lead_host = 'fake', lead_host_id = 'fake-lead' WHERE repo = 'app';
+UPDATE threads SET host = 'fake', host_id = 'fake-app-12' WHERE folder = 'app-12'`);
+  open("lead");
+  await until(() => seen().includes("I am fake-lead on fake"), "the lead through its host");
+  const looks = () => read(join("plugin-fake", "listed")).split("\n").length;
+  await until(() => looks() > 2, "the sidebar to ask the host");
+  toFirstThread();
+  await until(() => seen().includes("I am fake-app-12 on fake"), "the builder's attach");
+  await until(() => selected().includes("app-12"), "the sidebar to follow");
+  writeFileSync(join(plugin, "failing"), "");
+  const failed = looks();
+  await until(() => looks() > failed + 1, "the sidebar to ask the failing host");
+  type("\r");
+  await until(() => right().includes("I am fake-lead on fake"), "the lead again");
+  await until(() => selected() === "◆ lead", "the lead's row");
 });
 
 test("a screen opened on an agent starts on it, marked in the sidebar", async () => {
