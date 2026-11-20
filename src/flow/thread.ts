@@ -287,8 +287,8 @@ export async function builderSession(
   if (!found) return { host, id: thread.folder };
   const now = record(db, thread.folder, { host_id: found.name }, "found its builder on its host");
   // A short title given while its ID was unknown found nothing to rename, so its labels may
-  // still name it by the old title.
-  if (found.labels?.title !== (sessionTitle(db, now) ?? undefined)) renameOnHost(db, thread.folder);
+  // still name it by the old title, or by a title from before it held the task's name.
+  if (found.labels?.title !== sessionTitle(db, now)) renameOnHost(db, thread.folder);
   return { host, id: found.name };
 }
 
@@ -442,7 +442,7 @@ export function renameOnHost(db: Database, folder: string): void {
     if (thread.host === null || thread.host === "tmux" || thread.host_id === null) return;
     const host = pluginHost(db, thread.host);
     const title = sessionTitle(db, thread);
-    if (host === null || !title) return;
+    if (host === null) return;
     await renameSession(host, thread.host_id, title).catch((error) =>
       console.log(`couldn't rename ${folder} on ${host.plugin}: ${errorText(error)}`),
     );
@@ -455,11 +455,14 @@ export function renameOnHost(db: Database, folder: string): void {
   });
 }
 
-// Returns the title a builder's session goes by on its host: its thread's short title, else the
-// task's title as its builder was given it, which a row from before Skelcrew saved titles takes
-// from the copy of the tracker. Null when it has neither.
-export function sessionTitle(db: Database, thread: Thread): string | null {
-  return thread.short || threadTask(db, thread).title || null;
+// Returns the title a builder's session goes by on its host: its task's name as people read it,
+// then its thread's short title, else the task's title as its builder was given it, such as
+// APP-12 Login redirect. A row from before Skelcrew saved titles takes the title from the copy of
+// the tracker. A host's own apps, such as herdr's, name the session by it, and its labels and
+// session name stay lowercase, as Skelcrew finds the builder by them.
+export function sessionTitle(db: Database, thread: Thread): string {
+  const title = thread.short || threadTask(db, thread).title;
+  return title ? `${threadName(db, thread)} ${title}` : threadName(db, thread);
 }
 
 // The renames under way of each thread's builder, by its folder, each settling once it is over.

@@ -1131,14 +1131,15 @@ process.exit(0);`,
   );
 }, 40_000);
 
-// The last is a row from before Skelcrew saved a thread's title, which takes the issue's from
-// Skelcrew's copy of the tracker.
+// The title starts with the task's name as people read it, for a host's own apps to name the
+// session by. Skelcrew has no row for the repository here, so the name holds its owner. The last is a row from before Skelcrew saved a thread's title, which takes the
+// issue's from Skelcrew's copy of the tracker.
 for (const [short, title, saved] of [
-  ["login redirect", "login redirect", "Fix the login redirect"],
-  [null, "Fix the login redirect", "Fix the login redirect"],
-  [null, "Fix the login redirect", null],
+  ["login redirect", "SIMON/APP-12 login redirect", "Fix the login redirect"],
+  [null, "SIMON/APP-12 Fix the login redirect", "Fix the login redirect"],
+  [null, "SIMON/APP-12 Fix the login redirect", null],
 ] as const)
-  test(`a builder's session is labelled with its short title, else its full title: ${title}, saved ${saved}`, () => {
+  test(`a builder's session is labelled with its name and short title, else its full title: ${title}, saved ${saved}`, () => {
     const fake = join(home, ".config", "skelcrew", "plugins", "fake");
     const labels = runWithFakeHost(
       "sessions",
@@ -1168,7 +1169,9 @@ await Bun.sleep(1000);`,
     .map((line) => JSON.parse(line))
     .filter((question) => question.ask === "rename");
   // Only the change of title renames it, not every change to the thread.
-  expect(renames).toEqual([{ ask: "rename", id: "fake-app-12", title: "login redirect" }]);
+  expect(renames).toEqual([
+    { ask: "rename", id: "fake-app-12", title: "SIMON/APP-12 login redirect" },
+  ]);
 }, 40_000);
 
 test("a short title given while the host starts the builder still reaches the host", () => {
@@ -1192,7 +1195,9 @@ process.exit(0);`,
     .split("\n")
     .map((line) => JSON.parse(line))
     .filter((question) => question.ask === "rename");
-  expect(renames).toEqual([{ ask: "rename", id: "fake-app-12", title: "login redirect" }]);
+  expect(renames).toEqual([
+    { ask: "rename", id: "fake-app-12", title: "SIMON/APP-12 login redirect" },
+  ]);
 }, 40_000);
 
 test("renames reach the host one at a time, and the last says the latest title", () => {
@@ -1217,7 +1222,7 @@ process.exit(0);`,
     { host: "fake", host_id: "fake-app-12", title: "Fix the login redirect" },
   );
   // The second waited for the first to finish, so the host ends on the latest title.
-  expect(said).toBe("1\nfirst second\n");
+  expect(said).toBe("1\nSIMON/APP-12 first SIMON/APP-12 second\n");
 }, 40_000);
 
 test("a rename the host does but answers with nothing counts as done", () => {
@@ -1232,7 +1237,7 @@ process.exit(0);`,
     { host: "fake", host_id: "fake-app-12", title: "Fix the login redirect" },
   );
   const labels = readFileSync(join(fake, "sessions", "fake-app-12", "labels.json"), "utf8");
-  expect(JSON.parse(labels).title).toBe("login redirect");
+  expect(JSON.parse(labels).title).toBe("SIMON/APP-12 login redirect");
   expect(said).not.toContain("couldn't rename");
 }, 40_000);
 
@@ -1250,5 +1255,5 @@ process.exit(0);`,
     { host: "fake", host_id: null, title: "Fix the login redirect" },
   );
   const labels = readFileSync(join(fake, "sessions", "fake-app-12", "labels.json"), "utf8");
-  expect(JSON.parse(labels).title).toBe("login redirect");
+  expect(JSON.parse(labels).title).toBe("SIMON/APP-12 login redirect");
 }, 40_000);

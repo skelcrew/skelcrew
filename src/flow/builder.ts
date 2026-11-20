@@ -623,7 +623,7 @@ export function startOnHost(
       role: "builder",
       // A label names the task as Skelcrew stores it, in lowercase, as it finds the builder by it.
       task: threadName(db, thread).toLowerCase(),
-      ...(title ? { title } : {}),
+      title,
     };
     // The host is saved before the session starts, so a daemon that stops in between finds the
     // builder there by its labels, rather than starting it again elsewhere.
