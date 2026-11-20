@@ -11,8 +11,8 @@ import { seatbeltArgs } from "./seatbelt.ts";
 export const socketFolderInside = "/run/skelcrew";
 
 // Where a session host that provides files shows an agent the files you dropped onto it: a path
-// that never exists on the host, made anew for each start. The host's relay swaps every word of
-// the sandbox command equal to it for the session's real folder before bubblewrap runs, so the
+// that never exists on the host, made anew for each start. The host's relay swaps it, wherever it
+// appears in the sandbox command, for the session's real folder before bubblewrap runs, so the
 // agent reads its drops, read-only, at the path the host types for them. It is the only thing a
 // host may change in the command, and it can only change what that one read-only mount shows.
 export const filesPlaceholder = () =>

@@ -11,7 +11,7 @@
 // from a given time on. With a file lose-start, it starts the
 // next session but fails before saying its ID. Given `files` as it starts a session, it does as
 // a host that provides files: it makes the session a folder of dropped files, `files` in the
-// session's folder, and swaps every word of the command equal to the placeholder for it. Its one
+// session's folder, and swaps the placeholder for it wherever it appears in the command. Its one
 // argument, its settings folder, is only there so a test's clean-up can find its calls with ps.
 import {
   appendFileSync,
@@ -79,7 +79,7 @@ const answers: Record<string, () => unknown> = {
     const drops = join(folder(id), "files");
     if (question.files) mkdirSync(drops);
     const command = question.command.map((word: string) =>
-      question.files && word === question.files ? drops : word,
+      question.files ? word.replaceAll(question.files, drops) : word,
     );
     const env = Object.entries(question.env).map(([key, value]) => `${key}=${value}`);
     // The session's folder comes in as $0, then the agent's folder and the pipe, then the
