@@ -54,8 +54,9 @@ function repositoryAndLead(db: ReturnType<typeof openDb>, fullName: string): Ope
 }
 
 // Runs the sidebar until its pane goes. The session given is its own, on the screen's server,
-// `where` says which remote Skelcrew runs on, if any, for the header above it, and `repository`
-// is the owner/name of the repository it opens on.
+// `where` says which remote Skelcrew runs on, if any, for the header above it, `repository`
+// is the owner/name of the repository it opens on, and `onHost` the line the right pane
+// attaches to its lead's host with, empty for tmux.
 // tmux brings it the keys that move and clicks on its input. It looks again each second, and
 // writes only when something changed, as over a slow link each write costs.
 export async function runSidebar(
@@ -63,6 +64,7 @@ export async function runSidebar(
   session: string,
   where: string,
   repository: string,
+  onHost: string,
 ): Promise<void> {
   // A freeze of the screen leaves nothing behind, as everything the sidebar says is drawn in
   // your terminal. So it logs its own stalls to a file, with the step it was stuck on.
@@ -72,9 +74,10 @@ export async function runSidebar(
   const db = openDb();
   let open = repositoryAndLead(db, repository);
   // How the right pane reaches the open repository's lead: through its plugin's host, by this
-  // line, or through tmux when null. It is read again each second, as a lead the daemon is still
-  // starting may land on a plugin's host after the pane began waiting for it.
-  let leadAttach = leadOnHost(db, open);
+  // line, or through tmux when null. It starts as the screen started the pane, and is read again
+  // each second, as a lead the daemon is still starting may land on a plugin's host, or move on
+  // it, after the pane began waiting for it.
+  let leadAttach = onHost === "" ? null : onHost;
   // Returns a shell line that shows the open repository's lead, and again whenever it ends or you
   // leave it, as tmux's attach to the lead does.
   const leadLine = () =>
@@ -163,15 +166,6 @@ export async function runSidebar(
       }
       switchTo(next.fullName);
     }
-    // A lead that moved to or from a plugin's host is shown through its host now.
-    const lead = doing("reading the lead's host", () => leadOnHost(db, open));
-    if (lead !== leadAttach) {
-      leadAttach = lead;
-      if (shown === open.lead) {
-        respawnPane(agents, rightPane, paneOn(open.lead));
-        tty = paneTty(agents, rightPane);
-      }
-    }
     notice = noticeLines(updateNotice(db), size().width);
     rows = doing("reading the rows", () => sidebarRows(db, running, roundLimit, Date.now(), open));
     entries = doing("counting the lists", () => entryCounts(db, open));
@@ -183,6 +177,17 @@ export async function runSidebar(
       const client = doing("asking tmux which agent shows", () => shownSession(agents, tty));
       if (client) shown = client;
       else if (!running.includes(open.lead)) shown = open.lead;
+    }
+    // A lead that moved to or from a plugin's host, or to another session on it, is shown
+    // through its host now. This comes once the sidebar knows what the right side shows, as at
+    // the first look it doesn't yet, and the lead may have moved since the screen started it.
+    const lead = doing("reading the lead's host", () => leadOnHost(db, open));
+    if (lead !== leadAttach) {
+      leadAttach = lead;
+      if (shown === open.lead) {
+        respawnPane(agents, rightPane, paneOn(open.lead));
+        tty = paneTty(agents, rightPane);
+      }
     }
     // A lead that crashed while you look at it is brought back with its conversation, once,
     // as the daemon does at its start. One you exited closes its tab instead.

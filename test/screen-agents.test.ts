@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { join } from "node:path";
 import { startSession, stillRunning } from "../src/agents/sessions.ts";
 import { tmuxIsAtLeast } from "../src/agents/tmux.ts";
-import { threadSql } from "./harness.ts";
+import { source, threadSql } from "./harness.ts";
 import {
   agent,
   agents,
@@ -169,6 +169,37 @@ UPDATE repositories SET lead_host = 'fake', lead_host_id = 'fake-lead' WHERE rep
   await until(() => attached() === 3, "the host's attach to start again");
   expect(read(join("plugin-fake", "typed"))).toBe("xy");
   expect(existsSync(join(home, "left-one"))).toBe(false);
+});
+
+// The right side and the sidebar each learn the lead's host as they start, the sidebar a moment
+// later. The daemon can give the lead a new session on its host in that moment, as this host's
+// attach does the first time it runs. The sidebar must still see that the right side shows the
+// old one, and attach it to the new one.
+test("a lead that moves on its host while the screen opens is shown where it went", async () => {
+  tmux(agents, "kill-session", "-t", "=lead");
+  const plugin = join(home, "plugin-fake");
+  mkdirSync(plugin, { recursive: true });
+  writeFileSync(
+    join(plugin, "session.sh"),
+    `read -r question; echo '{"sessions":[{"id":"fake-lead-2","running":true,"labels":null}]}'\n`,
+  );
+  writeFileSync(
+    join(plugin, "move.ts"),
+    `import { openDb } from ${JSON.stringify(source("db.ts"))};
+openDb().run("UPDATE repositories SET lead_host_id = 'fake-lead-2' WHERE repo = 'app'");`,
+  );
+  writeFileSync(
+    join(plugin, "attach.sh"),
+    `[ -e moved ] || { touch moved; ${process.execPath} move.ts; }; echo "I am $1 on fake"; exec sleep 300\n`,
+  );
+  writeFileSync(
+    join(plugin, "skelcrew-plugin.yaml"),
+    "name: fake\nversion: 0.1.0\nskelcrew: 0.1.0\nabout: A host\nkind: runtime\nprovides: [sessions]\nsession: [sh, session.sh]\nattach: [sh, attach.sh]\n",
+  );
+  sql(`INSERT INTO plugins (name, folder) VALUES ('fake', '${plugin}');
+UPDATE repositories SET lead_host = 'fake', lead_host_id = 'fake-lead-1' WHERE repo = 'app'`);
+  open("lead");
+  await until(() => seen().includes("I am fake-lead-2 on fake"), "the lead where it went");
 });
 
 test("a screen opened on an agent starts on it, marked in the sidebar", async () => {

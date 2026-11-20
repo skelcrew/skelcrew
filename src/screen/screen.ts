@@ -166,11 +166,18 @@ const footerCommand = (agents: string, session: string) =>
   skelcrewCommand("footer", agents, session);
 
 // Returns the command that runs Skelcrew's sidebar, with the owner/name of the repository it opens
-// on. Where Skelcrew runs goes along as a word, not in the environment: a tmux server hands its
-// panes the environment of whichever terminal started it, and terminals on this server can
-// come from different laptops.
-const sidebarCommand = (agents: string, session: string, where: string, repository: string) =>
-  skelcrewCommand("sidebar", agents, session, where, repository);
+// on, and the line the right pane attaches to its lead's host with, empty for tmux. The sidebar
+// starts from that line rather than reading the host itself: the daemon can move the lead in
+// between, and the sidebar would then think the right pane already shows it. Where Skelcrew runs
+// goes along as a word, not in the environment: a tmux server hands its panes the environment of
+// whichever terminal started it, and terminals on this server can come from different laptops.
+const sidebarCommand = (
+  agents: string,
+  session: string,
+  where: string,
+  repository: string,
+  onHost: string,
+) => skelcrewCommand("sidebar", agents, session, where, repository, onHost);
 
 // Returns the command for the right pane while it shows an entry's list of the repository named
 // by its owner/name. It gets the agents' server and the screen's session, to tell the sidebar
@@ -226,7 +233,6 @@ export async function openScreen(
   const name = `screen-${process.pid}`;
   // The name sc --remote passes along, such as simon@workbox. Empty on this machine.
   const where = env.SKELCREW_REMOTE_NAME ?? "";
-  const left = sidebarCommand(agents, name, where, repository);
   // The title is the session's own: terminals on this server can come from different laptops.
   // tmux's border between the panes is blank where it can be: the sidebar draws its own line,
   // so the border is a gap before the agent. On an older tmux it stays tmux's thin line.
@@ -247,6 +253,7 @@ export async function openScreen(
       : session === lead
         ? ["sh", "-c", again]
         : attachThen(agents, session, again);
+  const left = sidebarCommand(agents, name, where, repository, onHost ?? "");
   const open = [
     ...config,
     ...border,

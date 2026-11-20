@@ -225,12 +225,12 @@ async function screenCommand(args: string[]): Promise<void> {
       return;
     }
   }
-  // `where` is the remote Skelcrew runs on, and empty on this machine, so check it against
-  // undefined.
-  if (command === "sidebar" && rest.length === 4) {
-    const [agents, session, where, repository] = rest;
-    if (agents && session && where !== undefined && repository) {
-      await runSidebar(agents, session, where, repository);
+  // `where` is the remote Skelcrew runs on, and empty on this machine, and the sidebar's last
+  // word is empty for a lead on tmux, so check them against undefined.
+  if (command === "sidebar" && rest.length === 5) {
+    const [agents, session, where, repository, onHost] = rest;
+    if (agents && session && where !== undefined && repository && onHost !== undefined) {
+      await runSidebar(agents, session, where, repository, onHost);
       return;
     }
   }
