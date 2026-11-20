@@ -233,6 +233,13 @@ function workingSince(): number | null {
   return z.object({ working_since: z.number().nullable() }).parse(row).working_since;
 }
 
+// What app-12's builder shows on its screen now.
+const builderScreen = () =>
+  Bun.spawnSync(["tmux", "-L", socket, "capture-pane", "-p", "-t", "=app-12:"], {
+    stdout: "pipe",
+    stderr: "pipe",
+  }).stdout.toString();
+
 // app-12's row in Skelcrew's database.
 function thread(): Record<string, unknown> {
   const db = new Database(join(data(), "skelcrew.db"));
@@ -800,17 +807,21 @@ describe.skipIf(insideSandbox)("needs you", () => {
 
   // The builder can ask you a question after Skelcrew found it idle and before the paste. The
   // message would then answer the question for you, so it waits until the question is over.
+  // Claude Code shows its busy line until the question's hook has run, so the lead's message
+  // waits from before the question. The question's screen then looks idle to typing.
   test("a lead's message isn't typed in once the builder asks a question while typing waits", async () => {
     addApp();
     await startApp12();
-    // Each look at its screen now takes a couple of seconds, so typing waits a while.
-    writeFileSync(join(builder(), "quoting"), "");
-    await Bun.sleep(500);
-    const lead = { SKELCREW_SANDBOX: "1", SKELCREW_SOCKET: leadSocket() };
-    expect((await skel(["tell", "app-12", "Use JSON."], lead)).err).toBe("");
+    writeFileSync(join(builder(), "busy"), "");
+    await until(() => builderScreen().includes("esc to interrupt"));
+    const told = await asLead(["tell", "app-12", "Use JSON."]);
+    expect(told.out).toContain("can't take it yet");
     await hook("ask");
     expect(thread().asking).toBe(1);
-    await Bun.sleep(8000);
+    // Each look at its screen now takes a couple of seconds, and finds it ready.
+    writeFileSync(join(builder(), "quoting"), "");
+    rmSync(join(builder(), "busy"));
+    await until(() => builderScreen().includes("❯"));
     expect(read(join(builder(), "typed"))).not.toContain("Use JSON.");
     const db = new Database(join(data(), "skelcrew.db"));
     db.run("PRAGMA busy_timeout = 5000");

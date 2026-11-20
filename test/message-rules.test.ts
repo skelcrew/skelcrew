@@ -21,7 +21,8 @@ const lead = leadPlaces("simon", "app").name;
 
 // Runs the code with the messages module on a fake transport, and returns what it prints. The
 // fake keeps what is typed in `fake.received`, as { to, text }, and says an agent is busy for
-// the reason `fake.busy` holds for its session's name. An agent runs while `fake.running` has
+// the reason `fake.busy` holds for its session's name. Each look at an agent's screen waits for
+// `fake.look`, so a test can hold typing mid-look. An agent runs while `fake.running` has
 // its name: app-12's builder and the lead, to start. The database is open as `db`, with app-12
 // waiting on its review, the module's functions are in `messages`, and `settle()` waits for
 // typing under way. The code takes a process of its own with HOME set, as homedir() keeps the
@@ -32,8 +33,11 @@ const transportPath = ${JSON.stringify(source("agents/transport.ts"))};
 const sessionsPath = ${JSON.stringify(source("agents/sessions.ts"))};
 const transport = await import(transportPath);
 const sessions = await import(sessionsPath);
-const fake = { busy: new Map(), running: new Set(["app-12", ${JSON.stringify(lead)}]), received: [] };
-const whyBusy = async (_socket, name) => fake.busy.get(name) ?? "";
+const fake = { busy: new Map(), running: new Set(["app-12", ${JSON.stringify(lead)}]), received: [], look: Promise.resolve() };
+const whyBusy = async (_socket, name) => {
+  await fake.look;
+  return fake.busy.get(name) ?? "";
+};
 // Like the built-in, it types nothing once its signal aborts, and gives up on a busy agent,
 // here without waiting.
 const deliver = async (socket, name, _marks, text, waits = {}) => {
@@ -240,6 +244,31 @@ messages.deliverAllWaiting(db, tmux);
 await settle();
 console.log(JSON.stringify({ during, after: texts("app-12") }));`);
   expect(JSON.parse(seen)).toEqual({ during: [], after: ["Use v2."] });
+});
+
+// A builder can ask its question while typing is still looking at its screen, which can take
+// seconds. The message must wait for the answer, as typing it in would answer the question.
+test("a question asked while typing looks at the builder's screen holds the message until it is over", () => {
+  const seen = run(`
+const { questionAsked, questionClosed } = await import(${JSON.stringify(source("flow/status.ts"))});
+let looked = () => {};
+fake.look = new Promise((resolve) => (looked = resolve));
+messages.queueMessage(db, tmux, "app-12", { sender: "lead", text: "Use JSON.", said: "Use JSON.", typed_in: [] });
+// The builder's hook says it asks a question while typing is still looking.
+questionAsked(db, tmux, "app-12");
+looked();
+// The typing under way ends, and a later attempt finds the question still open.
+await messages.deliverMessages(db, tmux, "app-12");
+await messages.deliverAllWaiting(db, tmux);
+const waiting = () => messages.messagesWaiting(db, readThread(db, "app-12"));
+const during = { typed: texts("app-12"), waiting: waiting() };
+questionClosed(db, "app-12");
+await messages.deliverAllWaiting(db, tmux);
+console.log(JSON.stringify({ during, after: { typed: texts("app-12"), waiting: waiting() } }));`);
+  expect(JSON.parse(seen)).toEqual({
+    during: { typed: [], waiting: 1 },
+    after: { typed: ["Use JSON."], waiting: 0 },
+  });
 });
 
 test("a lead's message to a builder not running, asking you, or stopped is refused and not kept", () => {
