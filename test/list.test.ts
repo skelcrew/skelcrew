@@ -1958,6 +1958,43 @@ exec ${JSON.stringify(Bun.which("tmux") ?? "tmux")} "$@"
   return { bin, reads: () => read(log).split("\n").filter(Boolean).length };
 }
 
+// A tmux whose capture of a screen takes 3 seconds, as a busy or stalled tmux server can, which
+// does all else at once.
+function slowTmux(): string {
+  const bin = join(home, "slow-bin");
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(
+    join(bin, "tmux"),
+    `#!/bin/sh
+case "$*" in *"capture-pane -p -e"*) sleep 3 ;; esac
+exec ${JSON.stringify(Bun.which("tmux") ?? "tmux")} "$@"
+`,
+    { mode: 0o755 },
+  );
+  return bin;
+}
+
+test("a tmux slow to capture an agent's screen never holds up the keys", async () => {
+  await open({ width: wide, bin: slowTmux() });
+  await until(() => paneSeen()[0] === "Rate limit the API", "app-12's details");
+  // Each read of app-12's screen takes 3 seconds. The moves meanwhile still show at once.
+  const start = performance.now();
+  press("Down");
+  await until(() => here().startsWith("▸ ○ app-9"), "app-9's row");
+  press("Up");
+  await until(() => here().startsWith("▸ ● app-12"), "app-12's row");
+  press("Down");
+  await until(() => here().startsWith("▸ ○ app-9"), "app-9's row");
+  expect(performance.now() - start).toBeLessThan(1000);
+  // Its screen shows once tmux answers. Then app-9 has no agent to read, and the read under way
+  // ends, as the test started it.
+  press("Up");
+  await until(() => liveSeen().includes("I am app-12"), "app-12's screen");
+  press("Down");
+  await until(() => here().startsWith("▸ ○ app-9"), "app-9's row");
+  await Bun.sleep(3500);
+});
+
 // Returns whether no read came for a second, as the live view reads 4 times a second.
 async function noReads(reads: () => number): Promise<boolean> {
   const before = reads();
