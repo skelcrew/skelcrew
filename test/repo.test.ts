@@ -949,8 +949,8 @@ plugins:
       "Skelcrew reads these files from main, so commit and push them there:",
       "",
       "  git add skelcrew.yaml skelcrew.lock .agents",
-      '  git commit -m "Set up Skelcrew"',
-      "  git push",
+      '  git commit -m "Set up Skelcrew" -- skelcrew.yaml skelcrew.lock .agents',
+      "  git push origin main",
       "",
       "Then run sc.",
       "",
@@ -1131,7 +1131,7 @@ function initAtTerminal(checkout: string, typed: string) {
 
 // What sc init shows when it leaves the commit to you, after the reason it gives.
 const commands =
-  '\n  git add skelcrew.yaml skelcrew.lock .agents\n  git commit -m "Set up Skelcrew"\n  git push\n\nThen run sc.\n';
+  '\n  git add skelcrew.yaml skelcrew.lock .agents\n  git commit -m "Set up Skelcrew" -- skelcrew.yaml skelcrew.lock .agents\n  git push origin main\n\nThen run sc.\n';
 
 // The lead and builders read the repository as its default branch has it, so sc init offers to
 // commit what it wrote and push it there, then opens the lead as plain sc does.
@@ -1174,19 +1174,35 @@ test("init after a no commits nothing, shows the commands, and opens no lead", a
   expect(calls()).not.toContain("daemon lead");
 });
 
-// The commit holds only what sc init wrote, so other staged work would ride along unseen.
-test("init with other changes staged asks nothing and leaves the commit to you", async () => {
+// The commit names the files sc init wrote, so other staged work stays out of it, and staged.
+test("init with other changes staged commits only its own files", async () => {
   const checkout = onGitHub("simon/app", "WRITE");
   githubInstalledAsYours();
   writeFileSync(join(checkout, "notes.txt"), "mine\n");
   git(checkout, "add", "notes.txt");
   const run = await initAtTerminal(checkout, "y\n");
   expect(run.code).toBe(0);
+  expect(run.out).toContain("Pushed them to main.");
+  expect(git(checkout, "show", "--name-only", "--format=", "HEAD")).not.toContain("notes.txt");
+  expect(git(checkout, "status", "--porcelain")).toBe("A  notes.txt\n");
+});
+
+// A file sc init edits that had your changes already would bring them into its commit, so it
+// leaves the commit to you, saying why.
+test("init asks nothing when a file it edits had changes of yours", async () => {
+  const checkout = onGitHub("simon/app", "WRITE");
+  githubInstalledAsYours();
+  writeFileSync(join(checkout, "skelcrew.yaml"), "setup: [make]\n");
+  git(checkout, "add", "skelcrew.yaml");
+  git(checkout, "commit", "-q", "-m", "config");
+  writeFileSync(join(checkout, "skelcrew.yaml"), "# Mine, not yet committed.\nsetup: [make]\n");
+  const run = await initAtTerminal(checkout, "y\n");
+  expect(run.code).toBe(0);
   expect(run.out).not.toContain("now? [Y/n]");
-  expect(run.out).toEndWith(
-    `Other changes are staged here, so Skelcrew leaves the commit to you. Skelcrew reads these files from main, so commit and push them there:\n${commands}`,
+  expect(run.out).toContain(
+    "skelcrew.yaml had changes of yours already, which the commit would take too, so Skelcrew leaves it to you.",
   );
-  expect(git(checkout, "log", "-1", "--format=%s")).toBe("start\n");
+  expect(git(checkout, "log", "-1", "--format=%s")).toBe("config\n");
 });
 
 // A push from another branch wouldn't reach the default branch, which is all Skelcrew reads.
@@ -1197,8 +1213,9 @@ test("init on another branch asks nothing and says where the files must go", asy
   const run = await initAtTerminal(checkout, "y\n");
   expect(run.code).toBe(0);
   expect(run.out).not.toContain("now? [Y/n]");
+  // The commands start by going to the default branch, where the push brings the files in.
   expect(run.out).toEndWith(
-    `You are on setup, and Skelcrew reads these files from main. Once they are there, the lead uses them. To commit and push them:\n${commands}`,
+    `You are on setup, and Skelcrew reads these files from main. Once they are there, the lead uses them. To commit and push them there:\n\n  git switch main${commands}`,
   );
 });
 
@@ -1213,7 +1230,7 @@ test("init whose push fails says why, shows the push that is left, and opens no 
   expect(run.out).toContain("git push failed: ");
   expect(run.out).toContain("protected branch");
   expect(run.out).toEndWith(
-    "The lead only sees the files once they are pushed.\n\n  git push\n\nThen run sc.\n",
+    "The lead only sees the files once they are pushed.\n\n  git push origin main\n\nThen run sc.\n",
   );
   expect(git(checkout, "log", "-1", "--format=%s")).toBe("Set up Skelcrew\n");
   expect(calls()).not.toContain("daemon lead");

@@ -680,6 +680,15 @@ export async function initRepo(sessions: string): Promise<boolean> {
   // A new file is made only where none is, so the write never follows a link.
   const file = join(root, "skelcrew.yaml");
   const hasConfig = lstatSync(file, { throwIfNoEntry: false }) !== undefined;
+  // Read before anything is written: changes of yours to a file sc init edits would ride along in
+  // the commit it offers, so they keep it from offering.
+  const yours = gitIn(root, ["status", "--porcelain", "--", "skelcrew.yaml", "skelcrew.lock"]);
+  const dirty = yours.said
+    .split("\n")
+    .filter((line) => line !== "")
+    // Each line is a status code, such as M or ??, then the path. The output is trimmed, so the
+    // first line can lose a space of its code, and the code is read up to the space after it.
+    .map((line) => line.replace(/^\S*\s+/, ""));
   if (!hasConfig) writeFileSync(file, starterConfig, { flag: "wx" });
   // The forge's plugin is installed before the repository comes in, so it can claim the remote.
   const forge = addForgePlugin(root, remote);
@@ -732,7 +741,7 @@ export async function initRepo(sessions: string): Promise<boolean> {
   if (wrote.length === 0) return false;
   const many = wrote.length > 1;
   console.log(`\nWrote ${wrote.slice(0, -1).join(", ")}${many ? " and " : ""}${wrote.at(-1)}.`);
-  return added !== undefined && (await offerPush(openDb(), root, wrote, added));
+  return added !== undefined && (await offerPush(openDb(), root, wrote, dirty, added));
 }
 
 // Runs git in the checkout at `root` and returns whether it worked, with what it said.
@@ -743,14 +752,17 @@ function gitIn(root: string, args: string[]): { ok: boolean; said: string } {
 
 // Offers to commit the files sc init wrote, `files`, and push them to the repository's default
 // branch, as Skelcrew's lead and builders read the repository only as it is there. The commit
-// holds those files alone, so it is offered only while nothing else is staged, and only on the
-// default branch, where a push brings them straight in. Elsewhere, after a no, with no terminal to
-// answer in, or when git fails, it shows the commands to run yourself instead. Returns whether it
-// pushed, once Skelcrew's clone has the files too, so the lead opens on them.
+// names those files, so nothing else staged joins it. It is offered only on the default branch,
+// where a push brings them straight in, and only when `dirty`, the files sc init edited that had
+// changes of yours already, is empty, as the commit would take those changes too. Otherwise, after
+// a no, with no terminal to answer in, or when git fails, it shows the commands to run yourself:
+// on another branch they switch to the default branch first. Returns whether it pushed, once
+// Skelcrew's clone has the files too, so the lead opens on them.
 async function offerPush(
   db: Database,
   root: string,
   files: string[],
+  dirty: string[],
   repository: Repository,
 ): Promise<boolean> {
   const paths = files.map((file) => file.replace(/\/$/, ""));
@@ -759,36 +771,43 @@ async function offerPush(
     "--short",
     "HEAD",
   ]).said;
-  // What to run yourself, `from` the step the offer didn't get past.
-  const steps = [`git add ${paths.join(" ")}`, 'git commit -m "Set up Skelcrew"', "git push"];
-  const show = (why: string, from = 0) => {
-    console.log(`${why}\n${toRun(steps.slice(from))}`);
+  const here = gitIn(root, ["symbolic-ref", "--short", "HEAD"]).said;
+  // What to run yourself. The commit names its files, so other staged work stays out of it, and
+  // the push names the default branch, which a branch with no upstream would need anyway.
+  const commit = `git commit -m "Set up Skelcrew" -- ${paths.join(" ")}`;
+  const push = `git push origin ${branch}`;
+  const steps = [
+    ...(here === branch ? [] : [`git switch ${branch}`]),
+    `git add ${paths.join(" ")}`,
+    commit,
+    push,
+  ];
+  const show = (why: string, left = steps) => {
+    console.log(`${why}\n${toRun(left)}`);
     console.log("Then run sc.");
     return false;
   };
-  const here = gitIn(root, ["symbolic-ref", "--short", "HEAD"]).said;
+  const commitThem = `Skelcrew reads these files from ${branch}, so commit and push them there:`;
   if (here !== branch)
     return show(
-      `You are on ${here || "no branch"}, and Skelcrew reads these files from ${branch}. Once they are there, the lead uses them. To commit and push them:`,
+      `You are on ${here || "no branch"}, and Skelcrew reads these files from ${branch}. Once they are there, the lead uses them. To commit and push them there:`,
     );
-  const staged = !gitIn(root, ["diff", "--cached", "--quiet"]).ok;
-  const commitThem = `Skelcrew reads these files from ${branch}, so commit and push them there:`;
-  if (staged)
+  if (dirty.length > 0)
     return show(
-      `Other changes are staged here, so Skelcrew leaves the commit to you. ${commitThem}`,
+      `${dirty.join(" and ")} had changes of yours already, which the commit would take too, so Skelcrew leaves it to you. ${commitThem}`,
     );
   if (!process.stdin.isTTY) return show(commitThem);
   if (!askYes(`Commit and push these files to ${branch} now? [Y/n]`)) return show(commitThem);
   // Each step stops at the first that fails, naming what git said and what is left to run.
   const added = gitIn(root, ["add", "--", ...paths]);
   if (!added.ok) return show(`git add failed: ${added.said}`);
-  const committed = gitIn(root, ["commit", "-q", "-m", "Set up Skelcrew"]);
-  if (!committed.ok) return show(`git commit failed: ${committed.said}`, 1);
+  const committed = gitIn(root, ["commit", "-q", "-m", "Set up Skelcrew", "--", ...paths]);
+  if (!committed.ok) return show(`git commit failed: ${committed.said}`, [commit, push]);
   const pushed = gitIn(root, ["push", "-q", "origin", `HEAD:refs/heads/${branch}`]);
   if (!pushed.ok)
     return show(
       `git push failed: ${pushed.said}\nThe lead only sees the files once they are pushed.`,
-      2,
+      [push],
     );
   console.log(`Pushed them to ${branch}.`);
   // The daemon refreshes the clone within a poll, which the lead opening now would beat.
