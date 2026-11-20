@@ -471,9 +471,10 @@ test("a name stays taken on another machine once claimed", async () => {
 
 // Threads named before Skelcrew claimed names on the remote, such as app-t25, were never claimed,
 // and live only in the database of the machine that started them, which may be another one. So
-// numbers start at 100, above all of them, and go on above the highest claim. Claims of names from
-// a machine's code, such as wr140, don't count.
-test("a new thread takes t100, or the next number above every claim", async () => {
+// numbers start at 100, above all of them, and go on above every claim and every number this
+// machine's tasks hold, claimed or not. Claims of names from a machine's code, such as wr140,
+// don't count.
+test("a new thread takes t100, or the next number above every one claimed or held", async () => {
   const { remote, homes } = twoMachines();
   const [laptop = "", lapdog = ""] = homes;
   const old = `db.run("INSERT INTO tasks (owner, repo, task) VALUES ('simon', 'app', 't25')");`;
@@ -481,7 +482,11 @@ test("a new thread takes t100, or the next number above every claim", async () =
   const work = join(home, "work");
   for (const claim of ["t150", "wr140"])
     Bun.spawnSync(["git", "-C", work, "push", "-q", remote, `HEAD:refs/skelcrew/names/${claim}`]);
-  expect(await namesFrom(startOn(lapdog, remote, ["Two"]))).toEqual(["app-t151"]);
+  const held = `db.run("INSERT INTO tasks (owner, repo, task) VALUES ('simon', 'app', 't170')");`;
+  expect(await namesFrom(startOn(lapdog, remote, ["Two", "Three"], held))).toEqual([
+    "app-t171",
+    "app-t172",
+  ]);
 }, 60_000);
 
 // The daemon of the release that named threads by the machine's code can still be running as a
@@ -591,7 +596,8 @@ ${check}`,
 
 // An issue created after a thread with no issue, with the thread's ID, such as t100, would share
 // its name. The copy of the tracker leaves it out, so app-t100 stays the thread's alone. So is one
-// shaped like a name from a machine's code, such as wr4, which a thread may still have.
+// shaped like a name from a machine's code, such as wr4, which a thread may still have, and one
+// shaped like either in another case, such as T100, as names are typed in any case.
 test("an issue whose ID has the shape of Skelcrew's own is left out of the copy", async () => {
   const { remote, homes } = twoMachines();
   const [laptop = ""] = homes;
@@ -613,7 +619,7 @@ test("an issue whose ID has the shape of Skelcrew's own is left out of the copy"
 import { saveItems } from ${JSON.stringify(source("flow/copy.ts"))};
 import { showTask } from ${JSON.stringify(source("flow/list.ts"))};
 const db = openDb();
-saveItems(db, "simon", "app", ${JSON.stringify([issue("t100"), issue("wr4"), issue("t4abc"), issue("12")])}, ["task"]);
+saveItems(db, "simon", "app", ${JSON.stringify([issue("t100"), issue("T100"), issue("wr4"), issue("t4abc"), issue("12")])}, ["task"]);
 const shown = await showTask(db, { repo: "app", task: "t100" });
 console.log(JSON.stringify({ ids: db.query("SELECT id FROM items ORDER BY id").all(),
   title: shown.title, issue: shown.issue }));`;
@@ -626,6 +632,7 @@ console.log(JSON.stringify({ ids: db.query("SELECT id FROM items ORDER BY id").a
   const lines = run.stdout.toString().trim().split("\n");
   expect(lines.slice(0, -1)).toEqual([
     "left out issue t100 of simon/app: Skelcrew names its own tasks like that",
+    "left out issue T100 of simon/app: Skelcrew names its own tasks like that",
     "left out issue wr4 of simon/app: Skelcrew names its own tasks like that",
   ]);
   expect(JSON.parse(lines.at(-1) ?? "")).toEqual({

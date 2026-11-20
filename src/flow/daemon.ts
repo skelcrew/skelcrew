@@ -108,7 +108,6 @@ import {
   liveThreads,
   readThread,
   record,
-  storedTask,
   type Thread,
   threadName,
   threadOn,
@@ -432,10 +431,6 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       keepState(db, lead ?? callingThread(caller), state);
       if (lead) return { state };
     }
-    // A task may be named in any case, such as APP-T7, and every command below looks it up as
-    // Skelcrew keeps it.
-    if ("task" in request && request.task !== undefined && "repo" in request && request.repo)
-      request.task = storedTask(db, request.repo, request.task);
     switch (request.command) {
       // sc check holds its connection open while it runs, so answer() hands it to the queue of
       // checks before it gets here.

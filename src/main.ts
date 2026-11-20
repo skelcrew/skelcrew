@@ -36,12 +36,13 @@ const agentRefusals: Record<string, string> = {
 // Splits a task's name, such as app-13, or app-t1 for a thread with no tracker, into its
 // repository and task. Gives nothing when the word isn't a task's name. Repository names can
 // hold dashes, so the task is what follows the last one. A name may be typed in any case, such
-// as APP-T1. Both parts come back as typed, and the daemon finds the repository and the task in
-// any case.
+// as APP-T100. The task comes back lowercase: an ID with letters can only be Skelcrew's own, as
+// the copy of the tracker leaves out issues shaped like one in any case, and Skelcrew keeps its
+// own in lowercase. The daemon finds the repository in any case.
 function splitTaskName(word?: string): [string, string] | undefined {
   // The greedy first group takes every dash but the last.
   const parts = word?.match(/^(.+)-([a-z]{0,2}\d+)$/i);
-  return parts?.[1] && parts[2] ? [parts[1], parts[2]] : undefined;
+  return parts?.[1] && parts[2] ? [parts[1], parts[2].toLowerCase()] : undefined;
 }
 
 // Splits a thread's name into its repository and task, as splitTaskName does. A thread is its

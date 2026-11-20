@@ -28,11 +28,11 @@ export const TaskId = z
   .regex(/^[A-Za-z0-9][\w-]*$/);
 
 // Returns whether a task is Skelcrew's own, started with no issue in the tracker behind it. Its ID
-// is a t and a number, such as t4, or, for a task named while Skelcrew named them by a code of
+// is a t and a number, such as t104, or, for a task named while Skelcrew named them by a code of
 // their machine's, two letters and a number, such as wr4. A thread's name is its repository and
 // its task's ID, so this shape is kept for Skelcrew alone: saveItems leaves out an issue whose ID
-// has it.
-export const ownTask = (task: string) => /^[a-z]{1,2}\d+$/.test(task);
+// has it. In any case, such as T104, since a name is typed in any case and must reach one task.
+export const ownTask = (task: string) => /^[a-z]{1,2}\d+$/i.test(task);
 
 // What an item has whatever its kind. An ID is the tracker's own, such as "12" on GitHub, and
 // is checked as the plugin answers, so one that isn't a plain name is refused once, there.

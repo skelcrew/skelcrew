@@ -11,7 +11,7 @@ import { threadsDir } from "../paths.ts";
 import { type Host, hostNamed, pluginHost } from "../plugins/runtime.ts";
 import { errorText } from "../say.ts";
 import { threadTask } from "./copy.ts";
-import { findRepository, repositoryNamed } from "./repo.ts";
+import { findRepository } from "./repo.ts";
 import { needsYou, reportStatus } from "./status.ts";
 
 // What an agent is doing: working on a turn, idle at its prompt, asking you a question with its
@@ -419,27 +419,6 @@ export function threadName(db: Database, thread: Thread): string {
     .get(thread.owner, thread.repo);
   const name = z.object({ name: z.string() }).nullable().parse(row)?.name ?? fullNameOf(thread);
   return `${name}-${thread.task}`;
-}
-
-// Returns a task's ID as Skelcrew keeps it, for an ID typed in any case, such as T7 for t7 or
-// ab12 for a tracker's AB12. Names may be typed in any case, but a task's ID is kept as its
-// tracker wrote it, and a tracker can tell AB12 from ab12. So the ID typed exactly wins, then the
-// one task or issue of the repository whose ID differs only in case. With none, or several, it
-// gives the ID back as typed, and the command says it found no such task.
-export function storedTask(db: Database, repository: string, task: string): string {
-  const found = repositoryNamed(db, repository);
-  if (!found) return task;
-  const { owner, repo } = found;
-  // Tasks started, and the issues in Skelcrew's copy of the tracker, which may not be started.
-  const ids = db
-    .query(
-      `SELECT task AS id FROM tasks WHERE owner = ?1 AND repo = ?2 AND lower(task) = lower(?3)
-       UNION SELECT id FROM items WHERE owner = ?1 AND repo = ?2 AND lower(id) = lower(?3)`,
-    )
-    .all(owner, repo, task)
-    .map((row) => z.object({ id: z.coerce.string() }).parse(row).id);
-  if (ids.includes(task)) return task;
-  return ids.length === 1 && ids[0] !== undefined ? ids[0] : task;
 }
 
 // Returns the thread named repo-task, such as app-12, or null when the task has none. Throws

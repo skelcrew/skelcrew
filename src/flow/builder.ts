@@ -3,6 +3,7 @@
 import type { Database } from "bun:sqlite";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { z } from "zod";
 import { harnessNamed } from "../agents/harness.ts";
 import { refuseCredentials, setupCommand } from "../agents/sandbox.ts";
 import {
@@ -151,11 +152,11 @@ async function recordThread(
   let issueLink: string | null = null;
   let closes: string | null = null;
   if ("title" in given) {
-    // A t and the next number after every one claimed on the remote, which every machine sees.
-    // Names from before Skelcrew claimed them, such as t25, were never claimed and live only on
-    // the machine that started them, so numbers start at 100, above all of them. Then claim it on
-    // the remote, which only one machine can, trying the next number while another got there
-    // first.
+    // A t and the next number after every one claimed on the remote, which every machine sees,
+    // and every one this machine's tasks hold. Names from before Skelcrew claimed them, such as
+    // t25, were never claimed and live only on the machine that started them, so numbers start
+    // at 100, above all of them. Then claim it on the remote, which only one machine can, trying
+    // the next number while another got there first.
     const clone = cloneDir(owner, repo);
     // Its clone, which the daemon may still be making, is where the claim is pushed from. The
     // refresh also learns the repository's forge the first time, such as one added before its
@@ -165,7 +166,13 @@ async function recordThread(
     const current = findRepository(db, given.repo);
     refuseMissingPlugins();
     const claimed = await claimedNames(db, current);
-    let number = Math.max(99, ...claimed.map((id) => Number(id.slice(1)))) + 1;
+    const held = db
+      .query("SELECT task FROM tasks WHERE owner = ? AND repo = ? AND task GLOB 't[0-9]*'")
+      .all(owner, repo)
+      .map((row) => z.object({ task: z.string() }).parse(row).task)
+      .filter((id) => /^t\d+$/.test(id));
+    const numbers = [...claimed, ...held].map((id) => Number(id.slice(1)));
+    let number = Math.max(99, ...numbers) + 1;
     while (!(await claimName(db, current, clone, `t${number}`))) number++;
     task = `t${number}`;
     ({ title, body } = given);
