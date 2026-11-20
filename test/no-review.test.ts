@@ -266,9 +266,13 @@ test("a merge when ready on a flow with no review waits only on CI at the commit
   // A newer submit waits for its own round, and a push Skelcrew never made is never merged.
   expect(mergeWaitsOn(thread({ submitting: "Round 2" }), pr(), head)).toBe("its checks");
   expect(mergeWaitsOn(thread({ reviewing: "b".repeat(40) }), pr(), head)).toBe("its checks");
+  // Nothing reviews a push on this flow, so the wait says its builder must submit it, and the
+  // lead hears it, as someone must act.
   expect(mergeWaitsOn(thread(), pr({ head: "b".repeat(40) }), head)).toBe(
-    "a review of its newest commit",
+    "its builder to submit its newest commit",
   );
+  const armed = thread({ merge_plan: "armed", review_at: 1000 });
+  expect(mergeStuck(armed, "its builder to submit its newest commit")).toBe(true);
   // Once that submit is marked not reviewed in turn, the merge goes at its commit.
   const newer = "b".repeat(40);
   const next = thread({ reviewed_commit: newer });

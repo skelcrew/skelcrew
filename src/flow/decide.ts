@@ -165,8 +165,12 @@ export function mergeWaitsOn(
   if (waitsOnFirstCheck(thread)) return "its checks";
   if (thread.submitting !== null || thread.reviewing !== null) return "its review";
   if (!passedReviewStage(thread)) return "an approval";
-  // A push Skelcrew didn't review, such as someone else's, is never merged unseen.
-  if (approved === null || pr.head !== approved) return "a review of its newest commit";
+  // A push Skelcrew didn't review, such as someone else's, is never merged unseen. On a flow with
+  // no review stage, nothing reviews it: its builder must submit it, and then it merges.
+  if (approved === null || pr.head !== approved)
+    return thread.verdict === "not reviewed"
+      ? "its builder to submit its newest commit"
+      : "a review of its newest commit";
   if (pr.conflicts || thread.conflicts !== null) return `its conflict with ${pr.base} to be fixed`;
   if (pr.checks.some((c) => c.state === "failed" || c.state === "cancelled"))
     return "its failing checks to be fixed";
