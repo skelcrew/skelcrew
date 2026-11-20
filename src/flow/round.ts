@@ -801,21 +801,25 @@ async function postOrEdit(
   // gives them back unchanged, so Skelcrew can find its review in its copy of the PR.
   const marker = `<!-- skelcrew:review thread=${thread.folder} -->`;
   const body = `${reviewComment(review, review.round, commit)}\n\n${marker}`;
-  // A review the forge took just before the daemon stopped, with its ID not yet saved, is in
-  // the copy, which the poll brought up to date since the start. One that already says this is
-  // counted as posted, so a restart never posts it twice. Otherwise the latest one there is the
-  // one to edit when none is saved.
-  const marked = (prOf(db, thread.owner, thread.repo, pr)?.reviews ?? []).filter((posted) =>
-    posted.text.includes(marker),
-  );
+  // Only a review on this PR counts: a PR opened again after sc rm starts with none.
+  const earlier = thread.review_post?.pr === pr ? thread.review_post : null;
+  // With no review saved, the forge may still have taken one just before the daemon stopped,
+  // with its ID not yet saved. The poll that posts after a restart has brought the copy up to
+  // date, so the review is there with its marker. One that already says this is counted as
+  // posted, so a restart never posts it twice, and any other is the one to edit. With a review
+  // saved, the copy is never asked: it may be older than Skelcrew's last edit.
+  const marked =
+    earlier === null
+      ? (prOf(db, thread.owner, thread.repo, pr)?.reviews ?? []).filter((posted) =>
+          posted.text.includes(marker),
+        )
+      : [];
   const already = marked.find((posted) => posted.text.trim() === body.trim());
   if (already) {
     const saved = { review_post: { pr, id: already.id, verdict, findings } };
     record(db, folder, saved, `found its review ${already.id} on PR #${pr}, posted already`);
     return;
   }
-  // Only a review on this PR counts: a PR opened again after sc rm starts with none.
-  const earlier = thread.review_post?.pr === pr ? thread.review_post : null;
   const editing = earlier?.id ?? marked.at(-1)?.id ?? null;
   // A forge that fails to edit, such as a plugin that doesn't know the question yet, is treated
   // as one that can't, so the review still reaches the PR.
