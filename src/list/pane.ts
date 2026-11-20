@@ -255,7 +255,9 @@ function keepColours(line: string): string {
 // line, and it ends by resetting colours, so none reaches the pane's edge or the list. A colour
 // set on one line goes on over the lines after it until reset, as a host can send a screen that
 // way, so each line starts with the colours still set from the lines above it, shown or not.
-function screenLines(screen: string, width: number, count: number): string[] {
+// `packed` leaves out the blank lines between the agent's, so a few lines show as much as they
+// can.
+function screenLines(screen: string, width: number, count: number, packed = false): string[] {
   if (count <= 0) return [];
   const lines = screen.replace(/\n$/, "").split("\n").map(keepColours);
   while (lines.length > 0 && Bun.stripANSI(lines.at(-1) ?? "").trim() === "") lines.pop();
@@ -274,40 +276,50 @@ function screenLines(screen: string, width: number, count: number): string[] {
     }
     return shown;
   });
-  return coloured.slice(-count).map((line) => `${Bun.sliceAnsi(line, 0, width)}\x1b[0m`);
+  const kept = packed ? coloured.filter((line) => Bun.stripANSI(line).trim() !== "") : coloured;
+  return kept.slice(-count).map((line) => `${Bun.sliceAnsi(line, 0, width)}\x1b[0m`);
 }
 
 // The lines the live view always keeps under the details: the dim line over it and two of the
 // agent's screen, or the one that says why there is none.
 const liveLeast = 3;
 
+// How many of the agent's last lines the live view shows while it is a strip, as it is unless you
+// ask for the whole of it, so the details have the rest of the pane.
+const stripLines = 3;
+
 // Returns the pane for the row you are on as exactly `height` lines, each `width` columns wide at
 // most. On a row that isn't a task, such as the lead's, it is empty. Otherwise the task's details
-// come first, then a dim line, then its agent's live screen filling the rest, or the line that
-// says why there is none. The details take what they need, but always leave the live view a few
-// lines: in a short pane they tighten, step by step, until they fit. Only a pane too short even
-// for that cuts them, ending in a dim …. The blank line over the live view goes first.
+// come first, then a dim line, then its agent's live screen, or the line that says why there is
+// none. The live screen is a strip of the agent's last few lines, without blank ones, or, when
+// `full`, as much of its screen as fills the rest. The details take what they need, but always
+// leave the live view a few lines: in a short pane they tighten, step by step, until they fit.
+// Only a pane too short even for that cuts them, ending in a dim …. The blank line over the live
+// view goes first.
 export function drawPane(
   row: Row | undefined,
   details: Details | null,
   live: Live | null,
   width: number,
   height: number,
+  full = false,
 ): string[] {
   const blank = (count: number) => Array.from({ length: Math.max(count, 0) }, () => "");
   if (!row || details === null) return blank(height);
-  const most = live === null ? height : Math.max(height - liveLeast, 0);
+  const least = full ? liveLeast : stripLines + 1;
+  const most = live === null ? height : Math.max(height - least, 0);
   let all = detailLines(row, details, width);
   for (let tight = 1; all.length > most && tight <= tightenings.length; tight++)
     all = detailLines(row, details, width, tight);
   const top = all.length <= most ? all : [...all.slice(0, Math.max(most - 1, 0)), paint(grey, "…")];
   if (live === null) return [...top, ...blank(height - top.length)].slice(0, height);
-  const gap = height - top.length > liveLeast ? [""] : [];
+  const gap = height - top.length > least ? [""] : [];
   const rule = paint(grey, "─".repeat(width));
-  const room = height - top.length - gap.length - 1;
+  const left = height - top.length - gap.length - 1;
+  const room = full ? left : Math.min(left, stripLines);
   const below =
     "note" in live
       ? [paint(grey, fitted(live.note, width))]
-      : screenLines(live.screen, width, room);
-  return [...top, ...gap, rule, ...below, ...blank(room - below.length)].slice(0, height);
+      : screenLines(live.screen, width, room, !full);
+  return [...top, ...gap, rule, ...below, ...blank(height)].slice(0, height);
 }

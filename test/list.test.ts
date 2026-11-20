@@ -2027,6 +2027,36 @@ test("the pane shows the latest review's findings though it was never posted", a
   expect(paneSeen()).toContain("  - Test the header");
 });
 
+test("o shows the agent's whole screen in the pane and back, and Enter still attaches", async () => {
+  await open({ width: wide, says: "step one\\nstep two\\nstep three\\nstep four\\n" });
+  // By default the pane shows a strip of the agent's last three lines under the details.
+  await until(() => liveSeen().includes("I am app-12"), "app-12's screen");
+  expect(liveSeen().filter((line) => line !== "")).toEqual([
+    "step three",
+    "step four",
+    "I am app-12",
+  ]);
+  expect(seen()).toContain("⏎ open · ctrl+\\ back · o output");
+  type("o");
+  await until(() => liveSeen().includes("step one"), "the whole screen");
+  expect(liveSeen().slice(0, 5)).toContain("step two");
+  // It stays as you move, and o brings the strip back.
+  press("Down");
+  await until(() => here().startsWith("▸ ● app-14"), "app-14's row");
+  press("Up");
+  await until(() => liveSeen().includes("step one"), "the whole screen on app-12 again");
+  type("o");
+  await until(() => !liveSeen().includes("step one"), "the strip again");
+  // Enter still attaches to the builder.
+  press("Enter");
+  await until(() => !seen().includes("q/esc quit"), "app-12's agent");
+  type("hello");
+  press("Enter");
+  await until(() => read(join(home, "app-12.typed")) === "hello\n", "what was typed");
+  press("C-\\");
+  await until(() => seen().includes("q/esc quit"), "the list again");
+});
+
 test("the pane shows only while the terminal is wide enough, and the keys do the same", async () => {
   await open();
   expect(seen()).not.toContain(" │ ");

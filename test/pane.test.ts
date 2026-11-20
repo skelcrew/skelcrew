@@ -76,7 +76,7 @@ const details: Details = {
 const plain = (lines: string[]) => lines.map((line) => Bun.stripANSI(line).trimEnd());
 
 test("the pane shows the task's details from the top, then its agent's screen below a line", () => {
-  const lines = drawPane(row, details, { screen: "I am app-12\n› \n\n\n" }, 50, 30);
+  const lines = drawPane(row, details, { screen: "I am app-12\n› \n\n\n" }, 50, 30, true);
   expect(lines).toHaveLength(30);
   expect(plain(lines).slice(0, 23)).toEqual([
     "Rate limit the API",
@@ -159,6 +159,21 @@ test("an approved review and passed CI show green, a failed one red", () => {
   expect(redLines.find((line) => line.includes("review failed"))).toContain(`${red}review failed`);
 });
 
+test("by default the live view is a strip of the agent's last three lines, the details above it", () => {
+  const screen = ["line 1", "", "line 2", "line 3", "", "line 4", "", "› ", "", ""].join("\n");
+  const lines = plain(drawPane(row, details, { screen }, 50, 30));
+  expect(lines).toHaveLength(30);
+  // The details come whole, then the line over the strip, then the last three lines with text.
+  const rule = lines.indexOf("─".repeat(50));
+  expect(lines.slice(0, rule)).toEqual(plain(drawPane(row, details, null, 50, 30)).slice(0, rule));
+  expect(lines.slice(rule + 1, rule + 4)).toEqual(["line 3", "line 4", "›"]);
+  expect(lines.slice(rule + 4)).toEqual(Array(30 - rule - 4).fill(""));
+  // In a short pane, the details tighten so the strip keeps its three lines.
+  const short = plain(drawPane(row, details, { screen }, 50, 12));
+  expect(short.slice(-4)).toEqual(["─".repeat(50), "line 3", "line 4", "›"]);
+  expect(short[0]).toBe("Rate limit the API");
+});
+
 test("the live view shows the bottom of the screen, colours kept and long lines cut", () => {
   const screen = [
     ...Array.from({ length: 40 }, (_, i) => `line ${i}`),
@@ -168,7 +183,7 @@ test("the live view shows the bottom of the screen, colours kept and long lines 
     "",
     "",
   ].join("\n");
-  const lines = drawPane(row, details, { screen }, 40, 30);
+  const lines = drawPane(row, details, { screen }, 40, 30, true);
   const live = lines.slice(lines.findIndex((line) => line.includes("───")) + 1);
   expect(plain(live).slice(-3)).toEqual([
     "line 39",
@@ -194,7 +209,7 @@ test("a colour set on one line of the screen goes on over the lines after it unt
     "still blue\x1b[m",
     "plain again",
   ].join("\n");
-  const lines = drawPane(row, details, { screen }, 50, 30);
+  const lines = drawPane(row, details, { screen }, 50, 30, true);
   const live = lines.slice(lines.findIndex((line) => line.includes("───")) + 1);
   const at = (text: string) => live.find((line) => Bun.stripANSI(line) === text) ?? "";
   // The green set above the part shown still colours the lines shown.
@@ -220,7 +235,7 @@ test("a task with no running agent says so, and a row that isn't a task has an e
 // their room, and the live view has what is left.
 test("in a short pane the details show whole, and the live view has what is left", () => {
   const screen = Array.from({ length: 20 }, (_, i) => `line ${i}`).join("\n");
-  const lines = plain(drawPane(row, details, { screen }, 50, 22));
+  const lines = plain(drawPane(row, details, { screen }, 50, 22, true));
   expect(lines).toHaveLength(22);
   expect(lines).toContain("minute. Clients over it get a 429 with a…");
   expect(lines).toContain("13:40 submitted · 13:52 reviewed · 14:02 submitted");
@@ -327,7 +342,7 @@ test("details too tall for the pane tighten so every part shows, and the live vi
     view: { ...details.view, title: "A title ".repeat(40), prPage: { ...page, checks } },
   };
   const screen = "first\nsecond\nthird";
-  const lines = plain(drawPane(row, tall, { screen }, 50, 22));
+  const lines = plain(drawPane(row, tall, { screen }, 50, 22, true));
   expect(lines).toHaveLength(22);
   expect(lines[0]).toEndWith("…");
   expect(lines).toContain("issue #42  https://github.com/acme/app/issues/42");

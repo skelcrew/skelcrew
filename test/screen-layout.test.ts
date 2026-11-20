@@ -213,7 +213,10 @@ test("the footer runs across the screen under a thin line, with move and quit, t
   await until(() => footer() === lead, "the lead's footer");
   expect(aboveFooter()).toBe("─".repeat(120));
   press("M-S-Down");
-  await until(() => footer() === "  ⌥↑↓ move  ⏎ open  1-6 stages  ⌥Q quit", "a task's footer");
+  await until(
+    () => footer() === "  ⌥↑↓ move  ⏎ open · o output  1-6 stages  ⌥Q quit",
+    "a task's footer",
+  );
   press("M-Down");
   await attachTo("app-7");
   await until(() => footer() === "  ⌥↑↓ move  ⌥Q quit  Esc stops codex", "app-7's footer");
