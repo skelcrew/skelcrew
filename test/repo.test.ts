@@ -1207,6 +1207,25 @@ test("init with other changes staged asks nothing and leaves the commit to you",
   expect(git(checkout, "status", "--porcelain")).toBe("A  notes.txt\n");
 });
 
+// Tracked files in .agents/ you deleted come back as sc init writes .agents/ again, and its commit
+// would take your deletions too, so it asks nothing.
+test("init asks nothing when .agents/ had tracked files you deleted", async () => {
+  const checkout = onGitHub("simon/app", "WRITE");
+  githubInstalledAsYours();
+  mkdirSync(join(checkout, ".agents", "roles"), { recursive: true });
+  writeFileSync(join(checkout, ".agents", "roles", "old.md"), "old\n");
+  git(checkout, "add", ".agents");
+  git(checkout, "commit", "-q", "-m", "agents");
+  rmSync(join(checkout, ".agents"), { recursive: true });
+  const run = await initAtTerminal(checkout, "y\n");
+  expect(run.code).toBe(0);
+  expect(run.out).not.toContain("now? [Y/n]");
+  expect(run.out).toContain(
+    ".agents/ had changes of yours already, which the commit would take too, so Skelcrew leaves it to you.",
+  );
+  expect(git(checkout, "log", "-1", "--format=%s")).toBe("agents\n");
+});
+
 // A file of yours sc init doesn't change stays out of its commit, so its changes don't keep the
 // offer away.
 test("init offers its commit when only a file it left alone has changes of yours", async () => {

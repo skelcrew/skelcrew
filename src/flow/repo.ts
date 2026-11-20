@@ -683,7 +683,9 @@ export async function initRepo(sessions: string): Promise<boolean> {
   // Read before anything is written: changes of yours to a file sc init edits would ride along in
   // the commit it offers, so they keep it from offering. Only the files it then wrote count.
   // Each file is asked about on its own, so nothing has to be read back out of git's lines.
-  const dirty = ["skelcrew.yaml", "skelcrew.lock"].filter(
+  // .agents/ counts too: tracked files there you deleted come back as sc init writes it, and the
+  // commit would take the deletions and the new files alike.
+  const dirty = ["skelcrew.yaml", "skelcrew.lock", ".agents/"].filter(
     (path) => gitIn(root, ["status", "--porcelain", "--", path]).said !== "",
   );
   if (!hasConfig) writeFileSync(file, starterConfig, { flag: "wx" });
