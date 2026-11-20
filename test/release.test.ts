@@ -179,17 +179,14 @@ const Workflow = z.object({
   }),
 });
 
-// A workflow's test job with every key of its steps kept, so two can be compared whole: the
-// checkout, the Bun version and every command.
-const TestJob = z.object({
-  jobs: z.object({ test: z.object({ steps: z.array(z.record(z.string(), z.unknown())) }) }),
-});
+// A workflow's test job with every key kept, so two can be compared whole: the runner, the
+// shards, the checkout, the Bun version and every command.
+const TestJob = z.object({ jobs: z.object({ test: z.record(z.string(), z.unknown()) }) });
 
 const workflowText = () => readFileSync(join(root, ".github", "workflows", "release.yml"), "utf8");
 const workflow = () => Workflow.parse(parse(workflowText()));
-const testSteps = (file: string) =>
-  TestJob.parse(parse(readFileSync(join(root, ".github", "workflows", file), "utf8"))).jobs.test
-    .steps;
+const testJob = (file: string) =>
+  TestJob.parse(parse(readFileSync(join(root, ".github", "workflows", file), "utf8"))).jobs.test;
 const runs = (steps: Steps) => steps.flatMap((step) => (step.run ? [step.run] : []));
 const uploads = (steps: Steps) => steps.filter((step) => step.uses?.includes("upload-artifact"));
 
@@ -243,7 +240,7 @@ test("the release runs all four test shards, set up as the pull request checks a
   expect(shards.strategy["fail-fast"]).toBe(false);
   // biome-ignore lint/suspicious/noTemplateCurlyInString: GitHub's syntax, not JavaScript's.
   expect(runs(shards.steps)).toContain("bun scripts/test.ts --shard=${{ matrix.shard }}/4");
-  expect(testSteps("release.yml")).toEqual(testSteps("check.yml"));
+  expect(testJob("release.yml")).toEqual(testJob("check.yml"));
   const setup = stepRunning(shards.steps, "apt-get install");
   expect(setup).toContain("tmux bubblewrap");
   expect(setup).toContain("kernel.apparmor_restrict_unprivileged_userns=0");
