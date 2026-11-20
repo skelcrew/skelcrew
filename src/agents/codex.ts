@@ -341,7 +341,8 @@ async function checkModel(home: string, model: string, env: Record<string, strin
 // saved conversation with `resume`. A builder, given its thread's clone, works there; a lead
 // works in its own `folder`. Each sees nothing else but `origin`, Skelcrew's clone of its
 // repository, read-only, the login it shares with every Codex session, and for a lead
-// `repositories`, the folder of every repository's clone, read-only.
+// `repositories`, the folder of every repository's clone, read-only. `files` is the placeholder of
+// its dropped files, on a host that hands it some.
 //
 // Settings go on the command line rather than in the session's config.toml: a repository's
 // own .codex/config.toml wins over that file, and could turn the hooks off. Codex's own
@@ -361,11 +362,12 @@ async function startCommand(given: {
   resume?: string;
   sessionId?: string;
   skills?: SkillsFrom;
+  files?: string | undefined;
   env?: Record<string, string | undefined>;
 }): Promise<{ argv: string[]; env: Record<string, string> }> {
   const { name, socket, model, thread, folder, origin, repositories, prompt, system, resume } =
     given;
-  const { skills } = given;
+  const { skills, files } = given;
   const env = given.env ?? process.env;
   // Refuse what would start the wrong agent or write outside Skelcrew's folders, and a model
   // Codex doesn't offer.
@@ -443,6 +445,7 @@ async function startCommand(given: {
     command: withSkillsOff(resume ? 2 : 1, command.slice(1)),
     programs: ["codex"],
     normalPriority: !thread,
+    files,
   });
   return { argv, env: kept };
 }

@@ -27,7 +27,7 @@ import {
   stopSession,
 } from "../src/agents/sessions.ts";
 import { deliver, forQuestion, idle, whyBusy } from "../src/agents/transport.ts";
-import type { PluginHost } from "../src/plugins/runtime.ts";
+import { filesFor, type PluginHost } from "../src/plugins/runtime.ts";
 import {
   endFakeSessions,
   fakeHostCommand,
@@ -59,13 +59,16 @@ afterEach(async () => {
 });
 
 // The fake host, providing sessions and, when asked, its own transport and status.
-const host = (own: { transport?: boolean; status?: boolean } = {}): PluginHost => ({
+const host = (
+  own: { transport?: boolean; status?: boolean; files?: boolean } = {},
+): PluginHost => ({
   plugin: name,
   folder: home,
   session: fakeHostCommand(settings()),
   attach: ["true"],
   transport: own.transport ?? false,
   status: own.status ?? false,
+  files: own.files ?? false,
 });
 
 // A stand-in for Claude Code: busy for a while, losing what is typed then, as the real one can,
@@ -127,6 +130,33 @@ test("a session on the host runs its command, carries its labels and can be read
   expect(await listSessions(on)).toEqual([{ name: id, running: true, labels }]);
   expect(await hasSession(on, id)).toBe(true);
   expect(await agentRuns(on, id)).toBe(true);
+});
+
+test("only a host that provides files is handed a placeholder for them, new for each start", async () => {
+  expect(filesFor("skelcrew-test")).toBeUndefined();
+  expect(filesFor(host())).toBeUndefined();
+  const files = filesFor(host({ files: true }));
+  expect(files).toMatch(/^\/skelcrew-files-[0-9a-f]{32}$/);
+  expect(filesFor(host({ files: true }))).not.toBe(files);
+  const starts = () =>
+    readFileSync(join(settings(), "asked"), "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line))
+      .filter((question) => question.ask === "start");
+  // The host swaps the placeholder in the command for the session's own folder of drops.
+  const on = host({ files: true });
+  const session = { folder: home, env: {}, labels, files };
+  const id = await startSession(on, "app-12", {
+    ...session,
+    command: ["sh", "-c", 'echo "$0"; sleep 30', files ?? ""],
+  });
+  expect(starts()[0].files).toBe(files);
+  const drops = join(settings(), "sessions", id, "files");
+  await until(async () => (await readSession(on, id)).includes(drops));
+  // A session started with none asks the host for none.
+  await startSession(host(), "app-13", { ...session, files: undefined, command: ["true"] });
+  expect(starts()[1]).not.toHaveProperty("files");
 });
 
 test("an agent that ended is no longer running, and its last screen says why", async () => {

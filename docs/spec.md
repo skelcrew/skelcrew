@@ -572,7 +572,7 @@ A plugin lives in a git repository of its own, with a `skelcrew-plugin.yaml` at 
 | Kind | What it is for | Provides | Examples |
 | --- | --- | --- | --- |
 | I/O | Work in and results out. In: issues become tasks, labels start them, comments and reviews reach builders. Out: PRs, reviews, checks, merges, closed issues and notifications | `tracker`, `forge`, `chat` | GitHub (tracker and forge), Linear, GitLab, Slack |
-| Runtime | Where and how agents run | `sessions`, `transport`, `status`, `machine` | herdr. tmux and SSH are built in |
+| Runtime | Where and how agents run | `sessions`, `transport`, `status`, `files`, `machine` | herdr. tmux and SSH are built in |
 
 Messages and the sandbox stay in core, between the two. Work comes in through an I/O plugin, becomes a message, and reaches an agent through the runtime. No plugin can provide messages or the sandbox, so the rules about who may reach whom, and what an agent can touch, are Skelcrew's on every setup. Harnesses are never plugins: each is built into Skelcrew, one module per harness, because that module draws the sandbox boundary.
 
@@ -642,7 +642,7 @@ For each repository, the plugin asks the service for a token, with your sign-in.
 
 ### Runtime plugins
 
-A runtime plugin says what it provides, out of four: the base modules `sessions`, `transport` and `status`, and `machine`. For the base modules, core uses its built-in for any it leaves out. Each function is a command, run as `call` is: one JSON question on stdin, one JSON answer on stdout. `attach` runs in your terminal, as `setup` does.
+A runtime plugin says what it provides, out of five: the base modules `sessions`, `transport` and `status`, `files`, and `machine`. For the base modules, core uses its built-in for any it leaves out. Skelcrew uses a plugin's transport, status and files only for the sessions it hosts. Each function is a command, run as `call` is: one JSON question on stdin, one JSON answer on stdout. `attach` runs in your terminal, as `setup` does.
 
 ```yaml
 name: herdr
@@ -650,12 +650,14 @@ version: 0.1.0
 skelcrew: 0.6.0
 about: Runs Skelcrew's agents in herdr-core, so herdr's apps show them
 kind: runtime
-provides: [sessions, transport, status]
+provides: [sessions, transport, status, files]
 session: [bun, session.ts]       # start, paste, keys, read, interrupt, end, list, rename, deliver, idle, status
 attach: [bun, attach.ts]
 ```
 
-**herdr** (`skelcrew/skelcrew-herdr`, https://github.com/herdrdev/herdr-core) provides sessions, transport and status. `start` maps onto `hc run`, `paste` and `keys` onto `hc send`, `read` onto `hc read`, `interrupt` onto `hc interrupt`, `attach` onto herdr-core's client, `end` onto ending the program, `list` onto herdr's labels, `rename` onto the tab's name, `deliver` onto `hc send --if idle`, `idle` onto `hc events`, and `status` onto OSC 7501, written by the plugin's relay in the pane, as **Status** says. herdr's own apps then show Skelcrew's leads and builders on your laptop, desktop and phone.
+**herdr** (`skelcrew/skelcrew-herdr`, https://github.com/herdrdev/herdr-core) provides sessions, transport, status and files. `start` maps onto `hc run`, `paste` and `keys` onto `hc send`, `read` onto `hc read`, `interrupt` onto `hc interrupt`, `attach` onto herdr-core's client, `end` onto ending the program, `list` onto herdr's labels, `rename` onto the tab's name, `deliver` onto `hc send --if idle`, `idle` onto `hc events`, `status` onto OSC 7501, written by the plugin's relay in the pane, as **Status** says, and `files` onto the folder where herdr saves what you drop on a session. herdr's own apps then show Skelcrew's leads and builders on your laptop, desktop and phone.
+
+**Files.** A file you drop onto an agent in a host's apps, such as a screenshot, is saved by the host in a folder of that session's. The sandbox hides it, so a plugin that provides `files` lets its agents read that folder, and nothing else of the host's. For an agent starting on such a host, Skelcrew makes a placeholder, a path that never exists on the host, such as `/skelcrew-files-3f9c…`, 32 random hex digits long and new for each start. The sandboxed command gets a read-only mount of it at its own path, after every other mount but the agent's socket, and `start` is handed it as `files`, as `{ "ask": "start", …, "files": "/skelcrew-files-3f9c…" }`. The command comes as plain words, so the plugin finds it. Before the command runs, the plugin makes the session's folder and swaps each word equal to the placeholder for that folder's path. The agent then reads its drops, read-only, at their real path, which is the path the host types when you drop a file, so it resolves inside the sandbox as typed. The placeholder is the only thing a host may change in the command, and the change can only say which folder that one read-only mount shows. So Skelcrew refuses `files` that isn't a placeholder of its own form, such as a real folder, and refuses a command that holds the placeholder anywhere but its mount, such as in a first message. tmux has no files, and on a host without them the command has no such mount. On a Mac, an agent gets no dropped files yet: its sandbox's rules are in a profile Skelcrew writes to a file before the command runs, not in the command's words, so a host has no word to swap, and the rules can't name a folder only the host knows.
 
 **Machines.** A runtime plugin that provides `machine` says how to reach a machine that runs Skelcrew, with three commands:
 
@@ -692,7 +694,7 @@ Every agent runs in a terminal session of its own: one for each repository's lea
 
 | Function | What it does |
 | --- | --- |
-| `start` | Starts a session running the command Skelcrew gives, in a folder, with its environment and its labels. Returns the session's ID. Can keep the session when its agent exits cleanly, so a lead you exited can be told from one that crashed. |
+| `start` | Starts a session running the command Skelcrew gives, in a folder, with its environment and its labels, and on a host that provides files, the placeholder of its dropped files. Returns the session's ID. Can keep the session when its agent exits cleanly, so a lead you exited can be told from one that crashed. |
 | `paste` | Pastes text into the session as one bracketed paste, in steps: readying the text, pasting it, then forgetting it, so typing can take its last look at the screen just before the paste. |
 | `keys` | Sends keys, such as Enter or Esc. |
 | `read` | Returns what the session shows now, and whether someone has scrolled back in it. Typing, the status screen check and `sc peek` use it. |
@@ -741,7 +743,7 @@ Messages stay in Skelcrew, never on GitHub, and each one goes in the task's log.
 
 ### Sandbox
 
-The sandbox stays in core on every host, drawn by the harness module. A host runs the sandboxed command exactly as Skelcrew gives it, and never changes what the agent can reach.
+The sandbox stays in core on every host, drawn by the harness module. A host runs the sandboxed command exactly as Skelcrew gives it, and never changes what the agent can reach. The one exception is a host that provides `files`: it swaps the placeholder of the agent's dropped files for their folder, which only says what one read-only mount shows, as **Files** under **Runtime plugins** says.
 
 - **bubblewrap on Linux, `sandbox-exec` on a Mac**, drawing the same boundary: the agent's folder writable, the rest of the system read-only, the home folder and credentials hidden.
 - **Claude Code.** Each session gets its own config folder in `~/.local/share/skelcrew/claude/`, where its transcripts stay for `claude --resume`, and logs in with the token from `sc install`. Your `~/.claude` stays hidden. Its own permission prompts and sandbox are turned off, since Skelcrew's draws the boundary. Inherited `CLAUDE_CODE_*` variables are removed. The folder is marked as trusted in the session's copy of its settings, or it waits at a question nobody sees. A lead's settings turn off Claude Code's tips, so they don't crowd the lead's greeting. Its notices that need you, such as a login problem, still show. So do its announcements, such as of a new model, as Anthropic's servers send them and no setting turns them off. The first message goes on the command line.
@@ -774,7 +776,7 @@ Skelcrew reports the status to the host when the host can show it. A plugin that
 | --- | --- |
 | `status` | Receives a session's ID, its status word (`working`, `idle`, `needs you`, `ready` or `error`) and a short reason, such as `question` or `round limit`, each time the status changes, and shows it on the host. |
 
-The engine calls `status` for every change, from wherever it came: a hook, the screen check, CI going green, or a review. herdr hears status as OSC 7501, an escape code written by the program running in the pane, which the engine, outside the pane, can't write. So `skelcrew-herdr`'s `start` runs the sandboxed command under a small relay of its own, which passes the agent's terminal through untouched and writes OSC 7501 into it when `status` hands it a new status. The relay runs outside the sandbox, as the plugin does, and the sandboxed command inside it is exactly the one Skelcrew gave. tmux shows no status, and Skelcrew's list shows it instead. A host's own view never replaces the hooks: needs you always comes from Skelcrew.
+The engine calls `status` for every change, from wherever it came: a hook, the screen check, CI going green, or a review. herdr hears status as OSC 7501, an escape code written by the program running in the pane, which the engine, outside the pane, can't write. So `skelcrew-herdr`'s `start` runs the sandboxed command under a small relay of its own, which passes the agent's terminal through untouched and writes OSC 7501 into it when `status` hands it a new status. The relay runs outside the sandbox, as the plugin does, and the sandboxed command inside it is exactly the one Skelcrew gave, but for the placeholder of the agent's dropped files, swapped for their folder. tmux shows no status, and Skelcrew's list shows it instead. A host's own view never replaces the hooks: needs you always comes from Skelcrew.
 
 ## The list
 

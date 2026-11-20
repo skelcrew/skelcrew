@@ -19,7 +19,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { claude } from "../src/agents/claude.ts";
 import { codex } from "../src/agents/codex.ts";
-import { setupCommand } from "../src/agents/sandbox.ts";
+import { filesPlaceholder, setupCommand } from "../src/agents/sandbox.ts";
 import { insideSandbox, source } from "./harness.ts";
 
 let home = "";
@@ -675,6 +675,59 @@ claude.start({ name: "app-12", socket: "x", model: "opus", ...${JSON.stringify(l
         env: outside(),
       }),
     ).toThrow("config");
+  });
+
+  test("a host's dropped files come in through one read-only mount of a placeholder, and nothing else changes", () => {
+    repository();
+    saveToken();
+    const id = "6f1c2a7e-0b4d-4c3e-9a51-2d8e7f6a9b10";
+    const start = (files?: string) =>
+      claude.start({
+        ...lead(),
+        name: "lead",
+        socket: socketPath,
+        model: "opus",
+        env: outside(),
+        sessionId: id,
+        prompt: "Hello",
+        files,
+      }).argv;
+    const files = filesPlaceholder();
+    expect(files).toMatch(/^\/skelcrew-files-[0-9a-f]{32}$/);
+    expect(filesPlaceholder()).not.toBe(files);
+    const argv = start(files);
+    // The placeholder is the source and the place of one read-only mount, and in no other word,
+    // so swapping it can only change what that mount shows.
+    const at = argv.indexOf(files);
+    expect(argv.slice(at - 1, at + 2)).toEqual(["--ro-bind", files, files]);
+    expect(argv.filter((word) => word.includes(files))).toHaveLength(2);
+    // It comes after every other mount but the socket's, so none can cover it.
+    const options = argv.slice(0, argv.indexOf("--"));
+    const mounts = options.flatMap((word, i) => (word.endsWith("bind") ? [options[i + 2]] : []));
+    expect(mounts.slice(-2)).toEqual([files, "/run/skelcrew"]);
+    // Without it, the command is the same but for that mount.
+    expect([...argv.slice(0, at - 1), ...argv.slice(at + 2)]).toEqual(start());
+  });
+
+  test("refuses dropped files that aren't a placeholder, or a placeholder found anywhere else", () => {
+    repository();
+    saveToken();
+    const start = (files: string, prompt = "Hello") =>
+      claude.start({
+        ...lead(),
+        name: "lead",
+        socket: socketPath,
+        model: "opus",
+        env: outside(),
+        prompt,
+        files,
+      });
+    // A real folder would go into the sandbox whatever the host did.
+    expect(() => start(home)).toThrow("isn't a placeholder for dropped files");
+    expect(() => start("/skelcrew-files-x")).toThrow("isn't a placeholder for dropped files");
+    // A host swaps every word that holds it, so it must be in no word but its mount's.
+    const files = filesPlaceholder();
+    expect(() => start(files, `look in ${files}`)).toThrow("outside its mount");
   });
 
   test("gives the agent a /proc of its own", () => {

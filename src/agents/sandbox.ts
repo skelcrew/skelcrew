@@ -10,6 +10,15 @@ import { seatbeltArgs } from "./seatbelt.ts";
 // too: a run that sees it is inside a sandbox, with the real daemon's socket in reach.
 export const socketFolderInside = "/run/skelcrew";
 
+// Where a session host that provides files shows an agent the files you dropped onto it: a path
+// that never exists on the host, made anew for each start. The host's relay swaps every word of
+// the sandbox command equal to it for the session's real folder before bubblewrap runs, so the
+// agent reads its drops, read-only, at the path the host types for them. It is the only thing a
+// host may change in the command, and it can only change what that one read-only mount shows.
+export const filesPlaceholder = () =>
+  `/skelcrew-files-${Buffer.from(crypto.getRandomValues(new Uint8Array(16))).toString("hex")}`;
+const placeholderForm = /^\/skelcrew-files-[0-9a-f]{32}$/;
+
 // Returns a read-only mount so agents can read a folder without changing its files.
 export const ro = (p: string) => ["--ro-bind", p, p];
 // Returns a writable mount for the agent's own work or session files.
@@ -57,7 +66,8 @@ function programLinks(program: string): Map<string, string> {
 // only its chosen writable folders: bubblewrap on Linux, sandbox-exec on a Mac. Keeps the
 // terminal connection and network available for the harness and model, and puts Skelcrew's own
 // commands on the agent's PATH. `mounts` is in bubblewrap's words. The sandbox runs at a lower
-// CPU priority unless `normalPriority` says otherwise, as only the lead's does.
+// CPU priority unless `normalPriority` says otherwise, as only the lead's does. `files`, a
+// placeholder from filesPlaceholder, adds the read-only mount of the agent's dropped files.
 export function sandboxArgs(given: {
   home: string;
   path: string;
@@ -67,8 +77,10 @@ export function sandboxArgs(given: {
   command: string[];
   programs?: string[] | undefined;
   normalPriority?: boolean;
+  files?: string | undefined;
 }): string[] {
   const {
+    files,
     home,
     path,
     mounts,
@@ -107,8 +119,15 @@ export function sandboxArgs(given: {
     : ["bin", "src", "node_modules", "package.json"]
         .map((part) => join(checkoutFolder, part))
         .filter((part) => existsSync(part));
-  // On a Mac, sandbox-exec draws the same boundary from the same lists.
-  if (process.platform === "darwin")
+  // Only a placeholder of Skelcrew's own can be swapped by a host, never a real folder, which
+  // would go into the sandbox whatever the host did.
+  if (files !== undefined && !placeholderForm.test(files))
+    throw new Error(`${files} isn't a placeholder for dropped files`);
+  // On a Mac, sandbox-exec draws the same boundary from the same lists. Its rules are in a
+  // file Skelcrew writes, which a host's relay can't reach to swap a placeholder, so a Mac's
+  // agents get no dropped files yet.
+  if (process.platform === "darwin") {
+    if (files) throw new Error("a Mac's sandbox can't show an agent its dropped files yet");
     return [
       ...niced,
       ...seatbeltArgs({
@@ -122,6 +141,7 @@ export function sandboxArgs(given: {
         command,
       }),
     ];
+  }
   // Its own process list, so your other processes can't be seen or signalled. No
   // --new-session: it moves Claude Code out of the terminal's process group, so it misses
   // resize signals and draws at the wrong width. The network stays shared for the model's
@@ -147,6 +167,9 @@ export function sandboxArgs(given: {
   for (const p of programFolders) args.push(...ro(p));
   for (const p of skelcrewFiles) args.push(...ro(p));
   args.push(...mounts);
+  // The dropped files, read-only, after the caller's mounts, so none can cover the folder the
+  // host swaps in or make it writable. bubblewrap makes the folders above it.
+  if (files) args.push(...ro(files));
   // Its folder rather than the socket itself: the daemon makes the socket anew each time it
   // starts, and a mounted file would stay the old one, which nothing answers on. Read-only,
   // so the agent can't replace it. The folder must hold nothing else.
@@ -160,6 +183,10 @@ export function sandboxArgs(given: {
   // pointed at localhost over TCP. A host the project names itself still wins.
   args.push("--setenv", "PGHOST", "localhost");
   args.push("--chdir", cwd, "--", ...command);
+  // The placeholder must be the two words of its mount and nothing else. Anywhere else, such
+  // as in a first message, the host's swap would change more than what the mount shows.
+  if (files && args.filter((word) => word.includes(files)).length !== 2)
+    throw new Error(`the sandbox command holds ${files} outside its mount`);
   return args;
 }
 
