@@ -115,12 +115,18 @@ describe.skipIf(insideSandbox)("needs you", () => {
       const said = `Claude AI usage limit reached|${Math.ceil(Date.now() / 1000) + 2}`;
       await hook("limit", JSON.stringify({ error: "rate_limit", last_assistant_message: said }));
       await until(() => thread().limited === 1);
-      // Busy past the reset, so the wake waits to type, and the error ends meanwhile.
+      // Busy past the reset, so the wake waits to type, and the error ends meanwhile. The wake
+      // clears the limit as it starts to type.
       writeFileSync(join(builder(), "busy"), "");
-      await Bun.sleep(3000);
+      await until(() => thread().limited === 0);
       await hook(step);
       rmSync(join(builder(), "busy"));
-      await Bun.sleep(3000);
+      // One message at a time goes into a builder, so the lead's, typed once the turn you
+      // started has ended, goes in only after the wake's typing is over. A "continue" would
+      // have gone in before it.
+      if (step === "talk") await hook("stop");
+      await asLead(["tell", "app-12", "Carry on with the export."]);
+      await until(() => read(join(builder(), "typed")).includes("Carry on with the export."));
       expect(read(join(builder(), "typed"))).not.toContain("continue");
     }, 60_000);
 
