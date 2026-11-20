@@ -157,7 +157,11 @@ const Workflow = z.object({
   on: z.object({ push: z.object({ tags: z.array(z.string()) }) }),
   env: z.object({ RELEASES_REPO: z.string() }),
   jobs: z.object({
-    build: z.object({ steps: Steps }),
+    test: z.object({
+      strategy: z.object({ matrix: z.object({ shard: z.array(z.number()) }) }),
+      steps: Steps,
+    }),
+    build: z.object({ needs: z.string(), steps: Steps }),
     sign: z.object({
       needs: z.string(),
       "runs-on": z.string(),
@@ -224,10 +228,17 @@ function sign(script: string, version = "skelcrew 0.4.2") {
 test("the workflow runs on a version tag, checks, builds, signs, then publishes all the files", () => {
   const { on, jobs } = workflow();
   expect(on.push.tags).toEqual(["v[0-9]+.[0-9]+.[0-9]+"]);
+  // The whole suite runs as four shards, and the build waits for all of them. The build then
+  // runs the lint and typecheck the shards leave out, before it builds.
+  expect(jobs.test.strategy.matrix.shard).toEqual([1, 2, 3, 4]);
+  expect(stepRunning(jobs.test.steps, "scripts/test.ts")).toMatch(
+    /--shard=\$\{\{ matrix\.shard \}\}\/4/,
+  );
+  expect(jobs.build.needs).toBe("test");
   const built = runs(jobs.build.steps);
   const at = (words: string) => built.findIndex((run) => run.includes(words));
-  expect(at("bun run check")).toBeGreaterThan(-1);
-  expect(at("scripts/build-release.ts")).toBeGreaterThan(at("bun run check"));
+  expect(at("bunx biome ci . && bunx tsc --noEmit")).toBeGreaterThan(-1);
+  expect(at("scripts/build-release.ts")).toBeGreaterThan(at("bunx biome ci ."));
   expect(jobs.sign.needs).toBe("build");
   expect(jobs.publish.needs).toBe("sign");
   const published = runs(jobs.publish.steps);
