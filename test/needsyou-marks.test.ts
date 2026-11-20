@@ -261,6 +261,23 @@ describe.skipIf(insideSandbox)("needs you", () => {
     expect(read(join(builder(), "typed"))).not.toContain("Yes, delete them.");
   }, 60_000);
 
+  // The builder's reply to the lead ends a turn without a submit, often to wait as the lead
+  // said. The lead has the reply, so the safety net holds off well past the grace.
+  test("a builder that only replied to the lead isn't marked once the grace is over", async () => {
+    graceMinutes(0.02);
+    addApp();
+    await startApp12();
+    await hook("stop", JSON.stringify({ last_assistant_message: "Should I wait for t113?" }));
+    await until(() => thread().turn_ended === 1);
+    expect((await asLead(["tell", "app-12", "Yes, wait for t113 to land."])).err).toBe("");
+    await until(() => thread().turn_ended === 0);
+    const said = "I'll merge origin/main once t113 lands.";
+    await hook("stop", JSON.stringify({ last_assistant_message: said }));
+    await until(() => thread().turn_ended === 1);
+    await Bun.sleep(4000);
+    expect(await needsYou()).toBe(false);
+  }, 60_000);
+
   test("telling or clearing a stopped builder in time keeps the safety net from marking it", async () => {
     graceMinutes(0.05);
     addApp();

@@ -357,3 +357,21 @@ console.log(JSON.stringify({ running, stopped, word: needsYouFor(thread()) }));`
     word: "The tests failed. Should I skip the slow one?",
   });
 });
+
+// A builder the lead just told something may wait on purpose, as the lead said, such as for
+// another thread to land. The lead got its reply, so the safety net holds off for 30 minutes
+// from the lead's message, then marks it as usual if nobody acted since.
+test("the safety net holds off for 30 minutes after the lead told the builder something", () => {
+  const seen = inProcess(`
+turnEnded(db, "none", "app-12", { message: "Should I wait for t113?" });
+// The lead's message goes in, and the builder's reply ends its turn.
+const told = Date.now();
+record(db, "app-12", { updates: [{ from: "lead", at: told, text: "Yes, wait for t113." }] });
+questionAnswered(db, "app-12");
+turnEnded(db, "none", "app-12", { message: "I'll merge origin/main once t113 lands." });
+markForgotten(db, "none", 5, told + 29 * 60_000);
+const held = needsYou(thread());
+markForgotten(db, "none", 5, told + 30 * 60_000);
+console.log(JSON.stringify({ held, word: needsYouFor(thread()) }));`);
+  expect(seen).toEqual({ held: false, word: "I'll merge origin/main once t113 lands." });
+});

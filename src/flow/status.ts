@@ -560,6 +560,11 @@ export function turnEnded(
     record(db, folder, { turn_ended: true, ...timed }, "its builder stopped without submitting");
 }
 
+// How long the safety net holds off after the lead told a builder something. The builder's
+// reply ends a turn without a submit, often to wait as the lead said, such as for another thread
+// to land. The lead has the reply, so the net only catches one it forgot after this long.
+const leadHold = 30 * 60_000;
+
 // How much of a builder's last message the safety net keeps as the reason the thread needs you,
 // so the word stays one line.
 const saidLength = 200;
@@ -567,10 +572,12 @@ const saidLength = 200;
 // The safety net: marks each thread whose builder ended its turn without submitting, and that
 // nobody acted on for `graceMinutes` with nothing in flight, as needing you, with what the
 // builder said last as the reason. Waiting on a submit being pushed, reviewed or on CI never needs
-// you, so meanwhile the wait's start is put off to now, and it counts from once that is over. The lead hears of it when the builder stops, but may be busy or miss it, and nothing
-// should wait unseen. Typing to the builder, a new submit, or the lead marking or clearing the
-// thread is acting on it. The lead gets a note, as for any thread that starts needing you. The
-// daemon runs it every few seconds.
+// you, so meanwhile the wait's start is put off to now, and it counts from once that is over.
+// The lead hears of it when the builder stops, but may be busy or miss it, and nothing should
+// wait unseen. Typing to the builder, a new submit, or the lead marking or clearing the thread
+// is acting on it. A builder the lead told something waits at least `leadHold` from that
+// message. The lead gets a note, as for any thread that starts needing you. The daemon runs it
+// every few seconds.
 export function markForgotten(
   db: Database,
   sessions: string,
@@ -592,8 +599,10 @@ export function markForgotten(
   const waiting = threads.filter((thread) => !needsYou(thread));
   for (const thread of waiting.filter(inFlight))
     db.run("UPDATE threads SET ended_at = ? WHERE folder = ?", [now, thread.folder]);
+  // The lead's messages to the builder are kept in order, so the last one is the newest.
+  const leadHeld = (thread: Thread) => (thread.updates.at(-1)?.at ?? 0) > now - leadHold;
   const forgotten = waiting.filter(
-    (thread) => !inFlight(thread) && (thread.ended_at ?? now) <= since,
+    (thread) => !inFlight(thread) && (thread.ended_at ?? now) <= since && !leadHeld(thread),
   );
   for (const thread of forgotten) {
     const said = oneLine(thread.ended_said ?? "");

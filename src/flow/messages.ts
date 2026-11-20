@@ -184,7 +184,8 @@ function afterTyped(db: Database, folder: string, message: Message): void {
     return;
   }
   if (message.sender === "lead") {
-    const update: Thread["updates"][number] = { from: "lead", at: Date.now(), text: message.said };
+    // Timed from when the lead sent it, as the safety net holds off from that moment.
+    const update: Thread["updates"][number] = { from: "lead", at: message.at, text: message.said };
     record(
       db,
       folder,
