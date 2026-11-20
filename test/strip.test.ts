@@ -54,7 +54,7 @@ const base: Top = {
   tabs: [tab("app")],
   open: "simon/app",
   where: "",
-  version: "0.1.0",
+  version: "v0.1.0",
 };
 // Returns the top row as a tmux format, for the base with some of it changed.
 const top = (more: Partial<Top> = {}, given = size) => drawTop({ ...base, ...more }, given);
@@ -176,23 +176,23 @@ test("on this machine the header is Skelcrew and its version, with no dot and no
 });
 
 test("the version shows dim right after the name, here and on a remote", () => {
-  expect(above({ version: "0.4.2" }).trimEnd()).toBe("  Skelcrew v0.4.2");
-  expect(top({ version: "0.4.2" })).toContain(
+  expect(above({ version: "v0.4.2" }).trimEnd()).toBe("  Skelcrew v0.4.2");
+  expect(top({ version: "v0.4.2" })).toContain(
     "#[bold,fg=colour231]Skelcrew#[default]#[fg=brightblack] v0.4.2#[default]",
   );
-  const there = { version: "0.4.2", where: "workbox" };
+  const there = { version: "v0.4.2", where: "workbox" };
   expect(above(there, roomy).trimEnd()).toBe("  Skelcrew v0.4.2 · workbox");
   expect(top(there, roomy)).toContain("#[fg=brightblack] v0.4.2 · workbox#[default]");
 });
 
 test("the place is cut before the version, which stays whole", () => {
   const where = "simon@a-very-long-server-name.example.com";
-  expect(above({ where, version: "0.4.2" })).toBe("  Skelcrew v0.4.2 · simon…  ");
+  expect(above({ where, version: "v0.4.2" })).toBe("  Skelcrew v0.4.2 · simon…  ");
 });
 
 test("with no room for both, the place goes first, and then the version, never half of it", () => {
   const line = (left: number) =>
-    above({ shown: "lead", where: "workbox", version: "0.4.2" }, { left, width: 40 }).trimEnd();
+    above({ shown: "lead", where: "workbox", version: "v0.4.2" }, { left, width: 40 }).trimEnd();
   expect(line(25)).toBe("  Skelcrew v0.4.2 · …");
   expect(line(24)).toBe("  Skelcrew v0.4.2");
   expect(line(21)).toBe("  Skelcrew v0.4.2");
@@ -203,7 +203,7 @@ test("the sidebar's edge runs up through the row, and the tabs start where the a
   for (const shown of ["lead", "app-12", "gone", null])
     for (const more of [
       {},
-      { where: "simon@a-very-long-server-name.example.com", version: "0.4.2" },
+      { where: "simon@a-very-long-server-name.example.com", version: "v0.4.2" },
     ]) {
       const line = seen(top({ shown, ...more }));
       expect(line[size.left - 2]).toBe("│");

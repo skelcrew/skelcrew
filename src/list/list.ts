@@ -15,7 +15,7 @@ import { attachOnHost, type Host } from "../plugins/runtime.ts";
 import { errorText } from "../say.ts";
 import { cpuBusy, cpuSample, loadText, memoryInUse, readMemory } from "../screen/load.ts";
 import { grey, paint, removeControlCodes } from "../screen/look.ts";
-import { version } from "../version.ts";
+import { shownVersion } from "../version.ts";
 import { type Details, readDetails } from "./details.ts";
 import {
   drawList,
@@ -168,7 +168,15 @@ export async function runList(agents: string, repository: string): Promise<void>
     const tabs = repositoryTabs(db, open);
     const name = tabs.find((tab) => tab.fullName === `${open.owner}/${open.repo}`)?.name ?? "";
     const notice = updateNotice(db);
-    return { version, where, name, tabs, notice, bottom: bottom(tabs.length), load: shownLoad };
+    return {
+      version: shownVersion(),
+      where,
+      name,
+      tabs,
+      notice,
+      bottom: bottom(tabs.length),
+      load: shownLoad,
+    };
   };
 
   // Returns the details pane's lines for a terminal of this size, or null when it is too narrow

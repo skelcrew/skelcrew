@@ -693,7 +693,7 @@ test("the rows come from the database alone, with no tmux and no settings file",
 
 // The list as drawn, given its rows, at 80 columns and 20 lines.
 const frame = {
-  version: "0.6.0",
+  version: "v0.6.0",
   where: "",
   name: "app",
   tabs: [
@@ -1182,7 +1182,7 @@ process.exit(0);`,
 
 test("the list opens on the first task that needs you, and q leaves it with every agent running", async () => {
   await open();
-  expect(seen()).toContain(" Skelcrew v");
+  expect(seen()).toContain(" Skelcrew ");
   expect(seen()).toContain("site •1");
   expect(here()).toStartWith("▸ ● app-12");
   type("q");
@@ -1833,12 +1833,23 @@ test("a click on a stage's heading opens or closes it, and the wheel moves a row
   expect(here()).toStartWith("▸ ● app-12");
 });
 
+// A Skelcrew run from a checkout names its commit, read from git as the engine reads it, and says
+// when it has changes not committed. A stand-in git names the commit, and passes the rest on.
+test("from a checkout, the top line names its commit and its uncommitted changes", async () => {
+  const bin = join(home, "bin");
+  mkdirSync(bin, { recursive: true });
+  const body = `case "$*" in *"rev-parse --short HEAD"*) echo 6f1c2ab;; *"status --porcelain"*) echo " M src/main.ts";; *) exec ${Bun.which("git")} "$@";; esac`;
+  writeFileSync(join(bin, "git"), `#!/bin/sh\n${body}\n`, { mode: 0o755 });
+  await open({ bin });
+  expect(seen().split("\n")[0]).toStartWith(" Skelcrew 6f1c2ab + changes (checkout)   app");
+});
+
 // The tabs are on the top line, left after Skelcrew's version. Your terminal reports a click by
 // its column and row, counted from 1, as typed here.
 test("a click on a repository's tab opens it, and a click elsewhere does nothing", async () => {
   await open();
   const top = seen().split("\n")[0] ?? "";
-  expect(top).toMatch(/^ Skelcrew v\S+ {3}app {4}site •1$/);
+  expect(top).toMatch(/^ Skelcrew .+? {3}app {4}site •1$/);
   type(`\x1b[<0;${top.indexOf("site") + 1};2M`);
   type(`\x1b[<0;${top.indexOf("site") + 1};1M\x1b[<0;${top.indexOf("site") + 1};1m`);
   await until(() => seen().includes("site-3"), "site's list");

@@ -22,7 +22,7 @@ import { updateNotice } from "../machine/update.ts";
 import { leadPlaces, screenLogFile } from "../paths.ts";
 import { quoteForSh } from "../plugins/plugin.ts";
 import { attachOnHostLine, pluginHost } from "../plugins/runtime.ts";
-import { version } from "../version.ts";
+import { shownVersion } from "../version.ts";
 import { agentFooter, tellFooter } from "./footer.ts";
 import { draw, entryPlace, noticeLines, type Size } from "./layout.ts";
 import { type EntryCount, entryCounts, pageRow, roundLimit } from "./lists.ts";
@@ -209,7 +209,7 @@ export async function runSidebar(
     const width = doing("asking tmux the agent's width", () => paneWidth(agents, rightPane));
     const left = size().width + 1;
     const fullName = `${open.owner}/${open.repo}`;
-    const look = { rows, shown, page, tabs, open: fullName, where, version };
+    const look = { rows, shown, page, tabs, open: fullName, where, version: shownVersion() };
     const top = drawTop(look, { left, width });
     if (top !== lastStrip) {
       lastStrip = top;

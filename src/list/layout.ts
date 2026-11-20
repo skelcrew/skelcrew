@@ -18,9 +18,10 @@ import {
 } from "../screen/look.ts";
 import type { Heading, Row, Tab } from "./rows.ts";
 
-// What the list shows besides its rows: the version of Skelcrew running here, where it runs on a
-// remote, or empty on this machine, the open repository's name, every repository's tab, the
-// notice of a release waiting for a restart, or empty, the bottom line's text, and the load.
+// What the list shows besides its rows: the version of Skelcrew running here, such as v0.4.2 or
+// 6f1c2ab (checkout), where it runs on a remote, or empty on this machine, the open repository's
+// name, every repository's tab, the notice of a release waiting for a restart, or empty, the
+// bottom line's text, and the load.
 export type Frame = {
   version: string;
   where: string;
@@ -107,9 +108,9 @@ const otherTab = "48;5;236";
 // doesn't fit beside the open one's is left out.
 function topParts(frame: Frame, width: number): { line: string; spans: TabSpan[] } {
   const place = frame.where ? ` on ${frame.where}` : "";
-  const plain = ` Skelcrew v${frame.version}${place}`;
+  const plain = ` Skelcrew ${frame.version}${place}`;
   if (Bun.stringWidth(plain) > width) return { line: fitted(plain, width), spans: [] };
-  let line = ` ${paint(bright, "Skelcrew")} ${paint(grey, `v${frame.version}${place}`)}`;
+  let line = ` ${paint(bright, "Skelcrew")} ${paint(grey, `${frame.version}${place}`)}`;
   let used = Bun.stringWidth(plain);
   const spans: TabSpan[] = [];
   // Each tab's text, with a space either side inside its background.

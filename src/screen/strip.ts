@@ -88,7 +88,7 @@ function aboutPage(page: { name: string; title: string }, width: number): [strin
 const skelName = "#[bold,fg=colour231]Skelcrew#[default]";
 
 // Returns the header above the sidebar: Skelcrew's name, in line with the sidebar's marks, then dim
-// its version, such as v0.4.2, then, on a remote, a dot and where it runs, then spaces out to the
+// its version, such as v0.4.2 or 6f1c2ab (checkout), then, on a remote, a dot and where it runs, then spaces out to the
 // sidebar's edge. `where` is empty on this machine. It comes from outside, so it is made safe as a
 // title is, and cut to stop two columns before the sidebar's edge, as all the sidebar's text does.
 // The place gives way first. A version is never cut, as half a number would be a different one.
@@ -97,9 +97,8 @@ function header(where: string, left: number, version: string): string {
   // stops two before it, so what follows the name has `room`.
   const nameWidth = 10;
   const room = Math.max(left - 4 - nameWidth, 0);
-  const shown = `v${version}`;
-  const taken = Bun.stringWidth(shown) + 1;
-  const number = room >= taken ? ` ${shown}` : "";
+  const taken = Bun.stringWidth(version) + 1;
+  const number = room >= taken ? ` ${version}` : "";
   // " · " before the place takes three columns.
   const place = fitted(removeControlCodes(where), Math.max(room - 3 - taken, 0));
   const about = `${number}${place && ` · ${place}`}`;
@@ -166,7 +165,7 @@ function drawTabs(tabs: Tab[], open: string, width: number): [string, number] {
 
 // What the top row shows: the rows, the session on the right, the name and title of the issue or
 // PR whose page is there, if that is what shows, the tabs and the open one's owner/name, the remote Skelcrew runs on, if any, and
-// the version of the Skelcrew running here.
+// the version of the Skelcrew running here, as people read it, such as v0.4.2.
 export type Top = {
   rows: Row[];
   shown: string | null;
