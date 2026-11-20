@@ -378,6 +378,24 @@ describe.skipIf(insideSandbox)("sc submit", () => {
     expect(lines.some((line) => line.reviewer === "codex" && line.submitting !== null)).toBe(true);
   });
 
+  // The list shows what a review found from what Skelcrew saved, so a review the forge refused
+  // to take still shows its findings there.
+  test("a review's findings are saved though the forge refuses to post it", async () => {
+    addApp();
+    verdict(1, "changes", "The export has no test.", ["The export has no test.", "Name it."]);
+    writeFileSync(join(plugin, "fail-review"), "the forge is down");
+    await startApp12();
+    const log = () =>
+      read(join(data(), "threads", "app-12.log"))
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line));
+    await until(() => log().some((line) => line.why?.includes("the review said")), 30_000);
+    // The post was asked for and refused, and the findings were saved all the same.
+    await until(() => asked(plugin).some((question) => question.ask === "review"), 30_000);
+    expect(log().at(-1)?.review_findings).toEqual(["The export has no test.", "Name it."]);
+  });
+
   // The lead's message changes the task after the thread started, such as a design you agreed
   // to, so the reviewer judges the round by it rather than asking to undo it. The line that
   // closes the issue is saved as the task starts, so the PR still closes it though Skelcrew's
