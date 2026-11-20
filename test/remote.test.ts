@@ -1485,7 +1485,10 @@ test("a file dropped onto the server's screen is sent to the agent it shows, and
   run.terminal?.close();
   const screen = readFileSync(named, "utf8").trim();
   expect(screen).toMatch(/^screen-\w+$/);
-  expect(calls()).toContain(`tmux -L skelcrew-screen show -qv -t =${screen}: @agent-folder`);
+  // It asks the screen there which folder your typing goes to, as tmux works it out then.
+  expect(calls()).toContain(
+    `tmux -L skelcrew-screen display -p -t =${screen}: #{?#{==:#{pane_index},1},#{@agent-folder},}`,
+  );
   const got = readFileSync(join(home, "server", "got"), "utf8").trim();
   const agent = join(home, "server", "agent", ".skelcrew-drops");
   expect(got.startsWith(`\x1b[200~${agent}/`)).toBe(true);

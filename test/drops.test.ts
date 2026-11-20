@@ -165,6 +165,33 @@ test("a paste split over several reads, and keys right after it, arrive whole an
   );
 });
 
+test("a paste's start split anywhere across two reads is still seen, and sent once", async () => {
+  const shot = file("shot.png");
+  const whole = `x${pasted(shot)}y`;
+  // Each place inside the start, from after its Esc to before its last byte.
+  for (let cut = 2; cut < 7; cut++) {
+    sent = "";
+    const take = filter();
+    take(Buffer.from(whole.slice(0, cut)));
+    take(Buffer.from(whole.slice(cut)));
+    const out = await afterCopies();
+    expect(out).toMatch(
+      new RegExp(`^x\\x1b\\[200~${agent}/${dropsFolder}/[^/]+/shot\\.png\\x1b\\[201~y$`),
+    );
+  }
+});
+
+test("a double-quoted path with an escaped quote in its name is copied", async () => {
+  const odd = file('say "hi".txt');
+  filter()(Buffer.from(pasted(`"${odd.replaceAll('"', '\\"')}"`)));
+  const out = await afterCopies();
+  expect(out).toMatch(
+    new RegExp(`^\\x1b\\[200~"${agent}/${dropsFolder}/[^/]+/say \\\\"hi\\\\"\\.txt"\\x1b\\[201~$`),
+  );
+  const copy = out.slice('\x1b[200~"'.length, -'"\x1b[201~'.length).replaceAll('\\"', '"');
+  expect(readFileSync(copy, "utf8")).toBe('the text of say "hi".txt');
+});
+
 test("a file already in the agent's folder keeps its path", async () => {
   mkdirSync(join(agent, "sub"));
   const inside = join(agent, "sub", "notes.txt");

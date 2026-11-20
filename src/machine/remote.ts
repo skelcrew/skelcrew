@@ -19,8 +19,8 @@ import { screenSocket } from "../agents/tmux.ts";
 import { sshFolder } from "../paths.ts";
 import { quietly } from "../run.ts";
 import {
-  agentFolderOption,
   type Drop,
+  dropFolderFormat,
   dropPath,
   dropsFolder,
   runWithDrops,
@@ -325,7 +325,9 @@ function dropOnServer(machine: Machine, screen: string): Drop {
   };
   return async (files) => {
     const asked = await quietly(
-      quiet(`tmux -L ${screenSocket("skelcrew")} show -qv -t =${screen}: ${agentFolderOption}`),
+      quiet(
+        `tmux -L ${screenSocket("skelcrew")} display -p -t =${screen}: ${quoted(dropFolderFormat)}`,
+      ),
     );
     const folder = asked.out.trim();
     if (!asked.ok || !folder.startsWith("/")) return files.map(() => null);

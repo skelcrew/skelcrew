@@ -1,13 +1,14 @@
 // Files dropped onto the screen reach the agent your typing goes to as copies in its own folder,
 // which its sandbox lets it read, through the screen's real tmux servers.
 import { afterEach, beforeEach, expect, setDefaultTimeout, test } from "bun:test";
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   attachTo,
   daemon,
   endTest,
   home,
+  onDetails,
   open,
   press,
   read,
@@ -76,6 +77,24 @@ test("a file dropped onto a builder you attached to reaches it in its clone", as
     true,
   );
   expect(readFileSync(line, "utf8")).toBe("notes");
+});
+
+test("right after Ctrl-\\ back from a builder, a drop goes to its details, and nothing is copied", async () => {
+  daemon();
+  const notes = join(home, "notes.txt");
+  writeFileSync(notes, "notes");
+  open("lead");
+  await ready("lead");
+  press("M-S-Down");
+  await attachTo("app-12");
+  const clone = join(skelcrew(), "threads", "app-12");
+  await toldFolder(clone);
+  press("C-\\");
+  await until(onDetails, "APP-12's details");
+  drop(notes);
+  await Bun.sleep(500);
+  expect(existsSync(join(clone, ".skelcrew-drops"))).toBe(false);
+  expect(read("app-12.typed")).toBe("");
 });
 
 test("text pasted onto the screen reaches the agent as it was", async () => {

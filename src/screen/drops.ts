@@ -11,10 +11,16 @@ import { basename, dirname, join } from "node:path";
 // clone at the thread's end, and for a lead with sc repo rm.
 export const dropsFolder = ".skelcrew-drops";
 
-// The screen session's option that holds the folder of the agent your typing goes to, or nothing
-// while it goes to the sidebar. The sidebar keeps it. A file dropped onto the screen is copied
-// there, and sc --remote reads it by the screen's name to send a file from your laptop there.
+// The screen session's option that holds the folder of the agent the right side is about. The
+// sidebar keeps it.
 export const agentFolderOption = "@agent-folder";
+
+// What tmux shows, for the screen's session, as the folder dropped files go to: the agent's
+// folder while your typing goes to the right side, its pane 1, and nothing while it goes to the
+// sidebar, as on a task's details. tmux works it out at the moment of the drop, so it is never a
+// moment behind where your typing goes. sc --remote asks the server the same, by the screen's
+// name, to send a file from your laptop there.
+export const dropFolderFormat = `#{?#{==:#{pane_index},1},#{${agentFolderOption}},}`;
 
 // The largest file copied. A paste waits while its files are copied, and over sc --remote while
 // they go up a link that may be slow, so a bigger file would hold up your typing for long. Agents
@@ -55,11 +61,26 @@ function pastedPaths(text: string): Part[] | null {
         if (end + 1 >= text.length) return null;
         path += text[end + 1];
         end += 2;
-      } else if (char === "'" || char === '"') {
-        const close = text.indexOf(char, end + 1);
+      } else if (char === "'") {
+        const close = text.indexOf("'", end + 1);
         if (close < 0) return null;
-        const inside = text.slice(end + 1, close);
-        path += char === '"' ? inside.replace(/\\([\\"$`])/g, "$1") : inside;
+        path += text.slice(end + 1, close);
+        end = close + 1;
+      } else if (char === '"') {
+        // In double quotes a backslash keeps the next \, ", $ or ` as it is, so an escaped
+        // quote doesn't close them.
+        let close = end + 1;
+        while (close < text.length && text[close] !== '"') {
+          const next = text[close + 1] ?? "";
+          if (text[close] === "\\" && '\\"$`'.includes(next) && next !== "") {
+            path += next;
+            close += 2;
+          } else {
+            path += text[close];
+            close++;
+          }
+        }
+        if (close >= text.length) return null;
         end = close + 1;
       } else {
         path += char;
@@ -148,12 +169,19 @@ async function rewritten(text: string, drop: Drop): Promise<string | null> {
 // Returns a function that takes what your terminal sends, in the pieces it arrives in, and hands
 // it to `send`. Everything but a paste goes on at once, byte for byte. A paste is held until its
 // end, and goes on as it came unless it is only paths of files `drop` copied. While those are
-// copied, what you type after waits, so it reaches the agent after the paste. A paste whose start
-// arrives split across two pieces passes untouched: holding a lone Esc back to see what follows
-// would delay the Esc key.
+// copied, what you type after waits, so it reaches the agent after the paste. A paste's start can
+// arrive split across two pieces. Nothing is held back to see whether one follows, as a lone Esc
+// would then wait. Instead the last bytes sent are kept, so a start that began in them is still
+// found, and only its rest is sent with the paste.
 export function pasteFilter(send: (bytes: Uint8Array) => void, drop: Drop) {
   // The paste read so far, without its start, or null outside one.
   let held: Buffer | null = null;
+  // The last bytes sent outside a paste, as many as a paste's start could have begun in, and how
+  // much of the held paste's start was sent already, in them.
+  let sentLast: Buffer = Buffer.alloc(0);
+  let startSent = 0;
+  // Returns the paste's start, without what was sent of it already.
+  const startLeft = () => pasteStart.subarray(startSent);
   // Whether a paste's files are being copied, and what arrived meanwhile.
   let copying = false;
   const waiting: Buffer[] = [];
@@ -165,16 +193,21 @@ export function pasteFilter(send: (bytes: Uint8Array) => void, drop: Drop) {
     }
     let rest: Buffer = Buffer.from(piece);
     while (rest.length > 0) {
-      // Outside a paste, everything goes on, up to the start of one.
+      // Outside a paste, everything goes on, up to the start of one, which is looked for in the
+      // last bytes sent too.
       if (held === null) {
-        const start = rest.indexOf(pasteStart);
+        const seen = Buffer.concat([sentLast, rest]);
+        const start = seen.indexOf(pasteStart);
         if (start < 0) {
           send(rest);
+          sentLast = seen.subarray(Math.max(seen.length - pasteStart.length + 1, 0));
           return;
         }
-        if (start > 0) send(rest.subarray(0, start));
+        if (start > sentLast.length) send(seen.subarray(sentLast.length, start));
+        startSent = Math.max(sentLast.length - start, 0);
+        sentLast = Buffer.alloc(0);
         held = Buffer.alloc(0);
-        rest = rest.subarray(start + pasteStart.length);
+        rest = seen.subarray(start + pasteStart.length);
         continue;
       }
       // Inside one, it is held until its end. One too long to be paths goes on as it is.
@@ -183,7 +216,7 @@ export function pasteFilter(send: (bytes: Uint8Array) => void, drop: Drop) {
       if (end < 0) {
         held = sofar;
         if (sofar.length > longestPaths) {
-          send(Buffer.concat([pasteStart, sofar]));
+          send(Buffer.concat([startLeft(), sofar]));
           held = null;
         }
         return;
@@ -191,7 +224,8 @@ export function pasteFilter(send: (bytes: Uint8Array) => void, drop: Drop) {
       const text = sofar.subarray(0, end).toString();
       rest = sofar.subarray(end + pasteEnd.length);
       held = null;
-      const asCame = Buffer.concat([pasteStart, sofar.subarray(0, end), pasteEnd]);
+      const begun = startLeft();
+      const asCame = Buffer.concat([begun, sofar.subarray(0, end), pasteEnd]);
       // Text that isn't only paths goes on at once, without waiting on anything.
       if (pastedPaths(text) === null) {
         send(asCame);
@@ -203,7 +237,8 @@ export function pasteFilter(send: (bytes: Uint8Array) => void, drop: Drop) {
       rewritten(text, drop)
         .catch(() => null)
         .then((changed) => {
-          send(changed === null ? asCame : Buffer.from(`\x1b[200~${changed}\x1b[201~`));
+          const changedPaste = Buffer.concat([begun, Buffer.from(`${changed}\x1b[201~`)]);
+          send(changed === null ? asCame : changedPaste);
           copying = false;
           for (const next of [after, ...waiting.splice(0)]) take(next);
         });

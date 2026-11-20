@@ -10,7 +10,7 @@ import { listShare, listWidth } from "../list/layout.ts";
 import { attachOnHostLine, pluginHost } from "../plugins/runtime.ts";
 import { windowTitle } from "../say.ts";
 import { mainFile, singleFile } from "../version.ts";
-import { agentFolderOption, copyDrops, runWithDrops } from "./drops.ts";
+import { copyDrops, dropFolderFormat, runWithDrops } from "./drops.ts";
 
 // Returns how wide the sidebar is, with the line it draws at its edge, in a terminal `width`
 // columns wide: as wide as sc --list's list, as both show the same rows. On a terminal too narrow
@@ -293,9 +293,9 @@ export async function openScreen(
   const argv = ["tmux", "-L", screenSocket(agents), "-f", "/dev/null", ...commands];
   // tmux runs in your terminal until you leave. Only a screen that couldn't open is an error.
   // Files dropped onto the screen are copied into the folder of the agent your typing goes to,
-  // as the sidebar last said it, and to none while your typing goes to the sidebar.
+  // and to none while your typing goes to the sidebar, as tmux says at that moment.
   const drop = async (files: string[]) => {
-    const asked = ["show", "-qv", "-t", `=${name}:`, agentFolderOption];
+    const asked = ["display", "-p", "-t", `=${name}:`, dropFolderFormat];
     const folder = Bun.spawnSync(["tmux", "-L", screenSocket(agents), ...asked], { env })
       .stdout.toString()
       .trim();
