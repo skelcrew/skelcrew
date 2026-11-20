@@ -449,6 +449,24 @@ function usageLimit(error: string, now: number): { reset: number | null } | null
   return { reset: resets === undefined ? null : resetTime(resets, now) };
 }
 
+// Returns the line where Claude Code's own input area starts on its screen, given as plain lines,
+// or null when it isn't found, such as after an update that redrew it. The area is a rule, the ❯
+// prompt with any more lines of what is typed under it, a closing rule, and the status lines
+// below. Only nothing but a rule may stand over the prompt: a past message quoted in the output
+// also starts with ❯, but never right under a rule.
+function inputStart(lines: string[]): number | null {
+  const rule = (line: string) => /^─{3,}/.test(line.trim());
+  for (let at = lines.length - 1; at > 0; at--) {
+    if (!lines[at]?.startsWith("❯") || !rule(lines[at - 1] ?? "")) continue;
+    // What is typed goes on, indented, until the closing rule.
+    const below = lines.slice(at + 1);
+    const end = below.findIndex(rule);
+    if (end >= 0 && below.slice(0, end).every((line) => line === "" || line.startsWith(" ")))
+      return at - 1;
+  }
+  return null;
+}
+
 // Claude Code as Skelcrew knows it. While a turn runs it shows "esc to interrupt". It is ready for
 // a message once that is gone and a line holding only its ❯ prompt shows. `keys` are the API key
 // variables let into the sandbox, for those who use a key rather than a login. The first run
@@ -464,6 +482,7 @@ export const claude = {
   saved: savedConversation,
   conversation: conversationFile,
   progress: readProgress,
+  inputStart,
   review: reviewCommand,
   answer: parseAnswer,
   failure: reportedError,

@@ -524,6 +524,16 @@ function usageLimit(error: string, now: number): { reset: number | null } | null
   return { reset: again === undefined ? null : resetTime(again, now) };
 }
 
+// Returns the line where Codex's own input area starts on its screen, given as plain lines, or
+// null when it isn't found, such as after an update that redrew it. The area is its › prompt,
+// with what is typed under it, and the footer below. Past messages in the output start with ›
+// too, so it is the last one, and only when none of Codex's own • output lines comes after it.
+function inputStart(lines: string[]): number | null {
+  const at = lines.findLastIndex((line) => line.startsWith("›"));
+  if (at < 0 || lines.slice(at + 1).some((line) => line.startsWith("•"))) return null;
+  return at;
+}
+
 // Codex as Skelcrew knows it. While a turn runs it shows "esc to interrupt". Its empty input
 // always shows "› Ask Codex to do anything", even mid-turn, so that whole line is its prompt:
 // a line holding only › never shows. codex exec reads CODEX_API_KEY: given only
@@ -541,6 +551,7 @@ export const codex = {
   saved: savedConversation,
   conversation: conversationFile,
   progress: readProgress,
+  inputStart,
   review: reviewCommand,
   answer: readAnswer,
   failure: reportedError,
