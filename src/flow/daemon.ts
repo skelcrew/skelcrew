@@ -27,7 +27,7 @@ import { createTask, mergePr } from "../plugins/ask.ts";
 import { errorText } from "../say.ts";
 import { checkoutFolder, git, release, singleFile } from "../version.ts";
 import { assignIssue } from "./assign.ts";
-import { backlogOf, filedTask, fileTask, unfileTask } from "./backlog.ts";
+import { filedTask, fileTask, unfileTask } from "./backlog.ts";
 import {
   bringBack,
   endEarlierBuilder,
@@ -546,28 +546,19 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         const by = leadOfCaller(caller) === null ? loginName() : `${loginName()} via the lead`;
         const { title, body } = request;
         const current = findRepository(db, request.repo);
-        // A push the remote took can still fail on its way back, with no way left to ask the
-        // remote, and you then run sc task add again. So the backlog is read from the remote
-        // first, which must answer, and the same task already there is the one filed before.
-        await refreshClone(db, current).catch((error) => {
-          throw new Error(
-            `Skelcrew can't read ${repository.name}'s backlog on its remote, so it files nothing: ${errorText(error)}`,
-          );
-        });
-        const same = backlogOf(db, current.owner, current.repo).find(
-          (t) => t.title === title && t.body === body,
+        // A filing whose outcome nobody heard is settled by the same sc task add run again.
+        const { task, already } = await fileTask(db, current, clone, { title, body, by }).catch(
+          (error) => {
+            throw new Error(
+              `${errorText(error)}. The remote may have taken the task: run the same sc task add again once it can be reached, which never files it twice.`,
+            );
+          },
         );
-        if (same) return { task: `${repository.name}-${same.task}`, already: true };
-        const task = await fileTask(db, current, clone, { title, body, by }).catch((error) => {
-          throw new Error(
-            `${errorText(error)}. The remote may have taken the task: run the same sc task add again once it can be reached, which never files it twice.`,
-          );
-        });
         // Read back by a refresh of the clone, which never runs beside another, so the list
         // shows it at once and sc start finds the commit it needs. One that fails only waits
         // for the next poll: the task is filed already.
         await refreshClone(db, current).catch((error) => console.log(errorText(error)));
-        return { task: `${repository.name}-${task}` };
+        return { task: `${repository.name}-${task}`, already };
       }
       case "review": {
         // A builder may ask only for its own thread, such as when you ask on its pull request

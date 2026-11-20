@@ -333,6 +333,11 @@ export async function moveRefs(
   ]);
 }
 
+// Returns the commit a name's claim is at on the repository's remote, or "" when it has none.
+// Throws when the remote can't be asked.
+export const claimedAt = (db: Database, repository: Repository, name: string) =>
+  remoteRef(db, repository, claimRef(name));
+
 // Returns the commit a ref is at on the repository's remote, or "" when it has no such ref.
 // Throws when the remote can't be asked.
 export async function remoteRef(db: Database, repository: Repository, ref: string) {
@@ -350,8 +355,9 @@ export async function remoteRef(db: Database, repository: Repository, ref: strin
 // it. False means another machine claimed this name, or any name, since then: the caller reads
 // the claims again and picks a number above them. So two machines never take one name, and a
 // name is never below one claimed before it. The claim is never removed, so no machine gives
-// the name to other work later, even once its branch is gone. `filed` is a task to keep in the
-// backlog under the name, as text. It goes in a commit of its own, which only its ref holds, so
+// the name to other work later, even once its branch is gone. `noting` hears the claim's commit
+// just before the push, so a caller can keep it in case the push's outcome is never heard. `filed`
+// is a task to keep in the backlog under the name, as text. It goes in a commit of its own, which only its ref holds, so
 // removing the task leaves its words on no ref. The same push files it, so a task is never filed
 // without its name, nor a name claimed without its task.
 export async function claimName(
@@ -361,6 +367,7 @@ export async function claimName(
   name: string,
   last: string,
   filed?: string,
+  noting?: (commit: string) => void,
 ): Promise<boolean> {
   const commit = await makeCommit(
     db,
@@ -379,6 +386,7 @@ export async function claimName(
     const task = await makeCommit(db, repository, folder, message);
     moves.push({ ref: filedRef(name), was: "", now: task });
   }
+  noting?.(commit);
   try {
     await moveRefs(db, repository, folder, moves);
     return true;

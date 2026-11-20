@@ -1449,6 +1449,9 @@ describe("the backlog", () => {
     // Its words and stdin, as sc start <repo> takes them.
     const piped = await runSkel(["task", "add", "app"], env(), "# Add notes\n\nAs text\n");
     expect(piped.out).toBe("Filed app-t101 in the backlog. sc start app-t101 starts it.\n");
+    // The same task filed again on purpose is a task of its own.
+    const again = await skel("task", "add", "app", "Add export", "As JSON");
+    expect(again.out).toBe("Filed app-t102 in the backlog. sc start app-t102 starts it.\n");
     // On the remote, under hidden refs, never as a branch, and never in the tracker.
     const refs = git(work, "ls-remote", "origin");
     expect(refs).toContain("refs/skelcrew/tasks/t100");
@@ -1685,7 +1688,7 @@ exec ${real} "$@"
     expect(failed.err).toContain("run the same sc task add again once it can be reached");
     // While the remote is out of reach, nothing is filed.
     const meanwhile = await skel("task", "add", "app", "Add export", "As JSON");
-    expect(meanwhile.err).toContain("Skelcrew can't read app's backlog on its remote");
+    expect(meanwhile.err).toContain("run the same sc task add again once it can be reached");
     rmSync(join(home, "down"));
     const again = await skel("task", "add", "app", "Add export", "As JSON");
     expect(again.err).toBe("");
@@ -1695,6 +1698,10 @@ exec ${real} "$@"
     const refs = git(work, "ls-remote", "origin", "refs/skelcrew/tasks/*");
     expect(refs).toContain("refs/skelcrew/tasks/t100");
     expect(refs).not.toContain("refs/skelcrew/tasks/t101");
+    // That try is settled, so the same task filed again on purpose is a task of its own.
+    rmSync(join(home, "bin", "git"));
+    const twice = await skel("task", "add", "app", "Add export", "As JSON");
+    expect(twice.out).toBe("Filed app-t101 in the backlog. sc start app-t101 starts it.\n");
   }, 60_000);
 
   test("sc rm deletes a task that never started, here and on the remote, and keeps its name", async () => {

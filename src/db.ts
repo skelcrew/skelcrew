@@ -546,6 +546,19 @@ function prepareTables(db: Database): void {
     filed_commit TEXT NOT NULL,
     PRIMARY KEY (owner, repo, task)
   )`);
+  // The tries to file a task in the backlog whose outcome this machine hasn't heard yet: the name
+  // each claimed, at which commit, with the task's title and description. A push the remote took
+  // can fail on its way back, and the same task given again finds its try here, so it is filed
+  // once, while a task filed twice on purpose, whose tries were all heard, is filed twice.
+  db.run(`CREATE TABLE IF NOT EXISTS filing_tries (
+    owner TEXT NOT NULL,
+    repo TEXT NOT NULL,
+    task TEXT NOT NULL,
+    claim_commit TEXT NOT NULL,
+    title TEXT NOT NULL,
+    body TEXT NOT NULL,
+    PRIMARY KEY (owner, repo, task)
+  )`);
   // The starts of backlog tasks this machine claimed on the remote and hasn't recorded a thread
   // for yet, each by the commit of its claim. A start a stop cut short is put back in the
   // backlog from here, while another machine's claim, which this table never holds, is left be.

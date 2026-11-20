@@ -6,6 +6,7 @@ import { z } from "zod";
 import type { Repository } from "../db.ts";
 import { errorText } from "../say.ts";
 import {
+  claimedAt,
   claimedNames,
   claimName,
   fetchBacklog,
@@ -68,6 +69,7 @@ export async function claimOwnName(
   repository: Repository,
   folder: string,
   filed?: string,
+  noting?: (task: string, commit: string) => void,
 ): Promise<string> {
   const { owner, repo } = repository;
   const held = db
@@ -79,21 +81,57 @@ export async function claimOwnName(
     const claims = await claimedNames(db, repository);
     const numbers = [...claims.names, ...held].map((id) => Number(id.slice(1)));
     const task = `t${Math.max(99, ...numbers) + 1}`;
-    if (await claimName(db, repository, folder, task, claims.last, filed)) return task;
+    const note = noting && ((commit: string) => noting(task, commit));
+    if (await claimName(db, repository, folder, task, claims.last, filed, note)) return task;
   }
 }
 
 // Files a task in the repository's backlog on its remote, from Skelcrew's clone in the folder,
 // and returns its name, such as t104. It starts nothing: sc start starts it later, on any
 // machine. The daemon's copy has it once the clone's next refresh reads it back.
+//
+// The remote can take the push and then be out of reach before Skelcrew learns it did, so the
+// filing fails though the task may be filed. Each try is noted before its push and forgotten once
+// its outcome is known, so only such a try keeps its note. The same task given again then settles
+// it first: with its claim on the remote, it was filed, and `already` says so with its name. A
+// task filed twice on purpose has no note, and is filed again. Throws when a note can't be
+// settled, as the remote can't be asked.
 export async function fileTask(
   db: Database,
   repository: Repository,
   folder: string,
   given: { title: string; body: string; by: string },
-): Promise<string> {
+): Promise<{ task: string; already: boolean }> {
+  const { owner, repo } = repository;
+  const same = "WHERE owner = ? AND repo = ? AND title = ? AND body = ?";
+  const notes = db
+    .query(`SELECT task, claim_commit FROM filing_tries ${same}`)
+    .all(owner, repo, given.title, given.body)
+    .map((row) => z.object({ task: z.string(), claim_commit: z.string() }).parse(row));
+  for (const note of notes) {
+    const holds = await claimedAt(db, repository, note.task);
+    db.run("DELETE FROM filing_tries WHERE owner = ? AND repo = ? AND task = ?", [
+      owner,
+      repo,
+      note.task,
+    ]);
+    if (holds === note.claim_commit) return { task: note.task, already: true };
+  }
   const kept = { ...given, created: new Date().toISOString() };
-  return claimOwnName(db, repository, folder, JSON.stringify(kept));
+  const tried: string[] = [];
+  const note = (task: string, commit: string) => {
+    tried.push(task);
+    db.run(
+      `INSERT OR REPLACE INTO filing_tries (owner, repo, task, claim_commit, title, body)
+        VALUES (?, ?, ?, ?, ?, ?)`,
+      [owner, repo, task, commit, given.title, given.body],
+    );
+  };
+  const task = await claimOwnName(db, repository, folder, JSON.stringify(kept), note);
+  // Every try's outcome is known now: lost to another machine, or this one.
+  for (const t of tried)
+    db.run("DELETE FROM filing_tries WHERE owner = ? AND repo = ? AND task = ?", [owner, repo, t]);
+  return { task, already: false };
 }
 
 // Writes tasks into the daemon's copy of the repository's backlog, over any of the same name.
