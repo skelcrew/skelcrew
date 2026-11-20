@@ -949,7 +949,9 @@ plugins:
       "Skelcrew reads these files from main, so commit and push them there:",
       "",
       "  git add skelcrew.yaml skelcrew.lock .agents",
+      "",
       '  git commit -m "Set up Skelcrew" -- skelcrew.yaml skelcrew.lock .agents',
+      "",
       "  git push origin main",
       "",
       "Then run sc.",
@@ -1131,7 +1133,7 @@ function initAtTerminal(checkout: string, typed: string) {
 
 // What sc init shows when it leaves the commit to you, after the reason it gives.
 const commands =
-  '\n  git add skelcrew.yaml skelcrew.lock .agents\n  git commit -m "Set up Skelcrew" -- skelcrew.yaml skelcrew.lock .agents\n  git push origin main\n\nThen run sc.\n';
+  '\n  git add skelcrew.yaml skelcrew.lock .agents\n\n  git commit -m "Set up Skelcrew" -- skelcrew.yaml skelcrew.lock .agents\n\n  git push origin main\n\nThen run sc.\n';
 
 // The lead and builders read the repository as its default branch has it, so sc init offers to
 // commit what it wrote and push it there, then opens the lead as plain sc does.
@@ -1232,7 +1234,7 @@ test("init on another branch asks nothing and says where the files must go", asy
   expect(run.out).not.toContain("now? [Y/n]");
   // The commands start by going to the default branch, where the push brings the files in.
   expect(run.out).toEndWith(
-    `You are on setup, and Skelcrew reads these files from main. Once they are there, the lead uses them. To commit and push them there:\n\n  git switch main${commands}`,
+    `You are on setup, and Skelcrew reads these files from main. Once they are there, the lead uses them. To commit and push them there:\n\n  git switch main\n${commands}`,
   );
 });
 

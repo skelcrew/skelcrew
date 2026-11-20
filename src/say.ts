@@ -16,9 +16,9 @@ export function colorful(): boolean {
 }
 
 // Returns commands for you to run, each on its own indented line, bold where the terminal shows
-// it, with a blank line above and below. Set apart so, a command reads as something to copy and
-// run, not as part of the sentence around it.
+// it, with a blank line above and below each one. Set apart so, a command reads as something to
+// copy and run, not as part of the sentence around it, and two never run together.
 export function toRun(commands: string[]): string {
   const bold = (text: string) => (colorful() ? `\x1b[1m${text}\x1b[22m` : text);
-  return ["", ...commands.map((command) => `  ${bold(command)}`), ""].join("\n");
+  return ["", ...commands.map((command) => `  ${bold(command)}`), ""].join("\n\n").slice(1, -1);
 }

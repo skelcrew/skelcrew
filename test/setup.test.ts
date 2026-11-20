@@ -832,6 +832,7 @@ test("names each missing tool with what to install, and runs nothing else", asyn
       "a coding agent, one of:",
       "",
       "  curl -fsSL https://claude.ai/install.sh | bash",
+      "",
       "  npm install -g @openai/codex",
       "",
       "Then run sc again.",
