@@ -318,7 +318,7 @@ async function actOnPr(
   // an earlier event is still being told: a check run again can fail, pass or vanish, and an
   // approval is ready to merge only while they all pass.
   const checks = ciState(pr);
-  const green = allGreen(pr);
+  const green = allGreen(thread, pr);
   const ciChanged = checks !== thread.checks || green !== thread.ci_passed;
   if (!stale && thread.submitting === null && ciChanged)
     record(db, folder, { checks, ci_passed: green });

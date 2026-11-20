@@ -62,19 +62,21 @@ export function ciState(pr: PullRequest): Thread["checks"] {
   return ci.some((c) => c.state === "failed" || c.state === "cancelled") ? "failing" : "pending";
 }
 
-// Returns whether every check on the PR passed, Skelcrew's own included, which it sets once its
-// reviewer approves. With no CI, that check is the only one. A thread's saved CI state leaves
-// Skelcrew's check out, so this is what says an approved PR is ready to merge.
-export function allGreen(pr: PullRequest): boolean {
-  const approved = pr.checks.some((c) => c.name === reviewCheck && c.state === "passed");
-  return approved && pr.checks.every((c) => c.state === "passed");
-}
-
 // Returns whether the PR's head has CI's checks to go by: a CI check shows on it, or the wait
 // for CI's first check on it ended with none, so no CI runs on it. Until then CI may still be
 // starting, and a PR with only Skelcrew's check is neither ready nor merged.
 export const ciKnown = (thread: Thread, pr: PullRequest) =>
   ciOf(pr).length > 0 || (pr.head !== null && thread.no_ci === pr.head);
+
+// Returns whether every check on the PR passed, Skelcrew's own included, which it sets once its
+// reviewer approves. With no CI, that check is the only one, and it counts only once the wait
+// for CI's first check on the head ended with none, as CI may still be starting. A thread's
+// saved CI state leaves Skelcrew's check out, so this is what says an approved PR is ready to
+// merge.
+export function allGreen(thread: Thread, pr: PullRequest): boolean {
+  const approved = pr.checks.some((c) => c.name === reviewCheck && c.state === "passed");
+  return approved && pr.checks.every((c) => c.state === "passed") && ciKnown(thread, pr);
+}
 
 // Returns what an armed merge when ready still waits on, in words for the thread's row and the
 // lead, such as "an approval", or null once the PR may merge. It merges only at the commit
@@ -354,11 +356,10 @@ export function decide(
     const why = `told the builder: ${told.join("; ")}`;
     return { seen, tell, notice, typedIn, failed, conflict, moved, change, why };
   }
-  // An approved PR with every check green is ready, once its CI is known: a docs-only commit's
-  // review waits for no CI, which can show its first check after the approval. A branch holding
-  // commits Skelcrew never pushed is never ready, as no review saw them, such as one that ran on
-  // the builder's commit while a PR was merged into its branch.
-  if (quiet && !thread.needs_you && !given.moved && allGreen(pr) && ciKnown(thread, pr))
+  // An approved PR with every check green is ready. A branch holding commits Skelcrew never
+  // pushed is never ready, as no review saw them, such as one that ran on the builder's commit
+  // while a PR was merged into its branch.
+  if (quiet && !thread.needs_you && !given.moved && allGreen(thread, pr))
     return {
       seen,
       tell,

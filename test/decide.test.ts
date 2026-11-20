@@ -560,16 +560,22 @@ test("a PR's CI reads as passing, failing or still running, and Skelcrew's own c
   expect(ciState(pr({ checks: [failed, going] }))).toBe("failing");
 });
 
-// Unlike the saved CI state, Skelcrew's own check counts: it is the approval.
+// Unlike the saved CI state, Skelcrew's own check counts: it is the approval. With no CI check,
+// it is green only once the wait for CI's first check on the head ended with none, so an
+// approval that needs you for another reason never reads as ready to merge during the wait.
 test("a PR is all green only while every check passed, Skelcrew's own included", () => {
   const passed = run(30, "test", "passed");
-  expect(allGreen(pr({ checks: [approved, passed] }))).toBe(true);
-  expect(allGreen(pr({ checks: [approved] }))).toBe(true);
-  expect(allGreen(pr({ checks: [approved, run(30, "test", "running")] }))).toBe(false);
-  expect(allGreen(pr({ checks: [approved, run(30, "test", "failed")] }))).toBe(false);
-  expect(allGreen(pr({ checks: [{ ...approved, state: "running" }, passed] }))).toBe(false);
-  expect(allGreen(pr({ checks: [{ ...approved, state: "failed" }, passed] }))).toBe(false);
-  expect(allGreen(pr({ checks: [passed] }))).toBe(false);
+  const green = (checks: Check[], noCi: string | null = null) =>
+    allGreen(thread({ no_ci: noCi }), pr({ head: "abc", checks }));
+  expect(green([approved, passed])).toBe(true);
+  expect(green([approved])).toBe(false);
+  expect(green([approved], "old")).toBe(false);
+  expect(green([approved], "abc")).toBe(true);
+  expect(green([approved, run(30, "test", "running")], "abc")).toBe(false);
+  expect(green([approved, run(30, "test", "failed")], "abc")).toBe(false);
+  expect(green([{ ...approved, state: "running" }, passed])).toBe(false);
+  expect(green([{ ...approved, state: "failed" }, passed])).toBe(false);
+  expect(green([passed])).toBe(false);
 });
 
 // Who runs the suite on commit abc, the head of PR 7, with these open PRs in the repository.
