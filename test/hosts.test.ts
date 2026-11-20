@@ -906,17 +906,30 @@ await startSession(host, "app-12", { folder: ${JSON.stringify(home)}, command: [
 // The host takes two seconds over each read of the screen.
 fs.writeFileSync(${JSON.stringify(join(fake, "slow-read"))}, "");
 const state = () => readThread(db, "app-12").state;
+// Waits until the host has answered one more read of the screen and has no call left running,
+// so the next look can't find this one still under way and be skipped. A slow machine can take
+// well over the two seconds of the read itself. The look notes what it saw a moment after the
+// host answers.
+const reads = () => fs.readFileSync(${JSON.stringify(join(fake, "asked"))}, "utf8").split("\\n").filter((line) => line.includes('"ask":"read"')).length;
+const calls = ${JSON.stringify(join(fake, "running-calls"))};
+const looked = async (before) => {
+  while (reads() <= before || fs.readdirSync(calls).length > 0) await Bun.sleep(50);
+  await Bun.sleep(200);
+};
 // A look starts, and a new turn starts while the host is still reading the screen.
+let before = reads();
 noticeIdleScreens(db, "unused");
 await Bun.sleep(500);
 keepState(db, { folder: "app-12" }, "working");
-await Bun.sleep(2500);
+await looked(before);
 // Only a second look of the new turn may make it idle.
+before = reads();
 noticeIdleScreens(db, "unused");
-await Bun.sleep(2500);
+await looked(before);
 const afterOne = state();
+before = reads();
 noticeIdleScreens(db, "unused");
-await Bun.sleep(2500);
+await looked(before);
 console.log(afterOne, state());
 process.exit(0);`,
     { host: "fake", host_id: "fake-app-12", state: "working" },
