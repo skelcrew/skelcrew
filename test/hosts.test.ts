@@ -14,6 +14,7 @@ import {
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { claude } from "../src/agents/claude.ts";
+import { filesPlaceholder } from "../src/agents/sandbox.ts";
 import {
   agentRuns,
   failedScreen,
@@ -135,9 +136,13 @@ test("a session on the host runs its command, carries its labels and can be read
 test("only a host that provides files is handed a placeholder for them, new for each start", async () => {
   expect(filesFor("skelcrew-test")).toBeUndefined();
   expect(filesFor(host())).toBeUndefined();
-  const files = filesFor(host({ files: true }));
-  expect(files).toMatch(/^\/skelcrew-files-[0-9a-f]{32}$/);
-  expect(filesFor(host({ files: true }))).not.toBe(files);
+  // A Mac's sandbox can't show dropped files yet, so there it gets none.
+  if (process.platform === "darwin") expect(filesFor(host({ files: true }))).toBeUndefined();
+  else {
+    expect(filesFor(host({ files: true }))).toMatch(/^\/skelcrew-files-[0-9a-f]{32}$/);
+    expect(filesFor(host({ files: true }))).not.toBe(filesFor(host({ files: true })));
+  }
+  const files = filesPlaceholder();
   const starts = () =>
     readFileSync(join(settings(), "asked"), "utf8")
       .trim()
@@ -149,7 +154,7 @@ test("only a host that provides files is handed a placeholder for them, new for 
   const session = { folder: home, env: {}, labels, files };
   const id = await startSession(on, "app-12", {
     ...session,
-    command: ["sh", "-c", 'echo "$0"; sleep 30', files ?? ""],
+    command: ["sh", "-c", 'echo "$0"; sleep 30', files],
   });
   expect(starts()[0].files).toBe(files);
   const drops = join(settings(), "sessions", id, "files");
