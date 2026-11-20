@@ -1170,7 +1170,7 @@ test("asks which harness reviews, offering the other one first", async () => {
   expect(run.code).toBe(0);
   const asked = run.out.slice(run.out.indexOf("Choose the coding agent for reviews:"));
   expect(asked).toStartWith(
-    "Choose the coding agent for reviews:\n› Codex        a second opinion\n  Claude Code\n↑/↓ to move · Enter to choose\n",
+    "Choose the coding agent for reviews:\n› Codex        installed · a second opinion\n  Claude Code  installed\n↑/↓ to move · Enter to choose\n",
   );
   expect(parse(readFileSync(config(), "utf8"))).toEqual({
     harness: "claude",

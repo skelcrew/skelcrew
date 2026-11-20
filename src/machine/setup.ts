@@ -322,7 +322,12 @@ function pickReviewer(harness: HarnessName): void {
   ];
   const at = pick(
     "Choose the coding agent for reviews:",
-    choices.map((h, index) => ({ label: h.title, hint: index === 0 ? "a second opinion" : "" })),
+    // Both are installed, as the question comes only then, and say so as the first question
+    // does. The other harness, first, is marked as the second opinion it gives.
+    choices.map((h, index) => ({
+      label: h.title,
+      hint: index === 0 ? "installed · a second opinion" : "installed",
+    })),
   );
   if (at === null) throw new Error("no harness was picked for reviews, so none is saved");
   const picked = choices[at];
