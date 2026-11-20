@@ -24,11 +24,13 @@ export type Labels = z.infer<typeof Labels>;
 
 // Skelcrew's tmux settings. They are sent on stdin with each new session instead of kept in a
 // file, so there is no file to find or keep in step, and a server that outlives an upgrade
-// picks up changes. Your own ~/.tmux.conf never applies: -f /dev/null replaces it. Ctrl-Q with
-// no prefix and no status bar make attaching feel like being inside Claude Code. tmux reads
-// Ctrl-Q however your terminal sends it, as one byte or as an extended key, and in pieces over
-// a slow link. Alt-Q, which an older Skelcrew bound, is unbound on a server it left running. A
-// session whose command fails keeps its last screen, so Skelcrew can say why it ended instead
+// picks up changes. Your own ~/.tmux.conf never applies: -f /dev/null replaces it. Ctrl-\ with
+// no prefix and no status bar make attaching feel like being inside Claude Code. Ctrl-\ is
+// herdr's key to detach, so an agent is left the same way on either host. tmux reads it however
+// your terminal sends it, as one byte or as an extended key, and in pieces over a slow link.
+// Ctrl-4 sends the same byte, for a keyboard where backslash needs AltGr. Alt-Q and Ctrl-Q,
+// which an older Skelcrew bound, are unbound on a server it left running. A session whose
+// command fails keeps its last screen, so Skelcrew can say why it ended instead
 // of finding it gone. tmux only passes synchronized output on to terminals it knows have it, and
 // without it Claude Code's redraws arrive in pieces, so the prompt flickers over a slow link.
 // Terminals without it ignore the codes. That setting has a fixed index, since these settings
@@ -44,7 +46,7 @@ export type Labels = z.infer<typeof Labels>;
 // the moment before that key, so the key leaves it only if it is still there. mode-keys is set
 // to emacs because when $EDITOR says vi, tmux uses vi's copy-mode table, which these bindings
 // don't touch. In copy mode tmux looks only in copy mode's table, never at the keys bound
-// without a prefix, so Ctrl-Q is bound there too. Otherwise an agent you scrolled back would
+// without a prefix, so Ctrl-\ is bound there too. Otherwise an agent you scrolled back would
 // keep you, and get the key typed into it.
 //
 // Extended keys let Shift+Enter reach the agent as a key of its own, which Claude Code and
@@ -72,7 +74,8 @@ const copied = `run-shell -d 0.3; send-keys -X copy-selection-no-clear; delete-b
   if -F "#{==:#{scroll_position},0}" { send-keys -X cancel }`;
 const tmuxConfig = `set -g status off
 unbind -n M-q
-bind -n C-q detach-client
+unbind -n C-q
+bind -n C-\\\\ detach-client
 set -g remain-on-exit failed
 set -s terminal-features[90] "*:sync:extkeys:clipboard"
 set -s extended-keys on
@@ -96,7 +99,7 @@ bind -n TripleClick1Pane {
   if -F "#{mouse_any_flag}" { send-keys -M } { copy-mode -H; send-keys -X select-line; ${copied} }
 }
 unbind -a -T copy-mode
-bind -T copy-mode C-q detach-client
+bind -T copy-mode C-\\\\ detach-client
 bind -T copy-mode WheelUpPane send-keys -X -N 5 scroll-up
 bind -T copy-mode WheelDownPane send-keys -X -N 5 scroll-down
 bind -T copy-mode MouseDown1Pane send-keys -X clear-selection
@@ -535,7 +538,7 @@ const knownTerminal = (term: string) =>
   Bun.spawnSync(["infocmp", term], { stdout: "ignore", stderr: "ignore" }).success;
 
 // Attaches your terminal full screen to the named session, and returns once you leave it with
-// Ctrl-Q, or its agent ends. Gives tmux's error when it couldn't attach, such as to a session
+// Ctrl-\, or its agent ends. Gives tmux's error when it couldn't attach, such as to a session
 // that just ended, or null. A session can stay after its agent ends, showing its last
 // screen, and tmux would keep you on it. So while you are attached it looks each half second,
 // and detaches you once the agent no longer runs. The server may have started under an older

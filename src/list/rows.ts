@@ -39,7 +39,7 @@ type Action = Question | { refused: string };
 // such as `#41`, its CI, such as `CI passed`, and when it last changed, such as `14:31`. Each is
 // empty where it has none. `needsYou` is whether it waits on you for something other than a
 // merge. `session` is the agent's session, which Enter attaches to, `running` whether its agent
-// runs, and `tmux` whether Enter attaches to it on tmux, where Ctrl-Q comes back, rather than on
+// runs, and `tmux` whether Enter attaches to it on tmux, where Ctrl-\ comes back, rather than on
 // a runtime plugin's host, which has a key of its own. `start` is what Enter does on an issue,
 // and `merge` what m does on a task ready for review. `link` is its PR's, which Enter opens, and
 // `branch` the branch a task that is ready without a forge waits on. Each is null where it

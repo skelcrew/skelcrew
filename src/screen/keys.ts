@@ -5,8 +5,8 @@ import { pad } from "./look.ts";
 // Each key in words and what it does, read as "alt + q to quit, agents run on". The keys for
 // anywhere come first, then those for lists, then those for pages. s and m work on a list and on
 // a page opened from it, so they sit between the two. There are no headings, so each says where it works.
-// Ctrl-Q leaves too, but isn't listed: it is there for a Mac terminal that doesn't send Option
-// as Alt.
+// Ctrl-Q and Ctrl-\ leave too, but aren't listed: Ctrl-Q is there for a Mac terminal that
+// doesn't send Option as Alt, and Ctrl-\ is how you leave an agent elsewhere.
 export const keys: [string, string][] = [
   ["alt + ↑/↓", "move in the sidebar"],
   ["alt + shift + ↑/↓", "jump a part"],
