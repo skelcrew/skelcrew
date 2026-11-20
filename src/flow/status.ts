@@ -61,6 +61,15 @@ export function needsYouFor(thread: Thread): string | null {
 // word `approved`, beside the green mark that says the rest.
 const reasonOf = (word: string) => (word === "approved" ? "ready to merge" : word);
 
+// Returns whether the thread is past its round limit with nobody having decided yet, so marking,
+// clearing or arming a merge on it is that decision. The round limit's word shows only once a
+// mark, a question and an error are gone, and only while no merge is armed, so it is asked of
+// the thread without them.
+export function limitWaits(thread: Thread): boolean {
+  const without = { ...thread, needs_you_for: null, asking: false, erred: false, merge_plan: null };
+  return needsYouFor(without) === "round limit";
+}
+
 // Returns whether the lead or you decided what the thread's flag waits on: a merge is armed, or
 // the round limit was cleared.
 const decided = (thread: Thread) => thread.merge_plan === "armed" || thread.limit_decided;
@@ -495,23 +504,22 @@ export function turnEnded(
   if (readThread(db, folder).told_lead) record(db, folder, { told_lead: false });
   if (!endedWithoutSubmit(thread)) return;
   const unchanged = ended.head !== undefined && ended.head === lastPushed(thread);
-  // The safety net times the wait from here, and marks the thread with what the builder said
-  // if nobody acts on it. A turn that only replied while its submit stands is timed too: its
-  // words, such as that it needs something only you can do, went to the lead, who may miss them.
-  const timed =
-    thread.ended_at === null ? { ended_at: Date.now(), ended_said: ended.message ?? null } : {};
   if (waitsOnSubmit(thread, unchanged)) {
     // A comment on an approved PR set the thread working. The builder only answered it, so the
     // thread waits on its approved submit again, and the next poll can find it ready to merge.
-    // A review under way sets the status itself once it ends.
-    const replied = "its builder only replied, so it waits on CI";
+    // A review under way sets the status itself once it ends. Waiting on a review or CI never
+    // needs you, so the safety net doesn't start: the builder's words went to the lead, who marks
+    // the thread when only you can act.
     if (thread.status === "working" && thread.reviewing === null)
-      record(db, folder, { status: "waiting", ...timed }, replied);
-    else record(db, folder, timed);
+      record(db, folder, { status: "waiting" }, "its builder only replied, so it waits on CI");
     return;
   }
-  if (!thread.turn_ended)
-    record(db, folder, { turn_ended: true, ...timed }, "its builder stopped without submitting");
+  // The safety net times the wait from here, and marks the thread with what the builder said
+  // if nobody acts on it.
+  if (!thread.turn_ended) {
+    const stopped = { turn_ended: true, ended_at: Date.now(), ended_said: ended.message ?? null };
+    record(db, folder, stopped, "its builder stopped without submitting");
+  }
 }
 
 // How much of a builder's last message the safety net keeps as the reason the thread needs you,
@@ -576,12 +584,8 @@ export function markNeedsYou(
   const who = by === "lead" ? "the lead" : "you";
   if (thread.status === "done") throw new Error(`${threadName(db, thread)} is done already`);
   const acted = { ended_at: null, ended_said: null };
-  // Marking or clearing a thread past its round limit is a decision about it. The round limit's
-  // word shows only once the mark, a question and an error are gone, so it is asked of the
-  // thread without them.
-  const without = { ...thread, needs_you_for: null, asking: false, erred: false };
-  const limit = needsYouFor(without) === "round limit";
-  const decision = limit ? { limit_decided: true } : {};
+  // Marking or clearing a thread past its round limit is a decision about it.
+  const decision = limitWaits(thread) ? { limit_decided: true } : {};
   if (reason !== null) {
     const action = oneLine(reason);
     if (action === "") throw new Error("say what the human must do to unblock the thread");
@@ -592,7 +596,8 @@ export function markNeedsYou(
     return marked;
   }
   const change = { needs_you_for: null, ...acted, ...decision };
-  const what = thread.needs_you_for ?? (limit ? "the round limit" : "nothing");
+  const what =
+    thread.needs_you_for ?? ("limit_decided" in decision ? "the round limit" : "nothing");
   return record(db, thread.folder, change, `${who} cleared its needs you: ${what}`);
 }
 

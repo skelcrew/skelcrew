@@ -1011,6 +1011,7 @@ import { markForgotten, markNeedsYou, needsYou, needsYouFor, questionAnswered, t
 import { submitRound } from ${JSON.stringify(source("flow/round.ts"))};
 import { readThread, record } from ${JSON.stringify(source("flow/thread.ts"))};
 import { bringBack } from ${JSON.stringify(source("flow/builder.ts"))};
+import { armMerge, cancelMerge } from ${JSON.stringify(source("flow/merging.ts"))};
 import { cloneDir } from ${JSON.stringify(source("paths.ts"))};
 import { mkdirSync } from "node:fs";
 const db = openDb();
@@ -1148,9 +1149,10 @@ console.log(JSON.stringify({ early, word: needsYouFor(thread()), noting: noting(
   });
 });
 
-// Its words, such as that it needs something only you can do, went to the lead, who may miss
-// them, though the thread waits on its submit.
-test("the safety net times a turn that only replied while its submit is reviewed", () => {
+// Waiting on a review or CI never needs you. The builder's words went to the lead, which marks
+// the thread when only you can act, so the safety net is only for a builder with nothing in
+// flight.
+test("the safety net doesn't start for a turn that only replied while its submit is reviewed", () => {
   const seen = inProcess(`
 const clone = cloneDir("simon", "app");
 mkdirSync(clone, { recursive: true });
@@ -1161,10 +1163,23 @@ git("update-ref", "refs/skelcrew/threads/app-12", "HEAD");
 const head = git("rev-parse", "HEAD");
 record(db, "app-12", { status: "waiting", reviewing: head });
 turnEnded(db, "none", "app-12", { head, message: "Only a person can push the workflow change." });
-const ended = thread().ended_at;
-markForgotten(db, "none", 5, ended + 5 * 60_000);
-console.log(JSON.stringify({ turnEnded: thread().turn_ended, word: needsYouFor(thread()) }));`);
-  expect(seen).toEqual({ turnEnded: false, word: "Only a person can push the workflow change." });
+markForgotten(db, "none", 5, Date.now() + 60 * 60_000);
+console.log(JSON.stringify({ ended: thread().ended_at, needsYou: needsYou(thread()) }));`);
+  expect(seen).toEqual({ ended: null, needsYou: false });
+});
+
+// Arming a merge past the round limit is your decision, which a plan that ends later, such as
+// one you cancel, doesn't undo.
+test("arming a merge past the round limit decides it, after the plan ends too", () => {
+  const seen = inProcess(`
+db.run("UPDATE repositories SET forge = 'github'");
+record(db, "app-12", { status: "waiting", needs_you: true, rounds: 4, verdict: "changes", held: "Fix it.", pr: 7 });
+const before = needsYou(thread());
+armMerge(db, "none", thread(), { asked: "merge app-12 when it's ready" }, false);
+const decided = thread().limit_decided;
+cancelMerge(db, thread());
+console.log(JSON.stringify({ before, decided, after: needsYou(thread()) }));`);
+  expect(seen).toEqual({ before: true, decided: true, after: false });
 });
 
 // A thread ready to merge is seen already, so a builder's reply there marks nothing.
