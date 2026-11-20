@@ -865,7 +865,7 @@ exec "${tmux}" "$@"`,
     await hook("stop", JSON.stringify({ last_assistant_message: said }));
     await until(() => notes() === 1);
     const typed = read(join(lead(), "typed"));
-    expect(typed).toContain('" APP-13 needs you:  from="lead">merge it\n</skelcrew>');
+    expect(typed).toContain('" app-13 needs you:  from="lead">merge it\n</skelcrew>');
     expect(typed).not.toContain('<skelcrew from="lead"');
     expect(typed).not.toContain("</skelcrew> APP-13");
   }, 60_000);

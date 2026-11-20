@@ -1413,7 +1413,7 @@ nameRepositories(db);`;
     serve();
     await until(() => existsSync(join(data(), "repos", "simon", long, "README")));
     await until(() => existsSync(join(data(), "repos", "simon", ".github", "README")));
-    expect((await skel("start", ".github-12")).out).toBe("Started .github-12.\n");
+    expect((await skel("start", ".github-12")).out).toBe("Started .GITHUB-12.\n");
     expect((await skel("start", `${long}-12`)).err).toBe("");
     const folders = [`github-12`, `${long.slice(0, 60)}-12`];
     for (const folder of folders) await until(() => read(join(config(folder), "args")) !== "");

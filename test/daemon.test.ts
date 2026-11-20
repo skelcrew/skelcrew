@@ -497,9 +497,9 @@ function addThread(repo: string, task: number): void {
   );
 }
 
-// app-1 as sc ps gives it. app has no forge, so it has no PR, CI or review to show.
+// APP-1 as sc ps gives it. app has no forge, so it has no PR, CI or review to show.
 const stoppedApp1 = {
-  thread: "app-1",
+  thread: "APP-1",
   short: null,
   title: null,
   status: "stopped",
