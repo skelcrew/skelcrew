@@ -81,6 +81,7 @@ const working: Thread = {
   agents: null,
   flow: "default",
   review_post: null,
+  posting: null,
   queued_since: null,
 };
 const thread = (more: Partial<Thread>) => ({ ...working, ...more });

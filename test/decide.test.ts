@@ -104,6 +104,7 @@ function thread(change: Partial<Thread> = {}): Thread {
     agents: null,
     flow: "default",
     review_post: null,
+    posting: null,
     queued_since: null,
     ...change,
   };

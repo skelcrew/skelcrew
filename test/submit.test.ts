@@ -1849,6 +1849,52 @@ done`,
     expect((await skel(["ps", "--json"])).out).not.toContain("round limit");
   }, 120_000);
 
+  // The daemon can stop after saving a verdict but before the PR has it. As it starts again, it
+  // puts it there, so the PR shows what Skelcrew saved and Skelcrew's check doesn't stay pending.
+  test("a verdict the daemon's stop kept from the PR is posted as it starts again", async () => {
+    addApp();
+    verdict(1, "approve", "Ready to merge.");
+    writeFileSync(join(plugin, "hold-review"), "");
+    const first = serve();
+    await untilCloned();
+    await skel(["start", "app-12"]);
+    await until(() => existsSync(join(plugin, "held-review")), 60_000);
+    first.kill();
+    await first.exited;
+    expect(thread()).toMatchObject({ verdict: "approve", reviewing: null });
+    rmSync(join(plugin, "hold-review"));
+    serve();
+    await until(() => finished("success").length === 1, 30_000);
+    expect(reviews().at(-1)).toEqual({
+      commit: pushed(),
+      verdict: "approve",
+      body: "Ready to merge.",
+    });
+    await until(() => thread().posting === null);
+  }, 120_000);
+
+  // sc stop forgets the round while its approval is still being posted. A review asked for
+  // after sc start then waits for that post, so the PR ends on the newer verdict, as the thread
+  // does, and the newer review's pending check comes after the older one's.
+  test("a review asked for after sc stop posts after the stopped round's review", async () => {
+    addApp();
+    verdict(1, "approve", "Ready to merge.");
+    verdict(2, "changes", "The export has no test.");
+    writeFileSync(join(plugin, "hold-review"), "");
+    await startApp12();
+    await until(() => existsSync(join(plugin, "held-review")), 60_000);
+    expect((await skel(["stop", "app-12"])).err).toBe("");
+    expect((await skel(["start", "app-12"])).err).toBe("");
+    expect((await skel(["review", "app-12"])).err).toBe("");
+    await Bun.sleep(2000);
+    rmSync(join(plugin, "hold-review"));
+    await until(() => finished("failure").length === 1, 60_000);
+    expect(statuses().map((s) => s.state)).toEqual(["pending", "success", "pending", "failure"]);
+    expect(reviews().map((r) => r.verdict)).toEqual(["approve", "changes"]);
+    await until(() => thread().posting === null);
+    expect(thread()).toMatchObject({ verdict: "changes", review_round: 1, rounds: 1 });
+  }, 120_000);
+
   test("a thread started from another branch is reviewed against it, and its PR goes into it", async () => {
     const work = addApp();
     git(work, "checkout", "-q", "-b", "next");

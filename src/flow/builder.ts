@@ -339,6 +339,7 @@ async function recordThread(
       agents,
       flow,
       review_post: null,
+      posting: null,
       queued_since: queued ? joinTime(db) : null,
     };
     // A failed or done thread's row gives way to the new one, and messages that waited for its
