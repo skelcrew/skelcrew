@@ -58,20 +58,21 @@ function splitThreadName(word?: string): [string, string] | undefined {
   return task;
 }
 
-// Splits a task given on stdin to sc start <repo>, such as a file or a lead's heredoc: the
-// first line is its title, without a markdown heading's "# ", and the rest is its body, from
-// its first line that isn't blank. Throws saying which is missing, as a builder needs both.
-function taskFrom(text: string): { title: string; body: string } {
+// Splits a task given on stdin to sc start <repo> or sc task add, such as a file or a lead's
+// heredoc: the first line is its title, without a markdown heading's "# ", and the rest is its
+// body, from its first line that isn't blank. Throws saying which is missing, as a builder needs
+// both. `command` names the command in what it says.
+function taskFrom(text: string, command = "sc start"): { title: string; body: string } {
   const [first = "", ...rest] = text.split("\n");
   const title = first.replace(/^#\s+/, "").trim();
   const body = rest.join("\n").replace(/^(?:[ \t]*\n)+/, "");
   if (!title)
     throw new Error(
-      "sc start read no title on stdin: give the title on the first line, then the body",
+      `${command} read no title on stdin: give the title on the first line, then the body`,
     );
   if (!body.trim())
     throw new Error(
-      "sc start read a title but no body on stdin: give the body on the lines after the title",
+      `${command} read a title but no body on stdin: give the body on the lines after the title`,
     );
   return { title, body };
 }
@@ -99,6 +100,7 @@ function usage(command?: string): never {
     "ls",
     "show",
     "issue",
+    "task",
     "pr",
     "start",
     "stop",
@@ -479,13 +481,44 @@ async function issueCommand(args: string[], json: boolean): Promise<void> {
   const { createTask } = await import("./client.ts");
   if (sub === "ls") return lsCommand(command ?? "issue", rest, json);
   if (sub === "show") return showCommand(command ?? "issue", rest, json);
-  // sc issue create takes a repository with a title and a body.
-  const [repository, title, body] = rest;
-  if (sub === "create" && repository && title && body !== undefined && rest.length === 3) {
-    console.log(await createTask(repository, title, bodyFor("sc issue create", body)));
+  // sc issue create takes a repository with a title and a body, and from a lead, --asked-file
+  // with the human's words asking for it, in a file the lead wrote with its own file tool, so
+  // they never pass through a shell. They are read unchanged.
+  const [repository, title, body, flag, file] = rest;
+  const askedFile = flag === "--asked-file" && file && rest.length === 5 ? file : undefined;
+  if (sub === "create" && repository && title && body !== undefined) {
+    if (rest.length !== 3 && askedFile === undefined) usage(command);
+    let asked: string | undefined;
+    if (askedFile !== undefined) {
+      const { readFileSync } = await import("node:fs");
+      asked = readFileSync(askedFile, "utf8");
+      if (!asked.trim())
+        throw new Error(
+          `${askedFile} is empty: write the human's words in it, exactly as they wrote them`,
+        );
+    }
+    console.log(await createTask(repository, title, bodyFor("sc issue create", body), asked));
     return;
   }
   usage(command);
+}
+
+// Files a task in a repository's backlog, for sc task add, with the title and description as
+// words, or on stdin as sc start <repo> takes them. It starts nothing.
+async function taskCommand(args: string[]): Promise<void> {
+  const [command, sub, repository, ...words] = args;
+  const { fileTask } = await import("./client.ts");
+  if (sub !== "add" || !repository) usage(command);
+  const [title, body] = words;
+  let given: { title: string; body: string } | undefined;
+  if (title && body !== undefined && words.length === 2)
+    given = { title, body: bodyFor("sc task add", body) };
+  // A terminal is never waited on: there, a missing title and body is a mistake.
+  else if (words.length === 0 && !process.stdin.isTTY)
+    given = taskFrom(await Bun.stdin.text(), "sc task add");
+  if (!given) usage(command);
+  const task = await fileTask(repository, given.title, given.body);
+  console.log(`Filed ${task} in the backlog. sc start ${task} starts it.`);
 }
 
 // Shows the task a PR belongs to, for sc pr show, a short name for sc show. The PR is named by
@@ -727,9 +760,11 @@ async function threadCommand(args: string[]): Promise<void> {
     if (process.stdin.isTTY) {
       const { thread: name, status, pr } = await previewRemoval(...task);
       const goes =
-        pr === null
-          ? "This deletes its branch and clone."
-          : `This closes PR #${pr} and deletes its branch and clone.`;
+        status === "not started"
+          ? "It never started, and this deletes it from the backlog on every machine."
+          : pr === null
+            ? "This deletes its branch and clone."
+            : `This closes PR #${pr} and deletes its branch and clone.`;
       // Bun's prompt answers a bare Enter with null, which is no, as the question says.
       const answer = status === "done" ? "y" : prompt(`Remove ${name}? ${goes} [y/N]`);
       if (!["y", "yes"].includes(answer?.trim().toLowerCase() ?? "")) {
@@ -738,7 +773,11 @@ async function threadCommand(args: string[]): Promise<void> {
       }
     }
     // An empty reason is no reason, so the PR closes with no comment.
-    const { removed: name, issue } = await removeOn(...task, rest[0] || undefined);
+    const { removed: name, issue, unfiled } = await removeOn(...task, rest[0] || undefined);
+    if (unfiled) {
+      console.log(`Removed ${name} from the backlog.`);
+      return;
+    }
     // The issue stays open in the tracker, so starting over needs no new one. GitHub writes a
     // number as #12, while a tracker such as Linear has IDs like JOTT-12 that stand alone.
     if (issue === null) console.log(`Removed ${name}. sc start ${name} starts it over.`);
@@ -949,6 +988,8 @@ async function runCommand(args: string[]): Promise<void> {
       return showCommand(first, words.slice(1), json);
     case "issue":
       return issueCommand(words, json);
+    case "task":
+      return taskCommand(words);
     case "pr":
       return prCommand(words, json);
     case "start":

@@ -92,9 +92,27 @@ export async function askForTask(which: {
 
 // Has the daemon create a task in the repository's tracker, such as a GitHub issue, for sc
 // issue create, and returns the task's name, such as app-13. The daemon asks the tracker, since
-// agents never hold its login.
-export async function createTask(repository: string, title: string, body: string): Promise<string> {
-  const reply = await request({ command: "task create", repo: repository, title, body });
+// agents never hold its login. `asked` is the human's words asking for it, which a lead gives.
+export async function createTask(
+  repository: string,
+  title: string,
+  body: string,
+  asked?: string,
+): Promise<string> {
+  const reply = await request({
+    command: "task create",
+    repo: repository,
+    title,
+    body,
+    ...(asked === undefined ? {} : { asked }),
+  });
+  return checkReply(z.object({ task: z.string() }), reply).task;
+}
+
+// Has the daemon file a task in the repository's backlog, for sc task add, and returns its name,
+// such as app-t104. The daemon keeps it on the repository's remote, so every machine shows it.
+export async function fileTask(repository: string, title: string, body: string): Promise<string> {
+  const reply = await request({ command: "task add", repo: repository, title, body });
   return checkReply(z.object({ task: z.string() }), reply).task;
 }
 
@@ -237,6 +255,7 @@ export async function previewRemoval(repository: string, task: string) {
 
 // Has the daemon remove a thread, for sc rm, with the reason its PR's comment gives, and
 // returns the thread's name and the ID of the issue it worked on, or null when it had none.
+// `unfiled` says it was a task of the backlog that never started, which is now gone.
 // The daemon answers once the PR is closed and the clone removed.
 export async function removeOn(repository: string, task: string, reason?: string) {
   const reply = await request({
@@ -245,7 +264,12 @@ export async function removeOn(repository: string, task: string, reason?: string
     task,
     ...(reason ? { reason } : {}),
   });
-  return checkReply(z.object({ removed: z.string(), issue: z.string().nullable() }), reply);
+  const removed = z.object({
+    removed: z.string(),
+    issue: z.string().nullable(),
+    unfiled: z.boolean().default(false),
+  });
+  return checkReply(removed, reply);
 }
 
 // Has the daemon start a round for sc submit, run by a builder in its sandbox, and returns

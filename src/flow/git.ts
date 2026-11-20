@@ -60,13 +60,13 @@ async function fetchRef(
 // Returns whether the repository's remote has no refs at all, as one with no commits yet. A
 // remote that can't be listed isn't taken for empty. The names Skelcrew claims for threads with
 // no issue, and its last claim, are refs too, made even on an empty remote, but they hold no
-// commit of the repository's, so they don't count.
+// commit of the repository's, so they don't count. Nor do the tasks filed in its backlog.
 export async function remoteEmpty(db: Database, repository: Repository): Promise<boolean> {
   const listed = await git(db, repository, ["ls-remote", repository.remote]).catch(() => null);
   if (listed === null) return false;
   return listed
     .split("\n")
-    .every((line) => line === "" || line.split("\t")[1]?.startsWith(claimRef("")));
+    .every((line) => line === "" || line.split("\t")[1]?.startsWith("refs/skelcrew/"));
 }
 
 // Returns the commit the clone in the folder is on, or nothing for a clone of a repository
@@ -265,18 +265,26 @@ export async function claimedNames(db: Database, repository: Repository): Promis
   return { names, last };
 }
 
+// Where a task filed in Skelcrew's backlog is kept on the remote, such as
+// refs/skelcrew/tasks/t104, until it starts or is removed. Outside refs/heads, so the forge lists
+// no branch for it, and every machine's daemon reads it.
+const filedRef = (name: string) => `refs/skelcrew/tasks/${name}`;
+
 // Claims a name for one of Skelcrew's own tasks on the remote, from Skelcrew's clone in the
 // folder, and returns whether this machine got it. `last` is the last claim as claimedNames read
 // it. False means another machine claimed this name, or any name, since then: the caller reads
 // the claims again and picks a number above them. So two machines never take one name, and a
 // name is never below one claimed before it. The claim is never removed, so no machine gives
-// the name to other work later, even once its branch is gone.
+// the name to other work later, even once its branch is gone. `filed` is a task to keep in the
+// backlog under the name, as text: it goes in the claim's message, and the same push files it,
+// so a task is never filed without its name, nor a name claimed without its task.
 export async function claimName(
   db: Database,
   repository: Repository,
   folder: string,
   name: string,
   last: string,
+  filed?: string,
 ): Promise<boolean> {
   // A commit of the claim's own, of no files, so it works in any clone, even one with no commit
   // yet. Were two machines to push the same commit, git would send nothing for the second and
@@ -296,7 +304,8 @@ export async function claimName(
     "tree",
     "/dev/null",
   ]);
-  const message = `Skelcrew claims ${name}: ${crypto.randomUUID()}`;
+  const claim = `Skelcrew claims ${name}: ${crypto.randomUUID()}`;
+  const message = filed === undefined ? claim : `${claim}\n\n${filed}`;
   const commit = await git(db, repository, ["-C", folder, "commit-tree", empty, "-m", message], {
     ...process.env,
     ...identity,
@@ -304,7 +313,8 @@ export async function claimName(
   // One atomic push makes the claim and moves the last claim to it. Each lease is checked by the
   // remote as it takes the push: the claim only where it doesn't exist yet, as nothing follows
   // its colon, and the last claim only where it is still the one read. Of two machines claiming
-  // at once, only the first gets either.
+  // at once, only the first gets either. A filed task's ref goes in the same push.
+  const refs = filed === undefined ? [claimRef(name)] : [claimRef(name), filedRef(name)];
   try {
     await git(db, repository, [
       "-C",
@@ -312,10 +322,10 @@ export async function claimName(
       "push",
       "--quiet",
       "--atomic",
-      `--force-with-lease=${claimRef(name)}:`,
+      ...refs.map((ref) => `--force-with-lease=${ref}:`),
       `--force-with-lease=${lastClaimRef}:${last}`,
       repository.remote,
-      `${commit}:${claimRef(name)}`,
+      ...refs.map((ref) => `${commit}:${ref}`),
       `${commit}:${lastClaimRef}`,
     ]);
     return true;
@@ -327,6 +337,74 @@ export async function claimName(
     if (now.last === last && !now.names.includes(name)) throw error;
     return false;
   }
+}
+
+// A task filed in the backlog, as the remote keeps it: its name, such as t104, the commit that
+// holds it, and the text claimName filed with it.
+export type Filed = { name: string; commit: string; text: string };
+
+// Brings the tasks filed in the repository's backlog on the remote into Skelcrew's clone in the
+// folder, and returns them. A task started or removed on any machine is gone from the remote,
+// so it goes from the clone too.
+export async function fetchFiled(
+  db: Database,
+  repository: Repository,
+  folder: string,
+): Promise<Filed[]> {
+  await git(db, repository, [
+    "-C",
+    folder,
+    "fetch",
+    "--quiet",
+    "--prune",
+    "--no-tags",
+    // Each poll's update of the clone reads FETCH_HEAD for the default branch, which this fetch
+    // could otherwise overwrite while one runs.
+    "--no-write-fetch-head",
+    repository.remote,
+    `+${filedRef("*")}:${filedRef("*")}`,
+  ]);
+  // One git reads them all. Each task ends with a NUL, and its fields are apart by one, as the
+  // text, written by any machine, could hold any other character.
+  const listed = await git(db, repository, [
+    "-C",
+    folder,
+    "for-each-ref",
+    "--format=%(refname:lstrip=3)%00%(objectname)%00%(contents)%00",
+    filedRef(""),
+  ]);
+  const fields = listed.split("\0");
+  const filed: Filed[] = [];
+  for (let at = 0; at + 2 < fields.length; at += 3) {
+    const [name = "", commit = "", contents = ""] = fields.slice(at, at + 3);
+    // The text follows the claim's own line, as claimName wrote it.
+    const text = contents.split("\n\n").slice(1).join("\n\n");
+    filed.push({ name: name.trim(), commit, text });
+  }
+  return filed;
+}
+
+// Takes a task out of the repository's backlog on the remote, as it starts or is removed, from
+// Skelcrew's clone in the folder. `commit` is the one it was read at: were it moved or taken
+// since, as by another machine starting it, the remote refuses, and so does this, so a task is
+// never started twice. Its name stays claimed.
+export async function unfile(
+  db: Database,
+  repository: Repository,
+  folder: string,
+  name: string,
+  commit: string,
+): Promise<void> {
+  await git(db, repository, [
+    "-C",
+    folder,
+    "push",
+    "--quiet",
+    `--force-with-lease=${filedRef(name)}:${commit}`,
+    repository.remote,
+    `:${filedRef(name)}`,
+  ]);
+  await git(db, repository, ["-C", folder, "update-ref", "-d", filedRef(name)]).catch(() => "");
 }
 
 // Checks that Skelcrew can push to a repository with no forge on your own git login, as it will

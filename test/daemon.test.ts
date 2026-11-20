@@ -639,7 +639,8 @@ describe.skipIf(insideSandbox)("with a lead per repository", () => {
     expect(line).toContain("start no thread and file no issue");
     expect(line).toContain("Start these?");
     expect(line).toContain("Run sc start only once the human says yes.");
-    expect(line).toContain("File an issue only when the human asks for one");
+    expect(line).toContain("park work for later, file it in Skelcrew's backlog with sc task add");
+    expect(line).toContain("Create an issue in the tracker only when the human explicitly asks");
     // Filing in a private repository unasked once read as leave to file without asking.
     expect(line).not.toContain("file it and say you did");
   });

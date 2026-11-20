@@ -3,7 +3,6 @@
 import type { Database } from "bun:sqlite";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { z } from "zod";
 import { harnessNamed } from "../agents/harness.ts";
 import { refuseCredentials, setupCommand } from "../agents/sandbox.ts";
 import {
@@ -26,9 +25,10 @@ import { repositoryRole } from "../roles.ts";
 import { quietly } from "../run.ts";
 import { errorText } from "../say.ts";
 import type { Settings } from "../settings.ts";
+import { claimOwnName, filedTask, unfileTask } from "./backlog.ts";
 import { ownTask, taskOf, threadTask } from "./copy.ts";
 import { pastRoundLimit } from "./decide.ts";
-import { claimedNames, claimName, fetchBranch } from "./git.ts";
+import { fetchBranch } from "./git.ts";
 import { dropEndNotes, noteForLead, typeLeadNotes } from "./messages.ts";
 import { findRepository, forgeAuthor, forgeKnown, refreshClones } from "./repo.ts";
 import { forgetStatus, needsYou } from "./status.ts";
@@ -154,30 +154,16 @@ async function recordThread(
   let issueLink: string | null = null;
   let closes: string | null = null;
   if ("title" in given) {
-    // A t and the next number after every one claimed on the remote, which every machine sees,
-    // and every one this machine's tasks hold. Names from before Skelcrew claimed them, such as
-    // t25, were never claimed and live only on the machine that started them, so numbers start
-    // at 100, above all of them. Then claim it on the remote, which only one machine can,
-    // reading the claims again while another machine claimed first.
+    // A name of Skelcrew's own, claimed on the remote, from its clone, which the daemon may
+    // still be making. The refresh also learns the repository's forge the first time, such as
+    // one added before its forge's plugin was installed, which can give it another URL, the one
+    // the forge's login works at. So it is waited for until both are there, and the repository
+    // read again after.
     const clone = cloneDir(owner, repo);
-    // Its clone, which the daemon may still be making, is where the claim is pushed from. The
-    // refresh also learns the repository's forge the first time, such as one added before its
-    // forge's plugin was installed, which can give it another URL, the one the forge's login
-    // works at. So it is waited for until both are there, and the repository read again after.
     if (!existsSync(clone) || !forgeKnown(db, repository)) await refreshClones(db);
     const current = findRepository(db, given.repo);
     refuseMissingPlugins();
-    const held = db
-      .query("SELECT task FROM tasks WHERE owner = ? AND repo = ? AND task GLOB 't[0-9]*'")
-      .all(owner, repo)
-      .map((row) => z.object({ task: z.string() }).parse(row).task)
-      .filter((id) => /^t\d+$/.test(id));
-    while (true) {
-      const claims = await claimedNames(db, current);
-      const numbers = [...claims.names, ...held].map((id) => Number(id.slice(1)));
-      task = `t${Math.max(99, ...numbers) + 1}`;
-      if (await claimName(db, current, clone, task, claims.last)) break;
-    }
+    task = await claimOwnName(db, current, clone);
     ({ title, body } = given);
     // It has no issue to close. Saved as empty rather than null, which only a task from before
     // Skelcrew kept the line has, so a later issue of the same ID is never closed by its PR.
@@ -191,12 +177,19 @@ async function recordThread(
     const had = Thread.nullable().parse(
       db.query(`SELECT * FROM task_threads ${where}`).get(owner, repo, task),
     );
+    const filed = filedTask(db, owner, repo, task);
     if (tracked && !ownTask(task)) {
       const found = taskOf(db, owner, repo, task);
       if (found.state !== "open") throw new Error(`there is no open issue ${task} in ${name}`);
       ({ title, body } = found);
       issueLink = found.link;
       closes = found.closes;
+    } else if (filed && !had) {
+      // A task from the backlog leaves it for every machine as it starts, so no other machine
+      // starts it too. Its words are kept on the thread from here on.
+      await unfileTask(db, repository, cloneDir(owner, repo), filed);
+      ({ title, body } = filed);
+      closes = "";
     } else if (had?.title) {
       title = had.title;
       body = had.body ?? "";

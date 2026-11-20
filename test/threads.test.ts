@@ -162,12 +162,17 @@ function onGitHub(files: Record<string, string>, repo: string, owner = "simon"):
 // Returns a checkout to push more from.
 function addApp(files: Record<string, string> = {}, repo = "app"): string {
   const work = onGitHub(files, repo);
+  knowApp(repo);
+  return work;
+}
+
+// Tells Skelcrew about simon/<repo>, already on the fake GitHub.
+function knowApp(repo = "app"): void {
   const script = `import { openDb } from ${JSON.stringify(source("db.ts"))};
 openDb().run("INSERT INTO repositories (name, owner, repo) VALUES (?, 'simon', ?)", [${JSON.stringify(repo)}, ${JSON.stringify(repo)}]);
 openDb().run("UPDATE repositories SET forge = 'github', claimed = 1, remote = 'https://github.com/' || owner || '/' || repo || '.git'");`;
   const added = Bun.spawnSync([process.execPath, "-e", script], { env: env(), stderr: "pipe" });
   if (!added.success) throw new Error(added.stderr.toString());
-  return work;
 }
 
 // Skelcrew's own clone, which the daemon makes as it starts.
@@ -257,6 +262,42 @@ test("sc issue create creates a task in the repository's tracker and prints its 
     { ask: "create task", repository: "simon/app", title: "Add import", body: "From CSV" },
   ]);
 });
+
+// A lead parks work in the backlog, and creates an issue only when the human explicitly asks,
+// giving their words. The human's own sc issue create needs none.
+test("a lead's sc issue create is refused without the human's words, and goes through with them", async () => {
+  addApp();
+  serve();
+  await untilCloned();
+  // The daemon opens the lead's socket as it opens the repository, as plain sc does.
+  const short = new Bun.CryptoHasher("sha256").update("simon/app").digest("hex").slice(0, 16);
+  const leadSocket = join(home, "run", "skelcrew", "leads", short, "skelcrew.sock");
+  const connection = createConnection(join(home, "run", "skelcrew.sock"));
+  connection.on("error", () => {});
+  connection.write(`${JSON.stringify({ command: "lead", from: "simon/app" })}\n`);
+  await until(() => existsSync(leadSocket));
+  connection.destroy();
+  const lead = { ...env(), SKELCREW_SANDBOX: "1", SKELCREW_SOCKET: leadSocket };
+  const refused = await runSkel(["issue", "create", "app", "Add import", "From CSV"], lead);
+  expect(refused.err).toContain("a lead creates an issue only when the human explicitly asks");
+  expect(refused.err).toContain("sc task add");
+  const words = join(home, "asked.txt");
+  writeFileSync(words, "");
+  const empty = await runSkel(
+    ["issue", "create", "app", "Add import", "From CSV", "--asked-file", words],
+    lead,
+  );
+  expect(empty.err).toContain("is empty");
+  expect(asked(plugin).filter((q) => q.ask === "create task")).toEqual([]);
+  writeFileSync(words, "File an issue for the CSV import.\n");
+  const made = await runSkel(
+    ["issue", "create", "app", "Add import", "From CSV", "--asked-file", words],
+    lead,
+  );
+  expect(made.err).toBe("");
+  expect(made.out).toBe("app-13\n");
+  expect(asked(plugin).filter((q) => q.ask === "create task")).toHaveLength(1);
+}, 60_000);
 
 // A builder sees only the title and body. A heredoc that failed inside $(...) leaves the
 // body empty while the command still runs, and an issue with no body can't be taken back.
@@ -1386,5 +1427,92 @@ nameRepositories(db);`;
     expect((await skel("start", `${long}-12`)).err).toBe("");
     const folders = [`github-12`, `${long.slice(0, 60)}-12`];
     for (const folder of folders) await until(() => read(join(config(folder), "args")) !== "");
+  }, 60_000);
+});
+
+// Tasks filed in Skelcrew alone, with no issue in a tracker, kept on the repository's remote so
+// every machine shows the same backlog.
+describe("the backlog", () => {
+  // The task's JSON as sc ls --json gives it.
+  const listed = async (name: string) => {
+    const tasks = z.array(z.object({ task: z.string() }).passthrough());
+    return tasks.parse(JSON.parse((await skel("ls", "--json")).out)).find((t) => t.task === name);
+  };
+
+  test("sc task add files a task that sc ls and sc show show, and starts nothing", async () => {
+    const work = addApp();
+    serve();
+    await untilCloned();
+    const filed = await skel("task", "add", "app", "Add export", "As JSON");
+    expect(filed.err).toBe("");
+    expect(filed.out).toBe("Filed app-t100 in the backlog. sc start app-t100 starts it.\n");
+    // Its words and stdin, as sc start <repo> takes them.
+    const piped = await runSkel(["task", "add", "app"], env(), "# Add notes\n\nAs text\n");
+    expect(piped.out).toBe("Filed app-t101 in the backlog. sc start app-t101 starts it.\n");
+    // On the remote, under hidden refs, never as a branch, and never in the tracker.
+    const refs = git(work, "ls-remote", "origin");
+    expect(refs).toContain("refs/skelcrew/tasks/t100");
+    expect(refs).toContain("refs/skelcrew/names/t100");
+    expect(git(work, "ls-remote", "--heads", "origin")).not.toContain("t100");
+    expect(asked(plugin).filter((q) => q.ask === "create task")).toEqual([]);
+    expect(await listed("app-t100")).toEqual({
+      task: "app-t100",
+      stage: "issue",
+      title: "Add export",
+      short: null,
+      issue: null,
+      thread: null,
+      pr: null,
+      checks: null,
+      review: null,
+    });
+    const shown = await skel("show", "app-t101");
+    expect(shown.err).toBe("");
+    expect(shown.out).toStartWith("app-t101  Add notes\nStage   issue\nIssue   none\nFiled   by ");
+    expect(shown.out).toContain("\nDescription\nAs text\n");
+    expect(thread()).toEqual({});
+    // A description is all a builder sees besides its title.
+    expect((await skel("task", "add", "app", "Add import", " ")).code).not.toBe(0);
+  }, 60_000);
+
+  // A second machine is this one with nothing of its own left: a new database and clone. All it
+  // shares with the first is the remote.
+  test("a task filed on one machine shows on another, through the remote, and starts there", async () => {
+    addApp();
+    const first = serve();
+    await untilCloned();
+    expect((await skel("task", "add", "app", "Add export", "As JSON")).err).toBe("");
+    await stop(first);
+    rmSync(data(), { recursive: true, force: true });
+    knowApp();
+    serve();
+    await untilCloned();
+    await until(async () => (await listed("app-t100")) !== undefined);
+    expect(await listed("app-t100")).toMatchObject({ title: "Add export", stage: "issue" });
+    const started = await skel("start", "app-t100");
+    expect(started.err).toBe("");
+    expect(started.out).toBe("Started app-t100.\n");
+    expect(thread()).toMatchObject({ task: "t100", title: "Add export", body: "As JSON" });
+    // Started, it leaves the backlog on the remote, so no other machine starts it too.
+    expect(git(join(home, "work", "simon", "app"), "ls-remote", "origin")).not.toContain(
+      "refs/skelcrew/tasks/t100",
+    );
+    expect(await listed("app-t100")).toMatchObject({ thread: expect.anything() });
+  }, 60_000);
+
+  test("sc rm deletes a task that never started, here and on the remote, and keeps its name", async () => {
+    const work = addApp();
+    serve();
+    await untilCloned();
+    await skel("task", "add", "app", "Add export", "As JSON");
+    const removed = await skel("rm", "app-t100");
+    expect(removed.err).toBe("");
+    expect(removed.out).toBe("Removed app-t100 from the backlog.\n");
+    expect(git(work, "ls-remote", "origin")).not.toContain("refs/skelcrew/tasks/t100");
+    expect(await listed("app-t100")).toBeUndefined();
+    expect((await skel("show", "app-t100")).err).toBe("Skelcrew: there is no task app-t100\n");
+    // The name stays claimed, so it never names other work.
+    const next = await skel("task", "add", "app", "Add import", "From CSV");
+    expect(next.out).toBe("Filed app-t101 in the backlog. sc start app-t101 starts it.\n");
   }, 60_000);
 });

@@ -201,10 +201,11 @@ export function refuseWithoutForge(db: Database, thread: Thread): void {
     );
 }
 
-// Returns your login name on this machine, for the record on the PR of who asked. Bun's
+// Returns your login name on this machine, for the record on the PR of who asked, and of who
+// filed a task in the backlog. Bun's
 // userInfo reads it from USER, which the daemon may run without, as a service does, and then
 // says "unknown", so the system is asked.
-function loginName(): string {
+export function loginName(): string {
   const id = Bun.spawnSync(["id", "-un"], { stdout: "pipe", stderr: "ignore" });
   return (id.success && id.stdout.toString().trim()) || "you";
 }

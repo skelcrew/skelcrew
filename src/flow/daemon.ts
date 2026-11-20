@@ -2,6 +2,7 @@
 // running, and answers the CLI and the agents on their sockets.
 
 import { dlopen, FFIType } from "bun:ffi";
+import type { Database } from "bun:sqlite";
 import { existsSync, mkdirSync, openSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server, type Socket } from "node:net";
 import { dirname } from "node:path";
@@ -26,6 +27,7 @@ import { createTask, mergePr } from "../plugins/ask.ts";
 import { errorText } from "../say.ts";
 import { checkoutFolder, git, release, singleFile } from "../version.ts";
 import { assignIssue } from "./assign.ts";
+import { filedTask, fileTask, unfileTask } from "./backlog.ts";
 import {
   bringBack,
   endEarlierBuilder,
@@ -48,6 +50,7 @@ import {
   alreadyMerging,
   armMerge,
   cancelMerge,
+  loginName,
   refuseWithoutForge,
   threadToMerge,
 } from "./merging.ts";
@@ -62,9 +65,11 @@ import {
 import { pollRepositories } from "./poll.ts";
 import {
   findRepository,
+  forgeKnown,
   fullNameIs,
   hasNoCommits,
   noRepositories,
+  refreshClone,
   refreshClones,
   repositories,
   repositoryAt,
@@ -152,6 +157,14 @@ const builderOf = (caller: Caller): Thread | null =>
 // builder or a reviewer call.
 const leadOfCaller = (caller: Caller) =>
   caller !== "you" && "lead" in caller ? caller.lead : null;
+
+// Returns a task of the repository's backlog, with its name, such as app-t104, or null when the
+// backlog has no task of that ID or a thread works on it, for sc rm.
+function filedOn(db: Database, repository: string, task: string) {
+  const { owner, repo, name } = findRepository(db, repository);
+  const filed = threadOn(db, repository, task) ? null : filedTask(db, owner, repo, task);
+  return filed && { ...filed, name: `${name}-${filed.task}` };
+}
 
 // Returns the thread whose builder is calling, for the requests only a builder may make.
 // `allowed` already refuses them from anyone else, so the throw never runs: it is what tells
@@ -507,11 +520,38 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         return { tasks: listTasks(db, request.repo) };
       case "task show":
         return { task: await showTask(db, request) };
+      // A lead files an issue only when the human explicitly asks for one, and gives their
+      // words, which the log keeps exactly. Otherwise it parks work in the backlog.
       case "task create": {
         const repository = findRepository(db, request.repo);
+        if (leadOfCaller(caller) !== null) {
+          if (request.asked === undefined)
+            throw new Error(
+              "a lead creates an issue only when the human explicitly asks for one: write their words to a file with your file-writing tool and add --asked-file <file>. To park work for later, use sc task add instead.",
+            );
+          console.log(
+            `${repository.name}'s lead creates an issue, as the human asked: ${JSON.stringify(request.asked)}`,
+          );
+        }
         const task = await createTask(db, repository, request.title, request.body);
         saveItems(db, repository.owner, repository.repo, [task], []);
         return { task: `${repository.name}-${task.id}` };
+      }
+      // Files a task in the backlog, from Skelcrew's clone, which the daemon may still be making
+      // or may not yet know the forge of, whose login pushes the task to the remote.
+      case "task add": {
+        const repository = findRepository(db, request.repo);
+        const clone = cloneDir(repository.owner, repository.repo);
+        if (!existsSync(clone) || !forgeKnown(db, repository)) await refreshClones(db);
+        const by = leadOfCaller(caller) === null ? loginName() : `${loginName()} via the lead`;
+        const { title, body } = request;
+        const current = findRepository(db, request.repo);
+        const task = await fileTask(db, current, clone, { title, body, by });
+        // Read back by a refresh of the clone, which never runs beside another, so the list
+        // shows it at once and sc start finds the commit it needs. One that fails only waits
+        // for the next poll: the task is filed already.
+        await refreshClone(db, current).catch((error) => console.log(errorText(error)));
+        return { task: `${repository.name}-${task}` };
       }
       case "review": {
         // A builder may ask only for its own thread, such as when you ask on its pull request
@@ -548,11 +588,20 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         await interruptSession(host, id);
         return { interrupted: name };
       }
+      // A task in the backlog never started, so removing it deletes only the task itself.
       case "rm preview": {
+        const filed = filedOn(db, request.repo, request.task);
+        if (filed) return { thread: filed.name, status: "not started", pr: null };
         const thread = findThread(db, request.repo, request.task);
         return { thread: threadName(db, thread), status: thread.status, pr: thread.pr };
       }
       case "rm": {
+        const filed = filedOn(db, request.repo, request.task);
+        if (filed) {
+          const repository = findRepository(db, request.repo);
+          await unfileTask(db, repository, cloneDir(repository.owner, repository.repo), filed);
+          return { removed: filed.name, issue: null, unfiled: true };
+        }
         const thread = findThread(db, request.repo, request.task);
         const name = threadName(db, thread);
         await removeThread(db, sessions, thread, request.reason, leadOfCaller(caller) !== null);

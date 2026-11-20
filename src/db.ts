@@ -532,6 +532,20 @@ function prepareTables(db: Database): void {
     item TEXT NOT NULL,
     PRIMARY KEY (owner, repo, kind, id)
   )`);
+  // The daemon's copy of each repository's backlog: the tasks filed with sc task add, which its
+  // remote keeps, so the list reads them without asking the remote. `filed_commit` is the commit
+  // the remote keeps each one at.
+  db.run(`CREATE TABLE IF NOT EXISTS backlog (
+    owner TEXT NOT NULL,
+    repo TEXT NOT NULL,
+    task TEXT NOT NULL,
+    title TEXT NOT NULL,
+    body TEXT NOT NULL,
+    created TEXT NOT NULL,
+    by TEXT NOT NULL,
+    filed_commit TEXT NOT NULL,
+    PRIMARY KEY (owner, repo, task)
+  )`);
   // Notes for a repository's lead that aren't about a thread needing you, such as a thread
   // started from a tracker, kept until they are typed in, since the lead may not be running.
   // A note's ID is never used twice, which AUTOINCREMENT makes so: without it, SQLite gives a
