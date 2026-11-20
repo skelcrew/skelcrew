@@ -179,13 +179,17 @@ const Workflow = z.object({
   }),
 });
 
-// The pull request checks' test job, whose setup the release's tests must match.
-const Check = z.object({ jobs: z.object({ test: z.object({ steps: Steps }) }) });
+// A workflow's test job with every key of its steps kept, so two can be compared whole: the
+// checkout, the Bun version and every command.
+const TestJob = z.object({
+  jobs: z.object({ test: z.object({ steps: z.array(z.record(z.string(), z.unknown())) }) }),
+});
 
 const workflowText = () => readFileSync(join(root, ".github", "workflows", "release.yml"), "utf8");
 const workflow = () => Workflow.parse(parse(workflowText()));
-const checkWorkflow = () =>
-  Check.parse(parse(readFileSync(join(root, ".github", "workflows", "check.yml"), "utf8")));
+const testSteps = (file: string) =>
+  TestJob.parse(parse(readFileSync(join(root, ".github", "workflows", file), "utf8"))).jobs.test
+    .steps;
 const runs = (steps: Steps) => steps.flatMap((step) => (step.run ? [step.run] : []));
 const uploads = (steps: Steps) => steps.filter((step) => step.uses?.includes("upload-artifact"));
 
@@ -239,7 +243,7 @@ test("the release runs all four test shards, set up as the pull request checks a
   expect(shards.strategy["fail-fast"]).toBe(false);
   // biome-ignore lint/suspicious/noTemplateCurlyInString: GitHub's syntax, not JavaScript's.
   expect(runs(shards.steps)).toContain("bun scripts/test.ts --shard=${{ matrix.shard }}/4");
-  expect(runs(shards.steps)).toEqual(runs(checkWorkflow().jobs.test.steps));
+  expect(testSteps("release.yml")).toEqual(testSteps("check.yml"));
   const setup = stepRunning(shards.steps, "apt-get install");
   expect(setup).toContain("tmux bubblewrap");
   expect(setup).toContain("kernel.apparmor_restrict_unprivileged_userns=0");
@@ -250,11 +254,12 @@ test("the workflow runs on a version tag, tests, checks, builds, signs, then pub
   expect(on.push.tags).toEqual(["v[0-9]+.[0-9]+.[0-9]+"]);
   expect(jobs.build.needs).toBe("test");
   const built = runs(jobs.build.steps);
-  const at = (words: string) => built.findIndex((run) => run.includes(words));
-  expect(at("bunx biome ci .")).toBeGreaterThan(-1);
-  expect(at("bunx tsc --noEmit")).toBeGreaterThan(-1);
-  expect(at("scripts/build-release.ts")).toBeGreaterThan(at("bunx biome ci ."));
-  expect(at("scripts/build-release.ts")).toBeGreaterThan(at("bunx tsc --noEmit"));
+  // Whole steps, so a failed lint or typecheck can't be hidden behind a build that runs after it.
+  const lint = built.indexOf("bunx biome ci . && bunx tsc --noEmit");
+  expect(lint).toBeGreaterThan(-1);
+  // biome-ignore lint/suspicious/noTemplateCurlyInString: the shell's syntax, not JavaScript's.
+  const release = built.indexOf('bun scripts/build-release.ts "${GITHUB_REF_NAME#v}"');
+  expect(release).toBeGreaterThan(lint);
   expect(jobs.sign.needs).toBe("build");
   expect(jobs.publish.needs).toBe("sign");
   const published = runs(jobs.publish.steps);
