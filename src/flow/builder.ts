@@ -77,7 +77,7 @@ export function statusOnceBack(stopped: Thread): "waiting" | "working" {
 // Records a new thread and returns it. Its task is either one of the tracker's, with its title
 // and body from Skelcrew's copy, which sc start brings up to date first, or a given title and
 // body. A given one becomes a task of the repository's own, named by a t and a number, such as
-// t100, t101 and on, the same on every machine. That works with a tracker too, so you can start
+// t1, t2 and on, the same on every machine. That works with a tracker too, so you can start
 // work without filing it. Refuses a task the copy doesn't have open. Refuses a task that has a thread already, unless that thread failed or is done,
 // such as after sc rm: then it starts over in the same folder. It only records the thread,
 // since the lead waits on the answer. Setting up its clone and starting its builder come

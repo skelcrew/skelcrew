@@ -60,9 +60,10 @@ function inTurn<T>(repository: Repository, work: () => Promise<T>): Promise<T> {
 
 // Claims the next name for one of Skelcrew's own tasks on the remote, from Skelcrew's clone in
 // the folder, and returns it, such as t104. It is a t and the next number after every one claimed
-// on the remote, which every machine sees, and every one this machine's tasks hold. Names from
-// before Skelcrew claimed them, such as t25, were never claimed and live only on the machine that
-// started them, so numbers start at 100, above all of them. Only one machine can claim a name, so
+// on the remote, which every machine sees, and every one this machine's tasks hold. A brand-new
+// repository's first is t1. Names from before Skelcrew claimed them, such as t25, were never
+// claimed and live only on the machine that started them, so where this machine holds one,
+// numbers start at 100, above all of them. Only one machine can claim a name, so
 // the claims are read again while another machine claimed first. `filed` is the task to keep in
 // the backlog under the name, as claimName takes it.
 export async function claimOwnName(
@@ -81,7 +82,8 @@ export async function claimOwnName(
   while (true) {
     const claims = await claimedNames(db, repository);
     const numbers = [...claims.names, ...held].map((id) => Number(id.slice(1)));
-    const task = `t${Math.max(99, ...numbers) + 1}`;
+    const old = held.some((id) => !claims.names.includes(id));
+    const task = `t${Math.max(old ? 99 : 0, ...numbers) + 1}`;
     const note = noting && ((commit: string) => noting(task, commit));
     if (await claimName(db, repository, folder, task, claims.last, filed, note)) return task;
   }
