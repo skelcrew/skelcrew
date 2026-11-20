@@ -79,6 +79,8 @@ Use your task's name where these say `app-12`. The lead and `sc ls` show it: a t
 sc merge --when-ready app-12
 ```
 
+To ask the lead to do that instead, such as "merge it when it's ready", first let it with `lead: { may_arm_merges: true }` in `~/.config/skelcrew/config.yaml`.
+
 ### 5. Optional: run it on a server
 
 Skelcrew can run on a server of your own, so the work carries on after you close the laptop:
