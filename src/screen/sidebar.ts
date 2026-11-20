@@ -34,7 +34,7 @@ import { leadPlaces, screenLogFile } from "../paths.ts";
 import { quoteForSh } from "../plugins/plugin.ts";
 import { pluginHost } from "../plugins/runtime.ts";
 import { errorText } from "../say.ts";
-import { version } from "../version.ts";
+import { shownVersions } from "../version.ts";
 import { agentFooter, tellFooter } from "./footer.ts";
 import { noticeLines } from "./layout.ts";
 import { roundLimit } from "./lists.ts";
@@ -381,7 +381,7 @@ export async function runSidebar(
       tabs,
       open: fullName,
       where,
-      version,
+      versions: shownVersions(),
     };
     const strip = drawTop(look, { left, width });
     if (strip !== lastStrip) {

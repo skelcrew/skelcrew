@@ -18,11 +18,12 @@ import {
 } from "../screen/look.ts";
 import type { Heading, Row, Section, Tab } from "./rows.ts";
 
-// What the list shows besides its rows: the version of Skelcrew running here, where it runs on a
-// remote, or empty on this machine, the open repository's name, every repository's tab, the
-// notice of a release waiting for a restart, or empty, the bottom line's text, and the load.
+// What the list shows besides its rows: the names of the version of Skelcrew running here,
+// longest first, such as v0.4.2 or 6f1c2ab (checkout), where it runs on a remote, or empty on this machine, the open repository's
+// name, every repository's tab, the notice of a release waiting for a restart, or empty, the
+// bottom line's text, and the load.
 export type Frame = {
-  version: string;
+  versions: string[];
   where: string;
   name: string;
   tabs: Tab[];
@@ -127,19 +128,13 @@ export type TabSpan = { from: number; to: number; fullName: string };
 const openTab = "48;5;238";
 const otherTab = "48;5;236";
 
-// Returns the top line and where each repository's tab is on it. Skelcrew in bold and its
-// version and where it runs, dim, then every repository's tab, in order, left to right. The open
+// Returns the top line and where each repository's tab is on it. Skelcrew in bold and the
+// longest name of its version that fits and where it runs, dim, then every repository's tab, in order, left to right. The open
 // one is white on a lighter grey. Each other one has a yellow dot and how many of its threads
 // need you, or red when one went wrong, then a green dot and how many wait for you to merge. They
 // are counted apart, so a finished task is never told twice. Another repository's tab that
 // doesn't fit beside the open one's is left out.
 function topParts(frame: Frame, width: number): { line: string; spans: TabSpan[] } {
-  const place = frame.where ? ` on ${frame.where}` : "";
-  const plain = ` Skelcrew v${frame.version}${place}`;
-  if (Bun.stringWidth(plain) > width) return { line: fitted(plain, width), spans: [] };
-  let line = ` ${paint(bright, "Skelcrew")} ${paint(grey, `v${frame.version}${place}`)}`;
-  let used = Bun.stringWidth(plain);
-  const spans: TabSpan[] = [];
   // Each tab's text, with a space either side inside its background.
   const laid = frame.tabs.map((tab) => {
     const open = tab.name === frame.name;
@@ -150,10 +145,27 @@ function topParts(frame: Frame, width: number): { line: string; spans: TabSpan[]
     const text = ` ${[tab.name, ...badges.map(({ badge }) => badge)].join(" ")} `;
     return { tab, open, badges, size: Bun.stringWidth(text) };
   });
+  // Words around a checkout's commit give way before the line is cut, so it keeps the whole
+  // commit when it can, and where it runs gives way before each of them. They give way for the open
+  // repository's tab too, so it keeps showing.
+  const openSize = laid.find(({ open }) => open)?.size ?? 0;
+  const where = frame.where ? ` on ${frame.where}` : "";
+  const named = frame.versions.flatMap((name) => [`${name}${where}`, name]);
+  const room = (name: string, more: number) => Bun.stringWidth(` Skelcrew ${name}`) + more <= width;
+  const about =
+    named.find((name) => room(name, openSize ? 2 + openSize : 0)) ??
+    named.find((name) => room(name, 0)) ??
+    named.at(-1) ??
+    "";
+  const plain = ` Skelcrew ${about}`;
+  if (Bun.stringWidth(plain) > width) return { line: fitted(plain, width), spans: [] };
+  let line = ` ${paint(bright, "Skelcrew")} ${paint(grey, about)}`;
+  let used = Bun.stringWidth(plain);
+  const spans: TabSpan[] = [];
   // The open repository's tab always keeps its room, so you can always tell which one shows.
   // Other tabs that don't fit beside it are left out. Each tab has a space between it and the
   // next.
-  let kept = laid.find(({ open }) => open)?.size ?? 0;
+  let kept = openSize;
   for (const { tab, open, badges, size } of laid) {
     if (open) kept = 0;
     else if (used + 2 + size + (kept ? 2 + kept : 0) > width) continue;
