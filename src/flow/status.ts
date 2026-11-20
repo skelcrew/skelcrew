@@ -53,8 +53,13 @@ export function needsYouFor(thread: Thread): string | null {
   try {
     maxRounds = roundLimit(thread);
   } catch {}
-  return threadWord(thread, maxRounds);
+  return reasonOf(threadWord(thread, maxRounds));
 }
+
+// Returns why a thread needs you from its word, as an action where the word says only what
+// happened: an approved thread with green checks waits on you to merge it. The list keeps the
+// word `approved`, beside the green mark that says the rest.
+const reasonOf = (word: string) => (word === "approved" ? "ready to merge" : word);
 
 // Returns whether the lead or you decided what the thread's flag waits on: a merge is armed, or
 // the round limit was cleared.
@@ -287,7 +292,9 @@ export function reportStatus(db: Database, thread: Thread): void {
   let said: { status: Status; reason: string };
   try {
     const maxRounds = roundLimit(thread);
-    said = { status: statusOf(thread, maxRounds), reason: threadWord(thread, maxRounds) };
+    const status = statusOf(thread, maxRounds);
+    const word = threadWord(thread, maxRounds);
+    said = { status, reason: status === "ready" ? reasonOf(word) : word };
   } catch (error) {
     console.log(`couldn't work out ${thread.folder}'s status: ${errorText(error)}`);
     return;

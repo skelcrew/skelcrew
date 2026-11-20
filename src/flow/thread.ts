@@ -278,6 +278,10 @@ export async function builderSession(
   return { host, id: found.name };
 }
 
+// Returns the mark of a thread whose builder's session host plugin is missing, which only you can
+// bring back, saying what to do.
+export const hostMissing = (host: string) => `run sc install: its session host ${host} is missing`;
+
 // Returns why a thread's builder can't be reached when its host plugin is gone.
 export const hostGone = (thread: Thread) =>
   `its builder's session host ${thread.host} isn't installed any more`;
@@ -386,7 +390,14 @@ export function record(
   // Read the thread back rather than merging the change in memory, so the log and the caller
   // see exactly what the database holds.
   const thread = readThread(db, folder);
-  log(db, thread, why);
+  // A mark that clears says so in the log, whatever cleared it, so the log shows what was cleared,
+  // by whom and why. One cleared on purpose already names it.
+  const old = before.needs_you_for;
+  const cleared =
+    old !== null && thread.needs_you_for === null && !(why ?? "").includes(old)
+      ? `${why ?? "changed"}, which cleared its mark: ${old}`
+      : why;
+  log(db, thread, cleared);
   reportStatus(db, thread);
   if (thread.short !== before.short) renameOnHost(db, folder);
   return thread;

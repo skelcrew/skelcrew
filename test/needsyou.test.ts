@@ -1101,6 +1101,8 @@ markNeedsYou(db, "none", thread(), "say which format", "lead");
 submitRound(db, "none", "app-12", "Round 2");
 console.log(JSON.stringify({ mark: thread().needs_you_for }));`);
   expect(seen).toEqual({ mark: null });
+  // The log says what cleared it, as it does for every mark that clears on its own.
+  expect(threadLog()).toContain("submitted: Round 2, which cleared its mark: say which format");
 });
 
 // The lead hears of a builder that stopped, but may be busy or miss it, so nothing waits unseen.

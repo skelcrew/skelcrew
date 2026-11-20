@@ -6,7 +6,9 @@ test("a filled mark means the thread needs you, and its colour says what kind", 
   expect(markOf("ready", "approved")).toEqual({ sign: "●", colour: "green" });
   for (const word of ["question", "round limit", "needs you", "apply the fix in #463"])
     expect(markOf("needs you", word)).toEqual({ sign: "●", colour: "yellow" });
-  expect(markOf("error", "failed")).toEqual({ sign: "●", colour: "red" });
+  // A failed thread is the lead's to start again, unless the lead marked it for you.
+  expect(markOf("error", "failed")).toEqual({ sign: "○", colour: "red" });
+  expect(markOf("error", "approve the new design")).toEqual({ sign: "●", colour: "red" });
   expect(markOf("error", "error")).toEqual({ sign: "●", colour: "red" });
 });
 
@@ -36,7 +38,8 @@ test("an approved thread counts as ready, not as needing you", () => {
   expect(readyToMerge(approved)).toBe(true);
   expect(needsDecision(approved)).toBe(false);
   expect(needsDecision(markOf("needs you", "question"))).toBe(true);
-  expect(needsDecision(markOf("error", "failed"))).toBe(true);
+  expect(needsDecision(markOf("error", "error"))).toBe(true);
+  expect(needsDecision(markOf("error", "failed"))).toBe(false);
   expect(needsDecision(markOf("working", "working"))).toBe(false);
 });
 

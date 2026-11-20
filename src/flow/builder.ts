@@ -40,6 +40,7 @@ import {
   cloneOf,
   folderName,
   hostGone,
+  hostMissing,
   log,
   readThread,
   record,
@@ -690,11 +691,13 @@ export async function bringBack(db: Database, sessions: string, thread: Thread):
   // A builder you stopped has no host left to look on.
   if (thread.host !== null) {
     if (hostNamed(db, sessions, thread.host) === null) {
-      const action = `run sc install: its session host ${thread.host} is missing`;
-      record(db, thread.folder, { needs_you_for: action }, hostGone(thread));
+      record(db, thread.folder, { needs_you_for: hostMissing(thread.host) }, hostGone(thread));
       typeLeadNotes(db, sessions);
       return;
     }
+    // The plugin is back, such as after sc install, so the mark that asked for it goes.
+    if (thread.needs_you_for === hostMissing(thread.host))
+      record(db, thread.folder, { needs_you_for: null }, `its session host ${thread.host} is back`);
     let told = false;
     while (true) {
       try {

@@ -11,15 +11,17 @@ export type Mark = { sign: "●" | "○"; colour: Colour };
 export type Shown = { word: string; status: Status; mark: Mark };
 
 // Returns the mark for a thread's status and word. The shape says whether the thread needs you,
-// and the colour what kind of state it is in. Red is wrong: the thread failed or its harness
-// stopped on an error, which needs you, or its review couldn't run, which the lead can run
-// again, so that mark is hollow. Green is approved and ready to merge, and
+// and the colour what kind of state it is in. Red is wrong: its harness stopped on an error,
+// which needs you, or the thread failed or its review couldn't run, which the lead can start or
+// run again, so those marks are hollow. Green is approved and ready to merge, and
 // yellow any other reason it needs you. Of the hollow ones, a working builder is bright and
 // anything that only waits is dim. A review under way, or one held on its harness's usage limit,
 // shows as waiting even while the builder works too, as the word then says what the thread
 // waits on.
 export function markOf(status: Status, word: string): Mark {
-  if (status === "error") return { sign: "●", colour: "red" };
+  // A thread that failed is the lead's to start again, so it doesn't need you unless marked, and
+  // then its word is the mark.
+  if (status === "error") return { sign: word === "failed" ? "○" : "●", colour: "red" };
   if (word === "review failed" || word === "review timed out") return { sign: "○", colour: "red" };
   if (status === "ready") return { sign: "●", colour: "green" };
   // Approved with a merge armed, it merges by itself, so it is good news that waits on nobody.

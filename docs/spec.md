@@ -507,14 +507,14 @@ The lead answers a question itself when the answer follows from what you already
 
 **What Skelcrew marks itself**, by the same rule:
 
-- **Ready to merge.** An approved thread with green checks and no merge armed waits on you to merge it, as **Merge when ready** says. One with a merge armed merges by itself, so it doesn't.
+- **Ready to merge.** An approved thread with green checks and no merge armed waits on you to merge it, as **Merge when ready** says. `sc ps`, `sc show` and a host's status say `ready to merge`, while the list's word stays `approved`, beside its green mark. One with a merge armed merges by itself, so it doesn't.
 - **The round limit**, while nobody has decided, as step 7 of **The flow** says. A merge you armed, `sc start` to go on, or the lead or you marking or clearing the thread decides it, and the thread follows that decision. Cleared or marked, it no longer needs you for the limit, so a mark that clears later doesn't bring the limit back. Cleared, it still shows `round limit`, without needing you, until the next review, which asks again.
 - **A question** asked with the harness's question tool, and **a harness error**, as below.
-- **A missing session host plugin**, which only `sc install` brings back, as **Sessions** says.
+- **A missing session host plugin**, which only `sc install` brings back, as **Sessions** says. The mark goes once the engine finds the plugin again.
 
-A review that failed, a round that failed and a builder that isn't running aren't among them: the lead hears of each, and can run the review again or bring the builder back.
+A thread that failed, a review that failed, a round that failed and a builder that isn't running aren't among them: the lead hears of each, and can run the review again or bring the builder back.
 
-**Clearing.** A mark clears when you type to the thread's builder, when the lead or you clear it, and when the thing it is about happens: the builder submits again, the PR merges or closes, the task is removed or stopped, or the thread goes on past its round limit. What Skelcrew types into the builder, such as the lead's message or a review's changes, doesn't clear it: the harness's hook gives what was typed, and only text Skelcrew didn't type is yours. The thread's log says each time a mark is set or cleared, who did it and why.
+**Clearing.** A mark clears when you type to the thread's builder, when the lead or you clear it, and when the thing it is about happens: the builder submits again, the PR merges or closes, the task is removed or stopped, or the thread goes on past its round limit. What Skelcrew types into the builder, such as the lead's message or a review's changes, doesn't clear it: the harness's hook gives what was typed, and only text Skelcrew didn't type is yours. The thread's log says each time a mark is set or cleared, who did it and why, and a mark that clears on its own names the mark it cleared.
 
 A builder that asks with its harness's question tool anyway, such as a custom role's, needs you until you attach and answer. On Claude Code that is `AskUserQuestion`.
 
@@ -820,9 +820,9 @@ A task in Building, Reviewing, Checks or Ready takes two lines, so what it does 
 | `round limit` | Review hit its round limit. It needs you until you or the lead decide, as **Needs you** says |
 | the action, such as `apply the check.yml split in PR #463` | The lead, you or the safety net marked the thread as needing you, with what you must do. It shows on a queued, failed or stopped thread too, and only a question or an error comes before it |
 | `review failed`, `review timed out` | The review couldn't run, or ran past its time limit twice. The lead can run it again, so it doesn't need you |
-| `failed`, `stopped` | As the thread's status says |
+| `failed`, `stopped` | As the thread's status says. Neither needs you: the lead hears why a thread failed and can start it again |
 
-The marks: a filled `●` needs you or is ready, a hollow `○` doesn't. Green is ready, yellow wants you, red is wrong (the thread failed or its harness errored, filled, or its review failed, hollow, as the lead can run it again), bright is working and dim waits. The word always says what is happening, so nothing is told by colour alone. Text from the tracker has its control codes removed before it reaches your terminal.
+The marks: a filled `●` needs you or is ready, a hollow `○` doesn't. Green is ready, yellow wants you, red is wrong (its harness errored, filled, or the thread or its review failed, hollow, as the lead can start or run it again), bright is working and dim waits. The word always says what is happening, so nothing is told by colour alone. Text from the tracker has its control codes removed before it reaches your terminal.
 
 | Key | On | What it does |
 | --- | --- | --- |

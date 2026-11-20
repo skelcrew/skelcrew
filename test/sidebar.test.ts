@@ -506,7 +506,7 @@ test("a mark is filled when the thread needs you, and hollow when it doesn't", (
   const mark = (more: Partial<Row>) => draw([thread("app-12", more)], "lead", size);
   // A working builder is bright, in the theme's own text in bold, so it reads on any theme.
   expect(mark({ status: "working" })).toContain("\x1b[1m○");
-  expect(mark({ status: "failed", word: "failed" })).toContain("\x1b[38;5;210m●");
+  expect(mark({ status: "failed", word: "failed" })).toContain("\x1b[38;5;210m○");
   for (const word of ["reviewing", "queued for review", "checks", "changes", "limit · 13:59"])
     expect(mark({ status: "waiting", word })).toContain("\x1b[90m○");
   expect(mark({ status: "stopped", word: "stopped" })).toContain("\x1b[90m○");
@@ -537,9 +537,10 @@ test("a mark looks the same whether or not you are on its row", () => {
   expect(colour(markLine("app-12"))).toBe(colour(markLine("lead")));
 });
 
-test("a failed thread is red even while it needs you, as its word says failed", () => {
+// The lead hears why it failed and can start it again, so it doesn't need you.
+test("a failed thread is red and hollow, as its word says failed", () => {
   const screen = draw([thread("app-12", { status: "failed", word: "failed" })], "lead", size);
-  expect(screen).toContain("\x1b[38;5;210m●");
+  expect(screen).toContain("\x1b[38;5;210m○");
   expect(screen).toContain("\x1b[38;5;210mfailed");
   expect(screen).not.toContain("\x1b[38;5;221m");
 });
@@ -609,7 +610,7 @@ test("on the grey, every colour is a fixed light one, as a theme's own can vanis
   expect(on("app-3")).toContain("\x1b[38;5;250mchecks");
   expect(on("app-4")).toContain("\x1b[38;5;120m●");
   expect(on("app-4")).toContain("\x1b[38;5;120mapproved");
-  expect(on("app-5")).toContain("\x1b[38;5;210m●");
+  expect(on("app-5")).toContain("\x1b[38;5;210m○");
   expect(on("app-5")).toContain("\x1b[38;5;210mfailed");
   expect(selected(draw([lead], "lead", size)).join("\n")).toContain("\x1b[38;5;250m◆");
 });
@@ -1343,9 +1344,9 @@ console.log(JSON.stringify(looks.map((row) => [row?.tokens, row?.step])));`;
   });
 
   test("each repository's tab counts what needs you and what is ready apart", () => {
-    // site and app each have a red mark among their yellow ones, docs only a yellow one, and web
-    // an approved thread, which is ready rather than needing you. Threads working, stopped or
-    // done count for neither, nor does one whose turn ended, as it waits on the lead.
+    // app has a red mark, for its harness error, site and docs only yellow ones, and web an
+    // approved thread, which is ready rather than needing you. Threads working, stopped, failed
+    // or done count for neither, nor does one whose turn ended, as each waits on the lead.
     const threads = [
       { repo: "site", task: "1", status: "waiting", needs_you: 1 },
       { repo: "site", task: "2", asking: 1 },
@@ -1377,7 +1378,7 @@ console.log(JSON.stringify(repositoryTabs(db, () => 3)));`;
     expect(JSON.parse(run.stdout.toString())).toEqual([
       { name: "app", fullName: "simon/app", needYou: 1, colour: "red", ready: 0 },
       { name: "docs", fullName: "simon/docs", needYou: 1, colour: "yellow", ready: 0 },
-      { name: "site", fullName: "simon/site", needYou: 3, colour: "red", ready: 0 },
+      { name: "site", fullName: "simon/site", needYou: 2, colour: "yellow", ready: 0 },
       { name: "web", fullName: "simon/web", needYou: 0, colour: "yellow", ready: 1 },
     ]);
   });

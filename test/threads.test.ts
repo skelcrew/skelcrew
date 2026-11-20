@@ -862,7 +862,7 @@ c.on("data", (d) => process.stdout.write(d));`;
     expect(hasSession("app-12")).toBe(false);
   }, 60_000);
 
-  test("a builder whose host plugin is gone needs you once the daemon starts, rather than moving", async () => {
+  test("a builder whose host plugin is gone needs you once the daemon starts, rather than moving, until it is back", async () => {
     addApp();
     fakeHost("sessions");
     useHost("fake");
@@ -874,7 +874,7 @@ c.on("data", (d) => process.stdout.write(d));`;
     const db = new Database(join(data(), "skelcrew.db"));
     db.run("DELETE FROM plugins WHERE name = 'fake'");
     db.close();
-    serve();
+    const second = serve();
     // Only you can bring the plugin back, so its mark says what to do.
     await until(
       () => thread().needs_you_for === "run sc install: its session host fake is missing",
@@ -882,6 +882,14 @@ c.on("data", (d) => process.stdout.write(d));`;
     expect(String(thread().noting)).toContain("session host fake isn't installed any more");
     expect(thread().host).toBe("fake");
     expect(hasSession("app-12")).toBe(false);
+    // You install it again, and the daemon finds it as it starts, so the mark goes.
+    await stop(second);
+    fakeHost("sessions");
+    serve();
+    await until(() => thread().needs_you_for === null);
+    expect(read(join(data(), "threads", "app-12.log"))).toContain(
+      "its session host fake is back, which cleared its mark: run sc install: its session host fake is missing",
+    );
   }, 60_000);
 
   // One broken plugin must never keep the daemon from starting: every other thread comes back.
