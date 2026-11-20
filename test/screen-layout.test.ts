@@ -4,6 +4,7 @@ import { afterEach, beforeEach, expect, setDefaultTimeout, test } from "bun:test
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import checkout from "../package.json";
+import { sidebarFor } from "../src/screen/screen.ts";
 import {
   attachTo,
   click,
@@ -43,19 +44,19 @@ afterEach(endTest);
 // The widths of the sidebar, the right side and the footer, as tmux has them.
 const widths = () => tmux(screen, "list-panes", "-a", "-F", "#{pane_width}").out.trim().split("\n");
 
-test("resizing the terminal resizes the agent and keeps the sidebar as wide", async () => {
+test("resizing the terminal resizes the agent, and the sidebar with the list's rule", async () => {
   open("lead");
   await ready("lead");
   await until(
-    () => readFileSync(join(home, "lead.size"), "utf8") === "26 61\n",
+    () => readFileSync(join(home, "lead.size"), "utf8") === "26 79\n",
     "the agent's size",
   );
   tmux(terminal, "resize-window", "-t", "=one:", "-x", "150", "-y", "40");
   await until(
-    () => readFileSync(join(home, "lead.size"), "utf8") === "36 91\n",
+    () => readFileSync(join(home, "lead.size"), "utf8") === "36 107\n",
     "the agent to resize",
   );
-  expect(widths()).toEqual(["58", "91", "150"]);
+  expect(widths()).toEqual(["42", "107", "150"]);
   // A terminal shorter than the list keeps the row you are looking at in view.
   await toSecondThread();
   tmux(terminal, "resize-window", "-t", "=one:", "-x", "150", "-y", "6");
@@ -68,8 +69,8 @@ test("on a narrow terminal the sidebar narrows, so the right side keeps half of 
   await until(() => widths()[0] === "39", "the sidebar to take what is left");
   expect(widths()).toEqual(["39", "40", "80"]);
   tmux(terminal, "resize-window", "-t", "=one:", "-x", "100", "-y", "30");
-  await until(() => widths()[0] === "49", "the sidebar to widen with the terminal");
-  expect(widths()).toEqual(["49", "50", "100"]);
+  await until(() => widths()[0] === "40", "the sidebar to widen with the terminal");
+  expect(widths()).toEqual(["40", "59", "100"]);
   // Every line keeps its edge, at the sidebar's new width.
   await until(() => edge(30, 100).every((columns) => columns === "│ "), "the sidebar's edge");
 });
@@ -77,9 +78,9 @@ test("on a narrow terminal the sidebar narrows, so the right side keeps half of 
 // The columns at the sidebar's edge, on each line of a screen `height` rows high above the
 // footer, its line and the gap tmux leaves above them: the sidebar's line, where the lines between
 // lists join it, then tmux's border. Blank past the end of a line that holds nothing else.
-// The sidebar is `sidebar` columns wide, or narrower on a terminal `width` columns wide, so the
+// The sidebar is as wide as the list on a terminal `width` columns wide, or narrower, so the
 // right side keeps half of it.
-const sidebarAt = (width: number) => Math.min(sidebar, Math.floor((width - 1) / 2));
+const sidebarAt = sidebarFor;
 const edge = (height: number, width = 120) =>
   seen()
     .split("\n")

@@ -20,7 +20,7 @@ import { ListStage } from "../flow/stage.ts";
 import { doing, watchForStalls } from "../flow/stall.ts";
 import { liveThreads } from "../flow/thread.ts";
 import { type Asking, canOpenLinks, openPr, stillOffered } from "../list/actions.ts";
-import { drawRows, type Target } from "../list/layout.ts";
+import { drawRows, listShare, type Target } from "../list/layout.ts";
 import {
   cutBacklog,
   listRows,
@@ -40,7 +40,6 @@ import { noticeLines } from "./layout.ts";
 import { roundLimit } from "./lists.ts";
 import { edge, filled, paint, removeControlCodes } from "./look.ts";
 import { type Open, repositoryTabs, sidebarRows } from "./rows.ts";
-import { sidebarWidth } from "./screen.ts";
 import { drawTop } from "./strip.ts";
 import { attachTask, showTask } from "./task.ts";
 
@@ -211,7 +210,7 @@ export async function runSidebar(
   const canOpen = canOpenLinks(where);
   // Returns the size the rest has now, as the terminal can change it at any time.
   const size = () => ({
-    width: process.stdout.columns || sidebarWidth,
+    width: process.stdout.columns || listShare.most,
     height: (process.stdout.rows || 24) - notice.length,
   });
 

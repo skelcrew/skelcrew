@@ -12,14 +12,15 @@ import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import { type Labels, startSession } from "../src/agents/sessions.ts";
-import { sidebarWidth } from "../src/screen/screen.ts";
+import { sidebarFor } from "../src/screen/screen.ts";
 import { fakePlugin, source, threadSql, until as wait } from "./harness.ts";
 
 const dbFile = source("db.ts");
 
 export const screenFile = source("screen/screen.ts");
 export const pathNow = process.env.PATH ?? "";
-export const sidebar = sidebarWidth;
+// How wide the sidebar is in the 120 columns the tests' terminal has, unless a test resizes it.
+export const sidebar = sidebarFor(120);
 export const leaving = "Your agents keep running. Run sc to come back.";
 // The labels the sessions these tests start carry, as the lead of the repository they add.
 export const labels: Labels = { repository: "simon/app", role: "lead" };
@@ -54,6 +55,9 @@ export const read = (file: string) => {
 // What you see in the first terminal, or a second one.
 export const seen = (window = "one") =>
   tmux(terminal, "capture-pane", "-p", "-t", `=${window}:`).out;
+// Returns how wide the sidebar is now, from how wide the terminal is, as a test may resize it.
+const sidebarNow = (window = "one") =>
+  sidebarFor(Number(tmux(terminal, "display", "-p", "-t", `=${window}:`, "#{window_width}").out));
 // The top row as you see it: Skelcrew above the sidebar, then the tabs and the strip above the
 // agent.
 export const tabRow = () => (seen().split("\n")[0] ?? "").trimEnd();
@@ -67,7 +71,7 @@ export function selected(window = "one"): string {
     .slice(1)
     .find((text) => (text.split(/[│┤]/)[0] ?? "").includes("48;5;238"));
   return Bun.stripANSI(line ?? "")
-    .slice(0, sidebar - 1)
+    .slice(0, sidebarNow(window) - 1)
     .trim();
 }
 export const screenSessions = () =>
@@ -313,5 +317,5 @@ export function daemon(): void {
 export const right = () =>
   seen()
     .split("\n")
-    .map((line) => line.slice(sidebar + 1))
+    .map((line) => line.slice(sidebarNow() + 1))
     .join("\n");
