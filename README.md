@@ -4,7 +4,7 @@
 
 Skelcrew is a crew of coding agents, always on, in parallel and isolated, from issue to merged PR. Bring your own harness and model.
 
-You run `sc` in a checkout and talk to that repository's lead, an agent that files issues and starts threads. Each thread is a builder agent in its own branch, clone and sandbox. A fresh reviewer reviews its PR, and they go back and forth until it is ready. You merge.
+You run `sc` in a checkout and talk to that repository's lead, an agent that plans the work with you and starts threads. Each thread is a builder agent in its own branch, clone and sandbox. A fresh reviewer reviews its PR, and they go back and forth until it is ready. You merge.
 
 ## Getting started
 
@@ -12,7 +12,7 @@ Five steps take you from nothing to a first merged task.
 
 ### 1. Install
 
-The script runs on macOS and Linux, needs no sudo, and puts `sc` in `~/.local/bin`. Then `sc install` sets up the machine.
+The script runs on macOS and Linux, needs no sudo, and puts `sc` in `~/.local/bin`. If that folder isn't on your PATH, the script says so and gives the line to add to your shell's startup file. Add it and open a new terminal, or `sc` won't be found. Then `sc install` sets up the machine.
 
 ```sh
 curl -fsSL https://skelcrew.dev/install.sh | sh
