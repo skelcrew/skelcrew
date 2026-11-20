@@ -740,26 +740,26 @@ The engine calls `status` for every change, from wherever it came: a hook, the s
 
 Two ways to see a repository exist side by side, until you choose which one stays: the split screen and the list. Plain `sc` opens the split screen: a sidebar of the repository's tasks and a tab for each repository, with the lead beside them, on a tmux server of the screen's own. Picking a thread in the sidebar shows its builder beside it, and `sc attach` opens the screen on a builder. The sidebar's entries count what waits on you. `Threads` says how many threads need you, in yellow: a question, a harness error, the round limit, a builder that stopped without submitting, or a review that failed or timed out, such as `1 needs you · 6`. `PRs` says how many are approved and green, in green, such as `1 ready · 5`. An approved thread is ready, not needing you, so it counts only on `PRs`. A repository with no forge has no `PRs`, so `Threads` says how many branches are ready itself, in green, before how many need you: `1 ready · 2 need you · 6`. The tabs' badges count the same way as the list's. `sc --list` shows the list instead. The rest of this section describes the list.
 
-`sc --list` shows a list: a picker, not a layout. You pick a row, and Skelcrew either attaches you full screen to an agent or does what the row offers. Detaching, with Ctrl-\, brings you back to the list, on the same row. While you are attached on tmux, the terminal's title names the agent and the key back, such as `app-24 · ctrl+\ back`, and the title you had comes back with you. Nothing else of Skelcrew's shows over the agent. On a row Enter attaches on tmux, the bottom line says so before you go, as `⏎ open · ctrl+\ back`. A runtime plugin's host has its own key to come back, and its rows say only `⏎ open`. There is no sidebar, no split, and no tmux server of the screen's own.
+`sc --list` shows a list, with a details pane beside it for the row you are on. You pick a row, and Skelcrew either attaches you full screen to an agent or does what the row offers. Detaching, with Ctrl-\, brings you back to the list, on the same row. While you are attached on tmux, the terminal's title names the agent and the key back, such as `app-24 · ctrl+\ back`, and the title you had comes back with you. Nothing else of Skelcrew's shows over the agent. On a row Enter attaches on tmux, the bottom line says so before you go, as `⏎ open · ctrl+\ back`. A runtime plugin's host has its own key to come back, and its rows say only `⏎ open`. There is no sidebar, and no tmux server of the screen's own.
 
 ```
  Skelcrew v0.6.0  [ app ]  [ docs ]  [ site •1 ]
 
-   ● lead    claude
-     asks you
-     asks: start a task on #31 "Export as CSV"?        y/n
-
- 1 Backlog   2
- 2 Building  3 · 1 needs you
- ▸ ● app-t3  Rate limit the API
-     question · #43 · CI running · 14:02
-   ○ app-24  Login redirect
-     working · Editing rows.ts · #40 · CI passed · 14:31
-
- 3 Reviewing 1
- 4 Checks    0
- 5 Ready     1
- 6 Done      4
+   ● lead    claude                                       │ Rate limit the API
+     asks you                                             │ issue #42  github.com/acme/app/issues/42
+     asks: start a task on #31 "Export as CSV"?   y/n     │ PR #43     github.com/acme/app/pull/43
+                                                          │
+ 1 Backlog   2                                            │ Building · question
+ 2 Building  3 · 1 needs you                              │ CI running: test ✓  lint ●  build ●
+ ▸ ● app-t3  Rate limit the API                           │ Round 2 · changes asked
+     question · #43 · CI running · 14:02                  │   - The limit resets per process, not per user
+   ○ app-24  Login redirect                               │
+     working · Editing rows.ts · #40 · CI passed · 14:31  │ Add a limit per user to the public API, so one
+                                                          │ client can't starve the others. …
+ 3 Reviewing 1                                            │
+ 4 Checks    0                                            │ 13:40 submitted · 13:52 reviewed · 14:02 submitted
+ 5 Ready     1                                            │
+ 6 Done      4                                            │
 
  ↑↓ move  ⏎ open  1-6 stages  y/n answer  ⇥/alt+shift+←→ repository  q quit   cpu 63%  mem 9/32G
 ```
@@ -824,6 +824,8 @@ The marks: a filled `●` needs you or is ready, a hollow `○` doesn't. Green i
 The engine does what the keys ask, as only it talks to the tracker and forge. Merging and starting stay yours: the lead can't press these keys, and the merge confirm says when the PR changes `.agents/`.
 
 The list reads only Skelcrew's database and its copy of the tracker, so it opens at once and never asks GitHub itself. It writes to the terminal only when what it shows changes, so a list sitting open sends almost nothing over a slow link. The machine's load is the exception: the bottom line ends with it, such as `cpu 63%  mem 9/32G`, refreshed every 5 seconds, for the machine the engine runs on. CPU is the busy share of all cores over the last 5 seconds, and memory the system can free counts as free. Each figure is dim, turns yellow from 80% and red from 95%, and gives way before any key on a narrow terminal.
+
+**The details pane.** Beside the list, on its right, a pane shows the row you are on, and follows it as you move. It shows, from the top: the task's full title, the issue's link and the PR's link, its stage and word, its CI with each check, its review round with the verdict and the latest review's findings in short, its description folded after a few lines, and its recent events, such as submitted, reviewed and merged. It is what `sc show` gives, read from Skelcrew's copy and database alone, so it never asks the forge, not even for the logs of failed checks. On a row that isn't a task, such as the lead's, the pane is empty. The pane shows only while the terminal is wide enough for the list and the pane side by side. In a narrower terminal it is hidden, and the list is as it would be without it. The keys do the same with the pane as without it.
 
 **A lead you exit.** Exiting a repository's lead, such as with `/exit` or Ctrl-D, ends only the lead. The repository, its clone and its tasks stay, and the engine keeps polling. The engine notices the exit and doesn't bring that lead back at its start. Opening the repository again, by `sc` in a checkout of it or `sc attach lead`, starts the lead again with its conversation. A lead that crashes is brought back with its conversation when you look at it.
 
