@@ -83,12 +83,19 @@ const remoteIs = (r: Repository, url: string) => {
   );
 };
 
-// Returns the repository a word names, by its name in Skelcrew, its owner/name in any case, or
-// its remote URL, or none. sc start asks it first, as a repository's name can end like a task's,
-// such as api-v2.
+// Returns the repository a word names, by its name in Skelcrew or its owner/name, each in any
+// case, or its remote URL, or none. So a task's name typed in any case, such as APP-12, finds
+// its repository. A name spelled exactly wins, as two owners' repositories, such as App and
+// app, can keep short names that differ only in case. sc start asks it first, as a
+// repository's name can end like a task's, such as api-v2.
 export function repositoryNamed(db: Database, given: string): Repository | undefined {
-  return repositories(db).find(
-    (r) => r.name === given || fullNameIs(r, given) || remoteIs(r, given),
+  const all = repositories(db);
+  return (
+    all.find((r) => r.name === given) ??
+    all.find(
+      (r) =>
+        r.name.toLowerCase() === given.toLowerCase() || fullNameIs(r, given) || remoteIs(r, given),
+    )
   );
 }
 

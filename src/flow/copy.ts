@@ -18,7 +18,7 @@ const Author = z.object({
 // A comment on an item, or the text of a review on a PR.
 const Comment = z.object({ id: z.string(), text: z.string(), author: Author.nullable() });
 
-// A task's ID in its tracker, or Skelcrew's own for a thread with no task there, such as wr1. It
+// A task's ID in its tracker, or Skelcrew's own for a thread with no task there, such as t1. It
 // names the thread's folder, which setup deletes, and its branch, so it holds only letters,
 // digits, underscores and dashes, starting with a letter or digit: never a / or a .. that
 // would reach outside Skelcrew's threads folder.
@@ -28,9 +28,10 @@ export const TaskId = z
   .regex(/^[A-Za-z0-9][\w-]*$/);
 
 // Returns whether a task is Skelcrew's own, started with no issue in the tracker behind it. Its ID
-// is its machine's code and a number, such as wr4, or a t and a number from before machines had
-// codes, such as t4. A thread's name is its repository and its task's ID, so this shape is kept
-// for Skelcrew alone: saveItems leaves out an issue whose ID has it.
+// is a t and a number, such as t4, or, for a task named while Skelcrew named them by a code of
+// their machine's, two letters and a number, such as wr4. A thread's name is its repository and
+// its task's ID, so this shape is kept for Skelcrew alone: saveItems leaves out an issue whose ID
+// has it.
 export const ownTask = (task: string) => /^[a-z]{1,2}\d+$/.test(task);
 
 // What an item has whatever its kind. An ID is the tracker's own, such as "12" on GitHub, and

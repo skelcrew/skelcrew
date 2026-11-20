@@ -81,7 +81,7 @@ Needs you is a flag on a thread, never a stage. A task in `working` can need you
 
 ### Names
 
-A task has one name, used everywhere. It is the issue's ID with the repository's short name in front when the ID doesn't name a repository: GitHub issue #12 in app is `app-12`, since its number is only unique within app, and Linear's `JOTT-12` stays `JOTT-12`. A task with no issue gets a `t` and a number of Skelcrew's, such as `app-t3`, so it never clashes with an issue's name. A name never changes, so you can always tell which issue a task is. A dash, because no shell reads a dash as anything special.
+A task has one name, used everywhere. It is the issue's ID with the repository's short name in front when the ID doesn't name a repository: GitHub issue #12 in app is `app-12`, since its number is only unique within app, and Linear's `JOTT-12` stays `JOTT-12`. A task with no issue gets a `t` and a number of Skelcrew's, such as `app-t3`, so it never clashes with an issue's name. The number is the next one after every `t` number claimed on the repository's remote or held by a task on this machine, so a new name never equals an old one. Skelcrew claims it on the remote before using it, so two machines on one repository never take the same name. A name is typed in any case: `sc show APP-T3` and `sc show app-t3` show the same task. A name never changes, so you can always tell which issue a task is. A dash, because no shell reads a dash as anything special.
 
 A thread is addressed as its task and its role: `app-12/builder`. Wherever a command takes a thread, the task's name alone means its active thread: the one that needs you, or else its builder. The slash never needs quoting in a shell.
 

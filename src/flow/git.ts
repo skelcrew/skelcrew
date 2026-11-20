@@ -232,24 +232,19 @@ export async function onRemote(
 }
 
 // Where a name Skelcrew gave one of its own tasks is claimed on the remote, such as
-// refs/skelcrew/names/wr4. Outside refs/heads, so the forge lists no branch for it.
+// refs/skelcrew/names/t4. Outside refs/heads, so the forge lists no branch for it.
 const claimRef = (name: string) => `refs/skelcrew/names/${name}`;
 
-// Returns the names of Skelcrew's own tasks with the machine's code that any machine claimed on
-// the remote, such as wr4. Another machine can have the same code, such as workbox and
-// workstation, and only the remote is shared.
-export async function claimedNames(
-  db: Database,
-  repository: Repository,
-  code: string,
-): Promise<string[]> {
-  const listed = await git(db, repository, ["ls-remote", repository.remote, claimRef(`${code}*`)]);
-  // Each line is a commit, a tab and the ref. The pattern also matches a longer code that starts
-  // with this one, such as wrx4 for wr, so the name must go on with digits alone.
+// Returns the names of Skelcrew's own tasks that any machine claimed on the remote, such as t4.
+// Only the remote is shared between machines, so it is what keeps their names apart.
+export async function claimedNames(db: Database, repository: Repository): Promise<string[]> {
+  const listed = await git(db, repository, ["ls-remote", repository.remote, claimRef("t*")]);
+  // Each line is a commit, a tab and the ref. Claims from when names began with a machine's code,
+  // such as wr4, don't match the pattern, and a name must go on with digits alone after the t.
   return listed
     .split("\n")
     .map((line) => line.split("\t")[1]?.slice(claimRef("").length) ?? "")
-    .filter((name) => new RegExp(`^${code}\\d+$`).test(name));
+    .filter((name) => /^t\d+$/.test(name));
 }
 
 // Claims a name for one of Skelcrew's own tasks on the remote, from Skelcrew's clone in the

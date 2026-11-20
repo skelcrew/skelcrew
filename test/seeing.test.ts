@@ -539,6 +539,20 @@ console.log(threadTask(db, await startThread(db, { repo: "app", task: "3" })).cl
     });
   });
 
+  // A task's name may be typed in any case, such as SITE-7 or App-T4, and finds the same task.
+  test("finds a task named in any case", async () => {
+    sql(threadSql({ task: "t4", status: "done", title: "Rate limit the API" }));
+    serve();
+    await untilAnswers();
+    const shown = await skel(["show", "site-7"]);
+    expect(shown.err).toBe("");
+    expect((await skel(["show", "SITE-7"])).out).toBe(shown.out);
+    expect((await skel(["show", "Site-7"])).out).toBe(shown.out);
+    const own = await skel(["show", "app-t4"]);
+    expect(own.out).toStartWith("app-t4  Rate limit the API\n");
+    expect((await skel(["show", "APP-T4"])).out).toBe(own.out);
+  });
+
   test("shows a task's issue, threads and description", async () => {
     serve();
     await untilAnswers();

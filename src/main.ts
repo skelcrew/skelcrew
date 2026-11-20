@@ -33,13 +33,15 @@ const agentRefusals: Record<string, string> = {
   "plugin ls": "listing plugins",
 };
 
-// Splits a task's name, such as app-13, or app-wr1 for a thread with no tracker, into its
+// Splits a task's name, such as app-13, or app-t1 for a thread with no tracker, into its
 // repository and task. Gives nothing when the word isn't a task's name. Repository names can
-// hold dashes, so the task is what follows the last one.
+// hold dashes, so the task is what follows the last one. A name may be typed in any case, such
+// as APP-T1: the task comes back lowercase, as Skelcrew keeps it, and the daemon finds the
+// repository in any case.
 function splitTaskName(word?: string): [string, string] | undefined {
   // The greedy first group takes every dash but the last.
-  const parts = word?.match(/^(.+)-([a-z]{0,2}\d+)$/);
-  return parts?.[1] && parts[2] ? [parts[1], parts[2]] : undefined;
+  const parts = word?.match(/^(.+)-([a-z]{0,2}\d+)$/i);
+  return parts?.[1] && parts[2] ? [parts[1], parts[2].toLowerCase()] : undefined;
 }
 
 // Splits a thread's name into its repository and task, as splitTaskName does. A thread is its
@@ -48,9 +50,9 @@ function splitTaskName(word?: string): [string, string] | undefined {
 // as a repository named with its owner. Every task's one thread is its builder, so another role
 // is refused, saying so.
 function splitThreadName(word?: string): [string, string] | undefined {
-  const parts = word?.match(/^(.+)\/([a-z]+)$/);
+  const parts = word?.match(/^(.+)\/([a-z]+)$/i);
   const task = splitTaskName(parts?.[1] ?? word);
-  if (task && parts?.[2] && parts[2] !== "builder")
+  if (task && parts?.[2] && parts[2].toLowerCase() !== "builder")
     throw new Error(`${parts[1]} has no ${parts[2]} thread: a task's only thread is its builder`);
   return task;
 }
