@@ -435,18 +435,22 @@ test("repo rm removes Skelcrew's clone and forgets the trust", async () => {
   expect(missing.err).toContain("app");
 });
 
-test("repo rm refuses while the repository has live threads, and names them", async () => {
+test("repo rm refuses while the repository has live threads or queued tasks, and names them", async () => {
   await skel([], "y\n", onGitHub("simon/app"));
   const db = new Database(join(home, ".local", "share", "skelcrew", "skelcrew.db"));
   db.run(`${threadSql({ task: "12" })}
 ${threadSql({ task: "15", status: "waiting" })}
+${threadSql({ task: "16", status: "queued" })}
 ${threadSql({ task: "9", status: "done" })}`);
   const refused = await skel(["repo", "rm", "app"]);
   expect(refused.code).toBe(1);
-  expect(refused.err).toBe("Skelcrew: app has live threads: app-12, app-15. Stop them first.\n");
+  expect(refused.err).toBe(
+    "Skelcrew: app has live threads: app-12, app-15, app-16. Stop them first.\n",
+  );
   expect(existsSync(clone("simon/app"))).toBe(true);
   db.run("UPDATE threads SET status = 'done' WHERE task = 12");
   db.run("UPDATE threads SET status = 'failed' WHERE task = 15");
+  db.run("UPDATE threads SET status = 'done' WHERE task = 16");
   db.close();
   const removed = await skel(["repo", "rm", "app"]);
   expect(removed.err).toBe("");

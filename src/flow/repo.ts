@@ -672,17 +672,17 @@ export async function trustRepo(given: string): Promise<void> {
 
 // Removes a repository for sc repo rm. Ends its lead, which runs in `sessions`, then deletes
 // Skelcrew's clone, its row, your trust in it and the .agents/ you approved, and names the other repositories again.
-// Refuses while the repository has live threads, naming them. The lead is ended because, left running, it would
+// Refuses while the repository has live threads, or tasks in its queue, naming them. The lead is ended because, left running, it would
 // go on with no repository behind it, and the daemon would never bring it back or end it.
 export async function removeRepo(name: string, sessions: string): Promise<void> {
   const db = openDb();
   const found = repositories(db).find((r) => r.name === name);
   if (!found) throw new Error(`there is no repository named ${name}`);
   // Builders of live threads would keep running with no repository behind them, which
-  // breaks polling, sc ps and cleanup after merge.
+  // breaks polling, sc ps and cleanup after merge. A queued task would start one later.
   const live = db
     .query(
-      "SELECT task FROM threads WHERE owner = ? AND repo = ? AND status IN ('working', 'waiting') ORDER BY task",
+      "SELECT task FROM threads WHERE owner = ? AND repo = ? AND status IN ('queued', 'working', 'waiting') ORDER BY task",
     )
     .all(found.owner, found.repo)
     .map((row) => `${name}-${z.object({ task: z.coerce.string() }).parse(row).task}`);

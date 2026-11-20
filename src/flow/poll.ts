@@ -38,6 +38,7 @@ import { briefsNote, noteForLead, skelcrewNoteForLead, typeLeadNotes } from "./m
 import { forgeKnown, fullNameIs, hasNoCommits, refreshClone, repositories } from "./repo.ts";
 import { lastPushed } from "./round.ts";
 import { needsYou } from "./status.ts";
+import { claimUnderWay } from "./task-queue.ts";
 import { readThread, record, Thread, threadName } from "./thread.ts";
 
 // The label that starts a thread on a task, added in its tracker by someone who may.
@@ -52,7 +53,11 @@ const startLabel = "skelcrew";
 // of its own, such as the branch to start from. A task in `passed`, named the same way, is one
 // this daemon won't start by its label: someone else claimed it, or its claim was this
 // daemon's but the thread failed to start. Kept in memory, so the tracker isn't asked about it
-// on every poll. Nothing starts until Skelcrew's clone has a commit.
+// on every poll. Nothing starts until Skelcrew's clone has a commit. Each claim is saved before
+// it is asked for, until its outcome is known. A claim whose ask failed, or that the engine's
+// stop cut short, may have been granted to this machine, so when the tracker then says the issue
+// is taken, Skelcrew can't tell by whom: it starts nothing, so no task starts twice, and tells
+// the lead, so none is lost without a word. So does one whose label is gone since.
 async function startLabeled(
   db: Database,
   sessions: string,
@@ -82,8 +87,54 @@ async function startLabeled(
     (!existsSync(cloneDir(owner, repo)) || (await hasNoCommits(db, repository)))
   )
     return;
+  // A claim saved for a task that has a thread at work now was granted, and the engine stopped
+  // before it was forgotten. One for a queued task is the claim it still owes, which the queue
+  // makes. One for a task sc rm removed, as done, is left to the step below.
+  db.run(
+    `DELETE FROM claims WHERE owner = ? AND repo = ? AND EXISTS (SELECT 1 FROM threads t
+      WHERE t.owner = claims.owner AND t.repo = claims.repo AND CAST(t.task AS TEXT) = claims.task
+        AND t.status NOT IN ('queued', 'done'))`,
+    [owner, repo],
+  );
+  const claimWhere = "WHERE owner = ? AND repo = ? AND task = ?";
+  const forget = (id: string) => db.run(`DELETE FROM claims ${claimWhere}`, [owner, repo, id]);
+  // A claim saved for a task nothing asks to start now was cut short by the engine's stop: one
+  // with no thread whose label was removed or whose issue was closed since, or one for a task
+  // sc rm removed while it was asked. It may be this machine's, so the lead hears of it, and
+  // Skelcrew doesn't ask the tracker again, as that would claim an issue nobody asks for now. The
+  // claim is forgotten as the note is saved. A removed task's claim whose answer is still coming
+  // is left to it.
+  const asked = new Set(toStart.map((task) => task.id));
+  const stranded = db
+    .query(`SELECT c.task AS id, t.folder FROM claims c LEFT JOIN task_threads t ON t.owner = c.owner
+        AND t.repo = c.repo AND CAST(t.task AS TEXT) = c.task
+      WHERE c.owner = ? AND c.repo = ? AND (t.folder IS NULL OR t.status = 'done')`)
+    .all(owner, repo)
+    .map((row) => z.object({ id: z.string(), folder: z.string().nullable() }).parse(row))
+    .filter(({ id, folder }) => {
+      if (asked.has(id) || starting.has(`${fullName}#${id}`)) return false;
+      return folder === null || !claimUnderWay(readThread(db, folder));
+    })
+    .map(({ id }) => id);
+  for (const id of stranded) {
+    const name = `${repository.name}-${id}`;
+    const note = `${name}'s claim was cut short, and nothing asks Skelcrew to start it now, so Skelcrew can't tell if this machine holds it. To start it, sc start ${name}.`;
+    console.log(note);
+    db.transaction(() => {
+      forget(id);
+      noteForLead(db, sessions, { owner, repo }, note);
+    })();
+  }
   for (const task of toStart) {
     const key = `${fullName}#${task.id}`;
+    // Whether an earlier ask for this claim has no known outcome.
+    const unsure =
+      db.query(`SELECT 1 FROM claims ${claimWhere}`).get(owner, repo, task.id) !== null;
+    db.run("INSERT OR IGNORE INTO claims (owner, repo, task) VALUES (?, ?, ?)", [
+      owner,
+      repo,
+      task.id,
+    ]);
     // A claim that fails, such as on a network error, starts nothing and is tried again on the
     // next poll, so a task is never started without its claim.
     const claimed = await claimTask(db, repository, task.id).catch((error) => {
@@ -91,7 +142,23 @@ async function startLabeled(
       return null;
     });
     if (claimed === null) continue;
+    const name = `${repository.name}-${task.id}`;
+    // The claim is forgotten in the same transaction as the note is saved, so a stop between the
+    // two can't leave the claim forgotten and the lead never told.
+    const forgetAndTell = (note: string) =>
+      db.transaction(() => {
+        forget(task.id);
+        noteForLead(db, sessions, { owner, repo }, note.replace(/\s+/g, " ").slice(0, 200));
+      })();
+    if (!claimed && unsure) {
+      const note = `${name}'s claim was cut short, so Skelcrew can't tell if this machine holds it. If no other machine works on it, sc start ${name}.`;
+      console.log(note);
+      forgetAndTell(note);
+      passed.add(key);
+      continue;
+    }
     if (!claimed) {
+      forget(task.id);
       // Claimed by another machine, or by this one before a restart, when its thread failed
       // to start.
       console.log(
@@ -102,12 +169,19 @@ async function startLabeled(
     }
     // An sc start that came in while the tracker answered starts the task itself, with its own
     // options, such as the branch to start from, so the poll leaves it be.
-    if (starting.has(key)) continue;
+    if (starting.has(key)) {
+      forget(task.id);
+      continue;
+    }
     // The claim is this daemon's now, so a thread that fails to start isn't started by a
-    // later poll either: on another machine, or after a restart, its claim reads as taken.
-    const thread = await startThread(db, { repo: fullName, task: task.id }).catch((error) => {
+    // later poll either: on another machine, or after a restart, its claim reads as taken. So
+    // the lead hears why, and can start it with sc start once that is fixed.
+    const thread = await startThread(db, { repo: fullName, task: task.id }, true).catch((error) => {
       console.log(
         `couldn't start ${task.id} in ${fullName}, and its label won't start it again; sc start does: ${errorText(error)}`,
+      );
+      forgetAndTell(
+        `couldn't start ${name} from its label; once fixed, sc start ${name}: ${errorText(error)}`,
       );
       passed.add(key);
       return null;
@@ -115,12 +189,14 @@ async function startLabeled(
     if (thread === null) continue;
     // Claimed already, so only assigned.
     assignIssue(db, thread, false);
-    // The lead hears first, then the builder starts. The note is one line, as every note to
-    // the lead is.
-    const note = `started ${threadName(db, thread)} from ${trackerOf(db, repository)}: ${task.title}`;
+    // The lead hears first, then the builder starts, or for a task over the repository's
+    // limits.threads, that it waits in the queue. The note is one line, as every note to the
+    // lead is.
+    const queued = thread.status === "queued";
+    const note = `${queued ? "queued" : "started"} ${threadName(db, thread)} from ${trackerOf(db, repository)}: ${task.title}`;
     noteForLead(db, sessions, { owner, repo }, note.replace(/\s+/g, " ").slice(0, 200));
     // Not waited on, as for sc start: setup can take minutes.
-    setUpAndStart(thread);
+    if (!queued) setUpAndStart(thread);
   }
 }
 
@@ -200,7 +276,7 @@ async function actOnPr(
   const { folder } = before;
   const moved = await movedOnRemote(before, pr.head);
   const thread = readThread(db, folder);
-  if (!["working", "waiting", "stopped"].includes(thread.status)) return;
+  if (!["queued", "working", "waiting", "stopped"].includes(thread.status)) return;
   // Read only for a thread with a PR, so a bad max_rounds never fails the copy's update, nor
   // sc start, which polls first.
   const maxRounds = roundLimit(thread);
@@ -238,8 +314,9 @@ async function actOnPr(
     const note = skipped ?? decision.note;
     await endThread(db, sessions, thread, decision.end, note, pr.state === "merged");
   }
-  // Left unhandled, so a stopped thread's events reach its builder once it starts again.
-  else if (thread.status === "stopped" || tellingEvents.has(folder) || stale) return;
+  // Left unhandled, so a stopped or queued thread's events reach its builder once it starts.
+  else if (["stopped", "queued"].includes(thread.status) || tellingEvents.has(folder) || stale)
+    return;
   else if (decision.tell.length > 0 || decision.notice.length > 0 || decision.failed.length > 0)
     // Not waited on, so fetching a check's log holds up neither the other threads nor the
     // next poll.
@@ -572,10 +649,13 @@ export function pollRepositories(
   // with none, so its first poll brings everything open, and what closed while it was down
   // leaves the copy.
   const nexts = new Map<string, Map<string, string | null>>();
-  // The threads a poll looks after. A stopped thread's PR or branch still merges or closes.
+  // The threads a poll looks after. A stopped thread's PR or branch still merges or closes, and
+  // so does one queued to come back.
   const threadsToPoll = () =>
     db
-      .query("SELECT * FROM task_threads WHERE status IN ('working', 'waiting', 'stopped')")
+      .query(
+        "SELECT * FROM task_threads WHERE status IN ('queued', 'working', 'waiting', 'stopped')",
+      )
       .all()
       .map((row) => Thread.parse(row));
   const poll = (owner: string, repo: string): Promise<void> => {

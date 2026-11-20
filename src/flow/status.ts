@@ -380,10 +380,11 @@ export function reportStatuses(db: Database): void {
 // that needs you comes before a limit, which only waits.
 export function threadWord(thread: Thread, maxRounds: number, now = Date.now()): string {
   const { status, verdict } = thread;
-  // A thread that failed, stopped or is done says just that. Otherwise a question from its builder
-  // comes first, then its harness stopping on an error, then why it needs you, then what it is
-  // doing.
-  if (status === "failed" || status === "stopped" || status === "done") return status;
+  // A thread that is queued, failed, stopped or is done says just that. Otherwise a question from
+  // its builder comes first, then its harness stopping on an error, then why it needs you, then
+  // what it is doing.
+  if (status === "queued" || status === "failed" || status === "stopped" || status === "done")
+    return status;
   const underWay = thread.submitting !== null || thread.reviewing !== null;
   if (thread.asking) return "question";
   if (thread.erred && !thread.limited) return "error";

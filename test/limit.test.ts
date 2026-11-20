@@ -273,6 +273,7 @@ const thread = (change: Partial<Thread>): Thread => ({
   agents: null,
   flow: "default",
   review_post: null,
+  queued_since: null,
   turn_ended: false,
   submitted: false,
   told_lead: false,
