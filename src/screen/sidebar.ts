@@ -38,7 +38,7 @@ import { version } from "../version.ts";
 import { agentFooter, tellFooter } from "./footer.ts";
 import { noticeLines } from "./layout.ts";
 import { roundLimit } from "./lists.ts";
-import { edge, filled, paint } from "./look.ts";
+import { edge, filled, paint, removeControlCodes } from "./look.ts";
 import { type Open, repositoryTabs, sidebarRows } from "./rows.ts";
 import { sidebarWidth } from "./screen.ts";
 import { drawTop } from "./strip.ts";
@@ -119,6 +119,8 @@ function leadOnHost(db: ReturnType<typeof openDb>, { owner, repo }: Open): strin
 // else the right side shows is an agent's session, by its name.
 const detailsOf = (name: string) => `details:${name}`;
 const isDetails = (shown: string | null) => shown?.startsWith("details:") ?? false;
+// What the right side shows while it says why Enter couldn't attach to a builder.
+const refused = "refused";
 
 // Runs the sidebar until its pane goes. The session given is its own, on the screen's server,
 // `where` says which remote Skelcrew runs on, if any, for the header above it, and `repository`
@@ -474,10 +476,24 @@ export async function runSidebar(
     working = false;
   };
 
+  // Shows on the right side why Enter couldn't attach to the builder of the task named, such as a
+  // builder that isn't running, in place of its details, as that is where you meant to reach it.
+  // Your next key or move brings the details back. A reason that comes after you moved on is
+  // dropped, as the right side shows another row by then.
+  const refuse = (name: string, reason: string) => {
+    if (shown !== detailsOf(name)) return;
+    // Cut at words to the pane's width, a column in, each line printed as given, never run.
+    const room = Math.max(paneWidth(agents, rightPane) - 2, 10);
+    const lines = Bun.wrapAnsi(removeControlCodes(reason), room, { hard: true }).split("\n");
+    const say = 'printf "\\n"; printf " %s\\n" "$@"; exec cat >/dev/null';
+    respawnPane(agents, rightPane, ["sh", "-c", say, "sh", ...lines]);
+    tty = paneTty(agents, rightPane);
+    shown = refused;
+  };
+
   // Opens the row you are on, as Enter does in the list. On a task at work, the builder takes
-  // the right side and your typing, until Ctrl-\ brings back its details, or the footer says why
-  // it can't. Backlog asks to start the task, and the
-  // `… more` row shows every issue. Ready and Done open the PR, or copy its link. A ready task
+  // the right side and your typing, until Ctrl-\ brings back its details, or the right side says
+  // why it can't. Backlog asks to start the task, and the `… more` row shows every issue. Ready and Done open the PR, or copy its link. A ready task
   // whose builder needs you reaches the builder instead, so one Enter reaches what it waits on.
   const enter = () => {
     const row = rows[here];
@@ -493,8 +509,7 @@ export async function runSidebar(
     const atWork = row.part !== "ready" && row.part !== "done";
     if ((atWork || row.needsYou) && row.session) {
       void attachTask(agents, session, `${open.owner}/${open.repo}`, row.name).then((failed) => {
-        said = failed;
-        refresh();
+        if (failed !== null) refuse(row.name, failed);
       });
       return;
     }
@@ -525,6 +540,11 @@ export async function runSidebar(
   // answer. s and m work as in the list, and only reach the sidebar on a task's row.
   const press = (key: string) => {
     if (working) return;
+    // A reason shown on the right goes at the next key, which then does what it does.
+    if (shown === refused) {
+      shown = null;
+      follow();
+    }
     const name = keyNames[key] ?? key;
     const [, button, column, line] = clickPattern.exec(key) ?? [];
     if (asking) {

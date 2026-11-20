@@ -643,7 +643,7 @@ test("a task that ends while you are on it stays yours, under Done, which opens"
   expect(seen()).toContain("○ app-12");
 });
 
-test("Enter on a task whose builder isn't running says so, and attaches to nothing", async () => {
+test("Enter on a task whose builder isn't running says so on the right, until the next key", async () => {
   sql("UPDATE threads SET status = 'failed' WHERE task = 12");
   tmux(agents, "kill-session", "-t", "=app-12");
   open("lead");
@@ -652,8 +652,12 @@ test("Enter on a task whose builder isn't running says so, and attaches to nothi
   await until(() => selected().includes("app-12"), "app-12's row");
   await until(() => right().includes("Builder not running"), "app-12's details");
   press("Enter");
-  await until(() => seen().includes("isn't running: sc start app-12"), "the footer to say why");
-  expect(right()).toContain("Builder not running");
+  const why = "app-12's builder isn't running: sc start app-12";
+  await until(() => right().includes(why), "the right side to say why");
+  expect(tmux(agents, "list-clients").out).toBe("");
+  type("q");
+  await until(() => right().includes("Builder not running"), "app-12's details again");
+  expect(right()).not.toContain(why);
 });
 
 test("opens from a terminal this machine has no description of", async () => {
