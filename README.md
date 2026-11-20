@@ -62,7 +62,7 @@ Ask the lead in plain words, such as:
 
 > Add a CSV export to the reports page.
 
-It proposes an issue and a thread, and files and starts them once you say yes. Or add the `skelcrew` label to an issue on GitHub, and Skelcrew starts a thread on it within a minute or so.
+It proposes a thread, with a title and a one-line summary, and starts it once you say yes. It files no issue unless you ask it to. Or add the `skelcrew` label to an issue on GitHub, and Skelcrew starts a thread on it within a minute or so.
 
 Watch it from another terminal:
 
@@ -72,7 +72,7 @@ sc ps             # the threads, with their status and which need you
 sc show app-12    # one task: its threads, PR, checks and review
 ```
 
-A task is named after its issue, such as `app-12`. The builder submits each round, and a fresh reviewer reviews it. When the PR is approved and green, merge it on GitHub or with `m` in the list. Or arm it to merge once it is ready:
+Use your task's name where these say `app-12`. The lead and `sc ls` show it: a task from an issue is named after it, such as `app-12`, and one you asked the lead for is named like `app-wr1`. The builder submits each round, and a fresh reviewer reviews it. When the PR is approved and green, merge it on GitHub or with `m` in the list. Or arm it to merge once it is ready:
 
 ```sh
 sc merge --when-ready app-12
