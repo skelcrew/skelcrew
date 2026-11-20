@@ -23,6 +23,9 @@ import {
 import { type Lock, type Locked, readLockAt, writeBoth, yourLock, yourPlugins } from "./lock.ts";
 import { commitOf, installedPlugins, readManifest } from "./plugin.ts";
 
+// The GitHub plugin, the forge of every repository on github.com.
+export const githubPlugin = "skelcrew/skelcrew-github";
+
 // What Skelcrew reads of a repository's skelcrew.yaml here: only plugins:, by the GitHub
 // repository each comes from, such as skelcrew/skelcrew-github. The rest is the loader's, in
 // settings.ts. A path, such as ./plugin, is refused: a folder plugin has no pin, so a
