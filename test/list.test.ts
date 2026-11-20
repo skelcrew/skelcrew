@@ -736,7 +736,7 @@ test("the rows come from the database alone, with no tmux and no settings file",
 
 // The list as drawn, given its rows, at 80 columns and 20 lines.
 const frame = {
-  version: "0.6.0",
+  versions: ["v0.6.0"],
   where: "",
   name: "app",
   tabs: [
@@ -1006,6 +1006,33 @@ test("the open repository's tab shows when other tabs don't fit", () => {
   expect(tabAt({ ...frame, tabs }, 40, 30)).toBe("simon/app");
 });
 
+// A narrow list shows the longest name of the version that fits, so words around a checkout's
+// commit give way before the commit is cut.
+test("a narrow list shows a shorter name of the version, keeping the whole commit", () => {
+  const versions = ["6f1c2ab* (checkout, * = uncommitted changes)", "checkout 6f1c2ab+changes"];
+  const shown = { ...frame, versions, tabs: [] };
+  const top = (width: number) =>
+    Bun.stripANSI(drawnWith(0, shown, { width, height: 20 })[0] ?? "").trimEnd();
+  expect(top(80)).toBe(" Skelcrew 6f1c2ab* (checkout, * = uncommitted changes)");
+  expect(top(40)).toBe(" Skelcrew checkout 6f1c2ab+changes");
+  // The open repository's tab keeps its room, so the name gives way for it too.
+  const app = [
+    { name: "app", fullName: "simon/app", needYou: 0, colour: "yellow" as const, ready: 0 },
+  ];
+  const withTab = (width: number) =>
+    Bun.stripANSI(drawnWith(0, { ...shown, tabs: app }, { width, height: 20 })[0] ?? "").trimEnd();
+  expect(withTab(56)).toBe(" Skelcrew checkout 6f1c2ab+changes   app");
+  expect(withTab(80)).toBe(" Skelcrew 6f1c2ab* (checkout, * = uncommitted changes)   app");
+  // On a remote, where it runs gives way before the version is cut.
+  const far = { ...shown, where: "simon@a-long-server-name.example.com" };
+  const remote = Bun.stripANSI(drawnWith(0, far, { width: 36, height: 20 })[0] ?? "").trimEnd();
+  expect(remote).toBe(" Skelcrew checkout 6f1c2ab+changes");
+  // A clean checkout keeps (checkout) over the place, so it never looks like a release.
+  const clean = { ...far, versions: ["6f1c2ab (checkout)", "6f1c2ab"], where: "workbox" };
+  const cleanTop = Bun.stripANSI(drawnWith(0, clean, { width: 30, height: 20 })[0] ?? "");
+  expect(cleanTop.trimEnd()).toBe(" Skelcrew 6f1c2ab (checkout)");
+});
+
 test("a list taller than the terminal scrolls its stages, and its edges say what is hidden", () => {
   const more = Array.from({ length: 10 }, (_, i) =>
     threadSql({ task: String(50 + i), title: `Task ${50 + i}`, changed: now - (10 + i) * 60_000 }),
@@ -1234,7 +1261,7 @@ process.exit(0);`,
 
 test("the list opens on the first task that needs you, and q leaves it with every agent running", async () => {
   await open();
-  expect(seen()).toContain(" Skelcrew v");
+  expect(seen()).toContain(" Skelcrew ");
   expect(seen()).toContain("site •1");
   expect(here()).toStartWith("▸ ● APP-12");
   type("q");
@@ -1944,12 +1971,25 @@ test("a click on a stage's heading opens or closes it, and the wheel moves a row
   expect(here()).toStartWith("▸ ○ APP-9");
 });
 
+// A Skelcrew run from a checkout names its commit, read from git as the engine reads it, and says
+// when it has changes not committed. A stand-in git names the commit, and passes the rest on.
+test("from a checkout, the top line names its commit and its uncommitted changes", async () => {
+  const bin = join(home, "bin");
+  mkdirSync(bin, { recursive: true });
+  const body = `case "$*" in *"rev-parse --short HEAD"*) echo 6f1c2ab;; *"status --porcelain"*) echo " M src/main.ts";; *) exec ${Bun.which("git")} "$@";; esac`;
+  writeFileSync(join(bin, "git"), `#!/bin/sh\n${body}\n`, { mode: 0o755 });
+  await open({ bin });
+  expect(seen().split("\n")[0]).toStartWith(
+    " Skelcrew 6f1c2ab* (checkout, * = uncommitted changes)   app",
+  );
+});
+
 // The tabs are on the top line, left after Skelcrew's version. Your terminal reports a click by
 // its column and row, counted from 1, as typed here.
 test("a click on a repository's tab opens it, and a click elsewhere does nothing", async () => {
   await open();
   const top = seen().split("\n")[0] ?? "";
-  expect(top).toMatch(/^ Skelcrew v\S+ {3}app {4}site •1$/);
+  expect(top).toMatch(/^ Skelcrew .+? {3}app {4}site •1$/);
   type(`\x1b[<0;${top.indexOf("site") + 1};2M`);
   type(`\x1b[<0;${top.indexOf("site") + 1};1M\x1b[<0;${top.indexOf("site") + 1};1m`);
   await until(() => seen().includes("SITE-3"), "site's list");

@@ -120,6 +120,14 @@ test("installs a newer release over Skelcrew, and notes which one", async () => 
   expect(readdirSync(join(home, "bin"))).toEqual(["sc"]);
 });
 
+// A release may name Skelcrew with a capital, as the spec has it, and still installs.
+test("installs a release whose version line names Skelcrew with a capital", async () => {
+  latest("#!/bin/sh\necho 'Skelcrew 0.4.3'\n");
+  const done = await installLatest();
+  expect(done.out).toBe("0.4.3\n");
+  expect(marker()).toBe("0.4.3");
+});
+
 test("downloads nothing more when Skelcrew already is the latest release", async () => {
   latest(binary("0.4.2"));
   const done = await installLatest();

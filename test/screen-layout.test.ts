@@ -3,7 +3,6 @@
 import { afterEach, beforeEach, expect, setDefaultTimeout, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import checkout from "../package.json";
 import {
   attachTo,
   click,
@@ -251,37 +250,68 @@ test("the header, the tabs and the strip share one row, and the agent starts rig
   await until(() => seen().includes("#34"), "the strip");
   const lines = seen().split("\n");
   // Skelcrew above the sidebar, its edge, and the tab above the agent, then the strip.
-  expect(lines[0]?.trimEnd()).toMatch(
-    /^ {2}Skelcrew v[\d.]+ +│ {3}app +APP-7 {2}Fix the login {2}#34$/,
-  );
+  expect(lines[0]?.trimEnd()).toMatch(/^ {2}Skelcrew .*│ {3}app +APP-7 {2}Fix the login {2}#34$/);
   // The open tab's grey starts where the agent's text does, with its name two columns in.
   expect(lines[0]?.indexOf("app")).toBe((lines[1]?.indexOf("I am") ?? 0) + 2);
   expect(lines[1]).toContain("I am app-7");
 });
 
-test("above the sidebar it says Skelcrew, in white, and the checkout's version when no laptop sent you here", async () => {
+// Puts a git ahead of the real one that says the checkout is at `commit`, with `changes` not
+// committed, and is the real one for everything else.
+function checkoutAt(commit: string, changes = ""): void {
+  const real = Bun.which("git") ?? "git";
+  mkdirSync(join(home, "checkout"));
+  const answers = `case "$*" in *"rev-parse --short HEAD"*) echo ${commit};; *"status --porcelain"*) echo "${changes}";; *) exec ${real} "$@";; esac`;
+  writeFileSync(join(home, "checkout", "git"), `#!/bin/sh\n${answers}\n`, { mode: 0o755 });
+  given.before = `PATH=${join(home, "checkout")}:$PATH `;
+}
+
+test("above the sidebar it says Skelcrew, in white, and the checkout's commit when no laptop sent you here", async () => {
+  checkoutAt("6f1c2ab");
   open("lead");
   await ready("lead");
   const above = () => (seen().split("\n")[0] ?? "").slice(0, sidebar - 1).trimEnd();
-  await until(() => above() === `  Skelcrew v${checkout.version}`, "the header");
+  await until(() => above() === "  Skelcrew 6f1c2ab (checkout)", "the header");
   const colours = tmux(terminal, "capture-pane", "-p", "-e", "-t", "=one:").out;
   const header = colours.split("\n")[0];
   expect(header).toContain("\x1b[1m");
   expect(header).toContain("38;5;231m");
 });
 
+// git gives a longer commit in a repository with many, or with core.abbrev set, and the header
+// has room for 44 columns after the name. Words around the commit give way, never the commit.
+test.each([
+  ["a6bfe6f", " M src/main.ts", "a6bfe6f* (checkout, * = uncommitted changes)"],
+  ["a6bfe6fe12", " M src/main.ts", "checkout a6bfe6fe12+changes"],
+  ["a6bfe6fe1234567890", "", "a6bfe6fe1234567890 (checkout)"],
+  ["a6bfe6fe1234567890a6bfe6fe1234567890abcd", "", "a6bfe6fe1234567890a6bfe6fe1234567890abcd"],
+  // Too long to show with +changes, it keeps a * for them, rather than look clean.
+  [
+    "a6bfe6fe1234567890a6bfe6fe1234567890abcd",
+    " M src/main.ts",
+    "a6bfe6fe1234567890a6bfe6fe1234567890abcd*",
+  ],
+])("commit %p with changes %p shows above the sidebar as %p", async (commit, changes, shown) => {
+  checkoutAt(commit, changes);
+  open("lead");
+  await ready("lead");
+  const above = () => (seen().split("\n")[0] ?? "").slice(0, sidebar - 1).trimEnd();
+  await until(() => above() === `  Skelcrew ${shown}`, "the header");
+});
+
 test("each terminal says where it came from, as they can come from different laptops", async () => {
+  checkoutAt("6f1c2ab");
   open("lead", "one", "xterm-256color", "120", "simon@workbox");
   await ready("lead");
   open("lead", "two");
   await ready("lead", "two");
   const place = (window: string) => (seen(window).split("\n")[0] ?? "").slice(0, sidebar - 1);
   await until(
-    () => place("one").startsWith(`  Skelcrew v${checkout.version} · simon@`),
+    () => place("one").startsWith("  Skelcrew 6f1c2ab (checkout) · s"),
     "the first place",
   );
   await until(
-    () => place("two").trimEnd() === `  Skelcrew v${checkout.version}`,
+    () => place("two").trimEnd() === "  Skelcrew 6f1c2ab (checkout)",
     "the second header",
     "two",
   );
