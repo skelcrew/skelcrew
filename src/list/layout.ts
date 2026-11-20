@@ -108,16 +108,6 @@ const otherTab = "48;5;236";
 // doesn't fit beside the open one's is left out.
 function topParts(frame: Frame, width: number): { line: string; spans: TabSpan[] } {
   const place = frame.where ? ` on ${frame.where}` : "";
-  // Words around a checkout's commit give way before the line is cut, so it keeps the whole
-  // commit when it can.
-  const named = (name: string) => ` Skelcrew ${name}${place}`;
-  const fits = (name: string) => Bun.stringWidth(named(name)) <= width;
-  const version = frame.versions.find(fits) ?? frame.versions.at(-1) ?? "";
-  const plain = named(version);
-  if (Bun.stringWidth(plain) > width) return { line: fitted(plain, width), spans: [] };
-  let line = ` ${paint(bright, "Skelcrew")} ${paint(grey, `${version}${place}`)}`;
-  let used = Bun.stringWidth(plain);
-  const spans: TabSpan[] = [];
   // Each tab's text, with a space either side inside its background.
   const laid = frame.tabs.map((tab) => {
     const open = tab.name === frame.name;
@@ -128,10 +118,25 @@ function topParts(frame: Frame, width: number): { line: string; spans: TabSpan[]
     const text = ` ${[tab.name, ...badges.map(({ badge }) => badge)].join(" ")} `;
     return { tab, open, badges, size: Bun.stringWidth(text) };
   });
+  // Words around a checkout's commit give way before the line is cut, so it keeps the whole
+  // commit when it can. They give way for the open repository's tab too, so it keeps showing.
+  const openSize = laid.find(({ open }) => open)?.size ?? 0;
+  const named = (name: string) => ` Skelcrew ${name}${place}`;
+  const room = (name: string, more: number) => Bun.stringWidth(named(name)) + more <= width;
+  const version =
+    frame.versions.find((name) => room(name, openSize ? 2 + openSize : 0)) ??
+    frame.versions.find((name) => room(name, 0)) ??
+    frame.versions.at(-1) ??
+    "";
+  const plain = named(version);
+  if (Bun.stringWidth(plain) > width) return { line: fitted(plain, width), spans: [] };
+  let line = ` ${paint(bright, "Skelcrew")} ${paint(grey, `${version}${place}`)}`;
+  let used = Bun.stringWidth(plain);
+  const spans: TabSpan[] = [];
   // The open repository's tab always keeps its room, so you can always tell which one shows.
   // Other tabs that don't fit beside it are left out. Each tab has a space between it and the
   // next.
-  let kept = laid.find(({ open }) => open)?.size ?? 0;
+  let kept = openSize;
   for (const { tab, open, badges, size } of laid) {
     if (open) kept = 0;
     else if (used + 2 + size + (kept ? 2 + kept : 0) > width) continue;

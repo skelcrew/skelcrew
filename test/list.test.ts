@@ -963,6 +963,14 @@ test("a narrow list shows a shorter name of the version, keeping the whole commi
     Bun.stripANSI(drawnWith(0, shown, { width, height: 20 })[0] ?? "").trimEnd();
   expect(top(80)).toBe(" Skelcrew 6f1c2ab* (checkout, * = uncommitted changes)");
   expect(top(40)).toBe(" Skelcrew checkout 6f1c2ab+changes");
+  // The open repository's tab keeps its room, so the name gives way for it too.
+  const app = [
+    { name: "app", fullName: "simon/app", needYou: 0, colour: "yellow" as const, ready: 0 },
+  ];
+  const withTab = (width: number) =>
+    Bun.stripANSI(drawnWith(0, { ...shown, tabs: app }, { width, height: 20 })[0] ?? "").trimEnd();
+  expect(withTab(56)).toBe(" Skelcrew checkout 6f1c2ab+changes   app");
+  expect(withTab(80)).toBe(" Skelcrew 6f1c2ab* (checkout, * = uncommitted changes)   app");
 });
 
 test("a list taller than the terminal scrolls its stages, and its edges say what is hidden", () => {
