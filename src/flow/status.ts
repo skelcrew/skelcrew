@@ -511,14 +511,26 @@ export function questionAsked(db: Database, sessions: string, folder: string): v
 // submit in that turn shows as turn ended, and its last message goes to the lead, who brings a
 // question in it to you. One that told the lead in that turn with sc tell lead sends nothing
 // more, as the lead already has its words. A turn with no new work while the last submit is
-// still on its way waits on that submit instead.
+// still on its way waits on that submit instead. A turn that ends with a background job still
+// running, such as a test run, isn't a stop: the harness starts a turn again once the job ends.
 export function turnEnded(
   db: Database,
   sessions: string,
   folder: string,
-  ended: { head?: string | undefined; message?: string | undefined },
+  ended: {
+    head?: string | undefined;
+    message?: string | undefined;
+    background?: boolean | undefined;
+  },
 ): void {
   const thread = readThread(db, folder);
+  // The builder still works, so it shows working, the lead hears nothing yet, and the safety
+  // net doesn't wait on it. The turn after the job ends is the one judged.
+  if (ended.background) {
+    const working = { turn_ended: false, ended_at: null, ended_said: null, told_lead: false };
+    record(db, folder, working);
+    return;
+  }
   // The lead reads the builder's own words, as a message from it, so a question need not end
   // in a question mark to reach you. A harness that gave none still says the turn ended.
   const said = ended.message ? `, saying:\n\n${ended.message}` : ".";

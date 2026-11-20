@@ -338,3 +338,22 @@ markForgotten(db, "none", 5, Date.now() + 60 * 60_000);
 console.log(JSON.stringify({ told, cleared: needsYou(thread()), ended: thread().turn_ended }));`);
   expect(seen).toEqual({ told: false, cleared: false, ended: true });
 });
+
+// A builder waiting on its own background job, such as a test run, isn't stopped: its harness
+// starts a turn again once the job ends. So it shows working, the lead hears nothing, and the
+// safety net waits for a turn that ends with nothing left running.
+test("a turn that ends with a background job still running isn't a stopped builder", () => {
+  const seen = inProcess(`
+turnEnded(db, "none", "app-12", { message: "The tests are still running.", background: true });
+markForgotten(db, "none", 5, Date.now() + 60 * 60_000);
+const running = { ended: thread().turn_ended, needsYou: needsYou(thread()), notes: notes() };
+turnEnded(db, "none", "app-12", { message: "The tests failed. Should I skip the slow one?" });
+const stopped = thread().turn_ended;
+markForgotten(db, "none", 5, Date.now() + 60 * 60_000);
+console.log(JSON.stringify({ running, stopped, word: needsYouFor(thread()) }));`);
+  expect(seen).toEqual({
+    running: { ended: false, needsYou: false, notes: [] },
+    stopped: true,
+    word: "The tests failed. Should I skip the slow one?",
+  });
+});
