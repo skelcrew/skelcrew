@@ -174,12 +174,13 @@ function leadRow(db: Database, open: Open): Row {
 
 // Returns the row of a request of the lead's that waits for your yes, such as `Start APP-12 Fix
 // login?`, with a filled yellow mark, as it waits on you. Its title is the request, whose task
-// title comes from the tracker, so its control codes go.
-function requestRow(request: LeadRequest): Row {
+// title comes from the tracker, so its control codes go. Its agent is the lead, given as its row,
+// whose screen the sidebar shows read-only beside it.
+function requestRow(request: LeadRequest, lead: Row): Row {
   return {
     part: "request",
     section: "lead",
-    name: `request ${request.id}`,
+    name: `request-${request.id}`,
     task: null,
     title: removeControlCodes(request.says),
     mark: { sign: "●", colour: "yellow" },
@@ -190,8 +191,8 @@ function requestRow(request: LeadRequest): Row {
     checks: "",
     when: "",
     needsYou: false,
-    session: null,
-    running: false,
+    session: lead.session,
+    running: lead.running,
     tmux: false,
     start: null,
     merge: null,
@@ -531,9 +532,10 @@ export function listRows(db: Database, open: Open, now: number): Row[] {
         (a.place ?? Number.POSITIVE_INFINITY) - (b.place ?? Number.POSITIVE_INFINITY) ||
         startedOf(b) - startedOf(a),
     );
+  const lead = leadRow(db, open);
   return [
-    leadRow(db, open),
-    ...requestsOf(db, open.owner, open.repo).map(requestRow),
+    lead,
+    ...requestsOf(db, open.owner, open.repo).map((request) => requestRow(request, lead)),
     ...live("needs you"),
     ...upNext,
     ...waiting,

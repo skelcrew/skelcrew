@@ -671,10 +671,10 @@ function prepareTables(db: Database): void {
   // and a note dropped while it was typed, such as a thread's end once the thread starts over,
   // must not hand its ID to a note saved meanwhile, which would then be deleted unheard.
   // The lead's requests that wait for your yes, each with what y does, as JSON, the line the
-  // list shows for it, when the lead made it, so the newest shows first, and whether an answer is
-  // under way, which keeps it until its start is done and the lead's note saved. AUTOINCREMENT
-  // keeps an answered request's ID from going to a new one, which a y meant for the old one
-  // would answer.
+  // list shows for it, when the lead made it, so the newest shows first, and when you said yes to
+  // it, null until then. A request you said yes to stays until what the yes does is done and the
+  // lead's note saved, so a stop of the daemon in between loses neither. AUTOINCREMENT keeps an
+  // answered request's ID from going to a new one, which a y meant for the old one would answer.
   db.run(`CREATE TABLE IF NOT EXISTS lead_requests (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     owner TEXT NOT NULL,
@@ -682,7 +682,7 @@ function prepareTables(db: Database): void {
     action TEXT NOT NULL,
     says TEXT NOT NULL,
     made INTEGER NOT NULL,
-    answering INTEGER NOT NULL DEFAULT 0
+    answered INTEGER
   )`);
   // The release the daemon installed in the background, for the list's notice, until it runs
   // on it. At most one row.

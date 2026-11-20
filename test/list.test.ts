@@ -151,7 +151,7 @@ function leadRequests(): void {
   ('simon', 'app', '{"kind":"no such kind"}', 'Unreadable', 3),
   ('simon', 'app', '{"kind":"start new","title":"CSV \\u001b[31mexport","body":"As CSV"}', 'Start a new task: CSV \u001b[31mexport?', 4),
   ('simon', 'site', '{"kind":"start","task":"3"}', 'Start SITE-3 Docs?', 5);
-INSERT INTO lead_requests (owner, repo, action, says, made, answering) VALUES
+INSERT INTO lead_requests (owner, repo, action, says, made, answered) VALUES
   ('simon', 'app', '{"kind":"start","task":"31"}', 'Being answered?', 6, 1);`);
 }
 

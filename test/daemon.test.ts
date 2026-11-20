@@ -412,20 +412,35 @@ test("writes down the full commit and checkout it started from", async () => {
   expect(readFileSync(file, "utf8")).toBe(`${commit.trim()} ${checkout}\n`);
 });
 
-// A daemon stopped while it started what you said yes to never told the lead, so the request
-// waits for your answer again once the daemon is back.
-test("a request whose answer a stop cut short waits for your answer again", async () => {
+// A daemon stopped after a yes started a new task, but before the lead heard, finishes the yes as
+// it starts again: it finds the task the yes started, tells the lead, and starts nothing twice.
+test("a yes whose start took effect before a stop is reported once the daemon is back, never run again", async () => {
   setUp();
+  addRepository("app");
   serve();
   await untilAnswers();
-  const answering = `INSERT INTO lead_requests (owner, repo, action, says, made, answering) VALUES
-  ('simon', 'app', '{"kind":"start","task":"12"}', 'Start APP-12?', 1, 1)`;
   for (const run of running.splice(0)) await stop(run);
-  onDb((db) => db.run(answering));
+  const said = Date.now() - 1000;
+  onDb((db) =>
+    db.run(`INSERT INTO lead_requests (owner, repo, action, says, made, answered) VALUES
+  ('simon', 'app', '{"kind":"start new","title":"CSV export","body":"Add it."}',
+    'Start a new task: CSV export?', 1, ${said});
+${threadSql({ task: "t100", title: "CSV export", body: "Add it.", status: "stopped", started: Date.now() })}`),
+  );
   serve();
   await untilAnswers();
-  expect(onDb((db) => db.query("SELECT answering FROM lead_requests").all())).toEqual([
-    { answering: 0 },
+  await until(() => onDb((db) => db.query("SELECT 1 FROM lead_requests").all()).length === 0);
+  const started = onDb((db) =>
+    db.query("SELECT task FROM task_threads WHERE title = 'CSV export'").all(),
+  );
+  expect(started).toEqual([{ task: "t100" }]);
+  const notes = onDb((db) =>
+    db.query("SELECT text FROM notes WHERE text LIKE '%your request%'").all(),
+  );
+  expect(notes).toEqual([
+    {
+      text: "The human said yes in the list to your request: Start a new task: CSV export? Started APP-T100.",
+    },
   ]);
 });
 

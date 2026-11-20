@@ -14,11 +14,15 @@ import {
   press,
   read,
   ready,
+  right,
+  screen,
+  screenSessions,
   seen,
   selected,
   sidebar,
   sql,
   startTest,
+  tmux,
   type,
   until,
 } from "./screen.ts";
@@ -152,7 +156,7 @@ test("Shift-Up on a queued task in Up next moves it in the queue, and the footer
 
 // A request of the lead's shows under the lead, and on its row the lead shows live on the right,
 // but your typing stays with the sidebar: y and n answer the request, and the lead gets nothing.
-test("on a request of the lead's, the lead shows on the right, and y and n answer it", async () => {
+test("on a request of the lead's, the lead shows read-only on the right, and y and n answer it", async () => {
   daemon();
   sql(`INSERT INTO lead_requests (owner, repo, action, says, made) VALUES
   ('simon', 'app', '{"kind":"start","task":"31"}', 'Start APP-31 Export as CSV?', 1),
@@ -166,7 +170,11 @@ test("on a request of the lead's, the lead shows on the right, and y and n answe
   press("M-Down");
   await until(() => selected().includes("Add the repository"), "the newest request");
   await until(() => footer().includes("y yes  n no"), "the keys in the footer");
-  expect(seen()).toContain("I am lead");
+  // The right side is the details pane, which reads the lead's screen without attaching to it.
+  const rightCommand = () =>
+    tmux(screen, "display", "-p", "-t", `=${screenSessions()[0]}:.1`, "#{pane_start_command}").out;
+  await until(() => rightCommand().includes("details"), "the details pane");
+  await until(() => right().includes("I am lead"), "the lead's screen, read-only");
   type("n");
   await until(() => acted.includes("answer simon/app 2 no"), "the no");
   await until(() => footer().includes("Told the lead no."), "the daemon's answer");

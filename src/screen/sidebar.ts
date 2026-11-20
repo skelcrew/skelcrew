@@ -254,15 +254,12 @@ export async function runSidebar(
     shown = next;
   };
   // Shows on the right what the row you are on is: the lead's session on the lead's row, and a
-  // task's details on any other. A request of the lead's shows the lead's session too, live, but
-  // your typing stays with the sidebar, so y and n answer the request and nothing reaches the lead.
+  // task's details on any other. A request of the lead's shows as a task's details do, with the
+  // lead's screen read-only in place of the details, so your typing stays with the sidebar, y and
+  // n answer the request, and nothing, a click included, reaches the lead.
   const follow = () => {
     const row = rows[here];
-    if (!row) return;
-    if (row.part !== "lead" && row.part !== "request") return show(detailsOf(row.name));
-    show(open.lead);
-    const typing = row.part === "lead" ? rightPane : `=${session}:.0`;
-    screenTmux(agents, ["select-pane", "-t", typing]);
+    if (row) show(row.part === "lead" ? open.lead : detailsOf(row.name));
   };
 
   // Returns the session of the agent the right side is about: the lead or an agent shown, or on a
@@ -388,8 +385,7 @@ export async function runSidebar(
       const client = doing("asking tmux which agent shows", () => shownSession(agents, tty));
       if (client) shown = client;
       else if (!running.includes(open.lead)) shown = open.lead;
-      const onLead = rows[here]?.part === "lead" || rows[here]?.part === "request";
-      if (shown === open.lead && !onLead) here = 0;
+      if (shown === open.lead && rows[here]?.part !== "lead") here = 0;
     }
     // A lead that moved to or from a plugin's host, or to another session on it, is shown
     // through its host now, once the right side shows the lead. This comes once the sidebar knows

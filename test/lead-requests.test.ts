@@ -91,6 +91,30 @@ describe.skipIf(insideSandbox)("the lead's requests", () => {
     );
   }, 60_000);
 
+  // A stop of the daemon right after your yes, before its start took effect, leaves the request
+  // marked as answered. The daemon starts it as it comes back, and the lead hears.
+  test("a yes whose start a stop cut short starts once the daemon is back", async () => {
+    addApp();
+    const db = new Database(join(data(), "skelcrew.db"));
+    db.run(
+      `INSERT INTO lead_requests (owner, repo, action, says, made, answered) VALUES
+      ('simon', 'app', '{"kind":"start","task":"12","short":"Export"}', 'Start APP-12 Add export?', 1, ?)`,
+      [Date.now()],
+    );
+    db.close();
+    serve();
+    await until(() => existsSync(join(data(), "repos", "simon", "app", "README")));
+    expect(await askForLead("simon/app")).toContain(leadPlaces("simon", "app").name);
+    await until(() => threadOf("12") !== null, 30_000);
+    expect(threadOf("12")).toMatchObject({ short: "Export" });
+    await until(() => read(join(data(), "claude", "app-12", "args")) !== "", 30_000);
+    await until(() =>
+      read(join(lead(), "typed")).includes(
+        "The human said yes in the list to your request: Start APP-12 Add export? Started APP-12.",
+      ),
+    );
+  }, 60_000);
+
   test("a yes to a new task starts it with its title, description, short title and flow", async () => {
     await openApp();
     const asked = await asLead([

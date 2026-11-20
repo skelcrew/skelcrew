@@ -51,7 +51,14 @@ import {
   openedRepositories,
   startLead,
 } from "./lead.ts";
-import { answerAgain, answerRequest, requestAnswered, saveRequest } from "./lead-requests.ts";
+import {
+  answeredRequests,
+  answerRequest,
+  type LeadRequest,
+  requestAnswered,
+  saveRequest,
+  startedBy,
+} from "./lead-requests.ts";
 import { restoreLimits, wakeAfterLimit } from "./limits.ts";
 import { listRepositories, listTasks, listThreads, showTask } from "./list.ts";
 import {
@@ -459,6 +466,66 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       failThread(db, sessions, thread, error);
     }
   };
+  // Tells the lead what came of your answer to its request, and deletes the request, in one step.
+  // So a stop of the daemon leaves either both done, or the request, which answeredRequests finds
+  // again.
+  const settle = (repository: Repository, id: number, text: string) =>
+    db.transaction(() => {
+      requestAnswered(db, id);
+      noteForLead(db, sessions, repository, text);
+    })();
+  // Does what your yes to a lead's request asks, tells the lead, and returns what the bottom line
+  // says. A yes to adding a repository only tells the lead, as only sc repo add at your terminal
+  // adds one. A start runs as sc start, and the lead hears what it did or why it failed.
+  const doYes = async (repository: Repository, taken: LeadRequest): Promise<string> => {
+    const { action, says } = taken;
+    const yes = `The human said yes in the list to your request: ${says}`;
+    if (action.kind === "repo add") {
+      settle(
+        repository,
+        taken.id,
+        `${yes} Only they can add it, with sc repo add ${action.repository} at their own terminal.`,
+      );
+      return `Told the lead yes. Add it with sc repo add ${action.repository} in your terminal.`;
+    }
+    const { short, flow } = action;
+    const options = { ...(short ? { short } : {}), ...(flow ? { flow } : {}) };
+    const full = `${repository.owner}/${repository.repo}`;
+    const start: DaemonRequest =
+      action.kind === "start"
+        ? {
+            command: "start",
+            repo: full,
+            task: action.task,
+            ...(action.from ? { from: action.from } : {}),
+            ...options,
+          }
+        : { command: "start new", repo: full, title: action.title, body: action.body, ...options };
+    try {
+      const { started } = z.object({ started: z.string() }).parse(await handle(start, "you"));
+      settle(repository, taken.id, `${yes} ${started}`);
+      return started;
+    } catch (error) {
+      settle(repository, taken.id, `${yes} It failed: ${errorText(error)}`);
+      throw error;
+    }
+  };
+  // Finishes each yes whose start the last stop of the daemon cut short. A start that took effect
+  // is only reported to the lead, and one that didn't runs now, so a yes never starts twice and
+  // the lead always hears it.
+  const finishAnswers = async () => {
+    for (const taken of answeredRequests(db)) {
+      try {
+        const repository = findRepository(db, `${taken.owner}/${taken.repo}`);
+        const name = startedBy(db, repository, taken.action, taken.answered);
+        const yes = `The human said yes in the list to your request: ${taken.says}`;
+        if (name !== null) settle(repository, taken.id, `${yes} Started ${name}.`);
+        else await doYes(repository, taken);
+      } catch (error) {
+        console.log(`couldn't finish the answer to a lead's request: ${errorText(error)}`);
+      }
+    }
+  };
   // Carries out a request the caller may make, and returns the reply to send. The switch has
   // no default, so the typecheck fails if a request is left out.
   const handle = async (request: DaemonRequest, caller: Caller): Promise<object> => {
@@ -729,63 +796,22 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
           asked: `Asked the human in the list: ${says} Their answer comes to you as a note.`,
         };
       }
-      // Your y or n on a lead's request. A yes to a start starts it as sc start does. A yes to
-      // adding a repository only tells the lead, as only sc repo add at your terminal adds one.
-      // The lead is told your answer either way, and what the start did or why it failed.
+      // Your y or n on a lead's request. A no and a yes to adding a repository only tell the
+      // lead. A yes to a start starts it as sc start does, as doYes says.
       case "answer": {
         const repository = findRepository(db, request.repo);
         const { owner, repo } = repository;
-        const taken = answerRequest(db, owner, repo, request.id);
+        const taken = answerRequest(db, owner, repo, request.id, Date.now());
         if (taken === null) throw new Error("That request was answered already.");
-        const { action, says } = taken;
-        // The request goes in the same step that saves the lead's note, so a stop of the daemon
-        // leaves either both or the request, which comes back as its start says.
-        const tell = (text: string) =>
-          db.transaction(() => {
-            requestAnswered(db, taken.id);
-            noteForLead(db, sessions, repository, text);
-          })();
         if (!request.yes) {
-          tell(`The human said no in the list to your request: ${says}`);
-          return { said: `Told the lead no to: ${says}` };
-        }
-        if (action.kind === "repo add") {
-          tell(
-            `The human said yes in the list to your request: ${says} Only they can add it, with sc repo add ${action.repository} at their own terminal.`,
+          settle(
+            repository,
+            taken.id,
+            `The human said no in the list to your request: ${taken.says}`,
           );
-          return {
-            said: `Told the lead yes. Add it with sc repo add ${action.repository} in your terminal.`,
-          };
+          return { said: `Told the lead no to: ${taken.says}` };
         }
-        const { short, flow } = action;
-        const options = { ...(short ? { short } : {}), ...(flow ? { flow } : {}) };
-        const full = `${owner}/${repo}`;
-        const start: DaemonRequest =
-          action.kind === "start"
-            ? {
-                command: "start",
-                repo: full,
-                task: action.task,
-                ...(action.from ? { from: action.from } : {}),
-                ...options,
-              }
-            : {
-                command: "start new",
-                repo: full,
-                title: action.title,
-                body: action.body,
-                ...options,
-              };
-        try {
-          const { started } = z.object({ started: z.string() }).parse(await handle(start, "you"));
-          tell(`The human said yes in the list to your request: ${says} ${started}`);
-          return { said: started };
-        } catch (error) {
-          tell(
-            `The human said yes in the list to your request: ${says} It failed: ${errorText(error)}`,
-          );
-          throw error;
-        }
+        return { said: await doYes(repository, taken) };
       }
       case "tell lead":
         messageLead(db, sessions, caller, request.text);
@@ -1022,8 +1048,9 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   // would overwrite a limit a review met meanwhile and forget when it was met, so a review
   // that started before it could end it by finishing.
   restoreLimits(db);
-  // A request whose answer the last stop cut short waits for your answer again.
-  answerAgain(db);
+  // A yes to a lead's request whose start the last stop cut short is finished. It isn't waited
+  // on, as a start waits for the first poll.
+  void finishAnswers();
   // A freeze leaves nothing else in the log, so the daemon logs its own stalls.
   watchForStalls("The daemon");
   // A task that left the queue but whose builder's start the stop cut short goes back to it

@@ -51,40 +51,41 @@ export function saveRequest(
 }
 
 // Returns the requests of a repository's lead that wait for your answer, newest first. One you
-// are answering is left out, as is one whose action can't be read, such as one an older release
-// saved in another shape.
+// answered is left out, as is one whose action can't be read, such as one an older release saved
+// in another shape.
 export function requestsOf(db: Database, owner: string, repo: string): LeadRequest[] {
   return db
     .query(
-      "SELECT id, action, says FROM lead_requests WHERE owner = ? AND repo = ? AND answering = 0 ORDER BY id DESC",
+      "SELECT id, action, says FROM lead_requests WHERE owner = ? AND repo = ? AND answered IS NULL ORDER BY id DESC",
     )
     .all(owner, repo)
-    .flatMap((row) => {
-      const saved = Saved.parse(row);
-      const action = readJson("lead_requests.action", saved.action, LeadAction.nullable(), null);
-      return action === null ? [] : [{ id: saved.id, action, says: saved.says }];
-    });
+    .flatMap((row) => readBack(row));
 }
 
-// Marks a request as being answered, as you answer it, and returns it, or null when it was answered
-// already, such as by another list a moment before. Marking it in one step means two answers never
-// both act on it. It stays saved until requestAnswered, so a daemon that stops while a start is
-// under way loses neither the request nor your answer.
+// Returns a request read back from the database, or nothing when its action can't be read.
+function readBack(row: unknown): LeadRequest[] {
+  const saved = Saved.parse(row);
+  const action = readJson("lead_requests.action", saved.action, LeadAction.nullable(), null);
+  return action === null ? [] : [{ id: saved.id, action, says: saved.says }];
+}
+
+// Marks a request as answered at a moment in milliseconds, as you answer it, and returns it, or
+// null when it was answered already, such as by another list a moment before. Marking it in one
+// step means two answers never both act on it. It stays saved until requestAnswered, so a daemon
+// that stops while a start is under way finds it again, as answeredRequests says.
 export function answerRequest(
   db: Database,
   owner: string,
   repo: string,
   id: number,
+  at: number,
 ): LeadRequest | null {
   const taken = db
     .query(
-      "UPDATE lead_requests SET answering = 1 WHERE owner = ? AND repo = ? AND id = ? AND answering = 0 RETURNING id, action, says",
+      "UPDATE lead_requests SET answered = ? WHERE owner = ? AND repo = ? AND id = ? AND answered IS NULL RETURNING id, action, says",
     )
-    .get(owner, repo, id);
-  if (taken === null) return null;
-  const saved = Saved.parse(taken);
-  const action = readJson("lead_requests.action", saved.action, LeadAction.nullable(), null);
-  return action === null ? null : { id: saved.id, action, says: saved.says };
+    .get(at, owner, repo, id);
+  return taken === null ? null : (readBack(taken)[0] ?? null);
 }
 
 // Deletes a request once what your answer does is done and the lead's note about it is saved.
@@ -92,8 +93,49 @@ export function requestAnswered(db: Database, id: number): void {
   db.run("DELETE FROM lead_requests WHERE id = ?", [id]);
 }
 
-// Puts every request whose answer a daemon's stop cut short back among those that wait, as the
-// daemon starts, so you see it again and can answer it again. Its lead never heard that answer.
-export function answerAgain(db: Database): void {
-  db.run("UPDATE lead_requests SET answering = 0 WHERE answering = 1");
+// Returns the requests you said yes to whose start a stop of the daemon cut short, with their
+// repository and when you said yes. A no and a yes to adding a repository finish in one step, so
+// only a start is ever left here.
+export function answeredRequests(
+  db: Database,
+): (LeadRequest & { owner: string; repo: string; answered: number })[] {
+  return db
+    .query(
+      "SELECT id, owner, repo, action, says, answered FROM lead_requests WHERE answered IS NOT NULL",
+    )
+    .all()
+    .flatMap((row) => {
+      const { owner, repo, answered } = z
+        .object({ owner: z.string(), repo: z.string(), answered: z.number() })
+        .parse(row);
+      return readBack(row).map((request) => ({ ...request, owner, repo, answered }));
+    });
+}
+
+// Returns the name of the task a yes started, such as APP-12, when the start took effect before a
+// stop of the daemon cut it short, or null when it didn't, so the start runs once and only once.
+// An issue's start took effect when its thread is at work, started or changed since the yes. A new
+// task's took effect when the repository has a thread with its title and description that
+// started since.
+export function startedBy(
+  db: Database,
+  repository: Repository,
+  action: LeadAction,
+  answered: number,
+): string | null {
+  const { owner, repo } = repository;
+  if (action.kind === "start") {
+    const thread = threadOn(db, `${owner}/${repo}`, action.task);
+    const live = thread !== null && ["working", "waiting", "queued"].includes(thread.status);
+    const since = Math.max(thread?.started ?? 0, thread?.changed ?? 0) >= answered;
+    return live && since ? taskName(repository.name, action.task) : null;
+  }
+  if (action.kind === "repo add") return null;
+  const found = db
+    .query(`SELECT task FROM task_threads WHERE owner = ? AND repo = ? AND title = ? AND body = ?
+      AND started >= ? ORDER BY started DESC LIMIT 1`)
+    .get(owner, repo, action.title, action.body, answered);
+  return found === null
+    ? null
+    : taskName(repository.name, z.object({ task: z.string() }).parse(found).task);
 }
