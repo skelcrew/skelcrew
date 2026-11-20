@@ -284,14 +284,19 @@ test("above the sidebar it says Skelcrew, in white, and the checkout's commit wh
   expect(header).toContain("38;5;231m");
 });
 
-// git gives a longer commit in a repository with many, and the header has room for 24 columns
-// after the name.
-test("a checkout with changes and a long commit still says so above the sidebar", async () => {
-  checkoutAt("a6bfe6fe12", " M src/main.ts");
+// git gives a longer commit in a repository with many, or with core.abbrev set, and the header
+// has room for 24 columns after the name. Words around the commit give way, never the commit.
+test.each([
+  ["a6bfe6f", " M src/main.ts", "checkout a6bfe6f+changes"],
+  ["a6bfe6fe12", " M src/main.ts", "a6bfe6fe12+changes"],
+  ["a6bfe6fe12345", "", "a6bfe6fe12345 (checkout)"],
+  ["a6bfe6fe1234567890", "", "a6bfe6fe1234567890"],
+])("commit %p with changes %p shows above the sidebar as %p", async (commit, changes, shown) => {
+  checkoutAt(commit, changes);
   open("lead");
   await ready("lead");
   const above = () => (seen().split("\n")[0] ?? "").slice(0, sidebar - 1).trimEnd();
-  await until(() => above() === "  Skelcrew checkout a6bfe6f+changes", "the header");
+  await until(() => above() === `  Skelcrew ${shown}`, "the header");
 });
 
 test("each terminal says where it came from, as they can come from different laptops", async () => {

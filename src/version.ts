@@ -55,25 +55,31 @@ export function laptopBuild(): string | null {
 }
 
 // Returns how a build from a checkout is named after "Skelcrew": its commit, such as
-// 6f1c2ab (checkout), with + changes when it held uncommitted changes, then a shorter name that
-// says the same, for the sidebar's header, which has room for only 24 columns. The short name
-// keeps seven characters of the commit, as git gives more in a repository with many commits,
-// and the name would no longer fit. A build with no commit to name, such as a single file nobody
+// 6f1c2ab (checkout), with + changes when it held uncommitted changes, then shorter names for
+// the sidebar's header, which has room for only 24 columns. Each shorter one drops words around
+// the commit, never a character of it, as git gives as many as it takes to name one commit, and
+// more in a repository with many. A build with no commit to name, such as a single file nobody
 // stamped, says so rather than pretending.
 function checkoutNames(build: string | null): string[] {
   if (build === null) return ["(checkout, commit unknown)", "checkout, commit unknown"];
   if (build.endsWith(dirty)) {
     const commit = build.slice(0, -dirty.length);
-    return [`${commit} + changes (checkout)`, `checkout ${commit.slice(0, 7)}+changes`];
+    return [
+      `${commit} + changes (checkout)`,
+      `checkout ${commit}+changes`,
+      `${commit}+changes`,
+      commit,
+    ];
   }
-  return [`${build} (checkout)`];
+  return [`${build} (checkout)`, build];
 }
 
 // Returns which Skelcrew this is, as the screen's header and the list's top line show it after
 // "Skelcrew": the release, such as v0.4.2, or a checkout's commit, so a screenshot always says
-// which Skelcrew it came from. The longest name comes first, then any shorter ones. The checkout is read once, with the same git commands the engine
-// uses to decide when to restart, as the code that runs doesn't change after it starts. Only
-// when asked, so commands that never draw, such as an agent's sc submit, don't run git for it.
+// which Skelcrew it came from. The longest name comes first, then any shorter ones. The checkout
+// is read once, with the same git commands the engine uses to decide when to restart, as the
+// code that runs doesn't change after it starts. Only when asked, so commands that never draw,
+// such as an agent's sc submit, don't run git for it.
 let shown: string[] = [];
 export function shownVersions(): string[] {
   if (release) return [`v${release}`];
