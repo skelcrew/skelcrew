@@ -913,12 +913,15 @@ describe("with a forge", () => {
       const listed: Row[] = JSON.parse((await skel(["ps", "app", "--json"])).out);
       return Object.fromEntries(listed.map((row) => [row.thread, row]));
     };
-    // app-18's push fails a moment after the daemon starts.
-    let shown = await rows();
-    for (let tries = 0; shown["app-18"]?.review.state !== "failed" && tries < 100; tries++) {
-      await Bun.sleep(100);
-      shown = await rows();
-    }
+    // app-18's push fails a moment after the daemon starts. sc ps names each thread by its task.
+    let shown: Record<string, Row> = {};
+    await until(
+      async () => {
+        shown = await rows();
+        return shown["APP-18"]?.review.state === "failed";
+      },
+      { what: () => `APP-18's review to fail, as sc ps showed ${JSON.stringify(shown["APP-18"])}` },
+    );
     expect(shown["APP-16"]?.review).toMatchObject({ state: "reviewing", round: 3 });
     expect(shown["APP-17"]?.review).toMatchObject({ state: "reviewing", round: 5 });
     expect(shown["APP-18"]?.review).toMatchObject({ state: "failed", round: 1 });

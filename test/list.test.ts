@@ -2505,15 +2505,18 @@ test("the live view reads only while the list shows with its pane", async () => 
   await until(() => here().startsWith("▸ ○ APP-7"), "the list again");
   const back = reads();
   await until(() => reads() > back, "reads again");
-  // In a terminal too narrow for the pane, nothing is read.
+  // In a terminal too narrow for the pane, nothing is read. A read under way as the pane went
+  // can still be noted, as after the attach above, so the list first goes a second without one.
   tmux("resize-window", "-t", "=one:", "-x", "100");
   await until(() => !seen().includes(" │ "), "no pane");
+  await wait(() => noReads(reads), { what: () => "the reads to stop without the pane" });
   expect(await noReads(reads)).toBe(true);
   // Nor once the list has left.
   tmux("resize-window", "-t", "=one:", "-x", String(wide));
   await until(() => seen().includes(" │ "), "the pane");
   type("q");
   await until(() => read(join(home, "left")) === "left", "the list to leave");
+  await wait(() => noReads(reads), { what: () => "the reads to stop once the list left" });
   expect(await noReads(reads)).toBe(true);
 });
 
