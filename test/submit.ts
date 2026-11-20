@@ -105,7 +105,8 @@ exec sleep 300`,
 }
 
 // Stands in for Codex. Review n answers with the verdict in Skelcrew's Codex folder's verdict-n,
-// and fails without one. It sleeps first when slow-n is there, and while held-n is there it
+// and fails without one. With check-n there, it first runs sc check, as a reviewer runs the
+// tests, and notes in the sessions folder that it did. It sleeps first when slow-n is there, and while held-n is there it
 // waits for the test to put go-n in the sessions folder. With error-n there, it echoes its
 // prompt and then that error, as codex exec does, and fails. What it was given, and the
 // branches it saw, go in the sessions folder, the one place a review writes that lasts. Each
@@ -120,6 +121,7 @@ n=$(( $(cat "$s/count" 2>/dev/null || echo 0) + 1 )); echo $n > "$s/count"
 git branch -r > "$s/branches-$n.new"; mv "$s/branches-$n.new" "$s/branches-$n"
 git rev-parse origin/main > "$s/main-$n.new" 2>&1; mv "$s/main-$n.new" "$s/main-$n"
 cat > "$s/prompt-$n.new"; mv "$s/prompt-$n.new" "$s/prompt-$n"
+test -e "$CODEX_HOME/check-$n" && { touch "$s/checking-$n"; sc check > /dev/null 2>&1; }
 test -e "$CODEX_HOME/slow-$n" && sleep 30
 i=0; while test -e "$CODEX_HOME/held-$n" && ! test -e "$s/go-$n" && [ $i -lt 600 ]; do sleep 0.1; i=$((i+1)); done
 test -e "$CODEX_HOME/error-$n" && { cat "$s/prompt-$n" "$CODEX_HOME/error-$n" >&2; exit 1; }

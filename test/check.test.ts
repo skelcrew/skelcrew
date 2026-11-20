@@ -207,12 +207,12 @@ test("a server the suite leaves running, such as tmux, doesn't hold the slot onc
   }
 }, 60_000);
 
-test("a review cancelled while its check runs ends the suite and frees the slot", async () => {
+test("sc check killed with its whole process group, as a reviewer is, ends the suite and frees the slot", async () => {
   await serve();
   const [a, b] = ["a", "b"].map((name) => checkout(name));
   if (!a || !b) throw new Error("no checkouts");
-  // A reviewer runs sc check in a process group of its own, and a cancelled review kills the
-  // whole group at once.
+  // A reviewer runs sc check in a process group of its own, and ending a review kills the whole
+  // group at once. The review itself is in submit-limits.test.ts, as it needs a real sandbox.
   const reviewer = Bun.spawn(
     ["sh", "-c", `${JSON.stringify(process.execPath)} "$0" check`, source("main.ts")],
     {
