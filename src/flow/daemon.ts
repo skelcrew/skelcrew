@@ -17,7 +17,7 @@ import {
   stillRunning,
 } from "../agents/sessions.ts";
 import { agentsUnanswered } from "../approved-agents.ts";
-import { checkFlow, graceMinutes, leadMayArmMerges, repositoryCommands } from "../config.ts";
+import { checkFlow, graceMinutes, leadCanMerge, repositoryCommands } from "../config.ts";
 import { finishUpgrade, moveToTasks, moveTurnEnded, openDb, type Repository } from "../db.ts";
 import { flowRoles } from "../flows.ts";
 import { setupDone } from "../machine/setup.ts";
@@ -43,7 +43,14 @@ import { ownTask, prOf, saveItems } from "./copy.ts";
 import { readyWhen } from "./decide.ts";
 import { removeThread, removing, stopThread } from "./events.ts";
 import { noCommits } from "./git.ts";
-import { closeExitedLeads, lastOpened, leadOf, openedRepositories, startLead } from "./lead.ts";
+import {
+  closeExitedLeads,
+  lastOpened,
+  leadOf,
+  leadPrompted,
+  openedRepositories,
+  startLead,
+} from "./lead.ts";
 import { restoreLimits, wakeAfterLimit } from "./limits.ts";
 import { listRepositories, listTasks, listThreads, showTask } from "./list.ts";
 import {
@@ -201,6 +208,17 @@ const exitLook = z.coerce
   .min(0)
   .catch(1000)
   .parse(process.env.SKELCREW_EXIT_LOOK_MS ?? 1000);
+
+// How often, in milliseconds, the daemon looks for work that waits: the queue of limits.threads,
+// the messages waiting for builders, and stopped builders for the safety net. Tests set
+// SKELCREW_LOOK_MS shorter, so seeing that something doesn't happen takes a fraction of a
+// second rather than several. The looks at agents' screens keep their two seconds, as telling
+// a live status line from a still one depends on it.
+const look = z.coerce
+  .number()
+  .min(0)
+  .catch(2000)
+  .parse(process.env.SKELCREW_LOOK_MS ?? 2000);
 
 // Ends the daemon on a signal: removes its sockets, ends the processes it started, and exits.
 // The agents' sessions aren't the daemon's processes, so agents keep working while the
@@ -446,7 +464,10 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
     if (state !== null) {
       const lead = leadOfCaller(caller);
       keepState(db, lead ?? callingThread(caller), state);
-      if (lead) return { state };
+      if (lead) {
+        if (request.command === "question answered") leadPrompted(db, lead.owner, lead.repo);
+        return { state };
+      }
     }
     switch (request.command) {
       // sc check holds its connection open while it runs, so answer() hands it to the queue of
@@ -655,9 +676,9 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
           ready: readyWhen(thread),
         };
       }
-      // You arm one at your terminal, after saying y. A lead arms one
-      // only when you let it in your config, and only with the words you asked it in, which it
-      // gives in a file.
+      // You arm one at your terminal, after saying y. A lead arms one only while your config
+      // lets it, as it does unless you turn it off, and only with the words you asked it in,
+      // which it gives in a file.
       case "merge when ready":
       case "merge skip review": {
         const thread = threadToMerge(db, request);
@@ -667,11 +688,11 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
             throw new Error("--asked-file is the lead's: at your terminal, sc merge asks you y/N");
           return { said: armMerge(db, sessions, thread, { seen: request.seen }, skip) };
         }
-        if (!leadMayArmMerges())
+        if (!leadCanMerge())
           throw new Error(
             skip
-              ? "the human hasn't let you arm a merge: ask them to run sc merge --skip-review in their own terminal"
-              : "the human hasn't let you arm a merge when ready: ask them to run sc merge --when-ready in their own terminal",
+              ? "the human turned off your arming merges: ask them to run sc merge --skip-review in their own terminal, or to turn it on with lead: { can_merge: true } in ~/.config/skelcrew/config.yaml"
+              : "the human turned off your arming merges: ask them to run sc merge --when-ready in their own terminal, or to turn it on with lead: { can_merge: true } in ~/.config/skelcrew/config.yaml",
           );
         if (!request.asked?.trim())
           throw new Error(
@@ -981,7 +1002,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
     } catch (error) {
       console.log(`couldn't mark stopped builders nobody acted on: ${errorText(error)}`);
     }
-  }, 2000);
+  }, look);
   // A host that shows status hears each builder's as it is now, and each change from here on.
   reportStatuses(db);
   // Open your socket.
@@ -1019,11 +1040,11 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       },
     );
   }
-  // Type the messages waiting for builders as soon as each can take them, looking every two
-  // seconds, as a builder becomes idle with no word to the daemon, such as after Esc.
-  setInterval(() => deliverAllWaiting(db, sessions), 2000);
-  // Start the tasks whose turn came in the queue of limits.threads, now and every two seconds
-  // from here on, as a builder ends in many ways, and a limit raised in a file frees places too.
+  // Type the messages waiting for builders as soon as each can take them, looking every look,
+  // as a builder becomes idle with no word to the daemon, such as after Esc.
+  setInterval(() => deliverAllWaiting(db, sessions), look);
+  // Start the tasks whose turn came in the queue of limits.threads, now and every look from
+  // here on, as a builder ends in many ways, and a limit raised in a file frees places too.
   // Only after the threads above were brought back, so a task leaving the queue now is never
   // also taken for one whose setup the daemon's stop cut short. A thread sc rm is removing stays
   // queued, so it never starts while it is being removed, as does one that still owes its claim,
@@ -1039,7 +1060,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
     }
   };
   startFromQueue();
-  setInterval(() => doing("starting tasks from the queue", startFromQueue), 2000);
+  setInterval(() => doing("starting tasks from the queue", startFromQueue), look);
   // Start polling, which also lets any sc start waiting on it go ahead, and keep Skelcrew itself
   // up to date.
   polling.resolve(pollRepositories(db, sessions, every, setUpAndStart, startingTasks));

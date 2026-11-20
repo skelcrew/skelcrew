@@ -12,7 +12,6 @@ import { draw as drawWith, noticeLines } from "../src/screen/layout.ts";
 import type { EntryCount } from "../src/screen/lists.ts";
 import { nextList, nextRow, rowAtLine } from "../src/screen/moves.ts";
 import { type Row, threadAge } from "../src/screen/rows.ts";
-import { sidebarWidth } from "../src/screen/screen.ts";
 import { source, threadSql } from "./harness.ts";
 
 const row = {
@@ -60,6 +59,9 @@ function stateOf(status: Row["status"], word: string): Status {
   return word === "working" ? "working" : "idle";
 }
 
+// The width the split screen's own sidebar was drawn at, which these tests of its drawing keep,
+// though the screen's sidebar is now the list.
+const sidebarWidth = 38;
 const size = { width: sidebarWidth, height: 12 };
 // The sidebar, a click and a move with no entries, as most of these tests need.
 const draw = (rows: Row[], shown: string | null, room: typeof size) =>
@@ -176,20 +178,13 @@ test("a thread with messages waiting for its builder says how many on its row", 
   expect(listed(draw(rows, "lead", { width: sidebarWidth, height: 14 }))).toEqual([
     "  ◆ lead",
     "    running · claude",
+    "  Needs you",
+    "  ● 13 app-13",
+    "    approved · 2 messages waiting …",
     "  ○ 12 app-12",
     "    claude",
     "    1 message waiting",
-    "  ● 13 app-13",
-    "    approved · 2 messages waiting …",
   ]);
-});
-
-test("the sidebar is 38 columns wide, with room for 31 of a name and title", () => {
-  expect(sidebarWidth).toBe(38);
-  const title = "Send people back to the page they came from after signing in";
-  expect(listed(draw([thread("app-9", { title })], "lead", size))[0]).toBe(
-    "  ○ 9 Send people back to the page…",
-  );
 });
 
 // A row of sc ps for a thread, with no PR or review unless given.
@@ -735,6 +730,72 @@ test("Alt-Up and Alt-Down move one row, stop at the ends, and skip agents that a
   expect(stepped(rows, "app-3", -1)).toBe("app-1");
   expect(stepped(rows, "lead", -1)).toBeNull();
   expect(stepped(rows, "app-3", 1)).toBeNull();
+});
+
+// A thread waiting on you is above the rest, under a heading of its own, so it is reached first.
+// Once it no longer waits on you it is back under Active, and the row you look at stays yours.
+test("a thread that needs you shows under Needs you, above Active, and goes back once it doesn't", () => {
+  const asking = thread("app-2", { status: "waiting", word: "question", state: "needs you" });
+  const rows = [lead, thread("app-1"), asking, thread("app-3")];
+  const tall = { width: sidebarWidth, height: 24 };
+  const lines = read(draw(rows, "app-2", tall)).filter((line) => line && line !== rule);
+  expect(lines.slice(2).map((line) => line.trimEnd())).toEqual([
+    "  Needs you",
+    "  ● 2 app-2",
+    "    question · claude",
+    "  Active",
+    "  ○ 1 app-1",
+    "    claude",
+    "    working",
+    "  ○ 3 app-3",
+    "    claude",
+    "    working",
+  ]);
+  expect(
+    selected(draw(rows, "app-2", tall))
+      .map(plain)
+      .join(""),
+  ).toContain("app-2");
+  // Moves and clicks follow the order shown.
+  expect(stepped(rows, "lead", 1)).toBe("app-2");
+  expect(stepped(rows, "app-2", 1)).toBe("app-1");
+  expect(stepped(rows, "app-3", -1)).toBe("app-1");
+  expect(picked(rows, "lead", tall, 6)).toBe("app-2");
+  // Answered, it is back under Active in its place, and still the row you look at.
+  const answered = [lead, thread("app-1"), thread("app-2"), thread("app-3")];
+  const after = read(draw(answered, "app-2", tall)).filter((line) => line && line !== rule);
+  expect(after).not.toContain("  Needs you");
+  expect(after.slice(2, 6).map((line) => line.trimEnd())).toEqual([
+    "  Active",
+    "  ○ 1 app-1",
+    "    claude",
+    "    working",
+  ]);
+  expect(
+    selected(draw(answered, "app-2", tall))
+      .map(plain)
+      .join(""),
+  ).toContain("app-2");
+});
+
+// Each heading scrolls with its rows, so a row of Active never shows under Needs you's heading.
+test("scrolled down to Active, no row shows under the Needs you heading", () => {
+  const asking = thread("app-1", { status: "waiting", word: "question", state: "needs you" });
+  const rows = [lead, asking, ...[2, 3, 4, 5].map((n) => thread(`app-${n}`))];
+  const short = { width: sidebarWidth, height: 12 };
+  const lines = read(draw(rows, "app-5", short)).map((line) => line.trimEnd());
+  expect(lines).not.toContain("  Needs you");
+  expect(
+    selected(draw(rows, "app-5", short))
+      .map(plain)
+      .join(""),
+  ).toContain("app-5");
+  // At the top, both headings show, each over its own rows.
+  const full = read(draw(rows, "app-1", { width: sidebarWidth, height: 30 }));
+  const needs = full.indexOf("  Needs you");
+  const active = full.findIndex((line) => line.trimEnd() === "  Active");
+  expect(full.slice(needs, active).join("\n")).toContain("app-1");
+  expect(full.slice(needs, active).join("\n")).not.toContain("app-2");
 });
 
 test("moving from an agent that isn't listed goes to the lead", () => {

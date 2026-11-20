@@ -130,13 +130,16 @@ function failedWaits(saved: ReturnType<typeof shownBefore>): void {
   saved.tabs[0] = { ...saved.tabs[0], needYou: 1, colour: "yellow" };
 }
 
-// Adds what sc ps now says each thread needs you for, which the release before tasks didn't
-// say: app-t1's builder asked a question, and app-13 is approved with green checks, waiting for
-// you to merge it.
+// Adds what sc ps and the sidebar now say each thread needs you for, which the release before
+// tasks didn't say: app-t1's builder asked a question, and app-13 is approved with green checks,
+// waiting for you to merge it.
 function sayWhatFor(saved: ReturnType<typeof shownBefore>): void {
   const words: Record<string, string> = { "app-t1": "question", "app-13": "ready to merge" };
   for (const row of [...saved.ps, ...saved.psNotes])
     row.needsYouFor = row.needsYou ? (words[row.thread] ?? null) : null;
+  // The sidebar says what you must do too, where that release said only approved.
+  for (const screen of saved.screen)
+    for (const row of screen.sidebar) if (row.word === "approved") row.word = "ready to merge";
 }
 
 // Returns the names of the database's tables.

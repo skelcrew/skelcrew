@@ -22,13 +22,16 @@ export function markOf(status: Status, word: string): Mark {
   // A thread that failed is the lead's to start again, so it doesn't need you unless marked, and
   // then its word is the mark. A review, submit or check that failed is the lead's to run again.
   if (status === "error") return { sign: word === "failed" ? "○" : "●", colour: "red" };
+  // Needing you comes before the words below, as a mark from the lead or you can read like one
+  // of them, such as "review failed", and is still an action for you. Without a mark, none of
+  // those words comes with needing you.
+  if (status === "needs you") return { sign: "●", colour: "yellow" };
   const failed = ["review failed", "review timed out", "submit failed", "check failed"];
   if (failed.includes(word)) return { sign: "○", colour: "red" };
   if (status === "ready") return { sign: "●", colour: "green" };
   // Approved, or not reviewed as its flow has no review stage, with a merge armed, it merges by
   // itself, so it is good news that waits on nobody.
   if (word === "approved" || word === "not reviewed") return { sign: "○", colour: "green" };
-  if (status === "needs you") return { sign: "●", colour: "yellow" };
   const waits = word === "reviewing" || word === "queued for review" || word.startsWith("limit");
   if (waits) return { sign: "○", colour: "dim" };
   return { sign: "○", colour: status === "working" ? "bright" : "dim" };

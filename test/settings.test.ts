@@ -38,7 +38,7 @@ function settings(yours: string, shared: string | null): void {
 // Runs code against config.ts in a process of its own, as homedir() keeps the HOME this one
 // started with, and returns what it printed and the error it ended with, if any.
 function run(code: string): { out: string; err: string } {
-  const script = `import { agentRole, checkLimit, leadMayArmMerges, repositoryCommands, reviewConfig, reviewLimit, roundLimit, sessionHost, threadLimit } from ${JSON.stringify(source("config.ts"))};
+  const script = `import { agentRole, checkLimit, leadCanMerge, repositoryCommands, reviewConfig, reviewLimit, roundLimit, sessionHost, threadLimit } from ${JSON.stringify(source("config.ts"))};
 const app = { owner: "simon", repo: "app" };
 ${code}`;
   const done = Bun.spawnSync([process.execPath, "-e", script], {
@@ -96,39 +96,51 @@ test("the reviewer's fallback and a review's time limit come from your config al
   expect(forApp()).toMatchObject({ fallback: null, reviewMinutes: 30 });
 });
 
-// Letting the lead arm a merge when ready grants an agent what is yours, so only your config can,
-// and it is off until you turn it on.
-test("only your config lets the lead arm merges, and it is off by default", () => {
-  const leadArms = () => run("console.log(leadMayArmMerges());").out.trim();
+// Letting the lead merge when you ask grants an agent what is yours, so only your config can
+// turn it off or on, and it is on until you turn it off.
+test("only your config lets the lead merge, and it is on by default", () => {
+  const leadMerges = () => run("console.log(leadCanMerge());").out.trim();
   settings("harness: claude\n", null);
-  expect(leadArms()).toBe("false");
-  settings("harness: claude\nlead: { may_arm_merges: true }\n", null);
-  expect(leadArms()).toBe("true");
+  expect(leadMerges()).toBe("true");
+  settings("harness: claude\nlead: { can_merge: false }\n", null);
+  expect(leadMerges()).toBe("false");
+  settings("harness: claude\nlead: { can_merge: true }\n", null);
+  expect(leadMerges()).toBe("true");
+  // The old name still counts as the same setting, and where both are set, can_merge wins.
+  settings("harness: claude\nlead: { may_arm_merges: false }\n", null);
+  expect(leadMerges()).toBe("false");
+  settings("harness: claude\nlead: { may_arm_merges: false, can_merge: true }\n", null);
+  expect(leadMerges()).toBe("true");
+  settings("harness: claude\nlead: { may_arm_merges: true, can_merge: false }\n", null);
+  expect(leadMerges()).toBe("false");
   // A repository's skelcrew.yaml can't turn it on, and the lead's harness still comes from it.
-  settings("harness: claude\n", "lead: { harness: codex, may_arm_merges: true }\n");
-  expect(leadArms()).toBe("false");
+  settings(
+    "harness: claude\nlead: { can_merge: false }\n",
+    "lead: { harness: codex, can_merge: true, may_arm_merges: true }\n",
+  );
+  expect(leadMerges()).toBe("false");
   expect(forApp().lead).toEqual({ harness: "codex" });
   // Nor can it turn yours off.
-  settings(
-    "harness: claude\nlead: { may_arm_merges: true }\n",
-    "lead: { may_arm_merges: false }\n",
-  );
-  expect(leadArms()).toBe("true");
+  settings("harness: claude\n", "lead: { can_merge: false }\n");
+  expect(leadMerges()).toBe("true");
   // Nor can an override for one repository under repos:, as only your general settings count.
-  settings("harness: claude\nrepos:\n  simon/app:\n    lead: { may_arm_merges: true }\n", null);
-  expect(leadArms()).toBe("false");
+  settings(
+    "harness: claude\nlead: { can_merge: false }\nrepos:\n  simon/app:\n    lead: { can_merge: true }\n",
+    null,
+  );
+  expect(leadMerges()).toBe("false");
   // Nor can anything in the repository's .agents/, such as a settings file put there.
-  settings("harness: claude\n", null);
+  settings("harness: claude\nlead: { can_merge: false }\n", null);
   mkdirSync(join(clone(), ".agents"), { recursive: true });
-  writeFileSync(join(clone(), ".agents", "skelcrew.yaml"), "lead: { may_arm_merges: true }\n");
-  writeFileSync(join(clone(), ".agents", "config.yaml"), "lead: { may_arm_merges: true }\n");
-  expect(leadArms()).toBe("false");
+  writeFileSync(join(clone(), ".agents", "skelcrew.yaml"), "lead: { can_merge: true }\n");
+  writeFileSync(join(clone(), ".agents", "config.yaml"), "lead: { can_merge: true }\n");
+  expect(leadMerges()).toBe("false");
   rmSync(join(clone(), ".agents"), { recursive: true });
   // A top-level line counts for nothing, and a value that isn't true or false is refused.
-  settings("harness: claude\nmay_arm_merges: true\n", null);
-  expect(leadArms()).toBe("false");
-  settings("harness: claude\nlead: { may_arm_merges: yes please }\n", null);
-  expect(run("leadMayArmMerges();").err).toContain("isn't valid");
+  settings("harness: claude\ncan_merge: false\n", null);
+  expect(leadMerges()).toBe("true");
+  settings("harness: claude\nlead: { can_merge: yes please }\n", null);
+  expect(run("leadCanMerge();").err).toContain("isn't valid");
 });
 
 // A model name belongs to its harness.
