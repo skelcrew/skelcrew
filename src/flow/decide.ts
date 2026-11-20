@@ -170,6 +170,10 @@ export function mergeWaitsOn(
       : "Skelcrew's check, which failed";
   if (waitsOnFirstCheck(thread)) return "its checks";
   if (thread.submitting !== null || thread.reviewing !== null) return "its review";
+  // Changes the round limit held never reach the builder, so no new round comes until someone
+  // lets it go on with sc start. Arming the merge decided the limit, but doesn't do that.
+  if (thread.verdict !== "approve" && thread.held !== null)
+    return "its builder to be let past the round limit";
   if (!passedReviewStage(thread)) return "an approval";
   // A push Skelcrew didn't review, such as someone else's, is never merged unseen. On a flow with
   // no review stage, nothing reviews it: its builder must submit it, and then it merges.
@@ -213,22 +217,47 @@ export function skipReviewWaitsOn(thread: Thread, pr: PullRequest | null): strin
   return null;
 }
 
-// Returns what the lead's note of a stuck merge is counted by, so it hears once for each: the
-// review round, or on a flow with no review stage, which has no rounds, when its last submit was
-// marked not reviewed. Null before either.
+// Returns what the lead's note of a stuck merge is counted by, so it hears each wait once for
+// each: the review round, or on a flow with no review stage, which has no rounds, when its last
+// submit was marked not reviewed. Null before either.
 export const noteRound = (thread: Thread) =>
   thread.verdict === "not reviewed" ? thread.review_at : thread.review_round;
 
-// Returns whether the lead should hear that an armed merge still waits, after a review round
-// ended, or a submit its flow doesn't review was marked so. A review or checks still running are
-// on their way, so only a wait that needs someone to act counts, and the lead hears it once for
-// each round or submit.
-export const mergeStuck = (thread: Thread, waits: string | null) =>
-  waits !== null &&
-  waits !== "its review" &&
-  waits !== "its checks" &&
-  noteRound(thread) !== null &&
-  thread.merge_noted !== noteRound(thread);
+// How the waits that need someone start, in the words mergeWaitsOn and skipReviewWaitsOn give,
+// and the merge's own words for a forge that failed or refused.
+const stuckWaits = [
+  "its conflict with",
+  "its failing checks",
+  "its thread, which",
+  "the forge, which",
+  "its builder to be let past the round limit",
+  "its submit, which failed",
+  "Skelcrew's check, which failed",
+  "its builder to submit its newest commit",
+];
+
+// Returns how a wait that needs someone starts, which names it whatever its details, or null for
+// a wait that is on its way. A forge's own words, after its name, change from poll to poll.
+export const stuckWait = (waits: string): string | null =>
+  stuckWaits.find((start) => waits.startsWith(start)) ?? null;
+
+// Returns which wait the lead should hear an armed merge is stuck on, after a review round ended
+// or a submit its flow doesn't review was marked so, or null for none. Only a wait someone must
+// act on counts: a conflict, failing checks, a thread that failed or stopped, the forge, changes
+// held by the round limit, or on a flow with no review stage, a failed submit or a commit its
+// builder must submit. A builder working on its round, a review running or to come, and checks
+// running are on their way, and a note for them would only repeat each round. The lead hears
+// each wait once per round, so a second one in the same round, such as the forge refusing once
+// the checks were fixed, still reaches it. What it gives back is how the wait starts, as a
+// forge's own words change from poll to poll.
+export function mergeNoteFor(thread: Thread, waits: string | null): string | null {
+  const round = noteRound(thread);
+  if (waits === null || round === null) return null;
+  const stuck = stuckWait(waits);
+  if (stuck === null) return null;
+  const heard = thread.merge_noted === round && thread.merge_noted_for.includes(stuck);
+  return heard ? null : stuck;
+}
 
 // Returns whether a change of these files touches only docs and Markdown: each is under docs/
 // or ends in .md. CI skips such a commit, and so does the reviewer's run of the tests, as no

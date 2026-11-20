@@ -103,7 +103,7 @@ A repository's `.agents/` tells agents how to work. So Skelcrew asks before usin
 | Command | What it does |
 | --- | --- |
 | `sc` | Opens the lead of the repository you are in, with the sidebar of its tasks. Alt+Q quits, and the agents run on. |
-| `sc --list` | Shows the repository as a list. Enter opens a row, such as an agent or a PR. Ctrl+\ comes back from an agent. |
+| `sc --list` | Shows the repository as a list. Enter opens a row, such as an agent or a PR. Ctrl+\ comes back from an agent. In a wide terminal, a pane beside the list shows the task you are on and its agent at work. |
 | `sc ls` | Lists the tasks, with each one's stage, status, PR, CI and review. |
 | `sc show <task>` | Shows one task: its description, threads, PR, checks and review. |
 | `sc ps` | Lists the threads, with their status and which need you. |

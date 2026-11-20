@@ -34,8 +34,23 @@ export type Frame = {
 // The size of your terminal.
 export type Size = { width: number; height: number };
 
-// The name of each section, as its heading shows it.
-const sectionNames: Record<Section, string> = {
+// The fewest columns the list keeps beside the pane, the fewest the pane takes, and the line
+// between them. A terminal narrower than both side by side shows no pane.
+const listLeast = 70;
+const paneLeast = 40;
+export const paneEdge = " │ ";
+
+// Returns how many columns the pane takes in a terminal `width` columns wide, or 0 when it is too
+// narrow for the list and the pane side by side. The pane takes a little under half, as the list
+// needs room for its titles and the pane for the agent's screen.
+export function paneWidth(width: number): number {
+  const edge = paneEdge.length;
+  if (width - 1 < listLeast + edge + paneLeast) return 0;
+  return Math.max(Math.floor((width - 1) * 0.45), paneLeast);
+}
+
+// The name of each section, as its heading shows it, which the pane also shows of a row's stage.
+export const sectionNames: Record<Section, string> = {
   "needs you": "Needs you",
   backlog: "Backlog",
   building: "Building",
@@ -309,7 +324,10 @@ function edgeLine(
 // doesn't fit. Gives the lines, what a click on each reaches, so a click hits what it was drawn
 // over, and the scroll they were drawn at, which the next draw starts from. Nothing is drawn in
 // the terminal's last column: a terminal waits there to wrap, and clearing the rest of the line
-// from that state erases the last character drawn.
+// from that state erases the last character drawn. `pane` is the details pane's lines, which
+// show on the right, beside every line but the top line and the bottom two, when the terminal is
+// wide enough. The rows then take the columns left of it, and the top and bottom lines the whole
+// width. The pane takes the same room on every row, so the list never moves as you do.
 export function drawList(
   rows: Row[],
   headings: Heading[],
@@ -317,8 +335,11 @@ export function drawList(
   top: number,
   frame: Frame,
   size: Size,
+  pane: string[] | null = null,
 ): { lines: string[]; targets: Target[]; top: number } {
-  const width = size.width - 1;
+  const whole = size.width - 1;
+  const beside = pane === null ? 0 : paneWidth(size.width);
+  const width = beside > 0 ? whole - beside - paneEdge.length : whole;
   // The one-line rows' columns, from those rows alone, and the names' width, from every row.
   const short = rows.filter((row) => !tall(row));
   const widest = (of: (row: Row) => string, among = short) =>
@@ -341,7 +362,7 @@ export function drawList(
   const leadAt = rows.findIndex((row) => row.part === "lead");
   const lead = leadAt < 0 ? [] : [...linesOf(leadAt), ""];
   const notice = frame.notice ? [paint(yellow, fitted(` ${frame.notice}`, width))] : [];
-  const head = [topParts(frame, width).line, ...notice, "", ...lead];
+  const head = [topParts(frame, whole).line, ...notice, "", ...lead];
   const headTargets: Target[] = head.map((_, at) =>
     at >= head.length - lead.length && at < head.length - 1 ? { row: leadAt } : null,
   );
@@ -408,11 +429,19 @@ export function drawList(
   const blank = Array.from({ length: room - shown.length }, () => "");
   // A question or a reason must stay on its one line, so it is cut to fit, and the load gives
   // way first.
-  const bottom = fitted(` ${frame.bottom}`, width);
+  const bottom = fitted(` ${frame.bottom}`, whole);
   const load = frame.load;
-  const gap = width - Bun.stringWidth(bottom) - Bun.stringWidth(Bun.stripANSI(load));
+  const gap = whole - Bun.stringWidth(bottom) - Bun.stringWidth(Bun.stripANSI(load));
   const last = gap > 1 ? `${paint(grey, bottom)}${" ".repeat(gap)}${load}` : paint(grey, bottom);
-  const lines = [...head, ...shown.map((line) => line.text), ...blank, "", last];
+  // The pane goes beside every line between the top line and the bottom two, each of the list's
+  // lines filled out to its width so the pane's edge stays straight.
+  const middle = [...head.slice(1), ...shown.map((line) => line.text), ...blank, ""].map(
+    (line, at) =>
+      beside > 0 && pane !== null
+        ? `${filled(line, width)}${paint(grey, paneEdge)}${pane[at] ?? ""}`
+        : line,
+  );
+  const lines = [head[0] ?? "", ...middle, last];
   // The blank lines and the bottom two reach nothing.
   const rest = [...blank, "", last].map((): Target => null);
   const targets = [...headTargets, ...shown.map((line) => line.target), ...rest];

@@ -457,12 +457,30 @@ export async function renameSession(host: PluginHost, id: string, title: string)
 }
 
 // Returns the screen the agent in the named session shows now, as text, such as to see whether
-// it is ready for a message. Throws when the session is gone.
-export async function readSession(host: Host, name: string): Promise<string> {
+// it is ready for a message. With `colours`, tmux keeps the screen's colours as escape codes, for
+// the list's live view of the agent. A runtime plugin's host gives its screen as it reads it.
+// Throws when the session is gone. tmux runs without waiting on it, as the list reads the screen
+// several times a second, and a slow tmux server must never hold up its keys. One that never
+// answers is given up after 30 seconds, as a plugin's host is.
+export async function readSession(host: Host, name: string, colours = false): Promise<string> {
   if (typeof host !== "string")
     return (await askHost(host, { ask: "read", id: name }, z.object({ screen: z.string() })))
       .screen;
-  return mustTmux(host, ["capture-pane", "-p", "-t", `=${name}:`]);
+  const args = ["capture-pane", "-p", ...(colours ? ["-e"] : []), "-t", `=${name}:`];
+  const run = Bun.spawn(["tmux", "-L", host, "-f", "/dev/null", ...args], {
+    env: envWithoutTmux(),
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+    timeout: 30_000,
+  });
+  const [out, err, code] = await Promise.all([
+    new Response(run.stdout).text(),
+    new Response(run.stderr).text(),
+    run.exited,
+  ]);
+  if (code !== 0) throw new Error(`tmux capture-pane failed: ${err.trim()}`);
+  return out;
 }
 
 // Types text into the agent in the named session as if from your keyboard, keys such as Enter

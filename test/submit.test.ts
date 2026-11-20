@@ -372,6 +372,8 @@ describe.skipIf(insideSandbox)("sc submit", () => {
       reviewed_by: "codex",
       verdict: "changes",
       review_line: "The export has no test.",
+      // The reviewer's findings are trimmed as Skelcrew reads them.
+      review_findings: ["The export has no test.\n\nMore detail here."],
     });
     expect(lines.at(-1)).toMatchObject({
       title: "Add export",
@@ -379,10 +381,29 @@ describe.skipIf(insideSandbox)("sc submit", () => {
       reviewed_by: "codex",
       verdict: "approve",
       review_line: "Ready to merge.",
+      review_findings: [],
     });
     // The approved commit is saved with its review, so the list can merge it asking git nothing.
     expect(lines.at(-1)?.reviewed_commit).toBe(pushed());
     expect(lines.some((line) => line.reviewer === "codex" && line.submitting !== null)).toBe(true);
+  });
+
+  // The list shows what a review found from what Skelcrew saved, so a review the forge refused
+  // to take still shows its findings there.
+  test("a review's findings are saved though the forge refuses to post it", async () => {
+    addApp();
+    verdict(1, "changes", "The export has no test.", ["The export has no test.", "Name it."]);
+    writeFileSync(join(plugin, "fail-review"), "the forge is down");
+    await startApp12();
+    const log = () =>
+      read(join(data(), "threads", "app-12.log"))
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line));
+    await until(() => log().some((line) => line.why?.includes("the review said")), 30_000);
+    // The post was asked for and refused, and the findings were saved all the same.
+    await until(() => asked(plugin).some((question) => question.ask === "review"), 30_000);
+    expect(log().at(-1)?.review_findings).toEqual(["The export has no test.", "Name it."]);
   });
 
   // The lead's message changes the task after the thread started, such as a design you agreed

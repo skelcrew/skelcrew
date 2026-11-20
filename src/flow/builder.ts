@@ -327,6 +327,7 @@ async function recordThread(
       merge_asked: null,
       merge_waits: null,
       merge_noted: null,
+      merge_noted_for: [],
       merge_pinned: null,
       merge_record: null,
       merge_record_id: null,
@@ -339,6 +340,7 @@ async function recordThread(
       agents,
       flow,
       review_post: null,
+      review_findings: null,
       queued_since: queued ? joinTime(db) : null,
     };
     // A failed or done thread's row gives way to the new one, and messages that waited for its

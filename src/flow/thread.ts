@@ -205,7 +205,10 @@ export const Thread = z.object({
   // your terminal.
   merge_asked: z.string().nullable(),
   merge_waits: z.string().nullable(),
+  // The review round the lead last heard the armed merge still waits after, and how each wait
+  // it heard in that round starts, so it hears each one once per round.
   merge_noted: z.number().nullable(),
+  merge_noted_for: savedJson("threads.merge_noted_for", z.array(z.string()), []),
   // The PR's head when you asked to merge it without Skelcrew's approval, or null for a merge when
   // ready. Only this commit merges, as you saw it, so a push after you asked cancels the plan.
   merge_pinned: z.string().nullable(),
@@ -243,6 +246,10 @@ export const Thread = z.object({
   // opened again after sc rm gets a review of its own. One Skelcrew can't read counts as none,
   // and the next review is posted anew.
   review_post: savedJson("tasks.review_post", ReviewPost.nullable(), null),
+  // What the latest finished review found, one finding each, kept whether or not it was posted,
+  // such as with no forge or when posting failed. None for a review that approved or failed, and
+  // null on a task from before Skelcrew kept it.
+  review_findings: savedJson("tasks.review_findings", z.array(z.string()).nullable(), null),
   // When the task last joined the queue of limits.threads, in milliseconds since 1970. The queue
   // goes in this order, after a restart too. Kept once the task leaves the queue, until its
   // builder's session is saved, so a restart before then puts it back in its place.

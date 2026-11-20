@@ -569,10 +569,13 @@ async function actOnVerdict(
           description: `approval kept: only merged ${prBase(db, thread)}`,
           why: ready === null ? `${keptWhy}, so it waits on CI` : `${keptWhy}; ${ready}`,
         };
-  // The whole review goes in the thread's log first, as the PR keeps only the latest one.
+  // The whole review goes in the thread's log first, as the PR keeps only the latest one. Its
+  // findings are saved before it is posted, so a post the forge refuses still leaves them for
+  // the list to show.
   if (verdict.verdict === "approve" || verdict.verdict === "changes") {
     const said = reviewComment(verdict, before + 1, sha);
-    record(db, folder, {}, `the review said (${verdict.verdict}): ${said}`);
+    const findings = { review_findings: verdict.findings };
+    record(db, folder, findings, `the review said (${verdict.verdict}): ${said}`);
     if (pr !== null) await postOrEdit(db, folder, pr, sha, { ...verdict, round: before + 1 });
   }
   // A newer round may be reviewing the same commit, and its check must stay pending.
@@ -616,6 +619,7 @@ async function actOnVerdict(
     verdict: verdict.verdict,
     review_line: verdict.body.trim().split("\n")[0]?.slice(0, 200) ?? "",
     reviewed_commit: sha,
+    review_findings: "findings" in verdict ? verdict.findings : [],
     review_at: Date.now(),
   };
   record(db, folder, change, outcome.why);
