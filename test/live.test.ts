@@ -60,6 +60,30 @@ test("Claude Code's tip under its busy line is cut, and the busy line stays", as
   const code = `${" ".repeat(12)}return limit;`;
   const indented = idle.replace(/\n\n(.*─{3,})/, `\n${code}\n$1`);
   expect(bottom(agentOutput("claude", indented), 1)).toEqual([code]);
+  // And a value the agent pushed to the right edge, which no notice says.
+  const value = `${" ".repeat(70)}Total: 42 req/min`;
+  const right = idle.replace(/\n\n(.*─{3,})/, `\n${value}\n$1`);
+  expect(bottom(agentOutput("claude", right), 1)).toEqual([value]);
+});
+
+test("under Claude Code's busy line, only its tip goes, and indented output stays", async () => {
+  const tip = await screen("claude-tip.txt");
+  // A tip too long for one line goes whole, with the line it goes on over.
+  const wrapped = tip.replace(/(Tip: [^\n]*)\n/, "$1\n     and keeps working meanwhile\n");
+  expect(agentOutput("claude", wrapped)).not.toContain("keeps working");
+  expect(bottom(agentOutput("claude", wrapped), 1)).toEqual([
+    "✻ Forging… (2m 13s · ↓ 3.4k tokens · esc to interrupt)",
+  ]);
+  // Anything else under the busy line stays, indented or not, the tip with it then.
+  const result = "  ⎿  Added 12 lines";
+  const output = tip.replace(/(Tip: [^\n]*)\n/, `$1\n${result}\n`);
+  expect(bottom(agentOutput("claude", output), 2)).toEqual([
+    expect.stringContaining("Tip: Use /btw"),
+    result,
+  ]);
+  const code = "     return limit;";
+  const under = tip.replace(/\n[^\n]*Tip: [^\n]*/, `\n${code}`);
+  expect(bottom(agentOutput("claude", under), 1)).toEqual([code]);
 });
 
 test("Codex's input box and footer are cut, idle, at work or with a long message typed", async () => {
