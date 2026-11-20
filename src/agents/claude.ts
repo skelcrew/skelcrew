@@ -453,11 +453,16 @@ function usageLimit(error: string, now: number): { reset: number | null } | null
   return { reset: resets === undefined ? null : resetTime(resets, now) };
 }
 
-// Returns the line where Claude Code's own input area starts on its screen, given as its lines
-// with their colours, or null when it isn't found, such as after an update that redrew it. The
-// area is a rule, the ❯ prompt with what is typed indented under it, a closing rule, and at most
-// two indented status lines, ending the screen. A past message quoted in the output also starts
-// with ❯, and the agent may print a box like this one itself, so anything after it shows whole.
+// Returns the line where Claude Code's own lines start at the bottom of its screen, given as its
+// lines with their colours, or null when its input area isn't found, such as after an update that
+// redrew it. The input area is a rule, the ❯ prompt with what is typed indented under it, a
+// closing rule, and at most two indented status lines, ending the screen. A past message quoted
+// in the output also starts with ❯, and the agent may print a box like this one itself, so
+// anything after it shows whole. Two more of Claude Code's own lines go with it, known by what
+// they say: its effort notice right on the input area, such as `◐ medium · /effort`, and while a
+// turn runs the tip under its busy line, such as `⎿  Tip: Use /btw…`. The busy line stays, as it
+// shows the agent at work. Any other line may be the agent's output, whatever its indent or
+// place, so it stays.
 function inputStart(screen: string[]): number | null {
   const lines = screen.map((line) => Bun.stripANSI(line));
   const rule = (line: string) => /^─{3,}/.test(line.trim());
@@ -469,7 +474,19 @@ function inputStart(screen: string[]): number | null {
   if (!rule(lines[end] ?? "")) return null;
   const status = lines.slice(end + 1).filter((line) => line.trim() !== "");
   const indented = status.every((line) => line.startsWith(" ") && !rule(line));
-  return status.length <= 2 && indented ? at - 1 : null;
+  if (status.length > 2 || !indented) return null;
+  // The effort notice: a half-filled circle, the effort's level, and the command that changes it.
+  let start = at - 1;
+  if (/^[○◔◑◕●◐◒◓] \S+ · \/effort$/.test((lines[start - 1] ?? "").trim())) start--;
+  // The tip: `⎿  Tip:` right under the busy line, a spinner, a word ending in … and how long the
+  // turn has run, such as `✻ Forging… (2m 13s · esc to interrupt)`. Only blank lines may follow
+  // it down to the input area. A line under it can't be told from the agent's output by what it
+  // says, even one that goes on a tip too long for one line, so then the tip stays whole.
+  let tip = start - 1;
+  while (tip > 0 && (lines[tip] ?? "").trim() === "") tip--;
+  const isTip = /^ {2}⎿ {2}Tip: /.test(lines[tip] ?? "");
+  const busy = /^\S \S+… \(/.test(lines[tip - 1] ?? "");
+  return isTip && busy ? tip : start;
 }
 
 // Claude Code as Skelcrew knows it. While a turn runs it shows "esc to interrupt". It is ready for

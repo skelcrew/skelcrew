@@ -83,14 +83,16 @@ const keyNames: Record<string, string> = {
   "\x1b[Z": "previous repository",
   "\r": "enter",
   "\n": "enter",
+  "\x1b[5~": "page up",
+  "\x1b[6~": "page down",
 };
 
 // The keys the footer shows on a task's row, where your typing goes to the sidebar: Enter, as
 // attach where it attaches to the builder, o to show the agent's whole screen or its last lines,
-// the stages' numbers, Shift with an arrow only on a queued task in Up next, which it moves in
+// Page Up and Page Down to scroll the details, the stages' numbers, Shift with an arrow only on a queued task in Up next, which it moves in
 // the queue, and s or m only where the row can be started, or queued, or merged.
 function taskFooter(row: Row): string {
-  const output = row.task ? " · o output" : "";
+  const output = row.task ? " · o output · pgup/pgdn scroll" : "";
   const reorder = row.section === "up next" && row.place !== null ? "  ⇧↑↓ reorder" : "";
   const start = row.start ? (row.start.queues ? "  s queue" : "  s start") : "";
   const merge = row.merge && "ask" in row.merge ? "  m merge" : "";
@@ -627,6 +629,12 @@ export async function runSidebar(
       fullOutput = !fullOutput;
       shown = null;
       return follow();
+    }
+    // Page Up and Page Down scroll the details on the right, which run in a pane of their own,
+    // so they are handed on to it.
+    if ((name === "page up" || name === "page down") && row?.task && isDetails(shown)) {
+      screenTmux(agents, ["send-keys", "-t", rightPane, name === "page up" ? "PPage" : "NPage"]);
+      return;
     }
     if (key === "s" && row?.part === "backlog" && row.start)
       asking = { question: row.start, row: row.name, merge: false };
