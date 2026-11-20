@@ -130,6 +130,10 @@ export const Thread = z.object({
   // lists say "no CI". It names its commit, so a newer push waits again. Null until a wait ends
   // that way, and in a row from before Skelcrew kept it.
   no_ci: z.string().nullable(),
+  // The PR's head commit on which a CI check last showed. That commit never counts as one no CI
+  // runs on, even once its checks vanish from the forge, so a check seen once is never ignored.
+  // Null until a check shows, and in a row from before Skelcrew kept it.
+  ci_shown: z.string().nullable(),
   // The harness of the review waiting or running, which can differ from the latest finished
   // one's once you change your config.
   reviewer: HarnessName.nullable(),

@@ -68,6 +68,35 @@ export function ciState(pr: PullRequest): Thread["checks"] {
 export const ciKnown = (thread: Thread, pr: PullRequest) =>
   ciOf(pr).length > 0 || (pr.head !== null && thread.no_ci === pr.head);
 
+// Returns what to save on the thread about CI on its PR's head, or null for nothing. A CI check
+// that shows marks the head as one CI runs on, and takes back a "no CI" saved on it, so a check
+// that showed and then vanished is never taken for no CI. Otherwise, once `waitEnded` says the
+// wait for CI's first check ended, the head is saved as one no CI runs on, such as a docs-only
+// commit CI skips with a paths filter. Only a head that would merge waits: an approved one, or
+// the one a merge without approval pinned, with no round under way. `waitEnded` is asked last,
+// as it reads the clock and Skelcrew's clone.
+export function ciOnHead(
+  thread: Thread,
+  pr: PullRequest,
+  waitEnded: () => boolean,
+): Partial<Pick<Thread, "no_ci" | "ci_shown">> | null {
+  const { head } = pr;
+  if (head === null) return null;
+  if (ciOf(pr).length > 0) {
+    if (thread.ci_shown === head && thread.no_ci !== head) return null;
+    return { ci_shown: head, ...(thread.no_ci === head ? { no_ci: null } : {}) };
+  }
+  const waits =
+    ["working", "waiting"].includes(thread.status) &&
+    (thread.verdict === "approve" || thread.merge_pinned === head) &&
+    thread.submitting === null &&
+    thread.reviewing === null &&
+    pr.state === "open" &&
+    thread.no_ci !== head &&
+    thread.ci_shown !== head;
+  return waits && waitEnded() ? { no_ci: head } : null;
+}
+
 // Returns whether every check on the PR passed, Skelcrew's own included, which it sets once its
 // reviewer approves. With no CI, that check is the only one, and it counts only once the wait
 // for CI's first check on the head ended with none, as CI may still be starting. A thread's

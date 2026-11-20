@@ -7,6 +7,7 @@ import {
   allGreen,
   branchMoved,
   type Check,
+  ciOnHead,
   ciResult,
   ciState,
   decide,
@@ -71,6 +72,7 @@ function thread(change: Partial<Thread> = {}): Thread {
     review_line: null,
     reviewed_commit: null,
     no_ci: null,
+    ci_shown: null,
     review_at: null,
     harness: null,
     short: null,
@@ -558,6 +560,41 @@ test("a PR's CI reads as passing, failing or still running, and Skelcrew's own c
   expect(ciState(pr({ checks: [changes, passed] }))).toBe("passing");
   expect(ciState(pr({ checks: [passed, going] }))).toBe("pending");
   expect(ciState(pr({ checks: [failed, going] }))).toBe("failing");
+});
+
+// An approved head with no CI check is saved as one no CI runs on once the wait for CI's first
+// check ended. A check that shows marks the head as one CI runs on, so a check that later
+// vanishes is never taken for no CI, and takes back a "no CI" saved before it showed.
+test("CI on a PR's head: no CI once the wait ends, never after a check showed there", () => {
+  const ready = thread({ status: "waiting", verdict: "approve" });
+  const bare = pr({ head: "abc", checks: [approved] });
+  const failing = pr({ head: "abc", checks: [approved, run(9, "test", "failed")] });
+  expect(ciOnHead(ready, bare, () => false)).toBeNull();
+  expect(ciOnHead(ready, bare, () => true)).toEqual({ no_ci: "abc" });
+  // A check showed on the head, then vanished: the wait never ends with no CI there.
+  expect(ciOnHead(ready, failing, () => true)).toEqual({ ci_shown: "abc" });
+  const shown = thread({ status: "waiting", verdict: "approve", ci_shown: "abc" });
+  expect(ciOnHead(shown, failing, () => true)).toBeNull();
+  expect(ciOnHead(shown, bare, () => true)).toBeNull();
+  // A check that shows after the wait ended takes back its "no CI".
+  const noCi = thread({ status: "waiting", verdict: "approve", no_ci: "abc" });
+  expect(ciOnHead(noCi, failing, () => true)).toEqual({ ci_shown: "abc", no_ci: null });
+  // A check on an older head says nothing of this one.
+  const older = thread({ status: "waiting", verdict: "approve", ci_shown: "old" });
+  expect(ciOnHead(older, bare, () => true)).toEqual({ no_ci: "abc" });
+  // Only a head that would merge waits: approved, or pinned by a merge without approval, with
+  // no round under way.
+  const changes = thread({ status: "waiting", verdict: "changes" });
+  expect(ciOnHead(changes, bare, () => true)).toBeNull();
+  expect(ciOnHead({ ...changes, merge_pinned: "abc" }, bare, () => true)).toEqual({ no_ci: "abc" });
+  expect(ciOnHead({ ...ready, reviewing: "abc" }, bare, () => true)).toBeNull();
+  expect(ciOnHead({ ...ready, submitting: "Fix" }, bare, () => true)).toBeNull();
+  // The wait isn't asked about at all when nothing waits, as it reads the clock and the clone.
+  expect(
+    ciOnHead(changes, bare, () => {
+      throw new Error("asked");
+    }),
+  ).toBeNull();
 });
 
 // Unlike the saved CI state, Skelcrew's own check counts: it is the approval. With no CI check,

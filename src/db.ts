@@ -147,6 +147,7 @@ export const taskColumns = {
   conflicts: "TEXT",
   ci_passed: "INTEGER NOT NULL DEFAULT 0",
   no_ci: "TEXT",
+  ci_shown: "TEXT",
   seen: "TEXT",
   last_review: "INTEGER",
   last_comment: "INTEGER",
