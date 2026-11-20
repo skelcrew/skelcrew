@@ -200,15 +200,10 @@ export async function endFakeSessions(settings: string): Promise<void> {
   // their command.
   const calls = join(settings, "running-calls");
   const running = () =>
-    [...(existsSync(calls) ? readdirSync(calls) : []).map(Number), ...hostCallsOf(settings)].filter(
-      (pid) => {
-        try {
-          return pid > 0 && process.kill(pid, 0);
-        } catch {
-          return false;
-        }
-      },
-    );
+    living([
+      ...(existsSync(calls) ? readdirSync(calls) : []).map(Number),
+      ...hostCallsOf(settings),
+    ]);
   // A start takes a moment. A call a test holds on purpose gets five seconds, then is killed
   // with its group: a held call hasn't started anything yet.
   const deadline = Date.now() + 5000;
@@ -217,6 +212,11 @@ export async function endFakeSessions(settings: string): Promise<void> {
     try {
       process.kill(-pid, "SIGKILL");
     } catch {}
+  // A kill takes a moment, and a call still running could start a session after the sessions
+  // are looked at. So they are looked at only once the calls have ended.
+  const killed = Date.now() + 5000;
+  while (running().length > 0 && Date.now() < killed) await Bun.sleep(20);
+  if (running().length > 0) throw new Error(`the fake host's calls in ${settings} didn't end`);
   const sessions = join(settings, "sessions");
   for (const id of existsSync(sessions) ? readdirSync(sessions) : []) {
     const pid = Number(read(join(sessions, id, "pid")));
@@ -225,6 +225,20 @@ export async function endFakeSessions(settings: string): Promise<void> {
       process.kill(-pid, "SIGKILL");
     } catch {}
   }
+}
+
+// Returns those of these process IDs that still run. A process that ended but wasn't reaped,
+// a zombie, runs nothing, though a signal still reaches it: the test run takes in the processes
+// a daemon left and reaps them only when it ends.
+function living(pids: number[]): number[] {
+  const states = new Map(
+    Bun.spawnSync(["ps", "-A", "-o", "pid=", "-o", "stat="])
+      .stdout.toString()
+      .split("\n")
+      .map((line) => line.trim().split(/\s+/))
+      .map(([pid, state]) => [Number(pid), state ?? ""]),
+  );
+  return pids.filter((pid) => pid > 0 && !(states.get(pid) ?? "Z").startsWith("Z"));
 }
 
 // The command a runtime plugin's manifest gives to run the fake host with these settings. The
