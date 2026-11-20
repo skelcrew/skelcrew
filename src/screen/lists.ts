@@ -173,12 +173,9 @@ function prGroups(db: Database, open: Open, threads: Known[]): Group[] {
         key: "m",
         refused: `${named} needs a newer forge plugin to merge here: run sc update -g`,
       };
-    else if (on && on.thread.reviewed_commit === null)
-      action = {
-        key: "m",
-        refused: `${named}'s approval has no commit saved: merge it on the forge, or run sc review ${on.name}`,
-      };
-    else if (on && on.thread.reviewed_commit !== pr.head) {
+    // An approval from before Skelcrew saved its commit has none to compare, and merges at the
+    // head as it always did, as the forge itself checks the head is still the one asked for.
+    else if (on && on.thread.reviewed_commit !== null && on.thread.reviewed_commit !== pr.head) {
       const which = on.thread.verdict === "not reviewed" ? "submitted" : "approved";
       action = { key: "m", refused: `${named} has a newer commit than the one ${which}` };
     } else

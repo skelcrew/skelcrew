@@ -313,10 +313,9 @@ ${threadSql({ task: "15", ...ready, pr: 34, verdict: "approve", review_round: 1 
     key: "m",
     refused: "app#33 has a newer commit than the one approved",
   });
-  expect(byName["app#34"]).toEqual({
-    key: "m",
-    refused:
-      "app#34's approval has no commit saved: merge it on the forge, or run sc review app-15",
+  // An approval from before Skelcrew saved its commit merges at the head, as it always did.
+  expect(byName["app#34"]).toMatchObject({
+    request: { command: "merge", pr: 34, commit: "c".repeat(40) },
   });
 });
 
