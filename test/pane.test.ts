@@ -217,3 +217,24 @@ test("the pane shows beside the list only in a terminal wide enough for both", (
   expect(Bun.stringWidth(lines.at(-1) ?? "")).toBe(139);
   for (const line of lines) expect(Bun.stringWidth(line)).toBeLessThanOrEqual(139);
 });
+
+// Details far taller than the pane, from a long title, many findings and many checks.
+test("details too tall for the pane end in …, and the live view keeps its lines", () => {
+  const page = details.view.prPage;
+  if (!page) throw new Error("the details have a PR");
+  const checks = Array.from({ length: 30 }, (_, i) => ({
+    name: `check-${i}`,
+    state: "passed" as const,
+    log: null,
+  }));
+  const tall: Details = {
+    ...details,
+    view: { ...details.view, title: "A title ".repeat(40), prPage: { ...page, checks } },
+  };
+  const screen = "first\nsecond\nthird";
+  const lines = plain(drawPane(row, tall, { screen }, 50, 22));
+  expect(lines).toHaveLength(22);
+  expect(lines.slice(-4)).toEqual(["…", "─".repeat(50), "second", "third"]);
+  const stopped = plain(drawPane(row, tall, { note: "Builder not running" }, 50, 22));
+  expect(stopped.slice(-4)).toEqual(["…", "─".repeat(50), "Builder not running", ""]);
+});

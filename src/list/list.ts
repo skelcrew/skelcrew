@@ -475,17 +475,18 @@ export async function runList(agents: string, repository: string): Promise<void>
 
   // Reads the screen of the agent on the row you are on, for the pane's live view, and draws it
   // when it changed, as a quiet agent's screen mostly hasn't. It reads only while the list shows
-  // with its pane, never while you are attached to an agent or once you left, and one read at a
-  // time, so a slow host never piles reads up. A read that comes back after you moved on is kept
-  // for its own row.
-  let reading = false;
+  // with its pane, never while you are attached to an agent or once you left. Each row has one
+  // read at a time, so a slow host never piles reads up, and a slow read of a row you left never
+  // holds up the row you moved to. A read that comes back after you moved on is kept for its own
+  // row.
+  const reading = new Set<string>();
   const look = async () => {
     const row = rows[here];
-    if (attached || left || reading || !row || row.task === null || liveNote(row) !== null) return;
-    if (paneWidth(process.stdout.columns || 80) === 0) return;
-    reading = true;
+    if (attached || left || !row || row.task === null || liveNote(row) !== null) return;
+    if (reading.has(row.name) || paneWidth(process.stdout.columns || 80) === 0) return;
+    reading.add(row.name);
     const shown = await readLive(db, agents, row);
-    reading = false;
+    reading.delete(row.name);
     // You may have left while the host answered, and the terminal is then your shell's again.
     if (left) return;
     if (live?.name === row.name && Bun.deepEquals(live.shown, shown)) return;

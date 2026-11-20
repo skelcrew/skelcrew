@@ -2017,3 +2017,23 @@ test("a read that answers after the list left draws nothing over your terminal",
   expect(seen()).toContain("Your agents keep running.");
   expect(seen()).not.toContain("q/esc quit");
 });
+
+test("a slow read of the row you left never holds up the live view of the row you are on", async () => {
+  slowHost();
+  await open({ width: wide });
+  await until(
+    () => liveSeen().some((line) => line.startsWith("slow screen")),
+    "the slow host's screen",
+  );
+  // Coming back to app-12 starts a read of 3 seconds. app-7, two rows on, is read at once.
+  press("Down");
+  press("Up");
+  await until(() => here().startsWith("▸ ● app-12"), "app-12's row");
+  const start = performance.now();
+  press("Down");
+  press("Down");
+  await until(() => liveSeen().includes("I am app-7"), "app-7's screen");
+  expect(performance.now() - start).toBeLessThan(1000);
+  // The read under way ends with the host's answer, which the test waits for, as it started it.
+  await Bun.sleep(3500);
+});
