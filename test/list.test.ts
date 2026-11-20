@@ -1227,6 +1227,20 @@ test("Ctrl-\\ in every form leaves a question open, and y then answers it", asyn
   await until(() => asked.includes("start simon/app 31"), "the start");
 });
 
+// s starts a task not started yet as Enter does there, and the bottom line offers it.
+test("s asks to start a task in Backlog, and y starts it", async () => {
+  sql(`INSERT INTO backlog (owner, repo, task, title, body, created, by, filed_commit)
+  VALUES ('simon', 'app', 't104', 'Add export', 'As JSON', '2026-11-07T10:00:00.000Z', 'simon', 'c1');`);
+  await open();
+  type("1");
+  await until(() => here().startsWith("▸ ○ app-t104"), "the backlog task's row");
+  expect(seen()).toContain("s start");
+  type("s");
+  await until(() => seen().includes("Start app-t104? y/n"), "the question");
+  type("y");
+  await until(() => asked.includes("start simon/app t104"), "the start");
+});
+
 // Nothing on an agent's screen is Skelcrew's, so the title says how to come back, and the one
 // you had comes back with you.
 test("while attached the title names the agent and the key back, and the list shows the key", async () => {

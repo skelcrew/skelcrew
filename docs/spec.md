@@ -85,7 +85,7 @@ Work you want done later, but not as an issue in the tracker, is filed in Skelcr
 
 The backlog is shared between machines through the repository's git remote, never through the tracker. Each task is a commit under a hidden ref, `refs/skelcrew/tasks/t104`, holding its title, description, when it was filed and by whom, such as `simon` or `simon via the lead`. It is never a branch or a file in the tree. The same push that claims the task's name files it, so a name is never claimed without its task, nor a task filed without its name. Every machine's engine fetches these refs each time it refreshes its clone of the repository, so the list, `sc ls` and `sc show` on any machine show the same backlog within a poll.
 
-`sc start app-t104`, or Enter on its row in the list, starts it like an issue, from its title and description. Starting it deletes its ref from the remote, with a lease on the commit Skelcrew read, so two machines never both start it: the second is refused. From then on its thread keeps its words, and once its work ends without a merge it goes to `closed`, as any task with no issue does. `sc rm app-t104` deletes a task that never started, on the remote too. Its name stays claimed, so it never names other work.
+`sc start app-t104`, or `s` or Enter on its row in the list, starts it like an issue, from its title and description. Once its thread is recorded, holding its words, starting it deletes its ref from the remote, with a lease on the commit Skelcrew read, so two machines never both start it: the second is refused, and its thread is taken back out. An engine that stops in between leaves the ref, which its next refresh deletes, so a task is never lost. From then on its thread keeps its words, and once its work ends without a merge it goes to `closed`, as any task with no issue does. `sc rm app-t104` deletes a task that never started, on the remote too. Its name stays claimed, so it never names other work.
 
 ### Names
 
@@ -840,6 +840,7 @@ The marks: a filled `●` needs you or is ready, a hollow `○` doesn't. Green i
 | `1` to `6` | Anywhere | Open or close Backlog, Building, Reviewing, Checks, Ready or Done |
 | Enter | The lead | Attaches full screen to the lead |
 | Enter | Backlog | Asks `Start app-31? y/n` in the bottom line, then starts the task, as `sc start` does |
+| `s` | Backlog | The same as Enter there: asks, then starts the issue or the task of the backlog |
 | Enter | Building, Reviewing, Checks | Attaches full screen to the task's builder, through its session host. Detaching returns to the list, on the same row |
 | Enter | Ready, Done | Opens the PR in your browser, or copies its link, as OSC 52, when Skelcrew runs on a server. Without a forge the bottom line shows the approved branch, such as `app-t103 is ready on branch skelcrew/t103-fix-login`. A ready task whose builder needs you attaches to the builder instead, so one Enter reaches what it waits on |
 | `m` | Ready | Asks `Merge app#41 into main? y/n`, then merges it on the forge. Not offered without a forge, where the line says so, nor while its builder needs you. If the forge refuses, the line says why |

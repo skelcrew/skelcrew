@@ -473,6 +473,11 @@ export async function runList(agents: string, repository: string): Promise<void>
     const stage = ListStage.options[Number(key) - 1];
     if (/^[1-6]$/.test(key) && stage) return toggleStage(stage);
     if (key === "enter" && row) return openRow(row);
+    // s starts a task not started yet, an issue or one of the backlog, as Enter does there.
+    if (key === "s" && row?.part === "backlog" && row.start) {
+      asking = { question: row.start, row: row.name, merge: false };
+      return draw();
+    }
     if (key === "m" && row?.merge) {
       if ("refused" in row.merge) return say(row.merge.refused);
       asking = { question: row.merge, row: row.name, merge: true };

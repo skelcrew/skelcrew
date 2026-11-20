@@ -1500,6 +1500,42 @@ describe("the backlog", () => {
     expect(await listed("app-t100")).toMatchObject({ thread: expect.anything() });
   }, 60_000);
 
+  // The remote refuses to let the task go, as when another machine started it a moment before.
+  // The start is refused, and the task stays in the backlog, with no thread left behind.
+  test("a start the remote refuses keeps the task in the backlog and records no thread", async () => {
+    const work = addApp();
+    serve();
+    await untilCloned();
+    await skel("task", "add", "app", "Add export", "As JSON");
+    writeFileSync(
+      join(home, "bin", "git"),
+      `#!/bin/sh\ncase "$*" in *":refs/skelcrew/tasks/"*) echo refused >&2; exit 1 ;; esac\nexec ${Bun.which("git") ?? "git"} "$@"\n`,
+      { mode: 0o755 },
+    );
+    const refused = await skel("start", "app-t100");
+    expect(refused.err).toContain("app-t100 was started or removed on another machine");
+    expect(thread()).toEqual({});
+    expect(git(work, "ls-remote", "origin")).toContain("refs/skelcrew/tasks/t100");
+    expect(await listed("app-t100")).toMatchObject({ title: "Add export", thread: null });
+  }, 60_000);
+
+  // A stop between recording a start's thread and taking its task off the remote leaves the task
+  // there. The next refresh of the backlog takes it off, so no other machine starts it too.
+  test("a task this machine started, left on the remote by a stop, comes off at the next refresh", async () => {
+    const work = addApp();
+    const first = serve();
+    await untilCloned();
+    await skel("task", "add", "app", "Add export", "As JSON");
+    await stop(first);
+    const db = new Database(join(data(), "skelcrew.db"));
+    db.run("PRAGMA busy_timeout = 5000");
+    db.run(threadSql({ task: "t100", title: "Add export", body: "As JSON", status: "stopped" }));
+    db.close();
+    serve();
+    await until(() => !git(work, "ls-remote", "origin").includes("refs/skelcrew/tasks/t100"));
+    expect(await listed("app-t100")).toMatchObject({ thread: { status: "stopped" } });
+  }, 60_000);
+
   test("sc rm deletes a task that never started, here and on the remote, and keeps its name", async () => {
     const work = addApp();
     serve();

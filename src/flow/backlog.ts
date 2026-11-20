@@ -28,6 +28,11 @@ const Kept = z.object({
   by: z.string(),
 });
 
+// The tasks of the backlog starting on this machine, by owner/name/task, from the moment their
+// thread is recorded until their start takes them off the remote. A refresh of the backlog
+// leaves them to the start, which would otherwise take them for started by another machine.
+export const starting = new Set<string>();
+
 // Claims the next name for one of Skelcrew's own tasks on the remote, from Skelcrew's clone in
 // the folder, and returns it, such as t104. It is a t and the next number after every one claimed
 // on the remote, which every machine sees, and every one this machine's tasks hold. Names from
@@ -97,10 +102,27 @@ export async function refreshBacklog(
     console.log(`left out ${repository.name}-${name} from its backlog: Skelcrew can't read it`);
     return [];
   });
+  // A task this machine has a thread on started here, and a stop before its start took it off the
+  // remote left it there, so it comes off now. Names are claimed, so no other machine filed it.
+  const started = (task: string) =>
+    !starting.has(`${repository.owner}/${repository.repo}/${task}`) &&
+    db
+      .query("SELECT 1 FROM task_threads WHERE owner = ? AND repo = ? AND task = ?")
+      .get(repository.owner, repository.repo, task) !== null;
+  for (const task of tasks.filter((t) => started(t.task)))
+    await unfile(db, repository, folder, task.task, task.commit).catch((error) =>
+      console.log(
+        `couldn't take started ${repository.name}-${task.task} off its backlog: ${errorText(error)}`,
+      ),
+    );
   // One transaction, so no reader sees the backlog half refreshed.
   db.transaction(() => {
     db.run("DELETE FROM backlog WHERE owner = ? AND repo = ?", [repository.owner, repository.repo]);
-    saveFiled(db, repository, tasks);
+    saveFiled(
+      db,
+      repository,
+      tasks.filter((t) => !started(t.task)),
+    );
   })();
 }
 
