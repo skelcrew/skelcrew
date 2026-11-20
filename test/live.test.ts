@@ -73,6 +73,28 @@ test("a screen whose input area isn't found shows whole", async () => {
   // Without the line under its prompt either, it still shows whole.
   const bare = ["› Rate limit the API per user", "", "Working on it.", "Done."].join("\n");
   expect(agentOutput("codex", bare)).toBe(bare);
+  // An earlier message in Codex's output, with an indented line under it, isn't its input box,
+  // which is shaded.
+  const earlier = ["› previous request", "", "  result line"].join("\n");
+  expect(agentOutput("codex", earlier)).toBe(earlier);
+  // A coloured message isn't shaded either, whatever numbers its colour takes.
+  const coloured = ["", "\x1b[38;5;42m› previous request\x1b[39m", "", "  result line"].join("\n");
+  expect(agentOutput("codex", coloured)).toBe(coloured);
+  // Claude Code's box quoted in its output, with more output after it, isn't its input box, which
+  // ends the screen.
+  const rule = "─".repeat(40);
+  const quoted = [
+    "⏺ The screen ends like this:",
+    rule,
+    "❯ hello",
+    rule,
+    "  ⏵⏵ bypass permissions on",
+    "⏺ That box is the prompt.",
+    "  ⎿  Read 3 lines",
+    "",
+    "> a prompt drawn another way",
+  ].join("\n");
+  expect(agentOutput("claude", quoted)).toBe(quoted);
   // A harness drawn another way, such as Codex's screen read as Claude Code's, keeps its input.
   const codex = await screen("codex-busy.txt");
   expect(agentOutput("claude", codex)).toBe(codex);

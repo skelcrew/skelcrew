@@ -23,7 +23,7 @@ export function liveNote(row: Row): string | null {
 export function agentOutput(harness: HarnessName | null, screen: string): string {
   if (harness === null) return screen;
   const lines = screen.split("\n");
-  const start = harnessNamed(harness).inputStart(lines.map((line) => Bun.stripANSI(line)));
+  const start = harnessNamed(harness).inputStart(lines);
   return start === null ? screen : lines.slice(0, start).join("\n");
 }
 
