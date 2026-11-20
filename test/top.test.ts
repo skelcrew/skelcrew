@@ -12,7 +12,7 @@ const tab = (name: string, needYou = 0, ready = 0, colour: Tab["colour"] = "yell
   ready,
 });
 const size = { left: 30, width: 99 };
-const base: Top = { tabs: [tab("app")], open: "simon/app", where: "", version: "0.1.0" };
+const base: Top = { tabs: [tab("app")], open: "simon/app", where: "", versions: ["v0.1.0"] };
 // Returns the top row as a tmux format, for the base with some of it changed.
 const top = (more: Partial<Top> = {}, given = size) => drawTop({ ...base, ...more }, given);
 // Returns a line as you see it, without tmux's styles. A ## is how tmux is told to show one #.
@@ -38,33 +38,45 @@ test("on this machine the header is Skelcrew and its version, with no dot and no
 });
 
 test("the version shows dim right after the name, here and on a remote", () => {
-  expect(above({ version: "0.4.2" }).trimEnd()).toBe("  Skelcrew v0.4.2");
-  expect(top({ version: "0.4.2" })).toContain(
+  expect(above({ versions: ["v0.4.2"] }).trimEnd()).toBe("  Skelcrew v0.4.2");
+  expect(top({ versions: ["v0.4.2"] })).toContain(
     "#[bold,fg=colour231]Skelcrew#[default]#[fg=brightblack] v0.4.2#[default]",
   );
-  const there = { version: "0.4.2", where: "workbox" };
+  const there = { versions: ["v0.4.2"], where: "workbox" };
   expect(above(there, roomy).trimEnd()).toBe("  Skelcrew v0.4.2 · workbox");
   expect(top(there, roomy)).toContain("#[fg=brightblack] v0.4.2 · workbox#[default]");
 });
 
 test("the place is cut before the version, which stays whole", () => {
   const where = "simon@a-very-long-server-name.example.com";
-  expect(above({ where, version: "0.4.2" })).toBe("  Skelcrew v0.4.2 · simon…  ");
+  expect(above({ where, versions: ["v0.4.2"] })).toBe("  Skelcrew v0.4.2 · simon…  ");
 });
 
 test("with no room for both, the place goes first, and then the version, never half of it", () => {
   const line = (left: number) =>
-    above({ where: "workbox", version: "0.4.2" }, { left, width: 40 }).trimEnd();
+    above({ where: "workbox", versions: ["v0.4.2"] }, { left, width: 40 }).trimEnd();
   expect(line(25)).toBe("  Skelcrew v0.4.2 · …");
   expect(line(24)).toBe("  Skelcrew v0.4.2");
   expect(line(21)).toBe("  Skelcrew v0.4.2");
   expect(line(20)).toBe("  Skelcrew");
 });
 
+test("a narrow sidebar shows the longest name of the version that fits", () => {
+  const versions = ["6f1c2ab* (checkout, * = uncommitted changes)", "checkout 6f1c2ab+changes"];
+  const wide = { left: 60, width: 99 };
+  expect(above({ versions }, wide).trimEnd()).toBe(
+    "  Skelcrew 6f1c2ab* (checkout, * = uncommitted changes)",
+  );
+  // A sidebar 38 columns wide.
+  const usual = { left: 39, width: 99 };
+  expect(above({ versions }, usual).trimEnd()).toBe("  Skelcrew checkout 6f1c2ab+changes");
+  expect(above({ versions }, { left: 38, width: 99 }).trimEnd()).toBe("  Skelcrew");
+});
+
 test("the sidebar's edge runs up through the row, and the tabs start where the right side does", () => {
   for (const more of [
     {},
-    { where: "simon@a-very-long-server-name.example.com", version: "0.4.2" },
+    { where: "simon@a-very-long-server-name.example.com", versions: ["v0.4.2"] },
   ]) {
     const line = seen(top(more));
     expect(line[size.left - 2]).toBe("│");

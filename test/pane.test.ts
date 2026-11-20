@@ -216,7 +216,7 @@ test("a long title and long links show whole, and every check shows however many
 
 // What the list shows besides its rows.
 const frame: Frame = {
-  version: "0.6.0",
+  versions: ["0.6.0"],
   where: "",
   name: "app",
   tabs: [{ name: "app", fullName: "simon/app", needYou: 0, colour: "yellow", ready: 0 }],

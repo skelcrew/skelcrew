@@ -28,16 +28,19 @@ const escaped = (text: string) => text.replaceAll("#", "##").replaceAll("%", "%%
 const skelName = "#[bold,fg=colour231]Skelcrew#[default]";
 
 // Returns the header above the sidebar: Skelcrew's name, in line with the sidebar's marks, then dim
-// its version, such as v0.4.2, then, on a remote, a dot and where it runs, then spaces out to the
-// sidebar's edge. `where` is empty on this machine. It comes from outside, so it is made safe as a
+// the longest name of its version that fits, such as v0.4.2 or 6f1c2ab (checkout), then, on a
+// remote, a dot and where it runs, then spaces out to the sidebar's edge. `where` is empty on this
+// machine. It comes from outside, so it is made safe as a
 // title is, and cut to stop two columns before the sidebar's edge, as all the sidebar's text does.
 // The place gives way first. A version is never cut, as half a number would be a different one.
-function header(where: string, left: number, version: string): string {
+function header(where: string, left: number, versions: string[]): string {
   // "  Skelcrew" takes ten columns. The sidebar's edge is two columns left of the agent, and text
   // stops two before it, so what follows the name has `room`.
   const nameWidth = 10;
   const room = Math.max(left - 4 - nameWidth, 0);
-  const shown = `v${version}`;
+  // With no name that fits, the shortest stands in, so the place doesn't take the room either.
+  const fits = (name: string) => Bun.stringWidth(name) + 1 <= room;
+  const shown = versions.find(fits) ?? versions.at(-1) ?? "";
   const taken = Bun.stringWidth(shown) + 1;
   const number = room >= taken ? ` ${shown}` : "";
   // " · " before the place takes three columns.
@@ -103,8 +106,8 @@ function drawTabs(tabs: Tab[], open: string, width: number): string {
 }
 
 // What the top row shows: the tabs and the open one's owner/name, the remote Skelcrew runs on, if
-// any, and the version of the Skelcrew running here.
-export type Top = { tabs: Tab[]; open: string; where: string; version: string };
+// any, and the names of the version of the Skelcrew running here, longest first, such as v0.4.2.
+export type Top = { tabs: Tab[]; open: string; where: string; versions: string[] };
 
 // Returns the top row of the screen as a tmux format, given what it shows and where the right
 // side's pane is, `left` columns in and `width` wide. tmux's one status line spans the whole
@@ -114,5 +117,5 @@ export type Top = { tabs: Tab[]; open: string; where: string; version: string };
 export function drawTop(top: Top, size: Size): string {
   const { left, width } = size;
   const edge = "#[fg=colour237]│#[default] ";
-  return `${header(top.where, left, top.version)}${edge}${drawTabs(top.tabs, top.open, width)}`;
+  return `${header(top.where, left, top.versions)}${edge}${drawTabs(top.tabs, top.open, width)}`;
 }

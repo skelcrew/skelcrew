@@ -35,7 +35,7 @@ import { leadPlaces, screenLogFile } from "../paths.ts";
 import { quoteForSh } from "../plugins/plugin.ts";
 import { pluginHost } from "../plugins/runtime.ts";
 import { errorText } from "../say.ts";
-import { version } from "../version.ts";
+import { shownVersions } from "../version.ts";
 import { agentFooter, tellFooter } from "./footer.ts";
 import { edge, filled, pad, paint, removeControlCodes } from "./look.ts";
 import { leadOnHost, sidebarWidth } from "./screen.ts";
@@ -373,7 +373,7 @@ export async function runSidebar(
     // The header and the tabs go to tmux's status line, and only when they changed.
     const width = doing("asking tmux the agent's width", () => paneWidth(agents, rightPane));
     const left = size().width + 1;
-    const look = { tabs, open: `${open.owner}/${open.repo}`, where, version };
+    const look = { tabs, open: `${open.owner}/${open.repo}`, where, versions: shownVersions() };
     const top = drawTop(look, { left, width });
     if (top !== lastTop) {
       lastTop = top;
