@@ -1,6 +1,5 @@
 // Skelcrew's help page: what sc --help shows, laid out in sections with skelcrew.dev's amber for
 // the headings, so it reads as help and not as an error.
-import { keys } from "./screen/keys.ts";
 
 // The help page's sections, each a heading and its rows of a command and what it does.
 const sections: [string, [string, string][]][] = [
@@ -100,8 +99,25 @@ const sections: [string, [string, string][]][] = [
       ["--version", "Which release of Skelcrew this is"],
     ],
   ],
-  // The screen's keys, in words, from the same place as its list of keys.
-  ["KEYS", keys],
+  // The screen's keys, in words, read as "alt + q to quit, agents run on". Those that work
+  // anywhere come first, then those for a task's row, where the list's keys work without Alt.
+  // Ctrl-Q leaves too, but isn't listed: it is there for a Mac terminal that doesn't send Option
+  // as Alt.
+  [
+    "KEYS",
+    [
+      ["alt + ↑/↓", "move one row"],
+      ["alt + shift + ↑/↓", "jump to the next or previous section"],
+      ["alt + 1-6", "open or close a stage"],
+      ["alt + shift + ←/→", "switch repository"],
+      ["alt + q", "quit, agents run on"],
+      ["enter", "open a task's row, or attach to its agent"],
+      ["ctrl + \\", "come back from an agent you attached to"],
+      ["shift + ↑/↓", "move a queued task in up next"],
+      ["s", "start or queue a task in the backlog"],
+      ["m", "merge a ready task"],
+    ],
+  ],
 ];
 
 // Lines to copy, in the order a new user would run them.

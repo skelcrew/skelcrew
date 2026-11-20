@@ -123,7 +123,7 @@ export const Thread = z.object({
   review_reset: z.number().nullable(),
   // Why the thread started needing you, until a note saying so is typed into the lead.
   noting: z.string().nullable(),
-  // The task's title and body when the thread started, for the strip, which looks each second
+  // The task's title and body when the thread started, for the list, which looks each second
   // and so can't ask the tracker, and for a task that has left Skelcrew's copy. With no task in
   // the tracker, they are the task itself. An old row can hold null.
   title: z.string().nullable(),

@@ -4,7 +4,6 @@ import { expect, test } from "bun:test";
 import { claude } from "../src/agents/claude.ts";
 import { codex } from "../src/agents/codex.ts";
 import { noProgress } from "../src/agents/progress.ts";
-import { tokenText } from "../src/screen/progress.ts";
 
 // A line of Claude Code's conversation file: one part of an answer, with the answer's whole
 // usage, as Claude Code writes each part.
@@ -165,17 +164,6 @@ test("Codex: each kind of call says its step in its own way", () => {
   });
   expect(codexStep(custom)).toBe("Editing rows.ts");
   expect(codexStep(call("view_image", { path: "a.png" }))).toBe("View image");
-});
-
-test("tokens show in the fewest letters, rounded down", () => {
-  expect(tokenText(0)).toBe("0");
-  expect(tokenText(850)).toBe("850");
-  expect(tokenText(1_250)).toBe("1.2k");
-  expect(tokenText(48_900)).toBe("48k");
-  expect(tokenText(999_999)).toBe("999k");
-  expect(tokenText(1_000_000)).toBe("1M");
-  expect(tokenText(1_290_000)).toBe("1.2M");
-  expect(tokenText(25_000_000)).toBe("25M");
 });
 
 // The file is the agent's to write, so a reader must take anything there without failing.

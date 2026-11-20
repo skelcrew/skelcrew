@@ -5,7 +5,7 @@
 // how many of its threads need you.
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
-import { threadLimit } from "../config.ts";
+import { roundLimit as roundLimitOf, threadLimit } from "../config.ts";
 import { backlogOf } from "../flow/backlog.ts";
 import { openTasks, prOf } from "../flow/copy.ts";
 import { passedReviewStage, reviewCheck } from "../flow/decide.ts";
@@ -26,7 +26,6 @@ import { ListStage, listStage } from "../flow/stage.ts";
 import { counted, ordinal } from "../flow/task-queue.ts";
 import { Thread, taskName } from "../flow/thread.ts";
 import { forgeOf } from "../plugins/ask.ts";
-import { changedAt, roundLimit as settingsRoundLimit } from "../screen/lists.ts";
 import { removeControlCodes } from "../screen/look.ts";
 import { builderProgress } from "../screen/progress.ts";
 
@@ -97,12 +96,28 @@ export type Tab = Badge & { name: string; fullName: string };
 // review past the limit says so by itself. Past the limit, sc submit and sc review drop those
 // changes but keep the thread needing you while its round runs, and so can other reasons, such
 // as a message that couldn't be typed in. Only the thread's real round limit tells them apart,
-// so for such a thread alone the list reads its settings, and settings that aren't valid read as
-// no limit. Any other thread reads none, so drawing the list stays fast.
+// so for such a thread alone the list reads its settings. Settings that aren't valid already stop
+// rounds, with the reason, and mustn't also take the list away, so they read as no limit. Any
+// other thread reads none, so drawing the list stays fast.
 const roundLimit = (thread: Thread) => {
   const underWay = thread.submitting !== null || thread.reviewing !== null;
-  return thread.needs_you && underWay ? settingsRoundLimit(thread) : Number.POSITIVE_INFINITY;
+  if (!thread.needs_you || !underWay) return Number.POSITIVE_INFINITY;
+  try {
+    return roundLimitOf(thread);
+  } catch {
+    return Number.POSITIVE_INFINITY;
+  }
 };
+
+// Returns when a task last changed as a clock time for a moment today, such as 14:32, and as a
+// date for an earlier one, such as 12 Nov, in this machine's time zone. It changes only when the
+// task does, or at midnight, so a list left open writes nothing.
+export function changedAt(at: number, now: number): string {
+  const when = new Date(at);
+  if (when.toDateString() === new Date(now).toDateString())
+    return `${String(when.getHours()).padStart(2, "0")}:${String(when.getMinutes()).padStart(2, "0")}`;
+  return `${when.getDate()} ${when.toLocaleString("en-GB", { month: "short" })}`;
+}
 
 // What the list reads of a lead beyond leadOf: what its hooks last said it does, and whether you
 // closed its tab by exiting it.
@@ -557,12 +572,14 @@ const TabRow = z.object({ name: z.string(), owner: z.string(), repo: z.string() 
 // Returns a tab for each repository, in name order, with its badge: how many of its threads
 // need you, and how many are ready to merge. The badges are how you hear of other repositories,
 // as one repository's lead never mentions another's threads. A repository whose lead you exited
-// has no tab until you open it again, except the open one, so the list never loses what it shows.
-export function repositoryTabs(db: Database, open: Open): Tab[] {
+// has no tab until you open it again, except `keep`, the one the list shows, so the list never
+// loses what it shows. The screen's sidebar keeps none: a tab that goes there is how it learns
+// to move to another repository.
+export function repositoryTabs(db: Database, keep: Open | null): Tab[] {
   const repositories = db
     .query(`SELECT name, owner, repo FROM repositories
       WHERE tab_closed = 0 OR (owner = ? AND repo = ?) ORDER BY name`)
-    .all(open.owner, open.repo)
+    .all(keep?.owner ?? null, keep?.repo ?? null)
     .map((row) => TabRow.parse(row));
   // Each thread that isn't done gets the mark its row would have.
   const marked = db
