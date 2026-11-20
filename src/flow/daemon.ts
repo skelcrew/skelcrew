@@ -202,14 +202,16 @@ const exitLook = z.coerce
   .catch(1000)
   .parse(process.env.SKELCREW_EXIT_LOOK_MS ?? 1000);
 
-// How often the daemon looks at the queue of limits.threads for a task whose turn came, in
-// milliseconds. Tests of the queue set SKELCREW_QUEUE_LOOK_MS shorter, so seeing that nothing
-// starts takes a fraction of a second rather than several.
-const queueLook = z.coerce
+// How often, in milliseconds, the daemon looks for work that waits: the queue of limits.threads,
+// the messages waiting for builders, and stopped builders for the safety net. Tests set
+// SKELCREW_LOOK_MS shorter, so seeing that something doesn't happen takes a fraction of a
+// second rather than several. The looks at agents' screens keep their two seconds, as telling
+// a live status line from a still one depends on it.
+const look = z.coerce
   .number()
   .min(0)
   .catch(2000)
-  .parse(process.env.SKELCREW_QUEUE_LOOK_MS ?? 2000);
+  .parse(process.env.SKELCREW_LOOK_MS ?? 2000);
 
 // Ends the daemon on a signal: removes its sockets, ends the processes it started, and exits.
 // The agents' sessions aren't the daemon's processes, so agents keep working while the
@@ -990,7 +992,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
     } catch (error) {
       console.log(`couldn't mark stopped builders nobody acted on: ${errorText(error)}`);
     }
-  }, 2000);
+  }, look);
   // A host that shows status hears each builder's as it is now, and each change from here on.
   reportStatuses(db);
   // Open your socket.
@@ -1028,10 +1030,10 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
       },
     );
   }
-  // Type the messages waiting for builders as soon as each can take them, looking every two
-  // seconds, as a builder becomes idle with no word to the daemon, such as after Esc.
-  setInterval(() => deliverAllWaiting(db, sessions), 2000);
-  // Start the tasks whose turn came in the queue of limits.threads, now and every queueLook from
+  // Type the messages waiting for builders as soon as each can take them, looking every look,
+  // as a builder becomes idle with no word to the daemon, such as after Esc.
+  setInterval(() => deliverAllWaiting(db, sessions), look);
+  // Start the tasks whose turn came in the queue of limits.threads, now and every look from
   // here on, as a builder ends in many ways, and a limit raised in a file frees places too.
   // Only after the threads above were brought back, so a task leaving the queue now is never
   // also taken for one whose setup the daemon's stop cut short. A thread sc rm is removing stays
@@ -1048,7 +1050,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
     }
   };
   startFromQueue();
-  setInterval(() => doing("starting tasks from the queue", startFromQueue), queueLook);
+  setInterval(() => doing("starting tasks from the queue", startFromQueue), look);
   // Start polling, which also lets any sc start waiting on it go ahead, and keep Skelcrew itself
   // up to date.
   polling.resolve(pollRepositories(db, sessions, every, setUpAndStart, startingTasks));

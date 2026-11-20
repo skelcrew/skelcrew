@@ -332,6 +332,15 @@ export const opened = () => asked(plugin).find((q) => q.ask === "open pr");
 export const typedMessages = () => read(join(builder(), "typed")).split("\x1b[201~").length - 1;
 export const finished = (state: string) => statuses().filter((s) => s.state === state);
 
+// Waits until the daemon has asked the forge what changed three more times. A repository's polls
+// run one at a time, each asking that first, so by the third new ask a poll that began after
+// this call has ended, with all it decided.
+export async function morePolls(): Promise<void> {
+  const polls = () => asked(plugin).filter((q) => q.ask === "changed").length;
+  const before = polls();
+  await until(() => polls() >= before + 3);
+}
+
 // Starts app-12 again after sc stop, and waits until its builder is back. The round it had
 // carries on only then, so a review asked for before could otherwise start a second time. The
 // builder brought back neither submits nor answers what is typed in, so the reviews that follow

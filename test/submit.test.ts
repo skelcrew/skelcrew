@@ -30,6 +30,7 @@ import {
   github,
   home,
   longWait,
+  morePolls,
   opened,
   plugin,
   pushed,
@@ -501,8 +502,8 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
     // The check shows at the next poll.
     await startApp12({ every: 1_000 });
     await until(() => opened() !== undefined, 30_000);
-    // No check yet, so no review either.
-    await Bun.sleep(5_000);
+    // No check yet, so no review either, however many polls find none.
+    await morePolls();
     expect(existsSync(join(codexHome(), "sessions", "prompt-1"))).toBe(false);
     answer(plugin, "changed", {
       items: [
@@ -532,8 +533,8 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
     await untilCloned();
     expect((await skel(["start", "app-12"])).err).toBe("");
     await until(() => opened() !== undefined, 30_000);
-    // No check yet, so no review either.
-    await Bun.sleep(5_000);
+    // No check yet, so no review either, however many polls find none.
+    await morePolls();
     expect(existsSync(join(codexHome(), "sessions", "prompt-1"))).toBe(false);
     answer(plugin, "changed", {
       items: [

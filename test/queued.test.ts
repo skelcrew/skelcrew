@@ -75,7 +75,7 @@ function serve(): Subprocess {
   const code = `import { serve } from ${JSON.stringify(source("flow/daemon.ts"))};
 await serve(${JSON.stringify(socket)}, 200);`;
   const run = Bun.spawn([process.execPath, "-e", code], {
-    env: { ...env(), SKELCREW_CHECK_WAIT_MS: "0", SKELCREW_QUEUE_LOOK_MS: "100" },
+    env: { ...env(), SKELCREW_CHECK_WAIT_MS: "0", SKELCREW_LOOK_MS: "100" },
     stdout: Bun.file(join(home, "daemon.log")),
     stderr: Bun.file(join(home, "daemon.err")),
   });

@@ -460,12 +460,14 @@ describe.skipIf(insideSandbox)("sc submit", () => {
     verdict(1, "changes", "The export has no test.");
     mkdirSync(builder(), { recursive: true });
     writeFileSync(join(builder(), "busy"), "");
-    await startApp12();
+    // The daemon tries the waiting messages every 200 ms rather than every two seconds.
+    await startApp12({ env: { SKELCREW_LOOK_MS: "200" } });
     await until(() => thread().telling !== null, 30_000);
     const asBuilder = { SKELCREW_SOCKET: builderSocket() };
     expect((await skel(["question", "asked"], asBuilder)).code).toBe(0);
     rmSync(join(builder(), "busy"));
-    await Bun.sleep(6000);
+    // Long enough for several tries, each finding the question open.
+    await Bun.sleep(1500);
     expect(read(join(builder(), "typed"))).not.toContain("The export has no test.");
     expect(String(thread().telling)).toContain("The export has no test.");
     expect((await skel(["question", "closed"], asBuilder)).code).toBe(0);
