@@ -599,8 +599,9 @@ describe.skipIf(insideSandbox)("with a lead per repository", () => {
     for (const line of claudeLines()) {
       expect(line).toContain("told: You are a lead");
       expect(line).toContain("sc issue create");
-      // The lead talks to the human, who sees issues and threads, never Skelcrew's word task.
-      expect(line).not.toMatch(/\btasks?\b/i);
+      // The lead talks to the human, who sees issues and threads, never Skelcrew's word task. The
+      // command that files work in the backlog is named sc task add, which the lead runs.
+      expect(line.replaceAll("sc task add", "")).not.toMatch(/\btasks?\b/i);
       expect(line).toContain("You are the lead of simon/app.");
       expect(line).toContain("--model opus");
       expect(line.trimEnd()).toEndWith("agent-view-off=1");

@@ -719,6 +719,7 @@ c.on("data", (d) => process.stdout.write(d));`;
     expect(existsSync(join(home, "issues", "sent"))).toBe(false);
   }, 60_000);
 
+  // The lead gives the human's words for an issue, in a file it writes in its own folder.
   test("the lead runs sc issue create and sc start from its sandbox, but can't trust", async () => {
     addApp();
     const asker = `const c = require("node:net").createConnection(process.env.SKELCREW_SOCKET);
@@ -726,7 +727,7 @@ c.on("connect", () => c.write('{"command":"lead"}\\n'));
 c.on("data", (d) => process.stdout.write(d));`;
     writeFileSync(join(home, "bin", "ask.js"), asker);
     fakeClaude(
-      `{ sc issue create app "Add import" "From CSV"; sc start app-12; sc repo trust simon/other; bun ${join(home, "bin", "ask.js")}; } > out.new 2>&1; mv out.new out`,
+      `{ printf 'File an issue for the CSV import.' > asked.txt; sc issue create app "Add import" "From CSV" --asked-file asked.txt; sc start app-12; sc repo trust simon/other; bun ${join(home, "bin", "ask.js")}; } > out.new 2>&1; mv out.new out`,
       "",
     );
     // Opened before, so the daemon starts app's lead as it starts.
