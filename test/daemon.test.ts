@@ -5,7 +5,6 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
-  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -17,7 +16,14 @@ import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import type { Subprocess } from "bun";
 import { leadPlaces } from "../src/paths.ts";
-import { insideSandbox, read, source, threadSql, until as wait } from "./harness.ts";
+import {
+  endFakeSessions,
+  insideSandbox,
+  read,
+  source,
+  threadSql,
+  until as wait,
+} from "./harness.ts";
 
 const main = source("main.ts");
 const daemon = source("flow/daemon.ts");
@@ -72,11 +78,7 @@ afterEach(async () => {
     await serve.exited;
   }
   // Each session the fake host started ends with the test, by its process group.
-  const hosted = join(fakeHostSettings(), "sessions");
-  for (const id of existsSync(hosted) ? readdirSync(hosted) : [])
-    try {
-      process.kill(-Number(readFileSync(join(hosted, id, "pid"), "utf8")), "SIGKILL");
-    } catch {}
+  await endFakeSessions(fakeHostSettings());
   Bun.spawnSync(["tmux", "-L", socket, "kill-server"], { stderr: "pipe" });
   // tmux leaves the socket file behind after kill-server.
   const folder = join(process.env.TMUX_TMPDIR ?? "/tmp", `tmux-${userInfo().uid}`);

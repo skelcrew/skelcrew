@@ -33,6 +33,26 @@ const ReviewPost = z.object({
 });
 export type ReviewPost = z.infer<typeof ReviewPost>;
 
+// A verdict saved on the thread but not yet on the forge: the commit, Skelcrew's check on it,
+// and the review to post on the PR with the commit it covers, or null when there is none to
+// post. A failed review posts none, but keeps the review before it that is still to post.
+const Posting = z.object({
+  commit: z.string(),
+  check: z.enum(["success", "failure"]),
+  description: z.string(),
+  review: z
+    .object({
+      pr: z.number(),
+      commit: z.string(),
+      verdict: z.enum(["approve", "changes"]),
+      body: z.string(),
+      findings: z.array(z.string()),
+      round: z.number(),
+    })
+    .nullable(),
+});
+export type Posting = z.infer<typeof Posting>;
+
 // A thread with its task, as Skelcrew's database keeps them, one row per thread from the
 // task_threads view. The task's fields are those openDb's taskColumns name, and they are saved on
 // the task. It is checked on every read, since the row comes back from disk. Its folder names it
@@ -246,6 +266,15 @@ export const Thread = z.object({
   // opened again after sc rm gets a review of its own. One Skelcrew can't read counts as none,
   // and the next review is posted anew.
   review_post: savedJson("tasks.review_post", ReviewPost.nullable(), null),
+  // The latest verdict while it is still being put on the forge, or null once it is there.
+  // It is saved with the verdict, so a daemon stopped meanwhile puts it there as it starts
+  // again, and the PR never keeps a review the thread no longer says. One Skelcrew can't read
+  // counts as none.
+  posting: savedJson("tasks.posting", Posting.nullable(), null),
+  // What the latest finished review found, one finding each, kept whether or not it was posted,
+  // such as with no forge or when posting failed. None for a review that approved or failed, and
+  // null on a task from before Skelcrew kept it.
+  review_findings: savedJson("tasks.review_findings", z.array(z.string()).nullable(), null),
   // When the task last joined the queue of limits.threads, in milliseconds since 1970. The queue
   // goes in this order, after a restart too. Kept once the task leaves the queue, until its
   // builder's session is saved, so a restart before then puts it back in its place.

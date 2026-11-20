@@ -275,7 +275,7 @@ export async function mergeIfReady(
   const thread = readThread(db, folder);
   if (thread.merge_plan !== "armed" || thread.status === "done" || removing.has(folder)) return;
   // `pr` is what the forge said while this poll ran. A round that moved on meanwhile, such as
-  // a review that started or ended, makes it stale: the checks of the new round may not be in
+  // a review that started or ended, or a saved verdict this poll just posted, makes it stale: the checks of the new round may not be in
   // it yet. The next poll acts on the PR as it is after the round.
   const moved =
     thread.started !== before.started ||
@@ -284,7 +284,8 @@ export async function mergeIfReady(
     thread.rounds !== before.rounds ||
     thread.review_round !== before.review_round ||
     thread.review_at !== before.review_at ||
-    thread.verdict !== before.verdict;
+    thread.verdict !== before.verdict ||
+    JSON.stringify(thread.posting) !== JSON.stringify(before.posting);
   if (moved) return;
   const name = threadName(db, thread);
   const pinned = thread.merge_pinned;

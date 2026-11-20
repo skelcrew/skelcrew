@@ -286,9 +286,14 @@ async function reviewRound(
   const limit = reviewLimit();
   const skelcrewClone = cloneDir(thread.owner, thread.repo);
   const bases = `refs/skelcrew/bases/${thread.folder}`;
-  const setCheck = async (state: "pending" | "success" | "failure", description: string) => {
-    if (hasForge) await setStatus(db, repository, { commit: sha, state, description });
-  };
+  // The check waits its turn behind the thread's earlier writes to the forge, such as a verdict
+  // still being posted. A round cancelled meanwhile writes none, as no review of it would then
+  // ever end the pending it sets.
+  const setCheck = (state: "pending" | "success" | "failure", description: string) =>
+    inTurn(folder, async () => {
+      if (signal.aborted) return;
+      if (hasForge) await setStatus(db, repository, { commit: sha, state, description });
+    });
   // A flow with no review stage saves its pushed commit at once, before any check is set, so a
   // check that fails from here on is told as one, never as a failed push.
   if (unreviewed) record(db, folder, { reviewing: sha, submitting: null, queued: null });
@@ -531,13 +536,16 @@ async function reviewRound(
   await actOnVerdict(db, sessions, folder, sha, signal, { verdict, by, kept: null }, builderBack);
 }
 
-// Acts on a review's verdict: with a forge, puts it in Skelcrew's one review on the PR and sets
-// Skelcrew's check; saves what it means for the thread, and types changes into the builder once
-// `builderBack` settles.
+// Acts on a review's verdict: saves what it means for the thread, then, with a forge, puts it in
+// Skelcrew's one review on the PR and sets Skelcrew's check, and types changes into the builder
+// once `builderBack` settles.
 // Without a forge an approved branch needs you at once. An approval is saved as a ref in
 // Skelcrew's clone, so a later submit that only merges the base branch can keep it. `kept` is
 // the approved commit whose approval this one keeps, with no reviewer run, which the check and
-// the thread's log say. Stops without a word once a newer round cancels it.
+// the thread's log say. A round a newer one or sc stop cancels before the verdict is saved stops
+// without a word. Once saved, the verdict still goes on the PR and the check, in its turn among
+// the thread's writes to the forge, so the PR never shows a verdict Skelcrew didn't save, nor
+// Skelcrew one the PR doesn't show.
 async function actOnVerdict(
   db: Database,
   sessions: string,
@@ -553,10 +561,8 @@ async function actOnVerdict(
   const { pr } = thread;
   const hasForge = forgeOf(db, repository) !== null;
   const maxRounds = roundLimit(thread);
-  // Decide what the verdict means for the thread, then post it on the PR. A failed or timed out
-  // review is Skelcrew's problem, not the PR's, so it is never posted. A kept approval says so
-  // on the check and in the log, in place of the reviewer's.
-  if (signal.aborted) return;
+  // Decide what the verdict means for the thread. A kept approval says so on the check and in
+  // the log, in place of the reviewer's.
   const before = thread.rounds;
   const ready = hasForge ? null : `${threadName(db, thread)} is ready on branch ${thread.branch}`;
   const decided = afterReview(before, verdict, maxRounds, ready);
@@ -569,37 +575,31 @@ async function actOnVerdict(
           description: `approval kept: only merged ${prBase(db, thread)}`,
           why: ready === null ? `${keptWhy}, so it waits on CI` : `${keptWhy}; ${ready}`,
         };
+  // A newer submit, or sc stop, may have cancelled the round, and the thread is then its to
+  // change. Nothing is awaited from this check until the verdict is saved, so a cancel either
+  // comes first and nothing is saved or posted, or comes after and finds the verdict saved.
+  if (signal.aborted) return;
   // The whole review goes in the thread's log first, as the PR keeps only the latest one.
-  if (verdict.verdict === "approve" || verdict.verdict === "changes") {
-    const said = reviewComment(verdict, before + 1, sha);
-    record(db, folder, {}, `the review said (${verdict.verdict}): ${said}`);
-    if (pr !== null) await postOrEdit(db, folder, pr, sha, { ...verdict, round: before + 1 });
-  }
-  // A newer round may be reviewing the same commit, and its check must stay pending.
-  if (signal.aborted) return;
-  if (hasForge)
-    await setStatus(db, repository, {
-      commit: sha,
-      state: outcome.check,
-      description: outcome.description,
-    });
-  if (signal.aborted) return;
-  // The approved commit is kept for the next submit to compare with. Losing it costs only a
-  // review, so a ref git won't write fails nothing.
-  if (verdict.verdict === "approve")
-    await git(
-      cloneDir(thread.owner, thread.repo),
-      "update-ref",
-      `refs/skelcrew/approved/${thread.folder}`,
-      sha,
-    ).catch(() => {});
-  // A newer submit, or sc stop, may have cancelled the round meanwhile, and the thread is then
-  // its to change.
-  if (signal.aborted) return;
-  // Save the outcome, tell the lead if the thread now needs you or its review failed, and type
-  // any changes into the builder.
+  if (verdict.verdict === "approve" || verdict.verdict === "changes")
+    record(
+      db,
+      folder,
+      {},
+      `the review said (${verdict.verdict}): ${reviewComment(verdict, before + 1, sha)}`,
+    );
+  // Save the outcome, with what is still to go on the forge, and tell the lead if the thread now
+  // needs you or its review failed. A failed or timed out review is Skelcrew's problem, not the
+  // PR's, so it is never posted, though its check is set.
   const { rounds, needsYou, status, tell, held } = outcome;
   const failed = verdict.verdict === "failed" || verdict.verdict === "timed out";
+  // A failed review posts none, so a review before it that the forge didn't take yet is still
+  // the one the PR must show.
+  const review =
+    (verdict.verdict === "approve" || verdict.verdict === "changes") && pr !== null
+      ? { pr, commit: sha, ...verdict, round: before + 1 }
+      : (thread.posting?.review ?? null);
+  const { check, description } = outcome;
+  const posting = hasForge ? { commit: sha, check, description, review } : null;
   // A new review asks anew about the round limit, so a decision about the last one ends.
   const change = {
     reviewing: null,
@@ -616,7 +616,9 @@ async function actOnVerdict(
     verdict: verdict.verdict,
     review_line: verdict.body.trim().split("\n")[0]?.slice(0, 200) ?? "",
     reviewed_commit: sha,
+    review_findings: "findings" in verdict ? verdict.findings : [],
     review_at: Date.now(),
+    posting,
   };
   record(db, folder, change, outcome.why);
   // A review that failed doesn't need you: the lead hears of it, with the error the harness
@@ -628,13 +630,44 @@ async function actOnVerdict(
     const line = `${name}${said}`.replace(/\s+/g, " ").slice(0, 200);
     noteForLead(db, sessions, repository, `${line}. sc review ${name} runs it again.`);
   }
+  // The approved commit is kept for the next submit to compare with. It is written at once,
+  // with no await since the save, so sc review, which deletes it as it asks for a review, never
+  // runs before the write and has it put back after. Losing it costs only a review, so a ref
+  // git won't write fails nothing.
+  if (verdict.verdict === "approve")
+    Bun.spawnSync(
+      [
+        "git",
+        "-C",
+        cloneDir(thread.owner, thread.repo),
+        "update-ref",
+        `refs/skelcrew/approved/${thread.folder}`,
+        sha,
+      ],
+      { stderr: "ignore" },
+    );
+  // The verdict takes its turn among the thread's writes to the forge as it is saved, with no
+  // await between. Otherwise sc stop, sc start and sc review could queue a newer review's pending
+  // check first, and this verdict's check would land on top of it. A forge that fails to take it
+  // is the lead's to hear, once, while each poll tries again. The verdict stands, so any changes
+  // still reach the builder.
+  const posted = postVerdict(db, folder).then((failed) => {
+    if (failed === null) return;
+    const why = `couldn't put its review on the forge: ${failed}`;
+    record(db, folder, {}, `${why}; each poll tries again`);
+    const line = `${threadName(db, thread)} ${why}`.replace(/\s+/g, " ").slice(0, 200);
+    noteForLead(db, sessions, repository, `${line}. Skelcrew tries again at each poll.`);
+    typeLeadNotes(db, sessions);
+  });
   typeLeadNotes(db, sessions);
-  if (!tell) return;
   // The changes are saved, so a builder that never comes back, which ends the round, keeps them
-  // for when you start it again.
-  await builderBack;
-  if (signal.aborted) return;
-  await queueChanges(db, sessions, folder, tell, signal);
+  // for when you start it again. A round cancelled meanwhile leaves them to the newer round,
+  // which drops them, or to sc start, which types them in.
+  if (tell) {
+    await builderBack;
+    if (!signal.aborted) await queueChanges(db, sessions, folder, tell, signal);
+  }
+  await posted;
 }
 
 // Ends a round whose task's flow has no review stage, once CI's first check had its chance to
@@ -655,11 +688,13 @@ async function markNotReviewed(
   const repository = repositoryOf(db, thread);
   const hasForge = forgeOf(db, repository) !== null;
   if (hasForge)
-    await setStatus(db, repository, {
-      commit: sha,
-      state: "success",
-      description: "not reviewed: this flow has no review stage",
-    });
+    await inTurn(folder, () =>
+      setStatus(db, repository, {
+        commit: sha,
+        state: "success",
+        description: "not reviewed: this flow has no review stage",
+      }),
+    );
   if (signal.aborted) return;
   // Without a forge there is no CI to wait on, so the branch is ready for you at once, as an
   // approved one is.
@@ -684,6 +719,80 @@ async function markNotReviewed(
   typeLeadNotes(db, sessions);
 }
 
+// Each thread's writes of its review to the forge, its checks and its review on the PR, by
+// folder, as the last one asked for. A round cancelled after saving its verdict still puts it on
+// the forge, and sc stop forgets the round, so a later round's writes wait here behind it, and
+// an older verdict never lands on the PR after a newer one.
+const forgeWrites = new Map<string, Promise<unknown>>();
+// How many of each thread's writes to the forge are waiting or under way, by folder, so a poll
+// can tell one is.
+const writesUnderWay = new Map<string, number>();
+
+// Runs `write` once every write to the forge the thread asked for before it has ended, failed
+// or not, and returns what it gives.
+function inTurn<T>(folder: string, write: () => Promise<T>): Promise<T> {
+  writesUnderWay.set(folder, (writesUnderWay.get(folder) ?? 0) + 1);
+  const mine = (forgeWrites.get(folder) ?? Promise.resolve())
+    .catch(() => {})
+    .then(write)
+    .finally(() => {
+      const left = (writesUnderWay.get(folder) ?? 1) - 1;
+      if (left > 0) writesUnderWay.set(folder, left);
+      else writesUnderWay.delete(folder);
+    });
+  forgeWrites.set(folder, mine);
+  return mine;
+}
+
+// Puts the thread's saved verdict on the forge in its turn: its review on the PR, then Skelcrew's
+// check on its commit. It is then no longer saved as posting, unless a newer verdict replaced it
+// meanwhile, which goes on in its own turn. A newer one already saved when the turn comes goes
+// on in its place, as the PR only shows the latest. Returns what the forge said when it failed,
+// or null. It never throws: the verdict stays saved, and each poll tries again, so a forge that
+// fails never stops the round, such as its changes reaching the builder.
+function postVerdict(db: Database, folder: string): Promise<string | null> {
+  return inTurn(folder, async () => {
+    const thread = readThread(db, folder);
+    const { posting } = thread;
+    if (posting === null) return null;
+    const { commit, check, description, review } = posting;
+    try {
+      if (review !== null) await postOrEdit(db, folder, review.pr, review.commit, review);
+      await setStatus(db, repositoryOf(db, thread), { commit, state: check, description });
+    } catch (error) {
+      return errorText(error);
+    }
+    const now = readThread(db, folder).posting;
+    if (JSON.stringify(now) === JSON.stringify(posting)) record(db, folder, { posting: null });
+    return null;
+  });
+}
+
+// Tries again to put on the forge a verdict whose post failed, or that a stop of the daemon cut
+// short, on a stopped thread too, so the PR doesn't keep an older review than the thread says.
+// Each poll asks, once Skelcrew's copy of the PR is up to date, so a review the forge took just
+// before the stop is found by its marker rather than posted twice. A forge that still fails is
+// logged and asked again at the next. A done thread's PR is closed, so it is
+// left alone. A submit or review under way brings a newer verdict, which is posted in its place,
+// so it is left to that round. So is a write to the forge still under way, such as the round's
+// own post: waiting behind it would hold up the whole poll, and a post that fails is tried
+// again at the next. A round that only waits to type its changes in, such as for a builder
+// still starting, doesn't hold it up.
+export async function retryPost(db: Database, folder: string): Promise<void> {
+  const thread = readThread(db, folder);
+  const quiet =
+    thread.status !== "done" &&
+    thread.posting !== null &&
+    thread.submitting === null &&
+    thread.reviewing === null &&
+    !writesUnderWay.has(folder);
+  if (!quiet) return;
+  const failed = await postVerdict(db, folder);
+  if (failed !== null)
+    console.log(`${folder}: couldn't put its saved verdict on the forge: ${failed}`);
+  else record(db, folder, {}, "its saved verdict is on the forge now");
+}
+
 // Puts a review's verdict and findings on the PR as Skelcrew's one review there, so the PR shows
 // the latest round rather than a review per round. It edits the review an earlier round posted.
 // When the forge can't edit it, it posts a new one only if the verdict or findings changed, so a
@@ -702,28 +811,49 @@ async function postOrEdit(
   const thread = readThread(db, folder);
   const repository = repositoryOf(db, thread);
   const { verdict, findings } = review;
-  const body = reviewComment(review, review.round, commit);
+  // The body ends with a hidden marker naming the thread. The forge keeps HTML comments, and
+  // gives them back unchanged, so Skelcrew can find its review in its copy of the PR.
+  const marker = `<!-- skelcrew:review thread=${thread.folder} -->`;
+  const body = `${reviewComment(review, review.round, commit)}\n\n${marker}`;
   // Only a review on this PR counts: a PR opened again after sc rm starts with none.
   const earlier = thread.review_post?.pr === pr ? thread.review_post : null;
+  // With no review saved, the forge may still have taken one just before the daemon stopped,
+  // with its ID not yet saved. The poll that posts after a restart has brought the copy up to
+  // date, so the review is there with its marker. One that already says this is counted as
+  // posted, so a restart never posts it twice, and any other is the one to edit. With a review
+  // saved, the copy is never asked: it may be older than Skelcrew's last edit.
+  const marked =
+    earlier === null
+      ? (prOf(db, thread.owner, thread.repo, pr)?.reviews ?? []).filter((posted) =>
+          posted.text.includes(marker),
+        )
+      : [];
+  const already = marked.find((posted) => posted.text.trim() === body.trim());
+  if (already) {
+    const saved = { review_post: { pr, id: already.id, verdict, findings } };
+    record(db, folder, saved, `found its review ${already.id} on PR #${pr}, posted already`);
+    return;
+  }
+  const editing = earlier?.id ?? marked.at(-1)?.id ?? null;
   // A forge that fails to edit, such as a plugin that doesn't know the question yet, is treated
   // as one that can't, so the review still reaches the PR.
   const edit =
-    earlier === null
+    editing === null
       ? "gone"
-      : await editReview(db, repository, { pr, id: earlier.id, verdict, body }).catch(
+      : await editReview(db, repository, { pr, id: editing, verdict, body }).catch(
           () => "can't" as const,
         );
   const edited = edit === "edited";
   // A review deleted from the PR is posted again even when it would say the same, so the PR
-  // always shows one.
+  // always shows one. One found only by its marker may say anything, so it isn't the same.
   const same =
     earlier !== null &&
     earlier.verdict === verdict &&
     JSON.stringify(earlier.findings) === JSON.stringify(findings);
   if (edit === "can't" && same) return;
   const id =
-    edited && earlier !== null
-      ? earlier.id
+    edited && editing !== null
+      ? editing
       : await postReview(db, repository, { pr, commit, verdict, body });
   const how = edited ? `edited its review ${id}` : `posted its review ${id}`;
   record(db, folder, { review_post: { pr, id, verdict, findings } }, `${how} on PR #${pr}`);
@@ -1185,9 +1315,11 @@ export function rerunReview(
   }
 }
 
-// Carries on with a round the daemon's stop cut short: a submit not yet pushed and
-// reviewed, a review whose Skelcrew's check was left pending, or changes not yet typed
-// into the builder. Pushing again is harmless: the remote has the commit, or gets it now. A
+// Carries on with a round the daemon's stop cut short: a submit not yet pushed and reviewed, a
+// review whose Skelcrew's check was left pending, or changes not yet typed into the builder. A
+// verdict saved but not yet on the forge is left to the poll, which first brings Skelcrew's copy
+// of the PR up to date, so a review the forge took before the stop is found there, not posted
+// again. Pushing again is harmless: the remote has the commit, or gets it now. A
 // builder brought back can submit before this runs, and then its newer round wins. A review
 // joins the queue of reviews again rather than starting at once: one that waited keeps its
 // place, and one that was running goes ahead of every review that waited. The daemon asks for

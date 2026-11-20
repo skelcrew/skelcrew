@@ -331,6 +331,9 @@ async function approvedApp12(from?: string, wait?: number): Promise<string> {
     30_000,
   );
   await until(() => read(join(data(), "threads", "app-12.log")).includes("waits on CI"));
+  // The approval is saved before it goes on the PR, so wait for it there too, as a test may
+  // then hold what goes on the PR.
+  await until(() => thread().posting === null);
   expect(thread()).toMatchObject({ status: "waiting", needs_you: 0 });
   return work;
 }
@@ -2760,14 +2763,19 @@ exec ${bwrap} "$@"`,
       const tried = merges().length;
       answer(plugin, "merge pr", null);
       await morePolls();
-      expect(thread().reviewing).not.toBeNull();
+      // The review is still on its way: running, or its verdict saved but held from the PR.
+      expect(thread().reviewing !== null || thread().posting !== null).toBe(true);
       expect(merges()).toHaveLength(tried);
       expect(thread().merge_plan).toBe("armed");
       // Once the review ends, the PR stops being green, so this phase merges nothing after it.
       pr({ head, reviews: [skelReview], checks: [{ ...approved, state: "running" }] });
       rmSync(join(plugin, "hold-review"));
       rmSync(join(plugin, "hold-edit-review"));
-      await until(() => thread().reviewing === null && thread().submitting === null, 30_000);
+      await until(
+        () =>
+          thread().reviewing === null && thread().submitting === null && thread().posting === null,
+        30_000,
+      );
       await morePolls();
       expect(merges()).toHaveLength(tried);
 

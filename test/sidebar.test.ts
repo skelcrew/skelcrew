@@ -1033,6 +1033,8 @@ const state: Thread = {
   agents: null,
   flow: "default",
   review_post: null,
+  posting: null,
+  review_findings: null,
   queued_since: null,
 };
 const word = (more: Partial<Thread>) => threadWord({ ...state, ...more }, 3);
