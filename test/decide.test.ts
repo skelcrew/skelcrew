@@ -72,7 +72,7 @@ function thread(change: Partial<Thread> = {}): Thread {
     review_line: null,
     reviewed_commit: null,
     no_ci: null,
-    ci_shown: null,
+    ci_shown: [],
     review_at: null,
     harness: null,
     short: null,
@@ -563,24 +563,30 @@ test("a PR's CI reads as passing, failing or still running, and Skelcrew's own c
 });
 
 // An approved head with no CI check is saved as one no CI runs on once the wait for CI's first
-// check ended. A check that shows marks the head as one CI runs on, so a check that later
-// vanishes is never taken for no CI, and takes back a "no CI" saved before it showed.
-test("CI on a PR's head: no CI once the wait ends, never after a check showed there", () => {
+// check ended. A check that shows adds the head to the commits CI showed on, so a check that
+// later vanishes is never taken for no CI, and takes back a "no CI" saved before it showed.
+test("CI on a PR's head: no CI once the wait ends, never on a commit a check showed on", () => {
   const ready = thread({ status: "waiting", verdict: "approve" });
   const bare = pr({ head: "abc", checks: [approved] });
   const failing = pr({ head: "abc", checks: [approved, run(9, "test", "failed")] });
   expect(ciOnHead(ready, bare, () => false)).toBeNull();
   expect(ciOnHead(ready, bare, () => true)).toEqual({ no_ci: "abc" });
   // A check showed on the head, then vanished: the wait never ends with no CI there.
-  expect(ciOnHead(ready, failing, () => true)).toEqual({ ci_shown: "abc" });
-  const shown = thread({ status: "waiting", verdict: "approve", ci_shown: "abc" });
+  expect(ciOnHead(ready, failing, () => true)).toEqual({ ci_shown: ["abc"] });
+  const shown = thread({ status: "waiting", verdict: "approve", ci_shown: ["abc"] });
   expect(ciOnHead(shown, failing, () => true)).toBeNull();
   expect(ciOnHead(shown, bare, () => true)).toBeNull();
   // A check that shows after the wait ended takes back its "no CI".
   const noCi = thread({ status: "waiting", verdict: "approve", no_ci: "abc" });
-  expect(ciOnHead(noCi, failing, () => true)).toEqual({ ci_shown: "abc", no_ci: null });
-  // A check on an older head says nothing of this one.
-  const older = thread({ status: "waiting", verdict: "approve", ci_shown: "old" });
+  expect(ciOnHead(noCi, failing, () => true)).toEqual({ ci_shown: ["abc"], no_ci: null });
+  // CI on another head adds it, and the PR's head going back to a commit CI showed on still
+  // never ends with no CI.
+  const other = pr({ head: "def", checks: [approved, run(10, "test", "passed")] });
+  expect(ciOnHead(shown, other, () => true)).toEqual({ ci_shown: ["abc", "def"] });
+  const both = thread({ status: "waiting", verdict: "approve", ci_shown: ["abc", "def"] });
+  expect(ciOnHead(both, bare, () => true)).toBeNull();
+  // A check on another commit says nothing of this one.
+  const older = thread({ status: "waiting", verdict: "approve", ci_shown: ["old"] });
   expect(ciOnHead(older, bare, () => true)).toEqual({ no_ci: "abc" });
   // Only a head that would merge waits: approved, or pinned by a merge without approval, with
   // no round under way.

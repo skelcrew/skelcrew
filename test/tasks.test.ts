@@ -292,8 +292,8 @@ console.log(JSON.stringify(db.query("SELECT task, ci_shown FROM tasks WHERE repo
   // From before tasks: PRs 40 and 41 had checks saved, at abc123 in Skelcrew's copy.
   oldDatabase();
   expect(JSON.parse(run(shown))).toEqual([
-    { task: 12, ci_shown: "abc123" },
-    { task: 13, ci_shown: "abc123" },
+    { task: 12, ci_shown: '["abc123"]' },
+    { task: 13, ci_shown: '["abc123"]' },
     { task: 14, ci_shown: null },
   ]);
   // From a release with tasks, which kept whether a PR ever showed CI. app-12's saved checks are
@@ -309,8 +309,8 @@ console.log(JSON.stringify(db.query("SELECT task, ci_shown FROM tasks WHERE repo
   earlier.run("DELETE FROM items WHERE kind = 'pr' AND id = '41'");
   earlier.close();
   expect(JSON.parse(run(shown))).toEqual([
-    { task: 12, ci_shown: "abc123" },
-    { task: 13, ci_shown: "def456" },
+    { task: 12, ci_shown: '["abc123"]' },
+    { task: 13, ci_shown: '["def456"]' },
     { task: 14, ci_shown: null },
   ]);
 });

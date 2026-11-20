@@ -69,8 +69,9 @@ export const ciKnown = (thread: Thread, pr: PullRequest) =>
   ciOf(pr).length > 0 || (pr.head !== null && thread.no_ci === pr.head);
 
 // Returns what to save on the thread about CI on its PR's head, or null for nothing. A CI check
-// that shows marks the head as one CI runs on, and takes back a "no CI" saved on it, so a check
-// that showed and then vanished is never taken for no CI. Otherwise, once `waitEnded` says the
+// that shows adds the head to the commits CI showed on, and takes back a "no CI" saved on it, so
+// a check that showed and then vanished is never taken for no CI, even when the PR's head goes
+// back to that commit after another. Otherwise, once `waitEnded` says the
 // wait for CI's first check ended, the head is saved as one no CI runs on, such as a docs-only
 // commit CI skips with a paths filter. Only a head that would merge waits: an approved one, or
 // the one a merge without approval pinned, with no round under way. `waitEnded` is asked last,
@@ -82,9 +83,13 @@ export function ciOnHead(
 ): Partial<Pick<Thread, "no_ci" | "ci_shown">> | null {
   const { head } = pr;
   if (head === null) return null;
+  const shown = thread.ci_shown.includes(head);
   if (ciOf(pr).length > 0) {
-    if (thread.ci_shown === head && thread.no_ci !== head) return null;
-    return { ci_shown: head, ...(thread.no_ci === head ? { no_ci: null } : {}) };
+    if (shown && thread.no_ci !== head) return null;
+    return {
+      ...(shown ? {} : { ci_shown: [...thread.ci_shown, head] }),
+      ...(thread.no_ci === head ? { no_ci: null } : {}),
+    };
   }
   const waits =
     ["working", "waiting"].includes(thread.status) &&
@@ -93,7 +98,7 @@ export function ciOnHead(
     thread.reviewing === null &&
     pr.state === "open" &&
     thread.no_ci !== head &&
-    thread.ci_shown !== head;
+    !shown;
   return waits && waitEnded() ? { no_ci: head } : null;
 }
 

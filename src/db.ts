@@ -393,7 +393,7 @@ export function finishUpgrade(db: Database): void {
   }).immediate();
 }
 
-// Saves, on each task whose PR showed CI before Skelcrew kept the commit it showed on, that its
+// Saves, on each task whose PR showed CI before Skelcrew kept the commits it showed on, that its
 // PR's head showed CI. Otherwise a check seen before the upgrade that has vanished by the first
 // poll after it would let the wait for CI's first check end with none, and a merge go ahead as
 // if no CI ran. CI showed when the task's saved checks say so, when the release before kept that
@@ -404,8 +404,10 @@ function markCiShown(db: Database): void {
   const seen = hasColumn(db, "tasks", "ci_seen") ? "OR tasks.ci_seen = 1" : "";
   const copy = `FROM items i WHERE i.owner = tasks.owner AND i.repo = tasks.repo AND i.kind = 'pr'
     AND i.id = CAST(tasks.pr AS TEXT) AND json_valid(i.item)`;
-  db.run(`UPDATE tasks SET ci_shown = COALESCE(
-      (SELECT json_extract(i.item, '$.head') ${copy}), tasks.reviewed_commit)
+  // A task whose commit isn't known keeps none, as a list holding null names no commit.
+  db.run(`UPDATE tasks SET ci_shown = (SELECT json_array(commit_id) FROM (SELECT COALESCE(
+      (SELECT json_extract(i.item, '$.head') ${copy}), tasks.reviewed_commit) AS commit_id)
+      WHERE commit_id IS NOT NULL)
     WHERE ci_shown IS NULL AND pr IS NOT NULL AND (checks IS NOT NULL ${seen}
       OR EXISTS (SELECT 1 ${copy} AND EXISTS (SELECT 1 FROM json_each(i.item, '$.checks') c
         WHERE json_extract(c.value, '$.name') IS NOT 'skelcrew/check')))`);
