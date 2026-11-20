@@ -16,8 +16,9 @@ import { errorText } from "../say.ts";
 import { cpuBusy, cpuSample, loadText, memoryInUse, readMemory } from "../screen/load.ts";
 import { grey, paint, removeControlCodes } from "../screen/look.ts";
 import { version } from "../version.ts";
-import { drawList, type Frame, keysFor, tabAt } from "./layout.ts";
+import { drawList, type Frame, keysFor, type Target, tabAt } from "./layout.ts";
 import {
+  cutBacklog,
   hasForge,
   listRows,
   type Open,
@@ -34,10 +35,14 @@ const openCommand = process.platform === "darwin" ? "open" : "xdg-open";
 // terminal may use, and Ctrl-C leaves as q does, since the terminal is raw. Esc leaves too, but
 // first closes a question that is open. Any other escape sequence is one key, which does
 // nothing. A terminal sends one for a key with Ctrl or Alt when a program asked it for extended
-// keys, such as Ctrl-Q as ESC[113;5u, and neither its Esc nor its letters may act as keys of
-// their own. Pressing Ctrl-Q once too often after coming back from an agent lands here too, in
+// keys, such as Ctrl-\ as ESC[92;5u, and neither its Esc nor its letters may act as keys of
+// their own. Pressing Ctrl-\ once too often after coming back from an agent lands here too, in
 // one of its three forms, and does nothing. Alt with a letter is matched whole, or its Esc or
-// its q would quit.
+// its q would quit. Shift-Tab and Alt-Shift-Left move to the previous repository, and Tab and
+// Alt-Shift-Right to the next: Shift-Tab plain, as kitty's CSI-u and as xterm's extended key,
+// and the arrows plain and with kitty's press event, which it adds when asked for events. Kitty
+// sends the main arrows so even in its CSI-u mode, and its keypad arrows as CSI-u, 57417 left
+// and 57418 right.
 const keyNames: Record<string, string> = {
   "\x1b[A": "up",
   "\x1bOA": "up",
@@ -46,6 +51,17 @@ const keyNames: Record<string, string> = {
   "\r": "enter",
   "\n": "enter",
   "\t": "tab",
+  "\x1b[1;4C": "tab",
+  "\x1b[1;4:1C": "tab",
+  "\x1b[57418;4u": "tab",
+  "\x1b[57418;4:1u": "tab",
+  "\x1b[Z": "back tab",
+  "\x1b[9;2u": "back tab",
+  "\x1b[27;2;9~": "back tab",
+  "\x1b[1;4D": "back tab",
+  "\x1b[1;4:1D": "back tab",
+  "\x1b[57417;4u": "back tab",
+  "\x1b[57417;4:1u": "back tab",
   "\x03": "q",
   "\x1b": "escape",
 };
@@ -74,8 +90,10 @@ const keyPattern = new RegExp(
 const endOfSequence = new RegExp(
   `${esc}(?:\\[[0-?]*[ -/]*|O|[P\\]X^_](?:[^${esc}\\x07]|${esc}(?!\\\\))*)?$`,
 );
-// Ctrl-Q as a terminal sends it: one byte, or as an extended key in the kitty or the xterm form.
-const ctrlQ = new Set(["\x11", "\x1b[113;5u", "\x1b[27;5;113~"]);
+// Any mouse report in SGR, a press with M or a release with m, which only the list reads.
+const mousePattern = new RegExp(`^${esc}\\[<\\d+;\\d+;\\d+[Mm]$`);
+// Ctrl-\ as a terminal sends it: one byte, or as an extended key in the kitty or the xterm form.
+const back = new Set(["\x1c", "\x1b[92;5u", "\x1b[27;5;92~"]);
 
 // Runs the list in your terminal for the repository named by its owner/name, until you press q,
 // then says your agents keep running.
@@ -92,13 +110,18 @@ export async function runList(agents: string, repository: string): Promise<void>
   // those of the open stages, the row you are on among those and how far it scrolled, the line
   // at the bottom when it says something other than the keys, the question it asks, and whether
   // the daemon is at work on an answer. Only Building is open at first. The stages you open
-  // stay open until you leave the list, whichever repository you move to.
+  // stay open until you leave the list, whichever repository you move to, and so does a whole
+  // Backlog once you asked for it, which shows its newest issues until then.
   let all: Row[] = [];
   let rows: Row[] = [];
   const opened = new Set<ListStage>(["building"]);
-  const showing = () => all.filter((row) => row.part === "lead" || opened.has(row.part));
+  let wholeBacklog = false;
+  const showing = () =>
+    cutBacklog(all, wholeBacklog).filter((row) => row.part === "lead" || opened.has(row.part));
   let here = -1;
   let top = 0;
+  // What a click on each line of the screen reaches, as it was last drawn.
+  let targets: Target[] = [];
   let said: string | null = null;
   // The open question, with the row it is about and whether it is a merge or a start.
   let asking: { question: Question; row: string; merge: boolean } | null = null;
@@ -145,6 +168,7 @@ export async function runList(agents: string, repository: string): Promise<void>
       size,
     );
     top = drawn.top;
+    targets = drawn.targets;
     const text = `\x1b[H${drawn.lines.map((line) => `${line}\x1b[K`).join("\r\n")}\x1b[J`;
     if (text === lastFrame) return;
     lastFrame = text;
@@ -176,9 +200,9 @@ export async function runList(agents: string, repository: string): Promise<void>
   // whole, with every stage open, and without colours, and sc returns.
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
     rows = listRows(db, open, Date.now());
-    // Tall enough for every row at three lines, the most one takes, every heading and the blank
+    // Tall enough for every row at two lines, the most one takes, every heading and the blank
     // line after each, so nothing scrolls out of the print.
-    const size = { width: 100, height: rows.length * 3 + ListStage.options.length * 2 + 8 };
+    const size = { width: 100, height: rows.length * 2 + ListStage.options.length * 2 + 8 };
     const { lines } = drawList(
       rows,
       stageHeadings(rows, new Set(ListStage.options)),
@@ -219,21 +243,25 @@ export async function runList(agents: string, repository: string): Promise<void>
   // Typing those keys in first takes tmux, so on such a host they are dropped. On tmux, the
   // terminal's title says which agent this is and how to come back, as nothing else on the
   // screen is Skelcrew's. The title you had is saved first and put back after, on terminals
-  // that keep one.
+  // that keep one. Mouse reports among those keys are the list's, such as the rest of the click
+  // that attached, and would reach the agent's prompt as text, so they are dropped, and so is the
+  // start of one cut off at the end of a read.
   const attach = async (session: string, name: string, host: Host = agents) => {
     attached = true;
     process.stdin.pause();
+    const rest = partial.startsWith(`${esc}[<`) ? "" : partial;
     const after =
       typed
         .splice(0)
+        .filter((key) => !mousePattern.test(key.sent))
         .map((key) => key.sent)
-        .join("") + partial;
+        .join("") + rest;
     partial = "";
     if (after && typeof host === "string") typeKeys(host, session, after);
     giveBack();
     let failed: string | null = null;
     if (typeof host === "string") {
-      const title = removeControlCodes(`${name} · ctrl+q back`);
+      const title = removeControlCodes(`${name} · ctrl+\\ back`);
       process.stdout.write(`\x1b[22;0t\x1b]2;${title}\x07`);
       failed = await attachSession(host, session);
       process.stdout.write("\x1b[23;0t");
@@ -278,6 +306,10 @@ export async function runList(agents: string, repository: string): Promise<void>
       const lead = await leadSession(db, agents, open.owner, open.repo);
       if (lead === null) return say("The lead's session host isn't installed.");
       return attach(lead.id, row.name, lead.host);
+    }
+    if (row.more > 0) {
+      wholeBacklog = true;
+      return reshow();
     }
     if (row.part === "backlog" && row.start) {
       asking = { question: row.start, row: row.name, merge: false };
@@ -336,26 +368,68 @@ export async function runList(agents: string, repository: string): Promise<void>
     refresh();
   };
 
-  // Moves to the next repository, after the last back to the first.
-  const nextRepository = () => {
+  // Moves to the next repository by `by` 1, or the previous by -1, from the last round to the
+  // first and from the first back to the last.
+  const nextRepository = (by: 1 | -1) => {
     const tabs = repositoryTabs(db, open);
     const at = tabs.findIndex((tab) => tab.fullName === `${open.owner}/${open.repo}`);
-    const next = tabs[(at + 1) % tabs.length];
+    const next = tabs[(at + by + tabs.length) % tabs.length];
     if (tabs.length > 1 && next) goTo(next.fullName);
   };
 
-  // Acts on a click of the left button on the top line: on a repository's tab, it opens that
-  // repository. Any other click, a release or the wheel does nothing.
+  // Opens or closes a stage, as its number key does. Opening one moves you to its first row, so
+  // the list scrolls to show it, rather than open it out of sight.
+  const toggleStage = (stage: ListStage) => {
+    if (opened.delete(stage)) return reshow();
+    opened.add(stage);
+    reshow();
+    const first = rows.findIndex((candidate) => candidate.part === stage);
+    if (first >= 0) here = first;
+    return draw();
+  };
+
+  // Moves you one row up, by -1, or down, by 1, staying among the rows.
+  const move = (by: 1 | -1) => {
+    here = Math.min(Math.max(here + by, 0), rows.length - 1);
+    return draw();
+  };
+
+  // Acts on the mouse, by what was drawn where it was pressed. The left button on a repository's
+  // tab opens that repository, and on a stage's heading, or its name pinned at an edge, opens or
+  // closes the stage. On a task's row it moves you there, and on the row you are on already it
+  // opens it, as Enter does, so a double click opens a row too. The lead's row opens the lead at
+  // once. The wheel moves you a row up or down, which scrolls the list, as the row you are on
+  // always stays in view. Another button, or a click on nothing, does nothing.
   const click = (sent: string) => {
     const [, button, column, line] = clickPattern.exec(sent) ?? [];
-    if (button !== "0" || line !== "1") return draw();
-    const width = process.stdout.columns || 80;
-    const tab = tabAt(
-      frameWith(() => "", ""),
-      width,
-      Number(column),
-    );
-    return tab ? goTo(tab) : draw();
+    if (button === "64") return move(-1);
+    if (button === "65") return move(1);
+    if (button !== "0") return draw();
+    if (line === "1") {
+      const width = process.stdout.columns || 80;
+      const tab = tabAt(
+        frameWith(() => "", ""),
+        width,
+        Number(column),
+      );
+      return tab ? goTo(tab) : draw();
+    }
+    const target = targets[Number(line) - 1] ?? null;
+    if (target === null) return draw();
+    if ("stage" in target) return toggleStage(target.stage);
+    if ("pinned" in target) {
+      const at = Number(column);
+      const pinned = target.pinned.find((span) => span.from <= at && at <= span.to);
+      return pinned ? toggleStage(pinned.stage) : draw();
+    }
+    const row = rows[target.row];
+    if (!row) return draw();
+    if (target.row === here || row.part === "lead") {
+      here = target.row;
+      return openRow(row);
+    }
+    here = target.row;
+    return draw();
   };
 
   // Acts on one key. A question takes only y and n, and anything else is a no, Esc included. A
@@ -364,10 +438,10 @@ export async function runList(agents: string, repository: string): Promise<void>
   // Leaves the list, once the list is ready to leave. `left` says it has.
   let leave: () => void = () => {};
   let left = false;
-  // Ctrl-Q does nothing here, an open question included, so pressing it once too often after
+  // Ctrl-\ does nothing here, an open question included, so pressing it once too often after
   // coming back from an agent never answers or drops a question.
   const press = async (key: string) => {
-    if (working || left || key === "ctrl-q") return;
+    if (working || left || key === "back") return;
     // q and Ctrl-C leave from anywhere, an open question included, which then does nothing. Esc
     // leaves only with no question open, so a stray Esc while you answer is a no and stays.
     if (key === "q" || (key === "escape" && !asking)) return leave();
@@ -391,18 +465,13 @@ export async function runList(agents: string, repository: string): Promise<void>
     }
     said = null;
     const row = rows[here];
-    if (key === "up" || key === "down") {
-      here = Math.min(Math.max(here + (key === "up" ? -1 : 1), 0), rows.length - 1);
-      return draw();
-    }
-    if (key === "tab") return nextRepository();
+    if (key === "up" || key === "down") return move(key === "up" ? -1 : 1);
+    if (key === "tab") return nextRepository(1);
+    if (key === "back tab") return nextRepository(-1);
     if (key.startsWith(`${esc}[<`)) return click(key);
     // 1 to 6 open or close the stages, in the order they show.
     const stage = ListStage.options[Number(key) - 1];
-    if (/^[1-6]$/.test(key) && stage) {
-      if (!opened.delete(stage)) opened.add(stage);
-      return reshow();
-    }
+    if (/^[1-6]$/.test(key) && stage) return toggleStage(stage);
     if (key === "enter" && row) return openRow(row);
     if (key === "m" && row?.merge) {
       if ("refused" in row.merge) return say(row.merge.refused);
@@ -432,7 +501,7 @@ export async function runList(agents: string, repository: string): Promise<void>
       // Enter, would otherwise attach after the terminal was given back.
       const key = left ? undefined : typed.shift();
       if (key === undefined) break;
-      const named = ctrlQ.has(key.sent) ? "ctrl-q" : (keyNames[key.sent] ?? key.sent);
+      const named = back.has(key.sent) ? "back" : (keyNames[key.sent] ?? key.sent);
       await press(named).catch((error) => say(errorText(error)));
       if (named === "enter" || asking) while (typed[0]?.read === key.read) typed.shift();
     }
@@ -442,9 +511,13 @@ export async function runList(agents: string, repository: string): Promise<void>
   // into one keeps that end until the next read completes it. Esc alone looks the same, so what
   // is kept counts as typed once no more comes for a moment, as terminals and editors do.
   let flush: ReturnType<typeof setTimeout> | undefined;
+  // A mouse button's release follows its press, often in a read of its own. The press did what a
+  // click does, so the release is dropped here: as a key it would answer the question a click
+  // just asked, as no.
   const take = (text: string) => {
     reads += 1;
-    for (const [sent] of text.matchAll(keyPattern)) typed.push({ sent, read: reads });
+    for (const [sent] of text.matchAll(keyPattern))
+      if (!(mousePattern.test(sent) && sent.endsWith("m"))) typed.push({ sent, read: reads });
     void act();
   };
   process.stdin.on("data", (bytes) => {

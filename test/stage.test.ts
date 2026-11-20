@@ -75,6 +75,7 @@ const working: Thread = {
   agents: null,
   flow: "default",
   review_post: null,
+  queued_since: null,
 };
 const thread = (more: Partial<Thread>) => ({ ...working, ...more });
 
@@ -209,6 +210,12 @@ test("the list puts each task in exactly one stage, from its state", () => {
     [
       "a review of a builder past its round limit",
       thread({ status: "waiting", reviewing: "abc", needs_you: true, held: "Fix it." }),
+      true,
+      "reviewing",
+    ],
+    [
+      "a submit past the round limit, under review",
+      thread({ status: "waiting", reviewing: "abc", needs_you: true, rounds: 6 }),
       true,
       "reviewing",
     ],

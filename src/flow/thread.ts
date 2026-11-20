@@ -46,7 +46,9 @@ export const Thread = z.object({
   folder: z.string(),
   branch: z.string(),
   base: z.string().nullable(),
-  status: z.enum(["working", "waiting", "failed", "stopped", "done"]),
+  // Queued while it waits in the queue of limits.threads for its builder to start, or for a
+  // stopped one to come back.
+  status: z.enum(["queued", "working", "waiting", "failed", "stopped", "done"]),
   session: z.string().nullable(),
   // Rounds whose review asked for changes, counted against max_rounds.
   rounds: z.number(),
@@ -217,6 +219,10 @@ export const Thread = z.object({
   // opened again after sc rm gets a review of its own. One Skelcrew can't read counts as none,
   // and the next review is posted anew.
   review_post: savedJson("tasks.review_post", ReviewPost.nullable(), null),
+  // When the task last joined the queue of limits.threads, in milliseconds since 1970. The queue
+  // goes in this order, after a restart too. Kept once the task leaves the queue, until its
+  // builder's session is saved, so a restart before then puts it back in its place.
+  queued_since: z.number().nullable(),
 });
 export type Thread = z.infer<typeof Thread>;
 

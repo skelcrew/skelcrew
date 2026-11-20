@@ -45,6 +45,9 @@ const File = z.looseObject({
       checks: z.number().int().positive().optional(),
     })
     .optional(),
+  // The most builders at once in a repository, written as limits: { threads: 4 } and picked out
+  // of the limits on reading, as a repository may set it but not the rest of its limits.
+  threads: z.number().int().positive().optional(),
   setup: z.array(z.string()).optional(),
   test: z.array(z.string()).optional(),
   tracker: z.string().nullish(),
@@ -77,7 +80,8 @@ export type Role = { harness: HarnessName; model?: string };
 // each role's harness and model, read one by one, so a mistake in one role's settings stops only
 // the agents of that role. `rounds` is how many rounds of
 // changes a thread gets before it needs you, `reviews` how many reviews run at once on this
-// machine, `checks` how many test suites run at once through sc check, and `setup` and `test` the commands that set up a thread's clone and run its whole
+// machine, `checks` how many test suites run at once through sc check, `threads` how many
+// builders run at once in the repository, or no limit when missing, and `setup` and `test` the commands that set up a thread's clone and run its whole
 // test suite. Each is missing when no file names it, and an empty list when a file says on purpose
 // that the repository needs none. `fallback` is the harness reviews run on
 // while the reviewer's own waits out its usage limit, and `reviewMinutes` how long a review may
@@ -94,6 +98,7 @@ export type Settings = {
   rounds: number;
   reviews: number;
   checks: number;
+  threads: number | undefined;
   setup: string[] | undefined;
   test: string[] | undefined;
   tracker: string | undefined;
@@ -117,6 +122,7 @@ const keysOf: Record<Group, Key[]> = {
   rounds: ["rounds", "max_rounds"],
   reviews: ["limits"],
   checks: ["limits"],
+  threads: ["threads"],
   setup: ["setup"],
   test: ["test"],
   tracker: ["tracker"],
@@ -152,7 +158,7 @@ const yourKeys: Key[] = [
   "session",
   "may_arm_merges",
 ];
-const repositoryKeys: Key[] = ["max_rounds", "setup", "test", "tracker"];
+const repositoryKeys: Key[] = ["max_rounds", "setup", "test", "tracker", "threads"];
 // What an override under repos: may set, besides the harness and model of its roles, which
 // roleOf reads: anything about one repository, from its files or yours, as an override is you
 // differing on purpose there. What is about your machine, such as limits and the session host,
@@ -161,6 +167,7 @@ const repositoryKeys: Key[] = ["max_rounds", "setup", "test", "tracker"];
 const overrideKeys: Key[] = [
   "rounds",
   "max_rounds",
+  "threads",
   "setup",
   "test",
   "tracker",
@@ -527,10 +534,16 @@ function pick(data: unknown, keys: Key[]): unknown {
   // The fallback and your reviewer's harness are written among the reviewer's lines, and
   // may_arm_merges among the lead's, but each is read on its own. A top-level line of any of
   // these names counts for nothing.
-  const nested = ["fallback", "your_reviewer", "may_arm_merges"];
+  const nested = ["fallback", "your_reviewer", "may_arm_merges", "threads"];
   const picked = Object.fromEntries(
     Object.entries(data).filter(([key]) => !nested.includes(key) && keys.some((k) => k === key)),
   );
+  // The limit on builders is the repository's, so it is read only where `threads` may be set:
+  // the repository's skelcrew.yaml and your override for it. Your general limits are about
+  // your machine.
+  const limits = "limits" in data ? data.limits : undefined;
+  if (keys.includes("threads") && isMapping(limits) && "threads" in limits)
+    picked.threads = limits.threads;
   // The new shape's reviewer comes last, so it wins where both shapes say something.
   const roles = "roles" in data ? data.roles : undefined;
   const reviewers = [
@@ -583,6 +596,7 @@ function mergeSettings(layers: File[], roles: Partial<Record<RoleName, Role>>): 
     rounds: first((l) => l.rounds ?? l.max_rounds) ?? defaults.max_rounds,
     reviews: first((l) => l.limits?.reviews) ?? defaults.reviews,
     checks: first((l) => l.limits?.checks) ?? defaults.checks,
+    threads: first((l) => l.threads),
     setup: first((l) => l.setup),
     test: first((l) => l.test),
     tracker: first((l) => l.tracker),

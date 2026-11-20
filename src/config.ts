@@ -100,6 +100,11 @@ export const repositoryTracker = (repository: Repository): string | undefined =>
 
 // Returns how many reviews may run at once on this machine. Throws when your config isn't valid.
 export const reviewLimit = (): number => readSettings(["reviews"]).reviews;
+// Returns how many builders may run at once in the repository, from your override for it under
+// repos: or its skelcrew.yaml, or nothing when neither sets limits.threads. Throws when the file
+// that decides it isn't valid.
+export const threadLimit = (repository: Repository): number | undefined =>
+  readSettings(["threads"], repository).threads;
 // Returns how many test suites may run at once through sc check on this machine. Throws when
 // your config isn't valid.
 export const checkLimit = (): number => readSettings(["checks"]).checks;

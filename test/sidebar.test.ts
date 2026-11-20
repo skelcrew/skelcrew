@@ -5,6 +5,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { printThreads, type ThreadRow } from "../src/flow/list.ts";
+import { shownOf } from "../src/flow/marks.ts";
 import { type Status, threadWord } from "../src/flow/status.ts";
 import type { Thread } from "../src/flow/thread.ts";
 import { draw as drawWith, noticeLines } from "../src/screen/layout.ts";
@@ -1004,6 +1005,7 @@ const state: Thread = {
   agents: null,
   flow: "default",
   review_post: null,
+  queued_since: null,
 };
 const word = (more: Partial<Thread>) => threadWord({ ...state, ...more }, 3);
 const needing = { status: "waiting", needs_you: true } satisfies Partial<Thread>;
@@ -1015,6 +1017,11 @@ test("a thread's word says who has it right now", () => {
   expect(word({ status: "waiting", reviewing: "abc", queued: 5 })).toBe("queued for review");
   expect(word({ status: "waiting", verdict: "approve" })).toBe("checks");
   expect(word({ telling: "fix it", verdict: "changes" })).toBe("changes");
+  // Checks is only for an approval waiting on CI. Changes asked for wait on the builder, and a
+  // thread with neither only waits.
+  expect(word({ status: "waiting", verdict: "changes", checks: "passing" })).toBe("changes");
+  expect(word({ status: "waiting", verdict: null })).toBe("waiting");
+  expect(word({ status: "waiting", verdict: "failed" })).toBe("waiting");
 });
 
 // A review that waited when the daemon stopped is saved with when it joined the queue, which a
@@ -1062,6 +1069,19 @@ test("a round that failed before its review answered reads as a failed review", 
 test("past the round limit it stays so while the builder submits again", () => {
   expect(word({ ...needing, rounds: 4, submitting: "the fix" })).toBe("round limit");
   expect(word({ ...needing, rounds: 4, reviewing: "abc" })).toBe("round limit");
+});
+
+// A thread past the round limit can still be approved, such as once you rerun its review. The
+// approval answers the changes the limit held, so it must not keep saying round limit.
+test("an approval past the round limit reads as approved, not as the round limit", () => {
+  const green = { ...needing, verdict: "approve", checks: "passing", ci_passed: true } as const;
+  expect(word({ ...green, rounds: 4 })).toBe("approved");
+  expect(shownOf({ ...state, ...green, rounds: 4 }, 3).mark).toEqual({
+    sign: "●",
+    colour: "green",
+  });
+  // Waiting on CI after it, it needs you for nothing.
+  expect(word({ status: "waiting", verdict: "approve", rounds: 4 })).toBe("checks");
 });
 
 test("approved is only said of a PR whose checks don't say otherwise", () => {
@@ -1209,7 +1229,11 @@ console.log(JSON.stringify(sidebarRows(db, ["lead", "app-12"], () => 3, ${now}, 
   // A line too long for one read would hold every later read where it began.
   test("a line too long to read whole is passed over, and what follows it still counts", () => {
     const usage = { input_tokens: 1, cache_creation_input_tokens: 0, output_tokens: 849 };
-    const bash = { type: "tool_use", name: "Bash", input: { command: "bun test" } };
+    const bash = {
+      type: "tool_use",
+      name: "Bash",
+      input: { command: "bun test", description: "Run the tests" },
+    };
     const answer = JSON.stringify({
       type: "assistant",
       message: { id: "m1", usage, content: [bash] },
@@ -1233,8 +1257,8 @@ console.log(JSON.stringify(looks.map((row) => [row?.tokens, row?.step])));`;
     expect(run.stderr.toString()).toBe("");
     expect(JSON.parse(run.stdout.toString())).toEqual([
       ["", "working"],
-      ["850 tok", "bun test"],
-      ["850 tok", "bun test"],
+      ["850 tok", "Run the tests"],
+      ["850 tok", "Run the tests"],
     ]);
   });
 

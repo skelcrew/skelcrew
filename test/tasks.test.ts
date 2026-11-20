@@ -118,6 +118,7 @@ function turnEndedWaits(saved: ReturnType<typeof shownBefore>): void {
 // Returns the names of the database's tables.
 function tables(file: string): string[] {
   const db = new Database(file, { readonly: true });
+  db.run("PRAGMA busy_timeout = 5000");
   const rows = db.query("SELECT name FROM sqlite_master WHERE type = 'table'").all();
   db.close();
   return rows.map((row) => String(Object.values(row ?? {})[0]));
@@ -190,6 +191,7 @@ openDb().run("INSERT INTO pr_agents (owner, repo, pr, head, base, changed) VALUE
   expect(named("app-16")).toMatchObject({ pr: 42, prPage: null });
   // Each thread has its task, and a copy of the database from before waits beside it.
   const db = new Database(dbFile(), { readonly: true });
+  db.run("PRAGMA busy_timeout = 5000");
   expect(db.query("SELECT owner, repo, task FROM tasks ORDER BY rowid").all()).toEqual(
     db.query("SELECT owner, repo, task FROM threads ORDER BY rowid").all(),
   );
@@ -221,6 +223,7 @@ console.log(JSON.stringify({ rounds, short, status }));`;
   expect(JSON.parse(run(code))).toEqual({ rounds: 4, short: "Darker", status: "stopped" });
   // The thread's old columns are left as they were, unread.
   const db = new Database(dbFile(), { readonly: true });
+  db.run("PRAGMA busy_timeout = 5000");
   expect(db.query("SELECT rounds, short FROM threads WHERE folder = 'app-15'").get()).toEqual({
     rounds: 3,
     short: "Dark mode",
@@ -412,6 +415,7 @@ openDb();`);
     { task: 16, merged: 1 },
   ]);
   const db = new Database(dbFile(), { readonly: true });
+  db.run("PRAGMA busy_timeout = 5000");
   expect(db.query("SELECT issue_link, closes FROM tasks WHERE task = 15").get()).toEqual({
     issue_link: "https://github.com/simon/app/issues/15",
     closes: "Closes #15",
@@ -512,7 +516,10 @@ test("a thread's rounds, PR, review and updates written just before the move sho
   serve();
   // The new daemon moves the database as it starts, before it listens.
   await until(() => existsSync(join(home, "run", "skelcrew.sock")), { timeout: 30_000 });
+  // The daemon may be writing as it starts, so the read waits for it rather than failing as
+  // locked.
   const db = new Database(dbFile(), { readonly: true });
+  db.run("PRAGMA busy_timeout = 5000");
   expect(
     db
       .query(

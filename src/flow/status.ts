@@ -380,16 +380,19 @@ export function reportStatuses(db: Database): void {
 // that needs you comes before a limit, which only waits.
 export function threadWord(thread: Thread, maxRounds: number, now = Date.now()): string {
   const { status, verdict } = thread;
-  // A thread that failed, stopped or is done says just that. Otherwise a question from its builder
-  // comes first, then its harness stopping on an error, then why it needs you, then what it is
-  // doing.
-  if (status === "failed" || status === "stopped" || status === "done") return status;
+  // A thread that is queued, failed, stopped or is done says just that. Otherwise a question from
+  // its builder comes first, then its harness stopping on an error, then why it needs you, then
+  // what it is doing.
+  if (status === "queued" || status === "failed" || status === "stopped" || status === "done")
+    return status;
   const underWay = thread.submitting !== null || thread.reviewing !== null;
   if (thread.asking) return "question";
   if (thread.erred && !thread.limited) return "error";
   // The round limit and an approval say what you must do next, so they come before any other
-  // reason the thread needs you.
-  const past = thread.needs_you && pastRoundLimit(thread, maxRounds);
+  // reason the thread needs you. Changes held past the limit say so too after something else,
+  // such as a conflict, cleared the thread's need of you: the task still waits on sc start, and
+  // its CI passing must not read as waiting on checks.
+  const past = thread.held !== null || (thread.needs_you && pastRoundLimit(thread, maxRounds));
   const failed = underWay || verdict === "failed";
   if (past) return "round limit";
   if (readyToMerge(thread)) return "approved";
@@ -405,11 +408,14 @@ export function threadWord(thread: Thread, maxRounds: number, now = Date.now()):
   if (thread.review_limited) return limitWord(thread.review_reset);
   // A review waiting for a place shows as queued, any other round under way as reviewing, and
   // a review's changes still waiting to be typed into the builder as changes. Otherwise it
-  // works or waits on checks.
+  // works, or waits: on CI only for an approval, and on the builder after changes asked for.
+  // Anything else only waits, as saying checks would claim CI is what it waits on.
   if (queuedForReview(thread)) return "queued for review";
   if (underWay) return "reviewing";
   if (thread.telling !== null) return "changes";
-  return status === "working" ? "working" : "checks";
+  if (status === "working") return "working";
+  if (verdict === "approve") return "checks";
+  return verdict === "changes" ? "changes" : "waiting";
 }
 
 // The builder asked you a question with AskUserQuestion, from Claude Code's PreToolUse hook.

@@ -21,7 +21,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import { dataDir } from "../paths.ts";
 import { copySkills, type SkillsFrom } from "../skills.ts";
-import { editing, type Progress, stepText, toolWords } from "./progress.ts";
+import { editing, type Progress, toolWords } from "./progress.ts";
 import { resetTime } from "./reset.ts";
 import {
   everyRepository,
@@ -164,7 +164,8 @@ const CallLine = z.object({
 });
 // What update_plan is given: the builder's whole plan, each step with its status.
 const Plan = z.object({ plan: z.array(z.object({ status: z.string() })) });
-// What a shell tool is given: its command as words, or as one line of text, by tool and release.
+// What a tool is given: a shell tool's command as words, or as one line of text, by tool and
+// release, or a patch as its input.
 const Shell = z.looseObject({
   command: z.union([z.array(z.string()), z.string()]).optional(),
   cmd: z.string().optional(),
@@ -194,7 +195,8 @@ function readProgress(lines: string[], before: Progress): Progress {
     }
     const call = CallLine.safeParse(parsed);
     if (!call.success) continue;
-    // update_plan sets the plan, and every other call is a step.
+    // update_plan sets the plan, and every other call is the step, or ends the one before when
+    // it has nothing short to say.
     const { name = "", input, action } = call.data.payload;
     const given = parseArguments(call.data.payload.arguments);
     const planned = name === "update_plan" ? Plan.safeParse(given) : null;
@@ -204,8 +206,7 @@ function readProgress(lines: string[], before: Progress): Progress {
         done: steps.filter((item) => item.status === "completed").length,
         total: steps.length,
       };
-    } else if (name !== "update_plan")
-      step = callStep(name, given, input ?? "", action?.command) ?? step;
+    } else if (name !== "update_plan") step = callStep(name, given, input ?? "", action?.command);
   }
   return { step, tokens, plan, last: "" };
 }
@@ -220,9 +221,10 @@ function parseArguments(text = ""): unknown {
   }
 }
 
-// Returns the step a tool call says the builder is on, in a few words: a command as it was run,
-// without the shell around it, a patch as the first file it changes, and any other tool as its
-// name in words.
+// Returns the step a tool call says the builder is on, in a few words, or null when it has none:
+// a patch as the first file it changes, and any other tool as its name in words. Codex gives a
+// command no description, and the command itself, such as a cd and a heredoc, reads as noise in
+// a row, so a command has no step.
 function callStep(
   name: string,
   given: unknown,
@@ -231,15 +233,7 @@ function callStep(
 ): string | null {
   const shell = Shell.safeParse(given);
   const args = shell.success ? shell.data : {};
-  const words = command ?? (Array.isArray(args.command) ? args.command : null);
-  // A command as words is often a shell running one line, such as bash -lc "bun test".
-  if (words) {
-    const [program = "", flag = "", line = ""] = words;
-    const shelled = /(^|\/)(ba|z)?sh$/.test(program) && /^-l?c$/.test(flag);
-    return stepText(shelled ? line : words.join(" "));
-  }
-  if (typeof args.command === "string") return stepText(args.command);
-  if (args.cmd) return stepText(args.cmd);
+  if (command || args.command !== undefined || args.cmd !== undefined) return null;
   // A patch names each file it changes on a line of its own.
   const patch = name === "apply_patch" ? input || args.input || "" : "";
   const file = /^\*\*\* (?:Update|Add|Delete) File: (.+)$/m.exec(patch)?.[1];

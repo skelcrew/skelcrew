@@ -22,7 +22,7 @@ import type { DaemonRequest } from "../flow/requests.ts";
 import { ListStage, listStage } from "../flow/stage.ts";
 import { Thread } from "../flow/thread.ts";
 import { forgeOf } from "../plugins/ask.ts";
-import { changedAt } from "../screen/lists.ts";
+import { changedAt, roundLimit as settingsRoundLimit } from "../screen/lists.ts";
 import { removeControlCodes } from "../screen/look.ts";
 import { builderProgress } from "../screen/progress.ts";
 
@@ -39,11 +39,12 @@ type Action = Question | { refused: string };
 // such as `#41`, its CI, such as `CI passed`, and when it last changed, such as `14:31`. Each is
 // empty where it has none. `needsYou` is whether it waits on you for something other than a
 // merge. `session` is the agent's session, which Enter attaches to, `running` whether its agent
-// runs, and `tmux` whether Enter attaches to it on tmux, where Ctrl-Q comes back, rather than on
+// runs, and `tmux` whether Enter attaches to it on tmux, where Ctrl-\ comes back, rather than on
 // a runtime plugin's host, which has a key of its own. `start` is what Enter does on an issue,
 // and `merge` what m does on a task ready for review. `link` is its PR's, which Enter opens, and
 // `branch` the branch a task that is ready without a forge waits on. Each is null where it
-// doesn't apply.
+// doesn't apply. `more` is how many issues the row stands for on the `… more` row at the end of
+// a cut Backlog, which Enter shows, and 0 on every other row.
 export type Row = {
   part: "lead" | ListStage;
   name: string;
@@ -63,6 +64,7 @@ export type Row = {
   merge: Action | null;
   link: string | null;
   branch: string | null;
+  more: number;
 };
 
 // The repository the list shows, by its owner/name.
@@ -71,12 +73,16 @@ export type Open = { owner: string; repo: string };
 // A repository's tab: its name in Skelcrew, its owner/name, and its badge.
 export type Tab = Badge & { name: string; fullName: string };
 
-// Returns a round limit that puts the thread past it exactly when its database row says so,
-// as the list reads no settings files. A review past the round limit holds its changes until
-// sc start lets the thread go on, so a thread that holds changes is past the limit, and any
-// other isn't.
-const roundLimit = (thread: Thread) =>
-  thread.held === null ? Number.POSITIVE_INFINITY : thread.rounds - 1;
+// Returns the round limit the list judges a thread's word by. A thread holding the changes of a
+// review past the limit says so by itself. Past the limit, sc submit and sc review drop those
+// changes but keep the thread needing you while its round runs, and so can other reasons, such
+// as a message that couldn't be typed in. Only the thread's real round limit tells them apart,
+// so for such a thread alone the list reads its settings, and settings that aren't valid read as
+// no limit. Any other thread reads none, so drawing the list stays fast.
+const roundLimit = (thread: Thread) => {
+  const underWay = thread.submitting !== null || thread.reviewing !== null;
+  return thread.needs_you && underWay ? settingsRoundLimit(thread) : Number.POSITIVE_INFINITY;
+};
 
 // What the list reads of a lead beyond leadOf: what its hooks last said it does, and whether you
 // closed its tab by exiting it.
@@ -118,6 +124,7 @@ function leadRow(db: Database, open: Open): Row {
     merge: null,
     link: null,
     branch: null,
+    more: 0,
   };
 }
 
@@ -226,6 +233,7 @@ function taskRow(
     // it opens one, and must never open the previous attempt's.
     link: copy?.link ?? (thread.pr === null ? null : SavedLink.parse(saved).pr_link),
     branch: thread.branch,
+    more: 0,
   };
 }
 
@@ -245,8 +253,9 @@ const doneShown = 10;
 // fastest, and within each, the one that changed last first. Done has the tasks that ended
 // today, latest first, or the last ten when fewer ended today, so an old repository's history
 // never fills the list. It reads the database, and a working builder's conversation file for its
-// step, as the sidebar does, never tmux or a settings file, so the list opens at once and works
-// on any session host.
+// step, as the sidebar does, never tmux, so the list opens at once and works on any session
+// host. Settings are read only for a thread that needs you while a review runs, to tell the
+// round limit from another reason.
 export function listRows(db: Database, open: Open, now: number): Row[] {
   const repository = findRepository(db, `${open.owner}/${open.repo}`);
   const issues = openTasks(db, open.owner, open.repo);
@@ -293,6 +302,7 @@ export function listRows(db: Database, open: Open, now: number): Row[] {
         merge: null,
         link: null,
         branch: null,
+        more: 0,
       };
     });
   // When each task last changed. For an ended task that is when it ended, as nothing changes
@@ -324,6 +334,43 @@ export function listRows(db: Database, open: Open, now: number): Row[] {
     ...live("ready"),
     ...done,
   ];
+}
+
+// How many issues Backlog shows before its `… more` row, as a long backlog would fill the list.
+const backlogShown = 10;
+
+// Returns the rows with Backlog cut to its newest 10 issues and a `… more` row after them, which
+// stands for the rest, unless `whole` asks for every issue. A Backlog of 10 or fewer is whole.
+export function cutBacklog(rows: Row[], whole: boolean): Row[] {
+  const backlog = rows.filter((row) => row.part === "backlog");
+  const rest = backlog.length - backlogShown;
+  if (whole || rest <= 0) return rows;
+  const hidden = new Set(backlog.slice(backlogShown));
+  const more: Row = {
+    part: "backlog",
+    name: `${rest} more`,
+    title: "",
+    mark: { sign: "…", colour: "dim" },
+    says: "",
+    colour: "dim",
+    step: "",
+    pr: "",
+    checks: "",
+    when: "",
+    needsYou: false,
+    session: null,
+    running: false,
+    tmux: false,
+    start: null,
+    merge: null,
+    link: null,
+    branch: null,
+    more: rest,
+  };
+  // The `… more` row goes where the first issue it stands for was, so it ends Backlog.
+  return rows.flatMap((row) =>
+    row === backlog[backlogShown] ? [more] : hidden.has(row) ? [] : [row],
+  );
 }
 
 // A stage's heading: its stage, how many tasks it has and how many of them need you, and

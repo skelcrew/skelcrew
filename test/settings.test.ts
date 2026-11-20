@@ -38,7 +38,7 @@ function settings(yours: string, shared: string | null): void {
 // Runs code against config.ts in a process of its own, as homedir() keeps the HOME this one
 // started with, and returns what it printed and the error it ended with, if any.
 function run(code: string): { out: string; err: string } {
-  const script = `import { agentRole, checkLimit, leadMayArmMerges, repositoryCommands, reviewConfig, reviewLimit, roundLimit, sessionHost } from ${JSON.stringify(source("config.ts"))};
+  const script = `import { agentRole, checkLimit, leadMayArmMerges, repositoryCommands, reviewConfig, reviewLimit, roundLimit, sessionHost, threadLimit } from ${JSON.stringify(source("config.ts"))};
 const app = { owner: "simon", repo: "app" };
 ${code}`;
   const done = Bun.spawnSync([process.execPath, "-e", script], {
@@ -226,4 +226,26 @@ test("how many checks run at once comes from your config only, else half the cor
   expect(limit()).toBe(eighth);
   settings("harness: claude\nlimits: { checks: 0 }\n", null);
   expect(run("checkLimit();").err).toContain("isn't valid");
+});
+
+test("how many builders run at once comes from the repository or your override for it, else no limit", () => {
+  const limit = () => run("console.log(threadLimit(app) ?? 'none');").out.trim();
+  settings("harness: claude\n", null);
+  expect(limit()).toBe("none");
+  settings("harness: claude\n", "limits: { threads: 2 }\n");
+  expect(limit()).toBe("2");
+  // Your general limits are about your machine, so they don't limit a repository's builders.
+  settings("harness: claude\nlimits: { threads: 5 }\n", null);
+  expect(limit()).toBe("none");
+  // An override for the repository wins, and one for another repository changes nothing.
+  const overrides =
+    "repos:\n  simon/app: { limits: { threads: 3 } }\n  simon/other: { limits: { threads: 7 } }\n";
+  settings(`harness: claude\n${overrides}`, "limits: { threads: 2 }\n");
+  expect(limit()).toBe("3");
+  // A repository still can't set your limits alongside it.
+  settings("harness: claude\n", "limits: { threads: 2, reviews: 9 }\n");
+  const quarter = Math.max(1, Math.floor(availableParallelism() / 4));
+  expect(Number(run("console.log(reviewLimit());").out)).toBe(quarter);
+  settings("harness: claude\n", "limits: { threads: 0 }\n");
+  expect(run("threadLimit(app);").err).toContain("isn't valid");
 });
