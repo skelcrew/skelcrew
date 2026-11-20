@@ -325,3 +325,19 @@ test("the pane of a queued task says it is up next and what it waits on", () => 
   expect(at).toBeGreaterThan(0);
   expect(lines[at + 1]).toBe("3rd in line: 4 of 4 builders busy");
 });
+
+// A wait reason wider than the pane wraps, so the claim holding the queue, or the command that
+// brings a paused task back, is never cut off.
+test("a queued task's wait reason wraps whole in a narrow pane", () => {
+  const waits = "2nd in line: app-21 waits for its issue's claim to reach the tracker";
+  const queued: Row = { ...row, section: "up next", says: "2nd in line", place: 2, waits };
+  const waiting: Details = { ...details, view: { ...details.view, prPage: null, pr: null } };
+  const lines = plain(drawPane(queued, waiting, null, 30, 40));
+  const at = lines.indexOf("Up next · 2nd in line");
+  expect(lines.slice(at + 1, at + 4)).toEqual([
+    "2nd in line: app-21 waits for",
+    "its issue's claim to reach the",
+    "tracker",
+  ]);
+  for (const line of lines) expect(Bun.stringWidth(line)).toBeLessThanOrEqual(30);
+});
