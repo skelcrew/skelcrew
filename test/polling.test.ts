@@ -2529,6 +2529,43 @@ exec ${bwrap} "$@"`,
       expect(thread().merge_asked).toBe(words);
     }, 90_000);
 
+    // A forge shows a review's verdict, such as GitHub's "Approved.", so a task whose flow has no
+    // review stage gets no record on the PR: nobody approved it. The merge still goes, at the
+    // commit last submitted, once CI is green.
+    test("a merge when ready of a task its flow didn't review posts no record on the PR", async () => {
+      await approvedApp12();
+      // The merge goes by the verdict saved on the task, as a no-review flow's submit saves it.
+      const db = new Database(join(data(), "skelcrew.db"));
+      db.run("PRAGMA busy_timeout = 5000");
+      db.run("UPDATE tasks SET verdict = 'not reviewed', review_round = NULL WHERE task = 12");
+      db.close();
+      // Nobody will approve it, so neither the question nor the answer says so.
+      const said = await runSkelInTerminal(
+        socket,
+        env(),
+        ["merge", "--when-ready", "app-12"],
+        "Merge #7 (app-12 Add export) when its checks pass?",
+        "y",
+      );
+      expect(said).toContain(
+        "Merging #7 as soon as its checks pass. sc merge --cancel app-12 stops it.",
+      );
+      await until(() =>
+        leadTyped().includes(
+          "Merging #7 (app-12) as soon as its checks pass, as you asked at your terminal.",
+        ),
+      );
+      expect(leadTyped()).not.toContain("approved and green");
+      const head = pushed();
+      pr({ head, reviews: [], checks: [approved, check(5, "passed")] });
+      await until(() => thread().status === "done");
+      expect(merges()[0]).toMatchObject({ pr: 7, commit: head });
+      const records = asked(plugin).filter(
+        (q) => q.ask === "review" && String(q.body).startsWith("Merging"),
+      );
+      expect(records).toEqual([]);
+    }, 90_000);
+
     test("an armed merge waits on a new push and failing CI, then merges the approved head", async () => {
       await approvedApp12();
       await arm();

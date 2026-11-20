@@ -92,16 +92,18 @@ export function repositoryFlows(place: {
 }
 
 // Returns the roles a task's stages run, from its flow's file: the built-in default flow's when
-// the flow is `default` and the repository has no file for it. A role other than the built-in
-// one must have its file in the same .agents/ tree, or the flow is refused, naming it, rather
-// than run a stage on instructions nobody wrote. The rounds are left unread, so a bad one stops
-// only what reads the round limit.
+// the flow is `default` and the repository has no file for it. `review` is null for a flow with
+// no review stage, such as one for small changes, whose submits go straight to CI. A file that
+// says `review:` with nothing under it still has the stage, with its defaults. A role other than
+// the built-in one must have its file in the same .agents/ tree, or the flow is refused, naming
+// it, rather than run a stage on instructions nobody wrote. The rounds are left unread, so a bad
+// one stops only what reads the round limit.
 export function flowRoles(place: {
   owner: string;
   repo: string;
   agents?: string | null;
   flow?: string;
-}): { build: string; review: string } {
+}): { build: string; review: string | null } {
   const tree = place.agents === undefined ? approvedAgents(place) : place.agents;
   const flow = place.flow ?? "default";
   const path = `flows/${flow}.yaml`;
@@ -115,9 +117,12 @@ export function flowRoles(place: {
   } catch (error) {
     throw new Error(`${where}: ${error instanceof Error ? error.message : error}`);
   }
-  const roles = { build: read.build?.role ?? "builder", review: read.review?.role ?? "reviewer" };
+  const roles = {
+    build: read.build?.role ?? "builder",
+    review: read.review === undefined ? null : (read.review?.role ?? "reviewer"),
+  };
   for (const role of [roles.build, roles.review])
-    if (role !== "builder" && role !== "reviewer") {
+    if (role !== null && role !== "builder" && role !== "reviewer") {
       const file = tree === null ? null : agentsFile(place, tree, `roles/${role}.md`);
       if (file === null)
         throw new Error(
