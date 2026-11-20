@@ -1836,7 +1836,10 @@ exec ${real} "$@"
     expect(await ask(answer(3, false))).toEqual({
       said: "Told the lead no to: Start APP-99 Busy work?",
     });
-    const notes = onDb((db) => db.query("SELECT text FROM notes ORDER BY id").all());
+    // Only the notes about its requests: a lead's first start brings it a greeting too.
+    const notes = onDb((db) =>
+      db.query("SELECT text FROM notes WHERE text LIKE '%your request%' ORDER BY id").all(),
+    );
     expect(notes).toEqual([
       {
         text: "The human said yes in the list to your request: Add the repository simon/site? Only they can add it, with sc repo add simon/site at their own terminal.",

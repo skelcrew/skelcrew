@@ -145,6 +145,7 @@ describe.skipIf(insideSandbox)("the lead's requests", () => {
   // back. The daemon also brings back the builders that ran before the stop, and must not count
   // the one the yes brings back among them, which would start its builder twice.
   test("a yes that brings back a stopped task, cut short by a stop, brings its builder back once", async () => {
+    addApp();
     await startApp12();
     expect((await skel(["stop", "app-12"])).err).toBe("");
     for (const run of running.splice(0)) {
