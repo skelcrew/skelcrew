@@ -685,8 +685,12 @@ async function typeNotes(
       const back = typeof host === "string" && scrolledBack(host, id);
       return back ? "the human has scrolled back in it" : "";
     };
-    // dropEndNotes cancels typing too, should it drop a note in the moment of the paste.
+    // dropEndNotes and dropLeadNotes cancel typing too, should they drop a note in the moment of
+    // the paste. A note they dropped while the lead was looked up above had no typing to cancel
+    // yet, so what would be said is looked at again once they can cancel it. A host with its own
+    // transport is never asked the hold's question, and would type that note in.
     for (const { id } of now.notes) typingNote.set(id, cancel);
+    if (batch().text !== now.text) cancel.abort();
     let typed: Typed;
     try {
       // However long the lead stays busy, the notes wait for it, as they must reach it.
