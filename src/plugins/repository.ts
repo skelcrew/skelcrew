@@ -75,13 +75,19 @@ const asWritten = { lineWidth: 0, flowCollectionPadding: false };
 
 // Returns `text` with `key` set to `value`, changing only where it goes, so every other line stays
 // byte for byte, as it would in the human's commit. A key that isn't there is added as a line at
-// the end. One with an empty list, such as plugins: [], gets the value in its place, on one line.
+// the end of the document. One with an empty list, such as plugins: [], gets the value in its place, on one line.
 // Returns null when neither fits, such as for a file written as one map on one line, or a key
 // with a value already, which the whole file must be written again to change.
 function withKey(text: string, key: string, value: unknown): string | null {
   const { contents } = parseDocument(text);
-  const added = () =>
-    `${text}${text === "" || text.endsWith("\n") ? "" : "\n"}${stringify({ [key]: value }, asWritten)}`;
+  // A line of ... ends the document, so a new line goes before it, or YAML would refuse the file.
+  const added = () => {
+    const marker = text.search(/^\.\.\.[ \t]*(#.*)?$/m);
+    const before = marker === -1 ? text : text.slice(0, marker);
+    const after = marker === -1 ? "" : text.slice(marker);
+    const line = before === "" || before.endsWith("\n") ? "" : "\n";
+    return `${before}${line}${stringify({ [key]: value }, asWritten)}${after}`;
+  };
   if (contents === null) return added();
   if (!isMap(contents) || contents.flow) return null;
   const pair = contents.items.find((item) => isScalar(item.key) && item.key.value === key);

@@ -207,7 +207,7 @@ test("a lead is told its repository and each setup and test command, or that non
     "A line that is only a comment, as sc init writes them, isn't configured.",
   );
   expect(told).toContain(
-    "fills in setup: and test: in the repository's skelcrew.yaml itself, as real lines rather than comments.",
+    "fills in only the missing ones in the repository's skelcrew.yaml itself, as real lines rather than comments, and leaves a command that is configured as it is.",
   );
   expect(told).toContain(
     "\nYou are the lead of simon/app. Skelcrew's clone of it is at /clones/simon/app.\n",
