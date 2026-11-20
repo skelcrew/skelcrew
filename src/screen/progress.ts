@@ -107,12 +107,3 @@ function readAdded(
     closeSync(fd);
   }
 }
-
-// Returns a count of tokens in the fewest letters: 850, then 48k, then 1.2M, with a decimal only
-// below ten. Rounded down, so it never shows more than was used.
-export function tokenText(tokens: number): string {
-  const short = (value: number, unit: string) =>
-    value < 10 ? `${Math.floor(value * 10) / 10}${unit}` : `${Math.floor(value)}${unit}`;
-  if (tokens < 1000) return `${tokens}`;
-  return tokens < 1_000_000 ? short(tokens / 1000, "k") : short(tokens / 1_000_000, "M");
-}

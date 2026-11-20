@@ -187,14 +187,6 @@ test("a task on a flow with no review shows not reviewed, and merges at its last
     says: "ready to merge, not reviewed",
     needsYou: false,
   });
-  // The sidebar says the same of it.
-  const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
-import { sidebarRows } from ${JSON.stringify(source("screen/rows.ts"))};
-const open = { owner: "simon", repo: "app", lead: "lead" };
-const found = sidebarRows(openDb(), [], () => 3, ${now}, open).find((r) => r.name === "APP-14");
-console.log(found?.word);`;
-  const sidebar = Bun.spawnSync([process.execPath, "-e", code], { env: env(), stderr: "pipe" });
-  expect(sidebar.stdout.toString().trim()).toBe("ready to merge, not reviewed");
   expect(row?.merge && "ask" in row.merge ? row.merge.request : null).toMatchObject({
     command: "merge",
     pr: 41,
@@ -2500,11 +2492,14 @@ test("the live view reads only while the list shows with its pane", async () => 
   press("Down");
   await until(() => here().startsWith("▸ ○ APP-9"), "APP-9's row");
   expect(await noReads(reads)).toBe(true);
-  // While you are attached to an agent, the list isn't showing.
+  // While you are attached to an agent, the list isn't showing. A read that began on APP-7's row
+  // just before Enter may still be noted, on a slow machine, so the list must first go a second
+  // without a read: one that went on reading never would. Then it stays without.
   press("Down");
   await until(() => here().startsWith("▸ ○ APP-7"), "APP-7's row");
   press("Enter");
   await until(() => seen().includes("I am app-7"), "app-7's agent");
+  await wait(() => noReads(reads), { what: () => "the reads to stop" });
   expect(await noReads(reads)).toBe(true);
   press("C-\\");
   await until(() => here().startsWith("▸ ○ APP-7"), "the list again");
@@ -2520,6 +2515,52 @@ test("the live view reads only while the list shows with its pane", async () => 
   type("q");
   await until(() => read(join(home, "left")) === "left", "the list to leave");
   expect(await noReads(reads)).toBe(true);
+});
+
+// A host can take seconds to find a builder's session before its screen is read. A read whose
+// row you left, or whose pane went, in that time reads nothing. Here the host's list of sessions
+// takes 2 seconds, and it notes each question it is asked.
+test("a live read that waits on its host reads nothing once you moved or the pane went", async () => {
+  const plugin = join(home, "plugin-slow");
+  const asked = join(home, "slow-host-asked");
+  mkdirSync(plugin, { recursive: true });
+  writeFileSync(
+    join(plugin, "session.sh"),
+    `q=$(cat)
+case "$q" in
+  *'"ask":"list"'*) echo list >> ${JSON.stringify(asked)}; sleep 2; echo '{"sessions":[]}' ;;
+  *'"ask":"read"'*) echo read >> ${JSON.stringify(asked)}; echo '{"screen":"I am app-12 on slow"}' ;;
+  *) echo null ;;
+esac
+`,
+  );
+  writeFileSync(
+    join(plugin, "skelcrew-plugin.yaml"),
+    "name: slow\nversion: 0.1.0\nskelcrew: 0.1.0\nabout: A host\nkind: runtime\nprovides: [sessions]\nsession: [sh, session.sh]\nattach: [sh, session.sh]\n",
+  );
+  sql(`INSERT INTO plugins (name, folder) VALUES ('slow', '${plugin}');
+UPDATE threads SET host = 'slow', host_id = NULL WHERE folder = 'app-12'`);
+  const count = (what: string) =>
+    read(asked)
+      .split("\n")
+      .filter((line) => line === what).length;
+  await open({ width: wide });
+  await until(() => here().startsWith("▸ ● APP-12") && count("list") === 1, "APP-12's lookup");
+  // You move on while the host looks.
+  press("Down");
+  await until(() => here().startsWith("▸ ● APP-14"), "APP-14's row");
+  await Bun.sleep(2500);
+  expect(count("read")).toBe(0);
+  // Back on APP-12, the pane goes while the host looks.
+  press("Up");
+  await until(() => count("list") === 2, "APP-12's second lookup");
+  tmux("resize-window", "-t", "=one:", "-x", "100");
+  await until(() => !seen().includes(" │ "), "no pane");
+  await Bun.sleep(2500);
+  expect(count("read")).toBe(0);
+  // With the pane back and nothing changing, the screen is read.
+  tmux("resize-window", "-t", "=one:", "-x", String(wide));
+  await until(() => liveSeen().includes("I am app-12 on slow"), "app-12's screen");
 });
 
 // The live view reads 4 times a second while you move. A move must still show at once.

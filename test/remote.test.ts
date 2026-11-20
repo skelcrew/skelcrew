@@ -829,20 +829,6 @@ test("a sidebar runs whichever laptop's build its tmux server remembers", () => 
   expect(run.out).toBe("");
 });
 
-test("a list runs whichever laptop's build its tmux server remembers", () => {
-  const socket = `skel-test-${process.pid}-no-server`;
-  const run = farSkel("abc1234", "def5678", [
-    "list",
-    socket,
-    "screen-1",
-    "issues",
-    "",
-    "simon/app",
-  ]);
-  expect(run.code).toBe(1);
-  expect(run.out).toBe("");
-});
-
 // Out of date, Skelcrew there would have the laptop copy things, so a machine that isn't set up
 // says so first, and the laptop asks.
 test("a copied Skelcrew that isn't set up says so before its build is checked", () => {

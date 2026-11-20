@@ -1,5 +1,5 @@
-// The look: what the sidebar, the strip and a page share to draw text, which is the colours, the
-// padding, and making text from outside safe and fit to show.
+// The look: what the list, the screen's sidebar and its footer share to draw text, which is the
+// colours, the padding, and making text from outside safe and fit to show.
 import type { Colour } from "../flow/marks.ts";
 
 // The colours of marks and words. 256-colour numbers, as they reach your terminal through both
@@ -16,10 +16,8 @@ export const grey = "90";
 // The colour each kind of mark is drawn in.
 export const markColours: Record<Colour, string> = { green, yellow, red, bright, dim: grey };
 // A light grey, for text that matters more than dim text but less than a title. It is a fixed
-// one, as a theme has no grey between its dim one and its text. It is lighter still on the row
-// you are looking at, so it stays apart from dim text there.
+// one, as a theme has no grey between its dim one and its text.
 export const lightGrey = "38;5;250";
-export const lightGreyOnShade = "38;5;253";
 // Returns text in a colour or style. It ends just that style, not all of them, so a grey
 // background behind the text goes on after it.
 export const paint = (code: string, text: string) => `\x1b[${code}m${text}\x1b[22;39m`;

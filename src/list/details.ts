@@ -7,9 +7,8 @@ import { z } from "zod";
 import { readTask, type TaskView } from "../flow/list.ts";
 import { threadOn } from "../flow/thread.ts";
 import { threadsDir } from "../paths.ts";
-import { changedAt } from "../screen/lists.ts";
 import { removeControlCodes } from "../screen/look.ts";
-import type { Open } from "./rows.ts";
+import { changedAt, type Open } from "./rows.ts";
 
 // A task's details: sc show's view of it without the logs of failed checks, what its latest
 // review found, each in a line, and its recent events, oldest first, such as `13:40 submitted`.

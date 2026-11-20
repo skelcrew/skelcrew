@@ -139,7 +139,7 @@ export async function runTaskDetails(
   const look = async () => {
     if (reading || !row || liveNote(row) !== null) return;
     reading = true;
-    live = await readLive(db, agents, row);
+    live = (await readLive(db, agents, row)) ?? live;
     reading = false;
     draw();
   };

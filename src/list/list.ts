@@ -524,10 +524,16 @@ export async function runList(agents: string, repository: string): Promise<void>
     if (reading.has(row.name) || paneWidth(process.stdout.columns || 80) === 0) return;
     reading.add(row.name);
     const asked = selections;
-    const shown = await readLive(db, agents, row);
+    // Whether the live view still wants this row's screen: the list shows with its pane, and you
+    // are on the same row. A host can take seconds to find the builder's session, and any of
+    // these can change meanwhile, so it is asked again before the screen is read.
+    const wanted = () =>
+      !attached && !left && selections === asked && paneWidth(process.stdout.columns || 80) > 0;
+    const shown = await readLive(db, agents, row, wanted);
     reading.delete(row.name);
-    // You may have left while the host answered, and the terminal is then your shell's again.
-    if (left || selections !== asked) return;
+    // A read the list stopped wanting read nothing and shows nothing, and so is one that came
+    // back once it was no longer wanted, such as after you left and the terminal is your shell's.
+    if (shown === null || !wanted()) return;
     if (live?.name === row.name && Bun.deepEquals(live.shown, shown)) return;
     live = { name: row.name, shown };
     draw();
