@@ -86,6 +86,9 @@ const sections: [string, [string, string][]][] = [
       ['tell lead "<text>"', "Type a message into its repository's lead, as a builder"],
       ['tell <thread> "<text>"', "Type a message into its builder, as the lead"],
       ['tell lead <repo> "<text>"', "Type a brief into another repository's lead, as a lead"],
+      ["ask start <issue>", "Ask you in the list to start it, as the lead"],
+      ['ask start <repo> "<title>" "<body>"', "The same for a thread with no issue"],
+      ["ask repo add <owner/repo>", "Ask you in the list to add a repository, as the lead"],
     ],
   ],
   [
@@ -116,6 +119,7 @@ const sections: [string, [string, string][]][] = [
       ["shift + ↑/↓", "move a queued task in up next"],
       ["s", "start or queue a task in the backlog"],
       ["m", "merge a ready task"],
+      ["y / n", "answer a request from the lead"],
     ],
   ],
 ];

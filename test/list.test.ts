@@ -143,6 +143,33 @@ test("the lead comes first, then what needs you, then what is up next, then each
 
 // A task that waits on you shows under Needs you, whatever its stage, and keeps its stage, so a
 // question on an approved task still reaches its builder, and offers no merge.
+// The lead's requests that wait for your yes, saved as sc ask saves them.
+function leadRequests(): void {
+  sql(`INSERT INTO lead_requests (owner, repo, action, says, made) VALUES
+  ('simon', 'app', '{"kind":"start","task":"31"}', 'Start APP-31 Export as CSV?', 1),
+  ('simon', 'app', '{"kind":"repo add","repository":"simon/site"}', 'Add the repository simon/site?', 2),
+  ('simon', 'app', '{"kind":"no such kind"}', 'Unreadable', 3),
+  ('simon', 'app', '{"kind":"start new","title":"CSV \\u001b[31mexport","body":"As CSV"}', 'Start a new task: CSV \u001b[31mexport?', 4),
+  ('simon', 'site', '{"kind":"start","task":"3"}', 'Start SITE-3 Docs?', 5);`);
+}
+
+test("the lead's requests show under the lead, newest first, each by its ID, with no control codes", () => {
+  leadRequests();
+  const shown = rows()
+    .filter((row) => row.section === "lead")
+    .map((row) => [row.part, row.request, row.title, row.mark.sign, row.mark.colour]);
+  // A request whose action can't be read shows nothing, and another repository's stays there.
+  expect(shown).toEqual([
+    ["lead", null, "claude", "○", "bright"],
+    ["request", 4, "Start a new task: CSV  [31mexport?", "●", "yellow"],
+    ["request", 2, "Add the repository simon/site?", "●", "yellow"],
+    ["request", 1, "Start APP-31 Export as CSV?", "●", "yellow"],
+  ]);
+  // A request is none of the sections' rows, so no heading counts it.
+  const headings = sectionHeadings(rows(), new Set(sections));
+  expect(headings.reduce((sum, heading) => sum + heading.count, 0)).toBe(rows().length - 4);
+});
+
 test("an approved task whose builder asks a question shows under Needs you, still in Ready", () => {
   sql("UPDATE threads SET asking = 1 WHERE folder = 'app-14';");
   const row = rows().find((candidate) => candidate.name === "APP-14");
@@ -1291,12 +1318,15 @@ function daemon(): void {
     pr: z.number().default(0),
     commit: z.string().default(""),
     by: z.number().default(0),
+    id: z.number().default(0),
+    yes: z.boolean().default(false),
   });
   standIn = createServer((connection) =>
     connection.on("data", (data) => {
-      const { command, from, tab, repo, task, pr, commit, by } = Request.parse(
+      const { command, from, tab, repo, task, pr, commit, by, id, yes } = Request.parse(
         JSON.parse(data.toString()),
       );
+      if (command === "answer") asked.push(`answer ${repo} ${id} ${yes ? "yes" : "no"}`);
       if (command === "lead") asked.push(`open ${from}${tab ? " from a tab" : ""}`);
       if (command === "start") asked.push(`start ${repo} ${task}`);
       if (command === "merge") asked.push(`merge ${repo} ${pr} ${commit}`);
@@ -1308,7 +1338,9 @@ function daemon(): void {
             ? { started: "Started." }
             : command === "queue move"
               ? { said: `APP-${task} starts next` }
-              : mergeAnswer;
+              : command === "answer"
+                ? { said: yes ? "Started APP-31." : "Told the lead no." }
+                : mergeAnswer;
       connection.end(`${JSON.stringify(said)}\n`);
     }),
   );
@@ -1613,6 +1645,40 @@ test("s asks to start a task in Backlog, and y starts it", async () => {
   await until(() => asked.includes("start simon/app t104"), "the start");
   // The line says what the daemon did, as the task could have been queued meanwhile.
   await until(() => seen().includes("Started."), "the daemon's answer");
+});
+
+// A request of the lead's is a line under the lead that never scrolls, y and n answer it at once
+// by its ID, and the line then says what the daemon did.
+test("y and n answer the lead's request you are on, and Enter says to use them", async () => {
+  leadRequests();
+  await open();
+  const lines = seen().split("\n");
+  const lead = lines.findIndex((line) => /○ lead +claude/.test(line));
+  expect(lines[lead + 2]).toMatch(/^ {3}● Start a new task: CSV {2}\[31mexport\? *$/);
+  expect(lines[lead + 3]).toMatch(/^ {3}● Add the repository simon\/site\? *$/);
+  expect(lines[lead + 4]).toMatch(/^ {3}● Start APP-31 Export as CSV\? *$/);
+  expect(lines[lead + 5]?.trim()).toBe("");
+  // The list starts on what needs you, right below the requests.
+  press("Up");
+  await until(() => here().startsWith("▸ ● Start APP-31"), "the request's row");
+  expect(seen()).toContain("y yes  n no");
+  press("Enter");
+  await until(() => seen().includes("Press y to say yes to the lead, or n to say no."), "how");
+  type("y");
+  await until(() => asked.includes("answer simon/app 1 yes"), "the yes");
+  await until(() => seen().includes("Started APP-31."), "the daemon's answer");
+  press("Up");
+  await until(() => here().startsWith("▸ ● Add the repository"), "the next request");
+  type("n");
+  await until(() => asked.includes("answer simon/app 2 no"), "the no");
+  await until(() => seen().includes("Told the lead no."), "the daemon's answer");
+  // y and n on any other row do nothing.
+  press("Up");
+  press("Up");
+  await until(() => here().startsWith("▸ ○ lead"), "the lead's row");
+  type("y");
+  await Bun.sleep(300);
+  expect(asked.filter((line) => line.startsWith("answer"))).toHaveLength(2);
 });
 
 // Shift with an arrow moves a queued task in its queue, through the daemon, and the bottom line

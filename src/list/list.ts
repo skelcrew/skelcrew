@@ -17,7 +17,7 @@ import { errorText } from "../say.ts";
 import { cpuBusy, cpuSample, loadText, memoryInUse, readMemory } from "../screen/load.ts";
 import { grey, paint, removeControlCodes } from "../screen/look.ts";
 import { shownVersions } from "../version.ts";
-import { type Asking, canOpenLinks, openPr, stillOffered } from "./actions.ts";
+import { type Asking, answerOf, canOpenLinks, openPr, stillOffered } from "./actions.ts";
 import { type Details, readDetails } from "./details.ts";
 import {
   drawList,
@@ -360,8 +360,8 @@ export async function runList(agents: string, repository: string): Promise<void>
   };
 
   // Opens a row with Enter: attaches to the lead, starting it first when it isn't running, or to
-  // the builder of a task at work. Says what a task up next waits on. Asks before starting an
-  // issue. Opens the PR of a task ready
+  // the builder of a task at work. Says what a task up next waits on, and that a request of the
+  // lead's is answered with y or n. Asks before starting an issue. Opens the PR of a task ready
   // for review or ended, or copies its link, or without a forge says which branch waits for you.
   // A ready task whose builder needs you, such as for a question, attaches to the builder, so one
   // Enter reaches what it waits on.
@@ -382,6 +382,7 @@ export async function runList(agents: string, repository: string): Promise<void>
       wholeBacklog = true;
       return reshow();
     }
+    if (row.part === "request") return say("Press y to say yes to the lead, or n to say no.");
     if (row.part === "backlog" && row.start) {
       asking = { question: row.start, row: row.name, merge: false };
       return draw();
@@ -573,6 +574,9 @@ export async function runList(agents: string, repository: string): Promise<void>
     const stage = ListStage.options[Number(key) - 1];
     if (/^[1-6]$/.test(key) && stage) return toggleSection(stage);
     if (key === "enter" && row) return openRow(row);
+    // y and n answer the lead's request you are on at once, as its row is the question.
+    const answer = (key === "y" || key === "n") && row ? answerOf(open, row, key === "y") : null;
+    if (answer) return goAhead(answer);
     // o shows the agent's whole screen in the details pane, or only its last lines again. It
     // stays as you move, as it is how you like the pane.
     if (key === "o" && row?.task && paneWidth(process.stdout.columns || 80) > 0) {

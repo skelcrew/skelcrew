@@ -51,6 +51,7 @@ import {
   openedRepositories,
   startLead,
 } from "./lead.ts";
+import { saveRequest, takeRequest } from "./lead-requests.ts";
 import { restoreLimits, wakeAfterLimit } from "./limits.ts";
 import { listRepositories, listTasks, listThreads, showTask } from "./list.ts";
 import {
@@ -717,6 +718,62 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         const by = leadOfCaller(caller) === null ? "you" : "lead";
         const now = markNeedsYou(db, sessions, thread, request.reason, by);
         return { thread: threadName(db, now), needsYou: needsYou(now) };
+      }
+      // A lead's request shows under the lead in the list until you answer it there.
+      case "ask": {
+        const lead = leadOfCaller(caller);
+        if (lead === null) throw new Error("only a lead asks the human to say yes in the list");
+        const repository = findRepository(db, `${lead.owner}/${lead.repo}`);
+        const says = saveRequest(db, repository, request.action, Date.now());
+        return {
+          asked: `Asked the human in the list: ${says} Their answer comes to you as a note.`,
+        };
+      }
+      // Your y or n on a lead's request. A yes to a start starts it as sc start does. A yes to
+      // adding a repository only tells the lead, as only sc repo add at your terminal adds one.
+      // The lead is told your answer either way, and what the start did or why it failed.
+      case "answer": {
+        const repository = findRepository(db, request.repo);
+        const { owner, repo } = repository;
+        const taken = takeRequest(db, owner, repo, request.id);
+        if (taken === null) throw new Error("That request was answered already.");
+        const { action, says } = taken;
+        const tell = (text: string) => noteForLead(db, sessions, repository, text);
+        if (!request.yes) {
+          tell(`The human said no in the list to your request: ${says}`);
+          return { said: `Told the lead no to: ${says}` };
+        }
+        if (action.kind === "repo add") {
+          tell(
+            `The human said yes in the list to your request: ${says} Only they can add it, with sc repo add ${action.repository} at their own terminal.`,
+          );
+          return {
+            said: `Told the lead yes. Add it with sc repo add ${action.repository} in your terminal.`,
+          };
+        }
+        const { short, flow } = action;
+        const options = { ...(short ? { short } : {}), ...(flow ? { flow } : {}) };
+        const full = `${owner}/${repo}`;
+        const start: DaemonRequest =
+          action.kind === "start"
+            ? { command: "start", repo: full, task: action.task, ...options }
+            : {
+                command: "start new",
+                repo: full,
+                title: action.title,
+                body: action.body,
+                ...options,
+              };
+        try {
+          const { started } = z.object({ started: z.string() }).parse(await handle(start, "you"));
+          tell(`The human said yes in the list to your request: ${says} ${started}`);
+          return { said: started };
+        } catch (error) {
+          tell(
+            `The human said yes in the list to your request: ${says} It failed: ${errorText(error)}`,
+          );
+          throw error;
+        }
       }
       case "tell lead":
         messageLead(db, sessions, caller, request.text);

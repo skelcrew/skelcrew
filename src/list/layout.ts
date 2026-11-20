@@ -80,15 +80,17 @@ export const sectionNames: Record<Section, string> = {
 // m only on a task it can merge, o on a task while the details pane shows, to show its agent's
 // whole screen or only the last lines, and Tab and Alt-Shift with an arrow only with another
 // repository to go to. A runtime plugin's host has its own key to come back, so its rows don't
-// offer Ctrl-\.
+// offer Ctrl-\. A request of the lead's offers y and n, which answer it, in place of Enter.
 export function keysFor(row: Row | undefined, tabs: number, pane = false): string {
+  const tab = tabs > 1 ? ["⇥/alt+shift+←→ repository"] : [];
+  if (row?.part === "request")
+    return ["↑↓ move", "y yes", "n no", "1-6 stages", ...tab, "q/esc quit"].join("  ");
   const back = row?.tmux ? " · ctrl+\\ back" : "";
   const enter = row?.more ? "⏎ show all" : row && enterAttaches(row) ? `⏎ attach${back}` : "⏎ open";
   const open = pane && row?.task ? `${enter} · o output` : enter;
   const merge = row?.merge && "ask" in row.merge ? ["m merge"] : [];
   const start = row?.start ? [row.start.queues ? "s queue" : "s start"] : [];
   const reorder = row?.section === "up next" && row.place !== null ? ["shift+↑↓ reorder"] : [];
-  const tab = tabs > 1 ? ["⇥/alt+shift+←→ repository"] : [];
   return ["↑↓ move", open, "1-6 stages", ...reorder, ...start, ...merge, ...tab, "q/esc quit"].join(
     "  ",
   );
@@ -265,6 +267,18 @@ function tallLines(row: Row, here: boolean, nameWidth: number, width: number): s
   return marked(lines, here, width);
 }
 
+// Returns a request of the lead's as one line, under the lead: its yellow mark, then the request,
+// such as `Start APP-12 Fix login?`, cut with … to fit. Your answer is y or n, which the bottom
+// line says on its row.
+function requestLine(row: Row, here: boolean, width: number): string {
+  const start = `${here ? " ▸ " : "   "}${row.mark.sign} `;
+  const room = width - Bun.stringWidth(start);
+  if (room <= 0) return fitted(start, width);
+  const text = fitted(row.title, room);
+  const line = `${markStart(row, here)} ${here ? tinted(here, bright, text) : text}`;
+  return here ? shaded(line, width) : line;
+}
+
 // What a click on a line of the list reaches: a row, by its place in the rows, which is the
 // lead's or a task's, a section's heading, or nothing, such as on a blank line or an edge.
 // On an edge line, a click reaches the heading pinned at its column: `pinned` has each one's
@@ -364,12 +378,13 @@ function edgeLine(
 }
 
 // Returns the lead's row and the sections under it as lines, exactly `height` of them, on the row
-// at `here`, for the list and for the screen's sidebar alike. The lead comes first, then a blank
-// line, then every section's heading, each open one with its rows under it. `rows` are the rows
-// that show: the lead's and those of the open sections, in the order of the sections. The lead
-// never scrolls. When the sections don't all fit, they scroll together, headings and rows, from
-// the line `top`, so an open section's heading is always right above its rows, and a heading with
-// none under it is closed. Then the first and last lines of the sections say what is hidden above
+// at `here`, for the list and for the screen's sidebar alike. The lead comes first, then its
+// requests that wait for your yes, then a blank line, then every section's heading, each open one
+// with its rows under it. `rows` are the rows that show: the lead's, its requests' and those of
+// the open sections, in the order of the sections. The lead and its requests never scroll. When
+// the sections don't all fit, they scroll together, headings and rows, from the line `top`, so an
+// open section's heading is always right above its rows, and a heading with none under it is
+// closed. Then the first and last lines of the sections say what is hidden above
 // and below, with the headings hidden there, so no section's count goes out of sight. The rows
 // move only when the row you are on would leave the view. A row that is the first of its section
 // brings its heading into view with it, so opening a section shows the heading over its rows. A
@@ -384,12 +399,16 @@ export function drawRows(
   width: number,
   height: number,
 ): { lines: string[]; targets: Target[]; top: number } {
-  // The one-line rows' columns, from those rows alone, and the names' width, from every row.
-  const short = rows.filter((row) => !tall(row));
+  // The one-line rows' columns, from those rows alone, and the names' width, from every row but
+  // the lead's requests, which show no name.
+  const short = rows.filter((row) => !tall(row) && row.part !== "request");
   const widest = (of: (row: Row) => string, among = short) =>
     Math.max(...among.map((row) => Bun.stringWidth(of(row))), 0);
   const columns = {
-    name: widest((row) => row.name, rows),
+    name: widest(
+      (row) => row.name,
+      rows.filter((row) => row.part !== "request"),
+    ),
     title: widest((row) => row.title),
     when: widest((row) => row.when),
   };
@@ -397,16 +416,20 @@ export function drawRows(
   const linesOf = (i: number) => {
     const row = rows[i];
     if (!row) return [];
+    if (row.part === "request") return [requestLine(row, i === here, width)];
     if (tall(row)) return tallLines(row, i === here, columns.name, width);
     return marked([shortLine(row, i === here, columns, width)], i === here, width);
   };
   const countWidth = Math.max(...headings.map((heading) => String(heading.count).length), 1);
-  // The lead is above the sections, and never scrolls.
-  const leadAt = rows.findIndex((row) => row.part === "lead");
-  const lead = leadAt < 0 ? [] : [...linesOf(leadAt), ""];
-  const leadTargets: Target[] = lead.map((_, at) =>
-    at < lead.length - 1 ? { row: leadAt } : null,
+  // The lead and its requests are above the sections, and never scroll.
+  const leads = rows.flatMap((row, i) =>
+    row.section === "lead" ? linesOf(i).map((text) => ({ text, row: i })) : [],
   );
+  const lead = leads.length === 0 ? [] : [...leads.map((line) => line.text), ""];
+  const leadTargets: Target[] = [
+    ...leads.map((line): Target => ({ row: line.row })),
+    ...(leads.length === 0 ? [] : [null]),
+  ];
   const room = Math.max(height - lead.length, 1);
   // Returns the sections' lines: each heading, with an open section's rows under it. With
   // `parted`, an open section with rows has a blank line after them, which parts it from the

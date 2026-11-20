@@ -149,3 +149,41 @@ test("Shift-Up on a queued task in Up next moves it in the queue, and the footer
   await until(() => footer().includes("APP-20 starts next"), "its place in the footer");
   expect(read("lead.typed")).toBe("");
 });
+
+// A request of the lead's shows under the lead, and on its row the lead shows live on the right,
+// but your typing stays with the sidebar: y and n answer the request, and the lead gets nothing.
+test("on a request of the lead's, the lead shows on the right, and y and n answer it", async () => {
+  daemon();
+  sql(`INSERT INTO lead_requests (owner, repo, action, says, made) VALUES
+  ('simon', 'app', '{"kind":"start","task":"31"}', 'Start APP-31 Export as CSV?', 1),
+  ('simon', 'app', '{"kind":"repo add","repository":"simon/site"}', 'Add the repository simon/site?', 2);`);
+  open("lead");
+  await ready("lead");
+  const lines = left();
+  const lead = lines.findIndex((line) => line.includes("lead"));
+  expect(lines[lead + 2]).toContain("● Add the repository simon/site?");
+  expect(lines[lead + 3]).toContain("● Start APP-31 Export as CSV?");
+  press("M-Down");
+  await until(() => selected().includes("Add the repository"), "the newest request");
+  await until(() => footer().includes("y yes  n no"), "the keys in the footer");
+  expect(seen()).toContain("I am lead");
+  type("n");
+  await until(() => acted.includes("answer simon/app 2 no"), "the no");
+  await until(() => footer().includes("Told the lead no."), "the daemon's answer");
+  press("M-Down");
+  await until(() => selected().includes("Start APP-31"), "the older request");
+  type("y");
+  await until(() => acted.includes("answer simon/app 1 yes"), "the yes");
+  await until(() => footer().includes("Started APP-31."), "the daemon's answer");
+  // Alt-Shift-Down from the lead goes past the requests, to the first section.
+  press("M-Up");
+  press("M-Up");
+  await until(onLead, "back on the lead");
+  press("M-S-Down");
+  await until(
+    () => !onLead() && !selected().includes("● Start") && !selected().includes("● Add"),
+    "past the requests",
+  );
+  await Bun.sleep(300);
+  expect(read("lead.typed")).toBe("");
+});

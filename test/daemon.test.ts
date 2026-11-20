@@ -1453,6 +1453,63 @@ exec ${real} "$@"
     await Bun.sleep(4000);
     expect(existsSync(clone)).toBe(false);
   }, 60_000);
+  // A lead's request waits in the list until you answer it, and the lead's notes say your answer.
+  // The fake lead never sits at a prompt, so its notes wait in the database to be read.
+  test("only a lead asks you in the list, only you answer, and the lead hears each answer", async () => {
+    setUp();
+    addRepository("app");
+    serve();
+    await untilAnswers();
+    await open();
+    await until(() => existsSync(leadSocket()));
+    onDb((db) => db.run(threadSql({ task: "99", title: "Busy work", status: "working" })));
+    const addSite = { command: "ask", action: { kind: "repo add", repository: "simon/site" } };
+    const startBusy = { command: "ask", repo: "app", action: { kind: "start", task: "99" } };
+    const refused = { error: "the daemon doesn't know that request" };
+    expect(await ask(addSite)).toEqual(refused);
+    expect(await askAsLead(addSite)).toEqual({
+      asked:
+        "Asked the human in the list: Add the repository simon/site? Their answer comes to you as a note.",
+    });
+    expect(await askAsLead(startBusy)).toEqual({
+      asked:
+        "Asked the human in the list: Start APP-99 Busy work? Their answer comes to you as a note.",
+    });
+    expect(await askAsLead({ ...addSite, action: { kind: "repo add", repository: "x" } })).toEqual(
+      refused,
+    );
+    const answer = (id: number, yes: boolean) =>
+      ({ command: "answer", repo: "simon/app", id, yes }) as const;
+    expect(await askAsLead(answer(1, true))).toEqual(refused);
+    const waiting = () =>
+      onDb((db) => db.query("SELECT id, says FROM lead_requests ORDER BY id").all());
+    expect(waiting()).toEqual([
+      { id: 1, says: "Add the repository simon/site?" },
+      { id: 2, says: "Start APP-99 Busy work?" },
+    ]);
+    // A yes to adding a repository adds nothing: only you can, at your terminal.
+    expect(await ask(answer(1, true))).toEqual({
+      said: "Told the lead yes. Add it with sc repo add simon/site in your terminal.",
+    });
+    expect(await ask(answer(1, false))).toEqual({ error: "That request was answered already." });
+    // A yes starts as sc start would, and a start that fails says why, to you and to the lead.
+    expect(await ask(answer(2, true))).toEqual({ error: "APP-99 has a thread already" });
+    expect(waiting()).toEqual([]);
+    expect(await askAsLead(startBusy)).toMatchObject({ asked: expect.any(String) });
+    expect(await ask(answer(3, false))).toEqual({
+      said: "Told the lead no to: Start APP-99 Busy work?",
+    });
+    const notes = onDb((db) => db.query("SELECT text FROM notes ORDER BY id").all());
+    expect(notes).toEqual([
+      {
+        text: "The human said yes in the list to your request: Add the repository simon/site? Only they can add it, with sc repo add simon/site at their own terminal.",
+      },
+      {
+        text: "The human said yes in the list to your request: Start APP-99 Busy work? It failed: APP-99 has a thread already",
+      },
+      { text: "The human said no in the list to your request: Start APP-99 Busy work?" },
+    ]);
+  });
 });
 
 // A machine that ran sc with one lead for all its repositories, as the release before leads
