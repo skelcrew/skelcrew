@@ -411,6 +411,37 @@ UPDATE threads SET host = 'fake', host_id = 'fake-app-12' WHERE folder = 'app-12
   await until(() => selected() === "◆ lead", "the lead's row");
 });
 
+// Whether a builder ran is kept while its host fails to answer, but it is always reached through
+// the session it has now. A builder given a new session meanwhile is never reached through its
+// old one.
+test("a builder that moved on its host while its host fails to answer is attached to its new session", async () => {
+  tmux(agents, "kill-session", "-t", "=app-12");
+  const plugin = join(home, "plugin-fake");
+  mkdirSync(plugin, { recursive: true });
+  writeFileSync(
+    join(plugin, "session.sh"),
+    `read -r question; echo >> listed; [ -e failing ] && exit 1; echo '{"sessions":[{"id":"fake-app-12-a","running":true,"labels":null}]}'\n`,
+  );
+  writeFileSync(join(plugin, "attach.sh"), 'echo "I am $1 on fake"; exec sleep 300\n');
+  writeFileSync(
+    join(plugin, "skelcrew-plugin.yaml"),
+    "name: fake\nversion: 0.1.0\nskelcrew: 0.1.0\nabout: A host\nkind: runtime\nprovides: [sessions]\nsession: [sh, session.sh]\nattach: [sh, attach.sh]\n",
+  );
+  sql(`INSERT INTO plugins (name, folder) VALUES ('fake', '${plugin}');
+UPDATE threads SET host = 'fake', host_id = 'fake-app-12-a' WHERE folder = 'app-12'`);
+  open("lead");
+  await ready("lead");
+  const looks = () => read(join("plugin-fake", "listed")).split("\n").length;
+  await until(() => looks() > 2, "the sidebar to ask the host");
+  writeFileSync(join(plugin, "failing"), "");
+  sql("UPDATE threads SET host_id = 'fake-app-12-b' WHERE folder = 'app-12'");
+  const failed = looks();
+  await until(() => looks() > failed + 2, "the sidebar to ask the failing host");
+  toFirstThread();
+  await until(() => seen().includes("I am fake-app-12-b on fake"), "the builder's new session");
+  expect(seen()).not.toContain("I am fake-app-12-a on fake");
+});
+
 test("a screen opened on an agent starts on it, marked in the sidebar", async () => {
   open("app-7");
   await ready("app-7");

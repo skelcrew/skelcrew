@@ -363,9 +363,9 @@ export async function runSidebar(
 // Returns the agents running on a plugin's host, each with the line that attaches to it, for the
 // sidebar: builders by their thread's folder, and the open repository's lead by its name, so a
 // lead there that ends is noticed and brought back, as one on tmux is. Each host is asked once
-// for all its agents. A host that fails to answer keeps what `before`, the last look, found on
-// it: a host can fail for a moment, and an agent shown on the right would otherwise be taken
-// for ended, and the lead's row marked while you still type to the agent.
+// for all its agents. A host that fails to answer keeps whether `before`, the last look, found
+// each agent running: a host can fail for a moment, and its agents' rows would otherwise show as
+// stopped.
 async function hostedAgents(
   db: ReturnType<typeof openDb>,
   open: Open,
@@ -389,9 +389,10 @@ async function hostedAgents(
     const listed = await listSessions(host).catch(() => null);
     for (const agent of agents) {
       if (agent.host !== name) continue;
-      const kept = before.get(agent.key);
-      if (listed === null && kept !== undefined) found.set(agent.key, kept);
-      else if (listed?.some((one) => one.name === agent.id && one.running))
+      // Only whether it ran is kept. The line is made from the host and session the agent has
+      // now, so a builder given a new session meanwhile is never reached through its old one.
+      const kept = listed === null && before.has(agent.key);
+      if (kept || listed?.some((one) => one.name === agent.id && one.running))
         found.set(agent.key, attachOnHostLine(host, agent.id));
     }
   }
