@@ -35,7 +35,7 @@ There are two ways to start work:
 - **Ask the lead**, such as "add a CSV export". It files the issue and starts a thread, after asking you.
 - **Add the `skelcrew` label** to an issue on GitHub. Skelcrew starts a thread on it within a minute or so, and the lead tells you.
 
-Every builder sets up and tests the repository with the same commands, `setup:` and `test:` in its `skelcrew.yaml`. Skelcrew never guesses them. The lead proposes them before its first thread, or you can run `sc init`, which writes a starter `skelcrew.yaml` and the default roles and flow in `.agents/`. They count once you push them to the default branch.
+Every builder sets up and tests the repository with the same commands, `setup:` and `test:` in its `skelcrew.yaml`. Skelcrew never guesses them. The lead proposes them before its first thread. Or run `sc init`, which writes a starter `skelcrew.yaml` and the default roles and flow in `.agents/`. Its `setup:` and `test:` lines are commented-out examples, so replace them with your repository's commands and uncomment them. The files count once you push them to the default branch.
 
 A repository's `.agents/` tells agents how to work, so Skelcrew shows it and asks you before using it, the first time and after each change. Until you approve a change with `sc repo trust <repo>`, new tasks run on the version you approved.
 
@@ -44,7 +44,7 @@ A repository's `.agents/` tells agents how to work, so Skelcrew shows it and ask
 | Command | What it does |
 | --- | --- |
 | `sc` | Opens the lead of the repository you are in, with the sidebar of its tasks. |
-| `sc --list` | Shows the repository as a list. Enter opens an agent, and Ctrl+\ comes back to the list. |
+| `sc --list` | Shows the repository as a list. Enter does what the row offers, such as opening an agent or a PR. Ctrl+\ comes back to the list from an agent. |
 | `sc ls` | Lists the tasks, with each one's stage, status, PR, CI and review. |
 | `sc show <task>` | Shows one task: its description, threads, PR, checks and review. |
 | `sc ps` | Lists the threads, with their status and which need you. |
