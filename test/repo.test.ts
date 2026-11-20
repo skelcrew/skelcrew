@@ -524,6 +524,16 @@ test("names two repositories that share a name with their owners", async () => {
   expect(await listed()).toEqual([["app", "simon/app", "github"]]);
 });
 
+// Names are typed in any case, so App and app would name both.
+test("names two repositories whose names differ only in case with their owners", async () => {
+  await skel([], "", onGitHub("simon/app", "WRITE"));
+  await skel([], "", onGitHub("other/App", "WRITE"));
+  expect(await listed()).toEqual([
+    ["other/App", "other/App", "github"],
+    ["simon/app", "simon/app", "github"],
+  ]);
+});
+
 test("repo ls lists each repository with its tracker and forge, as text and for tools", async () => {
   expect(JSON.parse((await skel(["repo", "ls", "--json"])).out)).toEqual([]);
   await skel([], "", onGitHub("simon/app", "WRITE"));
