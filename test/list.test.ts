@@ -156,6 +156,15 @@ test("an approved task whose builder asks a question shows under Needs you, stil
   expect(row?.session).toBe("app-14");
 });
 
+// A mark is an action for you whatever its words, so one that reads like a state's word still
+// puts the task under Needs you, where a closed stage can't hide it.
+test("a task marked with an action that reads like a state's word shows under Needs you", () => {
+  sql("UPDATE threads SET needs_you = 1, needs_you_for = 'review failed' WHERE folder = 'app-9';");
+  const row = rows().find((candidate) => candidate.name === "app-9");
+  expect(row).toMatchObject({ section: "needs you", says: "review failed", needsYou: true });
+  expect(row?.mark).toEqual({ sign: "●", colour: "yellow" });
+});
+
 // With a merge armed, an approved task merges by itself, so it waits on nobody and shows under
 // Ready, saying approved.
 test("an approved task with a merge armed shows under Ready, not Needs you", () => {

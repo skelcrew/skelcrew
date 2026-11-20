@@ -12,6 +12,13 @@ test("a filled mark means the thread needs you, and its colour says what kind", 
   expect(markOf("error", "error")).toEqual({ sign: "●", colour: "red" });
 });
 
+// A mark from the lead or you is an action, whatever its words, so it needs you even when it
+// reads like a word Skelcrew uses for a state that doesn't.
+test("a mark whose action reads like a state's word still needs you", () => {
+  for (const word of ["review failed", "submit failed", "approved", "not reviewed", "reviewing"])
+    expect(markOf("needs you", word)).toEqual({ sign: "●", colour: "yellow" });
+});
+
 // The lead can run a review that failed again, so it is wrong, but doesn't need you.
 test("a review that failed or timed out is red and hollow", () => {
   for (const word of ["review failed", "review timed out"])
