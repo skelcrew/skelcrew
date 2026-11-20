@@ -812,6 +812,43 @@ describe.skipIf(insideSandbox)("with a lead per repository", () => {
     expect(claudeLines()).toHaveLength(2);
   });
 
+  // A lead from before Skelcrew kept the .agents/ each lead started on has none recorded. It may
+  // run on instructions you have changed since, so it starts again too.
+  test("a lead with no record of its .agents/ starts again on the approved one, with its conversation", async () => {
+    setUp();
+    const clone = addRepository("app");
+    const work = join(home, "work", "app");
+    mkdirSync(join(work, ".agents", "roles"), { recursive: true });
+    writeFileSync(join(work, ".agents", "roles", "lead.md"), "Lead it the team's way.\n");
+    git(work, "add", "-A");
+    git(work, "commit", "-q", "-m", "roles");
+    git(work, "push", "-q", "origin", "HEAD:main");
+    openedBefore();
+    const first = serve();
+    await untilAnswers();
+    await until(() => claudeLines().length > 0);
+    const id = storedSession();
+    saveTranscript(id);
+    // The lead keeps running while the daemon is down, as one from before the record would.
+    await stop(first);
+    expect(hasLead()).toBe(true);
+    onDb((db) => db.run("UPDATE repositories SET lead_agents = NULL WHERE repo = 'app'"));
+    const tree = Bun.spawnSync(["git", "-C", clone, "rev-parse", "HEAD:.agents"]).stdout;
+    writeFileSync(
+      join(home, ".config", "skelcrew", "approved-agents.yaml"),
+      `simon/app: ${tree.toString().trim()}\n`,
+    );
+    // The next daemon brings back the open repository's lead, which starts again on what you
+    // approved.
+    serve();
+    await untilAnswers();
+    await until(() => claudeLines().length > 1);
+    expect(claudeCalls()).toBe(`--session-id ${id}\n--resume ${id}\n`);
+    expect(claudeLines()[1]).toContain("Lead it the team's way.");
+    expect(await open()).toEqual({ lead: leadName(), repository: "simon/app" });
+    expect(claudeLines()).toHaveLength(2);
+  });
+
   test("with no repositories, there is no lead to open", async () => {
     setUp();
     serve();

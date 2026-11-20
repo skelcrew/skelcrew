@@ -204,11 +204,12 @@ export async function startLead(
   // its tab. One whose harness ended leaves its screen behind, which is logged before its
   // session is ended to make room for the new one. One that started on another .agents/ than
   // you approved now, such as the built-in roles before you said yes, ends too and starts again
-  // on it. A lead whose start Skelcrew didn't keep is left as it is.
+  // on it. So does a lead from before Skelcrew kept what it started on, once: it may run on
+  // instructions you have changed since.
   const approved = approvedAgents(repository) ?? "none";
   if (await hasSession(before.host, before.id)) {
     const failed = await failedScreen(before.host, before.id);
-    const older = lead.agents !== null && lead.agents !== approved;
+    const older = lead.agents !== approved;
     if (failed === null && !older) {
       if (typeof before.host === "string") keepOnExit(before.host, before.id);
       return;
