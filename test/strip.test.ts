@@ -200,9 +200,11 @@ test("with no room for both, the place goes first, and then the version, never h
 });
 
 test("a narrow sidebar shows the longest name of the version that fits", () => {
-  const versions = ["6f1c2ab + changes (checkout)", "checkout 6f1c2ab+changes"];
+  const versions = ["6f1c2ab* (checkout, * = uncommitted changes)", "checkout 6f1c2ab+changes"];
   const wide = { left: 60, width: 99 };
-  expect(above({ versions }, wide).trimEnd()).toBe("  Skelcrew 6f1c2ab + changes (checkout)");
+  expect(above({ versions }, wide).trimEnd()).toBe(
+    "  Skelcrew 6f1c2ab* (checkout, * = uncommitted changes)",
+  );
   // The sidebar's usual width of 38 columns.
   const usual = { left: 39, width: 99 };
   expect(above({ versions }, usual).trimEnd()).toBe("  Skelcrew checkout 6f1c2ab+changes");

@@ -121,7 +121,7 @@ test("says which release it is, or which commit a build from a checkout came fro
   };
   expect(said("0.4.2")).toBe("skelcrew 0.4.2\n");
   expect(said("39939b0")).toBe("Skelcrew 39939b0 (checkout)\n");
-  expect(said("39939b0-dirty")).toBe("Skelcrew 39939b0 + changes (checkout)\n");
+  expect(said("39939b0-dirty")).toBe("Skelcrew 39939b0* (checkout, * = uncommitted changes)\n");
 });
 
 test("a build nobody stamped doesn't pretend to know what it is", () => {

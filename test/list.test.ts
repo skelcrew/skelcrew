@@ -1841,7 +1841,9 @@ test("from a checkout, the top line names its commit and its uncommitted changes
   const body = `case "$*" in *"rev-parse --short HEAD"*) echo 6f1c2ab;; *"status --porcelain"*) echo " M src/main.ts";; *) exec ${Bun.which("git")} "$@";; esac`;
   writeFileSync(join(bin, "git"), `#!/bin/sh\n${body}\n`, { mode: 0o755 });
   await open({ bin });
-  expect(seen().split("\n")[0]).toStartWith(" Skelcrew 6f1c2ab + changes (checkout)   app");
+  expect(seen().split("\n")[0]).toStartWith(
+    " Skelcrew 6f1c2ab* (checkout, * = uncommitted changes)   app",
+  );
 });
 
 // The tabs are on the top line, left after Skelcrew's version. Your terminal reports a click by

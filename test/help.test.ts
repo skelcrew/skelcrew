@@ -116,7 +116,9 @@ test("sc --version from a checkout says so, with its commit", () => {
       err: "",
     });
     git(" M src/main.ts");
-    expect(skel(["--version"], { PATH: path }).out).toBe("Skelcrew 39939b0 + changes (checkout)\n");
+    expect(skel(["--version"], { PATH: path }).out).toBe(
+      "Skelcrew 39939b0* (checkout, * = uncommitted changes)\n",
+    );
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
