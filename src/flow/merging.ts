@@ -425,7 +425,7 @@ export async function finishSkippedMerge(
       verdict: thread.verdict === "approve" ? "approve" : "changes",
       body: recordBody(thread, pinned, "Merged"),
     }).catch((error) =>
-      console.log(`${thread.folder}: couldn't edit its merge record: ${errorText(error)}`),
+      console.log(`${threadName(db, thread)}: couldn't edit its merge record: ${errorText(error)}`),
     );
   // Read again, as a review may have ended while the forge took the edit: its findings are the
   // ones still asked for.
@@ -463,7 +463,7 @@ async function fileFollowUps(db: Database, thread: Thread): Promise<string> {
     );
     return ` Its open findings are in #${issue.id}.`;
   } catch (error) {
-    console.log(`${thread.folder}: couldn't file its open findings: ${errorText(error)}`);
+    console.log(`${threadName(db, thread)}: couldn't file its open findings: ${errorText(error)}`);
     return ` Its open findings couldn't be filed as an issue: ${errorText(error)}`;
   }
 }

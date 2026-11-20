@@ -321,7 +321,7 @@ export function reportStatus(db: Database, thread: Thread): void {
     const word = threadWord(thread, maxRounds);
     said = { status, reason: status === "ready" ? reasonOf(word) : word };
   } catch (error) {
-    console.log(`couldn't work out ${thread.folder}'s status: ${errorText(error)}`);
+    console.log(`couldn't work out ${threadName(db, thread)}'s status: ${errorText(error)}`);
     return;
   }
   tellHost(host, thread.host_id, said, thread.folder, () =>

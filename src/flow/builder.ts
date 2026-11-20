@@ -596,7 +596,7 @@ export async function startBuilder(db: Database, sessions: string, thread: Threa
     ...start,
   });
   await startOnHost(db, thread, { host, name: hostName }, { folder: clone, command: argv, env });
-  console.log(`${resume ? "Brought back" : "Started"} the builder of ${thread.folder}.`);
+  console.log(`${resume ? "Brought back" : "Started"} the builder of ${threadName(db, thread)}.`);
 }
 
 // Starts the thread's builder in a session of its own on the host, running `command`, then
@@ -762,11 +762,11 @@ export function failThread(db: Database, sessions: string, thread: Thread, error
   const why = errorText(error);
   const { status } = readThread(db, thread.folder);
   if (status === "stopped" || status === "done") {
-    console.log(`${thread.folder} stays ${status}: ${why}`);
+    console.log(`${threadName(db, thread)} stays ${status}: ${why}`);
     return;
   }
   record(db, thread.folder, { status: "failed" }, why);
-  console.log(`${thread.folder} failed: ${why}`);
+  console.log(`${threadName(db, thread)} failed: ${why}`);
   // Every note to the lead is one line, as an error's text may not be. It names the thread's
   // folder as one that ended, so starting the thread over drops it, should it still wait: the
   // lead would otherwise ask you to start a thread that already runs again.
