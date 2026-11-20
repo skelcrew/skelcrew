@@ -1,7 +1,7 @@
 // The screen's sidebar as the list: its stages opening and closing by key and by click, moving
 // between sections, and the list's keys on a task's row, which never reach an agent.
 import { afterEach, beforeEach, expect, setDefaultTimeout, test } from "bun:test";
-import { itemSql } from "./harness.ts";
+import { itemSql, threadSql } from "./harness.ts";
 import {
   acted,
   click,
@@ -118,4 +118,21 @@ test("s on a task in Backlog asks in the footer, any key but y leaves it be, and
   await until(() => footer().includes("Start app-31? y/n"), "the question again");
   type("y");
   await until(() => acted.includes("start simon/app 31"), "the daemon to start app-31");
+});
+
+// A queued task shows under Up next, and Shift-Up there has the daemon move it earlier in the
+// queue, with the footer saying its place. No agent gets the key.
+test("Shift-Up on a queued task in Up next moves it in the queue, and the footer says its place", async () => {
+  daemon();
+  sql(threadSql({ task: "20", title: "Dark mode", status: "queued", queued_since: 1000 }));
+  open("lead");
+  await ready("lead");
+  await until(() => left().some((line) => line.includes("Up next")), "Up next");
+  press("M-S-Down");
+  await until(() => selected().includes("app-20") && onDetails(), "app-20's details");
+  await until(() => footer().includes("⇧↑↓ reorder"), "the key in the footer");
+  press("S-Up");
+  await until(() => acted.includes("queue move simon/app 20 -1"), "the daemon to move app-20");
+  await until(() => footer().includes("app-20 starts next"), "its place in the footer");
+  expect(read("lead.typed")).toBe("");
 });

@@ -13,8 +13,9 @@ import { findRepository } from "./repo.ts";
 import { readThread, record, repositoryOf, Thread, threadName } from "./thread.ts";
 
 // Returns how many of the repository's builders run, its threads at work or waiting, those still
-// setting up included, and how many of its tasks wait in the queue.
-function counted(db: Database, { owner, repo }: { owner: string; repo: string }) {
+// setting up included, and how many of its tasks wait in the queue. The list shows both, such as
+// `Building 4/4 · 3 queued`.
+export function counted(db: Database, { owner, repo }: { owner: string; repo: string }) {
   const row = db
     .query(
       `SELECT COUNT(*) FILTER (WHERE status IN ('working', 'waiting')) AS running,
@@ -50,6 +51,41 @@ export function joinTime(db: Database): number {
 export function queuedText(db: Database, thread: Thread): string {
   const { name } = findRepository(db, `${thread.owner}/${thread.repo}`);
   return `${threadName(db, thread)} is queued: ${name} runs as many builders as its limits.threads allows. It starts once one of them ends.`;
+}
+
+// Moves a queued task one place earlier in its repository's queue, by -1, or one place later, by
+// 1, so you choose which task starts next. It swaps when the task and its neighbour joined, as
+// the queue's order is that time alone, so no other task moves and a restart keeps the new order.
+// Returns what the list says of it, such as `app-13 starts next`. Refuses a task that isn't
+// queued, such as one that started meanwhile. One already first or last stays where it is.
+export function moveInQueue(db: Database, thread: Thread, by: -1 | 1): string {
+  const name = threadName(db, thread);
+  if (thread.status !== "queued" || thread.queued_since === null)
+    throw new Error(`${name} isn't queued, so it has no place to move`);
+  const queue = db
+    .query(`SELECT * FROM task_threads WHERE owner = ? AND repo = ? AND status = 'queued'
+      ORDER BY queued_since, rowid`)
+    .all(thread.owner, thread.repo)
+    .map((row) => Thread.parse(row));
+  const at = queue.findIndex((queued) => queued.folder === thread.folder);
+  const other = queue[at + by];
+  // Returns where the task is in line, in words.
+  const place = (index: number) =>
+    index === 0 ? "starts next" : `is ${ordinal(index + 1)} in line`;
+  if (other === undefined || other.queued_since === null) return `${name} ${place(at)}`;
+  // Both change in one transaction, so a queue read meanwhile never sees two tasks at one time.
+  db.transaction(() => {
+    record(db, thread.folder, { queued_since: other.queued_since }, "moved in the queue");
+    record(db, other.folder, { queued_since: thread.queued_since }, "moved in the queue");
+  })();
+  return `${name} ${place(at + by)}`;
+}
+
+// Returns a place in line as words, such as 1st, 2nd, 3rd, 4th, 11th or 22nd.
+export function ordinal(place: number): string {
+  const teen = place % 100 >= 11 && place % 100 <= 13;
+  const end = teen ? "th" : (["th", "st", "nd", "rd"][place % 10] ?? "th");
+  return `${place}${end}`;
 }
 
 // Whether a queued task still owes its claim, as leaveQueue reads it beside the thread.

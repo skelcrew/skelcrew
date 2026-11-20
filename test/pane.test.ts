@@ -30,6 +30,8 @@ const row: Row = {
   link: "https://github.com/acme/app/pull/43",
   branch: "skelcrew/12",
   more: 0,
+  place: null,
+  waits: "",
 };
 
 // Its details, as sc show reads them from Skelcrew's copy, with its review's findings and events.
@@ -303,4 +305,23 @@ test("a PR no longer in the forge's copy shows the link saved on its row", () =>
   expect(plain(drawPane(done, gone, null, 50, 30))).toContain(
     "PR    #43  https://github.com/acme/app/pull/43",
   );
+});
+
+// A queued task says it is up next, its place, and what it waits on, under its title.
+test("the pane of a queued task says it is up next and what it waits on", () => {
+  const queued: Row = {
+    ...row,
+    section: "up next",
+    mark: { sign: "○", colour: "dim" },
+    says: "3rd in line",
+    colour: "dim",
+    needsYou: false,
+    place: 3,
+    waits: "3rd in line: 4 of 4 builders busy",
+  };
+  const waiting: Details = { ...details, view: { ...details.view, prPage: null, pr: null } };
+  const lines = plain(drawPane(queued, waiting, null, 50, 30));
+  const at = lines.indexOf("Up next · 3rd in line");
+  expect(at).toBeGreaterThan(0);
+  expect(lines[at + 1]).toBe("3rd in line: 4 of 4 builders busy");
 });
