@@ -21,6 +21,7 @@ import {
   forgetMoves,
   headSeen,
   onlyDocs,
+  type PullRequest,
   refusedWorkflow,
   reviewComment,
   whoRunsTheSuite,
@@ -176,6 +177,52 @@ const ciWait = z.coerce
 // reviewers then run the suite as well, until a check shows on one of the repository's PRs.
 const waitedInVain = new Set<string>();
 
+// Takes the repository, as owner/repo, out of those whose reviews wait no more for a first
+// check, as a poll found a CI check on one of its PRs. Its reviews and merges then make the
+// full wait again, even once that PR closed, so a PR with workflows isn't taken for one no CI
+// runs on before its first check could start.
+export function ciShowedIn(repository: string): void {
+  waitedInVain.delete(repository);
+}
+
+// When the wait for CI's first check began on each commit, by owner/repo and commit. A review
+// that waits for CI starts it, so its approval finds it ended. A docs-only review waits for no
+// CI, so the first poll after its approval starts it instead. Kept in memory, so a restart
+// during the wait starts it again and no PR waits forever.
+const ciWaitSince = new Map<string, number>();
+
+// Returns whether the commit has GitHub workflows, read from Skelcrew's clone, which fetched it,
+// never from the builder's, which the builder controls. A commit Skelcrew can't read has none.
+function setsUpCi(skelcrewClone: string, sha: string): boolean {
+  const ls = ["git", "-C", skelcrewClone, "ls-tree", sha, "--", ".github/workflows"];
+  const listed = Bun.spawnSync(ls, { stdout: "pipe", stderr: "ignore" });
+  return listed.success && listed.stdout.toString().trim() !== "";
+}
+
+// Returns whether the wait for CI's first check on the head of `pr`, the thread's PR, has ended:
+// a CI check showed, or none came in time, so no CI runs on this commit, such as a docs-only one
+// CI skips with a paths filter. It is the wait a review makes before it joins the queue, by the
+// same rules and limits. Polls ask it so an approved PR with no CI check still gets ready and
+// merges when ready, rather than waiting on CI that never comes.
+export function ciWaitEnded(db: Database, thread: Thread, pr: PullRequest): boolean {
+  if (pr.head === null) return false;
+  const key = `${thread.owner}/${thread.repo} ${pr.head}`;
+  const since = ciWaitSince.get(key) ?? Date.now();
+  ciWaitSince.set(key, since);
+  const who = whoRunsTheSuite({
+    own: pr,
+    commit: pr.head,
+    prs: openPrs(db, thread.owner, thread.repo),
+    setsUpCi: setsUpCi(cloneDir(thread.owner, thread.repo), pr.head),
+    waitedInVain: waitedInVain.has(`${thread.owner}/${thread.repo}`),
+    waited: Date.now() - since,
+    checkWait,
+    ciWait,
+  });
+  if (who !== "wait") ciWaitSince.delete(key);
+  return who !== "wait";
+}
+
 // Returns what tells the reviewer CI's result for the commit, from Skelcrew's copy of the
 // thread's PR, which each poll brings up to date. The end of each failed check's log comes from
 // the forge, once per check, so a review that reads the result again doesn't ask again. A log
@@ -255,9 +302,7 @@ async function reviewRound(
   // commit is read from Skelcrew's clone, which fetched it, never from the builder's, which the
   // builder controls. It is read at once, so the review still joins before any await when it
   // doesn't wait, and a commit Skelcrew can't read sets nothing up.
-  const ls = ["git", "-C", skelcrewClone, "ls-tree", sha, "--"];
-  const listed = Bun.spawnSync([...ls, ".github/workflows"], { stdout: "pipe", stderr: "ignore" });
-  const setsUpCi = listed.success && listed.stdout.toString().trim() !== "";
+  const workflows = setsUpCi(skelcrewClone, sha);
   // A change to docs and Markdown alone is tested by no one, as CI skips it and no code
   // changed, so its review waits for no CI. The files are those changed since the base branch,
   // which the push fetched into the thread's own ref in Skelcrew's clone. The review asks
@@ -272,7 +317,7 @@ async function reviewRound(
       own,
       commit: sha,
       prs,
-      setsUpCi,
+      setsUpCi: workflows,
       waitedInVain: inVain,
       waited,
       checkWait,
@@ -286,6 +331,7 @@ async function reviewRound(
     const waiting = { reviewing: sha, submitting: null, reviewer, queued: null };
     record(db, folder, waiting, `waiting for CI's first check before reviewing ${sha}`);
     const started = Date.now();
+    ciWaitSince.set(`${repositoryName} ${sha}`, started);
     let who = suite(0);
     while (who === "wait") {
       await Bun.sleep(5_000);

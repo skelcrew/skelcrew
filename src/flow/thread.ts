@@ -125,11 +125,16 @@ export const Thread = z.object({
   // needs you for another reason would read as ready to merge before CI ran. False in a row
   // from before Skelcrew kept it, until the next poll.
   ci_passed: z.coerce.boolean(),
-  // Whether a poll ever found CI checks on the PR, besides Skelcrew's own. It never goes back,
-  // unlike its saved checks, which go back to none when the forge's checks vanish, so the list
-  // can tell a repository with no CI from CI that went missing. False in a row from before
-  // Skelcrew kept it, until a poll finds checks.
-  ci_seen: z.coerce.boolean(),
+  // The PR's head commit on which the wait for CI's first check ended with no CI check, such as
+  // a docs-only commit CI skips with a paths filter. Its checks then count as passed, and the
+  // lists say "no CI". It names its commit, so a newer push waits again. Null until a wait ends
+  // that way, and in a row from before Skelcrew kept it.
+  no_ci: z.string().nullable(),
+  // The commits a CI check showed on while each was the PR's head, kept as JSON. None of them
+  // ever counts as one no CI runs on, even once its checks vanish from the forge, or the PR's
+  // head goes back to it after another, so a check seen once is never ignored. Empty until a
+  // check shows.
+  ci_shown: savedJson("tasks.ci_shown", z.array(z.string()), []),
   // The harness of the review waiting or running, which can differ from the latest finished
   // one's once you change your config.
   reviewer: HarnessName.nullable(),

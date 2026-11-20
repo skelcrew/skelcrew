@@ -94,7 +94,7 @@ export const ThreadRow = z.object({
   branch: z.string(),
   pr: z.number().nullable(),
   prUrl: z.string().nullable(),
-  checks: z.enum(["passed", "failed", "running", "none"]).nullable(),
+  checks: z.enum(["passed", "failed", "running", "none", "no CI"]).nullable(),
   review: z
     .object({
       state: z.enum(["approved", "changes", "reviewing", "failed", "none"]),
@@ -116,14 +116,18 @@ const ciWords = { passing: "passed", failing: "failed", pending: "running" } as 
 // Returns what a thread's CI says, for sc ps. A working or waiting thread has the word its
 // polls keep, which a submit clears until CI starts on the new commit. Polls pass over any
 // other thread, such as one that failed, while its PR in Skelcrew's copy still changes, so its
-// CI comes from the copy, as on the PR's page, when the copy has it.
+// CI comes from the copy, as on the PR's page, when the copy has it. A PR head whose wait for
+// CI's first check ended with none says "no CI", as its checks count as passed.
 function ciOf(
   thread: Thread,
   copy: Extract<Item, { kind: "pr" }> | null,
 ): NonNullable<ThreadRow["checks"]> {
   const live = thread.status === "working" || thread.status === "waiting";
-  if (!live && copy) return ciSummary(copy)[0];
-  return thread.checks === null ? "none" : ciWords[thread.checks];
+  let word: NonNullable<ThreadRow["checks"]> = "none";
+  if (!live && copy) word = ciSummary(copy)[0];
+  else if (thread.checks !== null) word = ciWords[thread.checks];
+  const noCi = copy !== null && copy.head !== null && thread.no_ci === copy.head;
+  return word === "none" && noCi ? "no CI" : word;
 }
 
 // Returns where a thread's review stands, for sc ps. It reads only the thread's own review, as
@@ -643,7 +647,8 @@ function happening(task: TaskRow): string {
   if (thread?.needsYou)
     parts.push(saysWhy(thread.needsYouFor) ? `needs you: ${thread.needsYouFor}` : "needs you");
   if (task.pr !== null) parts.push(`#${task.pr}`);
-  if (task.checks !== null && task.checks !== "none") parts.push(`CI ${task.checks}`);
+  if (task.checks === "no CI") parts.push(task.checks);
+  else if (task.checks !== null && task.checks !== "none") parts.push(`CI ${task.checks}`);
   if (review && review.state !== "none")
     parts.push(review.round === null ? review.state : `${review.state} r${review.round}`);
   return parts.join(" · ");

@@ -7,6 +7,7 @@ import {
   allGreen,
   branchMoved,
   type Check,
+  ciOnHead,
   ciResult,
   ciState,
   decide,
@@ -70,7 +71,8 @@ function thread(change: Partial<Thread> = {}): Thread {
     verdict: null,
     review_line: null,
     reviewed_commit: null,
-    ci_seen: false,
+    no_ci: null,
+    ci_shown: [],
     review_at: null,
     harness: null,
     short: null,
@@ -247,8 +249,16 @@ test("approved by Skelcrew's reviewer and every check green: the thread needs yo
   expect(decision.why).toContain("ready to merge");
 });
 
-test("approved with no CI at all: the thread needs you", () => {
-  expect(acted(thread(), pr({ checks: [approved] })).change).toEqual({ needs_you: true });
+// CI can show its first check after a docs-only commit's approval, so a PR with only Skelcrew's
+// check is ready only once the wait for that check ended with none, on this very commit.
+test("approved with no CI check: the thread needs you once the wait for CI on its head ended", () => {
+  const reviewedOnly = pr({ head: "abc", checks: [approved] });
+  expect(acted(thread(), reviewedOnly).change).toEqual({});
+  expect(acted(thread({ no_ci: "old" }), reviewedOnly).change).toEqual({});
+  expect(acted(thread({ no_ci: "abc" }), reviewedOnly).change).toEqual({ needs_you: true });
+  // A check that shows after the wait still counts.
+  const late = pr({ head: "abc", checks: [approved, run(30, "test", "running")] });
+  expect(acted(thread({ no_ci: "abc" }), late).change).toEqual({});
 });
 
 test("approved while a check still runs: the thread waits on CI", () => {
@@ -464,7 +474,7 @@ test("a branch that moved on the forge tells the builder to merge it, once", () 
 // was told. No review saw the new commits, so the PR isn't ready until the builder pushes them.
 test("a branch that moved is never ready to merge, even once told", () => {
   const moved = pr({ head: "f00d", checks: [approved] });
-  const told = thread({ seen: ["head:f00d"] });
+  const told = thread({ seen: ["head:f00d"], no_ci: "f00d" });
   const decision = decide(told, moved, { ...given, moved: true });
   expect(decision).toMatchObject({ notice: [], moved: null, change: {} });
   // The same PR, at a commit Skelcrew pushed, is ready.
@@ -580,16 +590,63 @@ test("a PR's CI reads as passing, failing or still running, and Skelcrew's own c
   expect(ciState(pr({ checks: [failed, going] }))).toBe("failing");
 });
 
-// Unlike the saved CI state, Skelcrew's own check counts: it is the approval.
+// An approved head with no CI check is saved as one no CI runs on once the wait for CI's first
+// check ended. A check that shows adds the head to the commits CI showed on, so a check that
+// later vanishes is never taken for no CI, and takes back a "no CI" saved before it showed.
+test("CI on a PR's head: no CI once the wait ends, never on a commit a check showed on", () => {
+  const ready = thread({ status: "waiting", verdict: "approve" });
+  const bare = pr({ head: "abc", checks: [approved] });
+  const failing = pr({ head: "abc", checks: [approved, run(9, "test", "failed")] });
+  expect(ciOnHead(ready, bare, () => false)).toBeNull();
+  expect(ciOnHead(ready, bare, () => true)).toEqual({ no_ci: "abc" });
+  // A check showed on the head, then vanished: the wait never ends with no CI there.
+  expect(ciOnHead(ready, failing, () => true)).toEqual({ ci_shown: ["abc"] });
+  const shown = thread({ status: "waiting", verdict: "approve", ci_shown: ["abc"] });
+  expect(ciOnHead(shown, failing, () => true)).toBeNull();
+  expect(ciOnHead(shown, bare, () => true)).toBeNull();
+  // A check that shows after the wait ended takes back its "no CI".
+  const noCi = thread({ status: "waiting", verdict: "approve", no_ci: "abc" });
+  expect(ciOnHead(noCi, failing, () => true)).toEqual({ ci_shown: ["abc"], no_ci: null });
+  // CI on another head adds it, and the PR's head going back to a commit CI showed on still
+  // never ends with no CI.
+  const other = pr({ head: "def", checks: [approved, run(10, "test", "passed")] });
+  expect(ciOnHead(shown, other, () => true)).toEqual({ ci_shown: ["abc", "def"] });
+  const both = thread({ status: "waiting", verdict: "approve", ci_shown: ["abc", "def"] });
+  expect(ciOnHead(both, bare, () => true)).toBeNull();
+  // A check on another commit says nothing of this one.
+  const older = thread({ status: "waiting", verdict: "approve", ci_shown: ["old"] });
+  expect(ciOnHead(older, bare, () => true)).toEqual({ no_ci: "abc" });
+  // Only a head that would merge waits: approved, or pinned by a merge without approval, with
+  // no round under way.
+  const changes = thread({ status: "waiting", verdict: "changes" });
+  expect(ciOnHead(changes, bare, () => true)).toBeNull();
+  expect(ciOnHead({ ...changes, merge_pinned: "abc" }, bare, () => true)).toEqual({ no_ci: "abc" });
+  expect(ciOnHead({ ...ready, reviewing: "abc" }, bare, () => true)).toBeNull();
+  expect(ciOnHead({ ...ready, submitting: "Fix" }, bare, () => true)).toBeNull();
+  // The wait isn't asked about at all when nothing waits, as it reads the clock and the clone.
+  expect(
+    ciOnHead(changes, bare, () => {
+      throw new Error("asked");
+    }),
+  ).toBeNull();
+});
+
+// Unlike the saved CI state, Skelcrew's own check counts: it is the approval. With no CI check,
+// it is green only once the wait for CI's first check on the head ended with none, so an
+// approval that needs you for another reason never reads as ready to merge during the wait.
 test("a PR is all green only while every check passed, Skelcrew's own included", () => {
   const passed = run(30, "test", "passed");
-  expect(allGreen(pr({ checks: [approved, passed] }))).toBe(true);
-  expect(allGreen(pr({ checks: [approved] }))).toBe(true);
-  expect(allGreen(pr({ checks: [approved, run(30, "test", "running")] }))).toBe(false);
-  expect(allGreen(pr({ checks: [approved, run(30, "test", "failed")] }))).toBe(false);
-  expect(allGreen(pr({ checks: [{ ...approved, state: "running" }, passed] }))).toBe(false);
-  expect(allGreen(pr({ checks: [{ ...approved, state: "failed" }, passed] }))).toBe(false);
-  expect(allGreen(pr({ checks: [passed] }))).toBe(false);
+  const green = (checks: Check[], noCi: string | null = null) =>
+    allGreen(thread({ no_ci: noCi }), pr({ head: "abc", checks }));
+  expect(green([approved, passed])).toBe(true);
+  expect(green([approved])).toBe(false);
+  expect(green([approved], "old")).toBe(false);
+  expect(green([approved], "abc")).toBe(true);
+  expect(green([approved, run(30, "test", "running")], "abc")).toBe(false);
+  expect(green([approved, run(30, "test", "failed")], "abc")).toBe(false);
+  expect(green([{ ...approved, state: "running" }, passed])).toBe(false);
+  expect(green([{ ...approved, state: "failed" }, passed])).toBe(false);
+  expect(green([passed])).toBe(false);
 });
 
 // Who runs the suite on commit abc, the head of PR 7, with these open PRs in the repository.
@@ -832,42 +889,48 @@ test("a merge when ready waits until the approved head is green and merges clean
   const head = "a".repeat(40);
   const ready = thread({ status: "waiting", verdict: "approve" });
   const green = pr({ head, checks: [approved, run(1, "test", "passed")] });
-  expect(mergeWaitsOn(ready, green, head, true)).toBeNull();
+  expect(mergeWaitsOn(ready, green, head)).toBeNull();
   // A new push waits for its own approval, and a push nobody reviewed is never merged.
-  expect(mergeWaitsOn({ ...ready, submitting: "Fix" }, green, head, true)).toBe("its review");
-  expect(mergeWaitsOn({ ...ready, reviewing: head }, green, head, true)).toBe("its review");
-  expect(mergeWaitsOn(ready, pr({ ...green, head: "b".repeat(40) }), head, true)).toBe(
+  expect(mergeWaitsOn({ ...ready, submitting: "Fix" }, green, head)).toBe("its review");
+  expect(mergeWaitsOn({ ...ready, reviewing: head }, green, head)).toBe("its review");
+  expect(mergeWaitsOn(ready, pr({ ...green, head: "b".repeat(40) }), head)).toBe(
     "a review of its newest commit",
   );
-  expect(mergeWaitsOn({ ...ready, verdict: "changes" }, green, head, true)).toBe("an approval");
+  expect(mergeWaitsOn({ ...ready, verdict: "changes" }, green, head)).toBe("an approval");
   // A conflict or a failing check needs the builder, and running checks only time.
-  expect(mergeWaitsOn(ready, pr({ ...green, conflicts: true }), head, true)).toBe(
+  expect(mergeWaitsOn(ready, pr({ ...green, conflicts: true }), head)).toBe(
     "its conflict with main to be fixed",
   );
-  expect(mergeWaitsOn({ ...ready, conflicts: "main" }, green, head, true)).toBe(
+  expect(mergeWaitsOn({ ...ready, conflicts: "main" }, green, head)).toBe(
     "its conflict with main to be fixed",
   );
   const failing = pr({ ...green, checks: [approved, run(1, "test", "failed")] });
-  expect(mergeWaitsOn(ready, failing, head, true)).toBe("its failing checks to be fixed");
+  expect(mergeWaitsOn(ready, failing, head)).toBe("its failing checks to be fixed");
   const running = pr({ ...green, checks: [approved, run(1, "test", "running")] });
-  expect(mergeWaitsOn(ready, running, head, true)).toBe("its checks");
+  expect(mergeWaitsOn(ready, running, head)).toBe("its checks");
   // Skelcrew's own check counts too, as it carries the review's verdict.
   const pending = pr({ ...green, checks: [{ ...approved, state: "running" }] });
-  expect(mergeWaitsOn(ready, pending, head, true)).toBe("its checks");
+  expect(mergeWaitsOn(ready, pending, head)).toBe("its checks");
   // A PR the forge shows without Skelcrew's check yet isn't green, with CI or without.
-  expect(mergeWaitsOn(ready, pr({ ...green, checks: [] }), head, true)).toBe("its checks");
+  expect(mergeWaitsOn(ready, pr({ ...green, checks: [] }), head)).toBe("its checks");
   const ciOnly = pr({ ...green, checks: [run(1, "test", "passed")] });
-  expect(mergeWaitsOn(ready, ciOnly, head, true)).toBe("its checks");
-  // Approved with no CI check passes only in a repository where no poll ever found CI. Where one
-  // did, CI may not have started on this PR yet, so it waits.
+  expect(mergeWaitsOn(ready, ciOnly, head)).toBe("its checks");
+  // Approved with no CI check passes only once the wait for CI's first check on this head ended
+  // with none. Until then CI may not have started on it yet, so it waits.
   const reviewedOnly = pr({ ...green, checks: [approved] });
-  expect(mergeWaitsOn(ready, reviewedOnly, head, true)).toBe("its checks");
-  expect(mergeWaitsOn(ready, reviewedOnly, head, false)).toBeNull();
+  expect(mergeWaitsOn(ready, reviewedOnly, head)).toBe("its checks");
+  expect(mergeWaitsOn({ ...ready, no_ci: "b".repeat(40) }, reviewedOnly, head)).toBe("its checks");
+  expect(mergeWaitsOn({ ...ready, no_ci: head }, reviewedOnly, head)).toBeNull();
+  // A check that shows after the wait still counts: a failing one stops the merge.
+  const late = pr({ ...green, checks: [approved, run(1, "test", "failed")] });
+  expect(mergeWaitsOn({ ...ready, no_ci: head }, late, head)).toBe(
+    "its failing checks to be fixed",
+  );
   // A thread that failed or stopped keeps its plan, and says why it waits.
-  expect(mergeWaitsOn({ ...ready, status: "failed" }, green, head, true)).toBe(
+  expect(mergeWaitsOn({ ...ready, status: "failed" }, green, head)).toBe(
     "its thread, which failed",
   );
-  expect(mergeWaitsOn({ ...ready, status: "stopped" }, green, head, true)).toBe(
+  expect(mergeWaitsOn({ ...ready, status: "stopped" }, green, head)).toBe(
     "its thread, which is stopped",
   );
 });
@@ -875,33 +938,31 @@ test("a merge when ready waits until the approved head is green and merges clean
 // A merge without approval skips only Skelcrew's approval: its review may ask for changes or still
 // run. Everything else a merge when ready waits on still holds, CI's checks green included.
 test("a merge without approval waits on everything but the reviewer's approval", () => {
-  const changes = thread({ status: "waiting", verdict: "changes", ci_seen: true });
+  const changes = thread({ status: "waiting", verdict: "changes" });
   const failed = { ...approved, state: "failed" as const };
   const green = pr({ checks: [failed, run(1, "test", "passed")] });
-  expect(skipReviewWaitsOn(changes, green, true)).toBeNull();
+  expect(skipReviewWaitsOn(changes, green)).toBeNull();
   // A review still running is waited for, so its findings are filed, whatever it says.
-  expect(skipReviewWaitsOn({ ...changes, reviewing: "a".repeat(40) }, green, true)).toBe(
-    "its review",
-  );
+  expect(skipReviewWaitsOn({ ...changes, reviewing: "a".repeat(40) }, green)).toBe("its review");
   // A round on its way brings a new commit, which the human never saw.
-  expect(skipReviewWaitsOn({ ...changes, submitting: "Fix" }, green, true)).toBe(
+  expect(skipReviewWaitsOn({ ...changes, submitting: "Fix" }, green)).toBe(
     "its builder's new round",
   );
-  expect(skipReviewWaitsOn(changes, pr({ ...green, conflicts: true }), true)).toBe(
+  expect(skipReviewWaitsOn(changes, pr({ ...green, conflicts: true }))).toBe(
     "its conflict with main to be fixed",
   );
   const failing = pr({ checks: [run(1, "test", "failed")] });
-  expect(skipReviewWaitsOn(changes, failing, true)).toBe("its failing checks to be fixed");
-  expect(skipReviewWaitsOn(changes, pr({ checks: [run(1, "test", "running")] }), true)).toBe(
+  expect(skipReviewWaitsOn(changes, failing)).toBe("its failing checks to be fixed");
+  expect(skipReviewWaitsOn(changes, pr({ checks: [run(1, "test", "running")] }))).toBe(
     "its checks",
   );
-  // No CI on the PR passes only in a repository whose polls never found CI on any PR. This
-  // thread never saw CI, yet the repository did, so it waits: CI is all that guards it here.
-  const unseen = { ...changes, ci_seen: false };
-  expect(skipReviewWaitsOn(unseen, pr({ checks: [failed] }), true)).toBe("its checks");
-  expect(skipReviewWaitsOn(unseen, pr({ checks: [failed] }), false)).toBeNull();
-  expect(skipReviewWaitsOn(changes, pr({ ...green, state: "closed" }), true)).toBe("its PR");
-  expect(skipReviewWaitsOn({ ...changes, status: "stopped" }, green, true)).toBe(
+  // No CI on the PR passes only once the wait for CI's first check on its head ended with none,
+  // as CI is all that guards it here.
+  const reviewedOnly = pr({ head: "abc", checks: [failed] });
+  expect(skipReviewWaitsOn(changes, reviewedOnly)).toBe("its checks");
+  expect(skipReviewWaitsOn({ ...changes, no_ci: "abc" }, reviewedOnly)).toBeNull();
+  expect(skipReviewWaitsOn(changes, pr({ ...green, state: "closed" }))).toBe("its PR");
+  expect(skipReviewWaitsOn({ ...changes, status: "stopped" }, green)).toBe(
     "its thread, which is stopped",
   );
 });

@@ -7,14 +7,8 @@ import type { Database } from "bun:sqlite";
 import { z } from "zod";
 import { createTask, editReview, forgeOf, mergePr, postReview, trackerOf } from "../plugins/ask.ts";
 import { errorText } from "../say.ts";
-import { openPrs, openTasks, prOf } from "./copy.ts";
-import {
-  ciState,
-  mergeStuck,
-  mergeWaitsOn,
-  type PullRequest,
-  skipReviewWaitsOn,
-} from "./decide.ts";
+import { openTasks, prOf } from "./copy.ts";
+import { mergeStuck, mergeWaitsOn, type PullRequest, skipReviewWaitsOn } from "./decide.ts";
 import { endThread, removing } from "./events.ts";
 import { noteForLead } from "./messages.ts";
 import { findRepository, repositoryAt } from "./repo.ts";
@@ -276,11 +270,7 @@ export async function mergeIfReady(
     return;
   }
   const commit = pinned ?? lastPushed(thread);
-  const hasCi = repositoryHasCi(db, thread);
-  let waits =
-    pinned === null
-      ? mergeWaitsOn(thread, pr, commit, hasCi)
-      : skipReviewWaitsOn(thread, pr, hasCi);
+  let waits = pinned === null ? mergeWaitsOn(thread, pr, commit) : skipReviewWaitsOn(thread, pr);
   if (waits === null && commit !== null && thread.pr !== null) {
     const repository = repositoryOf(db, thread);
     // The PR records who asked, with a review on the commit it merges, the call every forge
@@ -382,18 +372,6 @@ export async function mergeIfReady(
       `Still merging #${now.pr} (${name}) ${when}, waiting on ${waits}.`,
     );
   }
-}
-
-// Returns whether a poll ever found CI in the thread's repository, so that both merges wait for
-// CI's checks on a PR that has none yet. The repository keeps it once any of its PRs showed CI,
-// so a PR that closed since still counts. Its tasks' PRs and the open PRs in Skelcrew's copy
-// count too, for a database from before the repository kept it, until its next poll.
-function repositoryHasCi(db: Database, thread: Thread): boolean {
-  const seen = db
-    .query(`SELECT 1 FROM repositories WHERE owner = ?1 AND repo = ?2 AND ci_seen = 1
-      UNION SELECT 1 FROM tasks WHERE owner = ?1 AND repo = ?2 AND ci_seen = 1 LIMIT 1`)
-    .get(thread.owner, thread.repo);
-  return seen !== null || openPrs(db, thread.owner, thread.repo).some((pr) => ciState(pr) !== null);
 }
 
 // Returns the hidden marker in a merge's record on the PR, naming its plan and commit, so the

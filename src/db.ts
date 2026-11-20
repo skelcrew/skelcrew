@@ -170,7 +170,8 @@ export const taskColumns = {
   checks: "TEXT",
   conflicts: "TEXT",
   ci_passed: "INTEGER NOT NULL DEFAULT 0",
-  ci_seen: "INTEGER NOT NULL DEFAULT 0",
+  no_ci: "TEXT",
+  ci_shown: "TEXT",
   seen: "TEXT",
   last_review: "INTEGER",
   last_comment: "INTEGER",
@@ -383,6 +384,10 @@ export function moveToTasks(db: Database): void {
 // ran, a task it started or merged afterwards would miss its link or its merge for good.
 export function finishUpgrade(db: Database): void {
   db.transaction(() => {
+    if (db.query("SELECT 1 FROM upgrades WHERE step = 'fill ci shown'").get()) {
+      markCiShown(db);
+      db.run("DELETE FROM upgrades WHERE step = 'fill ci shown'");
+    }
     if (!db.query("SELECT 1 FROM upgrades WHERE step = 'fill tasks'").get()) return;
     linkIssues(db);
     recoverMerges(db);
@@ -390,10 +395,38 @@ export function finishUpgrade(db: Database): void {
   }).immediate();
 }
 
-// Returns SQL that marks, in `table`, every task whose saved checks show a poll found CI as
-// having seen CI, for a database from before Skelcrew kept that. Otherwise checks that vanish
-// before the first poll after the upgrade would read as a repository without CI.
-const seenBefore = (table: string) => `UPDATE ${table} SET ci_seen = 1 WHERE checks IS NOT NULL`;
+// Saves, on each task whose PR showed CI before Skelcrew kept the commits it showed on, that its
+// PR's head showed CI. Otherwise a check seen before the upgrade that has vanished by the first
+// poll after it would let the wait for CI's first check end with none, and a merge go ahead as
+// if no CI ran. CI showed when the task's saved checks say so, when the release before kept that
+// it once did, on the task or, from before tasks, on one of its threads, or when Skelcrew's copy
+// of its PR has a check besides Skelcrew's own. Which
+// commit it showed on can't be told, so every commit that may be the PR's head again is kept:
+// its head in the copy, the one its reviewer approved, which a merge when ready merges, and the
+// one a merge without approval pinned on any of its threads. An item that isn't JSON is read
+// as none.
+function markCiShown(db: Database): void {
+  // Moving threads onto tasks leaves `ci_seen` behind on the threads, as tasks no longer have it.
+  const onTask = hasColumn(db, "tasks", "ci_seen") ? "OR tasks.ci_seen = 1" : "";
+  const onThread = hasColumn(db, "threads", "ci_seen")
+    ? `OR EXISTS (SELECT 1 FROM threads th WHERE th.owner = tasks.owner AND th.repo = tasks.repo
+        AND th.task = tasks.task AND th.ci_seen = 1)`
+    : "";
+  const seen = `${onTask} ${onThread}`;
+  const copy = `FROM items i WHERE i.owner = tasks.owner AND i.repo = tasks.repo AND i.kind = 'pr'
+    AND i.id = CAST(tasks.pr AS TEXT) AND json_valid(i.item)`;
+  // A commit that isn't known is left out, as null names no commit, and one that is both is
+  // kept once.
+  db.run(`UPDATE tasks SET ci_shown = (SELECT json_group_array(commit_id) FROM (
+      SELECT (SELECT json_extract(i.item, '$.head') ${copy}) AS commit_id
+      UNION SELECT tasks.reviewed_commit
+      UNION SELECT th.merge_pinned FROM threads th
+        WHERE th.owner = tasks.owner AND th.repo = tasks.repo AND th.task = tasks.task)
+      WHERE commit_id IS NOT NULL)
+    WHERE ci_shown IS NULL AND pr IS NOT NULL AND (checks IS NOT NULL ${seen}
+      OR EXISTS (SELECT 1 ${copy} AND EXISTS (SELECT 1 FROM json_each(i.item, '$.checks') c
+        WHERE json_extract(c.value, '$.name') IS NOT 'skelcrew/check')))`);
+}
 
 // Returns whether the table has the column.
 const hasColumn = (db: Database, table: string, column: string) =>
@@ -431,9 +464,7 @@ function prepareTables(db: Database): void {
   // .agents/ you haven't approved that the lead was told of, or `none` for one removed, so it is
   // told once. `lead_flows` is whether the lead knows of flows, from the instructions it started
   // with or a note, so a lead already running when Skelcrew learned of them is told once.
-  // `lead_briefs` is the same for briefing another repository's lead. `ci_seen` is whether a
-  // poll ever found CI on any of the repository's PRs, kept after they close, so a merge never
-  // takes a PR with no checks yet for one without CI. `lead_host` is the session host the lead
+  // `lead_briefs` is the same for briefing another repository's lead. `lead_host` is the session host the lead
   // runs on, tmux or a runtime plugin, which it keeps until it ends, and `lead_host_id` its
   // session's ID there. A lead from before hosts runs on tmux, where its ID is its name.
   // `lead_agents` is the tree of the approved .agents/ the running lead started on, `none` for
@@ -455,13 +486,10 @@ function prepareTables(db: Database): void {
     agents_noted: "TEXT",
     lead_flows: "INTEGER NOT NULL DEFAULT 0",
     lead_briefs: "INTEGER NOT NULL DEFAULT 0",
-    ci_seen: "INTEGER NOT NULL DEFAULT 0",
     lead_host: "TEXT DEFAULT 'tmux'",
     lead_host_id: "TEXT",
     lead_agents: "TEXT",
   };
-  // Whether repositories gain `ci_seen` now, so it is filled from the copy below.
-  const repositoriesSeen = !hasColumn(db, "repositories", "ci_seen");
   // SQLite has no ADD COLUMN IF NOT EXISTS, so each column is looked up first.
   for (const [column, type] of Object.entries(repositoryColumns))
     if (!db.query("SELECT 1 FROM pragma_table_info('repositories') WHERE name = ?").get(column))
@@ -494,12 +522,15 @@ function prepareTables(db: Database): void {
   // The rest of a thread's columns, added as the repositories' are. A database from before
   // tasks keeps the task's columns on its threads too, where moveToTasks reads them, so they are
   // added here for every release's database. Nothing reads them from threads after that.
-  const threadsSeen = !hasColumn(db, "threads", "ci_seen");
+  // A database that gains `ci_shown` fills it once its daemon moved its threads onto tasks, as
+  // finishUpgrade says.
+  let gainsCiShown = false;
   const reviewsFlagged = !hasColumn(db, "threads", "review_failed");
   for (const [column, type] of Object.entries({ ...threadColumns, ...taskColumns }))
-    if (!hasColumn(db, "threads", column))
+    if (!hasColumn(db, "threads", column)) {
       db.run(`ALTER TABLE threads ADD COLUMN ${column} ${type}`);
-  if (threadsSeen) db.run(seenBefore("threads"));
+      gainsCiShown ||= column === "ci_shown";
+    }
   if (!fresh && reviewsFlagged) flagFailedReviews(db);
   // A new database starts with tasks. One from an earlier release waits for its daemon to move
   // its threads onto tasks, as only the daemon knows no other daemon still writes to it.
@@ -509,15 +540,16 @@ function prepareTables(db: Database): void {
   // A tasks table made by an earlier release lacks the task's newer columns. Filling them in
   // waits for the new daemon, as finishUpgrade says.
   if (hasTasks(db)) {
-    const tasksSeen = !hasColumn(db, "tasks", "ci_seen");
     for (const [column, type] of Object.entries(taskColumns))
       if (!hasColumn(db, "tasks", column)) {
         db.run(`ALTER TABLE tasks ADD COLUMN ${column} ${type}`);
         if (column === "issue_link" || column === "merged" || column === "closes")
           db.run("INSERT OR IGNORE INTO upgrades (step) VALUES ('fill tasks')");
+        gainsCiShown ||= column === "ci_shown";
       }
-    if (tasksSeen) db.run(seenBefore("tasks"));
   }
+  if (gainsCiShown && !fresh)
+    db.run("INSERT OR IGNORE INTO upgrades (step) VALUES ('fill ci shown')");
   // Skelcrew's copy of each repository's open tasks and PRs, as items, kept as JSON. The columns
   // are what readers pick and sort by. A database from an earlier release also has an
   // open_items table, which nothing reads now. It stays, as a daemon of that release may still
@@ -703,16 +735,6 @@ function prepareTables(db: Database): void {
   // Skelcrew kept them, which is asked about once more.
   if (!db.query("SELECT 1 FROM pragma_table_info('plugins') WHERE name = 'approved'").get())
     db.run("ALTER TABLE plugins ADD COLUMN approved TEXT");
-  // A PR in the copy that showed CI before repositories kept it counts as CI found. It may have
-  // closed while the daemon was down, and the first poll after drops it from the copy, so a
-  // merge would then take a PR with no checks yet for one in a repository without CI. Skelcrew's
-  // own check is no CI, and an item that isn't JSON is read as none.
-  if (repositoriesSeen)
-    db.run(`UPDATE repositories SET ci_seen = 1 WHERE EXISTS (
-      SELECT 1 FROM items,
-        json_each(CASE WHEN json_valid(items.item) THEN items.item ELSE '{}' END, '$.checks') AS c
-      WHERE items.owner = repositories.owner AND items.repo = repositories.repo
-        AND items.kind = 'pr' AND json_extract(c.value, '$.name') IS NOT 'skelcrew/check')`);
 }
 
 // Upgrades the threads an earlier release saved, whose `turn_ended` is still null, from its

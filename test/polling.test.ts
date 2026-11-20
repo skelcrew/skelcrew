@@ -140,12 +140,13 @@ const daemonLog = () => join(home, "daemon.log");
 
 // Runs the daemon, polling every 200 milliseconds rather than every 30 seconds, and every
 // 400 rather than every minute while threads only wait on you, unless a test says otherwise.
-function serve(every = 200): Subprocess {
+// `wait` is how long it waits for CI's first check where CI shows on another PR.
+function serve(every = 200, wait = 2 * 60_000): Subprocess {
   const code = `import { serve } from ${JSON.stringify(daemon)};
 await serve(${JSON.stringify(socket)}, ${every});`;
   // Reviews start at once on app, which has no CI, rather than waiting for a first check.
   const run = Bun.spawn([process.execPath, "-e", code], {
-    env: { ...env(), SKELCREW_CHECK_WAIT_MS: "0" },
+    env: { ...env(), SKELCREW_CHECK_WAIT_MS: "0", SKELCREW_CI_WAIT_MS: String(wait) },
     stdout: Bun.file(daemonLog()),
     stderr: "ignore",
   });
@@ -256,7 +257,24 @@ const issue12 = (labeled = false) =>
 const changes = (items: object[], next = "2026-11-06T10:00:00Z") =>
   answer(plugin, "changed", { items, next });
 
-// Has the fake plugin answer the next polls with issue 12, and PR 7 in the given state.
+// The commit Skelcrew last pushed for app-12, as Skelcrew's clone keeps it, or "" before its
+// first push.
+const pushed = () =>
+  Bun.spawnSync(
+    [
+      "git",
+      "-C",
+      join(data(), "repos", "simon", "app"),
+      "rev-parse",
+      "refs/skelcrew/threads/app-12",
+    ],
+    { stdout: "pipe", stderr: "ignore" },
+  )
+    .stdout.toString()
+    .trim();
+
+// Has the fake plugin answer the next polls with issue 12, and PR 7 in the given state. Its head
+// is the commit Skelcrew last pushed, as a forge sends it, unless `head` says otherwise.
 function pr(given: {
   state?: string;
   conflicts?: boolean;
@@ -267,8 +285,9 @@ function pr(given: {
   labeled?: boolean;
   head?: string;
 }): void {
+  const head = given.head ?? pushed();
   const pr7 = prItem("7", "Add export", {
-    ...(given.head ? { head: given.head } : {}),
+    ...(head ? { head } : {}),
     state: given.state ?? "open",
     conflicts: given.conflicts ?? false,
     base: given.base ?? "main",
@@ -286,8 +305,9 @@ const check = (id: number, state: string) => ({ name: "test", id: String(id), st
 const handled = (id: string) => String(thread().seen ?? "").includes(`"${id}"`);
 
 // Starts the thread on app-12, and waits until Skelcrew's reviewer has approved its first round,
-// so the thread waits on CI.
-async function approvedApp12(from?: string): Promise<string> {
+// so the thread waits on CI. `wait` is how long the daemon waits for CI's first check where CI
+// shows on another PR.
+async function approvedApp12(from?: string, wait?: number): Promise<string> {
   const work = addApp();
   if (from) {
     git(work, "checkout", "-q", "-b", from);
@@ -295,7 +315,7 @@ async function approvedApp12(from?: string): Promise<string> {
   }
   // sc start reads the task from Skelcrew's copy, which it brings up to date first.
   changes([issue12()]);
-  serve();
+  serve(200, wait);
   await until(() => existsSync(join(data(), "repos", "simon", "app", "README")));
   const started = Bun.spawnSync(
     [process.execPath, main, "start", "app-12", ...(from ? ["--from", from] : [])],
@@ -945,13 +965,7 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
       status: "waiting",
       needs_you: 1,
       checks: "passing",
-      ci_seen: 1,
     });
-    // The CI checks vanish from the forge: the saved checks go back to none, but polls still
-    // remember the PR had CI, so the list never takes it for a repository without any.
-    pr({ reviews: [skelReview], checks: [approved] });
-    await until(() => thread().checks === null);
-    expect(thread()).toMatchObject({ ci_seen: 1 });
   });
 
   test("a failed check reaches the builder once, even after the forge fails and the daemon restarts", async () => {
@@ -2269,20 +2283,6 @@ exec ${bwrap} "$@"`,
       "the human hasn't let you arm a merge when ready: ask them to run sc merge --when-ready in their own terminal";
     const merges = () => asked(plugin).filter((q) => q.ask === "merge pr");
     const leadTyped = () => read(join(data(), "claude", leadName, "typed"));
-    // The commit Skelcrew pushed and its reviewer approved, as Skelcrew's clone keeps it.
-    const pushed = () =>
-      Bun.spawnSync(
-        [
-          "git",
-          "-C",
-          join(data(), "repos", "simon", "app"),
-          "rev-parse",
-          "refs/skelcrew/threads/app-12",
-        ],
-        { stdout: "pipe" },
-      )
-        .stdout.toString()
-        .trim();
     // Arms a new plan, and checks sc said so. A plan still armed, such as after a cancel that
     // was refused, would otherwise carry on as if it were the new one.
     const arm = async () => {
@@ -2622,26 +2622,51 @@ exec ${bwrap} "$@"`,
       );
     }, 90_000);
 
-    // CI found once on any PR of the repository, even one no thread works on and that closed
-    // since, means CI may still be starting on a PR with none. So an approved PR waits for it.
-    test("a merge when ready waits for CI once the repository had CI, even after that PR closed", async () => {
-      await approvedApp12();
+    // CI on another PR means CI may still be starting on this one, so an approved PR with no CI
+    // check waits for its first check, as a review does. CI that never shows, as on a docs-only
+    // PR it skips with a paths filter, ends the wait: no CI runs on it, and it merges.
+    test("a merge when ready waits for CI's first check, then merges a PR no CI runs on", async () => {
+      await approvedApp12(undefined, 6_000);
       const head = pushed();
-      const other = (state: string) =>
-        prItem("20", "Fix a typo", { state, base: "main", checks: [check(8, "passed")] });
-      changes([issue12(), other("open")]);
-      await morePolls();
-      changes([issue12(), other("closed")]);
-      await morePolls();
       await arm();
-      pr({ head, reviews: [skelReview], checks: [approved] });
+      // The wait starts once a poll sees the approved PR, with CI on another PR.
+      const other = prItem("20", "Fix a typo", { base: "main", checks: [check(8, "passed")] });
+      const pr7 = prItem("7", "Add export", { head, reviews: [skelReview], checks: [approved] });
+      changes([issue12(), pr7, other]);
       await until(() => thread().merge_waits === "its checks");
-      await morePolls();
       expect(merges()).toEqual([]);
-      // Once CI shows on it and passes, it merges.
-      pr({ head, reviews: [skelReview], checks: [approved, check(9, "passed")] });
+      expect(thread()).toMatchObject({ needs_you: 0, no_ci: null });
       await until(() => merges().length === 1, 30_000);
       expect(merges()[0]).toMatchObject({ pr: 7, commit: head });
+      expect(thread().no_ci).toBe(head);
+      await until(() => thread().status === "done");
+    }, 90_000);
+
+    // Once the wait ended with no check, sc ps says "no CI" and the PR is ready. A check that
+    // shows after that still counts: a failing one stops the merge.
+    test("sc ps says no CI after the wait, and a check that fails later stops the merge", async () => {
+      await approvedApp12(undefined, 1_000);
+      const head = pushed();
+      const other = prItem("20", "Fix a typo", { base: "main", checks: [check(8, "passed")] });
+      const pr7 = (checks: object[]) =>
+        prItem("7", "Add export", { head, reviews: [skelReview], checks });
+      changes([issue12(), pr7([approved]), other]);
+      await until(() => thread().no_ci === head && thread().needs_you === 1);
+      const ps = () =>
+        Bun.spawnSync([process.execPath, main, "ps"], {
+          env: env(),
+          stdout: "pipe",
+        }).stdout.toString();
+      expect(ps()).toContain("no CI");
+      // CI shows late and fails, before the merge is armed.
+      changes([issue12(), pr7([approved, check(9, "failed")]), other]);
+      await until(() => thread().checks === "failing");
+      expect(ps()).not.toContain("no CI");
+      await arm();
+      await until(() => thread().merge_waits === "its failing checks to be fixed");
+      await morePolls();
+      expect(merges()).toEqual([]);
+      expect(thread().merge_plan).toBe("armed");
     }, 90_000);
 
     // The thread or its checks can change while the forge takes the record. The PR stays green
@@ -2868,7 +2893,7 @@ exec ${bwrap} "$@"`,
     // Starts app-12 with a reviewer that asks for changes, and waits until its review is in and
     // the forge's copy of its PR shows the reviewed commit, with `checks` on it: CI still
     // running unless a test gives others.
-    const changesApp12 = async (checks: object[] = [check(5, "running")]) => {
+    const changesApp12 = async (checks: object[] = [check(5, "running")], wait?: number) => {
       script(
         "codex",
         `for a; do [ "$prev" = -o ] && out=$a; prev=$a; done
@@ -2877,7 +2902,7 @@ echo '{"verdict":"changes","body":"Not yet.","findings":["Handle an empty file",
       );
       addApp();
       changes([issue12()]);
-      serve();
+      serve(200, wait);
       await until(() => existsSync(join(data(), "repos", "simon", "app", "README")));
       const started = Bun.spawnSync([process.execPath, main, "start", "app-12"], {
         env: env(),
@@ -3054,17 +3079,15 @@ echo '{"verdict":"changes","body":"Not yet.","findings":["Handle an empty file",
       expect(String(filed[0]?.body)).toContain("#7");
     }, 90_000);
 
-    // CI found once on another PR, no thread's and closed since, still makes a merge without
-    // approval wait for CI on a PR that shows none yet, as CI is all that guards it.
-    test("a merge without approval waits for CI once the repository had CI, even after that PR closed", async () => {
-      const head = await changesApp12([]);
-      const other = (state: string) =>
-        prItem("20", "Fix a typo", { state, base: "main", checks: [check(8, "passed")] });
-      changes([issue12(), other("open")]);
+    // CI on another PR means CI may still be starting on this one, so a merge without approval
+    // waits for its first check, as CI is all that guards it. CI that never shows, as on a
+    // docs-only PR it skips with a paths filter, ends the wait: no CI runs on it, and it merges.
+    test("a merge without approval waits for CI's first check, then merges a PR no CI runs on", async () => {
+      const head = await changesApp12([], 6_000);
+      const other = prItem("20", "Fix a typo", { base: "main", checks: [check(8, "passed")] });
+      const pr7 = prItem("7", "Add export", { head, reviews: [skelReview], checks: [] });
+      changes([issue12(), pr7, other]);
       await morePolls();
-      changes([issue12(), other("closed")]);
-      await morePolls();
-      pr({ head, reviews: [skelReview], checks: [] });
       const yes = await runSkelInTerminal(
         socket,
         env(),
@@ -3073,13 +3096,13 @@ echo '{"verdict":"changes","body":"Not yet.","findings":["Handle an empty file",
         "y",
       );
       expect(yes).toContain(skipSaid);
+      // The wait starts once a poll sees the pinned commit.
       await until(() => thread().merge_waits === "its checks");
-      await morePolls();
       expect(merges()).toEqual([]);
-      // Once CI shows on it and passes, it merges the pinned head.
-      pr({ head, reviews: [skelReview], checks: [check(9, "passed")] });
+      expect(thread().no_ci).toBeNull();
       await until(() => merges().length === 1, 30_000);
       expect(merges()[0]).toMatchObject({ pr: 7, commit: head });
+      expect(thread().no_ci).toBe(head);
     }, 90_000);
 
     // A review that ends after you asked can approve the commit. The record then approves too,

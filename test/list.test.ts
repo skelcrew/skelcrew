@@ -63,7 +63,7 @@ ${itemSql("app", "pr", 41, "Fix the export header", "2026-11-06T10:00:00Z", { he
 ${threadSql({ task: "7", title: "Login redirect", harness: "claude", started: now - 300_000 })}
 ${threadSql({ task: "12", title: "Rate limit the API", harness: "codex", asking: 1, needs_you: 1 })}
 ${threadSql({ task: "9", title: "Old work", status: "stopped", changed: now - 60_000 })}
-${threadSql({ task: "14", title: "Fix the export header", status: "waiting", needs_you: 1, verdict: "approve", checks: "passing", ci_passed: 1, ci_seen: 1, pr: 41, review_round: 1, reviewed_commit: approved })}
+${threadSql({ task: "14", title: "Fix the export header", status: "waiting", needs_you: 1, verdict: "approve", checks: "passing", ci_passed: 1, pr: 41, review_round: 1, reviewed_commit: approved })}
 INSERT INTO pr_agents (owner, repo, pr, head, base, changed)
   VALUES ('simon', 'app', '41', '${approved}', 'main', 0);
 ${threadSql({ repo: "site", task: "3", title: "Docs", asking: 1, needs_you: 1 })}`);
@@ -391,23 +391,30 @@ test("a ready task whose PR moved past the approved commit, or whose checks ther
 });
 
 // The thread can still say CI passed while the forge's copy of the approved head has no checks
-// yet, and a poll sets its checks back to none when they vanish. Only a repository whose polls
-// never found CI merges without checks.
-test("a ready task whose approved head has no checks yet can't be merged, unless it has no CI", () => {
+// yet, and a poll sets its checks back to none when they vanish. Only a head whose wait for CI's
+// first check ended with none merges without checks, and its row says "no CI".
+test("a ready task whose approved head has no checks yet can't be merged, unless no CI runs on it", () => {
   const unchecked = { head: approved, checks: [] };
   sql(itemSql("app", "pr", 41, "Fix the export header", "2026-11-06T10:00:00Z", unchecked));
-  expect(rows().find((row) => row.name === "app-14")?.merge).toEqual({
+  const row = () => rows().find((r) => r.name === "app-14");
+  expect(row()?.merge).toEqual({
     refused: "app#41's checks haven't passed on the approved commit yet",
   });
-  // CI that polls once found, and whose checks then went missing, isn't a repository with no CI.
   sql("UPDATE tasks SET checks = NULL WHERE task = '14';");
-  expect(rows().find((row) => row.name === "app-14")?.merge).toEqual({
+  expect(row()?.merge).toEqual({
     refused: "app#41's checks haven't passed on the approved commit yet",
   });
-  // Polls that never found any CI checks are a repository with no CI.
-  sql("UPDATE tasks SET ci_seen = 0 WHERE task = '14';");
-  const merge = rows().find((row) => row.name === "app-14")?.merge;
+  expect(row()?.checks).toBe("");
+  // A wait that ended with no CI on another commit says nothing of this one.
+  sql("UPDATE tasks SET no_ci = 'f00d' WHERE task = '14';");
+  expect(row()?.merge).toEqual({
+    refused: "app#41's checks haven't passed on the approved commit yet",
+  });
+  // Once the wait for CI's first check on the approved head ended with none, it merges.
+  sql(`UPDATE tasks SET no_ci = '${approved}' WHERE task = '14';`);
+  const merge = row()?.merge;
   expect(merge && "ask" in merge ? merge.ask : "").toBe("Merge app#41 into main? y/n");
+  expect(row()?.checks).toBe("no CI");
 });
 
 test("a forge's base branch reaches the merge question without its control codes", () => {

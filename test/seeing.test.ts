@@ -798,10 +798,17 @@ function moreThreads(): void {
   sql(`${threadSql({ task: "16", status: "waiting", session: "s16", title: "Asks", pr: 35, rounds: 2, asking: 1, verdict: "changes", review_round: 2, reviewing: "def" })}
 ${threadSql({ task: "17", status: "waiting", session: "s17", title: "Past", pr: 36, rounds: 4, needs_you: 1, verdict: "changes", review_round: 4, reviewing: "ghi" })}
 ${threadSql({ task: "18", status: "waiting", session: "s18", title: "Push", pr: 37, submitting: "Go" })}
-${threadSql({ task: "19", status: "failed", title: "Late CI", pr: 38, checks: "pending" })}`);
+${threadSql({ task: "19", status: "failed", title: "Late CI", pr: 38, checks: "pending" })}
+${threadSql({ task: "20", status: "waiting", title: "Docs", pr: 39, verdict: "approve", no_ci: "d0c5" })}`);
   sql(
     itemSql("app", "pr", 38, "Late CI", "2026-11-08T10:00:00Z", {
       checks: [{ name: "test", id: "601", state: "passed" }],
+    }),
+  );
+  sql(
+    itemSql("app", "pr", 39, "Docs", "2026-11-08T10:00:00Z", {
+      head: "d0c5",
+      checks: [{ name: "skelcrew/check", id: null, state: "passed" }],
     }),
   );
   for (const live of ["app-16", "app-17", "app-18"])
@@ -917,6 +924,8 @@ describe("with a forge", () => {
     expect(shown["app-19"]?.checks).toBe("passed");
     // A live thread keeps the word its polls keep.
     expect(shown["app-14"]?.checks).toBe("running");
+    // A PR head whose wait for CI's first check ended with none says so.
+    expect(shown["app-20"]?.checks).toBe("no CI");
   });
 
   test("sc show shows a task's PR from Skelcrew's copy, with the log of a failed check", async () => {
