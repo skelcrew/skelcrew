@@ -971,6 +971,10 @@ test("a narrow list shows a shorter name of the version, keeping the whole commi
     Bun.stripANSI(drawnWith(0, { ...shown, tabs: app }, { width, height: 20 })[0] ?? "").trimEnd();
   expect(withTab(56)).toBe(" Skelcrew checkout 6f1c2ab+changes   app");
   expect(withTab(80)).toBe(" Skelcrew 6f1c2ab* (checkout, * = uncommitted changes)   app");
+  // On a remote, where it runs gives way before the version is cut.
+  const far = { ...shown, where: "simon@a-long-server-name.example.com" };
+  const remote = Bun.stripANSI(drawnWith(0, far, { width: 36, height: 20 })[0] ?? "").trimEnd();
+  expect(remote).toBe(" Skelcrew checkout 6f1c2ab+changes");
 });
 
 test("a list taller than the terminal scrolls its stages, and its edges say what is hidden", () => {

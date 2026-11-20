@@ -107,7 +107,6 @@ const otherTab = "48;5;236";
 // are counted apart, so a finished task is never told twice. Another repository's tab that
 // doesn't fit beside the open one's is left out.
 function topParts(frame: Frame, width: number): { line: string; spans: TabSpan[] } {
-  const place = frame.where ? ` on ${frame.where}` : "";
   // Each tab's text, with a space either side inside its background.
   const laid = frame.tabs.map((tab) => {
     const open = tab.name === frame.name;
@@ -119,18 +118,20 @@ function topParts(frame: Frame, width: number): { line: string; spans: TabSpan[]
     return { tab, open, badges, size: Bun.stringWidth(text) };
   });
   // Words around a checkout's commit give way before the line is cut, so it keeps the whole
-  // commit when it can. They give way for the open repository's tab too, so it keeps showing.
+  // commit when it can, and where it runs gives way before them. They give way for the open
+  // repository's tab too, so it keeps showing.
   const openSize = laid.find(({ open }) => open)?.size ?? 0;
-  const named = (name: string) => ` Skelcrew ${name}${place}`;
-  const room = (name: string, more: number) => Bun.stringWidth(named(name)) + more <= width;
-  const version =
-    frame.versions.find((name) => room(name, openSize ? 2 + openSize : 0)) ??
-    frame.versions.find((name) => room(name, 0)) ??
-    frame.versions.at(-1) ??
+  const where = frame.where ? ` on ${frame.where}` : "";
+  const named = [where, ""].flatMap((place) => frame.versions.map((name) => `${name}${place}`));
+  const room = (name: string, more: number) => Bun.stringWidth(` Skelcrew ${name}`) + more <= width;
+  const about =
+    named.find((name) => room(name, openSize ? 2 + openSize : 0)) ??
+    named.find((name) => room(name, 0)) ??
+    named.at(-1) ??
     "";
-  const plain = named(version);
+  const plain = ` Skelcrew ${about}`;
   if (Bun.stringWidth(plain) > width) return { line: fitted(plain, width), spans: [] };
-  let line = ` ${paint(bright, "Skelcrew")} ${paint(grey, `${version}${place}`)}`;
+  let line = ` ${paint(bright, "Skelcrew")} ${paint(grey, about)}`;
   let used = Bun.stringWidth(plain);
   const spans: TabSpan[] = [];
   // The open repository's tab always keeps its room, so you can always tell which one shows.
