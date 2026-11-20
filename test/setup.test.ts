@@ -322,7 +322,7 @@ openDb().run(${JSON.stringify(threadSql({ task: "12" }))});`;
   expect(err).toBe("");
   expect(await run.exited).toBe(0);
   expect(calls()).toContain("systemctl --user start skelcrew\n");
-  expect(calls()).toContain("screen on app-12\n");
+  expect(calls()).toContain("tmux -L skelcrew -f /dev/null attach -t =app-12\n");
 });
 
 // A builder on a plugin's host still talks to the daemon, through its hooks and sc, so the

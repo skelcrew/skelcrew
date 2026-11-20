@@ -132,7 +132,7 @@ UPDATE threads SET host = 'fake', host_id = 'fake-app-12' WHERE folder = 'app-12
   await until(() => selected().includes("app-12"), "the sidebar to follow");
 });
 
-test("sc attach's screen starts on the agent it names, marked in the sidebar", async () => {
+test("a screen opened on an agent starts on it, marked in the sidebar", async () => {
   open("app-7");
   await ready("app-7");
   expect(selected()).toBe("○ 7 app-7");
@@ -174,22 +174,25 @@ test("Ctrl-Q still leaves, though nothing shows it", async () => {
   await until(() => seen().includes(leaving), "the line that says what happened");
 });
 
-// Ctrl-\ is the agents' server's key to detach. Were it to reach that server, it would detach the
-// agent's pane and leave it empty, so the screen takes it and leaves, as it does on herdr.
-test("Ctrl-\\ leaves the whole screen too, and ends no agent", async () => {
+// Ctrl-\ only leaves an agent opened alone. Were it to reach the agents' server, it would detach
+// the agent's pane and leave it empty, so the screen takes it and does nothing.
+test("Ctrl-\\ leaves neither the screen nor the agent", async () => {
   open("lead");
   await ready("lead");
   press("C-\\");
-  await until(() => existsSync(join(home, "left-one")), "Skelcrew to return");
-  await until(() => seen().includes(leaving), "the line that says what happened");
-  expect(tmux(agents, "has-session", "-t", "=lead").ok).toBe(true);
+  await Bun.sleep(300);
+  expect(existsSync(join(home, "left-one"))).toBe(false);
+  expect(seen()).toContain("I am lead");
+  expect(tmux(agents, "list-clients", "-F", "#{client_tty}").out).not.toBe("");
+  type("hello\r");
+  await until(() => existsSync(join(home, "lead.typed")), "the typing");
 });
 
 // The sidebar, the footer and other terminals ask the screen's server things all the time. tmux
 // 3.6 could crash when one of those commands ended just as a terminal left, and every terminal
 // on the server lost its screen. Eight loops of commands make that moment common: leaving by
-// detaching crashed the server in every one of six runs. So each key leaves twice while they
-// run, and a second terminal must keep its screen throughout.
+// detaching crashed the server in every one of six runs. So each key that leaves does so twice
+// while they run, and a second terminal must keep its screen throughout.
 test("leaving never takes the screen away from another terminal, however busy the server", async () => {
   open("app-7", "two");
   await ready("app-7", "two");
@@ -198,7 +201,7 @@ test("leaving never takes the screen away from another terminal, however busy th
     Bun.spawn(["sh", "-c", asking], { env: { ...env(), TMUX: "" } }),
   );
   try {
-    for (const key of ["M-q", "C-q", "C-\\", "M-q", "C-q", "C-\\"]) {
+    for (const key of ["M-q", "C-q", "M-q", "C-q"]) {
       open("lead", "one");
       await ready("lead", "one");
       press(key, "one");
