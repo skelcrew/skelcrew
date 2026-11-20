@@ -258,29 +258,55 @@ export function startFiled<T>(
     const where = "WHERE owner = ? AND repo = ? AND task = ?";
     const task = filedTask(db, owner, repo, name);
     if (!task) throw new Error(`${repository.name}-${name} is no longer in the backlog`);
-    // The claim's commit carries the task's words, so it can be put back.
-    const kept = { title: task.title, body: task.body, created: task.created, by: task.by };
-    const message = `Skelcrew starts ${name}: ${crypto.randomUUID()}\n\n${JSON.stringify(kept)}`;
-    const commit = await makeCommit(db, repository, folder, message);
-    db.run(
-      "INSERT OR REPLACE INTO backlog_starts (owner, repo, task, started_commit) VALUES (?, ?, ?, ?)",
-      [owner, repo, name, commit],
-    );
-    try {
-      await moveRefs(db, repository, folder, [
-        { ref: filedRef(name), was: task.commit, now: "" },
-        { ref: startedRef(name), was: "", now: commit },
-      ]);
-    } catch (error) {
-      // A push can reach the remote and fail only on its way back, so the remote is asked whose
-      // claim it holds. With this one, the start goes on. With none or another's, it never got
-      // it. With no answer, the note stays, and the next refresh settles it either way.
-      const holds = await remoteRef(db, repository, startedRef(name)).catch(() => null);
-      if (holds !== commit) {
-        if (holds !== null) db.run(`DELETE FROM backlog_starts ${where}`, [owner, repo, name]);
+    // An earlier start of this task whose outcome nobody heard left its note. It is settled
+    // first, never replaced: with its claim on the remote, that start won, and this one goes on
+    // from it. With none, the note goes. With no answer, the note stays and the start is refused,
+    // as either way could be true.
+    const earlier = z
+      .object({ started_commit: z.string() })
+      .nullable()
+      .parse(db.query(`SELECT started_commit FROM backlog_starts ${where}`).get(owner, repo, name));
+    let won = false;
+    let commit = "";
+    if (earlier) {
+      const holds = await remoteRef(db, repository, startedRef(name)).catch((error) => {
         throw new Error(
-          `${repository.name}-${name} was started or removed on another machine, or its remote can't be reached: ${errorText(error)}`,
+          `Skelcrew can't tell whether its earlier start of ${repository.name}-${name} reached the remote, so it starts nothing: ${errorText(error)}`,
         );
+      });
+      won = holds === earlier.started_commit;
+      if (won) commit = earlier.started_commit;
+      else db.run(`DELETE FROM backlog_starts ${where}`, [owner, repo, name]);
+    }
+    if (!won) {
+      // The claim's commit carries the task's words, so it can be put back.
+      const kept = { title: task.title, body: task.body, created: task.created, by: task.by };
+      const message = `Skelcrew starts ${name}: ${crypto.randomUUID()}\n\n${JSON.stringify(kept)}`;
+      const claim = await makeCommit(db, repository, folder, message);
+      commit = claim;
+      db.run("INSERT INTO backlog_starts (owner, repo, task, started_commit) VALUES (?, ?, ?, ?)", [
+        owner,
+        repo,
+        name,
+        claim,
+      ]);
+      try {
+        await moveRefs(db, repository, folder, [
+          { ref: filedRef(name), was: task.commit, now: "" },
+          { ref: startedRef(name), was: "", now: claim },
+        ]);
+      } catch (error) {
+        // A push can reach the remote and fail only on its way back, so the remote is asked
+        // whose claim it holds. With this one, the start goes on. With none or another's, it
+        // never got it. With no answer, the note stays, and a retry or the next refresh
+        // settles it.
+        const holds = await remoteRef(db, repository, startedRef(name)).catch(() => null);
+        if (holds !== claim) {
+          if (holds !== null) db.run(`DELETE FROM backlog_starts ${where}`, [owner, repo, name]);
+          throw new Error(
+            `${repository.name}-${name} was started or removed on another machine, or its remote can't be reached: ${errorText(error)}`,
+          );
+        }
       }
     }
     // The note goes with the thread, in one transaction, as from then on the thread says this

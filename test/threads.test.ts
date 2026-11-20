@@ -1758,6 +1758,40 @@ exec ${real} "$@"
     expect(refs).toHaveLength(2);
   }, 60_000);
 
+  // A start's claim reaches the remote, then neither its answer nor a look at the remote comes
+  // back. Started again before any refresh settles it, the earlier claim is found and goes on, so
+  // the task is neither lost nor hidden behind a claim nobody owns.
+  test("a start retried after its claim's outcome was lost goes on from that claim", async () => {
+    const work = addApp();
+    serve();
+    await untilCloned();
+    await skel("task", "add", "app", "Add export", "As JSON");
+    const real = Bun.which("git") ?? "git";
+    // down: the remote can't be read at all. nofetch: only the backlog's fetch fails, so no
+    // refresh settles the start before the retry does.
+    writeFileSync(
+      join(home, "bin", "git"),
+      `#!/bin/sh
+case "$*" in *push*":refs/skelcrew/started/"*) ${real} "$@"; touch "$HOME/down" "$HOME/nofetch"; exit 1 ;; esac
+if [ -e "$HOME/down" ]; then case "$*" in *ls-remote*|*fetch*) exit 1 ;; esac; fi
+if [ -e "$HOME/nofetch" ]; then case "$*" in *fetch*refs/skelcrew/*) exit 1 ;; esac; fi
+exec ${real} "$@"
+`,
+      { mode: 0o755 },
+    );
+    const failed = await skel("start", "app-t100");
+    expect(failed.err).toContain("app-t100");
+    expect(thread()).toEqual({});
+    rmSync(join(home, "down"));
+    const again = await skel("start", "app-t100");
+    expect(again.err).toBe("");
+    expect(again.out).toBe("Started app-t100.\n");
+    expect(thread()).toMatchObject({ task: "t100", title: "Add export", body: "As JSON" });
+    const refs = git(work, "ls-remote", "origin");
+    expect(refs).not.toContain("refs/skelcrew/started/t100");
+    expect(refs).not.toContain("refs/skelcrew/tasks/t100");
+  }, 60_000);
+
   test("sc rm deletes a task that never started, here and on the remote, and keeps its name", async () => {
     const work = addApp();
     serve();
