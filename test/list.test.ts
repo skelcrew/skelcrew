@@ -155,6 +155,78 @@ test("a task approved past the round limit is under Ready, not needing you", () 
   expect(ready).toMatchObject({ count: 1, needYou: 0 });
 });
 
+// A task whose flow has no review stage is never called approved: its word says it wasn't
+// reviewed, while it waits on CI and once it is ready, and m merges the commit last submitted.
+test("a task on a flow with no review shows not reviewed, and merges at its last submit", () => {
+  sql(
+    "UPDATE tasks SET verdict = 'not reviewed', review_round = NULL, flow = 'noreview' WHERE task = '14';",
+  );
+  const row = rows().find((candidate) => candidate.name === "app-14");
+  expect(row).toMatchObject({ part: "ready", says: "not reviewed", needsYou: false });
+  expect(row?.merge && "ask" in row.merge ? row.merge.request : null).toMatchObject({
+    command: "merge",
+    pr: 41,
+    commit: approved,
+  });
+  expect(shown("14")).toContain("\nReview  not reviewed\n");
+  // A push Skelcrew didn't make is never merged here.
+  const moved = { head: "f00d", checks: passed };
+  sql(itemSql("app", "pr", 41, "Fix the export header", "2026-11-06T10:00:00Z", moved));
+  expect(rows().find((candidate) => candidate.name === "app-14")?.merge).toEqual({
+    refused: "app#41 has a newer commit than the one submitted: wait for its builder to submit it",
+  });
+  // Waiting on CI, it is under Checks.
+  sql(`UPDATE threads SET needs_you = 0 WHERE folder = 'app-14';
+UPDATE tasks SET checks = 'pending', ci_passed = 0 WHERE task = '14';`);
+  expect(rows().find((candidate) => candidate.name === "app-14")).toMatchObject({
+    part: "checks",
+    says: "checks",
+  });
+});
+
+// A submit on a flow with no review stage whose push or check failed has no review round to
+// have failed, so sc ps, sc ls and sc show say it isn't reviewed. Like a failed review, the
+// lead hears of it and can run it again, so it doesn't need you.
+test("a failed submit on a flow with no review shows as not reviewed, never a failed round", () => {
+  sql(`UPDATE threads SET review_failed = 1, needs_you = 0 WHERE folder = 'app-14';
+UPDATE tasks SET verdict = 'not reviewed', review_round = NULL, flow = 'noreview',
+  submitting = 'Round 2' WHERE task = '14';`);
+  const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
+import { listTasks, listThreads, printTasks, printThreads } from ${JSON.stringify(source("flow/list.ts"))};
+const db = openDb();
+printThreads(listThreads(db, "app"), false);
+printTasks(listTasks(db, "app"), false);`;
+  const run = Bun.spawnSync([process.execPath, "-e", code], { env: env(), stderr: "pipe" });
+  if (!run.success) throw new Error(run.stderr.toString());
+  const lines = run.stdout
+    .toString()
+    .split("\n")
+    .filter((line) => line.includes("app-14"));
+  expect(lines).toHaveLength(2);
+  for (const line of lines) {
+    expect(line).toContain("not reviewed");
+    expect(line).not.toContain("failed");
+  }
+  expect(shown("14")).toContain("\nReview  not reviewed\n");
+  expect(rows().find((row) => row.name === "app-14")?.says).toBe("submit failed");
+});
+
+// sc ps shows no review in a repository with no forge, but a task its flow didn't review is
+// ready on its branch with nobody having looked at it, so it says so.
+test("sc ps says not reviewed for a task on a flow with no review, in a repository with no forge", () => {
+  sql(`${threadSql({ repo: "site", task: "5", status: "waiting", needs_you: 1, verdict: "not reviewed", flow: "noreview" })}
+${threadSql({ repo: "site", task: "6", status: "waiting", needs_you: 1, verdict: "approve", review_round: 1 })}`);
+  const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
+import { listThreads } from ${JSON.stringify(source("flow/list.ts"))};
+console.log(JSON.stringify(listThreads(openDb(), "site")));`;
+  const run = Bun.spawnSync([process.execPath, "-e", code], { env: env(), stderr: "pipe" });
+  if (!run.success) throw new Error(run.stderr.toString());
+  const threads: { thread: string; review: unknown }[] = JSON.parse(run.stdout.toString());
+  const review = (name: string) => threads.find((t) => t.thread === name)?.review;
+  expect(review("site-5")).toEqual({ state: "not reviewed", round: null, at: null });
+  expect(review("site-6")).toBeNull();
+});
+
 test("each stage's heading counts its tasks and those that need you, open or closed", () => {
   sql("UPDATE threads SET asking = 1 WHERE folder = 'app-14';");
   expect(stageHeadings(rows(), new Set<ListStage>(["building"]))).toEqual([

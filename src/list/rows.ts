@@ -7,7 +7,7 @@ import type { Database } from "bun:sqlite";
 import { z } from "zod";
 import { backlogOf } from "../flow/backlog.ts";
 import { openTasks, prOf } from "../flow/copy.ts";
-import { reviewCheck } from "../flow/decide.ts";
+import { passedReviewStage, reviewCheck } from "../flow/decide.ts";
 import { leadOf } from "../flow/lead.ts";
 import {
   type Badge,
@@ -170,7 +170,8 @@ function taskRow(
   const reviewed = word === "reviewing" || word === "queued for review";
   const stepping = word === "working" || (reviewed && shown.status === "working");
   const step = stepping ? removeControlCodes(builderProgress(thread, now).step ?? "") : "";
-  // m merges the PR only at the commit Skelcrew's reviewer approved, and only while it is the
+  // m merges the PR only at the commit Skelcrew's reviewer approved, or for a flow with no review
+  // stage the one last submitted, and only while it is the
   // head the forge last sent and CI passed there, as the forge's copy of the PR shows. The thread's own verdict and checks can lag
   // behind a push, so they never stand for a newer head. A forge too old to send the head
   // commit can't merge either, as it lacks the call too.
@@ -179,7 +180,10 @@ function taskRow(
     const named = `${repoName}#${thread.pr}`;
     // The commit the latest review approved, as the review saved it, so drawing the list asks
     // git nothing. An approval from before Skelcrew saved it has none, and merges on the forge.
-    const approved = thread.verdict === "approve" ? thread.reviewed_commit : null;
+    const approved = passedReviewStage(thread) ? thread.reviewed_commit : null;
+    const unreviewed = thread.verdict === "not reviewed";
+    const which = unreviewed ? "submitted" : "approved";
+    const wait = unreviewed ? "wait for its builder to submit it" : "wait for its review";
     const ci = copy.checks.filter((check) => check.name !== reviewCheck);
     if (copy.head === null)
       merge = {
@@ -190,11 +194,13 @@ function taskRow(
         refused: `${named}'s approval has no commit saved: merge it on the forge, or run sc review ${name}`,
       };
     else if (approved !== copy.head)
-      merge = { refused: `${named} has a newer commit than the one approved: wait for its review` };
-    // No checks in the copy is a pass only once the wait for CI's first check on the approved
-    // commit ended with none. Until then CI may not have started on it yet.
+      merge = {
+        refused: `${named} has a newer commit than the one ${which}: ${wait}`,
+      };
+    // No checks in the copy is a pass only once the wait for CI's first check on that commit
+    // ended with none. Until then CI may not have started on it yet.
     else if ((ci.length === 0 && !noCi) || !ci.every((check) => check.state === "passed"))
-      merge = { refused: `${named}'s checks haven't passed on the approved commit yet` };
+      merge = { refused: `${named}'s checks haven't passed on the ${which} commit yet` };
     else
       merge = {
         ask: [

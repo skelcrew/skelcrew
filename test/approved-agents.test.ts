@@ -680,3 +680,23 @@ test("rounds: in your config goes under the flow file, and rounds: in your overr
   );
   expect(roundsOf()).toBe(7);
 });
+
+// A flow with no review: stage runs no reviewer. One that says review: with nothing under it
+// still has the stage, with its defaults. Reading the reviewer's settings for such a task still
+// works, as the built-in reviewer's.
+test("a flow without a review: stage has no review stage, and its reviewer settings still read", () => {
+  agentsFile("flows/noreview.yaml", "build:\n  role: builder\n");
+  agentsFile("flows/bare.yaml", "review:\n");
+  commit("flows");
+  inHome(approveCurrent);
+  const stages = (flow: string) =>
+    inHome(
+      `const { flowRoles } = await import(${JSON.stringify(source("flows.ts"))}); return flowRoles({ ...app, flow: "${flow}" });`,
+    );
+  expect(stages("noreview")).toEqual({ build: "builder", review: null });
+  expect(stages("bare")).toEqual({ build: "builder", review: "reviewer" });
+  expect(stages("default")).toEqual({ build: "builder", review: "reviewer" });
+  expect(
+    inHome('return readSettings(["reviewer"], { ...app, flow: "noreview" }).reviewer;'),
+  ).toEqual({ harness: "claude", model: "opus" });
+});

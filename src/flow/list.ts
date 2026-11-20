@@ -79,7 +79,7 @@ function tabClosed(db: Database, r: { owner: string; repo: string }): boolean {
 // A thread as sc ps shows it, with the short title the lead gave it, if any, and its whole
 // title, which an old row may lack. `queued` says its review waits for a place. `pr`, `prUrl`
 // and `checks` are null without a PR, and `review` without a forge, where sc ps leaves those
-// columns empty. `checks` is what the PR's CI says, without Skelcrew's own check. `review` is
+// columns empty, unless its flow has no review stage, which it then says. `checks` is what the PR's CI says, without Skelcrew's own check. `review` is
 // where Skelcrew's reviewer stands: its round, and when it was asked for or ended, as an ISO
 // time. `waiting` is how many messages wait to be typed into its builder. `merge` is its armed
 // merge, with what it waits on and whether it merges without Skelcrew's approval rather than when
@@ -98,7 +98,7 @@ export const ThreadRow = z.object({
   checks: z.enum(["passed", "failed", "running", "none", "no CI"]).nullable(),
   review: z
     .object({
-      state: z.enum(["approved", "changes", "reviewing", "failed", "none"]),
+      state: z.enum(["approved", "changes", "reviewing", "failed", "not reviewed", "none"]),
       round: z.number().nullable(),
       at: z.string().nullable(),
     })
@@ -141,6 +141,9 @@ function reviewOf(thread: Thread): NonNullable<ThreadRow["review"]> {
   const at = thread.review_at === null ? null : new Date(thread.review_at).toISOString();
   const live = thread.status === "working" || thread.status === "waiting";
   if (live && (thread.submitting !== null || thread.reviewing !== null)) {
+    // A submit its flow doesn't review has no round, and no review to fail: it says it isn't
+    // reviewed, while its status says it needs you when its push or check failed.
+    if (thread.verdict === "not reviewed") return { state: "not reviewed", round: null, at };
     const state = roundRunning(thread.folder) ? "reviewing" : "failed";
     return { state, round: thread.rounds + 1, at };
   }
@@ -151,6 +154,7 @@ function reviewOf(thread: Thread): NonNullable<ThreadRow["review"]> {
     changes: "changes",
     failed: "failed",
     "timed out": "failed",
+    "not reviewed": "not reviewed",
   } as const;
   return { state: states[thread.verdict], round: thread.review_round, at };
 }
@@ -175,7 +179,9 @@ function threadRow(db: Database, thread: Thread, forge: boolean): ThreadRow {
     pr,
     prUrl: copy?.link ?? null,
     checks: pr === null ? null : ciOf(thread, copy),
-    review: forge ? reviewOf(thread) : null,
+    // Without a forge sc ps shows no review, but a task its flow doesn't review says so, as it
+    // is ready on its branch with nobody having looked at it.
+    review: forge || thread.verdict === "not reviewed" ? reviewOf(thread) : null,
     waiting: messagesWaiting(db, thread),
     merge:
       thread.merge_plan === null

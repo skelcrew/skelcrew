@@ -139,14 +139,16 @@ export const Thread = z.object({
   // one's once you change your config.
   reviewer: HarnessName.nullable(),
   // The latest finished review: its round, reviewer, verdict and the first line of what it said.
-  // Each one is saved here, so it reaches the thread's log with the rest of the thread.
+  // Each one is saved here, so it reaches the thread's log with the rest of the thread. A task
+  // whose flow has no review stage gets "not reviewed" as each submit starts, with no round or
+  // reviewer, and goes on to CI as an approval does.
   reviewed_by: HarnessName.nullable(),
   review_round: z.number().nullable(),
-  verdict: z.enum(["approve", "changes", "failed", "timed out"]).nullable(),
+  verdict: z.enum(["approve", "changes", "failed", "timed out", "not reviewed"]).nullable(),
   review_line: z.string().nullable(),
-  // The commit the latest finished review was about, so the list knows which commit an approval
-  // stands for without asking git. Null before the first, and in a row from before Skelcrew kept
-  // it.
+  // The commit the latest finished review was about, or the one submitted without a review, so
+  // the list knows which commit an approval stands for without asking git. Null before the
+  // first, and in a row from before Skelcrew kept it.
   reviewed_commit: z.string().nullable(),
   // When the latest review was asked for, by sc submit or sc review, or ended, in milliseconds
   // since 1970, for sc ps. Null before the first, and in a row from before Skelcrew kept it.
@@ -191,7 +193,8 @@ export const Thread = z.object({
   // A merge you armed, or null with none, and then nothing merges by itself. A merge when ready
   // merges the PR once it is approved and green, and one skipping the review, with `merge_pinned`,
   // once CI is green at the commit you saw. Who armed it and when, what it waits on
-  // as the last poll found, and the review round the lead last heard it still waits after.
+  // as the last poll found, and the review round the lead last heard it still waits after,
+  // or on a flow with no review stage when the submit it heard of was marked not reviewed.
   merge_plan: z.enum(["armed"]).nullable(),
   // The armed plan's own ID, new each time it is armed, so a plan cancelled and armed again is
   // never taken for the one before.
@@ -202,7 +205,10 @@ export const Thread = z.object({
   // your terminal.
   merge_asked: z.string().nullable(),
   merge_waits: z.string().nullable(),
+  // The review round the lead last heard the armed merge still waits after, and how each wait
+  // it heard in that round starts, so it hears each one once per round.
   merge_noted: z.number().nullable(),
+  merge_noted_for: savedJson("threads.merge_noted_for", z.array(z.string()), []),
   // The PR's head when you asked to merge it without Skelcrew's approval, or null for a merge when
   // ready. Only this commit merges, as you saw it, so a push after you asked cancels the plan.
   merge_pinned: z.string().nullable(),

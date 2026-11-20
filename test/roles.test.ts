@@ -126,6 +126,8 @@ const tellingTheLead =
 const triage =
   "- Each thread runs a flow, which sets its stages and its rounds of review. When the approved .agents/ has flows other than default, pick one for each thread you start or propose, and add --flow <name> to sc start, such as sc start app-13 --flow <name>. Read the flows where the end of these instructions says, not .agents/flows/ in the clone, which may hold changes the human hasn't approved. Whenever you pick a flow other than default, tell the human which and why, such as \"I'll run this on quick, as it is a one-line fix.\" A thread keeps its flow to the end, but before its builder first submits you can switch it with sc start app-12 --flow <name>. If that flow builds with another role, sc start refuses, as that is another agent: run sc rm app-12, then sc start app-12 --flow <name>.\n";
 const labelTriage = " Pick its flow as for any thread.";
+const noReviewFlows =
+  "A flow with no review: stage skips Skelcrew's reviewer: the builder's submit goes straight to CI, and the PR is ready once CI passes. Pick one only for a change too small to need a review, such as docs, wording or a trivial config change, never for code that can break something. Always tell the human when you pick one, and that nobody will review it. ";
 
 // What the lead's file added with limits.threads: a start over the limit waits in a queue.
 const queue =
@@ -182,6 +184,8 @@ Bring such a question, and any you can't answer, to the human in this chat, nami
 test("the lead and builder files hold the instructions the code gave, but for what was added since", () => {
   // The digests of src/agents/prompts/lead.md and builder.md before they moved.
   let lead = builtInRole("lead").instructions;
+  expect(lead).toContain(noReviewFlows);
+  lead = lead.replace(noReviewFlows, "");
   expect(lead).toContain(waiting);
   expect(lead).toContain(settling);
   expect(lead).toContain(restarted);
