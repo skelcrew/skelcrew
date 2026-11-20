@@ -2,9 +2,12 @@
 // agent on the right side, plain keys work in the sidebar as in sc --list, Enter on a stage's
 // heading opens or closes it, and the screen always shows which side has your typing.
 import { afterEach, beforeEach, expect, setDefaultTimeout, test } from "bun:test";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   endTest,
   footer,
+  home,
   onDetails,
   onLead,
   open,
@@ -14,6 +17,7 @@ import {
   seen,
   selected,
   sidebar,
+  sql,
   startTest,
   terminal,
   tmux,
@@ -159,6 +163,39 @@ test("Ctrl-\\ comes back from an agent you attached to while your typing is in t
   await until(onDetails, "app-7's details");
   expect(selected()).toContain("APP-7");
   expect(typingToSidebar()).toBe(true);
+});
+
+// The host takes two seconds to list its sessions, which it must to find a builder whose ID
+// Skelcrew hasn't saved. You press Alt-Left meanwhile, so the agent that comes must not take your
+// typing.
+test("Alt-Left while a slow host attaches keeps your typing in the sidebar", async () => {
+  const plugin = join(home, "plugin-slow");
+  mkdirSync(plugin, { recursive: true });
+  writeFileSync(
+    join(plugin, "attach.sh"),
+    `echo "I am $1 on slow"; exec cat > ${join(home, "host.typed")}\n`,
+  );
+  writeFileSync(join(plugin, "session.sh"), `cat > /dev/null; sleep 2; echo '{"sessions":[]}'\n`);
+  writeFileSync(
+    join(plugin, "skelcrew-plugin.yaml"),
+    "name: slow\nversion: 0.1.0\nskelcrew: 0.1.0\nabout: A host\nkind: runtime\nprovides: [sessions]\nsession: [sh, session.sh]\nattach: [sh, attach.sh]\n",
+  );
+  sql(`INSERT INTO plugins (name, folder) VALUES ('slow', '${plugin}');
+UPDATE threads SET host = 'slow', host_id = NULL WHERE folder = 'app-7'`);
+  open("lead");
+  await ready("lead");
+  press("M-S-Down");
+  press("M-Down");
+  await until(() => selected().includes("APP-7") && onDetails(), "APP-7's details");
+  press("Enter");
+  await Bun.sleep(300);
+  press("M-Left");
+  await until(() => seen().includes("I am app-7 on slow"), "the host's attach");
+  await until(() => footer().includes("⌥→ to APP-7"), "the key back to the agent");
+  expect(typingToSidebar()).toBe(true);
+  type("5");
+  await Bun.sleep(300);
+  expect(read("host.typed")).toBe("");
 });
 
 test("Enter on a stage's heading closes it, keeping you there, and opens it on its first row", async () => {

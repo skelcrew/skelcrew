@@ -615,10 +615,14 @@ export async function runSidebar(
     if ((atWork || row.needsYou) && row.session) {
       const repository = `${open.owner}/${open.repo}`;
       held = false;
-      void attachTask(agents, session, repository, row.name, fullOutput).then((failed) => {
-        if (failed !== null) refuse(row.name, failed);
-        refresh();
-      });
+      // The builder takes your typing as it comes, unless you kept it in the sidebar meanwhile.
+      const takeTyping = () => !held;
+      void attachTask(agents, session, repository, row.name, fullOutput, takeTyping).then(
+        (failed) => {
+          if (failed !== null) refuse(row.name, failed);
+          refresh();
+        },
+      );
       return;
     }
     said = openPr(db, open, row, canOpen, (text) => process.stdout.write(text));

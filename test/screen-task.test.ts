@@ -62,7 +62,7 @@ const agents = ${JSON.stringify(agents)};
 const session = ${JSON.stringify(session())};
 const name = ${JSON.stringify(name)};
 if (${JSON.stringify(action)} === "show") showTask(agents, session, "simon/app", name, true);
-else console.log((await attachTask(agents, session, "simon/app", name, true)) ?? "");`;
+else console.log((await attachTask(agents, session, "simon/app", name, true, () => true)) ?? "");`;
 }
 
 // Does what onRow does without waiting for it, and gives what it printed once it ends.
