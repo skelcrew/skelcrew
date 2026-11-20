@@ -55,23 +55,27 @@ export function laptopBuild(): string | null {
 }
 
 // Returns how a build from a checkout is named after "Skelcrew": its commit, such as
-// 6f1c2ab (checkout), with + changes when it held uncommitted changes. A build with no commit
-// to name, such as a single file nobody stamped, says so rather than pretending.
-function checkoutName(build: string | null): string {
-  if (build === null) return "(checkout, commit unknown)";
-  if (build.endsWith(dirty)) return `${build.slice(0, -dirty.length)} + changes (checkout)`;
-  return `${build} (checkout)`;
+// 6f1c2ab (checkout), with + changes when it held uncommitted changes, then a shorter name that
+// says the same, for the sidebar's header, which has room for only 24 columns. A build with no
+// commit to name, such as a single file nobody stamped, says so rather than pretending.
+function checkoutNames(build: string | null): string[] {
+  if (build === null) return ["(checkout, commit unknown)", "checkout, commit unknown"];
+  if (build.endsWith(dirty)) {
+    const commit = build.slice(0, -dirty.length);
+    return [`${commit} + changes (checkout)`, `checkout ${commit}+changes`];
+  }
+  return [`${build} (checkout)`];
 }
 
 // Returns which Skelcrew this is, as the screen's header and the list's top line show it after
 // "Skelcrew": the release, such as v0.4.2, or a checkout's commit, so a screenshot always says
-// which Skelcrew it came from. The checkout is read once, with the same git commands the engine
+// which Skelcrew it came from. The longest name comes first, then any shorter ones. The checkout is read once, with the same git commands the engine
 // uses to decide when to restart, as the code that runs doesn't change after it starts. Only
 // when asked, so commands that never draw, such as an agent's sc submit, don't run git for it.
-let shown = "";
-export function shownVersion(): string {
-  if (release) return `v${release}`;
-  if (shown === "") shown = checkoutName(built ?? laptopBuild());
+let shown: string[] = [];
+export function shownVersions(): string[] {
+  if (release) return [`v${release}`];
+  if (shown.length === 0) shown = checkoutNames(built ?? laptopBuild());
   return shown;
 }
 
@@ -81,5 +85,5 @@ export function versionLine(): string {
   // installLatest and the release workflow read a release back from this line, so its shape
   // matters.
   if (release) return `skelcrew ${release}`;
-  return `Skelcrew ${checkoutName(built ?? laptopBuild())}`;
+  return `Skelcrew ${checkoutNames(built ?? laptopBuild())[0]}`;
 }

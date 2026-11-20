@@ -15,7 +15,7 @@ import { attachOnHost, type Host } from "../plugins/runtime.ts";
 import { errorText } from "../say.ts";
 import { cpuBusy, cpuSample, loadText, memoryInUse, readMemory } from "../screen/load.ts";
 import { grey, paint, removeControlCodes } from "../screen/look.ts";
-import { shownVersion } from "../version.ts";
+import { shownVersions } from "../version.ts";
 import { type Details, readDetails } from "./details.ts";
 import {
   drawList,
@@ -169,7 +169,7 @@ export async function runList(agents: string, repository: string): Promise<void>
     const name = tabs.find((tab) => tab.fullName === `${open.owner}/${open.repo}`)?.name ?? "";
     const notice = updateNotice(db);
     return {
-      version: shownVersion(),
+      version: shownVersions()[0] ?? "",
       where,
       name,
       tabs,
