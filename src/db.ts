@@ -611,6 +611,20 @@ function prepareTables(db: Database): void {
     typed_in TEXT NOT NULL DEFAULT '[]',
     pasted INTEGER NOT NULL DEFAULT 0
   )`);
+  // A lead's message to a builder, and a builder's message or a brief to a lead, are typed in as
+  // Skelcrew wrapped them. One saved before herdr's <hc> tags were removed from inside can still
+  // hold one, so the < that starts it is written &lt;. Skelcrew's wrapper holds no such tag, and
+  // escaped text no longer matches, so this changes nothing the next time.
+  const Saved = z.array(z.object({ id: z.number(), text: z.string() }));
+  for (const table of ["notes", "messages"]) {
+    const which = table === "notes" ? "wrapped = 1" : "sender = 'lead'";
+    for (const { id, text } of Saved.parse(
+      db.query(`SELECT id, text FROM ${table} WHERE ${which}`).all(),
+    )) {
+      const escaped = text.replace(/<(?=\s*\/?\s*hc\b)/gi, "&lt;");
+      if (escaped !== text) db.run(`UPDATE ${table} SET text = ? WHERE id = ?`, [escaped, id]);
+    }
+  }
   // For each open PR in Skelcrew's copy, the head commit and base branch a poll last looked at
   // and whether the PR's changes there touch .agents/, so the merge confirms say so while reading
   // only the database. Each poll looks again, as a retargeted PR or a moved base can change that.
