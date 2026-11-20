@@ -1686,7 +1686,7 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
     );
     expect(fromLead.stderr.toString()).toBe("");
     expect(fromLead.stdout.toString()).toBe(
-      "Removed app-12. Issue #12 stays open, and sc start APP-12 starts it over.\n",
+      "Removed APP-12. Issue #12 stays open, and sc start APP-12 starts it over.\n",
     );
     expect(asked(plugin).filter((q) => q.ask === "close pr")).toEqual([
       {

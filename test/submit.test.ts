@@ -2100,7 +2100,7 @@ await serve(${JSON.stringify(socket)}, 200);`;
     const removed = await skel(["rm", `app-t100`]);
     expect(removed.err).toBe("");
     // A thread with no issue has nothing that stays open, so the message names none.
-    expect(removed.out).toBe(`Removed app-t100. sc start APP-T100 starts it over.\n`);
+    expect(removed.out).toBe(`Removed APP-T100. sc start APP-T100 starts it over.\n`);
     expect(git(bare, "branch", "--list", `skelcrew/t100-add-export`)).not.toBe("");
     expect(existsSync(join(data(), "threads", `app-t100`))).toBe(false);
   }, 60_000);
@@ -2316,7 +2316,7 @@ await serve(${JSON.stringify(socket)}, 200);`;
     const refs = () => git(join(data(), "repos", "simon", "app"), "for-each-ref", "refs/skelcrew/");
     expect(refs()).toContain("refs/skelcrew/threads/");
     const before = log().split(ready).length;
-    expect((await skel(["start", `APP-T100`])).out).toBe(`Started app-t100.\n`);
+    expect((await skel(["start", `APP-T100`])).out).toBe(`Started APP-T100.\n`);
     await until(() => log().split(ready).length > before, longWait);
     expect(log()).not.toContain("was deleted");
     expect(onRemote()).toBe(true);
