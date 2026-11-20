@@ -149,6 +149,12 @@ test("a submit its flow doesn't review waits on CI, then is ready, and is never 
     status: "ready",
     mark: { sign: "●", colour: "green" },
   });
+  // With a merge armed it merges by itself, so its mark is hollow, but green as an approval's is.
+  expect(shownOf(thread({ ...green, merge_plan: "armed" }), 3)).toEqual({
+    word: "not reviewed",
+    status: "idle",
+    mark: { sign: "○", colour: "green" },
+  });
   expect(taskStage(ready, true)).toBe("ready for review");
   expect(listStage(ready, true)).toBe("ready");
   // Without a forge, it is ready on its branch at once.

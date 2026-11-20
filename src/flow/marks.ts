@@ -25,8 +25,9 @@ export function markOf(status: Status, word: string): Mark {
   const failed = ["review failed", "review timed out", "submit failed", "check failed"];
   if (failed.includes(word)) return { sign: "○", colour: "red" };
   if (status === "ready") return { sign: "●", colour: "green" };
-  // Approved with a merge armed, it merges by itself, so it is good news that waits on nobody.
-  if (word === "approved") return { sign: "○", colour: "green" };
+  // Approved, or not reviewed as its flow has no review stage, with a merge armed, it merges by
+  // itself, so it is good news that waits on nobody.
+  if (word === "approved" || word === "not reviewed") return { sign: "○", colour: "green" };
   if (status === "needs you") return { sign: "●", colour: "yellow" };
   const waits = word === "reviewing" || word === "queued for review" || word.startsWith("limit");
   if (waits) return { sign: "○", colour: "dim" };
