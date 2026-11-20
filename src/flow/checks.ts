@@ -8,16 +8,28 @@ import { Queue } from "./queue.ts";
 // The one queue of checks the daemon keeps, for every repository on this machine.
 const checks = new Queue();
 
+// Who holds a check slot, such as APP-12/reviewer or you, and in which repository, as
+// owner/name.
+type Holder = { holder: string; repository: string };
+
+// Who holds each slot taken now, and since when, so sc ps can say what keeps a check waiting in
+// line.
+const held = new Map<Socket, Holder & { since: number }>();
+
 // The slots are counted only here, in the daemon. A daemon that restarts starts counting from
 // none, and a suite that was running finishes on its own beside the new ones. A restart is rare,
 // and the cost is a short overlap, never a wrong result.
 
-// Answers an sc check on its connection, given the repository's test commands. Once a slot is
-// free it sends the commands, and the caller runs them in its own folder. The caller holds the
-// slot while its connection stays open, and closing it, however it ends, frees the slot. So a
-// check that was killed never keeps its place. A caller over the limit is first sent its place
-// in line. A repository configured with no tests runs none, so it takes no slot.
-export function holdCheckSlot(connection: Socket, test: string[] | undefined): void {
+// Answers an sc check on its connection, given the repository's test commands and who asks.
+// Once a slot is free it sends the commands, and the caller runs them in its own folder. The
+// caller holds the slot while its connection stays open, and closing it, however it ends, frees
+// the slot. So a check that was killed never keeps its place. A caller over the limit is first
+// sent its place in line. A repository configured with no tests runs none, so it takes no slot.
+export function holdCheckSlot(
+  connection: Socket,
+  test: string[] | undefined,
+  holder: Holder,
+): void {
   const send = (line: object) => connection.write(`${JSON.stringify(line)}\n`);
   // Without a test command there is nothing to run, and Skelcrew never guesses one.
   if (test === undefined) {
@@ -48,10 +60,20 @@ export function holdCheckSlot(connection: Socket, test: string[] | undefined): v
   // Said only when it waits, with how many wait ahead of it counted in.
   if (checks.full(limit)) send({ queued: checks.inLine() + 1 });
   checks
-    .run({ limit, order: Date.now(), signal: closed.signal }, () => {
+    .run({ limit, order: Date.now(), signal: closed.signal }, async () => {
+      held.set(connection, { ...holder, since: Date.now() });
       send({ test });
-      return heldUntilClosed();
+      try {
+        await heldUntilClosed();
+      } finally {
+        held.delete(connection);
+      }
     })
     // A caller that left while it waited never ran: there is no one to tell.
     .catch(() => {});
+}
+
+// Returns who holds the check slots taken now, and since when, oldest first, for sc ps.
+export function slotHolders(): (Holder & { since: number })[] {
+  return [...held.values()];
 }

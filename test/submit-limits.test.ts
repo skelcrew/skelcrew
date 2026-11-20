@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { git, insideSandbox, read } from "./harness.ts";
+import { git, insideSandbox, read, source, until as waitFor } from "./harness.ts";
 import {
   addApp,
   builder,
@@ -12,6 +12,7 @@ import {
   codexHome,
   config,
   data,
+  env,
   finished,
   github,
   home,
@@ -269,6 +270,54 @@ done`,
     await untilReviewSaved();
     expect(thread()).toMatchObject({ needs_you: 0, verdict: "approve" });
   }, 60_000);
+
+  test("a review ended at its time limit while its sc check runs frees the check slot", async () => {
+    addApp();
+    // The suite ends at once in your checkout, which has the file here, and in the reviewer's
+    // sandbox runs until something ends it. One slot, so your check waits for the review's.
+    const suite = "if [ -e here ]; then touch started; else sleep 600; fi";
+    config(
+      `review: { timeout_minutes: 0.2 }\nlimits: { checks: 1 }\nrepos: { simon/app: { test: [${JSON.stringify(suite)}] } }\n`,
+    );
+    mkdirSync(codexHome(), { recursive: true });
+    writeFileSync(join(codexHome(), "check-1"), "");
+    verdict(2, "approve", "Ready to merge.");
+    await startApp12();
+    await waitFor(
+      async () => (await skel(["ps"])).out.includes("APP-12/reviewer holds a check slot"),
+      {
+        timeout: 30_000,
+      },
+    );
+    // Your own checkout of app, by its remote, runs sc check meanwhile.
+    const mine = join(home, "mine");
+    mkdirSync(mine);
+    git(mine, "init", "-q");
+    git(mine, "remote", "add", "origin", "https://github.com/simon/app.git");
+    writeFileSync(join(mine, "here"), "");
+    const yours = Bun.spawn([process.execPath, source("main.ts"), "check"], {
+      cwd: mine,
+      env: env(),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    // Stopped if the test fails before it ends, and its suite with it.
+    try {
+      const said = new Response(yours.stdout).text();
+      // Ending the review ends its check, so yours starts rather than waiting for the suite.
+      expect(await yours.exited).toBe(0);
+      expect(await said).toContain("number 1 in line");
+      expect(existsSync(join(mine, "started"))).toBe(true);
+    } finally {
+      yours.kill();
+      await yours.exited;
+    }
+    await until(() =>
+      read(join(data(), "threads", "app-12.log")).includes("APP-12's review timed out"),
+    );
+    await until(() => finished("success").length === 1, 30_000);
+    expect((await skel(["ps"])).out).not.toContain("check slot");
+  }, 90_000);
 
   test("a review that times out twice needs you, and the lead hears why", async () => {
     addApp();
