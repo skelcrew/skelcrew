@@ -47,7 +47,7 @@ import { errorText, toRun } from "../say.ts";
 import { refreshBacklog } from "./backlog.ts";
 import { checkPush, cloneRepository, headCommit, remoteEmpty, updateClone } from "./git.ts";
 import { leadOf, leadSession } from "./lead.ts";
-import { renameBuilders, taskName } from "./thread.ts";
+import { taskName } from "./thread.ts";
 
 // What sc says outside any repository while Skelcrew has none yet, so you know where to run it.
 export const noRepositories = "Skelcrew has no repositories yet. Run sc in a checkout of one.";
@@ -428,7 +428,7 @@ async function bringIn(db: Database, details: RepositoryDetails): Promise<void> 
     [owner, repo, fullName, repository.forge, remote, authorOf(claimed)],
   );
   nameRepositories(db);
-  await renameBuilders(db);
+  await renameBuilders();
   const added = repositories(db).find((r) => r.owner === owner && r.repo === repo);
   askAboutAgents(repository, added?.name ?? fullName);
 }
@@ -491,6 +491,17 @@ function oldRemoteOf(
   const at = url.lastIndexOf(old);
   const current = `${repository.owner}/${repository.repo}`;
   return { old, current, url: url.slice(0, at) + current + url.slice(at + old.length) };
+}
+
+// Asks the engine to rename each running builder on a plugin's host by its title as it is now, as
+// adding or removing a repository can give another's name its owner or take it away. The engine
+// does it, so a host that fails says so in the engine's log, not here among sc repo's output. With
+// no engine running, nothing is renamed now, and the engine renames them all as it starts.
+async function renameBuilders(): Promise<void> {
+  // Imported here, as the client's replies are checked with what sc repo ls lists, which
+  // imports this file, and a loop of imports leaves one of them unset as the other loads.
+  const { ask } = await import("../client.ts");
+  await ask({ command: "rename builders" }, 60_000);
 }
 
 // Opens again a repository Skelcrew has, for sc repo add, and says so. A repository whose tab
@@ -920,7 +931,7 @@ export async function removeRepo(name: string, sessions: string): Promise<void> 
   db.run("DELETE FROM repositories WHERE owner = ? AND repo = ?", [found.owner, found.repo]);
   forgetAgents(found);
   nameRepositories(db);
-  await renameBuilders(db);
+  await renameBuilders();
   const trusted = trustLines().filter((line) => line !== "" && line !== fullName);
   if (existsSync(trustFile()))
     writeFileSync(trustFile(), trusted.map((line) => `${line}\n`).join(""));

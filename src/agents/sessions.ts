@@ -459,9 +459,9 @@ export async function renameSession(host: PluginHost, id: string, title: string)
 
 // Reports whether a host's failure at the question `ask` means it doesn't know that question,
 // such as an older plugin asked to rename, rather than that it failed this once. The protocol
-// has no word for an unknown question, so the host is asked one no host knows, and failing it
-// the same way, in the same words, means it didn't know the first either. A timeout or a
-// session gone fails in other words, so a host that is only down for a moment is asked again.
+// has no word for an unknown question, so the host is asked one no host knows, and must fail it
+// the same way, in the same words. That alone can't tell a host that is down, as both may time
+// out alike, so the host must also answer list, which every host knows, to show it is up.
 export async function unknownQuestion(
   host: PluginHost,
   ask: string,
@@ -472,7 +472,11 @@ export async function unknownQuestion(
     () => null,
     (error) => errorText(error),
   );
-  return failed !== null && failed.replaceAll(probe, ask) === errorText(failure);
+  if (failed === null || failed.replaceAll(probe, ask) !== errorText(failure)) return false;
+  return listSessions(host).then(
+    () => true,
+    () => false,
+  );
 }
 
 // Returns the screen the agent in the named session shows now, as text, such as to see whether

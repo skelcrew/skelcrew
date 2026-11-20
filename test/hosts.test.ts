@@ -1265,7 +1265,7 @@ process.exit(0);`,
   expect(said).not.toContain("couldn't rename");
 }, 40_000);
 
-test("a host that doesn't know rename is asked once for all its builders, and says nothing", () => {
+test("a host that doesn't know rename is asked once for all its builders, and logs it once", () => {
   const fake = join(home, ".config", "skelcrew", "plugins", "fake");
   const labels = (task: string) =>
     `{ repository: "simon/app", role: "builder", task: "app-${task}", title: "Fix ${task}" }`;
@@ -1287,10 +1287,9 @@ process.exit(0);`,
     .split("\n")
     .filter((line) => JSON.parse(line).ask === "rename");
   expect(renames).toHaveLength(1);
-  expect(said).toBe("");
-  const logged = readFileSync(join(home, ".local", "share", "skelcrew", "renames.log"), "utf8");
-  expect(logged.trim().split("\n")).toHaveLength(1);
-  expect(logged).toContain("fake can't rename sessions");
+  // One line in the engine's log, not one per builder.
+  expect(said.trim().split("\n")).toHaveLength(1);
+  expect(said).toContain("fake can't rename sessions");
 }, 40_000);
 
 test("a rename that fails for another reason goes to the log, and the next is still asked", () => {
@@ -1307,11 +1306,30 @@ await renameBuilders(db);
 process.exit(0);`,
     { host: "fake", host_id: "fake-app-12", title: "Fix the login redirect" },
   );
-  expect(said).toBe("");
-  const logged = readFileSync(join(home, ".local", "share", "skelcrew", "renames.log"), "utf8");
-  expect(logged).toContain(
-    "couldn't rename SIMON/APP-12 on fake: fake couldn't rename: the host is down for a moment",
+  expect(said).toBe(
+    "couldn't rename SIMON/APP-12 on fake: fake couldn't rename: the host is down for a moment\n",
   );
+  const labels = readFileSync(join(fake, "sessions", "fake-app-12", "labels.json"), "utf8");
+  expect(JSON.parse(labels).title).toBe("SIMON/APP-12 second");
+}, 40_000);
+
+test("a host down for every question isn't taken for one that can't rename", () => {
+  const fake = join(home, ".config", "skelcrew", "plugins", "fake");
+  const said = runWithFakeHost(
+    "sessions",
+    `const fs = require("node:fs");
+const host = (await builderSession(db, "unused", readThread(db, "app-12"))).host;
+await startSession(host, "app-12", { folder: ${JSON.stringify(home)}, command: ["sleep", "30"], env: {}, labels: { repository: "simon/app", role: "builder", task: "app-12", title: "Fix the login redirect" } });
+fs.writeFileSync(${JSON.stringify(join(fake, "down"))}, "");
+record(db, "app-12", { short: "first" });
+await renameBuilders(db);
+fs.rmSync(${JSON.stringify(join(fake, "down"))});
+record(db, "app-12", { short: "second" });
+await renameBuilders(db);
+process.exit(0);`,
+    { host: "fake", host_id: "fake-app-12", title: "Fix the login redirect" },
+  );
+  expect(said).not.toContain("can't rename sessions");
   const labels = readFileSync(join(fake, "sessions", "fake-app-12", "labels.json"), "utf8");
   expect(JSON.parse(labels).title).toBe("SIMON/APP-12 second");
 }, 40_000);

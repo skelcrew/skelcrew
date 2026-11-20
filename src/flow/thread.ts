@@ -7,7 +7,7 @@ import { z } from "zod";
 import { HarnessName, harnessNamed } from "../agents/harness.ts";
 import { listSessions, renameSession, unknownQuestion } from "../agents/sessions.ts";
 import { savedJson, taskColumns } from "../db.ts";
-import { renamesLogFile, threadsDir } from "../paths.ts";
+import { threadsDir } from "../paths.ts";
 import { type Host, hostNamed, pluginHost } from "../plugins/runtime.ts";
 import { errorText } from "../say.ts";
 import { threadTask } from "./copy.ts";
@@ -462,8 +462,8 @@ export function record(
 // showing an old one. A builder on tmux needs nothing, as Skelcrew's list reads the title from
 // here. It doesn't wait for the host. A host that doesn't know the question, such as an older
 // plugin, isn't asked again until Skelcrew restarts. Any other failure only costs that new name,
-// and the next title is still sent. Both go to a log file, never your terminal, as sc repo add
-// renames too. Each rename waits for the one before on the same session and sends the title as
+// and the next title is still sent. Both are logged, never thrown, and the engine's own renames,
+// which sc repo asks it for too, go to the engine's log. Each rename waits for the one before on the same session and sends the title as
 // it is then, so two quick changes can't reach the host out of order and leave it on the older
 // title. It gives back a promise that settles once the host answered, for a command that ends
 // before it would.
@@ -486,11 +486,13 @@ export function renameOnHost(db: Database, folder: string): Promise<void> {
       async (error) => {
         if (await unknownQuestion(host, "rename", error)) {
           canRename.set(plugin, false);
-          logRename(
+          console.log(
             `${plugin} can't rename sessions, so Skelcrew stops asking it: ${errorText(error)}`,
           );
         } else
-          logRename(`couldn't rename ${threadName(db, thread)} on ${plugin}: ${errorText(error)}`);
+          console.log(
+            `couldn't rename ${threadName(db, thread)} on ${plugin}: ${errorText(error)}`,
+          );
       },
     );
     const turn = asked.then(() => {});
@@ -505,14 +507,6 @@ export function renameOnHost(db: Database, folder: string): Promise<void> {
     if (renaming.get(folder) === settled) renaming.delete(folder);
   });
   return settled;
-}
-
-// Writes a line about a rename to the renames' log. One that can't be written, such as on a
-// full disk, costs only the line.
-function logRename(line: string): void {
-  try {
-    appendFileSync(renamesLogFile(), `${new Date().toISOString()} ${line}\n`);
-  } catch {}
 }
 
 // Whether each plugin's host can rename sessions, by the plugin's name: true once one rename

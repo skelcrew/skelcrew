@@ -6,7 +6,8 @@
 // own transport, when the test's manifest says it provides one, takes an agent as idle unless
 // its screen shows Claude Code's busy mark, and types a message in one step, noting it in
 // `delivered`. With a file hang-status, the first status it is given hangs, and with a file
-// garble-<question> it answers that question with nothing, with fail-<question> it fails it
+// garble-<question> it answers that question with nothing, with down it fails every question
+// alike, with fail-<question> it fails it
 // once, with unknown-<question> it fails it every time as an older plugin that doesn't know it,
 // with slow-<question> it takes two seconds over it, and with hold-<question> it holds it
 // from a given time on. With a file lose-start, it starts the
@@ -182,6 +183,11 @@ if (from > 0) {
 }
 // With a file slow-<question>, it takes two seconds over that question, as a slow host would.
 if (existsSync(join(dir, `slow-${question.ask}`))) await Bun.sleep(2000);
+// With a file down, it fails every question in the same words, as a host that is down would.
+if (existsSync(join(dir, "down"))) {
+  console.error("the host is down");
+  process.exit(1);
+}
 // A question it doesn't know, or one with a file unknown-<question>, as an older plugin that
 // doesn't know it, such as herdr's before it could rename, fails every time.
 if (!answers[question.ask] || existsSync(join(dir, `unknown-${question.ask}`))) {

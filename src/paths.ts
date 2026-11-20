@@ -15,9 +15,6 @@ export const screenLogFile = () => join(dataDir(), "screen.log");
 // Returns the file where a value Skelcrew can't read back from its database is logged, as the
 // screen, which reads it too, has your terminal for its output.
 export const dbLogFile = () => join(dataDir(), "db.log");
-// Returns the file where a rename a plugin's host failed is logged. sc repo add renames builders
-// too, and its output is your terminal, where a failure about some other thread doesn't belong.
-export const renamesLogFile = () => join(dataDir(), "renames.log");
 // Returns the file where a daemon run from a checkout writes the full commit it started from and
 // that checkout's folder, on one line. sc --remote reads it there with plain shell, so it must
 // stay at $HOME/.local/share/skelcrew/daemon-code.
