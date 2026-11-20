@@ -310,36 +310,27 @@ function edgeLine(
   return { text, row: null, target: { pinned: spans } };
 }
 
-// Returns the list as lines that fill the terminal, on the row at `here`. The top line comes
-// first, then a notice when there is one, then the lead, then every section's heading, each open
-// one with its rows under it, then the bottom line. `rows` are the rows that show: the lead's and
-// those of the open sections, in the order of the sections. The lead never scrolls. When the
-// sections don't all fit, they scroll together, headings and rows, from the line `top`, so an
-// open section's heading is always right above its rows, and a heading with none under it is
-// closed. Then the first and last lines of the sections say what is hidden above and below, with
-// the headings hidden there, so no section's count goes out of sight. The list moves only when
-// the row you are on would leave the screen. A row that is the first of its section brings its
-// heading into view with it, so opening a section shows the heading over its rows. A terminal
-// too short for those edge lines keeps only the row you are on, or its first line when even it
-// doesn't fit. Gives the lines, what a click on each reaches, so a click hits what it was drawn
-// over, and the scroll they were drawn at, which the next draw starts from. Nothing is drawn in
-// the terminal's last column: a terminal waits there to wrap, and clearing the rest of the line
-// from that state erases the last character drawn. `pane` is the details pane's lines, which
-// show on the right, beside every line but the top line and the bottom two, when the terminal is
-// wide enough. The rows then take the columns left of it, and the top and bottom lines the whole
-// width. The pane takes the same room on every row, so the list never moves as you do.
-export function drawList(
+// Returns the lead's row and the sections under it as lines, exactly `height` of them, on the row
+// at `here`, for the list and for the screen's sidebar alike. The lead comes first, then a blank
+// line, then every section's heading, each open one with its rows under it. `rows` are the rows
+// that show: the lead's and those of the open sections, in the order of the sections. The lead
+// never scrolls. When the sections don't all fit, they scroll together, headings and rows, from
+// the line `top`, so an open section's heading is always right above its rows, and a heading with
+// none under it is closed. Then the first and last lines of the sections say what is hidden above
+// and below, with the headings hidden there, so no section's count goes out of sight. The rows
+// move only when the row you are on would leave the view. A row that is the first of its section
+// brings its heading into view with it, so opening a section shows the heading over its rows. A
+// view too short for those edge lines keeps only the row you are on, or its first line when even
+// it doesn't fit. Gives the lines, each at most `width` columns, what a click on each reaches,
+// and the scroll they were drawn at, which the next draw starts from.
+export function drawRows(
   rows: Row[],
   headings: Heading[],
   here: number,
   top: number,
-  frame: Frame,
-  size: Size,
-  pane: string[] | null = null,
+  width: number,
+  height: number,
 ): { lines: string[]; targets: Target[]; top: number } {
-  const whole = size.width - 1;
-  const beside = pane === null ? 0 : paneWidth(size.width);
-  const width = beside > 0 ? whole - beside - paneEdge.length : whole;
   // The one-line rows' columns, from those rows alone, and the names' width, from every row.
   const short = rows.filter((row) => !tall(row));
   const widest = (of: (row: Row) => string, among = short) =>
@@ -357,16 +348,13 @@ export function drawList(
     return marked([shortLine(row, i === here, columns, width)], i === here, width);
   };
   const countWidth = Math.max(...headings.map((heading) => String(heading.count).length), 1);
-  // The lead is above the sections, and never scrolls. A click on the top line reaches a tab,
-  // which tabAt finds by its column.
+  // The lead is above the sections, and never scrolls.
   const leadAt = rows.findIndex((row) => row.part === "lead");
   const lead = leadAt < 0 ? [] : [...linesOf(leadAt), ""];
-  const notice = frame.notice ? [paint(yellow, fitted(` ${frame.notice}`, width))] : [];
-  const head = [topParts(frame, whole).line, ...notice, "", ...lead];
-  const headTargets: Target[] = head.map((_, at) =>
-    at >= head.length - lead.length && at < head.length - 1 ? { row: leadAt } : null,
+  const leadTargets: Target[] = lead.map((_, at) =>
+    at < lead.length - 1 ? { row: leadAt } : null,
   );
-  const room = Math.max(size.height - head.length - 2, 1);
+  const room = Math.max(height - lead.length, 1);
   // Returns the sections' lines: each heading, with an open section's rows under it. With
   // `parted`, an open section with rows has a blank line after them, which parts it from the
   // next heading.
@@ -427,6 +415,44 @@ export function drawList(
       : visible;
   }
   const blank = Array.from({ length: room - shown.length }, () => "");
+  // The blank lines reach nothing.
+  return {
+    lines: [...lead, ...shown.map((line) => line.text), ...blank],
+    targets: [
+      ...leadTargets,
+      ...shown.map((line) => line.target),
+      ...blank.map((): Target => null),
+    ],
+    top: start,
+  };
+}
+
+// Returns the list as lines that fill the terminal, on the row at `here`. The top line comes
+// first, then a notice when there is one, then a blank line, then the lead and the sections as
+// drawRows lays them out, then the bottom line. A click on the top line reaches a tab, which
+// tabAt finds by its column. Gives the lines, what a click on each reaches, so a click hits what
+// it was drawn over, and the scroll they were drawn at, which the next draw starts from. Nothing
+// is drawn in the terminal's last column: a terminal waits there to wrap, and clearing the rest
+// of the line from that state erases the last character drawn. `pane` is the details pane's
+// lines, which show on the right, beside every line but the top line and the bottom two, when
+// the terminal is wide enough. The rows then take the columns left of it, and the top and bottom
+// lines the whole width. The pane takes the same room on every row, so the list never moves as
+// you do.
+export function drawList(
+  rows: Row[],
+  headings: Heading[],
+  here: number,
+  top: number,
+  frame: Frame,
+  size: Size,
+  pane: string[] | null = null,
+): { lines: string[]; targets: Target[]; top: number } {
+  const whole = size.width - 1;
+  const beside = pane === null ? 0 : paneWidth(size.width);
+  const width = beside > 0 ? whole - beside - paneEdge.length : whole;
+  const notice = frame.notice ? [paint(yellow, fitted(` ${frame.notice}`, width))] : [];
+  const head = [topParts(frame, whole).line, ...notice, ""];
+  const drawn = drawRows(rows, headings, here, top, width, size.height - head.length - 2);
   // A question or a reason must stay on its one line, so it is cut to fit, and the load gives
   // way first.
   const bottom = fitted(` ${frame.bottom}`, whole);
@@ -435,15 +461,13 @@ export function drawList(
   const last = gap > 1 ? `${paint(grey, bottom)}${" ".repeat(gap)}${load}` : paint(grey, bottom);
   // The pane goes beside every line between the top line and the bottom two, each of the list's
   // lines filled out to its width so the pane's edge stays straight.
-  const middle = [...head.slice(1), ...shown.map((line) => line.text), ...blank, ""].map(
-    (line, at) =>
-      beside > 0 && pane !== null
-        ? `${filled(line, width)}${paint(grey, paneEdge)}${pane[at] ?? ""}`
-        : line,
+  const middle = [...head.slice(1), ...drawn.lines, ""].map((line, at) =>
+    beside > 0 && pane !== null
+      ? `${filled(line, width)}${paint(grey, paneEdge)}${pane[at] ?? ""}`
+      : line,
   );
   const lines = [head[0] ?? "", ...middle, last];
-  // The blank lines and the bottom two reach nothing.
-  const rest = [...blank, "", last].map((): Target => null);
-  const targets = [...headTargets, ...shown.map((line) => line.target), ...rest];
-  return { lines, targets, top: start };
+  // The head and the bottom two reach nothing.
+  const targets: Target[] = [...head.map(() => null), ...drawn.targets, null, null];
+  return { lines, targets, top: drawn.top };
 }

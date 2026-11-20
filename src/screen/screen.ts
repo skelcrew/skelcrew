@@ -7,11 +7,23 @@ import { windowTitle } from "../say.ts";
 import { mainFile, singleFile } from "../version.ts";
 import type { Entry } from "./lists.ts";
 
-// How wide the sidebar is, with the line it draws at its edge: room for 31 columns of a title,
-// between its mark and two columns of padding, so a thread's name, word, harness and time
-// usually fit on one line whole. tmux shares a resize out among panes, so it is set back after
-// each.
-export const sidebarWidth = 38;
+// How wide the sidebar is, with the line it draws at its edge: wide enough that a task's two lines
+// usually fit whole, such as `working · Editing rows.ts · #40 · CI passed · 14:31`. On a terminal
+// too narrow for it beside half the terminal, it narrows to what the right side leaves, as the
+// lead or an agent there must stay usable.
+export const sidebarWidth = 58;
+
+// Returns how wide the sidebar is in a terminal `width` columns wide: its own width, or less so the
+// right side keeps at least half, past the border between them.
+export const sidebarFor = (width: number) => Math.min(sidebarWidth, Math.floor((width - 1) / 2));
+
+// The same width as a tmux format, which tmux works out itself on each resize, from the window's
+// width.
+const sidebarFormat = `#{?#{e|<:#{window_width},${2 * sidebarWidth + 1}},#{e|/:#{e|-:#{window_width},1},2},${sidebarWidth}}`;
+
+// A word in the command of a right side attached to a builder. The screen's tmux finds it there,
+// so Ctrl-\ ends only that attachment, never the lead or a task's details.
+export const attachedMark = "skelcrew-attached";
 
 // The tmux commands that set up the screen's server. They run each time the screen opens,
 // before its session starts, so a first draw never shows tmux's own look. Your own ~/.tmux.conf
@@ -33,9 +45,11 @@ const config = [
   // All of tmux's own keys go: its default mouse keys pull a drag or the wheel into copy mode,
   // which would swallow your typing, and its prefix belongs to the agents' server. Alt-Q
   // here, not there, leaves the whole screen. Ctrl-Q does too, though nothing shows it, for a
-  // Mac terminal that doesn't send Option as Alt. Ctrl-\ does nothing here: it only leaves an
-  // agent opened alone, back to where you came from. It stays bound, to an empty command, as
-  // left to reach the agents' server it would detach the agent's pane and leave it empty.
+  // Mac terminal that doesn't send Option as Alt. Ctrl-\ never reaches a pane: left to reach the
+  // agents' server or a host's own client, it would detach it and leave the right side empty. On
+  // a builder you attached to on the right side, it ends that attachment instead, found by the
+  // mark in the pane's command, and the pane goes back to the task's details. Anywhere else it
+  // does nothing.
   // Each key that leaves ends your terminal's session rather than detaching from it. tmux 3.6
   // crashed about one time in five when a detach met another command, such as the sidebar's,
   // ending at that moment, and every terminal on the server lost its screen.
@@ -44,21 +58,39 @@ const config = [
   ["unbind", "-a", "-T", "root"],
   ["bind", "-n", "M-q", "kill-session"],
   ["bind", "-n", "C-q", "kill-session"],
-  ["bind", "-n", "C-\\", ""],
+  [
+    "bind",
+    "-n",
+    "C-\\",
+    "if",
+    "-F",
+    `#{m:*${attachedMark}*,#{pane_start_command}}`,
+    "run-shell 'pkill -P #{pane_pid}'",
+  ],
   // Keys that arrive faster than a millisecond apart are taken for a paste, and tmux then hands
   // them to the pane you type to rather than act on them. Several Alt keys in one read, as fast
   // typing, key repeat or a slow link bring, would lose all but the first two, and type the rest
   // into the agent. A paste that matters comes bracketed anyway.
   ["set", "-g", "assume-paste-time", "0"],
-  // Alt-Up and Alt-Down, with or without Shift, and Alt-Shift-Left and Alt-Shift-Right go to
-  // the sidebar, in pane 0, without moving your typing from the agent. Plain Alt-Left and
-  // Alt-Right stay the agent's, as some terminals send them to move a word while you type.
+  // Alt-Up and Alt-Down, with or without Shift, Alt-Shift-Left and Alt-Shift-Right, and Alt-1 to
+  // Alt-6, which open and close the stages, go to the sidebar, in pane 0, without moving your
+  // typing from the agent. Plain Alt-Left and Alt-Right stay the agent's, as some terminals send
+  // them to move a word while you type.
   ["bind", "-n", "M-Up", "send-keys", "-t", ":.0", "M-Up"],
   ["bind", "-n", "M-Down", "send-keys", "-t", ":.0", "M-Down"],
   ["bind", "-n", "M-S-Up", "send-keys", "-t", ":.0", "M-S-Up"],
   ["bind", "-n", "M-S-Down", "send-keys", "-t", ":.0", "M-S-Down"],
   ["bind", "-n", "M-S-Left", "send-keys", "-t", ":.0", "M-S-Left"],
   ["bind", "-n", "M-S-Right", "send-keys", "-t", ":.0", "M-S-Right"],
+  ...["1", "2", "3", "4", "5", "6"].map((digit) => [
+    "bind",
+    "-n",
+    `M-${digit}`,
+    "send-keys",
+    "-t",
+    ":.0",
+    `M-${digit}`,
+  ]),
   // A click on the tabs, in a status line, reaches no pane, so tmux types which tab it was
   // into the sidebar, as an OSC naming the tab's range. send-keys -F expands no format in what
   // it types, so run-shell -C expands it first. A second click soon after the first is a
@@ -141,13 +173,14 @@ const config = [
   // from refusing the whole screen over it.
   ["set", "-sq", "theme", "terminal"],
   // tmux shares a resize out among panes, so tmux itself sets the sidebar's width back after
-  // each, with no process of Skelcrew's to do it.
-  ["set-hook", "-g", "window-resized", `resize-pane -t :.0 -x ${sidebarWidth}`],
+  // each, with no process of Skelcrew's to do it. run-shell -C works out the width's format
+  // first, as resize-pane takes only a number.
+  ["set-hook", "-g", "window-resized", `run-shell -C "resize-pane -t :.0 -x ${sidebarFormat}"`],
 ];
 
 // Returns a command that runs this same Skelcrew with the given words. A Skelcrew built as a
 // single file runs itself. Otherwise Bun runs this checkout's main file.
-function skelcrewCommand(...words: string[]): string[] {
+export function skelcrewCommand(...words: string[]): string[] {
   const checkout = singleFile ? [] : [mainFile];
   return [process.execPath, ...checkout, ...words];
 }
@@ -215,7 +248,7 @@ export async function openScreen(
     ...border,
     ["new-session", "-s", name, "--", ...attachCommand(agents, session, lead)],
     ["set", "set-titles-string", windowTitle(env.SKELCREW_REMOTE_NAME)],
-    ["split-window", "-hbd", "-l", String(sidebarWidth), "--", ...left],
+    ["split-window", "-hbd", "-l", String(sidebarFor(process.stdout.columns || 80)), "--", ...left],
     // The footer goes across the whole width, below both, as the screen's third pane.
     ["split-window", "-vfd", "-l", footerHeight, "--", ...footerCommand(agents, name)],
     // Ctrl-C reaches a list until it has made its terminal raw, and Bun won't stay ignoring it.
