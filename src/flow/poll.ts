@@ -36,7 +36,7 @@ import { approvedFlowsTold, leadSession } from "./lead.ts";
 import { finishSkippedMerge, mergeIfReady } from "./merging.ts";
 import { briefsNote, noteForLead, skelcrewNoteForLead, typeLeadNotes } from "./messages.ts";
 import { forgeKnown, fullNameIs, hasNoCommits, refreshClone, repositories } from "./repo.ts";
-import { lastPushed } from "./round.ts";
+import { ciWaitEnded, lastPushed } from "./round.ts";
 import { needsYou } from "./status.ts";
 import { claimUnderWay } from "./task-queue.ts";
 import { readThread, record, Thread, threadName } from "./thread.ts";
@@ -261,6 +261,30 @@ async function actOnBranchHead(
   if (head.ok) await actOnMovedBranch(db, sessions, thread, head.out.trim());
 }
 
+// Saves on the thread that no CI runs on its PR's head, once the wait for CI's first check on
+// it ended with none, such as a docs-only commit CI skips with a paths filter. Its checks then
+// count as passed, so it gets ready and merges rather than waiting on CI that never comes. A
+// check that shows later still counts, as CI's checks come first. Only a head that would merge
+// waits: an approved one, or the one a merge without approval pinned, with no round under way.
+function noteNoCi(db: Database, thread: Thread, pr: PullRequest): void {
+  const waits =
+    ["working", "waiting"].includes(thread.status) &&
+    (thread.verdict === "approve" || thread.merge_pinned === pr.head) &&
+    thread.submitting === null &&
+    thread.reviewing === null &&
+    pr.state === "open" &&
+    pr.head !== null &&
+    thread.no_ci !== pr.head &&
+    ciState(pr) === null;
+  if (waits && ciWaitEnded(db, thread, pr))
+    record(
+      db,
+      thread.folder,
+      { no_ci: pr.head },
+      `no CI check showed on ${pr.head}: no CI runs on it`,
+    );
+}
+
 // Acts on what the thread's PR, as its forge just returned it, means for the thread. `before`
 // is the thread as it was when the poll began: a round that moved on while the forge answered
 // may have pushed a newer commit, and what the forge said about the checks would be the older
@@ -275,6 +299,7 @@ async function actOnPr(
   // answered. One already done or failed has nothing left to act on.
   const { folder } = before;
   const moved = await movedOnRemote(before, pr.head);
+  noteNoCi(db, readThread(db, folder), pr);
   const thread = readThread(db, folder);
   if (!["queued", "working", "waiting", "stopped"].includes(thread.status)) return;
   // Read only for a thread with a PR, so a bad max_rounds never fails the copy's update, nor

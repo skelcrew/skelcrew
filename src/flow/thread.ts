@@ -130,6 +130,11 @@ export const Thread = z.object({
   // can tell a repository with no CI from CI that went missing. False in a row from before
   // Skelcrew kept it, until a poll finds checks.
   ci_seen: z.coerce.boolean(),
+  // The PR's head commit on which the wait for CI's first check ended with no CI check, such as
+  // a docs-only commit CI skips with a paths filter. Its checks then count as passed, and the
+  // lists say "no CI". It names its commit, so a newer push waits again. Null until a wait ends
+  // that way, and in a row from before Skelcrew kept it.
+  no_ci: z.string().nullable(),
   // The harness of the review waiting or running, which can differ from the latest finished
   // one's once you change your config.
   reviewer: HarnessName.nullable(),
