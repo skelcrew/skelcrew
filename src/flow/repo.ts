@@ -827,10 +827,13 @@ export async function removeRepo(name: string, sessions: string): Promise<void> 
     ]);
     throw error;
   }
-  // Remove the clone, the row and your trust in it. The other repositories are named again,
-  // as one that shared a name with this one can drop its owner.
+  // Remove the clone, the row, the lead's requests and your trust in it. A request left behind
+  // would come back with the repository, and a yes could start work its new lead never asked
+  // for. The other repositories are named again, as one that shared a name with this one can
+  // drop its owner.
   rmSync(cloneDir(found.owner, found.repo), { recursive: true, force: true });
   db.run("DELETE FROM repositories WHERE owner = ? AND repo = ?", [found.owner, found.repo]);
+  db.run("DELETE FROM lead_requests WHERE owner = ? AND repo = ?", [found.owner, found.repo]);
   forgetAgents(found);
   nameRepositories(db);
   await renameBuilders(db);

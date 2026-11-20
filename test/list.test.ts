@@ -950,6 +950,30 @@ test("every section has its heading with its count, only open ones show rows, an
   expect(lines).toHaveLength(26);
 });
 
+// Requests are pinned nowhere, so however many wait, the list keeps to the terminal's height, its
+// bottom line shows, and the one you are on is in view, the oldest included.
+test("many requests of the lead's scroll with the sections, and the one you are on stays in view", () => {
+  sql(
+    `INSERT INTO lead_requests (owner, repo, action, says, made) VALUES ${Array.from(
+      { length: 30 },
+      (_, at) => `('simon', 'app', '{"kind":"start","task":"31"}', 'Request ${at + 1}?', ${at})`,
+    ).join(", ")};`,
+  );
+  const lines = drawn(1, 20);
+  expect(lines).toHaveLength(20);
+  expect(lines.slice(2, 6).map((line) => line.trimEnd())).toEqual([
+    "   ○ lead    claude",
+    "     running",
+    "",
+    " ▸ ● Request 30?",
+  ]);
+  expect(lines.at(-1)).toStartWith(" ↑↓ move");
+  const oldest = drawn(30, 20);
+  expect(oldest).toHaveLength(20);
+  expect(oldest.some((line) => line.startsWith(" ▸ ● Request 1?"))).toBe(true);
+  expect(oldest.at(-1)).toStartWith(" ↑↓ move");
+});
+
 test("an open section shows its rows, and its heading is bright while a closed one is dim", () => {
   const lines = drawn(1, 24, 80, ["backlog", "ready"]);
   // A task in Backlog or Done takes one line, in columns: mark, name, title, when it changed.
@@ -1654,10 +1678,12 @@ test("y and n answer the lead's request you are on, and Enter says to use them",
   await open();
   const lines = seen().split("\n");
   const lead = lines.findIndex((line) => /○ lead +claude/.test(line));
-  expect(lines[lead + 2]).toMatch(/^ {3}● Start a new task: CSV {2}\[31mexport\? *$/);
-  expect(lines[lead + 3]).toMatch(/^ {3}● Add the repository simon\/site\? *$/);
-  expect(lines[lead + 4]).toMatch(/^ {3}● Start APP-31 Export as CSV\? *$/);
-  expect(lines[lead + 5]?.trim()).toBe("");
+  // The sections scroll here, so their top edge comes first, blank while nothing is above it.
+  expect(lines[lead + 2]?.trim()).toBe("");
+  expect(lines[lead + 3]).toMatch(/^ {3}● Start a new task: CSV {2}\[31mexport\? *$/);
+  expect(lines[lead + 4]).toMatch(/^ {3}● Add the repository simon\/site\? *$/);
+  expect(lines[lead + 5]).toMatch(/^ {3}● Start APP-31 Export as CSV\? *$/);
+  expect(lines[lead + 6]?.trim()).toBe("");
   // The list starts on what needs you, right below the requests.
   press("Up");
   await until(() => here().startsWith("▸ ● Start APP-31"), "the request's row");

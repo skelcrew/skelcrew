@@ -381,11 +381,11 @@ function edgeLine(
 // at `here`, for the list and for the screen's sidebar alike. The lead comes first, then its
 // requests that wait for your yes, then a blank line, then every section's heading, each open one
 // with its rows under it. `rows` are the rows that show: the lead's, its requests' and those of
-// the open sections, in the order of the sections. The lead and its requests never scroll. When
-// the sections don't all fit, they scroll together, headings and rows, from the line `top`, so an
-// open section's heading is always right above its rows, and a heading with none under it is
-// closed. Then the first and last lines of the sections say what is hidden above
-// and below, with the headings hidden there, so no section's count goes out of sight. The rows
+// the open sections, in the order of the sections. The lead never scrolls, and its requests
+// scroll with the sections. When the sections don't all fit, they scroll together, headings and
+// rows, from the line `top`, so an open section's heading is always right above its rows, and a
+// heading with none under it is closed. Then the first and last lines of the sections say what is
+// hidden above and below, with the headings hidden there, so no section's count goes out of sight. The rows
 // move only when the row you are on would leave the view. A row that is the first of its section
 // brings its heading into view with it, so opening a section shows the heading over its rows. A
 // view too short for those edge lines keeps only the row you are on, or its first line when even
@@ -421,31 +421,38 @@ export function drawRows(
     return marked([shortLine(row, i === here, columns, width)], i === here, width);
   };
   const countWidth = Math.max(...headings.map((heading) => String(heading.count).length), 1);
-  // The lead and its requests are above the sections, and never scroll.
-  const leads = rows.flatMap((row, i) =>
-    row.section === "lead" ? linesOf(i).map((text) => ({ text, row: i })) : [],
+  // The lead is above the sections, and never scrolls. Its requests come right under it, at the
+  // top of the sections' part, so however many wait they scroll with the sections, and the one
+  // you are on stays in view. A blank line parts them from the first heading.
+  const leadAt = rows.findIndex((row) => row.part === "lead");
+  const requests = rows.flatMap((row, i) =>
+    row.part === "request" ? linesOf(i).map((text) => ({ text, row: i, target: { row: i } })) : [],
   );
-  const lead = leads.length === 0 ? [] : [...leads.map((line) => line.text), ""];
-  const leadTargets: Target[] = [
-    ...leads.map((line): Target => ({ row: line.row })),
-    ...(leads.length === 0 ? [] : [null]),
-  ];
+  const blankLine = { text: "", row: null, target: null };
+  const leadLines = leadAt < 0 ? [] : linesOf(leadAt);
+  const lead = leadAt < 0 ? [] : [...leadLines, ...(requests.length > 0 ? [] : [""])];
+  const leadTargets: Target[] = lead.map((_, at) =>
+    at < leadLines.length ? { row: leadAt } : null,
+  );
   const room = Math.max(height - lead.length, 1);
-  // Returns the sections' lines: each heading, with an open section's rows under it. With
-  // `parted`, an open section with rows has a blank line after them, which parts it from the
-  // next heading.
-  const sections = (parted: boolean): BodyLine[] =>
-    headings.flatMap((heading) => {
+  // Returns the requests and the sections' lines: each heading, with an open section's rows under
+  // it. With `parted`, an open section with rows has a blank line after them, which parts it from
+  // the next heading.
+  const sections = (parted: boolean): BodyLine[] => [
+    ...requests,
+    ...(requests.length > 0 ? [blankLine] : []),
+    ...headings.flatMap((heading) => {
       const ours = rows.flatMap((row, i) =>
         row.section === heading.section
           ? linesOf(i).map((text) => ({ text, row: i, target: { row: i } }))
           : [],
       );
-      const after = parted && ours.length > 0 ? [{ text: "", row: null, target: null }] : [];
+      const after = parted && ours.length > 0 ? [blankLine] : [];
       const text = headingLine(heading, countWidth, width);
       const line = { text, row: null, target: { section: heading.section } };
       return [line, ...ours, ...after];
-    });
+    }),
+  ];
   let body = sections(true);
   let shown = body;
   let start = 0;
