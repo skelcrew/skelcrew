@@ -70,18 +70,22 @@ afterEach(async () => {
   rmSync(home, { recursive: true, force: true });
 });
 
-// Runs the daemon, polling every 200 milliseconds.
+// Runs the daemon, polling every 200 milliseconds and looking at the queue every 100.
 function serve(): Subprocess {
   const code = `import { serve } from ${JSON.stringify(source("flow/daemon.ts"))};
 await serve(${JSON.stringify(socket)}, 200);`;
   const run = Bun.spawn([process.execPath, "-e", code], {
-    env: { ...env(), SKELCREW_CHECK_WAIT_MS: "0" },
+    env: { ...env(), SKELCREW_CHECK_WAIT_MS: "0", SKELCREW_QUEUE_LOOK_MS: "100" },
     stdout: Bun.file(join(home, "daemon.log")),
     stderr: Bun.file(join(home, "daemon.err")),
   });
   running.push(run);
   return run;
 }
+
+// Waits long enough for the daemon to look at the queue five times, so a task that would start
+// has started. Nothing tells when a look found nothing to start, so this is a wait.
+const queueLooks = () => Bun.sleep(500);
 
 // Stops the daemon, as a restart of the engine does. Sessions keep running.
 async function stopDaemon(): Promise<void> {
@@ -213,7 +217,7 @@ test("a start over limits.threads waits as queued, and starts in order once a bu
   expect(app12).toMatchObject({ stage: "working", thread: { status: "queued" } });
   expect(await sc("ps", "app")).toContain("queued");
   // Nothing starts while app-11's builder works.
-  await Bun.sleep(3000);
+  await queueLooks();
   expect(statuses()).toEqual({ "app-11": "working", "app-12": "queued", "app-13": "queued" });
   // Once it ends, app-12 starts, and app-13 only once app-12's builder has ended too.
   await sc("rm", "app-11");
@@ -232,7 +236,7 @@ test("a queued task keeps its place after a restart of the engine", async () => 
   await sc("start", "app-12");
   await stopDaemon();
   await serveApp();
-  await Bun.sleep(3000);
+  await queueLooks();
   expect(statuses()).toEqual({ "app-11": "working", "app-12": "queued", "app-13": "queued" });
   // app-13 joined first, so it starts first.
   await sc("rm", "app-11");
@@ -313,7 +317,7 @@ openDb().exec(${JSON.stringify(cut)});`;
   Bun.spawnSync([process.execPath, "-e", code], { env: env() });
   await serveApp();
   await sc("start", "app-13");
-  await Bun.sleep(3000);
+  await queueLooks();
   expect(statuses()).toEqual({ "app-11": "working", "app-12": "queued", "app-13": "queued" });
   // It joined first, so it starts first.
   await sc("rm", "app-11");
@@ -334,7 +338,7 @@ test("a queued sc start leaves the queue only once its claim is made, across a r
   await stopDaemon();
   await serveApp();
   await sc("rm", "app-11");
-  await Bun.sleep(3000);
+  await queueLooks();
   expect(statuses()["app-12"]).toBe("queued");
   // Once the tracker takes the claim, it starts, once.
   rmSync(failing);
@@ -378,7 +382,7 @@ openDb().exec(${JSON.stringify(rows)});`;
   writeFileSync(failing, "network is down");
   await serveApp();
   await sc("rm", "app-11");
-  await Bun.sleep(3000);
+  await queueLooks();
   expect(statuses()).toMatchObject({ "app-12": "queued", "app-13": "queued" });
   // Once app-12's claim is made, it starts first, and app-13 after it.
   rmSync(failing);
@@ -415,7 +419,7 @@ test("a queued task whose issue another machine claimed while its claim failed l
   expect(leadHears()).toContain("app-12 left the queue: its issue was claimed");
   // A place frees up, and app-12 never starts.
   await sc("rm", "app-11");
-  await Bun.sleep(3000);
+  await queueLooks();
   expect(leftQueue("app-12")).toHaveLength(0);
   const tasks = JSON.parse(await sc("ls", "app", "--json"));
   expect(tasks.find((row: { task: string }) => row.task === "app-12")).toMatchObject({
@@ -534,7 +538,7 @@ openDb().exec(${JSON.stringify(rows)});`;
   await until(() => asked(plugin).some((q) => q.ask === "close pr"));
   // A place frees up while app-12 is being removed: app-13, behind it, doesn't take it.
   await sc("rm", "app-11");
-  await Bun.sleep(3000);
+  await queueLooks();
   expect(statuses()).toMatchObject({ "app-12": "queued", "app-13": "queued" });
   rmSync(join(plugin, "hold-close-pr"));
   expect((await removal).code).not.toBe(0);

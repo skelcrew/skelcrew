@@ -202,6 +202,15 @@ const exitLook = z.coerce
   .catch(1000)
   .parse(process.env.SKELCREW_EXIT_LOOK_MS ?? 1000);
 
+// How often the daemon looks at the queue of limits.threads for a task whose turn came, in
+// milliseconds. Tests of the queue set SKELCREW_QUEUE_LOOK_MS shorter, so seeing that nothing
+// starts takes a fraction of a second rather than several.
+const queueLook = z.coerce
+  .number()
+  .min(0)
+  .catch(2000)
+  .parse(process.env.SKELCREW_QUEUE_LOOK_MS ?? 2000);
+
 // Ends the daemon on a signal: removes its sockets, ends the processes it started, and exits.
 // The agents' sessions aren't the daemon's processes, so agents keep working while the
 // daemon is down. The processes it started, such as a git clone or a reviewer, are ended and
@@ -1022,8 +1031,8 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
   // Type the messages waiting for builders as soon as each can take them, looking every two
   // seconds, as a builder becomes idle with no word to the daemon, such as after Esc.
   setInterval(() => deliverAllWaiting(db, sessions), 2000);
-  // Start the tasks whose turn came in the queue of limits.threads, now and every two seconds
-  // from here on, as a builder ends in many ways, and a limit raised in a file frees places too.
+  // Start the tasks whose turn came in the queue of limits.threads, now and every queueLook from
+  // here on, as a builder ends in many ways, and a limit raised in a file frees places too.
   // Only after the threads above were brought back, so a task leaving the queue now is never
   // also taken for one whose setup the daemon's stop cut short. A thread sc rm is removing stays
   // queued, so it never starts while it is being removed, as does one that still owes its claim,
@@ -1039,7 +1048,7 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
     }
   };
   startFromQueue();
-  setInterval(() => doing("starting tasks from the queue", startFromQueue), 2000);
+  setInterval(() => doing("starting tasks from the queue", startFromQueue), queueLook);
   // Start polling, which also lets any sc start waiting on it go ahead, and keep Skelcrew itself
   // up to date.
   polling.resolve(pollRepositories(db, sessions, every, setUpAndStart, startingTasks));
