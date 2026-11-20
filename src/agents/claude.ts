@@ -475,13 +475,11 @@ function inputStart(screen: string[]): number | null {
   let start = at - 1;
   if (/^[○◔◑◕●◐◒◓] \S+ · \/effort$/.test((lines[start - 1] ?? "").trim())) start--;
   // The tip: `⎿  Tip:` right under the busy line, a spinner, a word ending in … and how long the
-  // turn has run, such as `✻ Forging… (2m 13s · esc to interrupt)`. A tip too long for one line
-  // goes on under its text, so the lines under it that start there go with it, as long as only
-  // blank lines follow them down to the input area.
-  let last = start - 1;
-  while (last > 0 && (lines[last] ?? "").trim() === "") last--;
-  let tip = last;
-  while (tip > 0 && /^ {5}\S/.test(lines[tip] ?? "")) tip--;
+  // turn has run, such as `✻ Forging… (2m 13s · esc to interrupt)`. Only blank lines may follow
+  // it down to the input area. A line under it can't be told from the agent's output by what it
+  // says, even one that goes on a tip too long for one line, so then the tip stays whole.
+  let tip = start - 1;
+  while (tip > 0 && (lines[tip] ?? "").trim() === "") tip--;
   const isTip = /^ {2}⎿ {2}Tip: /.test(lines[tip] ?? "");
   const busy = /^\S \S+… \(/.test(lines[tip - 1] ?? "");
   return isTip && busy ? tip : start;

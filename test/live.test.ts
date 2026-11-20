@@ -68,19 +68,15 @@ test("Claude Code's tip under its busy line is cut, and the busy line stays", as
 
 test("under Claude Code's busy line, only its tip goes, and indented output stays", async () => {
   const tip = await screen("claude-tip.txt");
-  // A tip too long for one line goes whole, with the line it goes on over.
-  const wrapped = tip.replace(/(Tip: [^\n]*)\n/, "$1\n     and keeps working meanwhile\n");
-  expect(agentOutput("claude", wrapped)).not.toContain("keeps working");
-  expect(bottom(agentOutput("claude", wrapped), 1)).toEqual([
-    "✻ Forging… (2m 13s · ↓ 3.4k tokens · esc to interrupt)",
-  ]);
-  // Anything else under the busy line stays, indented or not, the tip with it then.
-  const result = "  ⎿  Added 12 lines";
-  const output = tip.replace(/(Tip: [^\n]*)\n/, `$1\n${result}\n`);
-  expect(bottom(agentOutput("claude", output), 2)).toEqual([
-    expect.stringContaining("Tip: Use /btw"),
-    result,
-  ]);
+  // A line under the tip may be the agent's, a tool's result, indented code or a right-aligned
+  // value, or go on a tip too long for one line. Nothing it says tells which, so it stays, and
+  // the tip with it.
+  const after = ["  ⎿  Added 12 lines", "     return limit;", `${" ".repeat(70)}Total: 42 req/min`];
+  for (const line of after) {
+    const kept = agentOutput("claude", tip.replace(/(Tip: [^\n]*)\n/, `$1\n${line}\n`));
+    expect(bottom(kept, 2)).toEqual([expect.stringContaining("Tip: Use /btw"), line]);
+  }
+  // A line in the tip's place that isn't one stays.
   const code = "     return limit;";
   const under = tip.replace(/\n[^\n]*Tip: [^\n]*/, `\n${code}`);
   expect(bottom(agentOutput("claude", under), 1)).toEqual([code]);
