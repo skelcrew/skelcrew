@@ -77,6 +77,7 @@ const state: Thread = {
   limit_decided: false,
   ended_at: null,
   ended_said: null,
+  review_failed: false,
   agents: null,
   flow: "default",
   review_post: null,
@@ -112,10 +113,13 @@ test("an approval whose PR conflicts isn't ready to merge, even once the thread 
   expect(status({ ...approved, conflicts: "main" })).toBe("idle");
 });
 
-test("a question, the round limit or a failed review needs you", () => {
+test("a question or the round limit needs you, and a failed review doesn't", () => {
   expect(status({ asking: true })).toBe("needs you");
   expect(status({ status: "waiting", needs_you: true, rounds: 4 })).toBe("needs you");
-  expect(status({ status: "waiting", needs_you: true, verdict: "failed" })).toBe("needs you");
+  // The lead hears of a failed review and can run it again.
+  const failed = { status: "waiting", verdict: "failed", review_failed: true } as const;
+  expect(status(failed)).toBe("idle");
+  expect(threadWord({ ...state, ...failed }, 3)).toBe("review failed");
 });
 
 // The lead marks a thread when only you can unblock it, saying what to do, and the word says it.
@@ -146,9 +150,6 @@ test("the round limit needs you only until a merge is armed or its mark is clear
   expect(word({ merge_plan: "armed" })).toBe("round limit");
   expect(shownOf({ ...state, ...past, merge_plan: "armed" }, 3).mark.sign).toBe("○");
   expect(status({ ...past, limit_decided: true })).toBe("idle");
-  // A review that failed is no decision a merge or a cleared limit answers.
-  expect(status({ ...past, verdict: "failed", merge_plan: "armed" })).toBe("needs you");
-  expect(status({ ...past, verdict: "timed out", limit_decided: true })).toBe("needs you");
 });
 
 // An armed merge merges an approved, green thread itself, so you have nothing to do.

@@ -81,7 +81,7 @@ export const waitingText = (count: number) =>
 const notRunning = "its builder isn't running";
 
 // How long a working or waiting thread's builder may be missing while messages wait for it
-// before the thread needs you, in milliseconds. The daemon brings builders back as it starts,
+// before the lead hears of it, in milliseconds. The daemon brings builders back as it starts,
 // which takes a few seconds, and a message saved meanwhile must not flag it. Tests set
 // SKELCREW_MISSING_WAIT_MS shorter, so they don't each wait the whole ten seconds.
 const missingFor = z.coerce
@@ -90,22 +90,28 @@ const missingFor = z.coerce
   .catch(10_000)
   .parse(process.env.SKELCREW_MISSING_WAIT_MS ?? 10_000);
 
-// When each thread's builder was first found missing while messages waited, by its folder.
-const missingSince = new Map<string, number>();
+// When each thread's builder was first found missing while messages waited, by its folder, and
+// whether the lead has heard of it since.
+const missingSince = new Map<string, { since: number; told: boolean }>();
 
-// Has a working or waiting thread need you once its builder has been missing a while with
+// Tells the lead, once, when a working or waiting thread's builder has been missing a while with
 // messages waiting, as nothing else would bring it back, such as a session that ended while a
-// review's changes waited. Its status becomes waiting, as no builder works on it.
+// review's changes waited. The lead can bring it back with sc stop and sc start, so it doesn't
+// need you. Its status becomes waiting, as no builder works on it. A builder found again can be
+// told of once more, should it go missing again.
 function noteMissing(db: Database, sessions: string, thread: Thread, why: string): void {
   if (why !== notRunning) return void missingSince.delete(thread.folder);
-  const since = missingSince.get(thread.folder) ?? Date.now();
-  missingSince.set(thread.folder, since);
-  if (thread.needs_you || Date.now() - since < missingFor) return;
+  const seen = missingSince.get(thread.folder) ?? { since: Date.now(), told: false };
+  missingSince.set(thread.folder, seen);
+  if (seen.told || Date.now() - seen.since < missingFor) return;
+  seen.told = true;
   const count = messagesWaiting(db, thread);
   const wait = count === 1 ? "a message waits" : `${count} messages wait`;
   const missing = `${notRunning}, so ${wait} for it`;
-  record(db, thread.folder, { needs_you: true, status: "waiting" }, missing);
-  typeLeadNotes(db, sessions);
+  record(db, thread.folder, { status: "waiting" }, missing);
+  const name = threadName(db, thread);
+  const back = `sc stop ${name}, then sc start ${name}, brings it back`;
+  noteForLead(db, sessions, thread, `${name}'s builder isn't running, so ${wait} for it. ${back}.`);
 }
 
 // Returns why the thread's builder can't take a message right now, in plain words, or empty

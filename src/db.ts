@@ -81,7 +81,8 @@ export function nameRepositories(db: Database): void {
 // `needs_you_for` is what you must do for the thread, in words for you, as the lead, you or the
 // safety net marked it, or null with no mark. `limit_decided` is whether the lead or you cleared
 // the round limit's needs you, so it stops needing you for it until the next review.
-// `ended_at` is when its builder ended a turn without submitting and nobody has acted on it
+// `review_failed` is whether the latest review or round failed, which the lead hears of and
+// can run again. `ended_at` is when its builder ended a turn without submitting and nobody has acted on it
 // since, and `ended_said` what the builder said last then, for the safety net.
 // They are
 // the thread's, so a thread that starts over begins with none. `host` is the session host its
@@ -121,6 +122,7 @@ const threadColumns = {
   limit_decided: "INTEGER NOT NULL DEFAULT 0",
   ended_at: "INTEGER",
   ended_said: "TEXT",
+  review_failed: "INTEGER NOT NULL DEFAULT 0",
 };
 
 // A task's columns past its repository and ID: what belongs to the work rather than the agent

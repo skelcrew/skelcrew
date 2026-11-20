@@ -220,6 +220,11 @@ export const Thread = z.object({
   // enough. Null otherwise.
   ended_at: z.number().nullable(),
   ended_said: z.string().nullable(),
+  // Whether the latest review failed or timed out, or its round failed before the review
+  // answered, such as on a push that failed. The lead hears of it and can run the review again,
+  // so it doesn't need you. Anything that sets the builder working again, a new submit or
+  // review, ends it.
+  review_failed: z.coerce.boolean(),
   // The tree of the .agents/ you had approved when the task started, whose roles its agents
   // keep to the end, though you approve another meanwhile. Null for the built-in roles, as
   // every task had before Skelcrew read .agents/.

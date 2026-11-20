@@ -5,7 +5,7 @@ import type { Review } from "./reviewer.ts";
 import type { Thread } from "./thread.ts";
 
 // How an event changes the thread's status and its needs you flag.
-type Change = Partial<Pick<Thread, "status" | "needs_you">>;
+type Change = Partial<Pick<Thread, "status" | "needs_you" | "review_failed">>;
 export type PullRequest = Extract<Item, { kind: "pr" }>;
 export type Check = PullRequest["checks"][number];
 type Author = PullRequest["comments"][number]["author"];
@@ -350,7 +350,7 @@ export function decide(
       ...[...tell, ...notice].map((t) => t.split("\n")[0]),
     ];
     // Past the round limit the thread still needs you, as the builder's next round would.
-    const change: Change = { status: "working", needs_you: past };
+    const change: Change = { status: "working", needs_you: past, review_failed: false };
     const why = `told the builder: ${told.join("; ")}`;
     return { seen, tell, notice, typedIn, failed, conflict, moved, change, why };
   }
@@ -395,7 +395,11 @@ export function decideBranch(
     conflict: null,
     moved: head,
     // Past the round limit the thread still needs you, as the builder's next round would.
-    change: { status: "working", needs_you: pastRoundLimit(thread, given.maxRounds) },
+    change: {
+      status: "working",
+      needs_you: pastRoundLimit(thread, given.maxRounds),
+      review_failed: false,
+    },
     why: `told the builder: ${notice.split(". ")[0]}`,
   };
 }
@@ -448,7 +452,7 @@ export function reviewComment(
 // It returns Skelcrew's check to set, the thread's new state, and what to type into the
 // builder, if anything. The builder gets max_rounds rounds of changes. Changes asked for after
 // those are posted but not typed in. They are held until sc start lets the thread go on, and
-// the thread needs you, as after a failed review. With a forge, an approved thread waits on CI,
+// the thread needs you until you or the lead decide. With a forge, an approved thread waits on CI,
 // and polling marks it needs you once every check is green. Without a forge there is no CI, so
 // `ready` is the reason it needs you at once, such as the branch it is ready on.
 export function afterReview(
@@ -457,13 +461,14 @@ export function afterReview(
   maxRounds: number,
   ready: string | null,
 ): Outcome {
-  // A review that failed to give a verdict, or timed out, needs you, and counts no round.
+  // A review that failed to give a verdict, or timed out, counts no round. The lead hears of it
+  // and can run it again, so it needs you only past the round limit, as before it.
   if (review.verdict === "failed" || review.verdict === "timed out")
     return {
       check: "failure",
       description: review.verdict === "failed" ? "review failed" : "review timed out",
       rounds,
-      needsYou: true,
+      needsYou: rounds > maxRounds,
       status: "waiting",
       tell: null,
       held: null,

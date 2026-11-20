@@ -474,7 +474,7 @@ test("the harness is grey, so the titles stand out", () => {
 
 test("a thread that needs you for anything but an approval has a yellow circle and word", () => {
   for (const status of ["working", "waiting"] as const)
-    for (const word of ["question", "round limit", "review timed out", "needs you"]) {
+    for (const word of ["question", "round limit", "needs you", "apply the fix in #463"]) {
       const needing = thread("app-12", { status, state: "needs you", word });
       const screen = draw([lead, needing], "lead", size);
       expect(read(screen).join("\n")).toContain(`  ● 12 app-12\n    ${word} · claude`);
@@ -492,17 +492,14 @@ test("an approved thread is green, as it is good news, though it waits on you to
   }
 });
 
-test("a thread whose harness stopped on an error, or whose review failed, is red, though it needs you", () => {
-  for (const word of ["error", "review failed"]) {
-    const screen = draw(
-      [thread("app-12", { state: word === "error" ? "error" : "needs you", word })],
-      "lead",
-      size,
-    );
-    expect(screen).toContain("\x1b[38;5;210m●");
-    expect(screen).toContain(`\x1b[38;5;210m${word}`);
-    expect(screen).not.toContain("\x1b[38;5;221m");
-  }
+test("a thread whose harness stopped on an error is red and needs you, and one whose review failed is red and hollow", () => {
+  const error = draw([thread("app-12", { state: "error", word: "error" })], "lead", size);
+  expect(error).toContain("\x1b[38;5;210m●");
+  expect(error).toContain("\x1b[38;5;210merror");
+  const failed = draw([thread("app-12", { state: "idle", word: "review failed" })], "lead", size);
+  expect(failed).toContain("\x1b[38;5;210m○");
+  expect(failed).toContain("\x1b[38;5;210mreview failed");
+  for (const screen of [error, failed]) expect(screen).not.toContain("\x1b[38;5;221m");
 });
 
 test("a mark is filled when the thread needs you, and hollow when it doesn't", () => {
@@ -1029,6 +1026,7 @@ const state: Thread = {
   limit_decided: false,
   ended_at: null,
   ended_said: null,
+  review_failed: false,
   agents: null,
   flow: "default",
   review_post: null,
@@ -1056,7 +1054,7 @@ test("a thread's word says who has it right now", () => {
 test("a newer submit is reviewing, not queued, until its own review waits", () => {
   const waited = { status: "waiting", reviewing: "abc", queued: 5 } satisfies Partial<Thread>;
   expect(word({ ...waited, submitting: "the fix" })).toBe("reviewing");
-  expect(word({ ...waited, needs_you: true })).toBe("review failed");
+  expect(word({ ...waited, review_failed: true })).toBe("review failed");
 });
 
 // A builder that replied to you or the lead and stopped waits on the lead, so it must not hide
@@ -1068,7 +1066,7 @@ test("a builder that stopped without submitting doesn't hide anything that needs
   );
   expect(word({ ...ended, verdict: "changes", rounds: 4, held: "fix" })).toBe("round limit");
   expect(word({ ...ended, verdict: "approve", checks: "failing" })).toBe("needs you");
-  expect(word({ ...ended, verdict: "failed" })).toBe("review failed");
+  expect(word({ ...ended, verdict: "failed", review_failed: true })).toBe("review failed");
   // Alone it says so, without claiming a question, as it may only have replied.
   expect(word({ turn_ended: true })).toBe("turn ended");
 });
@@ -1084,13 +1082,22 @@ test("each reason a thread needs you has its own word", () => {
   expect(word({ ...green, checks: "passing" })).toBe("approved");
   expect(word(green)).toBe("approved");
   expect(word({ ...needing, verdict: "changes", rounds: 4, held: "fix" })).toBe("round limit");
-  expect(word({ ...needing, verdict: "failed" })).toBe("review failed");
-  expect(word({ ...needing, verdict: "timed out" })).toBe("review timed out");
+  expect(word({ asking: true, needs_you_for: "apply the fix in #463" })).toBe("question");
+  expect(word({ needs_you_for: "apply the fix in #463" })).toBe("apply the fix in #463");
+});
+
+// The lead hears of a review that failed and can run it again, so it doesn't need you, but the
+// word says so until the builder works again or a new round starts.
+test("a review that failed or timed out says so, without needing you", () => {
+  const failed = { status: "waiting", review_failed: true } satisfies Partial<Thread>;
+  expect(word({ ...failed, verdict: "failed" })).toBe("review failed");
+  expect(word({ ...failed, verdict: "timed out" })).toBe("review timed out");
 });
 
 test("a round that failed before its review answered reads as a failed review", () => {
-  expect(word({ ...needing, submitting: "the fix" })).toBe("review failed");
-  expect(word({ ...needing, reviewing: "abc" })).toBe("review failed");
+  const failed = { status: "waiting", review_failed: true } satisfies Partial<Thread>;
+  expect(word({ ...failed, submitting: "the fix" })).toBe("review failed");
+  expect(word({ ...failed, reviewing: "abc" })).toBe("review failed");
 });
 
 test("past the round limit it stays so while the builder submits again", () => {

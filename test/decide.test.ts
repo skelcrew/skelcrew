@@ -98,6 +98,7 @@ function thread(change: Partial<Thread> = {}): Thread {
     limit_decided: false,
     ended_at: null,
     ended_said: null,
+    review_failed: false,
     agents: null,
     flow: "default",
     review_post: null,
@@ -181,7 +182,7 @@ test("a failed check is handed on to tell the builder, with the thread working a
   const decision = acted(thread(), pr({ checks: [run(29, "lint", "passed"), failing] }));
   expect(decision.failed).toEqual([failing]);
   expect(decision.seen).toEqual(["29", "30"]);
-  expect(decision.change).toEqual({ status: "working", needs_you: false });
+  expect(decision.change).toEqual({ status: "working", needs_you: false, review_failed: false });
 });
 
 test("a check still running, or cancelled, tells the builder nothing", () => {
@@ -215,7 +216,7 @@ test("a failed check with no ID is told while the thread waits, then not again",
   const status: Check = { name: "ci/circleci", id: null, state: "failed" };
   const decision = acted(thread(), pr({ checks: [status] }));
   expect(decision.failed).toEqual([status]);
-  expect(decision.change).toEqual({ status: "working", needs_you: false });
+  expect(decision.change).toEqual({ status: "working", needs_you: false, review_failed: false });
   // Told, the builder works on it until it submits, as for a conflict.
   expect(acted(thread({ status: "working" }), pr({ checks: [status] })).failed).toEqual([]);
 });
@@ -277,7 +278,7 @@ test("your comment is typed into the builder, even past the round limit", () => 
   expect(decision.tell[0]).toContain("simon");
   expect(decision.seen).toEqual(["50"]);
   // Past the round limit the thread still needs you, as a round now would.
-  expect(decision.change).toEqual({ status: "working", needs_you: true });
+  expect(decision.change).toEqual({ status: "working", needs_you: true, review_failed: false });
 });
 
 // On a public repository anyone can comment, and what is typed into the builder steers it.
@@ -319,7 +320,7 @@ test("a person's review is typed in with its line comments", () => {
   expect(decision.tell[0]).toContain("src/export.ts:12");
   expect(decision.tell[0]).toContain("Use the helper here.");
   expect(decision.seen).toEqual(["60"]);
-  expect(decision.change).toEqual({ status: "working", needs_you: false });
+  expect(decision.change).toEqual({ status: "working", needs_you: false, review_failed: false });
 });
 
 // The forge marks these seen once they are typed in, so the person sees Skelcrew picked them up.
@@ -393,7 +394,7 @@ test("a merge conflict tells the builder to merge the base branch", () => {
   expect(decision.tell).toEqual([]);
   // Skelcrew's clone, the builder's origin, must hold next before the builder is told.
   expect(decision.conflict).toBe("next");
-  expect(decision.change).toEqual({ status: "working", needs_you: false });
+  expect(decision.change).toEqual({ status: "working", needs_you: false, review_failed: false });
 });
 
 // A comment is a person's words, which hold whatever the commit, and the conflict Skelcrew's own
@@ -428,7 +429,7 @@ test("a branch that moved on the forge tells the builder to merge it, once", () 
     "git fetch origin, merge origin/skelcrew/12-add-export into your branch",
   );
   // It isn't ready to merge while the builder hasn't got what is on its branch.
-  expect(decision.change).toEqual({ status: "working", needs_you: false });
+  expect(decision.change).toEqual({ status: "working", needs_you: false, review_failed: false });
   // Told, the same head is never told again.
   const told = thread({ seen: decision.seen });
   const again = decide(told, moved, { ...given, moved: true });
@@ -499,7 +500,7 @@ test("a branch at the commit Skelcrew pushed hasn't moved", () => {
 
 test("an approved PR with a conflict doesn't need you yet", () => {
   const decision = acted(thread(), pr({ conflicts: true, checks: [approved] }));
-  expect(decision.change).toEqual({ status: "working", needs_you: false });
+  expect(decision.change).toEqual({ status: "working", needs_you: false, review_failed: false });
 });
 
 test("a thread never polled before starts after the PR's history, acting on none of it", () => {

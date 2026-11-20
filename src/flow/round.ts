@@ -523,15 +523,17 @@ async function actOnVerdict(
   // A newer submit, or sc stop, may have cancelled the round meanwhile, and the thread is then
   // its to change.
   if (signal.aborted) return;
-  // Save the outcome, tell the lead if the thread now needs you, and type any changes into
-  // the builder.
+  // Save the outcome, tell the lead if the thread now needs you or its review failed, and type
+  // any changes into the builder.
   const { rounds, needsYou, status, tell, held } = outcome;
+  const failed = verdict.verdict === "failed" || verdict.verdict === "timed out";
   // A new review asks anew about the round limit, so a decision about the last one ends.
   const change = {
     reviewing: null,
     submitting: null,
     rounds,
     needs_you: needsYou,
+    review_failed: failed,
     limit_decided: false,
     status,
     telling: tell,
@@ -544,6 +546,15 @@ async function actOnVerdict(
     review_at: Date.now(),
   };
   record(db, folder, change, outcome.why);
+  // A review that failed doesn't need you: the lead hears of it, with the error the harness
+  // gave, and can run it again, or mark the thread if only you can fix what stops it.
+  if (failed) {
+    const name = threadName(db, thread);
+    const said =
+      verdict.verdict === "failed" ? `'s review failed: ${verdict.body}` : `: ${verdict.body}`;
+    const line = `${name}${said}`.replace(/\s+/g, " ").slice(0, 200);
+    noteForLead(db, sessions, repository, `${line}. sc review ${name} runs it again.`);
+  }
   typeLeadNotes(db, sessions);
   if (!tell) return;
   // The changes are saved, so a builder that never comes back, which ends the round, keeps them
@@ -722,21 +733,29 @@ function trackRound(
   pushed: Promise<unknown>,
   rest: Promise<void>,
 ): void {
-  // A failure of a round no newer one replaced leaves the thread needing you, so it never
-  // sits waiting on a review that will never come.
+  // A failure of a round no newer one replaced shows as a failed review, and the lead hears of
+  // it, so it never sits waiting on a review that will never come.
   const done = rest.catch((error) => {
     if (cancel.signal.aborted) return;
     const why = errorText(error);
     // A review not yet typed in stays saved, so starting the daemon again can type it. A review
     // that waited in the queue left it with the failure, so it no longer counts as queued.
     const change = {
-      needs_you: true,
+      review_failed: true,
       status: "waiting",
       queued: null,
       ...notHeld,
       review_at: Date.now(),
     } satisfies Partial<Thread>;
-    record(db, folder, change, `the round failed: ${why}`);
+    const thread = record(db, folder, change, `the round failed: ${why}`);
+    const name = threadName(db, thread);
+    const line = `${name}'s round failed: ${why}`.replace(/\s+/g, " ").slice(0, 200);
+    noteForLead(
+      db,
+      sessions,
+      repositoryOf(db, thread),
+      `${line}. sc review ${name} runs it again.`,
+    );
     typeLeadNotes(db, sessions);
   });
   const round = { cancel, pushed, done, ended: false };
@@ -788,6 +807,7 @@ export function submitRound(db: Database, sessions: string, folder: string, summ
     {
       status: "waiting",
       needs_you,
+      review_failed: false,
       // A new submit is the thing a mark for you is most often about, such as a fix, so it
       // clears the mark. The lead marks it again if you still need to act.
       needs_you_for: null,
@@ -1011,6 +1031,7 @@ export function rerunReview(
   const change = {
     status: "waiting",
     needs_you,
+    review_failed: false,
     turn_ended: false,
     ...(byBuilder ? { submitted: true } : {}),
     telling: null,
@@ -1090,7 +1111,14 @@ export function resumeRound(
 export function goOn(db: Database, sessions: string, folder: string): void {
   const { held } = readThread(db, folder);
   // Letting it go on is your or the lead's decision, so it ends a mark for you too.
-  const change = { rounds: 0, needs_you: false, needs_you_for: null, held: null, telling: held };
+  const change = {
+    rounds: 0,
+    needs_you: false,
+    needs_you_for: null,
+    review_failed: false,
+    held: null,
+    telling: held,
+  };
   record(
     db,
     folder,

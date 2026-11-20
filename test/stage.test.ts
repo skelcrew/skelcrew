@@ -76,6 +76,7 @@ const working: Thread = {
   limit_decided: false,
   ended_at: null,
   ended_said: null,
+  review_failed: false,
   agents: null,
   flow: "default",
   review_post: null,
@@ -201,13 +202,13 @@ test("the list puts each task in exactly one stage, from its state", () => {
     ],
     [
       "a review that failed",
-      thread({ status: "waiting", verdict: "failed", needs_you: true }),
+      thread({ status: "waiting", verdict: "failed", review_failed: true }),
       true,
       "reviewing",
     ],
     [
       "a review that timed out",
-      thread({ status: "waiting", verdict: "timed out", needs_you: true }),
+      thread({ status: "waiting", verdict: "timed out", review_failed: true }),
       true,
       "reviewing",
     ],

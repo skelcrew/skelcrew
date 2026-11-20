@@ -34,10 +34,10 @@ export type Status = "working" | "idle" | "needs you" | "ready" | "error";
 // or the safety net marked it with what to do, its builder asked with its harness's question
 // tool, its harness stopped on an error, or its flag is up, such as for an approval with green
 // checks or the round limit. A merge you armed is a decision about either, and so is the lead or
-// you clearing the round limit, so neither needs you then. A review that failed isn't answered
-// by them. A usage limit isn't one, as the builder is woken once it resets. Nor is a builder
-// that stopped without submitting: its last message goes to the lead, who marks it when only
-// you can unblock it.
+// you clearing the round limit, so neither needs you then. A usage limit isn't one, as the
+// builder is woken once it resets. Nor is a review that failed, which the lead can run again,
+// nor a builder that stopped without submitting: the lead hears of both, and marks the thread
+// when only you can unblock it.
 export const needsYou = (thread: Thread) =>
   thread.needs_you_for !== null ||
   thread.asking ||
@@ -57,11 +57,8 @@ export function needsYouFor(thread: Thread): string | null {
 }
 
 // Returns whether the lead or you decided what the thread's flag waits on: a merge is armed, or
-// the round limit was cleared. A review that failed or timed out is no decision either answers.
-const decided = (thread: Thread) =>
-  (thread.merge_plan === "armed" || thread.limit_decided) &&
-  thread.verdict !== "failed" &&
-  thread.verdict !== "timed out";
+// the round limit was cleared.
+const decided = (thread: Thread) => thread.merge_plan === "armed" || thread.limit_decided;
 
 // Returns whether a builder that just ended its turn did so without sc submit, on any harness.
 // Such a builder may have a question written as plain text, or be stuck, or have only replied,
@@ -422,11 +419,13 @@ export function threadWord(thread: Thread, maxRounds: number, now = Date.now()):
   // such as a conflict, cleared the thread's need of you: the task still waits on sc start, and
   // its CI passing must not read as waiting on checks.
   const past = thread.held !== null || (thread.needs_you && pastRoundLimit(thread, maxRounds));
-  const failed = underWay || verdict === "failed";
   if (past) return "round limit";
   if (readyToMerge(thread)) return "approved";
-  if (thread.needs_you && verdict === "timed out" && !underWay) return "review timed out";
-  if (needsYou(thread)) return failed ? "review failed" : "needs you";
+  // A review that failed doesn't need you, but says so until something sets the builder working
+  // again, or a new round starts.
+  if (thread.review_failed && verdict === "timed out" && !underWay) return "review timed out";
+  if (thread.review_failed) return "review failed";
+  if (needsYou(thread)) return "needs you";
   // Not needing you: a builder that stopped without submitting waits on the lead, who got its
   // last message. Its word doesn't claim a question, as it may be only a reply.
   if (thread.turn_ended) return "turn ended";

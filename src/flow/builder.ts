@@ -338,6 +338,7 @@ async function recordThread(
       limit_decided: false,
       ended_at: null,
       ended_said: null,
+      review_failed: false,
       agents,
       flow,
       review_post: null,
@@ -689,7 +690,8 @@ export async function bringBack(db: Database, sessions: string, thread: Thread):
   // A builder you stopped has no host left to look on.
   if (thread.host !== null) {
     if (hostNamed(db, sessions, thread.host) === null) {
-      record(db, thread.folder, { needs_you: true }, hostGone(thread));
+      const action = `run sc install: its session host ${thread.host} is missing`;
+      record(db, thread.folder, { needs_you_for: action }, hostGone(thread));
       typeLeadNotes(db, sessions);
       return;
     }

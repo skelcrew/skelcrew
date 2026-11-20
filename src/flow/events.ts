@@ -212,6 +212,7 @@ async function stopNow(
       status: "stopped",
       needs_you: false,
       needs_you_for: null,
+      review_failed: false,
       asking: false,
       turn_ended: false,
       ended_at: null,

@@ -4,11 +4,16 @@ import { badgeOf, markOf, needsDecision, readyToMerge } from "../src/flow/marks.
 
 test("a filled mark means the thread needs you, and its colour says what kind", () => {
   expect(markOf("ready", "approved")).toEqual({ sign: "●", colour: "green" });
-  for (const word of ["question", "round limit", "review timed out", "needs you"])
+  for (const word of ["question", "round limit", "needs you", "apply the fix in #463"])
     expect(markOf("needs you", word)).toEqual({ sign: "●", colour: "yellow" });
   expect(markOf("error", "failed")).toEqual({ sign: "●", colour: "red" });
   expect(markOf("error", "error")).toEqual({ sign: "●", colour: "red" });
-  expect(markOf("needs you", "review failed")).toEqual({ sign: "●", colour: "red" });
+});
+
+// The lead can run a review that failed again, so it is wrong, but doesn't need you.
+test("a review that failed or timed out is red and hollow", () => {
+  for (const word of ["review failed", "review timed out"])
+    expect(markOf("idle", word)).toEqual({ sign: "○", colour: "red" });
 });
 
 test("a hollow mark is bright while the builder works, and dim while the thread waits", () => {

@@ -875,7 +875,10 @@ c.on("data", (d) => process.stdout.write(d));`;
     db.run("DELETE FROM plugins WHERE name = 'fake'");
     db.close();
     serve();
-    await until(() => thread().needs_you === 1);
+    // Only you can bring the plugin back, so its mark says what to do.
+    await until(
+      () => thread().needs_you_for === "run sc install: its session host fake is missing",
+    );
     expect(String(thread().noting)).toContain("session host fake isn't installed any more");
     expect(thread().host).toBe("fake");
     expect(hasSession("app-12")).toBe(false);
@@ -904,14 +907,18 @@ c.on("data", (d) => process.stdout.write(d));`;
       db.run("PRAGMA busy_timeout = 5000");
       try {
         return z
-          .object({ status: z.string(), host: z.string().nullable(), needs_you: z.number() })
+          .object({
+            status: z.string(),
+            host: z.string().nullable(),
+            needs_you_for: z.string().nullable(),
+          })
           .parse(db.query("SELECT * FROM task_threads WHERE folder = ?").get(folder));
       } finally {
         db.close();
       }
     };
-    await until(() => row("app-13").needs_you === 1);
-    expect(row("app-12")).toEqual({ status: "working", host: "tmux", needs_you: 0 });
+    await until(() => row("app-13").needs_you_for !== null);
+    expect(row("app-12")).toEqual({ status: "working", host: "tmux", needs_you_for: null });
     expect(hasSession("app-12")).toBe(true);
   }, 60_000);
 
