@@ -3,6 +3,7 @@
 // install installs what they pin.
 import { existsSync, lstatSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import { isMap, isScalar, isSeq, parse, parseDocument, stringify } from "yaml";
 import { z } from "zod";
 import { openDb } from "../db.ts";
@@ -80,7 +81,7 @@ const asWritten = { lineWidth: 0, flowCollectionPadding: false };
 // the value in its place, on one line.
 // Returns null when neither fits, such as for a file written as one map on one line, or a key
 // with a value already, which the whole file must be written again to change.
-function withKey(text: string, key: string, value: unknown): string | null {
+function editedInPlace(text: string, key: string, value: unknown): string | null {
   const { contents } = parseDocument(text);
   // A line of ... ends the document, so a new line goes before it, or YAML would refuse the file.
   const added = () => {
@@ -99,10 +100,26 @@ function withKey(text: string, key: string, value: unknown): string | null {
   const emptyList = isSeq(empty) && empty.items.length === 0;
   if (!(blank || emptyList) || !empty.range) return null;
   const [start, end] = empty.range;
-  // A bare key has its empty value right after the colon, which needs a space.
+  // A bare key has its empty value right after the colon, or right before a comment on its line,
+  // and YAML needs a space on each side of the value.
   const space = text[start - 1] === ":" ? " " : "";
+  const spaceAfter = /^[^\s]/.test(text.slice(end)) ? " " : "";
   const flow = stringify(value, { ...asWritten, collectionStyle: "flow" }).trim();
-  return `${text.slice(0, start)}${space}${flow}${text.slice(end)}`;
+  return `${text.slice(0, start)}${space}${flow}${spaceAfter}${text.slice(end)}`;
+}
+
+// Returns `text` with `key` set to `value` as editedInPlace changes it, or null when it can't.
+// Only text that reads back with the value set is kept, so a case editedInPlace misses costs the
+// file's spacing, never its meaning.
+function withKey(text: string, key: string, value: unknown): string | null {
+  const changed = editedInPlace(text, key, value);
+  if (changed === null) return null;
+  try {
+    const read = z.record(z.string(), z.unknown()).parse(parse(changed));
+    return isDeepStrictEqual(read[key], value) ? changed : null;
+  } catch {
+    return null;
+  }
 }
 
 // Sets `key` to `value` in the YAML file, keeping its other lines as they are where it can, as

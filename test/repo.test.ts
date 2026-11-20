@@ -1098,12 +1098,15 @@ test("init adds the forge's plugin to a skelcrew.yaml without changing its other
   expect(readFileSync(file, "utf8")).toBe(
     "setup: [make]\nplugins:\n  - skelcrew/skelcrew-github\n... # end\n",
   );
-  // A bare plugins: names none, so it gets the plugin in its place.
-  writeFileSync(file, "setup:   [ make ]\nplugins:\ntest: [make]\n");
-  expect((await skel(["init"], "", checkout)).err).toBe("");
-  expect(readFileSync(file, "utf8")).toBe(
-    "setup:   [ make ]\nplugins: [skelcrew/skelcrew-github]\ntest: [make]\n",
-  );
+  // A bare plugins: names none, so it gets the plugin in its place, before any comment.
+  for (const [bare, filled] of [
+    ["plugins:", "plugins: [skelcrew/skelcrew-github]"],
+    ["plugins: # later", "plugins: [skelcrew/skelcrew-github] # later"],
+  ]) {
+    writeFileSync(file, `setup:   [ make ]\n${bare}\ntest: [make]\n`);
+    expect((await skel(["init"], "", checkout)).err).toBe("");
+    expect(readFileSync(file, "utf8")).toBe(`setup:   [ make ]\n${filled}\ntest: [make]\n`);
+  }
   // An empty plugins: [] gets the plugin in its place.
   writeFileSync(file, "setup:   [ make ]\nplugins: [ ]  # none yet\ntest: [make]\n");
   expect((await skel(["init"], "", checkout)).err).toBe("");
