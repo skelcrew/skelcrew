@@ -260,7 +260,24 @@ const issue12 = (labeled = false) =>
 const changes = (items: object[], next = "2026-11-06T10:00:00Z") =>
   answer(plugin, "changed", { items, next });
 
-// Has the fake plugin answer the next polls with issue 12, and PR 7 in the given state.
+// The commit Skelcrew last pushed for app-12, as Skelcrew's clone keeps it, or "" before its
+// first push.
+const pushed = () =>
+  Bun.spawnSync(
+    [
+      "git",
+      "-C",
+      join(data(), "repos", "simon", "app"),
+      "rev-parse",
+      "refs/skelcrew/threads/app-12",
+    ],
+    { stdout: "pipe", stderr: "ignore" },
+  )
+    .stdout.toString()
+    .trim();
+
+// Has the fake plugin answer the next polls with issue 12, and PR 7 in the given state. Its head
+// is the commit Skelcrew last pushed, as a forge sends it, unless `head` says otherwise.
 function pr(given: {
   state?: string;
   conflicts?: boolean;
@@ -271,8 +288,9 @@ function pr(given: {
   labeled?: boolean;
   head?: string;
 }): void {
+  const head = given.head ?? pushed();
   const pr7 = prItem("7", "Add export", {
-    ...(given.head ? { head: given.head } : {}),
+    ...(head ? { head } : {}),
     state: given.state ?? "open",
     conflicts: given.conflicts ?? false,
     base: given.base ?? "main",
@@ -2268,20 +2286,6 @@ exec ${bwrap} "$@"`,
       "the human hasn't let you arm a merge when ready: ask them to run sc merge --when-ready in their own terminal";
     const merges = () => asked(plugin).filter((q) => q.ask === "merge pr");
     const leadTyped = () => read(join(data(), "claude", leadName, "typed"));
-    // The commit Skelcrew pushed and its reviewer approved, as Skelcrew's clone keeps it.
-    const pushed = () =>
-      Bun.spawnSync(
-        [
-          "git",
-          "-C",
-          join(data(), "repos", "simon", "app"),
-          "rev-parse",
-          "refs/skelcrew/threads/app-12",
-        ],
-        { stdout: "pipe" },
-      )
-        .stdout.toString()
-        .trim();
     // Arms a new plan, and checks sc said so. A plan still armed, such as after a cancel that
     // was refused, would otherwise carry on as if it were the new one.
     const arm = async () => {
