@@ -187,7 +187,11 @@ const daemonLog = () =>
 // launchctl restarted it. In a process of its own, as one in the test's process got no answer
 // while the test waited on Skelcrew, and on Bun.listen, as a node:net server refused connections
 // for a moment after it said it was listening.
-async function daemon(before: object, after: object, service = 1): Promise<void> {
+async function daemon(
+  before: object,
+  after: object,
+  { service = 1, restarts = true } = {},
+): Promise<void> {
   const managers: [string, string][] = [
     ["systemctl", "--user restart skelcrew"],
     ["launchctl", `kickstart -k gui/${userInfo().uid}/dev.skelcrew.daemon`],
@@ -205,18 +209,28 @@ async function daemon(before: object, after: object, service = 1): Promise<void>
       `${asked[name]}\necho "${name} $*" >> "$HOME/calls"\ntest "$*" = "${restart}" && touch "$HOME/restarted"\nexit 0`,
     );
   const socket = join(home, "run", "skelcrew.sock");
+  const restarted = join(home, "restarted");
   // The socket's file comes a moment before it takes connections.
   const ready = join(home, "listening");
-  const code = `import { existsSync } from "node:fs";
-Bun.listen({
-  unix: ${JSON.stringify(socket)},
-  socket: {
-    data(connection) {
-      const runs = existsSync(${JSON.stringify(join(home, "restarted"))}) ? ${JSON.stringify(after)} : ${JSON.stringify(before)};
-      connection.end(JSON.stringify({ running: true, pid: 1, ...runs }) + "\\n");
-    },
+  // Once restarted, it makes its socket again, as a new daemon would, unless `restarts` is false:
+  // then it stands for a daemon that keeps running, such as one in a terminal.
+  const code = `import { existsSync, rmSync } from "node:fs";
+const answer = {
+  data(connection) {
+    const runs = existsSync(${JSON.stringify(restarted)}) ? ${JSON.stringify(after)} : ${JSON.stringify(before)};
+    connection.end(JSON.stringify({ running: true, pid: 1, ...runs }) + "\\n");
   },
-});
+};
+let server = Bun.listen({ unix: ${JSON.stringify(socket)}, socket: answer });
+if (${restarts}) {
+  const timer = setInterval(() => {
+    if (!existsSync(${JSON.stringify(restarted)})) return;
+    clearInterval(timer);
+    server.stop(true);
+    rmSync(${JSON.stringify(socket)}, { force: true });
+    server = Bun.listen({ unix: ${JSON.stringify(socket)}, socket: answer });
+  }, 20);
+}
 await Bun.write(${JSON.stringify(ready)}, "");`;
   running.push(Bun.spawn([process.execPath, "-e", code], { stdout: "ignore", stderr: "ignore" }));
   await until(() => existsSync(ready));
@@ -325,9 +339,8 @@ async function restart(more: Record<string, string> = {}) {
   return { out, err, code, calls };
 }
 
-// The engine the service runs answers as process 1, and the one it starts in its place as 2.
 test("sc restart restarts the engine's service and says so once the new one answers", async () => {
-  await daemon({}, { pid: 2 });
+  await daemon({}, {});
   const done = await restart();
   expect(done.err).toBe("");
   expect(done.code).toBe(0);
@@ -346,9 +359,9 @@ test("sc restart asks you to stop an engine run in a terminal, and starts no ser
   expect(done.calls).toBe("");
 });
 
-// The old engine still answering counts as not back: only a new process id means it restarted.
+// The old engine still answering counts as not back.
 test("sc restart says where to look when no new engine answers", async () => {
-  await daemon({}, {});
+  await daemon({}, {}, { restarts: false });
   const done = await restart({ SKELCREW_RESTART_WAIT_MS: "2000" });
   expect(done.code).toBe(1);
   expect(done.err).toContain("within 2 seconds");
@@ -358,15 +371,17 @@ test("sc restart says where to look when no new engine answers", async () => {
 // An engine of an older release reports no process id. One that answers while the service runs
 // none runs in a terminal.
 test("sc restart asks you to stop an older engine run in a terminal, with no service running", async () => {
-  await daemon({ pid: 0 }, {}, 0);
+  await daemon({ pid: 0 }, {}, { service: 0 });
   const done = await restart();
   expect(done.code).toBe(1);
   expect(done.err).toContain("Ctrl-C");
   expect(done.calls).toBe("");
 });
 
+// The service can run an older installed Skelcrew than this sc, whose new engine reports no id
+// either.
 test("sc restart restarts an older engine the service runs, which reports no process id", async () => {
-  await daemon({ pid: 0 }, { pid: 2 });
+  await daemon({ pid: 0 }, { pid: 0 });
   const done = await restart();
   expect(done.err).toBe("");
   expect(done.code).toBe(0);
@@ -374,9 +389,9 @@ test("sc restart restarts an older engine the service runs, which reports no pro
 });
 
 // The service manager can run a process of its own beside an older engine in a terminal, such
-// as one retrying on the lock. The old engine keeps answering, with no id, which never counts.
+// as one retrying on the lock. The old engine keeps answering on its old socket.
 test("sc restart doesn't take an older engine in a terminal for the new one", async () => {
-  await daemon({ pid: 0 }, { pid: 0 });
+  await daemon({ pid: 0 }, { pid: 0 }, { restarts: false });
   const done = await restart({ SKELCREW_RESTART_WAIT_MS: "2000" });
   expect(done.code).toBe(1);
   expect(done.err).toContain("within 2 seconds");

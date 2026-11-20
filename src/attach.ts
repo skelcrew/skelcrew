@@ -2,6 +2,7 @@
 // lead or a thread's builder once it runs this Skelcrew's code. Plain sc opens the screen on a
 // lead, sc --list shows the lead's repository as a list, and sc attach opens a builder. sc restart
 // restarts the daemon when you ask.
+import { statSync } from "node:fs";
 import { hostname, userInfo } from "node:os";
 import { z } from "zod";
 import { agentRuns } from "./agents/sessions.ts";
@@ -12,6 +13,7 @@ import { leadOf } from "./flow/lead.ts";
 import { builderSession, findThread } from "./flow/thread.ts";
 import { runList } from "./list/list.ts";
 import { installService, restartDaemon, servicePid, startDaemon } from "./machine/service.ts";
+import { daemonSocket } from "./paths.ts";
 import { attachOnHost } from "./plugins/runtime.ts";
 import { openScreen } from "./screen/screen.ts";
 import { checkoutFolder, git, release, singleFile } from "./version.ts";
@@ -117,13 +119,17 @@ export async function restartEngine(): Promise<void> {
     throw new Error(
       "Skelcrew's engine runs in a terminal, with sc up, not as its service. Stop it there, such as with Ctrl-C, then run sc up again, or sc up --bg to run it as the service. Your agents keep running.",
     );
+  const began = Date.now();
   const log = restartDaemon();
-  // The old engine can still answer for a moment while it stops, so only another process id
-  // counts as the new one. Engines of this release always report theirs.
-  const deadline = Date.now() + restartWait;
+  // A new engine is told by its socket, which an engine makes once it holds the lock: one made
+  // after the restart began. The process id can't tell, as an engine from an older release
+  // reports none, and the service may run one. The old engine, still answering for a moment
+  // while it stops, and one in a terminal, which keeps a new one from starting, keep the socket
+  // they made before.
+  const deadline = began + restartWait;
   while (true) {
-    const now = await daemonRuns();
-    if (now && now.pid !== 0 && now.pid !== before?.pid) break;
+    const made = statSync(daemonSocket(), { throwIfNoEntry: false })?.ctimeMs ?? 0;
+    if (made >= began && (await daemonRuns())) break;
     if (Date.now() > deadline)
       throw new Error(
         `Skelcrew's engine didn't come back within ${restartWait / 1000} seconds: ${log} shows why. An engine from an older release that you ran with sc up in a terminal keeps a new one from starting: stop it there, such as with Ctrl-C.`,
