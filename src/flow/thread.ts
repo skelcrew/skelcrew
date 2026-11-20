@@ -463,8 +463,9 @@ export function record(
 // here. It doesn't wait for the host, and a host that fails, such as an older plugin that
 // doesn't know the question, only costs the new name, so it is logged. Each rename waits for
 // the one before on the same session and sends the title as it is then, so two quick changes
-// can't reach the host out of order and leave it on the older title.
-export function renameOnHost(db: Database, folder: string): void {
+// can't reach the host out of order and leave it on the older title. It gives back a promise
+// that settles once the host answered, for a command that ends before it would.
+export function renameOnHost(db: Database, folder: string): Promise<void> {
   const previous = renaming.get(folder) ?? Promise.resolve();
   const sent = previous.then(async () => {
     const thread = readThread(db, folder);
@@ -473,7 +474,9 @@ export function renameOnHost(db: Database, folder: string): void {
     const title = sessionTitle(db, thread);
     if (host === null) return;
     await renameSession(host, thread.host_id, title).catch((error) =>
-      console.log(`couldn't rename ${folder} on ${host.plugin}: ${errorText(error)}`),
+      console.log(
+        `couldn't rename ${threadName(db, thread)} on ${host.plugin}: ${errorText(error)}`,
+      ),
     );
   });
   // A thread gone by then, which readThread throws for, has nothing to rename.
@@ -482,14 +485,18 @@ export function renameOnHost(db: Database, folder: string): void {
   settled.then(() => {
     if (renaming.get(folder) === settled) renaming.delete(folder);
   });
+  return settled;
 }
 
-// Asks the host of each live builder on a plugin's host to rename it by its title as it is now.
-// The daemon does it as it starts: a host keeps a builder's title while it runs, and one started
-// by a release before has a title without its task's name, which herdr's apps would go on
-// showing. A rename of a title that didn't change does nothing a person sees.
-export function renameBuilders(db: Database): void {
-  for (const thread of liveThreads(db)) renameOnHost(db, thread.folder);
+// Asks the host of each live builder on a plugin's host to rename it by its title as it is now,
+// and settles once every host answered. A host keeps a builder's title while it runs, and the
+// title holds the task's name, so it goes stale twice: a builder started by a release before has
+// no name in it, and a repository added or removed can give another its owner or take it away,
+// such as app-12 becoming simon/app-12. So the daemon does it as it starts, and sc repo does
+// after it names the repositories again. A rename of a title that didn't change does nothing a
+// person sees.
+export async function renameBuilders(db: Database): Promise<void> {
+  await Promise.all(liveThreads(db).map((thread) => renameOnHost(db, thread.folder)));
 }
 
 // Returns the title a builder's session goes by on its host: its task's name as people read it,

@@ -524,6 +524,40 @@ test("names two repositories that share a name with their owners", async () => {
   expect(await listed()).toEqual([["app", "simon/app", "github"]]);
 });
 
+// A builder's title on its plugin's host starts with its task's name, which gains its owner once
+// another repository shares its name, and loses it once none does. The host keeps the title
+// while the builder runs, so adding and removing a repository rename it.
+test("adding or removing a repository renames the running builders whose names it changes", async () => {
+  await skel([], "", onGitHub("simon/app", "WRITE"));
+  // A builder of simon/app's runs on a fake plugin host, under the title it started with.
+  const plugin = join(home, "plugin-fake");
+  mkdirSync(plugin, { recursive: true });
+  writeFileSync(
+    join(plugin, "skelcrew-plugin.yaml"),
+    `name: fake
+version: 0.1.0
+skelcrew: 0.1.0
+about: A session host for tests
+kind: runtime
+provides: [sessions]
+session: [bun, ${JSON.stringify(join(import.meta.dir, "fake-host.ts"))}]
+attach: ["true"]
+`,
+  );
+  const session = join(home, ".config", "skelcrew", "plugins", "fake", "sessions", "fake-app-12");
+  mkdirSync(session, { recursive: true });
+  writeFileSync(join(session, "labels.json"), JSON.stringify({ title: "APP-12 Add export" }));
+  const db = new Database(join(home, ".local", "share", "skelcrew", "skelcrew.db"));
+  db.run("INSERT INTO plugins (name, folder) VALUES ('fake', ?)", [plugin]);
+  db.run(threadSql({ task: "12", title: "Add export", host: "fake", host_id: "fake-app-12" }));
+  db.close();
+  const title = () => JSON.parse(readFileSync(join(session, "labels.json"), "utf8")).title;
+  await skel([], "", onGitHub("other/app", "WRITE"));
+  expect(title()).toBe("SIMON/APP-12 Add export");
+  expect((await skel(["repo", "rm", "other/app"])).err).toBe("");
+  expect(title()).toBe("APP-12 Add export");
+});
+
 // Names are typed in any case, so App and app would name both.
 test("names two repositories whose names differ only in case with their owners", async () => {
   await skel([], "", onGitHub("simon/app", "WRITE"));
