@@ -88,17 +88,22 @@ function aboutPage(page: { name: string; title: string }, width: number): [strin
 const skelName = "#[bold,fg=colour231]Skelcrew#[default]";
 
 // Returns the header above the sidebar: Skelcrew's name, in line with the sidebar's marks, then dim
-// its version, such as v0.4.2 or 6f1c2ab (checkout), then, on a remote, a dot and where it runs, then spaces out to the
-// sidebar's edge. `where` is empty on this machine. It comes from outside, so it is made safe as a
+// its version, such as v0.4.2 or 6f1c2ab (checkout), then, on a remote, a dot and where it runs,
+// then spaces out to the sidebar's edge. `where` is empty on this machine. It comes from outside, so it is made safe as a
 // title is, and cut to stop two columns before the sidebar's edge, as all the sidebar's text does.
-// The place gives way first. A version is never cut, as half a number would be a different one.
+// The place gives way first, then a note in brackets after the version. A version is never cut,
+// as half a number would be a different one.
 function header(where: string, left: number, version: string): string {
   // "  Skelcrew" takes ten columns. The sidebar's edge is two columns left of the agent, and text
   // stops two before it, so what follows the name has `room`.
   const nameWidth = 10;
   const room = Math.max(left - 4 - nameWidth, 0);
-  const taken = Bun.stringWidth(version) + 1;
-  const number = room >= taken ? ` ${version}` : "";
+  // A checkout's note in brackets, such as (checkout), gives way before the version, so its
+  // commit and + changes still show on a narrow sidebar.
+  const short = version.replace(/ \(.*\)$/, "");
+  const shown = Bun.stringWidth(version) + 1 <= room ? version : short;
+  const taken = Bun.stringWidth(shown) + 1;
+  const number = room >= taken ? ` ${shown}` : "";
   // " · " before the place takes three columns.
   const place = fitted(removeControlCodes(where), Math.max(room - 3 - taken, 0));
   const about = `${number}${place && ` · ${place}`}`;

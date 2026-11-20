@@ -199,6 +199,18 @@ test("with no room for both, the place goes first, and then the version, never h
   expect(line(20)).toBe("  Skelcrew");
 });
 
+test("a checkout with changes keeps its commit and changes, giving up only its note in brackets", () => {
+  const version = "6f1c2ab + changes (checkout)";
+  const wide = { left: 60, width: 99 };
+  expect(above({ version }, wide).trimEnd()).toBe("  Skelcrew 6f1c2ab + changes (checkout)");
+  // At the sidebar's usual width of 38 columns, the note doesn't fit.
+  const usual = { left: 39, width: 99 };
+  expect(above({ version }, usual).trimEnd()).toBe("  Skelcrew 6f1c2ab + changes");
+  expect(above({ version: "6f1c2ab (checkout)" }, usual).trimEnd()).toBe(
+    "  Skelcrew 6f1c2ab (checkout)",
+  );
+});
+
 test("the sidebar's edge runs up through the row, and the tabs start where the agent does", () => {
   for (const shown of ["lead", "app-12", "gone", null])
     for (const more of [
