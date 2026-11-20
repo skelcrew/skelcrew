@@ -2043,7 +2043,7 @@ test("o shows the agent's whole screen in the pane and back, and Enter still att
   expect(liveSeen().slice(0, 5)).toContain("step two");
   // It stays as you move, and o brings the strip back.
   press("Down");
-  await until(() => here().startsWith("▸ ● app-14"), "app-14's row");
+  await until(() => here().startsWith("▸ ● APP-14"), "APP-14's row");
   press("Up");
   await until(() => liveSeen().includes("step one"), "the whole screen on app-12 again");
   type("o");
