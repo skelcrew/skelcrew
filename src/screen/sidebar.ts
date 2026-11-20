@@ -13,7 +13,7 @@ import {
   showSession,
 } from "../agents/sessions.ts";
 import { paneTty, paneWidth, respawnPane, screenTmux, showTop } from "../agents/tmux.ts";
-import { openRepository, startOrMerge } from "../client.ts";
+import { moveQueued, openRepository, startOrMerge } from "../client.ts";
 import { openDb } from "../db.ts";
 import { leadOf } from "../flow/lead.ts";
 import { ListStage } from "../flow/stage.ts";
@@ -22,6 +22,7 @@ import { liveThreads } from "../flow/thread.ts";
 import { type Asking, canOpenLinks, openPr, stillOffered } from "../list/actions.ts";
 import { drawRows, enterAttaches, listShare, type Target } from "../list/layout.ts";
 import {
+  buildersNote,
   cutBacklog,
   listRows,
   type Question,
@@ -72,6 +73,8 @@ const keyNames: Record<string, string> = {
   "\x1b[B": "down",
   "\x1bOA": "up",
   "\x1bOB": "down",
+  "\x1b[1;2A": "earlier",
+  "\x1b[1;2B": "later",
   "\x1b[1;4A": "previous section",
   "\x1b[1;4B": "next section",
   "\x1b[1;4C": "next repository",
@@ -84,13 +87,15 @@ const keyNames: Record<string, string> = {
 
 // The keys the footer shows on a task's row, where your typing goes to the sidebar: Enter, as
 // attach where it attaches to the builder, o to show the agent's whole screen or its last lines,
-// the stages' numbers, and s or m only where the row can be started or merged.
+// the stages' numbers, Shift with an arrow only on a queued task in Up next, which it moves in
+// the queue, and s or m only where the row can be started, or queued, or merged.
 function taskFooter(row: Row): string {
   const output = row.task ? " · o output" : "";
-  const start = row.start ? "  s start" : "";
+  const reorder = row.section === "up next" && row.place !== null ? "  ⇧↑↓ reorder" : "";
+  const start = row.start ? (row.start.queues ? "  s queue" : "  s start") : "";
   const merge = row.merge && "ask" in row.merge ? "  m merge" : "";
   const enter = enterAttaches(row) ? "⏎ attach" : "⏎ open";
-  return `⌥↑↓ move  ${enter}${output}  1-6 stages${start}${merge}  ⌥Q quit`;
+  return `⌥↑↓ move  ${enter}${output}  1-6 stages${reorder}${start}${merge}  ⌥Q quit`;
 }
 
 // Returns the repository open in the sidebar, given its owner/name, with its lead's session.
@@ -174,11 +179,14 @@ export async function runSidebar(
   let tty = paneTty(agents, rightPane);
   // The list's rows: every row, those that show, which are the lead's and those of the open
   // sections, the row you are on among those and how far the sections scrolled. Needs you is
-  // always open, and of the stages only Building at first. The sections you open stay open,
+  // always open, and so is Up next, and of the stages only Building at first. The sections you
+  // open stay open,
   // whichever repository you move to, and so does a whole Backlog once you asked for it.
   let all: Row[] = [];
   let rows: Row[] = [];
-  const opened = new Set<Section>(["needs you", "building"]);
+  const opened = new Set<Section>(["needs you", "up next", "building"]);
+  // What Up next's heading says of the builders, read with the rows.
+  let builders = "";
   let wholeBacklog = false;
   let here = 0;
   let top = 0;
@@ -281,7 +289,7 @@ export async function runSidebar(
   // sidebar's edge in the pane's last column, and a column before it is left blank.
   const draw = () => {
     const { width, height } = size();
-    const headings = sectionHeadings(all, opened);
+    const headings = sectionHeadings(all, opened, builders);
     const drawn = drawRows(rows, headings, here, top, Math.max(width - 2, 1), height - 1);
     top = drawn.top;
     targets = [...notice.map((): Target => null), null, ...drawn.targets];
@@ -353,6 +361,13 @@ export async function runSidebar(
         return listRows(db, open, Date.now());
       } catch {
         return [];
+      }
+    });
+    builders = doing("reading how full the builders are", () => {
+      try {
+        return buildersNote(db, open);
+      } catch {
+        return "";
       }
     });
     reshow();
@@ -453,10 +468,10 @@ export async function runSidebar(
       by === 1 ? starts.find((at) => at > here) : starts.filter((at) => at < mine).at(-1);
     if (next !== undefined) moveTo(next);
   };
-  // Opens or closes a stage. Needs you never closes, as it is where you must look. Opening one
-  // moves you to its first row, so its heading and first rows show.
+  // Opens or closes a stage. Needs you and Up next never close, as they are where you must look.
+  // Opening one moves you to its first row, so its heading and first rows show.
   const toggle = (section: Section) => {
-    if (section === "needs you") return;
+    if (section === "needs you" || section === "up next") return;
     if (opened.delete(section)) return reshow();
     opened.add(section);
     reshow();
@@ -464,19 +479,39 @@ export async function runSidebar(
     if (first >= 0) moveTo(first);
   };
 
-  // Has the daemon start or merge once you said y, saying so meanwhile. When the daemon or the
+  // Has the daemon start or merge once you said y, saying so meanwhile. A start says what the
+  // daemon answered, as a builder can take the last free place while you are asked, and the task
+  // then waits in the queue though the question said it would start. When the daemon or the
   // forge refuses, the footer says why until the next key.
   const goAhead = async (action: Question) => {
     working = true;
     said = action.working;
     refresh();
     try {
-      await startOrMerge(action.request);
-      said = null;
+      said = await startOrMerge(action.request);
     } catch (error) {
       said = errorText(error);
     }
     working = false;
+  };
+
+  // Moves the queued task you are on one place earlier, by -1, or later, by 1, as in the list.
+  // You stay on its row, and the footer says its place. A paused task has no place until sc start
+  // queues it, so the footer says that instead.
+  const reorder = async (row: Row, by: -1 | 1) => {
+    if (row.task === null || row.section !== "up next") return;
+    if (row.place === null) {
+      said = `${row.name} is paused: sc start ${row.name} brings it back`;
+      return;
+    }
+    working = true;
+    try {
+      said = await moveQueued(`${open.owner}/${open.repo}`, row.task, by);
+    } catch (error) {
+      said = errorText(error);
+    }
+    working = false;
+    refresh();
   };
 
   // Shows on the right side why Enter couldn't attach to the builder of the task named, such as a
@@ -496,7 +531,7 @@ export async function runSidebar(
 
   // Opens the row you are on, as Enter does in the list. On a task at work, the builder takes
   // the right side and your typing, until Ctrl-\ brings back its details, or the right side says
-  // why it can't. Backlog asks to start the task, and the `… more` row shows every issue. Ready and Done open the PR, or copy its link. A ready task
+  // why it can't. Up next says what the task waits on. Backlog asks to start the task, and the `… more` row shows every issue. Ready and Done open the PR, or copy its link. A ready task
   // whose builder needs you reaches the builder instead, so one Enter reaches what it waits on.
   const enter = () => {
     const row = rows[here];
@@ -507,6 +542,11 @@ export async function runSidebar(
     }
     if (row.part === "backlog" && row.start) {
       asking = { question: row.start, row: row.name, merge: false };
+      return;
+    }
+    // A task up next has no builder running yet, so the footer says what it waits on.
+    if (row.section === "up next") {
+      said = row.waits;
       return;
     }
     const atWork = row.part !== "ready" && row.part !== "done";
@@ -564,6 +604,8 @@ export async function runSidebar(
     said = null;
     const row = rows[here];
     if (name === "up" || name === "down") return moveTo(here + (name === "up" ? -1 : 1));
+    if ((name === "earlier" || name === "later") && row)
+      return void reorder(row, name === "earlier" ? -1 : 1);
     if (name === "previous section" || name === "next section")
       return jump(name === "next section" ? 1 : -1);
     if (name === "next repository" || name === "previous repository")

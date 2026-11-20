@@ -139,6 +139,8 @@ test("the help lists the screen's keys, anywhere first, then a task's row", () =
   expect(order.every((at) => at > 0)).toBe(true);
   expect([...order].sort((a, b) => a - b)).toEqual(order);
   expect(keys).toMatch(/\n {2}m +merge a ready task\n/);
+  expect(keys).toMatch(/\n {2}shift \+ ↑\/↓ +move a queued task in up next\n/);
+  expect(keys).toMatch(/\n {2}s +start or queue a task in the backlog\n/);
   expect(out).not.toContain("ctrl + q");
   expect(out).not.toContain("⌃Q");
 });

@@ -64,6 +64,7 @@ export function paneWidth(width: number): number {
 // The name of each section, as its heading shows it, which the pane also shows of a row's stage.
 export const sectionNames: Record<Section, string> = {
   "needs you": "Needs you",
+  "up next": "Up next",
   backlog: "Backlog",
   building: "Building",
   reviewing: "Reviewing",
@@ -74,25 +75,31 @@ export const sectionNames: Record<Section, string> = {
 
 // Returns the keys the bottom line offers on a row: Enter always, as attach on a row whose agent
 // it attaches to, with Ctrl-\, which comes back, when that is on tmux, or as showing every issue
-// on Backlog's `… more` row, the numbers that open and close the stages, s only on a task it can start, m only on a
-// task it can merge, o on a task while the details pane shows, to show its agent's whole screen
-// or only the last lines, and Tab and Alt-Shift with an arrow only with another repository to go
-// to. A runtime plugin's host has its own key to come back, so its rows don't offer Ctrl-\.
+// on Backlog's `… more` row, the numbers that open and close the stages, Shift with an arrow
+// only on a queued task in Up next, which it moves in the queue, s only on a task it can start,
+// m only on a task it can merge, o on a task while the details pane shows, to show its agent's
+// whole screen or only the last lines, and Tab and Alt-Shift with an arrow only with another
+// repository to go to. A runtime plugin's host has its own key to come back, so its rows don't
+// offer Ctrl-\.
 export function keysFor(row: Row | undefined, tabs: number, pane = false): string {
   const back = row?.tmux ? " · ctrl+\\ back" : "";
   const enter = row?.more ? "⏎ show all" : row && enterAttaches(row) ? `⏎ attach${back}` : "⏎ open";
   const open = pane && row?.task ? `${enter} · o output` : enter;
   const merge = row?.merge && "ask" in row.merge ? ["m merge"] : [];
-  const start = row?.start ? ["s start"] : [];
+  const start = row?.start ? [row.start.queues ? "s queue" : "s start"] : [];
+  const reorder = row?.section === "up next" && row.place !== null ? ["shift+↑↓ reorder"] : [];
   const tab = tabs > 1 ? ["⇥/alt+shift+←→ repository"] : [];
-  return ["↑↓ move", open, "1-6 stages", ...start, ...merge, ...tab, "q/esc quit"].join("  ");
+  return ["↑↓ move", open, "1-6 stages", ...reorder, ...start, ...merge, ...tab, "q/esc quit"].join(
+    "  ",
+  );
 }
 
 // Returns whether Enter on a row attaches to its agent: the lead, or a task's builder while it is
-// at work, or once it is ready but needs you. On Backlog it starts the task, and on Ready or Done
-// it opens the PR.
+// at work, or once it is ready but needs you. On Backlog it starts the task, on Up next it says
+// what the task waits on, as no builder runs for it yet, and on Ready or Done it opens the PR.
 export function enterAttaches(row: Row): boolean {
   if (row.part === "lead") return true;
+  if (row.section === "up next") return false;
   const atWork = row.part !== "ready" && row.part !== "done";
   return (atWork || row.needsYou) && row.session !== null;
 }
@@ -101,14 +108,18 @@ export function enterAttaches(row: Row): boolean {
 const sectionNameWidth = Math.max(...Object.values(sectionNames).map((name) => name.length));
 
 // Returns the number key that opens and closes a section, as its heading shows it. Needs you
-// has none, so its key's place is blank.
+// and Up next have none, as they are always open, so their key's place is blank.
 const keyOf = (section: Section) =>
-  section === "needs you" ? " " : String(ListStage.options.indexOf(section) + 1);
+  section === "needs you" || section === "up next"
+    ? " "
+    : String(ListStage.options.indexOf(section) + 1);
 
 // Returns a section's heading as a line: the number key that opens and closes it, dim, then its
 // name, bright while open and dim while closed, then how many tasks it has, lined up under the
 // other headings' counts, such as `2 Building  4`. Needs you's count is yellow while any task
-// waits on you. Cut to fit, without its colours, on a narrow terminal.
+// waits on you. Up next then says dim how full the builders are, such as `Building 4/4 · 3
+// queued`, which goes first on a narrow terminal. Cut to fit, without its colours, on a terminal
+// narrower still.
 function headingLine(heading: Heading, countWidth: number, width: number): string {
   const key = keyOf(heading.section);
   const name = sectionNames[heading.section].padEnd(sectionNameWidth);
@@ -117,7 +128,9 @@ function headingLine(heading: Heading, countWidth: number, width: number): strin
   if (Bun.stringWidth(plain) > width) return fitted(plain, width);
   const shown = paint(heading.open ? bright : grey, name);
   const waits = heading.section === "needs you" && heading.count > 0;
-  return ` ${paint(grey, key)} ${shown} ${waits ? paint(yellow, count) : count}`;
+  const fits = heading.note && Bun.stringWidth(`${plain}  ${heading.note}`) <= width;
+  const note = fits ? `  ${paint(grey, heading.note)}` : "";
+  return ` ${paint(grey, key)} ${shown} ${waits ? paint(yellow, count) : count}${note}`;
 }
 
 // A repository's tab on the top line, the columns it takes, counted from 1 as your terminal
@@ -266,6 +279,7 @@ type BodyLine = { text: string; row: number | null; target: Target };
 // The short name of each section, for an edge line too narrow for the full ones.
 const shortNames: Record<Section, string> = {
   "needs you": "Need",
+  "up next": "Next",
   backlog: "Back",
   building: "Build",
   reviewing: "Rev",
@@ -279,8 +293,8 @@ const shortNames: Record<Section, string> = {
 // when they are all in one, then each heading hidden there, short: its name and its count, such
 // as `↓ 5 more in Building   Checks 2`, with Needs you's count in yellow while any task waits on
 // you. So every count stays in sight however the list scrolls. Too wide for the terminal, it is
-// said in fewer letters, as `↓ +5  Chk 2`, then with each stage by its number key and Needs you
-// by `!`, as `↓ +5 4:2`, so the counts still fit. Only a terminal too narrow even for that cuts
+// said in fewer letters, as `↓ +5  Chk 2`, then with each stage by its number key, Needs you
+// by `!` and Up next by `>`, as `↓ +5 4:2`, so the counts still fit. Only a terminal too narrow even for that cuts
 // it, without its colours. Gives the line as a line of the body, whose target has the columns of
 // each pinned heading still in sight, so a click on one opens or closes its section as a click
 // on the heading itself does.
@@ -311,7 +325,12 @@ function edgeLine(
     const brief = words !== "full";
     const more = count === 0 ? [] : [brief ? `+${count}` : `${count} more${where}`];
     const parts = pinned.map((heading) => {
-      const key = heading.section === "needs you" ? "!" : keyOf(heading.section);
+      const key =
+        heading.section === "needs you"
+          ? "!"
+          : heading.section === "up next"
+            ? ">"
+            : keyOf(heading.section);
       const named =
         words === "keys"
           ? `${key}:${heading.count}`

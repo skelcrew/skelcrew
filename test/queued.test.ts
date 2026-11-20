@@ -253,6 +253,35 @@ test("a queued task keeps its place after a restart of the engine", async () => 
   expect(leftQueue("app-12")[0] ?? 0).toBeGreaterThanOrEqual(endedAt("app-13"));
 }, 60_000);
 
+// Moves app's queued task one place earlier or later, as a key in the list asks the daemon, and
+// returns what the daemon said.
+async function moveQueued(task: string, by: -1 | 1): Promise<string> {
+  const code = `import { moveQueued } from ${JSON.stringify(source("client.ts"))};
+try { console.log(await moveQueued("app", ${JSON.stringify(task)}, ${by})); }
+catch (error) { console.log(String(error)); }`;
+  const run = Bun.spawn([process.execPath, "-e", code], { env: env(), stdout: "pipe" });
+  return (await new Response(run.stdout).text()).trim();
+}
+
+test("a task moved earlier in the queue starts first, and keeps its place after a restart", async () => {
+  addApp();
+  await serveApp();
+  await sc("start", "app-12");
+  await sc("start", "app-13");
+  expect(await moveQueued("13", -1)).toBe("APP-13 starts next");
+  // Already first, it stays there.
+  expect(await moveQueued("13", -1)).toBe("APP-13 starts next");
+  expect(await moveQueued("12", 1)).toBe("APP-12 is 2nd in line");
+  // A task that isn't queued has no place to move.
+  expect(await moveQueued("11", 1)).toContain("APP-11 isn't queued");
+  await stopDaemon();
+  await serveApp();
+  await sc("rm", "app-11");
+  await until(() => statuses()["app-12"] === "failed");
+  expect(leftQueue("app-13")).toHaveLength(1);
+  expect(leftQueue("app-12")[0] ?? 0).toBeGreaterThanOrEqual(endedAt("app-13"));
+}, 60_000);
+
 test("sc rm takes a task out of the queue, back to its issue, and it never starts", async () => {
   addApp();
   await serveApp();

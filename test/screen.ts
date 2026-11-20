@@ -227,7 +227,7 @@ export function endTest(): void {
 // Returns whether the right side shows a task's details, which have a line with its stage and
 // word, such as `Building · working`.
 export const onDetails = () =>
-  /^\s*(Backlog|Building|Reviewing|Checks|Ready|Done)( · .*)?$/m.test(right());
+  /^\s*(Up next|Backlog|Building|Reviewing|Checks|Ready|Done)( · .*)?$/m.test(right());
 
 // Presses Enter on the task you are on, once its details show, as only then does your typing go
 // to the sidebar, and waits until its builder takes the right side, named by its row.
@@ -286,7 +286,7 @@ export const release = () => {
 export function daemon(): void {
   const answer = (connection: Socket) =>
     connection.on("data", (data) => {
-      const { command, from, tab, repo, task, pr, commit } = z
+      const { command, from, tab, repo, task, pr, commit, by } = z
         .object({
           command: z.string(),
           from: z.string().default(""),
@@ -295,9 +295,15 @@ export function daemon(): void {
           task: z.string().default(""),
           pr: z.number().default(0),
           commit: z.string().default(""),
+          by: z.number().default(0),
         })
         .parse(JSON.parse(data.toString()));
       if (command === "lead") asked.push(`open ${from}${tab ? " from a tab" : ""}`);
+      if (command === "queue move") {
+        acted.push(`queue move ${repo} ${task} ${by}`);
+        connection.end(`${JSON.stringify({ said: `APP-${task} starts next` })}\n`);
+        return;
+      }
       if (command !== "start" && command !== "merge") {
         connection.end("{}\n");
         return;

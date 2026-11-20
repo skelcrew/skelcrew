@@ -183,17 +183,22 @@ test("a terminal a few lines high still shows the agent, and Ctrl-Q still leaves
 });
 
 // An agent writes its size again on each resize, emptying its file for a moment, so each size
-// is waited for. A height that changed never comes, and the wait fails.
+// is waited for. The lead's is taken once it matches the right side, as the footer sizes its own
+// pane after the screen opens. A height that changed as you switch never comes, and the wait
+// fails.
 test("the agent's height stays as you switch", async () => {
   open("lead");
   await ready("lead");
-  await until(() => read("lead.size") !== "", "the lead's height");
-  const height = read("lead.size");
+  const rightSide = () =>
+    tmux(screen, "display", "-p", "-t", `=${screenSessions()[0]}:.1`, "#{pane_height}").out.trim();
+  const heightOf = (file: string) => read(file).split(" ")[0] ?? "";
+  await until(() => heightOf("lead.size") === rightSide(), "the lead at the right side's height");
+  const height = heightOf("lead.size");
   await toSecondThread();
-  await until(() => read("app-7.size") === height, "app-7 at the lead's height");
+  await until(() => heightOf("app-7.size") === height, "app-7 at the lead's height");
   press("M-Up");
   await attachTo("app-12");
-  await until(() => read("app-12.size") === height, "app-12 at the lead's height");
+  await until(() => heightOf("app-12.size") === height, "app-12 at the lead's height");
 });
 
 // The row above the footer, as you see it.

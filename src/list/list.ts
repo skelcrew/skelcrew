@@ -2,10 +2,11 @@
 // a picker. Enter attaches you full screen to an agent through its session host, and leaving it
 // comes back here, on the same row. It also starts an issue, merges a task ready for review and
 // opens its PR, each asking first where it can't be taken back. The number keys open and close
-// the stages, under Needs you, which holds every task waiting on you.
+// the stages, under Needs you, which holds every task waiting on you, and Up next, which holds
+// what waits for a builder, in the order it starts. Shift with an arrow reorders that queue.
 import { cpus } from "node:os";
 import { attachSession, typeKeys } from "../agents/sessions.ts";
-import { openRepository, startOrMerge } from "../client.ts";
+import { moveQueued, openRepository, startOrMerge } from "../client.ts";
 import { openDb } from "../db.ts";
 import { leadSession } from "../flow/lead.ts";
 import { ListStage } from "../flow/stage.ts";
@@ -30,6 +31,7 @@ import {
 import { liveNote, readLive } from "./live.ts";
 import { drawPane, type Live } from "./pane.ts";
 import {
+  buildersNote,
   cutBacklog,
   listRows,
   type Open,
@@ -52,8 +54,13 @@ import {
 // Alt-Shift-Right to the next: Shift-Tab plain, as kitty's CSI-u and as xterm's extended key,
 // and the arrows plain and with kitty's press event, which it adds when asked for events. Kitty
 // sends the main arrows so even in its CSI-u mode, and its keypad arrows as CSI-u, 57417 left
-// and 57418 right.
+// and 57418 right. Shift-Up and Shift-Down move a queued task in its queue, plain and with kitty's
+// press event.
 const keyNames: Record<string, string> = {
+  "\x1b[1;2A": "earlier",
+  "\x1b[1;2:1A": "earlier",
+  "\x1b[1;2B": "later",
+  "\x1b[1;2:1B": "later",
   "\x1b[A": "up",
   "\x1bOA": "up",
   "\x1b[B": "down",
@@ -120,12 +127,15 @@ export async function runList(agents: string, repository: string): Promise<void>
   // What the list keeps between draws: every row, those that show, which are the lead's and
   // those of the open sections, the row you are on among those and how far it scrolled, the line
   // at the bottom when it says something other than the keys, the question it asks, and whether
-  // the daemon is at work on an answer. Needs you is always open, and Building is open at first.
+  // the daemon is at work on an answer. Needs you and Up next are always open, and Building is
+  // open at first.
   // The sections you open stay open until you leave the list, whichever repository you move to,
   // and so does a whole Backlog once you asked for it, which shows its newest issues until then.
   let all: Row[] = [];
   let rows: Row[] = [];
-  const opened = new Set<Section>(["needs you", "building"]);
+  // What Up next's heading says of the builders, read with the rows.
+  let builders = "";
+  const opened = new Set<Section>(["needs you", "up next", "building"]);
   let wholeBacklog = false;
   const showing = () =>
     cutBacklog(all, wholeBacklog).filter(
@@ -212,7 +222,7 @@ export async function runList(agents: string, repository: string): Promise<void>
     const size = { width: process.stdout.columns || 80, height: process.stdout.rows || 24 };
     const drawn = drawList(
       rows,
-      sectionHeadings(all, opened),
+      sectionHeadings(all, opened, builders),
       here,
       top,
       frameWith(bottom, load),
@@ -251,6 +261,7 @@ export async function runList(agents: string, repository: string): Promise<void>
     if (attached) return;
     details = null;
     all = listRows(db, open, Date.now());
+    builders = buildersNote(db, open);
     reshow();
   };
 
@@ -263,7 +274,7 @@ export async function runList(agents: string, repository: string): Promise<void>
     const size = { width: 100, height: rows.length * 2 + sections.length * 2 + 8 };
     const { lines } = drawList(
       rows,
-      sectionHeadings(rows, new Set(sections)),
+      sectionHeadings(rows, new Set(sections), buildersNote(db, open)),
       -1,
       0,
       frameWith(() => "", ""),
@@ -332,14 +343,15 @@ export async function runList(agents: string, repository: string): Promise<void>
   };
 
   // Has the daemon start or merge once you said y, saying so meanwhile. The keys come back once
-  // it is done, and the list shows the row move as the database changes. When the daemon or the
+  // it is done, and the list shows the row move as the database changes. A start says what the
+  // daemon answered, as a builder can take the last free place while you are asked, and the task
+  // then waits in the queue though the question said it would start. When the daemon or the
   // forge refuses, the line says why until the next key.
   const goAhead = async (action: Question) => {
     working = true;
     say(action.working);
     try {
-      await startOrMerge(action.request);
-      said = null;
+      said = await startOrMerge(action.request);
     } catch (error) {
       said = errorText(error);
     }
@@ -348,7 +360,8 @@ export async function runList(agents: string, repository: string): Promise<void>
   };
 
   // Opens a row with Enter: attaches to the lead, starting it first when it isn't running, or to
-  // the builder of a task at work. Asks before starting an issue. Opens the PR of a task ready
+  // the builder of a task at work. Says what a task up next waits on. Asks before starting an
+  // issue. Opens the PR of a task ready
   // for review or ended, or copies its link, or without a forge says which branch waits for you.
   // A ready task whose builder needs you, such as for a question, attaches to the builder, so one
   // Enter reaches what it waits on.
@@ -373,6 +386,8 @@ export async function runList(agents: string, repository: string): Promise<void>
       asking = { question: row.start, row: row.name, merge: false };
       return draw();
     }
+    // A task up next has no builder running yet, so Enter says what it waits on.
+    if (row.section === "up next") return say(row.waits);
     // A builder that exited leaves its last screen behind, which would look like it still runs.
     const atWork = row.part !== "ready" && row.part !== "done";
     if ((atWork || row.needsYou) && row.session) {
@@ -415,16 +430,34 @@ export async function runList(agents: string, repository: string): Promise<void>
 
   // Opens or closes a section, as a stage's number key or a click on its heading does. Opening
   // one moves you to its first row, so the list scrolls to show it, rather than open it out of
-  // sight. Needs you is always open: it has no key, so once closed nothing but a click would
-  // bring back what waits on you, so a click on its heading does nothing.
+  // sight. Needs you and Up next are always open: they have no key, so once closed nothing but a
+  // click would bring back what waits, so a click on their heading does nothing.
   const toggleSection = (section: Section) => {
-    if (section === "needs you") return draw();
+    if (section === "needs you" || section === "up next") return draw();
     if (opened.delete(section)) return reshow();
     opened.add(section);
     reshow();
     const first = rows.findIndex((candidate) => candidate.section === section);
     if (first >= 0) here = first;
     return draw();
+  };
+
+  // Moves the queued task you are on one place earlier, by -1, or later, by 1, in its queue, as
+  // the daemon keeps the queue. You stay on its row, which moves with it once the rows are read
+  // again, and the bottom line says its place. A paused task has no place until sc start
+  // queues it, so the line says that instead.
+  const reorder = async (row: Row, by: -1 | 1) => {
+    if (row.task === null || row.section !== "up next") return draw();
+    if (row.place === null)
+      return say(`${row.name} is paused: sc start ${row.name} brings it back`);
+    working = true;
+    try {
+      said = await moveQueued(`${open.owner}/${open.repo}`, row.task, by);
+    } catch (error) {
+      said = errorText(error);
+    }
+    working = false;
+    refresh();
   };
 
   // Moves you one row up, by -1, or down, by 1, staying among the rows. The live view reads the
@@ -525,6 +558,8 @@ export async function runList(agents: string, repository: string): Promise<void>
     said = null;
     const row = rows[here];
     if (key === "up" || key === "down") return move(key === "up" ? -1 : 1);
+    if ((key === "earlier" || key === "later") && row)
+      return reorder(row, key === "earlier" ? -1 : 1);
     if (key === "tab") return nextRepository(1);
     if (key === "back tab") return nextRepository(-1);
     if (key.startsWith(`${esc}[<`)) return click(key);
@@ -538,7 +573,8 @@ export async function runList(agents: string, repository: string): Promise<void>
       fullOutput = !fullOutput;
       return draw();
     }
-    // s starts a task not started yet, an issue or one of the backlog, as Enter does there.
+    // s starts a task not started yet, an issue or one of the backlog, as Enter does there. With
+    // every builder busy, its question says it queues the task instead.
     if (key === "s" && row?.part === "backlog" && row.start) {
       asking = { question: row.start, row: row.name, merge: false };
       return draw();
