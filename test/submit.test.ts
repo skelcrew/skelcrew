@@ -1894,19 +1894,23 @@ done`,
     expect(thread().status).toBe("stopped");
   }, 120_000);
 
-  // A forge that fails to take the verdict fails the round, and the thread shows its review
-  // failed. Each poll tries the post again, so the PR gets the verdict the thread saved without
-  // waiting for a restart, and the review no longer shows as failed.
-  test("a verdict whose post failed is posted again at the next poll", async () => {
+  // A forge that fails to take the verdict doesn't stop the round: the lead hears of it, and the
+  // changes still reach the builder. The verdict stays saved, and the PR gets it once the forge
+  // takes it again, at the next poll or with the next round.
+  test("a verdict whose post failed still types its changes in, and is posted once the forge is back", async () => {
     addApp();
-    verdict(1, "approve", "Ready to merge.");
+    verdict(1, "changes", "The export has no test.");
+    verdict(2, "approve", "Ready to merge.");
     writeFileSync(join(plugin, "fail-review"), "GitHub is down");
     await startApp12({ every: 1_000 });
-    await until(() => thread().review_failed === 1 && thread().posting !== null, 60_000);
-    expect(finished("success")).toEqual([]);
+    await until(() => read(join(builder(), "typed")).includes("The export has no test."), 60_000);
+    await until(() =>
+      read(join(data(), "threads", "app-12.log")).includes("couldn't put its review on the forge"),
+    );
+    expect(thread().review_failed).toBe(0);
     rmSync(join(plugin, "fail-review"));
-    await until(() => finished("success").length === 1, 30_000);
-    await until(() => thread().posting === null && thread().review_failed === 0);
+    await until(() => finished("success").length === 1, 60_000);
+    await until(() => thread().posting === null);
     expect(reviews().at(-1)?.verdict).toBe("approve");
   }, 120_000);
 

@@ -641,18 +641,26 @@ async function actOnVerdict(
     );
   // The verdict takes its turn among the thread's writes to the forge as it is saved, with no
   // await between. Otherwise sc stop, sc start and sc review could queue a newer review's pending
-  // check first, and this verdict's check would land on top of it. A forge that fails here fails
-  // the round, so the thread shows its review failed and the lead can run it again.
-  const posted = postVerdict(db, folder);
+  // check first, and this verdict's check would land on top of it. A forge that fails to take it
+  // is the lead's to hear, once, while each poll tries again. The verdict stands, so any changes
+  // still reach the builder.
+  const posted = postVerdict(db, folder).then((failed) => {
+    if (failed === null) return;
+    const why = `couldn't put its review on the forge: ${failed}`;
+    record(db, folder, {}, `${why}; each poll tries again`);
+    const line = `${threadName(db, thread)} ${why}`.replace(/\s+/g, " ").slice(0, 200);
+    noteForLead(db, sessions, repository, `${line}. Skelcrew tries again at each poll.`);
+    typeLeadNotes(db, sessions);
+  });
   typeLeadNotes(db, sessions);
-  await posted;
-  if (!tell) return;
   // The changes are saved, so a builder that never comes back, which ends the round, keeps them
   // for when you start it again. A round cancelled meanwhile leaves them to the newer round,
   // which drops them, or to sc start, which types them in.
-  await builderBack;
-  if (signal.aborted) return;
-  await queueChanges(db, sessions, folder, tell, signal);
+  if (tell) {
+    await builderBack;
+    if (!signal.aborted) await queueChanges(db, sessions, folder, tell, signal);
+  }
+  await posted;
 }
 
 // Ends a round whose task's flow has no review stage, once CI's first check had its chance to
@@ -721,46 +729,45 @@ function inTurn<T>(folder: string, write: () => Promise<T>): Promise<T> {
 // Puts the thread's saved verdict on the forge in its turn: its review on the PR, then Skelcrew's
 // check on its commit. It is then no longer saved as posting, unless a newer verdict replaced it
 // meanwhile, which goes on in its own turn. A newer one already saved when the turn comes goes
-// on in its place, as the PR only shows the latest. Throws what the forge said when it fails,
-// and the verdict stays saved, so the daemon's next start tries again.
-function postVerdict(db: Database, folder: string): Promise<void> {
+// on in its place, as the PR only shows the latest. Returns what the forge said when it failed,
+// or null. It never throws: the verdict stays saved, and each poll tries again, so a forge that
+// fails never stops the round, such as its changes reaching the builder.
+function postVerdict(db: Database, folder: string): Promise<string | null> {
   return inTurn(folder, async () => {
     const thread = readThread(db, folder);
     const { posting } = thread;
-    if (posting === null) return;
+    if (posting === null) return null;
     const { commit, check, description, review } = posting;
-    if (review !== null) await postOrEdit(db, folder, review.pr, commit, review);
-    await setStatus(db, repositoryOf(db, thread), { commit, state: check, description });
+    try {
+      if (review !== null) await postOrEdit(db, folder, review.pr, commit, review);
+      await setStatus(db, repositoryOf(db, thread), { commit, state: check, description });
+    } catch (error) {
+      return errorText(error);
+    }
     const now = readThread(db, folder).posting;
     if (JSON.stringify(now) === JSON.stringify(posting)) record(db, folder, { posting: null });
+    return null;
   });
 }
 
 // Tries again to put on the forge a verdict whose post failed, so the PR doesn't keep an older
 // review than the thread says until the daemon starts again. Each poll asks, and a forge that
 // still fails is logged and asked again at the next. A done thread's PR is closed, so it is
-// left alone. A submit or review under way brings a
-// newer verdict, which is posted in its place, so it is left to that round. Once posted, the
-// review no longer shows as failed, unless the verdict itself was a failed review.
+// left alone. A submit or review under way brings a newer verdict, which is posted in its place,
+// so it is left to that round.
 export async function retryPost(db: Database, folder: string): Promise<void> {
-  const quiet = (thread: Thread) =>
+  const thread = readThread(db, folder);
+  const quiet =
     thread.status !== "done" &&
     thread.posting !== null &&
     thread.submitting === null &&
     thread.reviewing === null &&
     !roundRunning(folder);
-  if (!quiet(readThread(db, folder))) return;
-  try {
-    await postVerdict(db, folder);
-  } catch (error) {
-    console.log(`${folder}: couldn't put its saved verdict on the forge: ${errorText(error)}`);
-    return;
-  }
-  const thread = readThread(db, folder);
-  if (thread.posting !== null || thread.submitting !== null || thread.reviewing !== null) return;
-  const failed = thread.verdict === "failed" || thread.verdict === "timed out";
-  if (thread.review_failed !== failed)
-    record(db, folder, { review_failed: failed }, "its saved verdict is on the forge now");
+  if (!quiet) return;
+  const failed = await postVerdict(db, folder);
+  if (failed !== null)
+    console.log(`${folder}: couldn't put its saved verdict on the forge: ${failed}`);
+  else record(db, folder, {}, "its saved verdict is on the forge now");
 }
 
 // Puts on the forge the verdicts that stopped threads saved but didn't post, as the daemon
@@ -773,9 +780,10 @@ export function postStoppedVerdicts(db: Database): void {
     .all()
     .map((row) => Thread.parse(row));
   for (const { folder } of rows)
-    postVerdict(db, folder).catch((error) =>
-      record(db, folder, {}, `couldn't put its saved verdict on the forge: ${errorText(error)}`),
-    );
+    postVerdict(db, folder).then((failed) => {
+      if (failed !== null)
+        record(db, folder, {}, `couldn't put its saved verdict on the forge: ${failed}`);
+    });
 }
 
 // Puts a review's verdict and findings on the PR as Skelcrew's one review there, so the PR shows
@@ -1301,11 +1309,12 @@ export function resumeRound(
   const { submitting, reviewing, queued, telling, posting } = readThread(db, folder);
   const cancel = new AbortController();
   const none = Promise.resolve();
-  const post = posting === null ? none : postVerdict(db, folder);
-  // A submit or review asked for after the verdict brings a newer one, which is posted in its
-  // place, so a forge that fails to take the older one stays quiet. Otherwise its failure is the
-  // round's, which the lead hears of.
-  if (submitting !== null || reviewing !== null) post.catch(() => {});
+  // A forge that fails to take it is logged, and each poll tries again.
+  if (posting !== null)
+    postVerdict(db, folder).then((failed) => {
+      if (failed !== null)
+        record(db, folder, {}, `couldn't put its saved verdict on the forge: ${failed}`);
+    });
   if (submitting !== null) pushAndReview(db, sessions, folder, submitting, undefined);
   else if (reviewing !== null)
     trackRound(
@@ -1326,11 +1335,8 @@ export function resumeRound(
       folder,
       cancel,
       none,
-      Promise.all([post, queueChanges(db, sessions, folder, telling, cancel.signal)]).then(
-        () => {},
-      ),
+      queueChanges(db, sessions, folder, telling, cancel.signal),
     );
-  else if (posting !== null) trackRound(db, sessions, folder, cancel, none, post);
 }
 
 // Lets a thread past the round limit go on, for sc start: counts its rounds of changes from
