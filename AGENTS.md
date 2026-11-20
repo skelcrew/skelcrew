@@ -6,9 +6,8 @@ before changing anything it covers.
 The traps earlier versions found are in `docs/learnings.md`. Read the part that covers
 typing into a session, starting Claude Code or the sandbox before touching them.
 
-The spec describes Skelcrew v6, and parts of it aren't built yet. The order of work is in
-`docs/v6.md`: the phases that take the code to the spec. Until v6 lands, work that doesn't
-serve it waits.
+The spec describes Skelcrew v6. A few parts of it aren't built yet, and each is a task of its
+own.
 
 ## The goal: simple and clear
 

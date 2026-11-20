@@ -1,6 +1,6 @@
 # Skelcrew spec
 
-Nov 18, 2026 · @Simon · the design of Skelcrew v6. `docs/v6.md` is the plan that builds it, phase by phase.
+Nov 18, 2026 · @Simon · the design of Skelcrew v6.
 
 ## Goal
 
@@ -520,7 +520,7 @@ Every start of a task on an issue assigns the issue to you, the person the track
 
 The lead answers a question itself when the answer follows from what you already decided, such as earlier in its conversation, from the repository's spec or design documents, or from a clear technical call. It then tells you in one line what it answered and why, so you can overrule it. A question that is yours by rule always comes to you, however clear the answer seems: editing a spec, trust or security, the work's scope or direction, and merging. The lead brings it to you in its chat, framed the same way and naming the task, and passes your answer on with `sc tell`. You never need to attach to a builder to answer it. All of this is among the lead's core rules, so a repository's own lead role can't drop it.
 
-**The lead marks what only you can unblock.** When only you can unblock a thread, such as a change to a workflow file that only a person can push, the lead marks it with `sc needs-you APP-12 "<the action>"`, written for you, such as `apply the check.yml split in PR #463`. The thread then needs you, and its word is that action, in the sidebar, `sc --list`, `sc ps`, `sc show`, `sc pr show` and a host's status, such as herdr's. The lead never marks a thread it can unblock itself, or one that only waits on its review, CI or a queue. `sc needs-you --clear APP-12` takes the mark off. Only you and the lead of the thread's repository can run either, and both are among the lead's core rules. The lead gets no note of a mark it set itself, and gets one of each mark you set, even on a thread that needed you already.
+**The lead marks what only you can unblock.** When only you can unblock a thread, such as a change to a workflow file that only a person can push, the lead marks it with `sc needs-you APP-12 "<the action>"`, written for you, such as `apply the check.yml split in PR #463`. The thread then needs you, and its word is that action, in the sidebar, `sc --list`, `sc ps`, `sc show` and a host's status, such as herdr's. The lead never marks a thread it can unblock itself, or one that only waits on its review, CI or a queue. `sc needs-you --clear APP-12` takes the mark off. Only you and the lead of the thread's repository can run either, and both are among the lead's core rules. The lead gets no note of a mark it set itself, and gets one of each mark you set, even on a thread that needed you already.
 
 **What Skelcrew marks itself**, by the same rule:
 
