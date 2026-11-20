@@ -408,7 +408,7 @@ For the agents themselves:
 | `sc submit "<summary>"` | Builder | Submits a round for review: Skelcrew pushes, opens the PR if needed and there is a forge, and starts a review |
 | `sc tell lead "<text>"` | Builder | Types a message into its repository's lead, once it is idle |
 | `sc tell lead <repo> "<text>" \| - [--asked-file <file>]` | Lead | Types a brief into another repository's lead, once it is idle, with the text as words, or on stdin with `-`, and your words from the file when you asked for the work |
-| `sc ask start <task> \| <repo> "<title>" "<description>" [--short "<words>"] [--flow <name>]` | Lead | Puts a start in your list as a request, which your `y` starts exactly as `sc start` would, in the lead's own repository, as **The list** says |
+| `sc ask start <task> [--from <branch>] \| <repo> "<title>" "<description>" [--short "<words>"] [--flow <name>]` | Lead | Puts a start in your list as a request, which your `y` starts exactly as `sc start` would, in the lead's own repository, as **The list** says |
 | `sc ask repo add <owner/repo>` | Lead | Asks you in the list to add a repository. Your `y` only tells the lead yes: only `sc repo add` at your terminal adds it |
 | `sc review <task>` | Builder | Reviews its own task's last submitted commit again, such as when you ask for it on the PR. Never another task's |
 | `sc check` | Builder, reviewer, you | Runs the repository's whole test suite in the folder it runs in, once a check slot is free |

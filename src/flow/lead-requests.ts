@@ -16,7 +16,8 @@ const Saved = z.object({ id: z.number(), action: z.string(), says: z.string() })
 
 // Returns the line a request shows in the list, as a question, such as `Start APP-12 Fix login?`.
 // A task is named with its title, from Skelcrew's copy of the tracker, its backlog or its thread,
-// so you see what you say yes to. One it can't find a title for shows by its name alone.
+// so you see what you say yes to. One it can't find a title for shows by its name alone. A start
+// from another branch than the default names it.
 function requestLine(db: Database, repository: Repository, action: LeadAction): string {
   if (action.kind === "repo add") return `Add the repository ${action.repository}?`;
   if (action.kind === "start new") return `Start a new task: ${action.title}?`;
@@ -27,7 +28,8 @@ function requestLine(db: Database, repository: Repository, action: LeadAction): 
     threadOn(db, `${owner}/${repo}`, action.task)?.title ??
     "";
   const name = taskName(repository.name, action.task);
-  return title ? `Start ${name} ${title}?` : `Start ${name}?`;
+  const from = action.from ? ` from the branch ${action.from}` : "";
+  return `Start ${name}${title ? ` ${title}` : ""}${from}?`;
 }
 
 // Saves a request of the repository's lead, which shows in the list at once, and returns its line.

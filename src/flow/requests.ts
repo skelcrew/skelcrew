@@ -16,13 +16,14 @@ const TaskBody = z.string().regex(/\S/);
 // A thread's short title for the sidebar, which says nothing when blank, so one is refused.
 const ShortTitle = z.string().trim().min(1);
 
-// What a request from the lead does once you say yes: start a task or an issue, or start a new
-// task with its title and description, each in the lead's own repository as sc start would, or
+// What a request from the lead does once you say yes: start a task or an issue, from a branch
+// when it names one, or start a new task with its title and description, each in the lead's own repository as sc start would, or
 // only tell the lead yes to adding a repository, as only sc repo add at your terminal adds one.
 export const LeadAction = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("start"),
     task: TaskId,
+    from: Branch.optional(),
     short: ShortTitle.optional(),
     flow: FlowName.optional(),
   }),

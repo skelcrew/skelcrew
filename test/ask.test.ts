@@ -51,6 +51,7 @@ const asLead = (args: string[], input?: string) =>
 
 test("sc ask start takes what sc start takes, and asks for it in the list", async () => {
   const issue = await asLead(["ask", "start", "APP-31", "--short", "CSV", "--flow", "quick"]);
+  await asLead(["ask", "start", "APP-31", "--from", "dev"]);
   expect(issue).toMatchObject({ out: "Asked the human in the list.\n", err: "", code: 0 });
   await asLead(["ask", "start", "app", "CSV export", "Add a CSV export."]);
   await asLead(["ask", "start", "app"], "# CSV export\n\nAdd a CSV export.\n");
@@ -60,6 +61,7 @@ test("sc ask start takes what sc start takes, and asks for it in the list", asyn
       repo: "APP",
       action: { kind: "start", task: "31", short: "CSV", flow: "quick" },
     },
+    { command: "ask", repo: "APP", action: { kind: "start", task: "31", from: "dev" } },
     {
       command: "ask",
       repo: "app",
@@ -85,7 +87,7 @@ test("sc ask refuses what it doesn't take, and asks the daemon nothing", async (
   for (const args of [
     ["ask"],
     ["ask", "stop", "app-31"],
-    ["ask", "start", "app-31", "--from", "dev"],
+    ["ask", "start", "app", "--from", "dev"],
     ["ask", "repo", "add"],
     ["ask", "repo", "rm", "simon/site"],
     ["ask", "start", "app", "CSV export", "  "],

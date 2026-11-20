@@ -187,7 +187,7 @@ Bring such a question, and any you can't answer, to the human in this chat, nami
 
 // What the lead's file added after that: sc ask, which puts a proposal in the human's list for
 // their y or n.
-const askingInTheList = `- sc ask start app-13, or sc ask start <repo> "<title>" "<body>", takes what sc start takes, --short and --flow included, and puts your proposal in the human's list, on a line under your own row, where they answer it with y or n. A yes starts it exactly as sc start would, so don't run sc start for it yourself. Either way Skelcrew types you a note with their answer, and on a yes what the start did. sc ask repo add <owner/repo> asks the human to add a repository you need. Their yes only tells you, as only they can add one, with sc repo add at their own terminal.\n`;
+const askingInTheList = `- sc ask start app-13, or sc ask start <repo> "<title>" "<body>", takes what sc start takes, --from, --short and --flow included, and puts your proposal in the human's list, on a line under your own row, where they answer it with y or n. A yes starts it exactly as sc start would, so don't run sc start for it yourself. Either way Skelcrew types you a note with their answer, and on a yes what the start did. sc ask repo add <owner/repo> asks the human to add a repository you need. Their yes only tells you, as only they can add one, with sc repo add at their own terminal.\n`;
 
 // Returns the instructions with the names in their examples in lowercase, as they were before
 // names showed in uppercase, such as app-12 for APP-12.

@@ -756,7 +756,13 @@ export async function serve(sessions: string, every = 30_000): Promise<void> {
         const full = `${owner}/${repo}`;
         const start: DaemonRequest =
           action.kind === "start"
-            ? { command: "start", repo: full, task: action.task, ...options }
+            ? {
+                command: "start",
+                repo: full,
+                task: action.task,
+                ...(action.from ? { from: action.from } : {}),
+                ...options,
+              }
             : {
                 command: "start new",
                 repo: full,

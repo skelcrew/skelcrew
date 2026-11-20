@@ -737,8 +737,9 @@ async function threadCommand(args: string[]): Promise<void> {
   // --from takes a branch, and only sc start <issue> takes it.
   const from = words[0] === "--from" && words[1] && words.length === 2 ? words[1] : undefined;
   const options = { ...(short ? { short } : {}), ...(flow ? { flow } : {}) };
-  if (asking && task && words.length === 0) {
-    console.log(await askHuman({ kind: "start", task: task[1], ...options }, task[0]));
+  if (asking && task && (words.length === 0 || from)) {
+    const action = { kind: "start" as const, task: task[1], ...(from ? { from } : {}), ...options };
+    console.log(await askHuman(action, task[0]));
     return;
   }
   if (!asking && command === "start" && task && (words.length === 0 || from)) {
