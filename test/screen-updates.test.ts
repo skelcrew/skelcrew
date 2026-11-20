@@ -227,7 +227,7 @@ test("with nothing working, an open screen sends your terminal nothing at all", 
   sql(`UPDATE threads SET status = 'waiting', started = ${Date.now()} WHERE status = 'working'`);
   open("lead");
   await ready("lead");
-  await until(() => seen().includes("checks · claude"), "the threads");
+  await until(() => seen().includes("waiting · claude"), "the threads");
   const written = await copyOnceSettled();
   // The threads started five seconds short of a minute ago, so a time shown on a row would
   // change during the wait. The sidebar must read that and draw it before the minute. Each try
@@ -252,7 +252,7 @@ test("with nothing working, an open screen sends your terminal nothing at all", 
   expect(readFileSync(written, "utf8")).toBe("");
   const rows = seen().split("\n");
   const row = rows.findIndex((line) => line.includes("app-12"));
-  expect(rows[row + 1]?.split("│")[0]?.trim()).toBe("checks · claude");
+  expect(rows[row + 1]?.split("│")[0]?.trim()).toBe("waiting · claude");
 }, 90_000);
 
 test("a working thread's time moves on by itself, and writes when it does", async () => {
