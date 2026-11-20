@@ -69,6 +69,7 @@ const working: Thread = {
   merge_asked: null,
   merge_waits: null,
   merge_noted: null,
+  merge_noted_for: [],
   merge_pinned: null,
   merge_record: null,
   merge_record_id: null,

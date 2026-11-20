@@ -14,7 +14,7 @@ import {
   decideBranch,
   forgetMoves,
   labeledToStart,
-  mergeStuck,
+  mergeNoteFor,
   mergeWaitsOn,
   onlyDocs,
   type PullRequest,
@@ -92,6 +92,7 @@ function thread(change: Partial<Thread> = {}): Thread {
     merge_asked: null,
     merge_waits: null,
     merge_noted: null,
+    merge_noted_for: [],
     merge_pinned: null,
     merge_record: null,
     merge_record_id: null,
@@ -898,6 +899,13 @@ test("a merge when ready waits until the approved head is green and merges clean
     "a review of its newest commit",
   );
   expect(mergeWaitsOn({ ...ready, verdict: "changes" }, green, head)).toBe("an approval");
+  // Changes held by the round limit never reach the builder, so the merge waits on someone
+  // letting it go on, whether or not arming the merge decided the limit.
+  const held = { ...ready, verdict: "changes" as const, held: "Fix it" };
+  expect(mergeWaitsOn(held, green, head)).toBe("its builder to be let past the round limit");
+  expect(mergeWaitsOn({ ...held, limit_decided: true }, green, head)).toBe(
+    "its builder to be let past the round limit",
+  );
   // A conflict or a failing check needs the builder, and running checks only time.
   expect(mergeWaitsOn(ready, pr({ ...green, conflicts: true }), head)).toBe(
     "its conflict with main to be fixed",
@@ -977,13 +985,37 @@ test("a merge without approval waits on everything but the reviewer's approval",
   );
 });
 
-test("the lead hears an armed merge still waits once per review round, and only when it is stuck", () => {
+test("the lead hears each wait of an armed merge once per review round, and only when someone must act", () => {
   const armed = thread({ merge_plan: "armed", review_round: 2 });
-  expect(mergeStuck(armed, "an approval")).toBe(true);
-  expect(mergeStuck({ ...armed, merge_noted: 2 }, "an approval")).toBe(false);
-  expect(mergeStuck({ ...armed, merge_noted: 1 }, "its conflict with main to be fixed")).toBe(true);
-  expect(mergeStuck(armed, "its checks")).toBe(false);
-  expect(mergeStuck(armed, "its review")).toBe(false);
-  expect(mergeStuck(armed, null)).toBe(false);
-  expect(mergeStuck({ ...armed, review_round: null }, "an approval")).toBe(false);
+  const conflict = "its conflict with main to be fixed";
+  expect(mergeNoteFor(armed, conflict)).toBe("its conflict with");
+  expect(mergeNoteFor({ ...armed, review_round: null }, conflict)).toBeNull();
+  // Heard in this round, it isn't said again. A new round, or another wait, is.
+  const heard = { ...armed, merge_noted: 2, merge_noted_for: ["its conflict with"] };
+  expect(mergeNoteFor(heard, conflict)).toBeNull();
+  expect(mergeNoteFor({ ...heard, review_round: 3 }, conflict)).toBe("its conflict with");
+  expect(mergeNoteFor(heard, "the forge, which refused: Not mergeable")).toBe("the forge, which");
+  // A forge's words change from poll to poll, and are still the same wait.
+  const forge = { ...armed, merge_noted: 2, merge_noted_for: ["the forge, which"] };
+  expect(mergeNoteFor(forge, "the forge, which failed: GitHub is down")).toBeNull();
+  // What needs someone: the builder, you, or the forge.
+  for (const waits of [
+    "its failing checks to be fixed",
+    "its thread, which failed",
+    "its thread, which is stopped",
+    "the forge, which refused: Not mergeable",
+    "its builder to be let past the round limit",
+  ])
+    expect(mergeNoteFor(armed, waits)).not.toBeNull();
+  // What is on its way: a builder working on its round, a review running or to come, checks.
+  for (const waits of [
+    "an approval",
+    "its review",
+    "its builder's new round",
+    "a review of its newest commit",
+    "its checks",
+    "its PR",
+    null,
+  ])
+    expect(mergeNoteFor(armed, waits)).toBeNull();
 });
