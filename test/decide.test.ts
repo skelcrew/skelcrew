@@ -105,6 +105,7 @@ function thread(change: Partial<Thread> = {}): Thread {
     agents: null,
     flow: "default",
     review_post: null,
+    posting: null,
     review_findings: null,
     queued_since: null,
     ...change,
@@ -953,6 +954,15 @@ test("a merge without approval waits on everything but the reviewer's approval",
   expect(skipReviewWaitsOn(changes, green)).toBeNull();
   // A review still running is waited for, so its findings are filed, whatever it says.
   expect(skipReviewWaitsOn({ ...changes, reviewing: "a".repeat(40) }, green)).toBe("its review");
+  // So is a verdict saved but not yet on the PR, as the follow-up issue files the findings the
+  // PR's review holds.
+  const posting = {
+    commit: "a".repeat(40),
+    check: "failure" as const,
+    description: "Skelcrew's reviewer asked for changes",
+    review: null,
+  };
+  expect(skipReviewWaitsOn({ ...changes, posting }, green)).toBe("its review");
   // A round on its way brings a new commit, which the human never saw.
   expect(skipReviewWaitsOn({ ...changes, submitting: "Fix" }, green)).toBe(
     "its builder's new round",

@@ -6,7 +6,6 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
-  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -29,7 +28,7 @@ import {
 } from "../src/agents/sessions.ts";
 import { deliver, forQuestion, idle, whyBusy } from "../src/agents/transport.ts";
 import type { PluginHost } from "../src/plugins/runtime.ts";
-import { homeEnv, source, threadSql, until as wait } from "./harness.ts";
+import { endFakeSessions, homeEnv, source, threadSql, until as wait } from "./harness.ts";
 
 const moment = 100;
 let home = "";
@@ -43,15 +42,11 @@ beforeEach(() => {
   home = realpathSync(mkdtempSync(join(tmpdir(), "skelcrew-host-test-")));
   name = `fake-${Math.random().toString(36).slice(2)}`;
 });
-afterEach(() => {
+afterEach(async () => {
   // Each session's process group ends with the test, whatever it left running, on the host
   // this process asks and on the one a process of the test's own home asks.
   const fake = join(home, ".config", "skelcrew", "plugins", "fake");
-  for (const sessions of [join(settings(), "sessions"), join(fake, "sessions")])
-    for (const id of existsSync(sessions) ? readdirSync(sessions) : [])
-      try {
-        process.kill(-Number(readFileSync(join(sessions, id, "pid"), "utf8")), "SIGKILL");
-      } catch {}
+  for (const host of [settings(), fake]) await endFakeSessions(host);
   rmSync(settings(), { recursive: true, force: true });
   rmSync(home, { recursive: true, force: true });
 });
@@ -911,17 +906,30 @@ await startSession(host, "app-12", { folder: ${JSON.stringify(home)}, command: [
 // The host takes two seconds over each read of the screen.
 fs.writeFileSync(${JSON.stringify(join(fake, "slow-read"))}, "");
 const state = () => readThread(db, "app-12").state;
+// Waits until the host has answered one more read of the screen and has no call left running,
+// so the next look can't find this one still under way and be skipped. A slow machine can take
+// well over the two seconds of the read itself. The look notes what it saw a moment after the
+// host answers.
+const reads = () => fs.readFileSync(${JSON.stringify(join(fake, "asked"))}, "utf8").split("\\n").filter((line) => line.includes('"ask":"read"')).length;
+const calls = ${JSON.stringify(join(fake, "running-calls"))};
+const looked = async (before) => {
+  while (reads() <= before || fs.readdirSync(calls).length > 0) await Bun.sleep(50);
+  await Bun.sleep(200);
+};
 // A look starts, and a new turn starts while the host is still reading the screen.
+let before = reads();
 noticeIdleScreens(db, "unused");
 await Bun.sleep(500);
 keepState(db, { folder: "app-12" }, "working");
-await Bun.sleep(2500);
+await looked(before);
 // Only a second look of the new turn may make it idle.
+before = reads();
 noticeIdleScreens(db, "unused");
-await Bun.sleep(2500);
+await looked(before);
 const afterOne = state();
+before = reads();
 noticeIdleScreens(db, "unused");
-await Bun.sleep(2500);
+await looked(before);
 console.log(afterOne, state());
 process.exit(0);`,
     { host: "fake", host_id: "fake-app-12", state: "working" },

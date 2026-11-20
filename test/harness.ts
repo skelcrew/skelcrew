@@ -5,6 +5,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -184,6 +185,42 @@ export async function runSkel(args: string[], env: Record<string, string>, input
     run.exited,
   ]);
   return { out, err, code };
+}
+
+// Kills the process group of each session the fake host with these settings keeps, for a
+// test's clean-up, as those sessions outlive the daemon that started them. So do the host's
+// calls, so one can still be starting a session: the calls end first. A session without a
+// process ID is skipped, as its host died before starting it. Its ID would read as 0, and
+// killing group 0 kills the caller's own group: in a parallel run, the whole test worker,
+// which Bun then reports as crashed with SIGKILL.
+export async function endFakeSessions(settings: string): Promise<void> {
+  // The calls still running, by the IDs they noted. A call that ended took its note away. One
+  // that was killed left it, so its process is looked for too.
+  const calls = join(settings, "running-calls");
+  const running = () =>
+    (existsSync(calls) ? readdirSync(calls) : []).map(Number).filter((pid) => {
+      try {
+        return pid > 0 && process.kill(pid, 0);
+      } catch {
+        return false;
+      }
+    });
+  // A start takes a moment. A call a test holds on purpose gets five seconds, then is killed
+  // with its group: a held call hasn't started anything yet.
+  const deadline = Date.now() + 5000;
+  while (running().length > 0 && Date.now() < deadline) await Bun.sleep(50);
+  for (const pid of running())
+    try {
+      process.kill(-pid, "SIGKILL");
+    } catch {}
+  const sessions = join(settings, "sessions");
+  for (const id of existsSync(sessions) ? readdirSync(sessions) : []) {
+    const pid = Number(read(join(sessions, id, "pid")));
+    if (!Number.isInteger(pid) || pid <= 0) continue;
+    try {
+      process.kill(-pid, "SIGKILL");
+    } catch {}
+  }
 }
 
 // Installs the fake tracker and forge as a plugin named `name`, doing `jobs`, for a test with
