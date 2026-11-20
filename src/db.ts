@@ -436,6 +436,9 @@ function prepareTables(db: Database): void {
   // takes a PR with no checks yet for one without CI. `lead_host` is the session host the lead
   // runs on, tmux or a runtime plugin, which it keeps until it ends, and `lead_host_id` its
   // session's ID there. A lead from before hosts runs on tmux, where its ID is its name.
+  // `lead_agents` is the tree of the approved .agents/ the running lead started on, `none` for
+  // the built-in roles, or null for a lead started before Skelcrew kept it, which starts again
+  // on the approved .agents/ the next time it is asked for, if you approved one.
   const repositoryColumns = {
     open_issues: "INTEGER NOT NULL DEFAULT 0",
     open_prs: "INTEGER NOT NULL DEFAULT 0",
@@ -455,6 +458,7 @@ function prepareTables(db: Database): void {
     ci_seen: "INTEGER NOT NULL DEFAULT 0",
     lead_host: "TEXT DEFAULT 'tmux'",
     lead_host_id: "TEXT",
+    lead_agents: "TEXT",
   };
   // Whether repositories gain `ci_seen` now, so it is filled from the copy below.
   const repositoriesSeen = !hasColumn(db, "repositories", "ci_seen");
@@ -611,6 +615,46 @@ function prepareTables(db: Database): void {
     typed_in TEXT NOT NULL DEFAULT '[]',
     pasted INTEGER NOT NULL DEFAULT 0
   )`);
+  // A lead's message to a builder, and a builder's message or a brief to a lead, are typed in as
+  // Skelcrew wrapped them. One saved before herdr's <hc> tags were removed from inside can still
+  // hold one, so it is escaped. A brief's plain <asked> or <brief> element with one is escaped
+  // whole and marked escaped="yes", as a new brief's is, so the lead reads back the exact words:
+  // & as &amp; and < as &lt;. Such an element held no tag or control character of Skelcrew's,
+  // which escaped it then. Anywhere else, only the < that starts the tag is written &lt;.
+  // Skelcrew's wrapper holds no such tag, and escaped text no longer matches, so this changes
+  // nothing the next time.
+  const herdrTag = /<(?=\s*\/?\s*hc\b)/i;
+  const Saved = z.array(z.object({ id: z.number(), text: z.string() }));
+  for (const { id, text } of Saved.parse(
+    db.query("SELECT id, text FROM notes WHERE wrapped = 1").all(),
+  )) {
+    const escaped = text
+      .replace(
+        /\n<(asked|brief)>\n([\s\S]*?)\n<\/\1>(?=\n)/g,
+        (element, tag: string, said: string) =>
+          herdrTag.test(said)
+            ? `\n<${tag} escaped="yes">\n${said.replaceAll("&", "&amp;").replaceAll("<", "&lt;")}\n</${tag}>`
+            : element,
+      )
+      .replace(new RegExp(herdrTag.source, "gi"), "&lt;");
+    if (escaped !== text) db.run("UPDATE notes SET text = ? WHERE id = ?", [escaped, id]);
+  }
+  // A builder's waiting messages are saved escaped too: the < that starts a herdr tag in the
+  // lead's, wrapped by Skelcrew, and that of any herdr, skelcrew, asked or brief tag in Skelcrew's
+  // or the review's, which quote people. One the older Skelcrew pasted at the builder's prompt,
+  // left there for a question, sits there unescaped. So escaping it also forgets it was pasted:
+  // Skelcrew then waits on that draft as on a person's and never presses Enter on it, and the
+  // escaped text goes in once the draft is gone.
+  const Waiting = z.array(z.object({ id: z.number(), sender: z.string(), text: z.string() }));
+  for (const { id, sender, text } of Waiting.parse(
+    db.query("SELECT id, sender, text FROM messages").all(),
+  )) {
+    const tag =
+      sender === "lead" ? herdrTag.source : /<(?=\s*\/?\s*(?:skelcrew|asked|brief|hc\b))/.source;
+    const escaped = text.replace(new RegExp(tag, "gi"), "&lt;");
+    if (escaped !== text)
+      db.run("UPDATE messages SET text = ?, pasted = 0 WHERE id = ?", [escaped, id]);
+  }
   // For each open PR in Skelcrew's copy, the head commit and base branch a poll last looked at
   // and whether the PR's changes there touch .agents/, so the merge confirms say so while reading
   // only the database. Each poll looks again, as a retargeted PR or a moved base can change that.

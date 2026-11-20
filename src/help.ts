@@ -73,6 +73,7 @@ const sections: [string, [string, string][]][] = [
     [
       ["up", "Run the daemon here, until Ctrl-C"],
       ["up --bg", "Run it as a systemd or launchd service, and return"],
+      ["restart", "Restart it, here or with --remote. Agents keep running"],
     ],
   ],
   [

@@ -1,9 +1,12 @@
 // Running the daemon in the background, as sc up --bg does, then showing you a repository's
 // lead or a thread's builder once it runs this Skelcrew's code. Plain sc opens the screen on a
 // lead, sc --list shows the lead's repository as a list, and sc attach attaches to a builder
-// full screen.
+// full screen. sc restart restarts the daemon when you ask.
+import { statSync } from "node:fs";
+import { hostname, userInfo } from "node:os";
 import { z } from "zod";
 import { agentRuns, attachSession } from "./agents/sessions.ts";
+import { askAboutAgents } from "./approved-agents.ts";
 import { ask } from "./client.ts";
 import { tellOldKeys } from "./config.ts";
 import { openDb } from "./db.ts";
@@ -11,6 +14,7 @@ import { leadSession } from "./flow/lead.ts";
 import { builderSession, findThread } from "./flow/thread.ts";
 import { runList } from "./list/list.ts";
 import { installService, restartDaemon, servicePid, startDaemon } from "./machine/service.ts";
+import { daemonSocket } from "./paths.ts";
 import { attachOnHost } from "./plugins/runtime.ts";
 import { openScreen } from "./screen/screen.ts";
 import { checkoutFolder, git, release, singleFile } from "./version.ts";
@@ -20,6 +24,7 @@ import { checkoutFolder, git, release, singleFile } from "./version.ts";
 const LeadReply = z.union([
   z.object({ lead: z.string(), repository: z.string() }),
   z.object({ closed: z.literal(true) }),
+  z.object({ agents: z.object({ owner: z.string(), repo: z.string(), name: z.string() }) }),
   z.object({ error: z.string() }),
 ]);
 
@@ -101,6 +106,41 @@ export async function restartStaleDaemon(): Promise<void> {
   }
 }
 
+// Restarts the engine's service on this machine, for sc restart, and returns once a new engine
+// answers. sc --remote runs it on a server too. An engine run in a terminal with sc up is left
+// alone and you are asked to stop it, as the service manager can't restart it and a service
+// started beside it would fail on the lock. Agents keep running, as only the engine restarts.
+export async function restartEngine(): Promise<void> {
+  const before = await daemonRuns();
+  // An engine from an older release reports no process id. When the service runs none, it
+  // surely runs in a terminal. Otherwise it may be the service's, so the service restarts, and
+  // the wait below catches one in a terminal: it keeps answering, and with no id.
+  const terminal =
+    before !== null && (before.pid === 0 ? servicePid() === 0 : outsideService(before));
+  if (terminal)
+    throw new Error(
+      "Skelcrew's engine runs in a terminal, with sc up, not as its service. Stop it there, such as with Ctrl-C, then run sc up again, or sc up --bg to run it as the service. Your agents keep running.",
+    );
+  const began = Date.now();
+  const log = restartDaemon();
+  // A new engine is told by its socket, which an engine makes once it holds the lock: one made
+  // after the restart began. The process id can't tell, as an engine from an older release
+  // reports none, and the service may run one. The old engine, still answering for a moment
+  // while it stops, and one in a terminal, which keeps a new one from starting, keep the socket
+  // they made before.
+  const deadline = began + restartWait;
+  while (true) {
+    const made = statSync(daemonSocket(), { throwIfNoEntry: false })?.ctimeMs ?? 0;
+    if (made >= began && (await daemonRuns())) break;
+    if (Date.now() > deadline)
+      throw new Error(
+        `Skelcrew's engine didn't come back within ${restartWait / 1000} seconds: ${log} shows why. An engine from an older release that you ran with sc up in a terminal keeps a new one from starting: stop it there, such as with Ctrl-C.`,
+      );
+    await Bun.sleep(100);
+  }
+  console.log(`Restarted the engine on ${userInfo().username}@${hostname()}. Agents kept running.`);
+}
+
 // Runs the daemon as the background service on this Skelcrew's code, and returns once it
 // answers. This is sc up --bg, and plain sc and sc attach do it before attaching. The service is
 // installed first, or rewritten when the PATH or Skelcrew it needs moved. A daemon on another
@@ -134,7 +174,8 @@ export async function upInBackground(): Promise<boolean> {
 // first. The lead is for `from`, an owner/repo, or else for the repository you opened last.
 // With `tab`, only a repository whose tab is open will do. Returns false, showing nothing, when
 // every tab is closed. Before it shows either, it names once any old keys the opened
-// repository's skelcrew.yaml still uses: only the daemon knows which repository you opened last.
+// repository's skelcrew.yaml still uses, and before its lead starts, asks about an .agents/ you
+// never answered for: only the daemon knows which repository you opened last.
 export async function attachToLead(
   sessions: string,
   list: boolean,
@@ -142,28 +183,44 @@ export async function attachToLead(
   tab = false,
 ): Promise<boolean> {
   // Asking for the lead brings it back if it ended while the daemon kept running. Starting it
-  // takes longer than a status, hence the longer wait.
-  const reply = await ask(
-    { command: "lead", ...(from ? { from } : {}), ...(tab ? { tab } : {}) },
-    15_000,
-  );
-  if (reply === null) throw new Error("the daemon didn't answer: run sc to start it");
-  const lead = LeadReply.safeParse(reply);
-  if (!lead.success)
-    throw new Error("the daemon answered in a way this Skelcrew doesn't understand");
-  if ("error" in lead.data) throw new Error(lead.data.error);
-  if ("closed" in lead.data) return false;
-  tellOldKeys(lead.data.repository);
+  // takes longer than a status, hence the longer wait. The daemon may first hand back the
+  // repository it would open, for you to answer about its .agents/ before its lead starts. sc
+  // then asks again, and the daemon may pick another repository by then, which is asked about
+  // the same way.
+  let asked: string | undefined;
+  let lead: z.infer<typeof LeadReply>;
+  while (true) {
+    const reply = await ask(
+      {
+        command: "lead",
+        ...(from ? { from } : {}),
+        ...(tab ? { tab } : {}),
+        ...(asked ? { asked } : {}),
+      },
+      15_000,
+    );
+    if (reply === null) throw new Error("the daemon didn't answer: run sc to start it");
+    const parsed = LeadReply.safeParse(reply);
+    if (!parsed.success)
+      throw new Error("the daemon answered in a way this Skelcrew doesn't understand");
+    lead = parsed.data;
+    if (!("agents" in lead)) break;
+    askAboutAgents(lead.agents, lead.agents.name);
+    asked = `${lead.agents.owner}/${lead.agents.repo}`;
+  }
+  if ("error" in lead) throw new Error(lead.error);
+  if ("closed" in lead) return false;
+  tellOldKeys(lead.repository);
   if (list) {
-    await runList(sessions, lead.data.repository);
+    await runList(sessions, lead.repository);
     return true;
   }
   // The screen shows only tmux's sessions, so a lead on a runtime plugin's host is attached
   // through that host instead, full screen, as a builder there is.
-  const [owner = "", repo = ""] = lead.data.repository.split("/");
+  const [owner = "", repo = ""] = lead.repository.split("/");
   const on = await leadSession(openDb(), sessions, owner, repo);
   if (on !== null && typeof on.host !== "string") attachOnHost(on.host, on.id);
-  else await openScreen(sessions, lead.data.lead, lead.data.lead, lead.data.repository);
+  else await openScreen(sessions, lead.lead, lead.lead, lead.repository);
   return true;
 }
 
