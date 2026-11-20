@@ -287,5 +287,9 @@ export async function openScreen(
   // tmux runs in your terminal until you leave. Only a screen that couldn't open is an error.
   const code = await Bun.spawn(argv, { env, stdio: ["inherit", "inherit", "inherit"] }).exited;
   if (code !== 0) throw new Error(`couldn't open the screen: tmux exited with ${code}`);
+  // tmux says [exited] on its way out, straight to your terminal, which reads like something went
+  // wrong. Its line is the one above, so it is cleared, and the line saying what happened takes
+  // its place.
+  if (process.stdout.isTTY) process.stdout.write("\x1b[1A\r\x1b[2K");
   console.log("Your agents keep running. Run sc to come back.");
 }

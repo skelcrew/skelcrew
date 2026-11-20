@@ -78,7 +78,7 @@ export const sectionNames: Record<Section, string> = {
 // on Backlog's `… more` row, the numbers that open and close the stages, Shift with an arrow
 // only on a queued task in Up next, which it moves in the queue, s only on a task it can start,
 // m only on a task it can merge, o on a task while the details pane shows, to show its agent's
-// whole screen or only the last lines, and Tab and Alt-Shift with an arrow only with another
+// whole screen or only the last lines, and Page Up and Page Down to scroll its details, and Tab and Alt-Shift with an arrow only with another
 // repository to go to. A runtime plugin's host has its own key to come back, so its rows don't
 // offer Ctrl-\. A request of the lead's offers y and n, which answer it, in place of Enter.
 export function keysFor(row: Row | undefined, tabs: number, pane = false): string {
@@ -87,7 +87,7 @@ export function keysFor(row: Row | undefined, tabs: number, pane = false): strin
     return ["↑↓ move", "y yes", "n no", "1-6 stages", ...tab, "q/esc quit"].join("  ");
   const back = row?.tmux ? " · ctrl+\\ back" : "";
   const enter = row?.more ? "⏎ show all" : row && enterAttaches(row) ? `⏎ attach${back}` : "⏎ open";
-  const open = pane && row?.task ? `${enter} · o output` : enter;
+  const open = pane && row?.task ? `${enter} · o output · pgup/pgdn scroll` : enter;
   const merge = row?.merge && "ask" in row.merge ? ["m merge"] : [];
   const start = row?.start ? [row.start.queues ? "s queue" : "s start"] : [];
   const reorder = row?.section === "up next" && row.place !== null ? ["shift+↑↓ reorder"] : [];

@@ -305,9 +305,9 @@ export const check = (id: number, state: string) => ({ name: "test", id: String(
 export const handled = (id: string) => String(thread().seen ?? "").includes(`"${id}"`);
 
 // Starts the thread on app-12, and waits until Skelcrew's reviewer has approved its first round,
-// so the thread waits on CI. `wait` is how long the daemon waits for CI's first check where CI
+// so the thread waits on CI. `ciWait` is how long the daemon waits for CI's first check where CI
 // shows on another PR.
-export async function approvedApp12(from?: string, wait?: number): Promise<string> {
+export async function approvedApp12(from?: string, ciWait?: number): Promise<string> {
   const work = addApp();
   if (from) {
     git(work, "checkout", "-q", "-b", from);
@@ -315,7 +315,7 @@ export async function approvedApp12(from?: string, wait?: number): Promise<strin
   }
   // sc start reads the task from Skelcrew's copy, which it brings up to date first.
   changes([issue12()]);
-  serve(200, wait);
+  serve(200, ciWait);
   await until(() => existsSync(join(data(), "repos", "simon", "app", "README")));
   const started = Bun.spawnSync(
     [process.execPath, main, "start", "app-12", ...(from ? ["--from", from] : [])],
@@ -325,9 +325,16 @@ export async function approvedApp12(from?: string, wait?: number): Promise<strin
     },
   );
   expect(started.stderr.toString()).toBe("");
-  await until(
+  // A builder and then a reviewer start in sandboxes of their own, which CI's busy machine can
+  // take many seconds to do, so the limit only ends a test that hangs. One that hangs says how
+  // far the thread got, from its log and the daemon's.
+  await wait(
     () => thread().pr === 7 && thread().reviewing === null && thread().submitting === null,
-    30_000,
+    {
+      timeout: 45_000,
+      what: () =>
+        `${read(join(data(), "threads", "app-12.log"))}\n${read(daemonLog()).slice(-4000)}`,
+    },
   );
   await until(() => read(join(data(), "threads", "app-12.log")).includes("waits on CI"));
   // The approval is saved before it goes on the PR, so wait for it there too, as a test may

@@ -21,7 +21,7 @@ import { Repository } from "../db.ts";
 import leadRules from "../defaults/roles/lead-rules.md" with { type: "text" };
 import { quoted } from "../machine/remote.ts";
 import { cloneDir, leadPlaces, reposDir } from "../paths.ts";
-import { type Host, hostNamed } from "../plugins/runtime.ts";
+import { filesFor, type Host, hostNamed } from "../plugins/runtime.ts";
 import { builtInRole, repositoryRole } from "../roles.ts";
 import { errorText } from "../say.ts";
 import type { Settings } from "../settings.ts";
@@ -263,6 +263,7 @@ export async function startLead(
     owner,
     repo,
   ]);
+  const files = filesFor(host);
   const { argv, env } = await harness.start({
     name: lead.name,
     socket: lead.socket,
@@ -284,6 +285,7 @@ export async function startLead(
     ),
     // Its skills come from the .agents/ you approved, as its role does.
     skills: { owner, repo, agents: approvedAgents(repository) },
+    files,
     ...(resume ? { resume } : { sessionId: session }),
   });
   // On tmux the session stays when the lead exits, so closeExitedLeads can tell exiting it from a
@@ -296,6 +298,7 @@ export async function startLead(
     env,
     labels,
     keepOnExit: true,
+    files,
   });
   db.run("UPDATE repositories SET lead_host_id = ? WHERE owner = ? AND repo = ?", [
     id,

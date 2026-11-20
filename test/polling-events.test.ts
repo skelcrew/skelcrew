@@ -276,9 +276,12 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
       checks: [approved],
     });
     changes([issue12(), moved]);
+    // The daemon saves the change, then logs it, so the log can lag the database a moment.
     await until(() => thread().needs_you === 0);
-    expect(read(join(data(), "threads", "app-12.log"))).toContain(
-      `its branch moved on the remote to ${merged}, so it isn't ready to merge`,
+    await until(() =>
+      read(join(data(), "threads", "app-12.log")).includes(
+        `its branch moved on the remote to ${merged}, so it isn't ready to merge`,
+      ),
     );
     // Each poll fails to fetch, and the thread never goes back to ready.
     await morePolls();

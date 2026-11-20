@@ -4,12 +4,13 @@
 // one JSON answer on stdout.
 import type { Database } from "bun:sqlite";
 import type { z } from "zod";
+import { filesPlaceholder } from "../agents/sandbox.ts";
 import { errorText } from "../say.ts";
 import { commandFor, installedPlugins, type Manifest, quoteForSh, readManifest } from "./plugin.ts";
 
 // A runtime plugin that hosts sessions: its name, its folder, its session and attach commands,
-// and whether it also provides the transport and the status. The sessions module uses Skelcrew's
-// built-in for any it doesn't.
+// and whether it also provides the transport, the status and a folder of dropped files for each
+// session. The sessions module uses Skelcrew's built-in for any of the first two it doesn't.
 export type PluginHost = {
   plugin: string;
   folder: string;
@@ -17,6 +18,7 @@ export type PluginHost = {
   attach: string[];
   transport: boolean;
   status: boolean;
+  files: boolean;
 };
 
 // Where a session runs: on Skelcrew's tmux server, named by its socket, or on a plugin's host.
@@ -54,11 +56,20 @@ export function pluginHost(db: Database, name: string): PluginHost | null {
     attach,
     transport: manifest.provides.includes("transport"),
     status: manifest.provides.includes("status"),
+    files: manifest.provides.includes("files"),
   };
 }
 
 // What was logged of plugins whose manifest can't be read, so each is said once.
 const unreadable = new Set<string>();
+
+// Returns a new placeholder for the folder of files dropped onto an agent about to start on
+// `host`, for its sandbox command and the host's start, or undefined when it gets none: on tmux,
+// on a host that doesn't provide files, and on a Mac, whose sandbox can't show them yet.
+export const filesFor = (host: Host): string | undefined =>
+  typeof host !== "string" && host.files && process.platform !== "darwin"
+    ? filesPlaceholder()
+    : undefined;
 
 // Returns the program, environment and folder that run the host's session command, with the
 // plugin's environment added to Skelcrew's own.

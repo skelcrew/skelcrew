@@ -245,6 +245,21 @@ describe.skipIf(insideSandbox)("sc tell", () => {
     expect(threadLog()).toContain("The export needs app-9 first.");
   }, 60_000);
 
+  // A message from the lead can be long, so with - it comes on stdin, which needs no quoting.
+  test("the lead's message with - is read from stdin, and an empty one is refused", async () => {
+    await startApp12();
+    const text = "Timing data:\n  build 41s\n  test 2m 'slow'\n";
+    const told = await skel(["tell", "app-12", "-"], "lead", text);
+    expect(told.err).toBe("");
+    await until(() => typed(builder()).includes("</skelcrew>"));
+    expect(typed(builder())).toContain("Timing data:");
+    expect(typed(builder())).toContain("test 2m 'slow'");
+    expect(typed(builder())).not.toContain("\n-\n");
+    const empty = await skel(["tell", "app-12", "-"], "lead", "  \n");
+    expect(empty.code).not.toBe(0);
+    expect(empty.err).toContain("sc tell app-12 needs the message, as words or on stdin");
+  }, 60_000);
+
   // A builder's one word is its message, whatever its stdin holds, as only a lead's brief takes
   // a second word, or - for stdin.
   test("a builder's one-word message reaches its lead though stdin brings text", async () => {

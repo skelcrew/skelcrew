@@ -154,10 +154,12 @@ async function leadCommand(list: boolean, from?: string): Promise<void> {
   // In a repository with no remote, sc opens nothing, even with tabs open or no repositories
   // yet. Opening another repository there would look as if Skelcrew had ignored where you are.
   const origin = originHere();
+  // It is a step to take, not an error, so it goes to stdout like the first run's steps.
   if (from === undefined && origin === null && checkoutTop() !== null) {
-    console.error(
-      "This git repository has no remote. To add a remote and push it:\n\n  git remote add origin <url>\n  git push -u origin HEAD\n\nThen run sc again.\n",
-    );
+    const { toRun } = await import("./say.ts");
+    const steps = toRun(["git remote add origin <url>", "git push -u origin HEAD"]);
+    console.log(`This git repository has no remote. To add a remote and push it:\n${steps}`);
+    console.log("Then run sc again.");
     process.exit(1);
   }
   // Adds the repository you ran sc from if Skelcrew doesn't have it yet.
@@ -253,12 +255,14 @@ async function repoCommand(args: string[], json: boolean): Promise<void> {
   const { openDb } = await import("./db.ts");
   const { listRepositories, printRepositories } = await import("./flow/list.ts");
   const { addRepo, initRepo, removeRepo, trustRepo } = await import("./flow/repo.ts");
+  // Once sc init pushed its files, the lead opens on them, as plain sc would open it.
   if (command === "init" && args.length === 1) {
-    await initRepo("skelcrew");
+    if (await initRepo("skelcrew")) await leadCommand(false);
     return;
   }
   if (sub === "add" && rest.length <= 1) {
-    await addRepo(rest[0], "skelcrew");
+    const added = await addRepo(rest[0], "skelcrew");
+    if (added) console.log(`Added ${added.owner}/${added.repo}, as ${added.name}.`);
     return;
   }
   if (sub === "ls" && rest.length === 0) {
@@ -318,7 +322,8 @@ async function pluginCommand(args: string[], json: boolean): Promise<void> {
   }
   if (command === "add" && name && more.length === 0 && !yours) {
     const { addRepositoryPlugin } = await import("./plugins/repository.ts");
-    addRepositoryPlugin(name);
+    const added = addRepositoryPlugin(name);
+    if (added) console.log(added);
     return;
   }
   if ((command === "remove" || command === "update") && !yours)
@@ -867,8 +872,9 @@ async function needsYouCommand(args: string[]): Promise<void> {
 }
 
 // Types a message from the lead into a builder, from a builder into the lead, or from a lead
-// into another repository's lead, as sc tell lead <repo> "<text>". A brief can be long, so with
-// - as its text it comes on stdin instead, which needs no shell quoting. A builder's sc tell lead
+// into another repository's lead, as sc tell lead <repo> "<text>". A brief or a message to a
+// builder can be long, so with - as its text it comes on stdin instead, which needs no shell
+// quoting. Without that, a lead's - would reach the builder as the message. A builder's sc tell lead
 // "<text>" has one word after lead, so only a second word makes a brief, and a builder's message
 // never waits on stdin. --asked-file gives the human's words with a brief, in a file the lead
 // wrote, as sc merge --when-ready takes them. The daemon decides who may tell whom, from the
@@ -914,7 +920,9 @@ async function tellCommand(args: string[]): Promise<void> {
     return;
   }
   if (task && text && rest.length === 0) {
-    console.log(await tellOn(...task, text));
+    const message = text === "-" ? await Bun.stdin.text() : text;
+    if (!message.trim()) throw new Error(`sc tell ${to} needs the message, as words or on stdin`);
+    console.log(await tellOn(...task, message));
     return;
   }
   usage(command);

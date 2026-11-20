@@ -537,21 +537,21 @@ test("an issue whose work ended is back under Backlog, to start again", () => {
 // to start it as it does an issue.
 test("a task in Skelcrew's backlog shows under Backlog beside the issues, newest first", () => {
   sql(`INSERT INTO backlog (owner, repo, task, title, body, created, by, filed_commit)
-  VALUES ('simon', 'app', 't104', 'Add export', 'As JSON', '2026-11-07T10:00:00.000Z', 'simon', 'c1'),
-    ('simon', 'app', 't105', 'Add import', 'From CSV', '2026-11-01T10:00:00.000Z', 'simon', 'c2');`);
+  VALUES ('simon', 'app', 't5', 'Add export', 'As JSON', '2026-11-07T10:00:00.000Z', 'simon', 'c1'),
+    ('simon', 'app', 't6', 'Add import', 'From CSV', '2026-11-01T10:00:00.000Z', 'simon', 'c2');`);
   const backlog = rows().filter((row) => row.part === "backlog");
   expect(backlog.map((row) => [row.name, row.title, row.when])).toEqual([
-    ["APP-T104", "Add export", "7 Nov"],
+    ["APP-T5", "Add export", "7 Nov"],
     ["APP-31", "Export as CSV", "5 Nov"],
-    ["APP-T105", "Add import", "1 Nov"],
+    ["APP-T6", "Add import", "1 Nov"],
   ]);
   expect(backlog[0]?.start).toEqual({
-    ask: "Start APP-T104? y/n",
-    working: "Starting APP-T104…",
-    request: { command: "start", repo: "simon/app", task: "t104" },
+    ask: "Start APP-T5? y/n",
+    working: "Starting APP-T5…",
+    request: { command: "start", repo: "simon/app", task: "t5" },
     queues: false,
   });
-  expect(shown("t104")).toContain("Filed   by simon on 7 November 2026");
+  expect(shown("t5")).toContain("Filed   by simon on 7 November 2026");
 });
 
 // Returns SQL for open issues from 100 on, each a day older than the one before.
@@ -1658,15 +1658,15 @@ test("Ctrl-\\ in every form leaves a question open, and y then answers it", asyn
 // what the daemon answered.
 test("s asks to start a task in Backlog, and y starts it", async () => {
   sql(`INSERT INTO backlog (owner, repo, task, title, body, created, by, filed_commit)
-  VALUES ('simon', 'app', 't104', 'Add export', 'As JSON', '2026-11-07T10:00:00.000Z', 'simon', 'c1');`);
+  VALUES ('simon', 'app', 't5', 'Add export', 'As JSON', '2026-11-07T10:00:00.000Z', 'simon', 'c1');`);
   await open();
   type("1");
-  await until(() => here().startsWith("▸ ○ APP-T104"), "the backlog task's row");
+  await until(() => here().startsWith("▸ ○ APP-T5"), "the backlog task's row");
   expect(seen()).toContain("s start");
   type("s");
-  await until(() => seen().includes("Start APP-T104? y/n"), "the question");
+  await until(() => seen().includes("Start APP-T5? y/n"), "the question");
   type("y");
-  await until(() => asked.includes("start simon/app t104"), "the start");
+  await until(() => asked.includes("start simon/app t5"), "the start");
   // The line says what the daemon did, as the task could have been queued meanwhile.
   await until(() => seen().includes("Started."), "the daemon's answer");
 });
@@ -2389,6 +2389,44 @@ test("o shows the agent's whole screen in the pane and back, and Enter still att
   await until(() => seen().includes("q/esc quit"), "the list again");
 });
 
+// app-12's description is far taller than the pane: 30 short paragraphs, the last one ending it.
+const paragraphs = Array.from({ length: 30 }, (_, i) => `Paragraph ${i + 1}.`).join("\n\n");
+
+test("a long description scrolls in the pane by Page Down, Page Up and the wheel, the strip staying put", async () => {
+  sql(`UPDATE tasks SET body = '${paragraphs}' WHERE task = '12'`);
+  await open({ width: wide, says: "step one\\nstep two\\n" });
+  await until(() => paneSeen()[0] === "Rate limit the API", "app-12's details");
+  await until(() => liveSeen().includes("I am app-12"), "app-12's screen");
+  expect(seen()).toContain("o output · pgup/pgdn scroll");
+  // The details fill the pane down to the strip, their last line saying there is more.
+  const strip = liveSeen();
+  const rule = paneSeen().findIndex((line) => line.startsWith("───"));
+  expect(paneSeen()[rule - 1]).toBe("↓ more");
+  // Page Down shows the details further down, and the strip stays under them, as it was.
+  press("NPage");
+  await until(() => paneSeen()[0]?.startsWith("Paragraph") ?? false, "the details scrolled");
+  expect(paneSeen().findIndex((line) => line.startsWith("───"))).toBe(rule);
+  expect(liveSeen()).toEqual(strip);
+  // At the end, the last paragraph shows, with nothing more below.
+  for (const _ of [1, 2, 3]) press("NPage");
+  await until(() => paneSeen()[rule - 1] === "Paragraph 30.", "the end of the description");
+  // The wheel over the pane scrolls it back, a few lines each turn, and Page Up a page, while
+  // you stay on the same row.
+  const atEnd = paneSeen()[0];
+  type(`\x1b[<64;${wide - 10};5M`);
+  await until(() => paneSeen()[0] !== atEnd, "the wheel to scroll up");
+  expect(here()).toStartWith("▸ ● APP-12");
+  for (const _ of [1, 2, 3, 4]) press("PPage");
+  await until(() => paneSeen()[0] === "Rate limit the API", "the top again");
+  // Another row starts at the top of its details, and so does coming back.
+  press("NPage");
+  await until(() => paneSeen()[0] !== "Rate limit the API", "the details scrolled");
+  press("Down");
+  await until(() => paneSeen()[0] === "Fix the export header", "app-14's details from the top");
+  press("Up");
+  await until(() => paneSeen()[0] === "Rate limit the API", "app-12's details from the top");
+});
+
 test("the pane shows only while the terminal is wide enough, and the keys do the same", async () => {
   await open();
   expect(seen()).not.toContain(" │ ");
@@ -2597,15 +2635,18 @@ test("the live view reads only while the list shows with its pane", async () => 
   await until(() => here().startsWith("▸ ○ APP-7"), "the list again");
   const back = reads();
   await until(() => reads() > back, "reads again");
-  // In a terminal too narrow for the pane, nothing is read.
+  // In a terminal too narrow for the pane, nothing is read. A read under way as the pane went
+  // can still be noted, as after the attach above, so the list first goes a second without one.
   tmux("resize-window", "-t", "=one:", "-x", "100");
   await until(() => !seen().includes(" │ "), "no pane");
+  await wait(() => noReads(reads), { what: () => "the reads to stop without the pane" });
   expect(await noReads(reads)).toBe(true);
   // Nor once the list has left.
   tmux("resize-window", "-t", "=one:", "-x", String(wide));
   await until(() => seen().includes(" │ "), "the pane");
   type("q");
   await until(() => read(join(home, "left")) === "left", "the list to leave");
+  await wait(() => noReads(reads), { what: () => "the reads to stop once the list left" });
   expect(await noReads(reads)).toBe(true);
 });
 

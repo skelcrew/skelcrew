@@ -1,5 +1,6 @@
 // Skelcrew's help page: what sc --help shows, laid out in sections with skelcrew.dev's amber for
 // the headings, so it reads as help and not as an error.
+import { colorful } from "./say.ts";
 
 // The help page's sections, each a heading and its rows of a command and what it does.
 const sections: [string, [string, string][]][] = [
@@ -84,8 +85,8 @@ const sections: [string, [string, string][]][] = [
       ['submit "<summary>"', "Hand in a round for review, as a builder"],
       ["check", "Run the repository's tests once a check slot is free"],
       ['tell lead "<text>"', "Type a message into its repository's lead, as a builder"],
-      ['tell <thread> "<text>"', "Type a message into its builder, as the lead"],
-      ['tell lead <repo> "<text>"', "Type a brief into another repository's lead, as a lead"],
+      ['tell <thread> "<text>" | -', "Type a message into its builder, as the lead, - for stdin"],
+      ['tell lead <repo> "<text>" | -', "Type a brief into another repository's lead, - for stdin"],
       ["ask start <issue>", "Ask you in the list to start it, as the lead"],
       ['ask start <repo> "<title>" "<body>"', "The same for a thread with no issue"],
       ["ask repo add <owner/repo>", "Ask you in the list to add a repository, as the lead"],
@@ -169,9 +170,4 @@ export function help(color = colorful()): string {
     "",
   );
   return lines.join("\n");
-}
-
-// Returns whether stdout is a terminal that shows color, honoring NO_COLOR.
-export function colorful(): boolean {
-  return Boolean(process.stdout.isTTY) && !process.env.NO_COLOR && process.env.TERM !== "dumb";
 }

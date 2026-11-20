@@ -7,21 +7,23 @@ import { HarnessName, harnessNamed } from "../agents/harness.ts";
 import { configFile, yourConfigDocument } from "../config.ts";
 import { openDb } from "../db.ts";
 import { claudeTokenFile, configDir, dataDir, installDoneFile, setUpFile } from "../paths.ts";
-import { addPlugin, askYes, installYourPlugins } from "../plugins/install.ts";
+import { addPlugin, installYourPlugins } from "../plugins/install.ts";
 import { yourPlugins } from "../plugins/lock.ts";
 import { installedPlugins } from "../plugins/plugin.ts";
 import {
   cantTell,
   checkoutNames,
   everyNamed,
+  gitHubShown,
   githubPlugin,
   installRepositoryPlugins,
   type Need,
   repositoryNeeds,
 } from "../plugins/repository.ts";
-import { errorText } from "../say.ts";
+import { errorText, toRun } from "../say.ts";
 import { readSettings } from "../settings.ts";
 import { originHere, parseRemote } from "./origin.ts";
+import { pick } from "./pick.ts";
 import { promptSecret } from "./secret.ts";
 import { loginPath, serviceFile } from "./service.ts";
 
@@ -30,11 +32,11 @@ type Env = Record<string, string | undefined>;
 
 // The harnesses agents can run on, in the order the first run offers them.
 const harnesses = HarnessName.options.map(harnessNamed);
-// The programs agents need on Linux, each with the line that installs it.
+// The programs agents need on Linux, each with the apt package that has it.
 const linuxTools = [
-  { command: "tmux", install: "sudo apt install tmux" },
-  { command: "bwrap", install: "sudo apt install bubblewrap" },
-  { command: "git", install: "sudo apt install git" },
+  { command: "tmux", package: "tmux" },
+  { command: "bwrap", package: "bubblewrap" },
+  { command: "git", package: "git" },
 ];
 // On a Mac the sandbox comes with the system, and what Homebrew gives goes in one line.
 const brewTools = ["tmux", "git"];
@@ -46,15 +48,31 @@ const macTools = [
   },
 ];
 
-// Returns what to install for agents to have a harness: the one your config saved, or else
-// either one, when neither is installed. Each line says how to install it.
+// Returns the commands that install a harness for agents, when none they can run is installed:
+// the one your config saved, or else either one. Empty when one is there.
 function missingHarness(env: Env): string[] {
   const PATH = env.PATH ?? "";
   const saved = readSettings(["yourHarness"]).yourHarness;
   // Before you pick one, any installed harness will do.
   const wanted = harnesses.filter((h) => saved === undefined || h.name === saved);
   if (wanted.some((h) => Bun.which(h.program, { PATH }))) return [];
-  return wanted.map((h) => `  ${h.program}: ${h.install}`);
+  return wanted.map((h) => h.install);
+}
+
+// Stops the first run, before it asks anything, when a program agents need is missing, saying
+// what to install. `tools` are the commands that install the tools, and `before` what to read
+// above them, such as where to get Homebrew. A harness comes last, as a choice when either will
+// do. It reads as a step to take, not as an error, so it isn't on stderr and has no Skelcrew:
+// in front, and sc exits with 1, so a script can tell nothing was set up.
+function stopForTools(before: string[], tools: string[], harness: string[]): void {
+  if (before.length + tools.length + harness.length === 0) return;
+  const lines = ["Before Skelcrew can start, install:", ...before];
+  if (tools.length > 0) lines.push(toRun(tools));
+  if (harness.length > 0)
+    lines.push(harness.length > 1 ? "a coding agent, one of:" : "a coding agent:", toRun(harness));
+  lines.push("Then run sc again.");
+  console.log(lines.join("\n"));
+  process.exit(1);
 }
 
 // Checks the programs a Mac needs and tries sandbox-exec, stopping setup with what to install
@@ -63,13 +81,12 @@ function checkMacTools(env: Env): void {
   const PATH = env.PATH ?? "";
   const brew = brewTools.filter((command) => !Bun.which(command, { PATH }));
   const missing = macTools.filter((tool) => !Bun.which(tool.command, { PATH }));
-  const lines = missing.map((tool) => `  ${tool.command}: ${tool.install}`);
-  lines.push(...missingHarness(env));
-  // The brew line goes first, with where to get Homebrew above it when it is missing too.
-  if (brew.length > 0) lines.unshift(`  brew install ${brew.join(" ")}`);
+  const before = missing.map((tool) => `${tool.command}: ${tool.install}`);
+  // Where to get Homebrew goes above its line, when it is missing too.
   if (brew.length > 0 && !Bun.which("brew", { PATH }))
-    lines.unshift("  Homebrew, for the line below: https://brew.sh");
-  if (lines.length > 0) throw new Error(`Install these first:\n${lines.join("\n")}`);
+    before.push("Homebrew, for the line below, from https://brew.sh");
+  const tools = brew.length > 0 ? [`brew install ${brew.join(" ")}`] : [];
+  stopForTools(before, tools, missingHarness(env));
   // A sandbox that allows everything, to see that sandbox-exec starts one at all.
   const tried = Bun.spawnSync(["sandbox-exec", "-p", "(version 1)(allow default)", "true"], {
     env,
@@ -84,14 +101,17 @@ function checkMacTools(env: Env): void {
 function checkLinuxTools(env: Env): void {
   const PATH = env.PATH ?? "";
   const bwrap = Bun.which("bwrap", { PATH });
+  // Every missing package goes in one apt line, which can be pasted as it is.
   const missing = linuxTools.filter((tool) => !Bun.which(tool.command, { PATH }));
-  const lines = missing.map((tool) => `  ${tool.command}: ${tool.install}`);
-  lines.push(...missingHarness(env));
-  // A missing bwrap is in the lines already, and checking it here too tells TypeScript it
-  // is found below.
-  if (lines.length > 0 || !bwrap) {
-    throw new Error(`Install these first:\n${lines.join("\n")}`);
-  }
+  const apt = missing.map((tool) => tool.package);
+  stopForTools(
+    [],
+    apt.length > 0 ? [`sudo apt install ${apt.join(" ")}`] : [],
+    missingHarness(env),
+  );
+  // A missing bwrap stopped setup above, and checking it here too tells TypeScript it is found
+  // below.
+  if (!bwrap) return;
   // Reviews look at the thread's clone through an overlay, which bubblewrap has only since
   // 0.11. An older one, such as Ubuntu 24.04's 0.9, passes every other check here and then fails
   // every review, so it stops setup before anything is asked.
@@ -236,56 +256,51 @@ function gitHubToOffer(remote: string | null): string | null {
   return declined.includes(repository.toLowerCase()) ? null : repository;
 }
 
-// Offers to install the GitHub plugin for a checkout of `repository`. The offer is asked first,
-// from the checkout's remote alone, so a no needs no network and is saved even with GitHub out of
-// reach. Only a yes fetches the plugin, which then shows its version, kind, what it provides and
-// the commands it runs, and asks again, as for any plugin. A yes there adds it to your plugins. A
-// no to either is saved in config.yaml, so no checkout of the repository asks again, and you can
-// undo it there. A failed install is only reported: Skelcrew works from git alone until you run
-// sc add -g.
+// Offers to install the GitHub plugin for a checkout of `repository`, saying first, in plain
+// words, why Skelcrew needs it. The plugin is fetched before the question, so the question can
+// name its version and show what it runs. A yes adds it to your plugins. A no is saved in
+// config.yaml, so no checkout of the repository asks again, and you can undo it there. No answer,
+// or a plugin that can't be fetched or installed, decides nothing, so the next run asks again:
+// Skelcrew works from git alone meanwhile, and sc add -g installs it.
 function offerGitHub(repository: string, remote: string): void {
-  console.log(
-    "GitHub detected.\n\nThe GitHub plugin lets Skelcrew work with issues, pull requests\nand CI on your repositories.",
-  );
-  const answer = askYes("Add it? [Y/n]");
-  // No answer, such as after Ctrl-D, is no decision, so the next run asks again.
-  if (answer === null) return;
-  if (answer) {
-    // The plugin's setup is handed the remote, so it can set itself up for this repository.
-    try {
-      if (addPlugin(githubPlugin, remote)) return;
-    } catch (error) {
-      console.log(`Couldn't install the GitHub plugin: ${errorText(error)}`);
-      return;
-    }
+  const shown = gitHubShown(repository);
+  // The plugin's setup is handed the remote, so it can set itself up for this repository.
+  let answer: boolean | null = null;
+  try {
+    answer = addPlugin(githubPlugin, remote, shown);
+  } catch (error) {
+    console.log(`Couldn't install the GitHub plugin: ${errorText(error)}`);
+    return;
   }
+  if (answer) return;
   const { declined } = readSettings(["declined"]);
   const config = yourConfigDocument();
   config.set("github_declined", [...declined, repository]);
   mkdirSync(configDir(), { recursive: true });
   writeFileSync(configFile(), config.toString());
   console.log(
-    `Skelcrew won't ask again for ${repository}. To install it: sc add -g ${githubPlugin}`,
+    `Skelcrew won't ask again for ${repository}. To install it:\n${toRun([`sc add -g ${githubPlugin}`])}`,
   );
 }
 
-// Asks whether agents run on Claude Code or Codex, refuses one that isn't installed, and saves
-// the choice. Enter picks the first one installed.
+// Saves which harness agents run on. With only one installed there is nothing to ask, so it
+// says which it found and takes that one. With both, you pick one, Claude Code first. A harness
+// that isn't installed is never offered, as the tools check stopped setup without one.
 function pickHarness(env: Env): void {
   const config = yourConfigDocument();
   const PATH = env.PATH ?? "";
-  console.log("Choose the coding agent:");
-  for (const [at, h] of harnesses.entries()) console.log(`  ${at + 1}) ${h.title}`);
-  // The first one installed is the default, so Enter picks a harness that works.
-  const installed = harnesses.findIndex((h) => Bun.which(h.program, { PATH }));
-  // Bun's prompt answers null both for Ctrl-D and for a bare Enter, unless it has a
-  // default: then Enter gives the default and only Ctrl-D gives null.
-  const answer = prompt("Number:", String(installed + 1));
-  if (answer === null) throw new Error("no harness was picked, so none is saved");
-  const picked = harnesses[Number(answer.trim()) - 1];
-  if (!picked) throw new Error(`${answer.trim()} isn't one of the numbers, so no harness is saved`);
-  if (!Bun.which(picked.program, { PATH }))
-    throw new Error(`${picked.title} isn't installed. Install it first: ${picked.install}`);
+  const installed = harnesses.filter((h) => Bun.which(h.program, { PATH }));
+  let picked = installed[0];
+  if (installed.length === 1 && picked) {
+    for (const h of harnesses) console.log(`${h.title} ${h === picked ? "detected" : "not found"}`);
+    console.log(`Agents will run on ${picked.title}`);
+  } else {
+    const choices = installed.map((h) => ({ label: h.title, hint: "installed" }));
+    const at = pick("Choose the coding agent:", choices);
+    if (at === null) throw new Error("no harness was picked, so none is saved");
+    picked = installed[at];
+  }
+  if (!picked) throw new Error("no harness is installed, so none is saved");
   config.set("harness", picked.name);
   mkdirSync(configDir(), { recursive: true });
   writeFileSync(configFile(), config.toString());
@@ -300,17 +315,23 @@ function savedReviewerHarness(): HarnessName | undefined {
 // the builder's model misses. Saves it only when it isn't your harness, which reviews run on
 // anyway.
 function pickReviewer(harness: HarnessName): void {
-  const other = harnesses.filter((h) => h.name !== harness);
-  // The other harness is 1, the default.
-  const choices = [...other, ...harnesses.filter((h) => h.name === harness)];
-  console.log("Choose the coding agent for reviews:");
-  for (const [at, h] of choices.entries())
-    console.log(`  ${at + 1}) ${h.title}${at === 0 ? ", for a second opinion" : ""}`);
-  const answer = prompt("Number:", "1");
-  if (answer === null) throw new Error("no harness was picked for reviews, so none is saved");
-  const picked = choices[Number(answer.trim()) - 1];
-  if (!picked) throw new Error(`${answer.trim()} isn't one of the numbers, so none is saved`);
-  if (picked.name === harness) return;
+  // The other harness comes first, so Enter takes it.
+  const choices = [
+    ...harnesses.filter((h) => h.name !== harness),
+    ...harnesses.filter((h) => h.name === harness),
+  ];
+  const at = pick(
+    "Choose the coding agent for reviews:",
+    // Both are installed, as the question comes only then, and say so as the first question
+    // does. The other harness, first, is marked as the second opinion it gives.
+    choices.map((h, index) => ({
+      label: h.title,
+      hint: index === 0 ? "installed · a second opinion" : "installed",
+    })),
+  );
+  if (at === null) throw new Error("no harness was picked for reviews, so none is saved");
+  const picked = choices[at];
+  if (!picked || picked.name === harness) return;
   const config = yourConfigDocument();
   config.setIn(["roles", "reviewer", "harness"], picked.name);
   writeFileSync(configFile(), config.toString());
@@ -374,12 +395,6 @@ export function firstRun(from?: string): boolean {
       step.take();
       taken = step.title;
     }
-    // Reviews fall back to your harness when the other one isn't installed, which is worth
-    // a line.
-    const yours = harnesses.find((h) => h.name === readSettings(["yourHarness"]).yourHarness);
-    const other = harnesses.find((h) => h !== yours);
-    if (yours && other && !Bun.which(other.program, { PATH: env.PATH ?? "" }))
-      console.log(`\n${other.title} isn't installed, so reviews run on ${yours.title}.`);
   }
   return !done || github !== null;
 }
@@ -511,11 +526,9 @@ function stepsToTake(env: Env, asked: { reviewer: boolean }): Step[] {
     steps.push({
       title: "Claude's sign-in",
       take: () => {
-        // The command sits on a line of its own, bold where the terminal shows it, so it
-        // reads as something to copy and run, not as part of the sentence.
-        const bold = process.stdout.isTTY && process.env.TERM !== "dumb";
-        const command = bold ? "\x1b[1mclaude setup-token\x1b[22m" : "claude setup-token";
-        console.log(`Sign in to Claude${forReviews}. In another terminal, run:\n\n  ${command}\n`);
+        console.log(
+          `Sign in to Claude${forReviews}. In another terminal, run:\n${toRun(["claude setup-token"])}`,
+        );
         console.log("Then paste the token here.");
         saveClaudeToken();
       },
