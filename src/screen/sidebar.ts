@@ -1,8 +1,8 @@
-// The sidebar: the live left pane of the screen, showing the open repository. Its lead is on top,
-// then the entries Issues, Threads and PRs, then ACTIVE, with the active threads and what each
-// is doing. Picking a thread switches the client in the right pane, and picking an entry puts its
-// list there. The sidebar also keeps the top row up to date, with the header, the tabs and the
-// strip, tells the footer what to say under an agent, and switches tabs.
+// The sidebar: the live left pane of the screen, which is the list of the open repository. Its
+// lead is on top, then Needs you and the six stages, as sc --list shows them. The right side
+// follows the row you are on: the lead's session on the lead's row, a task's details on a task's.
+// The sidebar also keeps the top row up to date, with the header, the tabs and the strip, tells
+// the footer what to say, and switches tabs.
 import {
   attachCommand,
   attachThen,
@@ -13,33 +13,81 @@ import {
   showSession,
 } from "../agents/sessions.ts";
 import { paneTty, paneWidth, respawnPane, screenTmux, showStrip } from "../agents/tmux.ts";
-import { openRepository } from "../client.ts";
+import { openRepository, startOrMerge } from "../client.ts";
 import { openDb } from "../db.ts";
 import { leadOf } from "../flow/lead.ts";
+import { ListStage } from "../flow/stage.ts";
 import { doing, watchForStalls } from "../flow/stall.ts";
 import { liveThreads } from "../flow/thread.ts";
+import { type Asking, canOpenLinks, openPr, stillOffered } from "../list/actions.ts";
+import { drawRows, type Target } from "../list/layout.ts";
+import {
+  cutBacklog,
+  listRows,
+  type Question,
+  type Row,
+  type Section,
+  sectionHeadings,
+} from "../list/rows.ts";
 import { updateNotice } from "../machine/update.ts";
 import { leadPlaces, screenLogFile } from "../paths.ts";
 import { quoteForSh } from "../plugins/plugin.ts";
 import { attachOnHostLine, pluginHost } from "../plugins/runtime.ts";
+import { errorText } from "../say.ts";
 import { version } from "../version.ts";
 import { agentFooter, tellFooter } from "./footer.ts";
-import { draw, entryPlace, noticeLines, type Size } from "./layout.ts";
-import { type EntryCount, entryCounts, pageRow, roundLimit } from "./lists.ts";
-import { nextList, nextRow, rowAtLine } from "./moves.ts";
-import { type Open, type Row, repositoryTabs, sidebarRows } from "./rows.ts";
-import { paneCommand, sidebarWidth } from "./screen.ts";
+import { noticeLines } from "./layout.ts";
+import { roundLimit } from "./lists.ts";
+import { edge, filled, paint, removeControlCodes } from "./look.ts";
+import { type Open, repositoryTabs, sidebarRows } from "./rows.ts";
+import { sidebarWidth } from "./screen.ts";
 import { drawTop } from "./strip.ts";
+import { attachTask, showTask } from "./task.ts";
 
-// What the sidebar reads: Alt with an arrow as tmux sends it, 3 without Shift and 4 with it,
-// the left button going down, with its line on screen, and what the screen's tmux and the right
-// pane type into it as an OSC: a click on a tab, with the tab's place in the row, the page now
-// open on the right, or none, and a thread picked in the list of threads.
+// Splits what reaches the sidebar into keys: a message the screen's tmux types in as an OSC, such
+// as a click on a tab, a CSI sequence, such as an arrow or a click, an SS3 one, Alt with a key,
+// then any single character.
 const esc = "\x1b";
-const input = new RegExp(
-  `${esc}\\[1;([34])([ABCD])|${esc}\\[<0;\\d+;(\\d+)M|${esc}\\](skel-(?:tab|page|thread));([^\x07]*)\x07`,
+const keyPattern = new RegExp(
+  [
+    `${esc}\\][^\x07]*\x07`,
+    `${esc}\\[[0-?]*[ -/]*[@-~]`,
+    `${esc}O[\\s\\S]`,
+    `${esc}[^${esc}]`,
+    "[\\s\\S]",
+  ].join("|"),
   "g",
 );
+// A press of the mouse, with its button, column and line, counted from 1. A release ends in m,
+// and does nothing.
+const clickPattern = new RegExp(`^${esc}\\[<(\\d+);(\\d+);(\\d+)M$`);
+// The keys the sidebar acts on, by what they do. The Alt ones come from the screen's tmux, from
+// anywhere. The plain ones come only while the right side shows a task's details, as your typing
+// then goes to the sidebar. Alt with a digit and the digit alone open or close a stage.
+const keyNames: Record<string, string> = {
+  "\x1b[1;3A": "up",
+  "\x1b[1;3B": "down",
+  "\x1b[A": "up",
+  "\x1b[B": "down",
+  "\x1bOA": "up",
+  "\x1bOB": "down",
+  "\x1b[1;4A": "previous section",
+  "\x1b[1;4B": "next section",
+  "\x1b[1;4C": "next repository",
+  "\x1b[1;4D": "previous repository",
+  "\t": "next repository",
+  "\x1b[Z": "previous repository",
+  "\r": "enter",
+  "\n": "enter",
+};
+
+// The keys the footer shows on a task's row, where your typing goes to the sidebar: Enter, the
+// stages' numbers, and s or m only where the row can be started or merged.
+function taskFooter(row: Row): string {
+  const start = row.start ? "  s start" : "";
+  const merge = row.merge && "ask" in row.merge ? "  m merge" : "";
+  return `⌥↑↓ move  ⏎ open  1-6 stages${start}${merge}  ⌥Q quit`;
+}
 
 // Returns the repository open in the sidebar, given its owner/name, with its lead's session.
 // For a repository Skelcrew no longer has, such as one just removed, the session is named as a
@@ -67,11 +115,18 @@ function leadOnHost(db: ReturnType<typeof openDb>, { owner, repo }: Open): strin
   }
 }
 
+// What the right side shows of a task: its details, by the task's name, such as app-12. Anything
+// else the right side shows is an agent's session, by its name.
+const detailsOf = (name: string) => `details:${name}`;
+const isDetails = (shown: string | null) => shown?.startsWith("details:") ?? false;
+// What the right side shows while it says why Enter couldn't attach to a builder.
+const refused = "refused";
+
 // Runs the sidebar until its pane goes. The session given is its own, on the screen's server,
 // `where` says which remote Skelcrew runs on, if any, for the header above it, and `repository`
 // is the owner/name of the repository it opens on.
-// tmux brings it the keys that move and clicks on its input. It looks again each second, and
-// writes only when something changed, as over a slow link each write costs.
+// tmux brings it the Alt keys and clicks, and your typing while a task's details show. It looks
+// again each second, and writes only when something changed, as over a slow link each write costs.
 export async function runSidebar(
   agents: string,
   session: string,
@@ -103,8 +158,9 @@ export async function runSidebar(
     return attachThen(agents, first, leadLine());
   };
   // The agents running on a plugin's host, builders by their thread's folder and the open lead by
-  // its name, with the line that attaches to each, as the last look at the hosts found them. The look runs in the background, one at a
-  // time, as a host can be slow, and the sidebar never waits on it.
+  // its name, with the line that attaches to each, as the last look at the hosts found them. The
+  // look runs in the background, one at a time, as a host can be slow, and the sidebar never
+  // waits on it.
   let hosted = new Map<string, string>();
   let lookingAtHosts = false;
   const lookAtHosts = () => {
@@ -122,12 +178,26 @@ export async function runSidebar(
   let tabs = repositoryTabs(db, roundLimit);
   const rightPane = `=${session}:.1`;
   let tty = paneTty(agents, rightPane);
+  // The list's rows: every row, those that show, which are the lead's and those of the open
+  // sections, the row you are on among those and how far the sections scrolled. Needs you is
+  // always open, and of the stages only Building at first. The sections you open stay open,
+  // whichever repository you move to, and so does a whole Backlog once you asked for it.
+  let all: Row[] = [];
   let rows: Row[] = [];
-  let entries: EntryCount[] = [];
-  // What is on the right: a session, or an entry's place while its list or a page from it shows.
-  // `page` is the issue or PR whose page is open there, for the strip.
+  const opened = new Set<Section>(["needs you", "building"]);
+  let wholeBacklog = false;
+  let here = 0;
+  let top = 0;
+  let targets: Target[] = [];
+  // The agents whose sessions run, on tmux or a plugin's host, as the last refresh found them.
+  let running: string[] = [];
+  // What is on the right: an agent's session, or a task's details, by detailsOf.
   let shown: string | null = null;
-  let page: { name: string; title: string } | null = null;
+  // What the footer says in place of its keys until the next key, the question it asks, and
+  // whether the daemon is at work on an answer.
+  let said: string | null = null;
+  let asking: Asking | null = null;
+  let working = false;
   let lastFrame = "";
   let lastStrip = "";
   let lastFooter = "";
@@ -136,23 +206,106 @@ export async function runSidebar(
   // The lead this sidebar last asked the daemon to start, until it runs, so a lead that can't
   // start isn't asked for again each second. Whatever opened the screen asked already.
   let asked: string | null = open.lead;
+  // Whether the screen is leaving, as no tab is left.
+  let leaving = false;
+  const canOpen = canOpenLinks(where);
   // Returns the size the rest has now, as the terminal can change it at any time.
-  const size = (): Size => ({
+  const size = () => ({
     width: process.stdout.columns || sidebarWidth,
     height: (process.stdout.rows || 24) - notice.length,
   });
-  // Returns whether a place is one of the entries', whose list runs in the right pane.
-  const isEntry = (place: string | null) =>
-    entries.some((entry) => entryPlace(entry.entry) === place);
-  // Whether the screen is leaving, as no tab is left.
-  let leaving = false;
+
+  // Puts `next` on the right: an agent's session, or a task's details, which leave your typing
+  // with the sidebar. A client can switch between agents, but coming from details the pane must
+  // run something else, and so must a client still attaching, which can't switch yet. A lead on a
+  // plugin's host runs that host's attach in the pane, as no tmux client can switch to it. A
+  // builder you attached to with Enter still counts as its task's details, which the pane goes
+  // back to once you leave it.
+  const show = (next: string) => {
+    if (next === shown) return;
+    const onHost = hosted.get(next);
+    if (next.startsWith("details:"))
+      showTask(agents, session, `${open.owner}/${open.repo}`, next.slice("details:".length));
+    else if (onHost !== undefined)
+      respawnPane(agents, rightPane, ["sh", "-c", `${onHost}; ${leadLine()}`]);
+    else if (
+      isDetails(shown) ||
+      shownSession(agents, tty) === null ||
+      (next === open.lead && leadAttach !== null)
+    )
+      respawnPane(agents, rightPane, paneOn(next));
+    else showSession(agents, tty, next);
+    tty = paneTty(agents, rightPane);
+    if (!next.startsWith("details:")) screenTmux(agents, ["select-pane", "-t", rightPane]);
+    shown = next;
+  };
+  // Shows on the right what the row you are on is: the lead's session on the lead's row, and a
+  // task's details on any other.
+  const follow = () => {
+    const row = rows[here];
+    if (row) show(row.part === "lead" ? open.lead : detailsOf(row.name));
+  };
+
+  // Returns the session of the agent the right side is about: the lead or an agent shown, or on a
+  // task's row its builder, whether its details show or you attached to it.
+  const about = () => (isDetails(shown) ? (rows[here]?.session ?? null) : shown);
+
+  // Returns what the footer says now: a line said or a question asked, the keys for a task's row
+  // while your typing goes to the sidebar, or while it goes to an agent the keys you need most
+  // and what Esc stops. `typing` says whether your typing goes to the right side.
+  const footerText = (agentRows: ReturnType<typeof sidebarRows>, typing: boolean) => {
+    if (said ?? asking) return said ?? asking?.question.ask ?? "";
+    const row = rows[here];
+    if (!typing && row) return taskFooter(row);
+    const agent = agentRows.find((one) => one.session === about());
+    return agentFooter(agent?.agentHarness ?? "");
+  };
+
+  // Draws the sidebar, the notice above the rest, only when it changed. Every line ends with the
+  // sidebar's edge in the pane's last column, and a column before it is left blank.
+  const draw = () => {
+    const { width, height } = size();
+    const headings = sectionHeadings(all, opened);
+    const drawn = drawRows(rows, headings, here, top, Math.max(width - 2, 1), height - 1);
+    top = drawn.top;
+    targets = [...notice.map((): Target => null), null, ...drawn.targets];
+    const lines = ["", ...drawn.lines].map(
+      (line) => `${filled(line, Math.max(width - 1, 0))}${paint(edge, "│")}`,
+    );
+    const frame = [...notice, ...lines].join("\n");
+    if (frame === lastFrame) return;
+    lastFrame = frame;
+    // Every line fills the pane, so nothing of the last frame is left to clear.
+    doing("drawing the sidebar", () =>
+      process.stdout.write(`\x1b[H${frame.replaceAll("\n", "\r\n")}`),
+    );
+  };
+
+  // Shows the rows of the open sections again, keeping you on the same row by its name, or at
+  // the same place when it went. So a task that starts or stops needing you moves between Needs
+  // you and its stage with you still on it: a section it moves into that is closed opens, as
+  // otherwise its row would leave the list under you. The right side follows a row that went,
+  // but not the first rows read, as the screen opens on the lead already, on the lead's row.
+  const reshow = () => {
+    const name = rows[here]?.name;
+    const before = rows[here]?.section;
+    const moved = all.find((row) => row.name === name);
+    if (moved && moved.section !== before && moved.section !== "lead") opened.add(moved.section);
+    rows = cutBacklog(all, wholeBacklog).filter(
+      (row) => row.section === "lead" || opened.has(row.section),
+    );
+    const at = name === undefined ? -1 : rows.findIndex((row) => row.name === name);
+    here = at >= 0 ? at : Math.max(Math.min(here, rows.length - 1), 0);
+    if (name !== undefined && rows[here]?.name !== name) follow();
+  };
+
   // Looks at the database and tmux again, and redraws what that changed.
   const refresh = () => {
     if (leaving) return;
     // tmux first, then the tabs: the daemon closes a tab before it ends the lead's session, so
     // a lead found gone here with its tab still read as open has crashed.
     const found = doing("asking tmux for the agents' sessions", () => listTmuxSessions(agents));
-    const running = [...found.flatMap((one) => (one.running ? [one.name] : [])), ...hosted.keys()];
+    running = [...found.flatMap((one) => (one.running ? [one.name] : [])), ...hosted.keys()];
     lookAtHosts();
     const exited = doing("asking tmux whether the lead exited", () =>
       exitedCleanly(agents, open.lead),
@@ -162,9 +315,9 @@ export async function runSidebar(
     // A repository you removed, or whose lead you exited, has no tab left. The sidebar moves to
     // the tab that took its place, or the one before when it was last. With no tab left, the
     // screen leaves as Alt-Q does.
-    const here = before.findIndex((tab) => tab.fullName === `${open.owner}/${open.repo}`);
+    const at = before.findIndex((tab) => tab.fullName === `${open.owner}/${open.repo}`);
     if (!tabs.some((tab) => tab.fullName === `${open.owner}/${open.repo}`)) {
-      const next = tabs[Math.min(Math.max(here, 0), tabs.length - 1)];
+      const next = tabs[Math.min(Math.max(at, 0), tabs.length - 1)];
       if (!next) {
         // The session is ended, not detached. Detaching it from here made tmux 3.6 crash
         // about one time in six on a busy machine, as destroy-unattached ended the session,
@@ -187,16 +340,24 @@ export async function runSidebar(
       }
     }
     notice = noticeLines(updateNotice(db), size().width);
-    rows = doing("reading the rows", () => sidebarRows(db, running, roundLimit, Date.now(), open));
-    entries = doing("counting the lists", () => entryCounts(db, open));
+    // A repository Skelcrew no longer has has no rows, until the sidebar moves off it.
+    all = doing("reading the rows", () => {
+      try {
+        return listRows(db, open, Date.now());
+      } catch {
+        return [];
+      }
+    });
+    reshow();
     // An agent can end and its client move to the lead by itself, so the session shown is asked
-    // of tmux, unless a list shows. With no client on the right while the lead isn't running,
+    // of tmux, unless details show. With no client on the right while the lead isn't running,
     // the right side is waiting for the lead, such as after a builder ended while its lead was
-    // gone, so the lead is what it shows.
-    if (!isEntry(shown)) {
+    // gone, so the lead is what it shows. The sidebar then moves to the lead's row with it.
+    if (!isDetails(shown)) {
       const client = doing("asking tmux which agent shows", () => shownSession(agents, tty));
       if (client) shown = client;
       else if (!running.includes(open.lead)) shown = open.lead;
+      if (shown === open.lead && rows[here]?.part !== "lead") here = 0;
     }
     // A lead that crashed while you look at it is brought back with its conversation, once,
     // as the daemon does at its start. One you exited closes its tab instead.
@@ -206,126 +367,233 @@ export async function runSidebar(
       openRepository(`${open.owner}/${open.repo}`, true);
     }
     // The header, the tabs and the strip go to tmux's status line, and only when they changed.
+    const agentRows = doing("reading the agents' rows", () =>
+      sidebarRows(db, running, roundLimit, Date.now(), open),
+    );
     const width = doing("asking tmux the agent's width", () => paneWidth(agents, rightPane));
     const left = size().width + 1;
     const fullName = `${open.owner}/${open.repo}`;
-    const look = { rows, shown, page, tabs, open: fullName, where, version };
-    const top = drawTop(look, { left, width });
-    if (top !== lastStrip) {
-      lastStrip = top;
-      doing("drawing the strip", () => showStrip(agents, session, top));
+    const look = {
+      rows: agentRows,
+      shown: about(),
+      page: null,
+      tabs,
+      open: fullName,
+      where,
+      version,
+    };
+    const strip = drawTop(look, { left, width });
+    if (strip !== lastStrip) {
+      lastStrip = strip;
+      doing("drawing the strip", () => showStrip(agents, session, strip));
     }
-    // The footer under an agent, also only when it changed. Moving onto an agent hides the list
-    // of keys, as every key but the Alt ones is the agent's there. A list or page tells the
-    // footer what to say itself, as only it knows whether its row can be started or merged, so
-    // the sidebar forgets what it said and says it again on coming back to an agent.
-    if (isEntry(shown)) lastFooter = "";
-    else {
-      const agent = rows.find((row) => row.session === shown);
-      const footer = agentFooter(agent?.agentHarness ?? "");
-      if (footer !== lastFooter) {
-        lastFooter = footer;
-        doing("drawing the footer", () => {
-          tellFooter(agents, session, "keys", "hide");
-          tellFooter(agents, session, "footer", footer);
-        });
-      }
-    }
-    // Then the sidebar itself, the notice above the rest, also only when it changed.
-    const frame = [...notice, draw(rows, entries, shown, size())].join("\n");
-    if (frame === lastFrame) return;
-    lastFrame = frame;
-    // Every line fills the pane, so nothing of the last frame is left to clear.
-    doing("drawing the sidebar", () =>
-      process.stdout.write(`\x1b[H${frame.replaceAll("\n", "\r\n")}`),
+    // The footer, also only when it changed. The list of keys stays hidden.
+    // Your typing goes to the right side while its pane is the active one, such as once you
+    // attached to a builder, and to the sidebar otherwise.
+    const active = doing("asking tmux where your typing goes", () =>
+      screenTmux(agents, ["display", "-p", "-t", `=${session}:`, "#{pane_index}"]),
     );
-  };
-  // Puts what was picked on the right, if anything was. A client can switch between agents, but
-  // a list needs the pane to run something else, and so does a client still attaching, which
-  // can't switch yet: keys pressed together when leaving a list would be lost. Landing on the
-  // entry whose page shows goes back to its list, on the row you opened. Landing anywhere else
-  // you are does nothing, so a list isn't started again.
-  const show = (next: string | null) => {
-    if (next === null) return;
-    if (next === shown) {
-      if (page && isEntry(next)) screenTmux(agents, ["send-keys", "-t", rightPane, "Left"]);
-      return;
+    const footer = footerText(agentRows, active.out.trim() !== "0");
+    if (footer !== lastFooter) {
+      lastFooter = footer;
+      doing("drawing the footer", () => {
+        tellFooter(agents, session, "keys", "hide");
+        tellFooter(agents, session, "footer", footer);
+      });
     }
-    // An entry's list runs in the pane in place of what was there. Coming from a list, or onto
-    // a client still attaching, a new client starts on the agent. Otherwise the client switches.
-    // A builder on a plugin's host runs that host's attach in the pane, and the lead comes back
-    // once you leave it, as after a tmux session. So does a lead on a plugin's host, which no
-    // tmux client can switch to.
-    const entry = entries.find((candidate) => entryPlace(candidate.entry) === next);
-    const fullName = `${open.owner}/${open.repo}`;
-    const onHost = hosted.get(next);
-    if (entry)
-      respawnPane(agents, rightPane, paneCommand(agents, session, entry.entry, where, fullName));
-    else if (onHost !== undefined) {
-      respawnPane(agents, rightPane, ["sh", "-c", `${onHost}; ${leadLine()}`]);
-      tty = paneTty(agents, rightPane);
-    } else if (
-      isEntry(shown) ||
-      shownSession(agents, tty) === null ||
-      (next === open.lead && leadAttach !== null)
-    ) {
-      respawnPane(agents, rightPane, paneOn(next));
-      tty = paneTty(agents, rightPane);
-    } else showSession(agents, tty, next);
-    page = null;
-    shown = next;
+    draw();
   };
-  // Opens another repository: its sidebar on the left at once, and its lead on the right, which
-  // the daemon starts then if it never has. The client on the right tries again each second
-  // until the lead's session is there.
+
+  // Opens another repository: its rows on the left at once, on its lead's row, and its lead on
+  // the right, which the daemon starts then if it never has. The client on the right tries again
+  // each second until the lead's session is there.
   function switchTo(fullName: string) {
     if (fullName === `${open.owner}/${open.repo}`) return;
     open = repositoryAndLead(db, fullName);
     leadAttach = leadOnHost(db, open);
-    // Not waited on, so the sidebar draws at once. The right pane starts on the new lead, through
-    // its own host, and no list shows.
+    // Not waited on, so the sidebar draws at once.
     openRepository(fullName, true);
     asked = open.lead;
+    all = [];
+    rows = [];
+    here = 0;
+    top = 0;
+    asking = null;
     respawnPane(agents, rightPane, paneOn(open.lead));
     tty = paneTty(agents, rightPane);
-    page = null;
+    screenTmux(agents, ["select-pane", "-t", rightPane]);
     shown = open.lead;
   }
-  // Returns the owner/name of the tab before or after the open one, or null at either end.
-  const tabBeside = (by: 1 | -1) => {
-    const here = tabs.findIndex((tab) => tab.fullName === `${open.owner}/${open.repo}`);
-    return tabs[here + by]?.fullName ?? null;
+  // Moves to the tab after the open one, by 1, or before it, by -1, each wrapping round.
+  const nextRepository = (by: 1 | -1) => {
+    const at = tabs.findIndex((tab) => tab.fullName === `${open.owner}/${open.repo}`);
+    const next = tabs[(at + by + tabs.length) % tabs.length];
+    if (!next) return;
+    switchTo(next.fullName);
+    // Keys that came with the switch, such as Alt-Shift-Down, move in the new repository's rows.
+    refresh();
   };
+
+  // Moves to the row at `at` among those that show, staying among them, and shows it on the right.
+  const moveTo = (at: number) => {
+    here = Math.min(Math.max(at, 0), rows.length - 1);
+    follow();
+  };
+  // Moves to the first row of the section before or after yours: the lead, Needs you, or an
+  // open stage with rows. Past the first and the last there is nowhere to go.
+  const jump = (by: 1 | -1) => {
+    const starts = rows.flatMap((row, at) =>
+      at === 0 || row.section !== rows[at - 1]?.section ? [at] : [],
+    );
+    const mine = starts.filter((at) => at <= here).at(-1) ?? 0;
+    const next =
+      by === 1 ? starts.find((at) => at > here) : starts.filter((at) => at < mine).at(-1);
+    if (next !== undefined) moveTo(next);
+  };
+  // Opens or closes a stage. Needs you never closes, as it is where you must look. Opening one
+  // moves you to its first row, so its heading and first rows show.
+  const toggle = (section: Section) => {
+    if (section === "needs you") return;
+    if (opened.delete(section)) return reshow();
+    opened.add(section);
+    reshow();
+    const first = rows.findIndex((row) => row.section === section);
+    if (first >= 0) moveTo(first);
+  };
+
+  // Has the daemon start or merge once you said y, saying so meanwhile. When the daemon or the
+  // forge refuses, the footer says why until the next key.
+  const goAhead = async (action: Question) => {
+    working = true;
+    said = action.working;
+    refresh();
+    try {
+      await startOrMerge(action.request);
+      said = null;
+    } catch (error) {
+      said = errorText(error);
+    }
+    working = false;
+  };
+
+  // Shows on the right side why Enter couldn't attach to the builder of the task named, such as a
+  // builder that isn't running, in place of its details, as that is where you meant to reach it.
+  // Your next key or move brings the details back. A reason that comes after you moved on is
+  // dropped, as the right side shows another row by then.
+  const refuse = (name: string, reason: string) => {
+    if (shown !== detailsOf(name)) return;
+    // Cut at words to the pane's width, a column in, each line printed as given, never run.
+    const room = Math.max(paneWidth(agents, rightPane) - 2, 10);
+    const lines = Bun.wrapAnsi(removeControlCodes(reason), room, { hard: true }).split("\n");
+    const say = 'printf "\\n"; printf " %s\\n" "$@"; exec cat >/dev/null';
+    respawnPane(agents, rightPane, ["sh", "-c", say, "sh", ...lines]);
+    tty = paneTty(agents, rightPane);
+    shown = refused;
+  };
+
+  // Opens the row you are on, as Enter does in the list. On a task at work, the builder takes
+  // the right side and your typing, until Ctrl-\ brings back its details, or the right side says
+  // why it can't. Backlog asks to start the task, and the `… more` row shows every issue. Ready and Done open the PR, or copy its link. A ready task
+  // whose builder needs you reaches the builder instead, so one Enter reaches what it waits on.
+  const enter = () => {
+    const row = rows[here];
+    if (!row || row.part === "lead") return;
+    if (row.more > 0) {
+      wholeBacklog = true;
+      return reshow();
+    }
+    if (row.part === "backlog" && row.start) {
+      asking = { question: row.start, row: row.name, merge: false };
+      return;
+    }
+    const atWork = row.part !== "ready" && row.part !== "done";
+    if ((atWork || row.needsYou) && row.session) {
+      void attachTask(agents, session, `${open.owner}/${open.repo}`, row.name).then((failed) => {
+        if (failed !== null) refuse(row.name, failed);
+      });
+      return;
+    }
+    said = openPr(db, open, row, canOpen, (text) => process.stdout.write(text));
+  };
+
+  // Acts on a press of the mouse at a column and line, counted from 1. A click on the lead moves
+  // to it, so the right side shows the lead, ready to type to. A click on a task moves to it, and
+  // a second click on it opens it as Enter does. A click on a stage's heading, or its name pinned
+  // at an edge, opens or closes it. The wheel moves one row up or down.
+  const click = (button: string, column: number, line: number) => {
+    if (button === "64") return moveTo(here - 1);
+    if (button === "65") return moveTo(here + 1);
+    if (button !== "0") return;
+    const target = targets[line - 1] ?? null;
+    if (target === null) return;
+    if ("section" in target) return toggle(target.section);
+    if ("pinned" in target) {
+      const pinned = target.pinned.find((span) => span.from <= column && column <= span.to);
+      return pinned && toggle(pinned.section);
+    }
+    if (target.row === here && rows[here]?.part !== "lead") return enter();
+    moveTo(target.row);
+  };
+
+  // Acts on one key. A question takes only y, and any other key is a no. A line said goes at the
+  // next key, which then does what it does. Nothing acts while the daemon is at work on an
+  // answer. s and m work as in the list, and only reach the sidebar on a task's row.
+  const press = (key: string) => {
+    if (working) return;
+    // A reason shown on the right goes at the next key, which then does what it does.
+    if (shown === refused) {
+      shown = null;
+      follow();
+    }
+    const name = keyNames[key] ?? key;
+    const [, button, column, line] = clickPattern.exec(key) ?? [];
+    if (asking) {
+      const action = asking;
+      asking = null;
+      if (name !== "y") return;
+      refresh();
+      const offer = stillOffered(action, all);
+      if (typeof offer === "string") said = offer;
+      else void goAhead(offer);
+      return;
+    }
+    said = null;
+    const row = rows[here];
+    if (name === "up" || name === "down") return moveTo(here + (name === "up" ? -1 : 1));
+    if (name === "previous section" || name === "next section")
+      return jump(name === "next section" ? 1 : -1);
+    if (name === "next repository" || name === "previous repository")
+      return nextRepository(name === "next repository" ? 1 : -1);
+    if (key.startsWith(`${esc}]skel-tab;`)) {
+      const tab = tabs[Number(key.slice(`${esc}]skel-tab;`.length, -1))];
+      if (tab) switchTo(tab.fullName);
+      return refresh();
+    }
+    if (button && column && line) return click(button, Number(column), Number(line));
+    // 1 to 6, with Alt or without, open or close the stages, in the order they show.
+    const bare = key.startsWith(esc) ? key.slice(1) : key;
+    const stage = /^[1-6]$/.test(bare) ? ListStage.options[Number(bare) - 1] : undefined;
+    if (stage) return toggle(stage);
+    if (name === "enter") return enter();
+    if (key === "s" && row?.part === "backlog" && row.start)
+      asking = { question: row.start, row: row.name, merge: false };
+    else if (key === "m" && row?.merge) {
+      if ("refused" in row.merge) said = row.merge.refused;
+      else asking = { question: row.merge, row: row.name, merge: true };
+    } else if (key === "m" && row?.part === "ready")
+      said = row.needsYou
+        ? `${row.name}'s builder needs you first: press Enter to reach it`
+        : `${row.name} has no PR to merge here`;
+  };
+
   process.stdin.setRawMode(true);
   // Without the cursor hidden it would blink at the end of the sidebar. 1000 and 1006 ask for
-  // clicks, in the form tmux can give a place of any size.
+  // clicks and the wheel, in the form tmux can give a place of any size.
   process.stdout.write("\x1b[?25l\x1b[?1000h\x1b[?1006h");
-  // Acts on each key and click that came together, then redraws. A click on a row picks it by
-  // its line, counted from the top, below the notice.
+  // Acts on each key and click that came together, then redraws.
   process.stdin.on("data", (bytes) => {
-    for (const [, kind, arrow, y, said, about = ""] of bytes.toString().matchAll(input)) {
-      if (said === "skel-page") {
-        // The list on the right opened a page, or went back from one.
-        page = about ? pageRow(db, open, about) : null;
-      } else if (said === "skel-thread") {
-        // A thread picked in the list of threads shows as picking it in ACTIVE does, while its
-        // agent runs.
-        if (rows.some((row) => row.session === about && row.running)) show(about);
-      } else if (said === "skel-tab" || arrow === "C" || arrow === "D") {
-        // A click on a tab, or Alt-Shift-Right or Alt-Shift-Left for the tab after or before.
-        // tmux sends no other arrow sideways. Past either end there is nowhere to go.
-        const tab =
-          said === "skel-tab" ? tabs[Number(about)]?.fullName : tabBeside(arrow === "C" ? 1 : -1);
-        if (!tab) continue;
-        switchTo(tab);
-        // Keys that came with the switch, such as Alt-Down, move in the new repository's rows.
-        refresh();
-      } else if (arrow) {
-        // Alt-Up or Alt-Down moves a row, and with Shift a part.
-        const move = kind === "4" ? nextList : nextRow;
-        show(move(rows, entries, shown, size(), arrow === "A" ? -1 : 1));
-      } else if (y) show(rowAtLine(rows, entries, shown, size(), Number(y) - 1 - notice.length));
-    }
+    for (const [key] of bytes.toString().matchAll(keyPattern))
+      doing("acting on a key", () => press(key));
     refresh();
   });
   // Draws now, on each resize and each second, until the pane goes and its input closes.

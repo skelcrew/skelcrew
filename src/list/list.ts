@@ -16,6 +16,7 @@ import { errorText } from "../say.ts";
 import { cpuBusy, cpuSample, loadText, memoryInUse, readMemory } from "../screen/load.ts";
 import { grey, paint, removeControlCodes } from "../screen/look.ts";
 import { version } from "../version.ts";
+import { type Asking, canOpenLinks, openPr, stillOffered } from "./actions.ts";
 import { type Details, readDetails } from "./details.ts";
 import {
   drawList,
@@ -30,7 +31,6 @@ import { liveNote, readLive } from "./live.ts";
 import { drawPane, type Live } from "./pane.ts";
 import {
   cutBacklog,
-  hasForge,
   listRows,
   type Open,
   type Question,
@@ -40,9 +40,6 @@ import {
   sectionHeadings,
   sections,
 } from "./rows.ts";
-
-// The command that opens a link in your browser.
-const openCommand = process.platform === "darwin" ? "open" : "xdg-open";
 
 // The keys the list reads, as your terminal sends them. Arrows come in either of the two forms a
 // terminal may use, and Ctrl-C leaves as q does, since the terminal is raw. Esc leaves too, but
@@ -140,7 +137,7 @@ export async function runList(agents: string, repository: string): Promise<void>
   let targets: Target[] = [];
   let said: string | null = null;
   // The open question, with the row it is about and whether it is a merge or a start.
-  let asking: { question: Question; row: string; merge: boolean } | null = null;
+  let asking: Asking | null = null;
   let working = false;
   let attached = false;
   // The details of the row you are on, by its name, read again with the rows each second, and
@@ -160,12 +157,7 @@ export async function runList(agents: string, repository: string): Promise<void>
   const fixed = process.env.SKELCREW_FIXED_LOAD;
   let load = fixed ? paint(grey, removeControlCodes(fixed)) : "";
   let sample = cpuSample(cpus());
-  // Your browser opens a PR only on the machine you sit at. A Linux machine with no display,
-  // such as a server you ssh to, has none, so Enter copies the link to your clipboard instead.
-  const canOpen =
-    where === "" &&
-    (process.platform === "darwin" || !!process.env.DISPLAY || !!process.env.WAYLAND_DISPLAY) &&
-    Bun.which(openCommand) !== null;
+  const canOpen = canOpenLinks(where);
 
   // Returns what the list shows around its rows, with this bottom line and load.
   const frameWith = (bottom: (tabs: number) => string, shownLoad: string): Frame => {
@@ -381,29 +373,7 @@ export async function runList(agents: string, repository: string): Promise<void>
         return say(errorText(error));
       }
     }
-    // A task that ended before Skelcrew saved PR links, and whose PR has left the forge's copy,
-    // still had a PR: the line names it, as there is no link left to open.
-    if (row.link === null && row.part === "done")
-      return say(
-        row.pr
-          ? `${row.name}'s PR ${row.pr} has no link saved, as it ended before Skelcrew kept them: open it on the forge`
-          : `${row.name} has no PR to open`,
-      );
-    if (row.link === null) {
-      const branch = row.branch ? ` on branch ${row.branch}` : "";
-      return say(
-        hasForge(db, open)
-          ? `${row.name} has no PR yet`
-          : `${row.name} is ready${branch}: open a PR or merge it yourself`,
-      );
-    }
-    if (canOpen) {
-      Bun.spawn([openCommand, row.link], { stdout: "ignore", stderr: "ignore" });
-      return say(`Opened ${row.link}`);
-    }
-    // OSC 52 puts the link on your terminal's clipboard, which reaches your laptop over ssh too.
-    process.stdout.write(`\x1b]52;c;${Buffer.from(row.link).toString("base64")}\x07`);
-    say(`Copied ${row.link}`);
+    say(openPr(db, open, row, canOpen, (text) => process.stdout.write(text)));
   };
 
   // Moves to a repository by its owner/name, and has the daemon start its lead if it never has.
@@ -533,19 +503,10 @@ export async function runList(agents: string, repository: string): Promise<void>
       const action = asking;
       asking = null;
       if (key !== "y") return draw();
-      // The task can change while the question is open: CI can fail, the approval can go, or
-      // the issue can start elsewhere. So its row is read again, and only goes ahead while it
-      // still offers the very same request. Otherwise the line says why, when the row does.
+      // The row is read again, as the task can change while the question is open.
       refresh();
-      const row = rows.find((candidate) => candidate.name === action.row);
-      const offer = action.merge ? row?.merge : row?.start;
-      if (offer && "ask" in offer && Bun.deepEquals(offer.request, action.question.request))
-        return goAhead(offer);
-      return say(
-        offer && "refused" in offer
-          ? offer.refused
-          : `${action.row} changed while you were asked, so nothing was done`,
-      );
+      const offer = stillOffered(action, all);
+      return typeof offer === "string" ? say(offer) : goAhead(offer);
     }
     said = null;
     const row = rows[here];
